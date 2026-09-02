@@ -106,12 +106,15 @@ from scripts.apply_server_migrations import (
     serverTableExists,
 )
 from src.server.db.models import (
+    CK_MAINTENANCE_CERTAINTY_VS_PRECISION,
+    CK_MAINTENANCE_DATE_CERTAINTY,
     CK_MAINTENANCE_DATE_PRECISION,
     CK_MAINTENANCE_ODOMETER_PAIRED,
     CK_MAINTENANCE_ODOMETER_SOURCE,
     CK_MAINTENANCE_RANGE_END,
     CK_SCHEDULE_CONFIDENCE,
     CK_SCHEDULE_SOME_INTERVAL,
+    DATE_CERTAINTY_VALUES,
     EVENT_DATE_PRECISION_VALUES,
     LAST_DONE_CONFIDENCE_VALUES,
     MAINTENANCE_LOG_TABLE,
@@ -152,6 +155,7 @@ CREATE_MAINTENANCE_LOG_DDL: str = (
     '  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,'
     '  event_date DATE NOT NULL,'
     '  event_date_precision VARCHAR(8) NOT NULL,'
+    '  event_date_certainty VARCHAR(16) NOT NULL,'
     '  event_date_end DATE NULL,'
     '  odometer_mi INT NULL,'
     '  odometer_source VARCHAR(32) NULL,'
@@ -177,6 +181,11 @@ CREATE_MAINTENANCE_LOG_DDL: str = (
     f'  CONSTRAINT {CK_MAINTENANCE_ODOMETER_SOURCE} CHECK ('
     '    odometer_source IS NULL OR odometer_source IN '
     f'    ({_sqlEnum(ODOMETER_SOURCE_VALUES)})),'
+    f'  CONSTRAINT {CK_MAINTENANCE_DATE_CERTAINTY} CHECK ('
+    f'    event_date_certainty IN ({_sqlEnum(DATE_CERTAINTY_VALUES)})),'
+    f'  CONSTRAINT {CK_MAINTENANCE_CERTAINTY_VS_PRECISION} CHECK ('
+    "    event_date_precision = 'day'"
+    "    OR event_date_certainty = 'estimated'),"
     f'  CONSTRAINT {CK_MAINTENANCE_RANGE_END} CHECK ('
     "    (event_date_precision = 'range' AND event_date_end IS NOT NULL)"
     "    OR (event_date_precision <> 'range' AND event_date_end IS NULL)),"

@@ -1732,6 +1732,30 @@ EVENT_DATE_PRECISION_VALUES: tuple[str, ...] = (
     EVENT_DATE_PRECISION_RANGE,
 )
 
+# Whether a SOURCE recorded this date or somebody ESTIMATED it (CIO 2026-09-02).
+#
+# This is ORTHOGONAL to precision and the distinction is not academic.  Precision
+# says how fine-grained the date is; certainty says whether anyone actually wrote
+# it down.  The case that forced the column is seed row 3: it stores 1999-04-01
+# for the second of three services inside a Carfax window, and that date is an
+# INTERPOLATION invented to sort the row.  Precision 'range' flagged the
+# granularity, but nothing distinguished that invented anchor from 2008-05-08,
+# which a dealer actually recorded.
+#
+# The two directions are NOT symmetric:
+#   * a non-day precision is ALWAYS estimated -- the anchor's finer components
+#     were invented by the loader, so calling it exact would state a day no
+#     source gave (enforced by ck_maintenance_log_date_certainty_vs_precision);
+#   * a DAY precision may still be estimated -- someone recalling a specific day
+#     with confidence.  That row must remain distinguishable from a dealer
+#     record, which is exactly what a derived-from-precision flag could not do.
+DATE_CERTAINTY_EXACT: str = "exact"
+DATE_CERTAINTY_ESTIMATED: str = "estimated"
+DATE_CERTAINTY_VALUES: tuple[str, ...] = (
+    DATE_CERTAINTY_EXACT,
+    DATE_CERTAINTY_ESTIMATED,
+)
+
 # Odometer provenance tiers, ordered STRONGEST FIRST.  The ordering is measured,
 # not assumed: every Illinois emissions odometer in this vehicle's history is a
 # round thousand (31,000 / 59,000 / 65,000 / 69,000 / 74,000 / 75,000 / 77,000)
@@ -1789,6 +1813,10 @@ CK_MAINTENANCE_ODOMETER_PAIRED: str = "ck_maintenance_log_odometer_paired"
 CK_MAINTENANCE_DATE_PRECISION: str = "ck_maintenance_log_date_precision"
 CK_MAINTENANCE_ODOMETER_SOURCE: str = "ck_maintenance_log_odometer_source"
 CK_MAINTENANCE_RANGE_END: str = "ck_maintenance_log_range_end"
+CK_MAINTENANCE_DATE_CERTAINTY: str = "ck_maintenance_log_date_certainty"
+CK_MAINTENANCE_CERTAINTY_VS_PRECISION: str = (
+    "ck_maintenance_log_date_certainty_vs_precision"
+)
 CK_SCHEDULE_SOME_INTERVAL: str = "ck_maintenance_schedule_some_interval"
 CK_SCHEDULE_CONFIDENCE: str = "ck_maintenance_schedule_confidence"
 
@@ -1802,6 +1830,13 @@ _ODOMETER_PAIRED_EXPR: str = (
 
 # Only a 'range' event may carry an end date, and it MUST carry one -- an
 # open-ended range is not a range, it is an unstated assumption.
+# A date that is not day-precise cannot be called exact: the anchor's finer
+# components were invented, so "exact" would assert a day nobody recorded.  The
+# converse is deliberately permitted -- see DATE_CERTAINTY_VALUES.
+_CERTAINTY_VS_PRECISION_EXPR: str = (
+    "event_date_precision = 'day' OR event_date_certainty = 'estimated'"
+)
+
 _RANGE_END_EXPR: str = (
     "(event_date_precision = 'range' AND event_date_end IS NOT NULL) "
     "OR (event_date_precision <> 'range' AND event_date_end IS NULL)"
@@ -1858,6 +1893,8 @@ def formatEventDate(
         # display layer, exactly the false precision this column exists to
         # prevent.  Six of the 48 seed rows are same-year Carfax windows.
         if eventDate.year == eventDateEnd.year:
+            if eventDate.month == eventDateEnd.month:
+                return eventDate.strftime("%b %Y")
             return (
                 f"{eventDate.strftime('%b')}-{eventDateEnd.strftime('%b')} "
                 f"{eventDate.year}"
@@ -1897,6 +1934,14 @@ class MaintenanceLog(Base):
             name=CK_MAINTENANCE_ODOMETER_SOURCE,
         ),
         CheckConstraint(_RANGE_END_EXPR, name=CK_MAINTENANCE_RANGE_END),
+        CheckConstraint(
+            _inValuesExpr("event_date_certainty", DATE_CERTAINTY_VALUES),
+            name=CK_MAINTENANCE_DATE_CERTAINTY,
+        ),
+        CheckConstraint(
+            _CERTAINTY_VS_PRECISION_EXPR,
+            name=CK_MAINTENANCE_CERTAINTY_VS_PRECISION,
+        ),
         Index("ix_maintenance_log_event_date", "event_date"),
     )
 
@@ -1905,6 +1950,9 @@ class MaintenanceLog(Base):
     # ---- when, and how precisely we know it ---------------------------------
     event_date: Mapped[date] = mapped_column(Date, nullable=False)
     event_date_precision: Mapped[str] = mapped_column(String(8), nullable=False)
+    event_date_certainty: Mapped[str] = mapped_column(
+        String(16), nullable=False,
+    )
     event_date_end: Mapped[date | None] = mapped_column(Date)
 
     # ---- the odometer and its tier (one fact, enforced as one) --------------
@@ -2058,6 +2106,9 @@ __all__ = [
     "EVENT_DATE_PRECISION_MONTH",
     "EVENT_DATE_PRECISION_YEAR",
     "EVENT_DATE_PRECISION_RANGE",
+    "DATE_CERTAINTY_VALUES",
+    "DATE_CERTAINTY_EXACT",
+    "DATE_CERTAINTY_ESTIMATED",
     "ODOMETER_SOURCE_VALUES",
     "ODOMETER_SOURCE_SHOP_RECORD",
     "ODOMETER_SOURCE_PHOTO_EXIF",

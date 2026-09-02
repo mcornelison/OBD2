@@ -122,6 +122,7 @@ def test_add_event_lands_a_row(session) -> None:
         session,
         eventDate='2026-09-02',
         precision='day',
+        certainty='exact',
         workPerformed='Timing belt replaced',
         provenance='date+work: Highline invoice',
         recordedBy='spool',
@@ -148,6 +149,7 @@ def test_add_event_refuses_an_odometer_with_no_source(session) -> None:
             session,
             eventDate='2026-09-02',
             precision='day',
+            certainty='exact',
             workPerformed='Oil change',
             provenance='CIO reported',
             recordedBy='spool',
@@ -164,6 +166,7 @@ def test_add_event_refuses_an_unknown_precision(session) -> None:
             session,
             eventDate='2026-09-02',
             precision='approximately',
+            certainty='exact',
             workPerformed='Oil change',
             provenance='CIO reported',
             recordedBy='spool',
@@ -179,6 +182,7 @@ def test_add_event_requires_provenance(session) -> None:
             session,
             eventDate='2026-09-02',
             precision='day',
+            certainty='exact',
             workPerformed='Oil change',
             provenance='',
             recordedBy='spool',
@@ -194,6 +198,7 @@ def test_add_event_requires_a_range_end_for_a_range(session) -> None:
             session,
             eventDate='2022-01-01',
             precision='range',
+            certainty='estimated',
             workPerformed='Spark plugs',
             provenance='owner recollection',
             recordedBy='spool',
@@ -209,6 +214,7 @@ def test_add_event_names_the_recorder(session) -> None:
             session,
             eventDate='2026-09-02',
             precision='day',
+            certainty='exact',
             workPerformed='Oil change',
             provenance='CIO reported',
             recordedBy='',
@@ -244,3 +250,45 @@ def test_cli_help_does_not_need_a_database() -> None:
     with pytest.raises(SystemExit) as exc:
         parser.parse_args(['--help'])
     assert exc.value.code == 0
+
+
+def test_add_event_refuses_exact_on_a_non_day_precision(session) -> None:
+    """The CLI must refuse the contradiction, not leave it to the DB.
+
+    "May 2025 is an exact date" is the defect the precision column exists to
+    prevent, re-entering through the certainty column.
+    """
+    from src.server.cli.maintenance import MaintenanceInputError, addEvent
+
+    with pytest.raises(MaintenanceInputError, match='exact'):
+        addEvent(
+            session,
+            eventDate='2025-05-01',
+            precision='month',
+            certainty='exact',
+            workPerformed='Cold air intake',
+            provenance='owner reported, month only',
+            recordedBy='cio',
+        )
+
+
+def test_migration_ddl_carries_every_certainty_value_the_orm_declares() -> None:
+    from src.server.db.models import DATE_CERTAINTY_VALUES
+    from src.server.migrations.versions.v0025_arch020_maintenance_record import (
+        CREATE_MAINTENANCE_LOG_DDL,
+    )
+
+    for value in DATE_CERTAINTY_VALUES:
+        assert f"'{value}'" in CREATE_MAINTENANCE_LOG_DDL
+
+
+def test_migration_ddl_does_not_default_the_certainty_column() -> None:
+    """'exact' is the value a consumer trusts; it must never arrive by omission."""
+    from src.server.migrations.versions.v0025_arch020_maintenance_record import (
+        CREATE_MAINTENANCE_LOG_DDL,
+    )
+
+    assert 'event_date_certainty VARCHAR(16) NOT NULL,' in CREATE_MAINTENANCE_LOG_DDL
+    assert 'event_date_certainty VARCHAR(16) NOT NULL DEFAULT' not in (
+        CREATE_MAINTENANCE_LOG_DDL
+    )

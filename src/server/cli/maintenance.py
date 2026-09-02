@@ -54,6 +54,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.server.db.models import (
+    DATE_CERTAINTY_ESTIMATED,
+    DATE_CERTAINTY_VALUES,
+    EVENT_DATE_PRECISION_DAY,
     EVENT_DATE_PRECISION_RANGE,
     EVENT_DATE_PRECISION_VALUES,
     ODOMETER_SOURCE_VALUES,
@@ -79,6 +82,7 @@ def addEvent(
     *,
     eventDate: str,
     precision: str,
+    certainty: str,
     workPerformed: str,
     provenance: str,
     recordedBy: str,
@@ -103,6 +107,21 @@ def addEvent(
             f"Precision is never implied: this record holds exact days, a bare "
             f"month ('May 2025') and a four-year window, and storing a month as a "
             f'day would state something no source recorded.',
+        )
+
+    if certainty not in DATE_CERTAINTY_VALUES:
+        raise MaintenanceInputError(
+            f'certainty {certainty!r} is not one of {DATE_CERTAINTY_VALUES}. '
+            f'Say whether a source RECORDED this date or somebody ESTIMATED it '
+            f'-- that is a different question from how precise it is.',
+        )
+    if precision != EVENT_DATE_PRECISION_DAY and certainty != DATE_CERTAINTY_ESTIMATED:
+        raise MaintenanceInputError(
+            f'a {precision!r} precision cannot be {certainty!r}. The stored date '
+            f"anchor's finer components are invented by this tool, so marking it "
+            f'exact would assert a day no source gave you. (A DAY precision MAY '
+            f'be estimated -- that is a confident recollection, and it stays '
+            f'distinguishable from a dealer record.)',
         )
 
     hasReading = odometerMi is not None
@@ -156,6 +175,7 @@ def addEvent(
     row = MaintenanceLog(
         event_date=date.fromisoformat(eventDate),
         event_date_precision=precision,
+        event_date_certainty=certainty,
         event_date_end=date.fromisoformat(eventDateEnd) if eventDateEnd else None,
         odometer_mi=odometerMi,
         odometer_source=odometerSource,
@@ -247,6 +267,12 @@ def buildParser() -> argparse.ArgumentParser:
         '--precision', required=True, choices=list(EVENT_DATE_PRECISION_VALUES),
         help='how precisely the SOURCE knows this date -- never guess upward',
     )
+    add.add_argument(
+        '--certainty', required=True, choices=list(DATE_CERTAINTY_VALUES),
+        help='did a SOURCE record this date (exact) or did someone ESTIMATE it '
+             '(estimated)? Orthogonal to --precision: a recalled specific day is '
+             'day precision AND estimated.',
+    )
     add.add_argument('--date-end', help="range end (only with --precision range)")
     add.add_argument('--work', required=True, help='what was done (normalised)')
     add.add_argument(
@@ -298,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
                     session,
                     eventDate=args.date,
                     precision=args.precision,
+                    certainty=args.certainty,
                     eventDateEnd=args.date_end,
                     workPerformed=args.work,
                     sourceVerbatim=args.verbatim,

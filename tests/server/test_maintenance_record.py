@@ -140,6 +140,7 @@ def test_odometer_without_a_source_is_rejected(session) -> None:
         MaintenanceLog(
             event_date=_date('2026-08-22'),
             event_date_precision='day',
+        event_date_certainty='exact',
             odometer_mi=78907,
             odometer_source=None,
             work_performed='oil + filter',
@@ -159,6 +160,7 @@ def test_odometer_source_without_a_reading_is_rejected(session) -> None:
         MaintenanceLog(
             event_date=_date('2026-08-22'),
             event_date_precision='day',
+        event_date_certainty='exact',
             odometer_mi=None,
             odometer_source='shop_record',
             work_performed='oil + filter',
@@ -185,6 +187,7 @@ def test_the_2022_apparent_rollback_is_resolvable_from_the_source_tiers(
     earlier = MaintenanceLog(
         event_date=_date('2022-04-12'),
         event_date_precision='day',
+        event_date_certainty='exact',
         odometer_mi=77000,
         odometer_source='state_agency_rounded',
         work_performed='Emissions PASS',
@@ -194,6 +197,7 @@ def test_the_2022_apparent_rollback_is_resolvable_from_the_source_tiers(
     later = MaintenanceLog(
         event_date=_date('2022-10-11'),
         event_date_precision='day',
+        event_date_certainty='exact',
         odometer_mi=76961,
         odometer_source='shop_record',
         work_performed='tyres rotated; oil + filter',
@@ -471,3 +475,128 @@ def test_same_year_range_renders_months_not_a_repeated_year() -> None:
 
     assert rendered == 'Feb-Jun 1999'
     assert '1999-1999' not in rendered
+
+
+# ---- The date-CERTAINTY contract (CIO 2026-09-02) ----------------------------
+#
+# Precision and certainty are ORTHOGONAL and conflating them loses information.
+# Precision says how fine-grained the date is. Certainty says whether a source
+# RECORDED it or somebody ESTIMATED it. The case that proves they are different
+# is seed row 3: it stores 1999-04-01 for the second of three services inside a
+# Carfax window, and that date is an INTERPOLATION invented to sort the row.
+# Precision 'range' flags the granularity; nothing distinguished the invented
+# anchor from 2008-05-08, which a dealer actually wrote down.
+
+
+def test_event_date_certainty_has_no_default() -> None:
+    """Certainty must be stated, for the same reason precision must be.
+
+    A defaulting column lets a row acquire 'exact' by omission, and 'exact' is
+    the load-bearing value: it is the one a consumer trusts.
+    """
+    from src.server.db.models import MaintenanceLog
+
+    column = MaintenanceLog.__table__.columns['event_date_certainty']
+    assert column.default is None
+    assert column.server_default is None
+    assert not column.nullable
+
+
+def test_a_non_day_precision_cannot_be_marked_exact(session) -> None:
+    """'May 2025' marked exact is a contradiction, and the DB must refuse it.
+
+    A month-, year- or range-precision row stores an anchor whose finer
+    components were invented by the loader. Calling that exact would state a day
+    no source ever gave -- which is the whole defect the precision column exists
+    to prevent, re-entering through the certainty column.
+    """
+    from src.server.db.models import MaintenanceLog
+
+    session.add(
+        MaintenanceLog(
+            event_date=_date('2025-05-01'),
+            event_date_precision='month',
+            event_date_certainty='exact',
+            work_performed='Cold air intake',
+            provenance='owner reported, month only',
+            recorded_by='test',
+        ),
+    )
+    with pytest.raises(IntegrityError):
+        session.flush()
+
+
+def test_a_day_precision_row_may_still_be_estimated(session) -> None:
+    """The converse is NOT forbidden, and that is the point of the column.
+
+    Someone recalling a specific day with confidence gives day precision and
+    estimated certainty. If certainty were merely derived from precision, that
+    row would be indistinguishable from a dealer record.
+    """
+    from src.server.db.models import MaintenanceLog
+
+    session.add(
+        MaintenanceLog(
+            event_date=_date('2025-06-19'),
+            event_date_precision='day',
+            event_date_certainty='estimated',
+            work_performed='Coilovers',
+            provenance='owner recollection of a specific day',
+            recorded_by='test',
+        ),
+    )
+    session.flush()  # must not raise
+
+
+def test_every_seed_event_states_its_date_certainty() -> None:
+    for event in _seedRows():
+        assert event['event_date_certainty'] in {'exact', 'estimated'}, event
+
+
+def test_the_may_2025_row_is_estimated() -> None:
+    """The CIO's own worked example."""
+    events = _seedRows()
+    row = next(e for e in events if e['seq'] == 38)
+
+    assert row['event_date_precision'] == 'month'
+    assert row['event_date_certainty'] == 'estimated'
+
+
+def test_the_interpolated_window_rows_are_estimated() -> None:
+    """Seq 3's 1999-04-01 is mine, not any source's. It must say so."""
+    events = _seedRows()
+    row = next(e for e in events if e['seq'] == 3)
+
+    assert row['event_date_certainty'] == 'estimated'
+
+
+def test_a_dealer_recorded_day_is_exact() -> None:
+    """Seq 17, the belt candidate. Its DATE is exact even though the work is not."""
+    events = _seedRows()
+    row = next(e for e in events if e['seq'] == 17)
+
+    assert row['event_date_precision'] == 'day'
+    assert row['event_date_certainty'] == 'exact'
+
+
+def test_no_seed_row_claims_exact_on_a_non_day_precision() -> None:
+    """The invariant, checked against the real 48 rows rather than in principle."""
+    for event in _seedRows():
+        if event['event_date_precision'] != 'day':
+            assert event['event_date_certainty'] == 'estimated', event
+
+
+def test_same_month_range_renders_one_month_not_a_repeated_one() -> None:
+    """A 2024-08-01 -> 2024-08-31 window must read 'Aug 2024', not 'Aug-Aug 2024'.
+
+    Same reasoning as the same-year case: a repeated component reads as a
+    rendering bug, and a reader who dismisses it as one stops trusting the rest
+    of the line.
+    """
+    from datetime import date
+
+    from src.server.db.models import formatEventDate
+
+    rendered = formatEventDate(date(2024, 8, 1), 'range', date(2024, 8, 31))
+
+    assert rendered == 'Aug 2024'

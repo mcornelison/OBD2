@@ -94,7 +94,8 @@ def _renderDryRun() -> str:
         f'events    : {len(events)}',
         f'schedule  : {len(schedule)}',
         '',
-        'EVENTS',
+        '',
+        "EVENTS  ('~' before the date = ESTIMATED, not recorded by any source)",
         '------',
     ]
     for event in events:
@@ -113,8 +114,12 @@ def _renderDryRun() -> str:
             else '-'
         )
         flag = ' [EPOCH]' if event.get('is_epoch_boundary') else ''
+        # The certainty is printed on the SAME line as the date, deliberately.
+        # A date shown without it reads as recorded fact, which is precisely the
+        # false confidence the column was added to remove.
+        mark = '~' if event['event_date_certainty'] == 'estimated' else ' '
         lines.append(
-            f"{event['seq']:>3}  {when:<22} {odo:<34} "
+            f"{event['seq']:>3} {mark}{when:<22} {odo:<34} "
             f"{event['work_performed']}{flag}",
         )
 

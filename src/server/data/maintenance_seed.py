@@ -50,6 +50,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.server.db.models import (
+    DATE_CERTAINTY_VALUES,
     EVENT_DATE_PRECISION_VALUES,
     ODOMETER_SOURCE_VALUES,
     MaintenanceLog,
@@ -114,6 +115,21 @@ def loadSeedEvents() -> list[dict[str, Any]]:
             raise SeedError(
                 f'event {seq}: event_date_precision={precision!r} is not one of '
                 f'{EVENT_DATE_PRECISION_VALUES}.  Precision is never implied.',
+            )
+
+        certainty = event.get('event_date_certainty')
+        if certainty not in DATE_CERTAINTY_VALUES:
+            raise SeedError(
+                f'event {seq}: event_date_certainty={certainty!r} is not one of '
+                f'{DATE_CERTAINTY_VALUES}. Say whether a source RECORDED this '
+                f'date or somebody ESTIMATED it.',
+            )
+        if precision != 'day' and certainty != 'estimated':
+            raise SeedError(
+                f'event {seq}: precision={precision!r} cannot be '
+                f'{certainty!r}. A non-day precision stores an anchor whose '
+                f'finer components were invented by this loader, so calling it '
+                f'exact would assert a day no source ever gave.',
             )
 
         hasReading = event.get('odometer_mi') is not None
@@ -205,6 +221,7 @@ def loadSeedIntoSession(session: Session) -> dict[str, int]:
         row = MaintenanceLog(
             event_date=eventDate,
             event_date_precision=event['event_date_precision'],
+            event_date_certainty=event['event_date_certainty'],
             event_date_end=_asDate(event.get('event_date_end')),
             odometer_mi=event.get('odometer_mi'),
             odometer_source=event.get('odometer_source'),
