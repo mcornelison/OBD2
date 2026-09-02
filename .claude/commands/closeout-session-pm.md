@@ -1,9 +1,23 @@
 ---
 name: closeout-session-pm
-description: "Close out a PM session. Updates projectManager.md (session handoff, Quick Context, next actions), auto memory, and commits. Run at end of every PM session."
+description: "RETIRED 2026-09-02 -- superseded by /closeout-pm; do not run. Kept as history only. (Was: close out a PM session. Updates projectManager.md (session handoff, Quick Context, next actions), auto memory, and commits. Run at end of every PM session."
 ---
 
 # PM Session Closeout
+
+> ## 🔴 RETIRED 2026-09-02 — DO NOT RUN THIS. Use `/closeout-pm`.
+>
+> `closeout-pm.md` states plainly that it **"Replaces the older `closeout-session-pm.md` workflow"**
+> — and has since Session 24 (2026-04-19). This file was never removed, so both still resolve, and
+> **the superseded one is the one that still describes a file that does not exist**: it references
+> `offices/pm/projectManager.md` six times, which was RENAMED to `offices/pm/CLAUDE.md` in the
+> v2 → v3 migration.
+>
+> **A superseded command that still runs is how the wrong one gets picked at 2 a.m.** It is kept
+> only as history; nothing should invoke it.
+>
+> ➡️ **Use `/closeout-pm`.** Content below is preserved unchanged, as the record of the older
+> ritual — it is NOT corrected and should not be followed.
 
 End-of-session ritual for Marcus (PM). Updates all persistent knowledge so the next session starts clean.
 

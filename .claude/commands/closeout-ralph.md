@@ -90,7 +90,7 @@ Update ONLY the cross-agent facts that all agents need:
 
 ## Step 5: Branch Management via PM (if needed)
 
-Ralph does NOT merge, push, tag, or reshape branches. If this session's work needs branch management (e.g., a sprint branch is ready to merge to main, a feature branch needs tagging, an old branch should be deleted), write a note to `$FLEET_SHARE/pm/inbox/` describing what and why. The CIO reviews and performs the git operation.
+Ralph does NOT merge, push, tag, or reshape branches. If this session's work needs branch management (e.g., your BENCH branch is ready to merge to `dev`, a branch needs tagging, an old branch should be deleted), write a note to `$FLEET_SHARE/pm/inbox/` describing what and why. The PM reviews and performs the git operation -- `Invoke-FleetMerge.ps1` is the only thing that writes `trunk\`. ⚠️ Corrected 2026-09-02: this said 'sprint branch ... to main'. There are no `sprint/*` branches (bench model, CIO 2026-08-26), and NOTHING goes to `main` outside `/chain-validated` at chain end.
 
 ---
 

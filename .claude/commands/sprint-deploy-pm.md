@@ -5,6 +5,20 @@ description: "Sprint-deploy ritual for Marcus (PM). Validates sprint complete; a
 
 # Sprint Deploy (PM-driven, dev/main workflow per spec 2026-05-28)
 
+> ## 🔴 CORRECTED 2026-09-02 — this file still described the PRE-BENCH model
+>
+> It said "sprint branch" 17 times and gated Phase 0 on being **on a `sprint/*` branch**.
+> **There are no `sprint/*` branches.** Since the bench model landed (CIO 2026-08-26, commit
+> `a16dbdd7`) Ralph works in a **leased bench** on `ralph/<TICKET>-<slug>`, and `trunk\` is
+> integrator-only.
+>
+> ⚠️ **The command still WORKED** — it ran successfully on 2026-09-02 for Sprint 79 — because a
+> bench branch behaves like a sprint branch for the PR-into-`dev` mechanic, which is unchanged and
+> correct. **That is exactly how the drift survived:** the prose was wrong and the procedure still
+> passed. Phase 0's branch check was the one part that would actually have rejected a valid bench.
+>
+> Read "sprint branch" below as **"the bench branch you are deploying from"**.
+
 End-of-sprint deployment ritual for Marcus (PM). **Replaces the prior sprint-branch-deploy pattern.** Per spec `$FLEET_SHARE/knowledge/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: main = fully validated stable (untouched between chain merges); `dev` = integration branch carrying the active V0.X.Y chain. Sprint branches merge into `dev` on code-complete; deploy + IRL validation target `dev`. `/chain-validated` merges `dev` → `main` at chain end.
 
 **WHEN to run**: CIO explicitly directs sprint-deploy after Ralph finishes a sprint (all stories `passes:true`).
@@ -25,7 +39,7 @@ End-of-sprint deployment ritual for Marcus (PM). **Replaces the prior sprint-bra
 
 ```bash
 git status --short                                   # working tree clean except known noise
-git branch --show-current                            # MUST be the sprint/* branch (off dev)
+git branch --show-current                            # the BENCH branch, e.g. ralph/SPRINT-<NN>-<slug>
 git fetch origin dev                                 # refresh dev ref
 test "$(git merge-base HEAD origin/dev)" = "$(git rev-parse origin/dev)" \
   || echo "WARN: sprint branched off stale dev tip"
@@ -35,7 +49,7 @@ python -m tools.pm.repair_ralph_agents --check   # ralph_agents.json valid
 ```
 
 **Stop conditions** -- abort + report to CIO if:
-- Branch is `main` or `dev` (sprint-deploy runs FROM a `sprint/*` branch)
+- Branch is `main` or `dev` (sprint-deploy runs FROM the BENCH branch, `ralph/<TICKET>-<slug>`)
 - Sprint branched off stale `dev` tip (merge-base ≠ current `dev` HEAD; ask CIO whether to rebase the sprint branch onto current dev or merge through with awareness)
 - Any story has `passes: false` AND `status: pending` (sprint not actually done)
 - `sprint_lint.py` shows errors (US-274 phantom-path / US-282 commit-vs-claim drift / missing `validation` block per Sprint 28+ requirement)
@@ -72,7 +86,7 @@ Bump the active B-XXX phase entry to `awaiting-validation` (NEW status; was `in_
 "engine-on-critical-path": {
   "status": "awaiting-validation",        // NEW status; bumps to "complete" only on /sprint-validated
   "sprint": "Sprint 27",
-  "branch": "sprint/sprint27-engine-on-fixes",
+  "branch": "ralph/SPRINT-27-engine-on-fixes",
   "createdDate": "2026-05-08",
   "currentVersion": "V0.27.0",            // bumps to V0.27.1+ on each deploy iteration
   "validatedAt": null,
@@ -84,9 +98,14 @@ Bump the active B-XXX phase entry to `awaiting-validation` (NEW status; was `in_
 
 Update Current State to "Sprint X DEPLOYED V0.X.Y -- AWAITING VALIDATION (real-hardware drill pending)".
 
-### 3c -- `offices/pm/projectManager.md`
+### 3c -- `offices/pm/CLAUDE.md` (the PM record)
 
-Last Updated header + Current Phase descriptor. Insert Session narrative.
+🔴 **Corrected 2026-09-02: `projectManager.md` was RENAMED to `offices/pm/CLAUDE.md` in the
+v2 → v3 migration.** The charter IS the PM session record and is what a fresh PM reads at boot.
+
+`Last Updated` header + `Current Phase` descriptor + rewrite `Immediate Next Actions`. Demote the
+prior `Last Updated` into `Prior: (...)` rather than overwriting it — but note that header chains
+indefinitely if nobody trims it; `/optimize-office-pm` archives the old ones out.
 
 ---
 
@@ -104,13 +123,13 @@ Stage all relevant files on the sprint branch BEFORE integrating, so the sprint-
 # drift-drop is gone with it -- there is no index entry left to drop.
 git add -A -- src/ tests/ scripts/ deploy/ specs/ tools/
 git commit -m "feat(sprint-N): <Sprint Name> SHIPPED N/N -- code-complete on sprint branch"
-git push origin sprint/sprintN-<phase-name>
+git push origin ralph/SPRINT-<NN>-<slug>
 ```
 
 ### 3.5b -- Open the PR into dev
 
 ```bash
-SPRINT_BRANCH="sprint/sprintN-<phase-name>"
+SPRINT_BRANCH="ralph/SPRINT-<NN>-<slug>"   # the leased bench branch
 gh pr create --base dev --head "$SPRINT_BRANCH" \
   --title "Merge $SPRINT_BRANCH: <Sprint Name> code-complete N/N (V0.X.Y)" \
   --body "Sprint-deploy integration PR (US-471 CI-green gate). Migration-drift CI gates the merge."
@@ -158,7 +177,7 @@ git checkout dev && git pull origin dev              # bring the merge commit lo
 
 ## Phase 4 -- (RETIRED under dev/main workflow)
 
-Phase 3.5 above absorbs the sprint-deploy commit semantics via the merge to `dev`. PM artifact commits (sprint.json, projectManager.md, MEMORY.md) ride on the sprint branch up to the merge.
+Phase 3.5 above absorbs the sprint-deploy commit semantics via the merge to `dev`. PM artifacts (sprint.json, offices/pm/CLAUDE.md, MEMORY.md) live on the SHARE and are NOT version controlled -- they are not staged at all. Only repo files ride the bench branch.
 
 ---
 
@@ -240,7 +259,7 @@ If drill reveals regression: fix on sprint branch -> bump V0.X.(Y+1) -> re-run /
 
 | Phase | Stop condition | Action |
 |---|---|---|
-| 0 | Branch is `main` or `dev` | Abort; sprint-deploy runs FROM a `sprint/*` branch off dev |
+| 0 | Branch is `main` or `dev` | Abort; sprint-deploy runs FROM the BENCH branch off dev |
 | 0 | Sprint branched off stale `dev` tip | Ask CIO whether to rebase onto dev or merge through |
 | 0 | Any story `passes:false` + `status:pending` | Abort; sprint not done |
 | 0 | `sprint_lint.py` errors | Fix per error; re-run |
@@ -264,7 +283,7 @@ Per CIO 2026-05-23 directive #1 + spec 2026-05-28: the V0.27 chain demonstrated 
 
 ## Related
 
-- `/sprint-validated` -- runs after real-hardware drill passes; merges sprint branch to main + updates regression_manifest.
+- `/sprint-validated` -- runs after the real-hardware drill passes; STAMPS the per-sprint validation + bumps regression_manifest. ⚠️ It does NOT merge anything -- the sprint is already in `dev`, and `dev` -> `main` is `/chain-validated`'s job at chain end. (Corrected 2026-09-02: this line contradicted this file's own header.)
 - `pm_regression_status.py` -- reports which features are STALE/NEVER-validated; suggests next drill triggers.
 - `regression_manifest.json` -- the project's user-facing feature list with last_validated dates.
 - `feedback_pm_semver_convention.md` -- patch-version-on-sprint-branch rule (V0.X.Y -> V0.X.(Y+1) until validated).
