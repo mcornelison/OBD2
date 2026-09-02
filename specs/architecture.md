@@ -3364,6 +3364,155 @@ deploy.*
 
 ---
 
+## 10.9 Vehicle Maintenance Record (ARCH-020, v0025)
+
+**Rule-10 design-gate deliverable for ARCH-020.** Server-only; the Pi neither
+produces nor consumes these tables, so they are outside the A-4 Pi↔server parity
+contract by design rather than by omission.
+
+### 10.9.1 Why it exists
+
+Until 2026-09-01 `obd2db` carried **no** maintenance, service or odometer
+surface — 30 tables, and the nearest was `vehicle_info` holding two ECU-epoch
+rows. The vehicle's service history — 47 dated events and 26 odometer readings,
+assembled from five independent sources (Carfax export, Maas Automotive repair
+orders, Peter's Highline invoices, photo EXIF, this project's telemetry) — lived
+**only** as Markdown on the fleet share.
+
+That share was confirmed on 2026-09-01 to have **no snapshots and no undo of any
+kind**: the volume is ext4 on RAID 5 and Synology Snapshot Replication requires
+Btrfs, so none were ever taken and none can be until the volume is rebuilt. RAID
+5 is redundancy, not backup — it survives a disk failing, not a truncating
+script, because the corruption mirrors faithfully across the array.
+
+Not hypothetical: in S41 a script opened a 22,588-byte knowledge file with mode
+`"w"` — which truncates immediately — then raised before writing a byte. The
+content survived **only** because a copy also lived in `obd2db.drive_annotations`.
+The maintenance record had no such copy.
+
+### 10.9.2 The architectural distinction that shapes every column
+
+**This is the first table in the project fed entirely by humans and paper.**
+There is no odometer PID on a 2G 4G63; every mileage figure is operator- or
+shop-supplied. So the failure modes are **provenance** failure modes, not sensor
+failure modes, and the schema is shaped to make each one *representable* rather
+than to describe a reading.
+
+Everywhere else in this system, a column's job is to carry a measurement. Here, a
+column's job is to carry **how well the fact behind it is known**. Four columns
+exist purely for that, and each has **no default** — because in every case the
+value a consumer trusts is the one that must never arrive by omission.
+
+### 10.9.3 `maintenance_log` — what was DONE
+
+| Concern | Columns | Invariant |
+|---|---|---|
+| When | `event_date`, `event_date_precision`, `event_date_end` | precision ∈ {day, month, year, range}; a `range` carries an end and nothing else may |
+| How well the date is known | `event_date_certainty` | ∈ {exact, estimated}; a non-`day` precision is **always** estimated |
+| Mileage | `odometer_mi`, `odometer_source` | both NULL or both set — never one |
+| What happened | `work_performed`, `source_verbatim`, `dtc_code` | normalised category **and** the primary document's exact wording |
+| Who / cost | `venue`, `document_ref`, `source_document_path`, `parts`, `part_customer_supplied`, `cost_usd` | — |
+| Analysis hook | `is_epoch_boundary` | events that invalidate before/after comparison |
+| Custody | `provenance` (NOT NULL), `notes`, `recorded_by`, `recorded_at` | per-FIELD provenance; CIO data rule 2026-08-29 |
+
+**Date precision is stated, never implied.** The record holds exact days
+(`2008-05-08`), a bare month (`May 2025`) and an owner-estimated four-year window
+(spark plugs). A plain `DATE NOT NULL` forces the loader to write `2025-05-01`
+for "May 2025" — manufacturing a day no source recorded. That is SSOT rule A's
+corollary (*landing must not manufacture a reading*) applied to a date instead of
+a sensor value. `event_date` is a **sortable anchor, not a claim**;
+`formatEventDate()` renders at the precision the record actually has.
+
+**Precision and certainty are ORTHOGONAL** (CIO, 2026-09-02). Precision says how
+fine-grained the date is; certainty says whether a source *recorded* it or
+somebody *estimated* it. The case that forced the second column is seed row 3,
+which stores `1999-04-01` for the second of three services inside a Carfax
+window — an **interpolation invented by the loader** to sort the row. Precision
+`range` flagged the granularity; nothing distinguished that invented anchor from
+`2008-05-08`, which a dealer wrote down. The enforcement is deliberately
+one-directional (`ck_maintenance_log_date_certainty_vs_precision`):
+
+- a non-`day` precision is **always** estimated — its finer components were
+  invented, so `exact` would assert a day no source gave;
+- a `day` precision **may** be estimated — a confident recollection of a specific
+  day, which must stay distinguishable from a dealer record. A flag *derived*
+  from precision could not express this, which is why certainty is stored.
+
+**An odometer and its source are ONE fact**
+(`ck_maintenance_log_odometer_paired`, enforced both directions). The tiers —
+`shop_record` > `photo_exif` > `owner_reported` > `state_agency_rounded` — are
+**measured, not assumed**: every Illinois emissions odometer in this history is a
+round thousand while shop records are exact to the mile. That rounding
+**manufactures an apparent rollback** — 77,000 on 2022-04-12, then 76,961 on
+2022-10-11, six months later and lower. A schema without source tiers cannot
+resolve that pair, and a naive integrity check would flag a healthy car as
+tampered. `isRoundedOdometer()` makes the resolution queryable rather than
+buried in a note.
+
+**Provenance is per FIELD, not per row.** The 2026-08-22 oil change carries a
+CIO-declared odometer *fact*, a recollected oil brand (*"I believe"*) and an
+*absent* viscosity in a single row. One row-level confidence column would force
+downgrading the odometer or upgrading the brand; both are false.
+
+**`source_verbatim` sits beside the normalised category.** Carfax rendered the
+repair order's *"Reset PCM memory"* as *"Computer reprogrammed"*, manufacturing a
+conflict with the prior ECU's never-flashed status that stood as unresolvable
+until the primary document was read. A normalised summary is a **lossy view of a
+record, and the loss is not random** — it flattens distinctions exactly where
+they matter.
+
+### 10.9.4 `maintenance_schedule` — what is DUE
+
+Three interval columns — `interval_miles`, `interval_months`,
+`interval_engine_hours` — any of which may fire, at least one required
+(`ck_maintenance_schedule_some_interval`). This is not generality for its own
+sake: usage measured across three independent segments of this car's history runs
+**~460–500 mi/yr**, so a 60,000-mile interval would take 120 years. On this
+vehicle only calendar intervals can realistically fire, and a mileage-only schema
+would report the timing belt as healthy.
+
+**`last_done_confidence` ∈ {confirmed, inferred, unknown}, NO default — the most
+load-bearing column in either table.** `last_done_log_id` for the timing belt
+points at the 2008 *"60,000 MILE SERVICE"*, which **names no belt**; no
+timing-belt line item appears in any of four independent sources. Without this
+column the first query anyone runs returns `2008-05-08` and the belt reads as
+**serviced**. The 4G63 is an **interference engine** and the interval is 60,000
+miles OR 5 years — the car is ~10k miles into it and 18.3 years into it. Had the
+column defaulted to `confirmed`, the single most dangerous row in the record
+would have acquired the safest value by omission.
+
+This is §7's own lesson — *a normalised summary is a lossy view* — reappearing
+one level up, inside the schema built to prevent it.
+
+### 10.9.5 Boundaries
+
+- **ECU identity is REFERENCED, not duplicated.** The 2026-05-22 swap
+  (`MD346675` → `MD326328`) lives in `vehicle_info` with its install/removal
+  timestamps; the log row records that the event happened and points there. A
+  second home for that fact would be a bug.
+- **`is_epoch_boundary` is the analytics seam.** Oil change, O2 sensor, PCM reset
+  and battery disconnect all invalidate before/after comparison across them.
+  US-661's LTFT trend card should read this column rather than hard-coding drive
+  numbers.
+- **Write paths.** `scripts/load_maintenance_seed.py` is the one-time seed
+  (dry-run by default; `--commit` takes a `mysqldump` first). Ongoing
+  contribution is `python -m src.server.cli.maintenance add|list|due`, which
+  refuses an unattributed odometer, an unchosen precision, an `exact` non-day
+  date, a range with no end, and an unsigned row — with a sentence rather than a
+  MariaDB errno.
+
+### 10.9.6 Known gap
+
+v0025 has **never been applied against a live MariaDB**. The define-once tests
+assert that the migration's constraint names and enum values match the ORM; they
+prove the strings agree, **not** that MariaDB accepts the DDL. That is the A-10
+divergence class this project has hit four times (BL-019/020/021, US-459), and
+the only thing that closes it is the real-MariaDB migration test — TD-055's third
+leg, funded 2026-07-13 and still unbuilt. These tables are a new argument for it.
+
+
+---
+
 ## 11. Deployment Architecture
 
 ### Environments
