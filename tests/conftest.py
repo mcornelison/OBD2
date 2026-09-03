@@ -25,6 +25,7 @@ Usage:
 """
 
 import os
+import shutil
 import sys
 from collections.abc import Generator
 from pathlib import Path
@@ -368,8 +369,61 @@ def pytest_collection_modifyitems(
 
 
 # ==============================================================================
-# Deterministic `bash` (2026-08-27)
+# Deterministic `bash` (2026-08-27; made effective 2026-09-03)
 # ==============================================================================
+#
+# THIS RUNS AT IMPORT, NOT AS A FIXTURE, AND THAT IS THE WHOLE POINT.
+#
+# The original was a session-scoped autouse fixture. A session fixture runs at the
+# first test's SETUP -- which is after pytest has imported every test module. The
+# 27 modules this protects resolve bash at MODULE level:
+#
+#     _BASH_PATH = shutil.which("bash")      # tests/scripts/test_*_sh.py
+#
+# so they had already captured whichever bash PATH offered before the fixture ever
+# ran. Prepending PATH afterwards changed nothing they would ever look at.
+#
+# It LOOKED like it worked, because it was only ever exercised from shells whose
+# PATH already had git-bash first -- in which case the ambient PATH did the job and
+# the fixture was inert. Launched from a shell with System32 first (a detached
+# pwsh, a scheduled task, CI) the 22 shell-out tests failed on the WSL stub's
+# Microsoft Store advert, exactly as before the fix.
+#
+# Found 2026-09-03 while capturing the Phase H baseline: a clean-looking capture
+# reported 49 failures against a recorded baseline of 26, and 22 of the excess were
+# this. A fix that only works when it is not needed is worse than none -- it closes
+# the ticket.
+#
+# conftest.py is imported before any test module is collected, so doing the work
+# here is early enough for a module-level shutil.which() to see it.
+
+_BASH_CANDIDATES = [
+    Path(r"C:\Program Files\Git\usr\bin\bash.exe"),
+    Path(r"C:\Program Files\Git\bin\bash.exe"),
+    Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
+]
+
+
+def _prependRealBashToPath() -> None:
+    """Put a real bash ahead of the WSL stub, at import time."""
+    if sys.platform != "win32":
+        return
+    real = next((c for c in _BASH_CANDIDATES if c.is_file()), None)
+    if real is None:
+        raise pytest.UsageError(
+            "No git-bash found. Bare 'bash' resolves to the WSL stub, which exits 1 "
+            "with a Microsoft Store advert and fails ~22 shell-out tests for reasons "
+            "that have nothing to do with the code. Install Git for Windows or fix PATH."
+        )
+    parent = str(real.parent)
+    current = os.environ.get("PATH", "")
+    # Idempotent: pytest may import this conftest more than once.
+    if current.lower().startswith(parent.lower() + os.pathsep):
+        return
+    os.environ["PATH"] = f"{parent}{os.pathsep}{current}"
+
+
+_prependRealBashToPath()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -395,29 +449,20 @@ def _deterministicBash() -> Generator[None, None, None]:
     found we FAIL LOUDLY rather than let the suite quietly re-enter that state:
     a silent 54-test regression is exactly what took weeks to notice.
     """
-    candidates = [
-        Path(r"C:\Program Files\Git\usr\bin\bash.exe"),
-        Path(r"C:\Program Files\Git\bin\bash.exe"),
-        Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
-    ]
-
+    # The PATH work already happened at import (see above). This fixture now
+    # ASSERTS the invariant rather than establishing it -- if bare `bash` is still
+    # the WSL stub at run time, fail loudly instead of producing 22 failures that
+    # look like code defects.
     if sys.platform != "win32":
         yield
         return
 
-    real = next((c for c in candidates if c.is_file()), None)
-    if real is None:
+    resolved = shutil.which("bash")
+    if resolved and "system32" in resolved.lower():
         pytest.exit(
-            "No git-bash found. Bare 'bash' would resolve to the WSL stub, which "
-            "exits 1 with a Microsoft Store advert and fails ~54 deploy tests for "
-            "reasons that have nothing to do with the code. Install Git for "
-            "Windows or fix PATH.",
+            f"Bare 'bash' still resolves to {resolved} -- the WSL stub. The "
+            f"import-time PATH fix did not take. ~22 shell-out tests would fail "
+            f"with a Microsoft Store advert and look like real defects.",
             returncode=1,
         )
-
-    original = os.environ.get("PATH", "")
-    os.environ["PATH"] = f"{real.parent}{os.pathsep}{original}"
-    try:
-        yield
-    finally:
-        os.environ["PATH"] = original
+    yield
