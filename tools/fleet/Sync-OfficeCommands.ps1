@@ -71,6 +71,18 @@ foreach ($sl in $roles) {
 }
 $matchedMasters = New-Object System.Collections.Generic.HashSet[string]
 
+# The fleet kit holds the GOVERNANCE templates -- the masters above the project's
+# own masters. Sync-OfficeCommands has always enforced office <-> trunk. Nothing
+# enforced trunk <-> kit, which is exactly how 'optimize-knowledge' came to differ
+# between two projects and the kit with nobody noticing for a day.
+# Resolved the same way Initialize-ProjectConfig resolves it, so there is one rule.
+$kitRoot = $null
+$kitField = $null
+if ($fleet.PSObject.Properties.Name -contains 'fleetKit') { $kitField = $fleet.fleetKit }
+foreach ($cand in @($env:FLEET_KIT, $kitField)) {
+  if ($cand -and (Test-Path (Join-Path $cand 'templates\skills'))) { $kitRoot = $cand; break }
+}
+
 $skillSrc = Join-Path $fleet.trunk '.claude\skills'
 $cmdSrc   = Join-Path $fleet.trunk '.claude\commands'
 if (-not (Test-Path $offices)) { throw "Offices dir not found: $offices" }
@@ -120,6 +132,40 @@ foreach ($role in $roles | Sort-Object) {
   }
 }
 
+# ---- trunk masters vs the governance kit templates -------------------------
+# REPORT ONLY. Updating a trunk master is a repo write and belongs in a bench, so
+# this never copies -- it names the drift and the remedy. Silence here is the
+# failure mode being closed: a project master that has quietly diverged from the
+# fleet template looks identical to one that is in step.
+$kitDrift = 0
+if (-not $kitRoot) {
+  Write-Host ""
+  Write-Host "NOTE: no fleet kit resolved (set FLEET_KIT or add 'fleetKit' to fleet.json)." -ForegroundColor Yellow
+  Write-Host "      Trunk masters were NOT checked against the governance templates." -ForegroundColor Yellow
+} else {
+  $tplRoot = Join-Path $kitRoot 'templates\skills'
+  foreach ($tpl in Get-ChildItem $tplRoot -Directory -EA SilentlyContinue) {
+    $t = Join-Path $tpl.FullName 'SKILL.md'
+    if (-not (Test-Path $t)) { continue }
+    $m = Join-Path $skillSrc "$($tpl.Name)\SKILL.md"
+    if (-not (Test-Path $m)) {
+      Write-Host ("kit-template  MISSING  skill:{0} (not in this project's trunk)" -f $tpl.Name) -ForegroundColor Yellow
+      $kitDrift++
+    } elseif ((Get-FleetFileHash $t) -ne (Get-FleetFileHash $m)) {
+      Write-Host ("kit-template  DRIFTED  skill:{0}" -f $tpl.Name) -ForegroundColor Yellow
+      $kitDrift++
+    }
+  }
+  if ($kitDrift) {
+    Write-Host ""
+    Write-Host "$kitDrift skill master(s) differ from the fleet templates in $tplRoot" -ForegroundColor Yellow
+    Write-Host "DRIFT HAS A DIRECTION. Diff before copying either way -- the project copy is" -ForegroundColor Yellow
+    Write-Host "sometimes the newer and better one, and this tool cannot tell you which." -ForegroundColor Yellow
+    Write-Host "To adopt the template: lease a bench, copy it into <trunk>\.claude\skills\," -ForegroundColor Yellow
+    Write-Host "merge, then re-run this script without -Check to push it into every office." -ForegroundColor Yellow
+  }
+}
+
 if ($officesSeen -eq 0) {
   Write-Host "FAILED: resolved $($roles.Count) role(s) but found NO office directories." -ForegroundColor Red
   Write-Host "A clean report here would be a false green -- nothing was examined." -ForegroundColor Red
@@ -143,7 +189,11 @@ if (Test-Path $cmdSrc) {
 
 Write-Host ""
 if ($Check) {
-  if ($script:drift) { Write-Host "DRIFT: $($script:drift) file(s)" -ForegroundColor Red; exit 1 }
+  if ($script:drift -or $kitDrift) {
+    if ($script:drift) { Write-Host "DRIFT: $($script:drift) office file(s)" -ForegroundColor Red }
+    if ($kitDrift)     { Write-Host "DRIFT: $kitDrift trunk master(s) vs fleet templates" -ForegroundColor Red }
+    exit 1
+  }
   Write-Host "No drift across $officesSeen office(s). Roster: $($roles -join ', ')" -ForegroundColor Green
   exit 0
 }
