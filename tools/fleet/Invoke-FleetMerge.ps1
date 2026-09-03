@@ -18,13 +18,29 @@ param(
   # The project root, directly. The old -Client/-Project/-LocalRoot trio built
   # <LocalRoot>\<Client>\<Project>, which for this fleet resolved to
   # C:\agents\OBD2\OBD2v3 -- a path that does not exist. The layout is flat.
-  [string]$ProjectRoot = 'C:\agents\OBD2v3',
+  # NO cross-project default. This previously defaulted to another project's
+  # root, so running the integrator without -ProjectRoot would merge THAT
+  # project's benches. Resolved by walking up from this script instead.
+  [string]$ProjectRoot,
   [string]$Gate,                       # e.g. "npm test" — must exit 0
   [int]$LockTimeoutSec = 900,
   [switch]$Push
 )
 
 $ErrorActionPreference = 'Stop'
+
+# ProjectRoot: walk up from this script for fleet.json -- depth-independent, and
+# it cannot silently point at a different project.
+if (-not $ProjectRoot) {
+  $probe = $PSScriptRoot
+  while ($probe) {
+    if (Test-Path (Join-Path $probe 'fleet.json')) { $ProjectRoot = $probe; break }
+    $parent = Split-Path $probe -Parent
+    if (-not $parent -or $parent -eq $probe) { break }
+    $probe = $parent
+  }
+}
+if (-not $ProjectRoot) { throw "fleet.json not found above $PSScriptRoot. Pass -ProjectRoot." }
 $localDir = $ProjectRoot
 if (-not (Test-Path (Join-Path $localDir 'fleet.json'))) {
   throw "No fleet.json at $localDir -- pass -ProjectRoot pointing at the project root."
