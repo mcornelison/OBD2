@@ -23,7 +23,7 @@ Before writing anything, collect:
 - What's blocked or unfinished
 - Key learnings that would help the next Ralph instance
 - Current test baseline (`pytest tests/ --collect-only | tail -1` for fast suite count)
-- Current sprint state (read `$FLEET_SHARE/ralph/sprint.json` or `$FLEET_SHARE/ralph/stories.json`)
+- Current sprint state (read `$FLEET_SHARE/ralph/sprint.json`)
 - Agent assignment state (read `$FLEET_SHARE/ralph/ralph_agents.json`)
 
 ---
@@ -78,7 +78,7 @@ This is Ralph's primary knowledge store. Update these files:
 
 Create new knowledge files if a topic is substantial enough to warrant its own file. Index them in the README.
 
-### Shared auto-memory (`$FLEET_SHARE/knowledge/memory/MEMORY.md`)
+### Shared auto-memory (`$FLEET_SHARE/_shared/knowledge/MEMORY.md`)
 
 Update ONLY the cross-agent facts that all agents need:
 - **Current State** — session number, test baseline, sprint state, commits ahead of origin

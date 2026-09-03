@@ -28,7 +28,7 @@ Spool sends specs → PM creates stories → THIS REVIEW → PM loads sprint →
 
 Read these files:
 1. **The original spec** — find the most recent Spool note in `offices/pm/inbox/` that the stories were based on
-2. **The stories** — read `offices/ralph/stories.json` or the specific backlog items in `offices/pm/backlog/`
+2. **The stories** — read `offices/ralph/sprint.json` or the specific backlog items in `offices/pm/backlog/`
 3. **Spool's knowledge base** — `$FLEET_SHARE/tuner/knowledge/knowledge.md` for authoritative threshold values
 4. **Any related PRDs** — check `offices/pm/prds/` if the PM created a PRD from the specs
 

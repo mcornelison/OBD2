@@ -44,6 +44,33 @@ $fleet   = Get-Content $FleetJson -Raw | ConvertFrom-Json
 $offices = Join-Path $fleet.share 'offices'
 $roles   = @((Get-FleetRoles -Cfg $fleet -OfficesRoot $offices) | ForEach-Object { $_.slug })
 
+# Command masters are matched by filename suffix "*-<slug>.md". A project whose
+# master is named for an ABBREVIATION -- init-arch.md for the 'architect' office,
+# init-uidev.md for 'uideveloper' -- matches NOTHING, so that office's commands sit
+# outside drift detection entirely and -Check stays green about them. That is the
+# same failure this script already guards at the coarse level ("a clean report here
+# would be a false green"), one layer down.
+#
+# Aliases are declared per role in fleet.json (roles[].commandAliases), so the
+# roster stays the SSOT and no abbreviation is hardcoded here. Read from the raw
+# config rather than the normalised records, which carry only the four axes.
+$aliasMap = @{}
+if ($fleet.PSObject.Properties.Name -contains 'roles') {
+  foreach ($r in @($fleet.roles)) {
+    if ($r -is [string]) { continue }
+    if (($r.PSObject.Properties.Name -contains 'commandAliases') -and $r.commandAliases) {
+      $aliasMap[$r.slug] = @($r.commandAliases)
+    }
+  }
+}
+$suffixes = @{}
+foreach ($sl in $roles) {
+  $set = @($sl)
+  if ($aliasMap.ContainsKey($sl)) { $set += @($aliasMap[$sl]) }
+  $suffixes[$sl] = @($set | Sort-Object -Unique)
+}
+$matchedMasters = New-Object System.Collections.Generic.HashSet[string]
+
 $skillSrc = Join-Path $fleet.trunk '.claude\skills'
 $cmdSrc   = Join-Path $fleet.trunk '.claude\commands'
 if (-not (Test-Path $offices)) { throw "Offices dir not found: $offices" }
@@ -84,8 +111,11 @@ foreach ($role in $roles | Sort-Object) {
 
   # 2. commands -- only masters that actually target THIS office
   if (Test-Path $cmdSrc) {
-    foreach ($m in Get-ChildItem $cmdSrc -Filter "*-$role.md" -File) {
-      Sync-One $m.FullName (Join-Path $officeDir ".claude\commands\$($m.Name)") "cmd:$($m.Name)" $role
+    foreach ($sfx in $suffixes[$role]) {
+      foreach ($m in Get-ChildItem $cmdSrc -Filter "*-$sfx.md" -File) {
+        [void]$matchedMasters.Add($m.Name)
+        Sync-One $m.FullName (Join-Path $officeDir ".claude\commands\$($m.Name)") "cmd:$($m.Name)" $role
+      }
     }
   }
 }
@@ -94,6 +124,21 @@ if ($officesSeen -eq 0) {
   Write-Host "FAILED: resolved $($roles.Count) role(s) but found NO office directories." -ForegroundColor Red
   Write-Host "A clean report here would be a false green -- nothing was examined." -ForegroundColor Red
   exit 1
+}
+
+# A master matching NO office is invisible to drift detection: it is never synced
+# and never reported, so it looks fine forever. Name them. Some are legitimately
+# trunk-only (an integrator or operator command that no office owns) -- this is a
+# report, not an error, but it must not be silent.
+if (Test-Path $cmdSrc) {
+  $orphans = @(Get-ChildItem $cmdSrc -Filter *.md -File |
+               Where-Object { -not $matchedMasters.Contains($_.Name) } |
+               ForEach-Object { $_.Name })
+  if ($orphans) {
+    Write-Host ""
+    Write-Host "Masters matching no office (trunk-only, or a missing commandAliases entry):" -ForegroundColor DarkGray
+    $orphans | Sort-Object | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+  }
 }
 
 Write-Host ""

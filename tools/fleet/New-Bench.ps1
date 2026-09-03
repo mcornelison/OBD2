@@ -181,8 +181,29 @@ if ($Role -ne 'Integrator') {
 $bjPath = Join-Path $ProjectRoot 'baseline.json'
 if (Test-Path $bjPath) {
   $bj = Get-Content $bjPath -Raw | ConvertFrom-Json
-  $r  = $bj.result
-  $baselineNote = "Expected here: $($r.failed) failed / $($r.passed) passed / $($r.skipped) skipped / $($r.xfailed) xfailed.`nAuthoritative counts and provenance: $bjPath"
+  # The counts block is NOT one fixed schema. This project records them under
+  # 'reference' (total/passed/failed/errors/skipped); others use 'result'
+  # (failed/passed/skipped/xfailed). Assuming one key threw under StrictMode --
+  # "The property 'result' cannot be found on this object" -- and killed the lease
+  # AFTER the worktree and branch were already created, leaving a half-made bench.
+  # Report the fields that ARE present rather than naming a fixed four.
+  $bjNames = $bj.PSObject.Properties.Name
+  $r = $null
+  foreach ($k in 'result','reference','summary') {
+    if ($bjNames -contains $k) { $r = $bj.$k; break }
+  }
+  if ($r) {
+    $rNames = $r.PSObject.Properties.Name
+    $parts  = @()
+    foreach ($f in 'failed','errors','passed','skipped','xfailed') {
+      if ($rNames -contains $f) { $parts += "$($r.$f) $f" }
+    }
+    if (-not $parts) { $parts = @('no recognised count fields') }
+    $baselineNote = "Expected here: $($parts -join ' / ').`nAuthoritative counts and provenance: $bjPath"
+    if ($rNames -contains 'note') { $baselineNote += "`n`n$($r.note)" }
+  } else {
+    $baselineNote = "baseline.json at $bjPath has no recognised counts block (looked for: result, reference, summary). READ IT before claiming a regression -- do not assume a clean run."
+  }
   if (($bj.PSObject.Properties.Name -contains 'WARNING_time_dependent') -and $bj.WARNING_time_dependent) { $baselineNote += "`n`nWARNING: this suite is NOT time-invariant -- $($bj.WARNING_time_dependent.summary) Compare only runs captured in the same state." }
 } else {
   $baselineNote = "No baseline.json at $bjPath. Capture one before claiming a regression."
