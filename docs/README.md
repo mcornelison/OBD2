@@ -31,3 +31,5 @@ Use descriptive, lowercase names with hyphens:
 - `deployment-runbook.md`
 - `user-guide.md`
 - `troubleshooting.md`
+
+<!-- H3 surface-check verification, 2026-09-03T20:06:43Z -->
