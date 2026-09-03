@@ -14,36 +14,20 @@
 #>
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory)][ValidateSet('architect','pm','ralph','tester','tuner','uideveloper','Integrator')]
-  [string]$Role,
+  # Roster is validated at RUNTIME against fleet.json, never by a ValidateSet.
+  # A hardcoded set carries the previous project's roster -- this one listed
+  # tester/tuner/uideveloper and omitted 'drpixel', so that office could never
+  # lease a bench and the error blamed the caller.
+  [Parameter(Mandatory)][string]$Role,
   [Parameter(Mandatory)][string]$Ticket,
   [Parameter(Mandatory)][string]$Slug,
   [string[]]$Surface  = @('**'),
-  [string]$ProjectRoot = 'C:\agents\OBD2v3',
+  [string]$ProjectRoot,
   [switch]$SkipVenv,
   [switch]$Launch
 )
 
 $ErrorActionPreference = 'Stop'
-
-# --- normalise the surface -------------------------------------------------
-# The documented invocation is `powershell -File New-Bench.ps1 ... -Surface
-# "specs/**","docs/**"`. Under -File, arguments arrive as plain strings with NO
-# PowerShell array parsing, so a multi-glob surface collapses into ONE element:
-#   '"specs/**","docs/**"'
-# That element is then written verbatim to lease.json, and at merge time
-# Test-Surface compiles it to a regex that matches NOTHING -- so every changed
-# file reads as "outside surface" and the ENTIRE ticket is rejected. It fails
-# safe (rejects rather than admits) but the message is baffling: the agent is
-# told it edited outside a surface that visibly contains the file it edited.
-# Splitting on commas is safe -- a path glob never legitimately contains one.
-$Surface = @(
-  $Surface |
-    ForEach-Object { $_ -split ',' } |
-    ForEach-Object { $_.Trim().Trim('"').Trim("'").Trim() } |
-    Where-Object { $_ }
-)
-if (-not $Surface) { $Surface = @('**') }
 
 # Every office now uses claude.md (normalised 2026-08-25 -- previously a mix of
 # claude.md / CLAUDE.md / projectManager.md / tester.md, which was invisible on
@@ -51,16 +35,37 @@ if (-not $Surface) { $Surface = @('**') }
 # case-sensitive tool). The map stays rather than collapsing to a string: it is
 # the one place that knows the roles, and it fails loudly for an unmapped one.
 # Integrator works from trunk and has no office.
-$roleContext = @{
-  architect  = 'architect\claude.md'
-  pm         = 'pm\claude.md'
-  ralph      = 'ralph\claude.md'
-  tester     = 'tester\claude.md'
-  tuner      = 'tuner\claude.md'
-  uideveloper = 'uideveloper\claude.md'
+
+
+# ProjectRoot: walk up from this script for fleet.json -- depth-independent,
+# and it cannot silently point at another project's root.
+if (-not $ProjectRoot) {
+  $probe = $PSScriptRoot
+  while ($probe) {
+    if (Test-Path (Join-Path $probe 'fleet.json')) { $ProjectRoot = $probe; break }
+    $parent = Split-Path $probe -Parent
+    if (-not $parent -or $parent -eq $probe) { break }
+    $probe = $parent
+  }
 }
+if (-not $ProjectRoot) { throw "fleet.json not found above $PSScriptRoot. Pass -ProjectRoot." }
 
 $cfg = Get-Content (Join-Path $ProjectRoot 'fleet.json') -Raw | ConvertFrom-Json
+
+. (Join-Path $PSScriptRoot 'FleetRoles.ps1')
+$roleRecs   = Get-FleetRoles -Cfg $cfg -OfficesRoot (Join-Path $cfg.share 'offices')
+$roleSlugs  = @($roleRecs | ForEach-Object { $_.slug })
+if ($Role -notin (@($roleSlugs) + 'Integrator')) {
+  throw "Unknown role '$Role'. This project has: $($roleSlugs -join ', ') (plus Integrator)."
+}
+$roleRec = $roleRecs | Where-Object { $_.slug -eq $Role } | Select-Object -First 1
+
+# Role -> boot context file, GENERATED from the fleet.json roster. Each office's
+# CHARTER.md is its mandate. Never hardcode this map: an unmapped role fails at
+# lease time, and a role that is in the map but not in the project is worse --
+# it leases a bench whose charter import points at a file that never existed.
+$roleContext = @{}
+foreach ($r in $roleSlugs) { $roleContext[$r] = "$r\CHARTER.md" }
 
 $name   = ('{0}-{1}-{2}' -f $Role.ToLower(), $Ticket, $Slug)
 $branch = ('{0}/{1}-{2}'  -f $Role.ToLower(), $Ticket, $Slug)
@@ -75,17 +80,39 @@ if (Test-Path $wt) { throw "Bench already leased: $wt" }
 git --git-dir=$($cfg.bare) fetch origin
 git --git-dir=$($cfg.bare) worktree add -b $branch $wt "origin/$($cfg.trunkBranch)"
 
-# --- 2. stamps -------------------------------------------------------------
-# A worktree gets TRACKED files only. These are gitignored and required.
-New-Item -ItemType Directory -Path (Join-Path $wt 'deploy') -Force | Out-Null
-Copy-Item (Join-Path $stamp '.env')                  (Join-Path $wt '.env') -Force
-Copy-Item (Join-Path $stamp 'deploy\deploy.conf')    (Join-Path $wt 'deploy\deploy.conf') -Force
-Copy-Item (Join-Path $stamp '.superpowers')          (Join-Path $wt '.superpowers') -Recurse -Force
+# --- 1b. per-project Claude config ------------------------------------------
+# Must exist BEFORE the agent launches. An isolated config dir inherits nothing:
+# no credentials means "Not logged in" (fatal for a headless agent), and no
+# settings.json means the git and config guards SILENTLY DO NOT RUN.
+& (Join-Path $PSScriptRoot 'Initialize-ProjectConfig.ps1') -FleetJson (Join-Path $ProjectRoot 'fleet.json')
 
-foreach ($f in @('.env','deploy\deploy.conf')) {
-  $a = (Get-FileHash (Join-Path $stamp $f) -Algorithm MD5).Hash
-  $b = (Get-FileHash (Join-Path $wt    $f) -Algorithm MD5).Hash
-  if ($a -ne $b) { throw "Stamp mismatch on $f" }
+# --- 2. stamps -------------------------------------------------------------
+# A worktree gets TRACKED files only. Anything gitignored-but-required has to be
+# stamped in, or the bench fails in a way that looks like broken code.
+#
+# The manifest comes from fleet.json, NOT from a list in this script. fleet.json
+# is the SSOT; a second hardcoded list is one fact with two homes, and the copy
+# in here carried the previous project's files (.env, deploy.conf, .superpowers)
+# which do not exist in every project.
+foreach ($rel in @($cfg.stamp)) {
+  $isDir = $rel.EndsWith('/') -or $rel.EndsWith('\')
+  $clean = $rel.TrimEnd('/','\')
+  $src   = Join-Path $stamp $clean
+  $dst   = Join-Path $wt    $clean
+  if (-not (Test-Path $src)) {
+    throw "Stamp source missing: $src`nfleet.json declares '$rel' but .stamp\ does not have it. Stamp it in, or correct the manifest."
+  }
+  $parent = Split-Path $dst -Parent
+  if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+  if ($isDir -or (Get-Item $src).PSIsContainer) {
+    Copy-Item $src $dst -Recurse -Force
+  } else {
+    Copy-Item $src $dst -Force
+    $a = (Get-FleetFileHash $src)
+    $b = (Get-FleetFileHash $dst)
+    if ($a -ne $b) { throw "Stamp mismatch on $rel" }
+  }
+  Write-Host ("  stamped {0}" -f $rel) -ForegroundColor DarkGray
 }
 
 # --- 3. environment --------------------------------------------------------
@@ -96,12 +123,9 @@ foreach ($f in @('.env','deploy\deploy.conf')) {
 @"
 `$env:PYTHONUTF8 = '1'
 `$env:FLEET_SHARE = '$($cfg.share)\offices'
+`$env:CLAUDE_CONFIG_DIR = '$ProjectRoot\.claude-config'   # per-project config: the user-level dir is shared by EVERY agent in EVERY project
 `$env:OBD2_REPO_ROOT = '$wt'
-if (Test-Path '$wt\.venv\Scripts\Activate.ps1') {
-  . '$wt\.venv\Scripts\Activate.ps1'
-} else {
-  Write-Warning 'No venv in this bench (leased with -SkipVenv). Python tooling and pytest will not work here.'
-}
+. '$wt\.venv\Scripts\Activate.ps1'
 Set-Location '$wt'
 Write-Host 'Bench $name  |  branch $branch' -ForegroundColor Green
 Write-Host 'Surface: $($Surface -join ", ")' -ForegroundColor DarkGray
@@ -109,20 +133,9 @@ Write-Host 'Surface: $($Surface -join ", ")' -ForegroundColor DarkGray
 
 # --- 4. venv ---------------------------------------------------------------
 # Per-bench, not shared: ~6s warm, and sharing couples benches together.
-# NOTE: bare `uv venv` grabs CPython 3.14.7 and dies; the WindowsApps shim gives
-# ModuleNotFoundError. Use the exact invocation recorded in
-# fleet.json.uvVenvCommand -- currently `uv venv --python 3.13`, verified working
-# 2026-08-27 by a live lease.
-#
-# This comment previously said "--python 3.13 fails the same way", which
-# contradicted fleet.json, where `uv venv --python 3.13` IS the recorded command.
-# Per fleet.json.uvVenvNotes that form failed ONLY while uv's managed python store
-# was corrupt ("Missing expected target directory for Python minor version link");
-# with the store deleted it resolves cleanly to the system interpreter. The stale
-# warning pointed the reader at the SSOT and then told them the SSOT was wrong --
-# an invitation to "fix" fleet.json and break the thing that works.
-# If it fails again: delete %APPDATA%\uv\python and re-run. Do NOT pin an absolute
-# interpreter path -- that is what broke here before.
+# NOTE: bare `uv venv` grabs CPython 3.14.7 and dies; --python 3.13 fails the
+# same way; the WindowsApps shim gives ModuleNotFoundError. Use the exact
+# invocation recorded in fleet.json.uvVenvCommand.
 if (-not $SkipVenv) {
   Push-Location $wt
   try {
@@ -163,40 +176,24 @@ if ($Role -ne 'Integrator') {
   $imports += $ctx
 }
 # handbook.md is NOT auto-imported -- see the note in CLAUDE.local.md.
-# The board card is written HERE, once, with the full template. It used to be
-# written twice: a 3-line stub at this point (so the @import below was not
-# dangling), then the real template near the end of the script guarded by
-# `if (-not (Test-Path $wip))` on the SAME path. The stub always won, so the
-# template block was unreachable in every code path and every auto-created card
-# was three uninformative lines. No safety impact -- the surface is authoritative
-# in .fleet\lease.json and Invoke-FleetMerge reads it from there, not from this
-# markdown -- but the operator reviewing board\review\ got nothing to review.
-#
-# KEEP THE EMITTED TEMPLATE ASCII-ONLY. This file has no BOM, and the documented
-# invocation is `powershell -File` = Windows PowerShell 5.1, which reads a
-# BOM-less .ps1 as cp1252. The em-dash that used to be on the "# $Ticket" line
-# came out as "â€”" in the board card. It had never been seen because the block
-# was dead code -- making it reachable is what exposed it.
+# Baseline text is GENERATED from this project's baseline.json. Hardcoding another
+# project's counts sends every bench chasing phantom regressions.
+$bjPath = Join-Path $ProjectRoot 'baseline.json'
+if (Test-Path $bjPath) {
+  $bj = Get-Content $bjPath -Raw | ConvertFrom-Json
+  $r  = $bj.result
+  $baselineNote = "Expected here: $($r.failed) failed / $($r.passed) passed / $($r.skipped) skipped / $($r.xfailed) xfailed.`nAuthoritative counts and provenance: $bjPath"
+  if (($bj.PSObject.Properties.Name -contains 'WARNING_time_dependent') -and $bj.WARNING_time_dependent) { $baselineNote += "`n`nWARNING: this suite is NOT time-invariant -- $($bj.WARNING_time_dependent.summary) Compare only runs captured in the same state." }
+} else {
+  $baselineNote = "No baseline.json at $bjPath. Capture one before claiming a regression."
+}
+
 $wipTicket = "$($cfg.share)\board\wip\$Ticket.md"
 if (-not (Test-Path $wipTicket)) {
-  Write-Warning "No ticket file at $wipTicket -- creating one from the lease so the import is not dangling."
+  Write-Warning "No ticket file at $wipTicket -- creating a stub so the import is not dangling."
   New-Item -ItemType Directory -Path (Split-Path $wipTicket) -Force | Out-Null
-@"
-# $Ticket - $Slug
-
-- role:     $Role
-- branch:   $branch
-- worktree: $wt
-- surface:
-$( ($Surface | ForEach-Object { "  - $_" }) -join "`n" )
-
-> Created at lease time -- no board item existed. The surface above is a copy for
-> humans; the authoritative copy is ``.fleet\lease.json`` in the bench.
-
-## Goal
-
-## Done when
-"@ | Set-Content $wipTicket -Encoding UTF8
+  "# Ticket $Ticket`n`n(stub created at lease time -- no board item existed.)`n" |
+    Set-Content $wipTicket -Encoding UTF8
 }
 $imports += $wipTicket
 foreach ($i in $imports) { if (-not (Test-Path $i)) { throw "Import target missing: $i" } }
@@ -206,10 +203,10 @@ $importBlock = ($imports | ForEach-Object { "@$_" }) -join "`n"
 
 $importBlock
 
-> handbook.md is deliberately NOT imported. It is 657 lines, and its
-> per-agent-clone section still hands you a table of `Z:\o\OBD2v2-<role>` paths
-> -- the FROZEN ARCHIVE. Read it if you need the A2AL message format
-> ($($cfg.share)\offices\handbook.md, section 9); do not follow its git model.
+> handbook.md is deliberately NOT auto-imported -- read it on demand at
+> `$($cfg.share)\offices\_shared\handbook.md`. It defines the cross-office
+> procedures (hello / closeout / housekeeping). Follow the git contract in
+> this file, not any git model described elsewhere.
 
 ## Your lease
 - Branch ``$branch``. You are on it and you stay on it.
@@ -218,14 +215,17 @@ $importBlock
   and activates the venv. Tests behave incorrectly without it.
 
 ## Baseline
-GREEN IS NOT THE TARGET. 90 non-passing tests are EXPECTED here:
-74 failed + 16 errors, out of 8041 collected. The 16 errors are 8 DockerException
-(no Docker on this box) plus MariaDB-dependent contract tests.
-See C:\agents\OBD2v3\baseline.json for the authoritative counts and for one
-pending delta (skipped 52 -> 51) that is already explained there.
-A count that differs is YOURS until you have accounted for it by name.
-Diff the counts individually, not just the totals -- three real defects in this
-project were caught by a count moving, not by anything turning red.
+GREEN IS NOT THE TARGET. This suite carries a large pre-existing failure set, so a
+raw red/green read carries NO regression signal.
+
+$baselineNote
+
+Diff NODE IDS against the baseline, not totals:
+    ... --tb=no -q | grep '^FAILED ' | sed 's/^FAILED //' | sort > actual.txt
+    comm -13 baseline_ids.txt actual.txt   # <- YOUR regression. Fix it.
+    comm -23 baseline_ids.txt actual.txt   # <- newly passing. Report it.
+A count that differs is YOURS until you have accounted for it by name. Watch the
+skip count too: +1 passed / -1 skipped is a signal.
 
 ## Finishing
     git add <explicit paths>          # never -A, never .
@@ -247,8 +247,23 @@ try {
   }
 } finally { Pop-Location }
 
-# (The board card is created earlier, at the import-resolution step, with this
-# same template. It is not written twice -- see the note there.)
+$wip = Join-Path $cfg.share "board\wip\$Ticket.md"
+if (-not (Test-Path $wip)) {
+  New-Item -ItemType Directory -Path (Split-Path $wip) -Force | Out-Null
+@"
+# $Ticket — $Slug
+
+- role:     $Role
+- branch:   $branch
+- worktree: $wt
+- surface:
+$( ($Surface | ForEach-Object { "  - $_" }) -join "`n" )
+
+## Goal
+
+## Done when
+"@ | Set-Content $wip -Encoding UTF8
+}
 
 Write-Host "`nLeased $wt" -ForegroundColor Green
 Write-Host "  branch  : $branch"
