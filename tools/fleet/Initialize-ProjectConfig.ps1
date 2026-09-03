@@ -56,7 +56,7 @@ foreach ($cand in @(
     $env:FLEET_KIT,
     (Split-Path $PSScriptRoot -Parent),
     $fleetKitField,
-    'C:\agentV2'
+    'Z:\Project-Governance\fleet-kit'
   )) {
   if ($cand -and (Test-Path (Join-Path $cand 'hooks\git-guard.ps1'))) { $hookRoot = $cand; break }
 }
