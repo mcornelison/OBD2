@@ -102,12 +102,24 @@ if (Test-Path $projSettings) {
   $ps = Get-Content $projSettings -Raw | ConvertFrom-Json
   if ($ps.permissions -and $ps.permissions.allow) { $allow = @($ps.permissions.allow) }
 }
+# EVERY nested hashtable must be [ordered]. A plain @{} is an unordered
+# Hashtable whose enumeration order varies BETWEEN PROCESSES, so ConvertTo-Json
+# emitted 'matcher' and 'hooks' in a different order on each run -- and the
+# comparison below is whole-file TEXT. The result: -Check reported
+# "settings.json missing or drifted (hooks would not run)" on a file this script
+# had just written itself, with identical content and identical length (1710
+# chars both sides; only key order differed). Observed 8 failures out of 9 runs
+# against a byte-identical file.
+#
+# A guard that cries drift at unchanged config is worse than no guard: it is the
+# false positive that teaches everyone to ignore the check, and this one gates
+# whether an agent's hooks are believed to be running at all.
 $desired = [ordered]@{
-  permissions = @{ allow = $allow }
-  hooks = @{
+  permissions = [ordered]@{ allow = $allow }
+  hooks = [ordered]@{
     PreToolUse = @(
-      @{ matcher = 'Bash'; hooks = @(@{ type='command'; command = "powershell -NoProfile -ExecutionPolicy Bypass -File $hookRoot\hooks\git-guard.ps1"; timeout = 10 }) },
-      @{ matcher = 'Write|Edit|MultiEdit'; hooks = @(@{ type='command'; command = "powershell -NoProfile -ExecutionPolicy Bypass -File $hookRoot\hooks\config-guard.ps1"; timeout = 10 }) }
+      [ordered]@{ matcher = 'Bash';                 hooks = @([ordered]@{ type='command'; command = "powershell -NoProfile -ExecutionPolicy Bypass -File $hookRoot\hooks\git-guard.ps1";    timeout = 10 }) },
+      [ordered]@{ matcher = 'Write|Edit|MultiEdit'; hooks = @([ordered]@{ type='command'; command = "powershell -NoProfile -ExecutionPolicy Bypass -File $hookRoot\hooks\config-guard.ps1"; timeout = 10 }) }
     )
   }
 }
