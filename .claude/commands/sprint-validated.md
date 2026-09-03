@@ -5,7 +5,7 @@ description: "Sprint-validated ritual for Marcus (PM) -- stamps per-sprint valid
 
 # Sprint Validated (PM-driven, dev/main workflow per spec 2026-05-28)
 
-Per-sprint validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm` (Phase 3.5 merged sprint → dev; deploy ran from dev). Per spec `$FLEET_SHARE/knowledge/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: validation drills target `dev`; this command stamps the per-sprint validation block + bumps `regression_manifest` for the sprint's `validatesFeatures`. **It does NOT merge to main.** `/chain-validated` does that at chain end (after the CHAIN-TIP sprint has its `/sprint-validated` stamp AND CIO confirms whole-chain green -- earlier patches keep `validatedAt: null` and that is expected; `chain_validate_aggregate.py:238` gates on the tip alone).
+Per-sprint validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm` (Phase 3.5 merged sprint → dev; deploy ran from dev). Per spec `$FLEET_SHARE/_shared/knowledge/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: validation drills target `dev`; this command stamps the per-sprint validation block + bumps `regression_manifest` for the sprint's `validatesFeatures`. **It does NOT merge to main.** `/chain-validated` does that at chain end (after the CHAIN-TIP sprint has its `/sprint-validated` stamp AND CIO confirms whole-chain green -- earlier patches keep `validatedAt: null` and that is expected; `chain_validate_aggregate.py:238` gates on the tip alone).
 
 **WHEN to run**: after a real-hardware drill successfully exercises the sprint's `validation.bigDefinitionOfDone` clauses AND CIO confirms green light.
 

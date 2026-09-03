@@ -75,7 +75,7 @@ Make sure the sprint contract is clean before committing.
 
 ## Phase 4 — Update shared knowledge
 
-### MEMORY.md (`$FLEET_SHARE/knowledge/memory/MEMORY.md`)
+### MEMORY.md (`$FLEET_SHARE/_shared/knowledge/MEMORY.md`)
 
 Auto-loaded into every future session. **Cap: 200 lines** (truncated beyond).
 

@@ -9,7 +9,7 @@ A2AL/0.4.1 is a plain-text shorthand for agent-to-agent communication, paired wi
 
 Reference: https://github.com/mcornelison/A2AL — `specs/A2A-Core.md`, `library/`, `examples/`.
 
-Vocabulary library on this project: `offices/library/*.yaml`.
+Vocabulary library on this project: `../_shared/library/*.yaml`.
 
 ## When to use (audience rule, §2.1+§2.2 normative)
 
@@ -78,7 +78,7 @@ Always load `library/core.yaml` (~77 universal terms). Optionally load domain ex
 | Security review / threat modeling | + `library/security.yaml` |
 | LLM / agent / RAG topics | + `library/ai-agents.yaml` |
 
-On this project the library lives at `offices/library/*.yaml`. No special parser needed — just read the YAML.
+On this project the library lives at `../_shared/library/*.yaml`. No special parser needed — just read the YAML.
 
 ## Body style rules (§4)
 
@@ -183,7 +183,7 @@ You reply: "Ralph (Dev) reports US-713 is complete with acceptance criteria met 
 ## Reference
 
 - Spec: `specs/A2A-Core.md` (https://github.com/mcornelison/A2AL/blob/main/specs/A2A-Core.md)
-- Library: `offices/library/*.yaml` (this project) or `library/*.yaml` (upstream)
+- Library: `../_shared/library/*.yaml` (this project) or `library/*.yaml` (upstream)
 - Examples: `examples/*.txt` (upstream)
 - Validator (for library contributions): `python tools/validate_library.py`
-- Team handbook: `offices/handbook.md` — covers the team's adoption + onboarding
+- Team handbook: `../_shared/handbook.md` — covers the team's adoption + onboarding

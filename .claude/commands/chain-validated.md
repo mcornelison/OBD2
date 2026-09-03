@@ -336,6 +336,6 @@ V0.(X+1).0 chain branches from a clean dev = main base.
 - `chain_validate_manifest_bump.py` -- Phase 3 (manifest bump chain-wide)
 - `pm_regression_status.py` -- pre + post status report
 - `regression_manifest.json` -- the project's user-facing feature list
-- B-067 backlog item (`$FLEET_SHARE/pm/backlog/B-067-chain-validated-slash-command.md`)
+- B-067 backlog item (`$FLEET_SHARE/pm/archive/backlog/B-067-chain-validated-slash-command.md` -- graduated)
 - CIO 2026-05-10 chain-end-merge rule
   (`feedback_pm_main_merges_at_chain_end_only.md`)
