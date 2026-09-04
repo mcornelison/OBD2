@@ -1,5 +1,5 @@
 {
   "version": "V0.29.42",
-  "theme": "ARCH-020 maintenance record to the server",
-  "description": "SERVER-ONLY. Carries ARCH-020 to chi-srv-01: the maintenance CLI, the models that know its tables, migration v0025 and the seed loader. Closes the gap Spool hit 2026-09-03 -- tables existed and were seeded, but the CLI was never deployed, so no sanctioned write path existed. Pi NOT redeployed. Still open: no `update` verb, so `maintenance due` still misreports the belt."
+  "theme": "ARCH-020 record + US-668 GPIO6, both tiers",
+  "description": "BOTH TIERS to V0.29.42 -- Pi and server stay in sync even when a change is one-sided. SERVER: ARCH-020's maintenance CLI, models, migration v0025, seed loader -- closes the gap Spool hit 2026-09-03 (tables seeded, no write path). PI: US-668 -- powerwatch OWNS GPIO6, collector subscribes; power.mode gone. Shared cause of power.source unknown + battery-health stale. NOT yet verified on hardware."
 }
