@@ -25,6 +25,48 @@ Shows:
 CLI for common `backlog.json` mutations at sprint boundaries. Every operation is
 idempotent (re-run-safe). Use `--dry-run` to preview.
 
+> The `python offices/pm/scripts/backlog_set.py ...` invocations below are stale
+> — the tools moved to `tools/pm/` in the 2026-08-24 decouple and their data
+> moved to `$FLEET_SHARE`. Invoke as `python -m tools.pm.backlog_set ...`.
+
+### Create a Story (`--add-story`, US-669)
+
+Files a Story with every schema-required field already stamped, so
+`validateBacklog` accepts it unmodified. This is the only story-creation path;
+before it existed, filing a story meant hand-editing a ~900 KB JSON file and
+remembering twelve required fields — which drifted twice (47 records repaired by
+US-465, then 41 more).
+
+```bash
+python -m tools.pm.backlog_set --add-story \
+    --story-parent F-118 \
+    --story-title "The backlog lint reports every violation" \
+    --story-goal "As the PM, I want ... because ..." \
+    --story-dod "SSOT: tools/pm/sprint_lint.py" \
+    --story-dod "END STATE: every violation is listed" \
+    --story-vc "run the lint over a backlog with 3 violations" "all 3 are reported" \
+    --story-type tech-debt --story-size S --story-status sprint-ready
+```
+
+What it stamps, and what it refuses:
+
+- **Stamped** — `id` (allocated above `story_counter.json`, `counters.story` and
+  every id present), `createdAt`/`updatedAt` (run date), `conditionalOutcomes`
+  and `tasks` (empty lists), and `type`/`size`/`status` defaults
+  (`normal`/`M`/`pending`).
+- **Refused, with nothing written** — missing or blank `goal`,
+  `definitionOfDone`, `validationCriteria`, `title` or `parent` (it will never
+  invent a placeholder to satisfy the schema); a `parent` that is not an
+  existing **Feature** id (Rule 11); an `id` that already exists.
+- Every reason is reported at once, not one per run.
+- Writes via temp + `os.replace`, never truncating in place. The counter lands
+  first on purpose: a failed backlog write leaves a harmless *gap* in the id
+  sequence rather than handing the next caller a *duplicate*.
+
+The required-field list is read from `backlog_schema.REQUIRED_STORY_FIELDS` and
+never restated — add a field there and this tool starts requiring it with no
+edit. A test bans a second copy of that constant anywhere in `tools/pm/`.
+
 ### Bump `lastUpdated` + `updatedBy`
 
 ```bash
@@ -263,15 +305,17 @@ Reads `offices/pm/regression_manifest.json` (stdlib JSON; no PyYAML dep).
 
 ## repair_ralph_agents.py
 
-Repair `offices/ralph/ralph_agents.json` corruption from Rex's bloated-note bug pattern (unescaped quote in long note breaks `json.load`). Observed Sprint 21 close, Sprint 24 close.
+Repair `offices/ralph/ralph_agents.json` corruption from Rex's bloated-note bug pattern (unescaped quote in long note breaks `json.load`). Observed Sprint 21 close, Sprint 24 close and 2026-08-31 -- three occurrences to date.
 
 ```bash
-python offices/pm/scripts/repair_ralph_agents.py             # repair if corrupt
-python offices/pm/scripts/repair_ralph_agents.py --dry-run   # detect + describe
-python offices/pm/scripts/repair_ralph_agents.py --check     # exit 0/1 on validity
+python -m tools.pm.repair_ralph_agents             # repair if corrupt
+python -m tools.pm.repair_ralph_agents --dry-run   # detect + describe
+python -m tools.pm.repair_ralph_agents --check     # exit 0/1 on validity
 ```
 
-Strategy: truncate Rex's bloated note to a short pointer; preserve agents 2/3/4 verbatim. Detail log canonical in `progress.txt`.
+Strategy: truncate Rex's bloated note to a short pointer; preserve every other agent verbatim. Detail log canonical in `progress.txt`.
+
+The roster size is **read from the file under repair**, never assumed (US-664). `max_agent` is recovered from the document being repaired, and the post-repair agent count is compared against the pre-repair count -- so a repair that would lose (or invent) an agent still refuses, at any roster size. Writes go through a temp file + `os.replace`: the share has no undo, and this tool writes over the only copy of the file it exists to recover.
 
 ## sprint_lint.py
 
@@ -295,6 +339,35 @@ python offices/pm/scripts/sprint_lint.py --strict    # exit non-zero on warnings
 Exit code: 0 = clean, 1 = errors found (or warnings with --strict), 2 = file/arg error.
 
 Run this BEFORE every PM commit that touches sprint.json.
+
+### `--backlog` mode
+
+Lints `$FLEET_SHARE/pm/backlog.json` against schema v2.0.0 instead of the
+sprint. Schema violations are errors; rollup-cache staleness is a warning.
+
+```bash
+python -m tools.pm.sprint_lint --backlog
+```
+
+**It reports EVERY violation in one run** (US-670), then a count per violation
+class:
+
+```text
+ERROR: Story US-628: missing required fields ['createdAt', 'updatedAt']
+ERROR: Story US-629: missing required fields ['createdAt', 'updatedAt']
+...
+VIOLATIONS: 41 total in 2 class(es)
+  storyMissingFields 40
+  storyOrphan         1
+```
+
+The count line is the point. Until US-670 the lint stopped at the first
+failing story, so a 41-story drift printed one line and was indistinguishable
+from a single typo -- it was believed, and it under-reported by 40x. Firing is
+not the same as informing.
+
+Nothing is printed on a clean backlog; exit stays 0. A single violation still
+exits 1 -- the mode is more informative, never more permissive.
 
 ## Composition pattern: slash commands call Python scripts
 

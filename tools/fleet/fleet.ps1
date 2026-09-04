@@ -113,6 +113,17 @@ switch -Regex ($Command) {
       if (Test-Path $lease) {
         $l = Get-Content $lease -Raw | ConvertFrom-Json
         "  {0,-46} ticket {1,-12} surface {2}" -f $_.Name, $l.ticket, ($l.surface -join ',')
+        # US-676: the PRESENCE of a lease used to be read as proof of a good
+        # lease. It is not -- New-Bench.ps1 now writes the lease first and stamps
+        # the verdict last, so a half-built bench has a lease that says so.
+        # A lease with no `provisioning` field predates that and is left alone:
+        # flagging every bench leased before this shipped is the false positive
+        # that teaches everyone to ignore the warning.
+        $prov = if ($l.PSObject.Properties.Name -contains 'provisioning') { $l.provisioning } else { $null }
+        if ($prov -and $prov -ne 'complete') {
+          Bad  "  ^ PROVISIONING INCOMPLETE (failed at step '$($l.failedStep)') -- NOT mergeable"
+          Say  "        see $($_.FullName)\.fleet\PROVISIONING-INCOMPLETE.md" 'DarkGray'
+        }
         if (-not $venv) { Warn "  ^ no .venv -- tests cannot run in this bench" }
       } else {
         Warn "$($_.Name) has NO .fleet\lease.json -- the integrator will SKIP it"

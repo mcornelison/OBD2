@@ -52,6 +52,14 @@
 #   condition wearing two glyph colours. Measured at the foot of this file and
 #   filed as I-us663.
 #
+#   🔴 THAT FINDING WAS FIXED BY US-672 ON 2026-09-03 and the two characterisation
+#   tests at the foot of this file are RE-RECORDED, not deleted. Atlas ruled
+#   (2026-09-02) that retry phase must not ride on `available`, AND that this
+#   story's own "OBD: off is true for the never-connected branch" call was wrong:
+#   `totalConnections == 0` is a fact about US, so the reason is now "never
+#   connected". The full guard for the fixed behaviour is
+#   tests/ui/test_carousel_obd_availability_holds_one_value.py.
+#
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-31
@@ -63,6 +71,11 @@
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-663 typed-unknown OBD link + the
 #               |              | availability-flap finding (I-us663).
+# 2026-09-03    | Ralph (Rex)  | US-672: re-record the two I-us663
+#               |              | characterisation tests (the flap is fixed) and
+#               |              | the never-connected reason ("OBD: off" ->
+#               |              | "never connected", Atlas's reversal of this
+#               |              | file's own recorded call).
 # ================================================================================
 ################################################################################
 
@@ -89,6 +102,7 @@ import render_harness as rh  # noqa: E402
 from pi.obdii.orchestrator.card_state_emitter import (  # noqa: E402
     REASON_OBD_LINK_NOT_READ,
     REASON_OBD_LINK_UNREADABLE,
+    REASON_OBD_NEVER_CONNECTED,
     CardStateEmitterMixin,
 )
 from pi.splash.source_availability import REASON_OBD_OFF  # noqa: E402
@@ -194,7 +208,19 @@ def _allCauses() -> dict[str, Any]:
         "dropped_after_connecting": _connection(
             state="disconnected", retryCount=3, totalConnections=2
         ),
-        "reconnecting": _connection(state="connecting", retryCount=1, totalConnections=0),
+        # US-672 SPLIT THE OLD SINGLE `reconnecting` ROW IN TWO. It carried
+        # `totalConnections=0` -- a car this Pi has NEVER reached -- and under
+        # the availability rule of the day that row was the only thing exercising
+        # the `reconnecting` TOKEN. Once availability stopped following the retry
+        # phase that row became an ABSENCE, and the token would have quietly
+        # dropped out of every sweep in this file. Both rows are named now, and
+        # they differ in the one thing that decides availability.
+        "reconnecting_never_linked": _connection(
+            state="connecting", retryCount=1, totalConnections=0
+        ),
+        "reconnecting_seen_before": _connection(
+            state="reconnecting", retryCount=1, totalConnections=2
+        ),
         "linked": _connection(connected=True, state="connected", totalConnections=2),
     }
 
@@ -396,21 +422,33 @@ def test_whenTheLinkStateReadFails_theReasonSaysWeCouldNotLook_notThatTheCarIsOf
     assert payload["source"]["obd"]["reason"] != REASON_OBD_OFF
 
 
-def test_aCarThatWasLookedForAndNotFound_stillSaysObdOff_soTheFixDidNotRelabelIt(
+def test_aCarThatWasLookedForAndNotFound_saysNeverConnected_notThatTheCarIsOff(
     tmp_path,
 ):
     """
     Given: a connection object reporting disconnected, never connected
     When: it emits
-    Then: the reason is STILL "OBD: off".
+    Then: the reason is "never connected".
 
-          The control that keeps this story from becoming a rename. This branch
-          is a real MEASUREMENT -- we looked and there is no car -- and it is the
-          one case where "OBD: off" is true. A fix that gave all three branches a
-          new word would have destroyed the only correct one.
+          🔴 RE-RECORDED BY US-672 (Atlas, 2026-09-02). THIS TEST USED TO ASSERT
+          THE OPPOSITE, and the reversal is deliberate, not a relaxation.
+
+          US-663 kept "OBD: off" here and called this branch "the one case where
+          it is true -- we looked and there is no car". Atlas ruled that reading
+          wrong: the branch is reached from `totalConnections == 0`, which is a
+          fact about US, not a measurement of the car. *"That is an assertion
+          about the world drawn from an absence of evidence about ourselves."*
+          The CIO's key was in the ON position while this branch rendered
+          "OBD: off" on the System Status card -- US-663's ORIGINAL defect,
+          intact, inside US-663's own fix.
+
+          The control this test provides SURVIVES the re-recording and is worth
+          more than the word it used to pin: the branch still gets a word of its
+          OWN. See the sibling test that the other two causes are untouched.
     """
     payload = _emit(tmp_path, connection=_connection(state="disconnected"))
-    assert payload["source"]["obd"]["reason"] == REASON_OBD_OFF
+    assert payload["source"]["obd"]["reason"] == REASON_OBD_NEVER_CONNECTED
+    assert payload["source"]["obd"]["reason"] != REASON_OBD_OFF
 
 
 def test_theDriversThreeWordsArePinnedAsLITERALS_notAsTheConstantsTheyComeFrom(
@@ -446,25 +484,41 @@ def test_theDriversThreeWordsArePinnedAsLITERALS_notAsTheConstantsTheyComeFrom(
         ]
         == "link unreadable"
     )
+    # US-672 re-recorded this line from "OBD: off". See
+    # test_aCarThatWasLookedForAndNotFound_saysNeverConnected_notThatTheCarIsOff
+    # for Atlas's reasoning; this is the LITERAL half of it.
     assert (
         _emit(tmp_path / "c", connection=causes["never_connected"])["source"]["obd"][
             "reason"
         ]
-        == "OBD: off"
+        == "never connected"
     )
 
 
-def test_theThreeUnavailableCausesAreNowDistinguishableFromEachOther(tmp_path):
+def test_theDistinctUnavailableCausesAreStillDistinguishableFromEachOther(tmp_path):
     """
-    Given: the three distinct causes that reach `available: false`
-    When: all three are emitted
-    Then: their reasons are three different words.
+    Given: every cause that reaches `available: false`
+    When: all of them are emitted
+    Then: there are FOUR such causes and THREE different words -- and the two
+          that share a word are the two that share a CONDITION.
 
-          This is the assertion I-us637 was filed against, inverted. Before the
-          fix these three payloads were byte-identical in the source block, so
-          nobody reading the state file -- or the panel -- could tell "no car is
-          plugged in" from "the Pi lost its own adapter handle" from "nothing has
-          looked yet".
+          This is the assertion I-us637 was filed against, inverted. Before that
+          fix these payloads were byte-identical in the source block, so nobody
+          reading the state file -- or the panel -- could tell "no car is plugged
+          in" from "the Pi lost its own adapter handle" from "nothing has looked
+          yet".
+
+          US-672 RE-RECORDED THE COUNT, NOT THE CLAIM. A fourth cause joined the
+          unavailable set -- `reconnecting_never_linked`, which used to publish
+          available:true purely because an attempt happened to be in flight --
+          and it deliberately shares `never_connected`'s word. That is the point:
+          they are ONE condition observed at two instants of the retry cycle, and
+          US-672 exists because they were being reported as two different facts.
+
+          So the claim is now stated as a partition rather than a count: same
+          condition -> same word, different fault -> different word. A count
+          alone could not say which pair collapsed, and 3-of-4 would look like a
+          regression of exactly the drift this test was built to catch.
     """
     reasons = {}
     for cause, conn in _allCauses().items():
@@ -472,7 +526,13 @@ def test_theThreeUnavailableCausesAreNowDistinguishableFromEachOther(tmp_path):
         if payload["source"]["obd"]["available"] is False:
             reasons[cause] = payload["source"]["obd"]["reason"]
 
-    assert set(reasons) == {"never_looked", "status_unreadable", "never_connected"}
+    assert set(reasons) == {
+        "never_looked",
+        "status_unreadable",
+        "never_connected",
+        "reconnecting_never_linked",
+    }
+    assert reasons["never_connected"] == reasons["reconnecting_never_linked"]
     assert len(set(reasons.values())) == 3, reasons
 
 
@@ -569,7 +629,16 @@ def test_bothSidesOfThatBiconditionalAreActuallyReached_soItIsNotVacuous(tmp_pat
         payload = _emit(tmp_path / cause, connection=conn)
         (nulls if payload["obdLink"]["state"] is None else reals).append(cause)
     assert nulls and reals, (nulls, reals)
-    assert set(reals) == {"dropped_after_connecting", "reconnecting", "linked"}
+    # US-672 re-recorded this set. `reconnecting_never_linked` moved from the
+    # `reals` side to the `nulls` side -- a car we have never reached is an
+    # ABSENT source at every instant of the retry cycle, not only between
+    # attempts -- and `reconnecting_seen_before` was added so the RECONNECTING
+    # token is still exercised by the sweeps in this file.
+    assert set(reals) == {
+        "dropped_after_connecting",
+        "reconnecting_seen_before",
+        "linked",
+    }
 
 
 def test_aRealLinkStateIsAlwaysOneOfTheThreePublishedTokens_neverAFreeString(tmp_path):
@@ -681,30 +750,40 @@ def test_anUnreadableLinkGlyphIsNeutral_neverDown(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# CHARACTERISATION -- the SECOND CAUSE of the strobe (I-us663). These tests pin
-# behaviour that is WRONG, so that fixing it fails here ON PURPOSE and the
-# measurement gets re-recorded rather than quietly drifting. DO NOT relax them.
+# RE-RECORDED BY US-672. These two were CHARACTERISATION tests: they pinned the
+# SECOND CAUSE of the strobe (I-us663) as behaviour that was WRONG, so that
+# fixing it would fail here on purpose. It did, on 2026-09-03, and the new
+# behaviour is recorded in place rather than the cases being deleted.
+#
+# The FULL guard for the fixed behaviour -- the CIO's 5.5-minute window, both
+# forbidden cheap answers, and the never-connected/dropped distinguishability
+# claim -- lives in tests/ui/test_carousel_obd_availability_holds_one_value.py.
+# What these two keep is the BEFORE/AFTER pair on the exact two samples the
+# finding was originally measured on, which is why they stay here beside the
+# story that found it.
 # ---------------------------------------------------------------------------
 
 
-def test_characterisation_oneUnlinkedCarPublishesTwoDifferentAvailabilities(tmp_path):
+def test_oneUnlinkedCarNowPublishesONEAvailabilityAcrossTheRetryCycle(tmp_path):
     """
     Given: a car that has NEVER linked, with the reconnect loop running -- the
            connection cycles `connecting` -> `disconnected` between samples
     When: the two samples are emitted
-    Then: the SAME physical condition publishes available:true then false.
+    Then: the SAME physical condition publishes the SAME availability, and the
+          same typed reason, at both instants.
 
-          MEASURED, NOT INFERRED, and it is the finding. `available` is
-          `totalConnections > 0` on the `down` branch but unconditionally True on
-          the `reconnecting` branch, so nothing about the car changed between
-          these two payloads -- only which instant of the retry cycle the 2 s
-          emit tick happened to land on.
+          🔴 RE-RECORDED. This test previously asserted `available:true` then
+          `available:false` on these two payloads, and that split was the
+          finding: `available` was `totalConnections > 0` on the `down` branch
+          but unconditionally True on the `reconnecting` branch, so nothing about
+          the car changed between them -- only which instant of the retry cycle
+          the 2 s emit tick happened to land on. It alone accounted for the
+          grey/yellow flicker, with no omission required (I-us663 -> US-672).
 
-          This alone accounts for the grey/yellow flicker the story is named
-          after, with no omission required. Recorded as I-us663.
-
-          WHEN THIS IS FIXED this test FAILS. That is intended -- re-record the
-          new behaviour here, do not delete the case.
+          Both samples are now an ABSENT source carrying "never connected", which
+          is the honest answer to "is the source absent" for a car this Pi has
+          never reached. The link state is null on both, because the emitter
+          blanks the block whenever the source is unavailable.
     """
     connecting = _emit(
         tmp_path / "connecting",
@@ -714,24 +793,33 @@ def test_characterisation_oneUnlinkedCarPublishesTwoDifferentAvailabilities(tmp_
         tmp_path / "disconnected",
         connection=_connection(state="disconnected", retryCount=1, totalConnections=0),
     )
-    assert connecting["source"]["obd"]["available"] is True
+    assert connecting["source"]["obd"]["available"] is False
     assert disconnected["source"]["obd"]["available"] is False
-    assert connecting["obdLink"]["state"] == OBD_RECONNECTING
+    assert connecting["source"]["obd"]["reason"] == REASON_OBD_NEVER_CONNECTED
+    assert disconnected["source"]["obd"]["reason"] == REASON_OBD_NEVER_CONNECTED
+    assert connecting["obdLink"]["state"] is None
     assert disconnected["obdLink"]["state"] is None
 
 
 @_needsNode
-def test_characterisation_thatFlapReachesTheGlyphAsGreyThenYellow(tmp_path):
+def test_thatFlapNoLongerReachesTheGlyph_bothSamplesReadNeutral(tmp_path):
     """
     Given: the two payloads above
     When: the SHIPPED panel renders each
-    Then: the BT glyph reads amber then neutral.
+    Then: the BT glyph reads neutral on BOTH.
 
-          The strobe, on the rendered panel, from the real producer. Recorded
-          rather than fixed: choosing what an unlinked-but-retrying car SHOULD
-          publish is a US-429 availability call (is a car we have never spoken to
-          an absent source, or a present one we are failing to reach?), and this
-          story's mandate is the typed unknown, not the availability rule.
+          🔴 RE-RECORDED. This previously asserted amber then neutral -- the
+          strobe, on the rendered panel, from the real producer.
+
+          US-663 declined to fix it because choosing what an unlinked-but-
+          retrying car should publish is a US-429 availability call, not a
+          typed-unknown one. Atlas made that call on 2026-09-02: a car we have
+          never spoken to is an ABSENT source, and neutral is the honest colour
+          for it -- amber would be a claim about a measurement we have never
+          taken (ARCH-007). A car we HAVE spoken to reads amber and keeps
+          reading amber; that half is pinned in
+          test_carousel_obd_availability_holds_one_value.py, and this test would
+          otherwise be satisfiable by a producer pinned neutral for everything.
     """
     connecting = _emit(
         tmp_path / "connecting",
@@ -741,5 +829,5 @@ def test_characterisation_thatFlapReachesTheGlyphAsGreyThenYellow(tmp_path):
         tmp_path / "disconnected",
         connection=_connection(state="disconnected", retryCount=1, totalConnections=0),
     )
-    assert _btGlyph(connecting) == "amber"
+    assert _btGlyph(connecting) == "neutral"
     assert _btGlyph(disconnected) == "neutral"

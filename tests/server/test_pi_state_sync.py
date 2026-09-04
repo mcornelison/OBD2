@@ -21,6 +21,11 @@
 #               |              | was Pi-only until US-453 mirrored it as raw
 #               |              | forensic state (D-7 / F-082); the server does
 #               |              | not recompute it.
+# 2026-09-04    | Rex (US-675) | DELETED test_v0019IsLastInAscendingOrder (RED
+#               |              | since v0020).  Not repaired: every surviving
+#               |              | claim is already covered elsewhere -- see the
+#               |              | TestMigrationWiring docstring for the three
+#               |              | locations.
 # ================================================================================
 ################################################################################
 
@@ -107,16 +112,33 @@ class TestSyncRegistration:
 
 
 class TestMigrationWiring:
-    """v0019 creates the server pi_state table + is in the registry."""
+    """v0019 creates the server pi_state table + is in the registry.
+
+    ``test_v0019IsLastInAscendingOrder`` was DELETED here by US-675, not
+    repaired.  It asserted ``versions[-1] == '0019'`` and had been RED since
+    v0020 landed -- a fact with a shelf life, which every later migration
+    falsifies simply by existing.
+
+    It was deleted rather than restated because once that claim is removed
+    nothing UNIQUE is left in it.  All three of its surviving claims are
+    already covered elsewhere, verified by grep and not by assumption:
+
+    * v0019 is registered -- ``test_v0019Registered``, directly below.
+    * the registry is sorted -- ``test_migrations.py::TestRegistry::
+      test_versions_areSortedAscending`` (registry-wide, so it covers every
+      version rather than this one).
+    * v0019's PLACEMENT -- ``test_migration_0020_o2_name_normalization.py::
+      TestRegistration::test_v0020RegisteredAfterV0019AndSorted`` already
+      pins ``versions[index('0020') - 1] == '0019'`` from the successor side.
+
+    A deleted test is honest; a permanently-red one is worse than absent,
+    because it trains the team to skim past a failing suite.  Do not
+    "restore" this guard -- restoring it re-arms the fuse and adds no claim.
+    """
 
     def test_v0019Registered(self) -> None:
         versions = [m.version for m in ALL_MIGRATIONS]
         assert '0019' in versions
-
-    def test_v0019IsLastInAscendingOrder(self) -> None:
-        versions = [m.version for m in ALL_MIGRATIONS]
-        assert versions == sorted(versions)
-        assert versions[-1] == '0019'
 
 
 # ================================================================================

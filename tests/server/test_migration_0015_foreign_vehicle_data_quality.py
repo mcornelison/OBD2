@@ -20,6 +20,11 @@
 # ================================================================================
 # 2026-07-01    | Rex (US-424) | Initial -- F-116 foreign-vehicle data_quality
 #               |              | CHECK-widen migration tests.
+# 2026-09-04    | Rex (US-675) | Registry guard de-fused.  RED since v0016
+#               |              | because it asserted "v0015 is LAST" -- a fact
+#               |              | with a shelf life.  Restated as PLACEMENT
+#               |              | (follows v0014) + a shelf-life proof that
+#               |              | re-runs the guard against a widened registry.
 # ================================================================================
 ################################################################################
 
@@ -28,6 +33,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -41,7 +47,7 @@ from src.server.db.models import (
     DriveStatistic,
     DriveSummary,
 )
-from src.server.migrations import ALL_MIGRATIONS
+from src.server.migrations import ALL_MIGRATIONS, Migration
 from src.server.migrations.runner import RunnerContext
 from src.server.migrations.versions import (
     v0015_us424_foreign_vehicle_data_quality as m0015,
@@ -190,10 +196,57 @@ class TestModuleExports:
     def test_inAllMigrations(self) -> None:
         assert '0015' in [m.version for m in ALL_MIGRATIONS]
 
-    def test_registryStaysSortedWithV0015AtTail(self) -> None:
+    def test_v0015RegisteredAfterV0014AndSorted(self) -> None:
+        """Placement, not the absolute tail.
+
+        RENAMED from ``test_registryStaysSortedWithV0015AtTail`` by US-675.
+        That guard asserted ``versions[-1] == '0015'`` and had been RED since
+        v0016 landed -- four versions of standing red.
+
+        "Is LAST" was never an invariant.  It is a fact with a shelf life:
+        every future migration falsifies it simply by existing, so the guard
+        must be hand-edited on each one or it goes red and stays red.  Bumping
+        the literal to the current tail only re-arms the same fuse, so the
+        claim is restated as PLACEMENT, which survives every append.
+
+        Matches the pattern ARCH-020 established on v0024 and that
+        v0018 / v0020-v0024 already use.  The placement claim is not
+        redundant: v0015 has no successor test file, so nothing else in the
+        suite pins where it sits in the chain.
+        """
         versions = [m.version for m in ALL_MIGRATIONS]
         assert versions == sorted(versions)
-        assert versions[-1] == '0015'
+        assert '0015' in versions
+        assert versions[versions.index('0015') - 1] == '0014'
+
+    def test_v0015GuardSurvivesTheNextMigration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """US-675 VC2 -- the shelf-life proof, and why this file has two guards.
+
+        Appends a hypothetical future migration and RE-RUNS THE REAL GUARD
+        above against the widened registry -- ``self.test_...()``, not a copy
+        of its assertion body, so this cannot drift away from the thing it
+        protects.
+
+        Green here means the guard cannot be re-broken by the mere act of
+        adding v0026.  Restoring ``assert versions[-1] == '0015'`` still
+        passes on today's registry and fails HERE -- which is precisely the
+        failure mode that let the original guard rot unnoticed for four
+        versions.
+        """
+        hypothetical = Migration(
+            version='9999',
+            description='hypothetical future migration (US-675 shelf-life probe)',
+            applyFn=lambda _ctx: None,
+        )
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            'ALL_MIGRATIONS',
+            (*ALL_MIGRATIONS, hypothetical),
+        )
+
+        self.test_v0015RegisteredAfterV0014AndSorted()
 
     def test_constantsMatchOrm(self) -> None:
         assert m0015.DRIVE_SUMMARY_TABLE == DriveSummary.__tablename__

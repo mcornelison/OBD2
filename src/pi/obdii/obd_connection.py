@@ -137,8 +137,29 @@ except ImportError:
 # Constants
 # ================================================================================
 
-# Default retry delays in seconds (exponential backoff)
+# Default retry delays in seconds (exponential backoff).  This is the RAMP,
+# not the whole schedule -- see DEFAULT_RETRY_CEILING_SECONDS and
+# nextRetryDelaySeconds() for what happens once the ramp is exhausted.
 DEFAULT_RETRY_DELAYS = [1, 2, 4, 8, 16]
+
+# US-673: hard ceiling on the escalated inter-attempt delay, in seconds.
+#
+# GROUNDING -- this number is NOT invented for US-673.  320s is the ceiling the
+# fleet has actually run on since 2026-05-11: reconnect_loop's US-325 / I-025
+# production figure, HEARTBEAT_TICK_INTERVAL_SEC (10) * 2 ** BACKOFF_EXP_CAP (5).
+# Reusing it means this story adds a REACHABLE ceiling to the schedule rather
+# than a second, differently-shaped number beside the existing one.
+#
+# WHY A CEILING AT ALL.  Before US-673 the schedule was consumed as
+# ``retryDelays[min(attempt, len - 1)]`` -- so it PLATEAUED at its last entry
+# (16s) and stayed there for as many attempts as the caller allowed, with no
+# terminal state.  Measured cost: 275+ connect retries over 13 hours against a
+# dongle that could not answer (drives 42/43/44), and a Pi 5 whose shared
+# WiFi+BT combo chip starves under that much continuous rfcomm churn (I-025).
+#
+# Overridable via ``pi.bluetooth.retryCeilingSeconds``.  A non-positive value
+# is the documented opt-out: it restores the pre-US-673 plateau exactly.
+DEFAULT_RETRY_CEILING_SECONDS: float = 320.0
 
 # Default connection timeout in seconds
 DEFAULT_CONNECTION_TIMEOUT = 30
@@ -165,6 +186,85 @@ EVENT_TYPE_RECONNECT = 'reconnect'
 # silent-skips.  Keyed by python-obd command name (obdlib.commands.RPM.name), or
 # the bare parameter string when obdlib is unavailable.
 MANDATORY_MODE01_PIDS: frozenset[str] = frozenset({'RPM'})
+
+
+# ================================================================================
+# Retry schedule policy (US-673)
+# ================================================================================
+
+def nextRetryDelaySeconds(
+    attempt: int,
+    retryDelays: list[int] | list[float] | None,
+    ceilingSeconds: float | None,
+) -> float:
+    """Return the backoff to wait before retry number ``attempt + 1``.
+
+    THE single acquisition point for "how long do we wait before knocking
+    again".  Both the configured ramp and the escalation past it are decided
+    here so no caller re-derives either.
+
+    Policy:
+
+    * Within ``retryDelays``, the configured entry is used VERBATIM -- the
+      escalation appends a tail, it never rewrites the head an operator set.
+    * Past the end of ``retryDelays``, the last entry DOUBLES on each further
+      attempt instead of plateauing on it.  The plateau is the US-673 defect:
+      a schedule ending in 16s answered "16 seconds" for every attempt after
+      the fifth, forever, with no terminal state.
+    * Every value -- ramp and tail alike -- is clamped to ``ceilingSeconds``.
+      A ceiling that governed only the tail would let a configured entry
+      exceed it, which is a suffix rule wearing a ceiling's name.
+
+    Args:
+        attempt: Zero-based attempt index.  Negative values are treated as 0.
+        retryDelays: The configured ramp (``pi.bluetooth.retryDelays``).  Empty
+            or ``None`` means no backoff at all -- the repo's fast-test config.
+        ceilingSeconds: The escalation ceiling
+            (``pi.bluetooth.retryCeilingSeconds``).  ``None`` or a non-positive
+            value is the DOCUMENTED OPT-OUT: escalation and clamping are both
+            disabled and the pre-US-673 plateau is reproduced exactly, so an
+            operator who wants the old fixed cadence has a config route to it
+            rather than a code edit.
+
+    Returns:
+        Seconds to wait.  Never negative.
+    """
+    if not retryDelays:
+        return 0.0
+    if attempt < 0:
+        attempt = 0
+
+    lastIndex = len(retryDelays) - 1
+    if attempt <= lastIndex:
+        delay = float(retryDelays[attempt])
+    elif ceilingSeconds is None or ceilingSeconds <= 0:
+        # Documented opt-out -- plateau on the last entry, as before US-673.
+        return float(retryDelays[lastIndex])
+    else:
+        # Escalate geometrically past the end of the configured ramp.  Computed
+        # against the ceiling first so a long outage cannot build an enormous
+        # intermediate before the clamp applies.
+        overshoot = attempt - lastIndex
+        last = float(retryDelays[lastIndex])
+        if last <= 0:
+            # An explicit no-backoff schedule stays no-backoff: doubling zero
+            # is zero, and pinning that keeps a future "last + step" rewrite
+            # from silently inventing a delay the operator disabled.
+            return 0.0
+        if last >= ceilingSeconds:
+            return float(ceilingSeconds)
+        # Bounded exponent: enough doublings to reach the ceiling and no more,
+        # so a 10,000th attempt does not build a 2**10000 intermediate.
+        maxDoublings = 0
+        probe = last
+        while probe < ceilingSeconds:
+            probe *= 2.0
+            maxDoublings += 1
+        delay = last * float(2 ** min(overshoot, maxDoublings))
+
+    if ceilingSeconds is not None and ceilingSeconds > 0:
+        delay = min(delay, float(ceilingSeconds))
+    return max(delay, 0.0)
 
 
 # ================================================================================
@@ -319,6 +419,13 @@ class ObdConnection:
         self.macAddress = btConfig.get('macAddress', '')
         self.retryDelays = btConfig.get('retryDelays', DEFAULT_RETRY_DELAYS)
         self.maxRetries = btConfig.get('maxRetries', len(self.retryDelays))
+        # US-673: ceiling for the escalation past the end of retryDelays.  Read
+        # from the SAME config section as retryDelays deliberately -- the two
+        # halves of one schedule belong in one place, not split between config
+        # and a module constant.
+        self.retryCeilingSeconds = btConfig.get(
+            'retryCeilingSeconds', DEFAULT_RETRY_CEILING_SECONDS
+        )
         self.connectionTimeout = btConfig.get('connectionTimeoutSeconds', DEFAULT_CONNECTION_TIMEOUT)
         self.rfcommDevice = btConfig.get('rfcommDevice', DEFAULT_RFCOMM_DEVICE)
         self.rfcommChannel = btConfig.get('rfcommChannel', DEFAULT_RFCOMM_CHANNEL)
@@ -521,6 +628,38 @@ class ObdConnection:
         """
         return self._performConnect(callerGeneration)
 
+    def connectOnce(self, callerGeneration: int | None = None) -> bool:
+        """Attempt ONE connect, with no internal retry burst (US-673).
+
+        The seam for callers that own their own cadence -- specifically the
+        long-lived :func:`~src.pi.obdii.reconnect_loop.runReconnectHeartbeat`,
+        which already carries an exponentially-backed-off, ceilinged inter-tick
+        interval (US-325 / I-025).
+
+        WHY THIS EXISTS.  The heartbeat's per-tick attempt used to call
+        :meth:`connect`, which is ITSELF a retry loop -- so a tick that was
+        supposed to cost one probe cost six binds over 31 seconds, and the
+        heartbeat's carefully-ceilinged "one attempt every 320s" idle cadence
+        was in practice a 31-second burst of rfcomm churn every 350s.  That 6x
+        amplification is most of the 275+ retries measured over 13 hours on
+        drives 42/43/44, and it is the shape I-025's WiFi-starvation finding
+        warned about one layer up.  :meth:`_spawnReconnectHeartbeatDaemon`'s
+        own docstring has claimed "attempt a single ``connect()``" since
+        US-301; this method is what makes that sentence true.
+
+        Behaviourally identical to ``connect()`` in every other respect --
+        same lock, same epoch fence, same partial-close and rfcomm-release
+        cleanup on failure.  It simply never waits a backoff, because the
+        caller's own loop owns the waiting.
+
+        Args:
+            callerGeneration: Optional epoch-fence token; see :meth:`connect`.
+
+        Returns:
+            True if the single attempt established the link, False otherwise.
+        """
+        return self._performConnect(callerGeneration, maxAttempts=1)
+
     def query(self, command: Any, callerGeneration: int | None = None) -> Any:
         """Run a single OBD query under the serialization lock (US-441).
 
@@ -598,7 +737,11 @@ class ObdConnection:
             name = command
         return name in MANDATORY_MODE01_PIDS
 
-    def _performConnect(self, callerGeneration: int | None = None) -> bool:
+    def _performConnect(
+        self,
+        callerGeneration: int | None = None,
+        maxAttempts: int | None = None,
+    ) -> bool:
         """Internal connect implementation with PER-ATTEMPT serialization.
 
         Atlas A-17 fix (2026-07-27, "capture-dead-since-0703"): ``_ioLock`` is
@@ -620,6 +763,15 @@ class ObdConnection:
         connection may have won meanwhile, and a superseded daemon must fence
         rather than re-open the port.  Live callers (``callerGeneration=None``)
         are never fenced.
+
+        Args:
+            callerGeneration: Optional US-441 epoch-fence token.
+            maxAttempts: US-673.  Total attempts this call may make.  ``None``
+                (every pre-existing caller) means the configured budget,
+                ``self.maxRetries + 1``.  :meth:`connectOnce` passes 1 so the
+                reconnect heartbeat's per-tick attempt is singular and the
+                cadence is owned by the heartbeat's own ceiling rather than
+                multiplied by this loop.
         """
         if not OBD_AVAILABLE and self._obdFactory is None:
             error = "python-OBD library not available"
@@ -629,11 +781,20 @@ class ObdConnection:
         self._status.state = ConnectionState.CONNECTING
         self._status.retryCount = 0
 
+        # US-673: the attempt budget for THIS call.  `lastAttemptIndex` replaces
+        # the bare `self.maxRetries` everywhere below so a single-attempt caller
+        # (connectOnce) takes the same code path -- one budget, not two loops.
+        if maxAttempts is not None:
+            lastAttemptIndex = max(int(maxAttempts), 1) - 1
+        else:
+            lastAttemptIndex = self.maxRetries
+        totalAttempts = lastAttemptIndex + 1
+
         logger.info(f"Connecting to OBD-II dongle | mac={self.macAddress}")
 
         # Attempt connection with retries.  The lock is taken PER ATTEMPT (around
         # the port work only) and released across the backoff (fix A).
-        for attempt in range(self.maxRetries + 1):
+        for attempt in range(totalAttempts):
             # US-232 / TD-035: honor an already-set shutdown event before
             # even dispatching the next attempt. Covers the pre-set path
             # (SIGTERM arrived while we were preparing for the next retry).
@@ -734,11 +895,11 @@ class ObdConnection:
                     self._releaseRfcommBinding()
 
                     logger.warning(
-                        f"Connection attempt {attempt + 1}/{self.maxRetries + 1} failed | "
+                        f"Connection attempt {attempt + 1}/{totalAttempts} failed | "
                         f"mac={self.macAddress} | error={e}"
                     )
 
-                    if attempt >= self.maxRetries:
+                    if attempt >= lastAttemptIndex:
                         # All retries exhausted
                         self._status.state = ConnectionState.ERROR
                         self._logConnectionEvent(
@@ -748,23 +909,28 @@ class ObdConnection:
                             retryCount=attempt
                         )
                         logger.error(
-                            f"Failed to connect after {self.maxRetries + 1} attempts | "
+                            f"Failed to connect after {totalAttempts} attempts | "
                             f"mac={self.macAddress}"
                         )
             # --- _ioLock released here (fix A) ---
 
             # Backoff OUTSIDE the lock so disconnect()/query() can acquire it and
             # free the port while this (possibly orphaned) connect waits.
-            if attemptFailed and attempt < self.maxRetries:
-                # Get delay for this attempt (0 if empty, else clamp to last).
-                if not self.retryDelays:
-                    delay = 0
-                else:
-                    delayIndex = min(attempt, len(self.retryDelays) - 1)
-                    delay = self.retryDelays[delayIndex]
+            if attemptFailed and attempt < lastAttemptIndex:
+                # US-673: ONE acquisition point for the delay.  This used to be
+                # `retryDelays[min(attempt, len - 1)]`, which PLATEAUED on the
+                # last entry (16s) for every further attempt, forever, with no
+                # ceiling and no terminal state.  nextRetryDelaySeconds escalates
+                # past the ramp to self.retryCeilingSeconds instead.  The
+                # escalation is per-CALL state -- `attempt` restarts at 0 on the
+                # next connect() -- so a link that comes back is never punished
+                # by the previous outage's backoff level.
+                delay = nextRetryDelaySeconds(
+                    attempt, self.retryDelays, self.retryCeilingSeconds
+                )
 
                 if delay > 0:
-                    logger.info(f"Retrying in {delay}s...")
+                    logger.info(f"Retrying in {delay:.0f}s...")
                     # US-232 / TD-035: use event.wait() when a shutdown event is
                     # plumbed in so a signal handler set() wakes us mid-backoff;
                     # else legacy time.sleep for callers that didn't opt in.
@@ -774,7 +940,7 @@ class ObdConnection:
                                 "Connect retry loop exiting -- shutdown "
                                 "signaled during backoff (attempt %d/%d)",
                                 attempt + 1,
-                                self.maxRetries + 1,
+                                totalAttempts,
                             )
                             self._status.state = ConnectionState.DISCONNECTED
                             return False

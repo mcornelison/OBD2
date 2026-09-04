@@ -1109,12 +1109,22 @@ class LifecycleMixin:
         callable that returns True on connect success, False otherwise.  May
         raise -- the heartbeat loop classifies exceptions as the ``"error"``
         outcome and continues.
+
+        US-673: prefers :meth:`ObdConnection.connectOnce` over ``connect()``.
+        ``connect()`` is itself a retry loop, so a tick that this docstring has
+        described as "a single connect" since US-301 actually cost six rfcomm
+        binds over 31 seconds -- multiplying the heartbeat's own ceilinged idle
+        cadence by 6 and producing most of the 275+ retries measured over 13
+        hours.  Duck-typed connections without ``connectOnce`` (the simulator,
+        test doubles) fall back to ``connect()`` unchanged.
         """
         def _attempt() -> bool:
             conn = self._connection
             if conn is None:
                 return False
-            connectMethod = getattr(conn, 'connect', None)
+            connectMethod = getattr(conn, 'connectOnce', None)
+            if connectMethod is None:
+                connectMethod = getattr(conn, 'connect', None)
             if connectMethod is None:
                 return False
             return bool(connectMethod())

@@ -40,6 +40,12 @@
 #               |              | the emitter as well as the journal -- the state
 #               |              | file is the SSOT the card polls; the journal line
 #               |              | stays because it records the TRANSITION.
+# 2026-09-03    | Ralph (Rex)  | US-672: availability describes the link's
+#               |              | CONDITION, never the retry loop's phase -- one
+#               |              | decision point, taken before the phase is read.
+#               |              | And the THIRD cause gets its own word: "never
+#               |              | connected", not "OBD: off" (Atlas, the half
+#               |              | US-663 missed).
 # ================================================================================
 ################################################################################
 
@@ -69,6 +75,13 @@ _DEFAULT_SEVERITY_TABLE_PATH = str(
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
 
+# US-661: how often the `ltft-trend` producer re-aggregates. Five minutes, not
+# the 2 s card cadence: LTFT is a MULTI-DRIVE signal whose published value
+# cannot change until a drive ENDS, so a faster cadence buys nothing and costs a
+# multi-drive scan of `realtime_data` -- the table the logger is concurrently
+# writing to -- on every tick.
+_DEFAULT_LTFT_TREND_INTERVAL_S = 300.0
+
 # US-632: "no reason has been observed yet" -- distinct from an observed None
 # (which means the verdict RESOLVED). A plain None default would swallow the
 # first log line whenever the producer starts out resolved and later degrades.
@@ -89,6 +102,17 @@ _REASON_UNSET: Any = object()
 # a shared vocabulary drifting away from its causes.
 REASON_OBD_LINK_NOT_READ = "not read yet"  # nothing has looked at the link yet
 REASON_OBD_LINK_UNREADABLE = "link unreadable"  # we looked; getStatus() raised
+
+# US-672 (Atlas ruling 2026-09-02, the half US-663 missed) -- the THIRD cause.
+#
+# US-663 kept `REASON_OBD_OFF` for this branch and recorded it as "the one case
+# where 'OBD: off' is true". Atlas overruled that: the branch is reached from
+# `totalConnections == 0`, which is a fact about US -- we have never connected --
+# and "OBD: off" is a claim about the CAR. *"That is an assertion about the world
+# drawn from an absence of evidence about ourselves."* With the key ON it is
+# simply false, which is US-663's own original defect surviving inside US-663's
+# fix. The honest word is what we actually know.
+REASON_OBD_NEVER_CONNECTED = "never connected"  # we have never reached this car
 
 # US-628 -- the POWER-SOURCE acquisition's own failure reasons.
 #
@@ -182,6 +206,15 @@ class CardStateEmitterMixin:
     _gearStateEmitter: Any = None
     _lastSpeedReading: Any = None
     _lastRpmReading: Any = None
+    # US-661: the `ltft-trend` producer. CLASS defaults for the same reason as
+    # the gear pair above. Its own cadence -- the trend is a MULTI-DRIVE signal
+    # that cannot change more than once per drive, and recomputing it on the 2 s
+    # card tick would put a multi-drive aggregation over the Pi's hottest write
+    # table into the run loop 30 times a minute for an answer that is identical
+    # every time.
+    _ltftTrendEmitter: Any = None
+    _lastLtftTrendEmitTime: datetime | None = None
+    _ltftTrendIntervalS: float = _DEFAULT_LTFT_TREND_INTERVAL_S
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -211,6 +244,7 @@ class CardStateEmitterMixin:
             )
         )
         self._initializeGearProducer(statesDir)
+        self._initializeLtftTrendProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -297,6 +331,82 @@ class CardStateEmitterMixin:
             )
             self._gearDeriver = None
             self._gearStateEmitter = None
+
+    # ---------------------------------------------------------- ltft-trend
+    #
+    # US-661 (punch-list 5.2). The `ltft-trend` emitter module has existed since
+    # US-420 but NOTHING EVER CALLED IT, so the Fuel Trim card has never had
+    # data. Same shape as US-494/495/498/US-630: both halves built, no join.
+    #
+    # Constructed in its OWN try/except beside the gear producer, for the same
+    # reason -- these failure modes are unrelated and a missing DB must not also
+    # take the DTC card down.
+
+    def _initializeLtftTrendProducer(self, statesDir: str) -> None:
+        """Build the `ltft-trend` emitter, or stay dark."""
+        dashConfig = self._config.get("pi", {}).get("dashboard", {})
+        self._ltftTrendIntervalS = float(
+            dashConfig.get(
+                "ltftTrendIntervalSeconds", _DEFAULT_LTFT_TREND_INTERVAL_S
+            )
+        )
+        try:
+            from pi.splash.ltft_trend_emitter import (
+                makeLtftTrendEmitter,
+                readLtftDriveRowsFrom,
+            )
+
+            def readDriveRows() -> dict:
+                # The database is resolved through getattr AT USE TIME, never
+                # captured here. This sprint's predecessors hit that boot-order
+                # trap three times (US-501/502/504b): the emitters are built in
+                # _initializeAllComponents while their dependencies land later,
+                # so a captured reference stays None for the life of the process
+                # -- a permanently empty tile with fully green unit tests.
+                #
+                # The handle is OPENED inside the reader module, not here. The
+                # A-17 static guard forbids any connection-opening call in this
+                # file (it is a text sweep, so it cannot tell a DB handle from
+                # an OBD one -- which is precisely why every reader delegates);
+                # `_gatherLastDriveSummary` delegates for the same reason.
+                return readLtftDriveRowsFrom(getattr(self, "_database", None))
+
+            self._ltftTrendEmitter = makeLtftTrendEmitter(
+                statesDir, driveRowsReader=readDriveRows
+            )
+            logger.info(
+                "LTFT trend producer wired (every %.0fs); states_dir=%s",
+                self._ltftTrendIntervalS, statesDir,
+            )
+        except Exception as e:  # noqa: BLE001 -- dashboard wiring must not fail boot
+            logger.warning(
+                "LTFT trend producer init skipped: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._ltftTrendEmitter = None
+
+    def _emitLtftTrendState(self) -> None:
+        """Re-aggregate + publish `ltft-trend` when its own cadence has elapsed.
+
+        Silent when the database handle is absent. That is deliberate and it is
+        the US-672 lesson applied one card over: writing a file that says "no
+        real drives recorded" when we could not even OPEN the log would be a
+        claim about the CAR drawn from an absence of evidence about US. An
+        absent state file already renders the honest "no data -- trend not
+        computed"; a producer that never ran must not answer as though it had.
+        """
+        emitter = self._ltftTrendEmitter
+        if emitter is None:
+            return
+        if getattr(self, "_database", None) is None:
+            return
+        now = datetime.now()
+        last = self._lastLtftTrendEmitTime
+        if last is not None:
+            if (now - last).total_seconds() < self._ltftTrendIntervalS:
+                return
+        self._lastLtftTrendEmitTime = now
+        emitter()
 
     def _gearNowS(self) -> float:
         """Monotonic seconds for the gear freshness + debounce windows."""
@@ -475,6 +585,12 @@ class CardStateEmitterMixin:
             self._emitGearState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("gear card emit failed: %s", e)
+        try:
+            # US-661: self-throttled to its own multi-minute cadence, so this
+            # call is a cheap timestamp compare on all but one tick in 150.
+            self._emitLtftTrendState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("ltft-trend card emit failed: %s", e)
         return True
 
     # -------------------------------------------------------- system-status
@@ -520,11 +636,16 @@ class CardStateEmitterMixin:
     def _gatherObdLinkState(self) -> tuple[str, int, bool, str | None]:
         """Map the ObdConnection state -> (linkState, retries, available, reason).
 
-        available is False (US-429 typed NA) only when the OBD source is ABSENT
-        -- i.e. we have NEVER connected (totalConnections == 0): car off / no
-        dongle / bench. A dropped-but-previously-seen link is `down` but still
-        AVAILABLE (we are retrying a real car). Connected -> linked; connecting/
-        reconnecting -> reconnecting. A missing connection is unavailable.
+        available is False (US-429 typed NA) exactly when the OBD source is
+        ABSENT -- i.e. we have NEVER connected (totalConnections == 0): car off /
+        no dongle / bench. A dropped-but-previously-seen link stays AVAILABLE (we
+        are retrying a real car), whether or not an attempt happens to be in
+        flight at this instant. Connected -> linked; retrying a car we have seen
+        -> reconnecting/down by phase. A missing connection is unavailable.
+
+        US-672: the RETRY PHASE is deliberately not an input to `available`. It
+        used to be, on one of the two not-connected branches only, and that is
+        the whole defect -- see the comment at the decision below.
 
         US-663: the fourth element is the typed-NA reason that TRAVELS WITH the
         absence -- one word per cause, never one word for three. It is None on
@@ -539,7 +660,6 @@ class CardStateEmitterMixin:
         `down` is a MEASUREMENT ("we looked, there is no signal") and inventing
         an unknown token here would be a second vocabulary for one fact.
         """
-        from pi.splash.source_availability import REASON_OBD_OFF
         from pi.splash.system_status_emitter import (
             OBD_DOWN,
             OBD_LINKED,
@@ -567,12 +687,36 @@ class CardStateEmitterMixin:
 
         if connected:
             return (OBD_LINKED, retries, True, None)
+
+        # US-672 -- ONE question, ONE place it is answered. Availability asks
+        # "is the source ABSENT" (US-429), and the answer is whether this Pi has
+        # ever spoken to this car. It is decided HERE, once, BEFORE the retry
+        # phase is looked at, so the two not-connected branches below cannot
+        # disagree about it.
+        #
+        # They used to. The reconnect branch returned True unconditionally while
+        # the fall-through gated on `totalConns > 0`, so a car we have never
+        # reached published available:true mid-attempt and available:false
+        # between attempts -- 45 AMBER / 38 GREY over 5.5 minutes on a PARKED
+        # car with the key OUT (CIO, 2026-09-01), nothing about the world
+        # changing. Retry phase is a fact about our CLIENT; availability is a
+        # fact about the CAR, and an answer that changes every 100 seconds was
+        # answering the wrong question.
+        if totalConns == 0:
+            return (OBD_DOWN, retries, False, REASON_OBD_NEVER_CONNECTED)
+
+        # Available: we HAVE reached this car, so the source is present and we
+        # are failing to hold it. The link-state token still carries the retry
+        # PHASE, which is where Atlas said a "trying now" fact may live so long
+        # as it does not ride on `available` -- the OBD LINK tile's
+        # "RECONNECTING / retry 3" is a diagnostic the operator goes looking for.
+        # The GLYPH does not strobe on it because dashboard.css paints `down` and
+        # `reconnecting` with the same token (US-488), which is asserted in
+        # tests/ui/test_carousel_obd_availability_holds_one_value.py rather than
+        # left as a coincidence.
         if "reconnect" in stateStr or "connecting" in stateStr:
             return (OBD_RECONNECTING, retries, True, None)
-        # disconnected / error: available iff we have EVER seen this car. This is
-        # the ONE branch "OBD: off" is true of -- we looked, and there is no car.
-        available = totalConns > 0
-        return (OBD_DOWN, retries, available, None if available else REASON_OBD_OFF)
+        return (OBD_DOWN, retries, True, None)
 
     def _gatherPowerState(self) -> tuple[str, str | None]:
         """Return (powerSource, powerSourceReason) from the power-source SSOT.

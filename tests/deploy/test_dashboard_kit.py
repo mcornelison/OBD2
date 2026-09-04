@@ -1352,13 +1352,20 @@ assert.strictEqual(c.ltftTrendView([]), null, 'array -> no view');
 function pt(driveId, avg, level) {
   return { driveId: driveId, ts: null, ltftAvg: avg, level: level };
 }
+// US-681: this fixture is shaped like a payload `ltft_trend_emitter` CAN emit.
+// It carries `median`, because US-661 / TUNER-005 moved the headline onto the
+// rolling median and the emitter's two branches are `median: None` (insufficient)
+// and `median: _round2(median)` (sufficient) -- it CANNOT emit a sufficient
+// window without one. A fixture omitting `median` describes no reachable state.
 function trend(opts) {
   return {
     pid: 'LONG_FUEL_TRIM_1',
     sufficient: opts.sufficient,
     level: opts.level,
     driveCount: opts.points.length,
-    minDrives: 2,
+    median: opts.median === undefined ? null : opts.median,
+    medianWindow: 5,
+    minDrives: 5,
     okAbs: 5.0, driftAbs: 10.0,
     trend: opts.trend === undefined ? null : opts.trend,
     current: opts.points.length ? opts.points[opts.points.length - 1] : null,
@@ -1368,28 +1375,42 @@ function trend(opts) {
 }
 
 // --- healthy sufficient window -> headline ok, points carried ----------------
+// A full 5-drive window. `median` is the ACTUAL median of these five points
+// (-4.0), not an arbitrary number: a fixture whose median disagrees with its own
+// points is a lie that would mask exactly the mapping bug this test exists for.
 const healthy = c.ltftTrendView(trend({
-  sufficient: true, level: 'ok', trend: 'improving',
-  points: [pt(31, -8.0, 'amber'), pt(32, -4.0, 'ok'), pt(33, -2.0, 'ok')],
+  sufficient: true, level: 'ok', trend: 'improving', median: -4.0,
+  points: [pt(29, -8.0, 'amber'), pt(30, -6.0, 'amber'), pt(31, -4.0, 'ok'),
+           pt(32, -3.0, 'ok'), pt(33, -2.0, 'ok')],
 }));
 assert.ok(healthy, 'valid state -> a view');
 assert.strictEqual(healthy.sufficient, true, 'sufficient carried');
 assert.strictEqual(healthy.headline.level, 'ok', 'healthy -> ok headline');
-assert.ok(/-2\.00%/.test(healthy.headline.value), 'headline = current drift');
+// 🔴 THE HEADLINE IS THE ROLLING MEDIAN, NOT THE NEWEST DRIVE. specs/
+// grounded-knowledge.md "LTFT trend contract (US-661)": "Display a rolling
+// 5-drive MEDIAN, never the raw per-drive line." Both halves are asserted --
+// the median IS shown, and the newest drive's own mean (-2.00%) is NOT -- because
+// "shows the median" alone is also satisfied by a view that prints both.
+assert.ok(/-4\.00%/.test(healthy.headline.value), 'headline = rolling median');
+assert.ok(!/-2\.00%/.test(healthy.headline.value),
+  'headline is NOT the newest drive mean (a per-drive line wanders 3.72pp -- TUNER-005)');
+assert.ok(/median/i.test(healthy.headline.label), 'headline label names the median');
 assert.ok(/toward 0/i.test(healthy.headline.detail), 'improving trend surfaced');
-assert.strictEqual(healthy.points.length, 3, 'all drive points carried');
+assert.strictEqual(healthy.points.length, 5, 'all drive points carried');
 assert.deepStrictEqual(healthy.points.map(function (p) { return p.level; }),
-  ['amber', 'ok', 'ok'], 'each bar keeps its own drift level');
+  ['amber', 'amber', 'ok', 'ok', 'ok'], 'each bar keeps its own drift level');
 assert.strictEqual(healthy.points[0].value, '-8.00%', 'bar value formatted');
 
 // --- drift beyond +/-10% -> headline down (visibly distinct from healthy) -----
 const drift = c.ltftTrendView(trend({
-  sufficient: true, level: 'down', trend: 'worsening',
-  points: [pt(31, -6.0, 'amber'), pt(32, -9.0, 'amber'), pt(33, -14.0, 'down')],
+  sufficient: true, level: 'down', trend: 'worsening', median: -11.0,
+  points: [pt(29, -6.0, 'amber'), pt(30, -9.0, 'amber'), pt(31, -11.0, 'down'),
+           pt(32, -13.0, 'down'), pt(33, -14.0, 'down')],
 }));
 assert.strictEqual(drift.headline.level, 'down', 'drift -> down headline');
 assert.notStrictEqual(drift.headline.level, healthy.headline.level, 'down != ok');
-assert.strictEqual(drift.points[2].level, 'down', 'the drifted drive bar is down');
+assert.ok(/-11\.00%/.test(drift.headline.value), 'drift headline = its median too');
+assert.strictEqual(drift.points[4].level, 'down', 'the drifted drive bar is down');
 
 // --- insufficient window -> NEVER green (honest-instrument, forced here too) --
 const thin = c.ltftTrendView(trend({
@@ -1399,18 +1420,38 @@ assert.strictEqual(thin.sufficient, false, 'insufficient carried');
 assert.strictEqual(thin.headline.level, 'insufficient', 'insufficient headline');
 assert.notStrictEqual(thin.headline.level, 'ok', 'never green off too little data');
 assert.ok(/insufficient/i.test(thin.headline.value), 'value says insufficient');
-assert.ok(/need 2\+/i.test(thin.headline.detail), 'detail names the min-drives need');
+assert.ok(/need 5\+/i.test(thin.headline.detail), 'detail names the min-drives need');
 assert.strictEqual(thin.points.length, 1, 'the single point still listed honestly');
 
 // --- defense-in-depth: a mislabeled ok level with sufficient:false stays muted
 const lying = c.ltftTrendView(trend({
-  sufficient: false, level: 'ok', points: [pt(33, -2.0, 'ok')],
+  sufficient: false, level: 'ok', median: -2.0, points: [pt(33, -2.0, 'ok')],
 }));
 assert.strictEqual(lying.headline.level, 'insufficient',
   'sufficient:false forces insufficient even if the state claims ok');
 
+// --- US-681: sufficient:true but NO median -> still insufficient -------------
+// The US-661 guard, pinned in its own right. Without it the card paints a
+// confident green headline over fmtLtftPct(null) === "--": a verdict with no
+// number under it. Each clause of the predicate is now pinned by a case that
+// isolates it, so none can be dropped silently.
+const noMedian = c.ltftTrendView(trend({
+  sufficient: true, level: 'ok', trend: 'improving',
+  points: [pt(29, -8.0, 'amber'), pt(30, -6.0, 'amber'), pt(31, -4.0, 'ok'),
+           pt(32, -3.0, 'ok'), pt(33, -2.0, 'ok')],
+}));
+assert.strictEqual(noMedian.sufficient, false, 'no median -> not sufficient');
+assert.strictEqual(noMedian.headline.level, 'insufficient',
+  'a claimed-sufficient window with no median must not paint green');
+assert.ok(!/--/.test(noMedian.headline.value),
+  'and must not print a bare placeholder as if it were a reading');
+assert.strictEqual(noMedian.points.length, 5, 'the bars are still listed honestly');
+
 // --- empty points -> insufficient, no crash ----------------------------------
-const empty = c.ltftTrendView(trend({ sufficient: true, level: 'ok', points: [] }));
+// A median is supplied here so ONLY the empty-points clause can be what fires.
+const empty = c.ltftTrendView(trend({
+  sufficient: true, level: 'ok', median: -4.0, points: [],
+}));
 assert.strictEqual(empty.sufficient, false, 'no points -> not sufficient');
 assert.strictEqual(empty.headline.level, 'insufficient', 'no points -> insufficient');
 assert.strictEqual(empty.points.length, 0, 'no bars');
@@ -1427,9 +1468,20 @@ console.log('US420_OK');
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_ltftTrendView_renderLogic_f096_us420():
-    """US-420: the LTFT Trend view maps the emitter verdict -> an honest headline
-    + per-drive bars (healthy ok, drift-beyond-10 down/distinct, insufficient
-    never green), formatting signed 2-dp percents."""
+    """US-420 + US-661: the LTFT Trend view maps the emitter verdict -> an honest
+    headline + per-drive bars (healthy ok, drift-beyond-10 down/distinct,
+    insufficient never green), formatting signed 2-dp percents.
+
+    US-681 MIGRATED THIS TEST TO THE RULED CONTRACT. It was written for US-420,
+    where the headline printed `current.ltftAvg` -- the newest drive's mean. Spool's
+    TUNER-005 (specs/grounded-knowledge.md, "LTFT trend contract (US-661)",
+    2026-08-31) superseded that: "Display a rolling 5-drive MEDIAN, never the raw
+    per-drive line", because a per-drive line wanders up to 3.72 pp between drives
+    on the same day with nothing wrong. US-661 changed the view; this second copy
+    of the view's contract was not migrated with it, so it kept asserting the
+    behaviour the spec forbids. The assertions here were STRENGTHENED, not relaxed:
+    the headline must show the median AND must not show the newest drive's mean.
+    """
     result = subprocess.run(
         ["node", "-e", _US420_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
