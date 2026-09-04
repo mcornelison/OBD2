@@ -19,6 +19,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex          | Initial -- Sprint 16 US-213 TDD (TD-029 closure).
+# 2026-09-04    | Rex (US-675) | Registry sanity gains CONTIGUITY (no holes in
+#               |              | the chain -- sorted+unique still permits a
+#               |              | gap), a non-vacuity proof for it, and an
+#               |              | append-proof that re-runs the real guards
+#               |              | against a widened registry so no registry
+#               |              | guard can be given a shelf life again.
 # ================================================================================
 ################################################################################
 
@@ -26,7 +32,11 @@
 
 from __future__ import annotations
 
+import ast
+import pathlib
+import re
 import subprocess
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -112,6 +122,19 @@ def _applyNoop(_ctx: RunnerContext) -> None:
     return None
 
 
+def _isTailSubscript(node: ast.expr) -> bool:
+    """True for ``<anything>[-1]`` -- the absolute-tail read US-675 bans."""
+    if not isinstance(node, ast.Subscript):
+        return False
+    index = node.slice
+    return (
+        isinstance(index, ast.UnaryOp)
+        and isinstance(index.op, ast.USub)
+        and isinstance(index.operand, ast.Constant)
+        and index.operand.value == 1
+    )
+
+
 def _mkMigration(version: str, description: str = 'x',
                  applyFn: Callable[[RunnerContext], None] | None = None) -> Migration:
     return Migration(
@@ -153,6 +176,120 @@ class TestRegistry:
         versions = [m.version for m in ALL_MIGRATIONS]
         assert versions == sorted(versions), (
             f'migrations must be in ascending version order: {versions}'
+        )
+
+    def test_versions_areContiguous(self):
+        """No holes in the chain (US-675).
+
+        Sorted + unique still permits a GAP -- ..'0014', '0016'.. -- which is
+        what a migration silently dropped from the registry looks like, and
+        nothing in the suite asserted against it before US-675.
+
+        This is the half of the invariant that CANNOT rot: unlike "v0015 is
+        last", contiguity stays true through every future append, so it never
+        needs hand-editing.  A failure here means a version was removed or
+        renumbered -- fix the registry, do not relax this test.
+        """
+        versions = [int(m.version) for m in ALL_MIGRATIONS]
+        expected = list(range(versions[0], versions[0] + len(versions)))
+        assert versions == expected, (
+            'migration chain has a hole; missing '
+            f'{sorted(set(expected) - set(versions))}'
+        )
+
+    def test_registryGuardsSurviveTheNextMigration(self, monkeypatch):
+        """US-675 VC2 -- adding a migration must not turn these guards red.
+
+        The two guards US-675 retired (``versions[-1] == '0015'`` and
+        ``== '0019'``) were red because they encoded a fact with a shelf life:
+        each was falsified by the next migration to land.  This is the
+        standing proof that the replacements do not share that defect.
+
+        It appends a hypothetical next migration and RE-RUNS THE REAL GUARDS
+        -- ``self.test_...()``, not copies of their bodies -- so it cannot
+        drift away from the assertions it protects.  Any future registry
+        guard written as "version X is last" fails here on the day it is
+        written, rather than silently going red four versions later.
+        """
+        nextVersion = f'{int(ALL_MIGRATIONS[-1].version) + 1:04d}'
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            'ALL_MIGRATIONS',
+            (*ALL_MIGRATIONS, _mkMigration(nextVersion)),
+        )
+
+        self.test_versions_areSortedAscending()
+        self.test_versions_areContiguous()
+        self.test_ALL_MIGRATIONS_uniqueVersions()
+        self.test_v0001_exists_andIsFirst()
+
+    def test_contiguityGuardActuallyDetectsAHole(self, monkeypatch):
+        """``test_versions_areContiguous`` is non-vacuous -- proven, not assumed.
+
+        The real registry has no hole, so that guard passing says nothing
+        about whether it CAN fail.  Written as ``expected = list(versions)``
+        it would be trivially true and would sit there green forever -- the
+        inert-guard shape US-675 exists to remove, and a hole the registry
+        itself can never witness because it supplies no gap to detect.
+
+        So the gap is supplied here and the REAL guard is re-run against it.
+        """
+        gapped = tuple(m for m in ALL_MIGRATIONS if m.version != '0015')
+        monkeypatch.setattr(sys.modules[__name__], 'ALL_MIGRATIONS', gapped)
+
+        with pytest.raises(AssertionError, match='hole'):
+            self.test_versions_areContiguous()
+
+    def test_noRegistryGuardPinsTheAbsoluteTail(self):
+        """The absolute-tail pattern cannot be reintroduced anywhere (TD-062).
+
+        The append-proof above can only protect the guards it re-runs.  A NEW
+        migration test file writing ``versions[-1] == '0026'`` would still
+        pass on the day it is written and go red four versions later -- which
+        is exactly how v0015, v0018 and v0019 each rotted in turn (TD-062
+        recorded three recurrences and asked for this guard).
+
+        So the pattern is banned by shape across the whole server suite.
+
+        NOT banned: ``re.match(r'^\\d{4}$', versions[-1])``, which asserts the
+        tail's FORM and is satisfied by every future tail.  Three files use
+        it legitimately.  The defect is pinning the tail to a LITERAL, so
+        that -- and only that -- is what this matches.
+
+        Matched by AST, not by grep, and deliberately: a textual sweep also
+        fires on prose, so the retirement notes in this suite (which quote
+        the banned line in order to explain it) would be indistinguishable
+        from the defect.  Parsing compares real ``==`` nodes and ignores
+        comments and docstrings, so the ban can be documented in its own
+        terms.
+        """
+        offenders = []
+
+        for path in sorted(pathlib.Path(__file__).parent.glob('test_*.py')):
+            tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+                    continue
+                if not isinstance(node.ops[0], ast.Eq):
+                    continue
+                if not _isTailSubscript(node.left):
+                    continue
+                right = node.comparators[0]
+                if (
+                    isinstance(right, ast.Constant)
+                    and isinstance(right.value, str)
+                    and re.fullmatch(r'\d{4}', right.value)
+                ):
+                    offenders.append(
+                        f'{path.name}:{node.lineno}: '
+                        f'{ast.unparse(node)}'
+                    )
+
+        assert not offenders, (
+            'absolute-tail assertion(s) reintroduced -- these pass today and '
+            'go RED on the next migration.  Assert PLACEMENT (present + '
+            'sorted + directly after the predecessor) instead:\n  '
+            + '\n  '.join(offenders)
         )
 
 
