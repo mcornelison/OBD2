@@ -35,6 +35,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Atlas        | Initial -- ARCH-019 PLD transition witness.
+# 2026-09-03    | Rex (US-667) | Pinned the WARNING on an unwritable path. The
+#                                pre-existing unwritable-path test asserts only
+#                                the return value, so deleting the logger call
+#                                outright left it green -- measured (M3).
 # ================================================================================
 ################################################################################
 
@@ -43,7 +47,9 @@
 from __future__ import annotations
 
 import json
+import logging
 
+from src.pi.power.power_watch import pld_witness
 from src.pi.power.power_watch.pld_witness import (
     readWitness,
     recordTransitionWitnessed,
@@ -99,6 +105,42 @@ def test_an_unwritable_path_does_not_raise(tmp_path):
     """
     target = tmp_path / "no-such-dir" / "deep" / "witness.json"
     assert recordTransitionWitnessed(target, atIso="2026-08-31T20:15:00Z") is False
+
+
+def test_an_unwritable_path_SAYS_SO_at_WARNING(tmp_path, caplog):
+    """⚠️ US-667. Best-effort must not mean SILENT.
+
+    A witness that cannot record is worse than no witness at all: the arm line
+    then reports UNPROVEN forever and nobody can tell 'the pin never moved'
+    from 'the pin moved and we failed to write it down'. That ambiguity is the
+    same defect US-663 fixed for obdLink, and it is exactly what happened on
+    2026-08-31 -- a real transition fired, the write failed against a
+    /var/lib/eclipse-obd that the deploy never created, and the next boot's
+    arm line gave no hint why it still said UNPROVEN.
+
+    The swallow at :func:`recordTransitionWitnessed` is CORRECT and must stay
+    -- raising here would abort the shutdown pipeline this code exists to
+    observe. What must not be swallowed is the FACT that it failed.
+
+    Pinned separately from the does-not-raise test above deliberately: that
+    one asserts only the return value, so deleting the ``logger.warning`` call
+    outright leaves it green. Measured.
+    """
+    target = tmp_path / "no-such-dir" / "witness.json"
+    with caplog.at_level(logging.WARNING, logger=pld_witness.__name__):
+        assert recordTransitionWitnessed(target, atIso="2026-08-31T20:15:00Z") is False
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, (
+        "recording failed and logged NOTHING at WARNING or above. A witness "
+        "that cannot write must say so -- silence here is indistinguishable "
+        "from a transition that never happened."
+    )
+    assert any(str(target) in r.getMessage() for r in warnings), (
+        "the warning does not name the path that could not be written, so an "
+        "operator reading the journal cannot tell WHICH file is missing or "
+        f"why. Records: {[r.getMessage() for r in warnings]}"
+    )
 
 
 def test_recording_NEVER_creates_directories(tmp_path):

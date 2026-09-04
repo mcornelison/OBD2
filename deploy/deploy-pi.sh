@@ -1175,6 +1175,91 @@ step_reassert_obd_mac() {
     remote "sudo bash '${PI_PATH}/deploy/reassert-obd-mac.sh' --mac '${OBD_BT_MAC}' --env-file '${envFile}'"
 }
 
+step_install_persistent_state_dir() {
+    # US-667: provision /var/lib/eclipse-obd -- the PERSISTENT (survives reboot)
+    # state directory.  Distinct from /run/eclipse-obd (tmpfs, wiped every boot,
+    # owned by step_install_states_tmpfiles) and from /var/run/eclipse-obd
+    # (also tmpfs, owned by step_install_drain_forensics_unit).
+    #
+    # WHY THIS EXISTS.  ARCH-019's PLD transition witness writes to
+    # /var/lib/eclipse-obd/pld-transition-witness.json.  NOTHING EVER CREATED
+    # THAT DIRECTORY.  The witness deliberately does not create it either --
+    # Atlas's dev-box guard, "a missing parent means we are not on a deployed
+    # system", which stops a test run inventing C:\var\lib\eclipse-obd on a
+    # Windows box.  That guard is CORRECT and stays; the deploy owns the
+    # filesystem, the application owns the file.  But it made a deployed Pi with
+    # the directory absent indistinguishable from a dev box, so it failed
+    # silently in exactly the case it existed to protect.
+    #
+    # MEASURED 2026-08-31 18:51: a real power-loss transition fired, powerwatch
+    # ran the full sequenced shutdown (147 shutdown lines, poweroff.target
+    # reached) -- and the arm line on the next boot STILL read
+    # 'ARMED (UNPROVEN)'.  `ls -ld /var/lib/eclipse-obd` -> No such file or
+    # directory.  That transition is lost; it is not backfillable, because a
+    # hand-written witness is a manufactured measurement.
+    #
+    # ⚠️ TWO CONSUMERS, TWO UNITS, ONE DIRECTORY (Atlas Gap 5, 2026-09-03).
+    # This directory is NOT the witness's alone:
+    #
+    #   /var/lib/eclipse-obd/pld-transition-witness.json
+    #       written by src/pi/power/power_watch/pld_witness.py
+    #       running inside eclipse-powerwatch.service   (User=mcornelison)
+    #
+    #   /var/lib/eclipse-obd/update-pending.json   (pi.update.markerFilePath)
+    #       written by src/pi/update/update_checker.py + update_applier.py
+    #       running inside eclipse-obd.service          (User=mcornelison)
+    #
+    # BOTH units run as mcornelison TODAY, so one owner satisfies both and a
+    # single `install -d -o mcornelison -g mcornelison` is sufficient.  That is
+    # a fact about the current unit files, not a law -- tests/deploy/
+    # test_persistent_state_dir_install.py reads User= out of both units and
+    # FAILS if they ever diverge, rather than letting a directory be created
+    # correctly for one consumer and wrongly for the other.
+    #
+    # `install -d` is idempotent, and GNU coreutils applies -o/-g/-m to the
+    # target even when it already exists -- so a Pi with a stale root-owned
+    # /var/lib/eclipse-obd (e.g. hand-created by an operator) should self-heal
+    # on a routine re-deploy.  That "should" is deliberately NOT trusted: the
+    # writability probe below is what actually establishes it, and it is the
+    # thing that speaks up if the self-heal did not happen.  Asserting the
+    # repair and never checking is how this defect shipped in the first place.
+    #
+    # Runs UNCONDITIONALLY and BEFORE both consuming unit installs.  Deliberately
+    # NOT folded into step_install_drain_forensics_unit: that step's `install -d`
+    # calls sit AFTER an `exit 0` guard on drain-forensics.service being present,
+    # so a deploy missing that one unit silently skips provisioning. Persistent
+    # state two other services depend on must not inherit that coupling.
+    echo "--- Step: Provisioning persistent state dir /var/lib/eclipse-obd (US-667) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo install -d -o mcornelison -g mcornelison /var/lib/eclipse-obd"
+        echo "DRY-RUN would: verify /var/lib/eclipse-obd/pld-transition-witness.json is writable by mcornelison (eclipse-powerwatch.service -- ARCH-019 PLD witness)"
+        echo "DRY-RUN would: verify /var/lib/eclipse-obd/update-pending.json is writable by mcornelison (eclipse-obd.service -- pi.update.markerFilePath)"
+        return 0
+    fi
+    remote "
+        sudo install -d -o mcornelison -g mcornelison /var/lib/eclipse-obd \
+            && echo '/var/lib/eclipse-obd provisioned (owner mcornelison; persistent, survives reboot).' \
+            || echo 'WARN: could not provision /var/lib/eclipse-obd -- the PLD witness and the update marker will BOTH fail to write.' >&2
+
+        # Creating the directory is not the same as proving either service can
+        # write into it. Check BOTH consumer paths as the account their unit
+        # actually runs as -- a directory correct for one and wrong for the
+        # other reproduces this defect in the update subsystem, where nobody
+        # has looked. Warn-only: a stale-ownership finding must be VISIBLE in
+        # the deploy log, but must not abort a deploy mid-flight.
+        for witnessTarget in /var/lib/eclipse-obd/pld-transition-witness.json /var/lib/eclipse-obd/update-pending.json; do
+            targetDir=\$(dirname \"\$witnessTarget\")
+            if ! sudo -u mcornelison test -w \"\$targetDir\"; then
+                echo \"WARN: \$targetDir is NOT writable by mcornelison -- the service writing \$witnessTarget will fail SILENTLY. Inspect: ls -ld \$targetDir\" >&2
+            elif [ -e \"\$witnessTarget\" ] && ! sudo -u mcornelison test -w \"\$witnessTarget\"; then
+                echo \"WARN: \$witnessTarget exists but is NOT writable by mcornelison (stale ownership from a hand-created file?). Inspect: ls -l \$witnessTarget\" >&2
+            else
+                echo \"OK: \$witnessTarget is writable by mcornelison.\"
+            fi
+        done
+    "
+}
+
 step_install_eclipse_obd_unit() {
     # Install deploy/eclipse-obd.service into /etc/systemd/system/ whenever the
     # rsynced copy differs from the installed copy, then systemctl daemon-reload.
@@ -2424,6 +2509,13 @@ step_install_python_deps
 # synced src/pi/ops/obdctl.py) and BEFORE the unit installs, so that if a later
 # step leaves a unit in a bad state the operator already has the tool to fix it.
 step_install_obdctl
+# US-667: /var/lib/eclipse-obd must exist BEFORE either of its two consuming
+# units is installed and started -- eclipse-obd.service (update-pending marker)
+# and eclipse-powerwatch.service (ARCH-019 PLD transition witness). Nothing
+# created it until now, so a real power-loss transition on 2026-08-31 was
+# witnessed, acted on, and then never recorded: the arm line read UNPROVEN on
+# the next boot with no indication why.
+step_install_persistent_state_dir
 step_install_eclipse_obd_unit
 # US-277: install drain-forensics .service + .timer alongside the main
 # eclipse-obd unit so a fresh deploy is enough to start the forensic
@@ -2452,7 +2544,13 @@ step_install_boot_progress_units
 # Phase-2 T6: install eclipse-powerwatch.service (the bounded pre-shutdown
 # pipeline / graceful-poweroff watcher). Same sync-if-changed posture as the
 # other units; additionally restarts the long-running service on change so the
-# new code actually runs. No extra runtime dirs (outcome record -> data/).
+# new code actually runs.
+#
+# US-667 CORRECTION: this used to read "No extra runtime dirs (outcome record ->
+# data/)". That stopped being true when ARCH-019 added the PLD transition
+# witness at /var/lib/eclipse-obd/pld-transition-witness.json, and the stale
+# comment is part of why nobody noticed the directory was never created.
+# step_install_persistent_state_dir (dispatched above) owns that directory.
 step_install_power_watch_unit
 
 # US-395: F-103 boot/shutdown splash deploy integration.  Order matters at

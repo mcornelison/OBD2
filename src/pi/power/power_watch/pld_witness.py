@@ -40,6 +40,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Atlas        | Initial -- ARCH-019 PLD transition witness.
+# 2026-09-03    | Rex (US-667) | The failure WARNING now names the path
+#                                explicitly instead of relying on the OSError
+#                                repr to carry it. The dev-box guard below is
+#                                UNCHANGED and deliberately so -- deploy-pi.sh
+#                                now provisions /var/lib/eclipse-obd, because
+#                                the deploy owns the filesystem and the
+#                                application owns the file.
 # ================================================================================
 ################################################################################
 
@@ -115,5 +122,16 @@ def recordTransitionWitnessed(path: Path | str = DEFAULT_WITNESS_PATH, *, atIso:
         )
         return True
     except OSError as exc:
-        logger.warning("pld-witness: could not record transition (%s)", exc)
+        # US-667: name the PATH explicitly rather than relying on the OSError
+        # repr to carry it. Some OSError variants omit filename entirely, and
+        # on Windows the repr escapes separators -- so an operator grepping the
+        # journal for the witness path would miss its own failure. The one
+        # thing this line exists to say is WHICH file could not be written.
+        logger.warning(
+            "pld-witness: could not record transition at %s (%s) -- the arm "
+            "line will read UNPROVEN despite a witnessed transition; is the "
+            "parent directory provisioned?",
+            target,
+            exc,
+        )
         return False
