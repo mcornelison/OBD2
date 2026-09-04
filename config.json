@@ -49,6 +49,7 @@
         8,
         16
       ],
+      "retryCeilingSeconds": 320.0,
       "maxRetries": 5,
       "connectionTimeoutSeconds": 30
     },

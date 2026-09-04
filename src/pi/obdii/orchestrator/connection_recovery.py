@@ -348,7 +348,15 @@ class ConnectionRecoveryMixin:
             )
             return
 
-        connectFn = getattr(self._connection, 'connect', None)
+        # US-673: one attempt per tick, not a six-attempt burst.  `connect()`
+        # is itself a retry loop, so every heartbeat tick that called it spent
+        # 31s doing six rfcomm binds -- multiplying this heartbeat's ceilinged
+        # idle cadence by 6.  `connectOnce` hands the cadence back to the
+        # heartbeat, which is where US-325 / I-025 put it.  Duck-typed
+        # connections without the seam fall back to `connect()` unchanged.
+        connectFn = getattr(self._connection, 'connectOnce', None)
+        if connectFn is None:
+            connectFn = getattr(self._connection, 'connect', None)
         isConnectedFn = getattr(self._connection, 'isConnected', None)
         if connectFn is None or isConnectedFn is None:
             logger.debug(

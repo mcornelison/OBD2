@@ -81,6 +81,15 @@ OBD_DEFAULTS: dict[str, Any] = {
 
     # Bluetooth
     'pi.bluetooth.retryDelays': [1, 2, 4, 8, 16],
+    # US-673: the ramp above is the HEAD of the retry schedule, not all of it.
+    # Once it is exhausted the delay escalates geometrically to this ceiling
+    # instead of plateauing on 16s forever (measured: 275+ connect retries over
+    # 13 hours against a dongle that could not answer).  Both halves of the one
+    # schedule live here, side by side, so the ceiling is never a second
+    # hard-coded constant somewhere else.  320s is the US-325 / I-025 figure the
+    # fleet has run since 2026-05-11.  A non-positive value is the documented
+    # opt-out and restores the pre-US-673 plateau.
+    'pi.bluetooth.retryCeilingSeconds': 320.0,
     'pi.bluetooth.maxRetries': 5,
     'pi.bluetooth.connectionTimeoutSeconds': 30,
     # rfcomm resolution (US-193 / TD-023). macAddress may be a MAC or a
