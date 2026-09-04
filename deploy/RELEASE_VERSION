@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.42",
-  "theme": "ARCH-020 record + US-668 GPIO6, both tiers",
-  "description": "BOTH TIERS to V0.29.42 -- Pi and server stay in sync even when a change is one-sided. SERVER: ARCH-020's maintenance CLI, models, migration v0025, seed loader -- closes the gap Spool hit 2026-09-03 (tables seeded, no write path). PI: US-668 -- powerwatch OWNS GPIO6, collector subscribes; power.mode gone. Shared cause of power.source unknown + battery-health stale. NOT yet verified on hardware."
+  "version": "V0.29.43",
+  "theme": "Sprint 80 -- punch-list round 2, 10/10",
+  "description": "US-667 deploy provisions /var/lib/eclipse-obd for BOTH consumers. US-673 retry ceiling; the heartbeat stops bursting 6x. US-672 availability = the link's CONDITION, not the retry phase. US-661 the LTFT trend on Spool's 5-drive median. US-675/669/670/664/676 tooling. US-681: the gate caught US-661 rendering a healthy window 'insufficient' -- a US-420 fixture never migrated. AWAITING the key-off."
 }
