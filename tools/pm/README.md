@@ -25,6 +25,48 @@ Shows:
 CLI for common `backlog.json` mutations at sprint boundaries. Every operation is
 idempotent (re-run-safe). Use `--dry-run` to preview.
 
+> The `python offices/pm/scripts/backlog_set.py ...` invocations below are stale
+> — the tools moved to `tools/pm/` in the 2026-08-24 decouple and their data
+> moved to `$FLEET_SHARE`. Invoke as `python -m tools.pm.backlog_set ...`.
+
+### Create a Story (`--add-story`, US-669)
+
+Files a Story with every schema-required field already stamped, so
+`validateBacklog` accepts it unmodified. This is the only story-creation path;
+before it existed, filing a story meant hand-editing a ~900 KB JSON file and
+remembering twelve required fields — which drifted twice (47 records repaired by
+US-465, then 41 more).
+
+```bash
+python -m tools.pm.backlog_set --add-story \
+    --story-parent F-118 \
+    --story-title "The backlog lint reports every violation" \
+    --story-goal "As the PM, I want ... because ..." \
+    --story-dod "SSOT: tools/pm/sprint_lint.py" \
+    --story-dod "END STATE: every violation is listed" \
+    --story-vc "run the lint over a backlog with 3 violations" "all 3 are reported" \
+    --story-type tech-debt --story-size S --story-status sprint-ready
+```
+
+What it stamps, and what it refuses:
+
+- **Stamped** — `id` (allocated above `story_counter.json`, `counters.story` and
+  every id present), `createdAt`/`updatedAt` (run date), `conditionalOutcomes`
+  and `tasks` (empty lists), and `type`/`size`/`status` defaults
+  (`normal`/`M`/`pending`).
+- **Refused, with nothing written** — missing or blank `goal`,
+  `definitionOfDone`, `validationCriteria`, `title` or `parent` (it will never
+  invent a placeholder to satisfy the schema); a `parent` that is not an
+  existing **Feature** id (Rule 11); an `id` that already exists.
+- Every reason is reported at once, not one per run.
+- Writes via temp + `os.replace`, never truncating in place. The counter lands
+  first on purpose: a failed backlog write leaves a harmless *gap* in the id
+  sequence rather than handing the next caller a *duplicate*.
+
+The required-field list is read from `backlog_schema.REQUIRED_STORY_FIELDS` and
+never restated — add a field there and this tool starts requiring it with no
+edit. A test bans a second copy of that constant anywhere in `tools/pm/`.
+
 ### Bump `lastUpdated` + `updatedBy`
 
 ```bash

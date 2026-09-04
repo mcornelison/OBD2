@@ -72,15 +72,16 @@ from tools.pm._paths import REPO_ROOT, SHARE_ROOT
 BACKLOG_PATH = SHARE_ROOT / "pm" / "backlog.json"
 ARCHIVE_DIR = SHARE_ROOT / "ralph" / "archive"
 
-# Required story fields per backlog_schema.REQUIRED_STORY_FIELDS. Kept as a
-# local constant so this tool has no import-time dependency ordering with the
-# validator, but the two MUST stay in sync (a drift here would let a
-# non-compliant story slip past the backfill).
-REQUIRED_STORY_FIELDS = frozenset({
-    "id", "parent", "title", "type", "size", "status",
-    "goal", "definitionOfDone", "conditionalOutcomes", "validationCriteria",
-    "createdAt", "updatedAt",
-})
+# The required story fields come from the schema, which is their SSOT.
+#
+# This was a restated copy until US-669, guarded only by a comment saying the
+# two "MUST stay in sync". That is the same defect class US-669 closes on the
+# creation side: a duplicated list goes stale the moment the schema grows, and
+# nothing goes red -- the backfill would simply stop repairing the new field
+# while still reporting every story compliant. backlog_schema imports nothing
+# from tools.pm, so there is no circular-import cost to reading it directly.
+# tests/pm/test_backlog_add_story.py bans a second assignment across tools/pm.
+from tools.pm.backlog_schema import REQUIRED_STORY_FIELDS  # noqa: E402
 
 # Deliberate terminal end-states -- never overwritten by a shipped signal.
 TERMINAL_STATUSES = frozenset({"complete", "superseded", "declined"})
