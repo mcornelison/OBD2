@@ -305,15 +305,17 @@ Reads `offices/pm/regression_manifest.json` (stdlib JSON; no PyYAML dep).
 
 ## repair_ralph_agents.py
 
-Repair `offices/ralph/ralph_agents.json` corruption from Rex's bloated-note bug pattern (unescaped quote in long note breaks `json.load`). Observed Sprint 21 close, Sprint 24 close.
+Repair `offices/ralph/ralph_agents.json` corruption from Rex's bloated-note bug pattern (unescaped quote in long note breaks `json.load`). Observed Sprint 21 close, Sprint 24 close and 2026-08-31 -- three occurrences to date.
 
 ```bash
-python offices/pm/scripts/repair_ralph_agents.py             # repair if corrupt
-python offices/pm/scripts/repair_ralph_agents.py --dry-run   # detect + describe
-python offices/pm/scripts/repair_ralph_agents.py --check     # exit 0/1 on validity
+python -m tools.pm.repair_ralph_agents             # repair if corrupt
+python -m tools.pm.repair_ralph_agents --dry-run   # detect + describe
+python -m tools.pm.repair_ralph_agents --check     # exit 0/1 on validity
 ```
 
-Strategy: truncate Rex's bloated note to a short pointer; preserve agents 2/3/4 verbatim. Detail log canonical in `progress.txt`.
+Strategy: truncate Rex's bloated note to a short pointer; preserve every other agent verbatim. Detail log canonical in `progress.txt`.
+
+The roster size is **read from the file under repair**, never assumed (US-664). `max_agent` is recovered from the document being repaired, and the post-repair agent count is compared against the pre-repair count -- so a repair that would lose (or invent) an agent still refuses, at any roster size. Writes go through a temp file + `os.replace`: the share has no undo, and this tool writes over the only copy of the file it exists to recover.
 
 ## sprint_lint.py
 
