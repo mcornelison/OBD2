@@ -18,7 +18,10 @@ Catches things I (Marcus) routinely get wrong when grooming:
     pattern where Ralph's per-story commits log work that never staged)
 
 Backlog (--backlog mode):
-  - Schema validation via backlog_schema.validateBacklog (errors)
+  - Schema validation via backlog_schema.collectBacklogViolations (errors).
+    Reports EVERY violation in one run, plus a count per violation class
+    (US-670) -- the old first-failure-only path under-reported a 41-story
+    drift as a single line, which read as a triviality and was deferred.
   - Rollup-cache staleness check: compares stored Epic/Feature status against
     what computeRollups would compute fresh (warnings)
 
@@ -460,8 +463,17 @@ def lintSprintValidation(sprintData: dict, shareRoot: Path) -> list[str]:
 
 @dataclass
 class LintError:
-    """A schema-validation failure from lintBacklog."""
+    """
+    A schema-validation failure from lintBacklog.
+
+    Attributes:
+        message: Human-readable reason, naming the offending entity.
+        code: Violation class from backlog_schema.VIOLATION_CODES (US-670).
+            The --backlog summary groups its counts by this. Defaults to ""
+            so callers constructing a bare LintError stay valid.
+    """
     message: str
+    code: str = ""
 
 
 @dataclass
@@ -474,9 +486,9 @@ def lintBacklog(path: Path) -> tuple[list[LintError], list[LintWarning]]:
     """
     Lint a backlog.json v2.0.0 file. Returns (errors, warnings).
 
-    Errors are schema-validation failures (from validateBacklog).
-    Warnings are rollup-cache mismatches (Epic/Feature status stored differs
-    from what computeRollups would compute fresh).
+    Errors are schema-validation failures -- EVERY one of them, not just the
+    first (US-670). Warnings are rollup-cache mismatches (Epic/Feature status
+    stored differs from what computeRollups would compute fresh).
 
     Args:
         path: Path to backlog.json (any Path-like object with .read_text()).
@@ -484,18 +496,23 @@ def lintBacklog(path: Path) -> tuple[list[LintError], list[LintWarning]]:
     Returns:
         Tuple of (errors, warnings) lists of LintError / LintWarning.
     """
-    from tools.pm.backlog_schema import BacklogValidationError, validateBacklog
+    from tools.pm.backlog_schema import collectBacklogViolations
     from tools.pm.pm_status import computeRollups
 
     data = json.loads(path.read_text(encoding="utf-8"))
     errors: list[LintError] = []
     warnings: list[LintWarning] = []
 
-    try:
-        validateBacklog(data)
-    except BacklogValidationError as e:
-        errors.append(LintError(message=str(e)))
-        return errors, warnings  # short-circuit on validation failure
+    violations = collectBacklogViolations(data)
+    if violations:
+        errors.extend(
+            LintError(message=v.message, code=v.code) for v in violations
+        )
+        # The ROLLUP check is still skipped -- deliberately, and it is not the
+        # US-670 truncation. computeRollups over a file that failed schema
+        # validation produces meaningless warnings and can raise on the very
+        # fields that are missing. Only the one-error-per-run cap is gone.
+        return errors, warnings
 
     # Rollup-cache check: deep-copy data, recompute, diff with stored.
     storedEpic = {e["id"]: e["status"] for e in data["epics"]}
@@ -517,6 +534,36 @@ def lintBacklog(path: Path) -> tuple[list[LintError], list[LintWarning]]:
             ))
 
     return errors, warnings
+
+
+def printViolationSummary(errors: list[LintError]) -> None:
+    """
+    Print a per-violation-class count for a --backlog run.
+
+    US-670: the per-violation lines alone leave a reader counting by hand, and
+    a 41-story drift then reads like a 1-story typo. This states the totals so
+    the scale is visible without running anything else.
+
+    Prints NOTHING when there are no errors -- a lint that prints on success
+    trains people to stop reading it, which is the same failure one layer up.
+
+    Args:
+        errors: LintErrors from lintBacklog, each carrying a violation code.
+    """
+    if not errors:
+        return
+
+    counts: dict[str, int] = {}
+    for e in errors:
+        counts[e.code or "unclassified"] = counts.get(e.code or "unclassified", 0) + 1
+
+    width = max(len(code) for code in counts)
+    print(
+        f"VIOLATIONS: {len(errors)} total in {len(counts)} class(es)",
+        file=sys.stderr,
+    )
+    for code, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        print(f"  {code:<{width}} {count}", file=sys.stderr)
 
 
 def main(argv: list[str]) -> int:
@@ -563,6 +610,7 @@ def main(argv: list[str]) -> int:
         errors, warnings = lintBacklog(backlogPath)
         for e in errors:
             print(f"ERROR: {e.message}", file=sys.stderr)
+        printViolationSummary(errors)
         for w in warnings:
             print(f"WARNING: {w.message}")
         return 1 if errors or (args.strict and warnings) else 0

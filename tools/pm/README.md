@@ -338,6 +338,35 @@ Exit code: 0 = clean, 1 = errors found (or warnings with --strict), 2 = file/arg
 
 Run this BEFORE every PM commit that touches sprint.json.
 
+### `--backlog` mode
+
+Lints `$FLEET_SHARE/pm/backlog.json` against schema v2.0.0 instead of the
+sprint. Schema violations are errors; rollup-cache staleness is a warning.
+
+```bash
+python -m tools.pm.sprint_lint --backlog
+```
+
+**It reports EVERY violation in one run** (US-670), then a count per violation
+class:
+
+```text
+ERROR: Story US-628: missing required fields ['createdAt', 'updatedAt']
+ERROR: Story US-629: missing required fields ['createdAt', 'updatedAt']
+...
+VIOLATIONS: 41 total in 2 class(es)
+  storyMissingFields 40
+  storyOrphan         1
+```
+
+The count line is the point. Until US-670 the lint stopped at the first
+failing story, so a 41-story drift printed one line and was indistinguishable
+from a single typo -- it was believed, and it under-reported by 40x. Firing is
+not the same as informing.
+
+Nothing is printed on a clean backlog; exit stays 0. A single violation still
+exits 1 -- the mode is more informative, never more permissive.
+
 ## Composition pattern: slash commands call Python scripts
 
 Per `feedback_pm_python_for_deterministic_work.md` (CIO 2026-05-05): repeatable mechanical work belongs in a Python script in this folder; orchestration belongs in a slash command at `.claude/commands/`. They compose -- a slash command's phases each invoke `python offices/pm/scripts/<verb>.py [args]`. This saves CIO tokens (script body doesn't reappear in messages) + gets correct deterministic results.
