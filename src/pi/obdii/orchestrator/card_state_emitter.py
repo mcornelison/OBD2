@@ -40,6 +40,12 @@
 #               |              | the emitter as well as the journal -- the state
 #               |              | file is the SSOT the card polls; the journal line
 #               |              | stays because it records the TRANSITION.
+# 2026-09-03    | Ralph (Rex)  | US-672: availability describes the link's
+#               |              | CONDITION, never the retry loop's phase -- one
+#               |              | decision point, taken before the phase is read.
+#               |              | And the THIRD cause gets its own word: "never
+#               |              | connected", not "OBD: off" (Atlas, the half
+#               |              | US-663 missed).
 # ================================================================================
 ################################################################################
 
@@ -89,6 +95,17 @@ _REASON_UNSET: Any = object()
 # a shared vocabulary drifting away from its causes.
 REASON_OBD_LINK_NOT_READ = "not read yet"  # nothing has looked at the link yet
 REASON_OBD_LINK_UNREADABLE = "link unreadable"  # we looked; getStatus() raised
+
+# US-672 (Atlas ruling 2026-09-02, the half US-663 missed) -- the THIRD cause.
+#
+# US-663 kept `REASON_OBD_OFF` for this branch and recorded it as "the one case
+# where 'OBD: off' is true". Atlas overruled that: the branch is reached from
+# `totalConnections == 0`, which is a fact about US -- we have never connected --
+# and "OBD: off" is a claim about the CAR. *"That is an assertion about the world
+# drawn from an absence of evidence about ourselves."* With the key ON it is
+# simply false, which is US-663's own original defect surviving inside US-663's
+# fix. The honest word is what we actually know.
+REASON_OBD_NEVER_CONNECTED = "never connected"  # we have never reached this car
 
 # US-628 -- the POWER-SOURCE acquisition's own failure reasons.
 #
@@ -520,11 +537,16 @@ class CardStateEmitterMixin:
     def _gatherObdLinkState(self) -> tuple[str, int, bool, str | None]:
         """Map the ObdConnection state -> (linkState, retries, available, reason).
 
-        available is False (US-429 typed NA) only when the OBD source is ABSENT
-        -- i.e. we have NEVER connected (totalConnections == 0): car off / no
-        dongle / bench. A dropped-but-previously-seen link is `down` but still
-        AVAILABLE (we are retrying a real car). Connected -> linked; connecting/
-        reconnecting -> reconnecting. A missing connection is unavailable.
+        available is False (US-429 typed NA) exactly when the OBD source is
+        ABSENT -- i.e. we have NEVER connected (totalConnections == 0): car off /
+        no dongle / bench. A dropped-but-previously-seen link stays AVAILABLE (we
+        are retrying a real car), whether or not an attempt happens to be in
+        flight at this instant. Connected -> linked; retrying a car we have seen
+        -> reconnecting/down by phase. A missing connection is unavailable.
+
+        US-672: the RETRY PHASE is deliberately not an input to `available`. It
+        used to be, on one of the two not-connected branches only, and that is
+        the whole defect -- see the comment at the decision below.
 
         US-663: the fourth element is the typed-NA reason that TRAVELS WITH the
         absence -- one word per cause, never one word for three. It is None on
@@ -539,7 +561,6 @@ class CardStateEmitterMixin:
         `down` is a MEASUREMENT ("we looked, there is no signal") and inventing
         an unknown token here would be a second vocabulary for one fact.
         """
-        from pi.splash.source_availability import REASON_OBD_OFF
         from pi.splash.system_status_emitter import (
             OBD_DOWN,
             OBD_LINKED,
@@ -567,12 +588,36 @@ class CardStateEmitterMixin:
 
         if connected:
             return (OBD_LINKED, retries, True, None)
+
+        # US-672 -- ONE question, ONE place it is answered. Availability asks
+        # "is the source ABSENT" (US-429), and the answer is whether this Pi has
+        # ever spoken to this car. It is decided HERE, once, BEFORE the retry
+        # phase is looked at, so the two not-connected branches below cannot
+        # disagree about it.
+        #
+        # They used to. The reconnect branch returned True unconditionally while
+        # the fall-through gated on `totalConns > 0`, so a car we have never
+        # reached published available:true mid-attempt and available:false
+        # between attempts -- 45 AMBER / 38 GREY over 5.5 minutes on a PARKED
+        # car with the key OUT (CIO, 2026-09-01), nothing about the world
+        # changing. Retry phase is a fact about our CLIENT; availability is a
+        # fact about the CAR, and an answer that changes every 100 seconds was
+        # answering the wrong question.
+        if totalConns == 0:
+            return (OBD_DOWN, retries, False, REASON_OBD_NEVER_CONNECTED)
+
+        # Available: we HAVE reached this car, so the source is present and we
+        # are failing to hold it. The link-state token still carries the retry
+        # PHASE, which is where Atlas said a "trying now" fact may live so long
+        # as it does not ride on `available` -- the OBD LINK tile's
+        # "RECONNECTING / retry 3" is a diagnostic the operator goes looking for.
+        # The GLYPH does not strobe on it because dashboard.css paints `down` and
+        # `reconnecting` with the same token (US-488), which is asserted in
+        # tests/ui/test_carousel_obd_availability_holds_one_value.py rather than
+        # left as a coincidence.
         if "reconnect" in stateStr or "connecting" in stateStr:
             return (OBD_RECONNECTING, retries, True, None)
-        # disconnected / error: available iff we have EVER seen this car. This is
-        # the ONE branch "OBD: off" is true of -- we looked, and there is no car.
-        available = totalConns > 0
-        return (OBD_DOWN, retries, available, None if available else REASON_OBD_OFF)
+        return (OBD_DOWN, retries, True, None)
 
     def _gatherPowerState(self) -> tuple[str, str | None]:
         """Return (powerSource, powerSourceReason) from the power-source SSOT.

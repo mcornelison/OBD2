@@ -47,6 +47,14 @@
 #   the PRODUCER and not in either glyph: the BT glyph and the WiFi glyph are
 #   shown obeying the SAME source rule on the SAME payload shape.
 #
+#   🔴 US-672 FIXED THAT PRODUCER ON 2026-09-03, exactly where this file said the
+#   fix belonged. The characterisation test below is RE-RECORDED: a never-read
+#   link is now NEUTRAL and is distinguishable from a genuinely degraded one,
+#   which is what the ARCH-007 reading demanded. Everything else in this file was
+#   already written against the SSOT rather than against a cause->colour table
+#   (see `_expectedColour`), so the sweeps carried across the fix unchanged --
+#   which is the whole reason that helper was written that way.
+#
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-31
@@ -59,6 +67,9 @@
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-658 recorded pass: three glyph
 #               |              | states, pinned as COLOURS, plus the never-
 #               |              | asserted green and the stale-green reset.
+# 2026-09-03    | Ralph (Rex)  | US-672: re-record the I-us663 characterisation
+#               |              | -- a never-read link is NEUTRAL now, and
+#               |              | distinguishable from a degraded one.
 # ================================================================================
 ################################################################################
 
@@ -720,46 +731,54 @@ def test_theDashboardReadsTheLinkStateExactlyOnce():
 
 
 # ---------------------------------------------------------------------------
-# CHARACTERISATION -- RECORDED, NOT FIXED. This is I-us663, read on the axis
-# US-658's acceptance criteria state it: "AMBER IS A CLAIM ABOUT A MEASUREMENT,
-# and you cannot make a claim about a value you have not read."
+# RE-RECORDED BY US-672 (2026-09-03). This was a CHARACTERISATION test: it
+# pinned I-us663 on the axis US-658's acceptance criteria state it -- "AMBER IS
+# A CLAIM ABOUT A MEASUREMENT, and you cannot make a claim about a value you
+# have not read" -- and it was written to fail on purpose when the producer was
+# fixed. It did. The finding it recorded is now the invariant it asserts.
 #
-# I-us663's own two characterisation tests (in
-# tests/ui/test_carousel_obd_link_typed_unknown.py) pin the FLAP -- one condition
-# publishing two availabilities on successive samples. These pin something the
-# flap tests do not: that a SINGLE sample, on its own, paints amber over a link
-# this Pi has never once read. Both fail on purpose when I-us663 is fixed;
-# re-record them, do not relax them.
+# What this keeps that the US-672 file does not: the ARCH-007 reading. US-672's
+# own guard asks whether the two conditions are DISTINGUISHABLE and whether each
+# holds its colour; this asks the sharper question of WHICH colour a never-read
+# link is entitled to, and answers it from the amber semantics rather than from
+# the availability rule.
 # ---------------------------------------------------------------------------
 
 
 @_needsNode
-def test_characterisation_amberIsPaintedOverALinkThatHasNeverBeenRead(tmp_path):
+def test_amberIsNeverPaintedOverALinkThatHasNeverBeenRead(tmp_path):
     """
     Given: ARCH-007 -- amber is a claim about a MEASUREMENT
     When: the Pi is mid-reconnect to a car it has NEVER connected to
-          (`totalConnections == 0`)
-    Then: TODAY the glyph is AMBER, and it is indistinguishable from the genuinely
-          degraded link two lines below.
+          (`totalConnections == 0`), beside a genuinely degraded link it HAS
+    Then: the never-read link is NEUTRAL, the degraded one is AMBER, and the two
+          are distinguishable.
 
-          THE STORY'S TITLE, TRUE, BY A MECHANISM THE STORY DID NOT NAME. The
-          glyph is not at fault -- it renders `reconnecting` amber because the
-          PRODUCER published `available: true`, and `_gatherObdLinkState` does
-          that unconditionally on the reconnect branch while gating the `down`
-          branch on `totalConnections > 0`. So the ONE thing that separates these
-          two payloads -- has this Pi ever spoken to this car -- is the thing the
-          availability rule drops. Filed as I-us663 (with the fix options and the
-          routing question); NOT fixed here, because conditionalOutcome 1 of this
-          story says a distinction the SSOT does not carry is a producer story.
+          🔴 RE-RECORDED. This test used to assert the opposite -- both AMBER and
+          indistinguishable -- as US-658's recorded finding.
+
+          THE STORY'S TITLE WAS TRUE, BY A MECHANISM THE STORY DID NOT NAME, and
+          the glyph was never at fault: it rendered `reconnecting` amber because
+          the PRODUCER published `available: true`, unconditionally on the
+          reconnect branch while gating the `down` branch on
+          `totalConnections > 0`. So the ONE thing that separates these two
+          payloads -- has this Pi ever spoken to this car -- was the thing the
+          availability rule dropped. Filed as I-us663, fixed by US-672 after
+          Atlas ruled that retry phase is a fact about our client and must not
+          ride on `available`.
+
+          The amber semantics are what make the new answer the RIGHT one rather
+          than merely a different one: we have taken no measurement of this car,
+          so we are not entitled to report a degraded one.
     """
     causes = _allCauses()
     neverRead = _emit(tmp_path / "never", causes["reconnecting_never_linked"])
     genuinelyDegraded = _emit(tmp_path / "seen", causes["reconnecting_seen_before"])
 
-    assert neverRead["source"]["obd"]["available"] is True
-    assert _btGlyph(neverRead)[1] == AMBER
+    assert neverRead["source"]["obd"]["available"] is False
+    assert _btGlyph(neverRead)[1] == NEUTRAL
     assert _btGlyph(genuinelyDegraded)[1] == AMBER
-    assert _btGlyph(neverRead) == _btGlyph(genuinelyDegraded)
+    assert _btGlyph(neverRead) != _btGlyph(genuinelyDegraded)
 
 
 @_needsNode

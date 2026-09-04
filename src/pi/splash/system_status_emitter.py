@@ -22,6 +22,9 @@
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-400 system-status card)
 # 2026-07-21    | Ralph (Rex)  | US-480-a: add the idle-SSOT `idle` boolean (Atlas
 #               |              | ruling b) -- the emitter owns the idle decision.
+# 2026-09-03    | Ralph (Rex)  | US-672: drop the invisible `or REASON_OBD_OFF`
+#               |              | default -- an unexplained absence must not have
+#               |              | a claim about the CAR filled in for it.
 # ================================================================================
 ################################################################################
 
@@ -39,7 +42,6 @@ from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 
 # US-429 honest-availability: one source-availability truth per source (SSOT).
 from pi.splash.source_availability import (
-    REASON_OBD_OFF,
     SOURCE_OBD,
     SOURCE_WIFI,
     buildSourceState,
@@ -178,8 +180,10 @@ def buildSystemStatusState(
         obdAvailable: Whether the OBD source is present at all (US-429). False on
             wall power / car off -- the OBD-link tile then renders a typed NA, not
             a fabricated or stale link state. Defaults True (backward compatible).
-        obdUnavailableReason: The typed-NA reason when ``obdAvailable`` is False
-            (defaults to ``REASON_OBD_OFF``). Ignored when available.
+        obdUnavailableReason: The typed-NA reason when ``obdAvailable`` is False.
+            Ignored when available. NO DEFAULT (US-672): an unsupplied reason
+            falls through to ``buildSourceState``'s bare ``"unavailable"``, never
+            to a claim about the car.
         lastDrive: The US-505 last-COMPLETED-drive block
             (``{"driveId": int, "startedAtTs": str|None}``) from
             :func:`pi.obdii.last_drive_summary.readLastDriveSummary`, or None
@@ -266,9 +270,15 @@ def buildSystemStatusState(
         },
         "idle": idle,
         "source": {
-            SOURCE_OBD: buildSourceState(
-                obdAvailable, obdUnavailableReason or REASON_OBD_OFF
-            ),
+            # US-672: NO car-off fallback. This used to read
+            # `obdUnavailableReason or REASON_OBD_OFF`, so a caller that
+            # published an absence without saying why had "OBD: off" -- a claim
+            # about the CAR -- filled in on its behalf, invisibly. The producer
+            # supplies a real reason on every branch it can reach (pinned in
+            # tests/ui/test_carousel_obd_link_typed_unknown.py); a caller that
+            # does not now gets `buildSourceState`'s honest bare "unavailable"
+            # instead of a guess about a car nobody asked about.
+            SOURCE_OBD: buildSourceState(obdAvailable, obdUnavailableReason),
             SOURCE_WIFI: buildSourceState(
                 wifiAvailable, wifiUnavailableReason or REASON_WIFI_UNKNOWN
             ),
