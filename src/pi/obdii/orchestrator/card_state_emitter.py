@@ -75,6 +75,13 @@ _DEFAULT_SEVERITY_TABLE_PATH = str(
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
 
+# US-661: how often the `ltft-trend` producer re-aggregates. Five minutes, not
+# the 2 s card cadence: LTFT is a MULTI-DRIVE signal whose published value
+# cannot change until a drive ENDS, so a faster cadence buys nothing and costs a
+# multi-drive scan of `realtime_data` -- the table the logger is concurrently
+# writing to -- on every tick.
+_DEFAULT_LTFT_TREND_INTERVAL_S = 300.0
+
 # US-632: "no reason has been observed yet" -- distinct from an observed None
 # (which means the verdict RESOLVED). A plain None default would swallow the
 # first log line whenever the producer starts out resolved and later degrades.
@@ -199,6 +206,15 @@ class CardStateEmitterMixin:
     _gearStateEmitter: Any = None
     _lastSpeedReading: Any = None
     _lastRpmReading: Any = None
+    # US-661: the `ltft-trend` producer. CLASS defaults for the same reason as
+    # the gear pair above. Its own cadence -- the trend is a MULTI-DRIVE signal
+    # that cannot change more than once per drive, and recomputing it on the 2 s
+    # card tick would put a multi-drive aggregation over the Pi's hottest write
+    # table into the run loop 30 times a minute for an answer that is identical
+    # every time.
+    _ltftTrendEmitter: Any = None
+    _lastLtftTrendEmitTime: datetime | None = None
+    _ltftTrendIntervalS: float = _DEFAULT_LTFT_TREND_INTERVAL_S
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -228,6 +244,7 @@ class CardStateEmitterMixin:
             )
         )
         self._initializeGearProducer(statesDir)
+        self._initializeLtftTrendProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -314,6 +331,82 @@ class CardStateEmitterMixin:
             )
             self._gearDeriver = None
             self._gearStateEmitter = None
+
+    # ---------------------------------------------------------- ltft-trend
+    #
+    # US-661 (punch-list 5.2). The `ltft-trend` emitter module has existed since
+    # US-420 but NOTHING EVER CALLED IT, so the Fuel Trim card has never had
+    # data. Same shape as US-494/495/498/US-630: both halves built, no join.
+    #
+    # Constructed in its OWN try/except beside the gear producer, for the same
+    # reason -- these failure modes are unrelated and a missing DB must not also
+    # take the DTC card down.
+
+    def _initializeLtftTrendProducer(self, statesDir: str) -> None:
+        """Build the `ltft-trend` emitter, or stay dark."""
+        dashConfig = self._config.get("pi", {}).get("dashboard", {})
+        self._ltftTrendIntervalS = float(
+            dashConfig.get(
+                "ltftTrendIntervalSeconds", _DEFAULT_LTFT_TREND_INTERVAL_S
+            )
+        )
+        try:
+            from pi.splash.ltft_trend_emitter import (
+                makeLtftTrendEmitter,
+                readLtftDriveRowsFrom,
+            )
+
+            def readDriveRows() -> dict:
+                # The database is resolved through getattr AT USE TIME, never
+                # captured here. This sprint's predecessors hit that boot-order
+                # trap three times (US-501/502/504b): the emitters are built in
+                # _initializeAllComponents while their dependencies land later,
+                # so a captured reference stays None for the life of the process
+                # -- a permanently empty tile with fully green unit tests.
+                #
+                # The handle is OPENED inside the reader module, not here. The
+                # A-17 static guard forbids any connection-opening call in this
+                # file (it is a text sweep, so it cannot tell a DB handle from
+                # an OBD one -- which is precisely why every reader delegates);
+                # `_gatherLastDriveSummary` delegates for the same reason.
+                return readLtftDriveRowsFrom(getattr(self, "_database", None))
+
+            self._ltftTrendEmitter = makeLtftTrendEmitter(
+                statesDir, driveRowsReader=readDriveRows
+            )
+            logger.info(
+                "LTFT trend producer wired (every %.0fs); states_dir=%s",
+                self._ltftTrendIntervalS, statesDir,
+            )
+        except Exception as e:  # noqa: BLE001 -- dashboard wiring must not fail boot
+            logger.warning(
+                "LTFT trend producer init skipped: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._ltftTrendEmitter = None
+
+    def _emitLtftTrendState(self) -> None:
+        """Re-aggregate + publish `ltft-trend` when its own cadence has elapsed.
+
+        Silent when the database handle is absent. That is deliberate and it is
+        the US-672 lesson applied one card over: writing a file that says "no
+        real drives recorded" when we could not even OPEN the log would be a
+        claim about the CAR drawn from an absence of evidence about US. An
+        absent state file already renders the honest "no data -- trend not
+        computed"; a producer that never ran must not answer as though it had.
+        """
+        emitter = self._ltftTrendEmitter
+        if emitter is None:
+            return
+        if getattr(self, "_database", None) is None:
+            return
+        now = datetime.now()
+        last = self._lastLtftTrendEmitTime
+        if last is not None:
+            if (now - last).total_seconds() < self._ltftTrendIntervalS:
+                return
+        self._lastLtftTrendEmitTime = now
+        emitter()
 
     def _gearNowS(self) -> float:
         """Monotonic seconds for the gear freshness + debounce windows."""
@@ -492,6 +585,12 @@ class CardStateEmitterMixin:
             self._emitGearState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("gear card emit failed: %s", e)
+        try:
+            # US-661: self-throttled to its own multi-minute cadence, so this
+            # call is a cheap timestamp compare on all but one tick in 150.
+            self._emitLtftTrendState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("ltft-trend card emit failed: %s", e)
         return True
 
     # -------------------------------------------------------- system-status

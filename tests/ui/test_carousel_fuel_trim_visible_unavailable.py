@@ -116,31 +116,33 @@ VEHICLE: dict[str, Any] = {"source": {"obd": {"available": True, "reason": None}
 # hand-written. This exists for the negative controls: every "the card paints no
 # percentage" claim below is worthless unless this file can demonstrate the card
 # painting a percentage when one genuinely exists.
+# US-661 RESHAPED THIS FIXTURE, and the reason is the story, not a refactor.
+# It used to be three drives, because US-420's builder called two a trend. Spool's
+# measured contract needs SIX to produce a direction: five for one rolling median
+# (a single drive resolves to nothing at an SD of 1.43 pp between drives) and a
+# sixth so there are two medians to compare. The per-drive means still fall
+# 12.0 -> 1.5, so the headline median is +3.20% and the direction is "migrating
+# toward 0" -- the same two strings the assertions below were written against,
+# reached through the contract that actually ships.
+_DRIVE_RECORDS = [
+    {"driveId": 45, "ts": "2026-08-08T10:00:00Z", "ltftMean": 12.0},
+    {"driveId": 46, "ts": "2026-08-12T10:00:00Z", "ltftMean": 8.4},
+    {"driveId": 47, "ts": "2026-08-16T10:00:00Z", "ltftMean": 6.1},
+    {"driveId": 48, "ts": "2026-08-20T10:00:00Z", "ltftMean": 3.2},
+    {"driveId": 49, "ts": "2026-08-24T10:00:00Z", "ltftMean": 2.0},
+    {"driveId": 50, "ts": "2026-08-28T10:00:00Z", "ltftMean": 1.5},
+]
 _DRIVES = [
     {
-        "driveId": 48,
-        "ts": "2026-08-20T10:00:00Z",
-        "ltftAvg": 8.4,
-        "ltftMin": 7.0,
-        "ltftMax": 9.1,
+        **record,
         "sampleCount": 300,
-    },
-    {
-        "driveId": 49,
-        "ts": "2026-08-24T10:00:00Z",
-        "ltftAvg": 6.1,
-        "ltftMin": 5.4,
-        "ltftMax": 7.0,
-        "sampleCount": 310,
-    },
-    {
-        "driveId": 50,
-        "ts": "2026-08-28T10:00:00Z",
-        "ltftAvg": 3.2,
-        "ltftMin": 2.6,
-        "ltftMax": 4.0,
-        "sampleCount": 290,
-    },
+        "qualifyingCount": 120,
+        "stftMean": None,
+        # Never a reset: bit-identical 0.000 is the epoch boundary, so a fixture
+        # that used 0.0 for a drive mean would silently break its own series.
+        "isReset": False,
+    }
+    for record in _DRIVE_RECORDS
 ]
 _TREND_TS = "2026-08-31T14:00:00Z"
 # The same instant as epoch ms. The virtual page clock must be anchored to the
@@ -153,11 +155,11 @@ _THREE_DAYS_MS = 3 * 24 * 3600 * 1000
 
 
 def _liveTrend() -> dict:
-    return buildLtftTrendState(drives=_DRIVES, nowIso=_TREND_TS)
+    return buildLtftTrendState(driveRecords=_DRIVES, nowIso=_TREND_TS)
 
 
 def _oneDriveTrend() -> dict:
-    return buildLtftTrendState(drives=_DRIVES[:1], nowIso=_TREND_TS)
+    return buildLtftTrendState(driveRecords=_DRIVES[:1], nowIso=_TREND_TS)
 
 
 def _read(path: str) -> str:
@@ -534,8 +536,51 @@ def test_oneDriveRendersInsufficientAndNeverAConfidentTrim():
     _, _, text = _card({"/system-status": VEHICLE, "/ltft-trend": _oneDriveTrend()})
     joined = _joined(text)
     assert "insufficient data" in joined, joined
-    assert "need 2+ drives (1 captured)" in joined, joined
+    # US-661: the detail line now carries the PRODUCER'S OWN reason instead of a
+    # drive-count sentence the view composed. That matters beyond wording -- the
+    # commonest absence on this card is a WARMING engine, which is not a
+    # drive-count problem at all, and the old text named the wrong cause for it.
+    assert "not enough qualifying drives yet" in joined, joined
     assert "trend:" not in joined, "a trend direction was claimed from a single drive"
+
+
+def test_aPayloadClaimingSufficiencyWithNoMedianNeverPaintsAConfidentVerdict():
+    """
+    Given: a payload that claims `sufficient: true` and a green `level: ok`, has
+        real per-drive points, but carries NO median
+    When: the card is rendered
+    Then: the headline refuses the green and says "insufficient data" -- it
+        never paints a confident verdict over an absent value.
+
+    THE HEADLINE IS THE MEDIAN NOW (US-661 moved it off the newest drive), so
+    "sufficient" and "there is a median to show" became two different facts. A
+    view that trusted the flag alone would print the level's GREEN beside a "--"
+    where the number belongs: maximum confidence, zero content. That is the
+    honest-instrument breach the card's defense-in-depth exists to stop, and it
+    is reachable from any producer bug that sets the flag before the value.
+
+    NO SHIPPED PRODUCER EMITS THIS SHAPE -- buildLtftTrendState sets `sufficient`
+    and `median` together. That is exactly why it needs its own test rather than
+    an end-to-end one: a fixture built by the real producer can never hand the
+    view the disagreeing halves, so it cannot witness the view resolving them.
+    (US-639's M13 lesson, one card over.)
+    """
+    payload = dict(_liveTrend())
+    payload["median"] = None
+    payload["level"] = "ok"
+    assert payload["sufficient"] is True, "fixture guard: the flag must still claim yes"
+    assert payload["points"], "fixture guard: real points must still be present"
+
+    _, _, text = _card({"/system-status": VEHICLE, "/ltft-trend": payload})
+    joined = _joined(text)
+
+    assert "insufficient data" in joined, joined
+
+    # CONTROL: the per-drive BARS still paint. They are the shape of the window,
+    # not the verdict, so suppressing them would be the cheap wrong answer in
+    # the other direction -- discarding six real measurements to avoid printing
+    # one absent one. Only the HEADLINE refuses.
+    assert "+3.20%" in joined, joined
 
 
 # ---------------------------------------------------------------------------
@@ -546,26 +591,40 @@ def test_oneDriveRendersInsufficientAndNeverAConfidentTrim():
 
 
 def test_theProducerModuleIsCompleteNotMissing():
-    """Reader, classifier, builder and atomic writer all exist and import.
+    """Reader, gate, builder and atomic writer all exist and import.
 
-    US-661 is scoped as "build the emitter". It is already built -- US-420 built
-    it -- so what US-661 actually needs is a call site.
+    US-661 was scoped as "build the emitter". The MODULE was already built --
+    US-420 built it -- so what US-661 actually needed was a call site plus a
+    contract that matched the car. The names moved with the contract (see
+    tests/pi/splash/test_ltft_trend_emitter.py for what each retired name was
+    replaced by and why); the SEAM did not.
     """
     from pi.splash import ltft_trend_emitter as mod
 
-    for name in ("readLtftTrend", "buildLtftTrendState", "makeLtftTrendEmitter"):
+    for name in (
+        "readLtftDriveRows",
+        "qualifyingSamples",
+        "buildDriveRecords",
+        "buildLtftTrendState",
+        "makeLtftTrendEmitter",
+    ):
         assert hasattr(mod, name), name
     assert LTFT_TREND_FILENAME == "ltft-trend", LTFT_TREND_FILENAME
 
 
-def test_nothingInSrcCallsTheProducer_whichIsWhyTheFileNeverExists():
-    """THE MEASURED ROOT CAUSE of the empty card.
+def test_theProducerIsWiredIntoTheCardEmitTick():
+    """US-661 LANDED: the producer now has a call site, which it never had.
 
-    `makeLtftTrendEmitter` has no call site anywhere in `src/` outside its own
-    module, so nothing ever writes `states/ltft-trend`. This is the finding that
-    sizes US-661, and it is pinned so that WIRING the producer fails this test on
-    purpose -- at which point US-661 is done and this assertion should be deleted
-    with it.
+    THIS TEST IS THE INVERSION OF US-660'S FINDING, kept rather than deleted.
+    It used to assert `callers == []` -- "`makeLtftTrendEmitter` has no call site
+    anywhere in src/, so nothing ever writes states/ltft-trend" -- and it said in
+    its own docstring that wiring the producer should fail it on purpose. It did.
+
+    Inverted instead of removed because the assertion is worth exactly as much
+    in this direction: an unwired producer is invisible to every unit test the
+    module has (they all call the builder directly), so the ONLY thing that ever
+    catches the regression is a sweep like this one. That is how the card sat
+    empty from US-420 to US-661 with a fully green suite.
     """
     callers: list[str] = []
     for root, _dirs, files in os.walk(os.path.join(_REPO, "src")):
@@ -576,11 +635,9 @@ def test_nothingInSrcCallsTheProducer_whichIsWhyTheFileNeverExists():
                 continue
             path = os.path.join(root, name)
             if "makeLtftTrendEmitter" in _read(path):
-                callers.append(os.path.relpath(path, _REPO))
-    assert callers == [], (
-        "the ltft-trend producer is now wired -- US-661 has landed, so delete "
-        f"this assertion along with US-660's finding: {callers}"
-    )
+                callers.append(os.path.relpath(path, _REPO).replace("\\", "/"))
+    assert callers, "the ltft-trend producer is unwired again -- US-661 regressed"
+    assert "src/pi/obdii/orchestrator/card_state_emitter.py" in callers, callers
 
 
 def test_theTrimPidIsAlreadyPolledAndLogged():

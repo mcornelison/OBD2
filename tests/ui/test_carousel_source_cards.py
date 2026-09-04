@@ -182,12 +182,21 @@ def _light(lux: float | None = 412.0, **extra: object) -> dict:
 
 
 def _ltft(*, sufficient: bool = True, **extra: object) -> dict:
-    """A states/ltft-trend payload as the US-420 emitter writes it."""
+    """A states/ltft-trend payload as the US-661 emitter writes it.
+
+    US-661 added `median` and moved `minDrives` from 2 to 5. The headline now
+    renders the ROLLING MEDIAN rather than `current` -- Spool measured a single
+    drive's mean as carrying no information (up to 3.72 pp of same-day spread on
+    a healthy engine) -- so a payload without a median renders "insufficient
+    data" no matter what `current` holds.
+    """
     payload: dict = {
         "sufficient": sufficient,
         "level": "ok",
         "trend": "improving",
-        "minDrives": 2,
+        "minDrives": 5,
+        "median": -2.5,
+        "reason": None,
         "current": {"ltftAvg": -2.5},
         "points": [
             {"driveId": 30, "ltftAvg": -6.25, "level": "ok"},
@@ -372,7 +381,11 @@ def test_sourceCardView_fuelTrimSection_insufficientIsNeverGreen():
 def test_sourceCardView_fuelTrimSection_driftRendersItsOwnLevel():
     """A drive beyond +/-10% keeps its own non-green level -- the semantics the
     emitter classifies, which this view only maps."""
-    ltft = _ltft(level="down", points=[{"driveId": 32, "ltftAvg": 12.5, "level": "down"}])
+    ltft = _ltft(
+        level="down",
+        median=12.5,
+        points=[{"driveId": 32, "ltftAvg": 12.5, "level": "down"}],
+    )
     sec = _section(_cards(ltft=ltft), "ltft-trend")
     assert sec["view"]["headline"]["level"] == "down"
     assert sec["view"]["points"][0]["value"] == "+12.50%"
@@ -442,6 +455,42 @@ def test_sourceCardView_benchNoVehicle_fuelTrimReadsNoEngineData():
     sec = _section(_cards(obdAvailable=False), "ltft-trend")
     assert sec["gated"] is True
     assert sec["na"]["reason"] == "no engine data"
+
+
+def test_sourceCardView_fuelTrimHeadlineIsTheMedian_notTheNewestDrive():
+    """
+    Given: a payload whose 5-drive MEDIAN is -2.50 % while the NEWEST drive sits
+        at +9.90 % -- a single-drive excursion of the size Spool measured as
+        pure noise (up to 3.72 pp between drives on the same day)
+    Then: the headline reads the MEDIAN, and the newest drive's value appears
+        NOWHERE in the headline.
+
+    THIS ASSERTION IS DELIBERATELY MADE ON THE HEADLINE OBJECT, NOT ON THE
+    CARD'S TEXT, and that is the whole reason it exists. A mutation restoring
+    US-420's `current.ltftAvg` headline SURVIVED a rendered-text check, because
+    the per-drive BARS print their own values too -- and with an odd-width
+    window the median is ALWAYS one of them, so "the median appears on the card"
+    is true no matter which element painted it. A text sweep physically cannot
+    separate the headline from the bars here; only the structured view can.
+    """
+    ltft = _ltft(
+        median=-2.5,
+        current={"ltftAvg": 9.9},
+        points=[
+            {"driveId": 30, "ltftAvg": -6.25, "level": "ok"},
+            {"driveId": 31, "ltftAvg": -2.5, "level": "ok"},
+            {"driveId": 32, "ltftAvg": 9.9, "level": "ok"},
+        ],
+    )
+    sec = _section(_cards(obdAvailable=True, ltft=ltft), "ltft-trend")
+
+    headline = sec["view"]["headline"]
+    assert headline["value"] == "-2.50%", headline
+    assert "9.90" not in headline["value"], headline
+    assert "median" in headline["label"], headline
+    # The control: the excursion IS still visible as its own bar, so this test
+    # cannot be satisfied by suppressing the newest drive altogether.
+    assert any(p["value"] == "+9.90%" for p in sec["view"]["points"]), sec["view"]
 
 
 def test_sourceCardView_benchNoVehicle_fuelTrimLeaksNoValueEvenWithAState():

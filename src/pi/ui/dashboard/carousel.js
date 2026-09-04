@@ -1284,14 +1284,21 @@
   }
 
   // -------------------------------------------------------------------------
-  // US-420 LTFT Trend card -- pure render logic, node-testable (F-096). Long-
-  // Term Fuel Trim is a MULTI-DRIVE signal: a healthy tune migrates the trim
-  // TOWARD 0, drift beyond +/-10% is a fault. The `ltft-trend` emitter is the
-  // SSOT that CLASSIFIES the drift (ok/amber/down) + the insufficient guard;
-  // this view only maps the verdict -> a tile level + bar colours, it never
-  // classifies. Honest-instrument (defense-in-depth): an insufficient trend is
-  // forced to a non-green headline HERE too, so a mislabeled state can't paint
-  // a confident green off too little data.
+  // US-420 / US-661 LTFT Trend card -- pure render logic, node-testable (F-096).
+  // Long-Term Fuel Trim is a MULTI-DRIVE signal. The `ltft-trend` emitter is the
+  // SSOT that gates, aggregates and CLASSIFIES; this view only maps the verdict
+  // -> a tile level + bar colours, it never classifies. Honest-instrument
+  // (defense-in-depth): an insufficient trend is forced to a non-green headline
+  // HERE too, so a mislabeled state can't paint a confident green off too little
+  // data.
+  //
+  // US-661 MOVED THE HEADLINE OFF THE NEWEST DRIVE AND ONTO THE ROLLING MEDIAN.
+  // It used to print `current.ltftAvg` -- one drive's mean -- which Spool's
+  // TUNER-005 contract measured as carrying NO information: drive means spread
+  // up to 3.72 pp between drives on the same day with nothing wrong, so
+  // "anyone reading that for drift finds drift, every time". The median over 5
+  // drives resolves to about +/-0.6 pp. `points` still carries the per-drive
+  // bars (they are the shape of the window, not the verdict).
   // -------------------------------------------------------------------------
 
   // Signed percent to 2 dp (e.g. -6.25% / +2.10%); a non-number -> "--".
@@ -1317,25 +1324,36 @@
   function ltftTrendView(data) {
     if (!isObj(data)) return null;
     var pts = Array.isArray(data.points) ? data.points.filter(isObj) : [];
-    // Sufficient ONLY when the emitter says so AND real points exist.
-    var sufficient = data.sufficient === true && pts.length > 0;
-    var current = isObj(data.current) ? data.current : null;
+    var median =
+      typeof data.median === "number" && isFinite(data.median) ? data.median : null;
+    // Sufficient ONLY when the emitter says so, real points exist, AND a median
+    // was actually computed. The median clause is the US-661 half: the headline
+    // now RENDERS the median, so a payload claiming sufficiency without one
+    // could otherwise paint "insufficient data" under a confident green level.
+    var sufficient = data.sufficient === true && pts.length > 0 && median !== null;
     // The headline verdict: the emitter's level when sufficient, else forced to
     // `insufficient` (never inherits ok/green off too little data).
     var headLevel = sufficient
       ? (typeof data.level === "string" ? data.level : "unavailable")
       : "insufficient";
     var trendKey = typeof data.trend === "string" ? data.trend : null;
-    var minDrives = typeof data.minDrives === "number" ? data.minDrives : 2;
+    var minDrives = typeof data.minDrives === "number" ? data.minDrives : 5;
+    // The producer's own reason for the absence, when it has one. It
+    // distinguishes "the engine has not warmed up yet" (permanent for roughly
+    // one drive in four, and NOT a drive-count problem) from "we have not
+    // driven enough yet" -- printing the drive-count text for a warming engine
+    // would name the wrong cause.
+    var reason =
+      typeof data.reason === "string" && data.reason !== "" ? data.reason : null;
     var detail = sufficient
       ? (trendKey && LTFT_TREND_TEXT[trendKey] ? LTFT_TREND_TEXT[trendKey] : "")
-      : "need " + minDrives + "+ drives (" + pts.length + " captured)";
+      : (reason || "need " + minDrives + "+ drives (" + pts.length + " captured)");
     return {
       label: "LTFT (bank 1)",
       sufficient: sufficient,
       headline: {
-        label: "LTFT · current drift",
-        value: sufficient && current ? fmtLtftPct(current.ltftAvg) : "insufficient data",
+        label: "LTFT · " + minDrives + "-drive median",
+        value: sufficient ? fmtLtftPct(median) : "insufficient data",
         detail: detail,
         level: headLevel,
       },
