@@ -1948,6 +1948,21 @@
 
   // The persistent ribbon while ANY alert-eligible code is present (design §5.2).
   // Level = the hero severity (drives the color); `na`/empty -> null (no ribbon).
+  //
+  // US-691: THIS RETURNS SLOTS, NOT A SENTENCE, and that is the whole fix. It
+  // used to fold four facts into one string -- "CHECK ENGINE · <code> <desc> ·
+  // +N more" -- which `.ribbon-text` then clipped with a CSS ellipsis. An
+  // ellipsis eats a string FROM THE END, and the end is where the count lives,
+  // so the count was the first thing every overflow destroyed. That is not a
+  // styling accident: while the count exists only as a tail, NO stylesheet can
+  // protect it. On 2026-09-04 P0400 was stored beside P0443 and the operator
+  // did not learn from his own dashboard that a second fault existed.
+  //
+  // Splitting the view lets the stylesheet declare an overflow ORDER instead:
+  // the head and the count do not shrink, the DESCRIPTION is the only run that
+  // clips. What an overflow takes is then the part he can afford to lose.
+  // `more` is EMPTY (not "+0 more") for a single code -- the commonest state
+  // this car is in must not pay for a count it does not carry.
   function ribbonView(data) {
     if (!isObj(data)) return null;
     // US-429: an unavailable DTC source carries no active fault -> no ribbon.
@@ -1955,11 +1970,19 @@
     var alertable = alertableCodes(data.codes);
     if (alertable.length === 0) return null;
     var hero = alertable[0];
-    var text = "CHECK ENGINE · " + hero.code;
-    var desc = hero.short && String(hero.short).trim();
-    if (desc) text += " " + desc;
-    if (alertable.length > 1) text += " · +" + (alertable.length - 1) + " more";
-    return { level: hero.severity, glyph: "⚠", text: text, code: hero.code };
+    // `na` and unrecognized severities are already dropped by alertableCodes,
+    // so this counts FAULTS, never rows: a quiet auto-trans code beside one
+    // real fault must not send the operator hunting for a second one.
+    var moreCount = alertable.length - 1;
+    return {
+      level: hero.severity,
+      glyph: "⚠",
+      head: "CHECK ENGINE · " + hero.code,
+      desc: (hero.short && String(hero.short).trim()) || "",
+      moreCount: moreCount,
+      more: moreCount > 0 ? "+" + moreCount + " more" : "",
+      code: hero.code,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -5008,6 +5031,19 @@
         takeoverEl.hidden = false;
       }
 
+      // US-691: fill one banner slot, and take the slot DOWN when it has nothing
+      // to say. An empty-but-painted span still claims its flex gap, so a single
+      // code would pay width for a count that is not there -- the story's stated
+      // negative case ("do not fix multi-code display by making the one-code
+      // case worse"). Same lockstep the ribbon already keeps with data-level:
+      // the content and the box go up and down together.
+      function fillRibbonSlot(selector, text) {
+        var el = ribbonEl.querySelector(selector);
+        if (!el) return;
+        el.textContent = text || "";
+        el.hidden = !text;
+      }
+
       function renderRibbon(view) {
         if (!ribbonEl) return;
         if (!view) {
@@ -5016,10 +5052,10 @@
           return;
         }
         ribbonEl.setAttribute("data-level", view.level);
-        var glyph = ribbonEl.querySelector(".ribbon-glyph");
-        var text = ribbonEl.querySelector(".ribbon-text");
-        if (glyph) glyph.textContent = view.glyph;
-        if (text) text.textContent = view.text;
+        fillRibbonSlot(".ribbon-glyph", view.glyph);
+        fillRibbonSlot(".ribbon-head", view.head);
+        fillRibbonSlot(".ribbon-desc", view.desc);
+        fillRibbonSlot(".ribbon-more", view.more);
         ribbonEl.hidden = false;
       }
 

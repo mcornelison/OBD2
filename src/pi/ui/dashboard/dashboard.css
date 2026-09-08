@@ -827,9 +827,33 @@ html, body {
 #dtc-ribbon[data-level="minor"]   { background: var(--green-ok); color: #000; }
 #dtc-ribbon[data-level="unknown"] { background: var(--amber-warn); color: #000; }
 .ribbon-glyph { font-size: var(--fs-secondary); line-height: 1; flex: 0 0 auto; }
-.ribbon-text {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* US-691 -- THE OVERFLOW ORDER IS THE FIX, and it is declared here rather than
+   left to the default. This was ONE span, `.ribbon-text`, holding "CHECK ENGINE
+   · <code> <description> · +N more" behind a `text-overflow: ellipsis`. An
+   ellipsis truncates from the END, and the END is where the count is -- so the
+   count was, by construction, the FIRST thing every overflow destroyed. When
+   P0400 appeared beside P0443 on 2026-09-04 the banner clipped in all ten
+   dashboard frames of that day and the operator never learned a second fault
+   existed. A stylesheet cannot protect a fact that lives in a string's tail;
+   splitting the slots is what makes the guarantee below expressible.
+
+   `flex: 0 0 auto` on the head and the count is the whole guarantee -- a flex
+   item's DEFAULT is `flex-shrink: 1`, so without it the browser squeezes both
+   and re-creates the defect with the markup looking correct. The description is
+   the only run allowed to clip, and it is the only one whose loss the operator
+   can absorb: he can still read WHICH code and HOW MANY, which is what he needs
+   to act. `min-width: 0` is load-bearing on a flex child -- its default
+   `min-width: auto` refuses to shrink below its content, which would push the
+   count out of the banner instead of shortening the text.
+   Sized at tests/ui/test_carousel_dtc_banner_second_code.py: the unclippable
+   runs fit the 480px panel with room left over, so the count never merely
+   "must not" clip -- it does not need to. */
+.ribbon-head { flex: 0 0 auto; white-space: nowrap; }
+.ribbon-desc {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.ribbon-more { flex: 0 0 auto; white-space: nowrap; }
 /* US-537: the pulse hangs off `[data-level]`, NOT off the base #dtc-ribbon rule.
    carousel.js sets data-level and clears `hidden` together, and removes both
    together (renderRibbon), so this runs exactly while a code is real. Before, the
