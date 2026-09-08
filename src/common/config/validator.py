@@ -365,13 +365,30 @@ DEFAULTS: dict[str, Any] = {
     # config.json under `pi.gear.bands`, ONE place, and an unkeyed deployment
     # reports `not_calibrated` rather than guessing.  See
     # src/pi/obdii/gear_derivation.py.  The thresholds below are Spool's
-    # US-508 semantics; maxAgeSec is grounded to the ~4-5 PID/s OBD poll rate.
+    # US-508 semantics.
     'pi.gear.enabled': False,
     'pi.gear.bands': [],
     'pi.gear.minSpeedKph': 5.0,
     'pi.gear.minRpm': 900,
     'pi.gear.debounceSec': 2.0,
-    'pi.gear.maxAgeSec': 2.0,
+    # US-686 -- the freshness window for one SPEED/RPM sample.  Spool ruled 3.0
+    # on 2026-09-06, superseding 2.0.
+    #
+    # 🔴 THE CADENCE ANY RATIONALE FOR THIS VALUE MUST CITE IS THE MEASURED
+    # PER-PID PERIOD: 2.206-2.249 s for SPEED (Atlas, 2026-09-06, 3,494 paired
+    # samples across drives 64-67).  NOT an aggregate bus rate, and NOT
+    # `pi.pollingTiers` -- that block has ZERO importers in `src/` and describes
+    # a system this project does not have.  It has misled two builds (A-28), and
+    # THIS ENTRY WAS ONE OF THEM: the note that used to sit here grounded 2.0 in
+    # an aggregate bus rate nothing on this car produces.
+    #
+    # 2.0 WAS A UNIT ERROR.  The window was SHORTER than the interval between the
+    # readings it judged, so every sample aged out before its successor arrived
+    # and the tile could never latch (drive 64: engaged 0).  3.0 is 1.33x the
+    # period; it admits a sample that has missed one poll and still rejects one
+    # that has missed two.  Full reasoning:
+    # src/pi/obdii/gear_derivation.py DEFAULT_MAX_AGE_S.
+    'pi.gear.maxAgeSec': 3.0,
     # US-687-b -- how long RPM must stay UNUSABLE, with a healthy OBD link,
     # before the tile reads P.  Spool ratified 20.0 on 2026-09-07 and it is
     # bounded on BOTH sides, which is the half that keeps getting lost:

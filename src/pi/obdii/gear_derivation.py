@@ -158,14 +158,38 @@ GEAR_PARK = "P"
 # transitions; Park is a persistent state. One number answers one question.
 DEFAULT_PARK_DWELL_S = 20.0
 
-# Freshness window for a SPEED/RPM sample, seconds. GROUNDED TO THE PIPE, not
-# picked for feel: the OBD link sustains ~4-5 PIDs/sec over Bluetooth
-# (specs/obd2-research.md), so a reading older than 2 s means several polls have
-# been missed and the pipe is not keeping up -- not that the car is holding
-# still. Rex-derived from the documented poll rate, config-parameterised
-# (pi.gear.maxAgeSec) and flagged to Spool/Atlas for confirmation against a real
-# drive, following the DEFAULT_GRAVITY_TAU_S precedent (US-478).
-DEFAULT_MAX_AGE_S = 2.0
+# Freshness window for a SPEED/RPM sample, seconds. Spool ruled 3.0 on
+# 2026-09-06 (US-686), and the number is the smaller half of the story.
+#
+# 🔴 THE CADENCE ANY RATIONALE FOR THIS VALUE MUST CITE IS THE **MEASURED
+# PER-PID PERIOD**: 2.206-2.249 s for SPEED (Atlas, 2026-09-06, 3,494 paired
+# SPEED/RPM samples across drives 64-67). NOT an aggregate bus rate, and NOT
+# `pi.pollingTiers` -- that block has ZERO importers in `src/`, the live poll
+# list is a flat `pi.realtimeData.parameters`, and it describes a system this
+# project does not have. It has now misled two builds (A-28).
+#
+# WHY 2.0 WAS A UNIT ERROR AND NOT AGGRESSIVE CALIBRATION. This constant answers
+# *how long may I still believe this reading?*; the period above answers *how
+# often am I told?* No value of the first can be shorter than the second. At 2.0
+# a sample aged out BEFORE ITS SUCCESSOR COULD ARRIVE, every cycle, by
+# construction -- so `stale` fired in each cycle and cleared the debounce
+# candidate, and the tile could never latch. Drive 64's census is exactly that
+# prediction: below_threshold 776 / stale 722 / settling 409 / **engaged 0**.
+#
+# WHY 3.0 AND NOT MORE. This is also THE MAXIMUM TIME THE TILE CAN DISPLAY A
+# GEAR THE CAR HAS ALREADY LEFT, so the window is bounded above by the error it
+# permits. A 4G63 shift completes well inside 1 s; at 3.0 (1.33x the period) a
+# stale glyph self-corrects within roughly the duration of the shift that
+# invalidated it, and a reading that has missed TWO polls is still rejected. 2.5
+# is only 1.11x, and 11-12 s inter-sample gaps were measured on drive 66 -- it
+# passes a replay and fails the road. 4.0 buys nothing measurable and doubles
+# the wrong-answer window.
+#
+# Config-parameterised as `pi.gear.maxAgeSec`. The value ALSO lives in
+# `src/common/config/validator.py` DEFAULTS and in `config.json`;
+# `tests/pi/obdii/test_gear_max_age_grounding.py` is the lint that keeps all
+# three equal and keeps every one of them above the measured period.
+DEFAULT_MAX_AGE_S = 3.0
 
 # --------------------------------------------------------------------------
 # Grounded vehicle facts -- specs/grounded-knowledge.md. Transcribed, not
@@ -548,8 +572,18 @@ class GearDeriver:
 
         NOT debounced. ``parkDwellS`` IS the wait, and it was sized against a
         45 s pre-shutdown budget -- stacking ``debounceS`` on top would silently
-        make the real delay 22 s and put that argument out by two seconds of the
-        budget it was measured against.
+        add another ``debounceS`` to the delay and put that argument out by that
+        much of the budget it was measured against.
+
+        THE REAL KEY-OFF-TO-GLYPH DELAY IS ``parkDwellS + maxAgeS``, not
+        ``parkDwellS`` alone: the dwell clock starts when RPM becomes UNUSABLE,
+        and a PRESENT reading does not become unusable until it ages out, so one
+        whole freshness window elapses before the dwell begins. US-686 raised
+        ``maxAgeS`` 2.0 -> 3.0 and therefore moved that sum as well. It is
+        deliberately NOT written down as a figure here -- it is arithmetic on two
+        tunable constants, and the last two stories each invalidated whichever
+        figure the one before had recorded. Recompute it; do not quote it.
+        ``test_gear_park.py`` pins it as that arithmetic.
 
         The candidate IS cleared, for the reason US-687-a's ``_neutral`` records:
         without it, switching off in 2nd and restarting would republish the

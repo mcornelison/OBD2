@@ -428,11 +428,19 @@ class CardStateEmitterMixin:
         Called from the orchestrator's reading callback for every parameter;
         returns immediately for the ones gear does not consume.
 
-        WHY THE READING SEAM AND NOT THE 2 s CARD CADENCE: the freshness window
-        is 2 s, so derived on the card tick the newest sample would routinely be
-        as old as the window itself and a perfectly healthy cruise would flicker
-        to `stale`. The ratio is two floats and a table walk, so deriving it at
-        the ~4-5 PID/s poll rate is cheaper than the state-file write it feeds.
+        WHY THE READING SEAM AND NOT ONLY THE 2 s CARD CADENCE: derived on the
+        tick alone, the newest sample would routinely be nearly as old as the
+        freshness window itself and a perfectly healthy cruise would flicker to
+        `stale`. The ratio is two floats and a table walk, so deriving it on
+        every arrival is cheaper than the state-file write it feeds.
+
+        US-686 CORRECTED THE CADENCE THIS NOTE USED TO CITE. It gave an
+        aggregate Bluetooth bus rate, which is the same fiction that produced
+        the 2.0 s window this seam was sized against; the MEASURED per-PID
+        period is 2.206-2.249 s (Atlas, 2026-09-06). The seam is still right --
+        more right, in fact, because arrivals are 9x rarer than the note assumed
+        -- but the number behind it was not, and this was the THIRD home of that
+        fiction after a census twice declared complete.
 
         Args:
             paramName: The realtime parameter's name (e.g. ``SPEED``).

@@ -279,13 +279,20 @@ class TestParkFromStaleRpm:
         A PROPERTY WORTH STATING RATHER THAN DISCOVERING. The dwell clock starts
         when RPM becomes UNUSABLE, and a PRESENT reading does not become
         unusable until it ages out -- so the real key-off-to-glyph delay is
-        `parkDwellSec + maxAgeSec`, currently 22 s and not 20 s.
+        `parkDwellSec + maxAgeSec`, NOT `parkDwellSec` alone.
 
-        This is the SAFE direction (it lengthens the gap a bus stall must exceed
-        by a further 2 s), and it is well inside the ~45 s pre-shutdown ceiling.
-        But the ceiling argument is arithmetic on this number, so the number has
-        to be the true one: whoever re-checks the dwell after `totalCap` changes
-        must be re-checking 22, not 20.
+        🔴 US-686 MOVED THIS NUMBER, EXACTLY AS US-687-b PREDICTED IT WOULD. The
+        freshness window went 2.0 -> 3.0 s, so the real delay is now **23 s, not
+        22 s and not 20 s.** That is the whole reason this property is pinned as
+        arithmetic on the two constants rather than as a literal: the assertions
+        below needed no edit, and only this prose did.
+
+        The direction is SAFE (it lengthens the gap a bus stall must exceed by a
+        further second) and 23 s is still well inside the ~45 s pre-shutdown
+        ceiling. But the ceiling argument is arithmetic on this number, so the
+        number has to be the true one: whoever re-checks the dwell after
+        `totalCap` changes must re-check the SUM, and must recompute it rather
+        than trust any figure written down here.
         """
         deriver = _deriver()
         lastRpm = gd.Reading(_MEASURED_IDLE_RPM, 1000.0)
@@ -608,8 +615,11 @@ class TestParkPrecedence:
         Then:  Park is published immediately, with no further settling window
 
         The dwell IS the wait. Stacking debounceSec on top of it would silently
-        make the real delay 22 s and put the ceiling argument out by two
-        seconds of a 45 s budget.
+        add another debounce window to the delay and put the ceiling argument
+        out by that much of a 45 s budget. (The figure that used to sit here was
+        invalidated by US-686 raising maxAgeSec, which is why it is now stated as
+        the relationship rather than as a number -- see
+        test_update_theRealKeyOffDelay_isTheDwellPlusTheFreshnessWindow.)
         """
         result = _holdNoRpm(_deriver(), forS=gd.DEFAULT_PARK_DWELL_S,
                             stepS=gd.DEFAULT_PARK_DWELL_S)
