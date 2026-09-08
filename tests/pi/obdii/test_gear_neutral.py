@@ -281,11 +281,19 @@ class TestNeutralStealsNoCaseFromItsNeighbours:
         neutral" rather than as a named reason so that US-687-b changing the
         answer to P does not read as a regression of this story -- the claim
         this story makes is only that N does not reach here.
+
+        CONTRACT CHANGED 2026-09-07 BY US-687-b, exactly as the paragraph above
+        anticipated. This test also asserted `available is False`, which was a
+        claim about the TYPED ABSENCE that used to answer here and not about
+        neutral at all -- an off engine now publishes an AVAILABLE "P". The
+        surviving claim, and the only one this story ever owned, is that N does
+        not reach a stopped engine; it is kept, so the file still fails if the
+        `rpm > 0` trigger is ever loosened.
         """
         result = _settled(_deriver(), 0.0, 0.0)
 
         assert result.gear != gd.GEAR_NEUTRAL
-        assert result.available is False
+        assert result.reason != gd.REASON_NEUTRAL
 
     def test_update_stationaryButTheSpeedReadingIsStale_isStaleNotNeutral(self):
         """

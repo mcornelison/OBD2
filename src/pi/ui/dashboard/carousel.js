@@ -2925,6 +2925,7 @@
   var GEAR_REASON_TEXT = {
     engaged: "engaged",
     neutral: "neutral",
+    park: "parked",
     no_data: "no reading",
     stale: "reading stale",
     not_calibrated: "not calibrated",
@@ -2960,6 +2961,23 @@
     if (gear === "N") {
       return {
         label: "GEAR", value: "N", detail: "neutral",
+        level: "neutral", available: true,
+      };
+    }
+    // US-687-b. Unlike "N" -- which this function has handled since US-508 and
+    // no producer emitted for a month -- "P" was handled NOWHERE, so a producer
+    // emitting it fell through to the `--` below and the panel changed nothing.
+    // The producer half and this branch therefore ship together.
+    //
+    // "parked" is what the driver reads, not what P PROVES. The producer emits
+    // P when the OBD link is healthy and RPM has been unusable past the park
+    // dwell -- so it means "the link is up and the engine is not reporting a
+    // speed". This car is a manual with no Park detent and no PRNDL; the glyph
+    // is the operator's word for switched-off, ruled by the CIO on the record
+    // and sound only while gear stays display-only (US-693 enforces that).
+    if (gear === "P") {
+      return {
+        label: "GEAR", value: "P", detail: "parked",
         level: "neutral", available: true,
       };
     }

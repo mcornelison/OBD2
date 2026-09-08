@@ -211,9 +211,15 @@ def _probe(fn: str, *args: object) -> object:
 # Every reason the producer can put in states/gear. Read from the MODULE, not
 # retyped: a new reason added to the deriver joins this sweep automatically
 # instead of quietly bypassing it.
+#
+# US-687-b: `park` was added here BY HAND, and having to do that is the point --
+# a hand-written tuple is a sweep that expires the next time the producer's
+# vocabulary grows, and it grew within a week. The sibling file
+# tests/ui/test_carousel_gear_park.py discovers these by introspection instead.
 _PRODUCER_REASONS = (
     gd.REASON_ENGAGED,
     gd.REASON_NEUTRAL,
+    gd.REASON_PARK,
     gd.REASON_NO_DATA,
     gd.REASON_STALE,
     gd.REASON_NOT_CALIBRATED,

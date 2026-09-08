@@ -46,6 +46,11 @@
 #               |              | And the THIRD cause gets its own word: "never
 #               |              | connected", not "OBD: off" (Atlas, the half
 #               |              | US-663 missed).
+# 2026-09-07    | Ralph (Rex)  | US-687-b: _emitGearState hands the gear producer
+#               |              | the link health it already computes next door,
+#               |              | so PARK cannot be published on a dead dongle.
+#               |              | RECONNECTING is NOT healthy -- it reports
+#               |              | available:true by US-672's own (correct) rule.
 # ================================================================================
 ################################################################################
 
@@ -455,16 +460,40 @@ class CardStateEmitterMixin:
         the panel would hold the last real gear indefinitely -- the one outcome
         the story forbids. The tick re-derives against a moving clock, so the
         stored readings age out and the tile drops to a typed `stale`.
+
+        US-687-b: the tick is ALSO what makes PARK reachable, and the two facts
+        are the same fact. Park is published when RPM has been unusable for
+        longer than the dwell, which by definition means no reading arrived to
+        drive the callback seam -- so without the tick the producer would never
+        run at the moment it has something new to say.
+
+        NO SECOND ACQUISITION for the link health. `_gatherObdLinkState` is an
+        existing method on `self` in this very mixin (the gear producer at :450
+        and the link mapping at :636 are siblings), so the fact is read from the
+        one place that owns it -- no state-file read-back, no second vocabulary
+        for a link state, which is `ssot-design-pattern` rule B.
         """
         deriver = self._gearDeriver
         emitter = self._gearStateEmitter
         if deriver is None or emitter is None:
             return
+
+        from pi.splash.system_status_emitter import OBD_LINKED
+
+        linkState, _retries, obdAvailable, _reason = self._gatherObdLinkState()
+        # OBD_RECONNECTING IS NOT HEALTHY. A flapping link reports obdAvailable
+        # TRUE -- US-672 made availability ask "is the source ABSENT", and a car
+        # we have reached before is not absent -- so gating on availability
+        # alone would publish PARK while the car drove out of Bluetooth range.
+        # Park needs the link actually LINKED.
+        linkHealthy = obdAvailable and linkState == OBD_LINKED
+
         emitter(
             deriver.update(
                 speed=self._lastSpeedReading,
                 rpm=self._lastRpmReading,
                 nowS=self._gearNowS(),
+                linkHealthy=linkHealthy,
             )
         )
 

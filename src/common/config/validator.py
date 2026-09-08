@@ -372,6 +372,19 @@ DEFAULTS: dict[str, Any] = {
     'pi.gear.minRpm': 900,
     'pi.gear.debounceSec': 2.0,
     'pi.gear.maxAgeSec': 2.0,
+    # US-687-b -- how long RPM must stay UNUSABLE, with a healthy OBD link,
+    # before the tile reads P.  Spool ratified 20.0 on 2026-09-07 and it is
+    # bounded on BOTH sides, which is the half that keeps getting lost:
+    #   FLOOR ~13 s -- the worst in-drive RPM gap measured over 2,141 samples
+    #     (drives 64-68).  Below it, an ordinary bus stall paints Park at speed.
+    #   CEILING ~45 s -- at key-off the Pi runs a bounded pre-shutdown pipeline
+    #     (perTask=20s totalCap=45s), so it has roughly 45 s of life after the
+    #     event that stops the RPM data, and this dwell counts down INSIDE that
+    #     budget.  At 45 s or more, P NEVER RENDERS AT ALL.
+    # THE CEILING IS SOFT: it depends on that pre-shutdown budget, which is under
+    # active work.  If `totalCap` is ever shortened, re-check this value.
+    # Full reasoning: src/pi/obdii/gear_derivation.py DEFAULT_PARK_DWELL_S.
+    'pi.gear.parkDwellSec': 20.0,
     # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
     # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
     # engineOnSampleCount consecutive samples, the orchestrator transitions
