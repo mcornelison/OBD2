@@ -431,11 +431,22 @@ def test_renderer_tagsTheSummaryWithItsLevel():
 
 def test_renderer_appendsTheFourTilesIntoTheGrid_notTheCardBody():
     """AC2 wiring: if the tiles still go straight into `.card-body`, the grid
-    element renders empty and the card silently stays a 1-column stack."""
+    element renders empty and the card silently stays a 1-column stack.
+
+    US-688 CHANGED THE COUNT 4 -> 5, deliberately. The surviving claim -- and
+    the reason this test exists -- is that tiles go into the GRID and never
+    straight into `.card-body`; the number was only ever the tile roster at the
+    time of writing. The fifth is CAPTURE, whose absence from the grid would
+    let the card read "SYSTEM · 1 ISSUE" over four healthy-looking tiles
+    (pinned from the other side in tests/ui/test_carousel_capture_health.py).
+
+    Kept as an exact count rather than relaxed to `>= 4`: a count that cannot
+    notice a DROPPED tile is not doing the job this test was written for.
+    """
     js = _read(_JS)
     start = js.index("function renderSystemStatusCard")
     body = js[start : js.index("\n    }", start)]
-    assert body.count("appendTile(grid,") == 4
+    assert body.count("appendTile(grid,") == 5
     assert "appendTile(body," not in body
 
 

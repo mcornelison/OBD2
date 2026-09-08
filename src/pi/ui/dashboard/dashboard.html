@@ -88,9 +88,16 @@
   <!-- US-405 persistent DTC ribbon: rides under the top bar on every card while
        a code is present. STOP state uses the brighter --red-light (R-2, distinct
        from brand-red) + a leading ⚠ + a subtle pulse. JS sets the level + text. -->
+  <!-- US-691: FOUR SLOTS, not one string. The banner used to carry head, code,
+       description and "+N more" in a single ellipsis-clipped span, so an
+       overflow always ate the count first (it is the tail) and a second stored
+       code became invisible. The slots overflow in a declared order instead --
+       only .ribbon-desc clips; see the dashboard.css rules. -->
   <div id="dtc-ribbon" hidden>
     <span class="ribbon-glyph">⚠</span>
-    <span class="ribbon-text"></span>
+    <span class="ribbon-head"></span>
+    <span class="ribbon-desc"></span>
+    <span class="ribbon-more"></span>
   </div>
 
   <!-- US-405 full-screen DTC takeover: fired on a NEW code (newSinceTs), one at a

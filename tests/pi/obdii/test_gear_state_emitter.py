@@ -7,11 +7,17 @@
 #   orchestrator's real reading seam -> the deriver -> states/gear on tmpfs.
 #
 #   THE SEAM CHOICE IS THE LOAD-BEARING DECISION AND IS PINNED HERE. Gear is
-#   derived on the READING callback (~4-5 PIDs/sec), not on the 2 s card-state
-#   cadence the other emitters use. On that cadence the newest SPEED/RPM sample
-#   would be up to 2 s old at emit time, against a 2 s freshness window -- the
-#   tile would flicker to `stale` at random on a perfectly healthy car. A test
-#   below drives exactly that timing so the coupling cannot be reintroduced.
+#   derived on the READING callback, not on the 2 s card-state cadence the other
+#   emitters use. On that cadence the newest SPEED/RPM sample would be as old as
+#   the freshness window at emit time and the tile would flicker to `stale` at
+#   random on a perfectly healthy car. A test below drives exactly that timing so
+#   the coupling cannot be reintroduced.
+#
+#   🔴 US-686 CORRECTED THE CADENCE THIS FILE FED. It cited an aggregate
+#   Bluetooth bus rate and built every cruise fixture at 0.25 s spacing. That
+#   rate is a fiction (`pi.pollingTiers`, zero importers in `src/`, A-28); the
+#   MEASURED per-PID period is 2.206-2.249 s. See `_POLL_PERIOD_S` below for why
+#   an 8.9x-too-fast fixture kept this suite green through the whole defect.
 #
 #   SHIPS-DARK IS PINNED TOO. `pi.gear.enabled` false must leave NO states/gear
 #   file at all -- an absent file is what the carousel already renders as an
@@ -107,7 +113,13 @@ class _Orch(EventRouterMixin, CardStateEmitterMixin):
             "minSpeedKph": 5.0,
             "minRpm": 900,
             "debounceSec": 2.0,
-            "maxAgeSec": 2.0,
+            # 🔴 NOT A LITERAL, and US-686 is why. This harness hardcoded 2.0 --
+            # a FIFTH home of the superseded value, and the one that decided what
+            # this suite actually exercised. The other entries are deliberate
+            # fixture choices; this one is production tuning, so it is read from
+            # the module constant. Hardcode it again and the suite silently stops
+            # testing the shipped configuration the moment Spool re-tunes it.
+            "maxAgeSec": gd.DEFAULT_MAX_AGE_S,
         }
         self._config = {
             "pi": {
@@ -159,14 +171,27 @@ def _readGear(tmp_path) -> dict:
         return json.load(fh)
 
 
-# The OBD link sustains ~4-5 PIDs/sec over Bluetooth (specs/obd2-research.md),
-# so one full SPEED+RPM cycle lands about every 0.25 s. Cruises are fed at that
-# cadence rather than in two samples straddling the debounce window, because
-# the derivation is evaluated on EVERY reading: a pair whose halves are 2 s
-# apart is genuinely stale, and refusing it is correct behaviour, not a defect.
-# A test that fed the slower stream would be asserting against a feed the
-# documented poll rate never produces.
-_POLL_PERIOD_S = 0.25
+# 🔴 CORRECTED BY US-686, AND THIS WAS THE FICTION'S WORST HOME. This constant
+# was 0.25 s, justified by an aggregate Bluetooth bus rate that nothing on this
+# car produces -- taken from `pi.pollingTiers`, which has ZERO importers in
+# `src/` and describes a system this project does not have (A-28). The MEASURED
+# per-PID SPEED period is 2.206-2.249 s (Atlas, 2026-09-06, 3,494 paired samples
+# across drives 64-67): **8.9x slower than the figure this suite was feeding.**
+#
+# WHY IT MATTERED, AND IT IS THE POINT OF US-686. The old comment went on to say
+# a test fed the slower stream "would be asserting against a feed the documented
+# poll rate never produces" -- so the real cadence was considered and REJECTED in
+# favour of the documented one. At 0.25 s spacing no test in this file could ever
+# observe the freshness window being shorter than the sample period, which is the
+# defect that left the glyph dark for whole drives. The suite was green
+# throughout, because it was feeding a car that does not exist. This is Atlas's
+# own dead-steady-cruise mistake (scoping #2 in the story) reproduced at the unit
+# level: a synthetic best case producing a "no defect" verdict real data reversed.
+#
+# The midpoint of the measured range. Cruises are still fed at the poll cadence
+# rather than in two samples straddling the debounce window, because the
+# derivation is evaluated on EVERY reading.
+_POLL_PERIOD_S = 2.217
 
 
 def _cruise(orch, speedKph: float, rpm: float, seconds: float) -> None:
@@ -179,8 +204,13 @@ def _cruise(orch, speedKph: float, rpm: float, seconds: float) -> None:
 
 
 def _settleThirdGear(orch, tmp_path) -> dict:
-    """Hold a steady 3rd-gear cruise past the debounce and read the file."""
-    _cruise(orch, _SPEED_3RD, _RPM_3RD, gd.DEFAULT_DEBOUNCE_S + 0.5)
+    """Hold a steady 3rd-gear cruise past the debounce and read the file.
+
+    The window is the debounce PLUS one poll period: at the measured cadence a
+    sample lands only every ~2.2 s, so a fixture sized to the debounce alone
+    would depend on `_cruise`'s inclusive loop bound for its last feed.
+    """
+    _cruise(orch, _SPEED_3RD, _RPM_3RD, gd.DEFAULT_DEBOUNCE_S + _POLL_PERIOD_S)
     return _readGear(tmp_path)
 
 
@@ -281,18 +311,26 @@ class TestTheOrchestratorFeedsIt:
 
     def test_handleReading_atTheCardStateCadence_doesNotGoStale(self, tmp_path):
         """
-        Given: readings arriving every 0.25 s, as the ~4-5 PID/s poll delivers
-        When:  a full 2 s card-state emit window passes
+        Given: readings arriving at the MEASURED per-PID period (~2.217 s)
+        When:  many card-state emit windows pass
         Then:  the gear is still live -- freshness is measured from the READING
 
         This is the coupling test. Derived on the 2 s card cadence instead, the
-        newest sample would be ~2 s old at emit time and this steady cruise
-        would report `stale` on a healthy car.
+        newest sample would be as old as the window at emit time and this steady
+        cruise would report `stale` on a healthy car.
+
+        US-686 REWROTE THIS FIXTURE AND THE REWRITE IS THE STORY. It fed 0.25 s
+        spacing, which is 8.9x faster than the car -- at that cadence a reading
+        is replaced long before ANY plausible freshness window could expire, so
+        this test could not have failed for the shipped 2.0 s window no matter
+        how wrong it was. At the measured period it now exercises exactly the
+        ratio (window vs sample interval) that US-686 is about, and it goes RED
+        if `maxAgeSec` is ever pushed back below the period.
         """
         orch = _Orch(str(tmp_path / "states"))
         for _ in range(12):
             orch.feed(_SPEED_3RD, _RPM_3RD)
-            orch.clock.advance(0.25)
+            orch.clock.advance(_POLL_PERIOD_S)
 
         state = _readGear(tmp_path)
         assert state["reason"] == gd.REASON_ENGAGED

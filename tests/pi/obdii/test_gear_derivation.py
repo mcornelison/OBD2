@@ -17,6 +17,8 @@
 # ================================================================================
 # 2026-08-31    | Rex (US-630) | Initial -- derivation guards, debounce, and the
 #               |              | grounded F5M33 band formula cross-checks.
+# 2026-09-07    | Rex (US-687-a) | zeroSpeed now reads NEUTRAL, not
+#               |              | below_threshold. Contract change, not a fix.
 # ================================================================================
 ################################################################################
 
@@ -214,16 +216,25 @@ class TestTypedAbsence:
         assert result.available is False
         assert result.reason == gd.REASON_BELOW_THRESHOLD
 
-    def test_update_zeroSpeed_returnsTypedNaAndNeverDividesByZero(self):
+    def test_update_zeroSpeed_readsNeutralAndNeverDividesByZero(self):
         """
         Given: the car is stopped with the engine running
         When:  the deriver is updated
-        Then:  it reports typed NA rather than raising on the ratio division
+        Then:  it reports NEUTRAL, and never reaches the ratio division
+
+        CONTRACT CHANGED BY US-687-a, deliberately. Until 2026-09-07 this case
+        fell through to `below_threshold` -- a machine token shown to the
+        driver at every stoplight for a state the car states plainly. The
+        surviving half of the original claim is kept and is the reason this
+        test stayed rather than being replaced: whichever branch wins, the
+        division by a zero speed must never happen. The neutral branch is
+        pinned in full in tests/pi/obdii/test_gear_neutral.py.
         """
         result = _settled(_deriver(), 0.0, 1500.0)
 
-        assert result.available is False
-        assert result.reason == gd.REASON_BELOW_THRESHOLD
+        assert result.available is True
+        assert result.gear == gd.GEAR_NEUTRAL
+        assert result.reason == gd.REASON_NEUTRAL
 
     def test_update_ratioMatchesNoBand_returnsTypedNaNoBandMatch(self):
         """

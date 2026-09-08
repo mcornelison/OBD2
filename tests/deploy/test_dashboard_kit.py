@@ -944,7 +944,15 @@ const rb = c.ribbonView(known);
 assert.ok(rb, 'ribbon present while a code exists');
 assert.strictEqual(rb.level, 'stop', 'ribbon level = hero severity');
 assert.strictEqual(rb.glyph, '⚠', 'ribbon carries a leading warning glyph');
-assert.ok(/P0301/.test(rb.text), 'ribbon carries the hero code');
+// US-691 CONTRACT CHANGE, deliberate. This read `rb.text`, ONE string holding
+// head + code + description + "+N more" -- and that concatenation is the defect:
+// the CSS ellipsis truncates from the end, so the count was always the first
+// casualty of an overflow and a second stored code went invisible. `ribbonView`
+// now returns SLOTS. The surviving claim -- the banner carries the hero code --
+// is unchanged and is now asserted on the slot that CANNOT be clipped, which is
+// a stronger statement than it was able to make before.
+assert.ok(/P0301/.test(rb.head), 'ribbon carries the hero code, in the unclippable head');
+assert.strictEqual(rb.more, '', 'a lone code carries no count -- never "+0 more"');
 
 // --- escalation re-fires: a newer newSinceTs re-shows even after an ack ------
 assert.strictEqual(c.takeoverShouldShow(stopV, null), true, 'first fire (nothing acked)');

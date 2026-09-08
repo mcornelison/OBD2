@@ -507,7 +507,12 @@
       "minSpeedKph": 5.0,
       "minRpm": 900,
       "debounceSec": 2.0,
-      "maxAgeSec": 2.0
+      "maxAgeSec": 3.0,
+      "parkDwellSec": 20.0
+    },
+    "captureHealth": {
+      "enabled": true,
+      "stallSeconds": 60.0
     },
     "companionService": {
       "enabled": true,

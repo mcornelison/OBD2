@@ -133,24 +133,59 @@ class HealthMonitorMixin:
         US-302: the property may not exist on older logger shapes
         (legacy mocks, future replacement) -- return ``None`` (==
         ``never_written``) on a missing attribute so the health check
-        never crashes.  Must coerce to ``float`` and validate the type
-        because pytest MagicMock auto-creates attributes that lure the
-        ``:.1f`` formatter into a TypeError; only a real numeric value
-        survives the ``int|float`` filter.
+        never crashes.
+
+        US-688: the body MOVED to :meth:`_readDataLoggerRowFreshness`, which
+        returns the same value plus the REASON it is None.  This wrapper is
+        unchanged in behaviour and keeps the US-302 log line's contract; it
+        delegates rather than re-reading so there stays exactly ONE acquisition
+        of this fact (ssot-design-pattern rule B).
         """
+        value, _reason = self._readDataLoggerRowFreshness()
+        return value
+
+    def _readDataLoggerRowFreshness(self) -> tuple[float | None, str | None]:
+        """Read the logger's row freshness AND why it is absent (US-688).
+
+        🔴 THE DISTINCTION THIS EXISTS TO MAKE.  US-302 collapsed three very
+        different facts into one ``None``: the logger has written nothing (a
+        MEASUREMENT, and the 2026-09-04 incident), there is no logger at all (an
+        ABSENCE, the ordinary bench shape), and the read failed (a fault in the
+        Pi).  Only the first is a capture fault.  The health-check LOG could
+        blur them because a human reads it in context; an ALERT cannot, because
+        alerting on the other two is how an alert gets ignored.
+
+        Must coerce to ``float`` and validate the type because pytest MagicMock
+        auto-creates attributes that lure the ``:.1f`` formatter into a
+        TypeError; only a real numeric value survives the ``int|float`` filter.
+
+        Returns:
+            ``(secondsAgo, reason)``.  ``reason`` is None exactly when
+            ``secondsAgo`` is a real reading, and otherwise one of
+            ``capture_health``'s three read reasons.
+        """
+        from pi.obdii.capture_health import (
+            REASON_LOGGER_ABSENT,
+            REASON_NEVER_WRITTEN,
+            REASON_UNREADABLE,
+        )
+
         if self._dataLogger is None:
-            return None
+            return (None, REASON_LOGGER_ABSENT)
         try:
             value = getattr(self._dataLogger, 'lastRowWrittenSecondsAgo', None)
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.debug(f"lastRowWrittenSecondsAgo read failed: {e}")
-            return None
+            return (None, REASON_UNREADABLE)
         if value is None:
-            return None
+            # The logger is there and has written nothing. THE INCIDENT.
+            return (None, REASON_NEVER_WRITTEN)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            # MagicMock or non-numeric stand-in -- treat as never_written.
-            return None
-        return float(value)
+            # MagicMock or non-numeric stand-in -- we could not read a number.
+            # NOT `never_written`: this is an unreadable instrument, and calling
+            # it a capture stall would alarm on every legacy mock in the suite.
+            return (None, REASON_UNREADABLE)
+        return (float(value), None)
 
     def _collectComponentStats(self) -> None:
         """Collect additional statistics from components for health check."""

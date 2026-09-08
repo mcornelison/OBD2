@@ -388,6 +388,16 @@ def _buildHealthMonitorStub(
     stub._readDataLoggerLastRowSecondsAgo = (
         lambda: HealthMonitorMixin._readDataLoggerLastRowSecondsAgo(stub)
     )
+    # US-688: the body of the reader above MOVED to _readDataLoggerRowFreshness,
+    # which returns the same value plus the REASON it is None -- `never_written`
+    # (the logger wrote nothing: a MEASUREMENT) is now distinguishable from
+    # `logger_absent` (there is no logger: an ABSENCE), which US-302's single
+    # None conflated. The US-302 wrapper delegates, so this stub has to carry
+    # both bindings for the delegation to resolve. The assertions below are
+    # UNCHANGED: the health line's contract is exactly what it was.
+    stub._readDataLoggerRowFreshness = (
+        lambda: HealthMonitorMixin._readDataLoggerRowFreshness(stub)
+    )
     return stub  # type: ignore[return-value]
 
 

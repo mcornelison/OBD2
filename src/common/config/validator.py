@@ -365,13 +365,67 @@ DEFAULTS: dict[str, Any] = {
     # config.json under `pi.gear.bands`, ONE place, and an unkeyed deployment
     # reports `not_calibrated` rather than guessing.  See
     # src/pi/obdii/gear_derivation.py.  The thresholds below are Spool's
-    # US-508 semantics; maxAgeSec is grounded to the ~4-5 PID/s OBD poll rate.
+    # US-508 semantics.
     'pi.gear.enabled': False,
     'pi.gear.bands': [],
     'pi.gear.minSpeedKph': 5.0,
     'pi.gear.minRpm': 900,
     'pi.gear.debounceSec': 2.0,
-    'pi.gear.maxAgeSec': 2.0,
+    # US-686 -- the freshness window for one SPEED/RPM sample.  Spool ruled 3.0
+    # on 2026-09-06, superseding 2.0.
+    #
+    # 🔴 THE CADENCE ANY RATIONALE FOR THIS VALUE MUST CITE IS THE MEASURED
+    # PER-PID PERIOD: 2.206-2.249 s for SPEED (Atlas, 2026-09-06, 3,494 paired
+    # samples across drives 64-67).  NOT an aggregate bus rate, and NOT
+    # `pi.pollingTiers` -- that block has ZERO importers in `src/` and describes
+    # a system this project does not have.  It has misled two builds (A-28), and
+    # THIS ENTRY WAS ONE OF THEM: the note that used to sit here grounded 2.0 in
+    # an aggregate bus rate nothing on this car produces.
+    #
+    # 2.0 WAS A UNIT ERROR.  The window was SHORTER than the interval between the
+    # readings it judged, so every sample aged out before its successor arrived
+    # and the tile could never latch (drive 64: engaged 0).  3.0 is 1.33x the
+    # period; it admits a sample that has missed one poll and still rejects one
+    # that has missed two.  Full reasoning:
+    # src/pi/obdii/gear_derivation.py DEFAULT_MAX_AGE_S.
+    'pi.gear.maxAgeSec': 3.0,
+    # US-687-b -- how long RPM must stay UNUSABLE, with a healthy OBD link,
+    # before the tile reads P.  Spool ratified 20.0 on 2026-09-07 and it is
+    # bounded on BOTH sides, which is the half that keeps getting lost:
+    #   FLOOR ~13 s -- the worst in-drive RPM gap measured over 2,141 samples
+    #     (drives 64-68).  Below it, an ordinary bus stall paints Park at speed.
+    #   CEILING ~45 s -- at key-off the Pi runs a bounded pre-shutdown pipeline
+    #     (perTask=20s totalCap=45s), so it has roughly 45 s of life after the
+    #     event that stops the RPM data, and this dwell counts down INSIDE that
+    #     budget.  At 45 s or more, P NEVER RENDERS AT ALL.
+    # THE CEILING IS SOFT: it depends on that pre-shutdown budget, which is under
+    # active work.  If `totalCap` is ever shortened, re-check this value.
+    # Full reasoning: src/pi/obdii/gear_derivation.py DEFAULT_PARK_DWELL_S.
+    'pi.gear.parkDwellSec': 20.0,
+    # US-688 -- the CAPTURE-HEALTH alert. `data_logger_last_row_seconds_ago` has
+    # been logged every 60 s since US-302 with no consumer; on 2026-09-04 it read
+    # `never_written` for two days while a loose dongle produced zero rows.
+    #
+    # 🔴 THE GATE IS THE POWER SOURCE, NOT THE ENGINE, and that is not a
+    # simplification. Every engine-running signal this system owns -- RPM (0x0C),
+    # the `engineOnVoltageThreshold` escalation below (0x42), and drive detection
+    # derived from both -- arrives over the OBDLink transport WHOSE FAILURE IS
+    # THE INCIDENT. Gated on any of them the alert cannot fire in the one case it
+    # was written for. `powerSource` is sensed on the X1209 GPIO6 PLD line and
+    # survives a dead dongle.
+    'pi.captureHealth.enabled': True,
+    # ⚠️ NOT RATIFIED BY SPOOL -- derived, and filed for ratification. Bounded
+    # BELOW by two measurements already on file:
+    #   13 s -- worst in-drive RPM inter-sample gap (2,141 samples, drives 64-68).
+    #   30 s -- `initialConnectTimeoutSec` below; a booting Pi has legitimately
+    #           written nothing while it connects.
+    # 60 s clears the larger by 2x. The ceiling is soft and generous: the outage
+    # this reports lasted TWO DAYS, so any value in minutes still catches it --
+    # so the value is biased toward the RECOVERABLE error, because a false alarm
+    # is permanent (an alert that has cried wolf is off forever) while a slow one
+    # only costs uninformed driving time. Full reasoning:
+    # src/pi/obdii/capture_health.py DEFAULT_STALL_SECONDS.
+    'pi.captureHealth.stallSeconds': 60.0,
     # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
     # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
     # engineOnSampleCount consecutive samples, the orchestrator transitions

@@ -815,6 +815,79 @@
     return { label: "DRIVE", value: "—", detail: "unavailable", level: "unavailable" };
   }
 
+  // US-688 -- the CAPTURE tile. `data_logger_last_row_seconds_ago` has gone out
+  // on the Pi's health-check line every 60 s since US-302 and nothing has ever
+  // rendered it; on 2026-09-04 it read `never_written` for two days while a
+  // loose dongle produced zero rows, and a human found it by looking at the
+  // dongle. This is the surface that would have said so.
+  //
+  // 🔴 THE LEVELS ARE THE DESIGN, and two of them are load-bearing:
+  //   stalled -> `down`. The ALERT. Only amber/down are counted as ISSUES by
+  //              systemSummary, so anything softer would block green without
+  //              ever TELLING the operator anything -- which is the defect.
+  //   idle    -> `neutral`. The car's power is off and no rows are EXPECTED.
+  //              Neutral is the bucket DRIVE=IDLE already occupies for exactly
+  //              this reason: a fault reported in the commonest state there is
+  //              (parked) is crying wolf, and an alert that cries wolf is off
+  //              forever. This car spends most of its life parked.
+  // An absent payload or an unrecognised state resolves to `unavailable`, never
+  // to `ok` -- a dark producer must not be able to paint capture healthy.
+  var CAPTURE_REASON_TEXT = {
+    never_written: "no rows since start",
+    stalled: "no rows recently",
+    logger_absent: "no logger",
+    unreadable: "unreadable",
+  };
+
+  function captureDetail(c) {
+    var age = c.lastRowSecondsAgo;
+    var hasAge = typeof age === "number" && isFinite(age) && age >= 0;
+    if (c.state === "stalled") {
+      // An age is only printed when one exists. `never_written` has NO age, and
+      // "no rows for 0s" -- what `age || 0` produces -- is the exact inversion
+      // of the truth it would be standing in for.
+      return hasAge ? "no rows for " + Math.round(age) + "s" : "no rows since start";
+    }
+    if (c.state === "ok") {
+      return hasAge ? "row " + Math.round(age) + "s ago" : "logging";
+    }
+    if (c.state === "idle") return "car off";
+    return captureReasonText(c.reason);
+  }
+
+  // Machine tokens become driver English HERE, at the renderer, so the state
+  // file keeps the exact token for tests, logs and any future consumer. An
+  // unknown token degrades to words (underscores stripped) rather than leaking
+  // snake_case onto a panel read at speed.
+  function captureReasonText(reason) {
+    if (typeof reason !== "string" || reason === "") return "not reported";
+    if (Object.prototype.hasOwnProperty.call(CAPTURE_REASON_TEXT, reason)) {
+      return CAPTURE_REASON_TEXT[reason];
+    }
+    return reason.replace(/_/g, " ");
+  }
+
+  function captureTile(c) {
+    if (!isObj(c)) {
+      return { label: "CAPTURE", value: "—", detail: "unavailable",
+               level: "unavailable" };
+    }
+    if (c.state === "stalled") {
+      return { label: "CAPTURE", value: "NO DATA", detail: captureDetail(c),
+               level: "down" };
+    }
+    if (c.state === "ok") {
+      return { label: "CAPTURE", value: "LOGGING", detail: captureDetail(c),
+               level: "ok" };
+    }
+    if (c.state === "idle") {
+      return { label: "CAPTURE", value: "IDLE", detail: captureDetail(c),
+               level: "neutral" };
+    }
+    return { label: "CAPTURE", value: "—", detail: captureDetail(c),
+             level: "unavailable" };
+  }
+
   // Top-bar glyph states (bound to data-state CSS in dashboard.css).
   function btGlyphState(o) {
     if (!isObj(o)) return "neutral";
@@ -845,7 +918,13 @@
 
   // Display order == grid order, so "the worst source" is always named in a
   // stable, predictable place.
-  var SYS_TILE_ORDER = ["obdLink", "sync", "power", "drive"];
+  // US-688 appends `capture` LAST: it is the newest source and the grid order
+  // is the drill-down's tie-break order, so putting it anywhere else would
+  // reshuffle four rows the operator has already learned the position of.
+  // Absent from `tiles` when no capture payload was fetched -- both the summary
+  // and the row builder skip a non-object tile, so a caller that passes nothing
+  // gets the exact pre-US-688 card.
+  var SYS_TILE_ORDER = ["obdLink", "sync", "power", "drive", "capture"];
 
   // Severity rank over the tile-level vocabulary. Three buckets, not two:
   //   ok            -- genuinely good.
@@ -1050,7 +1129,13 @@
     return "neutral";   // available but ungradeable -- still not a claim
   }
 
-  function systemStatusView(data) {
+  // US-688: `captureData` is a SECOND state file (states/capture-health), read
+  // on the same slow tick. It is a separate slot rather than a key inside
+  // system-status because the two have different producers -- capture health is
+  // the orchestrator's fact about ITSELF, not about a car source -- and the
+  // gear tile already established this shape. Optional: every pre-US-688 call
+  // site passes one argument and gets the four-tile card unchanged.
+  function systemStatusView(data, captureData) {
     if (!isObj(data)) return null;
     // US-429: the OBD source owns the OBD-link tile + glyph. When the source is
     // unavailable (car off / wall power), render a typed NA ("OBD: off") rather
@@ -1066,6 +1151,13 @@
       power: powerTile(data.power),
       drive: driveTile(data.drive),
     };
+    // Only present when a payload was actually fetched. An UNDEFINED tile is
+    // skipped by the summary and the row builder alike, so "the producer is
+    // dark" renders as the card that existed before this story rather than as
+    // a fifth tile permanently reading unavailable.
+    if (captureData !== undefined && captureData !== null) {
+      tiles.capture = captureTile(captureData);
+    }
     return {
       // US-489: derived from the SAME tiles rendered below, so the headline can
       // never contradict the grid it summarises.
@@ -1948,6 +2040,21 @@
 
   // The persistent ribbon while ANY alert-eligible code is present (design §5.2).
   // Level = the hero severity (drives the color); `na`/empty -> null (no ribbon).
+  //
+  // US-691: THIS RETURNS SLOTS, NOT A SENTENCE, and that is the whole fix. It
+  // used to fold four facts into one string -- "CHECK ENGINE · <code> <desc> ·
+  // +N more" -- which `.ribbon-text` then clipped with a CSS ellipsis. An
+  // ellipsis eats a string FROM THE END, and the end is where the count lives,
+  // so the count was the first thing every overflow destroyed. That is not a
+  // styling accident: while the count exists only as a tail, NO stylesheet can
+  // protect it. On 2026-09-04 P0400 was stored beside P0443 and the operator
+  // did not learn from his own dashboard that a second fault existed.
+  //
+  // Splitting the view lets the stylesheet declare an overflow ORDER instead:
+  // the head and the count do not shrink, the DESCRIPTION is the only run that
+  // clips. What an overflow takes is then the part he can afford to lose.
+  // `more` is EMPTY (not "+0 more") for a single code -- the commonest state
+  // this car is in must not pay for a count it does not carry.
   function ribbonView(data) {
     if (!isObj(data)) return null;
     // US-429: an unavailable DTC source carries no active fault -> no ribbon.
@@ -1955,11 +2062,19 @@
     var alertable = alertableCodes(data.codes);
     if (alertable.length === 0) return null;
     var hero = alertable[0];
-    var text = "CHECK ENGINE · " + hero.code;
-    var desc = hero.short && String(hero.short).trim();
-    if (desc) text += " " + desc;
-    if (alertable.length > 1) text += " · +" + (alertable.length - 1) + " more";
-    return { level: hero.severity, glyph: "⚠", text: text, code: hero.code };
+    // `na` and unrecognized severities are already dropped by alertableCodes,
+    // so this counts FAULTS, never rows: a quiet auto-trans code beside one
+    // real fault must not send the operator hunting for a second one.
+    var moreCount = alertable.length - 1;
+    return {
+      level: hero.severity,
+      glyph: "⚠",
+      head: "CHECK ENGINE · " + hero.code,
+      desc: (hero.short && String(hero.short).trim()) || "",
+      moreCount: moreCount,
+      more: moreCount > 0 ? "+" + moreCount + " more" : "",
+      code: hero.code,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -2911,9 +3026,45 @@
   // >= 2 s debounce. NEVER a wrong number.
   var GEAR_UNKNOWN = "--";
 
+  // US-687-a: the producer's reasons are MACHINE vocabulary. `below_threshold`
+  // is a fine token in states/gear and in a test; it is not a phrase anyone
+  // parses on a 3.5in panel at a glance, and it was what the tile showed at
+  // every stoplight. THIS IS THE ONE PLACE they become driver English -- the
+  // snake_case token keeps travelling in the state file unchanged, so nothing
+  // downstream loses the exact reason.
+  //
+  // Nothing here is INVENTED: each phrase says only what its token says.
+  // `no_band_match` becomes "no gear match" rather than "clutch in", because
+  // clutch-in, coasting and mid-shift all land on that token and the producer
+  // cannot tell them apart.
+  var GEAR_REASON_TEXT = {
+    engaged: "engaged",
+    neutral: "neutral",
+    park: "parked",
+    no_data: "no reading",
+    stale: "reading stale",
+    not_calibrated: "not calibrated",
+    below_threshold: "too slow to tell",
+    no_band_match: "no gear match",
+    ambiguous: "ambiguous",
+    settling: "settling"
+  };
+
+  function gearReasonText(reason) {
+    if (typeof reason !== "string" || !reason) return "no source";
+    if (Object.prototype.hasOwnProperty.call(GEAR_REASON_TEXT, reason)) {
+      return GEAR_REASON_TEXT[reason];
+    }
+    // A reason this renderer has never heard of must still not reach the driver
+    // as raw machine vocabulary. A producer that grows a new token degrades to
+    // readable words rather than to snake_case -- so the sweep holds for
+    // reasons that do not exist yet, which is the only way it stays true.
+    return reason.replace(/_/g, " ");
+  }
+
   function gearView(gearData) {
     var reason = isObj(gearData) && typeof gearData.reason === "string" && gearData.reason
-      ? gearData.reason
+      ? gearReasonText(gearData.reason)
       : "no source";
     if (!isObj(gearData) || gearData.available !== true) {
       return {
@@ -2925,6 +3076,23 @@
     if (gear === "N") {
       return {
         label: "GEAR", value: "N", detail: "neutral",
+        level: "neutral", available: true,
+      };
+    }
+    // US-687-b. Unlike "N" -- which this function has handled since US-508 and
+    // no producer emitted for a month -- "P" was handled NOWHERE, so a producer
+    // emitting it fell through to the `--` below and the panel changed nothing.
+    // The producer half and this branch therefore ship together.
+    //
+    // "parked" is what the driver reads, not what P PROVES. The producer emits
+    // P when the OBD link is healthy and RPM has been unusable past the park
+    // dwell -- so it means "the link is up and the engine is not reporting a
+    // speed". This car is a manual with no Park detent and no PRNDL; the glyph
+    // is the operator's word for switched-off, ruled by the CIO on the record
+    // and sound only while gear stays display-only (US-693 enforces that).
+    if (gear === "P") {
+      return {
+        label: "GEAR", value: "P", detail: "parked",
         level: "neutral", available: true,
       };
     }
@@ -3404,6 +3572,7 @@
     imuView: imuView,
     compassTape: compassTape,
     gearView: gearView,
+    gearReasonText: gearReasonText,
     gLevel: gLevel,
     pushGradeTrend: pushGradeTrend,
     gradeTrendPoints: gradeTrendPoints,
@@ -3425,6 +3594,7 @@
     systemDiagnostics: systemDiagnostics,
     systemDrill: systemDrill,
     systemStatusView: systemStatusView,
+    captureTile: captureTile,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
     socTile: socTile,
@@ -3627,6 +3797,11 @@
         appendTile(grid, view.tiles.sync, true);
         appendTile(grid, view.tiles.power, true);
         appendTile(grid, view.tiles.drive, true);
+        // US-688. Guarded because the tile is absent whenever no capture-health
+        // payload was fetched. It MUST be painted whenever it exists: the
+        // summary counts it, so a card that summarised it without showing it
+        // would read "SYSTEM · 1 ISSUE" over four healthy-looking tiles.
+        if (view.tiles.capture) appendTile(grid, view.tiles.capture, true);
         body.appendChild(grid);
       }
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
@@ -4954,6 +5129,19 @@
         takeoverEl.hidden = false;
       }
 
+      // US-691: fill one banner slot, and take the slot DOWN when it has nothing
+      // to say. An empty-but-painted span still claims its flex gap, so a single
+      // code would pay width for a count that is not there -- the story's stated
+      // negative case ("do not fix multi-code display by making the one-code
+      // case worse"). Same lockstep the ribbon already keeps with data-level:
+      // the content and the box go up and down together.
+      function fillRibbonSlot(selector, text) {
+        var el = ribbonEl.querySelector(selector);
+        if (!el) return;
+        el.textContent = text || "";
+        el.hidden = !text;
+      }
+
       function renderRibbon(view) {
         if (!ribbonEl) return;
         if (!view) {
@@ -4962,10 +5150,10 @@
           return;
         }
         ribbonEl.setAttribute("data-level", view.level);
-        var glyph = ribbonEl.querySelector(".ribbon-glyph");
-        var text = ribbonEl.querySelector(".ribbon-text");
-        if (glyph) glyph.textContent = view.glyph;
-        if (text) text.textContent = view.text;
+        fillRibbonSlot(".ribbon-glyph", view.glyph);
+        fillRibbonSlot(".ribbon-head", view.head);
+        fillRibbonSlot(".ribbon-desc", view.desc);
+        fillRibbonSlot(".ribbon-more", view.more);
         ribbonEl.hidden = false;
       }
 
@@ -5457,7 +5645,16 @@
           }
           // available -> the per-card renderer owns the body.
           if (name === "system-status") {
-            renderSystemStatusCard(card, systemStatusView(data), glyphEls);
+            // US-688: the CAPTURE tile's fact lives in its own state file, so
+            // it is fetched here rather than carried inside system-status --
+            // different producer, different tier concern. `stateOnce` caches
+            // per tick, so this costs one read however many surfaces ask.
+            // A null (producer dark / 404 / fetch aborted) yields NO capture
+            // tile, which is the pre-US-688 card -- never a fabricated `ok`.
+            var captureData = await stateOnce("capture-health");
+            renderSystemStatusCard(
+              card, systemStatusView(data, captureData), glyphEls
+            );
           } else if (name === "dtc") {
             renderAlertsCard(card, alertsCardView(data));
           }
