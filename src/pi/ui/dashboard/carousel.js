@@ -815,6 +815,79 @@
     return { label: "DRIVE", value: "—", detail: "unavailable", level: "unavailable" };
   }
 
+  // US-688 -- the CAPTURE tile. `data_logger_last_row_seconds_ago` has gone out
+  // on the Pi's health-check line every 60 s since US-302 and nothing has ever
+  // rendered it; on 2026-09-04 it read `never_written` for two days while a
+  // loose dongle produced zero rows, and a human found it by looking at the
+  // dongle. This is the surface that would have said so.
+  //
+  // 🔴 THE LEVELS ARE THE DESIGN, and two of them are load-bearing:
+  //   stalled -> `down`. The ALERT. Only amber/down are counted as ISSUES by
+  //              systemSummary, so anything softer would block green without
+  //              ever TELLING the operator anything -- which is the defect.
+  //   idle    -> `neutral`. The car's power is off and no rows are EXPECTED.
+  //              Neutral is the bucket DRIVE=IDLE already occupies for exactly
+  //              this reason: a fault reported in the commonest state there is
+  //              (parked) is crying wolf, and an alert that cries wolf is off
+  //              forever. This car spends most of its life parked.
+  // An absent payload or an unrecognised state resolves to `unavailable`, never
+  // to `ok` -- a dark producer must not be able to paint capture healthy.
+  var CAPTURE_REASON_TEXT = {
+    never_written: "no rows since start",
+    stalled: "no rows recently",
+    logger_absent: "no logger",
+    unreadable: "unreadable",
+  };
+
+  function captureDetail(c) {
+    var age = c.lastRowSecondsAgo;
+    var hasAge = typeof age === "number" && isFinite(age) && age >= 0;
+    if (c.state === "stalled") {
+      // An age is only printed when one exists. `never_written` has NO age, and
+      // "no rows for 0s" -- what `age || 0` produces -- is the exact inversion
+      // of the truth it would be standing in for.
+      return hasAge ? "no rows for " + Math.round(age) + "s" : "no rows since start";
+    }
+    if (c.state === "ok") {
+      return hasAge ? "row " + Math.round(age) + "s ago" : "logging";
+    }
+    if (c.state === "idle") return "car off";
+    return captureReasonText(c.reason);
+  }
+
+  // Machine tokens become driver English HERE, at the renderer, so the state
+  // file keeps the exact token for tests, logs and any future consumer. An
+  // unknown token degrades to words (underscores stripped) rather than leaking
+  // snake_case onto a panel read at speed.
+  function captureReasonText(reason) {
+    if (typeof reason !== "string" || reason === "") return "not reported";
+    if (Object.prototype.hasOwnProperty.call(CAPTURE_REASON_TEXT, reason)) {
+      return CAPTURE_REASON_TEXT[reason];
+    }
+    return reason.replace(/_/g, " ");
+  }
+
+  function captureTile(c) {
+    if (!isObj(c)) {
+      return { label: "CAPTURE", value: "—", detail: "unavailable",
+               level: "unavailable" };
+    }
+    if (c.state === "stalled") {
+      return { label: "CAPTURE", value: "NO DATA", detail: captureDetail(c),
+               level: "down" };
+    }
+    if (c.state === "ok") {
+      return { label: "CAPTURE", value: "LOGGING", detail: captureDetail(c),
+               level: "ok" };
+    }
+    if (c.state === "idle") {
+      return { label: "CAPTURE", value: "IDLE", detail: captureDetail(c),
+               level: "neutral" };
+    }
+    return { label: "CAPTURE", value: "—", detail: captureDetail(c),
+             level: "unavailable" };
+  }
+
   // Top-bar glyph states (bound to data-state CSS in dashboard.css).
   function btGlyphState(o) {
     if (!isObj(o)) return "neutral";
@@ -845,7 +918,13 @@
 
   // Display order == grid order, so "the worst source" is always named in a
   // stable, predictable place.
-  var SYS_TILE_ORDER = ["obdLink", "sync", "power", "drive"];
+  // US-688 appends `capture` LAST: it is the newest source and the grid order
+  // is the drill-down's tie-break order, so putting it anywhere else would
+  // reshuffle four rows the operator has already learned the position of.
+  // Absent from `tiles` when no capture payload was fetched -- both the summary
+  // and the row builder skip a non-object tile, so a caller that passes nothing
+  // gets the exact pre-US-688 card.
+  var SYS_TILE_ORDER = ["obdLink", "sync", "power", "drive", "capture"];
 
   // Severity rank over the tile-level vocabulary. Three buckets, not two:
   //   ok            -- genuinely good.
@@ -1050,7 +1129,13 @@
     return "neutral";   // available but ungradeable -- still not a claim
   }
 
-  function systemStatusView(data) {
+  // US-688: `captureData` is a SECOND state file (states/capture-health), read
+  // on the same slow tick. It is a separate slot rather than a key inside
+  // system-status because the two have different producers -- capture health is
+  // the orchestrator's fact about ITSELF, not about a car source -- and the
+  // gear tile already established this shape. Optional: every pre-US-688 call
+  // site passes one argument and gets the four-tile card unchanged.
+  function systemStatusView(data, captureData) {
     if (!isObj(data)) return null;
     // US-429: the OBD source owns the OBD-link tile + glyph. When the source is
     // unavailable (car off / wall power), render a typed NA ("OBD: off") rather
@@ -1066,6 +1151,13 @@
       power: powerTile(data.power),
       drive: driveTile(data.drive),
     };
+    // Only present when a payload was actually fetched. An UNDEFINED tile is
+    // skipped by the summary and the row builder alike, so "the producer is
+    // dark" renders as the card that existed before this story rather than as
+    // a fifth tile permanently reading unavailable.
+    if (captureData !== undefined && captureData !== null) {
+      tiles.capture = captureTile(captureData);
+    }
     return {
       // US-489: derived from the SAME tiles rendered below, so the headline can
       // never contradict the grid it summarises.
@@ -3502,6 +3594,7 @@
     systemDiagnostics: systemDiagnostics,
     systemDrill: systemDrill,
     systemStatusView: systemStatusView,
+    captureTile: captureTile,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
     socTile: socTile,
@@ -3704,6 +3797,11 @@
         appendTile(grid, view.tiles.sync, true);
         appendTile(grid, view.tiles.power, true);
         appendTile(grid, view.tiles.drive, true);
+        // US-688. Guarded because the tile is absent whenever no capture-health
+        // payload was fetched. It MUST be painted whenever it exists: the
+        // summary counts it, so a card that summarised it without showing it
+        // would read "SYSTEM · 1 ISSUE" over four healthy-looking tiles.
+        if (view.tiles.capture) appendTile(grid, view.tiles.capture, true);
         body.appendChild(grid);
       }
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
@@ -5547,7 +5645,16 @@
           }
           // available -> the per-card renderer owns the body.
           if (name === "system-status") {
-            renderSystemStatusCard(card, systemStatusView(data), glyphEls);
+            // US-688: the CAPTURE tile's fact lives in its own state file, so
+            // it is fetched here rather than carried inside system-status --
+            // different producer, different tier concern. `stateOnce` caches
+            // per tick, so this costs one read however many surfaces ask.
+            // A null (producer dark / 404 / fetch aborted) yields NO capture
+            // tile, which is the pre-US-688 card -- never a fabricated `ok`.
+            var captureData = await stateOnce("capture-health");
+            renderSystemStatusCard(
+              card, systemStatusView(data, captureData), glyphEls
+            );
           } else if (name === "dtc") {
             renderAlertsCard(card, alertsCardView(data));
           }

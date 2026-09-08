@@ -220,6 +220,11 @@ class CardStateEmitterMixin:
     _ltftTrendEmitter: Any = None
     _lastLtftTrendEmitTime: datetime | None = None
     _ltftTrendIntervalS: float = _DEFAULT_LTFT_TREND_INTERVAL_S
+    # US-688: the capture-health producer. CLASS defaults for the same reason as
+    # the gear pair above -- every existing composer keeps working unchanged and
+    # simply publishes no capture verdict.
+    _captureHealthEmitter: Any = None
+    _captureStallSeconds: float = 0.0
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -250,6 +255,7 @@ class CardStateEmitterMixin:
         )
         self._initializeGearProducer(statesDir)
         self._initializeLtftTrendProducer(statesDir)
+        self._initializeCaptureHealthProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -297,6 +303,79 @@ class CardStateEmitterMixin:
             self._systemStatusEmitter = None
             self._batteryHealthEmitter = None
             self._dtcEmitter = None
+
+    # ----------------------------------------------------- capture health
+    #
+    # US-688. `data_logger_last_row_seconds_ago` has gone out on the health-check
+    # line every 60 s since US-302 and NOTHING has ever read it. On 2026-09-04 it
+    # read `never_written` for two days while a loose dongle produced zero rows,
+    # and the outage was found by a human looking at a dongle. This is the
+    # consumer.
+
+    def _initializeCaptureHealthProducer(self, statesDir: str) -> None:
+        """Build the states/capture-health emitter, or stay dark.
+
+        Its OWN try/except, like the gear producer: a failure here must not also
+        take down the DTC card, and vice versa.
+        """
+        try:
+            from pi.obdii.capture_health import (
+                DEFAULT_STALL_SECONDS,
+                makeCaptureHealthEmitter,
+            )
+
+            cfg = self._config.get("pi", {}).get("captureHealth", {})
+            if not cfg.get("enabled", True):
+                # Dark -> NO producer and NO file. An absent state file is an
+                # honest absence the carousel already renders; a file saying
+                # `ok` would be a producer claiming to have looked when it
+                # never ran -- which is this story's own defect, inverted.
+                logger.info("Capture-health dark (pi.captureHealth.enabled=false)")
+                self._captureHealthEmitter = None
+                return
+            self._captureStallSeconds = float(
+                cfg.get("stallSeconds", DEFAULT_STALL_SECONDS)
+            )
+            self._captureHealthEmitter = makeCaptureHealthEmitter(statesDir)
+            logger.info(
+                "Capture-health wired (stall_seconds=%.1f)",
+                self._captureStallSeconds,
+            )
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("Capture-health producer init skipped: %s", e)
+            self._captureHealthEmitter = None
+
+    def _emitCaptureHealthState(self) -> None:
+        """Publish whether capture has gone silent while the car is powered.
+
+        NO SECOND ACQUISITION (ssot-design-pattern rule B). Both facts come off
+        methods that already exist on ``self``:
+
+        * ``_readDataLoggerRowFreshness`` (``HealthMonitorMixin``) -- the SAME
+          read that feeds the US-302 health-check line, so the log and the panel
+          can never disagree about capture.
+        * ``_gatherPowerSource`` -- the US-502 GPIO6 SSOT for AC-vs-battery.
+
+        🔴 AND NOTHING FROM THE OBD TRANSPORT. RPM, the alternator-voltage
+        escalation and drive detection would all be natural "is the engine
+        running" gates, and every one of them dies with the dongle -- which is
+        the failure this alert reports. Gating on any of them would make the
+        alert unable to fire in its own motivating incident.
+        """
+        emitter = self._captureHealthEmitter
+        if emitter is None:
+            return
+
+        # Cross-mixin call (HealthMonitorMixin provides the method); matches the
+        # `_checkConnectionStatus` pattern used in health_monitor.py itself.
+        lastRowS, freshnessReason = self._readDataLoggerRowFreshness()  # type: ignore[attr-defined]
+        powerSource, _powerReason = self._gatherPowerSource()
+        emitter(
+            lastRowSecondsAgo=lastRowS,
+            freshnessReason=freshnessReason,
+            powerSource=powerSource,
+            stallSeconds=self._captureStallSeconds,
+        )
 
     # -------------------------------------------------------- derived gear
     #
@@ -628,6 +707,14 @@ class CardStateEmitterMixin:
             self._emitLtftTrendState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("ltft-trend card emit failed: %s", e)
+        try:
+            # US-688: re-published every tick against a MOVED clock, like the
+            # gear above -- the row age climbs whether or not anything arrives,
+            # and a producer wired only to a write callback would go quiet at
+            # exactly the moment writes stopped, which is the alert condition.
+            self._emitCaptureHealthState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("capture-health card emit failed: %s", e)
         return True
 
     # -------------------------------------------------------- system-status

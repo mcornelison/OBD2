@@ -402,6 +402,30 @@ DEFAULTS: dict[str, Any] = {
     # active work.  If `totalCap` is ever shortened, re-check this value.
     # Full reasoning: src/pi/obdii/gear_derivation.py DEFAULT_PARK_DWELL_S.
     'pi.gear.parkDwellSec': 20.0,
+    # US-688 -- the CAPTURE-HEALTH alert. `data_logger_last_row_seconds_ago` has
+    # been logged every 60 s since US-302 with no consumer; on 2026-09-04 it read
+    # `never_written` for two days while a loose dongle produced zero rows.
+    #
+    # 🔴 THE GATE IS THE POWER SOURCE, NOT THE ENGINE, and that is not a
+    # simplification. Every engine-running signal this system owns -- RPM (0x0C),
+    # the `engineOnVoltageThreshold` escalation below (0x42), and drive detection
+    # derived from both -- arrives over the OBDLink transport WHOSE FAILURE IS
+    # THE INCIDENT. Gated on any of them the alert cannot fire in the one case it
+    # was written for. `powerSource` is sensed on the X1209 GPIO6 PLD line and
+    # survives a dead dongle.
+    'pi.captureHealth.enabled': True,
+    # ⚠️ NOT RATIFIED BY SPOOL -- derived, and filed for ratification. Bounded
+    # BELOW by two measurements already on file:
+    #   13 s -- worst in-drive RPM inter-sample gap (2,141 samples, drives 64-68).
+    #   30 s -- `initialConnectTimeoutSec` below; a booting Pi has legitimately
+    #           written nothing while it connects.
+    # 60 s clears the larger by 2x. The ceiling is soft and generous: the outage
+    # this reports lasted TWO DAYS, so any value in minutes still catches it --
+    # so the value is biased toward the RECOVERABLE error, because a false alarm
+    # is permanent (an alert that has cried wolf is off forever) while a slow one
+    # only costs uninformed driving time. Full reasoning:
+    # src/pi/obdii/capture_health.py DEFAULT_STALL_SECONDS.
+    'pi.captureHealth.stallSeconds': 60.0,
     # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
     # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
     # engineOnSampleCount consecutive samples, the orchestrator transitions

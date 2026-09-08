@@ -510,6 +510,10 @@
       "maxAgeSec": 3.0,
       "parkDwellSec": 20.0
     },
+    "captureHealth": {
+      "enabled": true,
+      "stallSeconds": 60.0
+    },
     "companionService": {
       "enabled": true,
       "apiKeyEnv": "COMPANION_API_KEY",
