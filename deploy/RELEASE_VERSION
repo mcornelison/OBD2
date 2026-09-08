@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.43",
-  "theme": "Sprint 80 -- punch-list round 2, 10/10",
-  "description": "US-667 deploy provisions /var/lib/eclipse-obd for BOTH consumers. US-673 retry ceiling; the heartbeat stops bursting 6x. US-672 availability = the link's CONDITION, not the retry phase. US-661 the LTFT trend on Spool's 5-drive median. US-675/669/670/664/676 tooling. US-681: the gate caught US-661 rendering a healthy window 'insufficient' -- a US-420 fixture never migrated. AWAITING the key-off."
+  "version": "V0.29.44",
+  "theme": "Sprint 81 -- the car tells the truth, 6/6",
+  "description": "GEAR reads N when stopped with the engine turning, and P when a HEALTHY link stops reporting RPM (20 s dwell: floor 13 s worst bus gap, ceiling 45 s shutdown budget). US-686: the freshness window was SHORTER than the sample period, leaving the glyph dark most of a drive. US-691 the DTC banner cannot lose a second code. US-693 makes display-only a build failure. AWAITING one drive."
 }
