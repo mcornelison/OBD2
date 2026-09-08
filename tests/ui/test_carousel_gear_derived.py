@@ -30,6 +30,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Rex (US-630) | Initial -- the derived gear, as the panel shows it.
+# 2026-09-07    | Rex (US-687-a) | A stopped car reads N, not a dash; gear
+#               |              | reasons render as words. Contract changes.
 # ================================================================================
 ################################################################################
 
@@ -320,6 +322,11 @@ class TestTheGlyphRefusesToGuess:
         purpose of carrying a reason: a producer honestly refusing to guess is
         a different operator fact from a producer that does not exist.
 
+        US-687-a: the reason is still the producer's, but it is now RENDERED as
+        driver English rather than as the raw token. The state file keeps
+        `no_band_match` unchanged -- asserted directly below, so this test still
+        pins the producer's vocabulary as well as the panel's.
+
         THE OPERATING POINT IS ARTIFICIAL AND THAT IS THE FINDING, not a flaw
         in the test. Atlas's table is contiguous from 0.0 to 999.0, so the only
         ratios it does not claim are ones no engine and gearbox can produce
@@ -331,7 +338,7 @@ class TestTheGlyphRefusesToGuess:
         surface = _surface(payload)
 
         assert _gearGlyph(surface) == EN_DASH_PAIR
-        assert _gearDetail(surface) == gd.REASON_NO_BAND
+        assert _gearDetail(surface) == "no gear match"
         assert _gearDetail(surface) != "no source"
 
     def test_theStateFileVanishesMidSession_theGlyphDropsTheGear(self, tmp_path):
@@ -403,19 +410,26 @@ class TestCoastingReadsFifthGear_characterisation:
 
         assert _gearGlyph(surface) == "5"
 
-    def test_theFloorsStillCatchTheStationaryCase(self, tmp_path):
+    def test_theStationaryCaseIsStillCaught_andNowNamesItself(self, tmp_path):
         """
         Given: the car stopped at a light, engine idling
         When:  the panel renders
-        Then:  the glyph is a dash -- the speed/rpm floors hold
+        Then:  the glyph reads N -- never a phantom 5th
 
-        The bound on how far the finding above reaches: it is a COASTING
-        defect, not a parked one. Without the 5 km/h floor a stationary car
-        would sit in a permanent phantom 5th, which would be far worse.
+        THE BOUND ON HOW FAR THE FINDING ABOVE REACHES, and it is unchanged:
+        this is a COASTING defect, not a parked one. A stationary car must
+        never sit in a permanent phantom 5th, which would be far worse.
+
+        WHAT US-687-a CHANGED is only WHICH guard catches it. Until 2026-09-07
+        the 5 km/h floor caught it and the panel showed a dash; now the neutral
+        branch catches it first and the panel says N. The load-bearing claim --
+        `not 5` -- is asserted explicitly below so this test still fails on
+        purpose if the 5th band's zero floor ever swallows a stopped car.
         """
         surface = _surface(_emitAbsence(tmp_path, 0.0, 800.0))
 
-        assert _gearGlyph(surface) == EN_DASH_PAIR
+        assert _gearGlyph(surface) == "N"
+        assert _gearGlyph(surface) != "5"
 
 
 # ---------------------------------------------------------------------------

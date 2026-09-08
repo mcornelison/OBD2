@@ -17,6 +17,9 @@
 #               |              | absence for every non-resolving branch, Spool's
 #               |              | thresholds + debounce, and the grounded F5M33
 #               |              | band formula. Ships DARK (pi.gear.enabled).
+# 2026-09-07    | Rex (US-687-a) | NEUTRAL. RPM > 0 with SPEED == 0 is a
+#               |              | determinate state, not an absence -- the tile
+#               |              | showed `below_threshold` at every stoplight.
 # ================================================================================
 ################################################################################
 
@@ -63,6 +66,7 @@ __all__ = [
     "DEFAULT_MIN_SPEED_KPH",
     "F5M33_FINAL_DRIVE",
     "F5M33_GEAR_RATIOS",
+    "GEAR_NEUTRAL",
     "GearBand",
     "GearDeriver",
     "GearReading",
@@ -70,6 +74,7 @@ __all__ = [
     "REASON_AMBIGUOUS",
     "REASON_BELOW_THRESHOLD",
     "REASON_ENGAGED",
+    "REASON_NEUTRAL",
     "REASON_NOT_CALIBRATED",
     "REASON_NO_BAND",
     "REASON_NO_DATA",
@@ -87,6 +92,7 @@ __all__ = [
 # to tell a dead pipe from an uncalibrated one from a clutch pedal.
 # --------------------------------------------------------------------------
 REASON_ENGAGED = "engaged"
+REASON_NEUTRAL = "neutral"
 REASON_NO_DATA = "no_data"
 REASON_STALE = "stale"
 REASON_NOT_CALIBRATED = "not_calibrated"
@@ -103,6 +109,12 @@ REASON_SETTLING = "settling"
 DEFAULT_MIN_SPEED_KPH = 5.0
 DEFAULT_MIN_RPM = 900.0
 DEFAULT_DEBOUNCE_S = 2.0
+
+# US-687-a: the glyph the NEUTRAL state publishes. A STRING among otherwise
+# integer gears, because `carousel.js` gearView has branched on the literal
+# `gear === "N"` since US-508 -- this producer is meeting a renderer contract
+# that already existed, not inventing one.
+GEAR_NEUTRAL = "N"
 
 # Freshness window for a SPEED/RPM sample, seconds. GROUNDED TO THE PIPE, not
 # picked for feel: the OBD link sustains ~4-5 PIDs/sec over Bluetooth
@@ -186,10 +198,16 @@ class GearReading:
     ``gear`` is None whenever ``available`` is False -- there is no
     last-known-good and no partial state.  ``reason`` is populated in BOTH
     cases so a consumer never has to infer why a gear is missing.
+
+    ``gear`` is an ``int`` for a derived gear and the STRING
+    :data:`GEAR_NEUTRAL` (``"N"``) for neutral (US-687-a).  The union is the
+    renderer's, not this module's: ``gearView`` has read both shapes since
+    US-508 and tests the string with ``===`` before it tests for a number, so
+    every consumer must branch on the string BEFORE assuming arithmetic.
     """
 
     available: bool
-    gear: int | None
+    gear: int | str | None
     reason: str
 
     def toStateDict(self) -> dict[str, Any]:
@@ -346,6 +364,32 @@ class GearDeriver:
         # mypy: both are real floats past the sentinel checks above.
         assert isinstance(speedKph, float) and isinstance(rpmValue, float)
 
+        # US-687-a: NEUTRAL. An engine that is turning while the car is
+        # stationary is transmitting NO DRIVE RATIO -- a determinate state, and
+        # the state this car spends most of a drive in (63 % of drive 64's SPEED
+        # rows read zero). It sits HERE, deliberately, between two guards:
+        #
+        # * AFTER freshness, because a zero that arrived a minute ago is not
+        #   evidence the car is stopped NOW.
+        # * BEFORE the floors, because SPEED == 0 is below every speed floor
+        #   there could be -- and `below_threshold` is what the tile has been
+        #   showing at every stoplight, which is a machine token standing in
+        #   for a fact the car states plainly.
+        #
+        # THE TRIGGER IS `rpmValue > 0`, NOT `rpmValue >= self._minRpm` (Spool,
+        # ratified). The 900 rpm floor exists to make the RATIO trustworthy;
+        # in neutral no ratio is being computed, so the floor answers a question
+        # nobody asked. Measured idle on this car is 800 rpm average / 684 min,
+        # with 91.6 % of stationary samples below 900 -- gate on the floor and
+        # the branch is dead at exactly the stoplight it exists for.
+        #
+        # SPEED is compared to zero EXACTLY, not to a small epsilon: PID 0x0D
+        # decodes to whole km/h, so a stopped car reports a clean 0. A creeping
+        # 0.1 km/h is a car that IS transmitting a ratio, just not a trustworthy
+        # one -- which is what `below_threshold` below already says correctly.
+        if rpmValue > 0.0 and speedKph == 0.0:
+            return self._neutral()
+
         # Below either floor the ratio is noise-dominated and the clutch is
         # commonly slipping -- there is no gear FACT here to report. This also
         # makes the ratio division below safe.
@@ -385,6 +429,29 @@ class GearDeriver:
         if nowS - self._candidateSinceS < self._debounceS:
             return GearReading(available=False, gear=None, reason=REASON_SETTLING)
         return GearReading(available=True, gear=gear, reason=REASON_ENGAGED)
+
+    def _neutral(self) -> GearReading:
+        """Publish NEUTRAL, dropping any debounce candidate (US-687-a).
+
+        NOT debounced. The debounce exists to stop the glyph flickering between
+        NUMBERED gears while a ratio settles; ``SPEED == 0`` is exact and has
+        nothing to settle, and a debounced N would leave the tile dark for the
+        first two seconds of every stop.
+
+        The candidate IS cleared, exactly as a typed absence clears it: without
+        that, rolling to a stop in 2nd and pulling away again would republish
+        the pre-stop 2 on the first moving sample -- a gear the car is not yet
+        in, which is the one thing this producer must never print.
+
+        WHAT N CLAIMS: the engine is running and no drive ratio is being
+        transmitted. NOT that the lever is in neutral -- on a manual gearbox
+        this state is bit-for-bit identical to first-with-the-clutch-down.
+        There is no torque path either way, so the glyph is honest; anyone
+        analysing N-time must not read it as lever position.
+        """
+        self._candidateGear = None
+        self._candidateSinceS = 0.0
+        return GearReading(available=True, gear=GEAR_NEUTRAL, reason=REASON_NEUTRAL)
 
     def _absent(self, reason: str) -> GearReading:
         """Drop any candidate and report a typed absence with ``reason``."""

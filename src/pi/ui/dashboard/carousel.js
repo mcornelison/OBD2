@@ -2911,9 +2911,44 @@
   // >= 2 s debounce. NEVER a wrong number.
   var GEAR_UNKNOWN = "--";
 
+  // US-687-a: the producer's reasons are MACHINE vocabulary. `below_threshold`
+  // is a fine token in states/gear and in a test; it is not a phrase anyone
+  // parses on a 3.5in panel at a glance, and it was what the tile showed at
+  // every stoplight. THIS IS THE ONE PLACE they become driver English -- the
+  // snake_case token keeps travelling in the state file unchanged, so nothing
+  // downstream loses the exact reason.
+  //
+  // Nothing here is INVENTED: each phrase says only what its token says.
+  // `no_band_match` becomes "no gear match" rather than "clutch in", because
+  // clutch-in, coasting and mid-shift all land on that token and the producer
+  // cannot tell them apart.
+  var GEAR_REASON_TEXT = {
+    engaged: "engaged",
+    neutral: "neutral",
+    no_data: "no reading",
+    stale: "reading stale",
+    not_calibrated: "not calibrated",
+    below_threshold: "too slow to tell",
+    no_band_match: "no gear match",
+    ambiguous: "ambiguous",
+    settling: "settling"
+  };
+
+  function gearReasonText(reason) {
+    if (typeof reason !== "string" || !reason) return "no source";
+    if (Object.prototype.hasOwnProperty.call(GEAR_REASON_TEXT, reason)) {
+      return GEAR_REASON_TEXT[reason];
+    }
+    // A reason this renderer has never heard of must still not reach the driver
+    // as raw machine vocabulary. A producer that grows a new token degrades to
+    // readable words rather than to snake_case -- so the sweep holds for
+    // reasons that do not exist yet, which is the only way it stays true.
+    return reason.replace(/_/g, " ");
+  }
+
   function gearView(gearData) {
     var reason = isObj(gearData) && typeof gearData.reason === "string" && gearData.reason
-      ? gearData.reason
+      ? gearReasonText(gearData.reason)
       : "no source";
     if (!isObj(gearData) || gearData.available !== true) {
       return {
@@ -3404,6 +3439,7 @@
     imuView: imuView,
     compassTape: compassTape,
     gearView: gearView,
+    gearReasonText: gearReasonText,
     gLevel: gLevel,
     pushGradeTrend: pushGradeTrend,
     gradeTrendPoints: gradeTrendPoints,
