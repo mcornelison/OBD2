@@ -57,7 +57,6 @@ _BASE_CONFIG = {
         "display": {"carousel": {"autoRotateS": 8}},
         "calibration": {"mode": False},
         "alerts": {"audioAlerts": False},
-        "calibration": {"mode": False},
         "analysis": {"triggerAfterDrive": False},
     },
 }
@@ -65,10 +64,15 @@ _BASE_CONFIG = {
 # One valid value per allow-listed key. Deliberately keyed off OVERRIDABLE_KEYS
 # (asserted below) so growing the Slice-1 allow-list forces a conscious update
 # here rather than silently leaving a new writable key untested.
+#
+# US-603: this dict also carried a literal "pi.calibration.mode" beside
+# _CALIB_KEY, which IS that same string -- US-668's re-point (see above) landed
+# on a key already present. ruff's F601 could not see it, because F601 compares
+# LITERAL keys and one of the two was a name. The set-equality assertion below
+# could not see it either: duplicates collapse before the comparison runs.
 _VALID_VALUES = {
     _AUTO_ROTATE_KEY: 0,
     _CALIB_KEY: True,
-    "pi.calibration.mode": True,
     "pi.analysis.triggerAfterDrive": True,
 }
 

@@ -47,14 +47,21 @@ _INDEX = (
     "</script>"
 )
 
-# A config.json carrying every Slice-1 key at a value that is NOT the value any
-# test then writes -- so an assertion can never be satisfied by the default.
+# A config.json carrying every OVERRIDABLE_KEYS key at a value that is NOT the
+# value any test then writes -- so an assertion can never be satisfied by the
+# default. `alerts.audioAlerts` is a NON-overridable leftover kept as a neighbour
+# the allow-list must continue to ignore.
+#
+# US-603: this dict carried `pi.calibration` TWICE. US-533 removed
+# `pi.power.mode` from the allow-list by OVERWRITING its entry with a copy of the
+# calibration entry rather than deleting the line, and Python silently keeps the
+# last one. Same residue in test_states_http_settings_write.py and
+# tests/common/test_config_overlay.py.
 _BASE_CONFIG = {
     "pi": {
         "display": {"carousel": {"autoRotateS": 8}},
         "calibration": {"mode": False},
         "alerts": {"audioAlerts": True},
-        "calibration": {"mode": False},
         "analysis": {"triggerAfterDrive": True},
     }
 }
@@ -126,27 +133,25 @@ def test_loadEffectiveSettings_returnsShippedDefaultsWhenNoOverlay(tmp_path):
     settings = loadEffectiveSettings(_writeConfig(tmp_path))
     assert settings["pi.display.carousel.autoRotateS"] == 8
     assert settings["pi.calibration.mode"] is False
-    assert settings["pi.calibration.mode"] is False
     assert settings["pi.analysis.triggerAfterDrive"] is True
 
 
 def test_loadEffectiveSettings_overlayOverrideWins(tmp_path):
     """Every override value here DIFFERS from the base config's, so a reader that
-    ignored the overlay entirely would fail on all four (US-530's lesson: never
-    let the expected value equal the default)."""
+    ignored the overlay entirely would fail on all three (US-530's lesson: never
+    let the expected value equal the default). Said "all four" while the dict
+    below carried `pi.calibration.mode` twice; see the _BASE_CONFIG note."""
     configPath = _writeConfig(tmp_path)
     _writeOverlay(
         configPath,
         {
             "pi.display.carousel.autoRotateS": 0,
             "pi.calibration.mode": True,
-            "pi.calibration.mode": True,
             "pi.analysis.triggerAfterDrive": False,
         },
     )
     settings = loadEffectiveSettings(configPath)
     assert settings["pi.display.carousel.autoRotateS"] == 0
-    assert settings["pi.calibration.mode"] is True
     assert settings["pi.calibration.mode"] is True
     assert settings["pi.analysis.triggerAfterDrive"] is False
 
