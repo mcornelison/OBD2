@@ -16,6 +16,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-01    | Ralph (Rex)  | Initial -- US-504 verdict wiring into the card.
+# 2026-09-09    | Ralph (Rex)  | US-617 -- fixture supplies end_vcell_v.  US-527/
+#                               TD-074 (2026-08-03) moved the qualifying gate
+#                               from DURATION to DEPTH; this fixture kept
+#                               inserting the pre-US-527 column set, so every
+#                               row was filtered out and all 7 wiring tests read
+#                               `unknown`.  The WIRING was never the defect.
 # ================================================================================
 ################################################################################
 
@@ -42,22 +48,44 @@ def _iso(daysAgo: float) -> str:
     return (_NOW - timedelta(days=daysAgo)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+#: [EXACT-adjacent] A measured end-of-drain cell voltage inside the observed
+#: cutoff region for this pack (3.42-3.45 V, Spool Session-27 / 28 drains --
+#: see battery_health_verdict.QUALIFYING_MAX_END_VCELL_V).  A drain that ran the
+#: pack this low genuinely measured capacity, so it VOTES.
+_CUTOFF_END_VCELL_V = 3.44
+
+#: A drain that ended with the pack still near full.  Above the 3.55 V MAX17048
+#: low-battery threshold, so the pack did not even get low, let alone reach
+#: cutoff: this row measured nothing and must not vote.
+_SHALLOW_END_VCELL_V = 4.02
+
+
 class _FakeDatabase:
-    """An in-memory battery_health_log shaped exactly like the Pi's."""
+    """An in-memory battery_health_log shaped exactly like the Pi's.
+
+    US-617: each drain is a 5-tuple ending in ``endVcellV``, and the arity is
+    deliberately NOT optional.  US-527 made ``end_vcell_v`` a REQUIRED input to
+    the qualifying gate; this fixture went on inserting the pre-US-527 column
+    set and every row was silently filtered out, so seven tests asserting real
+    verdicts read `unknown` for five weeks.  A missing depth now raises on the
+    unpack instead of quietly producing a non-voting row.
+    """
 
     def __init__(self, drains=()):
         self._conn = sqlite3.connect(":memory:", check_same_thread=False)
         self._conn.execute(SCHEMA_BATTERY_HEALTH_LOG)
-        for daysAgo, runtimeSeconds, loadClass, closed in drains:
+        for daysAgo, runtimeSeconds, loadClass, closed, endVcellV in drains:
             self._conn.execute(
                 "INSERT INTO battery_health_log "
-                "(start_timestamp, end_timestamp, runtime_seconds, load_class) "
-                "VALUES (?, ?, ?, ?)",
+                "(start_timestamp, end_timestamp, runtime_seconds, load_class, "
+                " end_vcell_v) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (
                     _iso(daysAgo),
                     _iso(daysAgo - 0.01) if closed else None,
                     runtimeSeconds,
                     loadClass,
+                    endVcellV if closed else None,
                 ),
             )
         self._conn.commit()
@@ -68,7 +96,11 @@ class _FakeDatabase:
 
 
 def _qualifyingDrains(*daysAgo, runtimeSeconds=727):
-    return [(d, runtimeSeconds, "production", True) for d in daysAgo]
+    """Closed production drains that reach cutoff -- i.e. rows that DO vote."""
+    return [
+        (d, runtimeSeconds, "production", True, _CUTOFF_END_VCELL_V)
+        for d in daysAgo
+    ]
 
 
 class _FakeOrch(CardStateEmitterMixin):
@@ -138,9 +170,18 @@ def test_emit_carriesTheRealVerdictFromTheDrainLog(tmp_path):
 def test_emit_carriesTheRealLastHealthCheckDate(tmp_path):
     """last-health-check is MAX(start_timestamp) over QUALIFYING rows -- the
     newest row here is a 120s key-cycle that measured nothing, so the date must
-    come from the 4-day-old real drain instead."""
+    come from the 4-day-old real drain instead.
+
+    US-617: what disqualifies that key-cycle is now its DEPTH, not its duration.
+    US-527 retired the `runtime_seconds >= 600` gate (120 s clears today's 60 s
+    sanity floor), so the row ends at 4.02 V -- the pack never got near cutoff,
+    which is the honest reason it measured nothing.
+    """
     db = _FakeDatabase(
-        [(0.5, 120, "production", True), *_qualifyingDrains(4, 5, 6)]
+        [
+            (0.5, 120, "production", True, _SHALLOW_END_VCELL_V),
+            *_qualifyingDrains(4, 5, 6),
+        ]
     )
     orch = _FakeOrch(_config(tmp_path), hardwareManager=_liveUps(), database=db)
     bh = _emitAndRead(tmp_path, orch)
@@ -222,9 +263,10 @@ def test_emit_rereadsTheLogEachTick_notCachedAtStartup(tmp_path):
 
     db._conn.execute(
         "INSERT INTO battery_health_log "
-        "(start_timestamp, end_timestamp, runtime_seconds, load_class) "
-        "VALUES (?, ?, ?, ?)",
-        (_iso(0.2), _iso(0.1), 727, "production"),
+        "(start_timestamp, end_timestamp, runtime_seconds, load_class, "
+        " end_vcell_v) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (_iso(0.2), _iso(0.1), 727, "production", _CUTOFF_END_VCELL_V),
     )
     db._conn.commit()
 
