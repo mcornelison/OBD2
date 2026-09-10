@@ -3219,18 +3219,62 @@ accel/gyro/mag stay on the bus and in the versioned `edr_imu_sample` store; this
 file is the *derived* view and holds no raw axes at all. **The reader computes,
 the display consumes** (Atlas DELTA-2) — the card never fuses.
 
-*Contract (Atlas Q-A, 2026-07-30; `pitchDeg` added by US-521).* `{available, ts,
-gLat, gLon, gMag, headingDeg, pitchDeg, gradePct, altitude, reasons}`:
+*Contract (Atlas Q-A, 2026-07-30; `pitchDeg` added by US-521; `stopCount` /
+`biasRad` by US-708).* `{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg,
+gradePct, altitude, stopCount, biasRad, reasons}`:
 
 | Field | Meaning | Notes |
 |---|---|---|
-| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot |
-| `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract) |
+| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot. All three are measured in the **vehicle** frame produced by `IMU_BODY_FRAME` — see the body-frame note below; before US-708 the two horizontal components were **transposed** |
+| `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract). ⚠️ US-708 fixed the AXES only: the magnetometer carries a second, independent defect (A-30, ~28 % field, heading uncorrelated with rotation over 668 turns) and is **not** trustworthy today |
 | `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation |
-| `gradePct` | `tan(pitchDeg) × 100` | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away |
+| `gradePct` | `tan(pitchDeg) × 100` | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away. Until US-708 this was derived from the **lateral** axis, i.e. from the car's ROLL — every corner and crowned road read as a hill |
 | `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. US-519 derives it from `pitchDeg`; a future GPS/baro supersedes that, not this bridge |
+| `stopCount` / `biasRad` | **US-708 pitch-path diagnostics**: confirmed ZUPT stops in the rolling window, and the mount-tilt bias currently subtracted from the fused pitch (radians) | NOT derived fields, never gated, and deliberately **still published while the instrument is unavailable** — they describe the *estimator*, and the bias survives an unplug because how the board is bolted in did not change. `biasRad` is unreadable without `stopCount`: 0.0 means "no bias measured yet" until you can see how many stops are behind it |
 | `available` / `ts` | freshness | absent/stale → the US-497 idle-card fallback |
 | `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `pitch_unseeded`, `no_source` |
+
+##### The body frame (US-708 / F-135, Sprint 83 / V0.29.46)
+
+**One wrong fact, three wrong readouts.** The code assumed the board was mounted
+`X = forward, Y = left, Z = up`. It is not: **X is LATERAL and Y is FORE-AFT.**
+Heading's `atan2` arguments were therefore transposed (90° of error at N/E, 180°
+at S/W); `gLat` and `gLon` were swapped; and `pitch_fusion`, which reads index 0
+as forward, computed **grade from the car's ROLL** — the CIO's "gradients of 20 %
+or more" on flat Chicagoland roads. Both halves of the complementary filter were
+affected: the gyro half took index 1 as the left-axis rate, which under the real
+mounting is fore-aft, so it was integrating **roll rate** as pitch.
+
+*Measured, not inferred* (Atlas 2026-09-10, all from this car): `accel_X` vs
+`gyro_Z` = **+0.712** over 26,208 turning samples ⇒ X is lateral; `accel_Y` vs
+`d(SPEED)/dt` = **−0.945** over 829 accelerate/decelerate windows, slope **0.86×**
+theory ⇒ Y is fore-aft; gravity `z` = **+9.920 / +9.687** flat ⇒ Z is up. And a
+closed proof independent of the datasheet: those three are right-handed **only**
+under Z-up (`left × tail = up`); Z-down gives `right × nose = −Z`, left-handed and
+therefore impossible.
+
+*One transform, at the boundary.* `imu_state_bridge.IMU_BODY_FRAME` is the single
+declaration, and `resolveMountFrame` applies it **once** to each raw channel
+(accel, gyro, mag) on the way in. `_levelFrame` and `PitchFusion` both receive
+vehicle coordinates and neither re-spells the mounting — patching them separately
+would be two copies of one fact (SSOT rule B). Two candidates are named, 180° of
+yaw apart: **(A)** `+Y = nose` ⇒ `(fwd, left, up) = (+y, −x, +z)` (shipped) and
+**(B)** `+Y = tail` ⇒ `(−y, +x, +z)` (what the old under-seat mount measured as).
+Flipping between them is **one line**, which matters because they differ by the
+sign of pitch and of both g axes: **picking wrong inverts grade rather than fixing
+it.** 🔴 (A) is the *reasoned* default and is confirmed by a **post-sprint drive on
+the relocated mount** — correlate `accel_Y` against `d(SPEED)/dt`: strongly
+positive keeps (A), strongly negative flips to (B), `|r| < 0.15` means stop and
+report. ⚠️ Drives on or before 2026-09-09 are all the OLD mount and will confirm
+(B) whatever the dash is doing.
+
+*The mounting is not config.* It lived at `pi.sensors.imu.mount.*` until US-708,
+where it pinned the identity map and **overrode the code default** — so correcting
+the constant alone would have shipped a no-op. It is a fact about how the board is
+bolted to the dash, established by measurement and settled by a drive, not a knob;
+an adjustable-looking key reads as something a future session may adjust. The
+validator's mount-axis check went with it: no amount of well-formedness checking
+could notice that a well-formed map described the wrong board.
 
 *Honest-availability is PER FIELD.* A dead magnetometer grays `headingDeg` alone
 while the g fields stay live; an unwired sensor writes an **explicit**
@@ -3271,7 +3315,10 @@ US-519 reuses it unchanged. Three mechanisms, all Spool's:
    never subscribed). Sign is *derived*, not guessed: the frame is right-handed
    `forward × left = up`, so `ω × forward = −ω_left · up` and a nose-up rate is a
    **negative** left-axis rate. It must agree with the accel convention or the
-   two halves of the filter fight each other.
+   two halves of the filter fight each other. ⚠️ That derivation is correct *given
+   vehicle coordinates* — which is what it did not get until US-708 fixed the
+   body frame above; the index it reads was the fore-aft axis, so it integrated
+   **roll rate** as pitch. The estimator itself did not change.
 2. **The accel corrects the gyro only near 1 g** (`accelTrustBand`, default
    0.02 = 2%). This is what rejects the phantom: under 0.3 g the specific force is
    1.044 g, a 4.4% excess, well outside the band. The band cannot be much tighter
@@ -3320,11 +3367,12 @@ US-519/US-520 build the altitude display on top.
 `stateHz` (default 4) is the state-file write cadence, grounded to the
 **consumer** — `carousel.js POLL_MS = 250` — not the sensor's 50 Hz burst;
 writing tmpfs faster than the only reader polls is churn with no observable
-effect. `mount.{forward,left,up}` (default `+x`/`+y`/`+z`) places the board in the
-**vehicle** frame, so a physical remount is a config edit rather than a code
-edit; a duplicated or malformed axis is rejected at config-validation time (fail
-fast) instead of raising once per sample inside the bus drain, where it would be
-logged and swallowed. Gated behind `pi.bus.enabled` + `pi.sensors.imu.enabled`
+effect. 🔴 **`mount.{forward,left,up}` was RETIRED by US-708** — it is a mounting
+fact, not a knob, and it now lives as `imu_state_bridge.IMU_BODY_FRAME` with the
+measurement that established it in the comment (see the body-frame note above).
+The validator's axis check went with it. A stale `mount` block left in
+`config.json` is **inert**: nothing reads it. Gated behind `pi.bus.enabled` +
+`pi.sensors.imu.enabled`
 (flipped on in Sprint 66 — connect-when-wired, the genuine Adafruit ICM-20948
 #4554 confirmed @0x69 via `WHO_AM_I = 0xEA`).
 
@@ -4299,6 +4347,17 @@ distinguishable from *"the producer is refusing to guess right now"*.
 (negative screen y); `gLat` + = **right** → positive x. The G-FORCE tile spells
 both components out in words ("0.30 right · 0.12 brake") so a board mounted
 backwards becomes obvious to the operator instead of silently mirroring the dot.
+
+🟢 **Re-verified against the US-708 body-frame transform and UNCHANGED, on
+purpose.** US-708 altered how `gLat`/`gLon` are *derived* (before it, the two were
+transposed — a corner rendered as an acceleration), but not what they *mean*: the
+producer still publishes `gLon` + = accelerating and `gLat` + = right, and the fix
+makes the card's contract true rather than redefining it. **Nothing on this line
+moves and no consumer changes.** ⚠️ And the sentence above becomes load-bearing
+rather than decorative: the two US-708 candidate mountings differ by exactly a
+180° yaw, so if the shipped constant is the wrong one, "a board mounted backwards"
+is *precisely* what the operator is looking at — the words on the tile are how
+that gets caught on the first drive.
 An over-scale reading **clamps along its own direction** (never per-axis, which
 would swing the dot to a corner and misreport which way the car was loaded) and
 turns amber, while the tile keeps the true magnitude -- the clamp cannot

@@ -318,13 +318,17 @@ DEFAULTS: dict[str, Any] = {
     # gravityTauSec is the gravity low-pass time constant that separates static
     # mount tilt / road grade (slow) from vehicle acceleration (fast) -- without
     # it a board bolted in at a 10-degree tilt pins a phantom 0.17 g on the
-    # g-meter forever.  mount.* places the board in the VEHICLE frame so a
-    # physical remount is a config edit, not a code edit.
+    # g-meter forever.
+    #
+    # US-708 RETIRED 'pi.sensors.imu.mount.*' FROM HERE.  The body frame is a
+    # MOUNTING FACT, not a tuning value: it is established by measurement (X is
+    # lateral, Y is fore-aft, Z is up) and settled by a confirming drive, and an
+    # adjustable-looking key reads as something a future session may adjust.  It
+    # now lives beside the sensor definition as imu_state_bridge.IMU_BODY_FRAME,
+    # with the measurement that established it in the comment.  A stale mount
+    # block left in config.json is inert -- nothing reads it.
     'pi.sensors.imu.stateHz': 10,
     'pi.sensors.imu.gravityTauSec': 5.0,
-    'pi.sensors.imu.mount.forward': '+x',
-    'pi.sensors.imu.mount.left': '+y',
-    'pi.sensors.imu.mount.up': '+z',
     # US-521 (F-125) gyro-fused pitch + ZUPT.  An accelerometer cannot
     # distinguish grade from acceleration, so a 0.3 g pull reads as a
     # 16.7-degree climb; the gyro carries the short term and the accel corrects
@@ -1133,22 +1137,25 @@ class ConfigValidator:
     )
 
     def _validateImuStateBridge(self, config: dict[str, Any]) -> None:
-        """Validate pi.sensors.imu.{rates,mount,pitch,zupt} (US-478, US-521).
+        """Validate pi.sensors.imu.{rates,pitch,zupt} (US-478, US-521, US-708).
 
-        Called after defaults are applied. The mount axis map is the one piece of
-        IMU config that is a CALIBRATION fact rather than a rate, and a wrong one
-        is silently wrong -- a duplicated axis would leave the derived frame
-        degenerate and every g/heading reading subtly false rather than absent.
-        So it fails fast HERE (configuration error, 5-tier class 3) instead of
-        raising once per sample inside the bus drain, where it would be logged
-        and swallowed.
+        Called after defaults are applied.
+
+        US-708 REMOVED THE MOUNT-AXIS CHECK, and removing it was the point rather
+        than a casualty. The axis map was validated here because it is a
+        CALIBRATION fact whose wrongness is silent -- and being config was
+        exactly what let it BE wrong: config.json pinned the identity map,
+        overrode the code default, and no amount of well-formedness checking
+        could notice that a well-formed map described the wrong board. The
+        mounting is now a declared constant beside the sensor
+        (``imu_state_bridge.IMU_BODY_FRAME``), settled by measurement and a
+        confirming drive, so there is nothing left here to validate.
 
         Args:
             config: Validated configuration (post-default-application).
 
         Raises:
-            ConfigValidationError: If a rate is non-positive, or an axis spec is
-                not one of +/-x, +/-y, +/-z, or two axes name the same device axis.
+            ConfigValidationError: If one of the IMU rates is non-positive.
         """
         for key in self._IMU_POSITIVE_KEYS:
             val = self._getNestedValue(config, key)
@@ -1159,28 +1166,6 @@ class ConfigValidator:
                     f"{key} must be a positive number (got {val!r})",
                     missingFields=[key],
                 )
-
-        axes = {}
-        for role in ('forward', 'left', 'up'):
-            key = f'pi.sensors.imu.mount.{role}'
-            spec = self._getNestedValue(config, key)
-            if spec is None:
-                continue
-            if not isinstance(spec, str) or spec.strip().lower().lstrip('+-') not in (
-                'x', 'y', 'z'
-            ):
-                raise ConfigValidationError(
-                    f"{key} must name a device axis as +x/-x/+y/-y/+z/-z "
-                    f"(got {spec!r})",
-                    missingFields=[key],
-                )
-            axes[role] = spec.strip().lower().lstrip('+-')
-        if len(set(axes.values())) != len(axes):
-            raise ConfigValidationError(
-                f"pi.sensors.imu.mount must map forward/left/up to three DISTINCT "
-                f"device axes (got {axes!r})",
-                missingFields=['pi.sensors.imu.mount'],
-            )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """
