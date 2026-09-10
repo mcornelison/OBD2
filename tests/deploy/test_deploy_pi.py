@@ -89,6 +89,7 @@ def test_deployPiSh_smokeTestPasses():
         ["bash", str(SMOKE_TEST)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         # Generous timeout: the .sh test forks ~10 sub-bash invocations of
         # deploy-pi.sh, and a NAS-mounted repo (chi-nas-01 SMB) makes each
         # invocation noticeably slower than local-disk. 90s is comfortable
@@ -110,6 +111,7 @@ def test_deployPiSh_helpFlagExitsCleanly():
         ["bash", str(DEPLOY_SCRIPT), "--help"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
@@ -126,6 +128,7 @@ def test_deployPiSh_unknownFlagRejected():
         ["bash", str(DEPLOY_SCRIPT), "--nope"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
     )
     assert result.returncode == 2
@@ -433,6 +436,7 @@ def test_dryRunSmokeTestStillPasses():
         ["bash", str(SMOKE_TEST)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=90,
     )
     if result.returncode != 0:

@@ -63,7 +63,7 @@ def test_cli_finalize_invokedAsTheUnitInvokesIt(tmp_path):
     r = subprocess.run(
         [sys.executable, "-m", "src.pi.diagnostics.boot_progress",
          "--finalize", "--file", str(f), "--boot-id", "b"],
-        capture_output=True, text=True, cwd=".",
+        capture_output=True, text=True, encoding="utf-8", cwd=".",
     )
     assert r.returncode == 0, r.stderr
     assert "CLEAN_COMPLETE" in f.read_text(encoding="utf-8")

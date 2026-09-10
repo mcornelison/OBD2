@@ -60,6 +60,7 @@ def test_journaldPersistentInstall_postDeployState():
         ["bash", str(TEST_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         # The bash script does two SSH calls (5s + 10s connect timeouts).
         # On a healthy Pi the whole test finishes in ~15-25s; 45s is
         # comfortable headroom for slow first-hops (fresh key cache,

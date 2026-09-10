@@ -100,6 +100,7 @@ def _runEntryPointCleanEnv(*args: str) -> subprocess.CompletedProcess[str]:
         [sys.executable, str(_REPO_ROOT / "scripts/calibrate_max17048.py"), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
         check=False,
     )

@@ -122,7 +122,7 @@ def test_arm_real_production_invocation(tmp_path):
     proc = subprocess.run(
         [sys.executable, "-m", "src.pi.diagnostics.boot_progress", "--arm",
          "--file", str(trail), "--db", str(db)],
-        cwd=str(REPO), env=env, capture_output=True, text=True, timeout=180,
+        cwd=str(REPO), env=env, capture_output=True, text=True, encoding="utf-8", timeout=180,
     )
     blob = proc.stdout + proc.stderr
     assert "No module named 'pi'" not in blob, blob

@@ -345,6 +345,7 @@ class TestCliJsonOutput:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
             # cwd matters: the tools are invoked as `-m tools.pm.<mod>` now (the
             # bare-script form stopped working when the dual-import shim was
@@ -395,6 +396,7 @@ class TestCliStrictExitCode:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
             # cwd matters: the tools are invoked as `-m tools.pm.<mod>` now (the
             # bare-script form stopped working when the dual-import shim was
@@ -427,6 +429,7 @@ class TestCliStrictExitCode:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
             # cwd matters: the tools are invoked as `-m tools.pm.<mod>` now (the
             # bare-script form stopped working when the dual-import shim was

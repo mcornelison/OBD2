@@ -190,6 +190,7 @@ def _runInstall(*args: str, env_extra: dict[str, str] | None = None) -> subproce
         ["bash", str(INSTALL_SH), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
         env=env,
     )

@@ -71,7 +71,7 @@ def test_namedBenchScript_isTracked(name: str) -> None:
 
     result = subprocess.run(
         ["git", "ls-files", "--error-unmatch", f"tools/fleet/{name}"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", check=False,
     )
 
     assert result.returncode == 0, (

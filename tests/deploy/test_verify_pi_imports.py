@@ -181,6 +181,7 @@ def _runVerifier(unitDir: Path, projectRoot: Path | str = "") -> subprocess.Comp
         ["bash", str(SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
         timeout=300,
     )

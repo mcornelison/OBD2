@@ -111,7 +111,7 @@ def test_entrypoint_runs_exactly_as_systemd_invokes_it(tmp_path):
             sys.executable, "-m", "src.pi.power.power_watch",
             "--config", str(cfg), "--env-file", str(envFile),
         ],
-        cwd=str(REPO), env=env, capture_output=True, text=True, timeout=180,
+        cwd=str(REPO), env=env, capture_output=True, text=True, encoding="utf-8", timeout=180,
     )
     blob = proc.stdout + proc.stderr
     assert "No module named 'pi'" not in blob, blob

@@ -383,7 +383,11 @@ def test_deployScript_isStillSyntacticallyValid():
     Then:  no syntax error -- a broken deploy script fails the whole deploy
     """
     result = subprocess.run(
-        ["bash", "-n", str(DEPLOY_SCRIPT)], capture_output=True, text=True, check=False
+        ["bash", "-n", str(DEPLOY_SCRIPT)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr

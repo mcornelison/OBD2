@@ -473,6 +473,7 @@ class TestComposeRecordCli:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
         )
         assert result.returncode == 0, result.stderr
@@ -497,6 +498,7 @@ class TestComposeRecordCli:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
         )
         assert result.returncode != 0
@@ -511,6 +513,7 @@ class TestDeployScriptDryRun:
             ["bash", str(DEPLOY_PI), "--dry-run"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
         )
         assert result.returncode == 0, result.stderr
@@ -525,6 +528,7 @@ class TestDeployScriptDryRun:
             ["bash", str(DEPLOY_PI), "--dry-run"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
         )
         assert result.returncode == 0, result.stderr

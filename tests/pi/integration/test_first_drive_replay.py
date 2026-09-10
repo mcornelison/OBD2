@@ -207,6 +207,7 @@ def _runDriver(
         cwd=str(cwd or _PROJECT_ROOT),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
     )
 

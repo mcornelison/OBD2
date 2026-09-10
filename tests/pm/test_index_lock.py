@@ -740,7 +740,7 @@ def test_realGit_staleLockClearedThenCommitSucceeds(tmp_path, monkeypatch):
 
     def git(*argv: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["git", *argv], cwd=tmp_path, env=env, capture_output=True, text=True
+            ["git", *argv], cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8"
         )
 
     git("init")

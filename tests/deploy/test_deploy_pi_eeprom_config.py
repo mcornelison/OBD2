@@ -85,6 +85,7 @@ def test_eepromPowerOffOnHalt_allScenariosPass():
         ["bash", str(TEST_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         # The .sh test forks ~14 sub-bash invocations across 7 scenarios.
         # Local-disk runs finish in ~3s; a NAS-mounted repo (chi-nas-01 SMB)
         # makes each fork noticeably slower. 90s matches the established
@@ -111,6 +112,7 @@ def test_enforceScript_syntaxValid():
         ["bash", "-n", str(ENFORCE_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
     )
     assert result.returncode == 0, (
@@ -131,6 +133,7 @@ def test_enforceScript_toolMissingExitCode():
         ["bash", str(ENFORCE_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
         env={"RPI_EEPROM_CONFIG": "/nonexistent/rpi-eeprom-config", "PATH": ""},
     )

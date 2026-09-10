@@ -115,6 +115,7 @@ def _runGit(args: list[str], cwd: Path) -> str:
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     return result.stdout.strip()

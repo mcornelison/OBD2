@@ -50,6 +50,7 @@ def _view(fn: str, *args: object) -> dict | None:
         [_NODE, _PROBE, fn, *[json.dumps(a) for a in args]],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

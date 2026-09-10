@@ -110,6 +110,7 @@ def _runInstaller(script: Path, kitEnvPrefix: str, *, chromium: str | None) -> s
         ["bash", str(script), "--dry-run"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
         env=env,
     )
@@ -273,6 +274,7 @@ def test_deployDryRun_kioskStepDetectsSeat0():
         ["bash", str(DEPLOY_SCRIPT), "--dry-run"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=90,
         cwd=str(REPO_ROOT),
     )

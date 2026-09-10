@@ -90,6 +90,7 @@ def runJs(tmp_path: Path, body: str) -> dict:
         ["node", str(script)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
         check=False,
     )

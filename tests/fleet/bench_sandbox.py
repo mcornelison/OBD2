@@ -46,6 +46,7 @@ def _git(*args: str, cwd: Path | None = None) -> None:
         cwd=str(cwd) if cwd else None,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -218,7 +219,7 @@ class BenchSandbox:
         env['GIT_CONFIG_NOSYSTEM'] = '1'
 
         result = subprocess.run(
-            args, capture_output=True, text=True, env=env, cwd=str(self.root)
+            args, capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(self.root)
         )
         return BenchRun(
             returncode=result.returncode,
@@ -253,7 +254,7 @@ class BenchSandbox:
         benchPath = self.benchPathFor(ticket, slug)
         target = benchPath / watchFor
         process = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
             env=env, cwd=str(self.root),
         )
         try:
@@ -309,6 +310,7 @@ class BenchSandbox:
             [POWERSHELL, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(fleet), *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=env,
             cwd=str(self.root),
         )

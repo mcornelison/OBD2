@@ -77,6 +77,7 @@ def _probe(fn: str, *args: object) -> object:
         [_NODE, _PROBE, fn, *[json.dumps(a) for a in args]],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

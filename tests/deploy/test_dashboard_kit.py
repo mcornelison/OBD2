@@ -201,6 +201,7 @@ def test_carouselJs_passesNodeSyntaxCheck_s1():
         ["node", "--check", str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -239,6 +240,7 @@ def test_carouselLogic_swipeAdvancesAndDot_s2():
         ["node", "-e", _S2_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -343,6 +345,7 @@ def test_systemStatusView_renderLogic_s3_i3_i4_f1():
         ["node", "-e", _US400_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -441,6 +444,7 @@ def test_powerTile_modeBadgeHonestInstrument_us421():
         ["node", "-e", _US421_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -543,6 +547,7 @@ def test_batteryHealthView_renderLogic_f8_f9_f10_f2():
         ["node", "-e", _US401_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -635,6 +640,7 @@ def _runInstall(*args: str, env_extra: dict[str, str] | None = None):
         ["bash", str(INSTALL_SH), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
         env=env,
     )
@@ -797,6 +803,7 @@ def test_serviceMenuLogic_allowListAndGuards_us403():
         ["node", "-e", _US403_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -991,6 +998,7 @@ def test_dtcTakeoverAndRibbonLogic_s1_s2_r2_us405():
         ["node", "-e", _US405_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -1186,6 +1194,7 @@ def test_dtcAlertsCardAndDetailLogic_s4_s5_s12_s13_us406():
         ["node", "-e", _US406_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -1312,6 +1321,7 @@ def test_dtcClearLogic_s6_s7_s8_us407():
         ["node", "-e", _US407_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -1494,6 +1504,7 @@ def test_ltftTrendView_renderLogic_f096_us420():
         ["node", "-e", _US420_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -1603,6 +1614,7 @@ def test_powerTile_renderLogic_carWallUnknown_us421():
         ["node", "-e", _US421_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, result.stderr

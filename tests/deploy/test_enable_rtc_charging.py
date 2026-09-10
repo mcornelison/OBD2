@@ -112,6 +112,7 @@ def test_enableRtcCharging_allScenariosPass():
         ["bash", str(TEST_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=180,
     )
     assert result.returncode == 0, (

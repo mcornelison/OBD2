@@ -203,7 +203,7 @@ def _gearDetail(surface) -> str | None:
 def _probe(fn: str, *args: object) -> object:
     """Evaluate one carousel.js export against fixtures via the node probe."""
     cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 

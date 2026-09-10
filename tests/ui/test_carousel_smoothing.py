@@ -63,7 +63,12 @@ def runJs(tmp_path: Path, body: str) -> dict:
         encoding="utf-8",
     )
     completed = subprocess.run(
-        ["node", str(script)], capture_output=True, text=True, timeout=30, check=False
+        ["node", str(script)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
     )
     assert completed.returncode == 0, f"node failed: {completed.stderr}"
     return json.loads(completed.stdout)
