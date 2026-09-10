@@ -269,6 +269,32 @@ def test_fnBody_prefersTheLeastNestedOfSeveralDeclarations():
     assert "INNER_TOKEN" not in body
 
 
+def test_fnBody_prefersTheLeastNestedEvenWhenTheDeeperOneComesFirst():
+    """The DISCRIMINATING case for the test above, which cannot tell depth from
+    file order on its own.
+
+    In carousel.js the outer `render` also happens to appear first, so
+    "shallowest wins" and "first wins" agree on the real file -- which is
+    precisely how the nine replaced copies "got that right by accident"
+    (render_harness.py:158). A fixture in that same order inherits the accident:
+    MEASURED 2026-09-09, swapping `_outermost` for `declarations[0]` leaves the
+    whole slicer suite GREEN.
+
+    So this fixture puts the DEEPER declaration first, where the two strategies
+    give opposite answers. An assertion that can be satisfied two ways is not
+    evidence for either (US-635).
+    """
+    js = (
+        "            function render(value) {\n"
+        "              return INNER_TOKEN;\n"
+        "            }\n"
+        "      function render() {\n        return OUTER_TOKEN;\n      }\n"
+    )
+    body = _fnBody(js, "render")
+    assert "OUTER_TOKEN" in body, "depth lost to file order -- the deeper declaration won"
+    assert "INNER_TOKEN" not in body
+
+
 def test_fnBody_raisesWhenTwoDeclarationsShareTheShallowestDepth():
     """Two at the SAME depth is a genuine coin toss, and the honest instrument
     says so instead of picking one."""
