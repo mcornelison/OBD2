@@ -4157,10 +4157,18 @@
     // instruments on one card can disagree, and the operator has no way to know
     // which one to believe).
     //
-    // The CARET is static furniture: it marks the vehicle's own bearing and must
-    // never move, because the whole readability of a tape comes from one fixed
-    // reference with the world sliding past it. Only the tick group is rebuilt,
-    // and at 7 ticks that is nothing next to the 140-point trail beside it.
+    // US-715 (CIO 2026-09-09): the triangle that used to mark dead centre is
+    // REMOVED. It was fixed furniture the CIO never asked for. The argument it
+    // was defended with is real and was overruled knowingly -- a tape normally
+    // reads against one fixed reference with the world sliding past it -- so the
+    // "current" value is now implicit at the widget's horizontal centre and read
+    // precisely off the numeric HEADING tile instead.
+    //
+    // The TAPE itself stays, deliberately: it is the moving half, and while
+    // headingDeg is wrong (US-708's axis swap, A-30's magnetometer SNR) the tape
+    // is what keeps that defect visible on the glass. Only the tick group is
+    // rebuilt, and at 7 ticks that is nothing next to the 140-point trail beside
+    // it.
     var TAPE_W = 100;          // tape viewBox width
     var TAPE_HALF = 48;        // usable half-width (leaves room for edge labels)
 
@@ -4169,9 +4177,6 @@
         class: "imu-tape", viewBox: "0 0 100 26", "aria-hidden": "true",
       });
       svg.appendChild(svgEl("g", { class: "imu-tape-ticks" }));
-      svg.appendChild(svgEl("polygon", {
-        class: "imu-caret", points: "50,0 46,6 54,6",
-      }));
       return svg;
     }
 
@@ -4180,8 +4185,8 @@
       if (!group) return;
       while (group.firstChild) group.removeChild(group.firstChild);
       // No bearing -> no ticks. An empty strip reads as an absent instrument;
-      // ticks left frozen under the caret read as a confident heading, which is
-      // the same fabrication the frozen needle made in a different shape.
+      // ticks left frozen at the tape's centre read as a confident heading,
+      // which is the same fabrication the frozen needle made in another shape.
       if (!tape || !tape.available) return;
       for (var i = 0; i < tape.ticks.length; i++) {
         var t = tape.ticks[i];

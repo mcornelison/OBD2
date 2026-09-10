@@ -860,11 +860,15 @@ def test_absentHeading_drawsNoCompassTapeAtAll(tmp_path):
     When: the live face paints
     Then: not one rose label is drawn on the tape
 
-    The heading's second surface must go absent WITH it. A tape left under the
-    caret reads as a confident bearing in exactly the way the frozen needle did
-    -- the same fabrication in different geometry (US-497's rule, US-508's
-    instrument). Asserted as "no tick was EVER drawn" rather than "the tape
-    cleared", per the harness limit in the header.
+    The heading's second surface must go absent WITH it. A tape left with its
+    ticks frozen reads as a confident bearing in exactly the way the frozen
+    needle did -- the same fabrication in different geometry (US-497's rule,
+    US-508's instrument). Asserted as "no tick was EVER drawn" rather than "the
+    tape cleared", per the harness limit in the header.
+
+    US-715 removed the static caret this docstring used to name; the claim is
+    unchanged, because it was never about the caret -- it is about ticks that
+    outlive their bearing.
     """
     assert _tapeLabels(_run(_producedImuState(tmp_path, [_accel()]))) == []
 
