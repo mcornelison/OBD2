@@ -2284,13 +2284,28 @@
 
   // Battery-with-age fact. The ONE line allowed to go green at idle -- and only
   // via the Spool verdict, always carrying its data-age (F-9 stale-green guard).
-  // Reuses the battery-health view (single UPS source -> whole-card NA); prefers
-  // SoC% but falls back to volts (a voltage is never rendered AS a percent).
+  // Reuses the battery-health view (single UPS source -> whole-card NA).
   //
   // US-700: same three states. The UPS-unreadable disposition below is the one
   // that proves the discipline -- that payload ARRIVED and says why the gauge
   // cannot be read, so it keeps its typed NA and its reason even during the
   // loading window. The reason is the operator's only lead on what to fix.
+  //
+  // US-699 PUT THE VOLTS ON THE TILE, AND THAT IS NOT A COSMETIC ADDITION.
+  // The CIO was shown the full menu of readable values on 2026-09-09 and chose
+  // the SoC PERCENT for the headline on legibility grounds. He was shown at the
+  // same time that this gauge is KNOWN TO CONTRADICT ITSELF: `battery_health_log`
+  // row 38 recorded 3.63 V at soc 100% while row 37 recorded a HIGHER 3.985 V at
+  // 95%, and a voltage-based fuel gauge cannot report a lower charge at a higher
+  // voltage (US-685, open). Rendering `vcell` BENEATH the percent is what keeps
+  // that contradiction on the card, where it can be diagnosed, instead of behind
+  // the percent, where it gets argued about. Nothing here averages, clamps or
+  // reconciles the two registers -- they disagree, and the disagreement IS the
+  // signal a future session needs to see.
+  //
+  // THE VOLTS ARE ADDED TO THE DETAIL LINE, NEVER SWAPPED IN FOR IT. F-9 is the
+  // whole reason this line is allowed to be the one green thing at idle, and
+  // "we needed the room" is exactly how a stale-green guard gets lost.
   function idleBatteryFact(batteryData, waitedMs) {
     var label = "BATTERY";
     if (loadPhase(batteryData, waitedMs) === "loading") {
@@ -2303,11 +2318,25 @@
     if (view.unavailable) {
       return { label: label, value: "NA", detail: view.reason, level: "unavailable" };
     }
-    var value = view.soc && view.soc.shown ? view.soc.value : view.vcell.value;
+    // F-8 survives the promotion. `shown` is false whenever the MAX17048 SoC
+    // REGISTER was unreadable, and the headline falls back to volts rather than
+    // filling the slot with a percent derived from them. An unread register
+    // costs the operator the percent; it never buys them a fabricated one.
+    var shown = view.soc != null && view.soc.shown === true;
+    // A missing vcell is NAMED rather than quietly dropped: a percent with no
+    // volts beside it would otherwise look identical to a healthy pair, which
+    // is precisely the contradiction this detail line exists to expose.
+    var volts = view.vcell.level === "unavailable" ? "volts unavailable" : view.vcell.value;
     return {
       label: label,
-      value: value,
-      detail: view.healthCheck.label,   // "last health check · <date> (<age>)"
+      // The value slot is the one readable at arm's length, which is the whole
+      // basis of the legibility ruling -- a percent in the small line would
+      // satisfy the letter of the decision and none of its point.
+      value: shown ? view.soc.value : view.vcell.value,
+      // "<volts> · last health check · <date> (<age>)". The volts are omitted
+      // when they are ALREADY the headline: one register printed twice on a
+      // two-line tile is a line the operator reads and learns nothing from.
+      detail: shown ? volts + " · " + view.healthCheck.label : view.healthCheck.label,
       level: view.health.level,         // green ONLY on a `good` verdict (US-504)
     };
   }
