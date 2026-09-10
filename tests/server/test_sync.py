@@ -181,24 +181,88 @@ class TestSyncRequestValidation:
             SyncRequest.model_validate(payload)
 
     def test_allAcceptedTables(self):
-        """ACCEPTED_TABLES is the 8 spec-§2.2 tables plus Sprint 15+ additions."""
+        """``ACCEPTED_TABLES`` is DERIVED -- this pins the LAW, not the inventory.
+
+        **The intent question of TD-082, answered here in the code rather than
+        left implicit.**  This is the *derivation* form, NOT an allow-list.  It
+        asserts HOW the payload whitelist is composed, and is deliberately
+        SILENT about WHICH tables are in it: registering a new table in
+        ``_TABLE_REGISTRY`` keeps this test green **on purpose**.
+
+        The "no table joins the sync surface without a human noticing" job is
+        done by review of ``_TABLE_REGISTRY`` itself -- that dict IS the SSOT,
+        and editing it IS the deliberate act.  A second, hand-typed copy of the
+        same inventory here would carry the cost of an allow-list and the value
+        of neither: it can refuse nothing, and it goes stale in silence.  It did
+        exactly that when ``pi_state`` was registered (US-453), and then failed
+        with a bare set-diff that reads like a typo rather than like a finding.
+
+        Membership questions are asked as explicit property pins in their own
+        tests below, where a failure states what it means.
+
+        No count appears in this docstring.  A number describing a set that
+        grows is a currency defect waiting to happen.
+        """
+        from src.server.api.sync import (
+            _TABLE_REGISTRY,
+            ACCEPTED_TABLES,
+            DTC_FREEZE_FRAME_TABLE,
+        )
+
+        # TWO terms, not one.  dtc_freeze_frame (US-369) is accepted at the
+        # payload boundary while deliberately staying OUT of the generic
+        # registry -- see test_dtcFreezeFrameIsAcceptedOutsideTheRegistry.
+        assert ACCEPTED_TABLES == frozenset(_TABLE_REGISTRY) | {
+            DTC_FREEZE_FRAME_TABLE
+        }
+
+    def test_dtcFreezeFrameIsAcceptedOutsideTheRegistry(self):
+        """The derivation's second term is real, and it is the special case.
+
+        TD-082's source record recommended ``ACCEPTED_TABLES ==
+        frozenset(_TABLE_REGISTRY)``.  That single-term equality is FALSE on
+        this tree and always has been: ``dtc_freeze_frame`` is accepted
+        WITHOUT being registered, because its Pi rows carry a cross-tier shape
+        the column-copy upsert cannot map and are routed through the dedicated
+        ``_syncDtcFreezeFrameRows`` resolver instead.
+
+        Pinned on its own so the exception cannot be quietly folded away: if
+        someone moves it INTO ``_TABLE_REGISTRY`` the equality above still
+        holds, but the generic upsert path would start claiming rows it cannot
+        handle.
+        """
+        from src.server.api.sync import (
+            _TABLE_REGISTRY,
+            ACCEPTED_TABLES,
+            DTC_FREEZE_FRAME_TABLE,
+        )
+
+        assert DTC_FREEZE_FRAME_TABLE in ACCEPTED_TABLES
+        assert DTC_FREEZE_FRAME_TABLE not in _TABLE_REGISTRY
+
+    def test_loadBearingTableIsAccepted(self):
+        """A member the sync path cannot function without is present.
+
+        This is the pin that closes the derivation form's degenerate pass: an
+        EMPTY ``_TABLE_REGISTRY`` satisfies ``test_allAcceptedTables`` above
+        perfectly well.  ``realtime_data`` is the core telemetry table -- if it
+        is not accepted, sync does nothing at all.
+        """
         from src.server.api.sync import ACCEPTED_TABLES
 
-        assert ACCEPTED_TABLES == {
-            "realtime_data",
-            "statistics",
-            "profiles",
-            "vehicle_info",
-            "ai_recommendations",
-            "connection_log",
-            "alert_log",
-            "calibration_sessions",
-            "dtc_log",  # US-204
-            "drive_summary",  # US-206
-            "battery_health_log",  # US-217
-            "dtc_freeze_frame",  # US-369 (F-109)
-            "power_log",  # US-412 (F-101)
-        }
+        assert "realtime_data" in ACCEPTED_TABLES
+
+    def test_migrationLedgerIsNeverAccepted(self):
+        """The server's own migration ledger is not syncable from the Pi.
+
+        ``schema_migrations`` is written by the migration runner and by nothing
+        else; a Pi payload must never be able to reach it.  The name is
+        imported from its SSOT rather than re-typed here.
+        """
+        from src.server.api.sync import ACCEPTED_TABLES
+        from src.server.migrations.runner import SCHEMA_MIGRATIONS_TABLE
+
+        assert SCHEMA_MIGRATIONS_TABLE not in ACCEPTED_TABLES
 
 
 # ==============================================================================

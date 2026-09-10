@@ -203,6 +203,7 @@ class TestScriptFlags:
             ["bash", str(SCRIPT_PATH), "--help"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
         )
         assert result.returncode == 0, (
@@ -242,6 +243,7 @@ class TestScriptFlags:
                 ["bash", str(SCRIPT_PATH), "--dry-run", "AA:BB:CC:DD:EE:FF"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=10,
                 env=env,
             )
@@ -259,6 +261,7 @@ class TestScriptFlags:
             ["bash", str(SCRIPT_PATH)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
         )
         assert result.returncode != 0, (
@@ -270,6 +273,7 @@ class TestScriptFlags:
             ["bash", str(SCRIPT_PATH), "--dry-run", "not-a-mac"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
         )
         assert result.returncode != 0, (
@@ -291,6 +295,7 @@ def test_shellcheck_clean() -> None:
         ["shellcheck", str(SCRIPT_PATH)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, (
@@ -319,6 +324,7 @@ class TestVerifyScript:
             ["bash", str(VERIFY_SCRIPT), "--help"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
         )
         assert result.returncode == 0, (

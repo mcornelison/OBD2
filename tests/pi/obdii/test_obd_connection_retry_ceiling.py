@@ -581,6 +581,77 @@ class TestBothHeartbeatSpawnSitesUseTheSingleAttemptConnect:
         assert captured["connectFn"]() is False
         assert factory.callCount == 1
 
+    def test_postFailureHeartbeatStillWorksOnAConnectionWithoutConnectOnce(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fourth cell of this class's 2x2 grid: 2 spawn sites x
+        prefers-connectOnce / falls-back-to-connect.
+
+        US-703 measured the other three filled and this one empty.  The
+        lifecycle site's fallback is pinned above; the post-failure site's was
+        not, because the only test that drove it
+        (``test_postFailureHeartbeatPrefersConnectOnce``) hands it a real
+        :class:`ObdConnection`, which HAS ``connectOnce`` -- so the fallback at
+        ``connection_recovery.py:358-359`` was never executed by any test.
+
+        This matters more here than at the lifecycle site, because of HOW the
+        post-failure site fails.  If the fallback is removed, ``connectFn``
+        resolves to ``None``, the guard two lines later abandons the spawn, and
+        it says so at ``logger.debug`` -- invisible at the shipped log level.
+        The heartbeat simply never starts.  That is US-338 / I-033 exactly: the
+        silent dead-end that lost drive 13.  So the load-bearing assertion is
+        that a thread was spawned AT ALL, not merely that it was wired well.
+
+        ``SimulatedObdConnection`` is the real-world instance of this shape --
+        it has ``connect`` and no ``connectOnce``, and its ``connect`` is
+        already single-shot, so there is nothing for ``connectOnce`` to fix.
+        """
+        from src.pi.obdii.orchestrator import connection_recovery as cr
+
+        class LegacyConnection:
+            """Duck-typed like the simulator: ``connect``, no ``connectOnce``."""
+
+            def __init__(self) -> None:
+                self.connectCalls = 0
+
+            def connect(self) -> bool:
+                self.connectCalls += 1
+                return True
+
+            def isConnected(self) -> bool:
+                return False
+
+        captured: dict[str, Any] = {}
+
+        def _fakeHeartbeat(**kwargs: Any) -> int:
+            captured.update(kwargs)
+            return 0
+
+        monkeypatch.setattr(cr, "runReconnectHeartbeat", _fakeHeartbeat)
+
+        legacy = LegacyConnection()
+        host = cr.ConnectionRecoveryMixin()
+        host._connection = legacy
+        host._postFailureReconnectHeartbeatThread = None
+
+        host._spawnPostFailureReconnectHeartbeat()
+
+        thread = host._postFailureReconnectHeartbeatThread
+        assert thread is not None, (
+            "US-338 regression: a connection without `connectOnce` (the "
+            "simulator's shape) got NO post-failure heartbeat at all. Dropping "
+            "the `connect` fallback resolves connectFn to None and the spawn "
+            "is abandoned at logger.debug -- the silent dead-end that lost "
+            "drive 13."
+        )
+        thread.join(timeout=5)
+
+        # Behavioural, matching this class's sibling tests: the fallback must
+        # cost exactly one attempt per tick, which the simulator's single-shot
+        # `connect` already satisfies.
+        assert captured["connectFn"]() is True
+        assert legacy.connectCalls == 1
+
 
 # ================================================================================
 # The ceiling's home in config -- validationCriterion #3

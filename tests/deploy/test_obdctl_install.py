@@ -225,7 +225,12 @@ def test_obdctlInstallStep_actuallyProducesARunnableWrapper():
         pytest.skip("bash unavailable on this host")
 
     proc = subprocess.run(
-        [bash, str(sim)], capture_output=True, text=True, timeout=180, cwd=str(REPO_ROOT)
+        [bash, str(sim)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+        cwd=str(REPO_ROOT),
     )
 
     assert proc.returncode == 0, proc.stdout + proc.stderr

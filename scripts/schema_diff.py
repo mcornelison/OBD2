@@ -28,6 +28,15 @@
 #               |              | a server NOT-NULL column has no default + Pi
 #               |              | sync writer omits it (the TD-043 silent-failure
 #               |              | class).
+# 2026-09-09    | Rex (US-607) | TD-079 -- the hand-kept registry was blind to
+#               |              | dtc_freeze_frame (US-368 created it via an
+#               |              | ensureX helper, which on the Pi IS the
+#               |              | migration system).  Add its DDL, and add
+#               |              | syncedPiTables() + the
+#               |              | syncedTablesInvisibleToPiLoader rule so the
+#               |              | NEXT such omission fails the gate by name
+#               |              | instead of being reported as a server-only
+#               |              | table.
 # ================================================================================
 ################################################################################
 
@@ -83,7 +92,7 @@ Output (stdout, JSON, deterministic ordering)::
       }
     }
 
-The script exits non-zero when EITHER gate trips:
+The script exits non-zero when ANY gate trips:
 
 * ``tablesWithPiOnlyDrift`` non-empty -- TD-039 silent-data-loss
   direction (Pi added a column the server lacks).
@@ -91,6 +100,26 @@ The script exits non-zero when EITHER gate trips:
   direction (server has a NOT-NULL column with no default that the Pi
   sync writer never populates -- every Pi INSERT into that table will
   fail with the MariaDB-1364 / SQLite-NOT-NULL-constraint error class).
+* ``syncedTablesInvisibleToPiLoader`` non-empty -- TD-079 blind-gate
+  direction (a table is registered for sync but :func:`loadPiSchema`
+  cannot see it, so the two rules above say nothing at all about it).
+
+**Why the third rule exists (US-607 / TD-079).**  The Pi registry below
+is a hand-kept list of ``CREATE TABLE`` constants, and on the Pi the
+``ensureXSchema`` helpers ARE the migration system -- so a table can
+land the normal way and never reach this file.  ``dtc_freeze_frame``
+did exactly that: created by US-368, registered for sync by US-369, and
+absent here for four sprints.  The failure was not silence.  The gate
+read the SERVER's copy of the table, found no Pi counterpart, and filed
+it under ``tablesOnlyInServer`` -- a category this module documents as
+tier-owned and deliberately gate-exempt.  A synced, cross-tier table sat
+in the output the whole time, wearing the label that means "nothing to
+see here".
+
+The third rule closes the class rather than the instance: its subject is
+computed from the sync registries themselves (:func:`syncedPiTables`),
+so the next ensureX-only table fails the gate by name on the day it is
+registered, whether or not anyone remembers this file exists.
 
 Server-only extras (analytics columns the Pi never sends, PK rename
 conventions like ``drain_event_id`` -> ``id``) are reported in
@@ -114,10 +143,11 @@ deferred CI hookup.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sqlite3
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 __all__ = [
@@ -128,6 +158,7 @@ __all__ = [
     'loadServerSchema',
     'main',
     'renderJson',
+    'syncedPiTables',
 ]
 
 
@@ -176,6 +207,77 @@ PI_PK_RENAMED_TO_ID: dict[str, str] = {
 _PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
 
+@contextlib.contextmanager
+def _piImportPath() -> Iterator[None]:
+    """Put ``<root>`` and ``<root>/src`` on ``sys.path`` for the block's duration.
+
+    Pi-side ``__init__.py`` modules use bare ``pi.*`` imports (the legacy
+    python-OBD shadowing convention from
+    ``knowledge/patterns-python-systems.md`` -- ``src/`` must be on ``sys.path``
+    so ``pi.display`` resolves to ``src/pi/display``).  Both ``<root>`` (for
+    ``src.*``) and ``<root>/src`` (for ``pi.*``) are injected so the import chain
+    doesn't blow up whether we're called from the CLI or from pytest.
+
+    Only entries this helper actually added are popped again, so a caller that
+    already had them on the path keeps them.
+    """
+    added: list[str] = []
+    for path in (str(_PROJECT_ROOT), str(_PROJECT_ROOT / 'src')):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+            added.append(path)
+    try:
+        yield
+    finally:
+        for path in added:
+            try:
+                sys.path.remove(path)
+            except ValueError:
+                pass
+
+
+# ================================================================================
+# The synced-table subject -- computed from the registries, never hand-kept
+# ================================================================================
+
+
+def syncedPiTables() -> frozenset[str]:
+    """Return every Pi table registered to cross the sync wire, computed live.
+
+    The union of the two wire paths, read from the registries the sync client
+    itself derives from:
+
+    * ``src.pi.data.sync_log.PK_COLUMN`` -- the integer-PK delta path.
+    * ``src.common.sync.snapshot_registry.SNAPSHOT_SYNC`` -- the natural-key
+      snapshot path added by US-416.
+
+    COMPLETE BY CONSTRUCTION, and deliberately so.  TD-079's defect class is "a
+    hand-kept inventory of a set that keeps growing"; a guard whose own subject
+    was a second hand-kept list would reproduce that defect inside the fix for
+    it.  Computed on every call rather than snapshotted at import, so a table
+    registered for sync tomorrow is in the subject the same day.
+
+    ``scripts/audit_sync_contract_parity.syncedTables()`` derives the same set
+    for the US-543 A-4 gate.  Neither is a copy of the other's declaration --
+    both read the same two registries -- but two readers CAN drift if a third
+    wire path is added and only one of them learns about it.  That residual is
+    pinned by ``tests/scripts/test_schema_diff.py`` rather than left implicit,
+    and the dependency is not imported across because the A-4 audit already
+    imports FROM this module (the cycle would be real).
+
+    Returns:
+        Frozen set of table names.
+
+    Raises:
+        ImportError: if either registry module fails to import.
+    """
+    with _piImportPath():
+        from src.common.sync.snapshot_registry import SNAPSHOT_SYNC
+        from src.pi.data.sync_log import PK_COLUMN
+
+        return frozenset(PK_COLUMN) | frozenset(SNAPSHOT_SYNC)
+
+
 # ================================================================================
 # Pi loader -- execute canonical DDL in-memory, read columns via PRAGMA
 # ================================================================================
@@ -190,11 +292,15 @@ def loadPiSchema() -> dict[str, set[str]]:
     ourselves (regex on CREATE TABLE is famously fragile).
 
     Tables loaded: every CREATE TABLE statement reachable from
-    ``src.pi.obdii.database_schema.ALL_SCHEMAS`` plus the four standalone
+    ``src.pi.obdii.database_schema.ALL_SCHEMAS`` plus the standalone
     schema modules (``drive_summary``, ``dtc_log_schema``,
-    ``battery_health``, ``pi_state``, ``sync_log``,
-    ``calibration.types``).  Adding a new table on the Pi side requires
-    extending the registry below.
+    ``dtc_freeze_frame_schema``, ``battery_health``, ``pi_state``,
+    ``sync_log``, ``calibration.types``).  Adding a new table on the Pi
+    side requires extending the registry below -- and forgetting to is
+    exactly TD-079, so :func:`syncedPiTables` is diffed against this
+    function's output by the gate and by
+    ``tests/scripts/test_schema_diff.py``.  The list stays hand-kept; what
+    changed in US-607 is that letting it go stale is now LOUD.
 
     Returns:
         Mapping from table name to a set of its column names.
@@ -203,33 +309,15 @@ def loadPiSchema() -> dict[str, set[str]]:
         ImportError: if any Pi schema module fails to import (caller
             should report and exit non-zero).
     """
-    # Pi-side __init__.py modules use bare `pi.*` imports (legacy
-    # python-OBD shadowing convention from knowledge/patterns-python-systems.md
-    # -- ``src/`` must be on sys.path so ``pi.display`` resolves to
-    # ``src/pi/display``).  Inject both ``<root>`` (for ``src.*``) and
-    # ``<root>/src`` (for ``pi.*``) so the import chain doesn't blow up
-    # whether we're called from CLI or pytest.
-    _srcPath = _PROJECT_ROOT / 'src'
-    _added: list[str] = []
-    for path in (str(_PROJECT_ROOT), str(_srcPath)):
-        if path not in sys.path:
-            sys.path.insert(0, path)
-            _added.append(path)
-    try:
+    with _piImportPath():
         from src.pi.calibration.types import SCHEMA_CALIBRATION_DATA
         from src.pi.data.sync_log import SYNC_LOG_SCHEMA
         from src.pi.obdii.database_schema import ALL_SCHEMAS
         from src.pi.obdii.drive_summary import SCHEMA_DRIVE_SUMMARY
+        from src.pi.obdii.dtc_freeze_frame_schema import SCHEMA_DTC_FREEZE_FRAME
         from src.pi.obdii.dtc_log_schema import SCHEMA_DTC_LOG
         from src.pi.obdii.pi_state import SCHEMA_PI_STATE
         from src.pi.power.battery_health import SCHEMA_BATTERY_HEALTH_LOG
-    finally:
-        # Pop only the entries WE added so we don't pollute sys.path.
-        for path in _added:
-            try:
-                sys.path.remove(path)
-            except ValueError:
-                pass
 
     # Collect every (table_name, ddl) pair into one ordered registry.
     # ALL_SCHEMAS already carries the (name, ddl) shape; the standalone
@@ -237,6 +325,11 @@ def loadPiSchema() -> dict[str, set[str]]:
     registry: list[tuple[str, str]] = list(ALL_SCHEMAS) + [
         ('drive_summary', SCHEMA_DRIVE_SUMMARY),
         ('dtc_log', SCHEMA_DTC_LOG),
+        # US-368/US-369 (F-109).  Created by ``ensureDtcFreezeFrameTable`` and
+        # registered for sync, but absent from this list until US-607 -- so the
+        # gate compared nothing for it and labelled it server-only.  See the
+        # module docstring's TD-079 note.
+        ('dtc_freeze_frame', SCHEMA_DTC_FREEZE_FRAME),
         ('battery_health_log', SCHEMA_BATTERY_HEALTH_LOG),
         ('pi_state', SCHEMA_PI_STATE),
         ('sync_log', SYNC_LOG_SCHEMA),
@@ -349,6 +442,7 @@ def computeDiff(
     piSchema: dict[str, set[str]],
     serverSchema: dict[str, set[str]],
     serverNotNullNoDefault: dict[str, set[str]] | None = None,
+    syncedTables: set[str] | frozenset[str] | None = None,
 ) -> dict:
     """Compute the Pi <-> server schema diff.
 
@@ -368,6 +462,13 @@ def computeDiff(
             ``None`` (default for back-compat with the US-249 callers),
             the rule is skipped and those keys are omitted from the
             output.
+        syncedTables: optional set of table names registered to cross the
+            sync wire, normally :func:`syncedPiTables`.  When provided,
+            ``summary.syncedTablesInvisibleToPiLoader`` names every one
+            of them that ``piSchema`` does not contain -- the TD-079
+            blind-gate rule.  When ``None`` the rule is skipped and the
+            key is omitted, matching how the TD-043 rule handles its own
+            back-compat.
 
     Returns:
         Diff dict with the shape documented in the module docstring.
@@ -463,6 +564,16 @@ def computeDiff(
         out['serverRequiredColumnsMissingOnPi'] = (
             serverRequiredColumnsMissingOnPi
         )
+    if syncedTables is not None:
+        # The TD-079 gate signal: a table is registered for sync but the Pi
+        # loader cannot see it, so BOTH rules above are silent about it and the
+        # server's copy gets filed under tablesOnlyInServer -- the category that
+        # means "tier-owned, nothing to check".  Reported as an EMPTY list when
+        # clean rather than omitted, so "the rule ran and found nothing" is
+        # distinguishable from "the rule did not run".
+        summary['syncedTablesInvisibleToPiLoader'] = sorted(
+            set(syncedTables) - piTables,
+        )
     return out
 
 
@@ -481,8 +592,9 @@ def _renderHumanSummary(diff: dict) -> str:
     summary = diff['summary']
     piOnly = summary['tablesWithPiOnlyDrift']
     requiredGap = summary.get('tablesWithRequiredColumnGap', [])
+    blindSpots = summary.get('syncedTablesInvisibleToPiLoader', [])
     lines = [
-        '=== Pi <-> Server Schema Diff (US-249 / TD-039 + TD-043) ===',
+        '=== Pi <-> Server Schema Diff (US-249 / TD-039 + TD-043 + TD-079) ===',
         f'Pi tables:     {summary["piTableCount"]}',
         f'Server tables: {summary["serverTableCount"]}',
         f'Shared tables: {summary["sharedTableCount"]}',
@@ -494,6 +606,9 @@ def _renderHumanSummary(diff: dict) -> str:
         f'TD-043 GATE:   {len(requiredGap)} '
         f'({", ".join(requiredGap) or "none"})  '
         '<- server requires columns Pi omits (silent sync failure)',
+        f'TD-079 GATE:   {len(blindSpots)} '
+        f'({", ".join(blindSpots) or "none"})  '
+        '<- synced tables loadPiSchema() cannot see (gate blind, not clean)',
         '',
     ]
     if diff['tablesOnlyInPi']:
@@ -561,7 +676,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     piSchema = loadPiSchema()
     serverSchema = loadServerSchema()
     serverNotNullNoDefault = loadServerNotNullNoDefault()
-    diff = computeDiff(piSchema, serverSchema, serverNotNullNoDefault)
+    diff = computeDiff(
+        piSchema, serverSchema, serverNotNullNoDefault, syncedPiTables(),
+    )
 
     if args.verbose:
         sys.stderr.write(_renderHumanSummary(diff))
@@ -569,17 +686,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.write(renderJson(diff))
     sys.stdout.write('\n')
 
-    # Gate trips on EITHER failure direction:
+    # Gate trips on ANY failure direction:
     #   * TD-039 -- Pi added a column server lacks (silent-data-loss).
     #   * TD-043 -- server requires a column Pi never populates
     #     (silent-sync-failure / 1364 storm).
+    #   * TD-079 -- a synced table is invisible to loadPiSchema, so the two
+    #     rules above examined nothing at all for it.  A gate that cannot SEE a
+    #     table must not exit 0 over it: "no drift found" and "nowhere to look"
+    #     are different answers and only one of them is clean.
     # Server-only nullable extras (analytics columns, PK rename
     # conventions) are reported but don't fail the gate -- they are
     # by-design and would create CI false-positive fatigue.
     summary = diff['summary']
     piOnlyTrip = bool(summary['tablesWithPiOnlyDrift'])
     requiredGapTrip = bool(summary.get('tablesWithRequiredColumnGap', []))
-    return 1 if (piOnlyTrip or requiredGapTrip) else 0
+    blindSpotTrip = bool(summary.get('syncedTablesInvisibleToPiLoader', []))
+    return 1 if (piOnlyTrip or requiredGapTrip or blindSpotTrip) else 0
 
 
 if __name__ == '__main__':

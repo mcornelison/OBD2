@@ -348,6 +348,7 @@ class TestDeployPiShDryRunAnnouncesNewStep:
             ["bash", str(DEPLOY_SCRIPT), "--dry-run"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
         )
         # Dry-run is offline-safe and must always exit 0.
@@ -427,6 +428,7 @@ def test_deployPiSh_bashSyntaxValid():
         ["bash", "-n", str(DEPLOY_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
     )
     assert result.returncode == 0, (

@@ -14,10 +14,12 @@
 ################################################################################
 
 """Tests for backlog_schema validator (v2.0.0)."""
-from pathlib import Path
 import json
+from pathlib import Path
+
 import pytest
-from tools.pm.backlog_schema import validateBacklog, BacklogValidationError
+
+from tools.pm.backlog_schema import BacklogValidationError, validateBacklog
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

@@ -51,6 +51,7 @@ def test_verifyPreDrive_bashDriverPasses():
         ["bash", str(BASH_TEST)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     print(result.stdout)

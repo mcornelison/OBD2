@@ -58,6 +58,7 @@ def _scale(*args: object) -> float:
         [_NODE, _PROBE, "computeStageScale", *[json.dumps(a) for a in args]],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

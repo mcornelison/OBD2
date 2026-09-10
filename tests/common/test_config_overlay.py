@@ -65,14 +65,20 @@ GITIGNORE = REPO_ROOT / ".gitignore"
 
 
 def _writeConfig(tmp: Path, **overrides) -> Path:
-    """Write a minimal tier-shaped config.json carrying the 5 Slice-1 keys."""
+    """Write a minimal tier-shaped config.json carrying every OVERRIDABLE_KEYS default.
+
+    ``resumeIdleS`` is a NON-overridable neighbour inside the same
+    ``display.carousel`` branch and is load-bearing: it is what
+    ``test_bothReadPaths_agreeOnRejectingAnOutOfAllowListKey`` reads back at 45.
+    Docstring said "the 5 Slice-1 keys" until US-603; the allow-list has been 3
+    keys since US-533 dropped ``pi.alerts.audioAlerts`` and ``pi.power.mode``.
+    """
     config = {
         "protocolVersion": "1.0.0",
         "pi": {
             "display": {"carousel": {"autoRotateS": 8, "resumeIdleS": 45}},
             "calibration": {"mode": False},
             "alerts": {"audioAlerts": False},
-            "calibration": {"mode": False},
             "analysis": {"triggerAfterDrive": True},
         },
     }

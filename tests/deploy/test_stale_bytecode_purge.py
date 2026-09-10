@@ -147,7 +147,7 @@ def _runPiPurge(target: Path) -> subprocess.CompletedProcess:
         ]
     )
     return subprocess.run(
-        ["bash", "-c", harness], capture_output=True, text=True, timeout=60
+        ["bash", "-c", harness], capture_output=True, text=True, encoding="utf-8", timeout=60
     )
 
 
@@ -165,7 +165,7 @@ def _runServerPurge(target: Path) -> subprocess.CompletedProcess:
         ]
     )
     return subprocess.run(
-        ["bash", "-c", harness], capture_output=True, text=True, timeout=60
+        ["bash", "-c", harness], capture_output=True, text=True, encoding="utf-8", timeout=60
     )
 
 
@@ -223,7 +223,9 @@ def test_purgeKillsTheImportableGhostModule(runPurge, tmp_path):
     shutil.rmtree(pkg / "__pycache__", ignore_errors=True)
 
     probe = [sys.executable, "-c", "import ghost; print(ghost.VALUE)"]
-    before = subprocess.run(probe, cwd=pkg, capture_output=True, text=True, timeout=60)
+    before = subprocess.run(
+        probe, cwd=pkg, capture_output=True, text=True, encoding="utf-8", timeout=60
+    )
     assert before.returncode == 0, (
         "PREMISE FAILED: a sourceless .pyc was expected to be importable. "
         "If CPython dropped SourcelessFileLoader this test needs revisiting.\n"
@@ -233,7 +235,9 @@ def test_purgeKillsTheImportableGhostModule(runPurge, tmp_path):
 
     assert runPurge(tmp_path).returncode == 0
 
-    after = subprocess.run(probe, cwd=pkg, capture_output=True, text=True, timeout=60)
+    after = subprocess.run(
+        probe, cwd=pkg, capture_output=True, text=True, encoding="utf-8", timeout=60
+    )
     assert after.returncode != 0, "the ghost module is STILL importable after the purge"
     assert "ModuleNotFoundError" in after.stderr
 

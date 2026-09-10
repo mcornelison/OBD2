@@ -2,6 +2,7 @@
 import json
 import shutil
 from pathlib import Path
+
 from tools.pm.migrate_backlog_v1_to_v2 import migrate
 
 FIXTURES = Path(__file__).parent / "fixtures"

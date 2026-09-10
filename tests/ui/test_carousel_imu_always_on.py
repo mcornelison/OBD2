@@ -41,6 +41,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.ui.render_harness import _fnBody
+
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
@@ -70,7 +72,7 @@ def _read(path: str) -> str:
 def _view(fn: str, *args: object) -> object:
     """Evaluate one carousel.js export against fixtures via the node probe."""
     cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
@@ -99,19 +101,6 @@ def _parkedImu() -> dict:
     is CORRECT, not unavailable. It must render as an instrument, not as a gap.
     """
     return _imu(gLat=0.0, gLon=0.0, gMag=0.0, gradePct=0.0)
-
-
-def _fnBody(js: str, name: str) -> str:
-    """One `function <name>(` up to the next declaration at the SAME indent.
-
-    Indent-aware because `renderHome` is nested six spaces deep inside the
-    browser-only block; a fixed two-space probe would swallow the rest of the
-    file and make every absence assertion below vacuous.
-    """
-    start = js.index(f"function {name}(")
-    indent = js[js.rfind("\n", 0, start) + 1 : start]
-    nxt = js.find("\n" + indent + "function ", start + 1)
-    return js[start:] if nxt == -1 else js[start:nxt]
 
 
 def _codeOnly(src: str) -> str:

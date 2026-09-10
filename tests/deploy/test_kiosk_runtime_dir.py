@@ -171,6 +171,7 @@ def _runInstaller(
         ["bash", str(script), "--dry-run"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
         env=env,
     )
@@ -398,6 +399,7 @@ def test_installer_failsLoudWhenIdUItselfFails(script: Path, prefix: str):
         ["bash", str(script), "--dry-run"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
         env=env,
     )

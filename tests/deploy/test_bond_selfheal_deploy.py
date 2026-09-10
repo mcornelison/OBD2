@@ -453,6 +453,7 @@ def _runExecStart(module: str, pythonPath: str | None) -> subprocess.CompletedPr
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
 

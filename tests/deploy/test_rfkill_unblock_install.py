@@ -336,6 +336,7 @@ def test_deployPiSh_dryRunActuallyRunsTheRfkillStep():
         ["bash", str(DEPLOY_SCRIPT), "--dry-run"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=180,
     )
     assert result.returncode == 0, f"dry-run failed: {result.stderr}"
@@ -355,6 +356,7 @@ def test_deployPiSh_bashSyntaxValid():
         ["bash", "-n", str(DEPLOY_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=10,
     )
     assert result.returncode == 0, (

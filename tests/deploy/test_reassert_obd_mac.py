@@ -52,6 +52,7 @@ def test_reassertObdMac_bashSuitePasses():
         ["bash", str(BASH_TEST)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=90,
     )
     print(result.stdout)

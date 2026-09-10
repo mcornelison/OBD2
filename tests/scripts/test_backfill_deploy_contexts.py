@@ -569,7 +569,7 @@ class TestScanPiRowsSurvivesGitBashMsysMangle:
         )
         result = subprocess.run(
             [sys.executable, str(shim), 'mcornelison@10.27.27.28', remoteCmd],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", timeout=10,
         )
         assert result.returncode == 1, (
             'shim must reproduce the V0.27.8 deploy failure when given the '
@@ -592,7 +592,7 @@ class TestScanPiRowsSurvivesGitBashMsysMangle:
         )
         result = subprocess.run(
             [sys.executable, str(shim), 'mcornelison@10.27.27.28', remoteCmd],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", timeout=10,
         )
         assert result.returncode == 0, (
             f'shim should leave //home/... tokens alone; got rc='
@@ -625,7 +625,7 @@ class TestScanPiRowsSurvivesGitBashMsysMangle:
             capturedArgv.append(shimArgv)
             return subprocess.run(
                 shimArgv,
-                capture_output=True, text=True,
+                capture_output=True, text=True, encoding="utf-8",
                 input=input, timeout=timeout,
             )
 

@@ -206,6 +206,7 @@ def _runCli(*args: str) -> subprocess.CompletedProcess[str]:
         [sys.executable, str(INVARIANTS_PATH), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
 

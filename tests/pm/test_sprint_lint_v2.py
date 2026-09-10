@@ -16,8 +16,10 @@
 
 """Tests for sprint_lint v2 backlog rules."""
 import json
+
 import pytest
-from tools.pm.sprint_lint import lintBacklog, LintError, LintWarning
+
+from tools.pm.sprint_lint import lintBacklog
 
 
 @pytest.fixture

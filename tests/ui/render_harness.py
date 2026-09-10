@@ -42,6 +42,13 @@
 #                                {advanceMs} step, so a state file can AGE
 #                                without being rewritten (frozen-feed staleness).
 #                                Additive -- omitting nowMs leaves Date.now real.
+# 2026-09-09    | Ralph (Rex)  | US-608 (TD-080): `_fnBody` SSOT -- the single
+#                                shipped-JS function slicer, brace-matched and
+#                                RAISING. Replaces nine indent-blind near-copies.
+# 2026-09-09    | Ralph (Rex)  | US-612 (TD-084): `cssSection` -- banner-delimited
+#                                stylesheet section slicing, so a guard can name
+#                                its REGION structurally instead of by a fixed
+#                                character window. RAISES, never returns "".
 # ================================================================================
 ################################################################################
 
@@ -67,6 +74,176 @@ _UA_NOT_RENDERED_TAGS = frozenset({"script", "style", "head", "meta", "link", "t
 _VOID_TAGS = frozenset(
     {"meta", "link", "br", "hr", "img", "input", "source", "area", "base", "col"}
 )
+
+
+# --- shipped-JS source slicing (US-608 / TD-080) -----------------------------
+#
+# WHY THIS IS HERE AND WHY IT RAISES. Nine carousel suites each carried their own
+# `_fnBody`, in four mutually incompatible flavours: "cut at the next `function`
+# at a FIXED 2/4/6-space indent" (5 copies), "cut at the next declaration at the
+# SAME indent" (2), "cut at the closing brace at my own indent" (1), and "cut at
+# a hardcoded 4-space `\n    }`" (1). MEASURED 2026-09-09 against a brace-matched
+# body: ALL 17 live call sites got the wrong span -- 16 over-returned (renderHome
+# by 10831 chars, renderTopbarClock by 9105) and one truncated.
+#
+# Over-returning is the silent direction, and it is why this is a gate story: a
+# span that runs past the function makes `assert X in body` pass on text the
+# function never contained, and an empty span makes `assert X not in body` pass
+# on nothing at all. Both are assertions that cannot fail. So this slicer
+# delimits the body by MATCHING BRACES -- not by guessing an indent -- and it
+# RAISES rather than return a partial, an empty string, or the rest of the file.
+
+_SLICE_HAZARD_NOTE = (
+    "the shipped kit uses backtick strings but no ${} interpolation, so a "
+    "single-pass lexer over quotes and comments is sufficient to brace-match"
+)
+
+
+class FunctionSliceError(RuntimeError):
+    """A shipped-JS function could not be located or delimited.
+
+    Deliberately loud. The failure mode this replaces returned a wrong span and
+    let the caller's assertion pass anyway; a test that cannot find its subject
+    must fail as a test, not quietly assert against the wrong bytes.
+    """
+
+
+def _matchingBrace(js: str, openBrace: int) -> int:
+    """Index of the `}` closing the `{` at ``openBrace``, or -1 if unbalanced.
+
+    Skips quoted strings (', ", `) and both comment forms, so a brace inside a
+    string literal or inside prose cannot close a function body. Validated
+    against all 220 `function` declarations in the shipped carousel.js.
+    """
+    depth = 0
+    i = openBrace
+    n = len(js)
+    while i < n:
+        ch = js[i]
+        if ch in "\"'`":
+            quote = ch
+            i += 1
+            while i < n:
+                if js[i] == "\\":
+                    i += 2
+                    continue
+                if js[i] == quote:
+                    break
+                i += 1
+            if i >= n:
+                return -1
+        elif ch == "/" and i + 1 < n and js[i + 1] == "/":
+            i = js.find("\n", i)
+            if i == -1:
+                return -1
+        elif ch == "/" and i + 1 < n and js[i + 1] == "*":
+            end = js.find("*/", i + 2)
+            if end == -1:
+                return -1
+            i = end + 1
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _outermost(
+    declarations: list[re.Match[str]], js: str, name: str
+) -> re.Match[str]:
+    """The least-nested of several same-named declarations; raises on a true tie.
+
+    Resolution is by NESTING DEPTH, not file position. carousel.js declares
+    `render` twice -- the carousel's own transform renderer at 6 spaces and a
+    settings-row closure at 12 -- and a caller writing the bare name means the
+    outer one. The old copies got that right only by accident (the outer one also
+    happens to come first in the file); anchoring on indent makes it right for
+    the stated reason instead.
+
+    Two declarations at the SAME minimum depth are a genuine coin toss, so that
+    raises rather than picks.
+    """
+    byIndent = sorted(declarations, key=lambda m: len(m.group(0)) - len(m.group(0).lstrip()))
+
+    def depthOf(match: re.Match[str]) -> int:
+        return len(match.group(0)) - len(match.group(0).lstrip())
+
+    shallowest = depthOf(byIndent[0])
+    tied = [m for m in byIndent if depthOf(m) == shallowest]
+    if len(tied) > 1:
+        lines = [js[: m.start()].count("\n") + 1 for m in tied]
+        raise FunctionSliceError(
+            f"function {name!r} is declared {len(tied)} times at the same "
+            f"nesting depth (lines {lines}); the slice would be a coin toss. "
+            f"Disambiguate the source or the caller -- see US-608."
+        )
+    return byIndent[0]
+
+
+def _fnBody(js: str, name: str) -> str:
+    """The full source text of the shipped `function <name>(...) { ... }`.
+
+    THE ONE `_fnBody` under tests/ (US-608). Returned span runs from the start of
+    the declaration's own line-leading `function`/`async function` keyword
+    through its matching closing brace, inclusive -- so it is exactly the
+    function and never its neighbours.
+
+    The declaration is anchored at LINE START (optionally `async`), which is what
+    keeps a commented-out example from winning: the old copies did a bare
+    `js.index("function " + name + "(")` over the whole file, and for `imuTick`
+    that resolved to the `//     async function imuTick() {` at carousel.js:186
+    rather than the real declaration 5536 lines later.
+
+    When a name is declared more than once, the LEAST-NESTED declaration wins
+    (see `_outermost`); two at the same depth raise rather than resolve to a coin
+    toss.
+
+    Args:
+        js: The full shipped JS source text.
+        name: The function's declared name, without the `function ` keyword.
+
+    Returns:
+        The declaration and its whole body, closing brace included.
+
+    Raises:
+        FunctionSliceError: The name has no line-anchored declaration, is
+            declared twice at the same nesting depth, or its body has no matching
+            closing brace. Never returns a partial or empty span -- see the
+            section note above.
+    """
+    declarations = list(
+        re.finditer(
+            r"^[ \t]*(?:async[ \t]+)?function[ \t]+" + re.escape(name) + r"[ \t]*\(",
+            js,
+            re.M,
+        )
+    )
+    if not declarations:
+        raise FunctionSliceError(
+            f"no line-anchored declaration of function {name!r} in the "
+            f"{len(js)}-char source (a match inside a comment does not count)"
+        )
+    match = _outermost(declarations, js, name)
+    openBrace = js.find("{", match.end() - 1)
+    if openBrace == -1:
+        raise FunctionSliceError(
+            f"function {name!r} has no opening brace after its parameter list"
+        )
+    closeBrace = _matchingBrace(js, openBrace)
+    if closeBrace == -1:
+        raise FunctionSliceError(
+            f"function {name!r} has no matching closing brace -- body "
+            f"undelimitable ({_SLICE_HAZARD_NOTE})"
+        )
+    # Start at the keyword, not the line start: the leading indent is matched
+    # only to prove the declaration is real (not commented out) and to measure
+    # nesting depth. Excluding it keeps the span identical in shape to what the
+    # nine replaced copies returned, so no call site's assertion shifts meaning.
+    keyword = match.start() + (len(match.group(0)) - len(match.group(0).lstrip()))
+    return js[keyword : closeBrace + 1]
 
 
 # --- markup ------------------------------------------------------------------
@@ -194,6 +371,52 @@ def _parseBlock(text: str, media: str, startOrder: int) -> tuple[list[Rule], int
                     order += 1
         i = j
     return rules, order
+
+
+class SectionNotFound(Exception):
+    """A named stylesheet section banner is absent, ambiguous, or not brace-aligned."""
+
+
+_SECTION_BANNER = re.compile(r"^/\* --- ", re.MULTILINE)
+
+
+def cssSection(css: str, banner: str) -> str:
+    """The RAW source of one banner-delimited stylesheet section.
+
+    ``dashboard.css`` divides itself into sections introduced by a ``/* --- ``
+    banner at column 0. This returns everything from the banner whose text
+    starts with ``banner`` up to the next such banner (or EOF). Comments are
+    NOT stripped -- callers wanting declarations run ``parseCss`` on the result.
+
+    This exists so a guard can name the REGION it polices structurally instead
+    of by a character count. A fixed-length window silently changes what it
+    covers whenever the CSS inside it grows (TD-084/US-612).
+
+    Raises:
+        SectionNotFound: if the banner is missing, appears more than once, or
+            the resulting span is not brace-balanced. It NEVER returns an empty
+            or partial span -- a guard handed a silently-empty subject asserts
+            nothing at all, which is the inert guard this project keeps paying
+            for (A-27(a)).
+    """
+    starts = [m.start() for m in _SECTION_BANNER.finditer(css)]
+    hits = [s for s in starts if css.startswith("/* --- " + banner, s)]
+    if len(hits) != 1:
+        raise SectionNotFound(
+            f"expected exactly one '/* --- {banner}' section banner in the "
+            f"{len(css)}-char stylesheet, found {len(hits)}"
+        )
+    begin = hits[0]
+    following = [s for s in starts if s > begin]
+    section = css[begin : following[0] if following else len(css)]
+    stripped = _stripComments(section)
+    if stripped.count("{") != stripped.count("}"):
+        raise SectionNotFound(
+            f"the '/* --- {banner}' section is not brace-balanced "
+            f"({stripped.count('{')} open, {stripped.count('}')} close) -- its "
+            "banner boundaries do not line up with rule boundaries"
+        )
+    return section
 
 
 def declarationOf(declarations: str, prop: str) -> tuple[str, bool] | None:

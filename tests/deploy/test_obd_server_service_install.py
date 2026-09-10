@@ -51,6 +51,7 @@ def test_obdServerServiceInstall_postDeployState():
         ["bash", str(TEST_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         # 5 SSH calls (10s connect timeout each) + a curl. 60s headroom is
         # comfortable for slow first-hops.
         timeout=60,

@@ -21,6 +21,14 @@
 #               |              | has a NOT-NULL no-default column that the Pi
 #               |              | sync writer never populates (silent-sync-
 #               |              | failure direction).
+# 2026-09-09    | Rex (US-607) | TD-079 -- the DDL registry was blind to
+#               |              | dtc_freeze_frame.  Add TestSyncedPiTables,
+#               |              | TestPiLoaderSeesEverySyncedTable and
+#               |              | TestBlindSpotGate: a predicate over the WHOLE
+#               |              | synced set, not an entry for one table.  The
+#               |              | four TestMainExitCode tests that substitute a
+#               |              | synthetic Pi schema now substitute the synced
+#               |              | registry to match it (see that class docstring).
 # ================================================================================
 ################################################################################
 
@@ -552,7 +560,17 @@ class TestLoadServerNotNullNoDefaultSmoke:
 
 
 class TestMainExitCode:
-    """Exit-code contract: 0 = no drift in shared tables, 1 = drift present."""
+    """Exit-code contract: 0 = no drift in shared tables, 1 = drift present.
+
+    US-607 note on the ``syncedPiTables`` substitutions below.  These tests hand
+    ``main()`` a SYNTHETIC two-table world, so they must hand it a synthetic
+    sync registry too.  Left unsubstituted, the live registry would name a dozen
+    real tables that the synthetic Pi schema does not contain and every case
+    here would trip the new TD-079 blind-spot gate -- which would be the gate
+    working correctly over a fixture that lies about what the Pi syncs, not a
+    finding.  The gate's teeth are pinned against the REAL registry in
+    :class:`TestBlindSpotGate` instead.
+    """
 
     def test_main_cleanSchemas_exits0(self, monkeypatch, capsys) -> None:
         """When loaders return drift-free shared tables, main exits 0."""
@@ -560,6 +578,7 @@ class TestMainExitCode:
                             lambda: {'t': {'id', 'value'}})
         monkeypatch.setattr(sd, 'loadServerSchema',
                             lambda: {'t': {'id', 'value'}})
+        monkeypatch.setattr(sd, 'syncedPiTables', lambda: frozenset({'t'}))
 
         rc = sd.main([])
 
@@ -575,6 +594,7 @@ class TestMainExitCode:
                             lambda: {'t': {'id', 'pi_extra'}})
         monkeypatch.setattr(sd, 'loadServerSchema',
                             lambda: {'t': {'id'}})
+        monkeypatch.setattr(sd, 'syncedPiTables', lambda: frozenset({'t'}))
 
         rc = sd.main([])
 
@@ -593,6 +613,8 @@ class TestMainExitCode:
                             lambda: {'pi_only': {'id'}})
         monkeypatch.setattr(sd, 'loadServerSchema',
                             lambda: {'server_only': {'id'}})
+        monkeypatch.setattr(sd, 'syncedPiTables',
+                            lambda: frozenset({'pi_only'}))
 
         rc = sd.main([])
 
@@ -616,6 +638,7 @@ class TestMainExitCode:
         # nullable, so no TD-043 trip either.
         monkeypatch.setattr(sd, 'loadServerNotNullNoDefault',
                             lambda: {})
+        monkeypatch.setattr(sd, 'syncedPiTables', lambda: frozenset({'t'}))
 
         rc = sd.main([])
 
@@ -646,6 +669,8 @@ class TestMainExitCode:
                             })
         monkeypatch.setattr(sd, 'loadServerNotNullNoDefault',
                             lambda: {'drive_summary': {'device_id'}})
+        monkeypatch.setattr(sd, 'syncedPiTables',
+                            lambda: frozenset({'drive_summary'}))
 
         rc = sd.main([])
 
@@ -660,3 +685,247 @@ class TestMainExitCode:
             parsed['serverRequiredColumnsMissingOnPi']['drive_summary']
             == ['device_id']
         )
+
+
+# ================================================================================
+# US-607 / TD-079 -- the Pi loader must see every SYNCED Pi table
+# ================================================================================
+
+
+def _syncRegistries():  # noqa: ANN202 -- test helper
+    """Return the two live sync registries, or skip if the Pi stack won't import."""
+    root = str(_PROJECT_ROOT)
+    src = str(_PROJECT_ROOT / 'src')
+    added = [p for p in (root, src) if p not in sys.path]
+    for path in added:
+        sys.path.insert(0, path)
+    try:
+        from src.common.sync.snapshot_registry import SNAPSHOT_SYNC
+        from src.pi.data.sync_log import PK_COLUMN
+    except ImportError as err:  # pragma: no cover -- env guard
+        pytest.skip(f'Pi sync registries not importable: {err}')
+    finally:
+        for path in added:
+            try:
+                sys.path.remove(path)
+            except ValueError:
+                pass
+    return PK_COLUMN, SNAPSHOT_SYNC
+
+
+class TestSyncedPiTables:
+    """``syncedPiTables()`` is the two live registries, never a hand-kept list.
+
+    TD-079's class is "a hand-kept inventory of a growing set".  A guard whose
+    OWN subject is a second hand-kept list would reproduce the defect inside the
+    fix for it, so the subject is computed from the registries the sync client
+    itself reads, on every call.
+    """
+
+    def test_syncedPiTables_isExactlyTheDeltaAndSnapshotRegistries(self) -> None:
+        pkColumn, snapshotSync = _syncRegistries()
+
+        assert sd.syncedPiTables() == frozenset(pkColumn) | frozenset(snapshotSync)
+
+    def test_syncedPiTables_agreesWithTheA4AuditsSyncedSet(self) -> None:
+        """The residual: TWO modules now read these registries, so pin agreement.
+
+        ``scripts/audit_sync_contract_parity.syncedTables()`` derives the same
+        set for the US-543 gate.  Neither is a copy of the other's declaration
+        -- both read the same SSOT -- but two readers can still drift if one
+        gains a third wire path and the other does not.  That is the only way
+        this guard can go quietly wrong, so it is asserted rather than assumed.
+        """
+        try:
+            from scripts.audit_sync_contract_parity import syncedTables
+        except ImportError as err:  # pragma: no cover -- env guard
+            pytest.skip(f'A-4 audit module not importable: {err}')
+
+        assert sd.syncedPiTables() == frozenset(syncedTables())
+
+    def test_syncedPiTables_newDeltaRegistration_isSeenWithoutEditingTheGuard(
+        self, monkeypatch,
+    ) -> None:
+        """A table registered for sync tomorrow is in the subject the same day."""
+        pkColumn, _ = _syncRegistries()
+        monkeypatch.setitem(pkColumn, 'edr_event_vault', 'id')
+
+        assert 'edr_event_vault' in sd.syncedPiTables()
+
+    def test_syncedPiTables_newSnapshotRegistration_isAlsoSeen(
+        self, monkeypatch,
+    ) -> None:
+        """US-416 added a SECOND wire path; watching only one is not the set."""
+        _, snapshotSync = _syncRegistries()
+        from src.common.sync.snapshot_registry import SnapshotSyncSpec
+
+        monkeypatch.setitem(
+            snapshotSync, 'edr_snapshot',
+            SnapshotSyncSpec(naturalKeyCols=('event_id',), cursorCol='recorded_at'),
+        )
+
+        assert 'edr_snapshot' in sd.syncedPiTables()
+
+
+class TestPiLoaderSeesEverySyncedTable:
+    """The acceptance predicate, over the WHOLE set rather than one table."""
+
+    def test_loadPiSchema_seesEverySyncedPiTable(self) -> None:
+        """TD-079's standing gate: no synced Pi table is invisible to the loader.
+
+        This is the assertion the story asks for, and it is the one that cannot
+        go stale: adding ``dtc_freeze_frame`` to the registry fixes today, this
+        fails loudly on the next ensureX-only table instead of reporting the
+        gate clean over a table it cannot see.
+        """
+        invisible = sorted(sd.syncedPiTables() - set(sd.loadPiSchema()))
+
+        assert not invisible, (
+            f'tables registered for sync that scripts/schema_diff.loadPiSchema '
+            f'cannot see: {invisible}. The Pi<->server drift gate reports '
+            f'nothing about these -- worse, it reads the server copy and '
+            f'classifies them as SERVER-ONLY, which is documented as '
+            f'tier-owned and gate-exempt. Add each one to the registry in '
+            f'loadPiSchema().'
+        )
+
+    def test_loadPiSchema_includesDtcFreezeFrameWithItsCaptureColumns(self) -> None:
+        """The live instance TD-079 was filed for (US-368 ensureDtcFreezeFrameTable).
+
+        Named explicitly as well as covered by the predicate above: the
+        7-column shape is what US-543 measured as ``appliedOnly`` when the two
+        Pi loaders disagreed, so pinning it here makes the two records
+        comparable by column and not just by table name.
+        """
+        columns = sd.loadPiSchema()['dtc_freeze_frame']
+
+        assert columns == {
+            'id', 'dtc_log_id', 'captured_at_timestamp_utc',
+            'pid_responses_json', 'vehicle_info_vin', 'notes', 'data_source',
+        }
+
+
+class TestBlindSpotGate:
+    """A synced table the Pi loader cannot see must FAIL, never read as clean."""
+
+    def test_computeDiff_syncedTableMissingFromPiSchema_isReported(self) -> None:
+        result = sd.computeDiff(
+            {'t': {'id'}}, {'t': {'id'}},
+            syncedTables={'t', 'ghost_table'},
+        )
+
+        assert (
+            result['summary']['syncedTablesInvisibleToPiLoader']
+            == ['ghost_table']
+        )
+
+    def test_computeDiff_everySyncedTableVisible_reportsEmptyNotAbsent(
+        self,
+    ) -> None:
+        """Positive control: the key is present and empty, so green is legible.
+
+        An absent key and a clean result must not look the same -- that
+        ambiguity is how a rule silently stops running.
+        """
+        result = sd.computeDiff(
+            {'t': {'id'}}, {'t': {'id'}}, syncedTables={'t'},
+        )
+
+        assert result['summary']['syncedTablesInvisibleToPiLoader'] == []
+
+    def test_computeDiff_withoutSyncedTablesArg_ruleIsOmitted(self) -> None:
+        """Back-compat with the US-249/US-256 callers, as the TD-043 rule did."""
+        result = sd.computeDiff({'t': {'id'}}, {'t': {'id'}})
+
+        assert 'syncedTablesInvisibleToPiLoader' not in result['summary']
+
+    def test_computeDiff_blindSpotIsSortedAndDeterministic(self) -> None:
+        result = sd.computeDiff(
+            {}, {}, syncedTables={'zulu', 'alpha', 'mike'},
+        )
+
+        assert (
+            result['summary']['syncedTablesInvisibleToPiLoader']
+            == ['alpha', 'mike', 'zulu']
+        )
+
+    def test_main_syncedTableInvisibleToPiLoader_exits1AndNamesIt(
+        self, monkeypatch, capsys,
+    ) -> None:
+        """A blind spot alone trips the gate, with no column drift anywhere.
+
+        The discriminator against the pre-US-607 behaviour: the shared tables
+        really ARE clean here, so the ONLY thing that can produce a non-zero
+        exit is the blindness itself.
+        """
+        monkeypatch.setattr(sd, 'loadPiSchema', lambda: {'t': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerSchema',
+                            lambda: {'t': {'id'}, 'ghost_table': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerNotNullNoDefault', lambda: {})
+        monkeypatch.setattr(sd, 'syncedPiTables',
+                            lambda: frozenset({'t', 'ghost_table'}))
+
+        rc = sd.main([])
+
+        parsed = json.loads(capsys.readouterr().out)
+        assert rc == 1
+        assert parsed['summary']['tablesWithPiOnlyDrift'] == []
+        assert parsed['summary']['tablesWithRequiredColumnGap'] == []
+        assert (
+            parsed['summary']['syncedTablesInvisibleToPiLoader']
+            == ['ghost_table']
+        )
+
+    def test_main_blindSpotIsNamedInTheHumanSummary(
+        self, monkeypatch, capsys,
+    ) -> None:
+        """The operator reading --verbose must see the table name, not a count."""
+        monkeypatch.setattr(sd, 'loadPiSchema', lambda: {'t': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerSchema', lambda: {'t': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerNotNullNoDefault', lambda: {})
+        monkeypatch.setattr(sd, 'syncedPiTables',
+                            lambda: frozenset({'t', 'ghost_table'}))
+
+        sd.main(['--verbose'])
+
+        assert 'ghost_table' in capsys.readouterr().err
+
+    def test_realGate_newEnsureXTableRegisteredForSync_isNotReportedClean(
+        self, monkeypatch, capsys,
+    ) -> None:
+        """US-607 validationCriterion 2, executed against the REAL loaders.
+
+        Register a table for sync the way a real story would -- an ``ensureX``
+        helper creates it and ``PK_COLUMN`` gains an entry -- WITHOUT adding it
+        to ``loadPiSchema``'s registry, which is precisely what US-368/US-369
+        did.  The gate must not report 'shared tables clean'.
+
+        The whole-set predicate, not an entry for one table: this drill uses a
+        name that appears nowhere in ``schema_diff.py``, so it can only pass by
+        the rule being general.
+
+        NOTE ON WHAT IS *NOT* ASSERTED, and it is a finding rather than an
+        omission.  The obvious assertion here is ``main() == 1``.  It is not
+        made, because on this tree it is TRUE EITHER WAY: the real gate already
+        exits 1 on pre-existing ``power_log`` / ``startup_log`` / ``vehicle_info``
+        drift, so an exit code cannot distinguish "the blind spot was caught"
+        from "the gate was already red for unrelated reasons".  Measured, not
+        assumed -- a mutation that removed the blind-spot term from main()'s
+        return left this test GREEN while the hermetic sibling above died.  The
+        summary key is the discriminator, so the summary key is the assertion.
+        """
+        pkColumn, _ = _syncRegistries()
+        monkeypatch.setitem(pkColumn, 'edr_event_vault', 'id')
+        try:
+            sd.main([])
+        except ImportError as err:  # pragma: no cover -- env guard
+            pytest.skip(f'server stack not importable: {err}')
+
+        parsed = json.loads(capsys.readouterr().out)
+        assert 'edr_event_vault' in (
+            parsed['summary']['syncedTablesInvisibleToPiLoader']
+        )
+        # ...and it is NOT filed under the category that means "tier-owned,
+        # nothing to check here", which is where dtc_freeze_frame sat for four
+        # sprints.  Being listed somewhere harmless is how this defect hid.
+        assert 'edr_event_vault' not in parsed['tablesOnlyInServer']

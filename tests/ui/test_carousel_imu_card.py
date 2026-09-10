@@ -47,6 +47,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.ui.render_harness import _fnBody
+
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _DIST = os.path.join(
@@ -81,7 +83,7 @@ def _read(path: str) -> str:
 def _view(fn: str, *args: object) -> object:
     """Evaluate one carousel.js export against fixtures via the node probe."""
     cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
@@ -133,13 +135,6 @@ def _absent(reason: str = "sensor_absent") -> dict:
             for f in ("gLat", "gLon", "gMag", "headingDeg", "gradePct")
         },
     )
-
-
-def _fnBody(js: str, name: str) -> str:
-    """The source text of one `function <name>(` up to the next top-level one."""
-    start = js.index(f"function {name}(")
-    nxt = js.find("\n  function ", start + 1)
-    return js[start:] if nxt == -1 else js[start:nxt]
 
 
 # =============================================================================

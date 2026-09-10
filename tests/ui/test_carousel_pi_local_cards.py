@@ -41,6 +41,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.ui.render_harness import _fnBody
+
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _DIST = os.path.join(
@@ -75,7 +77,7 @@ def _read(path: str) -> str:
 def _view(fn: str, *args: object) -> object:
     """Evaluate one carousel.js export against fixtures via the node probe."""
     cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
@@ -85,20 +87,6 @@ def _light(lux: float | None, *, ts: str | None = _TS, **extra: object) -> dict:
     payload: dict = {"lux": lux, "ts": ts}
     payload.update(extra)
     return payload
-
-
-def _fnBody(js: str, name: str) -> str:
-    """The source text of one `function <name>(` up to the next top-level one.
-
-    Crude but sufficient: it lets a wiring test assert what a specific routine
-    references instead of grepping the whole 2500-line file, where a match could
-    come from anywhere (the coincidence US-495 warned about).
-    """
-    start = js.index("function " + name + "(")
-    nxt = js.find("\n    function ", start + 1)
-    nxt2 = js.find("\n      function ", start + 1)
-    ends = [e for e in (nxt, nxt2) if e != -1]
-    return js[start : min(ends)] if ends else js[start:]
 
 
 # ---------------------------------------------------------------------------

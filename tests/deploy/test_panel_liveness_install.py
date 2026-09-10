@@ -387,6 +387,7 @@ def test_deployScript_stillParses_us654():
         ["bash", "-n", str(DEPLOY_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 

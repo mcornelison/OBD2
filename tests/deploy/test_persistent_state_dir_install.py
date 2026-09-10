@@ -360,6 +360,7 @@ class TestDeployPiShDryRunAnnouncesTheProvisioning:
             ["bash", str(DEPLOY_SCRIPT), "--dry-run"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=60,
         )
         assert result.returncode == 0, (
@@ -419,6 +420,7 @@ def test_deployPiSh_bashSyntaxValid():
         ["bash", "-n", str(DEPLOY_SCRIPT)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert result.returncode == 0, (

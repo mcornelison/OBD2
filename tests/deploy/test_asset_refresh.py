@@ -57,6 +57,7 @@ def _run(tmpPath: Path, args: str, *, pathPrefix: str | None = None) -> subproce
         ["bash", "-c", script],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         cwd=str(tmpPath),
         timeout=60,
     )
@@ -250,6 +251,7 @@ def splashRefreshArgs() -> tuple[set[str], set[str]]:
         ["bash", str(REPO_ROOT / "deploy" / "deploy-pi.sh"), "--dry-run"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=180,
     )
     assert result.returncode == 0, result.stderr

@@ -64,6 +64,7 @@ def _clock(hour: int, minute: int) -> str:
         [_NODE, _PROBE, str(hour), str(minute)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout

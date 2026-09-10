@@ -80,24 +80,6 @@ def _view(fn: str, *args: object) -> object:
     return json.loads(proc.stdout)
 
 
-def _fnBody(js: str, name: str) -> str:
-    """The source text of one `function <name>(`, cut at ITS OWN closing brace.
-
-    Indent-aware on purpose. The neighbouring suites slice "up to the next
-    function declaration" at a FIXED indent, and that is not a body: carousel.js
-    declares its pure logic at 2-space indent and its browser-only helpers at 4,
-    so a 4-space terminator applied to a 2-space function runs on through
-    everything between it and the DOM block. That is how the absence assertion
-    below first went red against correct code -- it matched the comment that
-    DOCUMENTS the identifier this story forbids inside menuAccess. Third
-    occurrence of that shape (US-507, US-509): the fix is to strip what is not
-    the body, never to soften the assertion.
-    """
-    start = js.index("function " + name + "(")
-    indent = " " * (start - js.rindex("\n", 0, start) - 1)
-    return js[start : js.index("\n" + indent + "}", start)]
-
-
 def _feed(samples: list, cfg: object = None, state: object = None) -> list:
     """Run `(rawIdle, nowMs)` samples through parkedNext, keeping every step.
 
