@@ -48,7 +48,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 # on CI and SSH sessions without an X server / HDMI output.
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
-import pygame  # noqa: E402
+# IMPORT ORDER BELOW IS LOAD-BEARING -- DO NOT SORT IT, AND DO NOT RUN
+# `ruff check --fix` ON THIS BLOCK. Sorting merges it into the stdlib block at
+# the top of the file, which moves both imports above two runtime constraints:
+#   1. `import pygame` must stay BELOW the SDL_VIDEODRIVER setdefault above --
+#      pygame reads that variable AT IMPORT TIME. Hoisted, this script asks for
+#      a real display and dies on CI, on SSH, and on the Pi over ssh.
+#   2. The pi.display import must stay BELOW the `sys.path.insert` at the top --
+#      that insert is what puts src/ on the path. Hoisted, it is unresolvable.
+# The E402 markers already on these lines suppress the same class of constraint;
+# I001 is the isort half of it. US-706 / PM ruling 2026-09-10: a targeted,
+# documented suppression of a rule that is wrong for this file, NOT a
+# per-file-ignore and NOT a pyproject change.
+import pygame  # noqa: E402, I001
 
 from pi.display.screens.primary_screen_advanced import (  # noqa: E402
     AdvancedTierFooter,

@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
@@ -54,7 +54,7 @@ def archiveArtifacts(timestamp: str | None = None, dryRun: bool = False) -> tupl
         sys.exit(1)
 
     if timestamp is None:
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d_%H%M%SZ")
 
     sprintArchive = ARCHIVE_DIR / f"sprint.archive.{timestamp}.json"
     progressArchive = ARCHIVE_DIR / f"progress.archive.{timestamp}.txt"

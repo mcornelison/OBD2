@@ -229,13 +229,13 @@ def seedServerCache(
 
     row = {
         "id": sourceId,  # Pi rowid -> server source_id (sync handler renames)
-        **{k: v for k, v in ECLIPSE_VEHICLE_INFO.items()},
+        **ECLIPSE_VEHICLE_INFO,
         "raw_api_response": json.dumps(rawPayload),
     }
 
     # batchId follows the existing Pi sync convention (deviceId + ISO-8601 UTC).
-    from datetime import datetime, timezone
-    batchId = f"{deviceId}-{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}-seed-vin"
+    from datetime import UTC, datetime
+    batchId = f"{deviceId}-{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}-seed-vin"
 
     payload = {
         "deviceId": deviceId,
