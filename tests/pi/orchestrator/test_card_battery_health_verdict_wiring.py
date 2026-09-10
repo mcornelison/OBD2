@@ -22,12 +22,21 @@
 #                               inserting the pre-US-527 column set, so every
 #                               row was filtered out and all 7 wiring tests read
 #                               `unknown`.  The WIRING was never the defect.
+# 2026-09-09    | Ralph (Rex)  | US-707 -- the guard now DERIVES what the fixture
+#                               must supply from `_QUALIFYING_ROW_SQL` instead of
+#                               restating today's 5-tuple arity.  The arity was
+#                               real, passed, and could not detect the class of
+#                               change it existed to catch: the NEXT required
+#                               column would have gone missing exactly as
+#                               `end_vcell_v` did.  Covers WHERE-clause filter
+#                               columns too, not just the SELECT list.
 # ================================================================================
 ################################################################################
 
 """US-504: the battery-health card reads the real verdict producer."""
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -35,6 +44,7 @@ from types import SimpleNamespace
 
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
 from pi.power.battery_health import SCHEMA_BATTERY_HEALTH_LOG
+from pi.power.battery_health_verdict import _QUALIFYING_ROW_SQL
 
 # Anchored to the wall clock (the mixin owns its own clock, so the fixtures
 # have to be real-now-relative) but sampled ONCE at import: re-reading the clock
@@ -60,6 +70,62 @@ _CUTOFF_END_VCELL_V = 3.44
 _SHALLOW_END_VCELL_V = 4.02
 
 
+#: The columns this fixture actually writes.  Declared ONCE and used to build
+#: every INSERT below, so the guard cannot be checking a column list that the
+#: inserts have quietly stopped matching.
+_FIXTURE_COLUMNS: tuple[str, ...] = (
+    "start_timestamp",
+    "end_timestamp",
+    "runtime_seconds",
+    "load_class",
+    "end_vcell_v",
+)
+
+_INSERT_SQL: str = (
+    f"INSERT INTO battery_health_log ({', '.join(_FIXTURE_COLUMNS)}) "
+    f"VALUES ({', '.join('?' * len(_FIXTURE_COLUMNS))})"
+)
+
+
+def _batteryHealthLogColumns() -> frozenset[str]:
+    """Every column the real ``battery_health_log`` schema declares."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute(SCHEMA_BATTERY_HEALTH_LOG)
+        return frozenset(
+            row[1] for row in conn.execute("PRAGMA table_info(battery_health_log)")
+        )
+    finally:
+        conn.close()
+
+
+def _columnsRequiredBy(sql: str) -> frozenset[str]:
+    """The ``battery_health_log`` columns `sql` reads OR filters on.
+
+    Derived from the statement rather than restated, which is the whole of
+    US-707.  Identifier tokens are intersected with the REAL schema, so SQL
+    keywords and the table name drop out without a keyword blocklist to keep
+    current -- and a column reached only through the WHERE clause counts, which
+    matters because a pure filter column the fixture never writes is NULL, is
+    silently excluded, and produces exactly the US-527 failure again.
+    """
+    tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", sql))
+    return frozenset(tokens & _batteryHealthLogColumns())
+
+
+def _assertFixtureCoversQualifyingGate(sql: str = _QUALIFYING_ROW_SQL) -> None:
+    """Fail, NAMING the columns, if the gate requires more than this fixture writes."""
+    missing = _columnsRequiredBy(sql) - set(_FIXTURE_COLUMNS)
+    if missing:
+        raise AssertionError(
+            "the battery-health qualifying gate requires column(s) this fixture "
+            f"does not insert: {', '.join(sorted(missing))}. "
+            "Add them to _FIXTURE_COLUMNS and to the drain tuple -- otherwise "
+            "every row is filtered out and the verdict tests read 'unknown' "
+            "for a reason that has nothing to do with the wiring (US-527/US-617)."
+        )
+
+
 class _FakeDatabase:
     """An in-memory battery_health_log shaped exactly like the Pi's.
 
@@ -69,17 +135,21 @@ class _FakeDatabase:
     set and every row was silently filtered out, so seven tests asserting real
     verdicts read `unknown` for five weeks.  A missing depth now raises on the
     unpack instead of quietly producing a non-voting row.
+
+    US-707: the arity alone defends only the columns the gate requires TODAY.
+    Construction now also asserts, against the gate's OWN sql, that this fixture
+    supplies everything it needs -- so the NEXT required column fails loudly and
+    by name here, instead of surfacing as a bare `unknown` verdict somewhere
+    downstream.
     """
 
     def __init__(self, drains=()):
+        _assertFixtureCoversQualifyingGate()
         self._conn = sqlite3.connect(":memory:", check_same_thread=False)
         self._conn.execute(SCHEMA_BATTERY_HEALTH_LOG)
         for daysAgo, runtimeSeconds, loadClass, closed, endVcellV in drains:
             self._conn.execute(
-                "INSERT INTO battery_health_log "
-                "(start_timestamp, end_timestamp, runtime_seconds, load_class, "
-                " end_vcell_v) "
-                "VALUES (?, ?, ?, ?, ?)",
+                _INSERT_SQL,
                 (
                     _iso(daysAgo),
                     _iso(daysAgo - 0.01) if closed else None,
@@ -253,6 +323,101 @@ def test_emit_databaseAttachedAfterEmitterInit_isStillRead(tmp_path):
     assert bh["health"] == "good"
 
 
+# ---------------------------------------------------------------------------
+# US-707: the fixture guard must catch the NEXT required column, not today's.
+# ---------------------------------------------------------------------------
+
+
+#: A real `battery_health_log` column the gate does NOT require today, standing
+#: in for whatever the next US-527 turns out to be.  It has to be a column that
+#: genuinely exists: a gate cannot require one the table does not have -- that
+#: sql would not run at all -- so an invented name is not a realistic mutation.
+#: `start_vcell_v` is also the plausible one, being the other half of the depth
+#: `end_vcell_v` already measures.
+_A_NOT_YET_REQUIRED_COLUMN = "start_vcell_v"
+
+
+def _assertGuardCatches(mutatedGate: str) -> None:
+    """The guard must reject `mutatedGate`, naming the column it is missing."""
+    assert _A_NOT_YET_REQUIRED_COLUMN in mutatedGate, "the mutation must apply"
+    assert _A_NOT_YET_REQUIRED_COLUMN not in _FIXTURE_COLUMNS
+
+    try:
+        _assertFixtureCoversQualifyingGate(mutatedGate)
+    except AssertionError as exc:
+        assert _A_NOT_YET_REQUIRED_COLUMN in str(exc), (
+            f"the guard fired but did not name the column: {exc}"
+        )
+    else:
+        raise AssertionError(
+            "the guard passed a gate requiring a column the fixture does not "
+            "insert -- it is still pinning today's columns"
+        )
+
+
+def test_fixtureGuard_aSixthColumnInTheSelectList_failsAndNamesIt():
+    """The guard's whole job. US-617 pinned a 5-tuple ARITY, which defends the
+    columns the gate requires TODAY; the next required column would go missing
+    exactly as `end_vcell_v` did on 2026-08-03 and the arity would not notice.
+
+    It must also NAME the column -- US-617's root cause took five weeks to find
+    precisely because the symptom was a bare `unknown` verdict naming nothing.
+    """
+    _assertGuardCatches(
+        _QUALIFYING_ROW_SQL.replace(
+            "       end_vcell_v ", f"       end_vcell_v, {_A_NOT_YET_REQUIRED_COLUMN} "
+        )
+    )
+
+
+def test_fixtureGuard_aColumnRequiredOnlyByTheWhereClause_failsAndNamesIt():
+    """The harder half, and the one a SELECT-list-only derivation would miss.
+
+    A column the gate FILTERS on but never SELECTs is still required: the
+    fixture would leave it NULL, `IS NOT NULL` would exclude every row, and the
+    verdict tests would read `unknown` with nothing in the diagnostic pointing
+    at a column at all. That is the US-527 failure exactly, and it is INVISIBLE
+    to a guard that only reads what the statement returns.
+    """
+    _assertGuardCatches(
+        _QUALIFYING_ROW_SQL.replace(
+            "  AND end_vcell_v IS NOT NULL ",
+            f"  AND end_vcell_v IS NOT NULL "
+            f"  AND {_A_NOT_YET_REQUIRED_COLUMN} IS NOT NULL ",
+        )
+    )
+
+
+def test_fixtureGuard_derivesRealColumns_notAnEmptySet():
+    """A derivation law is satisfied by deriving NOTHING (TD-082's lesson): if
+    the token scan or the schema intersection ever breaks, `_columnsRequiredBy`
+    returns the empty set and the guard above passes forever while testing
+    nothing. Pin positive membership beside the law.
+
+    `end_vcell_v` is named explicitly because it is the column whose absence
+    WAS the original defect, and it is reached only through the WHERE clause
+    filter as well as the SELECT list.
+    """
+    required = _columnsRequiredBy(_QUALIFYING_ROW_SQL)
+    assert "end_vcell_v" in required
+    assert {
+        "start_timestamp",
+        "end_timestamp",
+        "runtime_seconds",
+        "load_class",
+    } <= required
+    # Table name and SQL keywords are not columns and must not leak in.
+    assert "battery_health_log" not in required
+
+
+def test_fixtureGuard_todaysGate_isFullySupplied():
+    """The control. Today's `_QUALIFYING_ROW_SQL` must pass -- otherwise the
+    failure above is not evidence about the guard, it is evidence the fixture
+    is broken right now.
+    """
+    _assertFixtureCoversQualifyingGate(_QUALIFYING_ROW_SQL)
+
+
 def test_emit_rereadsTheLogEachTick_notCachedAtStartup(tmp_path):
     """A drain recorded while the orchestrator is running must change the card
     without a restart -- the same per-request-read discipline US-501 needed for
@@ -262,10 +427,7 @@ def test_emit_rereadsTheLogEachTick_notCachedAtStartup(tmp_path):
     assert _emitAndRead(tmp_path, orch)["health"] == "unknown"
 
     db._conn.execute(
-        "INSERT INTO battery_health_log "
-        "(start_timestamp, end_timestamp, runtime_seconds, load_class, "
-        " end_vcell_v) "
-        "VALUES (?, ?, ?, ?, ?)",
+        _INSERT_SQL,
         (_iso(0.2), _iso(0.1), 727, "production", _CUTOFF_END_VCELL_V),
     )
     db._conn.commit()
