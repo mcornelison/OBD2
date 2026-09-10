@@ -327,6 +327,7 @@ def readExt5vVoltageFromVcgencmd() -> float | None:
             ['vcgencmd', 'pmic_read_adc', 'EXT5V_V'],
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=2.0,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
