@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.44",
-  "theme": "Sprint 81 -- the car tells the truth, 6/6",
-  "description": "GEAR reads N when stopped with the engine turning, and P when a HEALTHY link stops reporting RPM (20 s dwell: floor 13 s worst bus gap, ceiling 45 s shutdown budget). US-686: the freshness window was SHORTER than the sample period, leaving the glyph dark most of a drive. US-691 the DTC banner cannot lose a second code. US-693 makes display-only a build failure. AWAITING one drive."
+  "version": "V0.29.45",
+  "theme": "Sprint 82 -- gates that can do their job, 8/8",
+  "description": "Every story removed a test, gate or guard cited as evidence that could not produce it. US-617 a fixture stranded when US-527 added a required column. US-597 100 subprocess sites decoding with the ANSI code page. US-607 a drift gate blind to a synced table. US-612 a colour guard reading characters not declarations. US-703 a stale pin that was a second copy. Plus US-603, US-608, US-610."
 }
