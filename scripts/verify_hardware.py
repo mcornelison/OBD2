@@ -213,6 +213,7 @@ class HardwareVerifier:
                 ["systemctl", "is-active", "bluetooth"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=5,
             )
             serviceActive = result.stdout.strip() == "active"
@@ -231,6 +232,7 @@ class HardwareVerifier:
                 ["hciconfig", "hci0"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=5,
             )
             adapterExists = result.returncode == 0
@@ -256,6 +258,9 @@ class HardwareVerifier:
                     ["bluetoothctl", "show"],
                     capture_output=True,
                     text=True,
+                    # The adapter Name/Alias is user-set; the match is ASCII.
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=5,
                 )
                 if "Controller" in result.stdout:
@@ -321,6 +326,10 @@ class HardwareVerifier:
                 ["bluetoothctl", "paired-devices"],
                 capture_output=True,
                 text=True,
+                # Remote device names are peer-supplied bytes. A strict decode
+                # raises past the handlers below; the MAC match is ASCII.
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             if normalizedMac in result.stdout.upper():

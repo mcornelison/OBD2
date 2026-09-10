@@ -177,7 +177,7 @@ def _backup(host: str) -> str:
     result = subprocess.run(
         ['ssh', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes',
          host, cmd],
-        capture_output=True, text=True, timeout=120, check=False,
+        capture_output=True, text=True, encoding='utf-8', timeout=120, check=False,
     )
     if result.returncode != 0:
         raise SystemExit(
