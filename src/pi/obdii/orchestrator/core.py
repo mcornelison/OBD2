@@ -853,6 +853,13 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                     # drain is open (the overwhelmingly common case).
                     self._maybeTriggerDrainCheckpoint()
 
+                    # ARCH-023 (US-407): service a pending CLEAR CODES request.
+                    # This orchestrator is the only process allowed to touch the
+                    # OBD port, so the HTTP route publishes a request and this
+                    # answers it.  Cheap fast-path -- one stat on tmpfs, and the
+                    # usual answer is "no request".
+                    self._maybeServiceDtcClearRequest()
+
                     # US-226: interval-based Pi->server sync trigger.
                     # Cheap to call every loop pass -- the method is its
                     # own cadence gate and short-circuits when not due.
@@ -912,6 +919,113 @@ class ApplicationOrchestrator(  # type: ignore[misc]
     # ================================================================================
     # US-605: 30 s checkpoint of the OPEN drain row
     # ================================================================================
+
+    def _maybeServiceDtcClearRequest(self) -> bool:
+        """Service a pending US-407 CLEAR CODES request (ARCH-023).
+
+        Called once per :meth:`runLoop` pass.  Cheap fast-path: one stat on
+        tmpfs, and the overwhelmingly common answer is "no request".
+
+        WHY THIS LIVES HERE AND NOT IN THE HTTP SERVER.  The route that offers
+        the button runs in eclipse-states-http.service, a DIFFERENT PROCESS with
+        no OBD connection -- which is why its ``clearRunner`` was never injected
+        and the button answered 503.  It cannot simply open the port: this
+        orchestrator is the single owner, and a second opener is exactly the
+        defect that killed capture for a month (A-17, a DTC read that bypassed
+        the io lock) and battery health for 111 days (A-26, GPIO6 taken twice).
+        So the HTTP process asks, and the process that already holds the
+        connection answers -- ``specs/ssot-design-pattern.md`` rule B.
+
+        EVERY OUTCOME IS PUBLISHED, INCLUDING REFUSALS.  Staying silent when we
+        cannot clear is indistinguishable, from the requester's side, from a
+        dead orchestrator: it would report "timed out" when the truth is "not
+        connected".  A refusal that names itself is the honest instrument.
+
+        THE REQUEST IS ALWAYS CONSUMED.  Mode 04 is an irreversible,
+        all-or-nothing wipe; a request left in place would be serviced again on
+        the next pass -- a second wipe nobody asked for.
+
+        Returns:
+            True when a request was found and answered (either way), else False.
+        """
+        from pi.splash import dtc_clear_channel
+
+        statesDir = (
+            (self._config.get("pi", {}) or {}).get("splash", {}) or {}
+        ).get("statesDir", "/run/eclipse-obd/states")
+
+        request = dtc_clear_channel.readRequest(statesDir)
+        if request is None:
+            return False
+        requestId = str(request.get("requestId") or "")
+
+        # Consume FIRST.  If anything below throws, the request must not survive
+        # to be re-serviced on the next pass.
+        dtc_clear_channel.consumeRequest(statesDir)
+
+        connection = self._connection
+        connected = connection is not None
+        if connected:
+            try:
+                connected = bool(connection.isConnected())
+            except Exception:  # noqa: BLE001 -- an unhealthy wrapper is "not connected"
+                connected = False
+
+        if not connected:
+            self._publishDtcClearOutcome(
+                statesDir, requestId, ok=False, stored=[], pending=[], mil=False,
+                error="no OBD connection -- the ECU was not contacted",
+            )
+            return True
+
+        try:
+            client = self._dtcClearClientFactory()
+            readback = client.clearDtcs(connection)
+            stored = [str(c) for c in (getattr(readback, "stored", None) or [])]
+            pending = [str(c) for c in (getattr(readback, "pending", None) or [])]
+            self._publishDtcClearOutcome(
+                statesDir, requestId, ok=True, stored=stored, pending=pending,
+                mil=bool(stored), error=None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # This runs inside the capture loop: a failed clear must never take
+            # capture down, and the requester is owed the reason.
+            logger.error("US-407 clear failed for request %s: %s", requestId, exc)
+            self._publishDtcClearOutcome(
+                statesDir, requestId, ok=False, stored=[], pending=[], mil=False,
+                error=str(exc),
+            )
+        return True
+
+    def _dtcClearClientFactory(self):
+        """Build the DTC client used to issue Mode 04.  Injectable for tests.
+
+        Constructing a client is NOT a second acquisition of the port: the client
+        is stateless and takes the connection as an argument, and ``clearDtcs``
+        goes through ``_serializedQuery`` -- the serialized path US-474 made a
+        typed Protocol member precisely so the raw ``.obd`` handle could never be
+        reached from the DTC path again (the A-17 fix).
+        """
+        from pi.obdii.dtc_client import DtcClient
+
+        return DtcClient()
+
+    def _publishDtcClearOutcome(
+        self, statesDir, requestId, *, ok, stored, pending, mil, error
+    ) -> None:
+        """Publish the outcome; a publish failure must not break the loop."""
+        from pi.splash import dtc_clear_channel
+
+        try:
+            dtc_clear_channel.writeOutcome(
+                statesDir, requestId=requestId, ok=ok, stored=stored,
+                pending=pending, mil=mil, error=error,
+            )
+        except OSError as exc:
+            logger.error(
+                "US-407 clear outcome could not be published for %s: %s",
+                requestId, exc,
+            )
 
     def _maybeTriggerDrainCheckpoint(self) -> bool:
         """Checkpoint the open ``battery_health_log`` drain row (US-605).
