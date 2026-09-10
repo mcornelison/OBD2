@@ -45,6 +45,10 @@
 # 2026-09-09    | Ralph (Rex)  | US-608 (TD-080): `_fnBody` SSOT -- the single
 #                                shipped-JS function slicer, brace-matched and
 #                                RAISING. Replaces nine indent-blind near-copies.
+# 2026-09-09    | Ralph (Rex)  | US-612 (TD-084): `cssSection` -- banner-delimited
+#                                stylesheet section slicing, so a guard can name
+#                                its REGION structurally instead of by a fixed
+#                                character window. RAISES, never returns "".
 # ================================================================================
 ################################################################################
 
@@ -367,6 +371,52 @@ def _parseBlock(text: str, media: str, startOrder: int) -> tuple[list[Rule], int
                     order += 1
         i = j
     return rules, order
+
+
+class SectionNotFound(Exception):
+    """A named stylesheet section banner is absent, ambiguous, or not brace-aligned."""
+
+
+_SECTION_BANNER = re.compile(r"^/\* --- ", re.MULTILINE)
+
+
+def cssSection(css: str, banner: str) -> str:
+    """The RAW source of one banner-delimited stylesheet section.
+
+    ``dashboard.css`` divides itself into sections introduced by a ``/* --- ``
+    banner at column 0. This returns everything from the banner whose text
+    starts with ``banner`` up to the next such banner (or EOF). Comments are
+    NOT stripped -- callers wanting declarations run ``parseCss`` on the result.
+
+    This exists so a guard can name the REGION it polices structurally instead
+    of by a character count. A fixed-length window silently changes what it
+    covers whenever the CSS inside it grows (TD-084/US-612).
+
+    Raises:
+        SectionNotFound: if the banner is missing, appears more than once, or
+            the resulting span is not brace-balanced. It NEVER returns an empty
+            or partial span -- a guard handed a silently-empty subject asserts
+            nothing at all, which is the inert guard this project keeps paying
+            for (A-27(a)).
+    """
+    starts = [m.start() for m in _SECTION_BANNER.finditer(css)]
+    hits = [s for s in starts if css.startswith("/* --- " + banner, s)]
+    if len(hits) != 1:
+        raise SectionNotFound(
+            f"expected exactly one '/* --- {banner}' section banner in the "
+            f"{len(css)}-char stylesheet, found {len(hits)}"
+        )
+    begin = hits[0]
+    following = [s for s in starts if s > begin]
+    section = css[begin : following[0] if following else len(css)]
+    stripped = _stripComments(section)
+    if stripped.count("{") != stripped.count("}"):
+        raise SectionNotFound(
+            f"the '/* --- {banner}' section is not brace-balanced "
+            f"({stripped.count('{')} open, {stripped.count('}')} close) -- its "
+            "banner boundaries do not line up with rule boundaries"
+        )
+    return section
 
 
 def declarationOf(declarations: str, prop: str) -> tuple[str, bool] | None:

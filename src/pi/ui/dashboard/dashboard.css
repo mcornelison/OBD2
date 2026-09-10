@@ -1310,13 +1310,9 @@ html, body {
   --detail-pad:       8px 10px; /* every row card */
   position: fixed; inset: 0; z-index: 45;
   /* US-558: DESTINATION -- you tapped through from the System Status card. Was
-     `rgba(0,0,0,0.95)`; the rule is stated at the setup-menu block. It inherits
-     the per-code overlay's shell, so it takes the same field for the same
-     reason -- two drill-downs that look different teach two interactions for one
-     idea. (The cross-reference above omits its leading hash DELIBERATELY:
-     US-509's no-raw-colour guard scans a fixed character window from this
-     selector and reads a bare hash anywhere in it, comment or not, as a hex
-     literal. Do not "fix" the spelling -- it goes red. See TD-084.) */
+     `rgba(0,0,0,0.95)`; see the rule at #setup-menu. It inherits the per-code
+     overlay's shell, so it takes the same field for the same reason -- two
+     drill-downs that look different teach two interactions for one idea. */
   background: var(--bg);
   display: flex; flex-direction: column;
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
