@@ -46,6 +46,8 @@ import subprocess
 
 import pytest
 
+from tests.ui.render_harness import _fnBody
+
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _DIST = os.path.join(
@@ -98,28 +100,6 @@ def _view(fn: str, *args: object) -> object:
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
-
-
-def _fnBody(js: str, name: str) -> str:
-    """The source text of one `function <name>(` up to the next top-level one."""
-    start = js.index("function " + name + "(")
-    nxt = js.find("\n    function ", start + 1)
-    nxt2 = js.find("\n      function ", start + 1)
-    ends = [e for e in (nxt, nxt2) if e != -1]
-    return js[start : min(ends)] if ends else js[start:]
-
-
-def _fnTopLevelBody(js: str, name: str) -> str:
-    """The source of one TWO-SPACE `function <name>(` up to the next one.
-
-    `_fnBody` above probes 4- and 6-space nesting only, so on a function
-    declared at the IIFE's own level it silently returns the rest of the file
-    and every absence assertion over it becomes over-broad while every presence
-    assertion becomes vacuous. See TD-080.
-    """
-    start = js.index("  function " + name + "(")
-    nxt = js.find("\n  function ", start + 1)
-    return js[start:nxt] if nxt != -1 else js[start:]
 
 
 def _defaultKeys(js: str) -> list:
@@ -432,12 +412,12 @@ def test_resolveCarouselConfig_theZeroCarveOutIsANamedPerKeyAllowList():
     how that divergence is prevented before the key exists to catch it with.
     """
     js = _read(_JS)
-    # NOT _fnBody: its indent probe only knows 4- and 6-space nesting, and
-    # `resolveCarouselConfig` is declared at TWO spaces (top level inside the
-    # IIFE), so _fnBody returns the rest of the FILE. The absence assertion
-    # below found that in one run -- `>= 0` lives in nextVisibleIndex, hundreds
-    # of lines away. Filed as a TD; sliced correctly here.
-    body = _fnTopLevelBody(js, "resolveCarouselConfig")
+    # US-608 retired the local `_fnTopLevelBody` workaround this line used to
+    # need: the shared `_fnBody` brace-matches, so it delimits a 2-space
+    # declaration as exactly its own body. The defect it was routed around --
+    # a span running on to `>= 0` in nextVisibleIndex, hundreds of lines away --
+    # is what the shared slicer removes at the source rather than per caller.
+    body = _fnBody(js, "resolveCarouselConfig")
     assert "ZERO_IS_A_VALUE" in body
     assert ">= 0" not in body
     # ...and the allow-list holds only the ratified key. A second entry is a
@@ -463,7 +443,7 @@ def test_resolveCarouselConfig_autoRotateStillRejectsMalformedValues():
     # NaN / Infinity have no JSON literal, so they arrive via the arithmetic the
     # probe evaluates on the other side (JSON.parse of the fixture cannot carry
     # them). Asserted through the shipped isFinite guard in the resolver body.
-    body = _fnTopLevelBody(_read(_JS), "resolveCarouselConfig")
+    body = _fnBody(_read(_JS), "resolveCarouselConfig")
     assert "isFinite(v)" in body
 
 

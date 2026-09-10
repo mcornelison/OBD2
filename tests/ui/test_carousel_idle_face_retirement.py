@@ -54,6 +54,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 
 import render_harness as rh  # noqa: E402
+from render_harness import _fnBody  # noqa: E402  -- US-608 SSOT slicer
 
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
@@ -88,20 +89,6 @@ def _view(fn: str, *args: object) -> Any:
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
-
-
-def _fnBody(js: str, name: str) -> str:
-    """One `function <name>(` up to the next declaration at the SAME indent.
-
-    Indent-aware, inherited from US-541's gate: the browser-only renderers are
-    nested six spaces deep, and a fixed two-space probe swallows the rest of the
-    file -- which makes every ABSENCE assertion below pass vacuously, the one
-    direction a broken probe fails silently in.
-    """
-    start = js.index(f"function {name}(")
-    indent = js[js.rfind("\n", 0, start) + 1 : start]
-    nxt = js.find("\n" + indent + "function ", start + 1)
-    return js[start:] if nxt == -1 else js[start:nxt]
 
 
 def _codeOnly(src: str) -> str:

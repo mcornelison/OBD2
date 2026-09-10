@@ -39,6 +39,8 @@ import subprocess
 
 import pytest
 
+from tests.ui.render_harness import _fnBody
+
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 _JS = os.path.join(
@@ -87,18 +89,6 @@ def _battery(**extra: object) -> dict:
 def _js() -> str:
     with open(_JS, encoding="utf-8") as fh:
         return fh.read()
-
-
-def _fnBody(js: str, name: str) -> str:
-    """The source text of one `function <name>(` up to the next declaration."""
-    start = js.index("function " + name + "(")
-    candidates = [
-        js.find("\n  function ", start + 1),
-        js.find("\n    function ", start + 1),
-        js.find("\n      function ", start + 1),
-    ]
-    ends = [e for e in candidates if e != -1]
-    return js[start: min(ends)] if ends else js[start:]
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ import pytest
 from common.config import overlay
 
 # Reuse the canonical CSS/file parsers rather than re-implementing them.
+from tests.ui.render_harness import _fnBody
 from tests.ui.test_dashboard_stop_tier_safety import _read, _ruleBlock
 
 _NODE = shutil.which("node")
@@ -80,12 +81,6 @@ def _spec(key: str) -> dict:
 
 def _row(key: str, value: object) -> dict:
     return _view("settingsRowView", _spec(key), value)
-
-
-def _fnBody(js: str, signature: str) -> str:
-    """Slice one function's source out of carousel.js by its opening line."""
-    start = js.index(signature)
-    return js[start : js.index("\n    }", start)]
 
 
 # ---------------------------------------------------------------------------
@@ -319,13 +314,14 @@ def test_bandIsBuiltWhenTheMenuOpens():
     """Rendered on open, not once at boot: a save made in a previous open (or by
     another surface) must not leave a stale value behind the ⋮.
 
-    Sliced on openMenu's OWN 6-space closing brace rather than through the shared
-    `_fnBody` (which anchors at 4) -- a loose slice runs on into buildList/
-    doAction and would find a `buildSettings()` that openMenu never calls.
+    Sliced through the shared `_fnBody`, which brace-matches openMenu's OWN
+    closing brace at whatever depth it sits. Before US-608 this line hand-rolled
+    a 6-space `\\n      }` search because the then-shared `_fnBody` anchored at a
+    fixed 4 -- a loose slice runs on into buildList/doAction and would find a
+    `buildSettings()` that openMenu never calls.
     """
     js = _read(_JS)
-    start = js.index("function openMenu() {")
-    assert "buildSettings()" in js[start : js.index("\n      }", start)]
+    assert "buildSettings()" in _fnBody(js, "openMenu")
 
 
 def test_bandRendersThroughOneRenderPath_openAndSaveAlike():
