@@ -56,7 +56,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from common.config import overlay
-from pi.splash import dtc_clear, service_control
+from pi.splash import dtc_clear, dtc_clear_channel, service_control
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
 _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
@@ -394,7 +394,32 @@ def makeStatesHandler(
                 )
                 return
 
-            outcome = dtc_clear.performClear(dtcState, clearRunner=clearRunner)
+            # ARCH-023: the runner now crosses a PROCESS boundary, so it can
+            # fail in ways an in-process one never could.  Every such failure is
+            # reported as itself and NEVER as a clear that did not happen --
+            # `performClear` would faithfully render an empty readback as
+            # "cleared, 0 stored", which is a fabricated ECU write.
+            try:
+                outcome = dtc_clear.performClear(dtcState, clearRunner=clearRunner)
+            except dtc_clear_channel.ClearBridgeTimeout as exc:
+                # 504: we genuinely do not know.  A Mode 04 may or may not have
+                # reached the ECU; the next `dtc` refresh is what settles it.
+                self._send(
+                    504,
+                    json.dumps({"error": str(exc), "issued": None}).encode("utf-8"),
+                    "application/json",
+                )
+                return
+            except dtc_clear_channel.ClearBridgeError as exc:
+                # 502: the OBD service answered, and the answer was a refusal
+                # (no connection, adapter write failed).  A named cause, not a
+                # timeout the operator cannot act on.
+                self._send(
+                    502,
+                    json.dumps({"error": str(exc), "issued": False}).encode("utf-8"),
+                    "application/json",
+                )
+                return
             body = json.dumps(
                 {
                     "issued": outcome.issued,
@@ -769,6 +794,15 @@ def main(argv: list[str] | None = None) -> int:
         # one whose sibling overlay the settings route writes -- so a saved
         # toggle and the injected config can never point at different files.
         configPath=args.config,
+        # ARCH-023: THE INJECTION THAT WAS MISSING.  US-407 shipped the whole
+        # Mode-04 surface -- button, gate, performClear, this route -- and
+        # nothing ever supplied a `clearRunner`, so /dtc-clear answered 503 and
+        # the button was inert.  It could not be a direct call: this process
+        # holds no OBD connection and must never open one (the orchestrator is
+        # the single owner -- A-17 / A-26).  The bridge asks the process that
+        # already owns it, and raises rather than inventing a readback when it
+        # cannot get a real answer.
+        clearRunner=dtc_clear_channel.makeBridgeClearRunner(args.states_dir),
     )
     server.serveForever()
     return 0
