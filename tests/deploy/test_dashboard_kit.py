@@ -111,11 +111,19 @@ def test_dashboardHtml_hasBothCardSlots_s1():
 
 
 def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
-    """D-3: the persistent top bar carries BT / sync / power glyphs + version."""
+    """D-3: the persistent top bar carries BT / sync / WiFi glyphs + version.
+
+    US-696 removed the POWER glyph by CIO ruling. WiFi takes its place in the
+    list rather than the list shortening to two: the D-3 claim is about what the
+    bar CARRIES, and a shrinking list would let the next silent removal pass.
+    The absence is asserted alongside, so this test states the post-ruling bar
+    rather than merely omitting the bolt.
+    """
     html = _read(KIT_DIR, "dashboard.html")
     assert 'id="topbar"' in html
-    for glyph in ("glyph-bt", "glyph-sync", "glyph-power"):
+    for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi"):
         assert f'id="{glyph}"' in html, f"top bar missing {glyph}"
+    assert 'id="glyph-power"' not in html, "the US-696 bolt is still in the kit"
     assert 'id="version-chip"' in html
 
 
@@ -312,8 +320,11 @@ const dv = c.systemStatusView(degraded);
 assert.strictEqual(dv.tiles.obdLink.level, 'down', 'down link not ok');
 assert.strictEqual(dv.tiles.sync.level, 'amber', 'stale sync not ok');
 assert.strictEqual(dv.tiles.power.level, 'amber', 'battery power not ok');
-const dglyphs = [dv.glyphs.bt, dv.glyphs.sync, dv.glyphs.power];
+// US-696 dropped `glyphs.power` -- the tile assertion directly above is now
+// where a degraded supply is caught, so F-1 keeps both of its halves.
+const dglyphs = [dv.glyphs.bt, dv.glyphs.sync];
 assert.ok(dglyphs.indexOf('ok') === -1, 'no glyph is ok when degraded');
+assert.strictEqual(dv.glyphs.power, undefined, 'power glyph survived US-696');
 
 // A healthy state DOES render green (the positive control -- ok is reachable).
 const healthy = {
@@ -326,7 +337,10 @@ const healthy = {
 const hv = c.systemStatusView(healthy);
 assert.strictEqual(hv.tiles.obdLink.level, 'ok', 'linked -> ok');
 assert.strictEqual(hv.glyphs.bt, 'ok', 'BT glyph ok when linked');
-assert.strictEqual(hv.glyphs.power, 'ok', 'power glyph ok on external');
+// US-696: `ok` is still reachable for external power, on the tile that outlived
+// the bolt. Re-pointed rather than deleted -- this is the positive control that
+// keeps the degraded assertion above from passing on an unreachable green.
+assert.strictEqual(hv.tiles.power.level, 'ok', 'external power tile ok');
 
 // A missing sub-object -> that tile is `unavailable`, never green.
 const partial = c.systemStatusView({ts: '2026-06-30T19:42:00Z'});

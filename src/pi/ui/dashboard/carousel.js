@@ -900,12 +900,16 @@
     if (!isObj(s)) return "neutral";
     return s.stale === true ? "amber" : "ok";
   }
-  function powerGlyphState(p) {
-    if (!isObj(p)) return "neutral";
-    if (p.source === "battery") return "amber";
-    if (p.source === "external") return "ok";
-    return "neutral";
-  }
+  // US-696 (CIO ruling 2026-09-09): there is NO `powerGlyphState`. The top-bar
+  // lightning glyph was removed -- "if I can see the screen the power is on",
+  // so restating it spent a slot in a band that has none to spare. The state
+  // function went with its only consumer rather than lingering as residue.
+  // The MEASUREMENT is untouched: `power.source` is still sensed and still
+  // rendered by `powerTile` on the System Status card, which keeps its Power
+  // row. Recorded here because the argument against removal is real and should
+  // not have to be rediscovered: the glyph was the only on-screen signal during
+  // a UPS ride-down. The CIO's call is that the automatic sequenced poweroff
+  // makes that signal unactionable.
 
   // -------------------------------------------------------------------------
   // US-489 (Iris polish P-1) -- the one-glance SUMMARY line. A lossy
@@ -1169,7 +1173,6 @@
       glyphs: {
         bt: obdOff ? "neutral" : btGlyphState(data.obdLink),
         sync: syncGlyphState(data.sync),
-        power: powerGlyphState(data.power),
         wifi: wifiGlyphState(data),
       },
       ts: typeof data.ts === "string" ? data.ts : null,
@@ -3587,7 +3590,6 @@
     driveTile: driveTile,
     btGlyphState: btGlyphState,
     syncGlyphState: syncGlyphState,
-    powerGlyphState: powerGlyphState,
     systemSummary: systemSummary,
     sysRowFreshness: sysRowFreshness,
     systemIssueRows: systemIssueRows,
@@ -3806,7 +3808,6 @@
       }
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", view.glyphs.bt);
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", view.glyphs.sync);
-      if (glyphEls.power) glyphEls.power.setAttribute("data-state", view.glyphs.power);
       // ARCH-007: render the emitter's verdict. The display applies NO
       // threshold of its own (ruling s2.1) -- two rules for one fact disagree
       // the first time either moves.
@@ -3926,7 +3927,6 @@
     function resetSystemGlyphs(glyphEls) {
       if (glyphEls.bt) glyphEls.bt.setAttribute("data-state", "neutral");
       if (glyphEls.sync) glyphEls.sync.setAttribute("data-state", "neutral");
-      if (glyphEls.power) glyphEls.power.setAttribute("data-state", "neutral");
       if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", "neutral");
     }
 
@@ -4456,7 +4456,6 @@
       var glyphEls = {
         bt: document.getElementById("glyph-bt"),
         sync: document.getElementById("glyph-sync"),
-        power: document.getElementById("glyph-power"),
         wifi: document.getElementById("glyph-wifi"),
       };
 

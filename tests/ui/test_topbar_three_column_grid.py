@@ -318,7 +318,9 @@ def test_glyphsSitLeft_versionAndKebabSitRight():
     left = re.search(r'<div class="topbar-left">(.*?)</div>', inner, re.DOTALL)
     right = re.search(r'<div class="topbar-right">(.*?)</div>', inner, re.DOTALL)
     assert left is not None and right is not None
-    for glyph in ("glyph-bt", "glyph-sync", "glyph-power"):
+    # US-696 removed `glyph-power`; `glyph-wifi` (ARCH-007) takes its place here
+    # so the list still names every glyph the bar actually carries.
+    for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi"):
         assert f'id="{glyph}"' in left.group(1), f"{glyph} is not in the left cluster"
         assert f'id="{glyph}"' not in right.group(1)
     assert 'id="version-chip"' in right.group(1)
@@ -379,23 +381,69 @@ def test_theWidthCheckCanvasIsTheAuthoredStageBox():
     assert "transform: scale(var(--scale, 1))" in stage
 
 
-def test_everyClusterFitsItsGuaranteedTrackShare_today():
-    """AC-2's "regardless of version-string length" holds only while each side
-    cluster fits the free-space share its `1fr` is guaranteed. Asserted, not
-    assumed."""
+def _shippedLeftGlyphs() -> list[str]:
+    """The glyph TEXTS the left cluster actually paints, READ from the markup.
+
+    Read rather than restated, and that distinction is the whole of TD-us696
+    below. Every budget assertion in this section used to be made against a
+    hand-written `["BT", "⇅", "⚡"]`, which described the bar only until the
+    next glyph landed -- and when one did, nothing forced the list to notice.
+    A list derived from the markup cannot drift away from the bar it measures.
+    """
+    inner = _topbarMarkup(_readHtml())
+    left = re.search(r'<div class="topbar-left">(.*?)</div>', inner, re.DOTALL)
+    assert left is not None, "the left cluster must exist to be measured"
+    glyphs = re.findall(r'<span class="glyph"[^>]*>([^<]*)</span>', left.group(1))
+    assert glyphs, "no glyphs read from the left cluster -- markup or regex moved"
+    return glyphs
+
+
+def test_theShippedGlyphListIsReadFromTheMarkup_notRestated():
+    """The non-degeneracy pin for `_shippedLeftGlyphs`, and it earns its place.
+
+    The EMPTY case is already caught inside the helper (`assert glyphs`), so
+    this pin is not needed for that. What it catches is the case that survives
+    everything else: a regex that returns something NON-EMPTY BUT WRONG.
+
+    Measured, not assumed. Mutating the capture to read the `data-state`
+    attribute instead of the element text yields `["neutral"] * 3` -- three
+    plausible-looking strings, so the helper's own assert passes. Both
+    characterisation tests below SURVIVE it, because they assert `> share` and a
+    too-wide fixture satisfies that trivially. Only this test dies, on `"BT" in
+    glyphs`. A `>` assertion cannot notice being fed something too big; that is
+    the honest weakness of the characterisation form and this is its counterweight.
+    """
+    glyphs = _shippedLeftGlyphs()
+    assert "BT" in glyphs
+    assert len(glyphs) >= 2, f"the left cluster reads implausibly short: {glyphs}"
+    assert "⚡" not in glyphs, "US-696 removed the power glyph; it is back"
+
+
+def test_rightClusterFitsItsGuaranteedTrackShare():
+    """AC-2's "regardless of version-string length" holds only while the cluster
+    fits the free-space share its `1fr` is guaranteed.
+
+    SPLIT from the left cluster by US-696. The right side genuinely fits and
+    this stays a real guard; the left side does not, and says so below rather
+    than being carried along by a shared assertion.
+    """
     model = _BarModel(readCss(_CSS_PATH))
     share = model.sideTrackShare()
-    left = model.leftClusterWidth(["BT", "⇅", "⚡"])
     right = model.rightClusterWidth()
-    assert left <= share, f"left cluster {left:.1f}px exceeds its {share:.1f}px share"
     assert right <= share, f"right cluster {right:.1f}px exceeds its {share:.1f}px share"
 
 
 def test_theBarIsNotOverBudgetAcrossItsFullWidth():
-    """AC-4's headline: the three clusters plus the gaps fit the usable bar."""
+    """AC-4's headline: the three clusters plus the gaps fit the usable bar.
+
+    THIS is the assertion that means "nothing reflows into a second row", and it
+    is the one US-696's band-budget criterion turns on. Measured on the glyphs
+    the bar actually paints. Headroom went from 5.4px to 42.5px when US-696
+    removed the bolt -- removing a glyph frees space, as that story predicted.
+    """
     model = _BarModel(readCss(_CSS_PATH))
     used = (
-        model.leftClusterWidth(["BT", "⇅", "⚡"])
+        model.leftClusterWidth(_shippedLeftGlyphs())
         + model.centreWidth()
         + model.rightClusterWidth()
         + 2 * model.gap
@@ -403,17 +451,74 @@ def test_theBarIsNotOverBudgetAcrossItsFullWidth():
     assert used <= model.usable, f"{used:.1f}px used of {model.usable:.1f}px"
 
 
-def test_aFourthGlyphStillFits_soP6DropsInWithNoRelayout():
-    """AC-4's actual question. The Atlas-gated P-6 WiFi glyph joins the LEFT
-    cluster; if that pushes the left track past its share the clock moves and
-    P-6 becomes a re-layout instead of a drop-in. This is the guard that makes
-    "zero re-layout" a measured claim rather than a hope."""
+def test_leftClusterStillOverrunsItsTrackShare_us696NarrowedItButDidNotCloseIt():
+    """CHARACTERISATION, filed as TD-us696 -- recorded, deliberately NOT fixed.
+
+    THE FINDING. `test_aFourthGlyphStillFits_soP6DropsInWithNoRelayout` used to
+    stand here and made "P-6 drops in with zero re-layout" a measured claim. It
+    modelled the incoming glyph as a one-character `▾` at 27.0px. The glyph that
+    actually shipped (ARCH-007) is the five-character `((•))` at 93.6px -- 3.5x
+    the placeholder. So the guard passed, P-6 landed, and the left cluster went
+    over its guaranteed share anyway. A guard that is real, that passes, and
+    that cannot detect the class of change it exists to catch: this sprint's own
+    thesis, in the band budget.
+
+    THE OVERRUN IS REAL, NOT A MODEL ARTEFACT. This model reports UPPER bounds
+    (MONO_ADVANCE_EM / SYMBOL_ADVANCE_EM are both worst-case), so an overrun it
+    reports could in principle be slack. Re-measured with every character at the
+    mono advance -- the optimistic bound -- the four-glyph bar was still over:
+    175.6px against a 168.8px share. Over on BOTH bounds.
+
+    WHAT US-696 DID TO IT. Removing the bolt took the cluster from 211.0px to
+    173.9px against the same 168.8px share: the overrun falls from +42.2px to
+    +5.1px on this bound, and the optimistic bound now FITS at 150.0px. So the
+    story improved the condition by 37.1px and did not close it, which is why
+    this is pinned rather than asserted away.
+
+    IT IS NOT US-696'S TO FIX -- that story's own conditionalOutcomes say a
+    band-budget finding "belongs in its own story". The consequence is bounded:
+    a `1fr` is `minmax(auto, 1fr)`, so an oversized cluster grows its track and
+    the CLOCK DRIFTS off the bar's midpoint. It does not wrap to a second row --
+    the full-width budget above passes with 42.5px to spare.
+
+    A fix that brings the cluster back under its share FAILS THIS TEST ON
+    PURPOSE. That is the point: delete it then, do not weaken it.
+    """
     model = _BarModel(readCss(_CSS_PATH))
-    withWifi = model.leftClusterWidth(["BT", "⇅", "⚡", "▾"])
     share = model.sideTrackShare()
-    assert withWifi <= share, (
-        f"a 4th glyph takes the left cluster to {withWifi:.1f}px, past its "
-        f"{share:.1f}px share -- P-6 would move the clock"
+    left = model.leftClusterWidth(_shippedLeftGlyphs())
+    assert left > share, (
+        f"left cluster {left:.1f}px is now within its {share:.1f}px share -- "
+        "TD-us696 is FIXED. Delete this characterisation and restore the "
+        "`left <= share` guard alongside test_rightClusterFitsItsGuaranteedTrackShare."
+    )
+
+
+def test_theNextGlyphIsARelayout_notADropIn():
+    """The successor to `test_aFourthGlyphStillFits_soP6DropsInWithNoRelayout`,
+    and the correction of its method.
+
+    That guard's failure was not its arithmetic -- it was modelling a HYPOTHETICAL
+    glyph at a width nobody had committed to. So this one models the next glyph
+    at the width of the WIDEST GLYPH ALREADY ON THE BAR, which is the only glyph
+    width this project has real evidence for. On that basis the answer today is
+    NO: a fourth glyph does not fit, and whoever adds one is doing a re-layout.
+
+    Stated as the honest negative rather than dropped. "We do not know if the
+    next glyph fits" and "the next glyph does not fit" are different facts, and
+    the first is what the deleted guard was really asserting.
+    """
+    model = _BarModel(readCss(_CSS_PATH))
+    glyphs = _shippedLeftGlyphs()
+    widest = max(
+        _textWidthPx(glyph, model.glyphSize, model.glyphSpacing) for glyph in glyphs
+    )
+    withNext = model.leftClusterWidth(glyphs) + model.leftGap + widest
+    share = model.sideTrackShare()
+    assert withNext > share, (
+        f"a 4th glyph at the widest shipped width takes the cluster to "
+        f"{withNext:.1f}px against a {share:.1f}px share -- if this now fits, "
+        "TD-us696 has been fixed and this guard should be re-stated positively."
     )
 
 

@@ -19,10 +19,21 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-01    | Ralph (Rex)  | Initial -- US-502 emitter->tile/bolt chain.
+# 2026-09-10    | Ralph (Rex)  | US-696: the top-bar bolt was removed by CIO
+#               |              | ruling. The three `powerGlyphState` assertions
+#               |              | are replaced by assertions on the SENSED fact
+#               |              | they stood for, and two node IDs are renamed
+#               |              | because their old names claimed a bolt.
 # ================================================================================
 ################################################################################
 
-"""US-502: emitted power state -> carousel powerTile/powerGlyphState (node)."""
+"""US-502: emitted power state -> carousel powerTile (node).
+
+US-696 removed the top-bar bolt half of this chain. What the file pins is
+unchanged in substance -- the Pi's real AC/battery state reaches the renderer --
+but the surviving surface is the System Status card's POWER tile, so the bolt
+assertions were re-pointed at `power.source` rather than deleted.
+"""
 
 import json
 import os
@@ -107,10 +118,14 @@ def _pld(present: bool, available: bool = True):
     )
 
 
-def test_onExternalPower_tileIsRealAndBoltIsLit(tmp_path):
-    """Wall/bench or engine-running: the tile renders the deployment mode with
-    an `external` detail at level ok, and the header bolt lights -- issue #2
-    (grayed bolt) and #6 ("power unavailable") both gone."""
+def test_onExternalPower_tileIsReal(tmp_path):
+    """Wall/bench or engine-running: the tile renders the sensed source with an
+    `external` detail at level ok -- issue #6 ("power unavailable") gone.
+
+    RENAMED by US-696 (was `..._tileIsRealAndBoltIsLit`). The bolt it named was
+    removed by CIO ruling, and a node ID asserting a surface that no longer
+    exists is the stale-pointer class this sprint is closing.
+    """
     power = _emitPower(tmp_path, _pld(present=True))
 
     tile = _view("powerTile", power)
@@ -119,12 +134,22 @@ def test_onExternalPower_tileIsRealAndBoltIsLit(tmp_path):
     assert tile["value"] == "EXTERNAL"
     assert tile["detail"] == "wall/car power"
     assert tile["level"] == "ok"
-    assert _view("powerGlyphState", power) == "ok"
+    # US-696 removed the top-bar bolt this line used to assert. The claim it was
+    # making -- that the SENSED source reached the consumer -- is kept on the
+    # surface that survived: the emitted fact itself. Deleting the assertion
+    # outright would have thrown that away with the glyph.
+    assert power["source"] == "external"
 
 
-def test_onBatteryPower_tileSaysBatteryAndBoltIsAmber(tmp_path):
-    """Power dropped: the Pi is running off the UPS pack -> BATTERY tile +
-    amber bolt, so the operator sees it before the pack runs out."""
+def test_onBatteryPower_tileSaysBattery(tmp_path):
+    """Power dropped: the Pi is running off the UPS pack -> BATTERY tile at
+    amber, so the operator sees it before the pack runs out.
+
+    RENAMED by US-696 (was `..._tileSaysBatteryAndBoltIsAmber`), same reason.
+    ⚠️ This tile is now the ONLY on-screen surface for a UPS ride-down, and it
+    lives one card in rather than on persistent chrome. That is the cost the
+    CIO accepted; it is recorded here because this is where it would be felt.
+    """
     power = _emitPower(tmp_path, _pld(present=False))
 
     tile = _view("powerTile", power)
@@ -133,7 +158,8 @@ def test_onBatteryPower_tileSaysBatteryAndBoltIsAmber(tmp_path):
     # softened by whatever encoding a given box reads the source with.
     assert tile["detail"] == "on UPS"
     assert tile["level"] == "amber"
-    assert _view("powerGlyphState", power) == "amber"
+    # US-696: same substitution as above -- the bolt is gone, the fact is not.
+    assert power["source"] == "battery"
 
 
 def test_unreadableLine_staysHonestlyUnavailable(tmp_path):
@@ -147,4 +173,6 @@ def test_unreadableLine_staysHonestlyUnavailable(tmp_path):
     assert tile["value"] == "\u2014"
     assert tile["detail"] == "unavailable"
     assert tile["level"] == "unavailable"
-    assert _view("powerGlyphState", power) == "neutral"
+    # US-696: the `source == "unknown"` half of this claim is asserted above,
+    # before the tile is built -- an unreadable line must not become a confident
+    # reading at either layer, and the bolt is no longer one of them.

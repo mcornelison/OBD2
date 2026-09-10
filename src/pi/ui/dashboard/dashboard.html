@@ -41,7 +41,15 @@
     <div class="topbar-left">
       <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
       <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
-      <span class="glyph" id="glyph-power" data-state="neutral" title="Power">⚡</span>
+      <!-- US-696 (CIO ruling 2026-09-09): the lightning POWER glyph stood here
+           and was removed -- "if I can see the screen the power is on", so
+           restating it spent a slot in a band that has none to spare. The
+           MEASUREMENT survived the display: `power.source` is still sensed and
+           the System Status card keeps its Power row with a typed reason. The
+           argument against removal is recorded so it is not rediscovered: the
+           glyph was the only on-screen signal during a UPS ride-down, the one
+           window where "screen lit => mains present" is false. The CIO's call
+           is that the automatic sequenced poweroff makes it unactionable. -->
       <!-- ARCH-007 (Atlas ruling 2026-08-20): the P-6 WiFi glyph the US-555
            comment above reserved a slot for. It joins the LEFT cluster and
            needs no re-layout -- the three-column grid still has exactly three
