@@ -708,6 +708,106 @@
     return { label: label, value: "NA", detail: reason, level: "unavailable" };
   }
 
+  // -------------------------------------------------------------------------
+  // US-700 (F-123) -- LOADING IS A THIRD STATE, and it was missing.
+  //
+  // THE DEFECT, found by the CIO misreading his own panel at boot exactly as it
+  // was built to be misread: a tile whose payload had NOT ARRIVED YET rendered
+  // `— / unavailable`, which is BYTE-IDENTICAL to what it renders when the
+  // producer is dead. Both readings were honest and the tile was still useless,
+  // because one string covering two opposite situations is evidence that cannot
+  // do the job it is cited for -- the DISCRIMINATION variant of this project's
+  // own anti-pattern. The operator cannot act on it.
+  //
+  // THREE STATES, THREE RENDERS:
+  //   loading      -- nothing has arrived yet and the bound below is still open
+  //   ready        -- a payload is in hand. Everything downstream is UNCHANGED,
+  //                   including today's typed NA + reason for a payload that
+  //                   arrived and is unusable. A known-broken feed keeps its
+  //                   reason: "loading" must never dress a defect up as a
+  //                   start-up, which would be the same lie in a nicer word.
+  //   unavailable  -- no producer, or one that answered once and then died
+  //
+  // ⚠️ Deliberately NO spinner and NO animation. The panel is read at arm's
+  // length in a moving car; a distinct WORD in the big slot is the fix, motion
+  // is not.
+  // -------------------------------------------------------------------------
+
+  // THE BOUND. A tile that says LOADING forever is the same defect wearing a
+  // nicer word, so the pre-fetch state EXPIRES into the honest `unavailable`.
+  //
+  // Grounded on the PRODUCER'S OWN CADENCE rather than taste: the card states
+  // are written every DEFAULT_CARD_STATE_EMIT_INTERVAL = 2.0 s
+  // (src/pi/obdii/orchestrator/types.py), so three consecutive missed
+  // publications is no longer "still starting" -- it is a feed that is not
+  // answering. It also expires INSIDE the boot surface's own 12 s hard cap
+  // (config.json pi.splash.bootState.hardCapSeconds), so this panel reaches a
+  // definite verdict before the screen that precedes it gives up on the same
+  // services.
+  var LOADING_GRACE_MS = 6000;
+
+  function loadingGraceMs() {
+    return LOADING_GRACE_MS;
+  }
+
+  // THE ONE PREDICATE. Every surface that can render a WHOLE state payload asks
+  // this, so three states cannot drift into four readings of one fact.
+  //
+  // `waitedMs` is how long the panel has been asking for a payload that has
+  // NEVER arrived, and it is NULL once one has. That null is what stops a feed
+  // which answered and then DIED from falling back into "loading" and looking
+  // like it is merely starting up -- the mid-drive failure would otherwise
+  // acquire the reassuring word at the worst possible moment.
+  function loadPhase(payload, waitedMs) {
+    if (isObj(payload)) return "ready";
+    if (
+      typeof waitedMs === "number" &&
+      isFinite(waitedMs) &&
+      waitedMs >= 0 &&
+      waitedMs < LOADING_GRACE_MS
+    ) {
+      return "loading";
+    }
+    // Includes a NEGATIVE wait: this Pi has no RTC battery and boots before
+    // NTP, so a clock that steps backwards is a real event here. Nonsense
+    // resolves to the honest state, never to the comfortable one.
+    return "unavailable";
+  }
+
+  // The LOADING tile. The word lives in the VALUE slot because that is the slot
+  // readable at arm's length -- putting the distinction in the small detail line
+  // would leave the two states confusable at exactly the distance the panel is
+  // read from, which is the whole defect.
+  function loadingTile(label) {
+    return {
+      label: label,
+      value: "LOADING",
+      detail: "waiting for first read",
+      level: "loading",
+    };
+  }
+
+  // The waiting-room ledger: which feeds have EVER answered. Kept as a plain
+  // object rather than a closure on purpose -- it is the one piece of state this
+  // whole feature turns on, and a closure would have put it somewhere no test
+  // can hand it a value or read one back.
+  function feedObserved(seen, name, payload) {
+    var next = isObj(seen) ? seen : {};
+    // Only a real payload counts as ARRIVED. A null read (404 / abort /
+    // malformed) leaves the feed in the waiting room -- were it to count, the
+    // loading window would end on the first failed fetch, i.e. never fire.
+    if (isObj(payload)) next[name] = true;
+    return next;
+  }
+
+  function feedWaitedMs(seen, name, startedAtMs, nowMs) {
+    // Null, not 0: a 0 would read as "just started waiting" and would put a dead
+    // feed back into loading on every single tick.
+    if (isObj(seen) && seen[name] === true) return null;
+    if (typeof startedAtMs !== "number" || typeof nowMs !== "number") return null;
+    return nowMs - startedAtMs;
+  }
+
   function seenDetail(s) {
     return s == null ? "" : "seen " + s + "s ago";
   }
@@ -1538,14 +1638,23 @@
     return null;
   }
 
-  function sourceCardView(spec, data, sysData, cfg, nowMs) {
-    var base = { key: spec.key, title: spec.title };
+  //
+  // US-700: these cards are SIBLINGS of the idle face's BATTERY tile and share
+  // its defect exactly -- "no data -- UPS feed absent" is a confident claim at
+  // t=0. Fixing one and not the other would re-create the confusion one swipe
+  // away, which is why the story's conditionalOutcome names the shared shape
+  // rather than the three tiles it was reported on.
+  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs) {
+    var base = { key: spec.key, title: spec.title, label: spec.noData.label };
     // The gate is checked FIRST and short-circuits: a gated card must carry no
     // reading, not a suppressed one (nothing downstream can leak what was never
-    // derived).
+    // derived). US-700 keeps it first ON PURPOSE -- a gated card has no reading
+    // to be waiting FOR, and "loading" on a bench with no car would promise data
+    // that cannot arrive until an engine does.
     if (spec.vehicleGated && !vehicleConnected(sysData)) {
       base.gated = true;
       base.unavailable = false;
+      base.loading = false;
       base.na = { label: spec.noData.label, reason: FUEL_TRIM_GATED_REASON };
       base.view = null;
       return base;
@@ -1553,6 +1662,14 @@
     var view = sourceView(spec.key, data, cfg, nowMs);
     base.gated = false;
     if (view === null) {
+      if (loadPhase(data, waitedMs) === "loading") {
+        base.loading = true;
+        base.unavailable = false;
+        base.na = null;
+        base.view = null;
+        return base;
+      }
+      base.loading = false;
       base.unavailable = true;
       // Reuse the shipped whole-card wording where one exists (light), so the
       // silent-instrument phrasing lives in exactly one place.
@@ -1560,6 +1677,7 @@
       base.view = null;
       return base;
     }
+    base.loading = false;
     base.unavailable = false;
     base.na = null;
     base.view = view;
@@ -2127,8 +2245,18 @@
   // timestamp is missing or unparseable still shows the drive and admits
   // "age unknown", because the drive genuinely happened and hiding it would lose
   // a real fact to protect a cosmetic one.
-  function idleLastDriveFact(systemStatusData) {
+  //
+  // US-700: `waitedMs` distinguishes "the state file has not been read yet"
+  // from "there is no state file". Absent (every pre-US-700 caller) it resolves
+  // to `unavailable`, which is exactly the behaviour this tile shipped with.
+  function idleLastDriveFact(systemStatusData, waitedMs) {
     var label = "LAST DRIVE";
+    if (loadPhase(systemStatusData, waitedMs) === "loading") {
+      return loadingTile(label);
+    }
+    // Note the ORDER: an ARRIVED payload with no drive block falls through to
+    // here even inside the loading window, because `loadPhase` already answered
+    // "ready" for it. That absence is real and keeps its own render.
     if (!isObj(systemStatusData) || !isObj(systemStatusData.drive)) {
       return { label: label, value: "—", detail: "unavailable", level: "unavailable" };
     }
@@ -2158,8 +2286,16 @@
   // via the Spool verdict, always carrying its data-age (F-9 stale-green guard).
   // Reuses the battery-health view (single UPS source -> whole-card NA); prefers
   // SoC% but falls back to volts (a voltage is never rendered AS a percent).
-  function idleBatteryFact(batteryData) {
+  //
+  // US-700: same three states. The UPS-unreadable disposition below is the one
+  // that proves the discipline -- that payload ARRIVED and says why the gauge
+  // cannot be read, so it keeps its typed NA and its reason even during the
+  // loading window. The reason is the operator's only lead on what to fix.
+  function idleBatteryFact(batteryData, waitedMs) {
     var label = "BATTERY";
+    if (loadPhase(batteryData, waitedMs) === "loading") {
+      return loadingTile(label);
+    }
     var view = batteryHealthView(batteryData);
     if (view === null) {
       return { label: label, value: "—", detail: "unavailable", level: "unavailable" };
@@ -2193,7 +2329,18 @@
   // The footer stays a VIEW field rather than a renderer literal even now that
   // there is one of them: copy no test can reach is copy that drifts, which is
   // exactly what US-510 had to come back and repair on this very surface.
-  function idleCardView(systemStatusData, batteryData, motionReason) {
+  //
+  // US-700 adds `waits`, and it is a BAG OF FACTS ABOUT THE FETCHES, not a
+  // second opinion about them:
+  //   { systemStatus, battery }  -- ms waited for a payload that never arrived
+  //   { motionLoading }          -- `homeFace`'s verdict, handed DOWN
+  // The motion entry is a boolean rather than a duration on purpose. `homeFace`
+  // is the only arbiter of the motion face (US-508), and re-deriving the phase
+  // from a duration here would quietly install a second one -- the exact defect
+  // the one-arbiter rule on that function exists to prevent.
+  function idleCardView(systemStatusData, batteryData, motionReason, waits) {
+    var w = isObj(waits) ? waits : {};
+    var motionLoading = w.motionLoading === true;
     return {
       // US-510 A-1: the LOCKED wordmark, verbatim from Iris's idle spec
       // (2026-07-21-pi-idle-state-and-full-bleed.md §1.2). The build had
@@ -2203,19 +2350,26 @@
       // the screen it taught is gone. The ⋮ it named is still in the top bar.
       wordmark: "ECLIPSE OBD-II",
       hero: {
-        title: "NO MOTION DATA",
+        // US-700: two words that cannot be misread for each other at arm's
+        // length. "NO MOTION DATA" over a feed that is merely starting is a
+        // confident claim about a producer nobody has heard from yet.
+        title: motionLoading ? "MOTION LOADING" : "NO MOTION DATA",
         // Never fabricated: `homeFace` reaches this view only WITH a reason, so
         // the empty string here is an un-taken defensive floor, not a second
         // disposition wearing a default sentence.
         substate: typeof motionReason === "string" ? motionReason : "",
         level: "neutral",
       },
-      footer: "live instrument resumes when the motion feed returns",
+      // US-700: "resumes ... returns" asserts the feed was HERE and left. At
+      // first paint it never was, and a footer is copy the operator believes.
+      footer: motionLoading
+        ? "live instrument starts when the first reading arrives"
+        : "live instrument resumes when the motion feed returns",
       // TWO facts, not three. `faults` left with the Alerts card (AC-2); what
       // remains is what a dead motion feed does not make unreadable.
       facts: {
-        lastDrive: idleLastDriveFact(systemStatusData),
-        battery: idleBatteryFact(batteryData),
+        lastDrive: idleLastDriveFact(systemStatusData, w.systemStatus),
+        battery: idleBatteryFact(batteryData, w.battery),
       },
     };
   }
@@ -3483,15 +3637,29 @@
   // unwired sensor, undated payload or stale reading (AC-3 -- never a frozen
   // motion display). It therefore always carries a reason; there is no longer a
   // disposition where the fallback fires with nothing to say.
-  function homeFace(imuData, nowMs) {
+  //
+  // US-700 adds the THIRD state, and this function stays the only arbiter of
+  // it: the `loading` flag it returns is what the idle view renders, so the
+  // motion face still has exactly one rule in charge of it.
+  function homeFace(imuData, nowMs, waitedMs) {
     var view = imuView(imuData, nowMs);
     if (view === null) {
-      return { face: "idle", reason: "no motion feed" };
+      // NOTHING has arrived. Which nothing matters: a feed still inside the
+      // bound is starting up; a feed past it -- or one that answered once and
+      // then died -- is genuinely absent.
+      if (loadPhase(imuData, waitedMs) === "loading") {
+        return { face: "idle", reason: "waiting for first read", loading: true };
+      }
+      return { face: "idle", reason: "no motion feed", loading: false };
     }
     if (view.idle) {
-      return { face: "idle", reason: view.reason };
+      // A payload ARRIVED and is not renderable as an instrument: unwired,
+      // undated, stale. That is a real defect carrying a real reason, and a
+      // "loading" hero here would tell the operator to keep waiting for a
+      // sensor that is never coming.
+      return { face: "idle", reason: view.reason, loading: false };
     }
-    return { face: "live", reason: null };
+    return { face: "live", reason: null, loading: false };
   }
 
   // US-503 idle-card wall clock. PURE -- the caller supplies the Date, so this
@@ -3606,6 +3774,15 @@
     sourceUnavailable: sourceUnavailable,
     sourceReason: sourceReason,
     naTile: naTile,
+    // US-700: the three-state machinery. `loadingGraceMs` is exported as a
+    // FUNCTION as well as a constant so the fixture probe -- which can only
+    // call exports -- reads the shipped bound instead of re-typing it.
+    loadPhase: loadPhase,
+    loadingTile: loadingTile,
+    loadingGraceMs: loadingGraceMs,
+    feedObserved: feedObserved,
+    feedWaitedMs: feedWaitedMs,
+    LOADING_GRACE_MS: LOADING_GRACE_MS,
     obdLinkTile: obdLinkTile,
     syncTile: syncTile,
     powerTile: powerTile,
@@ -4052,6 +4229,15 @@
       appendTile(body, naTile(label, reason));
     }
 
+    // US-700: the pre-fetch body. Same geometry as the typed NA above -- one
+    // tile in the slot -- so the card does not JUMP when the real payload lands
+    // a moment later. Only the words and the level differ, which is the whole
+    // point: the operator reads a change of state, not a change of layout.
+    function renderLoadingBody(body, label) {
+      body.textContent = "";
+      appendTile(body, loadingTile(label));
+    }
+
     // US-507: the three merged renderers take a BODY element, not a card. They
     // used to reach for their own `.card-body`, which silently assumed one
     // source per card -- the assumption the Health card overturns. Taking the
@@ -4417,6 +4603,12 @@
       // `.unavailable` italic-gray must not also apply -- the tile carries its
       // own honest styling and the two together read as a doubly-dead card.
       card.classList.toggle("unavailable", false);
+      // US-700: checked BEFORE the NA branch. A card still inside its loading
+      // bound has nothing to be typed-NA about yet.
+      if (view.loading) {
+        renderLoadingBody(body, view.label);
+        return;
+      }
       if (view.gated || view.unavailable) {
         renderNaBody(body, view.na.label, view.na.reason);
         return;
@@ -5059,6 +5251,14 @@
       var lastSys = null;
       var lastBattery = null;
       var lastGear = null;
+      // US-700: the waiting room. `feedStartedMs` is when THIS PAGE started
+      // asking, not when the producer started -- the panel cannot know the
+      // latter, and claiming to would be the fabrication this story removes. So
+      // a reload three hours into a dead feed shows LOADING for the bound and
+      // then settles on `unavailable`, which is an honest account of what the
+      // panel actually knows: it has not been answered yet.
+      var feedStartedMs = Date.now();
+      var feedSeen = {};
       // US-496: the vehicle-dependent cards, revealed only while a vehicle is
       // actually connected (they ship `hidden`, so the pre-first-poll unknown
       // shows no vehicle card).
@@ -5526,7 +5726,9 @@
         if (!homeCard) return;
         // US-662: smooth for DISPLAY only. lastImu itself is untouched.
         var imuView = smoothedImuView(lastImu, nowMs);
-        var face = homeFace(imuView, nowMs);
+        var face = homeFace(
+          imuView, nowMs, feedWaitedMs(feedSeen, "imu", feedStartedMs, nowMs)
+        );
         if (face.face === "live") {
           // US-645: the fourth argument is the OBD vehicle speed, and it is
           // NULL because no producer publishes one to this dashboard -- the
@@ -5576,9 +5778,19 @@
         // US-542: `lastDtc` is no longer handed to this view -- the faults tile
         // it fed is on the Alerts card now -- and neither is a Date: the clock
         // lives in the top bar, painted by its own tick.
+        // US-700: the two slow feeds' waits, plus the motion verdict handed
+        // DOWN from `face` rather than re-derived -- one arbiter per fact.
         renderHomeCard(
           homeCard, face, null,
-          idleCardView(lastSys, lastBattery, face.reason),
+          idleCardView(lastSys, lastBattery, face.reason, {
+            systemStatus: feedWaitedMs(
+              feedSeen, "system-status", feedStartedMs, nowMs
+            ),
+            battery: feedWaitedMs(
+              feedSeen, "battery-health", feedStartedMs, nowMs
+            ),
+            motionLoading: face.loading === true,
+          }),
           null, null
         );
       }
@@ -5622,6 +5834,10 @@
           if (Object.prototype.hasOwnProperty.call(fetched, name)) return fetched[name];
           var payload = await fetchState(name);
           fetched[name] = payload;
+          // US-700: record the arrival HERE, where every state name funnels
+          // through exactly once per tick. A ledger updated per-consumer would
+          // be a ledger some consumer forgets to update.
+          feedSeen = feedObserved(feedSeen, name, payload);
           if (name === "dtc") dtcData = payload;
           else if (name === "system-status") sysData = payload;
           else if (name === "battery-health") batteryData = payload;
@@ -5651,20 +5867,41 @@
             renderSourceCard(
               card,
               sourceCardView(
-                spec, data, await stateOnce("system-status"), displayAutoDim, nowMs
+                spec, data, await stateOnce("system-status"), displayAutoDim,
+                nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs)
               )
             );
             continue;
           }
           var avail = cardAvailability(data);
-          card.classList.toggle("unavailable", avail === "unavailable");
+          // US-700: a card that has not been answered YET is not a dead card.
+          // The `.unavailable` class is the whole-card gray, and applying it to
+          // a loading card would paint the exact "this instrument is broken"
+          // claim the body below is being careful not to make.
+          var cardLoading =
+            loadPhase(data, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs))
+            === "loading";
+          card.classList.toggle(
+            "unavailable", avail === "unavailable" && !cardLoading
+          );
           if (avail === "unavailable") {
             var body = card.querySelector(".card-body");
             // US-496: a card with a bespoke no-data view NAMES the silent
             // instrument (`dtc` must never read as an all-clear); every other
             // card keeps the shipped one-word fallback.
             var nd = noDataView(name);
-            if (body && nd) renderNaBody(body, nd.label, nd.reason);
+            if (body && cardLoading) {
+              // The instrument's own name where one exists, else the card's
+              // painted title -- read off the DOM rather than a second table,
+              // so the label on the tile cannot disagree with the heading
+              // above it.
+              var titleEl = card.querySelector(".card-title");
+              renderLoadingBody(
+                body,
+                nd ? nd.label
+                   : (titleEl ? String(titleEl.textContent).toUpperCase() : "")
+              );
+            } else if (body && nd) renderNaBody(body, nd.label, nd.reason);
             else if (body) body.textContent = "unavailable";
             if (name === "system-status") resetSystemGlyphs(glyphEls);
             continue;
@@ -5747,6 +5984,10 @@
       // newest. setTimeout (not setInterval) so a slow read cannot stack.
       async function imuTick() {
         lastImu = await fetchState("imu");
+        // US-700: the live feed does NOT go through `stateOnce` (it has its own
+        // loop), so it books its own arrival. Missing this is how the motion
+        // card would have sat at LOADING while every other tile moved on.
+        feedSeen = feedObserved(feedSeen, "imu", lastImu);
         pushImuSamples(lastImu, Date.now());
         renderHome(Date.now());
       }

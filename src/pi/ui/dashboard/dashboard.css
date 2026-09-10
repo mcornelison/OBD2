@@ -553,6 +553,15 @@ html, body {
 .tile[data-level="unavailable"] .tile-value {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
+/* US-700: LOADING is a THIRD state and must not look like the other two. It is
+   UPRIGHT and one step brighter than the tertiary `unavailable` gray -- a
+   pre-fetch tile is not a dead instrument, and the italic gray is this
+   dashboard's word for dead. It is deliberately NOT green and NOT animated:
+   nothing is known yet, and motion on a panel read at arm's length in a moving
+   car is something the driver has to ignore. */
+.tile[data-level="loading"] .tile-value {
+  color: var(--text-secondary); font-weight: 500; letter-spacing: 0.06em;
+}
 
 /* --- US-497 IMU live-instrument card (S4-card, F-113) ----------------------- */
 /* The g-meter + compass sit side by side above the tile stack. EVERY colour is
@@ -702,6 +711,9 @@ html, body {
 .tile[data-level="down"] .tile-dot { background: var(--amber-warn); }
 .tile[data-level="neutral"] .tile-dot { background: var(--text-secondary); }
 .tile[data-level="unavailable"] .tile-dot { background: var(--text-tertiary); }
+/* US-700: the dot follows the value -- a loading tile with a dead-gray dot
+   beside a live-gray value would contradict itself inside one tile. */
+.tile[data-level="loading"] .tile-dot { background: var(--text-secondary); }
 
 /* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
 /* The drain ladder block is appended ONLY when battery-health.draining===true;
