@@ -24,8 +24,8 @@ from pathlib import Path
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS, Sample
 from pi.sensors.imu_state_bridge import (
-    DEFAULT_MOUNT,
     DEFAULT_STATE_HZ,
+    IMU_BODY_FRAME,
     IMU_STATE_FILENAME,
     MAX_GRADE_PITCH_DEG,
     REASON_NO_MAG,
@@ -49,7 +49,8 @@ from pi.sensors.pitch_fusion import PitchFusion
 G = STANDARD_GRAVITY_MS2
 
 # The exact key set of the states/imu payload (Atlas Q-A contract + gMag from the
-# US-478 AC).  Pinned so a field can never be dropped or silently renamed.
+# US-478 AC, + the US-708 pitch-path diagnostics).  Pinned so a field can never be
+# dropped or silently renamed.
 _EXPECTED_KEYS = {
     "available",
     "ts",
@@ -60,6 +61,11 @@ _EXPECTED_KEYS = {
     "pitchDeg",
     "gradePct",
     "altitude",
+    # US-708. NOT derived fields and never gated: they describe the ESTIMATOR,
+    # not a sensor reading, and they are wanted most when the instrument has gone
+    # unavailable -- which is why they are outside _DERIVED_FIELDS.
+    "stopCount",
+    "biasRad",
     "reasons",
 }
 
@@ -89,12 +95,33 @@ def _rollAboutForward(
     return (f, lft * math.cos(rad) + up * math.sin(rad), -lft * math.sin(rad) + up * math.cos(rad))
 
 
+def _asRawAxes(vehicle):
+    """Express a VEHICLE-frame vector in the board's own axes (US-708).
+
+    Every helper below states its reading in VEHICLE coordinates, because that is
+    what the assertions in this file are about -- the derived logic, not the
+    mounting. The bridge is fed RAW device axes, so the conversion happens here,
+    once, and it is DERIVED from the shipped IMU_BODY_FRAME (a rotation, so its
+    inverse is its transpose) rather than hand-written.
+
+    That makes this file deliberately mount-AGNOSTIC: it stays green if the
+    orientation constant is flipped between candidate (A) and (B). The mounting
+    itself is pinned in test_imu_body_frame.py, which feeds LITERAL raw vectors
+    -- a suite that passed under both candidates would pin neither.
+    """
+    cols = [
+        resolveMountFrame(axis, IMU_BODY_FRAME)
+        for axis in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    ]
+    return tuple(sum(cols[col][row] * vehicle[row] for row in range(3)) for col in range(3))
+
+
 def _accel(value, seq: int = 1, *, capture: float = 0.0) -> Sample:
-    """Build one raw.imu.accel burst sample (m/s^2 3-tuple)."""
+    """Build one raw.imu.accel burst sample from a VEHICLE-frame 3-tuple (m/s^2)."""
     return Sample(
         topic="raw.imu.accel",
         source="imu",
-        value=value,
+        value=_asRawAxes(value),
         unit="m/s^2",
         tsUtc="2026-07-31T00:00:00Z",
         tsCapture=capture,
@@ -105,11 +132,11 @@ def _accel(value, seq: int = 1, *, capture: float = 0.0) -> Sample:
 
 
 def _mag(value, seq: int = 1, *, capture: float = 0.0) -> Sample:
-    """Build one raw.imu.mag burst sample (uT 3-tuple)."""
+    """Build one raw.imu.mag burst sample from a VEHICLE-frame 3-tuple (uT)."""
     return Sample(
         topic="raw.imu.mag",
         source="imu",
-        value=value,
+        value=_asRawAxes(value),
         unit="uT",
         tsUtc="2026-07-31T00:00:00Z",
         tsCapture=capture,
@@ -152,22 +179,38 @@ def _settle(bridge: ImuStateBridge, gravity, *, seconds: float = 30.0, hz: float
 
 def test_resolveMountFrame_identityMount_passesTheVectorThrough():
     """
-    Given: the default mount (+x forward, +y left, +z up)
+    Given: an explicit identity map (+x forward, +y left, +z up)
     When: a raw device-frame vector is resolved
-    Then: the components are returned unchanged, in (forward, left, up) order
+    Then: the components are returned unchanged, in (forward, left, up) order --
+          the mapping PRIMITIVE, exercised on its own. US-708 note: the identity
+          is no longer the shipped mounting; it is the frame the code wrongly
+          assumed, kept here only to pin what the primitive does with it.
     """
-    assert resolveMountFrame((1.0, 2.0, 3.0), DEFAULT_MOUNT) == (1.0, 2.0, 3.0)
+    identity = {"forward": "+x", "left": "+y", "up": "+z"}
+    assert resolveMountFrame((1.0, 2.0, 3.0), identity) == (1.0, 2.0, 3.0)
 
 
 def test_resolveMountFrame_remountedBoard_remapsAndSignsAxes():
     """
     Given: a board mounted on its side (+y forward, -x left, +z up)
     When: a raw device-frame vector is resolved
-    Then: the axes are remapped AND the sign is applied -- so a physical remount
-          is a config change, never a code change
+    Then: the axes are remapped AND the sign is applied
     """
     mount = {"forward": "+y", "left": "-x", "up": "+z"}
     assert resolveMountFrame((1.0, 2.0, 3.0), mount) == (2.0, -1.0, 3.0)
+
+
+def test_resolveMountFrame_noMountGiven_appliesTheShippedBodyFrame():
+    """
+    Given: no explicit map -- the production call shape
+    When: a raw device-frame vector is resolved
+    Then: the shipped IMU_BODY_FRAME is applied. There is no second place the
+          mounting is declared and no identity fallback hiding behind a
+          .get() default (US-708).
+    """
+    probe = (1.0, 2.0, 3.0)
+    assert resolveMountFrame(probe) == resolveMountFrame(probe, IMU_BODY_FRAME)
+    assert resolveMountFrame(probe, {}) == resolveMountFrame(probe, IMU_BODY_FRAME)
 
 
 # NOTE (US-521): the pure grade math that used to be tested here as
@@ -703,18 +746,37 @@ def test_bridge_writeFailureIsIsolated_neverRaises(tmp_path: Path):
     assert bridge.handleSample(_accel(_level())) is True
 
 
-def test_bridge_mountConfig_isAppliedToTheReadings(tmp_path: Path):
+def _rawSample(topic: str, rawValue, seq: int = 1, *, capture: float = 0.0) -> Sample:
+    """Build a bus sample carrying an already-RAW device-frame 3-vector."""
+    return Sample(
+        topic=topic,
+        source="imu",
+        value=rawValue,
+        unit="m/s^2",
+        tsUtc="2026-07-31T00:00:00Z",
+        tsCapture=capture,
+        driveId=None,
+        dataSource="real",
+        seq=seq,
+    )
+
+
+def test_bridge_bodyFrame_isAppliedToTheReadings(tmp_path: Path):
     """
-    Given: a board physically mounted on its side (+z forward, +y left, -x up)
-    When: a device-frame gravity reading arrives
-    Then: the derived grade is computed in the VEHICLE frame -- a remount is a
-          config edit, not a code edit (CIO rule: calibration values live in
-          config)
+    Given: a RAW device reading whose UP axis carries the full 1 g
+    When: it is drained
+    Then: the derived grade is computed in the VEHICLE frame -- the boundary
+          transform ran, and it ran on the raw vector rather than on something a
+          caller had pre-mapped.
+
+    US-708 replaced this test's subject. It used to pass a custom ``mount=`` to
+    the constructor and assert that a remount was a CONFIG edit. It is not: the
+    mounting is a fact about how the board is bolted to the dash, established by
+    measurement -- and living in config.json is what let the identity map sit
+    there looking adjustable while silently overriding the code default.
     """
-    mount = {"forward": "+z", "left": "+y", "up": "-x"}
-    bridge = ImuStateBridge(None, str(tmp_path), mount=mount)
-    # Device frame reading whose UP axis (-x) carries the full 1 g -> level.
-    bridge.handleSample(_accel((-G, 0.0, 0.0)))
+    bridge = ImuStateBridge(None, str(tmp_path))
+    bridge.handleSample(_rawSample("raw.imu.accel", _asRawAxes((0.0, 0.0, G))))
     assert _readState(tmp_path)["gradePct"] == 0.0
 
 
@@ -747,11 +809,11 @@ def test_bridge_endToEnd_busPublishWritesStatesImu(tmp_path: Path):
 
 
 def _gyroSample(value, seq: int = 1, *, capture: float = 0.0) -> Sample:
-    """Build one raw.imu.gyro burst sample (rad/s 3-tuple)."""
+    """Build one raw.imu.gyro burst sample from a VEHICLE-frame 3-tuple (rad/s)."""
     return Sample(
         topic=TOPIC_IMU_GYRO,
         source="imu",
-        value=value,
+        value=_asRawAxes(value),
         unit="rad/s",
         tsUtc="2026-07-31T00:00:00Z",
         tsCapture=capture,

@@ -233,6 +233,7 @@ def _queryServiceState(serviceName: str) -> str:
             ["systemctl", "is-active", serviceName],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=5,
             check=False,
         )

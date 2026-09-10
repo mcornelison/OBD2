@@ -137,6 +137,7 @@ class GoogleDriveUploader:
                 RCLONE_VERSION_CMD,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=RCLONE_CHECK_TIMEOUT
             )
             self._rcloneInstalled = result.returncode == 0
@@ -178,6 +179,7 @@ class GoogleDriveUploader:
                 RCLONE_LISTREMOTES_CMD,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=RCLONE_CHECK_TIMEOUT
             )
 
@@ -238,6 +240,7 @@ class GoogleDriveUploader:
                 RCLONE_LISTREMOTES_CMD,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=RCLONE_CHECK_TIMEOUT
             )
 
@@ -318,6 +321,11 @@ class GoogleDriveUploader:
                 cmd,
                 capture_output=True,
                 text=True,
+                # rclone echoes REMOTE FILE NAMES back on both streams, and a
+                # Drive filename is user-authored -- exactly the input that has
+                # no business being decoded with whatever locale the host booted
+                # with. (US-710 / TD-068)
+                encoding='utf-8',
                 timeout=self._uploadTimeout
             )
 

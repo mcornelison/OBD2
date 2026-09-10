@@ -132,6 +132,7 @@ def _defaultTimedatectlRunner() -> str:
         ["timedatectl", "show", "--property=NTPSynchronized", "--value"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=_NTP_PROBE_TIMEOUT_SECONDS,
         check=True,
     )

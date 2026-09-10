@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
@@ -84,7 +84,9 @@ def renderReport(manifest: dict, staleOnly: bool = False) -> tuple[str, dict]:
 
     if not staleOnly and byStatus["OK"]:
         lines.append("OK (within threshold):")
-        for feat, daysAgo in byStatus["OK"]:
+        # `_daysAgo` is deliberately unbound-by-name: the OK line reports WHO
+        # validated, not how long ago -- that is what makes it the OK line.
+        for feat, _daysAgo in byStatus["OK"]:
             lines.append(f"  {feat['id']:<6} {feat['name']:<60} last {feat['lastValidated']} ({feat['validatedBy']})")
         lines.append("")
 

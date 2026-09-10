@@ -213,17 +213,28 @@ def test_idleCardView_cannotSeeTheDtcPayloadAtAll():
     """
     Given: the faults tile moved to the Alerts card
     When: the shipped declaration is read
-    Then: `idleCardView` takes (systemStatusData, batteryData, motionReason).
+    Then: `idleCardView` takes (systemStatusData, batteryData, motionReason,
+          waits) -- and nothing that could carry a fault back onto this face.
 
           The signature is the guard, not a tidy-up (the US-541 pattern). A view
           that cannot SEE the dtc payload cannot quietly re-borrow the fact that
           just left it; a future re-borrow has to widen the signature first,
           which is a visible act rather than a line added to a facts object.
+
+          US-700 IS THAT VISIBLE ACT. `waits` carries facts about the FETCHES --
+          how long each feed has gone unanswered, plus `homeFace`'s own loading
+          verdict handed down -- so the view still cannot see a code, a severity
+          or a count. The exact list stays exact; only the reviewed entry is new.
     """
     sig = re.search(r"function idleCardView\(([^)]*)\)", _read(_JS))
     assert sig, "idleCardView is gone"
     params = [p.strip() for p in sig.group(1).split(",") if p.strip()]
-    assert params == ["systemStatusData", "batteryData", "motionReason"], params
+    assert params == [
+        "systemStatusData", "batteryData", "motionReason", "waits",
+    ], params
+    assert not any("dtc" in p.lower() or "code" in p.lower() for p in params), (
+        "the idle face can see the fault payload again -- US-542's whole point"
+    )
 
 
 def test_idleCardView_carriesNoFaultsTile():

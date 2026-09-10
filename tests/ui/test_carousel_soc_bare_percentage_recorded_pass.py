@@ -29,6 +29,13 @@
 #   detail "uncalibrated", so treating this one as a pass would contradict a
 #   guard already standing in this suite.
 #
+#   ⚠️ THE EXAMPLE IS HISTORICAL AS OF US-697; THE DISTINCTION IS NOT. The CIO
+#   removed "magnetic" from the HEADING tile on 2026-09-09 -- on CLUTTER grounds
+#   (one less thing to read at arm's length), NOT because it was reclassified as
+#   a hedge. So the frame-vs-confidence line above still decides this file's
+#   finding, and the tile it was drawn on no longer carries the illustration.
+#   Do not read the removal as US-656 having been overturned.
+#
 #   AND IT IS NOT EVEN CONDITIONAL. `socCalibrated` is HARDCODED False at the
 #   single writer of this state file (card_state_emitter.py:763, whose own
 #   docstring says "no claimed calibration"), so socTile's `"register"` branch is
@@ -665,10 +672,12 @@ def test_characterisation_theChargeTilePaintsAnUncalibratedQualifier(tmp_path):
     qualifier". The VALUE is bare; the TILE is not. The driver reads
     "CHARGE / 96% / (uncalibrated)".
 
-    WHY THIS IS A QUALIFIER AND "magnetic" (US-656) IS NOT: "magnetic" names the
+    WHY THIS IS A QUALIFIER AND "magnetic" (US-656) WAS NOT: "magnetic" named the
     reference frame, a fact about the QUANTITY, like a unit. "(uncalibrated)" is
     a claim about how well the quantity was MEASURED -- precisely what the CIO's
-    ruling removes as clutter at 480x320.
+    ruling removes as clutter at 480x320. (US-697 has since taken "magnetic" off
+    the HEADING tile on clutter grounds, which does not move the line: a frame
+    label is still not a hedge, it just is not worth the pixels there.)
 
     FAIL THIS ON PURPOSE when the qualifier goes.
     """
@@ -715,8 +724,9 @@ def test_theHedgeSweepIsDiscriminatingAndNotABlanketDetailBan(tmp_path):
     NOT a characterisation -- a CONTROL, and a load-bearing one. Without it the
     sweep above could be flagging the mere PRESENCE of a detail line, which would
     make the finding an artefact of the test rather than a property of the tile.
-    A detail that names the SOURCE of a quantity is legitimate, exactly as
-    US-656's "magnetic" is.
+    A detail that names the SOURCE of a quantity is legitimate -- which is what
+    "Pi UPS battery" does here, and it is the live example now that US-697 has
+    removed the HEADING tile's "magnetic".
     """
     payload = _emit(tmp_path, _atlasGauge())
     cell = _tile(payload, CELL)

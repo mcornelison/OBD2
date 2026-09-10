@@ -142,20 +142,31 @@ def test_homeFace_takesTheMotionFeedAndAClockAndNothingElse():
     """
     Given: the always-on rule
     When: the shipped declaration is read
-    Then: `homeFace` has exactly the motion payload and the clock in its
-          signature.
+    Then: `homeFace` sees the motion payload, the clock, and how long the panel
+          has waited for a first read -- and NOTHING about the vehicle.
 
           The parameter list is the guard. A function that cannot SEE
           system-status cannot re-couple the home face to the vehicle state --
           a later edit would have to widen the signature first, which is a
           visible act rather than a one-line condition slipped into the body.
+
+          US-700 IS THAT VISIBLE ACT, and this is the guard being answered
+          rather than removed. `waitedMs` is a fact about the FETCH of the
+          motion feed -- how long this page has been asking for it -- so the
+          face still cannot see the vehicle, the DTC payload or the gear. The
+          exact list is kept exact for the same reason it was written exact.
     """
     js = _read(_JS)
     sig = re.search(r"function homeFace\(([^)]*)\)", js)
     assert sig, "homeFace is gone"
     params = [p.strip() for p in sig.group(1).split(",") if p.strip()]
-    assert len(params) == 2, f"homeFace should take (imuData, nowMs), got {params}"
-    assert "now" in params[1].lower()
+    assert params == ["imuData", "nowMs", "waitedMs"], params
+    # The claim the list is really making, stated so it survives a rename.
+    forbidden = ("sys", "vehicle", "dtc", "gear", "park", "drive", "idle")
+    for param in params:
+        assert not any(word in param.lower() for word in forbidden), (
+            f"the home face can now see {param} -- the US-541 re-coupling guard"
+        )
 
 
 def test_homeFace_neverConsultsTheParkedSignal():

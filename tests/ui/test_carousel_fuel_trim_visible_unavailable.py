@@ -170,8 +170,39 @@ def _read(path: str) -> str:
 # --- the rendered surface ----------------------------------------------------
 
 
+def _loadingGraceMs() -> int:
+    """carousel.js's OWN loading bound, read from the shipped file.
+
+    Read rather than re-typed so this file settles past the bound however the
+    bound is later retuned -- a copied constant here would silently stop
+    settling the day US-700's grounding changes.
+    """
+    match = re.search(r"var LOADING_GRACE_MS = (\d+);", _read(_JS))
+    assert match, "carousel.js no longer declares LOADING_GRACE_MS"
+    return int(match.group(1))
+
+
+def _settledSteps() -> list[dict[str, Any]]:
+    """A boot that has WAITED past US-700's loading bound.
+
+    US-700 gave the panel a third state: a card whose payload has not arrived
+    YET reads LOADING rather than claiming its producer is absent. Every claim
+    in this file is about a SETTLED panel -- "no producer exists" is a verdict,
+    not a first impression -- so the default boot walks the virtual clock past
+    the bound and flushes again. Without this the absence assertions below would
+    be reading the first second of a boot and calling it a diagnosis.
+    """
+    return [{"flush": 4}, {"advanceMs": _loadingGraceMs() + 4000}, {"flush": 4}]
+
+
 def _surface(routes: dict[str, Any], nowMs: int | None = None, steps: Any = None):
     """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet."""
+    # A caller that pins its own clock/steps (the freshness sweeps) is left
+    # alone -- it is making a claim about a specific instant, not about a
+    # settled panel.
+    if nowMs is None and steps is None:
+        nowMs = _TREND_TS_MS
+        steps = _settledSteps()
     tree = rh.runDashboard(routes=routes, viewport=PANEL, nowMs=nowMs, steps=steps)["tree"]
     return rh.dashboardSurface(tree, viewport=PANEL)
 

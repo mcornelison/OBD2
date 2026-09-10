@@ -292,7 +292,7 @@ def _renderSprintFromJson(sprintPath: Path) -> None:
 def _renderPrdsAndSprint() -> None:
     """Render active PRDs + current sprint.json (v2 view). Minimal MVP."""
     prdsDir = SHARE_ROOT / "pm" / "prds"
-    activePrds = [p for p in prdsDir.glob("prd-V*.md")] if prdsDir.exists() else []
+    activePrds = list(prdsDir.glob("prd-V*.md")) if prdsDir.exists() else []
     if activePrds:
         print("=== ACTIVE PRDs ===")
         for p in sorted(activePrds):

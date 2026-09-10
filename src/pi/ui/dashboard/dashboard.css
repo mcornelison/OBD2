@@ -553,6 +553,15 @@ html, body {
 .tile[data-level="unavailable"] .tile-value {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
+/* US-700: LOADING is a THIRD state and must not look like the other two. It is
+   UPRIGHT and one step brighter than the tertiary `unavailable` gray -- a
+   pre-fetch tile is not a dead instrument, and the italic gray is this
+   dashboard's word for dead. It is deliberately NOT green and NOT animated:
+   nothing is known yet, and motion on a panel read at arm's length in a moving
+   car is something the driver has to ignore. */
+.tile[data-level="loading"] .tile-value {
+  color: var(--text-secondary); font-weight: 500; letter-spacing: 0.06em;
+}
 
 /* --- US-497 IMU live-instrument card (S4-card, F-113) ----------------------- */
 /* The g-meter + compass sit side by side above the tile stack. EVERY colour is
@@ -612,11 +621,17 @@ html, body {
 .live-g { flex: 0 0 108px; align-items: center; gap: 2px; }
 .live-g .imu-meter { width: 104px; height: 104px; }
 
-/* The compass TAPE. The caret is STATIC furniture: it marks the vehicle's own
-   bearing and never moves -- a tape's readability comes entirely from one fixed
-   reference with the world sliding past it. */
+/* The compass TAPE. US-715 (CIO 2026-09-09): the static caret that sat at dead
+   centre was REMOVED, along with its rule -- it was fixed furniture the CIO
+   never asked for. The argument it was defended with is real and was overruled
+   knowingly: a tape normally reads against one fixed reference with the world
+   sliding past it, so the "current" value is now implicit at this widget's
+   horizontal centre, with the precise bearing on the numeric HEADING tile.
+   The tape keeps its full 26-unit viewBox; the top 6 units the caret occupied
+   are deliberately left empty rather than reclaimed, so nothing below reflows.
+   If the tape proves unreadable in the car, the answer is a SUBTLER fixed mark
+   (a hairline, a notch in the frame) and a new story -- not this triangle. */
 .imu-tape { width: 100%; height: 30px; flex: 0 0 auto; }
-.imu-caret { fill: var(--text-primary); }
 .imu-tick { stroke: var(--text-tertiary); stroke-width: 1; }
 .imu-tick-major { stroke: var(--text-secondary); stroke-width: 1.5; }
 .imu-tape-label {
@@ -696,6 +711,9 @@ html, body {
 .tile[data-level="down"] .tile-dot { background: var(--amber-warn); }
 .tile[data-level="neutral"] .tile-dot { background: var(--text-secondary); }
 .tile[data-level="unavailable"] .tile-dot { background: var(--text-tertiary); }
+/* US-700: the dot follows the value -- a loading tile with a dead-gray dot
+   beside a live-gray value would contradict itself inside one tile. */
+.tile[data-level="loading"] .tile-dot { background: var(--text-secondary); }
 
 /* --- US-401 Battery Health failsafe ladder (F-2/A-6) ------------------------ */
 /* The drain ladder block is appended ONLY when battery-health.draining===true;

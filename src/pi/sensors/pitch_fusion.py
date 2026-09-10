@@ -425,10 +425,15 @@ class PitchFusion:
         moves as ``omega x forward = omega_left * (left x forward) =
         -omega_left * up``: the nose rises when the LEFT-axis rate is NEGATIVE.
 
-        NOTE on mounts: this assumes ``pi.sensors.imu.mount`` expresses a
-        physical ROTATION (determinant +1), which every realizable remount is.
-        An axis map that mirrors the board is not a mount, it is a config typo,
-        and it already breaks the heading the same way.
+        NOTE on mounts: this is correct only if the caller has already put the
+        rate in VEHICLE coordinates. It did not until US-708 -- the board's
+        index 1 is the FORE-AFT axis, not the left one, so this was integrating
+        ROLL RATE as pitch. The fix is one constant applied at the bridge's
+        boundary (``imu_state_bridge.IMU_BODY_FRAME``); nothing here changed, and
+        nothing here should: a second copy of the mounting is the defect, not the
+        remedy. That constant is a physical ROTATION (determinant +1), which
+        every realizable remount is -- an axis map that MIRRORS the board is not
+        a mount, and it would silently invert this rate rather than fail.
         """
         vec = _finiteVec3(gyro)
         if vec is None:

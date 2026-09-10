@@ -26,6 +26,16 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-10    | Rex (US-543) | Initial -- A-4 contract parity guard, 6 checks.
+# 2026-09-09    | Rex (US-711) | F-138 -- MOVE CROSS_TIER_RESOLVED_COLUMNS to
+#               |              | scripts/schema_diff.py and import it back.
+#               |              | schema_diff needs it to stop reporting
+#               |              | dtc_freeze_frame's by-design resolver as a
+#               |              | TD-039 trip, and could not read it here: this
+#               |              | module already imports SERVER_MIRROR_COLUMNS
+#               |              | FROM schema_diff, so the reverse import is
+#               |              | circular.  No behaviour change here -- the
+#               |              | POLICING (checkCrossTierResolverDeclaration)
+#               |              | stays, only the declaration's home moved.
 # ================================================================================
 ################################################################################
 
@@ -234,12 +244,28 @@ def _kindsCompatible(piKind: str, serverKind: str) -> bool:
 # Contract constants (all DERIVED -- nothing here is a hand-kept second copy)
 # ================================================================================
 
-# Server-side adornments every synced-table model adds.  Imported-by-value from
-# schema_diff so the two audits share ONE definition of "not a Pi concept".
+# Server-side adornments every synced-table model adds, and the cross-tier
+# resolver declaration.  Both imported-by-value from schema_diff so the two
+# audits share ONE definition rather than a copy each.
+#
+# US-711 MOVED ``CROSS_TIER_RESOLVED_COLUMNS`` out of this module and into
+# schema_diff.  It was declared here, and schema_diff -- which needs it to stop
+# reporting dtc_freeze_frame's by-design resolver as a TD-039 silent-data-loss
+# trip -- could not read it: this module already imports FROM schema_diff, so
+# the reverse import is circular.  The declaration went to the module that is
+# downstream of nothing, beside the other two by-design classes
+# (SERVER_MIRROR_COLUMNS, PI_PK_RENAMED_TO_ID).  The arrow stays one-way and
+# there is still exactly one copy.
 try:  # pragma: no cover -- exercised by both import paths in the gate
-    from scripts.schema_diff import SERVER_MIRROR_COLUMNS
+    from scripts.schema_diff import (
+        CROSS_TIER_RESOLVED_COLUMNS,
+        SERVER_MIRROR_COLUMNS,
+    )
 except ImportError:  # pragma: no cover -- CLI run from inside scripts/
-    from schema_diff import SERVER_MIRROR_COLUMNS  # type: ignore[no-redef]
+    from schema_diff import (  # type: ignore[no-redef]
+        CROSS_TIER_RESOLVED_COLUMNS,
+        SERVER_MIRROR_COLUMNS,
+    )
 
 # Pi-local columns that must never reach the server.  Sourced from the sync
 # reader itself (``sync_log._WIRE_STRIPPED_COLUMNS``) rather than restated:
@@ -247,35 +273,16 @@ except ImportError:  # pragma: no cover -- CLI run from inside scripts/
 # data_quality branch flips from "not a shared contract" to "must be equal".
 WIRE_STRIPPED_COLUMNS: frozenset[str]
 
-# The THIRD wire transform, and the one that is NOT derivable from a registry.
-#
-# Most synced tables ride the generic path in ``api/sync.runSyncUpsert``, which
-# binds every payload key straight onto the model -- so an unmapped key really
-# does error the whole batch (what check 3 asserts).  ``dtc_freeze_frame`` does
-# NOT: US-369 gave it a bespoke resolver (``api/sync._syncDtcFreezeFrameRows``)
-# that builds an EXPLICIT column list and performs cross-tier FK resolution, so
-# a Pi column can legitimately be renamed (``vehicle_info_vin`` is resolved to
-# the server's ``vehicle_info_id``) or deliberately dropped (``data_source``:
-# the freeze frame's origin is carried by its parent dtc_log row).
-#
-# This map is a DECLARATION, not a derivation -- the resolver's key set lives in
-# imperative code with no registry to read.  It is therefore self-policed from
-# both sides by the gate: every target column named here must EXIST on the
+# NOTE (US-711): ``CROSS_TIER_RESOLVED_COLUMNS`` -- the THIRD wire transform,
+# and the one that is NOT derivable from a registry -- was declared HERE until
+# 2026-09-09 and now lives in ``scripts/schema_diff.py`` (imported above).  Its
+# full rationale travels with it.  What stays here is the POLICING: this map is
+# a DECLARATION, not a derivation, so :func:`checkCrossTierResolverDeclaration`
+# audits it from both sides -- every target column named must EXIST on the
 # server, and every column declared dropped must still have NO server
-# counterpart.  Adding a resolver mapping without updating this map is the one
+# counterpart.  Adding a resolver mapping without updating the map is the one
 # drift this guard cannot discover on its own; that residual is called out in
 # the module docstring on purpose rather than left implicit.
-#
-# ``None`` as a value means "consumed by the resolver, intentionally not stored".
-CROSS_TIER_RESOLVED_COLUMNS: dict[str, dict[str, str | None]] = {
-    'dtc_freeze_frame': {
-        # Resolved server-side to the vehicle_info row live at capture time.
-        'vehicle_info_vin': 'vehicle_info_id',
-        # Origin lives on the parent dtc_log row; the server model has no
-        # data_source column for freeze frames by design.
-        'data_source': None,
-    },
-}
 
 # A column carrying a point in time.  Suffix-based because the naming is
 # consistent across both tiers (``*_at`` / ``*_ts`` / ``*_time`` / ``timestamp``)

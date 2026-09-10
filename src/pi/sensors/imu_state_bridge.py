@@ -15,6 +15,7 @@
 #     pitchDeg            -- US-521 GYRO-FUSED, ZUPT-corrected chassis pitch
 #     gradePct            -- tan(pitchDeg) * 100 (reads pitchDeg, never gravity)
 #     altitude            -- typed NULL + reason "no_source" (no barometer)
+#     stopCount / biasRad -- US-708 pitch-path diagnostics (see below)
 #     available + ts      -- freshness; absent/stale -> US-497 idle-card fallback
 #   RAW accel/gyro/mag stay on the bus + the versioned edr_imu_sample store (A-4);
 #   this file is the DERIVED view and is deliberately a separate artifact.
@@ -41,6 +42,15 @@
 #   integration + accel correction only near 1 g + ZUPT at confirmed stops), and
 #   there is deliberately NO gravity fallback: one published fact, one producer.
 #
+#   THE BODY FRAME IS THE BOUNDARY (US-708). Every raw channel -- accel, gyro,
+#   mag -- passes through resolveMountFrame ONCE on the way in, and IMU_BODY_FRAME
+#   is the single declaration of how the board sits in the car. Before US-708 that
+#   declaration said "X = forward, Y = left"; the board's X is LATERAL and its Y is
+#   FORE-AFT, so heading was transposed, gLat/gLon were swapped, and gradePct was
+#   computed from the car's ROLL -- one wrong fact, three wrong readouts. It is
+#   fixed HERE and only here: patching _levelFrame and pitch_fusion separately
+#   would be two copies of one mounting (SSOT rule B).
+#
 #   This module opens no I2C device and starts no OBD connection -- bus subscriber
 #   only, so it cannot re-introduce the A-17 second-connection race. Gated behind
 #   pi.bus.enabled + pi.sensors.imu.enabled (built only by
@@ -56,7 +66,7 @@
 # 2026-07-31    | Rex (US-478) | Initial -- bus raw.imu.{accel,mag} -> states/imu
 #               |              | derived bridge (gLat/gLon/gMag, headingDeg,
 #               |              | gradePct, typed-NULL altitude), gravity low-pass,
-#               |              | config mount frame, display-cadence decimation.
+#               |              | mount frame, display-cadence decimation.
 # 2026-08-02    | Rex (US-521) | Subscribe raw.imu.gyro + raw.obd.SPEED; publish
 #               |              | gyro-fused pitchDeg and derive gradePct from it
 #               |              | (accel-only tilt removed from the grade path);
@@ -65,6 +75,14 @@
 #               |              | a derived field goes typed-NA WITH ITS INPUT,
 #               |              | carrying the gate's own reason (sensor_mute /
 #               |              | sensor_stale) rather than a generic absence.
+# 2026-09-09    | Rex (US-708) | Correct the BODY FRAME: X is lateral and Y is
+#               |              | fore-aft, not the identity the code assumed --
+#               |              | one constant (IMU_BODY_FRAME), applied once at
+#               |              | the boundary, fixing heading, gLat/gLon and
+#               |              | gradePct together. Mounting retired from config
+#               |              | (a fact, not a knob -- Atlas 2026-09-10), and
+#               |              | stopCount/biasRad published so the pitch path is
+#               |              | verifiable at all.
 # ================================================================================
 ################################################################################
 
@@ -112,12 +130,14 @@ __all__ = [
     "CHANNEL_STATE_MAG",
     "DEFAULT_ACCEL_TRUST_BAND",
     "DEFAULT_GRAVITY_TAU_S",
-    "DEFAULT_MOUNT",
     "DEFAULT_PITCH_TAU_S",
     "DEFAULT_STATE_HZ",
     "DEFAULT_ZUPT_MIN_STOPS",
     "DEFAULT_ZUPT_SPEED_MAX_AGE_S",
     "DEFAULT_ZUPT_WINDOW_STOPS",
+    "IMU_BODY_FRAME",
+    "IMU_BODY_FRAME_A",
+    "IMU_BODY_FRAME_B",
     "IMU_STATE_FILENAME",
     "MAG_MAX_AGE_POLLS",
     "MAX_GRADE_PITCH_DEG",
@@ -280,10 +300,54 @@ _DERIVED_FIELDS = (
     "altitude",
 )
 
-# Default mount frame: the board's +x points at the vehicle nose, +y out the left
-# flank, +z at the roof. A physical remount is a CONFIG edit (pi.sensors.imu.mount)
-# -- never a code edit.
-DEFAULT_MOUNT = {"forward": "+x", "left": "+y", "up": "+z"}
+# =============================== US-708: THE MOUNTING ========================
+# (fwd, left, up) expressed in the board's RAW sensor axes. ONE declaration,
+# applied ONCE where a raw vector enters this module -- never re-spelled inside
+# _levelFrame or pitch_fusion, which is two copies of one fact (SSOT rule B).
+#
+# THIS IS A MOUNTING FACT, NOT A TUNING CONSTANT, and it is deliberately NOT in
+# config.json (Atlas, 2026-09-10): an adjustable-looking key reads as something
+# a future session may adjust, and this one is settled by measurement plus a
+# confirming drive. It lived there until US-708, pinned at the identity map
+# below, where it silently OVERRODE the code default.
+#
+# THE DEFECT US-708 REMOVED. The code assumed {forward:+x, left:+y, up:+z}. The
+# board's X is LATERAL and its Y is FORE-AFT, so three published readouts were
+# wrong from one cause: headingDeg's atan2 arguments were transposed (90 deg of
+# error at N/E, 180 at S/W); gLat and gLon were swapped; and gradePct -- which
+# reads index 0 as forward -- was computed from the car's ROLL, so every corner
+# and crowned road rendered as a hill ("gradients of 20% or more", CIO).
+#
+# MEASURED, NOT INFERRED (Atlas, 2026-09-10, all from this car):
+#   accel_X vs gyro_Z        = +0.712 over 26,208 turning samples  -> X is LATERAL
+#   accel_Y vs d(SPEED)/dt   = -0.945 over 829 accel/decel windows -> Y is FORE-AFT
+#                              slope 0.86x theory (the physics sanity check)
+#   gravity z                = +9.920 / +9.687 flat                -> Z is UP
+# And a closed proof from our own data, independent of any datasheet: those three
+# form a RIGHT-handed triad only under Z-up (left x tail = up). Z-down gives
+# right x nose = -Z -- left-handed, therefore impossible.
+#
+# TWO CANDIDATES, 180 degrees of yaw apart. They differ by the SIGN of pitch and
+# of BOTH g axes, so choosing wrong INVERTS grade rather than fixing it, which is
+# worse than the identity map was.
+IMU_BODY_FRAME_A = {"forward": "+y", "left": "-x", "up": "+z"}  # +Y = nose, +X = passenger
+IMU_BODY_FRAME_B = {"forward": "-y", "left": "+x", "up": "+z"}  # +Y = tail, +X = driver
+
+# THE ONE LINE. Flipping A <-> B is this binding and nothing else.
+#
+# (A) is the REASONED default and is NOT YET MEASURED on the current mount. The
+# old under-seat board measured as (B); the CIO relocated it to the dash and
+# reports the Y arrow now facing the nose, which is a 180 degree yaw = (A).
+# THE CONFIRMING GATE IS POST-SPRINT and needs ONE drive on the NEW mount:
+# correlate accel_Y against d(SPEED)/dt across accelerate/decelerate windows.
+#   strongly POSITIVE -> (A) confirmed, ship as written
+#   strongly NEGATIVE -> flip this line to IMU_BODY_FRAME_B
+#   |r| < 0.15        -> STOP and report; the mount is neither candidate
+# Calibration of expectation, from the old mount: r = -0.945, slope 0.86x, 829
+# windows. A healthy result looks like that with the sign flipped.
+# DO NOT settle this against drives on or before 2026-09-09 -- every one of them
+# is the OLD mount and will confirm (B) whatever the dash is actually doing.
+IMU_BODY_FRAME = IMU_BODY_FRAME_A
 
 _AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
@@ -314,19 +378,29 @@ def resolveMountFrame(
 ) -> tuple[float, float, float]:
     """Re-express a raw device-frame vector in the VEHICLE frame.
 
+    THE boundary transform (US-708). Every raw channel this module reads --
+    accel, gyro and mag -- passes through here exactly once, and nothing
+    downstream re-spells the mounting: ``_levelFrame`` and ``PitchFusion`` both
+    receive vehicle coordinates and are written against that contract.
+
     Args:
         vec: The reader's raw 3-vector in the board's own axes.
-        mount: Axis map ``{"forward": "+x", "left": "+y", "up": "+z"}``; the
-            identity default matches the board mounted nose-forward, flat.
+        mount: Axis map ``{"forward": ..., "left": ..., "up": ...}``. Defaults to
+            the shipped ``IMU_BODY_FRAME``. The parameter exists so the mapping
+            PRIMITIVE can be exercised on its own; it is not a second place the
+            mounting is declared, and no production call site passes one.
 
     Returns:
         ``(forward, left, up)`` -- the frame every derived field is computed in.
     """
-    m = mount or DEFAULT_MOUNT
+    m = mount or IMU_BODY_FRAME
+    # Per-role fallbacks come from the shipped frame, never from a hardcoded
+    # identity: a literal here would be a third copy of the mounting, and a
+    # partial map would silently reinstate exactly the axes US-708 removed.
     return (
-        _axisComponent(vec, m.get("forward", "+x")),
-        _axisComponent(vec, m.get("left", "+y")),
-        _axisComponent(vec, m.get("up", "+z")),
+        _axisComponent(vec, m.get("forward", IMU_BODY_FRAME["forward"])),
+        _axisComponent(vec, m.get("left", IMU_BODY_FRAME["left"])),
+        _axisComponent(vec, m.get("up", IMU_BODY_FRAME["up"])),
     )
 
 
@@ -436,6 +510,8 @@ def buildImuState(
     linear: tuple[float, float, float] | None = None,
     mag: tuple[float, float, float] | None = None,
     pitchRad: float | None = None,
+    stopCount: int = 0,
+    biasRad: float = 0.0,
     unavailableReason: str | None = None,
     fieldReasons: dict[str, str] | None = None,
 ) -> dict:
@@ -453,6 +529,14 @@ def buildImuState(
             of ``pitchDeg`` and ``gradePct``: deriving either from ``gravity``
             as a fallback would quietly restore the accel-only tilt the story
             exists to delete, and give one fact two disagreeing producers.
+        stopCount: US-708 diagnostics -- confirmed ZUPT stops currently in the
+            bias window. Published because ``biasRad`` alone cannot be read: 0.0
+            means "no bias measured yet" until you can see how many stops are
+            behind it, and the two together are what make the pitch path (and
+            therefore the mounting) verifiable from the panel instead of only
+            from a rebuild.
+        biasRad: US-708 diagnostics -- the mount-tilt bias currently subtracted
+            from the fused pitch, radians.
         unavailableReason: When set, the whole instrument is reported absent with
             this reason (e.g. the sensor is not wired) and every derived field is
             null -- silence reported as silence.
@@ -464,7 +548,8 @@ def buildImuState(
 
     Returns:
         ``{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg, gradePct,
-        altitude, reasons}``. ``altitude`` is ALWAYS null with reason
+        altitude, stopCount, biasRad, reasons}``. ``altitude`` is ALWAYS null
+        with reason
         ``"no_source"``: the ICM-20948 has no barometer, and a zeroed altitude
         would render as sea level -- a confident lie (US-519 derives it from
         this pitch; a future GPS/baro supersedes that, not this bridge).
@@ -480,6 +565,13 @@ def buildImuState(
         "pitchDeg": None,
         "gradePct": None,
         "altitude": None,
+        # US-708 pitch-path diagnostics. NOT in _DERIVED_FIELDS and never gated:
+        # they describe the ESTIMATOR, not a sensor reading, and they are most
+        # wanted precisely when the instrument has gone unavailable. The ZUPT
+        # bias is a property of how the board is BOLTED IN, which an unplug does
+        # not change -- PitchFusion deliberately keeps it across reset.
+        "stopCount": stopCount,
+        "biasRad": biasRad,
         "reasons": reasons,
     }
 
@@ -581,7 +673,6 @@ class ImuStateBridge:
         subscription: Any,
         statesDir: str,
         *,
-        mount: dict[str, str] | None = None,
         stateHz: float = DEFAULT_STATE_HZ,
         gravityTauSec: float = DEFAULT_GRAVITY_TAU_S,
         sampleHz: int = DEFAULT_IMU_SAMPLE_HZ,
@@ -594,7 +685,6 @@ class ImuStateBridge:
             subscription: The bus Subscription (LOSSY on the IMU topics) this
                 consumer drains. May be None for direct-handleSample tests.
             statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
-            mount: Axis map placing the board in the vehicle (see DEFAULT_MOUNT).
             stateHz: State-file write cadence -- the DISPLAY's poll rate, not the
                 sensor's burst rate.
             gravityTauSec: Gravity low-pass time constant, seconds.
@@ -609,7 +699,6 @@ class ImuStateBridge:
         self._sub = subscription
         self._statesDir = statesDir
         self._target = os.path.join(statesDir, IMU_STATE_FILENAME)
-        self._mount = mount or DEFAULT_MOUNT
         self._writeIntervalS = 1.0 / stateHz if stateHz and stateHz > 0 else 1.0 / DEFAULT_STATE_HZ
         self._tauS = gravityTauSec if gravityTauSec and gravityTauSec > 0 else DEFAULT_GRAVITY_TAU_S
         rate = sampleHz if sampleHz and sampleHz > 0 else DEFAULT_IMU_SAMPLE_HZ
@@ -626,6 +715,8 @@ class ImuStateBridge:
         self._gyro: tuple[float, float, float] | None = None
         self._gyroCapture: float | None = None
         self._lastWriteCapture: float | None = None
+        # US-708: the last ZUPT stop count written to the log (change-only).
+        self._lastLoggedStopCount = 0
         # US-564: raw channel topic -> the gate reason currently refusing it.
         self._gatedChannels: dict[str, str] = {}
 
@@ -722,7 +813,13 @@ class ImuStateBridge:
         # change, and re-converging it costs another five stoplights.
         self._pitchFusion.reset()
         tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
-        self._writeState(buildImuState(tsUtc=tsUtc, unavailableReason=REASON_SENSOR_ABSENT))
+        self._writeState(
+            buildImuState(
+                tsUtc=tsUtc,
+                unavailableReason=REASON_SENSOR_ABSENT,
+                **self._pitchDiagnostics(),
+            )
+        )
         self._lastWriteCapture = None
 
     def _handleChannelGate(self, sample: Any, rawTopic: str) -> None:
@@ -765,7 +862,9 @@ class ImuStateBridge:
         self._gyroCapture = None
         self._pitchFusion.reset()
         tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
-        self._writeState(buildImuState(tsUtc=tsUtc, unavailableReason=reason))
+        self._writeState(
+            buildImuState(tsUtc=tsUtc, unavailableReason=reason, **self._pitchDiagnostics())
+        )
         self._lastWriteCapture = None
 
     def _fieldReasons(self) -> dict[str, str]:
@@ -776,18 +875,52 @@ class ImuStateBridge:
                 out[field] = reason
         return out
 
+    def _pitchDiagnostics(self) -> dict[str, Any]:
+        """The pitch estimator's calibration state, for publication (US-708).
+
+        ``pitchDeg`` said what the filter believes; these two say what it
+        believes it FROM. Without them the mounting defect was unfalsifiable
+        from the panel: a wrong body frame and a merely unconverged bias produce
+        the same suspicious grade, and nothing on screen told them apart.
+        """
+        return {
+            "stopCount": self._pitchFusion.stopCount,
+            "biasRad": self._pitchFusion.biasRad,
+        }
+
+    def _logStopCountChange(self) -> None:
+        """Log the ZUPT bias whenever a stop lands in the window.
+
+        On the CHANGE, not on the write: the display cadence is 10 Hz and a
+        per-write line would be 36,000 an hour of a number that moves at a
+        stoplight. This is the durable record that the bias converged -- the one
+        thing a rebuilt attitude cannot be reconstructed without.
+        """
+        count = self._pitchFusion.stopCount
+        if count == self._lastLoggedStopCount:
+            return
+        self._lastLoggedStopCount = count
+        logger.info(
+            "imu pitch: stopCount=%d biasRad=%.5f (%.2f deg) pitchRad=%s",
+            count,
+            self._pitchFusion.biasRad,
+            math.degrees(self._pitchFusion.biasRad),
+            self._pitchFusion.pitchRad,
+        )
+
     def _handleAccel(self, sample: Any) -> None:
         """Update the gravity estimate and (at the display cadence) write."""
         raw = _vec3(getattr(sample, "value", None))
         if raw is None:
             return  # an unreadable burst publishes nothing -- silence, not a zero
-        accel = resolveMountFrame(raw, self._mount)
+        accel = resolveMountFrame(raw)
         capture = float(getattr(sample, "tsCapture", 0.0))
         self._updateGravity(accel, capture)
         # US-521: the fusion is fed at the SENSOR rate, not the display rate.
         # A gyro integrated only on the ~10 Hz frames that happen to be written
         # would silently throw away four fifths of the rotation.
         self._pitchFusion.update(accel, self._freshGyro(capture), capture)
+        self._logStopCountChange()
         if not self._shouldWrite(capture):
             return
         gravity = self._gravity
@@ -802,6 +935,7 @@ class ImuStateBridge:
                 mag=self._freshMag(capture),
                 pitchRad=self._pitchFusion.pitchRad,
                 fieldReasons=self._fieldReasons(),
+                **self._pitchDiagnostics(),
             )
         )
         self._lastWriteCapture = capture
@@ -842,7 +976,7 @@ class ImuStateBridge:
         age = capture - self._magCapture
         if age < 0.0 or age > self._magMaxAgeS:
             return None
-        return resolveMountFrame(self._mag, self._mount)
+        return resolveMountFrame(self._mag)
 
     def _freshGyro(self, capture: float) -> tuple[float, float, float] | None:
         """The angular rate paired with this burst, or None if stale/absent.
@@ -857,7 +991,7 @@ class ImuStateBridge:
         age = capture - self._gyroCapture
         if age < 0.0 or age > self._magMaxAgeS:
             return None
-        return resolveMountFrame(self._gyro, self._mount)
+        return resolveMountFrame(self._gyro)
 
     def _shouldWrite(self, capture: float) -> bool:
         """True when the display-cadence window has opened (or on first sample)."""
@@ -934,7 +1068,6 @@ def createImuStateBridgeFromConfig(
     return ImuStateBridge(
         subscription,
         statesDir,
-        mount=imu.get("mount", DEFAULT_MOUNT),
         stateHz=imu.get("stateHz", DEFAULT_STATE_HZ),
         gravityTauSec=imu.get("gravityTauSec", DEFAULT_GRAVITY_TAU_S),
         sampleHz=imu.get("sampleHz", DEFAULT_IMU_SAMPLE_HZ),

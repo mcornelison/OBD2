@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_subprocess_declares_encoding.py
 # Purpose/Description: US-597 (TD-068 + TD-084) -- guard against a subprocess
-#                      call under tests/ that asks for TEXT mode without
+#                      call under tests/ or src/ that asks for TEXT mode without
 #                      DECLARING the encoding it wants that text decoded with.
 #
 #                      `subprocess.run(..., text=True)` with no `encoding=`
@@ -30,10 +30,27 @@
 # 2026-09-09    | Rex (US-597) | Initial -- AST guard over tests/, plus the
 #               |              | positive controls that keep its FAILURE path
 #               |              | exercised on every run.
+# 2026-09-09    | Rex (US-710) | SUBJECT widened tests/ -> tests/ + src/. The
+#               |              | predicate is unchanged and NOT duplicated: src/
+#               |              | held 15 sites with the identical defect, two of
+#               |              | them parsing user-authored SSIDs and three on
+#               |              | the shutdown path where the codec RAISES.
 # ================================================================================
 ################################################################################
 
-"""AST guard: a text-mode subprocess call under ``tests/`` must declare ``encoding=``.
+"""AST guard: a text-mode subprocess call under ``tests/`` or ``src/`` must declare ``encoding=``.
+
+Why ``src/`` joined the subject (US-710 / TD-us597)
+---------------------------------------------------
+US-597 shipped this guard pointed at ``tests/`` only, because that is where the
+lying instrument had been found. A census with THIS DETECTOR then measured 15
+sites in ``src/`` with the identical defect. Two of them
+(``src/pi/network/home_detector.py``) decode **SSIDs, which are user-authored and
+routinely non-ASCII**, and three sit on the **shutdown path**, where an undefined
+cp1252 byte does not mojibake -- it RAISES, and a raise on the shutdown path is
+how sync custody gets lost. Widening the SUBJECT is a change of which files are
+walked; the PREDICATE above is untouched and deliberately not copied, because a
+second implementation of it would go stale exactly the way the swept sites did.
 
 The subject is the ABSENCE of a declared encoding, not the presence of utf-8
 -------------------------------------------------------------------------------
@@ -61,13 +78,26 @@ own header, three lines up. A textual scan flags its own documentation and is
 red on a clean tree, which is how a lint gets deleted. ``ast`` sees only real
 calls.
 
-Known and deliberate limit
---------------------------
+Known and deliberate limits
+---------------------------
 The predicate is about what is VISIBLE AT THE CALL SITE. A call that hides its
 keywords behind ``**kwargs`` cannot be resolved statically; if such a site also
 writes ``text=True`` inline it is flagged and the fix is to write the encoding
 inline beside it. A site whose text-ness ALSO arrives through the splat is not
 visible to this guard and is not claimed to be. There are none today.
+
+The second limit was MEASURED during US-710 and is the larger of the two:
+the guard resolves its CALLEE against real ``subprocess`` imports, so a call
+through an INJECTION SEAM -- ``runFn(...)``, ``runner(...)``,
+``self._subprocessRun(...)``, each of which DEFAULTS to ``subprocess.run`` -- is
+invisible to it. 11 such sites in ``src/`` carry this defect in production today
+(kiosk_watchdog 4, obdctl 2, update_applier 3, panel_liveness 1,
+service_control 1) and this guard will stay green over every one of them. They
+are recorded in TD-us710 rather than swept here, and the reason the predicate was
+NOT loosened to "any call with ``text=`` and no ``encoding=``" is arithmetic: that
+predicate returns 30 hits in ``src/`` of which **19 are ``LayoutElement(text=...)``
+-- a UI label with no codec within a mile of it**. A guard that is 63% false
+positives is a guard somebody switches off.
 """
 
 from __future__ import annotations
@@ -92,6 +122,12 @@ _TESTS_ROOT = os.path.normpath(
     os.path.join(os.path.dirname(__file__), os.pardir)
 )
 _REPO_ROOT = os.path.normpath(os.path.join(_TESTS_ROOT, os.pardir))
+
+# The trees this guard walks. US-710 added `src`. Both are relative to the repo
+# root and BOTH are asserted non-empty below -- an unwalkable root is
+# byte-identical to a clean one, which is how this guard would pass forever
+# while testing nothing.
+_SUBJECT_ROOTS = ("tests", "src")
 
 
 def _isLiteralFalse(node: ast.expr) -> bool:
@@ -181,30 +217,33 @@ def findUndeclaredEncodingCalls(source: str, filename: str) -> list[tuple[int, s
     return sorted(offenders)
 
 
-def _testFiles() -> list[str]:
-    """Every .py file under tests/, the subject of this guard."""
+def _subjectFiles() -> list[str]:
+    """Every .py file under the subject roots -- tests/ and src/."""
     found: list[str] = []
-    for dirPath, dirNames, fileNames in os.walk(_TESTS_ROOT):
-        dirNames[:] = [d for d in dirNames if d not in {"__pycache__", ".pytest_cache"}]
-        found.extend(
-            os.path.join(dirPath, name)
-            for name in fileNames
-            if name.endswith(".py")
-        )
+    for root in _SUBJECT_ROOTS:
+        for dirPath, dirNames, fileNames in os.walk(os.path.join(_REPO_ROOT, root)):
+            dirNames[:] = [
+                d for d in dirNames if d not in {"__pycache__", ".pytest_cache"}
+            ]
+            found.extend(
+                os.path.join(dirPath, name)
+                for name in fileNames
+                if name.endswith(".py")
+            )
     return sorted(found)
 
 
 class TestSubprocessDeclaresEncoding:
     """The guard, and the positive controls that prove it can still fail."""
 
-    def test_everyTextModeSubprocessCallUnderTests_declaresAnEncoding(self) -> None:
+    def test_everyTextModeSubprocessCall_declaresAnEncoding(self) -> None:
         """
-        Given: every .py file under tests/ -- the declared subject of this guard
+        Given: every .py file under tests/ and src/ -- this guard's subject
         When:  each is parsed and its subprocess call sites resolved
         Then:  none asks for text mode without also declaring an encoding
         """
         offenders: list[str] = []
-        for path in _testFiles():
+        for path in _subjectFiles():
             with open(path, encoding="utf-8") as fh:
                 source = fh.read()
             for lineNumber, callee in findUndeclaredEncodingCalls(source, path):
@@ -217,7 +256,8 @@ class TestSubprocessDeclaresEncoding:
         # console that replaced both with `?`. A failure report about a decoding
         # defect must survive the decoding defect it reports.
         assert not offenders, (
-            f"{len(offenders)} subprocess call site(s) under tests/ ask for text "
+            f"{len(offenders)} subprocess call site(s) under "
+            f"{'/ or '.join(_SUBJECT_ROOTS)}/ ask for text "
             "mode without declaring an encoding. Without `encoding=`, the child's "
             "UTF-8 output is decoded with the PARENT's locale codec (cp1252 on "
             "the Windows bench), so the two bytes 0xC2 0xB7 -- one U+00B7 MIDDLE "
@@ -339,18 +379,40 @@ class TestSubprocessDeclaresEncoding:
         )
         assert findUndeclaredEncodingCalls(source, "<control>") == []
 
-    def test_testFiles_namesTestsAsItsSubject_andIsNotEmpty(self) -> None:
+    def test_subjectFiles_coversEveryDeclaredRoot_andNoneIsEmpty(self) -> None:
         """
         Given: the file set this guard walks
-        When:  it is enumerated
-        Then:  it is rooted at tests/ and is non-empty
+        When:  it is enumerated and split by declared root
+        Then:  EVERY root contributed files, and this module is among them
 
-        An empty file set makes the guard above pass vacuously, and an empty
-        walk over a path that does not exist is byte-identical to a clean tree
-        -- the failure already caught once this sprint, on US-612's dead
-        `specs/UI/` pointer.
+        🔴 THE DEGENERATE PASS IS WHY THIS TEST EXISTS, AND US-710 IS THE STORY
+        THAT MAKES IT LOAD-BEARING RATHER THAN TIDY. Widening a subject is
+        satisfied by widening it to a path that does not exist: `os.walk` over a
+        missing directory yields NOTHING and raises NOTHING, so a typo'd
+        `_SUBJECT_ROOTS` entry is byte-for-byte indistinguishable from a clean
+        tree and the guard passes forever while watching half of what it claims.
+        Asserting the TOTAL is not enough either -- tests/ alone clears any
+        plausible floor, so a broken src/ walk would hide under it. Hence a
+        per-root count. Same failure this sprint already caught once, on US-612's
+        dead `specs/UI/` pointer.
         """
-        files = _testFiles()
-        assert os.path.basename(_TESTS_ROOT) == "tests"
-        assert len(files) > 100, f"only {len(files)} test modules found under tests/"
+        files = _subjectFiles()
+        perRoot = {
+            root: [
+                f
+                for f in files
+                if f.startswith(os.path.join(_REPO_ROOT, root) + os.sep)
+            ]
+            for root in _SUBJECT_ROOTS
+        }
+        assert set(_SUBJECT_ROOTS) == {"tests", "src"}, (
+            "the declared subject changed; US-710 widened it to exactly tests/ "
+            f"and src/, this run walked {_SUBJECT_ROOTS}"
+        )
+        empty = [root for root, found in perRoot.items() if len(found) < 50]
+        assert not empty, (
+            "a declared subject root contributed (almost) nothing, so the guard "
+            "above is passing vacuously over it: "
+            + ", ".join(f"{root}={len(perRoot[root])}" for root in _SUBJECT_ROOTS)
+        )
         assert __file__ in files or os.path.normpath(__file__) in files

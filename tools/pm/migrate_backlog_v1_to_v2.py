@@ -14,7 +14,6 @@ import sys
 from datetime import date
 from pathlib import Path
 
-
 # Initial Epic taxonomy per spec §9.2
 EPICS_INITIAL = [
     {

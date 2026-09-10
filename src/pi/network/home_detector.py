@@ -110,7 +110,14 @@ def _readSsidViaIwgetid(timeout: float = _IWGETID_TIMEOUT_SECONDS) -> str | None
     try:
         result = subprocess.run(
             ["iwgetid", "-r"],
-            capture_output=True, text=True, timeout=timeout,
+            # An SSID is USER-AUTHORED and routinely non-ASCII, so this is the
+            # one site in the tree where the locale-default codec is not a
+            # theoretical exposure: a household name with an accent in it
+            # decodes to a different string under cp1252 than under UTF-8, and
+            # `_isHomeSsid` then compares that mojibake against the configured
+            # name and reports AWAY while sitting in the driveway.
+            # (US-710 / TD-068)
+            capture_output=True, text=True, encoding="utf-8", timeout=timeout,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
@@ -129,7 +136,7 @@ def _readLocalIps(timeout: float = _HOSTNAME_TIMEOUT_SECONDS) -> list[str]:
     try:
         result = subprocess.run(
             ["hostname", "-I"],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, encoding="utf-8", timeout=timeout,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return []
