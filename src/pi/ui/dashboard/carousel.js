@@ -3326,10 +3326,32 @@
     return {
       label: "HEADING",
       value: Math.round(d) + "° " + headingCardinal(d),
-      // MAGNETIC, not true -- no declination is in the contract, so a bearing a
-      // few degrees off a map is expected, not a fault. Saying so on the tile
-      // stops that from being read as a broken compass.
-      detail: "magnetic",
+      // NO DETAIL LINE. US-697, CIO 2026-09-09: removal, not rewording -- the
+      // bearing and its cardinal are the whole tile.
+      //
+      // WHAT WAS HERE AND WHY IT WENT, recorded so it is not re-added by
+      // someone re-deriving the original reasoning. The line read `magnetic`,
+      // and it was NOT one of the uncalibrated hedges US-656's ruling bans: it
+      // named the REFERENCE FRAME -- a bearing against magnetic north, no
+      // declination in the contract -- which is a fact about the quantity, the
+      // same class of statement as a unit. Its job was to stop a bearing a few
+      // degrees off a paper map from being read as a broken compass. The CIO's
+      // call is that at 480x320, read at arm's length, that is one more thing
+      // to read. The frame itself is unchanged and still documented in
+      // specs/architecture.md 10.8.2 and specs/grounded-knowledge.md.
+      //
+      // AND THE RATIONALE NO LONGER HELD ANYWAY: the compass IS broken today
+      // (A-30 -- rotating field at ~28% of Earth's, heading uncorrelated with
+      // rotation over 668 turns; US-695). The label was reassuring the operator
+      // about a real defect, so removing it hides nothing it was successfully
+      // communicating.
+      //
+      // EMPTY STRING, NOT AN ABSENT KEY. `appendTile` assigns
+      // `detail.textContent = tile.detail` unconditionally, so dropping the key
+      // paints the word `undefined` on the panel. "" is the shipped convention
+      // for a tile with nothing to say. `.tile-detail` reserves no height, so
+      // the empty span costs no line box.
+      detail: "",
       level: "neutral",
       deg: d,
       available: true,

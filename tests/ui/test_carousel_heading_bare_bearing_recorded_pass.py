@@ -65,6 +65,16 @@
 #               |              | bearing end to end, real bridge to painted
 #               |              | tile, with a real north bearing as the live
 #               |              | counter-example to a zeroed absence.
+# 2026-09-10    | Ralph (Rex)  | US-697: the "magnetic" detail is REMOVED (CIO
+#               |              | 2026-09-09). test_headingTile_detailNames-
+#               |              | TheReferenceFrame_notAConfidence is FLIPPED to
+#               |              | the absence rather than deleted, per the
+#               |              | story's conditionalOutcomes -- the tile's shape
+#               |              | is still worth pinning. Adds the span-present-
+#               |              | but-empty pin, the string-literal sweep, the
+#               |              | recorded-rationale pin and the no-line-box
+#               |              | property. The 6 bearing-number failures in this
+#               |              | file are I-us708b and predate US-697.
 # ================================================================================
 ################################################################################
 
@@ -123,6 +133,7 @@ _REPO = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
 )
 _CAROUSEL_JS = os.path.join(_REPO, "src", "pi", "ui", "dashboard", "carousel.js")
+_CSS = os.path.join(_REPO, "src", "pi", "ui", "dashboard", "dashboard.css")
 _SRC_DIR = os.path.join(_REPO, "src")
 
 G = STANDARD_GRAVITY_MS2
@@ -319,6 +330,18 @@ def _childText(tile: dict[str, Any], cls: str) -> str:
     return ""
 
 
+def _hasChild(tile: dict[str, Any], cls: str) -> bool:
+    """Does ``tile`` actually CONTAIN an element of class ``cls``?
+
+    `_childText` answers "" for BOTH an empty element and a missing one, which
+    makes every "reads empty" assertion in this file degenerate on its own: it
+    is equally satisfied by a span someone deleted. US-697 turns the HEADING
+    detail into the empty case deliberately, so the two have to be tellable
+    apart from here on.
+    """
+    return any(_classOf(node) == cls for node in _walk(tile))
+
+
 def _tiles(tree: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Every PAINTED tile on the Home card, keyed by its rendered label."""
     out: dict[str, dict[str, Any]] = {}
@@ -461,21 +484,204 @@ def test_headingTile_carriesNoUncertaintyQualifier(tmp_path):
         assert mark not in text, f"{mark!r} qualifies the bearing: {text!r}"
 
 
-def test_headingTile_detailNamesTheReferenceFrame_notAConfidence(tmp_path):
+def test_headingTile_carriesNoDetailLine_us697(tmp_path):
     """
-    Given: the painted HEADING tile
+    Given: the painted HEADING tile on a live bearing
     When: its detail line is read
-    Then: it is exactly "magnetic"
+    Then: it is EMPTY -- the "magnetic" qualifier is gone
 
-    RECORDED, because it is the one line on this tile a reader could mistake for
-    the qualifier the ruling forbids, and it is not one. "magnetic" says WHAT is
-    measured -- a bearing against magnetic north rather than true north, with no
-    declination in the contract -- which is a fact about the quantity, the same
-    class of statement as a unit. A hedge says how well it was measured. The
-    sweep above bans the second; this pins the first so that deleting it is a
-    deliberate act rather than a tidy-up.
+    US-697, CIO 2026-09-09: removal, not rewording. This test used to assert the
+    string and said in its own docstring that deleting it must be "a deliberate
+    act rather than a tidy-up" -- so it is flipped to the absence rather than
+    deleted, and the deliberate act is recorded here.
+
+    THE ARGUMENT THAT WAS OVERRULED, kept so it is not re-discovered and
+    re-applied: "magnetic" named the REFERENCE FRAME (a fact about the quantity,
+    the same class of statement as a unit) rather than a CONFIDENCE, so it was
+    never one of the hedges the sweep above bans. It was there so that a bearing
+    a few degrees off a paper map read as expected rather than as a broken
+    compass. The CIO's call is that on a 3.5 inch screen at arm's length that is
+    one more thing to read.
+
+    PAIRED WITH ITS POSITIVES IN THE SAME PASS, because `_detail` cannot tell an
+    empty line from a deleted tile: "no detail on HEADING" is equally true of a
+    card that never painted. So the bearing must still be a bearing, and a
+    SIBLING tile's detail must still render -- an over-delete that took the
+    detail mechanism with it dies on GRADE, not here.
+
+    THE VALUE IS ASSERTED AS A SHAPE, NOT AS 90 DEGREES, and that is deliberate:
+    the exact bearing this fixture paints is currently wrong by -90 degrees
+    (I-us708b -- US-708 corrected the body frame and this file's vectors still
+    encode the old answer). US-697 does not touch the data path, so tying this
+    pin to a number would make it fail for somebody else's reason.
     """
-    assert _detail(_tile(_run(_liveState(tmp_path)), "HEADING")) == "magnetic"
+    tiles = _tiles(_run(_liveState(tmp_path)))
+
+    assert _detail(tiles["HEADING"]) == "", (
+        "the HEADING tile still paints a detail line: "
+        f"{_detail(tiles['HEADING'])!r}"
+    )
+    # The positives. A bearing is still a bearing...
+    assert re.fullmatch(r"\d{1,3}° [NESW]{1,3}", _value(tiles["HEADING"])), _value(
+        tiles["HEADING"]
+    )
+    # ...and the detail LINE still works one tile over, so the emptiness above is
+    # this tile's decision and not a renderer someone broke.
+    assert _detail(tiles["GRADE"]) in ("climbing", "descending")
+
+
+def test_headingTile_detailSpanIsStillInTheDom_merelyEmpty(tmp_path):
+    """
+    Given: the HEADING tile after US-697 removed its detail string
+    When: the tile's own children are inspected
+    Then: the `.tile-detail` element is STILL THERE and reads exactly empty
+
+    The mutation the test above cannot see: DELETING THE SPAN, in carousel.js or
+    by removing the tile outright. `_detail` answers "" for a missing element
+    exactly as it does for an empty one, so "reads empty" is blind to it.
+    """
+    tile = _tile(_run(_liveState(tmp_path)), "HEADING")
+
+    assert _hasChild(tile, "tile-detail"), (
+        "the `.tile-detail` span is GONE from the HEADING tile. US-697 empties "
+        "the detail; it does not remove the element or the tile."
+    )
+    assert _detail(tile) == ""
+
+
+def test_headingTile_declaresAnEmptyDetail_ratherThanOmittingTheKey():
+    """
+    Given: `imuHeadingTile`'s source
+    When: its returned tile is read for a `detail` key
+    Then: the key is DECLARED and empty -- it was not simply deleted
+
+    THE DISTINCTION IS A REAL DEFECT, NOT PEDANTRY. `appendTile` assigns
+    `detail.textContent = tile.detail` UNCONDITIONALLY, and in a browser
+    assigning `undefined` to `textContent` paints the literal string
+    "undefined". `detail: ""` is the shipped convention for a tile with nothing
+    to say (the SYSTEM OK summary is the precedent).
+
+    🔴 WHY THIS IS PINNED ON THE SOURCE AND NOT ON THE RENDERED PANEL, WHERE IT
+    BELONGS. I wrote it as a rendered assertion first and the mutation SURVIVED:
+    mini_dom.js:210 sets text only `if (value !== "" && value != null)`, and
+    `!= null` is LOOSE -- so the harness silently swallows `undefined` where a
+    browser would paint it. No rendered assertion in this suite can catch a
+    missing-key defect, in this tile or any other. Filed as TD-us697. Until that
+    is closed the source is the only surface on which this claim is falsifiable,
+    and a source pin that is honest about why beats a rendered pin that cannot
+    fail.
+    """
+    body = rh._fnBody(Path(_CAROUSEL_JS).read_text(encoding="utf-8"), "imuHeadingTile")
+
+    assert re.search(r'\bdetail:\s*""', body), (
+        "`imuHeadingTile` no longer declares an empty `detail`. If the key was "
+        "DELETED, appendTile will paint `undefined` on the panel -- and this "
+        "suite's harness cannot see it (TD-us697)."
+    )
+
+
+def test_carouselJs_canNoLongerRenderTheMagneticQualifier_us697():
+    """
+    Given: the shipped carousel.js
+    When: every STRING LITERAL in it is swept for the removed word
+    Then: there is not one -- the panel has no way to paint it
+
+    US-697 validationCriterion 2. The criterion is worded as a whole-file grep,
+    and a whole-file grep IS what I ran first -- it failed, on the comment
+    written to record the CIO's decision. That is worth stating rather than
+    quietly narrowing, because narrowing a predicate is exactly US-706's defect
+    one story over.
+
+    WHY THE LITERALS ARE THE RIGHT SUBJECT AND THIS IS NOT US-706's MISTAKE.
+    US-706's predicate was NARROWER than the gate it was written to satisfy --
+    it could go green while the real condition stayed red. This one is not: the
+    requirement is that the TILE no longer says "magnetic", and a string literal
+    is the only thing in this file that can reach a pixel. A comment cannot. So
+    the literal sweep is not a weaker proxy for the panel claim, it is a
+    stricter one -- it fails for every reachable spelling, including ones no
+    fixture happens to render, which a rendered-tile assertion alone would miss.
+    The rendered half is asserted above; this is the half that generalises.
+
+    AND THE COMMENT IS PINNED, NOT EXEMPTED. The surviving occurrences must all
+    be comment lines. If the word ever re-enters as code this fails, and if the
+    recorded rationale is deleted the companion test below fails.
+    """
+    js = Path(_CAROUSEL_JS).read_text(encoding="utf-8")
+
+    inLiterals = [
+        literal
+        for literal in re.findall(r'"[^"\n]*"|\'[^\'\n]*\'', js)
+        if "magnetic" in literal.lower()
+    ]
+    assert inLiterals == [], (
+        "carousel.js can still render the removed qualifier: " f"{inLiterals}"
+    )
+
+    survivors = [
+        (i, line.strip())
+        for i, line in enumerate(js.splitlines(), start=1)
+        if "magnetic" in line.lower()
+    ]
+    notComments = [f"{i}: {text}" for i, text in survivors if not text.startswith("//")]
+    assert notComments == [], (
+        "the word survives outside a comment, so it is no longer merely a record "
+        "of the decision:\n" + "\n".join(notComments)
+    )
+
+
+def test_theOverruledRationaleIsRecordedBesideTheTile_notJustDeleted():
+    """
+    Given: `imuHeadingTile` after the qualifier was removed
+    When: its source is read
+    Then: it explains what was there, why it went, and on whose ruling
+
+    NOT CEREMONY -- this is the pin that keeps the sweep above honest. Without
+    it the cheapest way to pass a "zero occurrences" test is to delete the
+    reasoning along with the word, and the next person to notice an unlabelled
+    bearing re-derives the ORIGINAL argument (it names the reference frame, it
+    is not a hedge, it stops a map mismatch reading as a fault) and puts it
+    back. That argument is sound; it was OVERRULED, which is a different thing,
+    and only the record distinguishes them.
+
+    Same requirement US-715 carries one story over for the compass tape's CSS
+    comment, and the same thing US-696 did for the power glyph the CIO removed.
+    """
+    body = rh._fnBody(Path(_CAROUSEL_JS).read_text(encoding="utf-8"), "imuHeadingTile")
+
+    assert "US-697" in body, "the ruling that removed the detail is not cited"
+    assert "magnetic" in body.lower(), "what was removed is not recorded"
+    assert "2026-09-09" in body, "the decision is recorded without its date"
+
+
+def test_theEmptyDetailReservesNoLineBox_soTheTileIsGenuinelyShorter():
+    """
+    Given: the shipped stylesheet's `.tile-detail` rule
+    When: it is read for a height floor
+    Then: it declares none -- no height, min-height or fixed line-height
+
+    US-697 validationCriterion 3, reduced to the half that is actually
+    FALSIFIABLE here. THE HARNESS DOES NOT DO LAYOUT (render_harness header: "it
+    cannot tell you a box overflowed, wrapped, or landed"), so "one fewer line"
+    cannot be measured on this bench and is not claimed as measured. What CAN be
+    checked is the property the claim rests on: an empty inline span with no
+    reserved height contributes no line box, so emptying the detail really does
+    shorten the tile rather than leaving a blank gap where the word was.
+
+    This is also the pin that FAILS if a future stylesheet change reserves the
+    space back -- at which point "one fewer line" stops being true and somebody
+    should have to say so.
+    """
+    css = Path(_CSS).read_text(encoding="utf-8")
+    rules = [r for r in rh.parseCss(css) if r.selector.strip() == ".tile-detail"]
+    assert rules, "no `.tile-detail` rule in the shipped stylesheet"
+
+    for rule in rules:
+        for prop in ("height", "min-height"):
+            assert rh.declarationOf(rule.declarations, prop) is None, (
+                f"`.tile-detail` now reserves {prop} -- an emptied detail leaves a "
+                "blank gap instead of shortening the tile, so US-697's "
+                "'one fewer line' no longer holds."
+            )
 
 
 def test_headingTile_isWholeDegrees_neverATenth(tmp_path):
