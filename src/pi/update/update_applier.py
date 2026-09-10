@@ -600,6 +600,7 @@ class UpdateApplier:
                 ["git", "rev-parse", "HEAD"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
                 timeout=30,
             )
@@ -652,6 +653,7 @@ class UpdateApplier:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
                 timeout=600,  # 10 minutes -- worst-case full rsync deploy
             )
@@ -741,6 +743,7 @@ class UpdateApplier:
                 ["systemctl", "is-active", self.serviceUnit],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
                 timeout=_SYSTEMCTL_PROBE_TIMEOUT_SECONDS,
             )

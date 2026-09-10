@@ -35,6 +35,10 @@
 #               |              | held 15 sites with the identical defect, two of
 #               |              | them parsing user-authored SSIDs and three on
 #               |              | the shutdown path where the codec RAISES.
+# 2026-09-10    | Rex (US-716) | RESOLUTION widened: the callee may now resolve
+#               |              | through an injection seam's default. Reported
+#               |              | the 11 TD-us710 sites by name before they were
+#               |              | fixed; admits no LayoutElement(text=...) hit.
 # ================================================================================
 ################################################################################
 
@@ -86,18 +90,31 @@ writes ``text=True`` inline it is flagged and the fix is to write the encoding
 inline beside it. A site whose text-ness ALSO arrives through the splat is not
 visible to this guard and is not claimed to be. There are none today.
 
-The second limit was MEASURED during US-710 and is the larger of the two:
-the guard resolves its CALLEE against real ``subprocess`` imports, so a call
-through an INJECTION SEAM -- ``runFn(...)``, ``runner(...)``,
-``self._subprocessRun(...)``, each of which DEFAULTS to ``subprocess.run`` -- is
-invisible to it. 11 such sites in ``src/`` carry this defect in production today
-(kiosk_watchdog 4, obdctl 2, update_applier 3, panel_liveness 1,
-service_control 1) and this guard will stay green over every one of them. They
-are recorded in TD-us710 rather than swept here, and the reason the predicate was
-NOT loosened to "any call with ``text=`` and no ``encoding=``" is arithmetic: that
-predicate returns 30 hits in ``src/`` of which **19 are ``LayoutElement(text=...)``
--- a UI label with no codec within a mile of it**. A guard that is 63% false
-positives is a guard somebody switches off.
+Injection seams (US-716, closing TD-us710)
+------------------------------------------
+US-710 MEASURED the guard blind to calls through an INJECTION SEAM --
+``runFn(...)``, ``runner(...)``, ``self._subprocessRun(...)``, each defaulting
+to ``subprocess.run`` -- and 11 such sites in ``src/`` carried the defect while
+it was green. ``_SeamResolver`` now follows a seam from its default: a parameter
+defaulting to an entry point, a name or ``self`` attribute assigned one (also
+as an ``or`` fallback), and a no-default parameter that a call in the same
+module hands a seam to. Measured on 2026-09-10 before the sweep, over
+``tests/`` + ``src/``: own-default alone found 9 of the 11 (it missed obdctl,
+whose helpers take ``runner`` with no default of their own); with the hand-off,
+11 of 11 and nothing else.
+
+The predicate was NOT loosened to "any call with ``text=`` and no
+``encoding=``", and that is arithmetic: that predicate returns 30 hits in
+``src/`` of which **19 are ``LayoutElement(text=...)`` -- a UI label with no
+codec within a mile of it**. A guard that is 63% false positives is a guard
+somebody switches off. Seam resolution widens what the CALLEE may resolve
+through; it still starts from a real subprocess import and never from a
+parameter's name.
+
+What seam resolution does NOT see, stated rather than implied: a seam handed
+across a MODULE boundary to a parameter with no default of its own; a seam held
+on any object other than ``self``; and a runner wrapped before the call
+(``functools.partial``, a lambda). None of those carry a text-mode call today.
 """
 
 from __future__ import annotations
@@ -182,6 +199,184 @@ def _calleeName(
     return None
 
 
+_FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+class _SeamResolver:
+    """Which names and ``self`` attributes in a module hold a subprocess entry point.
+
+    US-716. A seam is a runner that DEFAULTS to a subprocess entry point:
+
+    * a parameter whose default is one -- ``runFn=subprocess.run``;
+    * a name or ``self`` attribute assigned one, directly or as the fallback of
+      an ``or`` -- ``self._subprocessRun = subprocessRun or subprocess.run``;
+    * a parameter with NO default that a call in the same module hands a seam
+      to -- obdctl's ``queryState(unit, runner)``, called from the ``main``
+      that owns the default. Reading only a parameter's own default resolves 9
+      of the 11 sites US-716 names and misses exactly those two.
+
+    Resolution stays anchored on a real subprocess import: a parameter is never
+    a seam because of its NAME, and a ``text=`` keyword never counts unless the
+    callee resolves. That is what keeps ``LayoutElement(text=...)`` out.
+    """
+
+    def __init__(self, tree: ast.Module, moduleAliases: set[str], directNames: set[str]):
+        self._moduleAliases = moduleAliases
+        self._directNames = directNames
+        self._functions: list[_FunctionNode] = [
+            node for node in ast.walk(tree) if isinstance(node, _FunctionNode)
+        ]
+        self._byName: dict[str, list[_FunctionNode]] = {}
+        for function in self._functions:
+            self._byName.setdefault(function.name, []).append(function)
+        self.seamNames: dict[int, set[str]] = {
+            id(function): self._defaultedParameters(function) for function in self._functions
+        }
+        self.seamAttributes: set[str] = set()
+        self._propagate(tree)
+
+    def _isEntryPoint(self, node: ast.expr) -> bool:
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            return node.value.id in self._moduleAliases and node.attr in _DECODING_ENTRY_POINTS
+        return isinstance(node, ast.Name) and node.id in self._directNames
+
+    def isSeamValue(self, node: ast.expr, seams: set[str]) -> bool:
+        """True when ``node`` evaluates to a subprocess entry point in this scope."""
+        if self._isEntryPoint(node):
+            return True
+        if isinstance(node, ast.Name):
+            return node.id in seams
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            return node.value.id == "self" and node.attr in self.seamAttributes
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+            return any(self.isSeamValue(value, seams) for value in node.values)
+        return False
+
+    @staticmethod
+    def _positional(function: _FunctionNode) -> list[ast.arg]:
+        return function.args.posonlyargs + function.args.args
+
+    def _defaultedParameters(self, function: _FunctionNode) -> set[str]:
+        positional = self._positional(function)
+        defaults = function.args.defaults
+        pairs = list(zip(positional[len(positional) - len(defaults) :], defaults))
+        pairs += [
+            (param, default)
+            for param, default in zip(function.args.kwonlyargs, function.args.kw_defaults)
+            if default is not None
+        ]
+        return {param.arg for param, default in pairs if self._isEntryPoint(default)}
+
+    def _handOff(self, call: ast.Call, seams: set[str]) -> bool:
+        """Mark the callee's parameters that ``call`` supplies a seam to."""
+        if not isinstance(call.func, ast.Name):
+            return False
+        changed = False
+        for target in self._byName.get(call.func.id, []):
+            targetSeams = self.seamNames[id(target)]
+            positional = self._positional(target)
+            supplied = [
+                (positional[index].arg, arg)
+                for index, arg in enumerate(call.args)
+                if index < len(positional)
+            ]
+            supplied += [(kw.arg, kw.value) for kw in call.keywords if kw.arg is not None]
+            for paramName, value in supplied:
+                if paramName not in targetSeams and self.isSeamValue(value, seams):
+                    targetSeams.add(paramName)
+                    changed = True
+        return changed
+
+    def _assign(self, node: ast.Assign, seams: set[str]) -> bool:
+        if not self.isSeamValue(node.value, seams):
+            return False
+        changed = False
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id not in seams:
+                seams.add(target.id)
+                changed = True
+            elif (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+                and target.attr not in self.seamAttributes
+            ):
+                self.seamAttributes.add(target.attr)
+                changed = True
+        return changed
+
+    def _propagate(self, tree: ast.Module) -> None:
+        # Module scope carries no seam names of its own, but a module-level call
+        # can still hand a literal `subprocess.run` to a function.
+        scopes: list[tuple[ast.AST, set[str]]] = [(tree, set())]
+        scopes += [(function, self.seamNames[id(function)]) for function in self._functions]
+        changed = True
+        while changed:
+            changed = False
+            for scope, seams in scopes:
+                for node in ast.walk(scope):
+                    if isinstance(node, ast.Assign):
+                        changed |= self._assign(node, seams)
+                    elif isinstance(node, ast.Call):
+                        changed |= self._handOff(node, seams)
+
+    def seamCallee(self, call: ast.Call, seams: set[str]) -> str | None:
+        """The seam this call goes through, or None."""
+        fn = call.func
+        if isinstance(fn, ast.Name) and fn.id in seams:
+            return fn.id
+        if (
+            isinstance(fn, ast.Attribute)
+            and isinstance(fn.value, ast.Name)
+            and fn.value.id == "self"
+            and fn.attr in self.seamAttributes
+        ):
+            return f"self.{fn.attr}"
+        return None
+
+
+def findSubprocessCallSites(source: str, filename: str) -> list[tuple[ast.Call, str]]:
+    """Every call in ``source`` that reaches a subprocess entry point.
+
+    Directly (``subprocess.run``, an alias, a ``from`` import) or through an
+    injection seam (US-716). Text mode is NOT considered here -- this is the
+    resolution half of the guard, exposed so a test can prove it still SEES the
+    seams after they have all been fixed.
+
+    Args:
+        source: Python source text.
+        filename: Path used for the parse error message only.
+
+    Returns:
+        ``[(callNode, calleeName), ...]`` in source order.
+
+    Raises:
+        SyntaxError: if ``source`` does not parse.
+    """
+    tree = ast.parse(source, filename=filename)
+    moduleAliases, directNames = _subprocessAliases(tree)
+    if not moduleAliases and not directNames:
+        return []
+
+    resolver = _SeamResolver(tree, moduleAliases, directNames)
+    found: dict[int, tuple[ast.Call, str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            callee = _calleeName(node, moduleAliases, directNames)
+            if callee is not None:
+                found[id(node)] = (node, callee)
+    # A nested function sees its enclosing function's seams, so walking each
+    # function's whole body (nested defs included) is the closure rule.
+    for function in resolver._functions:
+        seams = resolver.seamNames[id(function)]
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call) and id(node) not in found:
+                callee = resolver.seamCallee(node, seams)
+                if callee is not None:
+                    found[id(node)] = (node, callee)
+    return sorted(found.values(), key=lambda pair: (pair[0].lineno, pair[0].col_offset))
+
+
 def findUndeclaredEncodingCalls(source: str, filename: str) -> list[tuple[int, str]]:
     """Every text-mode subprocess call in ``source`` that declares no encoding.
 
@@ -195,18 +390,8 @@ def findUndeclaredEncodingCalls(source: str, filename: str) -> list[tuple[int, s
     Raises:
         SyntaxError: if ``source`` does not parse.
     """
-    tree = ast.parse(source, filename=filename)
-    moduleAliases, directNames = _subprocessAliases(tree)
-    if not moduleAliases and not directNames:
-        return []
-
     offenders: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        callee = _calleeName(node, moduleAliases, directNames)
-        if callee is None:
-            continue
+    for node, callee in findSubprocessCallSites(source, filename):
         declaresText = any(
             kw.arg in _TEXT_MODE_KEYWORDS and not _isLiteralFalse(kw.value)
             for kw in node.keywords
@@ -378,6 +563,158 @@ class TestSubprocessDeclaresEncoding:
             "subprocess.run(['x'], text=True, encoding='utf-8')\n"
         )
         assert findUndeclaredEncodingCalls(source, "<control>") == []
+
+    def test_findUndeclaredEncodingCalls_parameterDefaultingToSubprocess_isFlagged(
+        self,
+    ) -> None:
+        """
+        Given: the kiosk_watchdog / panel_liveness / service_control shape -- a
+               runner parameter DEFAULTING to subprocess.run, positional and
+               keyword-only
+        When:  the detector reads it
+        Then:  each text-mode call through the seam is flagged, by seam name
+
+        US-716. Before this, the guard resolved only the literal callee, so a
+        call reaching subprocess.run through an injection seam did not resolve
+        and was not seen -- 11 such sites sat in src/ while the guard was green.
+        """
+        source = (
+            "import subprocess\n"
+            "def probe(runFn=subprocess.run):\n"
+            "    return runFn(['journalctl'], capture_output=True, text=True)\n"
+            "def restart(unit, *, runner=subprocess.run):\n"
+            "    return runner(['systemctl', 'restart', unit], text=True)\n"
+        )
+        assert findUndeclaredEncodingCalls(source, "<control>") == [
+            (3, "runFn"),
+            (5, "runner"),
+        ]
+
+    def test_findUndeclaredEncodingCalls_attributeSeamWithOrDefault_isFlagged(
+        self,
+    ) -> None:
+        """
+        Given: the update_applier shape -- `self._x = injected or subprocess.run`
+        When:  the detector reads a text-mode call through `self._x`
+        Then:  it is flagged
+        """
+        source = (
+            "import subprocess\n"
+            "class Applier:\n"
+            "    def __init__(self, subprocessRun=None):\n"
+            "        self._subprocessRun = subprocessRun or subprocess.run\n"
+            "    def head(self):\n"
+            "        return self._subprocessRun(['git', 'rev-parse', 'HEAD'], text=True)\n"
+        )
+        assert findUndeclaredEncodingCalls(source, "<control>") == [
+            (6, "self._subprocessRun")
+        ]
+
+    def test_findUndeclaredEncodingCalls_seamPassedToParameterWithNoDefault_isFlagged(
+        self,
+    ) -> None:
+        """
+        Given: the obdctl shape -- the default lives on `main`, and the helpers
+               that actually call the runner take it with NO default of their own
+        When:  the detector reads the module
+        Then:  both helpers' calls are flagged, positional and keyword hand-off
+
+        A rule that reads only a parameter's OWN default resolves 9 of the 11
+        sites US-716 names and misses exactly these two, so the seam is
+        followed through the call that supplies it.
+        """
+        source = (
+            "import subprocess\n"
+            "def queryState(unit, runner):\n"
+            "    return runner(['systemctl', 'show', unit], capture_output=True, text=True)\n"
+            "def act(*, unit, runner):\n"
+            "    return runner(['systemctl', 'stop', unit], text=True)\n"
+            "def main(*, runner=subprocess.run):\n"
+            "    queryState('a', runner)\n"
+            "    act(unit='a', runner=runner)\n"
+        )
+        assert findUndeclaredEncodingCalls(source, "<control>") == [
+            (3, "runner"),
+            (5, "runner"),
+        ]
+
+    def test_findUndeclaredEncodingCalls_seamDefaultViaAliasOrDirectImport_isFlagged(
+        self,
+    ) -> None:
+        """
+        Given: seam defaults spelled through a module alias and a direct import
+        When:  the detector reads each
+        Then:  both are flagged -- import resolution applies to seams too
+        """
+        aliased = "import subprocess as sp\ndef f(run=sp.run):\n    run(['x'], text=True)\n"
+        direct = "from subprocess import run\ndef f(r=run):\n    r(['x'], text=True)\n"
+        assert findUndeclaredEncodingCalls(aliased, "<control>") == [(3, "run")]
+        assert findUndeclaredEncodingCalls(direct, "<control>") == [(3, "r")]
+
+    def test_findUndeclaredEncodingCalls_textKeywordOffTheSubprocessPath_isClean(
+        self,
+    ) -> None:
+        """
+        Given: a `text=` keyword on a UI constructor, a runner-NAMED parameter
+               nothing supplies a subprocess to, a seam defaulting to a fake, and
+               a seam call that declares its encoding -- all in a module that
+               imports subprocess
+        When:  the detector reads it
+        Then:  nothing is flagged
+
+        🔴 THIS IS THE FALSE-POSITIVE CLASS US-710 MEASURED AND REJECTED:
+        flagging any `text=` without `encoding=` returned 30 hits over src/, 19
+        of them `LayoutElement(text=...)` -- 63% noise. Seam resolution widens
+        what the CALLEE may resolve through; it must not relax the callee check
+        into a keyword check, and it must not key on a parameter's name.
+        """
+        source = (
+            "import subprocess\n"
+            "from layout import LayoutElement\n"
+            "def fakeRun(*args, **kwargs):\n"
+            "    return None\n"
+            "def draw(label):\n"
+            "    return LayoutElement(text=label)\n"
+            "def query(unit, runner):\n"
+            "    return runner(['systemctl', unit], text=True)\n"
+            "def probe(runFn=fakeRun):\n"
+            "    return runFn(['x'], text=True)\n"
+            "def declared(runFn=subprocess.run):\n"
+            "    return runFn(['x'], text=True, encoding='utf-8')\n"
+            "query('a', fakeRun)\n"
+        )
+        assert findUndeclaredEncodingCalls(source, "<control>") == []
+
+    def test_findSubprocessCallSites_realSrc_resolvesEveryKnownInjectionSeam(
+        self,
+    ) -> None:
+        """
+        Given: the five src/ modules that reach subprocess through a seam
+        When:  their REAL source is resolved -- whether or not each call now
+               declares an encoding
+        Then:  every seam is seen, by module and seam name
+
+        US-716 validation #4: the guard must be green over src/ for a reason a
+        reader can check, not because it cannot see. The guard above going green
+        after the 11 sites were fixed is indistinguishable from the resolution
+        silently breaking again -- this pins that it still SEES them.
+        """
+        expected = {
+            ("src/pi/display/kiosk_watchdog.py", "runFn"),
+            ("src/pi/display/panel_liveness.py", "runFn"),
+            ("src/pi/ops/obdctl.py", "runner"),
+            ("src/pi/splash/service_control.py", "runner"),
+            ("src/pi/update/update_applier.py", "self._subprocessRun"),
+        }
+        seen: set[tuple[str, str]] = set()
+        for relative in sorted({module for module, _ in expected}):
+            path = os.path.join(_REPO_ROOT, *relative.split("/"))
+            with open(path, encoding="utf-8") as fh:
+                source = fh.read()
+            seen.update(
+                (relative, callee) for _, callee in findSubprocessCallSites(source, path)
+            )
+        assert expected <= seen, f"seams no longer resolved: {sorted(expected - seen)}"
 
     def test_subjectFiles_coversEveryDeclaredRoot_andNoneIsEmpty(self) -> None:
         """

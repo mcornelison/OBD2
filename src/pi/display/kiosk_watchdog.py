@@ -683,6 +683,12 @@ def countWedgeMarkers(
             argv,
             capture_output=True,
             text=True,
+            # US-716. The journal carries arbitrary bytes from arbitrary units. A
+            # strict decode raises a ValueError past the except below on the Pi,
+            # and on Windows silently empties stdout -- zero markers read as a
+            # healthy kiosk. The marker is ASCII, so replacement costs nothing.
+            encoding="utf-8",
+            errors="replace",
             timeout=_COMMAND_TIMEOUT_SECONDS,
             check=False,
         )
@@ -753,6 +759,7 @@ def unitIsActive(
             ["systemctl", "is-active", "--quiet", unitName],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=_COMMAND_TIMEOUT_SECONDS,
             check=False,
         )
@@ -786,6 +793,7 @@ def restartUnit(
             ["systemctl", "restart", unitName],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=_COMMAND_TIMEOUT_SECONDS,
             check=False,
         )
@@ -914,6 +922,9 @@ def probeJournal(
             argv,
             capture_output=True,
             text=True,
+            # US-716. Same journal bytes as the marker query above, same reason.
+            encoding="utf-8",
+            errors="replace",
             timeout=_PROBE_TIMEOUT_SECONDS,
             check=False,
         )

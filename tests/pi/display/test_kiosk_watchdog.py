@@ -64,6 +64,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1457,6 +1458,72 @@ def test_probeJournal_runsUnderItsOwnShortTimeout(tmp_path: Path):
     kw.probeJournal(runFn=runFn, journalGlobs=(pattern,))
 
     assert seen == [kw._PROBE_TIMEOUT_SECONDS]
+
+
+def _realChildEmitting(payload: bytes):
+    """A runFn that runs a REAL child printing ``payload``, with the caller's kwargs.
+
+    The decode happens inside subprocess itself, so a fake that returns a ready
+    `str` cannot see a codec failure. This keeps every keyword the module passes
+    -- `text=`, `encoding=`, `errors=` -- and swaps only the argv.
+    """
+
+    def runFn(argv, **kwargs):
+        script = f"import sys; sys.stdout.buffer.write({payload!r})"
+        return subprocess.run([sys.executable, "-c", script], **kwargs)
+
+    return runFn
+
+
+# A strict decode fails in DIFFERENT places per platform, and both must be red.
+# On POSIX (the Pi) `communicate()` decodes on the calling thread, so the
+# UnicodeDecodeError raises out of the tick. On Windows it decodes inside a
+# reader THREAD: the exception dies there, stdout comes back empty, and the
+# watchdog silently reads zero markers -- a wedge storm reported as a healthy
+# kiosk. Promoting pytest's unhandled-thread warning to an error is what makes
+# the quiet Windows form fail instead of passing for the wrong reason.
+_THREAD_DECODE_FAILURE_IS_AN_ERROR = pytest.mark.filterwarnings(
+    "error::pytest.PytestUnhandledThreadExceptionWarning"
+)
+
+
+@_THREAD_DECODE_FAILURE_IS_AN_ERROR
+def test_countWedgeMarkers_journalLineWithAnInvalidUtf8Byte_isCountedNotRaised_us716():
+    """
+    Given: journal output carrying a byte that is not valid UTF-8 -- the journal
+           holds arbitrary bytes from arbitrary units
+    When:  the wedge-marker query decodes it
+    Then:  the line is counted; the decode neither raises nor silently empties it
+
+    US-716. `encoding=` alone decodes strictly, and a UnicodeDecodeError is a
+    ValueError -- it walks straight past `except (OSError, SubprocessError)`.
+    The marker being counted is ASCII, so a replacement character elsewhere in
+    the line changes nothing it reads.
+    """
+    runFn = _realChildEmitting(b"AllocateRingBuffer \xff\n")
+
+    reading = kw.countWedgeMarkers("u", sinceEpoch=0.0, cap=10, runFn=runFn)
+
+    assert reading.count == 1
+
+
+@_THREAD_DECODE_FAILURE_IS_AN_ERROR
+def test_probeJournal_journalLineWithAnInvalidUtf8Byte_isReadableNotRaised_us716(
+    tmp_path: Path,
+):
+    """
+    Given: the readability probe's one journal line carries an invalid UTF-8 byte
+    When:  the probe decodes it
+    Then:  the journal is READABLE -- it plainly was read -- and the decode
+           failed nowhere, on the calling thread or a reader thread
+
+    Without the thread-warning promotion this passes on Windows while the
+    decode is failing: the probe only reads the exit code, which is still 0.
+    """
+    pattern = _journalTree(tmp_path)
+    runFn = _realChildEmitting(b"a log line \xfe\n")
+
+    assert kw.probeJournal(runFn=runFn, journalGlobs=(pattern,)) == kw.PROBE_READABLE
     assert kw._PROBE_TIMEOUT_SECONDS < kw._COMMAND_TIMEOUT_SECONDS
 
 
