@@ -48,6 +48,15 @@
 #               |              | would have been a circular import and copying
 #               |              | it would have made two drift gates hold two
 #               |              | hand-kept copies of one list.
+# 2026-09-10    | Rex (US-712) | F-138 -- the exit code was three rules OR'd to
+#               |              | one bit, and TWO of them stand red on this
+#               |              | tree, so `main() == 1` proved nothing about
+#               |              | any particular rule (measured in US-607: a
+#               |              | drill survived deletion of the term it tested).
+#               |              | Add GATE_RULES (the single enumeration) +
+#               |              | gateTrips() + summary.gateTrips, and DERIVE
+#               |              | main()'s exit code from that report so the two
+#               |              | cannot drift apart.
 # ================================================================================
 ################################################################################
 
@@ -88,7 +97,9 @@ Output (stdout, JSON, deterministic ordering)::
         "sharedTableCount": K,
         "tablesWithDrift": ["..."],
         "tablesWithPiOnlyDrift": ["..."],   # TD-039 gate trip
-        "tablesWithRequiredColumnGap": ["..."]  # TD-043 gate trip
+        "tablesWithRequiredColumnGap": ["..."],  # TD-043 gate trip
+        "syncedTablesInvisibleToPiLoader": ["..."],  # TD-079 gate trip
+        "gateTrips": ["TD-039", "TD-043"]   # WHICH rules fired (US-712)
       },
       "tablesOnlyInPi": ["pi_state", "static_data", ...],
       "tablesOnlyInServer": ["sync_history", "anomaly_log", ...],
@@ -160,12 +171,23 @@ resolver writing a column the server lacks, is real data loss and still
 trips.  Class 3 additionally suppresses per COLUMN, never per table --
 a table having a resolver does not exempt the table.
 
-Manual usage today; a future story can wire this into ``make
-pre-commit`` or a GitHub Actions check.  See US-249 acceptance for the
-deferred CI hookup.  ⚠️ US-712 is that story's prerequisite: this gate
-exits 1 for several standing reasons at once, so a bare exit code cannot
-say WHICH condition fired, and a permanently-red gate in a hook gets
-deleted rather than obeyed.
+**Which condition fired (US-712).**  The exit code is still 0/1 -- shells and
+CI only read "did it fail" -- but it is no longer the ONLY signal.  Every rule
+is enumerated once in :data:`GATE_RULES`, :func:`gateTrips` reports the ones
+that fired as ``summary.gateTrips`` (and ``TRIPPED:`` in ``--verbose``), and
+:func:`main` derives its return value from that list.  A caller -- or a test --
+that cares about ONE condition asserts the rule id, not the exit code.  Before
+this, ``1`` was already the standing answer for TD-039 AND TD-043 at once, so
+``main() == 1`` was true for reasons unrelated to whatever it meant to check.
+
+Manual usage today; a future story can wire this into ``make pre-commit`` or a
+GitHub Actions check.  See US-249 acceptance for the deferred CI hookup.
+⚠️ STILL NOT WIRED, and US-712 did not change that.  US-712 removed the
+*diagnostic* blocker (a bare exit code could not say which rule fired); the
+*operational* blocker stands -- TD-039 (``power_log`` / ``startup_log``) and
+TD-043 (``vehicle_info``) are open, so this gate is RED on a clean checkout and
+a permanently-red gate in a hook gets deleted rather than obeyed.  Close those,
+or teach the gate an expected-failures allowlist, before hooking it up.
 """
 
 from __future__ import annotations
@@ -180,8 +202,10 @@ from pathlib import Path
 
 __all__ = [
     'CROSS_TIER_RESOLVED_COLUMNS',
+    'GATE_RULES',
     'SERVER_MIRROR_COLUMNS',
     'computeDiff',
+    'gateTrips',
     'loadPiSchema',
     'loadServerNotNullNoDefault',
     'loadServerSchema',
@@ -273,6 +297,34 @@ CROSS_TIER_RESOLVED_COLUMNS: dict[str, dict[str, str | None]] = {
         'data_source': None,
     },
 }
+
+# THE SINGLE ENUMERATION OF THE GATE'S FAILURE DIRECTIONS (US-712).
+#
+# ``(ruleId, summaryKey)`` -- the rule's public name, and the ``summary`` key
+# whose non-emptiness means it fired.  Ordered, so the reported trip list is
+# deterministic without a sort.
+#
+# WHY A REGISTRY AND NOT AN ``or``-CHAIN.  ``main()`` used to return
+# ``1 if (piOnlyTrip or requiredGapTrip or blindSpotTrip) else 0``.  That is
+# three terms collapsed to one bit, and on this tree TWO of them are standing
+# red at once (TD-039 on power_log/startup_log, TD-043 on vehicle_info), so
+# ``1`` was already the answer for reasons unrelated to whatever a given test
+# meant to prove.  It was not a theoretical hazard: a drill inside US-607
+# asserting ``main() == 1`` SURVIVED a mutation that deleted the blind-spot
+# term from the exit code entirely, because TD-039 was holding the ``1`` up on
+# its own.  That test had to be rewritten to assert the summary key instead;
+# this registry is the general case of that rewrite.
+#
+# Adding a fourth rule means adding ONE line here.  :func:`gateTrips` reports it
+# and :func:`main` derives the exit code from that report, so the rule cannot
+# exist in the exit code but not the JSON, or the reverse.
+# ``tests/scripts/test_schema_diff.py::TestExitCodeIsDerivedFromTheNamedTrips``
+# pins that structurally -- ``main`` may not name a per-rule key at all.
+GATE_RULES: tuple[tuple[str, str], ...] = (
+    ('TD-039', 'tablesWithPiOnlyDrift'),
+    ('TD-043', 'tablesWithRequiredColumnGap'),
+    ('TD-079', 'syncedTablesInvisibleToPiLoader'),
+)
 
 _PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 
@@ -670,12 +722,44 @@ def computeDiff(
         summary['syncedTablesInvisibleToPiLoader'] = sorted(
             set(syncedTables) - piTables,
         )
+
+    # US-712: name the conditions that fired.  Computed LAST, after every
+    # conditional rule above has decided whether to contribute its key, so a
+    # rule that was skipped is simply not in the list.  This is the value
+    # ``main`` returns its exit code from -- see :data:`GATE_RULES` for why the
+    # rules are enumerated once and only here.
+    summary['gateTrips'] = gateTrips(out)
     return out
 
 
 # ================================================================================
 # Output helpers
 # ================================================================================
+
+
+def gateTrips(diff: dict) -> list[str]:
+    """Return the ids of every gate rule that FIRED, in :data:`GATE_RULES` order.
+
+    The machine-readable answer to "which condition tripped", which a bare exit
+    code cannot give (see :data:`GATE_RULES`).  Also written into
+    ``summary.gateTrips`` by :func:`computeDiff`, so a caller reading the JSON
+    off stdout gets it without re-deriving anything.
+
+    A rule that did not RUN is absent, exactly like a rule that ran clean --
+    neither is a trip.  The distinction between the two stays where it is
+    already legible: a rule that ran reports its own summary key (empty when
+    clean), a rule that was skipped omits the key entirely.
+
+    Args:
+        diff: a diff dict from :func:`computeDiff`, or the same structure
+            parsed back from this script's JSON output.
+
+    Returns:
+        Sorted-by-declaration list of rule ids, e.g. ``['TD-039', 'TD-043']``.
+        Empty means the gate is clean.
+    """
+    summary = diff['summary']
+    return [ruleId for ruleId, summaryKey in GATE_RULES if summary.get(summaryKey)]
 
 
 def renderJson(diff: dict) -> str:
@@ -705,6 +789,10 @@ def _renderHumanSummary(diff: dict) -> str:
         f'TD-079 GATE:   {len(blindSpots)} '
         f'({", ".join(blindSpots) or "none"})  '
         '<- synced tables loadPiSchema() cannot see (gate blind, not clean)',
+        # US-712: the operator gets the same answer the machine does.  "exit 1"
+        # on its own does not say which of the three lines above earned it.
+        f'TRIPPED:       {", ".join(summary.get("gateTrips", [])) or "none"}'
+        f'  <- exit {1 if summary.get("gateTrips") else 0}',
         '',
     ]
     if diff['tablesOnlyInPi']:
@@ -782,22 +870,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.write(renderJson(diff))
     sys.stdout.write('\n')
 
-    # Gate trips on ANY failure direction:
-    #   * TD-039 -- Pi added a column server lacks (silent-data-loss).
-    #   * TD-043 -- server requires a column Pi never populates
-    #     (silent-sync-failure / 1364 storm).
-    #   * TD-079 -- a synced table is invisible to loadPiSchema, so the two
-    #     rules above examined nothing at all for it.  A gate that cannot SEE a
-    #     table must not exit 0 over it: "no drift found" and "nowhere to look"
-    #     are different answers and only one of them is clean.
-    # Server-only nullable extras (analytics columns, PK rename
-    # conventions) are reported but don't fail the gate -- they are
-    # by-design and would create CI false-positive fatigue.
-    summary = diff['summary']
-    piOnlyTrip = bool(summary['tablesWithPiOnlyDrift'])
-    requiredGapTrip = bool(summary.get('tablesWithRequiredColumnGap', []))
-    blindSpotTrip = bool(summary.get('syncedTablesInvisibleToPiLoader', []))
-    return 1 if (piOnlyTrip or requiredGapTrip or blindSpotTrip) else 0
+    # The gate trips when ANY rule in GATE_RULES fired.  Which ones fired is
+    # already named in ``summary.gateTrips`` (US-712), and this function
+    # deliberately does NOT restate the individual rules -- restating them is
+    # how a fourth rule ends up in one list and not the other, and it is why a
+    # test could once assert ``main() == 1`` while the term it cared about had
+    # been deleted.  Server-only nullable extras (analytics columns, PK rename
+    # conventions) are not rules at all: reported for visibility, never a trip.
+    return 1 if diff['summary']['gateTrips'] else 0
 
 
 if __name__ == '__main__':

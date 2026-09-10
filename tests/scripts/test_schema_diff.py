@@ -39,6 +39,17 @@
 #               |              | Add TestComputeDiffCrossTierResolvedColumns,
 #               |              | TestCrossTierResolvedColumnsIsDeclaredOnce and
 #               |              | TestRealTreeCrossTierResolution.
+# 2026-09-10    | Rex (US-712) | F-138 -- the exit code collapsed three rules
+#               |              | into one bit and TWO stand red here, so
+#               |              | `main() == 1` could not attribute a trip.  Add
+#               |              | TestGateTripsNameTheCondition,
+#               |              | TestExitCodeIsDerivedFromTheNamedTrips (the
+#               |              | structural guard: main may not restate a rule
+#               |              | key) and
+#               |              | TestRealTreeStandingConditionsAreIndividually-
+#               |              | Identifiable.  Mutation-verified: deleting the
+#               |              | TD-039 term leaves the real gate at exit 1 and
+#               |              | still fails a test BY NAME.
 # ================================================================================
 ################################################################################
 
@@ -68,6 +79,7 @@ asserting deterministic ordering so CI diffs stay readable.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import re
 import subprocess
@@ -1180,3 +1192,257 @@ class TestRealTreeCrossTierResolution:
 
         assert 'power_log' in result['summary']['tablesWithPiOnlyDrift']
         assert 'startup_log' in result['summary']['tablesWithPiOnlyDrift']
+
+
+# ================================================================================
+# US-712 / F-138 -- WHICH condition tripped, not merely THAT one did
+# ================================================================================
+
+
+class TestGateTripsNameTheCondition:
+    """``summary.gateTrips`` names every rule that fired, so a test can assert one.
+
+    THE DEFECT THIS CLOSES, and it was measured inside US-607 rather than
+    theorised.  ``main()`` returned ``1 if (piOnlyTrip or requiredGapTrip or
+    blindSpotTrip) else 0``.  On this tree TD-039 (``power_log`` /
+    ``startup_log``) and TD-043 (``vehicle_info``) are BOTH standing red, so
+    ``1`` is already the answer for two unrelated reasons.  A drill asserting
+    ``main() == 1`` therefore survived a mutation that deleted the blind-spot
+    term from the exit code entirely -- it proved nothing it claimed to prove.
+
+    The fix is not a cleverer exit code (see the story's conditionalOutcome).
+    It is that the terms are enumerated in exactly ONE place,
+    :data:`~schema_diff.GATE_RULES`, that the enumeration is REPORTED, and that
+    the exit code is DERIVED from the report.  A rule cannot then be dropped
+    from the exit code without disappearing from the JSON, where these tests
+    name it.
+    """
+
+    def test_gateTrips_noRuleFires_isEmptyList(self) -> None:
+        """Given: both tiers agree and every rule ran.
+        Then: gateTrips is an empty list -- present and empty, not absent.
+        """
+        pi = {'t': {'id', 'value'}}
+        server = {'t': {'id', 'value'}}
+
+        result = sd.computeDiff(pi, server, {}, {'t'})
+
+        assert result['summary']['gateTrips'] == []
+
+    def test_gateTrips_piOnlyDrift_namesTd039AndNothingElse(self) -> None:
+        """Given: Pi has a column the server lacks; the other two rules are clean.
+        Then: gateTrips is exactly ['TD-039'].
+        """
+        pi = {'t': {'id', 'pi_extra'}}
+        server = {'t': {'id'}}
+
+        result = sd.computeDiff(pi, server, {}, {'t'})
+
+        assert result['summary']['gateTrips'] == ['TD-039']
+
+    def test_gateTrips_requiredColumnGap_namesTd043AndNothingElse(self) -> None:
+        """Given: server requires a column the Pi never populates.
+        Then: gateTrips is exactly ['TD-043'] -- TD-039 did not fire.
+        """
+        pi = {'t': {'id'}}
+        server = {'t': {'id', 'device_id'}}
+
+        result = sd.computeDiff(pi, server, {'t': {'device_id'}}, {'t'})
+
+        assert result['summary']['gateTrips'] == ['TD-043']
+
+    def test_gateTrips_blindSpotOnly_namesTd079AndNothingElse(self) -> None:
+        """THE DISCRIMINATOR the old exit code could not express.
+
+        Shared tables are genuinely clean and no required column is missing, so
+        the ONLY thing that can appear here is the blindness itself.  Under the
+        old ``or``-chain this scenario and the two above were all indistinguishably
+        ``1``.
+        """
+        pi = {'t': {'id'}}
+        server = {'t': {'id'}, 'ghost_table': {'id'}}
+
+        result = sd.computeDiff(pi, server, {}, {'t', 'ghost_table'})
+
+        assert result['summary']['gateTrips'] == ['TD-079']
+
+    def test_gateTrips_allThreeFire_namesAllThreeDeterministically(self) -> None:
+        """Given: every rule trips at once.
+        Then: all three are named, in a stable order (CI diffs stay readable).
+        """
+        pi = {'t': {'id', 'pi_extra'}}
+        server = {'t': {'id', 'device_id'}, 'ghost_table': {'id'}}
+
+        result = sd.computeDiff(
+            pi, server, {'t': {'device_id'}}, {'t', 'ghost_table'},
+        )
+
+        assert result['summary']['gateTrips'] == ['TD-039', 'TD-043', 'TD-079']
+
+    def test_gateTrips_ruleThatDidNotRun_isNotNamed(self) -> None:
+        """A rule that never RAN must not be reported as a trip.
+
+        The two-arg back-compat call omits the TD-043 and TD-079 rules entirely.
+        'Did not run' and 'ran and found nothing' are different answers; neither
+        is a trip, so neither appears -- but the per-rule keys stay the place
+        that distinction is readable (TD-079 reports ``[]`` vs absent).
+        """
+        pi = {'t': {'id', 'pi_extra'}}
+        server = {'t': {'id'}}
+
+        result = sd.computeDiff(pi, server)
+
+        assert result['summary']['gateTrips'] == ['TD-039']
+        assert 'tablesWithRequiredColumnGap' not in result['summary']
+        assert 'syncedTablesInvisibleToPiLoader' not in result['summary']
+
+    def test_gateTrips_everyRegisteredRuleKey_isARealSummaryKey(self) -> None:
+        """GATE_RULES must not name a summary key that computeDiff never emits.
+
+        A rule registered under a misspelt or renamed key would silently never
+        fire -- the exact "gate that cannot see" class TD-079 is about, one level
+        up.  Run with every rule enabled so all keys are expected present.
+        """
+        result = sd.computeDiff({'t': {'id'}}, {'t': {'id'}}, {}, {'t'})
+
+        for ruleId, summaryKey in sd.GATE_RULES:
+            assert summaryKey in result['summary'], (
+                f'GATE_RULES registers {ruleId} under summary key '
+                f'{summaryKey!r}, which computeDiff does not emit -- that rule '
+                f'can never trip'
+            )
+
+
+class TestExitCodeIsDerivedFromTheNamedTrips:
+    """The structural half: main() may not re-enumerate the rules."""
+
+    def test_main_doesNotRestateTheRuleKeys_gateTripsIsTheSingleSource(
+        self,
+    ) -> None:
+        """WHY THIS TEST EXISTS, and it is the whole point of the story.
+
+        Every behavioural test below can be satisfied by a ``main()`` that keeps
+        its own parallel ``or``-chain and happens to agree with ``gateTrips``
+        today.  That is the pre-US-712 shape with a report bolted on beside it,
+        and it re-opens the defect the moment a FOURTH rule is added to one list
+        and not the other -- which is precisely how the third rule arrived
+        (US-607) and how the by-design list drifted (US-711).
+
+        So the assertion is structural: ``main`` must not mention any per-rule
+        summary key at all.  It reads the derived list, and nothing else.
+        """
+        source = inspect.getsource(sd.main)
+
+        for ruleId, summaryKey in sd.GATE_RULES:
+            assert summaryKey not in source, (
+                f'main() names {summaryKey!r} ({ruleId}) directly, so the rule '
+                f'set is enumerated in two places and can drift between them. '
+                f'Derive the exit code from summary["gateTrips"] instead.'
+            )
+        assert 'gateTrips' in source, (
+            "main() must derive its exit code from summary['gateTrips']"
+        )
+
+    def test_main_cleanEverything_exits0(self, monkeypatch, capsys) -> None:
+        """Empty gateTrips is still exit 0 -- the contract did not change."""
+        monkeypatch.setattr(sd, 'loadPiSchema', lambda: {'t': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerSchema', lambda: {'t': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerNotNullNoDefault', lambda: {})
+        monkeypatch.setattr(sd, 'syncedPiTables', lambda: frozenset({'t'}))
+
+        rc = sd.main([])
+
+        assert rc == 0
+        assert json.loads(capsys.readouterr().out)['summary']['gateTrips'] == []
+
+    def test_main_blindSpotOnly_exits1AndTd079IsTheNamedReason(
+        self, monkeypatch, capsys,
+    ) -> None:
+        """The hermetic drill: exit 1 AND the JSON says which rule earned it."""
+        monkeypatch.setattr(sd, 'loadPiSchema', lambda: {'t': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerSchema',
+                            lambda: {'t': {'id'}, 'ghost_table': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerNotNullNoDefault', lambda: {})
+        monkeypatch.setattr(sd, 'syncedPiTables',
+                            lambda: frozenset({'t', 'ghost_table'}))
+
+        rc = sd.main([])
+
+        assert rc == 1
+        assert json.loads(capsys.readouterr().out)['summary']['gateTrips'] == [
+            'TD-079',
+        ]
+
+    def test_verboseSummary_namesTheTrippedRules_forTheOperator(
+        self, monkeypatch, capsys,
+    ) -> None:
+        """The human reading --verbose gets the same answer as the machine."""
+        monkeypatch.setattr(sd, 'loadPiSchema', lambda: {'t': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerSchema',
+                            lambda: {'t': {'id'}, 'ghost_table': {'id'}})
+        monkeypatch.setattr(sd, 'loadServerNotNullNoDefault', lambda: {})
+        monkeypatch.setattr(sd, 'syncedPiTables',
+                            lambda: frozenset({'t', 'ghost_table'}))
+
+        sd.main(['--verbose'])
+
+        err = capsys.readouterr().err
+        assert 'TD-079' in err
+        assert re.search(r'TRIPPED:\s+TD-079', err), (
+            f'verbose output must state the tripped rule set:\n{err}'
+        )
+
+
+class TestRealTreeStandingConditionsAreIndividuallyIdentifiable:
+    """US-712 validationCriterion 2, executed against the REAL loaders.
+
+    This is the general case of the US-607 finding.  On this tree the gate is
+    standing red for TWO reasons at once, and the two are what a bare ``1``
+    cannot tell apart.  Delete the TD-039 term and the process still exits 1 on
+    TD-043 -- but THIS test fails, naming TD-039.  That is the acceptance.
+    """
+
+    def _realDiff(self):  # noqa: ANN202 -- test helper
+        try:
+            server = sd.loadServerSchema()
+            notNull = sd.loadServerNotNullNoDefault()
+        except ImportError as err:  # pragma: no cover -- env guard
+            pytest.skip(f'server stack not importable: {err}')
+        return sd.computeDiff(
+            sd.loadPiSchema(), server, notNull, sd.syncedPiTables(),
+        )
+
+    def test_realGate_standingTd039IsNamed_notCollapsedIntoTheExitCode(
+        self,
+    ) -> None:
+        """TD-039 stands on power_log / startup_log and must be named as itself."""
+        result = self._realDiff()
+
+        assert 'TD-039' in result['summary']['gateTrips'], (
+            'power_log / startup_log carry Pi columns the server lacks; the '
+            'report must attribute the trip to TD-039 by name'
+        )
+
+    def test_realGate_standingTd043IsNamed_separatelyFromTd039(self) -> None:
+        """The pairing.  Two rules, two names -- this is what `1` could not say."""
+        result = self._realDiff()
+
+        assert 'TD-043' in result['summary']['gateTrips'], (
+            'vehicle_info requires ecu_id / ecu_signature / '
+            'ecu_install_timestamp_utc, which the Pi never populates'
+        )
+
+    def test_realGate_td079IsCleanToday_andSaysSoRatherThanBeingUnknowable(
+        self,
+    ) -> None:
+        """The negative half, and it is load-bearing.
+
+        Without it a gateTrips that simply named all three rules unconditionally
+        would pass both tests above.  TD-079 is genuinely green on this tree
+        (US-607 closed it), so it must be ABSENT from the trip list while the
+        other two are present.
+        """
+        result = self._realDiff()
+
+        assert 'TD-079' not in result['summary']['gateTrips']
+        assert result['summary']['syncedTablesInvisibleToPiLoader'] == []
