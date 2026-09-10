@@ -37,6 +37,17 @@
 #               |              | NEXT such omission fails the gate by name
 #               |              | instead of being reported as a server-only
 #               |              | table.
+# 2026-09-09    | Rex (US-711) | F-138 -- US-607's restored sight produced a
+#               |              | FALSE TD-039 trip: dtc_freeze_frame's US-369
+#               |              | resolver renames vehicle_info_vin and drops
+#               |              | data_source BY DESIGN, and this gate knew only
+#               |              | two by-design classes.  Add the third,
+#               |              | CROSS_TIER_RESOLVED_COLUMNS -- MOVED here from
+#               |              | audit_sync_contract_parity, which already
+#               |              | imports from this module, so reading it there
+#               |              | would have been a circular import and copying
+#               |              | it would have made two drift gates hold two
+#               |              | hand-kept copies of one list.
 # ================================================================================
 ################################################################################
 
@@ -129,15 +140,32 @@ noise.  Only columns that are NOT NULL and have no default land in the
 TD-043 gate-trip list -- the analytics-only nullable extras are
 correctly classified as visibility-only.
 
-The four server-side mirror columns (``source_id``, ``source_device``,
-``synced_at``, ``sync_batch_id``) are filtered out before drift
-detection -- they exist by design on every synced table per the
-US-CMP-003 sync convention and would otherwise drown the report in
-noise.
+**The three by-design classes filtered before drift detection.**  Each is
+a transform the wire really applies, so reporting it is the drift gate
+itself drifting:
+
+1. :data:`SERVER_MIRROR_COLUMNS` -- ``source_id``, ``source_device``,
+   ``synced_at``, ``sync_batch_id``.  Present by design on every synced
+   table per the US-CMP-003 sync convention.
+2. :data:`PI_PK_RENAMED_TO_ID` -- Pi PK columns the sync client renames
+   to ``id`` on the wire.
+3. :data:`CROSS_TIER_RESOLVED_COLUMNS` (US-711) -- columns a table's
+   BESPOKE server resolver renames or deliberately consumes.  Only
+   ``dtc_freeze_frame`` has one today (US-369).
+
+Classes 2 and 3 suppress only when the declared counterpart is actually
+present on the server.  That condition is what keeps an exemption from
+growing into a blind spot: a rename whose target does not exist, or a
+resolver writing a column the server lacks, is real data loss and still
+trips.  Class 3 additionally suppresses per COLUMN, never per table --
+a table having a resolver does not exempt the table.
 
 Manual usage today; a future story can wire this into ``make
 pre-commit`` or a GitHub Actions check.  See US-249 acceptance for the
-deferred CI hookup.
+deferred CI hookup.  ⚠️ US-712 is that story's prerequisite: this gate
+exits 1 for several standing reasons at once, so a bare exit code cannot
+say WHICH condition fired, and a permanently-red gate in a hook gets
+deleted rather than obeyed.
 """
 
 from __future__ import annotations
@@ -151,6 +179,7 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 __all__ = [
+    'CROSS_TIER_RESOLVED_COLUMNS',
     'SERVER_MIRROR_COLUMNS',
     'computeDiff',
     'loadPiSchema',
@@ -202,6 +231,47 @@ PI_PK_RENAMED_TO_ID: dict[str, str] = {
     # by the US-372 chk_drive_id_source_id invariant -- a different fact from
     # the Pi's PK, which is why both names appear on the server side.
     'drive_summary': 'drive_id',
+}
+
+# The THIRD by-design class, and the one that is NOT derivable from a registry.
+#
+# Most synced tables ride the generic path in ``api/sync.runSyncUpsert``, which
+# binds every payload key straight onto the model.  ``dtc_freeze_frame`` does
+# NOT: US-369 gave it a bespoke resolver (``api/sync._syncDtcFreezeFrameRows``)
+# that builds an EXPLICIT column list and performs cross-tier FK resolution, so
+# a Pi column can legitimately be renamed (``vehicle_info_vin`` is resolved to
+# the server's ``vehicle_info_id``) or deliberately dropped (``data_source``:
+# the freeze frame's origin is carried by its parent dtc_log row).  The rows
+# land.  Reporting them as TD-039 silent data loss is the drift gate drifting.
+#
+# ``None`` as a value means "consumed by the resolver, intentionally not stored".
+#
+# WHY IT LIVES HERE (US-711).  It was declared in
+# ``scripts/audit_sync_contract_parity.py`` until 2026-09-09, and the tidy fix
+# for this gate's false trip -- read it from there -- is impossible: that module
+# imports ``SERVER_MIRROR_COLUMNS`` and ``PI_PK_RENAMED_TO_ID`` FROM this one at
+# module level, so the import would be CIRCULAR.  Copying it would have put two
+# hand-kept copies of one by-design list in two gates that check each other,
+# which is the drift class both gates exist to catch.  So it MOVED, to sit
+# beside the two by-design classes it joins; the audit module imports it back
+# and the dependency arrow stays one-way.
+#
+# This map is a DECLARATION, not a derivation -- the resolver's key set lives in
+# imperative code with no registry to read.  It is therefore self-policed from
+# both sides by ``audit_sync_contract_parity.checkCrossTierResolverDeclaration``:
+# every target column named here must EXIST on the server, and every column
+# declared dropped must still have NO server counterpart.  This gate deliberately
+# does NOT re-implement that policing -- it only declines to report the pair as
+# drift, and only while the declared target is actually present (see
+# :func:`computeDiff`).
+CROSS_TIER_RESOLVED_COLUMNS: dict[str, dict[str, str | None]] = {
+    'dtc_freeze_frame': {
+        # Resolved server-side to the vehicle_info row live at capture time.
+        'vehicle_info_vin': 'vehicle_info_id',
+        # Origin lives on the parent dtc_log row; the server model has no
+        # data_source column for freeze frames by design.
+        'data_source': None,
+    },
 }
 
 _PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
@@ -495,6 +565,32 @@ def computeDiff(
         if renamedPk and renamedPk in piCols and 'id' in serverCols:
             piCols = piCols - {renamedPk}
             serverCols = serverCols - {'id'}
+
+        # Third by-design class (US-711): columns a bespoke server-side
+        # resolver renames or deliberately consumes.  Suppressed PER COLUMN --
+        # a table having a resolver does not exempt the table.
+        for piColumn, target in CROSS_TIER_RESOLVED_COLUMNS.get(
+            tableName, {},
+        ).items():
+            if piColumn not in piCols:
+                # Declaration is stale or the column has moved on.  Not this
+                # gate's finding: checkCrossTierResolverDeclaration reports it.
+                continue
+            if target is None:
+                # Consumed by the resolver, intentionally not stored.  Only
+                # suppress while the server genuinely LACKS it -- if the server
+                # gained the column the two sides agree, and stripping the Pi
+                # side anyway would manufacture a phantom columnsOnlyInServer
+                # entry out of an agreement.
+                if piColumn not in serverCols:
+                    piCols = piCols - {piColumn}
+            elif target in serverCols:
+                # Declared rename pair, both halves present -> one column,
+                # resolved.  Conditional on the target existing, exactly as the
+                # PK-rename rule above is: a resolver writing a column the
+                # server does NOT have is real data loss and must still trip.
+                piCols = piCols - {piColumn}
+                serverCols = serverCols - {target}
 
         onlyPi = sorted(piCols - serverCols)
         onlyServer = sorted(serverCols - piCols)
