@@ -19,6 +19,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-10    | Rex (US-543) | Initial -- A-4 standing contract-parity gate.
+# 2026-09-09    | Rex (US-607) | TD-079 closed the dtc_freeze_frame blindness,
+#               |              | so TestPiLoaderReadsTheAppliedSchema's
+#               |              | assertion that the DDL loader MISSES it became
+#               |              | false.  Rewritten to the inverse, durable
+#               |              | claim: on the synced surface the two Pi loaders
+#               |              | must AGREE.  See that class docstring.
 # ================================================================================
 ################################################################################
 
@@ -230,32 +236,101 @@ class TestSyncedTableSetIsCompleteByConstruction:
 class TestPiLoaderReadsTheAppliedSchema:
     """The Pi loader runs ensure-schema; it does not read the DDL constants.
 
-    Mechanism, not declaration: ``scripts/schema_diff.loadPiSchema`` executes a
-    hand-listed registry of CREATE TABLE constants, so any table or column that
-    arrives via an ``ensureXSchema`` helper is invisible to it.  If both loaders
-    returned the same thing, US-543's "assert the APPLIED schema" would be
-    satisfied by the cheaper loader and this one would be pointless -- so the
-    difference is asserted, not assumed.
+    US-607 REWROTE THIS CLASS, and the reason is the finding.  It used to assert
+    that ``scripts/schema_diff.loadPiSchema`` was BLIND to ``dtc_freeze_frame``
+    -- true when US-543 wrote it, and a fair way to prove the applied loader was
+    not redundant.  But an assertion that pins a defect goes red the day the
+    defect is fixed, and TD-079/US-607 fixed exactly that one.  The claim is now
+    the INVERSE, which is the durable direction: on the SYNCED surface the two
+    loaders must AGREE, and any disagreement is TD-079 growing back.
+
+    That makes this a SECOND, independent detector of the same class, taken from
+    the other end: ``tests/scripts/test_schema_diff.py`` measures the DDL
+    registry against the sync REGISTRIES, while this measures it against what
+    the Pi's real ``initialize()`` boot actually creates.  A table could be
+    missed by one route and caught by the other.
+
+    The applied loader is still required, and this class proves it rather than
+    asserting it -- see the two tests below.  Measured on this tree 2026-09-09:
+    the ``ensureXSchema``-ALTER column class the US-543 docstring names (US-419
+    ``data_quality``, US-252 ``vcell``, the US-289 SOC columns) currently has NO
+    live instance -- every one has since been folded into a DDL constant.  The
+    class stays live even with no instance, so the justification below rests on
+    facts that ARE currently true instead.
     """
 
-    def test_appliedLoader_seesASyncedTableTheDdlLoaderCannot(
+    def test_bothPiLoadersAgreeOnTheSyncedTableSet(
         self, piSchema: dict[str, dict[str, ColumnSpec]],
     ) -> None:
+        """TD-079 from the applied side: the DDL registry must not go stale.
+
+        Failing here means a table the Pi boot really creates and really syncs
+        is absent from ``schema_diff``'s hand-kept CREATE TABLE registry, so the
+        drift gate compares nothing for it -- and files the server's copy under
+        ``tablesOnlyInServer``, the category that means "tier-owned, exempt".
+        """
         from scripts.schema_diff import loadPiSchema
 
-        ddlOnly = loadPiSchema()
-        appliedTables = set(piSchema) & set(syncedTables())
-        ddlTables = set(ddlOnly) & set(syncedTables())
-        invisible = sorted(appliedTables - ddlTables)
-        assert invisible, (
-            'the applied loader found no synced table the DDL-constant loader '
-            'misses -- if that is genuinely true, this guard could use the '
-            'cheaper loader; verify before deleting the applied path.'
+        synced = set(syncedTables())
+        invisible = sorted((set(piSchema) & synced) - (set(loadPiSchema()) & synced))
+
+        assert not invisible, (
+            f'synced tables the Pi boot creates but scripts/schema_diff.'
+            f'loadPiSchema cannot see: {invisible}. TD-079 has grown back -- '
+            f'add each DDL constant to the registry in loadPiSchema().'
         )
-        # dtc_freeze_frame is the live example: US-368 created it via
-        # ensureDtcFreezeFrameTable and it was never added to schema_diff's
-        # hand-listed DDL registry.
-        assert 'dtc_freeze_frame' in invisible
+
+    def test_theAgreementCheckCanActuallyFail(self) -> None:
+        """Positive control -- without it the test above is an inert guard.
+
+        Reproduces the pre-US-607 state synthetically: the applied side knows a
+        synced table, the DDL side does not.  If the set arithmetic above were
+        ever inverted or emptied, this is what notices.
+        """
+        applied = {'realtime_data': {}, 'dtc_freeze_frame': {}}
+        ddl = {'realtime_data': set()}
+        synced = {'realtime_data', 'dtc_freeze_frame'}
+
+        assert sorted((set(applied) & synced) - (set(ddl) & synced)) == [
+            'dtc_freeze_frame',
+        ]
+
+    def test_theTwoLoadersAreNotInterchangeable_soTheAppliedPathStays(
+        self, piSchema: dict[str, dict[str, ColumnSpec]],
+    ) -> None:
+        """Why US-543's expensive loader survives US-607 closing the table gap.
+
+        Two measured facts, either of which alone is sufficient:
+
+        1. The applied loader returns per-column ``ColumnSpec`` -- kind, notNull
+           and hasDefault.  ``loadPiSchema`` returns bare ``set[str]`` of names
+           and structurally CANNOT answer A2, A5 or A6.
+        2. Neither table set contains the other.  The DDL loader lists tables
+           the Pi's ``initialize()`` boot never creates (they are built by other
+           init paths), so substituting it here would assert parity over tables
+           that do not exist on a booted Pi.
+        """
+        from scripts.schema_diff import loadPiSchema
+
+        ddl = loadPiSchema()
+
+        # The capability, not one column's nullability (that belongs to the
+        # schema, not to this guard): the applied loader answers three questions
+        # per column, and at least one synced column exercises each answer.
+        specs = [s for cols in piSchema.values() for s in cols.values()]
+        assert any(s.notNull for s in specs)
+        assert any(s.hasDefault for s in specs)
+        assert {s.kind for s in specs} > {'text'}
+        # The DDL loader's whole return value is a set of NAMES -- there is no
+        # place in that shape for any of the three.
+        assert isinstance(ddl['realtime_data'], set)
+
+        neverBooted = sorted(set(ddl) - set(piSchema))
+        assert neverBooted, (
+            'the DDL registry no longer names any table absent from the booted '
+            'Pi schema -- fact 2 has expired; fact 1 still stands, but re-read '
+            'this docstring before leaning on it.'
+        )
 
     def test_appliedLoader_returnsPopulatedColumnSpecs(
         self, piSchema: dict[str, dict[str, ColumnSpec]],
