@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.45",
-  "theme": "Sprint 82 -- gates that can do their job, 8/8",
-  "description": "Every story removed a test, gate or guard cited as evidence that could not produce it. US-617 a fixture stranded when US-527 added a required column. US-597 100 subprocess sites decoding with the ANSI code page. US-607 a drift gate blind to a synced table. US-612 a colour guard reading characters not declarations. US-703 a stale pin that was a second copy. Plus US-603, US-608, US-610."
+  "version": "V0.29.46",
+  "theme": "Sprint 83 -- instruments say what they support, 12/12",
+  "description": "US-708: gradePct was computed from the car ROLL -- the code assumed X=forward when X is lateral. One boundary transform, three readouts. US-700 tiles could not tell loading from broken. US-706 make lint exits 0 -- the gate command, not a narrower substitute. US-712 an exit code that was 1 for three reasons. Plus CIO display rulings and BATTERY wired to UPS soc."
 }
