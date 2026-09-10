@@ -716,8 +716,17 @@ class Orchestrator:
 > - *the census as acceptance* — a count is not evidence of completeness
 > - *ask the instrument a question it can answer* — a proxy that reads the same in the healthy
 >   case and the failure case is not evidence of anything
+> - *scope* — a run cited for a path it could not have touched is not evidence about that path
+> - *currency* — a record cited as current is not evidence about today
+> - *the write fence that reads like a test boundary* — a limit on what you may EDIT is not
+>   evidence about what you have BROKEN
 >
-> All three pass review, because in all three something **looks like information and is not.**
+> All six pass review, because in all six something **looks like information and is not.**
+>
+> **The one question that catches every member:** *what would this evidence look like if the claim
+> were FALSE?* If the answer is **"the same"**, it is not evidence. ⚠️ **Apply it to ABSENT evidence
+> too** — the hunt for a Synology snapshot was debugged as a *visibility* problem for two days when
+> it was an *existence* problem, because the thing being searched for was assumed to be there.
 
 
 ### The inert guard — a check that is syntactically present and semantically does nothing
@@ -734,6 +743,30 @@ having no guard at all, because its presence stops anyone looking.
 | Kiosk watchdog threshold | Set to 100 markers/60 s, calibrated against a ~30,000/window catastrophic wedge. The observed regime was 84–101 — **inside the signal's own band**, so it reported `healthy; markers=84` while the display was frozen. |
 | `drive_summary.data_quality` | `NOT NULL DEFAULT 'full'` — a verdict column defaulting to the **best verdict**, so "never assessed" and "assessed and complete" are the same stored value. |
 | `journalctl --grep` exit code | Exits 1 on **zero matches**; the caller treated non-zero as "journal unreadable", so a perfectly healthy system was reported as an honest-unknown — the inverse of the documented intent. |
+
+**A sixth instance, added 2026-09-04 (Atlas) — and it is one layer DOWN, which makes it worse:**
+
+| Guard | Why it was inert |
+|---|---|
+| `pi.pollingTiers` in `config.json` | A complete four-tier OBD rate plan, plus a tier engine in `src/pi/obdii/data/polling_tiers.py` that **nothing imports** — `grep -rn "^\s*\(from\|import\).*polling_tiers" src/` returns **0**. The live poll list is `pi.realtimeData.parameters` — flat, every PID every cycle. Measured: ~1,747 rows for **each** of 16 PIDs on drives 64-67, where tiers would give 1 : 1/3 : 1/10 : 1/30. Four PIDs the Pi actually polls appear in **no tier at all**. |
+
+⚠️ **Check that claim with the import-statement grep above, not a bare name search.** A bare
+`grep -rn pollingTiers src/` returns **4** — one config-schema field and three comments, two of
+which document this very defect. **Counting the token instead of the construct would make this
+row read false.** It is the same discriminating move as `grep -c 'PldSensor('` rather than
+`grep -c PldSensor` (US-668, Marcus).
+
+⚠️ **Dead CONFIG is strictly worse than a dead CHECK, and the difference is worth naming.** A dead
+check merely *fails to catch*. Dead config **actively supplies wrong numbers to anyone who reasons
+from it** — and it survives review precisely *because* those numbers are properly sourced. It had
+already misled one build (`DEFAULT_MAX_AGE_S = 2.0` in `gear_derivation.py` was derived from it by
+an author who cited his source scrupulously), and it came within one note of misleading a second:
+a complete, self-consistent, **false** root cause for a display defect, killed only by one query
+against `realtime_data`.
+
+> **A config file is an instrument. It is evidence about INTENT, never about BEHAVIOUR.**
+> Before quoting any rate, list, threshold or topology from config, confirm it in the running
+> system's output.
 
 **Why they survive review.** Each is *locally* reasonable. The code is innocent; the failure lives at a
 boundary — a matcher's syntax, a tool's exit convention, a schema default, a threshold's relationship to
@@ -898,6 +931,114 @@ measurement confirms what you already believe** — six of the seven above did.
 **Related:** *the inert guard* and *the census as acceptance*, above. Same family: something that
 looks like information and is not. The inert guard fails at enforcement, the census at
 completeness, this one at **discrimination.**
+
+### Scope — a run cited for a path it could not have touched
+
+**Added 2026-09-09 (Atlas; the worked example is Marcus's).**
+
+**The pattern.** A command really ran. Its output is real. It is then cited as evidence about a
+code path **the run never executed**. Nothing in the output says so, because an instrument does not
+report the questions it was not asked.
+
+**Two worked examples, both from this project:**
+
+| Claim | The run | Why it could not support the claim |
+|---|---|---|
+| *"bench provisioning is verified"* | A bench leased **with** a venv | Cited as evidence about the **`-SkipVenv`** path — which that run, by construction, never entered |
+| *"8 failures on the bench, 8 on trunk, no new failures"* (Atlas, US-668) | `pytest tests/pi tests/common tests/lint` | **A set the author chose himself.** The regression was in `tests/ui`, outside it. The evidence could not detect the regressions that existed, and the story was rejected at merge |
+
+**Why it survives review.** The run is genuine, the output is genuine, and the reader has no way to
+see the gap between *what executed* and *what is being claimed* — that gap lives in the author's
+head, not in the artefact. A green result is equally consistent with "the path works" and "the path
+was never reached."
+
+**The rule:**
+
+> **Before citing a run, state what it could NOT have shown.** If the failure being ruled out would
+> have produced the *same* output, the run is not evidence about it.
+
+**How to apply it.** Name the command **and** its scope in the same sentence as the claim. *"No new
+failures across `tests/pi tests/common tests/ui`, on both trees"* is a claim someone can check;
+*"no new failures"* is not. ⚠️ **Where a story deletes a symbol or changes a signature, the scope
+that matters is every CALLER** — see *the write fence*, below.
+
+### Currency — a record cited as current that is not
+
+**Added 2026-09-09 (Atlas; the TD-074 example is Marcus's, and it is the sharpest one we have).**
+
+**The pattern.** A ticket, TD, comment or spec states a fact about the system. It was true when
+written. It is read later as though it still is. **Prose has no expiry date and no dirty bit**, so
+nothing about the record signals that the world moved underneath it.
+
+**The canonical instance — and it was wrong in BOTH directions at once:**
+
+> **TD-074** recorded that a battery-health defect was *"entirely latent — there is no production
+> writer."* By 2026-09-02 **US-526 had shipped that writer** and `battery_health_log` took its first
+> row in **111 days**, so the record's own stated precondition for latency had **expired**.
+> Meanwhile **US-527 had already fixed the defect**, which the record also did not say.
+> ⇒ Reading it in either direction produced a wrong action: file a newly-live P1 that does not
+> exist, or dismiss a live trigger that had already fired.
+
+**Four more, all inside three sprints:**
+
+| Record | What had changed underneath it |
+|---|---|
+| US-583 | Its **own intake record carried a `RESOLVED` block**, and the story sat `pending` for **72 more days** |
+| US-674 (Sprint 80) | Scoped as if US-625 had never shipped — the fix was already on `dev` |
+| US-692 / US-663 (Sprint 81) | Both scoped against defects that **did not exist as described**; each story's acceptance was already true, so both would have shipped green having changed nothing |
+| US-701 / US-702 (F-141) | Scoped as new work; the altitude integrator was **already designed** (US-519/US-520) and the distance integrator **already shipped** (US-436) |
+
+⚠️ **A test FIXTURE is a record too, and it is the least visible kind.** US-617's seven failures
+were caused by a `_FakeDatabase` that predates a qualifying gate added by US-527 and never migrated:
+the fixture supplies no `end_vcell_v`, the gate requires it, so every fixture row is filtered and
+the verdict is honestly `unknown`. **The fixture asserted a fact using an input that could no longer
+produce it.** US-681 was the same shape one sprint earlier.
+
+**Why it survives review.** Nothing decays visibly. The prose is as confident on the day it is wrong
+as on the day it was right, and the reader has no cue to re-check. **This is structural, not a
+competence failure** — five occurrences in three sprints across two careful authors says the process
+has no re-measurement step, not that people were careless.
+
+**The rule:**
+
+> **A record is evidence about the day it was written. Re-measure before acting on it.**
+> The cheapest form is one live check of the thing the record names — a query, a `grep` for the
+> symbol, a read of the file it cites.
+
+⚠️ **And a documented defect window in PROSE is the thing a query never reads.** Where a record
+states a condition that must be re-checked later, make it **executable** — a lint that fails the
+build — or accept that it will be read years later by someone who has never heard of it. *(Worked
+example: the gear display-only ruling, converted from a `conditionalOutcomes` paragraph into
+`tests/lint/test_gear_is_display_only.py`, which fails the build if gear ever becomes persisted,
+synced or polled.)*
+
+### The write fence that reads like a test boundary
+
+**Added 2026-09-09 (Atlas). The finding is Marcus's and the compounding half was Atlas's own.**
+
+**The pattern.** A bench's declared **surface** stops an agent EDITING outside it. It is silently
+read as though it also bounds what the change can BREAK. It does not.
+
+> **A signature change INSIDE a surface breaks callers OUTSIDE it, and nothing in the bench model
+> surfaces that.**
+
+**The worked example.** US-668 was rejected at merge: `pytest tests/ui` failed to **collect** — two
+files, both green on clean trunk. ⚠️ **The compounding half is the instructive one:** the author's
+own regression evidence was *"8 failures on the bench, 8 on trunk, no new failures"*, taken from
+`tests/pi tests/common tests/lint` — **a set chosen from his own surface.** The evidence could not
+detect the regressions that existed. That is the *scope* member, occurring inside the verification
+step meant to catch this.
+
+**The rule, and both halves are required:**
+
+> **A story that DELETES a symbol or CHANGES a signature OWNS every caller of it. Its surface must
+> cover them, or the story is mis-sized.**
+> **And baseline with the SAME command you will claim, across the full affected tree, on BOTH
+> trees.** A correct surface with an agent who still only runs its own subtree fails identically.
+
+**Related:** *scope*, above — this is that member specialised to the bench model, where the fence is
+a real, enforced, useful mechanism that happens to answer a different question from the one a
+reader assumes.
 
 ## Adding New Anti-Patterns
 
