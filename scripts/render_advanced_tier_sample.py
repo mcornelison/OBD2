@@ -11,6 +11,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-165 Spool Gate 2
+# 2026-09-10    | Rex          | US-721: repo root on sys.path -- documented Usage ran
 # ================================================================================
 ################################################################################
 """
@@ -43,6 +44,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+# The repo root too, as src/pi/main.py does: pi.alert.manager imports
+# `src.common.*` and this script imports `tools.pm._paths`, and both resolve only
+# from the root. `python scripts/<this>.py` puts scripts/ on the path, not the cwd.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Headless pygame: choose the 'dummy' SDL video driver so this script runs
 # on CI and SSH sessions without an X server / HDMI output.
