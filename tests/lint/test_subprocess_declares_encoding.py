@@ -46,6 +46,9 @@
 # 2026-09-10    | Rex (US-718) | SUBJECT widened to tools/ -- one token. Reported
 #               |              | the 9 tools/pm sites by name before they were
 #               |              | fixed; sprint_lint + pm_status among them.
+# 2026-09-10    | Rex (US-722) | SUBJECT-side control: an offender planted under
+#               |              | every claimed root, walked by _subjectFiles().
+#               |              | The string-fed controls are detector-side only.
 # ================================================================================
 ################################################################################
 
@@ -89,6 +92,16 @@ own header, three lines up. A textual scan flags its own documentation and is
 red on a clean tree, which is how a lint gets deleted. ``ast`` sees only real
 calls.
 
+Two halves, two kinds of control (US-722)
+-----------------------------------------
+This guard is a DETECTOR (is this call a violation?) applied to a SUBJECT (which
+files, and which calls in them, get looked at). Every burn on record was the
+SUBJECT: ``tests/`` alone while ``src/`` held 15 sites, then 11 seam calls it
+could not resolve. The controls that feed the detector a STRING prove only the
+detector can fail -- they were green through both burns. The subject control
+plants one offender under each root this docstring claims, in a scratch tree,
+and runs the guard's own walk over it.
+
 Known and deliberate limits
 ---------------------------
 The predicate is about what is VISIBLE AT THE CALL SITE. A call that hides its
@@ -128,6 +141,7 @@ from __future__ import annotations
 
 import ast
 import os
+from pathlib import Path
 
 # The subprocess entry points that accept `text=`/`universal_newlines=` and
 # decode the child's bytes on the caller's behalf. `call` and `check_call`
@@ -410,11 +424,15 @@ def findUndeclaredEncodingCalls(source: str, filename: str) -> list[tuple[int, s
     return sorted(offenders)
 
 
-def _subjectFiles() -> list[str]:
-    """Every .py file under the subject roots -- see ``_SUBJECT_ROOTS``."""
+def _subjectFiles(repoRoot: str = _REPO_ROOT) -> list[str]:
+    """Every .py file under the subject roots -- see ``_SUBJECT_ROOTS``.
+
+    ``repoRoot`` exists so US-722's subject control can walk a planted tree
+    through THIS function; the guard itself always walks the real repo.
+    """
     found: list[str] = []
     for root in _SUBJECT_ROOTS:
-        for dirPath, dirNames, fileNames in os.walk(os.path.join(_REPO_ROOT, root)):
+        for dirPath, dirNames, fileNames in os.walk(os.path.join(repoRoot, root)):
             dirNames[:] = [
                 d for d in dirNames if d not in {"__pycache__", ".pytest_cache"}
             ]
@@ -426,8 +444,67 @@ def _subjectFiles() -> list[str]:
     return sorted(found)
 
 
+def _undeclaredEncodingOffenders(repoRoot: str = _REPO_ROOT) -> list[str]:
+    """The guard's whole pipeline -- subject walk, then detector -- without the assert.
+
+    Args:
+        repoRoot: Tree to walk. The guard passes nothing; the subject control
+            passes a planted tree.
+
+    Returns:
+        ``["<relative/path>:<line>  <callee>(..., text=True)", ...]``. Empty is clean.
+    """
+    offenders: list[str] = []
+    for path in _subjectFiles(repoRoot):
+        with open(path, encoding="utf-8") as fh:
+            source = fh.read()
+        for lineNumber, callee in findUndeclaredEncodingCalls(source, path):
+            relative = os.path.relpath(path, repoRoot).replace(os.sep, "/")
+            offenders.append(f"{relative}:{lineNumber}  {callee}(..., text=True)")
+    return offenders
+
+
+# US-722. Where this guard CLAIMS to look -- the four roots its module docstring
+# names -- recorded INDEPENDENTLY of _SUBJECT_ROOTS. A control that planted under
+# each entry of _SUBJECT_ROOTS would narrow in lockstep with the subject and could
+# never fail. One offender per claimed root, nested, each in a burn's own shape:
+# (relative path, source, the offender line the guard must report).
+_PLANTED_OFFENDERS: tuple[tuple[str, str, str], ...] = (
+    (
+        "tests/lint/test_us722_planted.py",
+        "import subprocess\nsubprocess.run(['node', 'p.js'], capture_output=True, text=True)\n",
+        "tests/lint/test_us722_planted.py:2  subprocess.run(..., text=True)",
+    ),
+    (
+        # TD-us710's location and shape: a seam defaulting to subprocess.run.
+        "src/pi/display/us722_planted.py",
+        "import subprocess\n"
+        "def probe(runFn=subprocess.run):\n"
+        "    return runFn(['journalctl'], capture_output=True, text=True)\n",
+        "src/pi/display/us722_planted.py:3  runFn(..., text=True)",
+    ),
+    (
+        # US-717's one entry point that is not `run`.
+        "scripts/us722_planted.py",
+        "import subprocess\nsubprocess.Popen(['python', '-c', 'pass'], text=True)\n",
+        "scripts/us722_planted.py:2  subprocess.Popen(..., text=True)",
+    ),
+    (
+        # tools/ is the thinnest root, and every file in it sits under tools/pm.
+        "tools/pm/_us722_planted.py",
+        "from subprocess import run\nrun(['git', 'rev-parse', 'HEAD'], text=True)\n",
+        "tools/pm/_us722_planted.py:2  run(..., text=True)",
+    ),
+)
+
+
 class TestSubprocessDeclaresEncoding:
-    """The guard, and the positive controls that prove it can still fail."""
+    """The guard, its DETECTOR-side controls, and its SUBJECT-side control.
+
+    US-722: the string-fed controls prove the detector can still fail. They say
+    nothing about which files get walked -- only
+    ``test_subjectControl_offenderPlantedUnderEveryClaimedRoot_isReported`` does.
+    """
 
     def test_everyTextModeSubprocessCall_declaresAnEncoding(self) -> None:
         """
@@ -435,13 +512,7 @@ class TestSubprocessDeclaresEncoding:
         When:  each is parsed and its subprocess call sites resolved
         Then:  none asks for text mode without also declaring an encoding
         """
-        offenders: list[str] = []
-        for path in _subjectFiles():
-            with open(path, encoding="utf-8") as fh:
-                source = fh.read()
-            for lineNumber, callee in findUndeclaredEncodingCalls(source, path):
-                relative = os.path.relpath(path, _REPO_ROOT).replace(os.sep, "/")
-                offenders.append(f"{relative}:{lineNumber}  {callee}(..., text=True)")
+        offenders = _undeclaredEncodingOffenders()
 
         # This message is deliberately ASCII-only. The first draft spelled the
         # mojibake out as `·` -> `Â·`, and the fails-on-purpose run -- which
@@ -766,3 +837,39 @@ class TestSubprocessDeclaresEncoding:
             + ", ".join(f"{root}={len(perRoot[root])}" for root in _SUBJECT_ROOTS)
         )
         assert __file__ in files or os.path.normpath(__file__) in files
+
+    def test_subjectControl_offenderPlantedUnderEveryClaimedRoot_isReported(
+        self, tmp_path: Path
+    ) -> None:
+        """
+        Given: a scratch tree holding ONE known offender under each root this
+               guard claims -- tests/, src/, scripts/, tools/ -- each nested, each
+               in the shape of a real burn
+        When:  the guard's own pipeline (``_subjectFiles`` then the detector) runs
+        Then:  every planted offender is reported, and nothing else is
+
+        🔴 US-722. THIS IS THE SUBJECT-SIDE CONTROL; EVERY CONTROL ABOVE IS
+        DETECTOR-SIDE. Those feed ``findUndeclaredEncodingCalls`` a string and
+        never touch ``_subjectFiles()`` -- and they were green the whole time the
+        guard sat green over the 11 seam sites TD-us710 found. This one walks a
+        planted tree through the function the guard walks the repo with, so a
+        narrowed subject turns it RED.
+
+        The planted locations are ``_PLANTED_OFFENDERS``, NOT derived from
+        ``_SUBJECT_ROOTS`` -- derive them and removing a root removes its plant.
+        """
+        for relative, source, _ in _PLANTED_OFFENDERS:
+            planted = tmp_path.joinpath(*relative.split("/"))
+            planted.parent.mkdir(parents=True, exist_ok=True)
+            planted.write_text(source, encoding="utf-8")
+
+        reported = _undeclaredEncodingOffenders(str(tmp_path))
+
+        expected = [offender for _, _, offender in _PLANTED_OFFENDERS]
+        missed = sorted(set(expected) - set(reported))
+        assert not missed, (
+            "an offender planted where this guard CLAIMS to look was not reported, "
+            f"so the subject no longer covers it: {missed}. "
+            f"Walked roots: {_SUBJECT_ROOTS}"
+        )
+        assert sorted(reported) == sorted(expected)
