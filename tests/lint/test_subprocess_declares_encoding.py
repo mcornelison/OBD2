@@ -857,6 +857,19 @@ class TestSubprocessDeclaresEncoding:
 
         The planted locations are ``_PLANTED_OFFENDERS``, NOT derived from
         ``_SUBJECT_ROOTS`` -- derive them and removing a root removes its plant.
+
+        Measured 2026-09-10, each mutation reverted from the HEAD blob. RED, and
+        the ONLY red, when ``tools`` is dropped from ``_SUBJECT_ROOTS`` with the
+        by-value pin edited to match, and when the walk prunes every ``pi``
+        directory (the per-root floor still counts src=125, tests=414). Also red,
+        beside older pins, for a top-level-only walk and for seam resolution off.
+
+        What it does NOT catch, stated rather than implied: a walk that drops
+        files where nothing is planted. Skipping exactly the three tools/pm files
+        US-718 fixed left THIS test, the per-root floor (tools/ 23 -> 20, floor
+        20) and the guard all green. A plant proves a location, not a census.
+        Nor can it see ``_REPO_ROOT`` resolving wrong -- the tree is passed in;
+        the floor and the ``__file__`` pin own that.
         """
         for relative, source, _ in _PLANTED_OFFENDERS:
             planted = tmp_path.joinpath(*relative.split("/"))

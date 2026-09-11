@@ -933,6 +933,14 @@ class TestSubjectControl:
         that function narrows the plant with it.  Narrow the table set, what the
         aggregation hands a check, or the loader's read of the applied DB, and
         this goes RED while the standing gate stays green over a clean tree.
+
+        Measured 2026-09-10, each mutation reverted from the HEAD blob: the
+        aggregate handing A3 only the delta tables, and the loader booting a
+        fresh DB instead of reading the one it is handed, turned THIS test and
+        nothing else red.  syncedTables() forgetting the snapshot path turned it
+        red beside the two registry pins.  It plants via A3 only -- it proves the
+        gate REACHES every registered table and column, not that each of A4-A6
+        is wired into the aggregate; those stay with their own real-repo tests.
         """
         from src.common.sync.snapshot_registry import SNAPSHOT_SYNC
         from src.pi.data.sync_log import PK_COLUMN

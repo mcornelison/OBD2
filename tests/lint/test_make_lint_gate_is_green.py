@@ -217,6 +217,14 @@ def test_subjectControl_f401PlantedInEveryRecordedPath_turnsTheGateRed(
     run from a narrowed one, so the gate test above is green either way: drop
     path tokens from the command, or add a ruff `extend-exclude`, and only this
     goes red.
+
+    Measured 2026-09-10, each mutation reverted from the HEAD blob: the command
+    cut to `ruff check src/ tests/` (US-603's own predicate) and a ruff
+    `extend-exclude = ["src/pi"]` each turned THIS test and nothing else red --
+    the two ignore-list pins do not read `exclude`. The Makefile dropping
+    tools/pm, and readMakeRecipe truncating the recipe, turned it red beside the
+    recorded-scope pin. What it cannot see: a narrowing that spares every
+    planted file, e.g. an exclude on a directory holding no plant.
     """
     (tmp_path / "pyproject.toml").write_bytes(PYPROJECT.read_bytes())
     for planted in RECORDED_GATE_SCOPE.values():
