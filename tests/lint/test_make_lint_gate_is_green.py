@@ -7,7 +7,14 @@
 #     validate_config.py, tools/pm and specs/golden_code_sample.py. So this test
 #     does not carry a path list of its own: it READS THE RECIPE OUT OF THE
 #     MAKEFILE and runs that. A predicate that re-declares the scope can decay
-#     away from the gate again; one that extracts it cannot.
+#     away from the gate again; one that extracts it cannot drift from the
+#     Makefile -- but it CAN still be narrowed between the Makefile and ruff (a
+#     dropped path token, a ruff `extend-exclude`), and a clean tree stays green
+#     through either. US-722 adds the SUBJECT-side control for that: an F401
+#     planted in every path the gate covers, in a scratch tree carrying the real
+#     ruff config, must turn the gate's own command red. Where to plant is
+#     RECORDED_GATE_SCOPE, pinned equal to the Makefile -- recorded, because a
+#     control that planted only where the extraction pointed would narrow with it.
 #     It also pins the two runtime ordering constraints in
 #     scripts/render_advanced_tier_sample.py, because the "obvious" fix for its
 #     I001 (`ruff check --fix`) hoists `import pygame` above the
@@ -21,6 +28,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-10    | Rex          | Initial -- US-706: the gate itself is the test.
+# 2026-09-10    | Rex          | US-722: subject-side control + recorded scope.
 # ================================================================================
 ################################################################################
 
@@ -56,6 +64,19 @@ PREEXISTING_PER_FILE_IGNORES = {
 # C416, F401 and B007; silencing any of them repo-wide is the forbidden fix.
 PREEXISTING_GLOBAL_IGNORES = {"E501", "B008"}
 
+# US-722. The paths `make lint` covers, recorded by value, each mapped to the file
+# the subject control plants an F401 in (nested where the path is a directory).
+# Recorded rather than extracted: planting only where readMakeRecipe() points
+# would narrow in lockstep with the thing under test.
+RECORDED_GATE_SCOPE: dict[str, str] = {
+    "src/": "src/pi/us722_planted.py",
+    "tests/": "tests/lint/us722_planted.py",
+    "scripts/": "scripts/us722_planted.py",
+    "validate_config.py": "validate_config.py",
+    "tools/pm": "tools/pm/us722_planted.py",
+    "specs/golden_code_sample.py": "specs/golden_code_sample.py",
+}
+
 
 def readMakeRecipe(target: str) -> list[str]:
     """
@@ -88,6 +109,40 @@ def readMakeRecipe(target: str) -> list[str]:
     return recipe
 
 
+def lintGateCommand() -> list[str]:
+    """
+    Build the lint gate's command line from the Makefile's own recipe.
+
+    Returns:
+        The argv to run. The SCOPE comes from the Makefile; only the resolution
+        of the `ruff` executable is an environment detail we may substitute.
+    """
+    tokens = readMakeRecipe("lint")[0].split()
+    if shutil.which("ruff"):
+        return tokens
+    return [sys.executable, "-m", *tokens]
+
+
+def runLintGate(cwd: Path) -> subprocess.CompletedProcess[str]:
+    """
+    Run the lint gate's command with ``cwd`` as the tree it lints.
+
+    Args:
+        cwd: The repo root for the real gate; a planted tree for the subject control.
+
+    Returns:
+        The completed process, stdout and stderr decoded as UTF-8.
+    """
+    return subprocess.run(
+        lintGateCommand(),
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+
 def test_readMakeRecipe_lintTarget_returnsARuffInvocation() -> None:
     """
     Given: the Makefile's lint target
@@ -116,27 +171,75 @@ def test_makeLintGate_currentTree_exitsZero() -> None:
     THIS IS US-706's ACCEPTANCE. Not `ruff check src/ tests/` -- that is the
     narrower predicate that passed while the gate stayed red at 8 errors.
     """
-    tokens = readMakeRecipe("lint")[0].split()
-
-    # The SCOPE comes from the Makefile; only the resolution of the `ruff`
-    # executable is an environment detail we are allowed to substitute.
-    if shutil.which("ruff"):
-        command = tokens
-    else:
-        command = [sys.executable, "-m", *tokens]
-
-    result = subprocess.run(
-        command,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
+    result = runLintGate(REPO_ROOT)
 
     assert result.returncode == 0, (
         "`make lint` is the command every Definition of Done names and it is "
-        f"red.\ncommand: {' '.join(command)}\n{result.stdout}{result.stderr}"
+        f"red.\ncommand: {' '.join(lintGateCommand())}\n{result.stdout}{result.stderr}"
+    )
+
+
+def test_makeLintRecipe_pathArguments_equalTheRecordedScope() -> None:
+    """
+    Given: the path arguments of the Makefile's lint recipe
+    When: they are compared with RECORDED_GATE_SCOPE
+    Then: they are the same set
+
+    US-722. The subject control below plants only where the record says, so the
+    record must not drift from the gate: a path the Makefile gains would go
+    unplanted, and one it loses would be a narrowed gate nobody decided on.
+    """
+    tokens = readMakeRecipe("lint")[0].split()
+    extracted = {token for token in tokens[2:] if not token.startswith("-")}
+
+    assert extracted == set(RECORDED_GATE_SCOPE), (
+        "the lint gate's scope changed. Update RECORDED_GATE_SCOPE on purpose -- "
+        "that is where a widening or narrowing of `make lint` gets recorded.\n"
+        f"in Makefile only: {sorted(extracted - set(RECORDED_GATE_SCOPE))}\n"
+        f"recorded only: {sorted(set(RECORDED_GATE_SCOPE) - extracted)}"
+    )
+
+
+def test_subjectControl_f401PlantedInEveryRecordedPath_turnsTheGateRed(
+    tmp_path: Path,
+) -> None:
+    """
+    Given: a scratch tree carrying the repo's real pyproject.toml, with one F401
+           planted in every path RECORDED_GATE_SCOPE says `make lint` covers
+    When: the gate's own command -- lintGateCommand(), exactly what
+          test_makeLintGate_currentTree_exitsZero runs -- runs in that tree
+    Then: it exits non-zero and names every planted file
+
+    🔴 US-722, AND THIS IS THE HALF THAT BURNED. US-603's predicate was not a
+    broken DETECTOR -- ruff was fine -- it looked at a narrower SUBJECT than the
+    gate and went green over 8 errors. Extraction fixed where the scope is READ;
+    nothing proved the scope survives to ruff. A clean tree cannot tell a full
+    run from a narrowed one, so the gate test above is green either way: drop
+    path tokens from the command, or add a ruff `extend-exclude`, and only this
+    goes red.
+
+    Measured 2026-09-10, each mutation reverted from the HEAD blob: the command
+    cut to `ruff check src/ tests/` (US-603's own predicate) and a ruff
+    `extend-exclude = ["src/pi"]` each turned THIS test and nothing else red --
+    the two ignore-list pins do not read `exclude`. The Makefile dropping
+    tools/pm, and readMakeRecipe truncating the recipe, turned it red beside the
+    recorded-scope pin. What it cannot see: a narrowing that spares every
+    planted file, e.g. an exclude on a directory holding no plant.
+    """
+    (tmp_path / "pyproject.toml").write_bytes(PYPROJECT.read_bytes())
+    for planted in RECORDED_GATE_SCOPE.values():
+        target = tmp_path.joinpath(*planted.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("import os\n", encoding="utf-8")
+
+    result = runLintGate(tmp_path)
+    report = f"{result.stdout}{result.stderr}".replace("\\", "/")
+
+    missed = sorted(planted for planted in RECORDED_GATE_SCOPE.values() if planted not in report)
+    assert result.returncode != 0 and not missed, (
+        "an F401 planted in a path `make lint` covers was not reported, so the "
+        f"gate's subject no longer reaches it: {missed}\n"
+        f"exit: {result.returncode}\ncommand: {' '.join(lintGateCommand())}\n{report}"
     )
 
 

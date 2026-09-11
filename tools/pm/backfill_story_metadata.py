@@ -17,6 +17,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-13    | Rex (Ralph)  | Initial implementation -- US-465 TDD
+# 2026-09-10    | Rex (US-718) | git log pickaxe declares encoding="utf-8"
 # ================================================================================
 ################################################################################
 
@@ -336,7 +337,8 @@ def _gitFirstAppearanceResolver(repoRoot: Path) -> Callable[[str], str | None]:
             result = subprocess.run(  # noqa: S603 -- explicit argv
                 ["git", "log", "--reverse", "--format=%ad", "--date=short",
                  "-S", f'"{storyId}"', "--", backlogRel],
-                cwd=str(repoRoot), capture_output=True, text=True, check=True,
+                cwd=str(repoRoot), capture_output=True, text=True, encoding="utf-8",
+                check=True,
             )
         except (subprocess.CalledProcessError, FileNotFoundError):
             return None

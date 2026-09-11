@@ -33,6 +33,9 @@
  * Created: 2026-07-29 -- Sprint 66 US-499 (S6 render-regression backstop)
  * Updated: 2026-08-31 -- US-638: createElementNS, so the LIVE home face renders
  *          instead of throwing. Additive; no existing behaviour changed.
+ * Updated: 2026-09-10 -- US-719: setAttribute(name, undefined) stores the string
+ *          "undefined", as Chrome/Edge 152 were measured to. textContent left
+ *          as-is: it already matched the browser.
  * ==========================================================================*/
 "use strict";
 
@@ -164,9 +167,14 @@ Element.prototype.hasAttribute = function (name) {
 Element.prototype.getAttribute = function (name) {
   return this.hasAttribute(name) ? this.attributes[name] : null;
 };
+// US-719. The value is a NON-nullable DOMString, so `undefined` is stored as the
+// STRING "undefined" -- measured in Chrome 152 + Edge 152. Storing "" made the
+// harness more forgiving than the browser. (`textContent` is the opposite case
+// and is ALREADY faithful: see its setter. Both are pinned by
+// test_mini_dom_undefined_matches_measured_browser.py.)
 Element.prototype.setAttribute = function (name, value) {
   var hadId = name === "id";
-  this.attributes[name] = value === undefined ? "" : String(value);
+  this.attributes[name] = String(value);
   if (hadId && this.ownerDocument) this.ownerDocument._index(this);
 };
 Element.prototype.removeAttribute = function (name) {

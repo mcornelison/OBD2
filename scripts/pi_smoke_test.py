@@ -265,6 +265,10 @@ def checkDryRun() -> None:
             [sys.executable, mainPy, '--dry-run'],
             capture_output=True,
             text=True,
+            # The child interpreter picks its own stderr codec from ITS locale;
+            # a strict decode turns that into a false FAIL. Only the tail is read.
+            encoding='utf-8',
+            errors='replace',
             timeout=30,
             cwd=str(PROJECT_ROOT)
         )
@@ -290,6 +294,10 @@ def checkSimulateStart() -> None:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # Read on THIS thread, so a strict decode raises into the except
+            # below and reports a running app as failed. The match is ASCII.
+            encoding='utf-8',
+            errors='replace',
             cwd=str(PROJECT_ROOT)
         )
         # Let it run for 5 seconds

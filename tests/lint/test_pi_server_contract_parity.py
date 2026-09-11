@@ -10,6 +10,9 @@
 #     green over the current repo -- a parity guard that has never been seen to
 #     fail is indistinguishable from one that cannot fail (US-459's tuple
 #     compare passed for weeks over a live DB that rejected every foreign row).
+#     Those injections are DETECTOR-side (a synthetic schema handed to a check).
+#     US-722 adds the SUBJECT-side control: a column planted by ALTER into the
+#     real applied Pi DB, in every registered table, must reach the gate.
 # Author: Rex (Ralph Agent)
 # Creation Date: 2026-08-10
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -25,6 +28,8 @@
 #               |              | false.  Rewritten to the inverse, durable
 #               |              | claim: on the synced surface the two Pi loaders
 #               |              | must AGREE.  See that class docstring.
+# 2026-09-10    | Rex (US-722) | TestSubjectControl -- the gate's table/column
+#               |              | REACH proven RED, not just its checks.
 # ================================================================================
 ################################################################################
 
@@ -52,6 +57,7 @@ Run locally::
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -895,6 +901,74 @@ class TestStandingGate:
         )
         assert parity.main([]) == 1
         assert 'DRIFT' in capsys.readouterr().out
+
+
+# A column no server model declares, so a Pi table carrying it is an A3 finding.
+_PLANTED_COLUMN = 'us722_planted_probe'
+
+
+class TestSubjectControl:
+    """US-722: the gate's SUBJECT -- which tables and columns it reaches -- can fail.
+
+    Every mechanism test above is DETECTOR-side: a synthetic schema, usually one
+    table, handed straight to a check function.  The deliberate-mismatch test
+    uses the real schemas but plants into ONE table's already-loaded dict, so
+    the loader and the table set are never exercised.  A guard is a detector
+    applied to a subject, and the burn this file carries -- US-543 asserting the
+    DDL loader's blindness as evidence -- was a subject failure.
+    """
+
+    def test_subjectControl_columnPlantedInEveryRegisteredTable_failsTheGate(
+        self, tmp_path: Path, serverSchema: dict,
+    ) -> None:
+        """
+        Given: a Pi DB built by the real boot path, then ALTERed so EVERY table
+               the sync registries register carries a column no server model has
+        When:  the real loader reads that DB and the aggregate gate runs with its
+               default table set
+        Then:  the gate reports the planted column in every registered table
+
+        The claim comes from PK_COLUMN and SNAPSHOT_SYNC directly, NOT from
+        syncedTables(): derive it from the function under test and narrowing
+        that function narrows the plant with it.  Narrow the table set, what the
+        aggregation hands a check, or the loader's read of the applied DB, and
+        this goes RED while the standing gate stays green over a clean tree.
+
+        Measured 2026-09-10, each mutation reverted from the HEAD blob: the
+        aggregate handing A3 only the delta tables, and the loader booting a
+        fresh DB instead of reading the one it is handed, turned THIS test and
+        nothing else red.  syncedTables() forgetting the snapshot path turned it
+        red beside the two registry pins.  It plants via A3 only -- it proves the
+        gate REACHES every registered table and column, not that each of A4-A6
+        is wired into the aggregate; those stay with their own real-repo tests.
+        """
+        from src.common.sync.snapshot_registry import SNAPSHOT_SYNC
+        from src.pi.data.sync_log import PK_COLUMN
+
+        claimed = sorted(set(PK_COLUMN) | set(SNAPSHOT_SYNC))
+        assert claimed, 'both sync registries are empty -- nothing to plant in'
+
+        dbPath = str(tmp_path / 'obd.db')
+        loadPiAppliedSchema(dbPath)
+        conn = sqlite3.connect(dbPath)
+        try:
+            for table in claimed:
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN {_PLANTED_COLUMN} REAL')
+            conn.commit()
+        finally:
+            conn.close()
+
+        violations = checkContractParity(loadPiAppliedSchema(dbPath), serverSchema)
+
+        reached = {
+            v.table for v in violations
+            if v.assertionId == 'A3' and _PLANTED_COLUMN in v.message
+        }
+        missed = sorted(set(claimed) - reached)
+        assert not missed, (
+            f'a column planted in a registered synced table was not reported, so '
+            f'the gate no longer reaches: {missed}'
+        )
 
 
 class TestGuardDesign:

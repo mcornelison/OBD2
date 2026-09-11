@@ -94,7 +94,9 @@ def runSsh(piHost: str, piUser: str, remoteCmd: str, *, dryRun: bool) -> str:
     if dryRun:
         print(f"[dry-run] ssh {piUser}@{piHost} {remoteCmd!r}")
         return ""
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", timeout=30
+    )
     if result.returncode != 0:
         print(
             f"WARNING: ssh exited {result.returncode}: {result.stderr.strip()}",
@@ -128,9 +130,11 @@ def probeBootForMarker(
     if dryRun:
         runSsh(piHost, piUser, journalctl, dryRun=True)
         return False
+    # Only the returncode is read. errors="replace" because the remote stderr is
+    # not ours to control, and a strict decode would turn a verdict into a crash.
     result = subprocess.run(
         ["ssh", f"{piUser}@{piHost}", journalctl],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     return result.returncode == 0
 

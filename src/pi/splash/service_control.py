@@ -136,6 +136,7 @@ def runServiceAction(
             ["systemctl", verb, unit],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeoutS,
         )
     except Exception as exc:  # subprocess timeout / OSError -> honest failure

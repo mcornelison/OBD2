@@ -75,6 +75,10 @@
 #               |              | recorded-rationale pin and the no-line-box
 #               |              | property. The 6 bearing-number failures in this
 #               |              | file are I-us708b and predate US-697.
+# 2026-09-10    | Ralph (Rex)  | US-719: the empty-detail source pin's stated
+#               |              | REASON corrected -- a browser paints nothing
+#               |              | for `textContent = undefined` (measured,
+#               |              | Chrome/Edge 152). The pin itself is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -555,28 +559,30 @@ def test_headingTile_declaresAnEmptyDetail_ratherThanOmittingTheKey():
     When: its returned tile is read for a `detail` key
     Then: the key is DECLARED and empty -- it was not simply deleted
 
-    THE DISTINCTION IS A REAL DEFECT, NOT PEDANTRY. `appendTile` assigns
-    `detail.textContent = tile.detail` UNCONDITIONALLY, and in a browser
-    assigning `undefined` to `textContent` paints the literal string
-    "undefined". `detail: ""` is the shipped convention for a tile with nothing
-    to say (the SYSTEM OK summary is the precedent).
+    `detail: ""` is the shipped convention for a tile with nothing to say (the
+    SYSTEM OK summary is the precedent): every tile declares its whole
+    label/value/detail/level shape.
 
-    🔴 WHY THIS IS PINNED ON THE SOURCE AND NOT ON THE RENDERED PANEL, WHERE IT
-    BELONGS. I wrote it as a rendered assertion first and the mutation SURVIVED:
-    mini_dom.js:210 sets text only `if (value !== "" && value != null)`, and
-    `!= null` is LOOSE -- so the harness silently swallows `undefined` where a
-    browser would paint it. No rendered assertion in this suite can catch a
-    missing-key defect, in this tile or any other. Filed as TD-us697. Until that
-    is closed the source is the only surface on which this claim is falsifiable,
-    and a source pin that is honest about why beats a rendered pin that cannot
-    fail.
+    ⚠️ CORRECTED BY US-719 -- THE REASON THIS DOCSTRING FIRST GAVE WAS FALSE. Its
+    browser behaviour for `textContent = undefined` was never measured. Measured
+    in Chrome 152 and Edge 152, the read-back is "" with 0 child nodes,
+    identical to "" and null. A deleted key is therefore INVISIBLE on the real
+    panel, not a painted word.
+
+    🔴 WHY THIS IS PINNED ON THE SOURCE AND NOT ON THE RENDERED PANEL. I wrote it
+    as a rendered assertion first and the mutation SURVIVED -- and it survives
+    in the browser too, not only in mini_dom.js, whose `textContent` setter
+    matches the browser, pinned by
+    test_mini_dom_undefined_matches_measured_browser.py. No rendered assertion,
+    harness or real, can catch a missing key, in this tile or any other. The source is the only surface on which
+    this claim is falsifiable; a general contract check is US-726.
     """
     body = rh._fnBody(Path(_CAROUSEL_JS).read_text(encoding="utf-8"), "imuHeadingTile")
 
     assert re.search(r'\bdetail:\s*""', body), (
         "`imuHeadingTile` no longer declares an empty `detail`. If the key was "
-        "DELETED, appendTile will paint `undefined` on the panel -- and this "
-        "suite's harness cannot see it (TD-us697)."
+        "DELETED, the tile paints nothing there -- in the browser and in this "
+        "harness alike -- so no rendered test can see it (US-726)."
     )
 
 

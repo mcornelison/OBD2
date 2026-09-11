@@ -446,6 +446,7 @@ def dashboardMainPid(
             ["systemctl", "show", "-p", "MainPID", "--value", unitName],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=_COMMAND_TIMEOUT_SECONDS,
             check=False,
         )

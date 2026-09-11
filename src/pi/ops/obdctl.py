@@ -214,6 +214,7 @@ def queryState(
             ["systemctl", "show", "-p", "LoadState", "-p", "ActiveState", "--value", unit],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeoutS,
         )
     except Exception:
@@ -511,7 +512,13 @@ def _actOnUnit(
         )
 
     try:
-        proc = runner(command, capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S)
+        proc = runner(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=SYSTEMCTL_TIMEOUT_S,
+        )
         returnCode: int | None = proc.returncode
         stderr = proc.stderr or ""
     except Exception as exc:

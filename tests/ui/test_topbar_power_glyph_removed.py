@@ -35,9 +35,13 @@
 #
 #   BAND BUDGET (F-127): removing a glyph FREES space, and the confirmation the
 #   story asks for lives in test_topbar_three_column_grid.py where the width
-#   model is. See the finding recorded there -- the left cluster overruns its
-#   guaranteed track share TODAY, before and after this story, because the P-6
-#   WiFi glyph shipped five characters wide against a guard that modelled one.
+#   model is. AMENDED by US-720: this said the left cluster overruns its
+#   guaranteed track share "before and after this story". True of the four-glyph
+#   bar on any bound; false of the three-glyph bar once the model charged the Pi
+#   face's measured advance instead of a full-em guess for `⇅` and `•`. After
+#   this story the cluster fits (153.6px of a 168.6px share, confirmed by a real
+#   render). The finding that stands is the guard's: the P-6 WiFi glyph shipped
+#   five characters wide against a guard that modelled one.
 #
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
@@ -50,6 +54,8 @@
 # ================================================================================
 # 2026-09-10    | Ralph (Rex)  | Initial -- US-696 power glyph removal + the pin
 #               |              | that the sensed source outlived its display.
+# 2026-09-10    | Ralph (Rex)  | US-720 -- band-budget note amended to the
+#               |              | measured-advance finding (comment only).
 # ================================================================================
 ################################################################################
 

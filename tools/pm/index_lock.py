@@ -149,12 +149,18 @@ def _listGitProcessNames() -> list[str]:
         OSError / subprocess.SubprocessError: if the probe cannot be run. Callers
             treat that as "cannot determine" and fail safe.
     """
+    # Both probes print OTHER processes' names, in a codec this tool does not
+    # choose (tasklist: the OEM code page; ps: raw bytes). errors="replace" keeps
+    # the ASCII git match intact, and a strict decode would raise ValueError --
+    # which the caller's fail-safe `except (OSError, SubprocessError)` misses.
     if sys.platform.startswith("win"):
         # /FI exact IMAGENAME filter, /NH no header, /FO CSV stable output.
         completed = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq git.exe", "/NH", "/FO", "CSV"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         return [
@@ -162,7 +168,12 @@ def _listGitProcessNames() -> list[str]:
         ]
     # POSIX: -e all processes, -o comm= just the executable name (no header).
     completed = subprocess.run(
-        ["ps", "-e", "-o", "comm="], capture_output=True, text=True, check=False
+        ["ps", "-e", "-o", "comm="],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     return [
         line.strip()

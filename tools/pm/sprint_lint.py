@@ -159,6 +159,7 @@ def _collectChangedFilesSinceRef(repoRoot: Path, sinceRef: str) -> set[str] | No
             cwd=str(repoRoot),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -185,6 +186,7 @@ def _resolveSprintBaseRef(repoRoot: Path, baseBranch: str = "main") -> str | Non
             cwd=str(repoRoot),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):

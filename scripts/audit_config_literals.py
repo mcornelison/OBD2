@@ -224,7 +224,8 @@ def _gitIgnoredPrefixes(repoRoot: Path) -> tuple[str, ...]:
         result = subprocess.run(  # noqa: S603 -- fixed argv, repoRoot from caller
             ["git", "ls-files", "--others", "--ignored", "--exclude-standard",
              "--directory"],
-            cwd=str(repoRoot), capture_output=True, text=True, check=True,
+            cwd=str(repoRoot), capture_output=True, text=True, encoding="utf-8",
+            check=True,
             timeout=60,
         )
     except (OSError, subprocess.SubprocessError):

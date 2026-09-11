@@ -208,6 +208,7 @@ class _FakeDeployRunner:
         *,
         capture_output: bool = False,  # noqa: ARG002 -- match subprocess.run
         text: bool = False,  # noqa: ARG002
+        encoding: str | None = None,  # noqa: ARG002
         check: bool = False,  # noqa: ARG002
         timeout: float | None = None,  # noqa: ARG002
     ) -> subprocess.CompletedProcess[str]:
@@ -669,6 +670,7 @@ class _FailFullDeployRunner(_FakeDeployRunner):
         *,
         capture_output: bool = False,  # noqa: ARG002
         text: bool = False,  # noqa: ARG002
+        encoding: str | None = None,  # noqa: ARG002
         check: bool = False,  # noqa: ARG002
         timeout: float | None = None,  # noqa: ARG002
     ) -> subprocess.CompletedProcess[str]:
@@ -688,6 +690,7 @@ class _FailFullDeployRunner(_FakeDeployRunner):
             cmd,
             capture_output=capture_output,
             text=text,
+            encoding=encoding,
             check=check,
             timeout=timeout,
         )

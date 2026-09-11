@@ -18,8 +18,12 @@
 #     3. the WIDTH BOUND (AC-4). `1fr` is `minmax(auto, 1fr)`, so a side track
 #        that outgrows its free-space share pushes the centre track off centre.
 #        Centring is therefore structural UP TO a measurable bound, and the
-#        bound is asserted here rather than asserted away -- including with the
-#        Atlas-gated P-6 WiFi glyph added, which is AC-4's actual question.
+#        bound is asserted here rather than asserted away. US-720: every
+#        character is charged the Pi mono face's MEASURED advance, a character
+#        with no measurement FAILS rather than being guessed, and the guard is
+#        proven to go red on a glyph planted in the shipped markup -- the P-6
+#        guard this replaced certified a one-character placeholder and a
+#        five-character glyph shipped.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -29,6 +33,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-21    | Ralph (Rex)  | Initial -- US-555 top-bar three-column grid.
+# 2026-09-10    | Ralph (Rex)  | US-720 -- measured-advance width model; left
+#               |              | guard restored; planted-glyph subject controls.
 # ================================================================================
 ################################################################################
 
@@ -42,6 +48,7 @@ import re
 import pytest
 
 from tests.ui.css_type_scale import readCss, ruleBlock
+from tests.ui.test_gforce_tile_width_budget import ADVANCE_OBSERVED as PI_MONO_ADVANCE_EM
 
 _DIST = os.path.join(
     os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"
@@ -55,17 +62,31 @@ _CSS_PATH = os.path.join(_DIST, "dashboard.css")
 # `--scale`. Pinned below by test_theWidthCheckCanvasIsTheAuthoredStageBox.
 STAGE_WIDTH_PX = 480
 
-# Monospace advance as a fraction of the font size. 0.6em is the WIDEST advance
-# among the faces `--font-mono` actually names (Menlo / DejaVu Sans Mono are
-# ~0.602em; Consolas is 0.550em; the ui-monospace resolutions -- SF Mono,
-# Cascadia Mono -- are 0.60em), so every width this model reports is an UPPER
-# BOUND and a pass here passes on the narrower faces too.
-MONO_ADVANCE_EM = 0.6
-
-# A non-ASCII pictograph is NOT served from the mono face -- it falls through to
-# a symbol font, where the advance is typically full-em. Modelled at 1.0em so
-# the glyph cluster is over-estimated rather than under-estimated.
-SYMBOL_ADVANCE_EM = 1.0
+# PI_MONO_ADVANCE_EM (imported above) is the advance this model charges, as a
+# fraction of the font size. It is a MEASUREMENT of the face `--font-mono`
+# resolves to under Chromium on the Pi -- DejaVu Sans Mono, 1233 of 2048 units
+# per em -- and it is imported from the file that calibrated it against Atlas's
+# wrap observation rather than restated here. One fact, one copy.
+#
+# US-720 REPLACED A GUESS. This model used to charge ASCII 0.6em and "anything
+# else" a full 1.0em, on the theory that a non-ASCII pictograph falls through to
+# a symbol font. For the glyphs this bar carries, that theory is false: DejaVu
+# Sans Mono holds `⇅` (U+21C5) and `•` (U+2022) itself, at the same 1233-unit
+# advance as every ASCII character. Measured two ways, 2026-09-10:
+#   - the face's own hmtx/cmap tables (fontTools, DejaVu Sans Mono 2.35): all 95
+#     printable ASCII characters, `⇅` and `•` are 1233 units; `⋮` is ABSENT;
+#   - a real render (headless Chrome 152; the real dashboard.html +
+#     dashboard.css with the face embedded as --font-mono, stage at 480px):
+#     `BT` 33.39px, `⇅` 16.70px, `((•))` 83.47px, left cluster 153.56px, clock
+#     102.73px, right cluster 121.45px -- each within 0.02px of this model.
+# Neither `⇅` nor `•` has default emoji presentation, so the browser serves both
+# from the primary face; the render confirms it.
+#
+# The characters MEASURED present in that face at that advance. Deliberately
+# not a rule like `isascii()`: a character the face lacks is painted by a
+# FALLBACK face at a different advance, and this model has no honest number for
+# it. `_textWidthPx` fails on one instead -- the thing the P-6 guard could not do.
+_MEASURED_IN_FACE = frozenset(map(chr, range(0x20, 0x7F))) | frozenset("⇅•")
 
 # The longest string the clock can hold: `fmtClock` renders 12-hour with a
 # meridiem, so "12:45 PM" (8 chars) is the maximum, never "9:05 AM".
@@ -159,16 +180,33 @@ def _shorthandPx(block: str, prop: str, index: int) -> float:
 
 
 def _textWidthPx(text: str, fontSizePx: float, letterSpacingEm: float) -> float:
-    """Upper-bound rendered width of a run of text in the bar.
+    """Rendered width of a run of text in the bar, at the MEASURED advance.
 
-    ASCII is charged the mono advance; anything else is charged a full em (see
-    the module constants for why both figures are upper bounds).
+    Letter-spacing is charged after every character, the last one included,
+    because that is what Chrome paints: `BT` rendered 33.39px, which is
+    2 x 26 x (0.60205 + 0.04).
+
+    Args:
+        text: the run as the markup carries it.
+        fontSizePx: the run's font size.
+        letterSpacingEm: the run's letter-spacing, em.
+
+    Returns:
+        The width in CSS px.
+
+    Raises:
+        AssertionError: the run carries a character with no measured advance in
+            the Pi's mono face. A guessed width is how a five-character glyph
+            passed a one-character model, so this refuses to guess.
     """
-    total = 0.0
-    for char in text:
-        advance = MONO_ADVANCE_EM if char.isascii() else SYMBOL_ADVANCE_EM
-        total += fontSizePx * (advance + letterSpacingEm)
-    return total
+    unmeasured = sorted({char for char in text if char not in _MEASURED_IN_FACE})
+    assert not unmeasured, (
+        f"{text!r} carries {', '.join(f'U+{ord(char):04X}' for char in unmeasured)} "
+        "with no measured advance in the Pi's mono face -- measure it (the face's "
+        "hmtx table, or a real render) and record it in _MEASURED_IN_FACE; do not "
+        "charge it a guessed width (US-720)"
+    )
+    return len(text) * fontSizePx * (PI_MONO_ADVANCE_EM + letterSpacingEm)
 
 
 class _BarModel:
@@ -381,16 +419,26 @@ def test_theWidthCheckCanvasIsTheAuthoredStageBox():
     assert "transform: scale(var(--scale, 1))" in stage
 
 
-def _shippedLeftGlyphs() -> list[str]:
+def _shippedLeftGlyphs(html: str | None = None) -> list[str]:
     """The glyph TEXTS the left cluster actually paints, READ from the markup.
 
-    Read rather than restated, and that distinction is the whole of TD-us696
-    below. Every budget assertion in this section used to be made against a
+    Read rather than restated, and that distinction is the whole of TD-us696.
+    Every budget assertion in this section used to be made against a
     hand-written `["BT", "⇅", "⚡"]`, which described the bar only until the
     next glyph landed -- and when one did, nothing forced the list to notice.
     A list derived from the markup cannot drift away from the bar it measures.
+    The markup IS the runtime set: carousel.js only ever flips a glyph's
+    `data-state`, never its text.
+
+    Args:
+        html: the markup to read; the shipped dashboard.html when omitted. The
+            seam exists so the subject controls below can plant a glyph and put
+            it through THIS reader rather than a copy of it.
+
+    Returns:
+        The left cluster's glyph texts in document order.
     """
-    inner = _topbarMarkup(_readHtml())
+    inner = _topbarMarkup(_readHtml() if html is None else html)
     left = re.search(r'<div class="topbar-left">(.*?)</div>', inner, re.DOTALL)
     assert left is not None, "the left cluster must exist to be measured"
     glyphs = re.findall(r'<span class="glyph"[^>]*>([^<]*)</span>', left.group(1))
@@ -402,16 +450,16 @@ def test_theShippedGlyphListIsReadFromTheMarkup_notRestated():
     """The non-degeneracy pin for `_shippedLeftGlyphs`, and it earns its place.
 
     The EMPTY case is already caught inside the helper (`assert glyphs`), so
-    this pin is not needed for that. What it catches is the case that survives
-    everything else: a regex that returns something NON-EMPTY BUT WRONG.
+    this pin is not needed for that. What it catches is a read that is
+    NON-EMPTY BUT WRONG.
 
-    Measured, not assumed. Mutating the capture to read the `data-state`
-    attribute instead of the element text yields `["neutral"] * 3` -- three
-    plausible-looking strings, so the helper's own assert passes. Both
-    characterisation tests below SURVIVE it, because they assert `> share` and a
-    too-wide fixture satisfies that trivially. Only this test dies, on `"BT" in
-    glyphs`. A `>` assertion cannot notice being fed something too big; that is
-    the honest weakness of the characterisation form and this is its counterweight.
+    US-696 measured the shape: mutating the capture to read the `data-state`
+    attribute instead of the element text yields `["neutral"] * 3`, three
+    plausible-looking strings that pass the helper's own assert -- and both of
+    that era's `> share` characterisations survived it. The `<=` guard US-720
+    restored would not survive that one; it WOULD survive a wrong read that is
+    too NARROW. Each width assertion here is a relation, and a relation is
+    satisfied by a wrong read in one direction or the other. Membership is not.
     """
     glyphs = _shippedLeftGlyphs()
     assert "BT" in glyphs
@@ -423,9 +471,9 @@ def test_rightClusterFitsItsGuaranteedTrackShare():
     """AC-2's "regardless of version-string length" holds only while the cluster
     fits the free-space share its `1fr` is guaranteed.
 
-    SPLIT from the left cluster by US-696. The right side genuinely fits and
-    this stays a real guard; the left side does not, and says so below rather
-    than being carried along by a shared assertion.
+    US-696 split this from the left cluster when the left side appeared not to
+    fit. US-720 measured that it does, and restored the left guard beside this
+    one. A real render put the right cluster at 121.45px, equal to this model.
     """
     model = _BarModel(readCss(_CSS_PATH))
     share = model.sideTrackShare()
@@ -438,8 +486,11 @@ def test_theBarIsNotOverBudgetAcrossItsFullWidth():
 
     THIS is the assertion that means "nothing reflows into a second row", and it
     is the one US-696's band-budget criterion turns on. Measured on the glyphs
-    the bar actually paints. Headroom went from 5.4px to 42.5px when US-696
-    removed the bolt -- removing a glyph frees space, as that story predicted.
+    the bar actually paints, at the measured advance: 397.7px of 460.0px. (The
+    5.4px -> 42.5px headroom US-696 recorded was on the full-em guess US-720
+    retired.) It is NOT the centring guard -- a glyph small enough to fit this
+    headroom can still push the clock off the midpoint, which is why the left
+    guard below exists.
     """
     model = _BarModel(readCss(_CSS_PATH))
     used = (
@@ -451,74 +502,78 @@ def test_theBarIsNotOverBudgetAcrossItsFullWidth():
     assert used <= model.usable, f"{used:.1f}px used of {model.usable:.1f}px"
 
 
-def test_leftClusterStillOverrunsItsTrackShare_us696NarrowedItButDidNotCloseIt():
-    """CHARACTERISATION, filed as TD-us696 -- recorded, deliberately NOT fixed.
-
-    THE FINDING. `test_aFourthGlyphStillFits_soP6DropsInWithNoRelayout` used to
-    stand here and made "P-6 drops in with zero re-layout" a measured claim. It
-    modelled the incoming glyph as a one-character `▾` at 27.0px. The glyph that
-    actually shipped (ARCH-007) is the five-character `((•))` at 93.6px -- 3.5x
-    the placeholder. So the guard passed, P-6 landed, and the left cluster went
-    over its guaranteed share anyway. A guard that is real, that passes, and
-    that cannot detect the class of change it exists to catch: this sprint's own
-    thesis, in the band budget.
-
-    THE OVERRUN IS REAL, NOT A MODEL ARTEFACT. This model reports UPPER bounds
-    (MONO_ADVANCE_EM / SYMBOL_ADVANCE_EM are both worst-case), so an overrun it
-    reports could in principle be slack. Re-measured with every character at the
-    mono advance -- the optimistic bound -- the four-glyph bar was still over:
-    175.6px against a 168.8px share. Over on BOTH bounds.
-
-    WHAT US-696 DID TO IT. Removing the bolt took the cluster from 211.0px to
-    173.9px against the same 168.8px share: the overrun falls from +42.2px to
-    +5.1px on this bound, and the optimistic bound now FITS at 150.0px. So the
-    story improved the condition by 37.1px and did not close it, which is why
-    this is pinned rather than asserted away.
-
-    IT IS NOT US-696'S TO FIX -- that story's own conditionalOutcomes say a
-    band-budget finding "belongs in its own story". The consequence is bounded:
-    a `1fr` is `minmax(auto, 1fr)`, so an oversized cluster grows its track and
-    the CLOCK DRIFTS off the bar's midpoint. It does not wrap to a second row --
-    the full-width budget above passes with 42.5px to spare.
-
-    A fix that brings the cluster back under its share FAILS THIS TEST ON
-    PURPOSE. That is the point: delete it then, do not weaken it.
-    """
+def _leftClusterFit(html: str | None = None) -> tuple[float, float]:
+    """(left cluster width, its guaranteed track share) for the given markup."""
     model = _BarModel(readCss(_CSS_PATH))
-    share = model.sideTrackShare()
-    left = model.leftClusterWidth(_shippedLeftGlyphs())
-    assert left > share, (
-        f"left cluster {left:.1f}px is now within its {share:.1f}px share -- "
-        "TD-us696 is FIXED. Delete this characterisation and restore the "
-        "`left <= share` guard alongside test_rightClusterFitsItsGuaranteedTrackShare."
+    return model.leftClusterWidth(_shippedLeftGlyphs(html)), model.sideTrackShare()
+
+
+def _assertLeftClusterFits(html: str | None = None) -> None:
+    """The left-cluster guard's body, shared by the guard and its subject controls.
+
+    Args:
+        html: the markup to measure; the shipped dashboard.html when omitted.
+
+    Raises:
+        AssertionError: the cluster is wider than its share, or carries a
+            character with no measured advance.
+    """
+    left, share = _leftClusterFit(html)
+    assert left <= share, (
+        f"left cluster {left:.1f}px exceeds its {share:.1f}px share by "
+        f"{left - share:.1f}px -- a `1fr` track grows to fit its content, so the "
+        "clock leaves the bar's midpoint. A new glyph here is a re-layout."
     )
 
 
-def test_theNextGlyphIsARelayout_notADropIn():
-    """The successor to `test_aFourthGlyphStillFits_soP6DropsInWithNoRelayout`,
-    and the correction of its method.
+def test_leftClusterFitsItsGuaranteedTrackShare():
+    """RESTORED by US-720 -- the positive guard TD-us696 asked for.
 
-    That guard's failure was not its arithmetic -- it was modelling a HYPOTHETICAL
-    glyph at a width nobody had committed to. So this one models the next glyph
-    at the width of the WIDEST GLYPH ALREADY ON THE BAR, which is the only glyph
-    width this project has real evidence for. On that basis the answer today is
-    NO: a fourth glyph does not fit, and whoever adds one is doing a re-layout.
+    WHY THE TWO TESTS THAT STOOD HERE WENT. `..._us696NarrowedItButDidNotCloseIt`
+    asserted `left > share`; `test_theNextGlyphIsARelayout_notADropIn` asserted
+    `withNext > share`. Both shared the P-6 guard's blind spot in a new form:
+    each was SATISFIED BY THE CLUSTER GROWING. Measured: plant a fourth glyph in
+    the shipped markup and that file stayed 17 of 17 green -- while a real
+    render of the pre-US-696 four-glyph bar puts the clock 11.63px off the
+    bar's midpoint for an 11.6px overrun. This assertion fails in the direction
+    that matters.
 
-    Stated as the honest negative rather than dropped. "We do not know if the
-    next glyph fits" and "the next glyph does not fit" are different facts, and
-    the first is what the deleted guard was really asserting.
+    WHY IT PASSES, stated plainly because the verdict FLIPPED. Before US-720 this
+    file reported the three-glyph cluster +5.1px over. That was the model, not
+    the bar: it charged `⇅` and `•` a full em for a fallback face they never use.
+    At the face's measured advance the cluster is 153.6px against a 168.6px
+    share. The flip is not a re-tuned number -- a real render agrees
+    independently: the grid resolves to 168.625px / 102.734px / 168.641px and
+    the clock's centre sits 0.008px from the bar's midpoint.
+    """
+    _assertLeftClusterFits()
+
+
+def test_noFourthGlyphOfAnyWidthDropsIn_theHeadroomIsNarrowerThanOneCharacter():
+    """The honest successor to `test_aFourthGlyphStillFits_soP6DropsInWithNoRelayout`.
+
+    That guard modelled the incoming glyph as a one-character `▾`; US-696's
+    replacement modelled it at the widest glyph already shipped. Both modelled
+    a glyph nobody had committed to, which is the method US-720 retires. This
+    models NO future glyph. It compares the headroom left in the track with the
+    narrowest glyph a monospace bar can carry -- one character plus the cluster
+    gap -- so the answer holds for every glyph anyone could add.
+
+    Today: 15.1px of headroom against 26.7px. No fourth glyph drops in; adding
+    one is a re-layout, and `test_leftClusterFitsItsGuaranteedTrackShare` is what
+    turns red when someone tries.
+
+    This fails if the headroom GROWS past one character (a glyph narrowed or
+    removed). Re-state the claim then, with the new number; do not delete it.
     """
     model = _BarModel(readCss(_CSS_PATH))
-    glyphs = _shippedLeftGlyphs()
-    widest = max(
-        _textWidthPx(glyph, model.glyphSize, model.glyphSpacing) for glyph in glyphs
-    )
-    withNext = model.leftClusterWidth(glyphs) + model.leftGap + widest
-    share = model.sideTrackShare()
-    assert withNext > share, (
-        f"a 4th glyph at the widest shipped width takes the cluster to "
-        f"{withNext:.1f}px against a {share:.1f}px share -- if this now fits, "
-        "TD-us696 has been fixed and this guard should be re-stated positively."
+    left, share = _leftClusterFit()
+    narrowestGlyph = model.leftGap + _textWidthPx("x", model.glyphSize, model.glyphSpacing)
+    headroom = share - left
+    assert headroom < narrowestGlyph, (
+        f"{headroom:.1f}px of headroom now holds a one-character glyph "
+        f"({narrowestGlyph:.1f}px with its gap) -- the bar has room for another "
+        "glyph again; re-state this as the positive claim"
     )
 
 
@@ -533,3 +588,68 @@ def test_theWidthModelCanFail_negativeControl(version: str):
     length, not unconditionally."""
     model = _BarModel(readCss(_CSS_PATH))
     assert model.rightClusterWidth(version) > model.sideTrackShare()
+
+
+# ---------------------------------------------------------------------------
+# US-720 -- SUBJECT controls for the left-cluster guard. A guard is
+# `detector ∘ subject`, and the P-6 burn was the SUBJECT: the model was fed a
+# glyph narrower than the one that shipped. So each control plants a glyph where
+# the guard CLAIMS to look -- the shipped markup's left cluster -- and runs it
+# through the guard's own reader, model and assertion.
+# ---------------------------------------------------------------------------
+
+
+def _plantLeftGlyph(html: str, text: str) -> str:
+    """The markup with one more glyph at the END of the left cluster.
+
+    Placed by the cluster's own opening tag, NOT by `_shippedLeftGlyphs`: a
+    plant positioned by the reader under test moves with any narrowing of that
+    reader, and the control stays green forever (US-722).
+
+    Args:
+        html: the markup to plant into.
+        text: the planted glyph's text.
+
+    Returns:
+        The planted markup.
+    """
+    opener = '<div class="topbar-left">'
+    close = html.index("</div>", html.index(opener))
+    plant = f'<span class="glyph" id="glyph-planted" data-state="neutral">{text}</span>'
+    return html[:close] + plant + html[close:]
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        pytest.param("((•))", id="a-glyph-as-wide-as-the-one-that-shipped"),
+        pytest.param("x", id="one-character-the-narrowest-glyph-there-is"),
+    ],
+)
+def test_aPlantedGlyphTurnsTheLeftGuardRed_subjectControl(planted: str):
+    """Validation 1: add a glyph wider than the headroom and the guard FAILS.
+
+    The five-character plant is the width that actually shipped. The
+    one-character plant is the P-6 placeholder's width, and the stronger case:
+    the old file certified exactly that width as a drop-in, and it too is red.
+    """
+    html = _plantLeftGlyph(_readHtml(), planted)
+    assert _shippedLeftGlyphs(html)[-1] == planted, (
+        "the plant was not read by the guard's own reader -- a red below would prove nothing"
+    )
+    with pytest.raises(AssertionError, match="exceeds its"):
+        _assertLeftClusterFits(html)
+
+
+def test_aPlantedGlyphTheFaceLacksTurnsTheLeftGuardRed_notAGuess_subjectControl():
+    """A glyph the Pi's mono face cannot paint fails as UNMEASURED, not as a width.
+
+    `⋮` is the kebab's own character and it is ABSENT from DejaVu Sans Mono
+    (measured: no cmap entry), so on the Pi it would be served by a fallback
+    face at an advance this model does not know. Charging it anyway -- at the
+    mono advance, or at a full em -- is the guess US-720 removed.
+    """
+    html = _plantLeftGlyph(_readHtml(), "⋮")
+    assert _shippedLeftGlyphs(html)[-1] == "⋮", "the plant was not read by the guard's reader"
+    with pytest.raises(AssertionError, match="no measured advance"):
+        _assertLeftClusterFits(html)

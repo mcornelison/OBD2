@@ -74,7 +74,7 @@ def getBranchTip(branchName: str) -> tuple[str | None, str | None]:
     """
     revParse = subprocess.run(
         ["git", "rev-parse", "--short", branchName],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     if revParse.returncode != 0:
         return (None, None)
@@ -82,7 +82,7 @@ def getBranchTip(branchName: str) -> tuple[str | None, str | None]:
 
     show = subprocess.run(
         ["git", "show", f"{branchName}:deploy/RELEASE_VERSION"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     if show.returncode != 0:
         return (hashStr, "unknown")

@@ -217,10 +217,13 @@ html, body {
    THE ONE BOUND, stated because `1fr` hides it: `1fr` is `minmax(auto, 1fr)`,
    so a side track whose CONTENT is wider than its share of the free space grows
    past `1fr` and pushes the centre track off centre. Centring is structural up
-   to that bound, not unconditionally. The bound is measured -- and re-measured
-   with the Atlas-gated P-6 WiFi glyph added to the left cluster -- by
-   tests/ui/test_topbar_three_column_grid.py, which is also what makes "P-6
-   drops in with no re-layout" a checked claim instead of a hope. */
+   to that bound, not unconditionally. The bound is measured on the glyphs the
+   markup actually carries, at the Pi mono face's measured advance, by
+   tests/ui/test_topbar_three_column_grid.py. It is NOT a promise that another
+   glyph drops in: US-720 measured the headroom left as narrower than a single
+   character, so the next glyph is a re-layout. (This comment used to call "P-6
+   drops in with no re-layout" a checked claim. The check modelled a
+   one-character placeholder and the glyph that shipped was five -- TD-us696.) */
 /* US-557: the height is --bar-h, and it GREW 28 -> 34. This bar was the one
    band genuinely under-sized for its own contents -- 26px glyphs and a 40px
    kebab button in a 28px stripe -- which is what pushed the ⋮ outside the

@@ -3529,11 +3529,14 @@
       // about a real defect, so removing it hides nothing it was successfully
       // communicating.
       //
-      // EMPTY STRING, NOT AN ABSENT KEY. `appendTile` assigns
-      // `detail.textContent = tile.detail` unconditionally, so dropping the key
-      // paints the word `undefined` on the panel. "" is the shipped convention
-      // for a tile with nothing to say. `.tile-detail` reserves no height, so
-      // the empty span costs no line box.
+      // EMPTY STRING, NOT AN ABSENT KEY. "" is the shipped convention for a
+      // tile with nothing to say: every tile declares its whole shape. NOT
+      // because a dropped key would paint a word -- `appendTile` assigns
+      // `detail.textContent = tile.detail` unconditionally, and a browser
+      // paints NOTHING for `undefined` there (measured, Chrome/Edge 152,
+      // US-719). That is exactly why a dropped key would go unseen, on the
+      // panel and in the render harness alike (US-726). `.tile-detail`
+      // reserves no height, so the empty span costs no line box.
       detail: "",
       level: "neutral",
       deg: d,

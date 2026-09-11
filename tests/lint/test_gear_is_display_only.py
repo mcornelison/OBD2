@@ -25,6 +25,9 @@
 # 2026-09-08    | Rex (US-693) | Initial -- three surfaces (applied schemas, the
 #               |              | sync table registries, the poll list), each
 #               |              | proven RED by an injected gear leak.
+# 2026-09-10    | Rex (US-723) | Docstring only -- fourth NOT-COVER bullet, in
+#               |              | Spool's wording: an analytic inferring Park
+#               |              | from a GAP in realtime_data.
 # ================================================================================
 ################################################################################
 
@@ -64,6 +67,12 @@ than a narrow one that does not"):
 * **The simulator's internal ``gear``.**  ``sensor_simulator.py`` carries a gear
   as an INPUT it uses to compute a synthetic SPEED.  It is not a reading, never
   reaches a schema, and is deliberately out of scope.
+* This guard catches gear becoming PERSISTED, SYNCED or POLLED. It does not
+  catch an analytic that infers vehicle state from the ABSENCE of rows -- e.g.
+  treating a gap in realtime_data as 'parked'. That inference is the same
+  defect the P ruling set aside, re-created in a record. Gaps in this corpus
+  are known to be caused by dongle disconnection, reconnect failure and
+  ungraceful shutdown, none of which are Park.
 
 Run::
 
