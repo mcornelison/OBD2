@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_subprocess_declares_encoding.py
 # Purpose/Description: US-597 (TD-068 + TD-084) -- guard against a subprocess
-#                      call under tests/, src/ or scripts/ that asks for TEXT mode without
+#                      call under tests/, src/, scripts/ or tools/ that asks for TEXT mode without
 #                      DECLARING the encoding it wants that text decoded with.
 #
 #                      `subprocess.run(..., text=True)` with no `encoding=`
@@ -43,10 +43,13 @@
 #               |              | _SUBJECT_ROOTS. Reported the 12 sites (one a
 #               |              | Popen) by name before they were fixed. Per-root
 #               |              | floor 50 -> 20: scripts/ holds 41 files.
+# 2026-09-10    | Rex (US-718) | SUBJECT widened to tools/ -- one token. Reported
+#               |              | the 9 tools/pm sites by name before they were
+#               |              | fixed; sprint_lint + pm_status among them.
 # ================================================================================
 ################################################################################
 
-"""AST guard: a text-mode subprocess call under ``tests/``, ``src/`` or ``scripts/`` must declare ``encoding=``.
+"""AST guard: a text-mode subprocess call under ``tests/``, ``src/``, ``scripts/`` or ``tools/`` must declare ``encoding=``.
 
 Why ``src/`` joined the subject (US-710 / TD-us597)
 ---------------------------------------------------
@@ -144,12 +147,12 @@ _TESTS_ROOT = os.path.normpath(
 )
 _REPO_ROOT = os.path.normpath(os.path.join(_TESTS_ROOT, os.pardir))
 
-# The trees this guard walks. US-710 added `src`, US-717 `scripts`. All are
-# relative to the repo root and EVERY one is asserted non-empty below -- an
-# unwalkable root is byte-identical to a clean one, which is how this guard
-# would pass forever while testing nothing. `tools` is deliberately absent until
-# its sites are fixed (US-718): a guard red on a tree nobody may touch is US-706.
-_SUBJECT_ROOTS = ("tests", "src", "scripts")
+# The trees this guard walks. US-710 added `src`, US-717 `scripts`, US-718
+# `tools` (its 9 sites fixed in the same story, so the guard was never red on a
+# tree nobody may touch -- US-706). All are relative to the repo root and EVERY
+# one is asserted non-empty below -- an unwalkable root is byte-identical to a
+# clean one, which is how this guard would pass forever while testing nothing.
+_SUBJECT_ROOTS = ("tests", "src", "scripts", "tools")
 
 
 def _isLiteralFalse(node: ast.expr) -> bool:
@@ -428,7 +431,7 @@ class TestSubprocessDeclaresEncoding:
 
     def test_everyTextModeSubprocessCall_declaresAnEncoding(self) -> None:
         """
-        Given: every .py file under tests/, src/ and scripts/ -- this guard's subject
+        Given: every .py file under tests/, src/, scripts/ and tools/ -- this guard's subject
         When:  each is parsed and its subprocess call sites resolved
         Then:  none asks for text mode without also declaring an encoding
         """
@@ -747,9 +750,9 @@ class TestSubprocessDeclaresEncoding:
             ]
             for root in _SUBJECT_ROOTS
         }
-        assert set(_SUBJECT_ROOTS) == {"tests", "src", "scripts"}, (
+        assert set(_SUBJECT_ROOTS) == {"tests", "src", "scripts", "tools"}, (
             "the declared subject changed; US-710 widened it to tests/ and src/, "
-            f"US-717 to scripts/ -- this run walked {_SUBJECT_ROOTS}"
+            f"US-717 to scripts/, US-718 to tools/ -- this run walked {_SUBJECT_ROOTS}"
         )
         # The failure this catches is a walk that yields ZERO files. The floor
         # was 50 until US-717: scripts/ holds 41, so a floor above the smallest
