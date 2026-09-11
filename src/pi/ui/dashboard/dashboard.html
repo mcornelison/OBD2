@@ -34,10 +34,10 @@
     <!-- US-555 (F-132): the bar is a `1fr auto 1fr` grid and must have EXACTLY
          THREE children -- left cluster, clock, right cluster. The clusters are
          not decoration: five children in a three-column template wrap into an
-         implicit second row that a 28px bar clips. The P-6 WiFi glyph, when
-         Atlas's contract lands, joins the LEFT cluster and needs no re-layout;
-         the width bound that makes that true is asserted in
-         tests/ui/test_topbar_three_column_grid.py. -->
+         implicit second row that a 28px bar clips. The P-6 WiFi glyph joined
+         the LEFT cluster (ARCH-007). The width bound that keeps the clock on the
+         bar's midpoint is asserted in tests/ui/test_topbar_three_column_grid.py,
+         and it says a FOURTH glyph does not fit without a re-layout (US-720). -->
     <div class="topbar-left">
       <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
       <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
