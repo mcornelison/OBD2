@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.46",
-  "theme": "Sprint 83 -- instruments say what they support",
-  "description": "US-708: gradePct was computed from the car ROLL -- the code assumed X=forward when X is lateral. One boundary transform, three readouts. US-700 tiles could not tell loading from broken. US-706 make lint exits 0 -- the gate command, not a narrower substitute. US-712 an exit code that was 1 for three reasons. Plus CIO display rulings and BATTERY wired to UPS soc."
+  "version": "V0.29.47",
+  "theme": "Sprint 84 -- every burn was a subject failure",
+  "description": "A guard is detector-compose-subject and every recorded burn is a SUBJECT failure -- it looked in the wrong place, not at the wrong thing. US-722 adds subject-side controls to the three guards that burned us. US-716 the encoding guard was blind to 11 injected seams. US-724 a no-caller check for two of three dead-code shapes. US-719 re-targeted after a two-engine browser probe refuted its premise."
 }
