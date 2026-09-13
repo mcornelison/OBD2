@@ -28,6 +28,8 @@
 #               |              | dashboard assets joined the gate; an absent
 #               |              | obdProbeFn now reports OBD_NOT_PROBED instead of
 #               |              | claiming "starting" forever.
+# 2026-09-13    | Ralph (Rex)  | US-737: ensureStatesDir docstring corrected --
+#               |              | systemd does NOT ref-count the shared runtime dir.
 # ================================================================================
 ################################################################################
 
@@ -209,7 +211,10 @@ def ensureStatesDir(statesDir: str) -> None:
 
     Part of the C-5 contract: the F-103 units provision ``states/`` themselves
     so it exists independent of eclipse-obd.service (whose ``RuntimeDirectory``
-    is ref-counted + removed on stop and never creates the ``states/`` subdir).
+    makes only the parent dir, never the ``states/`` subdir).
+    systemd does not ref-count a shared ``RuntimeDirectory``; the dir survives a
+    sharer's stop only because every sharer declares
+    ``RuntimeDirectoryPreserve=yes`` (US-737).
     """
     Path(statesDir).mkdir(parents=True, exist_ok=True)
 

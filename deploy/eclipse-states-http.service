@@ -10,12 +10,13 @@
 #
 # C-5 lifecycle contract (the load-bearing reason this unit runs CONTINUOUSLY):
 #   This unit shares RuntimeDirectory=eclipse-obd and runs from multi-user.target
-#   onward. systemd ref-counts the shared runtime dir, so /run/eclipse-obd (and
-#   the states/ subdir under it) OUTLIVES eclipse-obd.service when that unit
-#   stops -- exactly what the US-394 shutdown splash needs (shutdown-state must
-#   remain readable AFTER eclipse-obd has stopped). If this unit exclusively
-#   owned the dir it would vanish on eclipse-obd stop; sharing the name is what
-#   reconciles the two.
+#   onward. systemd does NOT ref-count a shared runtime dir (US-737, measured on
+#   systemd 257.13): ANY sharer that stops without RuntimeDirectoryPreserve=yes
+#   deletes /run/eclipse-obd for all of them, this unit included. What keeps
+#   the dir (and states/ under it) alive after eclipse-obd.service stops -- the
+#   US-394 shutdown splash reads shutdown-state after that -- is that EVERY
+#   sharer declares RuntimeDirectoryPreserve=yes. Sharing the name alone does
+#   nothing.
 #
 # Listen-failure semantics (spec §8): if the 9899 bind fails (port in use), the
 #   process raises + the unit exits non-zero -> the kiosk fetch errors -> the
@@ -41,8 +42,9 @@ After=local-fs.target
 [Service]
 Type=simple
 User=mcornelison
-# Shared ref-counted runtime dir (C-5) -- keeps /run/eclipse-obd alive across
-# eclipse-obd.service stop so the shutdown splash can still read shutdown-state.
+# Shared runtime dir (C-5). Preserve=yes on EVERY sharer (US-737) is what keeps
+# /run/eclipse-obd alive across eclipse-obd.service stop, so the shutdown splash
+# can still read shutdown-state. systemd does not ref-count the shared name.
 RuntimeDirectory=eclipse-obd
 RuntimeDirectoryPreserve=yes
 WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
