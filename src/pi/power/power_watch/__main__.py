@@ -93,6 +93,16 @@
 #                           to sync custody); (3) composePrePowerOffHooks
 #                           isolates each hook so a failing US-526 drain close
 #                           cannot silently delete the custody record.
+# 2026-09-13    | US-666  | Sprint 85 / V0.29.48. The startup check proves the
+#                           PLD pin READS, never that it CHANGES, so a readable
+#                           pin with no witnessed transition now logs
+#                           ARM_DECISION_UNVERIFIED ("PIN READABLE, TRANSITION
+#                           UNVERIFIED"), not ARMED (UNPROVEN). The read is named
+#                           a readability check, not an "arm self-check PASSED".
+#                           The PROVEN line says its proof is a PRIOR run's
+#                           witness and that the line prints at every start.
+#                           Wording only: the armed/not-armed disposition and
+#                           the watch loop are unchanged.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -186,6 +196,10 @@ logger = logging.getLogger(__name__)
 ARM_DECISION_PREFIX = "powerwatch: ARM DECISION ="
 ARM_DECISION_ARMED = "ARMED"
 ARM_DECISION_NOT_ARMED = "NOT-ARMED"
+# US-666: the verdict for a pin that READS but has never been seen to CHANGE.
+# A stuck pin gives the startup check the same single reading as a live one,
+# so readability alone must not earn ARMED. The watch still runs.
+ARM_DECISION_UNVERIFIED = "PIN READABLE, TRANSITION UNVERIFIED"
 
 # A disarmed service is `systemctl is-active` == active and otherwise silent --
 # indistinguishable from a healthy armed one. Announcing the refusal once at
@@ -224,6 +238,9 @@ def buildArmDecisionMessage(
             indistinguishable from a wire that is not connected. So the ARMED
             line only PREDICTS what a power loss will do once a real transition
             has been witnessed; until then it states what it actually verified.
+            US-666: without a witness the verdict is ARM_DECISION_UNVERIFIED,
+            not ARMED. With one, the line says the proof came from a PRIOR run,
+            because this start cannot exercise a power loss in software.
 
     Returns:
         The exact line to log -- prefixed with ARM_DECISION_PREFIX on both
@@ -232,23 +249,26 @@ def buildArmDecisionMessage(
     evidence = (
         f"gpio={pldGpioPin} pld.available={pldAvailable} reads-power-present={readsPowerPresent}"
     )
+    readability = f"GPIO{pldGpioPin} PLD readability check PASSED ({evidence})"
     if armed and lastTransitionUtc:
         return (
             f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} (PROVEN) -- safe-shutdown "
             f"protection is ON and its detection path has been OBSERVED to fire "
-            f"(last transition {lastTransitionUtc}). GPIO{pldGpioPin} PLD SSOT "
-            f"arm self-check PASSED ({evidence}). A sustained external-power "
-            f"loss will run the bounded pre-shutdown pipeline and then poweroff."
+            f"(last transition {lastTransitionUtc}, observed on a PRIOR run). "
+            f"{readability} -- THIS start verified readability only. This line "
+            f"is printed at every start and is not itself a transition event. A "
+            f"sustained external-power loss will run the bounded pre-shutdown "
+            f"pipeline and then poweroff."
         )
     if armed:
         return (
-            f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} (UNPROVEN) -- safe-shutdown "
-            f"protection is ON, but its detection path has NEVER been observed to "
-            f"fire. GPIO{pldGpioPin} PLD SSOT arm self-check PASSED ({evidence}) "
-            f"-- that proves the pin READS, not that it CHANGES. No power-loss "
-            f"transition has ever been witnessed on this install, and a pin that "
-            f"reads but has never been seen to move is indistinguishable from a "
-            f"wire that is not connected."
+            f"{ARM_DECISION_PREFIX} {ARM_DECISION_UNVERIFIED} -- safe-shutdown "
+            f"protection is UNVERIFIED: the watch is RUNNING, but its detection "
+            f"path has NEVER been observed to fire. {readability} -- that proves "
+            f"the pin READS, not that it CHANGES. No power-loss transition has "
+            f"ever been witnessed on this install, and a pin that reads but has "
+            f"never been seen to move is indistinguishable from a wire that is "
+            f"not connected."
         )
     return (
         f"{ARM_DECISION_PREFIX} {ARM_DECISION_NOT_ARMED} -- safe-shutdown "
@@ -821,7 +841,9 @@ def main(argv: list[str] | None = None) -> int:
     armed = provider.startupArmCheck()
     # ARCH-019: the arm line may only PREDICT what a power loss will do once a
     # real PLD transition has been witnessed. Until then it states what the
-    # self-check actually established -- that the pin READS.
+    # self-check actually established -- that the pin READS. US-666: that
+    # renders PIN READABLE, TRANSITION UNVERIFIED, never ARMED. The disposition
+    # below is unchanged: a readable pin still runs the watch.
     decisionLine = emitArmDecision(
         armed=armed,
         pldGpioPin=pldGpioPin,

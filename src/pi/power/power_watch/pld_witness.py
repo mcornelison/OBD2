@@ -56,6 +56,9 @@
 #                                shape), in a worker bounded by one smoothing
 #                                poll. readWitness names an EMPTY file a LOST
 #                                WRITE at WARNING; it still reads as NEVER.
+# 2026-09-13    | Rex (US-666) | The record-failure WARNING names the arm
+#                                line's new unwitnessed verdict, TRANSITION
+#                                UNVERIFIED (was UNPROVEN).
 # ================================================================================
 ################################################################################
 
@@ -220,7 +223,7 @@ def _writeWitnessAtomically(target: Path, atIso: str) -> bool:
         # thing this line exists to say is WHICH file could not be written.
         logger.warning(
             "pld-witness: could not record transition at %s (%s) -- the arm "
-            "line will read UNPROVEN despite a witnessed transition; is the "
+            "line will read TRANSITION UNVERIFIED despite a witnessed transition; is the "
             "parent directory provisioned?",
             target,
             exc,
