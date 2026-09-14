@@ -1190,6 +1190,12 @@ html, body {
   border: 1px solid var(--surface); border-radius: 4px;
   background: var(--surface); color: var(--text-primary);
 }
+/* US-757: the featured entry is the worst code's own row, not a second copy of
+   it. Out-specifies the .dtc-row reset below; the tier colors after it win. */
+.dtc-row.dtc-hero {
+  flex-wrap: wrap; padding: 6px 8px; margin-bottom: 6px;
+  border: 1px solid var(--surface); border-radius: 4px; background: var(--surface);
+}
 .dtc-hero[data-level="stop"]  { border-color: var(--critical-red); }
 .dtc-hero[data-level="watch"] { border-color: var(--amber-warn); }
 .dtc-hero-code { font-size: var(--fs-primary); font-weight: 800; letter-spacing: 0.04em; }

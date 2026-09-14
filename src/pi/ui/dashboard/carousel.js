@@ -5814,43 +5814,24 @@
         head.textContent = view.storedCount + " stored · " + view.pendingCount + " pending";
         body.appendChild(head);
 
-        // Hero block (worst code + its directive), when an alert-eligible code
-        // exists (na-only / empty -> no hero).
-        if (view.hero) {
-          var heroEl = document.createElement("button");
-          heroEl.className = "dtc-hero tap-target";
-          heroEl.setAttribute("data-level", view.hero.level);
-          var hChip = document.createElement("span");
-          hChip.className = "dtc-chip";
-          hChip.setAttribute("data-level", view.hero.level);
-          hChip.textContent = view.hero.chip;
-          heroEl.appendChild(hChip);
-          var hCode = document.createElement("span");
-          hCode.className = "dtc-hero-code";
-          hCode.textContent = view.hero.code;
-          heroEl.appendChild(hCode);
-          var hShort = document.createElement("span");
-          hShort.className = "dtc-hero-short";
-          hShort.textContent = view.hero.short;
-          heroEl.appendChild(hShort);
-          var hDir = document.createElement("span");
-          hDir.className = "dtc-hero-directive";
-          hDir.textContent = view.hero.directive;
-          heroEl.appendChild(hDir);
-          (function (codeStr) {
-            heroEl.addEventListener("click", function () { openAlertsCard(codeStr); });
-          })(view.hero.code);
-          body.appendChild(heroEl);
-        } else if (view.rows.length === 0) {
+        if (!view.hero && view.rows.length === 0) {
           // No codes at all -> an honest all-clear (never a fabricated green).
           body.appendChild(detailLine("dtc-noalert", "", "No stored codes"));
         }
 
+        // US-757: the hero is NOT a selection -- it is the head of the same
+        // worst-first ordering -- so drawing it as its own block above the list
+        // showed the worst code twice. The hero code's ROW is now the featured
+        // entry (tier border + directive); every code appears exactly once.
+        var featuredCode = view.hero ? view.hero.code : null;
+
         // Compact tappable rows (worst-first, na last). Each opens the detail.
         for (var i = 0; i < view.rows.length; i++) {
           (function (r) {
+            var featured = featuredCode !== null && r.code === featuredCode;
+            if (featured) featuredCode = null; // first match only
             var row = document.createElement("button");
-            row.className = "dtc-row tap-target";
+            row.className = featured ? "dtc-row dtc-hero tap-target" : "dtc-row tap-target";
             row.setAttribute("data-level", r.level);
             var rChip = document.createElement("span");
             rChip.className = "dtc-chip";
@@ -5869,6 +5850,12 @@
             rStatus.className = "dtc-row-status";
             rStatus.textContent = r.status;
             row.appendChild(rStatus);
+            if (featured) {
+              var rDir = document.createElement("span");
+              rDir.className = "dtc-hero-directive";
+              rDir.textContent = view.hero.directive;
+              row.appendChild(rDir);
+            }
             row.addEventListener("click", function () { openDetail(findCode(r.code) || r); });
             body.appendChild(row);
           })(view.rows[i]);
