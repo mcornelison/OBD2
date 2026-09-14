@@ -5181,7 +5181,10 @@ gate SSOT. `evaluateClearGate` **re-derives** the verdict from the raw captured
 codes and deliberately **ignores** any precomputed `clearGate.enabled` in the
 state: enabled only when **every stored (non-`na`) code is MINOR (green) AND
 logged AND server-sync-acked**, and no code re-set this session. Any STOP/WATCH →
-`severity_present`; an un-synced MINOR → `sync_pending` (capture-before-clear,
+`severity_present`; else any ungraded code (`unknown`, absent or unrecognised
+severity) → `severity_unknown` ("severity could not be determined" — US-753: the
+refusal is identical, but it is a different fact from a graded STOP/WATCH, so it
+gets its own reason); an un-synced MINOR → `sync_pending` (capture-before-clear,
 advisory §4c); a returned code (`sessionResetLock`) → `session_locked` ("don't
 chase the light", §4d); nothing clearable → `no_codes`. This is the DTC analog of
 US-403's action-path allow-list re-check in `service_control.py`.

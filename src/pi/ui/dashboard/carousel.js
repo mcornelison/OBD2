@@ -2749,6 +2749,9 @@
   var CLEAR_REASON_LABEL = {
     ok: "CLEAR CODES",
     severity_present: "🔒 CLEAR CODES — a STOP/WATCH code is present",
+    // US-753: an ungraded code is refused on principle; saying STOP/WATCH
+    // there asserts a tier nobody determined.
+    severity_unknown: "🔒 CLEAR CODES — severity could not be determined",
     sync_pending: "🔒 CLEAR CODES — waiting for server sync",
     session_locked: "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it",
   };
@@ -2765,8 +2768,13 @@
       return c.status === "stored" && c.severity !== "na";
     });
     if (relevant.length === 0) return "no_codes";
-    if (relevant.some(function (c) { return c.severity !== "minor"; })) {
+    if (relevant.some(function (c) {
+      return c.severity === "stop" || c.severity === "watch";
+    })) {
       return "severity_present";
+    }
+    if (relevant.some(function (c) { return c.severity !== "minor"; })) {
+      return "severity_unknown";
     }
     if (relevant.some(function (c) { return !(c.logged && c.syncAcked); })) {
       return "sync_pending";

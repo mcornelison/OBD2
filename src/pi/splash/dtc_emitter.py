@@ -29,6 +29,8 @@
 # 2026-09-14    | Ralph (Rex)  | US-752: unavailable -> codes/mil null (not []/
 #               |              | false) + separate `lastKnown` block. CHANGES
 #               |              | the US-429 fresh-empty contract (Atlas ruling).
+# 2026-09-14    | Ralph (Rex)  | US-753: clearGate `severity_unknown` for an
+#               |              | ungraded code (was `severity_present`).
 # ================================================================================
 ################################################################################
 
@@ -47,7 +49,9 @@ from pi.splash.dtc_severity_table import (
     FIX_PROVENANCE_NONE,
     SEVERITY_MINOR,
     SEVERITY_NA,
+    SEVERITY_STOP,
     SEVERITY_UNKNOWN,
+    SEVERITY_WATCH,
 )
 
 # US-429 honest-availability: one source-availability truth per source (SSOT).
@@ -70,6 +74,10 @@ _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 # authoritative gate (re-checked at the privileged action path); this is the
 # honest UI-side computation from what the capture read knows.
 _REASON_SEVERITY = "severity_present"
+# US-753: an ungraded code is refused as UNKNOWN, never as a STOP/WATCH it may
+# not be. Mirrors dtc_clear.GATE_SEVERITY_UNKNOWN.
+_REASON_SEVERITY_UNKNOWN = "severity_unknown"
+_SEVERITIES_BLOCKING = frozenset({SEVERITY_STOP, SEVERITY_WATCH})
 _REASON_SYNC = "sync_pending"
 _REASON_OK = "ok"
 
@@ -143,7 +151,8 @@ def _computeClearGate(enrichedCodes: list[dict]) -> dict:
 
     Mode 04 is all-or-nothing, so the gate keys off ALL stored codes. ``na``
     codes (auto-trans on this manual car) are not real faults and never block.
-    A non-MINOR stored fault -> ``severity_present``; an un-logged/un-synced
+    A STOP/WATCH stored fault -> ``severity_present``; any other non-MINOR
+    (ungraded) stored code -> ``severity_unknown``; an un-logged/un-synced
     MINOR capture -> ``sync_pending``; otherwise clearable. US-407 re-checks
     this authoritatively at the privileged action path -- the UI is never
     trusted to be the gate.
@@ -155,8 +164,10 @@ def _computeClearGate(enrichedCodes: list[dict]) -> dict:
     ]
     if not relevant:
         return {"enabled": False, "reason": _REASON_OK}
-    if any(c.get("severity") != SEVERITY_MINOR for c in relevant):
+    if any(c.get("severity") in _SEVERITIES_BLOCKING for c in relevant):
         return {"enabled": False, "reason": _REASON_SEVERITY}
+    if any(c.get("severity") != SEVERITY_MINOR for c in relevant):
+        return {"enabled": False, "reason": _REASON_SEVERITY_UNKNOWN}
     if any(not (c.get("logged") and c.get("syncAcked")) for c in relevant):
         return {"enabled": False, "reason": _REASON_SYNC}
     return {"enabled": True, "reason": _REASON_OK}
