@@ -462,10 +462,22 @@ html, body {
    The cue borrows --text-tertiary deliberately. A clipped card is a LAYOUT
    fact, not a vehicle fault; dressing it amber or red would put a layout
    condition into the alert vocabulary US-488 spent a whole story making mean
-   exactly one thing each. Pinned by tests/ui/test_card_band_budget.py. */
+   exactly one thing each. Pinned by tests/ui/test_card_band_budget.py.
+
+   US-746: `touch-action: pan-y` IS LOAD-BEARING FOR SWIPE. `overflow-y: auto`
+   makes this box a scroll container (overflow-x computes to auto with it), and
+   Chromium re-allows panning inside a scroller -- the `html, body { pan-y }`
+   rule does NOT reach through it (measured: pan-y on #carousel does not help
+   either). Without this line a horizontal finger drag over any card body is
+   claimed by the browser as a pan: the page gets pointerdown, one pointermove,
+   then pointercancel and never pointerup, so the swipe handler on #track never
+   runs. Taps and a mouse drag still work, which is why only the dots navigated.
+   Regressed in 4186b0e9 (US-557). Pinned by
+   tests/ui/test_carousel_swipe_gesture_guard.py. */
 .card-body {
   flex: 1; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y;
   font-size: var(--fs-secondary); color: var(--text-primary);
   background:
     linear-gradient(rgba(0, 0, 0, 0), var(--bg) 70%) bottom / 100% 12px no-repeat local,
