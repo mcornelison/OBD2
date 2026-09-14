@@ -461,9 +461,10 @@ class TestRecoveryLoopIsTheOnlyCounter:
         Given: the REAL recovery loop (maxRetries=3) over a REAL ObdConnection
                whose own connect() budget is 6 attempts
         When:  every attempt fails
-        Then:  exactly 3 port attempts, and every connect_attempt row the
-               connection logs carries retry index 0 -- no second, inner series
-               counting underneath the loop's own counter
+        Then:  exactly 3 port attempts, and the connect_attempt rows carry ONE
+               series, 0, 1, 2 -- no second, inner series counting underneath
+               the loop's own counter (US-751: the connection numbers attempts
+               per outage, so the series no longer restarts on every call)
         """
         factory = CountingFactory()
         conn = _connection(factory, maxRetries=5)
@@ -492,7 +493,7 @@ class TestRecoveryLoopIsTheOnlyCounter:
             f"{factory.callCount} port attempts under a 3-attempt ceiling -- the "
             "recovery loop is nesting connect()'s own retry loop (US-690)"
         )
-        assert attemptRows == [0, 0, 0]
+        assert attemptRows == [0, 1, 2]
 
 
 # ================================================================================

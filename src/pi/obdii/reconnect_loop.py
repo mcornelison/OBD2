@@ -66,6 +66,13 @@
 #               |              | up on (production: ObdConnection.
 #               |              | cancelPendingConnects) instead of leaving it to
 #               |              | run beside the next tick.
+# 2026-09-14    | Rex (US-751) | Key-on delay is backoff latency.  Add wakeEvent
+#               |              | to runReconnectHeartbeat: a set() cuts the
+#               |              | current backoff short and restarts the ladder at
+#               |              | the base interval, so wake -> next attempt is
+#               |              | bounded by at most one in-flight attempt instead
+#               |              | of the 320s ceiling.  Unset, the cadence is
+#               |              | byte-identical (I-025 duty cycle unchanged).
 # ================================================================================
 ################################################################################
 
@@ -537,6 +544,7 @@ def runReconnectHeartbeat(
     sleepFn: Callable[[float], None] | None = None,
     monotonicFn: Callable[[], float] | None = None,
     shutdownEvent: threading.Event | None = None,
+    wakeEvent: threading.Event | None = None,
     tickIntervalSec: float = HEARTBEAT_TICK_INTERVAL_SEC,
     attemptTimeoutSec: float = HEARTBEAT_ATTEMPT_TIMEOUT_SEC,
     maxTicks: int | None = None,
@@ -626,6 +634,17 @@ def runReconnectHeartbeat(
             field.  Defaults to :func:`time.monotonic`.
         shutdownEvent: Optional :class:`threading.Event`; when set, loop exits
             at the next tick boundary.  Wires into orchestrator SIGTERM.
+        wakeEvent: US-751 optional :class:`threading.Event` meaning "the car
+            may have just woken -- stop waiting out the backoff".  When set,
+            the current backoff sleep ends early (default sleep only; an
+            injected ``sleepFn`` owns its own timing), the event is cleared,
+            and the failure counter restarts at 0 so the next attempt runs
+            immediately and the ladder climbs again from the base interval --
+            the same ladder a fresh boot or a fresh dropout already pays, so a
+            wake costs no radio time a boot does not.  A wake that lands while
+            an attempt is in flight takes effect when that attempt returns, so
+            wake -> next attempt is bounded by one attempt, not by the ceiling.
+            Never set, the cadence is identical to the loop without it.
         tickIntervalSec: BASE interval for the US-325 exponential backoff (the
             first failed-tick sleep, and the unit doubled on each subsequent
             consecutive failure).  Defaults to
@@ -638,7 +657,18 @@ def runReconnectHeartbeat(
         Total tick count executed.  Return is informational; call sites that
         spawn this on a daemon thread typically discard it.
     """
-    sleepImpl = sleepFn if sleepFn is not None else time.sleep
+    def _wakeAwareSleep(seconds: float) -> None:
+        # US-751: a wake must be able to end the backoff it lands in.
+        assert wakeEvent is not None
+        wakeEvent.wait(timeout=seconds)
+
+    sleepImpl: Callable[[float], None]
+    if sleepFn is not None:
+        sleepImpl = sleepFn
+    elif wakeEvent is not None:
+        sleepImpl = _wakeAwareSleep
+    else:
+        sleepImpl = time.sleep
     monoImpl = monotonicFn if monotonicFn is not None else time.monotonic
 
     ticks = 0
@@ -666,6 +696,19 @@ def runReconnectHeartbeat(
             return ticks
         if maxTicks is not None and ticks >= maxTicks:
             return ticks
+
+        # US-751: a wake restarts the ladder.  Checked here, before the backoff
+        # for this tick is computed, so a wake that ended the previous sleep --
+        # or arrived during the previous attempt -- makes THIS tick's attempt
+        # the immediate one and its failure sleep the base interval.
+        if wakeEvent is not None and wakeEvent.is_set():
+            wakeEvent.clear()
+            logger.info(
+                "%s | wake signalled -- backoff reset from consecutive_failures=%d "
+                "to 0; attempting now (US-751)",
+                HEARTBEAT_LOG_PREFIX, consecutiveFailures,
+            )
+            consecutiveFailures = 0
 
         if lastAttemptAt is None:
             secondsAgoStr = "n/a"
@@ -757,4 +800,8 @@ def runReconnectHeartbeat(
                     )
 
         consecutiveFailures += 1
+        # US-751: a wake that arrived during this attempt must not be followed
+        # by a ceiling backoff -- whatever sleep implementation is in use.
+        if wakeEvent is not None and wakeEvent.is_set():
+            continue
         sleepImpl(backoffSec)

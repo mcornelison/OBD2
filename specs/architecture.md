@@ -715,6 +715,40 @@ Contract tests: `tests/pi/obdii/test_single_retry_authority.py` (the real
 initial-connect cap over a real `ObdConnection`: 1 port attempt after the cap
 fires, 6 with the cancel turned off).
 
+**Key-on latency is backoff latency (US-751).** `connection_log` on 2026-09-14
+showed the Pi retrying all night at the heartbeat's 320 s ceiling, each attempt
+failing in ~42-45 s with `OBD connection not active after creation` — i.e.
+`obd.OBD()` returned (the rfcomm link opened) but never reached car-connected.
+So the adapter was reachable and the ECU was asleep; a key-on that lands just
+after a failed attempt waits out the whole ceiling. Two rules now hold:
+
+- **A wake cuts the backoff short.** `runReconnectHeartbeat(wakeEvent=…)`: a
+  `set()` ends the current backoff, is cleared, and restarts the failure count
+  at 0 — the next attempt runs at once and the ladder climbs again from 10 s
+  (the same ladder a boot or fresh dropout already pays). A wake that lands
+  during an attempt takes effect when it returns, so wake → next attempt is at
+  most one attempt (~45 s), never the ceiling. Never set, the cadence is
+  identical, so the I-025 radio duty cycle is unchanged. Both heartbeats carry
+  the orchestrator's `_obdWakeEvent`; `requestObdLinkWake(reason)` is the one
+  entry point. It never touches the port — the next attempt goes through the
+  connection's `_ioLock` owner as always. **It is not yet wired to a physical
+  signal**: which signal means "key-on" on this install is open (US-751
+  blocker).
+- **Retries are one series per outage.** `ObdConnection` numbers every port
+  attempt in the current outage, whichever loop makes it, and resets on a
+  successful connect. `connection_log.retry_count` and `obdLink.retries` both
+  read that number, so a boot `connect()` followed by the heartbeat reads
+  0, 1, 2, … instead of 0..5 then 0, 0, 0.
+
+A `/dev/rfcomm0` present beside `Connected: no` is `rfcomm-bind.service`'s
+lazy binding: `rfcomm bind` creates the node without opening the link. Every
+failed attempt closes its partial `obd` and releases a MAC binding (US-512), so
+the OBD layer holds no node open across a failed session.
+
+Contract tests: `tests/pi/obdii/test_key_on_link_latency.py` (modelled wake →
+attempt: 319 s without a wake, 0 s with one in a backoff, 44 s with one
+mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
+
 ---
 
 ## 4. Data Flow

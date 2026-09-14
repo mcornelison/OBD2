@@ -265,6 +265,9 @@
 #               |              | PENDING heartbeat -- two counters, two backoffs),
 #               |              | and the heartbeat is wired with cancelFn so its
 #               |              | own 30s cap cancels too.
+# 2026-09-14    | Rex (US-751) | The PENDING heartbeat is wired with the
+#               |              | orchestrator's _obdWakeEvent, so
+#               |              | requestObdLinkWake() cuts its backoff short.
 # ================================================================================
 ################################################################################
 
@@ -1076,6 +1079,8 @@ class LifecycleMixin:
             isConnectedFn = self._buildHeartbeatIsConnectedFn()
             inFlightProbeFn = self._buildHeartbeatInFlightProbeFn()
             shutdownEvent = getattr(self, '_shutdownEvent', None)
+            # US-751: requestObdLinkWake() cuts this heartbeat's backoff short.
+            wakeEvent = getattr(self, '_obdWakeEvent', None)
 
             def _run() -> None:
                 try:
@@ -1085,6 +1090,7 @@ class LifecycleMixin:
                         inFlightProbeFn=inFlightProbeFn,
                         cancelFn=self._cancelAbandonedConnect,
                         shutdownEvent=shutdownEvent,
+                        wakeEvent=wakeEvent,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(

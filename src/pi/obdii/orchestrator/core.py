@@ -61,6 +61,8 @@
 #               |              | the OBD poll loop quiesces, instead of leaking
 #               |              | open and absorbing a later key-on (drives
 #               |              | 28/29).  Atlas C-alpha off-tick close.
+# 2026-09-14    | Rex (US-751) | Own _obdWakeEvent, the event both reconnect
+#               |              | heartbeats observe (requestObdLinkWake).
 # ================================================================================
 ################################################################################
 
@@ -330,6 +332,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # retryDelays cap (~60-90s) and forcing systemd to SIGKILL.
         # The signal handler mixin sets this alongside _shutdownState.
         self._shutdownEvent: threading.Event = threading.Event()
+        # US-751: "the car may have just woken".  Passed to both reconnect
+        # heartbeats; requestObdLinkWake() sets it to cut a backoff short.
+        self._obdWakeEvent: threading.Event = threading.Event()
 
         # Main loop configuration
         self._healthCheckInterval = config.get('pi', {}).get('monitoring', {}).get(

@@ -92,6 +92,11 @@
 #                |              | abandoned call instead of merely walking away.
 #                |              | Add reconnectOnce(): transport reset + ONE attempt,
 #                |              | for the recovery loop that owns its own count.
+# 2026-09-14    | Rex (US-751) | retry_count is ONE series per outage.  Every
+#                |              | port attempt is numbered by _outageAttempts, not
+#                |              | by the calling loop's local index, and the number
+#                |              | lands in connection_log AND status.retryCount the
+#                |              | moment the attempt fails.  Reset on success.
 # ================================================================================
 ################################################################################
 
@@ -476,6 +481,14 @@ class ObdConnection:
         # a slow obd.OBD() handshake, so cancelling must never block behind it.
         self._cancelLock = threading.Lock()
         self._cancelEpoch = 0
+        # US-751: port attempts made in the CURRENT outage, across every call
+        # and every caller.  Each loop used to log its own local attempt index
+        # as retry_count, so a boot connect() (0..5) followed by the heartbeat's
+        # single attempts (0, 0, 0, ...) read as two series -- and obdLink.retries
+        # sat at 0 through the whole overnight backoff.  The connection is the
+        # one thing every caller shares, so it counts.  Reset on a successful
+        # connect.  Guarded by _ioLock (read and bumped inside the attempt).
+        self._outageAttempts = 0
         # US-199: Supported-PID probe result cached at connection-open time.
         # None until connect() runs the probe. Consumers (ObdDataLogger) use
         # it to silent-skip unsupported PIDs before dispatching a K-line query.
@@ -839,7 +852,8 @@ class ObdConnection:
         cancelEpoch = self._currentCancelEpoch()
 
         self._status.state = ConnectionState.CONNECTING
-        self._status.retryCount = 0
+        # US-751: retries so far in this outage, not in this call.
+        self._status.retryCount = self._outageAttempts
 
         # US-673: the attempt budget for THIS call.  `lastAttemptIndex` replaces
         # the bare `self.maxRetries` everywhere below so a single-attempt caller
@@ -894,10 +908,16 @@ class ObdConnection:
                     )
                     return self._isConnected()
 
+                # US-751: this port attempt's number within the outage -- the
+                # retry_count every row of this attempt carries.  `attempt`
+                # stays the per-call index; it only drives this call's backoff.
+                outageAttempt = self._outageAttempts
+                self._outageAttempts += 1
+
                 try:
                     self._logConnectionEvent(
                         EVENT_TYPE_CONNECT_ATTEMPT,
-                        retryCount=attempt
+                        retryCount=outageAttempt
                     )
 
                     # Resolve MAC -> /dev/rfcommN if needed. When the caller
@@ -917,7 +937,9 @@ class ObdConnection:
                         self._status.connected = True
                         self._status.lastConnectTime = datetime.now()
                         self._status.totalConnections += 1
-                        self._status.retryCount = attempt
+                        self._status.retryCount = outageAttempt
+                        # US-751: the outage is over; the next one counts from 0.
+                        self._outageAttempts = 0
 
                         # US-441 epoch fence: a new live connection = a new
                         # generation.  Runs under the held _ioLock so the bump is
@@ -933,7 +955,7 @@ class ObdConnection:
                         self._logConnectionEvent(
                             EVENT_TYPE_CONNECT_SUCCESS,
                             success=True,
-                            retryCount=attempt
+                            retryCount=outageAttempt
                         )
 
                         logger.info(f"Connected to OBD-II dongle | mac={self.macAddress} | attempts={attempt + 1}")
@@ -947,6 +969,10 @@ class ObdConnection:
                     self._status.lastError = str(e)
                     self._status.lastErrorTime = datetime.now()
                     self._status.totalErrors += 1
+                    # US-751: visible the moment the attempt fails, whichever
+                    # loop made it -- the heartbeat never reaches the backoff
+                    # branch below, so setting it only there left it at 0.
+                    self._status.retryCount = self._outageAttempts
 
                     # Fix B: close the partially-opened obd (and the serial fd it
                     # opened on /dev/rfcommN) BEFORE the next attempt re-opens the
@@ -977,7 +1003,7 @@ class ObdConnection:
                             EVENT_TYPE_CONNECT_FAILURE,
                             success=False,
                             errorMessage=str(e),
-                            retryCount=attempt
+                            retryCount=outageAttempt
                         )
                         logger.error(
                             f"Failed to connect after {totalAttempts} attempts | "
@@ -1029,7 +1055,6 @@ class ObdConnection:
                             return False
                     else:
                         time.sleep(delay)
-                self._status.retryCount = attempt + 1
 
         return False
 
