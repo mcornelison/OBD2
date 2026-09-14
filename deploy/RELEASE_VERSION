@@ -1,5 +1,5 @@
 {
   "version": "V0.29.49",
-  "theme": "US-761 stop-loss -- the Pi was deleting 1.77M unsynced IMU rows a day",
-  "description": "Patch deploy, CIO-directed 2026-09-14. pi.sensors.retentionDays 7 -> 45. The 7-day rolling purge had already destroyed ~36.9M EDR rows and no edr_* table syncs, so every day cost ~1.77M rows permanently. Hotfix only -- US-734 is the fix. Preconditions verified before deploy: US-322 backups bounded at 2; disk margin 41.0 GB against a 20 GB floor; validator has no range check on the key. First deletion under the new window is ~2026-10-22."
+  "theme": "US-761 stop-loss -- EDR retention 7 to 45 days",
+  "description": "Patch deploy, CIO-directed. pi.sensors.retentionDays 7 -> 45. The 7-day purge had destroyed ~36.9M EDR rows and no edr_* table syncs, so every day cost ~1.77M rows. Hotfix only -- US-734 is the fix. Verified first: US-322 backups bounded at 2, disk margin 41.0 GB vs a 20 GB floor, no validator range check. First deletion under the new window ~2026-10-22."
 }
