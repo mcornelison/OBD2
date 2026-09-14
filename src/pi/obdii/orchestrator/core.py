@@ -992,6 +992,20 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 statesDir, requestId, ok=True, stored=stored, pending=pending,
                 mil=bool(stored), error=None,
             )
+            # US-752: Mode 04 wiped every code, so the remembered ones must go
+            # too -- otherwise the resting Alerts card would show codes that no
+            # longer exist. Isolated: the clear HAPPENED and was published; a
+            # failed watermark must never rewrite that outcome as a failure.
+            try:
+                from pi.obdii.dtc_last_known import recordClearWatermark
+
+                recordClearWatermark(getattr(self, "_database", None))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "US-752 clear watermark not written for request %s: %s -- "
+                    "the resting Alerts card may still show pre-clear codes",
+                    requestId, exc,
+                )
         except Exception as exc:  # noqa: BLE001
             # This runs inside the capture loop: a failed clear must never take
             # capture down, and the requester is owed the reason.

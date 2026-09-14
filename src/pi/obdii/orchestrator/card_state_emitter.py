@@ -596,7 +596,18 @@ class CardStateEmitterMixin:
         emitter = self._dtcEmitter
         if emitter is None:
             return
-        emitter(codes=[], mil=False, newSinceTs=None, dtcAvailable=False)
+        # US-752: the resting state carries the codes the system ALREADY holds,
+        # read from the persisted dtc_log -- never a re-query of the ECU (SSOT
+        # rule B). Null when nothing is remembered, so "not read" keeps meaning.
+        from pi.obdii.dtc_last_known import readLastKnownDtcs
+
+        emitter(
+            codes=[],
+            mil=False,
+            newSinceTs=None,
+            dtcAvailable=False,
+            lastKnown=readLastKnownDtcs(getattr(self, "_database", None)),
+        )
 
     def _recordSyncOutcome(self, rowsPushed: int) -> None:
         """Cache the REAL last-sync outcome for the system-status sync tile.

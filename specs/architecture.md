@@ -5010,7 +5010,42 @@ orchestrator — its live injection follows the US-400/401 deferral pattern). Th
 state schema is design-spec §8: `mil` · `codes[]` (each with
 `severity`/`severityCaveat`/`short`/`setAtTs`/`driveId`/`freezeFrame`/
 `suggestedFix`/`fixProvenance`/`logged`/`syncAcked`/`clearEligible`) · `newSinceTs`
-· `clearGate` · `sessionResetLock` · `ts`.
+· `clearGate` · `sessionResetLock` · `lastKnown` · `source` · `ts`.
+
+**Resting state: honest nulls + `lastKnown` (US-752, Atlas ruling 2026-09-14).**
+When no live read is possible (boot, key-off, process restart) the live fields
+are **absences, not values**: `codes: null`, `mil: null` beside
+`source.dtc.available: false`. This **deliberately changes** the US-429
+fresh-empty contract, whose `codes: []` / `mil: false` read as a measurement ("no
+codes, lamp off") to any consumer that skipped `source`. What the system already
+holds rides in a **separate** `lastKnown` block `{codes, mil, asOfTs, source:
+"dtc_log"}` — `codes` is never overloaded. The block is null when the source is
+available (a live read always wins) and null when nothing is remembered, so "DTC
+not read" keeps its meaning. `src/pi/obdii/dtc_last_known.py` reads it from the
+persisted `dtc_log` **only** (SSOT rule B — the ECU is never re-queried to
+populate a resting state): `data_source='real'` rows, one entry per code (newest
+wins), each enriched from the severity table like a live code and carrying
+`lastSeenTs`. `asOfTs` is the newest `last_seen_timestamp`, a read-time column the
+DB stamps at the read and bumps on re-read — not an insert time. `lastKnown.mil`
+is the same stored-code proxy the live KOEO path publishes; `dtc_log` has no MIL
+column.
+
+**Remembered codes are never actionable.** The clear gate computes from LIVE
+`codes` only (`dtc_clear` reads `codes or []`, so null → `no_codes`; the emitter's
+`clearGate` is built from live codes). `newSinceTs` stays null, and the ribbon and
+takeover already return early on an unavailable source, so a remembered code never
+takes over. The Alerts card renders them as **inert rows** under "LAST KNOWN CODES ·
+last read <age> · not a live read": no detail overlay (where the clear button
+lives) opens from them.
+
+**Not sticky.** A successful Mode-04 clear (`_maybeServiceDtcClearRequest`) writes
+one `status='cleared'` `dtc_log` row per remembered code — the status the schema
+reserved for clear events. The reader drops every `stored`/`pending` row before
+that watermark (by `id`, or by `last_seen_timestamp` for an older row re-read
+after the clear). The watermark write is isolated: a failure is logged and never
+rewrites a clear that happened. **Limit:** a read that finds no codes writes no
+row, so a code that stops reporting without a Mode 04 stays remembered (dated)
+until a clear. The pinned design-spec §8 lives on the fleet share (PM-owned).
 
 **Honest-instrument by construction.** The Pi never decides severity: a static
 loader (`dtc_severity_table.py`) parses **Spool's SSOT**

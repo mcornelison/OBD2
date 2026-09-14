@@ -2506,16 +2506,60 @@
     };
   }
 
+  // US-752 -- the codes the system ALREADY HOLDS, shown when no live read is
+  // possible (key-off / restart). Atlas 2026-09-14: a SEPARATE `lastKnown`
+  // block beside honest-null live fields, never an overload of `codes`. The
+  // view is labelled "last known" and dated, so a remembered code never reads
+  // as a live one, and its rows are rendered inert: the detail overlay is where
+  // the clear affordance lives, and a clear offered on remembered codes is a
+  // safety inversion. Null when nothing is remembered (never read, or cleared
+  // since) -- which is what keeps the true "not read" absence meaningful.
+  function lastKnownDtcView(lastKnown, nowTs) {
+    if (!isObj(lastKnown) || !Array.isArray(lastKnown.codes)) return null;
+    var codes = lastKnown.codes.filter(isObj);
+    if (codes.length === 0) return null;
+    var stored = 0;
+    var pending = 0;
+    for (var i = 0; i < codes.length; i++) {
+      if (codes[i].status === "pending") pending++;
+      else stored++;
+    }
+    var age = agoText(nowTs, lastKnown.asOfTs);
+    var mil = lastKnown.mil === true;
+    return {
+      tile: {
+        label: "ALERTS",
+        value: "LAST KNOWN CODES",
+        detail: "last read " + age + " · not a live read" + (mil ? " · MIL was on" : ""),
+        level: "unavailable",
+      },
+      asOfTs: typeof lastKnown.asOfTs === "string" ? lastKnown.asOfTs : null,
+      age: age,
+      rows: dtcListSorted(codes).map(dtcRow),
+      storedCount: stored,
+      pendingCount: pending,
+      mil: mil,
+    };
+  }
+
   // The Alerts card view: hero (worst ALERT-eligible code + its directive; `na`
   // and unrecognized severities are never a hero) + the full list (worst-first,
   // na last) + stored/pending counts. Non-object payload -> null (the shell
   // renders `unavailable`). An empty `codes` array is a valid no-fault view.
-  function alertsCardView(data) {
+  // `nowTs` (US-752) dates remembered codes; absent -> the payload's own `ts`.
+  function alertsCardView(data, nowTs) {
     if (!isObj(data)) return null;
     // US-429: an unavailable DTC source (no read happened) is a typed NA -- NOT
     // "No stored codes" (which would falsely imply a clean all-clear read).
     if (sourceUnavailable(data, "dtc")) {
       var why = sourceReason(data, "dtc");
+      // US-752: known codes are shown, dated -- never "not read" over them.
+      var remembered = lastKnownDtcView(
+        data.lastKnown, typeof nowTs === "string" ? nowTs : data.ts
+      );
+      if (remembered) {
+        return { unavailable: true, reason: why, notRead: null, lastKnown: remembered };
+      }
       return { unavailable: true, reason: why, notRead: dtcNotReadTile(why) };
     }
     var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
@@ -3876,6 +3920,7 @@
     idleCardView: idleCardView,
     dtcRow: dtcRow,
     alertsCardView: alertsCardView,
+    lastKnownDtcView: lastKnownDtcView,
     trustBadge: trustBadge,
     fixArea: fixArea,
     fixSectionLabel: fixSectionLabel,
@@ -5638,6 +5683,42 @@
 
       // --- US-406 Alerts card render (browser only) --------------------------
 
+      // US-752: remembered codes. Rows are DIVs, not buttons -- no detail
+      // overlay opens from a remembered code, so the clear surface is never
+      // reachable from one (the clear gate computes from LIVE codes only).
+      function renderLastKnownDtc(body, lk) {
+        appendTile(body, lk.tile);
+        var head = document.createElement("div");
+        head.className = "dtc-count";
+        head.textContent =
+          lk.storedCount + " stored · " + lk.pendingCount + " pending · last known";
+        body.appendChild(head);
+        for (var i = 0; i < lk.rows.length; i++) {
+          var r = lk.rows[i];
+          var row = document.createElement("div");
+          row.className = "dtc-row dtc-row-last-known";
+          row.setAttribute("data-level", r.level);
+          var rChip = document.createElement("span");
+          rChip.className = "dtc-chip";
+          rChip.setAttribute("data-level", r.level);
+          rChip.textContent = r.chip;
+          row.appendChild(rChip);
+          var rCode = document.createElement("span");
+          rCode.className = "dtc-row-code";
+          rCode.textContent = r.code;
+          row.appendChild(rCode);
+          var rShort = document.createElement("span");
+          rShort.className = "dtc-row-short";
+          rShort.textContent = r.short;
+          row.appendChild(rShort);
+          var rStatus = document.createElement("span");
+          rStatus.className = "dtc-row-status";
+          rStatus.textContent = r.status;
+          row.appendChild(rStatus);
+          body.appendChild(row);
+        }
+      }
+
       function renderAlertsCard(card, view) {
         var body = card.querySelector(".card-body");
         if (!body || !view) return;
@@ -5650,6 +5731,10 @@
         // which would have swallowed the moved fact).
         if (view.unavailable) {
           body.textContent = "";
+          if (view.lastKnown) {
+            renderLastKnownDtc(body, view.lastKnown);
+            return;
+          }
           appendTile(body, view.notRead);
           return;
         }
@@ -5953,7 +6038,7 @@
               card, systemStatusView(data, captureData), glyphEls
             );
           } else if (name === "dtc") {
-            renderAlertsCard(card, alertsCardView(data));
+            renderAlertsCard(card, alertsCardView(data, new Date(nowMs).toISOString()));
           }
           // US-508: the standalone Motion branch is GONE with the card it
           // served -- the live instrument is now a FACE of the home slot,

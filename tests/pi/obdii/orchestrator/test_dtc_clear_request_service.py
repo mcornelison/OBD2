@@ -80,6 +80,20 @@ def _orchestrator(tmp_path, connection, client):
     return obj
 
 
+def _seededDb(tmp_path):
+    """A real ObdDatabase remembering one stored code (US-752)."""
+    from pi.obdii.database import ObdDatabase
+
+    db = ObdDatabase(str(tmp_path / "obd.db"), walMode=False)
+    db.initialize()
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO dtc_log (dtc_code, description, status, last_seen_timestamp) "
+            "VALUES ('P0443', 'EVAP purge', 'stored', '2026-01-01T08:00:00Z')"
+        )
+    return db
+
+
 class TestServiceDtcClearRequest:
     def test_noRequest_isANoOp_andIssuesNoClear(self, tmp_path):
         client = _FakeDtcClient()
@@ -134,6 +148,38 @@ class TestServiceDtcClearRequest:
         assert outcome["requestId"] == "req-1"
         assert outcome["ok"] is False
         assert "connect" in (outcome["error"] or "").lower()
+
+    def test_successfulClear_writesTheWatermark_lastKnownDoesNotOutliveIt(
+        self, tmp_path
+    ):
+        """US-752: remembered codes must not become permanently sticky."""
+        from pi.obdii.dtc_last_known import readLastKnownDtcs
+
+        db = _seededDb(tmp_path)
+        client = _FakeDtcClient(stored=[], pending=[])
+        conn = types.SimpleNamespace(isConnected=lambda: True)
+        orch = _orchestrator(tmp_path, connection=conn, client=client)
+        orch._database = db
+        writeRequest(str(tmp_path), "req-1", nowFn=lambda: 1.0)
+
+        orch._maybeServiceDtcClearRequest()
+
+        assert readOutcome(str(tmp_path))["ok"] is True
+        assert readLastKnownDtcs(db) is None
+
+    def test_refusedClear_leavesLastKnownIntact(self, tmp_path):
+        """No Mode 04 happened, so nothing remembered may be dropped."""
+        from pi.obdii.dtc_last_known import readLastKnownDtcs
+
+        db = _seededDb(tmp_path)
+        orch = _orchestrator(tmp_path, connection=None, client=_FakeDtcClient())
+        orch._database = db
+        writeRequest(str(tmp_path), "req-1", nowFn=lambda: 1.0)
+
+        orch._maybeServiceDtcClearRequest()
+
+        assert readOutcome(str(tmp_path))["ok"] is False
+        assert [c["code"] for c in readLastKnownDtcs(db)["codes"]] == ["P0443"]
 
     def test_disconnectedConnection_alsoRefuses(self, tmp_path):
         client = _FakeDtcClient()

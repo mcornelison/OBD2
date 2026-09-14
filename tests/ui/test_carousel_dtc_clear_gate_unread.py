@@ -504,7 +504,7 @@ def test_anUnavailableRead_emptiesTheCodesTheGateKeysOffAndTheAffordanceStaysAwa
           guarantee is invisible -- which is how it has been shipping.
     """
     published = _state([_raw()], **_UNREAD)
-    assert published["codes"] == [], published
+    assert published["codes"] is None, published  # US-752: null, not []
     assert published["source"] == {
         "dtc": {"available": False, "reason": "not read yet"}
     }, published
