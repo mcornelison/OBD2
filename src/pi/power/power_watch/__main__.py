@@ -103,6 +103,14 @@
 #                           witness and that the line prints at every start.
 #                           Wording only: the armed/not-armed disposition and
 #                           the watch loop are unchanged.
+# 2026-09-14    | US-748  | Sprint 86 / V0.29.50. Wires the 1 Hz power-loss
+#                           heartbeat (loss_heartbeat.py) into the sequencer's
+#                           powerLossObservedFn, and reports the previous loss's
+#                           surviving rows at every start (LOSS HEARTBEAT line),
+#                           so time-to-death after a cut is read from SQLite
+#                           instead of inferred from a journal that cannot see
+#                           the last seconds. No trigger, budget or poweroff
+#                           change.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -151,6 +159,11 @@ from src.pi.power.power_source_pubsub import (  # noqa: E402
     publishPowerSource,
 )
 from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
+from src.pi.power.power_watch.loss_heartbeat import (  # noqa: E402
+    LossHeartbeatSummary,
+    PowerLossHeartbeat,
+    readLatestLossHeartbeat,
+)
 from src.pi.power.power_watch.outcome import writeOutcomeRecord  # noqa: E402
 from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
 from src.pi.power.power_watch.pld_witness import readWitness  # noqa: E402
@@ -633,6 +646,58 @@ def _runOneShotForTest(
     return 0
 
 
+#: One greppable prefix for the next-boot time-to-death report (US-748):
+#:   journalctl -u eclipse-powerwatch.service --grep='LOSS HEARTBEAT'
+LOSS_HEARTBEAT_PREFIX = "powerwatch: LOSS HEARTBEAT ="
+
+
+def emitPriorLossHeartbeat(dbPath: str) -> LossHeartbeatSummary | None:
+    """Report what the most recent power loss's heartbeat rows say (US-748).
+
+    The last surviving row is how long the machine was OBSERVED alive after the
+    PLD loss. It is time-to-death when the previous boot has no CLEAN_COMPLETE,
+    and time-to-poweroff when it does -- this line states the number and names
+    both readings rather than choosing one it cannot see from here.
+
+    Args:
+        dbPath: ``pi.database.path``.
+
+    Returns:
+        The summary that was reported, or None when no loss has been recorded.
+    """
+    summary = readLatestLossHeartbeat(dbPath)
+    if summary is None:
+        logger.info("%s none recorded (no power loss has been measured)", LOSS_HEARTBEAT_PREFIX)
+        return None
+    vcellText = f"{summary.minVcellV:.3f} V" if summary.minVcellV is not None else "unread"
+    if summary.windowCompleted:
+        logger.warning(
+            "%s loss at %s: alive through the WHOLE %d-row window (last row %.1fs) "
+            "-- the machine outlived the instrument; min VCELL %s, %d row(s) saw "
+            "power return",
+            LOSS_HEARTBEAT_PREFIX,
+            summary.lossStartedUtc,
+            summary.rowCount,
+            summary.lastElapsedS,
+            vcellText,
+            summary.powerReturnedRows,
+        )
+    else:
+        logger.warning(
+            "%s loss at %s: last row %.1fs after the PLD loss (%d row(s), min VCELL "
+            "%s, %d row(s) saw power return) -- TIME-TO-DEATH if the prior boot has "
+            "no CLEAN_COMPLETE, time-to-poweroff if it does; understated by at "
+            "most one row interval",
+            LOSS_HEARTBEAT_PREFIX,
+            summary.lossStartedUtc,
+            summary.lastElapsedS,
+            summary.rowCount,
+            vcellText,
+            summary.powerReturnedRows,
+        )
+    return summary
+
+
 def _runPldWatchLoop(
     *,
     isPowerLostFn,
@@ -807,6 +872,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     prePowerOffFn = composePrePowerOffHooks(drainCloseFn, custodyFn)
 
+    # US-748: the previous loss's heartbeat rows, reported once per start --
+    # the number the 09-14 cuts could only bound ("under 30 s").
+    emitPriorLossHeartbeat(dbPath)
+    # ...and this boot's instrument, started at the ENTRY of handleOnBattery.
+    lossHeartbeat = PowerLossHeartbeat(
+        dbPath=dbPath,
+        vcellFn=monitor.getVcell,
+        isPowerLostFn=provider.isPowerLost,
+    )
+
     shutdownSequencer = ShutdownSequencer(
         isOnBattery=provider.isPowerLost,
         vcell=monitor.getVcell,
@@ -822,6 +897,7 @@ def main(argv: list[str] | None = None) -> int:
         smoothingPollSec=smoothingPollSec,
         phaseEmitFn=phaseEmitFn,
         prePowerOffFn=prePowerOffFn,
+        powerLossObservedFn=lossHeartbeat.start,
     )
 
     # TRIGGER = the X1209 GPIO6 PLD hardware line via the PowerSourceProvider

@@ -2576,9 +2576,67 @@ power loss is not a monitor** -- it reads "healthy" through every outage.
 
 ⚠️ **What this does NOT fix:** an in-process logger still cannot witness its own machine's death.
 On a hard rail collapse there is no poll interval left and no time to reach SQLite. The structural
-answer -- reconstructing the loss at next boot from a last-known-good heartbeat -- remains **open**
-(A-22). This section documents a monitor that now records what it *can* see; it does not claim
+answer -- reconstructing the loss at next boot from a last-known-good heartbeat (A-22) -- is
+§10.6.6. This section documents a monitor that records what it *can* see; it does not claim
 coverage of the case where the observer dies with the observed.
+
+### 10.6.6 Surviving a power loss is MEASURED, not assumed — the loss heartbeat (US-748, Sprint 86 / V0.29.50) [Atlas Rule 10]
+
+**What the flow above does NOT establish.** §10.6 describes a sequence that needs roughly
+`smoothingSec` (7) + the sync drain (`perTaskTimeoutSec` 20, capped by `totalWindowCapSec` 45) to
+reach `systemctl poweroff`. **Nothing in this section guarantees the supply keeps the Pi up that
+long.** Atlas cut power twice on 2026-09-14 (16:04:44Z, 16:40:03Z), with all services running.
+Both times:
+
+- GPIO6 fired and `power_log` `transition_to_battery` was written.
+- The collector opened the drain row at **4.18 V** and **3.95 V**.
+- The Pi was dead **before the row's first 30 s checkpoint** (§10.6.4). There was no
+  `CLEAN_COMPLETE`, and the journal's last persisted line predates the transition.
+
+Both software explanations are excluded by evidence. The VCELL floor fast path needs ≤ 3.50 V, and a
+graceful poweroff writes `CLEAN_COMPLETE`. **Until the cause is known (US-748, CIO/hardware), read
+§10.6.2–§10.6.3 as what happens IF the machine lives through the window, not as a claim that it
+does.** The pre-shutdown budget is deliberately **unchanged**: shortening it to fit a machine with
+no time left would not help, and it would break the sync-custody sequencing.
+
+**The instrument.** At `handleOnBattery` **entry** (after the ARCH-019 witness, **before**
+smoothing) the sequencer calls the optional `powerLossObservedFn`. powerwatch wires this to
+`PowerLossHeartbeat.start` (`src/pi/power/power_watch/loss_heartbeat.py`). The heartbeat writes one
+row per **1 s** for **60 s** into the Pi-local `power_loss_heartbeat` table, following Atlas's gate
+(2026-09-14 §1). Each row holds:
+
+| column | meaning |
+|---|---|
+| `loss_started_utc` | event key — UTC instant the loss was observed |
+| `seq` | 0-based row number |
+| `elapsed_s` | **monotonic** seconds since the loss (never wall clock — US-620) |
+| `vcell_v` | VCELL, NULL if the gauge could not be read |
+| `power_lost` | PLD at that row: 1 lost / 0 returned / NULL unknown |
+| `recorded_at` | wall-clock write time, context only |
+
+**Invariants.**
+
+- The heartbeat runs on its own daemon thread, and `start()` never blocks. A hook that raises is
+  logged and **never** delays shutdown.
+- Every row is committed with `PRAGMA synchronous = FULL` (the US-267 chain). A buffered row is
+  exactly the row a hard cut loses.
+- An unreadable gauge or PLD writes NULL. The row is still written, because its **existence** is the
+  measurement.
+- A missing database is never created.
+- The table is **not synced** (absent from `IN_SCOPE_TABLES`) and sits outside `ALL_SCHEMAS`, so it
+  adds no Pi-only server-parity drift (TD-039).
+
+**The reading.** At every start powerwatch logs one `powerwatch: LOSS HEARTBEAT =` line for the most
+recent event, via `readLatestLossHeartbeat`. The line gives the last surviving `elapsed_s`, the
+**floor** on how long the machine lived (understated by at most one interval), plus the min VCELL
+and whether power returned.
+
+- If the rows reach the end of the window, the machine outlived the instrument.
+- Otherwise the number is **time-to-death** when the prior boot has no `CLEAN_COMPLETE`, and
+  **time-to-poweroff** when it does. Poweroff stops the service, which ends the rows.
+
+**Scope.** Losses ignored inside boot-grace start no heartbeat, because they never reach
+`handleOnBattery`.
 
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
