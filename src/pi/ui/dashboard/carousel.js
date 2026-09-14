@@ -5194,8 +5194,18 @@
 
       // Long-press anywhere on the carousel opens the menu (D-6). A filling ring
       // gives feedback after the arm delay; movement or an early release cancels.
+      //
+      // US-747: the SAME hold on the open menu closes it -- a second way out
+      // that does not depend on the ✕ (the one control is exactly what failed).
+      //
+      // US-747 root cause, and why each press OWNS its interval: this used to
+      // keep the interval in `timer` alone. A second pointerdown before the
+      // pointerup (a second finger, a palm) overwrote it, the first interval was
+      // never cleared, and after the release nulled `pressStart` it read
+      // `Date.now() - null` -- always past the hold -- and re-opened the menu on
+      // every tick. ✕ closed it; the orphan opened it again 50 ms later.
       var carousel = document.getElementById("carousel");
-      if (carousel && ring) {
+      if (ring) {
         var pressStart = null;
         var pressX = 0;
         var pressY = 0;
@@ -5211,11 +5221,19 @@
           ring.hidden = true;
           ring.style.setProperty("--fill", "0");
         }
-        carousel.addEventListener("pointerdown", function (e) {
+        function startPress(e) {
+          // A new contact restarts the hold rather than stacking a second one.
+          clearPress();
           pressStart = Date.now();
           pressX = e.clientX;
           pressY = e.clientY;
-          timer = setInterval(function () {
+          var id = setInterval(function () {
+            // Belt and braces: an interval that is not the live press, or that
+            // outlived it, stops itself instead of reading a null start.
+            if (timer !== id || pressStart === null) {
+              clearInterval(id);
+              return;
+            }
             var elapsed = Date.now() - pressStart;
             if (elapsed >= LONG_PRESS_ARM_MS && !armed) {
               armed = true;
@@ -5226,16 +5244,26 @@
             }
             if (isLongPressComplete(elapsed)) {
               clearPress();
-              openMenu();
+              if (menu.hidden) openMenu();
+              else closeMenu();
             }
           }, 50);
-        });
-        carousel.addEventListener("pointermove", function (e) {
+          timer = id;
+        }
+        function movePress(e) {
           if (pressStart === null) return;
           if (exceedsMoveCancel(e.clientX - pressX, e.clientY - pressY)) clearPress();
-        });
-        carousel.addEventListener("pointerup", clearPress);
-        carousel.addEventListener("pointercancel", clearPress);
+        }
+        if (carousel) {
+          carousel.addEventListener("pointerdown", startPress);
+          carousel.addEventListener("pointermove", movePress);
+          carousel.addEventListener("pointerup", clearPress);
+          carousel.addEventListener("pointercancel", clearPress);
+        }
+        menu.addEventListener("pointerdown", startPress);
+        menu.addEventListener("pointermove", movePress);
+        menu.addEventListener("pointerup", clearPress);
+        menu.addEventListener("pointercancel", clearPress);
       }
     }
 

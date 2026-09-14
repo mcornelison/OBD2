@@ -4925,6 +4925,16 @@ item (A-8). Confirm-before-consequential: **Stop** and **Exit** require a confir
 modal; **Restart** acts directly; a `✕`/Back is always present (the operator is
 never trapped, F-6).
 
+**Two ways out (US-747).** No overlay may be escapable only by its own single
+control: the same ~5s hold, made on the open menu, closes it (the ring paints
+above the menu, `z-index` 45, below the confirm modal). Each press **owns** its
+interval — a new contact restarts the hold, and an interval that is not the
+live press stops itself. Before US-747 a second contact overwrote the only
+handle; the orphaned interval read `Date.now() - null` after release and
+re-opened the menu every 50 ms, so `✕` produced a flicker and the same screen
+until a reboot. The menu's open state is **not persisted** anywhere (no
+storage, hash or cookie). Guard: `tests/ui/test_carousel_setup_menu_escape.py`.
+
 **Privilege path (A-7) — three independent defense-in-depth layers.** The
 chromium kiosk runs **unprivileged** and can only do HTTP; it never runs as root
 and never holds sudo.

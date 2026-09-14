@@ -372,8 +372,10 @@ Clock.prototype.flushRound = function () {
   this._queue = [];
   for (var i = 0; i < due.length; i++) due[i].fn();
   var self = this;
+  // US-747: an interval cleared by an EARLIER callback in this same round does
+  // not fire -- as in a browser. The key snapshot would otherwise call it.
   Object.keys(this._intervals).forEach(function (id) {
-    self._intervals[id]();
+    if (self._intervals[id]) self._intervals[id]();
   });
 };
 

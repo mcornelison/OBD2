@@ -984,11 +984,14 @@ html, body {
 
 /* --- US-403 long-press ring (D-6) ------------------------------------------- */
 /* A radial fill driven by the JS --fill (0..1). Centered; non-interactive so it
-   never intercepts the press it visualizes. */
+   never intercepts the press it visualizes.
+   US-747: z-index 45 -- ABOVE #setup-menu (40), because the same hold now also
+   dismisses the menu and its progress must paint over it; BELOW #confirm-modal
+   (50), which interrupts. */
 #longpress-ring {
   position: fixed; top: 50%; left: 50%;
   width: 72px; height: 72px; margin: -36px 0 0 -36px;
-  border-radius: 50%; z-index: 30; pointer-events: none;
+  border-radius: 50%; z-index: 45; pointer-events: none;
   --fill: 0;
   background: conic-gradient(var(--green-ok) calc(var(--fill) * 360deg),
                              rgba(255, 255, 255, 0.12) 0);
