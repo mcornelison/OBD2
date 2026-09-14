@@ -3265,7 +3265,7 @@ gradePct, altitude, stopCount, biasRad, reasons}`:
 
 | Field | Meaning | Notes |
 |---|---|---|
-| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot. All three are measured in the **vehicle** frame produced by `IMU_BODY_FRAME` — see the body-frame note below; before US-708 the two horizontal components were **transposed** |
+| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot. All three are measured in the **vehicle** frame produced by `IMU_BODY_FRAME` — see the body-frame note below; before US-708 the two horizontal components were **transposed**. *Re-checked under (B) by US-745 (2026-09-14): holds unchanged, because the derivation is written in vehicle coordinates* |
 | `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract). ⚠️ US-708 fixed the AXES only: the magnetometer carries a second, independent defect (A-30, ~28 % field, heading uncorrelated with rotation over 668 turns) and is **not** trustworthy today |
 | `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation |
 | `gradePct` | `tan(pitchDeg) × 100` | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away. Until US-708 this was derived from the **lateral** axis, i.e. from the car's ROLL — every corner and crowned road read as a hill |
@@ -3298,15 +3298,31 @@ declaration, and `resolveMountFrame` applies it **once** to each raw channel
 (accel, gyro, mag) on the way in. `_levelFrame` and `PitchFusion` both receive
 vehicle coordinates and neither re-spells the mounting — patching them separately
 would be two copies of one fact (SSOT rule B). Two candidates are named, 180° of
-yaw apart: **(A)** `+Y = nose` ⇒ `(fwd, left, up) = (+y, −x, +z)` (shipped) and
-**(B)** `+Y = tail` ⇒ `(−y, +x, +z)` (what the old under-seat mount measured as).
-Flipping between them is **one line**, which matters because they differ by the
-sign of pitch and of both g axes: **picking wrong inverts grade rather than fixing
-it.** 🔴 (A) is the *reasoned* default and is confirmed by a **post-sprint drive on
-the relocated mount** — correlate `accel_Y` against `d(SPEED)/dt`: strongly
-positive keeps (A), strongly negative flips to (B), `|r| < 0.15` means stop and
-report. ⚠️ Drives on or before 2026-09-09 are all the OLD mount and will confirm
-(B) whatever the dash is doing.
+yaw apart: **(A)** `+Y = nose` ⇒ `(fwd, left, up) = (+y, −x, +z)` and **(B)**
+`+Y = tail` ⇒ `(−y, +x, +z)` **(shipped, US-745 / V0.29.50)**. Flipping between
+them is **one line**, which matters because they differ by the sign of pitch and
+of both g axes: **picking wrong inverts grade rather than fixing it.**
+
+🔴 **The confirming gate RAN and (A) FAILED it (Atlas ruling 2026-09-11; bound by
+US-745).** US-708 shipped (A) as the *reasoned* default pending a drive on the
+relocated dash mount: strongly positive `accel_Y` vs `d(SPEED)/dt` keeps (A),
+strongly negative flips to (B), `|r| < 0.15` stops. Drives **70/71** (NEW mount,
+23,770 IMU samples): `accel_Y` vs `d(SPEED)/dt` = **−0.906** over 235
+accelerate/decelerate windows ⇒ **(B)**; `accel_X` vs `d(SPEED)/dt` = **+0.039**
+(X carries no fore/aft content); mean accel `x=+0.315 y=−0.722 z=+9.845` (Z up).
+Independently, grade vs **GPS ground truth** scored **+0.411 for (B)** against
+**−0.411 for (A)** over 125 constant-speed windows. Under (B) `forward = −accel_Y`,
+so the same windows correlate **+0.906** against `d(SPEED)/dt` by construction.
+*Why (A) was chosen first — so it is not later read as carelessness:* the old
+under-seat board measured as (B), and after the relocation the CIO read the
+board's silkscreen **Y arrow** as facing the nose, which is a 180° yaw = (A). The
+reading was reasonable; the drive disproved it, which is exactly why it was a gate.
+`tests/pi/sensors/test_imu_body_frame.py` pins the binding to (B) with this basis
+in its failure message, so a revert to (A) fails loudly. ⚠️ Drives on or before
+2026-09-09 are all the OLD mount and will confirm (B) whatever the dash is doing.
+⚠️ The residual grade error left after the flip is the **uncancelled gyro-Y
+bias** (a separate defect), not an orientation error — the constant is not tuned
+to absorb it. The flip does **not** fix the compass (A-30, stuck magnetometer).
 
 *The mounting is not config.* It lived at `pi.sensors.imu.mount.*` until US-708,
 where it pinned the identity map and **overrode the code default** — so correcting
@@ -4400,7 +4416,15 @@ moves and no consumer changes.** ⚠️ And the sentence above becomes load-bear
 rather than decorative: the two US-708 candidate mountings differ by exactly a
 180° yaw, so if the shipped constant is the wrong one, "a board mounted backwards"
 is *precisely* what the operator is looking at — the words on the tile are how
-that gets caught on the first drive.
+that gets caught on the first drive. 🔴 **That case HAPPENED:** (A) shipped, the
+first drives on the new mount (70/71) measured (B), and **US-745** re-bound the
+constant (2026-09-14). The contract was re-derived under (B) and **the meaning did
+not move**: `resolveMountFrame` applies the mount once per raw channel and every
+downstream formula (`_levelFrame`, `computeHorizontalG`, `computeHeadingDeg`,
+`pitch_fusion`) is written in vehicle coordinates, so `gLon` + = accelerating,
+`gLat` + = right, heading = nose bearing and pitch + = nose up hold *iff* the
+binding produces true vehicle coordinates. Under (A) on a (B)-physical board all
+four published inverted (heading rotated 180°). **No consumer changes.**
 An over-scale reading **clamps along its own direction** (never per-axis, which
 would swing the dot to a corner and misreport which way the car was loaded) and
 turns amber, while the tile keeps the true magnitude -- the clamp cannot

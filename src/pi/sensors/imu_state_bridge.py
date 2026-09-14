@@ -335,19 +335,28 @@ IMU_BODY_FRAME_B = {"forward": "-y", "left": "+x", "up": "+z"}  # +Y = tail, +X 
 
 # THE ONE LINE. Flipping A <-> B is this binding and nothing else.
 #
-# (A) is the REASONED default and is NOT YET MEASURED on the current mount. The
-# old under-seat board measured as (B); the CIO relocated it to the dash and
-# reports the Y arrow now facing the nose, which is a 180 degree yaw = (A).
-# THE CONFIRMING GATE IS POST-SPRINT and needs ONE drive on the NEW mount:
-# correlate accel_Y against d(SPEED)/dt across accelerate/decelerate windows.
-#   strongly POSITIVE -> (A) confirmed, ship as written
-#   strongly NEGATIVE -> flip this line to IMU_BODY_FRAME_B
-#   |r| < 0.15        -> STOP and report; the mount is neither candidate
-# Calibration of expectation, from the old mount: r = -0.945, slope 0.86x, 829
-# windows. A healthy result looks like that with the sign flipped.
-# DO NOT settle this against drives on or before 2026-09-09 -- every one of them
-# is the OLD mount and will confirm (B) whatever the dash is actually doing.
-IMU_BODY_FRAME = IMU_BODY_FRAME_A
+# (B) IS SHIPPED, BY MEASUREMENT (US-745; Atlas ruled 2026-09-11). The confirming
+# gate US-708 left pending HAS RUN on the NEW dash mount, and (A) FAILED it:
+#   drives 70/71, 23,770 IMU samples:
+#     accel_Y vs d(SPEED)/dt = -0.906 over 235 accel/decel windows -> NEGATIVE
+#     accel_X vs d(SPEED)/dt = +0.039                              -> X is lateral
+#     mean accel x=+0.315 y=-0.722 z=+9.845                        -> Z is up
+#   independently, grade vs GPS ground truth over 125 constant-speed windows:
+#     (B) +0.411, (A) -0.411
+# The gate's own rule was "strongly NEGATIVE -> flip this line to (B)", so it was.
+#
+# WHY (A) WAS SHIPPED FIRST, so it is not read as carelessness: the old under-seat
+# board measured as (B); the CIO relocated it to the dash and read the Y arrow on
+# the board's silkscreen as facing the nose, which is a 180 degree yaw = (A). The
+# reading was reasonable and the drive disproved it -- which is why it was a gate.
+#
+# The published contract did NOT move (gLon + = accelerating, gLat + = right,
+# heading = nose bearing, pitch + = nose up): every formula downstream is written
+# in vehicle coordinates, so it holds iff this binding produces them. Under (A) on
+# a (B)-physical board all four published inverted (heading rotated 180 deg).
+# DO NOT tune this constant to absorb the residual grade error -- that is the
+# separate, uncancelled gyro-Y bias, and a fixed frame must not hide a drifting term.
+IMU_BODY_FRAME = IMU_BODY_FRAME_B
 
 _AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
