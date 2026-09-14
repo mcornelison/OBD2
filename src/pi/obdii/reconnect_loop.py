@@ -60,6 +60,12 @@
 #               |              | Fix #1 is the OS-side wifi.powersave=2
 #               |              | NetworkManager drop-in (deploy/nm-disable-
 #               |              | wifi-powersave.conf, installed by deploy-pi.sh).
+# 2026-09-14    | Rex (US-690) | A cap that abandons must also CANCEL.  Add
+#               |              | cancelFn to runReconnectHeartbeat: on a timeout
+#               |              | outcome the heartbeat cancels the attempt it gave
+#               |              | up on (production: ObdConnection.
+#               |              | cancelPendingConnects) instead of leaving it to
+#               |              | run beside the next tick.
 # ================================================================================
 ################################################################################
 
@@ -527,6 +533,7 @@ def runReconnectHeartbeat(
     isConnectedFn: Callable[[], bool],
     *,
     inFlightProbeFn: Callable[[], bool] | None = None,
+    cancelFn: Callable[[], None] | None = None,
     sleepFn: Callable[[float], None] | None = None,
     monotonicFn: Callable[[], float] | None = None,
     shutdownEvent: threading.Event | None = None,
@@ -605,6 +612,13 @@ def runReconnectHeartbeat(
             left unchanged.  When ``None`` (the legacy / pre-V0.27.1 callsites),
             the loop behaves identically to its original US-301 form aside from
             the US-325 backoff.
+        cancelFn: US-690 optional zero-arg callable invoked when an attempt
+            exceeds ``attemptTimeoutSec``.  The cap stops the heartbeat
+            WAITING; this stops the abandoned attempt RUNNING -- without it the
+            abandoned call is a second retry authority beside this loop.
+            Production wires :meth:`ObdConnection.cancelPendingConnects`.  Not
+            called on success, failure or error outcomes (those attempts have
+            already returned).  Exceptions are logged and swallowed.
         sleepFn: Injectable sleep used between ticks.  Defaults to
             :func:`time.sleep`.  Tests pass a :class:`FakeClock`-style fn
             that advances simulated time.
@@ -728,9 +742,19 @@ def runReconnectHeartbeat(
         elif outcome == 'timeout':
             logger.warning(
                 "Reconnect heartbeat tick %d: connectFn exceeded %.1fs "
-                "wall-clock cap; next attempt in %.1fs",
+                "wall-clock cap; cancelling it; next attempt in %.1fs",
                 ticks, attemptTimeoutSec, backoffSec,
             )
+            # US-690: abandoning is not enough -- cancel, so this heartbeat
+            # stays the only thing retrying.
+            if cancelFn is not None:
+                try:
+                    cancelFn()
+                except Exception as exc:  # noqa: BLE001 -- must not crash loop
+                    logger.warning(
+                        "Reconnect heartbeat tick %d: cancelFn raised %r",
+                        ticks, exc,
+                    )
 
         consecutiveFailures += 1
         sleepImpl(backoffSec)

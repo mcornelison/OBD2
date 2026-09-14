@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-012
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
+# 2026-09-14    | Rex (US-690) | Mocks drive reconnectOnce -- the loop's one-attempt seam
 # ================================================================================
 ################################################################################
 
@@ -350,7 +351,7 @@ class TestExponentialBackoff:
 
         # Mock connection to always fail reconnection
         mockConnection = MagicMock()
-        mockConnection.reconnect.return_value = False
+        mockConnection.reconnectOnce.return_value = False
         orchestrator._connection = mockConnection
 
         # Act
@@ -378,7 +379,7 @@ class TestExponentialBackoff:
         orchestrator._reconnectAttempt = 0
 
         mockConnection = MagicMock()
-        mockConnection.reconnect.return_value = False
+        mockConnection.reconnectOnce.return_value = False
         orchestrator._connection = mockConnection
 
         # Act
@@ -407,7 +408,7 @@ class TestExponentialBackoff:
         orchestrator._reconnectAttempt = 0
 
         mockConnection = MagicMock()
-        mockConnection.reconnect.return_value = False
+        mockConnection.reconnectOnce.return_value = False
         orchestrator._connection = mockConnection
 
         # Set shutdown after a brief moment

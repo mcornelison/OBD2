@@ -601,9 +601,11 @@ handshake. This matches the protocol documented in `specs/obd2-research.md`.
 `python-obd`'s connection object wraps **one serial port and is NOT
 thread-safe**. eclipse-obd drives that connection from **multiple threads**:
 
-- the lifecycle's bounded connect/query **timeout daemons**, which are
-  deliberately **left running on timeout** (TD-036 / US-244 anti-boot-hang —
-  `_runInitialConnectWithTimeout`, `_queryWithTimeout`);
+- the lifecycle's bounded connect/query **timeout daemons**, which the caller
+  stops **waiting** on at the cap (TD-036 / US-244 anti-boot-hang —
+  `_runInitialConnectWithTimeout`, `_queryWithTimeout`). Since US-690 an
+  abandoned **connect** is also **cancelled** (see "One retry authority" below);
+  the thread lives on only until its in-flight handshake returns;
 - the **US-301 reconnect heartbeat** daemon (a second connect path);
 - the **realtime logger**, which reads `ObdConnection.query()` on the capture
   loop thread.
@@ -682,6 +684,36 @@ interleaving) and `tests/pi/obdii/test_dtc_connect_edge_concurrency.py`
 (US-474 / F-117 GAP-1: a real `DtcClient` KOEO read + a logger read serialize
 through `_ioLock` on one faked non-thread-safe port; reverting the lock makes
 it RED).
+
+**One retry authority (US-690).** The epoch fence only moves when a connection
+is *made* or *torn down*, so it cannot stop an orphan that keeps **failing**:
+with the ECU asleep the generation never changes, and a timed-out
+`connect()` used to run its whole retry budget beside the loop that replaced
+it. The live V0.29.43 trace recorded that as two interleaved `retry_count`
+series in `connection_log`. Three rules now hold:
+
+- **A cap that abandons also cancels.** `ObdConnection.cancelPendingConnects()`
+  bumps a cancel epoch (its own lock, never `_ioLock`, so cancelling cannot
+  block behind the slow handshake it is giving up on). A connect call captures
+  the epoch at entry and returns False before its next attempt or backoff once
+  it moves. An attempt already inside `obd.OBD()` cannot be interrupted and
+  finishes; a link it establishes is kept. Both caps call it: the initial-
+  connect cap (`_runInitialConnectWithTimeout`) and the heartbeat's per-tick
+  cap (`runReconnectHeartbeat(cancelFn=…)`).
+- **No nested retry loops.** A loop that owns a count calls a single-attempt
+  seam: the heartbeats call `connectOnce()` (US-673) and the recovery loop
+  (`_reconnectionLoop`) calls `reconnectOnce()`. So the recovery loop's
+  `maxRetries` means that many port attempts, not that many × `connect()`'s
+  own budget.
+- **At most one retry thread.** `_liveRetryAuthorityName()` checks the US-301
+  heartbeat, the recovery loop and the US-338 post-failure heartbeat, skipping
+  the calling thread so the recovery loop can still hand off to the
+  post-failure heartbeat. `_startReconnection` and the post-failure spawn do
+  nothing while another retry thread is alive.
+
+Contract tests: `tests/pi/obdii/test_single_retry_authority.py` (the real
+initial-connect cap over a real `ObdConnection`: 1 port attempt after the cap
+fires, 6 with the cancel turned off).
 
 ---
 

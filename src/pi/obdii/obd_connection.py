@@ -81,6 +81,17 @@
 #                |              | Deliberately never touches the radio (rfkill /
 #                |              | hciconfig / `power off`) -- that class of recovery
 #                |              | is what got persisted as the 07-03 soft-block.
+# 2026-09-14    | Rex (US-690) | One retry authority.  A wall-clock cap that
+#                |              | abandoned a connect left its retry loop running
+#                |              | beside the loop that replaced it -- two counters,
+#                |              | two backoffs, interleaved retry_count series in
+#                |              | connection_log.  Add cancelPendingConnects(): a
+#                |              | lock-free cancel epoch that a call captures at
+#                |              | entry and checks before every attempt and every
+#                |              | backoff, so a capped caller can CANCEL the
+#                |              | abandoned call instead of merely walking away.
+#                |              | Add reconnectOnce(): transport reset + ONE attempt,
+#                |              | for the recovery loop that owns its own count.
 # ================================================================================
 ################################################################################
 
@@ -458,6 +469,13 @@ class ObdConnection:
         # -- it must NOT touch a connection a newer owner now holds.  Guarded by
         # _ioLock.
         self._generation = 0
+        # US-690: cancel epoch.  A connect call captures it at entry; any bump
+        # after that cancels the call's REMAINING attempts and backoffs.  Guarded
+        # by its own lock, NOT _ioLock -- the caller cancelling is precisely the
+        # one that gave up waiting on a call which may be holding _ioLock inside
+        # a slow obd.OBD() handshake, so cancelling must never block behind it.
+        self._cancelLock = threading.Lock()
+        self._cancelEpoch = 0
         # US-199: Supported-PID probe result cached at connection-open time.
         # None until connect() runs the probe. Consumers (ObdDataLogger) use
         # it to silent-skip unsupported PIDs before dispatching a K-line query.
@@ -523,6 +541,44 @@ class ObdConnection:
             True if any thread holds ``self._ioLock``, False otherwise.
         """
         return self._ioLock.locked()
+
+    def cancelPendingConnects(self) -> None:
+        """Cancel every connect call already in progress (US-690).
+
+        THE cancel for a wall-clock cap that gives up on a connect.  Before
+        US-690 such a cap only stopped WAITING: the call it abandoned kept
+        running its own retry loop -- its own attempt counter, its own backoff
+        -- beside whatever loop the caller started next.  That is the two
+        interleaved ``retry_count`` series in ``connection_log``.
+
+        Semantics:
+
+        * A call that started BEFORE this makes no further attempt and sleeps
+          no further backoff.  It returns False at its next attempt boundary.
+        * An attempt already inside ``obd.OBD()`` cannot be interrupted --
+          python-obd offers no abort -- so it finishes.  If it establishes the
+          link, the link is kept: a live connection is what every caller wants,
+          and discarding it would only force another handshake.  What cancel
+          guarantees is that no LOOP continues, not that no I/O completes.
+        * A call that starts AFTER this is unaffected.
+
+        Never blocks on ``_ioLock``; safe from any thread.
+        """
+        with self._cancelLock:
+            self._cancelEpoch += 1
+        logger.info(
+            "Pending connect calls cancelled by their owner -- no further "
+            "attempts or backoffs will run under them (US-690)"
+        )
+
+    def _currentCancelEpoch(self) -> int:
+        """Return the cancel epoch (US-690); see :meth:`cancelPendingConnects`."""
+        with self._cancelLock:
+            return self._cancelEpoch
+
+    def _isConnectCancelled(self, startEpoch: int) -> bool:
+        """True when :meth:`cancelPendingConnects` ran after ``startEpoch``."""
+        return self._currentCancelEpoch() != startEpoch
 
     def _isConnected(self) -> bool:
         """Internal connection check."""
@@ -778,6 +834,10 @@ class ObdConnection:
             self._logConnectionEvent(EVENT_TYPE_CONNECT_FAILURE, success=False, errorMessage=error)
             raise ObdNotAvailableError(error)
 
+        # US-690: captured once, so a cancel issued after this call began
+        # stops THIS call's loop and leaves later calls untouched.
+        cancelEpoch = self._currentCancelEpoch()
+
         self._status.state = ConnectionState.CONNECTING
         self._status.retryCount = 0
 
@@ -803,6 +863,17 @@ class ObdConnection:
                     "Connect retry loop exiting -- shutdown signaled "
                     "before attempt %d",
                     attempt + 1,
+                )
+                self._status.state = ConnectionState.DISCONNECTED
+                return False
+
+            # US-690: the owner that started this call has given up on it.
+            if self._isConnectCancelled(cancelEpoch):
+                logger.info(
+                    "Connect retry loop exiting -- cancelled by its owner "
+                    "before attempt %d/%d (US-690)",
+                    attempt + 1,
+                    totalAttempts,
                 )
                 self._status.state = ConnectionState.DISCONNECTED
                 return False
@@ -917,6 +988,18 @@ class ObdConnection:
             # Backoff OUTSIDE the lock so disconnect()/query() can acquire it and
             # free the port while this (possibly orphaned) connect waits.
             if attemptFailed and attempt < lastAttemptIndex:
+                # US-690: a cancelled call must not sleep a backoff it will never
+                # use -- the loop that replaced it owns the waiting now.
+                if self._isConnectCancelled(cancelEpoch):
+                    logger.info(
+                        "Connect retry loop exiting -- cancelled by its owner "
+                        "after attempt %d/%d, before backoff (US-690)",
+                        attempt + 1,
+                        totalAttempts,
+                    )
+                    self._status.state = ConnectionState.DISCONNECTED
+                    return False
+
                 # US-673: ONE acquisition point for the delay.  This used to be
                 # `retryDelays[min(attempt, len - 1)]`, which PLATEAUED on the
                 # last entry (16s) for every further attempt, forever, with no
@@ -1322,6 +1405,27 @@ class ObdConnection:
 
         self.resetTransport()
         return self.connect()
+
+    def reconnectOnce(self) -> bool:
+        """Reset the transport and make ONE connect attempt (US-690).
+
+        :meth:`reconnect` ends in :meth:`connect`, which is itself a retry loop.
+        The orchestrator's recovery loop called it once per ITS attempt, so each
+        "attempt 1/5" was up to six port attempts with a backoff of their own --
+        two nested loops, two counters, and a ceiling of 5 that was really 30.
+        This is :meth:`reconnect` with the inner loop removed: the caller's own
+        loop is the only thing that counts and the only thing that waits.
+
+        Returns:
+            True if the single attempt established the link, False otherwise.
+        """
+        logger.info("Attempting single-shot reconnection to OBD-II dongle")
+        self._status.state = ConnectionState.RECONNECTING
+
+        self._logConnectionEvent(EVENT_TYPE_RECONNECT)
+
+        self.resetTransport()
+        return self.connectOnce()
 
     def _logConnectionEvent(
         self,
