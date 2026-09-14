@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.47",
-  "theme": "Sprint 84 -- every burn was a subject failure",
-  "description": "A guard is detector-compose-subject and every recorded burn is a SUBJECT failure -- it looked in the wrong place, not at the wrong thing. US-722 adds subject-side controls to the three guards that burned us. US-716 the encoding guard was blind to 11 injected seams. US-724 a no-caller check for two of three dead-code shapes. US-719 re-targeted after a two-engine browser probe refuted its premise."
+  "version": "V0.29.48",
+  "theme": "Sprint 85 -- two facts must never be one string",
+  "description": "The power path tells the truth about itself. US-743: the Pi read AWAY in its own garage on an SSID case mismatch. US-737: systemd does NOT ref-count a shared RuntimeDirectory (measured); the false claim corrected at 7 sites incl. specs/architecture.md. US-728 surfaces the startup_log verdict -- right and unread since 08-25 -- never as 'crashed'. US-682, US-666, US-589."
 }
