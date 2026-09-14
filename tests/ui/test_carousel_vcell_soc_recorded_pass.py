@@ -62,6 +62,8 @@
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-639 punch-list 4.1 recorded pass +
 #               |              | the unreachable-F-8-fallback characterisation.
+# 2026-09-14    | Ralph (Rex)  | US-736: HEALTH detail now leads with the unknown
+#               |              | reason (`no_database` for this fixture).
 # ================================================================================
 ################################################################################
 
@@ -661,7 +663,11 @@ def test_aLiveGaugeDoesNotBuyAHealthVerdict(tmp_path):
     assert health is not None
     assert health["value"] == EM_DASH, health
     assert health["level"] == "unavailable", health
-    assert health["detail"] == "last health check " + MIDDOT + " never", health
+    # US-736: the unknown verdict now says WHY in front of the F-9 line. This
+    # fixture has no database handle, so the producer publishes `no_database`.
+    assert health["detail"] == (
+        "no battery log database " + MIDDOT + " last health check " + MIDDOT + " never"
+    ), health
     assert _tile(payload, CELL)["value"] == ATLAS_VCELL_PRINTED
     assert _tile(payload, CHARGE)["value"] == ATLAS_SOC_PRINTED
 

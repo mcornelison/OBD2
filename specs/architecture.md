@@ -4819,6 +4819,16 @@ never raised; atomic `writeStateAtomic`). Schema (spec §7):
   `ts − lastHealthCheckTs` (both in the state file, so the age is deterministic /
   node-testable, not browser-clock dependent). A month-old reading is never
   mistaken for live.
+- **Unknown says why (US-736).** An `unknown` verdict carries one of the six
+  US-632 machine reasons in `reasons.health` (`battery_health_verdict.UNKNOWN_REASONS`).
+  `carousel.js#BATTERY_HEALTH_REASON_TEXT` is the ONE renderer table for them;
+  its keys equal `UNKNOWN_REASONS` exactly (guard:
+  `tests/ui/test_carousel_battery_health_reason_text.py`). The HEALTH tile's
+  detail reads `"<reason text> · last health check · <date> (<age>)"` -- the F-9
+  line is kept whole, never swapped out. Fallbacks are typed and never equal a
+  known string: no usable reason -> `"reason not reported"`; an unrecognised
+  code -> `"unrecognised reason (<code>)"`. A resolved verdict (good/degraded/
+  replace) ignores any reason. The idle-home BATTERY fact is unchanged.
 
 **Temp honest (F-10).** `ambientTempC:null` → the card renders **"not captured"**,
 never a fabricated number.

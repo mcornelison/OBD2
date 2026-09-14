@@ -1325,6 +1325,34 @@
     return "—";
   }
 
+  // US-736: WHY the verdict is unknown. US-632 publishes one of six machine
+  // reasons in `reasons.health` (battery_health_verdict.UNKNOWN_REASONS); before
+  // this table the card threw all six away and every one read as the same
+  // em-dash. Keys are the producer's names VERBATIM -- `no_qualifying_drains`
+  // is plural -- and a guard test holds them equal to UNKNOWN_REASONS.
+  var BATTERY_HEALTH_REASON_TEXT = {
+    no_database: "no battery log database",
+    log_unreadable: "battery log unreadable",
+    no_qualifying_drains: "no full drain measured yet",
+    too_few_drains: "too few drains to judge",
+    health_data_stale: "last drain test too old",
+    clock_unreadable: "clock unreadable",
+  };
+
+  // Words for an unknown verdict's reason, or null for a resolved verdict (a
+  // reason explains an ABSENCE). The two fallbacks are typed and can never
+  // equal a known string: a missing reason and an untaught one are different
+  // facts, and neither may pass for "last drain test too old".
+  function healthReasonText(data) {
+    if (data.health !== "unknown") return null;
+    var code = isObj(data.reasons) ? data.reasons.health : null;
+    if (typeof code !== "string" || code === "") return "reason not reported";
+    if (Object.prototype.hasOwnProperty.call(BATTERY_HEALTH_REASON_TEXT, code)) {
+      return BATTERY_HEALTH_REASON_TEXT[code];
+    }
+    return "unrecognised reason (" + code + ")";
+  }
+
   // The date portion (YYYY-MM-DD) of an ISO instant, or null.
   function isoDate(ts) {
     if (typeof ts !== "string") return null;
@@ -1461,14 +1489,18 @@
         ts: typeof data.ts === "string" ? data.ts : null,
       };
     }
+    // US-736: the reason goes IN FRONT of the F-9 line, never in place of it.
+    var reason = healthReasonText(data);
+    var checkLabel = healthCheckLine(data).label;
     return {
       label: BATTERY_LABEL,
       unavailable: false,
       health: {
         label: "HEALTH",
         value: healthValue(data.health),
-        detail: healthCheckLine(data).label,
+        detail: reason === null ? checkLabel : reason + " · " + checkLabel,
         level: healthLevel(data.health),
+        reason: reason,
       },
       vcell: vcellTile(data),
       soc: socTile(data),
