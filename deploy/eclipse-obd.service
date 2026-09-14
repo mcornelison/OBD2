@@ -50,8 +50,9 @@ User=mcornelison
 
 # Runtime dir for the single-instance pidfile (F-107 Mechanism B / A-9 Root 1)
 # and the F-103 state-server's /run/eclipse-obd/states/. systemd creates
-# /run/eclipse-obd owned by User= on start (tmpfs, removed on stop, cleared on
-# reboot) so the non-root service can write its lock. REQUIRED when
+# /run/eclipse-obd owned by User= on start (tmpfs, so it clears on reboot; it is
+# KEPT across this unit's stop by RuntimeDirectoryPreserve=yes below -- ARCH-025)
+# so the non-root service can write its lock. REQUIRED when
 # pi.runtime.singleInstanceGuard.enabled is true -- without it acquire() hits
 # EPERM on mkdir(/run/eclipse-obd) and the orchestrator crash-loops on boot.
 #
