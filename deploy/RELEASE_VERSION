@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.48",
-  "theme": "Sprint 85 -- two facts must never be one string",
-  "description": "The power path tells the truth about itself. US-743: the Pi read AWAY in its own garage on an SSID case mismatch. US-737: systemd does NOT ref-count a shared RuntimeDirectory (measured); the false claim corrected at 7 sites incl. specs/architecture.md. US-728 surfaces the startup_log verdict -- right and unread since 08-25 -- never as 'crashed'. US-682, US-666, US-589."
+  "version": "V0.29.49",
+  "theme": "US-761 stop-loss -- the Pi was deleting 1.77M unsynced IMU rows a day",
+  "description": "Patch deploy, CIO-directed 2026-09-14. pi.sensors.retentionDays 7 -> 45. The 7-day rolling purge had already destroyed ~36.9M EDR rows and no edr_* table syncs, so every day cost ~1.77M rows permanently. Hotfix only -- US-734 is the fix. Preconditions verified before deploy: US-322 backups bounded at 2; disk margin 41.0 GB against a 20 GB floor; validator has no range check on the key. First deletion under the new window is ~2026-10-22."
 }
