@@ -3075,6 +3075,8 @@
     no_mag_reading: "no compass reading",
     tilt_unresolved: "orientation unresolved",
     pitch_out_of_range: "pitch beyond range",
+    // US-749: the fusion's plausibility guard withheld a pitch the accelerometer contradicts.
+    gyro_implausible: "gyro implausible",
     no_source: "no source",
   };
 

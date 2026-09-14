@@ -51,6 +51,10 @@
 #               |              | + ZUPT stop detector and rolling bias mean.
 #               |              | Owns the gravity/tilt constants US-478 defined
 #               |              | (imu_state_bridge re-exports them; ONE home).
+# 2026-09-14    | Rex (US-749) | Plausibility guard: a trusted accel that
+#               |              | disagrees with the fused pitch beyond the trust
+#               |              | band's own contamination bound for > 3 tau marks
+#               |              | the gyro implausible; pitchRad is then None.
 # ================================================================================
 ################################################################################
 
@@ -70,11 +74,13 @@ __all__ = [
     "DEFAULT_ZUPT_MIN_STOPS",
     "DEFAULT_ZUPT_SPEED_MAX_AGE_S",
     "DEFAULT_ZUPT_WINDOW_STOPS",
+    "GYRO_IMPLAUSIBLE_SETTLE_TAUS",
     "MAX_GRADE_PITCH_DEG",
     "MIN_GRAVITY_MS2",
     "STANDARD_GRAVITY_MS2",
     "ZUPT_MIN_STOP_S",
     "PitchFusion",
+    "accelTrustContaminationRad",
     "gradePctFromPitchRad",
     "pitchRadFromAccel",
 ]
@@ -138,6 +144,16 @@ DEFAULT_ZUPT_MIN_STOPS = 5
 # mean over all history would freeze on an old calibration and never recover
 # from a physical remount. Rex-derived.
 DEFAULT_ZUPT_WINDOW_STOPS = 20
+
+# US-749: how long a trusted accel must disagree with the fused pitch before the
+# gyro is declared implausible, in multiples of the filter's own tau. 3 tau is the
+# textbook settling time of a first-order filter (1 - e^-3 = 95%): any transient
+# the accel correction can pull out has been pulled out by then. What SURVIVES it
+# is not a transient -- the complementary filter settles at
+# ``accelPitch + rate * tau``, so a sustained disagreement is a standing gyro
+# rate, which a parked or cruising chassis cannot physically be turning at.
+# (2026-09-14: 0.2457 rad/s x 5 s = 70.4 deg, published as a confident pitch.)
+GYRO_IMPLAUSIBLE_SETTLE_TAUS = 3
 
 # The integrated pitch is clamped here: past vertical the attitude is not merely
 # wrong, it makes every downstream tan() nonsense.
@@ -211,6 +227,25 @@ def gradePctFromPitchRad(pitchRad: float | None) -> float | None:
     return round(math.tan(pitchRad) * 100.0, _GRADE_DECIMALS)
 
 
+def accelTrustContaminationRad(accelTrustBand: float) -> float:
+    """The largest tilt error a TRUSTED accel reading can carry, radians (US-749).
+
+    A longitudinal pull of ``a`` g reads ``|f| = g * sqrt(1 + a^2)``, so the
+    trust band admits pulls up to ``a = sqrt((1 + band)^2 - 1)`` and each fakes
+    ``atan(a)`` of tilt (~11.4 deg at the default 2%). A disagreement larger than
+    this cannot be the accelerometer being contaminated, so it is the plausibility
+    guard's bound -- derived from the existing band, not a new judgement.
+
+    Args:
+        accelTrustBand: Fractional deviation of |accel| from 1 g the filter trusts.
+
+    Returns:
+        The contamination bound in radians.
+    """
+    band = max(0.0, accelTrustBand)
+    return math.atan(math.sqrt((1.0 + band) ** 2 - 1.0))
+
+
 class PitchFusion:
     """Complementary gyro/accel pitch filter with a ZUPT bias update.
 
@@ -272,6 +307,9 @@ class PitchFusion:
         self._stopSum = 0.0
         self._stopSamples = 0
         self._stopObs: deque[float] = deque(maxlen=window)
+        # US-749 plausibility guard state.
+        self._implausibleBoundRad = accelTrustContaminationRad(self._trustBand)
+        self._disagreeSince: float | None = None
 
     # -- read side -------------------------------------------------------------
     @property
@@ -279,11 +317,26 @@ class PitchFusion:
         """The fused, bias-corrected chassis pitch, or None when unknown.
 
         None is the honest answer before the filter has seeded from an
-        uncontaminated reading -- never a fabricated 0.0.
+        uncontaminated reading -- never a fabricated 0.0 -- and, since US-749,
+        while ``gyroImplausible``: a number the estimator has evidence is wrong
+        must not reach any consumer as a confident attitude (``rawPitchRad``
+        still carries it for diagnostics).
         """
-        if self._pitch is None:
+        if self._pitch is None or self.gyroImplausible:
             return None
         return self._pitch - self.biasRad
+
+    @property
+    def gyroImplausible(self) -> bool:
+        """Whether a trusted accel has disagreed past the bound for > 3 tau (US-749).
+
+        No clamp and no offset: the verdict withholds the number, it does not
+        replace it with a plausible-looking one. It clears as soon as a trusted
+        reading agrees again.
+        """
+        if self._disagreeSince is None or self._lastCapture is None:
+            return False
+        return (self._lastCapture - self._disagreeSince) > GYRO_IMPLAUSIBLE_SETTLE_TAUS * self._tauS
 
     @property
     def rawPitchRad(self) -> float | None:
@@ -369,6 +422,8 @@ class PitchFusion:
         # acceleration phantom in as the origin the gyro integrates from.
         dt = capture - last if last is not None else None
         if prev is None or dt is None or dt <= 0.0 or dt > self._tauS:
+            # A re-seed discards the history the disagreement was measured over.
+            self._disagreeSince = None
             if trusted:
                 self._pitch = accelPitch
             return
@@ -395,6 +450,9 @@ class PitchFusion:
                 predicted = predicted + alpha * (accelPitch - predicted)
 
         self._pitch = _clampPitch(predicted)
+        if trusted:
+            assert accelPitch is not None  # narrowed by `trusted`
+            self._trackDisagreement(accelPitch, capture)
 
     def reset(self) -> None:
         """Drop the attitude estimate (e.g. the sensor went absent).
@@ -408,8 +466,23 @@ class PitchFusion:
         self._endStop()
         self._stopSince = None
         self._lastSpeedCapture = None
+        self._disagreeSince = None
 
     # -- internals -------------------------------------------------------------
+    def _trackDisagreement(self, accelPitch: float, capture: float) -> None:
+        """Open or close the disagreement window on a TRUSTED reading (US-749).
+
+        Only trusted readings are evidence: an untrusted one leaves the window as
+        it was, neither confirming nor clearing it. A ZUPT snap sets pitch to the
+        accel measurement, so a confirmed stop always closes the window.
+        """
+        assert self._pitch is not None  # set by the caller's update
+        if abs(self._pitch - accelPitch) > self._implausibleBoundRad:
+            if self._disagreeSince is None:
+                self._disagreeSince = capture
+        else:
+            self._disagreeSince = None
+
     def _accelIsNearOneG(self, vec: tuple[float, float, float]) -> bool:
         """Whether |accel| sits inside the trust band around standard gravity."""
         magnitudeG = math.sqrt(sum(c * c for c in vec)) / STANDARD_GRAVITY_MS2

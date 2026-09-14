@@ -83,6 +83,9 @@
 #               |              | (a fact, not a knob -- Atlas 2026-09-10), and
 #               |              | stopCount/biasRad published so the pitch path is
 #               |              | verifiable at all.
+# 2026-09-14    | Rex (US-749) | pitchDeg/gradePct publish typed-null
+#               |              | gyro_implausible when PitchFusion's plausibility
+#               |              | guard trips (the 09-14 confident 70 deg pitch).
 # ================================================================================
 ################################################################################
 
@@ -288,6 +291,11 @@ REASON_NO_SOURCE = "no_source"
 # (e.g. the process started mid-drive under power). Distinct from
 # tilt_unresolved -- the sensor is fine, the attitude is simply not yet known.
 REASON_PITCH_UNSEEDED = "pitch_unseeded"
+# US-749: the fusion HAS an attitude, but a trusted accelerometer has contradicted
+# it for > 3 tau -- a standing gyro rate. Distinct from pitch_unseeded (nothing
+# known yet) and pitch_out_of_range (a number past tan's range): here the number
+# exists and the estimator has evidence it is wrong.
+REASON_GYRO_IMPLAUSIBLE = "gyro_implausible"
 
 # The derived fields, in payload order (the reasons map is keyed by these).
 _DERIVED_FIELDS = (
@@ -521,6 +529,7 @@ def buildImuState(
     pitchRad: float | None = None,
     stopCount: int = 0,
     biasRad: float = 0.0,
+    gyroImplausible: bool = False,
     unavailableReason: str | None = None,
     fieldReasons: dict[str, str] | None = None,
 ) -> dict:
@@ -546,6 +555,9 @@ def buildImuState(
             from a rebuild.
         biasRad: US-708 diagnostics -- the mount-tilt bias currently subtracted
             from the fused pitch, radians.
+        gyroImplausible: US-749 -- the fusion's plausibility guard has tripped.
+            ``pitchDeg`` and ``gradePct`` are then null with
+            ``gyro_implausible``, never the contradicted number.
         unavailableReason: When set, the whole instrument is reported absent with
             this reason (e.g. the sensor is not wired) and every derived field is
             null -- silence reported as silence.
@@ -612,7 +624,12 @@ def buildImuState(
     # reported as such -- "the attitude is not known yet" must not read like
     # "you are climbing a cliff".
     grade = gradePctFromPitchRad(pitchRad)
-    if pitchRad is None:
+    if gyroImplausible:
+        # US-749: checked FIRST -- the guard makes the fusion withhold pitchRad,
+        # and that must not be reported as "not seeded yet".
+        reasons["pitchDeg"] = REASON_GYRO_IMPLAUSIBLE
+        reasons["gradePct"] = REASON_GYRO_IMPLAUSIBLE
+    elif pitchRad is None:
         reasons["pitchDeg"] = REASON_PITCH_UNSEEDED
         reasons["gradePct"] = REASON_PITCH_UNSEEDED
     else:
@@ -726,6 +743,7 @@ class ImuStateBridge:
         self._lastWriteCapture: float | None = None
         # US-708: the last ZUPT stop count written to the log (change-only).
         self._lastLoggedStopCount = 0
+        self._lastLoggedGyroImplausible = False
         # US-564: raw channel topic -> the gate reason currently refusing it.
         self._gatedChannels: dict[str, str] = {}
 
@@ -917,6 +935,28 @@ class ImuStateBridge:
             self._pitchFusion.pitchRad,
         )
 
+    def _logGyroPlausibilityChange(self) -> None:
+        """Log the US-749 guard on each transition, never per write.
+
+        The durable record that pitch went dark for a reason: the raw fused
+        attitude at the moment of the verdict is the number a later diagnosis
+        needs, and the state file deliberately no longer carries it.
+        """
+        implausible = self._pitchFusion.gyroImplausible
+        if implausible == self._lastLoggedGyroImplausible:
+            return
+        self._lastLoggedGyroImplausible = implausible
+        rawPitch = self._pitchFusion.rawPitchRad
+        rawDeg = f"{math.degrees(rawPitch):.2f}" if rawPitch is not None else "None"
+        if implausible:
+            logger.warning(
+                "imu pitch: gyro_implausible -- trusted accel contradicts fused pitch "
+                "(rawPitchDeg=%s); pitchDeg/gradePct withheld",
+                rawDeg,
+            )
+        else:
+            logger.info("imu pitch: gyro plausible again (rawPitchDeg=%s)", rawDeg)
+
     def _handleAccel(self, sample: Any) -> None:
         """Update the gravity estimate and (at the display cadence) write."""
         raw = _vec3(getattr(sample, "value", None))
@@ -930,6 +970,7 @@ class ImuStateBridge:
         # would silently throw away four fifths of the rotation.
         self._pitchFusion.update(accel, self._freshGyro(capture), capture)
         self._logStopCountChange()
+        self._logGyroPlausibilityChange()
         if not self._shouldWrite(capture):
             return
         gravity = self._gravity
@@ -943,6 +984,7 @@ class ImuStateBridge:
                 linear=linear,
                 mag=self._freshMag(capture),
                 pitchRad=self._pitchFusion.pitchRad,
+                gyroImplausible=self._pitchFusion.gyroImplausible,
                 fieldReasons=self._fieldReasons(),
                 **self._pitchDiagnostics(),
             )

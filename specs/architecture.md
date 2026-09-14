@@ -3267,12 +3267,12 @@ gradePct, altitude, stopCount, biasRad, reasons}`:
 |---|---|---|
 | `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot. All three are measured in the **vehicle** frame produced by `IMU_BODY_FRAME` — see the body-frame note below; before US-708 the two horizontal components were **transposed**. *Re-checked under (B) by US-745 (2026-09-14): holds unchanged, because the derivation is written in vehicle coordinates* |
 | `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract). ⚠️ US-708 fixed the AXES only: the magnetometer carries a second, independent defect (A-30, ~28 % field, heading uncorrelated with rotation over 668 turns) and is **not** trustworthy today |
-| `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation |
+| `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation. **Since US-749 it is `null` + `gyro_implausible` when a trusted accelerometer has contradicted the fusion for > 3 τ** (see *Plausibility guard* below) — never the contradicted number, never clamped |
 | `gradePct` | `tan(pitchDeg) × 100` | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away. Until US-708 this was derived from the **lateral** axis, i.e. from the car's ROLL — every corner and crowned road read as a hill |
 | `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. US-519 derives it from `pitchDeg`; a future GPS/baro supersedes that, not this bridge |
 | `stopCount` / `biasRad` | **US-708 pitch-path diagnostics**: confirmed ZUPT stops in the rolling window, and the mount-tilt bias currently subtracted from the fused pitch (radians) | NOT derived fields, never gated, and deliberately **still published while the instrument is unavailable** — they describe the *estimator*, and the bias survives an unplug because how the board is bolted in did not change. `biasRad` is unreadable without `stopCount`: 0.0 means "no bias measured yet" until you can see how many stops are behind it |
 | `available` / `ts` | freshness | absent/stale → the US-497 idle-card fallback |
-| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `pitch_unseeded`, `no_source` |
+| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `pitch_unseeded`, `gyro_implausible` (US-749, on `pitchDeg` + `gradePct`), `no_source` |
 
 ##### The body frame (US-708 / F-135, Sprint 83 / V0.29.46)
 
@@ -3411,6 +3411,37 @@ confidence than the drift it was fixing. A stop therefore requires zero speed
 *observed across* the whole gate **and** still fresh (`zuptSpeedMaxAgeSec`,
 default 2 s, deliberately **below** the 3 s gate); elapsed time after one zero
 reading is evidence only that we stopped being told.
+
+*Stop detector, stated (US-749).* A stop does **not** need a moving→stopped
+transition: `observeSpeed` opens one on the first observed zero, so a car that
+starts parked with a live link is ZUPT-snapped after 3 s like any other. The bias
+observation is committed **per stop, when it ends** (moving again, stale speed or
+reset), so `stopCount` reads 0 *during* one long stop, and `biasRad` stays 0.0
+until `zuptMinStops` (5) stops. With the OBD link down there is no SPEED at all,
+so `stopCount = 0` is correct.
+
+**Plausibility guard (US-749 / F-135, Sprint 86 / V0.29.50).** On 2026-09-14 the
+gyro carried a standing offset (0.2457 rad/s on the pitch channel, stationary car)
+and the fusion published **70° as a confident pitch** (`gradePct` 276) beside a
+level, trusted accelerometer. The mechanism is exact: the complementary filter
+settles at `accelPitch + rate × τ`, and 0.2457 × 5 s = 70.4°. The accelerometer
+term *was* contributing (without it pitch integrates to the 90° clamp); nothing
+checked the answer against it. ⚠️ `gLat`/`gLon` are gravity-removed and **cannot**
+see this error, so a healthy g-meter is no evidence about pitch.
+`PitchFusion` now tracks, on **trusted** readings only, how long `|fused −
+accelPitch|` has exceeded `accelTrustContaminationRad(accelTrustBand)` — the
+largest tilt a pull the trust band still admits can fake, `atan(√((1+band)² − 1))`
+≈ **11.4°** at 2% (derived from the existing band, not a new number). Past
+**`GYRO_IMPLAUSIBLE_SETTLE_TAUS` = 3 τ** (a first-order filter's 95% settling time)
+`gyroImplausible` is true, `pitchRad` returns `None` (`rawPitchRad` still carries
+the value, and the bridge logs it on the transition), and the bridge publishes
+`pitchDeg`/`gradePct` `null` + `gyro_implausible`. Why this discriminates: a
+contaminated or stepped accel is *followed* by the filter, so its disagreement
+decays inside ~τ; only a standing rate holds one past 3 τ, i.e. a trip means a
+rate above ≈ 11.4° / 5 s ≈ 0.040 rad/s, against ≤ 0.015 rad/s measured healthy on
+this car. The verdict clears on the first trusted reading that agrees; a ZUPT snap
+always agrees. **No clamp and no hard-coded offset** — the guard withholds the
+number; the gyro offset itself must be fixed upstream.
 
 *Config (`pi.sensors.imu.*`, all positive-checked in `_validateImuStateBridge`).*
 `pitchTauSec` (5.0), `accelTrustBand` (0.02), `zuptMinStopSec` (**3.0 — Spool
