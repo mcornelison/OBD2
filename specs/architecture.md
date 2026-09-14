@@ -2462,14 +2462,22 @@ mode (degraded UX, no data loss). No new config key, no runtime coordination.
 
 **C-5 lifecycle — `shutdown-state` must survive `eclipse-obd.service` stop.** The
 shutdown splash reads `shutdown-state` *during* the shutdown sequence, after
-`eclipse-obd.service` may already have stopped. Because `eclipse-obd.service`'s
-`RuntimeDirectory=eclipse-obd` is removed on its stop, the states dir would vanish
-exactly when the splash needs it — unless another live unit holds the shared
-ref-counted `RuntimeDirectory`. `eclipse-states-http.service` runs continuously and
-shares `RuntimeDirectory=eclipse-obd` (+ `RuntimeDirectoryPreserve=yes`), and the
+`eclipse-obd.service` may already have stopped. **systemd does NOT ref-count a
+`RuntimeDirectory` shared between units** (US-737, measured by Atlas on systemd
+257.13, 2026-09-13: two units sharing one dir, A with `RuntimeDirectoryPreserve=yes`
+and B without — stopping B removed the dir while A was still running).
+`RuntimeDirectoryPreserve=yes` protects only against the unit that declares it. So
+the states dir survives `eclipse-obd`'s stop **only because every sharer —
+`eclipse-obd.service`, `eclipse-states-http.service`, `eclipse-boot-state.service` —
+declares `RuntimeDirectoryPreserve=yes`**, and the
 `/etc/tmpfiles.d/eclipse-obd-states.conf` entry recreates `states/` at every boot.
 Together these keep `/run/eclipse-obd/states/shutdown-state` readable across
-`eclipse-obd`'s stop. The multi-owner runtime-dir contract is documented in full in
+`eclipse-obd`'s stop. ⚠️ Until US-737 (V0.29.48) `eclipse-obd.service` lacked the
+directive, so every deploy, `Restart=` and poweroff deleted the dir — including
+powerwatch's `power-source.json` (A-26 SSOT publish → EPERM). Consumers were already
+protected from the frozen file by `readPowerSource`'s 30 s freshness bound
+(`power_source_pubsub.py`); the directory was the whole defect.
+`tests/deploy/test_shared_runtime_dir_preserve.py` pins the directive on every sharer. The multi-owner runtime-dir contract is documented in full in
 the **F-103 Splash Subsystem** section below (US-393); this section is the
 shutdown-state half of that contract.
 
@@ -3798,15 +3806,18 @@ multi-owner runtime-dir contract).** `/run` is tmpfs (wiped every reboot). The d
 has three would-be owners that must be reconciled so they do not fight:
 
 1. **`eclipse-obd.service`** declares `RuntimeDirectory=eclipse-obd` → systemd
-   creates `/run/eclipse-obd` on *its* start and **removes it on its stop**, and
-   it never creates the `states/` subdir. Owning the dir *exclusively* would make
-   `states/` (and `shutdown-state`) vanish the moment eclipse-obd stops — exactly
-   when the US-394 shutdown splash needs it.
-2. **The F-103 units share `RuntimeDirectory=eclipse-obd`** (same name → systemd
-   **ref-counts** it). `eclipse-states-http.service` runs continuously, so the
-   ref-count never hits zero while it is up → `/run/eclipse-obd` **outlives**
-   eclipse-obd.service across its stop/restart. `RuntimeDirectoryPreserve=yes`
-   reinforces this.
+   creates `/run/eclipse-obd` on *its* start, and it never creates the `states/`
+   subdir. Without `RuntimeDirectoryPreserve=yes` systemd **removes the dir on
+   its stop**, making `states/` (and `shutdown-state`) vanish the moment
+   eclipse-obd stops — exactly when the US-394 shutdown splash needs it.
+2. **The F-103 units share `RuntimeDirectory=eclipse-obd`.** 🔴 **Sharing the name
+   does NOT make systemd ref-count it** (US-737, measured on systemd 257.13): any
+   sharer that stops without `RuntimeDirectoryPreserve=yes` deletes the dir for
+   every other sharer, running or not. `/run/eclipse-obd` outlives
+   eclipse-obd.service's stop/restart **only because every sharer declares
+   `RuntimeDirectoryPreserve=yes`** — `eclipse-obd.service` was missing it until
+   V0.29.48. `tests/deploy/test_shared_runtime_dir_preserve.py` pins it on every
+   sharer.
 3. **`/etc/tmpfiles.d/eclipse-obd-states.conf`** (`deploy/eclipse-obd-states.conf`)
    creates `/run/eclipse-obd/states/` (owned `mcornelison`) **at every boot,
    independent of any unit's start order** — the cold-reboot invariant the bench
@@ -3814,8 +3825,8 @@ has three would-be owners that must be reconciled so they do not fight:
 
 The emitter + server also `ensureStatesDir()` the `states/` subdir in-process
 (`RuntimeDirectory` makes only the parent `/run/eclipse-obd`, not `states/`).
-Together: tmpfiles guarantees boot-time existence; the shared ref-counted
-`RuntimeDirectory` guarantees mid-session survival across eclipse-obd's lifecycle.
+Together: tmpfiles guarantees boot-time existence; `RuntimeDirectoryPreserve=yes`
+on every sharer guarantees mid-session survival across eclipse-obd's lifecycle.
 The old deploy-time `install -d` alone is **insufficient** (tmpfs wipes it on the
 next reboot).
 

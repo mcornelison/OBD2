@@ -18,6 +18,10 @@
 # ================================================================================
 # 2026-08-21    | US-566  | Initial -- Sprint 75 / V0.29.30 arm-decision
 #                           observability gate.
+# 2026-09-13    | US-666  | Sprint 85: a pin that has only been READ no longer
+#                           reports ARMED. It reports PIN READABLE, TRANSITION
+#                           UNVERIFIED, and the PROVEN line says its proof is
+#                           a PRIOR run's witness, not this start.
 # ================================================================================
 ################################################################################
 """US-566: the powerwatch arm decision must never be silent."""
@@ -183,14 +187,24 @@ def test_buildArmDecisionMessage_statesTheProtectionStateInPlainWords():
     """
     Given: each disposition
     When: the message is composed
-    Then: it says whether safe-shutdown protection is ON or OFF
+    Then: it says whether safe-shutdown protection is ON, UNVERIFIED or OFF
 
     The operator's question is not "did a self-check pass", it is "am I
-    protected". Both must be answerable from the one line.
+    protected". All three answers must be readable from the one line. US-666:
+    a pin that has only been READ earns UNVERIFIED, not ON.
     """
     assert "protection is ON" in m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc="2026-09-11T19:02:36Z",
+    )
+    unwitnessed = m.buildArmDecisionMessage(
         armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True
     )
+    assert "protection is UNVERIFIED" in unwitnessed
+    assert "protection is ON" not in unwitnessed
     assert "protection is OFF" in m.buildArmDecisionMessage(
         armed=False, pldGpioPin=6, pldAvailable=True, readsPowerPresent=False
     )
@@ -409,7 +423,8 @@ def test_armed_but_NEVER_witnessed_does_not_predict_what_it_will_do():
         readsPowerPresent=True,
         lastTransitionUtc=None,
     )
-    assert "UNPROVEN" in message
+    # US-666 moved this pin: the unwitnessed verdict is no longer ARMED (UNPROVEN).
+    assert m.ARM_DECISION_UNVERIFIED in message
     assert "will run" not in message, (
         "the line still PREDICTS the pipeline will run, on evidence that is one "
         "instantaneous read -- this is the defect ARCH-019 exists to remove"
@@ -417,8 +432,8 @@ def test_armed_but_NEVER_witnessed_does_not_predict_what_it_will_do():
     assert "READS" in message and "CHANGES" in message, (
         "the line must say what the self-check actually established"
     )
-    # It still arms, and still says so: the fix is not to stop arming.
-    assert "protection is ON" in message
+    # It still runs the watch, and still says so: the fix is not to stop arming.
+    assert "watch is RUNNING" in message
 
 
 def test_armed_AND_witnessed_may_state_what_it_will_do():
@@ -481,3 +496,124 @@ def test_the_witness_is_actually_WIRED_at_both_ends():
         "nothing RECORDS a witnessed transition -- PROVEN would be unreachable "
         "and the arm line would be permanently, if honestly, unproven"
     )
+
+
+# ---------------------------------------------------------------------------
+# US-666 -- the self-check proves the pin can be READ, never that it CHANGES.
+#
+# A stuck pin and a live one give the startup check the same single reading,
+# so readability alone must not earn the word ARMED. The only evidence that the
+# pin changes is a witnessed transition, and that witness is always from a
+# PRIOR run -- this start cannot exercise a power loss in software.
+# ---------------------------------------------------------------------------
+WITNESS_UTC = "2026-09-11T19:02:36Z"
+
+
+def test_US666_pinHeldInOneState_neverWitnessed_isNotReportedArmed(caplog):
+    """
+    Given: the pin reads power-present (held in one state) and no transition
+        has ever been witnessed
+    When: the arm decision is emitted
+    Then: the logged line does NOT contain ARMED; it carries the downgraded
+        verdict PIN READABLE, TRANSITION UNVERIFIED
+
+    VC1 + VC3. This is exactly what a stuck pin looks like to the check.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    m.emitArmDecision(armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True)
+
+    message = _decisionRecords(caplog)[0].getMessage()
+    assert m.ARM_DECISION_UNVERIFIED == "PIN READABLE, TRANSITION UNVERIFIED"
+    assert f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_UNVERIFIED} --" in message
+    assert m.ARM_DECISION_ARMED not in message, (
+        "a pin that has only been READ is still being reported as ARMED"
+    )
+
+
+def test_US666_witnessedTransition_isTheOnlyPathToArmed():
+    """
+    Given: the same pin reading, with and without a witnessed transition
+    When: each message is composed
+    Then: only the witnessed one says ARMED
+
+    VC2. The observed transition is the evidence; the reading is not.
+    """
+    witnessed = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=WITNESS_UTC,
+    )
+    unwitnessed = m.buildArmDecisionMessage(
+        armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True
+    )
+
+    assert f"{m.ARM_DECISION_ARMED} (PROVEN)" in witnessed
+    assert m.ARM_DECISION_UNVERIFIED not in witnessed
+    assert m.ARM_DECISION_ARMED not in unwitnessed
+
+
+@pytest.mark.parametrize("lastTransitionUtc", [None, WITNESS_UTC])
+def test_US666_readabilityIsNotCalledAnArmSelfCheckPass(lastTransitionUtc):
+    """
+    Given: either armed rendering
+    When: the message is composed
+    Then: the startup read is named a READABILITY check, never an "arm
+        self-check PASSED"
+
+    "arm self-check PASSED" is the phrase that was read as proof for weeks.
+    What passed is that the line reads.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=lastTransitionUtc,
+    )
+
+    assert "arm self-check PASSED" not in message
+    assert "GPIO6 PLD readability check PASSED" in message
+
+
+def test_US666_provenLineSaysItsProofIsFromAPriorRun_notThisStart():
+    """
+    Given: a witnessed transition
+    When: the PROVEN line is composed
+    Then: it says the transition was observed on a PRIOR run, that THIS start
+        verified readability only, and that the line is not itself an event
+
+    ARMED (PROVEN) prints at every start once a witness exists -- including on
+    the boot that later died with nothing recorded. Read alone it looked like
+    proof that the witness fired this time.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=WITNESS_UTC,
+    )
+
+    assert "observed on a PRIOR run" in message
+    assert "THIS start verified readability only" in message
+    assert "printed at every start" in message
+
+
+def test_US666_notArmedBranchIsUnchanged():
+    """
+    Given: the pin reads power-absent or is unreadable
+    When: the message is composed
+    Then: it is still NOT-ARMED, and never the downgraded unverified verdict
+
+    The downgrade is for a readable pin. A failed read is a refusal and stays
+    one -- three facts, three strings.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} --" in message
+    assert m.ARM_DECISION_UNVERIFIED not in message

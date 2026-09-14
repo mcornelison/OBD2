@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-188
+# 2026-09-13    | Rex          | US-743: SSID compared case-insensitively (casefold)
 # ================================================================================
 ################################################################################
 
@@ -217,7 +218,7 @@ class HomeNetworkDetector:
         the SSID check.  Defense in depth.
         """
         ssid = self._ssidReader()
-        if not ssid or ssid != self._ssid:
+        if not ssid or not self._isHomeSsid(ssid):
             return False
         return self._hasIpInHomeSubnet()
 
@@ -268,7 +269,7 @@ class HomeNetworkDetector:
         ssid = self._ssidReader()
         if ssid is None:
             return HomeNetworkState.UNKNOWN
-        if ssid != self._ssid:
+        if not self._isHomeSsid(ssid):
             # Includes the empty-string "not connected" case.
             return HomeNetworkState.AWAY
         if not self._hasIpInHomeSubnet():
@@ -276,6 +277,16 @@ class HomeNetworkDetector:
         if self.isServerReachable():
             return HomeNetworkState.AT_HOME_SERVER_REACHABLE
         return HomeNetworkState.AT_HOME_SERVER_DOWN
+
+    def _isHomeSsid(self, ssid: str) -> bool:
+        # An SSID is user-authored: the router and pi.homeNetwork.ssid can hold
+        # the same name in different case, and both read as correct in a log
+        # (measured: live "DeathstarWifi" vs config "DeathStarWiFi"). casefold()
+        # rather than lower() because SSIDs are routinely non-ASCII and lower()
+        # does not fold them fully (e.g. "ß" stays "ß" but casefolds to "ss").
+        # Exact match otherwise -- no strip, no prefix -- and the subnet check
+        # still gates AT_HOME. (US-743)
+        return ssid.casefold() == self._ssid.casefold()
 
     def _hasIpInHomeSubnet(self) -> bool:
         ips = self._ipReader()

@@ -25,6 +25,8 @@
 # 2026-09-03    | Ralph (Rex)  | US-672: drop the invisible `or REASON_OBD_OFF`
 #               |              | default -- an unexplained absence must not have
 #               |              | a claim about the CAR filled in for it.
+# 2026-09-13    | Ralph (Rex)  | US-728: add the always-present `priorShutdown`
+#               |              | block (startup_log verdict, transported verbatim).
 # ================================================================================
 ################################################################################
 
@@ -147,6 +149,7 @@ def buildSystemStatusState(
     wifiRssiDbm: int | None = None,
     wifiWeakRssiDbm: int = DEFAULT_WEAK_RSSI_DBM,
     wifiDownRssiDbm: int = DEFAULT_DOWN_RSSI_DBM,
+    priorShutdown: dict | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -191,6 +194,9 @@ def buildSystemStatusState(
             which is the ACTIVE drive and stays null at idle -- merging the two
             would make a parked Pi read as recording. Transported verbatim: the
             emitter never reformats or re-derives the producer's fact.
+        priorShutdown: The US-728 prior-shutdown block from
+            :meth:`pi.diagnostics.prior_shutdown_summary.PriorShutdownSummary.toStatePayload`,
+            or None when ``startup_log`` could not be read. Transported verbatim.
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -269,6 +275,9 @@ def buildSystemStatusState(
             "lastDrive": lastDrive,
         },
         "idle": idle,
+        # US-728: always a key (null = not read), same reason as `lastDrive`.
+        # A different fact from NO RECORD, which arrives as a block.
+        "priorShutdown": priorShutdown,
         "source": {
             # US-672: NO car-off fallback. This used to read
             # `obdUnavailableReason or REASON_OBD_OFF`, so a caller that
@@ -364,6 +373,7 @@ def makeSystemStatusEmitter(
         obdAvailable: bool = True,
         obdUnavailableReason: str | None = None,
         lastDrive: dict | None = None,
+        priorShutdown: dict | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -386,6 +396,7 @@ def makeSystemStatusEmitter(
                 obdAvailable=obdAvailable,
                 obdUnavailableReason=obdUnavailableReason,
                 lastDrive=lastDrive,
+                priorShutdown=priorShutdown,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

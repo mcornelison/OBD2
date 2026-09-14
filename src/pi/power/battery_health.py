@@ -519,10 +519,8 @@ class BatteryHealthRecorder:
         Args:
             startSoc: VCELL voltage at event start (3.4-4.2V).  Despite
                 the historical "soc" name, this value is treated as
-                LiPo cell voltage and lands in ``start_vcell_v``.  When
-                ``startSocPct`` is omitted, the same value is also
-                written to the legacy ``start_soc`` column (US-289
-                dual-write contract).  ``None`` records NULL -- US-526:
+                LiPo cell voltage and lands in ``start_vcell_v``, the
+                sole voltage column.  ``None`` records NULL -- US-526:
                 the production writer opens a drain the instant wall power
                 is lost, and an unreadable MAX17048 at that instant must
                 write NULL rather than a guessed voltage (honest-instrument).
@@ -532,16 +530,11 @@ class BatteryHealthRecorder:
             notes: Free-form text (drill context, weather, hardware
                 notes).  Optional.
             dataSource: US-195 origin tag.  Defaults to ``'real'``.
-            startSocPct: BL-013 Option A Step 1 (US-309): optional
-                actual SOC % (0-100) at event start.  When provided,
-                this value lands in the legacy ``start_soc`` column
-                (overriding the dual-write VCELL fallback) so the
-                column finally carries a real SOC%; ``start_vcell_v``
-                continues to hold the VCELL voltage from ``startSoc``.
-                When ``None`` (current production callers), legacy
-                dual-write VCELL behavior is preserved.  Step 2
-                (B-060) wires :meth:`UpsMonitor.getBatteryPercentage`
-                through the orchestrator.
+            startSocPct: Optional MAX17048 register SoC% (0-100) at
+                event start (US-309 seam; US-426 column).  Lands in
+                ``start_soc_pct``; ``None`` records NULL there.  It is
+                independent of ``startSoc``: ``start_vcell_v`` holds
+                the voltage whether or not this is given.
 
         Returns:
             The auto-incremented ``drain_event_id`` for the new row.
@@ -612,19 +605,18 @@ class BatteryHealthRecorder:
                 :meth:`startDrainEvent`.
             endSoc: VCELL voltage at event end.  Mirrors the
                 :meth:`startDrainEvent` ``startSoc`` semantic -- lands
-                in ``end_vcell_v`` and (when ``endSocPct`` is omitted)
-                also in the legacy ``end_soc`` column.  ``None`` records
+                in ``end_vcell_v``, the sole voltage column.  ``None`` records
                 NULL (US-526 honest-instrument: a gauge that died during
                 the drain leaves the depth unknown; the row is still
                 closed, so the DURATION survives even though the depth
                 does not, and a NULL ``end_vcell_v`` correctly fails
                 Spool's depth gate instead of faking it).
             ambientTempC: Optional ambient temperature (Celsius).
-            endSocPct: BL-013 Option A Step 1 (US-309): optional actual
-                SOC % (0-100) at event end.  When provided, lands in
-                the legacy ``end_soc`` column; ``end_vcell_v`` keeps
-                the VCELL voltage from ``endSoc``.  When ``None``,
-                legacy dual-write VCELL behavior is preserved.
+            endSocPct: Optional MAX17048 register SoC% (0-100) at event
+                end (US-309 seam; US-426 column).  Lands in
+                ``end_soc_pct``; ``None`` records NULL there.
+                ``end_vcell_v`` keeps the voltage from ``endSoc``
+                either way.
 
         Returns:
             :class:`DrainEventCloseResult` describing whether this call

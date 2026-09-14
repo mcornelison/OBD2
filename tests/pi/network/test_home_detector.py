@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-188
+# 2026-09-13    | Rex          | US-743: case-insensitive SSID guard (casefold)
 # ================================================================================
 ################################################################################
 
@@ -193,6 +194,80 @@ class TestHomeNetworkStateBranches:
             apiKey="test-key",
         )
 
+        assert detector.getHomeNetworkState() == HomeNetworkState.AWAY
+
+
+# =============================================================================
+# US-743: SSID comparison is case-insensitive (casefold, not lower)
+# =============================================================================
+
+
+class TestSsidComparisonIgnoresCase:
+    """A case-only difference between config and the live SSID is still home.
+
+    Measured 2026-09-13 on the Pi in the home garage: ``iwgetid -r`` read
+    ``DeathstarWifi`` while ``pi.homeNetwork.ssid`` held ``DeathStarWiFi``.
+    Both look right to a human reading a log, and the detector said AWAY.
+    """
+
+    def test_caseOnlyMismatch_measuredStrings_returnsAtHome(self) -> None:
+        """The exact measured pair -> AT_HOME, via both public entry points."""
+        detector = HomeNetworkDetector(
+            _baseConfig(**{"pi.homeNetwork.ssid": "DeathStarWiFi"}),
+            ssidReader=lambda: "DeathstarWifi",
+            ipReader=lambda: ["10.27.27.28"],
+            httpOpener=_openerReturning(_FakeResponse(status=200)),
+            apiKey="test-key",
+        )
+
+        assert detector.isAtHomeWifi() is True
+        assert detector.getHomeNetworkState() == HomeNetworkState.AT_HOME_SERVER_REACHABLE
+
+    def test_genuinelyDifferentSsid_stillAway(self) -> None:
+        """Ignoring case did not make the comparison a prefix or fuzzy match."""
+        httpOpener = _openerReturning(_FakeResponse(status=200))
+        detector = HomeNetworkDetector(
+            _baseConfig(),
+            ssidReader=lambda: "deathstarwifi-guest",
+            ipReader=lambda: ["10.27.27.28"],
+            httpOpener=httpOpener,
+            apiKey="test-key",
+        )
+
+        assert detector.isAtHomeWifi() is False
+        assert detector.getHomeNetworkState() == HomeNetworkState.AWAY
+        assert httpOpener.calls == []  # type: ignore[attr-defined]
+
+    def test_nonAsciiCaseDifference_foldedByCasefoldNotLower(self) -> None:
+        """German sharp s: ``lower()`` keeps it, ``casefold()`` expands it to ``ss``.
+
+        So a ``lower()`` comparison would still answer AWAY for this pair.
+        """
+        configured, live = "Straße", "STRASSE"
+        assert configured.lower() != live.lower()
+        assert configured.casefold() == live.casefold()
+
+        detector = HomeNetworkDetector(
+            _baseConfig(**{"pi.homeNetwork.ssid": configured}),
+            ssidReader=lambda: live,
+            ipReader=lambda: ["10.27.27.28"],
+            httpOpener=_openerRaising(urllib.error.URLError("connection refused")),
+            apiKey="test-key",
+        )
+
+        assert detector.getHomeNetworkState() == HomeNetworkState.AT_HOME_SERVER_DOWN
+
+    def test_caseOnlyMismatch_wrongSubnet_stillAway(self) -> None:
+        """The subnet half still gates: a case-matched SSID alone is never home."""
+        detector = HomeNetworkDetector(
+            _baseConfig(),
+            ssidReader=lambda: "DeathstarWifi",
+            ipReader=lambda: ["192.168.1.42"],
+            httpOpener=_openerReturning(_FakeResponse(status=200)),
+            apiKey="test-key",
+        )
+
+        assert detector.isAtHomeWifi() is False
         assert detector.getHomeNetworkState() == HomeNetworkState.AWAY
 
 

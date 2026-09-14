@@ -28,12 +28,14 @@
 #
 # C-5 states-dir provisioning (Atlas 2026-06-29):
 #   /run/eclipse-obd/states/ must exist at boot INDEPENDENT of eclipse-obd.service
-#   (whose RuntimeDirectory=eclipse-obd is ref-counted + REMOVED on its own stop,
-#   and which never creates the states/ subdir). Two reinforcing mechanisms:
-#     1. RuntimeDirectory=eclipse-obd here (shared name -> systemd ref-counts it;
-#        /run/eclipse-obd survives as long as ANY sharer runs, so it does not
-#        vanish when eclipse-obd.service stops -- see eclipse-states-http.service
-#        + US-394 shutdown-splash requirement).
+#   (which creates only /run/eclipse-obd and never the states/ subdir). Two
+#   reinforcing mechanisms:
+#     1. RuntimeDirectory=eclipse-obd + RuntimeDirectoryPreserve=yes here.
+#        systemd does NOT ref-count a shared RuntimeDirectory (US-737, measured
+#        on systemd 257.13): any sharer stopping WITHOUT Preserve=yes deletes
+#        the dir for all of them. It survives eclipse-obd.service's stop only
+#        because EVERY sharer declares Preserve=yes -- see
+#        eclipse-states-http.service + US-394 shutdown-splash requirement.
 #     2. /etc/tmpfiles.d/eclipse-obd-states.conf creates the states/ subdir at
 #        boot regardless of unit start order (tmpfs is wiped every reboot).
 #   The emitter ALSO ensures states/ in-process (RuntimeDirectory makes only the
@@ -58,7 +60,8 @@ Wants=eclipse-states-http.service
 [Service]
 Type=simple
 User=mcornelison
-# Shared ref-counted runtime dir (C-5). Creates /run/eclipse-obd owned by User=.
+# Shared runtime dir (C-5). Creates /run/eclipse-obd owned by User=. Preserve=yes
+# is required on every sharer; systemd does not ref-count the name (US-737).
 RuntimeDirectory=eclipse-obd
 RuntimeDirectoryPreserve=yes
 WorkingDirectory=/home/mcornelison/Projects/Eclipse-01

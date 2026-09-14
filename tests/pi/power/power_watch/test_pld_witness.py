@@ -39,6 +39,14 @@
 #                                pre-existing unwritable-path test asserts only
 #                                the return value, so deleting the logger call
 #                                outright left it green -- measured (M3).
+# 2026-09-13    | Rex (US-682) | The witness write is ATOMIC and BOUNDED. On
+#                                2026-09-04 a real transition left a 0-byte
+#                                witness: the old write truncated the target
+#                                and lost the race with the power loss. Pins:
+#                                a failed commit leaves the previous record,
+#                                kill -9 mid-write never leaves empty/partial,
+#                                a hung fsync cannot hold the power-loss path,
+#                                and an EMPTY file warns as a LOST WRITE.
 # ================================================================================
 ################################################################################
 
@@ -48,12 +56,23 @@ from __future__ import annotations
 
 import json
 import logging
+import random
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
 
+from src.pi.power.power_watch import __main__ as powerWatchMain
 from src.pi.power.power_watch import pld_witness
 from src.pi.power.power_watch.pld_witness import (
     readWitness,
     recordTransitionWitnessed,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+PREVIOUS = "2026-06-01T00:00:00Z"
+NEWER = "2026-09-04T15:46:37Z"
 
 
 def test_a_fresh_install_has_NOT_witnessed_a_transition(tmp_path):
@@ -154,3 +173,173 @@ def test_recording_NEVER_creates_directories(tmp_path):
     absent = tmp_path / "not-created"
     recordTransitionWitnessed(absent / "witness.json", atIso="2026-08-31T20:15:00Z")
     assert not absent.exists(), "recording created a directory tree it was not given"
+
+
+# ================================================================================
+# US-682 -- the write is ATOMIC and BOUNDED; an empty witness is a LOST WRITE
+# ================================================================================
+
+
+def test_a_commit_that_fails_leaves_the_PREVIOUS_record_whole(tmp_path, monkeypatch):
+    """🔴 US-682. The target must never be the thing that gets truncated.
+
+    On 2026-09-04 a real transition produced a 0-byte witness: the old write
+    opened the target with truncation and lost the race with the power loss.
+    Fail the commit step and the previous record must still read back intact.
+    """
+    p = tmp_path / "witness.json"
+    assert recordTransitionWitnessed(p, atIso=PREVIOUS) is True
+
+    def _commitFails(src, dst):
+        raise OSError(5, "Input/output error (simulated at commit)")
+
+    monkeypatch.setattr("os.replace", _commitFails)
+    assert recordTransitionWitnessed(p, atIso=NEWER) is False
+
+    assert readWitness(p) == PREVIOUS, (
+        "a write that did not commit changed the witness on disk -- the target "
+        "was written in place, so a power loss mid-write leaves it empty"
+    )
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["witness.json"], (
+        "a failed write left its temp file behind"
+    )
+
+
+def test_a_successful_write_leaves_no_temp_file(tmp_path):
+    p = tmp_path / "witness.json"
+    assert recordTransitionWitnessed(p, atIso=NEWER) is True
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["witness.json"]
+
+
+_KILL_CHILD = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from src.pi.power.power_watch.pld_witness import recordTransitionWitnessed
+target = sys.argv[2]
+stamps = (sys.argv[3], sys.argv[4])
+print("go", flush=True)
+i = 0
+while True:
+    recordTransitionWitnessed(target, atIso=stamps[i % 2])
+    i += 1
+"""
+
+
+def test_kill_9_mid_write_never_leaves_an_empty_or_partial_witness(tmp_path):
+    """🔴 US-682 VC1: kill the writer mid-write, repeatedly.
+
+    The witness is written DURING a power loss -- the process is racing the
+    thing that kills it. Whatever instant it dies, the file on disk is the
+    previous complete record or the new one. Never 0 bytes, never partial.
+    """
+    p = tmp_path / "witness.json"
+    assert recordTransitionWitnessed(p, atIso=PREVIOUS) is True
+    rng = random.Random(682)  # deterministic kill offsets
+
+    for attempt in range(12):
+        child = subprocess.Popen(
+            [sys.executable, "-c", _KILL_CHILD, str(REPO_ROOT), str(p), PREVIOUS, NEWER],
+            cwd=REPO_ROOT,
+            stdout=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        try:
+            assert child.stdout is not None
+            assert child.stdout.readline().strip() == "go", "writer child failed to start"
+            time.sleep(rng.uniform(0.0, 0.05))
+        finally:
+            child.kill()  # SIGKILL on POSIX, TerminateProcess on Windows
+            child.wait(timeout=10)
+            if child.stdout is not None:
+                child.stdout.close()
+
+        raw = p.read_bytes()
+        assert raw, f"attempt {attempt}: kill -9 left a 0-byte witness"
+        assert json.loads(raw.decode("utf-8"))["lastTransitionUtc"] in (PREVIOUS, NEWER), (
+            f"attempt {attempt}: witness is partial or foreign: {raw!r}"
+        )
+
+
+def test_a_hung_fsync_cannot_hold_the_power_loss_path(tmp_path, monkeypatch, caplog):
+    """🔴 US-682. The write is the FIRST statement of handleOnBattery, before the
+    T=0 grace emit and the smoothing window, against a 45 s totalCap. A storage
+    stall must cost at most the bound -- and must SAY it was cut short.
+    """
+    release = threading.Event()
+
+    def _stalledFsync(fd):
+        release.wait(timeout=10)
+
+    monkeypatch.setattr("os.fsync", _stalledFsync)
+    p = tmp_path / "witness.json"
+    try:
+        with caplog.at_level(logging.WARNING, logger=pld_witness.__name__):
+            started = time.monotonic()
+            result = recordTransitionWitnessed(p, atIso=NEWER, timeoutSec=0.2)
+            elapsed = time.monotonic() - started
+    finally:
+        release.set()
+
+    assert result is False, "a write that did not finish in the bound reported success"
+    assert elapsed < 2.0, f"the power-loss path waited {elapsed:.2f}s on a 0.2s bound"
+    assert any(str(p) in r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING), (
+        "a write cut short by the bound was silent"
+    )
+
+
+def test_the_default_bound_is_one_smoothing_poll():
+    """Grounding: config.json pi.powerWatch.smoothingPollSec = 1. The witness may
+    cost the power-loss path at most one poll interval of the loop it precedes."""
+    assert pld_witness.WITNESS_WRITE_TIMEOUT_SEC == 1.0
+
+
+def test_an_EMPTY_witness_reads_NEVER_and_warns_LOST_WRITE(tmp_path, caplog):
+    """🔴 US-682 VC3. The exact file found on the Pi on 2026-09-04.
+
+    NEVER stays the safe default. But a file that EXISTS with no content is a
+    write that did not land -- a different fact from a transition that never
+    happened, and the journal must say which one it is.
+    """
+    p = tmp_path / "witness.json"
+    p.write_bytes(b"")
+    with caplog.at_level(logging.WARNING, logger=pld_witness.__name__):
+        assert readWitness(p) is None
+
+    messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("LOST WRITE" in m and str(p) in m for m in messages), (
+        f"an empty witness was not named as a lost write. Records: {messages}"
+    )
+
+
+def test_a_MISSING_witness_is_silent_and_a_corrupt_one_is_not_called_a_lost_write(
+    tmp_path, caplog
+):
+    """Three facts, three strings: absent (never recorded), empty (lost write),
+    corrupt (unreadable). Only the empty case claims a lost write."""
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text("{ this is not json", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger=pld_witness.__name__):
+        assert readWitness(tmp_path / "absent.json") is None
+        absentMessages = [r.getMessage() for r in caplog.records]
+        assert readWitness(corrupt) is None
+
+    assert absentMessages == [], f"a never-written witness warned: {absentMessages}"
+    corruptMessages = [r.getMessage() for r in caplog.records]
+    assert corruptMessages and not any("LOST WRITE" in m for m in corruptMessages)
+
+
+def test_a_written_witness_renders_the_arm_line_PROVEN(tmp_path):
+    """🔴 US-682 VC2: write, read back through readWitness, render the arm line."""
+    p = tmp_path / "witness.json"
+    assert recordTransitionWitnessed(p, atIso=NEWER) is True
+
+    line = powerWatchMain.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=readWitness(p),
+    )
+    assert "(PROVEN)" in line and "UNPROVEN" not in line
+    assert f"last transition {NEWER}" in line
