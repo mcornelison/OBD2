@@ -22,6 +22,8 @@ read nonsense. See `ownsBus()`.
 
 from __future__ import annotations
 
+import math
+import statistics
 import subprocess
 import time
 from collections.abc import Iterable, Sequence
@@ -43,12 +45,40 @@ REG_PWR_MGMT_2 = 0x07
 REG_ACCEL_XOUT_H = 0x2D  # 12 bytes: accel xyz, gyro xyz
 REG_TEMP_OUT_H = 0x39
 
+# Bank 1: factory self-test OTP codes, three consecutive registers per block.
+REG_SELF_TEST_X_GYRO = 0x02
+REG_SELF_TEST_X_ACCEL = 0x0E
+
 # Bank 2
 REG_GYRO_SMPLRT_DIV = 0x00
 REG_GYRO_CONFIG_1 = 0x01
+REG_GYRO_CONFIG_2 = 0x02
 REG_ACCEL_SMPLRT_DIV_1 = 0x10
 REG_ACCEL_SMPLRT_DIV_2 = 0x11
 REG_ACCEL_CONFIG = 0x14
+REG_ACCEL_CONFIG_2 = 0x15
+
+# Self-test enable bits, bank 2 CONFIG_2 registers: all three axes at once.
+BIT_GYRO_CTEN = 0x38
+BIT_ACCEL_CTEN = 0x1C
+
+# Vendor self-test setup: gyro +/-250 dps and accel +/-16 g, DLPF engaged.
+SELF_TEST_GYRO_CONFIG = (0 << 3) | 1
+SELF_TEST_ACCEL_CONFIG = (7 << 3) | 1
+SELF_TEST_SAMPLES = 200
+SELF_TEST_SETTLE_S = 0.02
+SELF_TEST_SAMPLE_INTERVAL_S = 0.01
+
+# AK09916 magnetometer, addressed directly at 0x0C through the ICM's I2C bypass.
+MAG_ADDRESS = 0x0C
+MAG_REG_ST1 = 0x10
+MAG_REG_HXL = 0x11
+MAG_UT_PER_LSB = 0.15
+MAG_ST1_DRDY_MASK = 0x01
+MAG_ST2_OVERFLOW_MASK = 0x08
+
+# Earth's total field at this latitude, for judging whether a reading is sane.
+EARTH_FIELD_REFERENCE_UT = 52.0
 
 # PWR_MGMT_2: three bits per block. 0x07 disables all three axes of one block.
 PWR_MGMT_2_GYRO_OFF = 0x07
@@ -313,6 +343,177 @@ def readRawSample(bus, address: int = ADDR_IMU) -> tuple[list[int], list[int]]:
     block = bus.read_i2c_block_data(address, REG_ACCEL_XOUT_H, 12)
     values = _readSigned16(block)
     return values[0:3], values[3:6]
+
+
+def readSelfTest(
+    bus, address: int = ADDR_IMU, samples: int = SELF_TEST_SAMPLES
+) -> dict[str, object]:
+    """Run the vendor self-test on both blocks and report per-axis verdicts.
+
+    Procedure follows InvenSense's own driver: gyro +/-250 dps and accel +/-16 g
+    with DLPF engaged, average `samples` readings with the self-test bits OFF,
+    enable CTEN, settle, average again, and compare the difference against the
+    factory trim decoded from the bank-1 OTP registers.
+
+    This is the measurement that separates "the gyro reads a constant rate"
+    (which a real rotation also does) from "the gyro's sense/drive chain is not
+    working" (which nothing else explains). On 2026-09-14 it read 0.06-0.13 in
+    the faulted state and 1.00 once recovered, on the same silicon.
+    """
+    _selectBank(bus, address, 2)
+    savedGyroConfig = bus.read_byte_data(address, REG_GYRO_CONFIG_1)
+    savedAccelConfig = bus.read_byte_data(address, REG_ACCEL_CONFIG)
+    bus.write_byte_data(address, REG_GYRO_CONFIG_1, SELF_TEST_GYRO_CONFIG)
+    bus.write_byte_data(address, REG_ACCEL_CONFIG, SELF_TEST_ACCEL_CONFIG)
+    _selectBank(bus, address, 0)
+    time.sleep(SELF_TEST_SETTLE_S)
+
+    normalAccel, normalGyro = _averageSamples(bus, address, samples)
+
+    _selectBank(bus, address, 2)
+    bus.write_byte_data(address, REG_GYRO_CONFIG_2, BIT_GYRO_CTEN)
+    bus.write_byte_data(address, REG_ACCEL_CONFIG_2, BIT_ACCEL_CTEN)
+    _selectBank(bus, address, 0)
+    time.sleep(SELF_TEST_SETTLE_S)
+
+    testAccel, testGyro = _averageSamples(bus, address, samples)
+
+    _selectBank(bus, address, 2)
+    bus.write_byte_data(address, REG_GYRO_CONFIG_2, 0x00)
+    bus.write_byte_data(address, REG_ACCEL_CONFIG_2, 0x00)
+    bus.write_byte_data(address, REG_GYRO_CONFIG_1, savedGyroConfig)
+    bus.write_byte_data(address, REG_ACCEL_CONFIG, savedAccelConfig)
+
+    _selectBank(bus, address, 1)
+    gyroCodes = [bus.read_byte_data(address, REG_SELF_TEST_X_GYRO + i) for i in range(3)]
+    accelCodes = [bus.read_byte_data(address, REG_SELF_TEST_X_ACCEL + i) for i in range(3)]
+    _selectBank(bus, address, 0)
+
+    result: dict[str, object] = {"restoredConfig": True}
+    for label, codes, normal, test in (
+        ("gyro", gyroCodes, normalGyro, testGyro),
+        ("accel", accelCodes, normalAccel, testAccel),
+    ):
+        axes = {}
+        for index, axisName in enumerate("xyz"):
+            trim = stOtpFromCode(codes[index])
+            response = test[index] - normal[index]
+            axes[axisName] = {
+                "otpCode": codes[index],
+                "factoryTrim": round(trim, 1),
+                "response": round(response, 1),
+                "ratio": (
+                    None
+                    if selfTestRatio(response, trim) is None
+                    else round(selfTestRatio(response, trim), 4)
+                ),
+                "verdict": selfTestVerdict(response, trim, channel=label),  # type: ignore[arg-type]
+            }
+        result[label] = axes
+    return result
+
+
+def _averageSamples(bus, address: int, samples: int) -> tuple[list[float], list[float]]:
+    accelSum = [0.0, 0.0, 0.0]
+    gyroSum = [0.0, 0.0, 0.0]
+    for _ in range(samples):
+        accel, gyro = readRawSample(bus, address)
+        for axis in range(3):
+            accelSum[axis] += accel[axis]
+            gyroSum[axis] += gyro[axis]
+        time.sleep(SELF_TEST_SAMPLE_INTERVAL_S)
+    return (
+        [total / samples for total in accelSum],
+        [total / samples for total in gyroSum],
+    )
+
+
+# --------------------------------------------------------------------------
+# Magnetometer: read the AK09916 directly, NOT through our own bypass module
+# --------------------------------------------------------------------------
+
+
+def decodeMagTriple(data: Sequence[int]) -> tuple[float, float, float]:
+    """Six bytes HXL..HZH -> (x, y, z) in uT. Little-endian signed, 0.15 uT/LSB."""
+    values = list(data)
+    if len(values) != 6:
+        raise ValueError(f"expected 6 bytes HXL..HZH, got {len(values)}")
+    out: list[float] = []
+    for low, high in zip(values[0::2], values[1::2], strict=True):
+        raw = (high << 8) | low
+        signed = raw - 65536 if raw > 32767 else raw
+        out.append(signed * MAG_UT_PER_LSB)
+    return (out[0], out[1], out[2])
+
+
+def magDataReady(st1: int) -> bool:
+    """ST1 bit 0 (DRDY)."""
+    return bool(st1 & MAG_ST1_DRDY_MASK)
+
+
+def magOverflowed(st2: int) -> bool:
+    """ST2 bit 3 (HOFL): the reading saturated and is not a measurement."""
+    return bool(st2 & MAG_ST2_OVERFLOW_MASK)
+
+
+def alignMagToImuFrame(
+    mag: Sequence[float],
+) -> tuple[float, float, float]:
+    """Rotate AK09916 axes into the ICM-20948 accel/gyro frame: negate Y and Z.
+
+    ⚠️ The primary source for this is NOT in hand. See the test docstring: the
+    datasheet figure could not be retrieved, and what supports the transform is
+    two independent implementations plus our own out-of-sample GPS score
+    (4.1 / 6.8 deg with it, 62.7 / 101.8 deg without). Treat it as measured on
+    our car, not as quoted from TDK.
+    """
+    return (mag[0], -mag[1], -mag[2])
+
+
+def fieldMagnitudeUt(mag: Sequence[float]) -> float:
+    """Total field strength. Earth's is ~52 uT at this latitude."""
+    return math.sqrt(sum(component**2 for component in mag))
+
+
+def readMagnetometerDirect(bus, samples: int = 100, intervalS: float = 0.02) -> dict[str, object]:
+    """Read the AK09916 at 0x0C ourselves, to compare against what our code says.
+
+    Deliberately re-implemented rather than imported from `ak09916_bypass.py`:
+    if the probe used that module, a fault in it would be invisible to the probe.
+    Assumes I2C bypass is already enabled (the collector leaves it on).
+    """
+    accepted: list[tuple[float, float, float]] = []
+    overflows = 0
+    notReady = 0
+    for _ in range(samples):
+        st1 = bus.read_byte_data(MAG_ADDRESS, MAG_REG_ST1)
+        if not magDataReady(st1):
+            notReady += 1
+            time.sleep(intervalS)
+            continue
+        frame = bus.read_i2c_block_data(MAG_ADDRESS, MAG_REG_HXL, 8)
+        if magOverflowed(frame[7]):
+            overflows += 1
+            time.sleep(intervalS)
+            continue
+        accepted.append(decodeMagTriple(frame[0:6]))
+        time.sleep(intervalS)
+
+    if not accepted:
+        return {"samples": 0, "overflows": overflows, "notReady": notReady, "error": "no readings"}
+
+    meanRaw = tuple(
+        statistics.fmean([sample[axis] for sample in accepted]) for axis in range(3)
+    )
+    return {
+        "samples": len(accepted),
+        "overflows": overflows,
+        "notReady": notReady,
+        "meanRawUt": [round(value, 2) for value in meanRaw],
+        "meanAlignedUt": [round(value, 2) for value in alignMagToImuFrame(meanRaw)],
+        "fieldMagnitudeUt": round(fieldMagnitudeUt(meanRaw), 2),
+        "earthReferenceUt": EARTH_FIELD_REFERENCE_UT,
+    }
 
 
 def gyroPowerCycle(bus, address: int = ADDR_IMU, settleS: float = 1.0) -> None:

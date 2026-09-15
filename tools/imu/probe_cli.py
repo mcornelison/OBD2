@@ -36,7 +36,9 @@ from tools.imu.imu_probe import (
     openBus,
     ownsBus,
     readConfiguration,
+    readMagnetometerDirect,
     readRawSample,
+    readSelfTest,
 )
 
 DEGREES_TO_RADIANS = math.pi / 180.0
@@ -139,6 +141,16 @@ def main(argv: list[str] | None = None) -> int:
         help="measure, run the A-34 gyro power cycle, then measure again",
     )
     parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="run the vendor self-test on both blocks (restores config afterwards)",
+    )
+    parser.add_argument(
+        "--mag",
+        action="store_true",
+        help="read the AK09916 directly, independently of our own bypass module",
+    )
+    parser.add_argument(
         "--allow-shared-bus",
         action="store_true",
         help="proceed even if eclipse-obd is running (readings may be corrupted)",
@@ -165,6 +177,11 @@ def main(argv: list[str] | None = None) -> int:
             ),
             "before": collectRest(bus, args.addr, args.seconds, args.sample_hz),
         }
+        if args.mag:
+            # Before the self-test, which rewrites config registers.
+            result["magnetometer"] = readMagnetometerDirect(bus)
+        if args.self_test:
+            result["selfTest"] = readSelfTest(bus, args.addr)
         if args.power_cycle:
             gyroPowerCycle(bus, args.addr)
             result["after"] = collectRest(bus, args.addr, args.seconds, args.sample_hz)

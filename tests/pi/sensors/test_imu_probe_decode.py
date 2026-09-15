@@ -18,9 +18,14 @@ import pytest
 
 from tools.imu.imu_probe import (
     aliasingRisk,
+    alignMagToImuFrame,
     classifyGyroHealth,
     decodeAccelConfig,
     decodeGyroConfig,
+    decodeMagTriple,
+    fieldMagnitudeUt,
+    magDataReady,
+    magOverflowed,
     odrHzFromDivider,
     selfTestRatio,
     selfTestVerdict,
@@ -221,3 +226,77 @@ class TestSelfTestVerdict:
         MEASUREMENT; it is the wrong default for a SAFETY CHECK.
         """
         assert selfTestVerdict(response=5000.0, factoryTrim=0.0, channel="gyro") == "fail"
+
+
+class TestDecodeMagTriple:
+    """AK09916: little-endian signed 16-bit, 0.15 uT/LSB."""
+
+    def test_positiveValue_scalesToMicrotesla(self) -> None:
+        # 1000 LSB little-endian = 0xE8 0x03 -> 150.0 uT
+        assert decodeMagTriple([0xE8, 0x03, 0x00, 0x00, 0x00, 0x00])[0] == pytest.approx(150.0)
+
+    def test_negativeValue_usesTwosComplement(self) -> None:
+        # -1000 LSB = 0x18 0xFC
+        assert decodeMagTriple([0x18, 0xFC, 0x00, 0x00, 0x00, 0x00])[0] == pytest.approx(-150.0)
+
+    def test_allThreeAxesDecodeIndependently(self) -> None:
+        decoded = decodeMagTriple([0x0A, 0x00, 0x14, 0x00, 0x1E, 0x00])
+        assert decoded == pytest.approx((1.5, 3.0, 4.5))
+
+    def test_wrongByteCount_raisesRatherThanGuessing(self) -> None:
+        with pytest.raises(ValueError):
+            decodeMagTriple([0x00, 0x01, 0x02])
+
+
+class TestMagStatusBits:
+    def test_dataReadyBitSet(self) -> None:
+        assert magDataReady(0x01) is True
+
+    def test_dataReadyBitClear(self) -> None:
+        assert magDataReady(0x00) is False
+
+    def test_overflowBitSet(self) -> None:
+        """HOFL (0x08) means the reading saturated and MUST NOT be published."""
+        assert magOverflowed(0x08) is True
+
+    def test_overflowBitClear(self) -> None:
+        assert magOverflowed(0x00) is False
+
+
+class TestAlignMagToImuFrame:
+    """The AK09916 die does not share the accel/gyro axes inside the package.
+
+    ⚠️ PROVENANCE, stated because it is weaker than I would like: I could not
+    retrieve the datasheet's own orientation figure (six fetch attempts: 403,
+    a navigation page, and PDFs whose text would not extract). What supports
+    this transform is (a) two independent implementations applying exactly
+    `my = -my; mz = -mz`, one of them noting the datasheet illustration only
+    *implies* it, and (b) our own out-of-sample GPS score: 4.1 deg and 6.8 deg
+    median heading error with this transform plus a hard-iron offset, against
+    62.7 deg and 101.8 deg as shipped. That is measurement, not authority.
+    """
+
+    def test_yAndZAreNegated_xIsUnchanged(self) -> None:
+        assert alignMagToImuFrame((10.0, 20.0, 30.0)) == pytest.approx((10.0, -20.0, -30.0))
+
+    def test_transformIsItsOwnInverse(self) -> None:
+        once = alignMagToImuFrame((3.0, -4.0, 5.0))
+        assert alignMagToImuFrame(once) == pytest.approx((3.0, -4.0, 5.0))
+
+    def test_magnitudeIsPreserved(self) -> None:
+        """A sign flip cannot change field strength. If it does, it is a bug."""
+        raw = (16.34, 15.98, 36.72)
+        assert fieldMagnitudeUt(alignMagToImuFrame(raw)) == pytest.approx(fieldMagnitudeUt(raw))
+
+
+class TestFieldMagnitudeUt:
+    def test_threeFourFive(self) -> None:
+        assert fieldMagnitudeUt((3.0, 4.0, 0.0)) == pytest.approx(5.0)
+
+    def test_liveDashMountReading(self) -> None:
+        """Measured on the Pi 2026-09-15: ~43.2 uT against Earth's ~52 uT here.
+
+        Pinned so that a decode regression that halves or doubles the field is
+        caught by a number someone actually observed.
+        """
+        assert fieldMagnitudeUt((16.34, 15.98, 36.72)) == pytest.approx(43.2, abs=0.1)
