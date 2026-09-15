@@ -18,6 +18,7 @@
 # ================================================================================
 # 2026-07-13    | Rex (Ralph)  | Initial implementation -- US-465 TDD
 # 2026-09-10    | Rex (US-718) | git log pickaxe declares encoding="utf-8"
+# 2026-09-15    | Rex (US-775) | Refuse a backlog whose schemaVersion is not 2.0.0
 # ================================================================================
 ################################################################################
 
@@ -82,7 +83,11 @@ ARCHIVE_DIR = SHARE_ROOT / "ralph" / "archive"
 # while still reporting every story compliant. backlog_schema imports nothing
 # from tools.pm, so there is no circular-import cost to reading it directly.
 # tests/pm/test_backlog_add_story.py bans a second assignment across tools/pm.
-from tools.pm.backlog_schema import REQUIRED_STORY_FIELDS  # noqa: E402
+from tools.pm.backlog_schema import (  # noqa: E402
+    REQUIRED_STORY_FIELDS,
+    UnknownSchemaVersionError,
+    assertSchemaVersion,
+)
 
 # Deliberate terminal end-states -- never overwritten by a shipped signal.
 TERMINAL_STATUSES = frozenset({"complete", "superseded", "declined"})
@@ -404,6 +409,11 @@ def main(argv: list[str]) -> int:
         return 2
 
     data = json.loads(backlogPath.read_text(encoding="utf-8"))
+    try:
+        assertSchemaVersion(data, "backfill_story_metadata")
+    except UnknownSchemaVersionError as exc:
+        print(f"REFUSED -- {exc}", file=sys.stderr)
+        return 2
     gitResolver = _gitFirstAppearanceResolver(REPO_ROOT)
     data, changes = backfillBacklog(data, ARCHIVE_DIR, gitResolver=gitResolver)
 

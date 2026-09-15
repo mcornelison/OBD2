@@ -9,7 +9,10 @@ Prints a compact one-screen status summary:
 
 Detects backlog schemaVersion:
   - "2.0.0" → v2 path: computeRollups() + renderTree() + active PRDs + sprint
-  - anything else → v1 legacy path (existing behaviour unchanged)
+  - absent  → v1 legacy path (existing behaviour unchanged)
+  - anything else → REFUSED: exit 2 naming the expected and the found value,
+    and no backlog tree (US-775). This used to fall into the v1 path, which
+    rendered the ralphV2 backlog as an empty list and exited 0.
 
 Used at session start by Marcus (PM) to orient before any planning work.
 Stdlib-only; runs on Windows git-bash or Linux.
@@ -19,6 +22,7 @@ Usage:
   python -m tools.pm.pm_status --sprint     # sprint only
   python -m tools.pm.pm_status --backlog    # backlog only
   python -m tools.pm.pm_status --counter    # counter only
+  python -m tools.pm.pm_status --backlog --backlog-path <file>   # read-only view of another backlog
 """
 from __future__ import annotations
 
@@ -35,6 +39,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import SHARE_ROOT
+from tools.pm.backlog_schema import (
+    SUPPORTED_SCHEMA_VERSION,
+    UnknownSchemaVersionError,
+    assertSchemaVersion,
+)
 
 SPRINT_PATH = SHARE_ROOT / "ralph" / "sprint.json"
 BACKLOG_PATH = SHARE_ROOT / "pm" / "backlog.json"
@@ -305,7 +314,7 @@ def _renderPrdsAndSprint() -> None:
 
 
 def _renderV1Legacy(data: dict) -> None:
-    """Print legacy v1 backlog summary (schemaVersion != 2.0.0).
+    """Print legacy v1 backlog summary (schemaVersion absent).
 
     Args:
         data: Parsed backlog.json dict (v1 shape).
@@ -343,9 +352,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--sprint", action="store_true", help="Show sprint only")
     parser.add_argument("--backlog", action="store_true", help="Show backlog only")
     parser.add_argument("--counter", action="store_true", help="Show counter only")
+    parser.add_argument(
+        "--backlog-path",
+        help="Read this backlog file instead of the live pm/backlog.json. "
+             "Read-only: the rollup cache is never written back to it.",
+    )
     args = parser.parse_args(argv)
 
     anyFlag = args.sprint or args.backlog or args.counter
+    backlogPath = Path(args.backlog_path) if args.backlog_path else BACKLOG_PATH
 
     # Determine whether backlog is needed for this invocation.
     # v2 path always requires backlog.json (rollup is its job).
@@ -353,9 +368,9 @@ def main(argv: list[str]) -> int:
     # or no flags are given (full snapshot).  --sprint-only can proceed without it.
     backlogNeeded = not anyFlag or args.backlog
 
-    if not BACKLOG_PATH.exists():
+    if not backlogPath.exists():
         if backlogNeeded:
-            print(f"[backlog] {BACKLOG_PATH} does not exist", file=sys.stderr)
+            print(f"[backlog] {backlogPath} does not exist", file=sys.stderr)
             if args.sprint:
                 # --backlog was also implied by no-flag default but --sprint was given:
                 # fall through to v1 sprint-only rendering below.
@@ -364,7 +379,7 @@ def main(argv: list[str]) -> int:
                 return 1
         else:
             # --sprint (or --counter) only; backlog not needed -- print warning and continue
-            print(f"[backlog] {BACKLOG_PATH} does not exist -- skipping backlog section", file=sys.stderr)
+            print(f"[backlog] {backlogPath} does not exist -- skipping backlog section", file=sys.stderr)
 
         # v1 sprint/counter only (backlog missing)
         if not anyFlag or args.sprint:
@@ -374,9 +389,31 @@ def main(argv: list[str]) -> int:
             printCounterSummary()
         return 0
 
-    data = json.loads(BACKLOG_PATH.read_text(encoding="utf-8"))
+    data = json.loads(backlogPath.read_text(encoding="utf-8"))
 
-    if data.get("schemaVersion") == "2.0.0":
+    # THE THIRD BRANCH (US-775). The dispatch below used to be two-way -- "2.0.0"
+    # or "everything else is v1" -- so the ralphV2 backlog fell into the v1
+    # renderer, which found no nested B- features, printed an empty backlog and
+    # exited 0. A version this tool was not written for is refused instead.
+    try:
+        schemaVersion = assertSchemaVersion(
+            data, "pm_status", accepted=(SUPPORTED_SCHEMA_VERSION, None)
+        )
+    except UnknownSchemaVersionError as exc:
+        if backlogNeeded:
+            print(f"REFUSED -- {exc}", file=sys.stderr)
+            return 2
+        # --sprint / --counter never read story data from the backlog, so an
+        # unreadable backlog does not stop them (it never did).
+        print(f"[backlog] {exc} -- skipping backlog section", file=sys.stderr)
+        if args.sprint:
+            printSprintSummary()
+            print()
+        if args.counter:
+            printCounterSummary()
+        return 0
+
+    if schemaVersion == SUPPORTED_SCHEMA_VERSION:
         # v2 path: compute + cache rollups, then render tree
         if not anyFlag or args.backlog:
             data = computeRollups(data)
@@ -390,11 +427,14 @@ def main(argv: list[str]) -> int:
             # newline= is the second half of the same bug: without it,
             # write_text on Windows translates every LF to CRLF, so a
             # 9,022-line file is rewritten end to end on each run.
-            BACKLOG_PATH.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-                newline="\n",
-            )
+            # --backlog-path is a read-only view (e.g. of an archived backlog):
+            # the cache belongs to the live file only.
+            if not args.backlog_path:
+                BACKLOG_PATH.write_text(
+                    json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                    newline="\n",
+                )
             # Show dev + main branch tips at the top of v2 output (spec 2026-05-28)
             if not anyFlag:
                 printBranchSummary()
@@ -407,7 +447,7 @@ def main(argv: list[str]) -> int:
         if not anyFlag or args.counter:
             printCounterSummary()
     else:
-        # v1 legacy path: unchanged behaviour
+        # v1 legacy path (schemaVersion absent): unchanged behaviour
         if not anyFlag or args.sprint:
             printSprintSummary()
             print()

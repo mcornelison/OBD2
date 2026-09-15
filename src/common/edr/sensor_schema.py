@@ -18,6 +18,9 @@
 # 2026-06-30    | Rex (US-408) | Initial -- EDR versioned raw-sensor schema (F-114,
 #                               ADR section 2.2). Forward-only migration shape
 #                               (section 2.5); schema_version stamped every row.
+# 2026-09-15    | Rex (US-764) | EDR_COLUMNS structured column list for the server
+#                               DDL generator (server_ddl.py). DDL strings untouched
+#                               (D8; SHA-256 pinned in tests/common/test_edr_contract.py).
 # ================================================================================
 ################################################################################
 """Versioned single-source DDL for the EDR raw-sensor tables (F-114).
@@ -112,6 +115,48 @@ EDR_INDEXES: list[tuple[str, str]] = [
     ("ix_edr_light_sample_ts", INDEX_EDR_LIGHT_SAMPLE_TS),
 ]
 
+# --- Structured column list (US-764) -------------------------------------------
+# table -> ordered (name, kind, nullable). The server DDL generator
+# (server_ddl.py) derives the MariaDB tables from THIS list, and
+# tests/common/test_edr_contract.py pins it to the Pi DDL above (names, order,
+# kind vs SQLite type, NOT NULL), so the two cannot drift silently. The Pi `id`
+# PK is excluded: on the server it arrives as `source_id`.
+# Kinds: iso_ts | monotonic_s | int | float | label.
+EDR_COLUMNS: dict[str, tuple[tuple[str, str, bool], ...]] = {
+    "edr_imu_sample": (
+        ("ts_utc", "iso_ts", False),
+        ("ts_capture", "monotonic_s", False),
+        ("seq", "int", False),
+        ("accel_x", "float", True),
+        ("accel_y", "float", True),
+        ("accel_z", "float", True),
+        ("gyro_x", "float", True),
+        ("gyro_y", "float", True),
+        ("gyro_z", "float", True),
+        ("mag_x", "float", True),
+        ("mag_y", "float", True),
+        ("mag_z", "float", True),
+        ("temp_c", "float", True),
+        ("drive_id", "int", True),
+        ("data_source", "label", False),
+        ("schema_version", "int", False),
+    ),
+    "edr_light_sample": (
+        ("ts_utc", "iso_ts", False),
+        ("ts_capture", "monotonic_s", False),
+        ("seq", "int", False),
+        ("lux", "float", True),
+        ("visible", "int", True),
+        ("infrared", "int", True),
+        ("full_spectrum", "int", True),
+        ("gain", "label", True),
+        ("integration_ms", "int", True),
+        ("drive_id", "int", True),
+        ("data_source", "label", False),
+        ("schema_version", "int", False),
+    ),
+}
+
 __all__ = [
     "SCHEMA_VERSION",
     "SCHEMA_EDR_IMU_SAMPLE",
@@ -122,4 +167,5 @@ __all__ = [
     "INDEX_EDR_LIGHT_SAMPLE_TS",
     "EDR_SCHEMAS",
     "EDR_INDEXES",
+    "EDR_COLUMNS",
 ]

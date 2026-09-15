@@ -16,6 +16,7 @@ from pathlib import Path
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import SHARE_ROOT, resolveShareRoot
+from tools.pm.backlog_schema import UnknownSchemaVersionError, assertSchemaVersion
 
 
 def _synthesizeArchiveMd(story: dict) -> str:
@@ -73,11 +74,14 @@ def graduateStory(
         ValueError: If the story is not found or its status is not 'complete'.
                     A missing Story.md is NOT fatal -- an archive record is
                     synthesized from the JSON entry.
+        UnknownSchemaVersionError: If backlog.json is not schemaVersion 2.0.0
+                    (US-775). Nothing is moved or written.
     """
     if shareRoot is None:
         shareRoot = resolveShareRoot()
     backlogPath = shareRoot / "pm/backlog.json"
     data = json.loads(backlogPath.read_text(encoding="utf-8"))
+    assertSchemaVersion(data, "graduate_story")
     story = next((s for s in data["stories"] if s["id"] == storyId), None)
     if not story:
         raise ValueError(f"Story {storyId} not found in backlog.json")
@@ -128,5 +132,9 @@ if __name__ == "__main__":
         print("Usage: graduate_story.py <US-id> [--dry-run]", file=sys.stderr)
         sys.exit(1)
     dryRun = "--dry-run" in sys.argv
-    graduateStory(sys.argv[1], shareRoot=SHARE_ROOT, dryRun=dryRun)
+    try:
+        graduateStory(sys.argv[1], shareRoot=SHARE_ROOT, dryRun=dryRun)
+    except UnknownSchemaVersionError as exc:
+        print(f"REFUSED -- {exc}", file=sys.stderr)
+        sys.exit(2)
     print("Graduation complete.")
