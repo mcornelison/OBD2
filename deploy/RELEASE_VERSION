@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.50",
-  "theme": "Sprint 86 -- nothing reacts when it matters",
-  "description": "Sprint 86 shipped 8 of 12; 4 carried, each blocked on a CIO ruling or a Pi measurement, not on code. Headline: US-745 binds IMU_BODY_FRAME to measured candidate (B), ending confidently inverted grade and heading. Also: one OBD retry authority (US-690), swipe restored (US-746), SYSTEM SETUP escape (US-747), resting DTC state (US-752), typed battery reasons (US-736), severity_unknown gate (US-753)."
+  "version": "V0.29.51",
+  "theme": "Sprint 87 -- empty, unreadable, deleted",
+  "description": "Shipped 4 of 4, first attempt each -- the ralphV2 pilot run. US-764 lays the shared EDR column contract, SHA-256 pinned against the Pi DDL, plus a MariaDB DDL generator. US-769 adds the EDR backlog cleanup script, dry-run by default. US-774 removes April/May outage telemetry and drive 2 simulator rows from both tiers. US-775 makes the legacy backlog tools refuse a schemaVersion they cannot read."
 }
