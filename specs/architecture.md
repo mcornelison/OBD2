@@ -601,9 +601,11 @@ handshake. This matches the protocol documented in `specs/obd2-research.md`.
 `python-obd`'s connection object wraps **one serial port and is NOT
 thread-safe**. eclipse-obd drives that connection from **multiple threads**:
 
-- the lifecycle's bounded connect/query **timeout daemons**, which are
-  deliberately **left running on timeout** (TD-036 / US-244 anti-boot-hang —
-  `_runInitialConnectWithTimeout`, `_queryWithTimeout`);
+- the lifecycle's bounded connect/query **timeout daemons**, which the caller
+  stops **waiting** on at the cap (TD-036 / US-244 anti-boot-hang —
+  `_runInitialConnectWithTimeout`, `_queryWithTimeout`). Since US-690 an
+  abandoned **connect** is also **cancelled** (see "One retry authority" below);
+  the thread lives on only until its in-flight handshake returns;
 - the **US-301 reconnect heartbeat** daemon (a second connect path);
 - the **realtime logger**, which reads `ObdConnection.query()` on the capture
   loop thread.
@@ -682,6 +684,70 @@ interleaving) and `tests/pi/obdii/test_dtc_connect_edge_concurrency.py`
 (US-474 / F-117 GAP-1: a real `DtcClient` KOEO read + a logger read serialize
 through `_ioLock` on one faked non-thread-safe port; reverting the lock makes
 it RED).
+
+**One retry authority (US-690).** The epoch fence only moves when a connection
+is *made* or *torn down*, so it cannot stop an orphan that keeps **failing**:
+with the ECU asleep the generation never changes, and a timed-out
+`connect()` used to run its whole retry budget beside the loop that replaced
+it. The live V0.29.43 trace recorded that as two interleaved `retry_count`
+series in `connection_log`. Three rules now hold:
+
+- **A cap that abandons also cancels.** `ObdConnection.cancelPendingConnects()`
+  bumps a cancel epoch (its own lock, never `_ioLock`, so cancelling cannot
+  block behind the slow handshake it is giving up on). A connect call captures
+  the epoch at entry and returns False before its next attempt or backoff once
+  it moves. An attempt already inside `obd.OBD()` cannot be interrupted and
+  finishes; a link it establishes is kept. Both caps call it: the initial-
+  connect cap (`_runInitialConnectWithTimeout`) and the heartbeat's per-tick
+  cap (`runReconnectHeartbeat(cancelFn=…)`).
+- **No nested retry loops.** A loop that owns a count calls a single-attempt
+  seam: the heartbeats call `connectOnce()` (US-673) and the recovery loop
+  (`_reconnectionLoop`) calls `reconnectOnce()`. So the recovery loop's
+  `maxRetries` means that many port attempts, not that many × `connect()`'s
+  own budget.
+- **At most one retry thread.** `_liveRetryAuthorityName()` checks the US-301
+  heartbeat, the recovery loop and the US-338 post-failure heartbeat, skipping
+  the calling thread so the recovery loop can still hand off to the
+  post-failure heartbeat. `_startReconnection` and the post-failure spawn do
+  nothing while another retry thread is alive.
+
+Contract tests: `tests/pi/obdii/test_single_retry_authority.py` (the real
+initial-connect cap over a real `ObdConnection`: 1 port attempt after the cap
+fires, 6 with the cancel turned off).
+
+**Key-on latency is backoff latency (US-751).** `connection_log` on 2026-09-14
+showed the Pi retrying all night at the heartbeat's 320 s ceiling, each attempt
+failing in ~42-45 s with `OBD connection not active after creation` — i.e.
+`obd.OBD()` returned (the rfcomm link opened) but never reached car-connected.
+So the adapter was reachable and the ECU was asleep; a key-on that lands just
+after a failed attempt waits out the whole ceiling. Two rules now hold:
+
+- **A wake cuts the backoff short.** `runReconnectHeartbeat(wakeEvent=…)`: a
+  `set()` ends the current backoff, is cleared, and restarts the failure count
+  at 0 — the next attempt runs at once and the ladder climbs again from 10 s
+  (the same ladder a boot or fresh dropout already pays). A wake that lands
+  during an attempt takes effect when it returns, so wake → next attempt is at
+  most one attempt (~45 s), never the ceiling. Never set, the cadence is
+  identical, so the I-025 radio duty cycle is unchanged. Both heartbeats carry
+  the orchestrator's `_obdWakeEvent`; `requestObdLinkWake(reason)` is the one
+  entry point. It never touches the port — the next attempt goes through the
+  connection's `_ioLock` owner as always. **It is not yet wired to a physical
+  signal**: which signal means "key-on" on this install is open (US-751
+  blocker).
+- **Retries are one series per outage.** `ObdConnection` numbers every port
+  attempt in the current outage, whichever loop makes it, and resets on a
+  successful connect. `connection_log.retry_count` and `obdLink.retries` both
+  read that number, so a boot `connect()` followed by the heartbeat reads
+  0, 1, 2, … instead of 0..5 then 0, 0, 0.
+
+A `/dev/rfcomm0` present beside `Connected: no` is `rfcomm-bind.service`'s
+lazy binding: `rfcomm bind` creates the node without opening the link. Every
+failed attempt closes its partial `obd` and releases a MAC binding (US-512), so
+the OBD layer holds no node open across a failed session.
+
+Contract tests: `tests/pi/obdii/test_key_on_link_latency.py` (modelled wake →
+attempt: 319 s without a wake, 0 s with one in a backoff, 44 s with one
+mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 
 ---
 
@@ -2544,9 +2610,67 @@ power loss is not a monitor** -- it reads "healthy" through every outage.
 
 ⚠️ **What this does NOT fix:** an in-process logger still cannot witness its own machine's death.
 On a hard rail collapse there is no poll interval left and no time to reach SQLite. The structural
-answer -- reconstructing the loss at next boot from a last-known-good heartbeat -- remains **open**
-(A-22). This section documents a monitor that now records what it *can* see; it does not claim
+answer -- reconstructing the loss at next boot from a last-known-good heartbeat (A-22) -- is
+§10.6.6. This section documents a monitor that records what it *can* see; it does not claim
 coverage of the case where the observer dies with the observed.
+
+### 10.6.6 Surviving a power loss is MEASURED, not assumed — the loss heartbeat (US-748, Sprint 86 / V0.29.50) [Atlas Rule 10]
+
+**What the flow above does NOT establish.** §10.6 describes a sequence that needs roughly
+`smoothingSec` (7) + the sync drain (`perTaskTimeoutSec` 20, capped by `totalWindowCapSec` 45) to
+reach `systemctl poweroff`. **Nothing in this section guarantees the supply keeps the Pi up that
+long.** Atlas cut power twice on 2026-09-14 (16:04:44Z, 16:40:03Z), with all services running.
+Both times:
+
+- GPIO6 fired and `power_log` `transition_to_battery` was written.
+- The collector opened the drain row at **4.18 V** and **3.95 V**.
+- The Pi was dead **before the row's first 30 s checkpoint** (§10.6.4). There was no
+  `CLEAN_COMPLETE`, and the journal's last persisted line predates the transition.
+
+Both software explanations are excluded by evidence. The VCELL floor fast path needs ≤ 3.50 V, and a
+graceful poweroff writes `CLEAN_COMPLETE`. **Until the cause is known (US-748, CIO/hardware), read
+§10.6.2–§10.6.3 as what happens IF the machine lives through the window, not as a claim that it
+does.** The pre-shutdown budget is deliberately **unchanged**: shortening it to fit a machine with
+no time left would not help, and it would break the sync-custody sequencing.
+
+**The instrument.** At `handleOnBattery` **entry** (after the ARCH-019 witness, **before**
+smoothing) the sequencer calls the optional `powerLossObservedFn`. powerwatch wires this to
+`PowerLossHeartbeat.start` (`src/pi/power/power_watch/loss_heartbeat.py`). The heartbeat writes one
+row per **1 s** for **60 s** into the Pi-local `power_loss_heartbeat` table, following Atlas's gate
+(2026-09-14 §1). Each row holds:
+
+| column | meaning |
+|---|---|
+| `loss_started_utc` | event key — UTC instant the loss was observed |
+| `seq` | 0-based row number |
+| `elapsed_s` | **monotonic** seconds since the loss (never wall clock — US-620) |
+| `vcell_v` | VCELL, NULL if the gauge could not be read |
+| `power_lost` | PLD at that row: 1 lost / 0 returned / NULL unknown |
+| `recorded_at` | wall-clock write time, context only |
+
+**Invariants.**
+
+- The heartbeat runs on its own daemon thread, and `start()` never blocks. A hook that raises is
+  logged and **never** delays shutdown.
+- Every row is committed with `PRAGMA synchronous = FULL` (the US-267 chain). A buffered row is
+  exactly the row a hard cut loses.
+- An unreadable gauge or PLD writes NULL. The row is still written, because its **existence** is the
+  measurement.
+- A missing database is never created.
+- The table is **not synced** (absent from `IN_SCOPE_TABLES`) and sits outside `ALL_SCHEMAS`, so it
+  adds no Pi-only server-parity drift (TD-039).
+
+**The reading.** At every start powerwatch logs one `powerwatch: LOSS HEARTBEAT =` line for the most
+recent event, via `readLatestLossHeartbeat`. The line gives the last surviving `elapsed_s`, the
+**floor** on how long the machine lived (understated by at most one interval), plus the min VCELL
+and whether power returned.
+
+- If the rows reach the end of the window, the machine outlived the instrument.
+- Otherwise the number is **time-to-death** when the prior boot has no `CLEAN_COMPLETE`, and
+  **time-to-poweroff** when it does. Poweroff stops the service, which ends the rows.
+
+**Scope.** Losses ignored inside boot-grace start no heartbeat, because they never reach
+`handleOnBattery`.
 
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
@@ -3233,14 +3357,14 @@ gradePct, altitude, stopCount, biasRad, reasons}`:
 
 | Field | Meaning | Notes |
 |---|---|---|
-| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot. All three are measured in the **vehicle** frame produced by `IMU_BODY_FRAME` — see the body-frame note below; before US-708 the two horizontal components were **transposed** |
+| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot. All three are measured in the **vehicle** frame produced by `IMU_BODY_FRAME` — see the body-frame note below; before US-708 the two horizontal components were **transposed**. *Re-checked under (B) by US-745 (2026-09-14): holds unchanged, because the derivation is written in vehicle coordinates* |
 | `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract). ⚠️ US-708 fixed the AXES only: the magnetometer carries a second, independent defect (A-30, ~28 % field, heading uncorrelated with rotation over 668 turns) and is **not** trustworthy today |
-| `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation |
+| `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation. **Since US-749 it is `null` + `gyro_implausible` when a trusted accelerometer has contradicted the fusion for > 3 τ** (see *Plausibility guard* below) — never the contradicted number, never clamped |
 | `gradePct` | `tan(pitchDeg) × 100` | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away. Until US-708 this was derived from the **lateral** axis, i.e. from the car's ROLL — every corner and crowned road read as a hill |
 | `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. US-519 derives it from `pitchDeg`; a future GPS/baro supersedes that, not this bridge |
 | `stopCount` / `biasRad` | **US-708 pitch-path diagnostics**: confirmed ZUPT stops in the rolling window, and the mount-tilt bias currently subtracted from the fused pitch (radians) | NOT derived fields, never gated, and deliberately **still published while the instrument is unavailable** — they describe the *estimator*, and the bias survives an unplug because how the board is bolted in did not change. `biasRad` is unreadable without `stopCount`: 0.0 means "no bias measured yet" until you can see how many stops are behind it |
 | `available` / `ts` | freshness | absent/stale → the US-497 idle-card fallback |
-| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `pitch_unseeded`, `no_source` |
+| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `pitch_unseeded`, `gyro_implausible` (US-749, on `pitchDeg` + `gradePct`), `no_source` |
 
 ##### The body frame (US-708 / F-135, Sprint 83 / V0.29.46)
 
@@ -3266,15 +3390,31 @@ declaration, and `resolveMountFrame` applies it **once** to each raw channel
 (accel, gyro, mag) on the way in. `_levelFrame` and `PitchFusion` both receive
 vehicle coordinates and neither re-spells the mounting — patching them separately
 would be two copies of one fact (SSOT rule B). Two candidates are named, 180° of
-yaw apart: **(A)** `+Y = nose` ⇒ `(fwd, left, up) = (+y, −x, +z)` (shipped) and
-**(B)** `+Y = tail` ⇒ `(−y, +x, +z)` (what the old under-seat mount measured as).
-Flipping between them is **one line**, which matters because they differ by the
-sign of pitch and of both g axes: **picking wrong inverts grade rather than fixing
-it.** 🔴 (A) is the *reasoned* default and is confirmed by a **post-sprint drive on
-the relocated mount** — correlate `accel_Y` against `d(SPEED)/dt`: strongly
-positive keeps (A), strongly negative flips to (B), `|r| < 0.15` means stop and
-report. ⚠️ Drives on or before 2026-09-09 are all the OLD mount and will confirm
-(B) whatever the dash is doing.
+yaw apart: **(A)** `+Y = nose` ⇒ `(fwd, left, up) = (+y, −x, +z)` and **(B)**
+`+Y = tail` ⇒ `(−y, +x, +z)` **(shipped, US-745 / V0.29.50)**. Flipping between
+them is **one line**, which matters because they differ by the sign of pitch and
+of both g axes: **picking wrong inverts grade rather than fixing it.**
+
+🔴 **The confirming gate RAN and (A) FAILED it (Atlas ruling 2026-09-11; bound by
+US-745).** US-708 shipped (A) as the *reasoned* default pending a drive on the
+relocated dash mount: strongly positive `accel_Y` vs `d(SPEED)/dt` keeps (A),
+strongly negative flips to (B), `|r| < 0.15` stops. Drives **70/71** (NEW mount,
+23,770 IMU samples): `accel_Y` vs `d(SPEED)/dt` = **−0.906** over 235
+accelerate/decelerate windows ⇒ **(B)**; `accel_X` vs `d(SPEED)/dt` = **+0.039**
+(X carries no fore/aft content); mean accel `x=+0.315 y=−0.722 z=+9.845` (Z up).
+Independently, grade vs **GPS ground truth** scored **+0.411 for (B)** against
+**−0.411 for (A)** over 125 constant-speed windows. Under (B) `forward = −accel_Y`,
+so the same windows correlate **+0.906** against `d(SPEED)/dt` by construction.
+*Why (A) was chosen first — so it is not later read as carelessness:* the old
+under-seat board measured as (B), and after the relocation the CIO read the
+board's silkscreen **Y arrow** as facing the nose, which is a 180° yaw = (A). The
+reading was reasonable; the drive disproved it, which is exactly why it was a gate.
+`tests/pi/sensors/test_imu_body_frame.py` pins the binding to (B) with this basis
+in its failure message, so a revert to (A) fails loudly. ⚠️ Drives on or before
+2026-09-09 are all the OLD mount and will confirm (B) whatever the dash is doing.
+⚠️ The residual grade error left after the flip is the **uncancelled gyro-Y
+bias** (a separate defect), not an orientation error — the constant is not tuned
+to absorb it. The flip does **not** fix the compass (A-30, stuck magnetometer).
 
 *The mounting is not config.* It lived at `pi.sensors.imu.mount.*` until US-708,
 where it pinned the identity map and **overrode the code default** — so correcting
@@ -3363,6 +3503,37 @@ confidence than the drift it was fixing. A stop therefore requires zero speed
 *observed across* the whole gate **and** still fresh (`zuptSpeedMaxAgeSec`,
 default 2 s, deliberately **below** the 3 s gate); elapsed time after one zero
 reading is evidence only that we stopped being told.
+
+*Stop detector, stated (US-749).* A stop does **not** need a moving→stopped
+transition: `observeSpeed` opens one on the first observed zero, so a car that
+starts parked with a live link is ZUPT-snapped after 3 s like any other. The bias
+observation is committed **per stop, when it ends** (moving again, stale speed or
+reset), so `stopCount` reads 0 *during* one long stop, and `biasRad` stays 0.0
+until `zuptMinStops` (5) stops. With the OBD link down there is no SPEED at all,
+so `stopCount = 0` is correct.
+
+**Plausibility guard (US-749 / F-135, Sprint 86 / V0.29.50).** On 2026-09-14 the
+gyro carried a standing offset (0.2457 rad/s on the pitch channel, stationary car)
+and the fusion published **70° as a confident pitch** (`gradePct` 276) beside a
+level, trusted accelerometer. The mechanism is exact: the complementary filter
+settles at `accelPitch + rate × τ`, and 0.2457 × 5 s = 70.4°. The accelerometer
+term *was* contributing (without it pitch integrates to the 90° clamp); nothing
+checked the answer against it. ⚠️ `gLat`/`gLon` are gravity-removed and **cannot**
+see this error, so a healthy g-meter is no evidence about pitch.
+`PitchFusion` now tracks, on **trusted** readings only, how long `|fused −
+accelPitch|` has exceeded `accelTrustContaminationRad(accelTrustBand)` — the
+largest tilt a pull the trust band still admits can fake, `atan(√((1+band)² − 1))`
+≈ **11.4°** at 2% (derived from the existing band, not a new number). Past
+**`GYRO_IMPLAUSIBLE_SETTLE_TAUS` = 3 τ** (a first-order filter's 95% settling time)
+`gyroImplausible` is true, `pitchRad` returns `None` (`rawPitchRad` still carries
+the value, and the bridge logs it on the transition), and the bridge publishes
+`pitchDeg`/`gradePct` `null` + `gyro_implausible`. Why this discriminates: a
+contaminated or stepped accel is *followed* by the filter, so its disagreement
+decays inside ~τ; only a standing rate holds one past 3 τ, i.e. a trip means a
+rate above ≈ 11.4° / 5 s ≈ 0.040 rad/s, against ≤ 0.015 rad/s measured healthy on
+this car. The verdict clears on the first trusted reading that agrees; a ZUPT snap
+always agrees. **No clamp and no hard-coded offset** — the guard withholds the
+number; the gyro offset itself must be fixed upstream.
 
 *Config (`pi.sensors.imu.*`, all positive-checked in `_validateImuStateBridge`).*
 `pitchTauSec` (5.0), `accelTrustBand` (0.02), `zuptMinStopSec` (**3.0 — Spool
@@ -4368,7 +4539,15 @@ moves and no consumer changes.** ⚠️ And the sentence above becomes load-bear
 rather than decorative: the two US-708 candidate mountings differ by exactly a
 180° yaw, so if the shipped constant is the wrong one, "a board mounted backwards"
 is *precisely* what the operator is looking at — the words on the tile are how
-that gets caught on the first drive.
+that gets caught on the first drive. 🔴 **That case HAPPENED:** (A) shipped, the
+first drives on the new mount (70/71) measured (B), and **US-745** re-bound the
+constant (2026-09-14). The contract was re-derived under (B) and **the meaning did
+not move**: `resolveMountFrame` applies the mount once per raw channel and every
+downstream formula (`_levelFrame`, `computeHorizontalG`, `computeHeadingDeg`,
+`pitch_fusion`) is written in vehicle coordinates, so `gLon` + = accelerating,
+`gLat` + = right, heading = nose bearing and pitch + = nose up hold *iff* the
+binding produces true vehicle coordinates. Under (A) on a (B)-physical board all
+four published inverted (heading rotated 180°). **No consumer changes.**
 An over-scale reading **clamps along its own direction** (never per-axis, which
 would swing the dot to a corner and misreport which way the car was loaded) and
 turns amber, while the tile keeps the true magnitude -- the clamp cannot
@@ -4640,6 +4819,16 @@ never raised; atomic `writeStateAtomic`). Schema (spec §7):
   `ts − lastHealthCheckTs` (both in the state file, so the age is deterministic /
   node-testable, not browser-clock dependent). A month-old reading is never
   mistaken for live.
+- **Unknown says why (US-736).** An `unknown` verdict carries one of the six
+  US-632 machine reasons in `reasons.health` (`battery_health_verdict.UNKNOWN_REASONS`).
+  `carousel.js#BATTERY_HEALTH_REASON_TEXT` is the ONE renderer table for them;
+  its keys equal `UNKNOWN_REASONS` exactly (guard:
+  `tests/ui/test_carousel_battery_health_reason_text.py`). The HEALTH tile's
+  detail reads `"<reason text> · last health check · <date> (<age>)"` -- the F-9
+  line is kept whole, never swapped out. Fallbacks are typed and never equal a
+  known string: no usable reason -> `"reason not reported"`; an unrecognised
+  code -> `"unrecognised reason (<code>)"`. A resolved verdict (good/degraded/
+  replace) ignores any reason. The idle-home BATTERY fact is unchanged.
 
 **Temp honest (F-10).** `ambientTempC:null` → the card renders **"not captured"**,
 never a fabricated number.
@@ -4746,6 +4935,16 @@ item (A-8). Confirm-before-consequential: **Stop** and **Exit** require a confir
 modal; **Restart** acts directly; a `✕`/Back is always present (the operator is
 never trapped, F-6).
 
+**Two ways out (US-747).** No overlay may be escapable only by its own single
+control: the same ~5s hold, made on the open menu, closes it (the ring paints
+above the menu, `z-index` 45, below the confirm modal). Each press **owns** its
+interval — a new contact restarts the hold, and an interval that is not the
+live press stops itself. Before US-747 a second contact overwrote the only
+handle; the orphaned interval read `Date.now() - null` after release and
+re-opened the menu every 50 ms, so `✕` produced a flicker and the same screen
+until a reboot. The menu's open state is **not persisted** anywhere (no
+storage, hash or cookie). Guard: `tests/ui/test_carousel_setup_menu_escape.py`.
+
 **Privilege path (A-7) — three independent defense-in-depth layers.** The
 chromium kiosk runs **unprivileged** and can only do HTTP; it never runs as root
 and never holds sudo.
@@ -4831,7 +5030,42 @@ orchestrator — its live injection follows the US-400/401 deferral pattern). Th
 state schema is design-spec §8: `mil` · `codes[]` (each with
 `severity`/`severityCaveat`/`short`/`setAtTs`/`driveId`/`freezeFrame`/
 `suggestedFix`/`fixProvenance`/`logged`/`syncAcked`/`clearEligible`) · `newSinceTs`
-· `clearGate` · `sessionResetLock` · `ts`.
+· `clearGate` · `sessionResetLock` · `lastKnown` · `source` · `ts`.
+
+**Resting state: honest nulls + `lastKnown` (US-752, Atlas ruling 2026-09-14).**
+When no live read is possible (boot, key-off, process restart) the live fields
+are **absences, not values**: `codes: null`, `mil: null` beside
+`source.dtc.available: false`. This **deliberately changes** the US-429
+fresh-empty contract, whose `codes: []` / `mil: false` read as a measurement ("no
+codes, lamp off") to any consumer that skipped `source`. What the system already
+holds rides in a **separate** `lastKnown` block `{codes, mil, asOfTs, source:
+"dtc_log"}` — `codes` is never overloaded. The block is null when the source is
+available (a live read always wins) and null when nothing is remembered, so "DTC
+not read" keeps its meaning. `src/pi/obdii/dtc_last_known.py` reads it from the
+persisted `dtc_log` **only** (SSOT rule B — the ECU is never re-queried to
+populate a resting state): `data_source='real'` rows, one entry per code (newest
+wins), each enriched from the severity table like a live code and carrying
+`lastSeenTs`. `asOfTs` is the newest `last_seen_timestamp`, a read-time column the
+DB stamps at the read and bumps on re-read — not an insert time. `lastKnown.mil`
+is the same stored-code proxy the live KOEO path publishes; `dtc_log` has no MIL
+column.
+
+**Remembered codes are never actionable.** The clear gate computes from LIVE
+`codes` only (`dtc_clear` reads `codes or []`, so null → `no_codes`; the emitter's
+`clearGate` is built from live codes). `newSinceTs` stays null, and the ribbon and
+takeover already return early on an unavailable source, so a remembered code never
+takes over. The Alerts card renders them as **inert rows** under "LAST KNOWN CODES ·
+last read <age> · not a live read": no detail overlay (where the clear button
+lives) opens from them.
+
+**Not sticky.** A successful Mode-04 clear (`_maybeServiceDtcClearRequest`) writes
+one `status='cleared'` `dtc_log` row per remembered code — the status the schema
+reserved for clear events. The reader drops every `stored`/`pending` row before
+that watermark (by `id`, or by `last_seen_timestamp` for an older row re-read
+after the clear). The watermark write is isolated: a failure is logged and never
+rewrites a clear that happened. **Limit:** a read that finds no codes writes no
+row, so a code that stops reporting without a Mode 04 stays remembered (dated)
+until a clear. The pinned design-spec §8 lives on the fleet share (PM-owned).
 
 **Honest-instrument by construction.** The Pi never decides severity: a static
 loader (`dtc_severity_table.py`) parses **Spool's SSOT**
@@ -4947,7 +5181,10 @@ gate SSOT. `evaluateClearGate` **re-derives** the verdict from the raw captured
 codes and deliberately **ignores** any precomputed `clearGate.enabled` in the
 state: enabled only when **every stored (non-`na`) code is MINOR (green) AND
 logged AND server-sync-acked**, and no code re-set this session. Any STOP/WATCH →
-`severity_present`; an un-synced MINOR → `sync_pending` (capture-before-clear,
+`severity_present`; else any ungraded code (`unknown`, absent or unrecognised
+severity) → `severity_unknown` ("severity could not be determined" — US-753: the
+refusal is identical, but it is a different fact from a graded STOP/WATCH, so it
+gets its own reason); an un-synced MINOR → `sync_pending` (capture-before-clear,
 advisory §4c); a returned code (`sessionResetLock`) → `session_locked` ("don't
 chase the light", §4d); nothing clearable → `no_codes`. This is the DTC analog of
 US-403's action-path allow-list re-check in `service_control.py`.

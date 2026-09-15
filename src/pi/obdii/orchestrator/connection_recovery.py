@@ -28,6 +28,20 @@
 #               |              | _handleConnectionRestored() + the US-302 data
 #               |              | logger restart.  Idempotent: re-firing the
 #               |              | handler while a heartbeat is alive is a no-op.
+# 2026-09-14    | Rex (US-690) | One retry authority.  (1) _attemptReconnection
+#               |              | makes ONE port attempt (reconnectOnce) -- it used
+#               |              | to call reconnect() -> connect(), a 6-attempt
+#               |              | loop, so "attempt 1/5" was up to 6 attempts with
+#               |              | a backoff of their own and the 5-attempt ceiling
+#               |              | was really 30.  (2) At most one retry loop is
+#               |              | live: _startReconnection and the post-failure
+#               |              | spawn both stand down while another retry thread
+#               |              | is alive.  (3) The post-failure heartbeat is
+#               |              | wired with cancelFn so its cap cancels.
+# 2026-09-14    | Rex (US-751) | requestObdLinkWake(): the one entry point that
+#               |              | cuts a heartbeat backoff short.  The post-failure
+#               |              | heartbeat is wired with the orchestrator's
+#               |              | _obdWakeEvent.
 # ================================================================================
 ################################################################################
 
@@ -126,6 +140,18 @@ class ConnectionRecoveryMixin:
             logger.warning("Cannot reconnect - no connection object available")
             return
 
+        # US-690: a heartbeat that is still alive already owns the retry.  A
+        # second loop beside it is the two-authorities defect -- each with its
+        # own counter and backoff, interleaving attempts on one port.
+        liveAuthority = self._liveRetryAuthorityName()
+        if liveAuthority is not None:
+            logger.info(
+                "Connection recovery not started -- retry authority %r is "
+                "already live and owns the reconnect (US-690)",
+                liveAuthority,
+            )
+            return
+
         self._isReconnecting = True
         self._reconnectAttempt = 0
 
@@ -199,6 +225,12 @@ class ConnectionRecoveryMixin:
         """
         Attempt a single reconnection to the OBD-II dongle.
 
+        US-690: "single" is now literal.  ``reconnectOnce()`` resets the
+        transport and makes ONE port attempt, so :meth:`_reconnectionLoop` is
+        the only thing counting and the only thing backing off.  ``reconnect()``
+        ends in ``connect()``, a retry loop of its own; it remains only as the
+        fallback for duck-typed connections (the simulator) that lack the seam.
+
         Returns:
             True if reconnection successful, False otherwise
         """
@@ -206,7 +238,11 @@ class ConnectionRecoveryMixin:
             return False
 
         try:
-            # Check if connection has reconnect method (preferred)
+            reconnectOnce = getattr(self._connection, 'reconnectOnce', None)
+            if reconnectOnce is not None:
+                return bool(reconnectOnce())
+
+            # Fallback: connections without the single-attempt seam
             if hasattr(self._connection, 'reconnect'):
                 return self._connection.reconnect()
 
@@ -341,6 +377,16 @@ class ConnectionRecoveryMixin:
             )
             return
 
+        # US-690: nor may it start beside a DIFFERENT live retry thread.
+        liveAuthority = self._liveRetryAuthorityName()
+        if liveAuthority is not None:
+            logger.info(
+                "US-338 post-failure reconnect heartbeat not spawned -- retry "
+                "authority %r is already live (US-690)",
+                liveAuthority,
+            )
+            return
+
         if self._connection is None:
             logger.debug(
                 "US-338 post-failure reconnect heartbeat: no _connection; "
@@ -366,7 +412,11 @@ class ConnectionRecoveryMixin:
             return
 
         inFlightProbeFn = getattr(self._connection, 'isConnectInFlight', None)
+        # US-690: the per-tick cap cancels what it abandons.
+        cancelFn = getattr(self._connection, 'cancelPendingConnects', None)
         shutdownEvent = getattr(self, '_shutdownEvent', None)
+        # US-751: a wake cuts this heartbeat's backoff short.
+        wakeEvent = getattr(self, '_obdWakeEvent', None)
 
         def _runHeartbeat() -> None:
             try:
@@ -374,7 +424,9 @@ class ConnectionRecoveryMixin:
                     connectFn=connectFn,
                     isConnectedFn=isConnectedFn,
                     inFlightProbeFn=inFlightProbeFn,
+                    cancelFn=cancelFn,
                     shutdownEvent=shutdownEvent,
+                    wakeEvent=wakeEvent,
                 )
             except Exception:  # noqa: BLE001 -- daemon must not crash silently
                 logger.exception(
@@ -394,6 +446,67 @@ class ConnectionRecoveryMixin:
             "will be retried with exponential backoff up to 15 min "
             "ceiling until reachable)"
         )
+
+    def requestObdLinkWake(self, reason: str) -> None:
+        """Tell the live reconnect heartbeat the car may have just woken (US-751).
+
+        The key-on delay measured on 2026-09-14 was backoff latency: the Pi was
+        retrying all night, sitting at the 320 s ceiling, and a key-on waited
+        out whatever was left of it.  A wake cuts that sleep short and restarts
+        the ladder at the base interval, so wake -> next attempt is bounded by
+        at most one in-flight attempt.
+
+        This is a SEAM, deliberately not wired to a physical signal: which
+        signal means "key-on" on this install is an open question (see the
+        US-751 blocker).  It never touches the port -- the heartbeat's next
+        attempt goes through the connection's single ``_ioLock`` owner as
+        always, so no second serial owner exists (A-17).  With no heartbeat
+        alive it is a harmless no-op beyond the log line: the flag is cleared
+        by the next heartbeat's first tick, which attempts immediately anyway.
+
+        Args:
+            reason: Short label for the journal, e.g. ``"power_restored"``.
+        """
+        wakeEvent = getattr(self, '_obdWakeEvent', None)
+        if wakeEvent is None:
+            logger.debug("OBD link wake (%s) ignored -- no wake event wired", reason)
+            return
+        logger.info(
+            "OBD link wake requested (%s) -- reconnect backoff will be cut "
+            "short (US-751)",
+            reason,
+        )
+        wakeEvent.set()
+
+    def _liveRetryAuthorityName(self) -> str | None:
+        """Name the retry thread that currently owns reconnection, if any (US-690).
+
+        The orchestrator has three retry threads -- the US-301 PENDING
+        heartbeat, this mixin's recovery loop, and the US-338 post-failure
+        heartbeat.  Each used to guard only against ANOTHER COPY OF ITSELF, so
+        two different ones could run at once against the one port, each with
+        its own counter and backoff.  This is the one check all spawn points
+        share.
+
+        The calling thread is excluded: the recovery loop hands off to the
+        post-failure heartbeat from inside its own thread, and must not see
+        itself as the authority blocking that handoff.
+
+        Returns:
+            The live thread's name, or None when no retry thread is alive.
+        """
+        current = threading.current_thread()
+        candidates = (
+            getattr(self, '_reconnectHeartbeatThread', None),
+            getattr(self, '_reconnectThread', None),
+            getattr(self, '_postFailureReconnectHeartbeatThread', None),
+        )
+        for thread in candidates:
+            if thread is None or thread is current:
+                continue
+            if thread.is_alive():
+                return str(thread.name)
+        return None
 
     def _pauseDataLogging(self) -> None:
         """

@@ -61,6 +61,8 @@
 #               |              | the OBD poll loop quiesces, instead of leaking
 #               |              | open and absorbing a later key-on (drives
 #               |              | 28/29).  Atlas C-alpha off-tick close.
+# 2026-09-14    | Rex (US-751) | Own _obdWakeEvent, the event both reconnect
+#               |              | heartbeats observe (requestObdLinkWake).
 # ================================================================================
 ################################################################################
 
@@ -330,6 +332,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # retryDelays cap (~60-90s) and forcing systemd to SIGKILL.
         # The signal handler mixin sets this alongside _shutdownState.
         self._shutdownEvent: threading.Event = threading.Event()
+        # US-751: "the car may have just woken".  Passed to both reconnect
+        # heartbeats; requestObdLinkWake() sets it to cut a backoff short.
+        self._obdWakeEvent: threading.Event = threading.Event()
 
         # Main loop configuration
         self._healthCheckInterval = config.get('pi', {}).get('monitoring', {}).get(
@@ -987,6 +992,20 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 statesDir, requestId, ok=True, stored=stored, pending=pending,
                 mil=bool(stored), error=None,
             )
+            # US-752: Mode 04 wiped every code, so the remembered ones must go
+            # too -- otherwise the resting Alerts card would show codes that no
+            # longer exist. Isolated: the clear HAPPENED and was published; a
+            # failed watermark must never rewrite that outcome as a failure.
+            try:
+                from pi.obdii.dtc_last_known import recordClearWatermark
+
+                recordClearWatermark(getattr(self, "_database", None))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "US-752 clear watermark not written for request %s: %s -- "
+                    "the resting Alerts card may still show pre-clear codes",
+                    requestId, exc,
+                )
         except Exception as exc:  # noqa: BLE001
             # This runs inside the capture loop: a failed clear must never take
             # capture down, and the requester is owed the reason.

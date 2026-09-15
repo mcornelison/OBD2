@@ -94,6 +94,8 @@
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-636 punch-list 2.3 recorded pass +
 #               |              | F1/F2/F3 characterisations (I-us636).
+# 2026-09-14    | Ralph (Rex)  | US-753 fixed F3's WORDS: the two P0443 tests are
+#               |              | re-recorded to `severity_unknown` (refusal same).
 # ================================================================================
 ################################################################################
 
@@ -161,6 +163,7 @@ _FIXTURE_TABLE: dict[str, dict[str, Any]] = {
 # The exact strings the operator meets on the 3.5in panel (carousel.js:2212).
 _LABEL_ENABLED = "CLEAR CODES"
 _LABEL_SEVERITY = "🔒 CLEAR CODES — a STOP/WATCH code is present"
+_LABEL_SEVERITY_UNKNOWN = "🔒 CLEAR CODES — severity could not be determined"
 _LABEL_SYNC = "🔒 CLEAR CODES — waiting for server sync"
 _LABEL_LOCKED = "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it"
 
@@ -504,7 +507,7 @@ def test_anUnavailableRead_emptiesTheCodesTheGateKeysOffAndTheAffordanceStaysAwa
           guarantee is invisible -- which is how it has been shipping.
     """
     published = _state([_raw()], **_UNREAD)
-    assert published["codes"] == [], published
+    assert published["codes"] is None, published  # US-752: null, not []
     assert published["source"] == {
         "dtc": {"available": False, "reason": "not read yet"}
     }, published
@@ -751,21 +754,19 @@ def test_characterisation_theShippedSeverityTableContainsNoClearableTier():
     assert tiers.count("na") == 5, tiers
 
 
-def test_characterisation_theLiveP0443_isRefusedAsIfItWereAStopOrWatch():
+def test_characterisation_theLiveP0443_isRefusedAsSeverityUnknown():
     """
     Given: P0443 -- stored on the car since 2026-08-20, MIL lit -- enriched by
            the SHIPPED table, which has no entry for it
     When: the gate runs and the detail is rendered
-    Then: severity degrades honestly to `unknown`, the gate refuses with
-          `severity_present`, and the button reads "a STOP/WATCH code is
-          present" -- which the code is not.
+    Then: severity degrades honestly to `unknown` and the gate refuses with
+          `severity_unknown`.
 
-          Refusing is CORRECT: never clear what you could not classify. The
-          words are not. The tier vocabulary has an `unknown` presentation
-          already (carousel.js DTC_TIER -> "GET DIAGNOSED"); the clear gate has
-          no matching reason, so it borrows one that names two tiers the code
-          does not hold. Python-only assertions here so the measurement survives
-          on a node-less box; the rendered label is pinned in the sibling test.
+          Re-recorded by US-753. This used to pin `severity_present` -- "a
+          STOP/WATCH code is present", which the code is not. Refusing was and
+          is CORRECT (never clear what you could not classify); only the reason
+          moved. Python-only assertions here so the measurement survives on a
+          node-less box; the rendered label is pinned in the sibling test.
     """
     table = _shippedTable()
     assert "P0443" not in table
@@ -773,22 +774,22 @@ def test_characterisation_theLiveP0443_isRefusedAsIfItWereAStopOrWatch():
     state = _state([_raw("P0443")], table=table)
 
     assert state["codes"][0]["severity"] == "unknown", state["codes"]
-    assert state["clearGate"] == {"enabled": False, "reason": "severity_present"}
-    assert dtc_clear.evaluateClearGate(state).reason == dtc_clear.GATE_SEVERITY
+    assert state["clearGate"] == {"enabled": False, "reason": "severity_unknown"}
+    assert dtc_clear.evaluateClearGate(state).reason == dtc_clear.GATE_SEVERITY_UNKNOWN
 
 
 @_needsNode
-def test_characterisation_theLiveP0443_rendersTheStopWatchLabelOnThePanel():
+def test_characterisation_theLiveP0443_rendersTheSeverityUnknownLabelOnThePanel():
     """
     Given: the same P0443 state through the shipped table
     When: the operator opens its detail on the panel
-    Then: the button is disabled and reads the STOP/WATCH label verbatim.
+    Then: the button is disabled and says severity could not be determined.
 
           The rendered half of F3 -- the words the driver actually reads about
-          the code that is actually on their car.
+          the code that is actually on their car (US-753 re-record).
     """
     got = _clearSurface(_state([_raw("P0443")], table=_shippedTable()), _OPEN_DETAIL)
 
     assert got["disabled"] is True, got
-    assert got["reason"] == "severity_present", got
-    assert got["label"] == _LABEL_SEVERITY, got
+    assert got["reason"] == "severity_unknown", got
+    assert got["label"] == _LABEL_SEVERITY_UNKNOWN, got

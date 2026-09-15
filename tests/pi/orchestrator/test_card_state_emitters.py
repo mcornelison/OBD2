@@ -105,9 +105,53 @@ def test_initialize_writesHonestInitialDtcState_takeoverHidden(tmp_path):
 
     dtc = _readState(tmp_path, "dtc")
     assert dtc["source"]["dtc"]["available"] is False
-    assert dtc["codes"] == []
-    assert dtc["mil"] is False
+    # US-752: honest absences, not []/false defaults.
+    assert dtc["codes"] is None
+    assert dtc["mil"] is None
+    assert dtc["lastKnown"] is None  # no database -> nothing remembered
     assert dtc["newSinceTs"] is None  # US-405 takeover NOT triggered
+
+
+class _RecordingConnection:
+    """Records every attribute the boot path reaches for on the OBD connection."""
+
+    def __init__(self):
+        self.touched = []
+
+    def __getattr__(self, name):
+        self.touched.append(name)
+        raise AttributeError(name)
+
+
+def test_initialize_restingStateCarriesLastKnownFromDtcLog_noEcuQuery(tmp_path):
+    """US-752: with codes previously persisted in dtc_log and no live read, the
+    boot `dtc` state carries them in lastKnown -- dated from last_seen_timestamp
+    -- while the live fields stay null, and the OBD connection is never queried
+    to populate it (one acquisition path)."""
+    from pi.obdii.database import ObdDatabase
+
+    db = ObdDatabase(str(tmp_path / "obd.db"), walMode=False)
+    db.initialize()
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO dtc_log (dtc_code, description, status, last_seen_timestamp) "
+            "VALUES ('P0443', 'EVAP purge', 'stored', '2026-09-14T09:00:00Z')"
+        )
+    connection = _RecordingConnection()
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=connection)
+    orch._database = db
+
+    orch._initializeCardStateEmitters()
+
+    dtc = _readState(tmp_path, "dtc")
+    assert dtc["codes"] is None
+    assert dtc["mil"] is None
+    assert dtc["newSinceTs"] is None
+    assert dtc["lastKnown"]["asOfTs"] == "2026-09-14T09:00:00Z"
+    assert dtc["lastKnown"]["source"] == "dtc_log"
+    assert dtc["lastKnown"]["mil"] is True
+    assert [c["code"] for c in dtc["lastKnown"]["codes"]] == ["P0443"]
+    assert not {"query", "obd"} & set(connection.touched), connection.touched
 
 
 def test_initialize_disabled_writesNothing(tmp_path):

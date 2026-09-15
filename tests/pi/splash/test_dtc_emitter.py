@@ -91,6 +91,7 @@ def test_buildDtcState_schema_hasAllSpecKeys():
         "newSinceTs",
         "clearGate",
         "sessionResetLock",
+        "lastKnown",
         "source",
         "ts",
     }
@@ -222,11 +223,12 @@ def test_buildDtcState_available_carriesAvailableSource():
     assert state["source"] == {"dtc": {"available": True, "reason": None}}
 
 
-def test_buildDtcState_unavailable_freshEmptyNoTakeoverTrigger():
-    """US-429 / Bug-3b: an unavailable DTC source (no read happened) publishes a
-    FRESH empty state -- codes cleared (never stale), newSinceTs None (so the
-    US-405 takeover can NOT mis-fire), mil off -- and source.dtc carries the NA
-    reason. An absent source reads `unavailable`, not "no codes -> all clear"."""
+def test_buildDtcState_unavailable_liveFieldsAreHonestNulls_noTakeoverTrigger():
+    """US-429 / Bug-3b, amended by US-752 (Atlas 2026-09-14): an unavailable DTC
+    source publishes NO live values -- codes and mil are null, not []/false (a
+    default read as a measurement), newSinceTs None (the US-405 takeover can NOT
+    mis-fire), a stale caller value never leaks through, and with nothing
+    remembered the lastKnown block is null."""
     state = buildDtcState(
         codes=[_rawCode("P1300")],  # a stale caller value must NOT leak through
         severityTable=_TABLE,
@@ -237,10 +239,150 @@ def test_buildDtcState_unavailable_freshEmptyNoTakeoverTrigger():
         dtcAvailable=False,
         dtcUnavailableReason="not read yet",
     )
-    assert state["codes"] == []
+    assert state["codes"] is None
     assert state["newSinceTs"] is None
-    assert state["mil"] is False
+    assert state["mil"] is None
+    assert state["lastKnown"] is None
     assert state["source"] == {"dtc": {"available": False, "reason": "not read yet"}}
+
+
+def _lastKnownBlock(*codes: dict) -> dict:
+    return {"codes": list(codes), "asOfTs": "2026-09-14T09:00:00Z", "source": "dtc_log"}
+
+
+def _knownCode(code: str, *, status: str = "stored", lastSeenTs: str = "2026-09-14T09:00:00Z"):
+    return {
+        "code": code,
+        "status": status,
+        "description": "remembered",
+        "driveId": None,
+        "lastSeenTs": lastSeenTs,
+    }
+
+
+def test_buildDtcState_unavailable_withLastKnown_enrichedAndDatedSeparately():
+    """
+    Given: the source is down and dtc_log remembers a tabled + an un-tabled code
+    When: the state is built
+    Then: live codes/mil stay null; lastKnown carries both codes enriched like
+          live ones (tier never invented), each with lastSeenTs, plus asOfTs,
+          source and the stored-code MIL proxy
+    """
+    state = buildDtcState(
+        codes=[],
+        severityTable=_TABLE,
+        mil=False,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T12:00:00Z",
+        dtcAvailable=False,
+        lastKnown=_lastKnownBlock(
+            _knownCode("p1300"),
+            _knownCode("P0443", status="pending", lastSeenTs="2026-09-13T09:00:00Z"),
+        ),
+    )
+
+    assert state["codes"] is None
+    assert state["mil"] is None
+    lk = state["lastKnown"]
+    assert lk["asOfTs"] == "2026-09-14T09:00:00Z"
+    assert lk["source"] == "dtc_log"
+    assert lk["mil"] is True
+    assert [c["code"] for c in lk["codes"]] == ["P1300", "P0443"]
+    assert lk["codes"][0]["severity"] == "watch"
+    assert lk["codes"][1]["severity"] == "unknown"
+    assert lk["codes"][1]["lastSeenTs"] == "2026-09-13T09:00:00Z"
+
+
+def test_buildDtcState_lastKnownPendingOnly_milIsNotLastKnownLit():
+    """Two facts, not one boolean: a pending-only memory does not claim a lit MIL."""
+    state = buildDtcState(
+        codes=[],
+        severityTable=_TABLE,
+        mil=False,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T12:00:00Z",
+        dtcAvailable=False,
+        lastKnown=_lastKnownBlock(_knownCode("P0443", status="pending")),
+    )
+    assert state["mil"] is None
+    assert state["lastKnown"]["mil"] is False
+
+
+def test_buildDtcState_available_ignoresLastKnown_liveReadWins():
+    """A live read is the truth: any remembered block is dropped."""
+    state = buildDtcState(
+        codes=[_rawCode("P1300")],
+        severityTable=_TABLE,
+        mil=True,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T12:00:00Z",
+        lastKnown=_lastKnownBlock(_knownCode("P0443")),
+    )
+    assert state["lastKnown"] is None
+    assert [c["code"] for c in state["codes"]] == ["P1300"]
+    assert state["mil"] is True
+
+
+def test_buildDtcState_lastKnown_neverReachesTheClearGate():
+    """
+    Given: a remembered code that WOULD be clearable if it were live (MINOR,
+           logged) and no live codes
+    When: the state is built and the authoritative gate re-derives from it
+    Then: the published gate and dtc_clear both see no codes; the Mode-04 runner
+          is never called
+    """
+    from pi.splash import dtc_clear
+
+    table = {
+        **_TABLE,
+        "P0442": {
+            "severity": "minor",
+            "severityCaveat": None,
+            "short": "EVAP small leak",
+            "long": "EVAP small leak",
+            "suggestedFix": "Check the fuel cap seal",
+            "fixProvenance": "spool-validated",
+            "clearEligible": True,
+        },
+    }
+    state = buildDtcState(
+        codes=[],
+        severityTable=table,
+        mil=False,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T12:00:00Z",
+        dtcAvailable=False,
+        lastKnown=_lastKnownBlock(_knownCode("P0442")),
+    )
+
+    assert state["clearGate"] == {"enabled": False, "reason": "ok"}
+    assert dtc_clear.evaluateClearGate(state).reason == dtc_clear.GATE_NO_CODES
+    calls: list[int] = []
+    outcome = dtc_clear.performClear(state, clearRunner=lambda: calls.append(1) or {})
+    assert outcome.issued is False
+    assert calls == []
+
+
+def test_makeDtcEmitter_passesLastKnownThroughToTheFile(tmp_path):
+    """The emit callable carries lastKnown into the written `dtc` state."""
+    emit = makeDtcEmitter(
+        str(tmp_path), severityTable=_TABLE, nowIsoFn=lambda: "2026-09-14T12:00:00Z"
+    )
+
+    emit(
+        codes=[],
+        mil=False,
+        dtcAvailable=False,
+        lastKnown=_lastKnownBlock(_knownCode("P0443")),
+    )
+
+    payload = json.loads((tmp_path / DTC_FILENAME).read_text())
+    assert payload["codes"] is None
+    assert payload["lastKnown"]["codes"][0]["code"] == "P0443"
 
 
 def test_makeDtcEmitter_writesAtomicValidJsonToDtcFile(tmp_path):

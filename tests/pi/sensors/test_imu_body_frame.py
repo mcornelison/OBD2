@@ -147,13 +147,40 @@ def test_imuBodyFrame_declaresTheMeasuredMounting_notTheIdentity():
     Then:  it is candidate (A), (fwd, left, up) = (+y, -x, +z), and it is NOT the
            identity map the code shipped with. The identity IS the defect: it
            claims X is forward, and X is the lateral axis.
+
+    US-745: the binding is now (B) -- see the dedicated guard below. (A) stays
+    DEFINED because the source comment cites it as the rejected candidate.
     """
     assert IMU_BODY_FRAME_A == {"forward": "+y", "left": "-x", "up": "+z"}
-    assert IMU_BODY_FRAME == IMU_BODY_FRAME_A
+    assert IMU_BODY_FRAME_B == {"forward": "-y", "left": "+x", "up": "+z"}
     assert IMU_BODY_FRAME != _IDENTITY_FRAME, (
         "the identity frame is the US-708 defect: it reads the LATERAL axis as "
         "forward, which is why gradePct was computed from roll"
     )
+
+
+_MEASURED_BASIS_FOR_B = (
+    "IMU_BODY_FRAME must be candidate (B) (+Y = tail, +X = driver). MEASURED on the "
+    "NEW dash mount, drives 70/71, 23,770 IMU samples (Atlas ruling 2026-09-11, "
+    "US-745): accel_Y vs d(SPEED)/dt = -0.906 over 235 accel/decel windows (US-708's "
+    "gate: strongly NEGATIVE => (B)); grade vs GPS ground truth +0.411 for (B) vs "
+    "-0.411 for (A) over 125 constant-speed windows. Binding (A) on this board "
+    "publishes gLon, gLat and pitch INVERTED and heading rotated 180 degrees."
+)
+
+
+def test_imuBodyFrame_shippedBinding_isCandidateB_byMeasurement():
+    """
+    Given: the gate US-708 left pending, run on drives 70/71 (the NEW mount)
+    When:  the shipped binding is read, and a raw +Y unit vector is resolved with
+           NO mount argument (so the BOUND frame is exercised, not the primitive)
+    Then:  the binding is (B) and the forward component is NEGATIVE. A correct
+           ruling with no executable consumer is how (A) stayed shipped after the
+           measurement; this is that consumer, so a revert to (A) fails loudly.
+    """
+    assert IMU_BODY_FRAME == IMU_BODY_FRAME_B, _MEASURED_BASIS_FOR_B
+    forward, _, _ = resolveMountFrame((0.0, 1.0, 0.0))
+    assert forward < 0.0, _MEASURED_BASIS_FOR_B
 
 
 def test_imuBodyFrame_bothCandidates_areProperRotations():
@@ -217,7 +244,7 @@ def test_lateralAcceleration_landsOnGLat_notGLon(tmp_path: Path):
     """
     bridge = ImuStateBridge(None, str(tmp_path), stateHz=4, gravityTauSec=5.0)
     _settle(bridge, (0.0, 0.0, G))
-    bridge.handleSample(_rawAccel((0.4 * G, 0.0, G), seq=9000, capture=30.5))
+    bridge.handleSample(_rawAccel((-0.4 * G, 0.0, G), seq=9000, capture=30.5))
     state = _readState(tmp_path)
     assert 0.35 <= state["gLat"] <= 0.45, "X must land on gLat (right positive)"
     assert abs(state["gLon"]) <= 0.02, "a corner is not an acceleration"
@@ -232,7 +259,8 @@ def test_foreAftAcceleration_landsOnGLon_notGLat(tmp_path: Path):
     """
     bridge = ImuStateBridge(None, str(tmp_path), stateHz=4, gravityTauSec=5.0)
     _settle(bridge, (0.0, 0.0, G))
-    bridge.handleSample(_rawAccel((0.0, 0.4 * G, G), seq=9000, capture=30.5))
+    # US-745: -Y is the nose under the shipped (B) mounting.
+    bridge.handleSample(_rawAccel((0.0, -0.4 * G, G), seq=9000, capture=30.5))
     state = _readState(tmp_path)
     assert 0.35 <= state["gLon"] <= 0.45, "Y must land on gLon (accelerating positive)"
     assert abs(state["gLat"]) <= 0.02, "an acceleration is not a corner"
@@ -280,14 +308,14 @@ def test_realClimb_rendersAsTheGrade(tmp_path: Path):
     When:  the state is written
     Then:  gradePct reports it, WITH ITS SIGN -- a climb, not a descent. Under
            the identity frame it read FLAT: the defect hid real hills as
-           thoroughly as it invented fake ones. Under candidate (B) it would read
-           -4%, which is the "picking wrong inverts grade rather than fixing it"
-           case, and asserting the signed value is what catches it.
+           thoroughly as it invented fake ones. Under the rejected candidate (A)
+           it would read -4%, which is the "picking wrong inverts grade rather
+           than fixing it" case, and asserting the signed value is what catches it.
     """
     rad = math.atan(0.04)
     # RAW axes, written out: pitching the nose up tilts gravity onto the board's
-    # Y axis -- Y is the FORE-AFT one, and +Y points at the nose under (A).
-    raw = (0.0, G * math.sin(rad), G * math.cos(rad))
+    # Y axis -- Y is the FORE-AFT one, and -Y points at the nose under (B) (US-745).
+    raw = (0.0, -G * math.sin(rad), G * math.cos(rad))
     bridge = ImuStateBridge(None, str(tmp_path), stateHz=4, gravityTauSec=5.0)
     _settle(bridge, raw)
     assert abs(_readState(tmp_path)["gradePct"] - 4.0) < 0.3
@@ -306,11 +334,11 @@ def test_gyroPitchRate_isIntegratedFromTheLateralAxis(tmp_path: Path):
            GYRO, not just the accelerometer.
     """
     # RAW axes, written out. Nose-up is a NEGATIVE left-axis rate (right-handed:
-    # forward x left = up), and left is -X, so a nose-up rotation reads POSITIVE
-    # on the board's X. A roll about the nose reads on Y. The identity frame has
-    # these the other way round, which is why the gyro half of the filter was
-    # integrating ROLL RATE as pitch (Atlas, spec s7).
-    noseUp = (0.1, 0.0, 0.0)
+    # forward x left = up), and left is +X under (B) (US-745), so a nose-up
+    # rotation reads NEGATIVE on the board's X. A roll about the nose reads on Y.
+    # The identity frame has these the other way round, which is why the gyro
+    # half of the filter was integrating ROLL RATE as pitch (Atlas, spec s7).
+    noseUp = (-0.1, 0.0, 0.0)
     rollRight = (0.0, 0.1, 0.0)
 
     def _pitchAfterOneSecond(rawGyro, statesDir: Path) -> float:
@@ -345,7 +373,7 @@ def test_heading_noseAtMagneticNorth_readsZero(tmp_path: Path):
     axis fix cannot rescue a signal at the noise floor; that waits on the
     relocation gate (US-695).
     """
-    rawNorth = (0.0, 20.0, 0.0)
+    rawNorth = (0.0, -20.0, 0.0)  # US-745: -Y is the nose under (B)
     bridge = ImuStateBridge(None, str(tmp_path))
     bridge.handleSample(_rawMag(rawNorth, seq=1, capture=0.0))
     bridge.handleSample(_rawAccel((0.0, 0.0, G), seq=2, capture=0.02))
@@ -355,7 +383,9 @@ def test_heading_noseAtMagneticNorth_readsZero(tmp_path: Path):
         resolveMountFrame((0.0, 0.0, G), _IDENTITY_FRAME),
         resolveMountFrame(rawNorth, _IDENTITY_FRAME),
     )
-    assert oldHeading == 90.0, "the pre-US-708 transposition, measured"
+    # 270 rather than 90 only because the (B) raw vector points along -Y; the
+    # error is the same 90 degree transposition either way.
+    assert oldHeading == 270.0, "the pre-US-708 transposition, measured"
 
 
 # ------------------------------------------------- the diagnostics (AC 5 / VC 2)
@@ -399,7 +429,7 @@ def test_publishedState_carriesPitchStopCountAndBias(tmp_path: Path):
     bias measured yet" until you can see how many stops are behind it.
     """
     rad = math.radians(3.0)
-    tilt = (0.0, G * math.sin(rad), G * math.cos(rad))  # RAW: Y is fore-aft
+    tilt = (0.0, -G * math.sin(rad), G * math.cos(rad))  # RAW: Y is fore-aft
     bridge = ImuStateBridge(None, str(tmp_path), pitchFusion=PitchFusion(zuptMinStops=1))
     _convergeOneStop(bridge, tilt)
 
@@ -419,7 +449,7 @@ def test_absentSensor_stillReportsTheCalibrationState(tmp_path: Path):
            vanishes exactly when you are diagnosing something is not one.
     """
     rad = math.radians(3.0)
-    tilt = (0.0, G * math.sin(rad), G * math.cos(rad))
+    tilt = (0.0, -G * math.sin(rad), G * math.cos(rad))
     bridge = ImuStateBridge(None, str(tmp_path), pitchFusion=PitchFusion(zuptMinStops=1))
     at = _convergeOneStop(bridge, tilt)
 
@@ -467,6 +497,6 @@ def test_theMounting_isNotReadFromConfig(tmp_path: Path):
     bridge = createImuStateBridgeFromConfig(config, _NullBus())
     assert bridge is not None
     _settle(bridge, (0.0, 0.0, G))
-    bridge.handleSample(_rawAccel((0.4 * G, 0.0, G), seq=9000, capture=30.5))
+    bridge.handleSample(_rawAccel((-0.4 * G, 0.0, G), seq=9000, capture=30.5))
     state = _readState(tmp_path)
     assert 0.35 <= state["gLat"] <= 0.45, "the stale config mount must not be honoured"

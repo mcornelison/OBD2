@@ -13,7 +13,8 @@
 #   monitors), so the gate keys off ALL stored codes, not the one on screen. It is
 #   ENABLED only when every stored (non-`na`) code is MINOR (green) AND logged AND
 #   server-sync-acked, and no code re-set this session. Any STOP/WATCH ->
-#   `severity_present`; an un-synced MINOR -> `sync_pending`; a returned code (in
+#   `severity_present`; else any ungraded (`unknown` / absent / unrecognised)
+#   severity -> `severity_unknown`; an un-synced MINOR -> `sync_pending`; a returned code (in
 #   sessionResetLock) -> `session_locked` ("don't chase the light", advisory
 #   sec 4d).
 #
@@ -29,6 +30,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-407 clear gate).
+# 2026-09-14    | Ralph (Rex)  | US-753: `severity_unknown` split out of
+#               |              | `severity_present`; refusal unchanged.
 # ================================================================================
 ################################################################################
 
@@ -43,11 +46,17 @@ from dataclasses import dataclass
 # MINOR (green) code is ever clear-eligible; `na` is not a real fault on this car.
 _SEVERITY_MINOR = "minor"
 _SEVERITY_NA = "na"
+# The graded blocking tiers. Only these justify saying "a STOP/WATCH code is
+# present"; any other non-MINOR value is a severity nobody could determine.
+_SEVERITIES_BLOCKING = frozenset({"stop", "watch"})
 
 # Gate reasons (design-spec sec 6.1 + advisory sec 4). `ok` is the only enabled
 # state; the rest are honest disable reasons the UI renders verbatim.
 GATE_OK = "ok"
 GATE_SEVERITY = "severity_present"
+# US-753: an ungraded code is refused on principle, which is a DIFFERENT fact
+# from a graded STOP/WATCH being present -- two facts, two reasons.
+GATE_SEVERITY_UNKNOWN = "severity_unknown"
 GATE_SYNC = "sync_pending"
 GATE_NO_CODES = "no_codes"
 GATE_SESSION_LOCKED = "session_locked"
@@ -57,6 +66,7 @@ __all__ = [
     "GATE_OK",
     "GATE_SESSION_LOCKED",
     "GATE_SEVERITY",
+    "GATE_SEVERITY_UNKNOWN",
     "GATE_SYNC",
     "ClearGateDecision",
     "ClearOutcome",
@@ -73,8 +83,8 @@ class ClearGateDecision:
         enabled: True only when every stored (non-``na``) code is MINOR, logged,
             server-sync-acked, and none re-set this session.
         reason: ``ok`` when enabled; otherwise the honest disable cause
-            (``severity_present`` / ``sync_pending`` / ``no_codes`` /
-            ``session_locked``).
+            (``severity_present`` / ``severity_unknown`` / ``sync_pending`` /
+            ``no_codes`` / ``session_locked``).
     """
 
     enabled: bool
@@ -140,8 +150,10 @@ def evaluateClearGate(dtcState: Mapping) -> ClearGateDecision:
     relevant = _relevantStored(dtcState)
     if not relevant:
         return ClearGateDecision(enabled=False, reason=GATE_NO_CODES)
-    if any(c.get("severity") != _SEVERITY_MINOR for c in relevant):
+    if any(c.get("severity") in _SEVERITIES_BLOCKING for c in relevant):
         return ClearGateDecision(enabled=False, reason=GATE_SEVERITY)
+    if any(c.get("severity") != _SEVERITY_MINOR for c in relevant):
+        return ClearGateDecision(enabled=False, reason=GATE_SEVERITY_UNKNOWN)
     if any(not (c.get("logged") and c.get("syncAcked")) for c in relevant):
         return ClearGateDecision(enabled=False, reason=GATE_SYNC)
     lock = set(dtcState.get("sessionResetLock") or [])

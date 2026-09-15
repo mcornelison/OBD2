@@ -259,6 +259,15 @@
 #               |              | -- and independently of -- the sink, whose
 #               |              | swallowed faults previously discarded the only
 #               |              | record of a power loss.
+# 2026-09-14    | Rex (US-690) | One retry authority.  The initial-connect cap
+#               |              | now CANCELS the connect() it abandons (its own
+#               |              | 6-attempt loop used to keep running beside the
+#               |              | PENDING heartbeat -- two counters, two backoffs),
+#               |              | and the heartbeat is wired with cancelFn so its
+#               |              | own 30s cap cancels too.
+# 2026-09-14    | Rex (US-751) | The PENDING heartbeat is wired with the
+#               |              | orchestrator's _obdWakeEvent, so
+#               |              | requestObdLinkWake() cuts its backoff short.
 # ================================================================================
 ################################################################################
 
@@ -797,9 +806,8 @@ class LifecycleMixin:
         if not completed:
             logger.warning(
                 "Initial connect timed out after %.1fs, runLoop starting in "
-                "PENDING (connect daemon thread continues; US-211 reconnect "
-                "path will transition to CONNECTED if/when adapter+ECU "
-                "become responsive)",
+                "PENDING (the abandoned connect is cancelled; the reconnect "
+                "heartbeat is the one retry authority from here -- US-690)",
                 timeoutSec,
             )
             # US-301 Spool 2026-05-08 BUG-1: spawn the heartbeat daemon so the
@@ -853,11 +861,16 @@ class LifecycleMixin:
         US-244 / TD-036: dispatches connect on a background thread so the
         wall-clock cap can return control to ``_initializeAllComponents``
         even when the underlying retry loop has not yet exhausted its
-        configured delays.  On timeout, the daemon thread is left running
-        -- it may eventually transition the connection to CONNECTED in
-        the background.  The runLoop's existing ``_checkConnectionStatus``
-        path observes the late transition and fires
-        ``_handleConnectionRestored`` automatically.
+        configured delays.
+
+        US-690: on timeout the abandoned call is CANCELLED via
+        ``cancelPendingConnects()``.  Before US-690 it was left running its
+        whole retry budget beside the PENDING heartbeat spawned next -- two
+        retry loops, each with its own counter and backoff.  Cancel stops that
+        loop at its next attempt boundary; an attempt already inside the
+        handshake still completes, and if it establishes the link the runLoop's
+        ``_checkConnectionStatus`` observes the late transition and fires
+        ``_handleConnectionRestored`` as before.
 
         Args:
             timeoutSec: Wall-clock cap in seconds.
@@ -934,6 +947,9 @@ class LifecycleMixin:
                 elapsed,
                 elapsed / timeoutSec if timeoutSec > 0 else float('inf'),
             )
+
+        if not completed:
+            self._cancelAbandonedConnect()
 
         return (
             completed,
@@ -1063,6 +1079,8 @@ class LifecycleMixin:
             isConnectedFn = self._buildHeartbeatIsConnectedFn()
             inFlightProbeFn = self._buildHeartbeatInFlightProbeFn()
             shutdownEvent = getattr(self, '_shutdownEvent', None)
+            # US-751: requestObdLinkWake() cuts this heartbeat's backoff short.
+            wakeEvent = getattr(self, '_obdWakeEvent', None)
 
             def _run() -> None:
                 try:
@@ -1070,7 +1088,9 @@ class LifecycleMixin:
                         connectFn=connectFn,
                         isConnectedFn=isConnectedFn,
                         inFlightProbeFn=inFlightProbeFn,
+                        cancelFn=self._cancelAbandonedConnect,
                         shutdownEvent=shutdownEvent,
+                        wakeEvent=wakeEvent,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
@@ -1177,6 +1197,31 @@ class LifecycleMixin:
             except Exception:  # noqa: BLE001
                 return False
         return _isInFlight
+
+    def _cancelAbandonedConnect(self) -> None:
+        """Cancel the connect a wall-clock cap just gave up on (US-690).
+
+        Shared by the initial-connect cap and the heartbeat's per-tick cap so
+        both mean the same thing by "timed out": stop waiting AND stop the call
+        from retrying.  Resolves ``self._connection`` lazily; duck-typed
+        connections without ``cancelPendingConnects`` (the simulator, older
+        doubles) are left alone.  Never raises -- a cap firing is already the
+        failure path.
+        """
+        conn = self._connection
+        if conn is None:
+            return
+        cancelMethod = getattr(conn, 'cancelPendingConnects', None)
+        if cancelMethod is None:
+            return
+        try:
+            cancelMethod()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Cancelling the abandoned connect raised %r -- it may keep "
+                "retrying beside the reconnect heartbeat (US-690)",
+                exc,
+            )
 
     def _verifyReconnectDaemonAlive(self) -> None:
         """V0.24.1-style boot canary: prove the heartbeat daemon was spawned.

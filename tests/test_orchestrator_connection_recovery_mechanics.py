@@ -11,6 +11,9 @@
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-012
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
+# 2026-09-14    | Rex (US-690) | _attemptReconnection prefers reconnectOnce (one
+#               |              | port attempt); renamed usesReconnectMethod ->
+#               |              | prefersSingleAttemptReconnectOnce, added fallback
 # ================================================================================
 ################################################################################
 
@@ -194,17 +197,41 @@ def createOrchestrator(config: dict[str, Any]) -> Any:
 class TestReconnectionMechanics:
     """Tests for the low-level reconnection attempt behavior."""
 
-    def test_attemptReconnection_usesReconnectMethod(
+    def test_attemptReconnection_prefersSingleAttemptReconnectOnce(
         self, recoveryConfig: dict[str, Any]
     ):
         """
-        Given: Connection object with reconnect() method
+        Given: Connection object with both reconnectOnce() and reconnect()
         When: _attemptReconnection is called
-        Then: reconnect() is called (preferred path)
+        Then: reconnectOnce() is called and reconnect() is NOT (US-690) --
+              reconnect() ends in connect(), a retry loop nested inside ours
         """
         # Arrange
         orchestrator = createOrchestrator(recoveryConfig)
         mockConnection = MagicMock()
+        mockConnection.reconnectOnce.return_value = True
+        orchestrator._connection = mockConnection
+
+        # Act
+        result = orchestrator._attemptReconnection()
+
+        # Assert
+        assert result is True
+        mockConnection.reconnectOnce.assert_called_once()
+        mockConnection.reconnect.assert_not_called()
+        mockConnection.connect.assert_not_called()
+
+    def test_attemptReconnection_fallsBackToReconnect_withoutReconnectOnce(
+        self, recoveryConfig: dict[str, Any]
+    ):
+        """
+        Given: Duck-typed connection with reconnect() but no reconnectOnce()
+        When: _attemptReconnection is called
+        Then: reconnect() is called (the simulator's path)
+        """
+        # Arrange
+        orchestrator = createOrchestrator(recoveryConfig)
+        mockConnection = MagicMock(spec=['reconnect', 'disconnect', 'connect'])
         mockConnection.reconnect.return_value = True
         orchestrator._connection = mockConnection
 
@@ -248,7 +275,7 @@ class TestReconnectionMechanics:
         # Arrange
         orchestrator = createOrchestrator(recoveryConfig)
         mockConnection = MagicMock()
-        mockConnection.reconnect.side_effect = OSError("Bluetooth error")
+        mockConnection.reconnectOnce.side_effect = OSError("Bluetooth error")
         orchestrator._connection = mockConnection
 
         # Act
@@ -326,7 +353,7 @@ class TestReconnectionMechanics:
         # Arrange
         orchestrator = createOrchestrator(recoveryConfig)
         mockConnection = MagicMock()
-        mockConnection.reconnect.return_value = False
+        mockConnection.reconnectOnce.return_value = False
         orchestrator._connection = mockConnection
 
         # Act

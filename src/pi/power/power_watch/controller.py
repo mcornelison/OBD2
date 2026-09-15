@@ -51,6 +51,12 @@
 #                              When no emitter is wired the sequencer behaves
 #                              byte-identically to before. See the A-6 timing
 #                              invariant below + specs/architecture.md §10.6.
+# 2026-09-14    | Rex (US-748) | Added OPTIONAL `powerLossObservedFn`, called at
+#                              handleOnBattery ENTRY (after the ARCH-019 witness,
+#                              before smoothing). powerwatch wires it to the 1 Hz
+#                              loss heartbeat so time-to-death after a cut is a
+#                              number in SQLite on the next boot. Guarded: a hook
+#                              that raises never blocks shutdown. None = legacy.
 # ================================================================================
 ################################################################################
 #
@@ -127,6 +133,7 @@ class ShutdownSequencer:
         nowIsoFn: Callable[[], str] | None = None,
         shutdownReason: str = DEFAULT_SHUTDOWN_REASON,
         prePowerOffFn: Callable[[], None] | None = None,
+        powerLossObservedFn: Callable[[], None] | None = None,
     ):
         """Args:
         isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
@@ -182,6 +189,15 @@ class ShutdownSequencer:
             returning mid-window) -- an aborted shutdown is not a drain
             end, and the collector's BATTERY->AC transition owns that
             close. ``None`` (the default) runs the exact legacy path.
+        powerLossObservedFn: OPTIONAL zero-arg hook run at the ENTRY of
+            ``handleOnBattery`` -- the instant a power-lost signal arrives,
+            before smoothing, and on a blip too (US-748). powerwatch wires it to
+            ``PowerLossHeartbeat.start``, whose rows make time-to-death a number
+            on the next boot; starting BEFORE smoothing is load-bearing, since
+            the 09-14 cuts died inside the window this path runs. It must
+            return promptly (the heartbeat writes on its own thread) and is
+            guarded like ``phaseEmitFn``: a hook that raises NEVER blocks
+            shutdown. ``None`` (the default) runs the exact legacy path.
         """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
@@ -195,6 +211,7 @@ class ShutdownSequencer:
         self._monotonic = monotonicFn if monotonicFn is not None else time.monotonic
         self._phaseEmitFn = phaseEmitFn
         self._prePowerOffFn = prePowerOffFn
+        self._powerLossObservedFn = powerLossObservedFn
         self._shutdownReason = shutdownReason
         self._nowIso = nowIsoFn if nowIsoFn is not None else _defaultNowIso
         # Grace-window bookkeeping (set when the grace phase is emitted).
@@ -244,6 +261,12 @@ class ShutdownSequencer:
         # Best-effort by contract -- this runs on a machine that may be losing
         # power and must never abort the pipeline it is observing.
         recordTransitionWitnessed(atIso=datetime.now(UTC).isoformat())
+
+        # US-748: start measuring how long this machine lives from HERE. On
+        # 2026-09-14 the Pi died inside 30 s of this point with a near-full pack,
+        # and the journal could not see those seconds. Before smoothing so a
+        # death during smoothing is still measured.
+        self._notifyPowerLossObserved()
 
         # F-103 [A-2]: emit `grace` at T=0 (BEFORE smoothing resolves) so the
         # splash triggers immediately -- the animation IS the grace countdown.
@@ -320,6 +343,22 @@ class ShutdownSequencer:
         self._emitPhase(PHASE_POWERING_OFF)
         self._runPrePowerOff()
         self._powerOff()
+
+    # ----- US-748 power-loss-observed hook (time-to-death heartbeat) ----------
+
+    def _notifyPowerLossObserved(self) -> None:
+        """Run the power-loss-observed hook (best-effort, never raises)."""
+        if self._powerLossObservedFn is None:
+            return
+        try:
+            self._powerLossObservedFn()
+        except Exception as exc:  # noqa: BLE001 -- best-effort, belt+braces
+            logger.error(
+                "shutdown-sequencer: power-loss-observed hook failed (%s) -- "
+                "ignored, shutdown proceeds; time-to-death is NOT being measured "
+                "for this loss",
+                exc,
+            )
 
     # ----- US-526 pre-poweroff hook (drain-event close, Atlas Option C) -------
 

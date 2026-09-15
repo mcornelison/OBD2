@@ -1325,6 +1325,34 @@
     return "—";
   }
 
+  // US-736: WHY the verdict is unknown. US-632 publishes one of six machine
+  // reasons in `reasons.health` (battery_health_verdict.UNKNOWN_REASONS); before
+  // this table the card threw all six away and every one read as the same
+  // em-dash. Keys are the producer's names VERBATIM -- `no_qualifying_drains`
+  // is plural -- and a guard test holds them equal to UNKNOWN_REASONS.
+  var BATTERY_HEALTH_REASON_TEXT = {
+    no_database: "no battery log database",
+    log_unreadable: "battery log unreadable",
+    no_qualifying_drains: "no full drain measured yet",
+    too_few_drains: "too few drains to judge",
+    health_data_stale: "last drain test too old",
+    clock_unreadable: "clock unreadable",
+  };
+
+  // Words for an unknown verdict's reason, or null for a resolved verdict (a
+  // reason explains an ABSENCE). The two fallbacks are typed and can never
+  // equal a known string: a missing reason and an untaught one are different
+  // facts, and neither may pass for "last drain test too old".
+  function healthReasonText(data) {
+    if (data.health !== "unknown") return null;
+    var code = isObj(data.reasons) ? data.reasons.health : null;
+    if (typeof code !== "string" || code === "") return "reason not reported";
+    if (Object.prototype.hasOwnProperty.call(BATTERY_HEALTH_REASON_TEXT, code)) {
+      return BATTERY_HEALTH_REASON_TEXT[code];
+    }
+    return "unrecognised reason (" + code + ")";
+  }
+
   // The date portion (YYYY-MM-DD) of an ISO instant, or null.
   function isoDate(ts) {
     if (typeof ts !== "string") return null;
@@ -1461,14 +1489,18 @@
         ts: typeof data.ts === "string" ? data.ts : null,
       };
     }
+    // US-736: the reason goes IN FRONT of the F-9 line, never in place of it.
+    var reason = healthReasonText(data);
+    var checkLabel = healthCheckLine(data).label;
     return {
       label: BATTERY_LABEL,
       unavailable: false,
       health: {
         label: "HEALTH",
         value: healthValue(data.health),
-        detail: healthCheckLine(data).label,
+        detail: reason === null ? checkLabel : reason + " · " + checkLabel,
         level: healthLevel(data.health),
+        reason: reason,
       },
       vcell: vcellTile(data),
       soc: socTile(data),
@@ -2506,16 +2538,60 @@
     };
   }
 
+  // US-752 -- the codes the system ALREADY HOLDS, shown when no live read is
+  // possible (key-off / restart). Atlas 2026-09-14: a SEPARATE `lastKnown`
+  // block beside honest-null live fields, never an overload of `codes`. The
+  // view is labelled "last known" and dated, so a remembered code never reads
+  // as a live one, and its rows are rendered inert: the detail overlay is where
+  // the clear affordance lives, and a clear offered on remembered codes is a
+  // safety inversion. Null when nothing is remembered (never read, or cleared
+  // since) -- which is what keeps the true "not read" absence meaningful.
+  function lastKnownDtcView(lastKnown, nowTs) {
+    if (!isObj(lastKnown) || !Array.isArray(lastKnown.codes)) return null;
+    var codes = lastKnown.codes.filter(isObj);
+    if (codes.length === 0) return null;
+    var stored = 0;
+    var pending = 0;
+    for (var i = 0; i < codes.length; i++) {
+      if (codes[i].status === "pending") pending++;
+      else stored++;
+    }
+    var age = agoText(nowTs, lastKnown.asOfTs);
+    var mil = lastKnown.mil === true;
+    return {
+      tile: {
+        label: "ALERTS",
+        value: "LAST KNOWN CODES",
+        detail: "last read " + age + " · not a live read" + (mil ? " · MIL was on" : ""),
+        level: "unavailable",
+      },
+      asOfTs: typeof lastKnown.asOfTs === "string" ? lastKnown.asOfTs : null,
+      age: age,
+      rows: dtcListSorted(codes).map(dtcRow),
+      storedCount: stored,
+      pendingCount: pending,
+      mil: mil,
+    };
+  }
+
   // The Alerts card view: hero (worst ALERT-eligible code + its directive; `na`
   // and unrecognized severities are never a hero) + the full list (worst-first,
   // na last) + stored/pending counts. Non-object payload -> null (the shell
   // renders `unavailable`). An empty `codes` array is a valid no-fault view.
-  function alertsCardView(data) {
+  // `nowTs` (US-752) dates remembered codes; absent -> the payload's own `ts`.
+  function alertsCardView(data, nowTs) {
     if (!isObj(data)) return null;
     // US-429: an unavailable DTC source (no read happened) is a typed NA -- NOT
     // "No stored codes" (which would falsely imply a clean all-clear read).
     if (sourceUnavailable(data, "dtc")) {
       var why = sourceReason(data, "dtc");
+      // US-752: known codes are shown, dated -- never "not read" over them.
+      var remembered = lastKnownDtcView(
+        data.lastKnown, typeof nowTs === "string" ? nowTs : data.ts
+      );
+      if (remembered) {
+        return { unavailable: true, reason: why, notRead: null, lastKnown: remembered };
+      }
       return { unavailable: true, reason: why, notRead: dtcNotReadTile(why) };
     }
     var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
@@ -2673,6 +2749,9 @@
   var CLEAR_REASON_LABEL = {
     ok: "CLEAR CODES",
     severity_present: "🔒 CLEAR CODES — a STOP/WATCH code is present",
+    // US-753: an ungraded code is refused on principle; saying STOP/WATCH
+    // there asserts a tier nobody determined.
+    severity_unknown: "🔒 CLEAR CODES — severity could not be determined",
     sync_pending: "🔒 CLEAR CODES — waiting for server sync",
     session_locked: "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it",
   };
@@ -2689,8 +2768,13 @@
       return c.status === "stored" && c.severity !== "na";
     });
     if (relevant.length === 0) return "no_codes";
-    if (relevant.some(function (c) { return c.severity !== "minor"; })) {
+    if (relevant.some(function (c) {
+      return c.severity === "stop" || c.severity === "watch";
+    })) {
       return "severity_present";
+    }
+    if (relevant.some(function (c) { return c.severity !== "minor"; })) {
+      return "severity_unknown";
     }
     if (relevant.some(function (c) { return !(c.logged && c.syncAcked); })) {
       return "sync_pending";
@@ -3075,6 +3159,8 @@
     no_mag_reading: "no compass reading",
     tilt_unresolved: "orientation unresolved",
     pitch_out_of_range: "pitch beyond range",
+    // US-749: the fusion's plausibility guard withheld a pitch the accelerometer contradicts.
+    gyro_implausible: "gyro implausible",
     no_source: "no source",
   };
 
@@ -3874,6 +3960,7 @@
     idleCardView: idleCardView,
     dtcRow: dtcRow,
     alertsCardView: alertsCardView,
+    lastKnownDtcView: lastKnownDtcView,
     trustBadge: trustBadge,
     fixArea: fixArea,
     fixSectionLabel: fixSectionLabel,
@@ -5147,8 +5234,18 @@
 
       // Long-press anywhere on the carousel opens the menu (D-6). A filling ring
       // gives feedback after the arm delay; movement or an early release cancels.
+      //
+      // US-747: the SAME hold on the open menu closes it -- a second way out
+      // that does not depend on the ✕ (the one control is exactly what failed).
+      //
+      // US-747 root cause, and why each press OWNS its interval: this used to
+      // keep the interval in `timer` alone. A second pointerdown before the
+      // pointerup (a second finger, a palm) overwrote it, the first interval was
+      // never cleared, and after the release nulled `pressStart` it read
+      // `Date.now() - null` -- always past the hold -- and re-opened the menu on
+      // every tick. ✕ closed it; the orphan opened it again 50 ms later.
       var carousel = document.getElementById("carousel");
-      if (carousel && ring) {
+      if (ring) {
         var pressStart = null;
         var pressX = 0;
         var pressY = 0;
@@ -5164,11 +5261,19 @@
           ring.hidden = true;
           ring.style.setProperty("--fill", "0");
         }
-        carousel.addEventListener("pointerdown", function (e) {
+        function startPress(e) {
+          // A new contact restarts the hold rather than stacking a second one.
+          clearPress();
           pressStart = Date.now();
           pressX = e.clientX;
           pressY = e.clientY;
-          timer = setInterval(function () {
+          var id = setInterval(function () {
+            // Belt and braces: an interval that is not the live press, or that
+            // outlived it, stops itself instead of reading a null start.
+            if (timer !== id || pressStart === null) {
+              clearInterval(id);
+              return;
+            }
             var elapsed = Date.now() - pressStart;
             if (elapsed >= LONG_PRESS_ARM_MS && !armed) {
               armed = true;
@@ -5179,16 +5284,26 @@
             }
             if (isLongPressComplete(elapsed)) {
               clearPress();
-              openMenu();
+              if (menu.hidden) openMenu();
+              else closeMenu();
             }
           }, 50);
-        });
-        carousel.addEventListener("pointermove", function (e) {
+          timer = id;
+        }
+        function movePress(e) {
           if (pressStart === null) return;
           if (exceedsMoveCancel(e.clientX - pressX, e.clientY - pressY)) clearPress();
-        });
-        carousel.addEventListener("pointerup", clearPress);
-        carousel.addEventListener("pointercancel", clearPress);
+        }
+        if (carousel) {
+          carousel.addEventListener("pointerdown", startPress);
+          carousel.addEventListener("pointermove", movePress);
+          carousel.addEventListener("pointerup", clearPress);
+          carousel.addEventListener("pointercancel", clearPress);
+        }
+        menu.addEventListener("pointerdown", startPress);
+        menu.addEventListener("pointermove", movePress);
+        menu.addEventListener("pointerup", clearPress);
+        menu.addEventListener("pointercancel", clearPress);
       }
     }
 
@@ -5636,6 +5751,42 @@
 
       // --- US-406 Alerts card render (browser only) --------------------------
 
+      // US-752: remembered codes. Rows are DIVs, not buttons -- no detail
+      // overlay opens from a remembered code, so the clear surface is never
+      // reachable from one (the clear gate computes from LIVE codes only).
+      function renderLastKnownDtc(body, lk) {
+        appendTile(body, lk.tile);
+        var head = document.createElement("div");
+        head.className = "dtc-count";
+        head.textContent =
+          lk.storedCount + " stored · " + lk.pendingCount + " pending · last known";
+        body.appendChild(head);
+        for (var i = 0; i < lk.rows.length; i++) {
+          var r = lk.rows[i];
+          var row = document.createElement("div");
+          row.className = "dtc-row dtc-row-last-known";
+          row.setAttribute("data-level", r.level);
+          var rChip = document.createElement("span");
+          rChip.className = "dtc-chip";
+          rChip.setAttribute("data-level", r.level);
+          rChip.textContent = r.chip;
+          row.appendChild(rChip);
+          var rCode = document.createElement("span");
+          rCode.className = "dtc-row-code";
+          rCode.textContent = r.code;
+          row.appendChild(rCode);
+          var rShort = document.createElement("span");
+          rShort.className = "dtc-row-short";
+          rShort.textContent = r.short;
+          row.appendChild(rShort);
+          var rStatus = document.createElement("span");
+          rStatus.className = "dtc-row-status";
+          rStatus.textContent = r.status;
+          row.appendChild(rStatus);
+          body.appendChild(row);
+        }
+      }
+
       function renderAlertsCard(card, view) {
         var body = card.querySelector(".card-body");
         if (!body || !view) return;
@@ -5648,6 +5799,10 @@
         // which would have swallowed the moved fact).
         if (view.unavailable) {
           body.textContent = "";
+          if (view.lastKnown) {
+            renderLastKnownDtc(body, view.lastKnown);
+            return;
+          }
           appendTile(body, view.notRead);
           return;
         }
@@ -5659,43 +5814,24 @@
         head.textContent = view.storedCount + " stored · " + view.pendingCount + " pending";
         body.appendChild(head);
 
-        // Hero block (worst code + its directive), when an alert-eligible code
-        // exists (na-only / empty -> no hero).
-        if (view.hero) {
-          var heroEl = document.createElement("button");
-          heroEl.className = "dtc-hero tap-target";
-          heroEl.setAttribute("data-level", view.hero.level);
-          var hChip = document.createElement("span");
-          hChip.className = "dtc-chip";
-          hChip.setAttribute("data-level", view.hero.level);
-          hChip.textContent = view.hero.chip;
-          heroEl.appendChild(hChip);
-          var hCode = document.createElement("span");
-          hCode.className = "dtc-hero-code";
-          hCode.textContent = view.hero.code;
-          heroEl.appendChild(hCode);
-          var hShort = document.createElement("span");
-          hShort.className = "dtc-hero-short";
-          hShort.textContent = view.hero.short;
-          heroEl.appendChild(hShort);
-          var hDir = document.createElement("span");
-          hDir.className = "dtc-hero-directive";
-          hDir.textContent = view.hero.directive;
-          heroEl.appendChild(hDir);
-          (function (codeStr) {
-            heroEl.addEventListener("click", function () { openAlertsCard(codeStr); });
-          })(view.hero.code);
-          body.appendChild(heroEl);
-        } else if (view.rows.length === 0) {
+        if (!view.hero && view.rows.length === 0) {
           // No codes at all -> an honest all-clear (never a fabricated green).
           body.appendChild(detailLine("dtc-noalert", "", "No stored codes"));
         }
 
+        // US-757: the hero is NOT a selection -- it is the head of the same
+        // worst-first ordering -- so drawing it as its own block above the list
+        // showed the worst code twice. The hero code's ROW is now the featured
+        // entry (tier border + directive); every code appears exactly once.
+        var featuredCode = view.hero ? view.hero.code : null;
+
         // Compact tappable rows (worst-first, na last). Each opens the detail.
         for (var i = 0; i < view.rows.length; i++) {
           (function (r) {
+            var featured = featuredCode !== null && r.code === featuredCode;
+            if (featured) featuredCode = null; // first match only
             var row = document.createElement("button");
-            row.className = "dtc-row tap-target";
+            row.className = featured ? "dtc-row dtc-hero tap-target" : "dtc-row tap-target";
             row.setAttribute("data-level", r.level);
             var rChip = document.createElement("span");
             rChip.className = "dtc-chip";
@@ -5714,6 +5850,12 @@
             rStatus.className = "dtc-row-status";
             rStatus.textContent = r.status;
             row.appendChild(rStatus);
+            if (featured) {
+              var rDir = document.createElement("span");
+              rDir.className = "dtc-hero-directive";
+              rDir.textContent = view.hero.directive;
+              row.appendChild(rDir);
+            }
             row.addEventListener("click", function () { openDetail(findCode(r.code) || r); });
             body.appendChild(row);
           })(view.rows[i]);
@@ -5951,7 +6093,7 @@
               card, systemStatusView(data, captureData), glyphEls
             );
           } else if (name === "dtc") {
-            renderAlertsCard(card, alertsCardView(data));
+            renderAlertsCard(card, alertsCardView(data, new Date(nowMs).toISOString()));
           }
           // US-508: the standalone Motion branch is GONE with the card it
           // served -- the live instrument is now a FACE of the home slot,

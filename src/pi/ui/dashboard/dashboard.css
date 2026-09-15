@@ -462,10 +462,22 @@ html, body {
    The cue borrows --text-tertiary deliberately. A clipped card is a LAYOUT
    fact, not a vehicle fault; dressing it amber or red would put a layout
    condition into the alert vocabulary US-488 spent a whole story making mean
-   exactly one thing each. Pinned by tests/ui/test_card_band_budget.py. */
+   exactly one thing each. Pinned by tests/ui/test_card_band_budget.py.
+
+   US-746: `touch-action: pan-y` IS LOAD-BEARING FOR SWIPE. `overflow-y: auto`
+   makes this box a scroll container (overflow-x computes to auto with it), and
+   Chromium re-allows panning inside a scroller -- the `html, body { pan-y }`
+   rule does NOT reach through it (measured: pan-y on #carousel does not help
+   either). Without this line a horizontal finger drag over any card body is
+   claimed by the browser as a pan: the page gets pointerdown, one pointermove,
+   then pointercancel and never pointerup, so the swipe handler on #track never
+   runs. Taps and a mouse drag still work, which is why only the dots navigated.
+   Regressed in 4186b0e9 (US-557). Pinned by
+   tests/ui/test_carousel_swipe_gesture_guard.py. */
 .card-body {
   flex: 1; min-height: 0;
   overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y;
   font-size: var(--fs-secondary); color: var(--text-primary);
   background:
     linear-gradient(rgba(0, 0, 0, 0), var(--bg) 70%) bottom / 100% 12px no-repeat local,
@@ -984,11 +996,14 @@ html, body {
 
 /* --- US-403 long-press ring (D-6) ------------------------------------------- */
 /* A radial fill driven by the JS --fill (0..1). Centered; non-interactive so it
-   never intercepts the press it visualizes. */
+   never intercepts the press it visualizes.
+   US-747: z-index 45 -- ABOVE #setup-menu (40), because the same hold now also
+   dismisses the menu and its progress must paint over it; BELOW #confirm-modal
+   (50), which interrupts. */
 #longpress-ring {
   position: fixed; top: 50%; left: 50%;
   width: 72px; height: 72px; margin: -36px 0 0 -36px;
-  border-radius: 50%; z-index: 30; pointer-events: none;
+  border-radius: 50%; z-index: 45; pointer-events: none;
   --fill: 0;
   background: conic-gradient(var(--green-ok) calc(var(--fill) * 360deg),
                              rgba(255, 255, 255, 0.12) 0);
@@ -1174,6 +1189,12 @@ html, body {
   text-align: left; cursor: pointer;
   border: 1px solid var(--surface); border-radius: 4px;
   background: var(--surface); color: var(--text-primary);
+}
+/* US-757: the featured entry is the worst code's own row, not a second copy of
+   it. Out-specifies the .dtc-row reset below; the tier colors after it win. */
+.dtc-row.dtc-hero {
+  flex-wrap: wrap; padding: 6px 8px; margin-bottom: 6px;
+  border: 1px solid var(--surface); border-radius: 4px; background: var(--surface);
 }
 .dtc-hero[data-level="stop"]  { border-color: var(--critical-red); }
 .dtc-hero[data-level="watch"] { border-color: var(--amber-warn); }

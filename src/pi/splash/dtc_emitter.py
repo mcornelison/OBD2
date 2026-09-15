@@ -26,6 +26,11 @@
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-404 `dtc` emitter (4th states-dir
 #               |              | writer; KOEO + drive read publish path).
+# 2026-09-14    | Ralph (Rex)  | US-752: unavailable -> codes/mil null (not []/
+#               |              | false) + separate `lastKnown` block. CHANGES
+#               |              | the US-429 fresh-empty contract (Atlas ruling).
+# 2026-09-14    | Ralph (Rex)  | US-753: clearGate `severity_unknown` for an
+#               |              | ungraded code (was `severity_present`).
 # ================================================================================
 ################################################################################
 
@@ -44,7 +49,9 @@ from pi.splash.dtc_severity_table import (
     FIX_PROVENANCE_NONE,
     SEVERITY_MINOR,
     SEVERITY_NA,
+    SEVERITY_STOP,
     SEVERITY_UNKNOWN,
+    SEVERITY_WATCH,
 )
 
 # US-429 honest-availability: one source-availability truth per source (SSOT).
@@ -67,6 +74,10 @@ _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 # authoritative gate (re-checked at the privileged action path); this is the
 # honest UI-side computation from what the capture read knows.
 _REASON_SEVERITY = "severity_present"
+# US-753: an ungraded code is refused as UNKNOWN, never as a STOP/WATCH it may
+# not be. Mirrors dtc_clear.GATE_SEVERITY_UNKNOWN.
+_REASON_SEVERITY_UNKNOWN = "severity_unknown"
+_SEVERITIES_BLOCKING = frozenset({SEVERITY_STOP, SEVERITY_WATCH})
 _REASON_SYNC = "sync_pending"
 _REASON_OK = "ok"
 
@@ -140,7 +151,8 @@ def _computeClearGate(enrichedCodes: list[dict]) -> dict:
 
     Mode 04 is all-or-nothing, so the gate keys off ALL stored codes. ``na``
     codes (auto-trans on this manual car) are not real faults and never block.
-    A non-MINOR stored fault -> ``severity_present``; an un-logged/un-synced
+    A STOP/WATCH stored fault -> ``severity_present``; any other non-MINOR
+    (ungraded) stored code -> ``severity_unknown``; an un-logged/un-synced
     MINOR capture -> ``sync_pending``; otherwise clearable. US-407 re-checks
     this authoritatively at the privileged action path -- the UI is never
     trusted to be the gate.
@@ -152,11 +164,48 @@ def _computeClearGate(enrichedCodes: list[dict]) -> dict:
     ]
     if not relevant:
         return {"enabled": False, "reason": _REASON_OK}
-    if any(c.get("severity") != SEVERITY_MINOR for c in relevant):
+    if any(c.get("severity") in _SEVERITIES_BLOCKING for c in relevant):
         return {"enabled": False, "reason": _REASON_SEVERITY}
+    if any(c.get("severity") != SEVERITY_MINOR for c in relevant):
+        return {"enabled": False, "reason": _REASON_SEVERITY_UNKNOWN}
     if any(not (c.get("logged") and c.get("syncAcked")) for c in relevant):
         return {"enabled": False, "reason": _REASON_SYNC}
     return {"enabled": True, "reason": _REASON_OK}
+
+
+def _buildLastKnown(lastKnown: dict | None, severityTable: dict[str, dict]) -> dict | None:
+    """Enrich the persisted last-known codes into the `lastKnown` block (US-752).
+
+    Args:
+        lastKnown: The :func:`pi.obdii.dtc_last_known.readLastKnownDtcs` result,
+            or None when nothing is remembered.
+        severityTable: Spool's static P1xxx severity map.
+
+    Returns:
+        ``{codes, mil, asOfTs, source}`` -- codes enriched exactly like live ones
+        plus each code's ``lastSeenTs`` -- or None when there is nothing to show.
+        ``mil`` is the same stored-code proxy the live KOEO path publishes;
+        ``dtc_log`` has no MIL column, so nothing stronger exists.
+    """
+    if not isinstance(lastKnown, dict):
+        return None
+    rawCodes = [c for c in (lastKnown.get("codes") or []) if isinstance(c, dict)]
+    if not rawCodes:
+        return None
+    codes = []
+    for raw in rawCodes:
+        enriched = enrichCode(
+            {**raw, "setAtTs": None, "logged": True, "syncAcked": False},
+            severityTable,
+        )
+        enriched["lastSeenTs"] = raw.get("lastSeenTs")
+        codes.append(enriched)
+    return {
+        "codes": codes,
+        "mil": any(c.get("status") == "stored" for c in codes),
+        "asOfTs": lastKnown.get("asOfTs"),
+        "source": lastKnown.get("source"),
+    }
 
 
 def buildDtcState(
@@ -169,6 +218,7 @@ def buildDtcState(
     nowIso: str,
     dtcAvailable: bool = True,
     dtcUnavailableReason: str | None = None,
+    lastKnown: dict | None = None,
 ) -> dict:
     """Assemble the `dtc` payload (pure; design-spec §8 pinned schema).
 
@@ -185,30 +235,43 @@ def buildDtcState(
         dtcAvailable: Whether a DTC read actually happened (US-429). False when
             the OBD source is down so no KOEO/drive read could run -- the display
             then reads the source as *unavailable* (NA), NOT "no codes -> all
-            clear" and never a mis-fired takeover. An unavailable read writes a
-            FRESH empty state (no stale codes, no takeover trigger). Defaults True.
+            clear" and never a mis-fired takeover. An unavailable read publishes
+            ``codes: null`` / ``mil: null`` (US-752). Defaults True.
         dtcUnavailableReason: The typed-NA reason when ``dtcAvailable`` is False
             (defaults to ``REASON_DTC_NOT_READ``). Ignored when available.
+        lastKnown: The persisted last-known codes (``readLastKnownDtcs``), shown
+            ONLY when the source is unavailable. Ignored when available -- a
+            live read always wins.
 
     Returns:
-        The `dtc` dict with exactly the spec §8 keys plus the US-429 ``source``
-        block (one availability truth per source).
+        The `dtc` dict with the spec §8 keys, the US-429 ``source`` block (one
+        availability truth per source) and the US-752 ``lastKnown`` block.
     """
-    # US-429 honest-availability: an unavailable DTC source (no read happened)
-    # publishes a FRESH empty state -- never leave stale codes and never a
-    # newSinceTs that would mis-fire the US-405 takeover (Bug-3b). The display
-    # reads `source.dtc.available == false` and renders NA, not a false all-clear.
-    if not dtcAvailable:
-        codes = []
+    # US-752 (Atlas ruling 2026-09-14) -- deliberately CHANGES the US-429
+    # contract. An unavailable source used to publish `codes: []` / `mil: false`
+    # beside `source.dtc.available: false`; those defaults read as MEASUREMENTS
+    # ("no codes, lamp off") to any consumer that skipped `source`. The live
+    # fields are now honest absences, and what the system already holds rides
+    # in a SEPARATE `lastKnown` block -- `codes` is never overloaded. newSinceTs
+    # stays None so a remembered code can never mis-fire the US-405 takeover.
+    if dtcAvailable:
+        enriched: list[dict] | None = [enrichCode(raw, severityTable) for raw in codes]
+        liveMil: bool | None = bool(mil)
+        lastKnownBlock = None
+    else:
+        enriched = None
+        liveMil = None
         newSinceTs = None
-        mil = False
-    enriched = [enrichCode(raw, severityTable) for raw in codes]
+        lastKnownBlock = _buildLastKnown(lastKnown, severityTable)
     return {
-        "mil": bool(mil),
+        "mil": liveMil,
         "codes": enriched,
         "newSinceTs": newSinceTs,
-        "clearGate": _computeClearGate(enriched),
+        # LIVE codes only: a clear offered on remembered codes is a safety
+        # inversion, so `lastKnown` never reaches the gate.
+        "clearGate": _computeClearGate(enriched or []),
         "sessionResetLock": list(sessionResetLock or []),
+        "lastKnown": lastKnownBlock,
         "source": {
             SOURCE_DTC: buildSourceState(
                 dtcAvailable, dtcUnavailableReason or REASON_DTC_NOT_READ
@@ -251,6 +314,7 @@ def makeDtcEmitter(
         sessionResetLock: list[str] | None = None,
         dtcAvailable: bool = True,
         dtcUnavailableReason: str | None = None,
+        lastKnown: dict | None = None,
     ) -> None:
         try:
             payload = buildDtcState(
@@ -262,6 +326,7 @@ def makeDtcEmitter(
                 nowIso=nowFn(),
                 dtcAvailable=dtcAvailable,
                 dtcUnavailableReason=dtcUnavailableReason,
+                lastKnown=lastKnown,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
