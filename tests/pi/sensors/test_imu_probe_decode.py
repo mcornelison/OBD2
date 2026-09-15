@@ -1,0 +1,166 @@
+"""ARCH-027: pure decode/classify helpers behind the live IMU probe.
+
+These are the parts of the probe that can be tested without an I2C bus, so they
+are tested. The bus-facing half of `tools/imu/imu_probe.py` is exercised against
+the real sensor on the Pi and reports its own evidence.
+
+Register semantics are the ICM-20948 datasheet (bank 2 `ACCEL_CONFIG` 0x14,
+`GYRO_CONFIG_1` 0x01). The concrete byte values asserted here are the ones read
+off the live sensor on 2026-09-14 (`ACCEL_CONFIG 0x05`, `GYRO_CONFIG_1 0x03`),
+so a decoder change that breaks the reading of our own hardware fails loudly.
+"""
+
+from __future__ import annotations
+
+import math
+
+import pytest
+
+from tools.imu.imu_probe import (
+    aliasingRisk,
+    classifyGyroHealth,
+    decodeAccelConfig,
+    decodeGyroConfig,
+    odrHzFromDivider,
+    selfTestRatio,
+)
+
+
+class TestDecodeAccelConfig:
+    def test_liveSensorByte_decodesToPlusMinus8g(self) -> None:
+        """0x05 is what our Pi actually runs. FS_SEL=2 => +/-8 g."""
+        cfg = decodeAccelConfig(0x05)
+        assert cfg.fullScaleG == 8
+        assert cfg.lsbPerG == 4096
+
+    def test_liveSensorByte_hasDlpfEnabledAtWidestBandwidth(self) -> None:
+        """FCHOICE=1 means the DLPF is ENGAGED; DLPFCFG=0 is its widest setting.
+
+        Getting this backwards was a real error in my own notes: 'DLPF bypassed'
+        and 'DLPF enabled at 246 Hz' imply different fixes.
+        """
+        cfg = decodeAccelConfig(0x05)
+        assert cfg.dlpfEnabled is True
+        assert cfg.dlpfConfig == 0
+        assert cfg.bandwidthHz == pytest.approx(246.0)
+
+    def test_dlpfConfig4_isTheAntiAliasCandidate(self) -> None:
+        """cfg 4 = 23.9 Hz, the setting that suits a 50 Hz read."""
+        cfg = decodeAccelConfig(0b100_10_1)
+        assert cfg.dlpfConfig == 4
+        assert cfg.bandwidthHz == pytest.approx(23.9)
+
+    def test_fchoiceZero_reportsDlpfDisabled(self) -> None:
+        cfg = decodeAccelConfig(0b000_00_0)
+        assert cfg.dlpfEnabled is False
+        assert cfg.fullScaleG == 2
+
+    @pytest.mark.parametrize(
+        "fsSel,expectedG,expectedLsb",
+        [(0, 2, 16384), (1, 4, 8192), (2, 8, 4096), (3, 16, 2048)],
+    )
+    def test_allFullScaleRanges(self, fsSel: int, expectedG: int, expectedLsb: int) -> None:
+        cfg = decodeAccelConfig((fsSel << 1) | 0x01)
+        assert cfg.fullScaleG == expectedG
+        assert cfg.lsbPerG == expectedLsb
+
+
+class TestDecodeGyroConfig:
+    def test_liveSensorByte_decodesToPlusMinus500Dps(self) -> None:
+        cfg = decodeGyroConfig(0x03)
+        assert cfg.fullScaleDps == 500
+        assert cfg.lsbPerDps == pytest.approx(65.5)
+
+    def test_liveSensorByte_hasDlpfEnabledAt196Hz(self) -> None:
+        cfg = decodeGyroConfig(0x03)
+        assert cfg.dlpfEnabled is True
+        assert cfg.bandwidthHz == pytest.approx(196.6)
+
+    def test_dlpfConfig4_is23_9Hz(self) -> None:
+        cfg = decodeGyroConfig(0b100_01_1)
+        assert cfg.bandwidthHz == pytest.approx(23.9)
+
+    @pytest.mark.parametrize(
+        "fsSel,expectedDps,expectedLsb",
+        [(0, 250, 131.0), (1, 500, 65.5), (2, 1000, 32.8), (3, 2000, 16.4)],
+    )
+    def test_allFullScaleRanges(self, fsSel: int, expectedDps: int, expectedLsb: float) -> None:
+        cfg = decodeGyroConfig((fsSel << 1) | 0x01)
+        assert cfg.fullScaleDps == expectedDps
+        assert cfg.lsbPerDps == pytest.approx(expectedLsb)
+
+
+class TestOdrFromDivider:
+    def test_liveDividerTen_givesAboutOneHundredHz(self) -> None:
+        """SRD 10 was read live on 2026-09-14: 1125/(1+10) = 102.3 Hz."""
+        assert odrHzFromDivider(10) == pytest.approx(102.27, abs=0.01)
+
+    def test_dividerZero_isTheBaseRate(self) -> None:
+        assert odrHzFromDivider(0) == pytest.approx(1125.0)
+
+    def test_dividerTwentyTwo_isAboutFiftyHz(self) -> None:
+        """The candidate divider for a 50 Hz read."""
+        assert odrHzFromDivider(22) == pytest.approx(48.9, abs=0.1)
+
+
+class TestAliasingRisk:
+    def test_shippedConfiguration_isAtRisk(self) -> None:
+        """196.6 Hz of signal bandwidth sampled at 50 Hz folds back into the band."""
+        assert aliasingRisk(bandwidthHz=196.6, sampleHz=50.0) is True
+
+    def test_matchedFilter_isNotAtRisk(self) -> None:
+        assert aliasingRisk(bandwidthHz=23.9, sampleHz=50.0) is False
+
+    def test_exactlyNyquist_isNotFlagged(self) -> None:
+        assert aliasingRisk(bandwidthHz=25.0, sampleHz=50.0) is False
+
+
+class TestClassifyGyroHealth:
+    """The 0.10 rad/s cut comes from a measured bimodal distribution:
+    quiet minutes at 0.013-0.015 rad/s, faulted at 0.487-0.553, nothing between.
+    """
+
+    def test_healthyRestVector_classifiesHealthy(self) -> None:
+        assert classifyGyroHealth((0.002, 0.014, 0.004)) == "healthy"
+
+    def test_liveFaultedVector_classifiesFaulted(self) -> None:
+        """Measured on the live sensor 2026-09-15T22:17-22:39Z."""
+        assert classifyGyroHealth((0.239, -0.543, -0.337)) == "faulted"
+
+    def test_variantA_fromTheRcaAlsoClassifiesFaulted(self) -> None:
+        assert classifyGyroHealth((0.246, -0.51, -0.31)) == "faulted"
+
+    def test_theGapBetweenModes_isIndeterminateNotHealthy(self) -> None:
+        """An unclassifiable reading must not be silently called healthy."""
+        assert classifyGyroHealth((0.05, 0.05, 0.02)) == "indeterminate"
+
+    def test_realRotationIsNotClassified_becauseTheCallerMustGateOnStillness(self) -> None:
+        """A car turning at 30 deg/s looks exactly like a fault to this function.
+
+        The classifier is only meaningful on a confirmed-stationary window; that
+        precondition belongs to the caller, so this test pins the docstring
+        contract rather than inventing a motion check here.
+        """
+        turning = classifyGyroHealth((0.0, 0.0, 0.52))
+        assert turning == "faulted"
+
+
+class TestSelfTestRatio:
+    """Pass/fail follows InvenSense: response vs factory trim, >= 0.5 passes."""
+
+    def test_healthyGyroRatio_passes(self) -> None:
+        ratio = selfTestRatio(response=1000.0, factoryTrim=1000.0)
+        assert ratio == pytest.approx(1.0)
+
+    def test_faultedGyroRatio_fails(self) -> None:
+        """Measured faulted gyro: 0.062-0.126 against a 0.5 floor."""
+        ratio = selfTestRatio(response=62.0, factoryTrim=1000.0)
+        assert ratio == pytest.approx(0.062)
+
+    def test_zeroFactoryTrim_isNotADivideByZero(self) -> None:
+        """An unprogrammed OTP must report absence, never a fabricated ratio."""
+        assert selfTestRatio(response=100.0, factoryTrim=0.0) is None
+
+    def test_negativeResponse_keepsItsSignAsMagnitude(self) -> None:
+        ratio = selfTestRatio(response=-900.0, factoryTrim=1000.0)
+        assert ratio is not None and math.isclose(ratio, 0.9)
