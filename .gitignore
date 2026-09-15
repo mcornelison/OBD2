@@ -151,6 +151,12 @@ tools/*
 # bench on 2026-08-27 and correctly reported the documented procedure had no
 # implementation on disk. In the repo they are versioned and reachable.
 !tools/fleet/
+# tools/imu/ is first-party too (ARCH-027): the independent IMU probe harness.
+# Without this line `tools/*` swallowed it, `git add` skipped it SILENTLY, and the
+# first commit landed a test whose import target was not in the repo. Negating the
+# directory is the fix rather than `git add -f`, which would leave the next file
+# added here to be skipped exactly the same way.
+!tools/imu/
 
 # Claude settings (local only)
 .claude/settings.local.json
