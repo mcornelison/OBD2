@@ -15,6 +15,7 @@
 # 2026-05-27    | Marcus (PM)  | Initial implementation -- Task 1 TDD
 # 2026-07-13    | Rex (Ralph)  | US-465: accept 'superseded' as a story status
 # 2026-09-04    | Rex (Ralph)  | US-670: collect-all path beside validateBacklog
+# 2026-09-15    | Rex (Ralph)  | US-775: assertSchemaVersion, the shared refusal
 # ================================================================================
 ################################################################################
 
@@ -93,6 +94,68 @@ VIOLATION_CODES = frozenset({
 
 class BacklogValidationError(ValueError):
     """Raised when backlog.json fails v2.0.0 schema validation."""
+
+
+# The one schemaVersion these tools were written for. ``None`` in an accepted
+# tuple means "the key is absent" -- the pre-2.0.0 v1 layout, which pm_status and
+# backlog_set's feature path still read on purpose.
+SUPPORTED_SCHEMA_VERSION = "2.0.0"
+
+
+class UnknownSchemaVersionError(BacklogValidationError):
+    """A PM tool was handed a backlog format it was not written for (US-775).
+
+    One class, one message, for every legacy reader: pm_status once rendered the
+    ralphV2 backlog through its v1 fallthrough, printed an empty tree and exited
+    0. A tool that cannot read its input must say so, and say it the same way
+    everywhere so the PM recognises the refusal on sight.
+    """
+
+    def __init__(self, tool: str, expected: tuple[str | None, ...], found: Any) -> None:
+        self.tool = tool
+        self.expected = expected
+        self.found = found
+        shown = " or ".join(
+            "absent (the pre-2.0.0 v1 layout)" if value is None else repr(value)
+            for value in expected
+        )
+        self.reasons = [
+            f"{tool}: unknown backlog schemaVersion -- expected {shown}, found "
+            f"{'absent' if found is None else repr(found)}. This tool was not "
+            f"written for that format and will not guess at it; nothing was "
+            f"read as story data."
+        ]
+        super().__init__(self.reasons[0])
+
+
+def assertSchemaVersion(
+    data: Any,
+    tool: str,
+    accepted: tuple[str | None, ...] = (SUPPORTED_SCHEMA_VERSION,),
+) -> str | None:
+    """Refuse a parsed backlog whose schemaVersion ``tool`` does not read.
+
+    Keys on the VALUE in the document, never on its path: an archived 2.0.0
+    backlog reads exactly as the live one did.
+
+    Args:
+        data: The parsed backlog JSON.
+        tool: Tool name, printed in the refusal.
+        accepted: The versions the caller reads; ``None`` accepts an absent key.
+
+    Returns:
+        The schemaVersion that was read (``None`` when absent).
+
+    Raises:
+        UnknownSchemaVersionError: If ``data`` is not a JSON object, or its
+            schemaVersion is not in ``accepted``.
+    """
+    if not isinstance(data, dict):
+        raise UnknownSchemaVersionError(tool, accepted, f"<a JSON {type(data).__name__}>")
+    found = data.get("schemaVersion")
+    if found not in accepted or not (found is None or isinstance(found, str)):
+        raise UnknownSchemaVersionError(tool, accepted, found)
+    return found
 
 
 @dataclass(frozen=True)

@@ -133,8 +133,78 @@ def resolveCounterPath(override: str | None = None) -> Path:
     return _paths.resolveShareRoot() / "pm" / "story_counter.json"
 
 
-def loadBacklog(path: Path | None = None) -> dict[str, Any]:
-    return json.loads((path or resolveBacklogPath()).read_text(encoding="utf-8"))
+# The versions the --feature / --updated-by path reads: 2.0.0, plus the absent
+# key of the pre-2.0.0 v1 layout that findFeature still walks on purpose.
+# --add-story reads 2.0.0 only -- it appends to the top-level story list.
+FEATURE_PATH_SCHEMA_VERSIONS = (backlog_schema.SUPPORTED_SCHEMA_VERSION, None)
+
+_ABSENT = object()
+
+
+class SchemaVersionChangedError(backlog_schema.BacklogValidationError):
+    """A write would land a schemaVersion other than the one on disk (US-775)."""
+
+    def __init__(self, path: Path, onDisk: Any, writing: Any) -> None:
+        def show(value: Any) -> str:
+            return "absent" if value is _ABSENT else repr(value)
+
+        self.reasons = [
+            f"backlog_set: refusing to write schemaVersion {show(writing)} to {path}, "
+            f"which holds {show(onDisk)}. A mutation never changes a backlog's "
+            f"format -- stamping 2.0.0 onto a file that is not 2.0.0 is how a "
+            f"backlog becomes unreadable to the tools that own it."
+        ]
+        super().__init__(self.reasons[0])
+
+
+def loadBacklog(
+    path: Path | None = None,
+    accepted: tuple[str | None, ...] = (backlog_schema.SUPPORTED_SCHEMA_VERSION,),
+) -> dict[str, Any]:
+    """Read the backlog and refuse a schemaVersion this tool was not written for.
+
+    Args:
+        path: Backlog path; defaults to the live share backlog.
+        accepted: Versions the calling path reads (``None`` = key absent).
+
+    Returns:
+        The parsed backlog.
+
+    Raises:
+        backlog_schema.UnknownSchemaVersionError: On any other schemaVersion.
+    """
+    data = json.loads((path or resolveBacklogPath()).read_text(encoding="utf-8"))
+    backlog_schema.assertSchemaVersion(data, "backlog_set", accepted)
+    return data
+
+
+def assertWritesTheVersionItRead(path: Path, data: dict[str, Any]) -> None:
+    """Refuse to land ``data`` unless its schemaVersion is the one on disk.
+
+    Re-reads the file rather than trusting an in-memory note of what was loaded,
+    so a concurrent rewrite of the file's format is caught too. A path that does
+    not exist yet may only receive the one version this tool writes.
+
+    Args:
+        path: The backlog about to be written.
+        data: The payload about to be written.
+
+    Raises:
+        SchemaVersionChangedError: If the versions differ, in value, type or
+            presence.
+    """
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        onDisk = existing.get("schemaVersion", _ABSENT) if isinstance(existing, dict) else _ABSENT
+    else:
+        onDisk = backlog_schema.SUPPORTED_SCHEMA_VERSION
+    writing = data.get("schemaVersion", _ABSENT)
+    if onDisk is _ABSENT or writing is _ABSENT:
+        same = onDisk is writing
+    else:
+        same = type(onDisk) is type(writing) and onDisk == writing
+    if not same:
+        raise SchemaVersionChangedError(path, onDisk, writing)
 
 
 def writeJsonAtomic(path: Path, data: dict[str, Any]) -> None:
@@ -175,7 +245,10 @@ def writeJsonAtomic(path: Path, data: dict[str, Any]) -> None:
 
 
 def saveBacklog(data: dict[str, Any], path: Path | None = None) -> None:
-    writeJsonAtomic(path or resolveBacklogPath(), data)
+    """Land the backlog atomically, refusing a schemaVersion change first."""
+    target = path or resolveBacklogPath()
+    assertWritesTheVersionItRead(target, data)
+    writeJsonAtomic(target, data)
 
 
 def findFeature(data: dict[str, Any], featureId: str) -> dict[str, Any] | None:
@@ -405,7 +478,10 @@ def addStory(
     Raises:
         StoryCreationError: With EVERY reason the request was refused. Nothing
             is mutated when this raises.
+        backlog_schema.UnknownSchemaVersionError: If ``data`` is not a 2.0.0
+            backlog. Nothing is mutated when this raises.
     """
+    backlog_schema.assertSchemaVersion(data, "backlog_set")
     warnings: list[str] = []
     if storyId is None:
         storyId, warnings = allocateStoryId(data, counter)
@@ -428,7 +504,8 @@ def addStory(
     epic = next((e for e in data.get("epics", [])
                  if e.get("id") == (feature or {}).get("parent")), None)
     backlog_schema.validateBacklog({
-        "schemaVersion": "2.0.0",
+        # The version READ from the backlog, never a stamped literal (US-775).
+        "schemaVersion": data["schemaVersion"],
         "epics": [epic] if epic else [],
         "features": [dict(feature or {}, parent=(epic or {}).get("id"))],
         "stories": [story],
@@ -508,7 +585,12 @@ def main(argv: list[str]) -> int:
                         default=STORY_SIZE_DEFAULT)
     parser.add_argument("--story-status", choices=sorted(backlog_schema.VALID_STORY_STATUSES),
                         default=STORY_STATUS_DEFAULT)
-    parser.add_argument("--backlog", help="backlog.json path override")
+    parser.add_argument(
+        "--backlog",
+        help="backlog.json path override. Only schemaVersion 2.0.0 (or, for "
+             "--feature/--updated-by, the unversioned v1 layout) is read; any "
+             "other format is REFUSED and nothing is written.",
+    )
     parser.add_argument("--counter", help="story_counter.json path override")
 
     parser.add_argument("--dry-run", action="store_true", help="Print the proposed JSON without writing")
@@ -520,7 +602,11 @@ def main(argv: list[str]) -> int:
     if args.add_story:
         return _runAddStory(args, backlogPath)
 
-    data = loadBacklog(backlogPath)
+    try:
+        data = loadBacklog(backlogPath, FEATURE_PATH_SCHEMA_VERSIONS)
+    except backlog_schema.BacklogValidationError as exc:
+        _printRefusal(exc)
+        return 2
     changes: list[str] = []
 
     # Top-level metadata updates
@@ -590,9 +676,20 @@ def main(argv: list[str]) -> int:
         print("\n[DRY RUN -- no write performed]")
         return 0
 
-    saveBacklog(data, backlogPath)
+    try:
+        saveBacklog(data, backlogPath)
+    except backlog_schema.BacklogValidationError as exc:
+        _printRefusal(exc)
+        return 2
     print(f"\nWrote {backlogPath}")
     return 0
+
+
+def _printRefusal(exc: Exception) -> None:
+    """Print every reason a request was refused, under one REFUSED banner."""
+    print("REFUSED -- nothing was written:", file=sys.stderr)
+    for reason in getattr(exc, "reasons", [str(exc)]):
+        print(f"  - {reason}", file=sys.stderr)
 
 
 def _runAddStory(args: argparse.Namespace, backlogPath: Path) -> int:
@@ -606,7 +703,11 @@ def _runAddStory(args: argparse.Namespace, backlogPath: Path) -> int:
         Process exit code -- 0 on success, 2 on refusal or write failure.
     """
     counterPath = resolveCounterPath(args.counter)
-    data = loadBacklog(backlogPath)
+    try:
+        data = loadBacklog(backlogPath)
+    except backlog_schema.BacklogValidationError as exc:
+        _printRefusal(exc)
+        return 2
     counter = (json.loads(counterPath.read_text(encoding="utf-8"))
                if counterPath.exists() else {})
 
@@ -627,10 +728,7 @@ def _runAddStory(args: argparse.Namespace, backlogPath: Path) -> int:
             status=args.story_status,
         )
     except (StoryCreationError, backlog_schema.BacklogValidationError) as exc:
-        reasons = getattr(exc, "reasons", [str(exc)])
-        print("REFUSED -- nothing was written:", file=sys.stderr)
-        for reason in reasons:
-            print(f"  - {reason}", file=sys.stderr)
+        _printRefusal(exc)
         return 2
 
     for warning in warnings:
@@ -652,6 +750,14 @@ def _runAddStory(args: argparse.Namespace, backlogPath: Path) -> int:
     # gap -- harmless. The other order fails the other way: a landed story whose
     # counter bump was lost hands the SAME id to the next caller, which is the
     # collision AC #7 exists to prevent. Prefer a gap to a duplicate.
+    #
+    # The schemaVersion check runs BEFORE either file lands, so a refusal
+    # burns no id.
+    try:
+        assertWritesTheVersionItRead(backlogPath, data)
+    except backlog_schema.BacklogValidationError as exc:
+        _printRefusal(exc)
+        return 2
     try:
         if counter:
             writeJsonAtomic(counterPath, counter)

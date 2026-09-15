@@ -12,6 +12,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-05-27    | Marcus (PM)  | Initial implementation -- Task 5 backlog-hierarchy-v2
+# 2026-09-15    | Rex (US-775) | Refuse a backlog whose schemaVersion is not 2.0.0
 # ================================================================================
 ################################################################################
 
@@ -31,6 +32,7 @@ import frontmatter
 
 # Roots come from the _paths SSOT -- depth-independent by construction.
 from tools.pm._paths import SHARE_ROOT, resolveShareRoot
+from tools.pm.backlog_schema import assertSchemaVersion
 
 
 def convertPrdToSprint(
@@ -49,7 +51,8 @@ def convertPrdToSprint(
         ValueError: If a selectedStory referenced in the PRD is not in backlog.json,
                     or if required frontmatter fields (sprint, version, selectedStories)
                     are missing from the PRD, or if a story's parent feature or epic
-                    cannot be resolved in backlog.json.
+                    cannot be resolved in backlog.json. UnknownSchemaVersionError
+                    (a ValueError) if backlog.json is not schemaVersion 2.0.0.
     """
     prd = frontmatter.load(prdPath)
     meta = prd.metadata
@@ -71,6 +74,7 @@ def convertPrdToSprint(
         shareRoot = resolveShareRoot()
     backlogPath = shareRoot / "pm" / "backlog.json"
     backlog = json.loads(backlogPath.read_text(encoding="utf-8"))
+    assertSchemaVersion(backlog, "prd_to_sprint")
 
     epicsById: dict[str, Any] = {e["id"]: e for e in backlog["epics"]}
     featuresById: dict[str, Any] = {f["id"]: f for f in backlog["features"]}
