@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.49",
-  "theme": "US-761 stop-loss -- EDR retention 7 to 45 days",
-  "description": "Patch deploy, CIO-directed. pi.sensors.retentionDays 7 -> 45. The 7-day purge had destroyed ~36.9M EDR rows and no edr_* table syncs, so every day cost ~1.77M rows. Hotfix only -- US-734 is the fix. Verified first: US-322 backups bounded at 2, disk margin 41.0 GB vs a 20 GB floor, no validator range check. First deletion under the new window ~2026-10-22."
+  "version": "V0.29.50",
+  "theme": "Sprint 86 -- nothing reacts when it matters",
+  "description": "Sprint 86 shipped 8 of 12; 4 carried, each blocked on a CIO ruling or a Pi measurement, not on code. Headline: US-745 binds IMU_BODY_FRAME to measured candidate (B), ending confidently inverted grade and heading. Also: one OBD retry authority (US-690), swipe restored (US-746), SYSTEM SETUP escape (US-747), resting DTC state (US-752), typed battery reasons (US-736), severity_unknown gate (US-753)."
 }
