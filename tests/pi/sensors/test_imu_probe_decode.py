@@ -23,6 +23,8 @@ from tools.imu.imu_probe import (
     decodeGyroConfig,
     odrHzFromDivider,
     selfTestRatio,
+    selfTestVerdict,
+    stOtpFromCode,
 )
 
 
@@ -164,3 +166,58 @@ class TestSelfTestRatio:
     def test_negativeResponse_keepsItsSignAsMagnitude(self) -> None:
         ratio = selfTestRatio(response=-900.0, factoryTrim=1000.0)
         assert ratio is not None and math.isclose(ratio, 0.9)
+
+
+class TestStOtpFromCode:
+    """ST_OTP = 2620 / 2^FS * 1.01^(code - 1), per InvenSense's own driver
+    (Icm20948SelfTest.c, which precomputes it as a 256-entry lookup table).
+    """
+
+    def test_codeOne_atFullScaleZero_isTheBaseConstant(self) -> None:
+        assert stOtpFromCode(1, fullScaleSelect=0) == pytest.approx(2620.0)
+
+    def test_codeTwo_appliesOnePercentStep(self) -> None:
+        assert stOtpFromCode(2, fullScaleSelect=0) == pytest.approx(2646.2)
+
+    def test_fullScaleSelect_halvesTheValuePerStep(self) -> None:
+        assert stOtpFromCode(1, fullScaleSelect=1) == pytest.approx(1310.0)
+        assert stOtpFromCode(1, fullScaleSelect=2) == pytest.approx(655.0)
+
+    def test_codeZero_isAnUnprogrammedOtp_notAValue(self) -> None:
+        """Code 0 means the OTP was never programmed. It is zero, not 2620/1.01."""
+        assert stOtpFromCode(0, fullScaleSelect=0) == 0.0
+
+
+class TestSelfTestVerdict:
+    """Vendor criteria, verified against InvenSense's driver rather than recalled:
+    gyro fails below 0.5x the factory trim, accel fails above 1.5x, and a ZERO
+    OTP fails outright.
+    """
+
+    def test_healthyGyro_passes(self) -> None:
+        assert selfTestVerdict(response=1000.0, factoryTrim=1000.0, channel="gyro") == "pass"
+
+    def test_faultedGyro_fails(self) -> None:
+        """The measured A-34 faulted gyro: ratios 0.062-0.126."""
+        assert selfTestVerdict(response=62.0, factoryTrim=1000.0, channel="gyro") == "fail"
+
+    def test_gyroExactlyAtTheLowerBound_passes(self) -> None:
+        """The driver fails when BELOW the bound, so the boundary itself passes."""
+        assert selfTestVerdict(response=500.0, factoryTrim=1000.0, channel="gyro") == "pass"
+
+    def test_accelAboveUpperBound_fails(self) -> None:
+        assert selfTestVerdict(response=1600.0, factoryTrim=1000.0, channel="accel") == "fail"
+
+    def test_healthyAccel_passes(self) -> None:
+        """Our measured healthy accel ratios were 1.003 / 1.005 / 0.991."""
+        assert selfTestVerdict(response=1003.0, factoryTrim=1000.0, channel="accel") == "pass"
+
+    def test_zeroFactoryTrim_failsRatherThanReturningNoVerdict(self) -> None:
+        """🔴 This CONTRADICTS my first implementation, and the vendor is right.
+
+        I coded an unread OTP as 'absence, therefore no verdict'. InvenSense
+        fails it: a part whose trim cannot be read has not been validated, and
+        'unvalidated' is not 'fine'. Honest absence is the correct default for a
+        MEASUREMENT; it is the wrong default for a SAFETY CHECK.
+        """
+        assert selfTestVerdict(response=5000.0, factoryTrim=0.0, channel="gyro") == "fail"

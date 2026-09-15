@@ -72,8 +72,14 @@ _GYRO_LSB_PER_DPS = {250: 131.0, 500: 65.5, 1000: 32.8, 2000: 16.4}
 GYRO_HEALTHY_MAX_RAD_S = 0.02
 GYRO_FAULT_MIN_RAD_S = 0.10
 
-# InvenSense self-test pass floor: response must be at least half the factory trim.
-SELF_TEST_PASS_RATIO = 0.5
+# InvenSense self-test constants, taken from their own driver (Icm20948SelfTest.c)
+# rather than recalled: ST_OTP = 2620 / 2^FS * 1.01^(code - 1), bounds 0.5x/1.5x.
+# The driver also uses 200 averaged samples and a 20 ms settle after enabling the
+# self-test bits; those belong to the bus-facing routine, not here.
+SELF_TEST_BASE_CONSTANT = 2620.0
+SELF_TEST_STEP = 1.01
+SELF_TEST_LOWER_BOUND_RATIO = 0.5
+SELF_TEST_UPPER_BOUND_RATIO = 1.5
 
 GyroHealth = Literal["healthy", "faulted", "indeterminate"]
 
@@ -185,11 +191,41 @@ def selfTestRatio(response: float, factoryTrim: float) -> float | None:
     return abs(response) / abs(factoryTrim)
 
 
-def selfTestPasses(ratio: float | None) -> bool | None:
-    """None in, None out: no trim means no verdict, not a failure."""
+def stOtpFromCode(code: int, fullScaleSelect: int = 0) -> float:
+    """Factory self-test trim from the OTP code: 2620 / 2^FS * 1.01^(code - 1).
+
+    Verified against InvenSense's own driver (`Icm20948SelfTest.c`), which ships
+    this as a 256-entry precomputed table. Code 0 means the OTP was never
+    programmed, which is zero -- not 2620/1.01.
+    """
+    if code <= 0:
+        return 0.0
+    return (SELF_TEST_BASE_CONSTANT / (2**fullScaleSelect)) * (SELF_TEST_STEP ** (code - 1))
+
+
+def selfTestVerdict(
+    response: float, factoryTrim: float, channel: Literal["gyro", "accel"] = "gyro"
+) -> Literal["pass", "fail"]:
+    """Vendor pass/fail for one axis, against the factory trim.
+
+    Bounds are InvenSense's: 0.5x lower, 1.5x upper. The driver source quotes the
+    LOWER check for gyro and the UPPER check for accel explicitly; applying both
+    bounds to both channels is the conservative reading, since a response at 0.1x
+    is not a healthy accelerometer by any account.
+
+    🔴 A ZERO factory trim is a FAIL, not an absence. This overrides my first
+    implementation, which returned "no verdict". Honest absence is right for a
+    measurement; for a safety check, a part whose trim cannot be read has not
+    been validated, and unvalidated is not fine.
+    """
+    if factoryTrim == 0:
+        return "fail"
+    ratio = selfTestRatio(response, factoryTrim)
     if ratio is None:
-        return None
-    return ratio >= SELF_TEST_PASS_RATIO
+        return "fail"
+    if ratio < SELF_TEST_LOWER_BOUND_RATIO or ratio > SELF_TEST_UPPER_BOUND_RATIO:
+        return "fail"
+    return "pass"
 
 
 # --------------------------------------------------------------------------
