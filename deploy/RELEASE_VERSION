@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.55",
-  "theme": "ARCH-027a -- gyro startup recovery (A-34)",
-  "description": "CIO-directed early merge, split from ARCH-027. At IMU startup the collector checks for the latched gyro fault (A-34) and clears it with a PWR_MGMT_2 gyro off/on, then re-checks; a failed recovery reports recovered=false and never costs the IMU. The faulted path was verified on real silicon 2026-09-16 (self-test 3/3 FAIL -> 3/3 PASS). The rest of ARCH-027 (calibration, probe tools, spec) follows."
+  "version": "V0.29.56",
+  "theme": "ARCH-031 -- shed load on power loss (US-748)",
+  "description": "On the power-loss edge powerwatch stops the dashboard at once and restores it if power returns; the shutdown decision still waits for the 7 s debounce. Measured: shed fires 210 ms after loss; carry rises from 0.678 s to ~7 s. NOT yet a graceful shutdown: the Pi still dies ~0.1 s before the debounce commits, and smoothingSec is unchanged pending one validated cut."
 }
