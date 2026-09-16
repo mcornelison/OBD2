@@ -40,6 +40,8 @@ field able to delay or block a capture row -- and an instrument must never be
 able to take down the thing it measures.
 """
 
+import threading
+
 import pytest
 
 from src.pi.bus.edr_persistence_subscriber import _gainLabel
@@ -71,6 +73,9 @@ class TestTheRowCarriesTheContext:
 
         class _Conn:
             def execute(self, sql, params): rows.append((sql, params))
+            # ARCH-030: the real write path reuses a connection and commits per
+            # row, so the fake has to honour commit() too.
+            def commit(self): pass
             def __enter__(self): return self
             def __exit__(self, *a): return False
 
@@ -79,6 +84,7 @@ class TestTheRowCarriesTheContext:
 
         sub = EdrPersistenceSubscriber.__new__(EdrPersistenceSubscriber)
         sub._database = _Db()
+        sub._tls = threading.local()  # ARCH-030: __new__ skips __init__
         buf = {
             "seq": 7, "tsUtc": "2026-08-29T18:00:00Z", "tsCapture": 1.0,
             "dataSource": "real",
@@ -101,6 +107,9 @@ class TestTheRowCarriesTheContext:
 
         class _Conn:
             def execute(self, sql, params): rows.append((sql, params))
+            # ARCH-030: the real write path reuses a connection and commits per
+            # row, so the fake has to honour commit() too.
+            def commit(self): pass
             def __enter__(self): return self
             def __exit__(self, *a): return False
 
@@ -109,6 +118,7 @@ class TestTheRowCarriesTheContext:
 
         sub = EdrPersistenceSubscriber.__new__(EdrPersistenceSubscriber)
         sub._database = _Db()
+        sub._tls = threading.local()  # ARCH-030: __new__ skips __init__
         buf = {
             "seq": 8, "tsUtc": "2026-08-29T18:00:01Z", "tsCapture": 2.0,
             "dataSource": "real",

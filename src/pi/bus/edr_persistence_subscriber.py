@@ -188,6 +188,53 @@ class EdrPersistenceSubscriber:
         self._buffers: dict[str, dict[str, Any] | None] = {"imu": None, "light": None}
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # ARCH-030: one REUSED write connection per writing thread.
+        # See _writeConn() for why a fresh connection per row was catastrophic.
+        self._tls = threading.local()
+
+    # -- write connection ------------------------------------------------------
+    def _writeConn(self) -> Any:
+        """Return this thread's reusable write connection, opening it once.
+
+        ARCH-030 (measured on chi-eclipse-01 2026-09-16, idle, no OBD link):
+        this subscriber used to take a fresh ``ObdDatabase.connect()`` for every
+        single row. Nothing else held a connection, so **every close was the
+        LAST close** -- which makes SQLite checkpoint the entire database and
+        unlink the WAL. Against a 2.9 GB file that turned ~3.7 KB/s of EDR rows
+        into ~3.4 MB/s of physical SD writes (~900x, ~85 fdatasync/s, ~294
+        GB/day). Holding one connection open cut total machine I/O 9x.
+
+        The connection is thread-local because a ``sqlite3`` connection is bound
+        to the thread that created it: the drain thread owns one, and a caller
+        that writes directly (tests, or ``flushPending()`` after the join) owns
+        its own. Each thread only ever touches its own.
+
+        Rows are still committed one at a time -- see ``_writeImuRow``. The EDR
+        is a black box, so buffering rows to batch them would trade away the
+        durability this subsystem exists to provide.
+        """
+        conn = getattr(self._tls, "conn", None)
+        if conn is None:
+            cm = self._database.connect()
+            conn = cm.__enter__()
+            self._tls.cm = cm
+            self._tls.conn = conn
+        return conn
+
+    def closeWriteConnection(self) -> None:
+        """Commit and close this thread's write connection, if it opened one.
+
+        Safe to call on a thread that never wrote, and safe to call twice.
+        """
+        cm = getattr(self._tls, "cm", None)
+        self._tls.cm = None
+        self._tls.conn = None
+        if cm is None:
+            return
+        try:
+            cm.__exit__(None, None, None)
+        except Exception as e:  # noqa: BLE001 -- closing must never raise at shutdown
+            logger.warning("EDR write connection close failed: %s", e)
 
     # -- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -210,19 +257,28 @@ class EdrPersistenceSubscriber:
             self._thread = None
         # The thread is stopped -> flushing the buffers here cannot race it.
         self.flushPending()
+        # ARCH-030: release THIS thread's write connection. The drain thread
+        # closes its own in _loop's finally -- a sqlite3 connection may only be
+        # closed by the thread that opened it.
+        self.closeWriteConnection()
 
     def _loop(self) -> None:
         """Drain samples until stopped; purge on cadence (subscriber isolation)."""
         if self._sub is None:
             return
-        while not self._stop.is_set():
-            sample = self._sub.get(timeoutS=_DRAIN_TIMEOUT_S)
-            if sample is not None:
-                try:
-                    self.handleSample(sample)
-                except Exception as e:  # noqa: BLE001 -- never crash the loop
-                    logger.warning("EDR handleSample failed: %s", e)
-            self.maybePurge()
+        try:
+            while not self._stop.is_set():
+                sample = self._sub.get(timeoutS=_DRAIN_TIMEOUT_S)
+                if sample is not None:
+                    try:
+                        self.handleSample(sample)
+                    except Exception as e:  # noqa: BLE001 -- never crash the loop
+                        logger.warning("EDR handleSample failed: %s", e)
+                self.maybePurge()
+        finally:
+            # ARCH-030: this thread owns its write connection and is the only
+            # thread allowed to close it.
+            self.closeWriteConnection()
 
     # -- ingest ----------------------------------------------------------------
     def handleSample(self, sample: Sample) -> bool:
@@ -313,19 +369,21 @@ class EdrPersistenceSubscriber:
         gx, gy, gz = _xyz(fields.get("gyro"))
         mx, my, mz = _xyz(fields.get("mag"))
         tempC = _scalar(fields.get("temp"))
-        with self._database.connect() as conn:
-            conn.execute(
-                "INSERT INTO edr_imu_sample "
-                "(ts_utc, ts_capture, seq, accel_x, accel_y, accel_z, "
-                "gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, temp_c, "
-                "drive_id, data_source, schema_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    buf["tsUtc"], buf["tsCapture"], buf["seq"],
-                    ax, ay, az, gx, gy, gz, mx, my, mz, tempC,
-                    driveId, buf["dataSource"], SCHEMA_VERSION,
-                ),
-            )
+        # ARCH-030: reused connection, still committed per row (black-box durability).
+        conn = self._writeConn()
+        conn.execute(
+            "INSERT INTO edr_imu_sample "
+            "(ts_utc, ts_capture, seq, accel_x, accel_y, accel_z, "
+            "gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, temp_c, "
+            "drive_id, data_source, schema_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                buf["tsUtc"], buf["tsCapture"], buf["seq"],
+                ax, ay, az, gx, gy, gz, mx, my, mz, tempC,
+                driveId, buf["dataSource"], SCHEMA_VERSION,
+            ),
+        )
+        conn.commit()
 
     def _writeLightRow(self, buf: dict[str, Any], driveId: int | None) -> None:
         fields = buf["fields"]
@@ -337,19 +395,21 @@ class EdrPersistenceSubscriber:
         rng = fields.get("range") or (None, None)
         gain = _gainLabel(rng[0] if len(rng) > 0 else None)
         integrationMs = rng[1] if len(rng) > 1 and isinstance(rng[1], int) else None
-        with self._database.connect() as conn:
-            conn.execute(
-                "INSERT INTO edr_light_sample "
-                "(ts_utc, ts_capture, seq, lux, visible, infrared, full_spectrum, "
-                "gain, integration_ms, drive_id, data_source, schema_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    buf["tsUtc"], buf["tsCapture"], buf["seq"],
-                    lux, visible, infrared, full,
-                    gain, integrationMs,
-                    driveId, buf["dataSource"], SCHEMA_VERSION,
-                ),
-            )
+        # ARCH-030: reused connection, still committed per row (black-box durability).
+        conn = self._writeConn()
+        conn.execute(
+            "INSERT INTO edr_light_sample "
+            "(ts_utc, ts_capture, seq, lux, visible, infrared, full_spectrum, "
+            "gain, integration_ms, drive_id, data_source, schema_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                buf["tsUtc"], buf["tsCapture"], buf["seq"],
+                lux, visible, infrared, full,
+                gain, integrationMs,
+                driveId, buf["dataSource"], SCHEMA_VERSION,
+            ),
+        )
+        conn.commit()
 
     # -- retention -------------------------------------------------------------
     def maybePurge(self) -> bool:
