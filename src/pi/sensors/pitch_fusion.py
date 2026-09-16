@@ -55,6 +55,10 @@
 #               |              | disagrees with the fused pitch beyond the trust
 #               |              | band's own contamination bound for > 3 tau marks
 #               |              | the gyro implausible; pitchRad is then None.
+# 2026-09-16    | Rex (US-779) | Per-run gyro RATE-bias learning at confirmed
+#               |              | stops, applied before integration; a stop whose
+#               |              | standing rate reaches GYRO_BIAS_MAX_RAD_S (A-34
+#               |              | latch) is rejected, never absorbed.
 # ================================================================================
 ################################################################################
 
@@ -74,6 +78,7 @@ __all__ = [
     "DEFAULT_ZUPT_MIN_STOPS",
     "DEFAULT_ZUPT_SPEED_MAX_AGE_S",
     "DEFAULT_ZUPT_WINDOW_STOPS",
+    "GYRO_BIAS_MAX_RAD_S",
     "GYRO_IMPLAUSIBLE_SETTLE_TAUS",
     "MAX_GRADE_PITCH_DEG",
     "MIN_GRAVITY_MS2",
@@ -154,6 +159,21 @@ DEFAULT_ZUPT_WINDOW_STOPS = 20
 # rate, which a parked or cruising chassis cannot physically be turning at.
 # (2026-09-14: 0.2457 rad/s x 5 s = 70.4 deg, published as a confident pitch.)
 GYRO_IMPLAUSIBLE_SETTLE_TAUS = 3
+
+# US-779: the largest standing rate, rad/s on ANY vehicle axis, a confirmed stop
+# may teach the rate-bias learner. At or above it the stop is REJECTED as the A-34
+# latch -- never absorbed, because a learner that subtracts the latch hides it from
+# the plausibility guard (imufusion at a 50 deg/s threshold did exactly that).
+# MEASURED, not tuned (Atlas gyro-quality classifier, 2026-09-14, every quiet
+# minute since 2026-09-05, metric = max over axes of |mean gyro|): healthy
+# 0.0127-0.0153 over 4,337 minutes, faulted 0.4871-0.5531 over 5,976, and ZERO
+# minutes between 0.02 and 0.40. 0.10 rad/s (5.7 deg/s) is his threshold: >6x the
+# healthy ceiling and well under half the 14-30 deg/s fault band's lower edge.
+GYRO_BIAS_MAX_RAD_S = 0.10
+
+# Vehicle-frame axis names for the learner's report: rotation ABOUT forward is
+# roll, about left is pitch, about up is yaw.
+_GYRO_AXIS_NAMES = ("roll", "pitch", "yaw")
 
 # The integrated pitch is clamped here: past vertical the attitude is not merely
 # wrong, it makes every downstream tan() nonsense.
@@ -249,10 +269,18 @@ def accelTrustContaminationRad(accelTrustBand: float) -> float:
 class PitchFusion:
     """Complementary gyro/accel pitch filter with a ZUPT bias update.
 
-    Owns exactly two running facts: the fused attitude and the rolling mean of
-    the tilts measured at confirmed stops (the mount-tilt bias). The published
-    pitch is ``fused - bias``, which is the road grade rather than the board's
-    angle in its bracket.
+    Owns three running facts: the fused attitude, the rolling mean of the tilts
+    measured at confirmed stops (the mount-tilt bias), and -- since US-779 -- the
+    rolling mean of the gyro RATES measured at those same stops (the rate bias,
+    subtracted before integration). The published pitch is ``fused - bias``,
+    which is the road grade rather than the board's angle in its bracket.
+
+    THE RATE BIAS IS PER RUN AND CANNOT CONCEAL A LATCH. It lives only in this
+    object (a bias carried between drives measurably made stop error worse,
+    3.77 -> 4.45 deg), and a stop whose standing rate reaches
+    ``GYRO_BIAS_MAX_RAD_S`` on any axis is rejected rather than learned, so the
+    A-34 latch keeps integrating uncorrected into the US-749 plausibility guard.
+    With no accepted stop the gyro passes through untouched.
 
     THE DANGEROUS CASE IS NOT A FAILED SPEED READ, IT IS A STALE ONE. If the OBD
     link drops while the car is stopped at a light and the last thing the
@@ -307,6 +335,11 @@ class PitchFusion:
         self._stopSum = 0.0
         self._stopSamples = 0
         self._stopObs: deque[float] = deque(maxlen=window)
+        # US-779 per-run gyro rate-bias state (never persisted).
+        self._gyroStopSum = [0.0, 0.0, 0.0]
+        self._gyroStopSamples = 0
+        self._gyroBiasObs: deque[tuple[float, float, float]] = deque(maxlen=window)
+        self._gyroBiasRejected = 0
         # US-749 plausibility guard state.
         self._implausibleBoundRad = accelTrustContaminationRad(self._trustBand)
         self._disagreeSince: float | None = None
@@ -354,6 +387,50 @@ class PitchFusion:
         if len(self._stopObs) < self._minStops:
             return 0.0
         return sum(self._stopObs) / len(self._stopObs)
+
+    @property
+    def gyroBiasRadS(self) -> tuple[float, float, float] | None:
+        """The learned gyro rate bias, vehicle frame, rad/s -- or None.
+
+        The mean standing rate over the accepted stops in the rolling window.
+        None until one stop has been accepted in THIS run: an unlearned bias is
+        not a reason to guess one, so the gyro is then used exactly as read.
+        Unlike the tilt bias, one stop suffices -- a stopped chassis is not
+        rotating, so the stop's mean rate IS the bias, with no parking-slope
+        ambiguity to average out.
+        """
+        if not self._gyroBiasObs:
+            return None
+        n = len(self._gyroBiasObs)
+        return (
+            sum(o[0] for o in self._gyroBiasObs) / n,
+            sum(o[1] for o in self._gyroBiasObs) / n,
+            sum(o[2] for o in self._gyroBiasObs) / n,
+        )
+
+    @property
+    def gyroBiasCorrection(self) -> dict[str, float] | None:
+        """Which axes the learner is correcting, and by how much (rad/s).
+
+        Keyed ``roll`` / ``pitch`` / ``yaw`` (rotation about forward / left / up).
+        Only ``pitch`` feeds this estimator's attitude; roll and yaw are reported
+        so the bias they carry is visible rather than inferred. None when no
+        stop has been accepted.
+        """
+        bias = self.gyroBiasRadS
+        if bias is None:
+            return None
+        return dict(zip(_GYRO_AXIS_NAMES, bias, strict=True))
+
+    @property
+    def gyroBiasStopCount(self) -> int:
+        """Accepted stops currently held in the rate-bias window."""
+        return len(self._gyroBiasObs)
+
+    @property
+    def gyroBiasRejectedStops(self) -> int:
+        """Stops refused as a latched-magnitude standing rate this run (A-34)."""
+        return self._gyroBiasRejected
 
     @property
     def stopCount(self) -> int:
@@ -411,6 +488,7 @@ class PitchFusion:
             return
 
         self._expireStaleStop(capture)
+        self._accumulateStopGyro(gyro, capture)
         accelPitch = pitchRadFromAccel(vec)
         trusted = accelPitch is not None and self._accelIsNearOneG(vec)
 
@@ -430,7 +508,7 @@ class PitchFusion:
 
         # 1. Gyro integration -- the short-term truth, blind to linear g.
         predicted = prev
-        rate = self._pitchRateFromGyro(gyro)
+        rate = self._pitchRateFromGyro(self._correctGyro(gyro))
         if rate is not None:
             predicted = _clampPitch(prev + rate * dt)
 
@@ -460,6 +538,11 @@ class PitchFusion:
         The ZUPT bias survives: it is a property of how the board is BOLTED IN,
         which an unplug does not change, and re-converging it costs another five
         stoplights.
+
+        The gyro RATE bias does NOT survive (US-779): it is a property of the
+        powered die, not of the bolting, and a re-plugged chip is re-powered --
+        it can come up with a different bias, or latched. The old value is no
+        evidence about the new power-on.
         """
         self._pitch = None
         self._lastCapture = None
@@ -467,6 +550,7 @@ class PitchFusion:
         self._stopSince = None
         self._lastSpeedCapture = None
         self._disagreeSince = None
+        self._gyroBiasObs.clear()
 
     # -- internals -------------------------------------------------------------
     def _trackDisagreement(self, accelPitch: float, capture: float) -> None:
@@ -547,6 +631,60 @@ class PitchFusion:
             self._stopObs.append(self._stopSum / self._stopSamples)
         self._stopSum = 0.0
         self._stopSamples = 0
+        self._commitGyroStop()
+
+    def _accumulateStopGyro(self, gyro, capture: float) -> None:
+        """Add one RAW gyro sample to the current stop's rate sum (US-779).
+
+        Raw, not corrected: the stop measures the bias itself, so subtracting the
+        previous estimate first would make each stop measure only the change.
+        """
+        if not self._confirmedStopAt(capture):
+            return
+        vec = _finiteVec3(gyro)
+        if vec is None:
+            return
+        for i in range(3):
+            self._gyroStopSum[i] += vec[i]
+        self._gyroStopSamples += 1
+
+    def _commitGyroStop(self) -> None:
+        """Close the stop's rate observation: learn it, or reject it as a latch."""
+        if self._gyroStopSamples == 0:
+            return
+        n = self._gyroStopSamples
+        obs = (self._gyroStopSum[0] / n, self._gyroStopSum[1] / n, self._gyroStopSum[2] / n)
+        self._gyroStopSum = [0.0, 0.0, 0.0]
+        self._gyroStopSamples = 0
+        peak = max(abs(c) for c in obs)
+        if peak >= GYRO_BIAS_MAX_RAD_S:
+            # Rejected, and loudly: absorbing this would subtract the A-34 latch
+            # and hide it from the plausibility guard.
+            self._gyroBiasRejected += 1
+            logger.warning(
+                "imu gyro bias: stop REJECTED as latched-magnitude standing rate "
+                "(peak %.4f rad/s >= %.2f; roll=%.4f pitch=%.4f yaw=%.4f) -- not learned",
+                peak,
+                GYRO_BIAS_MAX_RAD_S,
+                *obs,
+            )
+            return
+        self._gyroBiasObs.append(obs)
+        logger.info(
+            "imu gyro bias: learned at stop (roll=%.5f pitch=%.5f yaw=%.5f rad/s, %d stops)",
+            *obs,
+            len(self._gyroBiasObs),
+        )
+
+    def _correctGyro(self, gyro):
+        """Subtract the learned rate bias; the gyro unchanged when none is learned."""
+        bias = self.gyroBiasRadS
+        if bias is None:
+            return gyro
+        vec = _finiteVec3(gyro)
+        if vec is None:
+            return gyro
+        return (vec[0] - bias[0], vec[1] - bias[1], vec[2] - bias[2])
 
 
 def _clampPitch(pitchRad: float) -> float:
