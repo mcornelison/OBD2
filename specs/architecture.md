@@ -3312,15 +3312,17 @@ IMU burst. The channels never touch the `raw.obd.* → realtime_data` path, so t
 F-110 byte-identical golden master is preserved by construction. A sibling
 persistence subscriber writes `edr_imu_sample` / `edr_light_sample`, whose DDL is
 authored once in the versioned `src/common/edr/sensor_schema.py` contract (A-4
-anti-divergence: the future server table derives from the same module).
+anti-divergence: the future server table derives from the same module — **that
+promise was kept by US-764; see §10.8.3**).
 Persistence is **always-on** (key-on incl. engine-off — true black-box) at a
 decimated baseline (`persistHz`, default 25 Hz); rows stamp `drive_id` only when
 a drive is RUNNING, else explicit NULL (the A-9/DTC-KOEO latch rule). A
-rolling-window purge job (`retentionDays`, default 7) bounds the Pi-local volume.
+rolling-window purge job (`retentionDays`, **45** since US-761 — this paragraph
+said `7` until 2026-09-16) bounds the Pi-local volume.
 The reader is **graceful-absent** (probe → silence, never fabricate) and ships
 **dark** behind `pi.sensors.{imu,light}.enabled` under `pi.bus.enabled`. Raw
-samples are **Pi-local this phase**; server sync, the event vault, and the
-event-triggered high-rate (100–200 Hz) capture are F-115. The reader stores
+samples were **Pi-local** until F-142 — **server sync is §10.8.3**; the event
+vault and the event-triggered high-rate (100–200 Hz) capture remain F-115. The reader stores
 **sensor-frame** values; vehicle-frame rotation + magnetometer hard/soft-iron
 calibration are deferred transforms (F-115), pending the recorded mounting
 axis-orientation.
@@ -3412,9 +3414,19 @@ reading was reasonable; the drive disproved it, which is exactly why it was a ga
 `tests/pi/sensors/test_imu_body_frame.py` pins the binding to (B) with this basis
 in its failure message, so a revert to (A) fails loudly. ⚠️ Drives on or before
 2026-09-09 are all the OLD mount and will confirm (B) whatever the dash is doing.
-⚠️ The residual grade error left after the flip is the **uncancelled gyro-Y
+⚠️ The residual grade error left after the flip is an **uncancelled gyro rate
 bias** (a separate defect), not an orientation error — the constant is not tuned
-to absorb it. The flip does **not** fix the compass (A-30, stuck magnetometer).
+to absorb it. 🔴 **CORRECTED 2026-09-16 (Atlas): this line previously read
+"gyro-**Y** bias", and that is the WRONG AXIS.** Under (B) `left = +x`, and
+`pitch_fusion._pitchRateFromGyro` returns `-vec[1]` — the **left** component,
+i.e. raw **X**. Raw **Y** is `forward`, so a raw-Y rate is **roll** and never
+reaches pitch at all. Measured on the dash mount at rest: raw X **−0.012 °/s**
+(pitch), raw Y **+0.730** (roll), raw Z **+0.156** (yaw) — so the pitch-axis bias
+is roughly **60× smaller** than the figure this line used to carry, and anyone
+sizing a bias-learning story from it would have sized that story ~60× too large.
+⚠️ **Re-derive the axis at the point of use; a remembered mapping is not a
+derivation** — this error survived here precisely because it was quoted rather
+than re-derived. The flip does **not** fix the compass (A-30, stuck magnetometer).
 
 *The mounting is not config.* It lived at `pi.sensors.imu.mount.*` until US-708,
 where it pinned the identity map and **overrode the code default** — so correcting
@@ -3613,8 +3625,8 @@ connection.
 / `pi.sensors.light.enabled` (each requires the bus gate);
 `pi.sensors.imu.sampleHz` (`50`, bus publish rate), `pi.sensors.imu.persistHz`
 (`25`, decimated persist), `pi.sensors.light.sampleHz` (`1`),
-`pi.sensors.retentionDays` (`7`, rolling-window purge — confirm vs Pi free space
-at deploy). Built US-408 (schema contract + Pi tables) / US-409 (IMU + light
+`pi.sensors.retentionDays` (**`45`** since US-761 — was `7`; rolling-window purge,
+confirm vs Pi free space at deploy). Built US-408 (schema contract + Pi tables) / US-409 (IMU + light
 readers) / US-410 (persistence subscriber + retention) / US-411 (bench harness +
 golden-master regression + connect-when-wired drill). **US-483-a (V0.29.15)
 flipped `pi.bus.enabled` + `pi.sensors.light.enabled` ON** — the TSL2591 is wired
@@ -3622,12 +3634,114 @@ flipped `pi.bus.enabled` + `pi.sensors.light.enabled` ON** — the TSL2591 is wi
 live and bridged to `states/light`; the IMU stays dark (clone boards absent — the
 graceful-absent reader stays silent, isolating the live light feed).
 
+### 10.8.3 EDR reaches the server (F-142, Sprint 87–88 / V0.29.51–52) [Atlas Rule 10]
+
+**The distance this closes.** The Pi has recorded EDR samples faithfully since
+V0.29.4 and **none of them ever left the device**. Measured on the Pi
+2026-09-16: **14,461,121** `edr_imu_sample` rows and **700,217**
+`edr_light_sample` rows, 2026-09-07 → 2026-09-16, accumulating at ~1.6M rows/day.
+Recorded is not the same as usable.
+
+⚠️ **Status boundary, stated so this section is not read as shipped.** US-764
+(the shared contract) **is live on `dev` at V0.29.51**. US-765/766/767/768 are
+the **ratified design** from the Sprint 88 design gate and are **not yet built**;
+this subsection is the architecture they must satisfy, not a description of
+running code. Rows in this section marked *designed* are exactly that.
+
+**One contract, two tiers — the A-4 promise, kept.** `EDR_COLUMNS` in
+`src/common/edr/sensor_schema.py` is the single column list. `server_ddl.py`
+**generates** the MariaDB DDL from it; `sync_contract.py` publishes
+`EDR_SYNC_TABLES` and `SHUTDOWN_DRAIN_EXCLUDED_TABLES`. **The server table is not
+authored, it is derived** — so the Pi↔server divergence A-4 tracks cannot open by
+someone editing one side. A migration that restates the DDL instead of comparing
+against the generator re-opens it; the story's acceptance therefore *compares*.
+
+**The two tiers deliberately differ in shape, and that is NOT divergence.**
+
+| | Pi (SQLite) | Server (MariaDB) |
+|---|---|---|
+| Key | `id INTEGER PRIMARY KEY AUTOINCREMENT` | composite `(source_device, source_id, ts_utc)`, **no surrogate id** |
+| Why | the `id` **is the sync cursor** — monotonic per device, and what the delta push walks | the server receives from **N devices**; a per-device autoincrement is not unique across them |
+| Storage | rolling window, `retentionDays` 45 | monthly `RANGE COLUMNS` on `ts_utc` + `pmax`, `PAGE_COMPRESSED=1` |
+
+🔴 **`source_device` is the dimension that prevents a known, already-instantiated
+defect.** `drives.PRIMARY KEY` is `drive_id` **alone**, with no device dimension —
+so two edge devices will collide the moment a second vehicle arrives. The EDR
+tables are keyed the way `drives` should have been. Do not "simplify" the
+composite key to a surrogate id; the surrogate is what loses the device.
+
+**Sync is insert-only and rides the existing path** *(designed, US-766)*.
+Registration is an entry in `PK_COLUMN` (`src/pi/data/sync_log.py`) — the same
+id-cursor delta mechanism every other table uses. **No new transport, no new
+protocol version.**
+
+🔴 **EDR must never ride the shutdown drain** *(designed, US-766)*. The drain
+budget is **seconds**; the EDR backlog is **millions of rows**. The exclusion is
+read from `SHUTDOWN_DRAIN_EXCLUDED_TABLES`, never re-listed at the call site.
+**The custody verdict (§10.6.3) must be byte-identical with and without
+outstanding EDR rows**, and `edrOutstandingRows` is reported on a **separate**
+journal line. The reason is architectural, not cosmetic: sync custody answers
+*"did the safety-critical data survive this shutdown?"* Folding an unbounded
+archival backlog into that verdict would make every healthy shutdown report a
+failure forever, and a verdict that is always failing is a verdict nobody reads.
+
+**The log gate: record while linked, keep the seconds before** *(designed,
+US-767)*. CLOSED holds a monotonic 60 s ring and writes nothing; opening flushes
+that ring **in order**; OPEN→HOLD keeps writing for 300 s and re-arms when the
+link returns. A parked car otherwise logs millions of rows nobody will read, and
+the moments just before a link opens are the ones worth keeping.
+
+*The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.*
+`obd.py` `is_connected()` returns `status() == OBDStatus.CAR_CONNECTED` and is
+explicitly **False** at `ELM_CONNECTED` — so it is an **ECU-level** fact, not an
+adapter-level one, and a powered dongle on a parked car does not open the gate.
+⚠️ **Do not substitute a rendered or derived UI value** (SSOT rule B: that is a
+second acquisition of one fact). ⚠️ **And do not substitute the capture-health
+freshness signal**, which stays alive on adapter-only `ATRV` reads with the key
+out — a different consumer with a different defect. The two must not be
+"reconciled".
+
+🔴 **The gate must distinguish "link down" from "signal unreadable."**
+`ObdConnection._isConnected()` wraps its read in `try/except Exception: return
+False`, so **every** failure of the signal arrives as `connected=False`, byte-
+identical to a genuinely down link. A gate that treats the two alike fails
+**CLOSED** on a broken signal — it silently stops recording, which is the outcome
+the gate exists to avoid. The stated contract is **fail OPEN on an unreadable
+signal**; satisfying it requires a typed availability, not an exception path,
+because production cannot raise here. *(Raised at the Sprint 88 design gate;
+recorded because a test that patches a raise would pass while production could
+never produce one — the inert-guard shape, `specs/anti-patterns.md`.)*
+
+**Retention deletes only what the server already has** *(designed, US-768)*.
+`DELETE … WHERE ts_utc < cutoff AND id <= the sync high-water mark`. **Age alone
+never authorises a delete** — age is evidence about time, never about whether a
+reading was preserved. Below the free-space floor the job **WARNS and still
+deletes no unsynced row**: a disk-space emergency must not become a data-loss
+event. If the high-water mark cannot be read, **delete nothing** — a purge that
+guesses at what was synced is the defect being removed.
+
+⚠️ **There must be exactly ONE EDR delete path.** `purgeExpired()` in
+`src/pi/bus/edr_persistence_subscriber.py` already deletes by `ts_utc < cutoff`
+with **no sync gate**. That is the path which must *gain* the high-water-mark
+condition. Adding a second, sync-gated purge beside it leaves the age-only one
+running and the guarantee above is false on the shipped system while every test
+of the new module passes.
+
+**The deadline this carries.** US-761 raised retention 7 → 45 days, so Pi-side
+deletion resumes about **2026-10-22**. Until sync is live the high-water mark is
+0 and the correct behaviour is that **nothing is deleted** — an expected
+validation outcome, not a defect.
+
 *Gate-ratification note: §10.8 added per the 2026-05-18 design-gate governance
 rule (PM Rule 10 / C-4 DoD, in-sprint) from Atlas's 2026-06-30 EDR ADR
 (`$FLEET_SHARE/knowledge/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §5).
 BENCH-validated (US-411 golden-master + absent-path); live IRL acceptance —
 `i2cdetect` 0x29/0x69 + connect-when-wired — pending the first V0.29.4 Pi
 deploy.*
+*§10.8.3 added 2026-09-16 (ARCH-028) at the Sprint 88 design gate, same Rule-10
+obligation: the sprint wires EDR across a tier boundary, so §10.8 gains the
+server tier in-sprint rather than as follow-up. Verified against the tree at
+`3946d041`, not against the PRD's prose.*
 
 ---
 
