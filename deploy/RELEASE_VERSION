@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.51",
-  "theme": "Sprint 87 -- empty, unreadable, deleted",
-  "description": "Shipped 4 of 4, first attempt each -- the ralphV2 pilot run. US-764 lays the shared EDR column contract, SHA-256 pinned against the Pi DDL, plus a MariaDB DDL generator. US-769 adds the EDR backlog cleanup script, dry-run by default. US-774 removes April/May outage telemetry and drive 2 simulator rows from both tiers. US-775 makes the legacy backlog tools refuse a schemaVersion they cannot read."
+  "version": "V0.29.52",
+  "theme": "Sprint 88 -- gyro bias guard (closed early)",
+  "description": "Closed early by CIO decision; ships 1 story. US-779 learns gyro rate-bias per run at ZUPT-confirmed stops and rejects a latched-magnitude rate rather than absorbing it, so the A-34 fault stays visible. It also corrects the wrong-axis comment in imu_state_bridge. US-765/766 ship via ARCH-029; US-767/768 carry to Sprint 89 pending an architecture ruling."
 }
