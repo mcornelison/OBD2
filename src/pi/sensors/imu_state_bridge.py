@@ -362,8 +362,11 @@ IMU_BODY_FRAME_B = {"forward": "-y", "left": "+x", "up": "+z"}  # +Y = tail, +X 
 # heading = nose bearing, pitch + = nose up): every formula downstream is written
 # in vehicle coordinates, so it holds iff this binding produces them. Under (A) on
 # a (B)-physical board all four published inverted (heading rotated 180 deg).
-# DO NOT tune this constant to absorb the residual grade error -- that is the
-# separate, uncancelled gyro-Y bias, and a fixed frame must not hide a drifting term.
+# DO NOT tune this constant to absorb the residual grade error -- that is a separate
+# gyro RATE bias, and a fixed frame must not hide a drifting term. Under THIS frame
+# the pitch axis is raw X (left = +x; measured at rest -0.012 deg/s); raw Y is
+# FORWARD, i.e. ROLL (+0.730 deg/s), not pitch. PitchFusion learns the rate bias
+# per run at confirmed stops (US-779), downstream of this boundary.
 IMU_BODY_FRAME = IMU_BODY_FRAME_B
 
 _AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
