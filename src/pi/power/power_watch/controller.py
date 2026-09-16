@@ -134,6 +134,7 @@ class ShutdownSequencer:
         shutdownReason: str = DEFAULT_SHUTDOWN_REASON,
         prePowerOffFn: Callable[[], None] | None = None,
         powerLossObservedFn: Callable[[], None] | None = None,
+        powerRestoredFn: Callable[[], None] | None = None,
     ):
         """Args:
         isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
@@ -212,6 +213,7 @@ class ShutdownSequencer:
         self._phaseEmitFn = phaseEmitFn
         self._prePowerOffFn = prePowerOffFn
         self._powerLossObservedFn = powerLossObservedFn
+        self._powerRestoredFn = powerRestoredFn
         self._shutdownReason = shutdownReason
         self._nowIso = nowIsoFn if nowIsoFn is not None else _defaultNowIso
         # Grace-window bookkeeping (set when the grace phase is emitted).
@@ -274,6 +276,12 @@ class ShutdownSequencer:
         # isOnBattery() read (existing iterator-based mocks keep their pattern).
         if self._phaseEmitFn is not None:
             if not self._isOnBattery():
+                # ARCH-031: _notifyPowerLossObserved() has ALREADY run above, so a
+                # reversible mitigation (load shed) may be outstanding on this
+                # path even though no `cancelled` phase is emitted. Restoring
+                # here is what stops a blip leaving the dashboard dark until the
+                # next boot.
+                self._notifyPowerRestored()
                 return
             self._beginGraceAndEmit()
         if not self._smoothedPowerLost():
@@ -284,6 +292,7 @@ class ShutdownSequencer:
                 self._smoothingSec,
             )
             self._emitPhase(PHASE_CANCELLED)
+            self._notifyPowerRestored()  # ARCH-031: undo the reversible shed
             return
         logger.warning(
             "shutdown-sequencer: sustained power-lost confirmed (%.0fs "
@@ -338,6 +347,7 @@ class ShutdownSequencer:
             # Power came back mid-window: tell the splash to abort too so it does
             # not sit in BLACK_TAIL waiting for a poweroff that will not come.
             self._emitPhase(PHASE_CANCELLED)
+            self._notifyPowerRestored()  # ARCH-031: undo the reversible shed
             return
         logger.warning("shutdown-sequencer: pre-shutdown window resolved -- graceful poweroff")
         self._emitPhase(PHASE_POWERING_OFF)
@@ -357,6 +367,29 @@ class ShutdownSequencer:
                 "shutdown-sequencer: power-loss-observed hook failed (%s) -- "
                 "ignored, shutdown proceeds; time-to-death is NOT being measured "
                 "for this loss",
+                exc,
+            )
+
+    def _notifyPowerRestored(self) -> None:
+        """Run the power-restored hook (best-effort, never raises).
+
+        ARCH-031: the counterpart to ``powerLossObservedFn``. Called on EVERY
+        path that abandons a shutdown, so a reversible mitigation taken on the
+        loss edge (load shedding) is undone when the loss turns out to be a blip.
+
+        🔴 Guarded exactly like the other hooks. A restore that fails costs us
+        the restore -- the dashboard stays down until the next boot -- and must
+        never cost us the cancel, which is what keeps a transient blip from
+        bricking the Pi (2026-05-18 hotfix).
+        """
+        if self._powerRestoredFn is None:
+            return
+        try:
+            self._powerRestoredFn()
+        except Exception as exc:  # noqa: BLE001 -- best-effort, belt+braces
+            logger.error(
+                "shutdown-sequencer: power-restored hook failed (%s) -- ignored, "
+                "abort proceeds. Any shed load stays down until the next boot.",
                 exc,
             )
 
