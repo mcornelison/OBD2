@@ -139,6 +139,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Collection
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -896,7 +897,12 @@ class SyncClient:
                 status=PushStatus.OK,
             )
 
-    def pushAllDeltas(self, *, bypassQuarantine: bool = False) -> list[PushResult]:
+    def pushAllDeltas(
+        self,
+        *,
+        bypassQuarantine: bool = False,
+        excludeTables: Collection[str] = (),
+    ) -> list[PushResult]:
         """Push every in-scope table in deterministic order.
 
         Snapshot/upsert reject-list tables (``profiles`` / ``vehicle_info``)
@@ -911,14 +917,24 @@ class SyncClient:
             bypassQuarantine: Forwarded to :meth:`pushDelta`; when True the
                 US-391 quarantine throttle is ignored (explicit re-drain via
                 :meth:`forcePush`).
+            excludeTables: Tables to skip entirely this sweep (US-766). The
+                power-loss drain passes the EDR set: those rows are archival
+                and catch up on the next ordinary tick, while the shutdown
+                budget is seconds and the EDR backlog is millions of rows.
+                An excluded table yields NO PushResult at all -- it was never
+                attempted, and reporting it as SKIPPED would put it in the
+                operator's table list as though it had been considered.
 
         Returns:
-            One :class:`PushResult` per delta table in
+            One :class:`PushResult` per non-excluded delta table in
             :data:`sync_log.IN_SCOPE_TABLES` (sorted), then one per registered
             snapshot-sync table (sorted), so operator-facing output is stable.
         """
+        skip = set(excludeTables)
         results: list[PushResult] = []
         for tableName in sorted(sync_log.IN_SCOPE_TABLES):
+            if tableName in skip:
+                continue
             results.append(
                 self.pushDelta(tableName, bypassQuarantine=bypassQuarantine),
             )
@@ -926,7 +942,7 @@ class SyncClient:
             results.append(self.pushSnapshot(tableName))
         return results
 
-    def forcePush(self) -> PushSummary:
+    def forcePush(self, *, excludeTables: Collection[str] = ()) -> PushSummary:
         """Explicit-intent manual sync flush (US-225 / TD-034).
 
         Wraps :meth:`pushAllDeltas` with an explicit log line + an
@@ -963,7 +979,9 @@ class SyncClient:
         # US-391: forcePush is the explicit re-drain -- bypass the quarantine
         # throttle so a deploy-time / pre-poweroff flush re-attempts any
         # quarantined table (e.g. after US-367 lands the ECU lineage spine).
-        results = self.pushAllDeltas(bypassQuarantine=True)
+        results = self.pushAllDeltas(
+            bypassQuarantine=True, excludeTables=excludeTables,
+        )
         # US-418: forcePush is the explicit power-down flush -- bypass the
         # unchanged-value idle gate so the server singleton is guaranteed
         # current before poweroff, even if an interval tick already delivered
