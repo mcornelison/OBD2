@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from src.pi.data import sync_log
@@ -173,10 +174,36 @@ def _countOneTable(conn: sqlite3.Connection, tableName: str) -> int:
     )
 
 
+def _tablesInScope(
+    excludeTables: Collection[str],
+    onlyTables: Collection[str] | None,
+) -> list[str]:
+    """Resolve which delta tables this count covers, in deterministic order.
+
+    ``onlyTables`` narrows first, ``excludeTables`` removes after -- so an
+    explicit exclusion always wins, and asking for a table in both is answered
+    the safe way (it is left out) rather than the surprising way.
+
+    Args:
+        excludeTables: Tables to leave out entirely.
+        onlyTables: When not None, restrict to these tables.
+
+    Returns:
+        Sorted table names.
+    """
+    scope = set(sync_log.DELTA_SYNC_TABLES)
+    if onlyTables is not None:
+        scope &= set(onlyTables)
+    scope -= set(excludeTables)
+    return sorted(scope)
+
+
 def countOutstandingRows(
     dbPath: str,
     *,
     busyTimeoutSec: float = DEFAULT_BUSY_TIMEOUT_SEC,
+    excludeTables: Collection[str] = (),
+    onlyTables: Collection[str] | None = None,
 ) -> SyncBacklog:
     """Measure what the Pi still owes the server. READ-ONLY. NEVER raises.
 
@@ -198,6 +225,14 @@ def countOutstandingRows(
         busyTimeoutSec: SQLite busy timeout. Callers on the shutdown path pass
             the bound that path already owns, so a locked database can never
             delay a poweroff.
+        excludeTables: Tables to leave out of the count entirely (US-766).
+            An EXCLUDED table is not an UNREADABLE one: it contributes nothing
+            to ``perTable`` and nothing to ``unreadableTables``, so excluding it
+            cannot flip the verdict to UNKNOWN. The shutdown drain passes
+            ``SHUTDOWN_DRAIN_EXCLUDED_TABLES`` here, because a multi-million-row
+            EDR archive must never make a clean poweroff report OUTSTANDING.
+        onlyTables: When not None, count ONLY these tables. Used to report the
+            EDR backlog beside the verdict rather than inside it.
 
     Returns:
         A :class:`SyncBacklog`. On any failure to open or read the database the
@@ -221,7 +256,7 @@ def countOutstandingRows(
         existing = _existingTables(conn)
         perTable: dict[str, int] = {}
         unreadable: list[str] = []
-        for tableName in sorted(sync_log.DELTA_SYNC_TABLES):
+        for tableName in _tablesInScope(excludeTables, onlyTables):
             if tableName not in existing:
                 # A table this DB has never created cannot hold unsynced rows.
                 # Counting it as unreadable would make every healthy Pi report

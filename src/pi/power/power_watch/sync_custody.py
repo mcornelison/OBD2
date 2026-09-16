@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CUSTODY_RECORD_FILENAME",
     "CUSTODY_RECORD_SCHEMA_VERSION",
+    "EDR_BACKLOG_PREFIX",
     "SYNC_CUSTODY_PREFIX",
     "buildCustodyRecord",
     "emitSyncCustody",
@@ -70,6 +71,13 @@ __all__ = [
 # safety fact split across branches at different severities was unfindable.
 SYNC_CUSTODY_PREFIX = "powerwatch: SYNC CUSTODY ="
 
+# US-766: the EDR archive gets its OWN prefix, deliberately NOT
+# SYNC_CUSTODY_PREFIX. That prefix exists so ONE grep answers "did my data get
+# away?" for a shutdown; emitting a second line under it would hand a log
+# scraper two answers to one question and make the first match ambiguous.
+# Distinct prefix, distinct question, same shutdown.
+EDR_BACKLOG_PREFIX = "powerwatch: EDR BACKLOG ="
+
 CUSTODY_RECORD_SCHEMA_VERSION: int = 1
 
 # Sits beside powerwatch_outcome.json in the existing data/ dir. A SEPARATE
@@ -79,16 +87,32 @@ CUSTODY_RECORD_SCHEMA_VERSION: int = 1
 CUSTODY_RECORD_FILENAME = "powerwatch_sync_custody.json"
 
 
-def buildCustodyRecord(backlog: SyncBacklog, *, nowIso: str) -> dict:
+def buildCustodyRecord(
+    backlog: SyncBacklog,
+    *,
+    nowIso: str,
+    edrBacklog: SyncBacklog | None = None,
+) -> dict:
     """Compose the durable custody record for one poweroff.
 
     Counts are kept as NUMBERS rather than folded into a prose detail string,
     so a later consumer can answer "how many rows were stranded across the last
     ten shutdowns?" without parsing English.
 
+    US-766: the EDR archive is reported BESIDE the verdict, never inside it.
+    ``backlog`` is expected to have been measured with the EDR tables excluded,
+    so every field describing custody -- verdict, outstandingRows, perTable --
+    is byte-identical whether the EDR queue holds nothing or fifteen million
+    rows. Folding an unbounded archival backlog into the custody verdict would
+    make every healthy shutdown report OUTSTANDING forever, and a verdict that
+    always fails is a verdict nobody reads.
+
     Args:
-        backlog: The backlog measured at poweroff.
+        backlog: The custody backlog measured at poweroff (EDR excluded).
         nowIso: ISO-8601 UTC stamp for the record.
+        edrBacklog: The EDR-only backlog, when it was measured. ``None`` means
+            NOT MEASURED and is recorded as ``None`` -- never 0, which would
+            claim the EDR queue was looked at and found empty.
 
     Returns:
         A JSON-serialisable record body.
@@ -103,6 +127,9 @@ def buildCustodyRecord(backlog: SyncBacklog, *, nowIso: str) -> dict:
         "perTable": dict(backlog.perTable),
         "unreadableTables": list(backlog.unreadableTables),
         "error": backlog.error,
+        # US-766: a typed absence, not a zero. Reported separately so it can
+        # never move the verdict above.
+        "edrOutstandingRows": None if edrBacklog is None else edrBacklog.total,
         "ts": nowIso,
     }
 
@@ -112,6 +139,7 @@ def emitSyncCustody(
     backlog: SyncBacklog,
     recordPath: str,
     nowIsoFn: Callable[[], str] | None = None,
+    edrBacklog: SyncBacklog | None = None,
 ) -> str:
     """State sync custody for this poweroff, on BOTH channels. Never raises.
 
@@ -158,9 +186,26 @@ def emitSyncCustody(
         # never ran" -- the precise ambiguity US-621 VC-2 forbids.
         logger.warning("%s.", line)
 
+    # US-766: stated BESIDE the verdict, never inside it. An EDR backlog is
+    # expected and is not a custody failure -- those rows are archival and
+    # catch up on the next ordinary sync tick, whereas the verdict above is
+    # about drive data that the shutdown was responsible for. Reported at
+    # WARNING for the US-566 reason: this service has run with no root handler,
+    # so INFO would be discarded in exactly the degraded conditions that make
+    # the number worth having.
+    if edrBacklog is not None:
+        logger.warning(
+            "%s %s. Archival -- EXPECTED to be outstanding at poweroff and "
+            "deliberately excluded from the custody verdict above.",
+            EDR_BACKLOG_PREFIX,
+            edrBacklog.describe(),
+        )
+
     nowIso = nowIsoFn() if nowIsoFn is not None else utcIsoNow()
     writeAtomicJson(
-        recordPath, buildCustodyRecord(backlog, nowIso=nowIso), what="custody"
+        recordPath,
+        buildCustodyRecord(backlog, nowIso=nowIso, edrBacklog=edrBacklog),
+        what="custody",
     )
     return line
 
@@ -171,6 +216,7 @@ def makeSyncCustodyHook(
     backlogReader: Callable[[], SyncBacklog] | None = None,
     dbPath: str = "",
     busyTimeoutSec: float | None = None,
+    edrBacklogReader: Callable[[], SyncBacklog] | None = None,
 ) -> Callable[[], None]:
     """Build the zero-arg pre-poweroff custody hook.
 
@@ -211,8 +257,26 @@ def makeSyncCustodyHook(
                 BACKLOG_UNKNOWN,
             )
             backlog = SyncBacklog(error=f"backlog read failed: {exc}")
+
+        # US-766: the EDR count is a nice-to-have on the poweroff path. A fault
+        # reading it must never cost us the custody record, which is the fact
+        # that actually matters -- so it degrades to "not measured" (None), not
+        # to a zero and not to an exception.
+        edrBacklog: SyncBacklog | None = None
+        if edrBacklogReader is not None:
+            try:
+                edrBacklog = edrBacklogReader()
+            except Exception as exc:  # noqa: BLE001 -- never block a poweroff
+                logger.warning(
+                    "powerwatch: EDR-backlog read failed (%s) -- recording it "
+                    "as NOT MEASURED; custody is unaffected",
+                    exc,
+                )
+
         try:
-            emitSyncCustody(backlog=backlog, recordPath=recordPath)
+            emitSyncCustody(
+                backlog=backlog, recordPath=recordPath, edrBacklog=edrBacklog,
+            )
         except Exception as exc:  # noqa: BLE001 -- belt+braces on the poweroff path
             logger.error("powerwatch: sync-custody emit failed (%s)", exc)
 

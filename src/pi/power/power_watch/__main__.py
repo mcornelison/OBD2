@@ -145,6 +145,10 @@ from src.common.config.secrets_loader import (  # noqa: E402
     loadConfigWithSecrets,
 )
 from src.common.config.validator import ConfigValidator  # noqa: E402
+from src.common.edr.sync_contract import (  # noqa: E402
+    EDR_SYNC_TABLES,
+    SHUTDOWN_DRAIN_EXCLUDED_TABLES,
+)
 from src.common.logging.setup import setupLogging  # noqa: E402
 from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
 from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
@@ -380,6 +384,7 @@ def _buildRunSync(
     backlogReader=None,
     budgetSec: float = 0.0,
     monotonicFn=time.monotonic,
+    excludeTables=(),
 ):
     """Adapt SyncClient.forcePush() to the SyncWithServerTask runSync contract.
 
@@ -421,6 +426,15 @@ def _buildRunSync(
         budgetSec: Wall-clock budget for the whole drain. Production passes the
             shutdown path's own ``perTaskTimeoutSec``.
         monotonicFn: DI monotonic clock.
+        excludeTables: Tables the drain must NOT carry (US-766). Production
+            passes the EDR set. The drain budget is seconds; the EDR backlog
+            was measured at 15.16M rows and grows ~1.77M/day, so a single pass
+            over it could not finish and every pass would crowd out the drive
+            data this window exists to save. EDR catches up on the next
+            ordinary sync tick, where there is no deadline.
+            NOTE the backlogReader must exclude the same set, or the loop below
+            sees a backlog it is not pushing and keeps spending passes on rows
+            that will never move.
     """
 
     def runSync() -> None:
@@ -432,7 +446,7 @@ def _buildRunSync(
         passes = 0
         while True:
             passStart = now
-            summary = syncClient.forcePush()
+            summary = syncClient.forcePush(excludeTables=excludeTables)
             passes += 1
             if summary.disabled:
                 logger.info("powerwatch sync: companion service disabled -- no-op")
@@ -824,8 +838,29 @@ def main(argv: list[str] | None = None) -> int:
     # another pass is worth making) and by the custody record (to state what
     # remains). Two readers could disagree, and a shutdown that pushed until
     # "empty" then recorded a different number would be worse than either.
+    #
+    # US-766: that shared reader now EXCLUDES the EDR tables, and the drain
+    # excludes the SAME set when it pushes. The US-621 invariant is preserved
+    # exactly -- one membership, read from the shared contract, used by both --
+    # because a drain that skipped EDR while its backlog reader still counted
+    # EDR would never see "empty" and would spend the entire shutdown window on
+    # passes that move nothing.
     def readSyncBacklog():
-        return countOutstandingRows(dbPath, busyTimeoutSec=perTaskTimeoutSec)
+        return countOutstandingRows(
+            dbPath,
+            busyTimeoutSec=perTaskTimeoutSec,
+            excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
+        )
+
+    # A DIFFERENT question, deliberately not folded into the reader above: how
+    # much archival EDR is still on the Pi? Reported beside the custody verdict
+    # so it stays visible, never inside it so it can never move it.
+    def readEdrBacklog():
+        return countOutstandingRows(
+            dbPath,
+            busyTimeoutSec=perTaskTimeoutSec,
+            onlyTables=EDR_SYNC_TABLES,
+        )
 
     syncTask = SyncWithServerTask(
         serverReachable=detector.isServerReachable,
@@ -833,6 +868,7 @@ def main(argv: list[str] | None = None) -> int:
             syncClient,
             backlogReader=readSyncBacklog,
             budgetSec=perTaskTimeoutSec,
+            excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=writeRecord,
     )
@@ -869,6 +905,7 @@ def main(argv: list[str] | None = None) -> int:
     custodyFn = makeSyncCustodyHook(
         recordPath=os.path.join(os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME),
         backlogReader=readSyncBacklog,
+        edrBacklogReader=readEdrBacklog,
     )
     prePowerOffFn = composePrePowerOffHooks(drainCloseFn, custodyFn)
 

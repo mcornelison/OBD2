@@ -702,6 +702,96 @@ class CalibrationSession(Base):
     )
 
 
+# ==============================================================================
+# EDR raw sample tables (US-765 / F-142)
+# ==============================================================================
+#
+# The FIRST synced tables whose natural key is not (source_device, source_id).
+# The PK is (source_device, source_id, ts_utc) because MariaDB requires the
+# PARTITION COLUMN in every unique key, and these tables are RANGE-partitioned
+# monthly on ts_utc.  (source_device, source_id) is still unique on its own --
+# source_id is the Pi rowid -- so ts_utc changes the DDL, NOT the identity.
+# That is why runSyncUpsert's insert/update partitioning works unchanged here.
+#
+# There is deliberately NO surrogate id.  ``drives.PRIMARY KEY`` is drive_id
+# ALONE, with no device dimension, and will collide the moment a second vehicle
+# reports; these tables are keyed the way that one should have been.  Do not
+# "simplify" the composite key -- the surrogate is what loses the device.
+#
+# These models exist for the SYNC path.  The live server tables are created by
+# migration v0026 from src/common/edr/server_ddl.py, which GENERATES its DDL
+# from the same EDR_COLUMNS contract these mirror (A-4 anti-divergence).  They
+# are not a second declaration of the schema.
+
+
+class EdrImuSample(Base):
+    """Raw ICM-20948 IMU samples mirrored from the Pi (US-765 / F-142).
+
+    ~25 Hz, always-on (key-on including engine-off -- true black box).  Until
+    this table existed the Pi recorded them faithfully and an hourly age-based
+    purge deleted them, because there was nowhere for them to go.
+    """
+
+    __tablename__ = "edr_imu_sample"
+    __sync_conflict_cols__ = ("source_device", "source_id", "ts_utc")
+
+    source_device: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+
+    ts_capture: Mapped[float] = mapped_column(Float, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    accel_x: Mapped[float | None] = mapped_column(Float)
+    accel_y: Mapped[float | None] = mapped_column(Float)
+    accel_z: Mapped[float | None] = mapped_column(Float)
+    gyro_x: Mapped[float | None] = mapped_column(Float)
+    gyro_y: Mapped[float | None] = mapped_column(Float)
+    gyro_z: Mapped[float | None] = mapped_column(Float)
+    mag_x: Mapped[float | None] = mapped_column(Float)
+    mag_y: Mapped[float | None] = mapped_column(Float)
+    mag_z: Mapped[float | None] = mapped_column(Float)
+    temp_c: Mapped[float | None] = mapped_column(Float)
+    # NULL whenever no drive was RUNNING (the A-9 / DTC-KOEO latch rule).  An
+    # unattributed sample stays unattributed -- never back-filled to a drive.
+    drive_id: Mapped[int | None] = mapped_column(Integer)
+    data_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class EdrLightSample(Base):
+    """Raw TSL2591 light samples mirrored from the Pi (US-765 / F-142).
+
+    1 Hz.  ``lux`` is NULL for a saturated or IR-dominated read, never 0 and
+    never a clamped value -- 0 lux reads as darkness, which is the ARCH-010
+    negative-lux defect in a different costume.
+    """
+
+    __tablename__ = "edr_light_sample"
+    __sync_conflict_cols__ = ("source_device", "source_id", "ts_utc")
+
+    source_device: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+
+    ts_capture: Mapped[float] = mapped_column(Float, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    lux: Mapped[float | None] = mapped_column(Float)
+    visible: Mapped[int | None] = mapped_column(Integer)
+    infrared: Mapped[int | None] = mapped_column(Integer)
+    full_spectrum: Mapped[int | None] = mapped_column(Integer)
+    gain: Mapped[str | None] = mapped_column(String(16))
+    integration_ms: Mapped[int | None] = mapped_column(Integer)
+    drive_id: Mapped[int | None] = mapped_column(Integer)
+    data_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+
 class BatteryHealthLog(Base):
     """UPS drain-event records, mirrored from Pi (US-217 / Spool Session 6).
 

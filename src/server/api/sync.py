@@ -153,6 +153,8 @@ from src.server.db.models import (
     DriveSummary,
     DtcFreezeFrame,
     DtcLog,
+    EdrImuSample,
+    EdrLightSample,
     PiState,
     PowerLog,
     Profile,
@@ -225,6 +227,15 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # opts pi_state into the modified_at cursor so those UPDATEs re-sync).
     # Irreproducible forensic state -- the server mirrors it, never recomputes.
     "pi_state": (PiState, ()),
+    # US-765 (F-142): the EDR raw sample tables -- the destination that did not
+    # exist while the Pi recorded ~1.77M rows a day and purged them by age.
+    # Their upsert conflict target is the TRIPLE, declared on the models as
+    # __sync_conflict_cols__ (the server tables are RANGE-partitioned on ts_utc
+    # and MariaDB requires the partition column in every unique key).  Nothing
+    # else about their sync path is special: the Pi 'id' maps to source_id like
+    # every other capture table.
+    "edr_imu_sample": (EdrImuSample, ()),
+    "edr_light_sample": (EdrLightSample, ()),
 }
 
 # US-369 (F-109): dtc_freeze_frame is a synced capture table but is NOT a
@@ -556,17 +567,49 @@ def runSyncUpsert(
     return result
 
 
+# The conflict target every synced table used before US-765, and still uses
+# unless it says otherwise.  Kept as a named constant rather than a literal so
+# the "unchanged" half of the US-765 seam is assertable in a test.
+_DEFAULT_SYNC_CONFLICT_COLS: tuple[str, ...] = ("source_device", "source_id")
+
+
+def _syncConflictCols(model: type) -> tuple[str, ...]:
+    """Return the upsert conflict target for ``model``.
+
+    Reads ``__sync_conflict_cols__`` off the model when present, else the
+    historic ``(source_device, source_id)`` pair.  US-765 needed this because
+    the EDR raw tables are RANGE-partitioned on ``ts_utc`` and MariaDB requires
+    the partition column in every unique key, so their key is the triple.
+
+    The default is what matters here.  Eleven tables were already upserting
+    against a HARDCODED pair, and a conflict target that shifts silently does
+    not fail loudly -- rows simply start, or stop, colliding.  So the attribute
+    is opt-in per model and its absence is the old behaviour exactly.
+
+    Args:
+        model: A SQLAlchemy model class registered for sync.
+
+    Returns:
+        The ordered conflict column names.
+    """
+    return tuple(getattr(model, "__sync_conflict_cols__", _DEFAULT_SYNC_CONFLICT_COLS))
+
+
 def _upsertBatch(
     session: Session,
     model: type,
     rows: list[dict[str, Any]],
 ) -> None:
-    """Dialect-aware bulk upsert on ``(source_device, source_id)``."""
+    """Dialect-aware bulk upsert on the model's sync conflict columns.
+
+    Defaults to ``(source_device, source_id)`` -- see :func:`_syncConflictCols`.
+    """
     if not rows:
         return
 
     table = model.__table__  # type: ignore[attr-defined]
     dialectName = session.bind.dialect.name  # type: ignore[union-attr]
+    conflictCols = _syncConflictCols(model)
 
     # Normalise keys — executemany needs identical columns on every row.
     allKeys: set[str] = set()
@@ -576,23 +619,30 @@ def _upsertBatch(
         for k in allKeys:
             r.setdefault(k, None)
 
+    # Never SET a conflict column on update.  For every pre-US-765 table both
+    # conflict columns are already in _PRESERVE_ON_UPDATE, so this clause is a
+    # no-op for them and the generated SQL is unchanged; it earns its keep only
+    # for a key column (EDR's ts_utc) that is not server-owned bookkeeping.
+    def _updateColNames() -> list[str]:
+        return [
+            c.name
+            for c in table.columns
+            if c.name in allKeys
+            and c.name not in _PRESERVE_ON_UPDATE
+            and c.name not in conflictCols
+        ]
+
     if dialectName in {"mysql", "mariadb"}:
         stmt = mysql_insert(table)
-        updateCols = {
-            c.name: stmt.inserted[c.name]
-            for c in table.columns
-            if c.name in allKeys and c.name not in _PRESERVE_ON_UPDATE
-        }
+        updateCols = {name: stmt.inserted[name] for name in _updateColNames()}
         stmt = stmt.on_duplicate_key_update(**updateCols)
     elif dialectName == "sqlite":
         stmt = sqlite_insert(table)
         updateCols = {
-            c.name: getattr(stmt.excluded, c.name)
-            for c in table.columns
-            if c.name in allKeys and c.name not in _PRESERVE_ON_UPDATE
+            name: getattr(stmt.excluded, name) for name in _updateColNames()
         }
         stmt = stmt.on_conflict_do_update(
-            index_elements=["source_device", "source_id"],
+            index_elements=list(conflictCols),
             set_=updateCols,
         )
     else:

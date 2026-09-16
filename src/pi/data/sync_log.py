@@ -232,6 +232,24 @@ PK_COLUMN: dict[str, str] = {
     # degenerate-single-row case of the drive_summary UPDATE-replay pattern --
     # so the server mirror stays current across flips.
     'pi_state':             'id',
+    # US-765/US-766 (F-142): the EDR raw sample tables.  Append-only with an
+    # integer 'id' PK, so they delta-sync exactly like every other capture
+    # table -- the id IS the sync cursor, and on the server it arrives as
+    # source_id.
+    #
+    # THIS LINE IS THE ONLY PI-SIDE WIRING NEEDED, which is not obvious:
+    # DELTA_SYNC_TABLES is frozenset(PK_COLUMN.keys()) and IN_SCOPE_TABLES is
+    # that | SNAPSHOT_TABLES, so pushAllDeltas (which walks IN_SCOPE_TABLES)
+    # and countOutstandingRows (which walks DELTA_SYNC_TABLES) both pick these
+    # up from here.  Registering them in a second place would be a second
+    # membership to keep in step.
+    #
+    # Deliberately NOT in SYNC_UPDATE_TABLES_PK: EDR rows are never UPDATEd
+    # after insert, so the parallel modified_at cursor would be dead weight --
+    # and an opt-in that costs a trigger on a table taking ~1.77M rows/day is
+    # not dead weight for long.
+    'edr_imu_sample':       'id',
+    'edr_light_sample':     'id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.

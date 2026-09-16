@@ -436,19 +436,21 @@ class TestTableCount:
         """
         Given: the models module
         When: counting all model classes with __tablename__
-        Then: there are exactly 28 tables (base 15 + baselines from US-162
+        Then: there are exactly 32 tables (base 15 + baselines from US-162
               + analysis_recommendations from US-CMP-005 + dtc_log from US-204
               + battery_health_log from US-217 + drive_counter from US-314
               + dtc_freeze_frame from US-368 + speed_pid_calibration from US-370
               + ecu from US-376 + power_log from US-412
               + startup_log from US-417 + drive_derived_signals from US-436
-              + drives from US-448 + pi_state from US-453)
+              + drives from US-448 + pi_state from US-453
+              + maintenance_log and maintenance_schedule from ARCH-020
+              + edr_imu_sample and edr_light_sample from US-765)
         """
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 30, (
-            f"Expected 30 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 32, (
+            f"Expected 32 tables, got {len(tableNames)}: {tableNames}"
         )
         # ARCH-020 (Atlas, 2026-09-01): 28 -> 30. maintenance_log and
         # maintenance_schedule give the vehicle's service history a durable home;
@@ -457,6 +459,14 @@ class TestTableCount:
         # so a table that appears by accident still trips this guard.
         assert 'maintenance_log' in tableNames
         assert 'maintenance_schedule' in tableNames
+        # US-765 (F-142, ARCH-029): 30 -> 32.  edr_imu_sample and
+        # edr_light_sample are the server's destination for the Pi's EDR raw
+        # samples (migration v0026).  Until they existed the Pi recorded ~1.77M
+        # rows/day and an age-only purge deleted them, because there was nowhere
+        # for them to go.  Named for the same reason as the pair above: a bare
+        # 30 -> 32 would pass with ANY two tables added, which is not a check.
+        assert 'edr_imu_sample' in tableNames
+        assert 'edr_light_sample' in tableNames
 
 
 # ---- Connection Module Tests --------------------------------------------------
