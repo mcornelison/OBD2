@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.52",
-  "theme": "Sprint 88 -- gyro bias guard (closed early)",
-  "description": "Closed early by CIO decision; ships 1 story. US-779 learns gyro rate-bias per run at ZUPT-confirmed stops and rejects a latched-magnitude rate rather than absorbing it, so the A-34 fault stays visible. It also corrects the wrong-axis comment in imu_state_bridge. US-765/766 ship via ARCH-029; US-767/768 carry to Sprint 89 pending an architecture ruling."
+  "version": "V0.29.53",
+  "theme": "ARCH-024/025/028/030 -- EDR write fix + docs",
+  "description": "Architect batch. ARCH-030: EDR persistence reuses one SQLite connection instead of one per row (~900x write amplification); not a P0 fix, US-748 stays open. ARCH-025: deploy preserves the shared runtime dir; stop comments corrected. ARCH-024: anti-patterns scope sub-case gate restated. ARCH-028: architecture.md server-tier EDR section. ARCH-026 had nothing to merge; ARCH-029 follows."
 }
