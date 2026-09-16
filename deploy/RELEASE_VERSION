@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.53",
-  "theme": "ARCH-024/025/028/030 -- EDR write fix + docs",
-  "description": "Architect batch. ARCH-030: EDR persistence reuses one SQLite connection instead of one per row (~900x write amplification); not a P0 fix, US-748 stays open. ARCH-025: deploy preserves the shared runtime dir; stop comments corrected. ARCH-024: anti-patterns scope sub-case gate restated. ARCH-028: architecture.md server-tier EDR section. ARCH-026 had nothing to merge; ARCH-029 follows."
+  "version": "V0.29.54",
+  "theme": "ARCH-029 -- EDR server tables + sync (v0026)",
+  "description": "ARCH-029 ships US-765 and US-766. Migration v0026 creates edr_imu_sample and edr_light_sample on the server, generated from the shared DDL contract, and the Pi's EDR tables enter sync scope. The Pi's parked-car EDR backlog was trimmed first by US-769 --apply (15.0M IMU and 0.73M light rows deleted after a verified backup). Server deploys first; the Pi follows after an applied-schema check."
 }
