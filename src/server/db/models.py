@@ -50,6 +50,11 @@
 # 2026-07-01    | Rex (US-412) | F-101: PowerLog model mirroring Pi's power_log
 #               |              | table (one row per power-source / shutdown-stage
 #               |              | transition).  power_log was Pi-only until US-412.
+# 2026-09-16    | Rex (US-765) | F-142: EdrImuSample + EdrLightSample raw models,
+#               |              | no surrogate id, natural PK (source_device,
+#               |              | source_id, ts_utc) declared as
+#               |              | __sync_conflict_cols__; shape pinned to
+#               |              | src/common/edr/server_ddl.py by test.
 # ================================================================================
 ################################################################################
 
@@ -89,6 +94,7 @@ from sqlalchemy import (
     Computed,
     Date,
     DateTime,
+    Double,
     Float,
     ForeignKey,
     Index,
@@ -897,6 +903,95 @@ class PiState(Base):
     no_new_drives: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0"),
     )
+
+
+# ==============================================================================
+# EDR raw sensor samples (US-765 / F-142)
+# ==============================================================================
+#
+# The columns, their order and their MariaDB types are OWNED by
+# ``src/common/edr/server_ddl.py`` (generated from ``sensor_schema.EDR_COLUMNS``).
+# These models mirror that output and tests/server/test_edr_raw_tables.py compiles
+# them for MariaDB and compares them line by line, so a drift fails a test rather
+# than a deploy.  Declaration ORDER is load-bearing: it is the column order of the
+# compiled DDL.
+#
+# No surrogate ``id``: the tables are RANGE-partitioned on ``ts_utc`` and MariaDB
+# requires the partition column in every unique key, so the natural key
+# ``(source_device, source_id, ts_utc)`` is both the primary key and the upsert
+# conflict key (US-734 spec section 9a.1).  REAL -> FLOAT and ISO text ->
+# DATETIME (seconds) are the casts ruled in that spec (D8), not choices made here.
+# ==============================================================================
+
+EDR_SYNC_CONFLICT_COLS: tuple[str, str, str] = ("source_device", "source_id", "ts_utc")
+
+
+class EdrImuSample(Base):
+    """EDR IMU raw sample, mirrored from the Pi's ``edr_imu_sample`` (US-765).
+
+    One row per IMU burst.  ``source_id`` is the Pi row's ``id``.
+    """
+
+    __tablename__ = "edr_imu_sample"
+    __sync_conflict_cols__ = EDR_SYNC_CONFLICT_COLS
+    __table_args__ = (
+        Index("ix_edr_imu_sample_device_ts", "source_device", "ts_utc"),
+    )
+
+    source_device: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=False,
+    )
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+    ts_capture: Mapped[float] = mapped_column(Double, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    accel_x: Mapped[float | None] = mapped_column(Float)
+    accel_y: Mapped[float | None] = mapped_column(Float)
+    accel_z: Mapped[float | None] = mapped_column(Float)
+    gyro_x: Mapped[float | None] = mapped_column(Float)
+    gyro_y: Mapped[float | None] = mapped_column(Float)
+    gyro_z: Mapped[float | None] = mapped_column(Float)
+    mag_x: Mapped[float | None] = mapped_column(Float)
+    mag_y: Mapped[float | None] = mapped_column(Float)
+    mag_z: Mapped[float | None] = mapped_column(Float)
+    temp_c: Mapped[float | None] = mapped_column(Float)
+    drive_id: Mapped[int | None] = mapped_column(Integer)
+    data_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class EdrLightSample(Base):
+    """EDR light raw sample, mirrored from the Pi's ``edr_light_sample`` (US-765).
+
+    One row per light poll; ``lux`` is NULL when the sensor saturated.
+    """
+
+    __tablename__ = "edr_light_sample"
+    __sync_conflict_cols__ = EDR_SYNC_CONFLICT_COLS
+    __table_args__ = (
+        Index("ix_edr_light_sample_device_ts", "source_device", "ts_utc"),
+    )
+
+    source_device: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=False,
+    )
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+    ts_capture: Mapped[float] = mapped_column(Double, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    lux: Mapped[float | None] = mapped_column(Float)
+    visible: Mapped[int | None] = mapped_column(Integer)
+    infrared: Mapped[int | None] = mapped_column(Integer)
+    full_spectrum: Mapped[int | None] = mapped_column(Integer)
+    gain: Mapped[str | None] = mapped_column(String(16))
+    integration_ms: Mapped[int | None] = mapped_column(Integer)
+    drive_id: Mapped[int | None] = mapped_column(Integer)
+    data_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
 
 
 # ==============================================================================

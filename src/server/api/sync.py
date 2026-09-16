@@ -84,6 +84,10 @@
 #               |              | registry path AND from dtc_freeze_frame's FK
 #               |              | resolver (left untouched).  Registry + model
 #               |              | registry ship empty; startup_log registers US-417.
+# 2026-09-16    | Rex (US-765) | F-142: register edr_imu_sample + edr_light_sample;
+#               |              | _upsertBatch reads the conflict key from the
+#               |              | model (__sync_conflict_cols__), default
+#               |              | (source_device, source_id) unchanged.
 # ================================================================================
 ################################################################################
 
@@ -153,6 +157,8 @@ from src.server.db.models import (
     DriveSummary,
     DtcFreezeFrame,
     DtcLog,
+    EdrImuSample,
+    EdrLightSample,
     PiState,
     PowerLog,
     Profile,
@@ -225,7 +231,17 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # opts pi_state into the modified_at cursor so those UPDATEs re-sync).
     # Irreproducible forensic state -- the server mirrors it, never recomputes.
     "pi_state": (PiState, ()),
+    # US-765 (F-142): EDR raw sensor samples.  Pi ``id`` -> source_id like every
+    # table above, but the models carry NO surrogate id and declare their own
+    # conflict key (source_device, source_id, ts_utc): the tables are partitioned
+    # on ts_utc and MariaDB requires the partition column in every unique key.
+    "edr_imu_sample": (EdrImuSample, ()),
+    "edr_light_sample": (EdrLightSample, ()),
 }
+
+# The upsert conflict key for any model that does not declare
+# ``__sync_conflict_cols__``.
+DEFAULT_SYNC_CONFLICT_COLS: tuple[str, ...] = ("source_device", "source_id")
 
 # US-369 (F-109): dtc_freeze_frame is a synced capture table but is NOT a
 # generic registry table -- its Pi rows carry a cross-tier shape (vehicle_info_vin
@@ -556,17 +572,31 @@ def runSyncUpsert(
     return result
 
 
+def _syncConflictCols(model: type) -> tuple[str, ...]:
+    """Return the upsert conflict key the model declares, else the default."""
+    return tuple(getattr(model, "__sync_conflict_cols__", DEFAULT_SYNC_CONFLICT_COLS))
+
+
 def _upsertBatch(
     session: Session,
     model: type,
     rows: list[dict[str, Any]],
 ) -> None:
-    """Dialect-aware bulk upsert on ``(source_device, source_id)``."""
+    """Dialect-aware bulk upsert on the model's sync conflict key.
+
+    The key is ``model.__sync_conflict_cols__`` when declared (the EDR raw
+    tables, US-765), else ``(source_device, source_id)``.  Conflict-key columns
+    are never in the UPDATE SET.  For every default-keyed table that exclusion is
+    already implied by ``_PRESERVE_ON_UPDATE``, so their SQL is unchanged
+    (pinned byte-identical by tests/server/test_edr_raw_tables.py).
+    """
     if not rows:
         return
 
     table = model.__table__  # type: ignore[attr-defined]
     dialectName = session.bind.dialect.name  # type: ignore[union-attr]
+    conflictCols = _syncConflictCols(model)
+    neverUpdated = _PRESERVE_ON_UPDATE | frozenset(conflictCols)
 
     # Normalise keys — executemany needs identical columns on every row.
     allKeys: set[str] = set()
@@ -581,7 +611,7 @@ def _upsertBatch(
         updateCols = {
             c.name: stmt.inserted[c.name]
             for c in table.columns
-            if c.name in allKeys and c.name not in _PRESERVE_ON_UPDATE
+            if c.name in allKeys and c.name not in neverUpdated
         }
         stmt = stmt.on_duplicate_key_update(**updateCols)
     elif dialectName == "sqlite":
@@ -589,10 +619,10 @@ def _upsertBatch(
         updateCols = {
             c.name: getattr(stmt.excluded, c.name)
             for c in table.columns
-            if c.name in allKeys and c.name not in _PRESERVE_ON_UPDATE
+            if c.name in allKeys and c.name not in neverUpdated
         }
         stmt = stmt.on_conflict_do_update(
-            index_elements=["source_device", "source_id"],
+            index_elements=list(conflictCols),
             set_=updateCols,
         )
     else:
