@@ -723,6 +723,10 @@ class Orchestrator:
 >
 > All six pass review, because in all six something **looks like information and is not.**
 >
+> ⚠️ *scope* carries a sub-case worth knowing by name — **the restated gate**, where the wrong
+> scope came from the **contract** rather than from the author, so the agent who satisfied their
+> own Definition of Done faithfully still shipped a red gate.
+>
 > **The one question that catches every member:** *what would this evidence look like if the claim
 > were FALSE?* If the answer is **"the same"**, it is not evidence. ⚠️ **Apply it to ABSENT evidence
 > too** — the hunt for a Synology snapshot was debugged as a *visibility* problem for two days when
@@ -961,6 +965,58 @@ was never reached."
 failures across `tests/pi tests/common tests/ui`, on both trees"* is a claim someone can check;
 *"no new failures"* is not. ⚠️ **Where a story deletes a symbol or changes a signature, the scope
 that matters is every CALLER** — see *the write fence*, below.
+
+#### Sub-case: the restated gate — when the CONTRACT supplies the wrong scope, not the author
+
+**Added 2026-09-11 (Atlas, ruling on Rex's finding; the measurement and the remedy are his).**
+
+The two examples above share a blame: the **author** chose a run narrower than the claim needed.
+**This sub-case is the one where the author is blameless** — they ran exactly what their Definition
+of Done named, and the DoD was wrong.
+
+| | |
+|---|---|
+| `ruff check src/ tests/` — **US-603's acceptance predicate** | **0** |
+| `make lint` — **what every story's DoD actually names** | **8, exit 1** |
+
+`Makefile:52` also lints `scripts/`, `validate_config.py`, `tools/pm` and
+`specs/golden_code_sample.py` — widened by US-207/TD-018 **after** US-603's predicate was written.
+So US-603 met its predicate, went green, and **left the gate it existed to fix still red.**
+
+🔴 **Why this needs naming separately from the rest of SCOPE.** Rex's framing, and it is exact:
+
+> *"The record decayed in a dimension nobody was counting — the count was not the failure mode
+> here, the SCOPE was."*
+
+⚠️ **It is not CURRENCY:** the number was honestly re-measured (TD-075 and US-603 both did).
+⚠️ **It is not a census:** the predicate was executable and falsifiable. **It ran, it could have
+failed, and it still measured the wrong thing.** The existing rule — *before citing a run, state
+what it could NOT have shown* — puts the duty on the **citer**, and here the citer discharged it
+faithfully. The gap was written into the contract before they arrived.
+
+⚠️ **And it produces the most demoralising outcome this project can generate:** an agent finishes a
+story, runs the command their own DoD names, and sees red — which is precisely the position the
+story existed to end.
+
+**The mechanism is duplication.** A DoD that *restates* a gate's scope is holding a **mirror** of
+that gate, and nothing asserts the two still agree. That is the same disease as the server-address
+mirror-drift (A-15), one layer up: the copy drifts, and only the copy is checked.
+
+**The rule:**
+
+> **A Definition of Done must INVOKE the gate, never RESTATE its scope.** `make lint` is a claim
+> that cannot decay. `ruff check src/ tests/` is a snapshot of what `make lint` meant on the day
+> someone typed it.
+
+**The remedy, already built — US-706 (`01c33cac`), and it is the generalisable move:** the standing
+test does not carry a path list of its own. It **extracts the recipe out of the Makefile and runs
+that.** ⚠️ **A predicate that re-declares the scope can decay away from the gate again; one that
+extracts it cannot.** Where a gate cannot be invoked directly, derive the scope from the gate's own
+definition at run time — never transcribe it.
+
+⚠️ **The generalisation beyond lint:** any acceptance criterion that names paths, table lists, PID
+sets or file globs which exist authoritatively somewhere else is a mirror. **Read them from the
+authority.**
 
 ### Currency — a record cited as current that is not
 
