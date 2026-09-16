@@ -49,9 +49,16 @@ class _FakeSyncClient:
     def __init__(self, summaries: list[_FakeSummary]) -> None:
         self._summaries = list(summaries)
         self.calls = 0
+        # US-766: what the drain asked to be EXCLUDED, recorded so a test can
+        # assert the exclusion is actually forwarded. A fake that silently
+        # swallowed **kwargs would keep passing while the drain quietly stopped
+        # excluding EDR -- the double would be hiding the defect it exists to
+        # expose, so the signature is matched exactly rather than widened.
+        self.excludeTables: tuple[str, ...] | None = None
 
-    def forcePush(self) -> _FakeSummary:
+    def forcePush(self, *, excludeTables=()) -> _FakeSummary:
         self.calls += 1
+        self.excludeTables = tuple(excludeTables)
         if self._summaries:
             return self._summaries.pop(0)
         return _FakeSummary(rowsPushed=0)

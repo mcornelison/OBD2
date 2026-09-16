@@ -603,6 +603,32 @@ class SyncClient:
         with closing(sqlite3.connect(self._dbPath)) as conn, conn:
             sync_log.initDb(conn)  # idempotent; makes the client robust to
             #                         a fresh DB being handed in by tests.
+            # US-766: a registered DELTA table may not be CREATE-d in this DB --
+            # a fresh/partial DB, or a Pi whose schema predates the table. Skip
+            # it gracefully (EMPTY) rather than letting the raw "no such table"
+            # propagate out of getDeltaRows and abort the WHOLE pushAllDeltas
+            # sweep. Exactly the guard pushSnapshot already carries (US-417) and
+            # _readLocalDriveCounter before it; the delta path never needed one
+            # because every delta table was created unconditionally by
+            # ObdDatabase.initialize().
+            #
+            # MEASURED, not hypothetical: registering edr_imu_sample took down
+            # sync for realtime_data, drive_summary and dtc_log alike, because
+            # one missing table raised out of the sweep and nothing else got
+            # pushed. A registration must never be able to do that.
+            tableExists = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name = ?",
+                (tableName,),
+            ).fetchone()
+            if tableExists is None:
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.EMPTY,
+                )
             # US-315: lazy idempotent migration -- ensures the modified_at
             # column + AFTER UPDATE trigger exist on opt-in tables before
             # the cursor query references them.  Pre-flight on a stale Pi

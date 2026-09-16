@@ -351,6 +351,61 @@ class TestPushDeltaOnSnapshotTables:
 
 
 # --------------------------------------------------------------------------- #
+# A REGISTERED delta table this DB does not have (US-766)
+# --------------------------------------------------------------------------- #
+
+
+class TestPushDeltaOnAMissingTable:
+    """Registering a table must never be able to abort the whole sweep.
+
+    MEASURED 2026-09-16, not hypothetical: adding edr_imu_sample to PK_COLUMN
+    made ``getDeltaRows`` raise ``sqlite3.OperationalError: no such table`` out
+    of ``pushAllDeltas``, so realtime_data, drive_summary and dtc_log stopped
+    syncing too -- one absent table took the entire pipeline down.
+
+    ``productionShapedDb`` genuinely lacks the EDR tables (``_createAllInScopeStubs``
+    is a hand-kept list that predates them), so this exercises the real
+    condition rather than a staged one. That is deliberate: teaching the stub
+    helper to create EDR would turn this green while production stayed broken.
+    """
+
+    def test_pushDelta_missingTable_returnsEmptyRatherThanRaising(
+        self, syncClient: SyncClient,
+    ) -> None:
+        result = syncClient.pushDelta("edr_imu_sample")
+        assert result.status is PushStatus.EMPTY
+
+    def test_pushDelta_missingTable_isNotReportedAsAFailure(
+        self, syncClient: SyncClient,
+    ) -> None:
+        """A table this DB never created is not an integrity fault.
+
+        FAILED would mark it for re-attempt and pollute the operator report;
+        the absence is expected on a fresh or older DB.
+        """
+        result = syncClient.pushDelta("edr_imu_sample")
+        assert result.status is not PushStatus.FAILED
+
+    def test_pushDelta_missingTable_makesNoNetworkCall(
+        self, syncClient: SyncClient, recordingOpener: _RecordingOpener,
+    ) -> None:
+        _ = syncClient.pushDelta("edr_imu_sample")
+        assert recordingOpener.calls == []
+
+    def test_pushAllDeltas_sweepSurvivesAnAbsentRegisteredTable(
+        self, syncClient: SyncClient,
+    ) -> None:
+        """The load-bearing one: the sweep must reach PAST the missing table.
+
+        Without the guard this raised and nothing after it was ever pushed.
+        """
+        results = syncClient.pushAllDeltas()
+        returnedNames = {r.tableName for r in results}
+        assert "edr_imu_sample" in returnedNames
+        assert "realtime_data" in returnedNames
+
+
+# --------------------------------------------------------------------------- #
 # pushAllDeltas end-to-end shape after the fix
 # --------------------------------------------------------------------------- #
 

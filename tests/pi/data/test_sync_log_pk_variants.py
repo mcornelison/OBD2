@@ -72,6 +72,8 @@ EXPECTED_PK_COLUMN: dict[str, str] = {
     'dtc_freeze_frame':    'id',  # US-369 (F-109)
     'power_log':           'id',  # US-412 (F-101)
     'pi_state':            'id',  # US-453 (D-7 / F-082) -- mutable singleton
+    'edr_imu_sample':      'id',  # US-766 (F-142) -- EDR raw, append-only
+    'edr_light_sample':    'id',  # US-766 (F-142) -- EDR raw, append-only
 }
 
 # Tables excluded from delta-by-PK sync.  These are upsert/snapshot style --
@@ -220,14 +222,18 @@ class TestDeltaSyncTables:
             sync_log.PK_COLUMN.keys()
         )
 
-    def test_DELTA_SYNC_TABLES_has_twelve_entries(self) -> None:
+    def test_DELTA_SYNC_TABLES_has_fourteen_entries(self) -> None:
         """Crystalize the expected count so additions are deliberate.
 
         Was 6 pre-US-204; 7 with dtc_log; 8 with US-206 drive_summary;
         9 with US-217 battery_health_log; 10 with US-369 dtc_freeze_frame;
-        11 with US-412 power_log (F-101); 12 with US-453 pi_state (D-7).
+        11 with US-412 power_log (F-101); 12 with US-453 pi_state (D-7);
+        14 with US-766 edr_imu_sample + edr_light_sample (F-142).
+
+        This test did its job: registering EDR flipped it red, which is the
+        whole point of pinning a count rather than deriving one.
         """
-        assert len(sync_log.DELTA_SYNC_TABLES) == 12
+        assert len(sync_log.DELTA_SYNC_TABLES) == 14
 
     def test_DELTA_SYNC_TABLES_excludes_profiles(self) -> None:
         assert 'profiles' not in sync_log.DELTA_SYNC_TABLES
