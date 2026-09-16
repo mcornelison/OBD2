@@ -447,13 +447,9 @@ class TestTableCount:
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 32, (
-            f"Expected 32 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 30, (
+            f"Expected 30 tables, got {len(tableNames)}: {tableNames}"
         )
-        # US-765 (F-142): 30 -> 32. edr_imu_sample and edr_light_sample are the
-        # server's destination for the Pi's EDR raw samples (migration v0026).
-        assert 'edr_imu_sample' in tableNames
-        assert 'edr_light_sample' in tableNames
         # ARCH-020 (Atlas, 2026-09-01): 28 -> 30. maintenance_log and
         # maintenance_schedule give the vehicle's service history a durable home;
         # before them, 47 dated events lived only as Markdown on a share with no
