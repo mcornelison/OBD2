@@ -145,6 +145,16 @@ DEFAULT_ZUPT_MIN_STOPS = 5
 # from a physical remount. Rex-derived.
 DEFAULT_ZUPT_WINDOW_STOPS = 20
 
+# ARCH-027: how many recent updates the accel-trust diagnostic averages over.
+# 100 at the 50 Hz sensor rate is a ~2 s window -- long enough that a single
+# pothole does not swing it, short enough to answer "is grade trustworthy NOW"
+# rather than reporting a lifetime average in which a bad minute disappears
+# inside a good hour. The diagnostic changes no filter behaviour; it only
+# reports the decision `update()` already makes, which until now was invisible
+# to every consumer of pitch and grade. (imufusion exposes the same thing as
+# `accelerometer_ignored`; it measured 3-5% on drive 77, 2026-09-16.)
+DEFAULT_ACCEL_TRUST_WINDOW = 100
+
 # US-749: how long a trusted accel must disagree with the fused pitch before the
 # gyro is declared implausible, in multiples of the filter's own tau. 3 tau is the
 # textbook settling time of a first-order filter (1 - e^-3 = 95%): any transient
@@ -277,6 +287,7 @@ class PitchFusion:
         zuptSpeedMaxAgeSec: float = DEFAULT_ZUPT_SPEED_MAX_AGE_S,
         zuptMinStops: int = DEFAULT_ZUPT_MIN_STOPS,
         zuptWindowStops: int = DEFAULT_ZUPT_WINDOW_STOPS,
+        accelTrustWindow: int = DEFAULT_ACCEL_TRUST_WINDOW,
     ) -> None:
         """Bind the estimator to its filter + ZUPT parameters.
 
@@ -289,6 +300,8 @@ class PitchFusion:
                 evidence about motion.
             zuptMinStops: Confirmed stops required before any bias is applied.
             zuptWindowStops: Length of the rolling stop-observation window.
+            accelTrustWindow: Updates the accel-trust diagnostic averages over.
+                Reporting only -- it changes no filter behaviour.
         """
         self._tauS = pitchTauSec if pitchTauSec > 0 else DEFAULT_PITCH_TAU_S
         self._trustBand = accelTrustBand if accelTrustBand > 0 else DEFAULT_ACCEL_TRUST_BAND
@@ -310,6 +323,13 @@ class PitchFusion:
         # US-749 plausibility guard state.
         self._implausibleBoundRad = accelTrustContaminationRad(self._trustBand)
         self._disagreeSince: float | None = None
+        # ARCH-027 accel-trust diagnostic. Rolling, so it answers "is grade
+        # trustworthy NOW" rather than reporting a lifetime average in which a
+        # bad minute disappears inside a good hour.
+        self._accelIgnoredLast = False
+        self._accelTrustWindow: deque[float] = deque(
+            maxlen=max(1, int(accelTrustWindow))
+        )
 
     # -- read side -------------------------------------------------------------
     @property
@@ -354,6 +374,39 @@ class PitchFusion:
         if len(self._stopObs) < self._minStops:
             return 0.0
         return sum(self._stopObs) / len(self._stopObs)
+
+    @property
+    def accelIgnored(self) -> bool:
+        """Whether the LAST update ran without an accelerometer correction.
+
+        True means the reading was too far from 1 g to be treated as gravity, so
+        pitch advanced on gyro integration alone -- which drifts. A consumer
+        seeing this cannot be sure the published grade is fused rather than
+        dead-reckoned.
+
+        Copied in spirit from imufusion's ``accelerometer_ignored`` (ARCH-027,
+        2026-09-16): the one diagnostic that library had which we lacked. It
+        RECORDS the decision ``update()`` already made -- it does not recompute
+        it, because a second copy could disagree with the first and then describe
+        a filter we are not running.
+        """
+        return self._accelIgnoredLast
+
+    @property
+    def accelIgnoredFraction(self) -> float:
+        """Fraction of recent updates that ran without an accel correction.
+
+        Rolling, not lifetime: the useful question is "is grade trustworthy
+        NOW", and a lifetime average buries a bad minute inside a good hour.
+        0.0 before any update -- an absence of evidence, not a clean bill.
+
+        Reference: imufusion measured 3-5% on drive 77. Sustained HIGH values
+        mean the accelerometer is rarely being believed, which on a stationary
+        vehicle points at a scale error rather than at real acceleration.
+        """
+        if not self._accelTrustWindow:
+            return 0.0
+        return sum(self._accelTrustWindow) / len(self._accelTrustWindow)
 
     @property
     def stopCount(self) -> int:
@@ -414,6 +467,13 @@ class PitchFusion:
         accelPitch = pitchRadFromAccel(vec)
         trusted = accelPitch is not None and self._accelIsNearOneG(vec)
 
+        # ARCH-027: record the decision update() is about to act on. Recorded
+        # HERE, before the re-seed branch returns, so a re-seed counts too -- a
+        # filter repeatedly re-seeding across gaps is struggling, and a
+        # diagnostic that skipped those updates would look healthiest then.
+        self._accelIgnoredLast = not trusted
+        self._accelTrustWindow.append(0.0 if trusted else 1.0)
+
         prev, last = self._pitch, self._lastCapture
         self._lastCapture = capture
 
@@ -467,6 +527,11 @@ class PitchFusion:
         self._stopSince = None
         self._lastSpeedCapture = None
         self._disagreeSince = None
+        # The trust history describes the attitude we just discarded, so it goes
+        # with it -- unlike the ZUPT bias above, which survives on purpose
+        # because it is a property of how the board is BOLTED IN.
+        self._accelIgnoredLast = False
+        self._accelTrustWindow.clear()
 
     # -- internals -------------------------------------------------------------
     def _trackDisagreement(self, accelPitch: float, capture: float) -> None:
