@@ -24,6 +24,7 @@ import json
 import sys
 import time
 
+from pi.sensors.mag_fit import ellipticity, sphereFit
 from tools.imu.imu_probe import (
     ADDR_IMU,
     MAG_ADDRESS,
@@ -37,7 +38,6 @@ from tools.imu.imu_probe import (
     readConfiguration,
     readRawSample,
 )
-from tools.imu.mag_fit import ellipticity, sphereFit
 
 
 def main(argv: list[str] | None = None) -> int:

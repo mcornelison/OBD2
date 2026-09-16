@@ -17,7 +17,7 @@ import math
 
 import pytest
 
-from tools.imu.mag_fit import axisRadii, ellipticity, sphereFit
+from pi.sensors.mag_fit import axisRadii, ellipticity, sphereFit
 
 
 def _spherePoints(
