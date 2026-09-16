@@ -163,6 +163,10 @@ from src.pi.power.power_source_pubsub import (  # noqa: E402
     publishPowerSource,
 )
 from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
+from src.pi.power.power_watch.load_shed import (  # noqa: E402
+    DEFAULT_SHED_UNITS,
+    LoadShedder,
+)
 from src.pi.power.power_watch.loss_heartbeat import (  # noqa: E402
     LossHeartbeatSummary,
     PowerLossHeartbeat,
@@ -919,6 +923,19 @@ def main(argv: list[str] | None = None) -> int:
         isPowerLostFn=provider.isPowerLost,
     )
 
+    # ARCH-031 (US-748): shed the heavy, non-essential load the INSTANT power is
+    # lost -- before smoothing decides anything. Measured over nine live cuts
+    # 2026-09-16: with the chromium dashboard up the Pi drew 4.35 W bursty and
+    # lasted 0.678 s on battery; with that one service stopped, 1.886 W and ~7 s.
+    # Everything else the project runs adds ~0.1 W combined.
+    #
+    # Reversible by design: if the loss turns out to be a blip the sequencer
+    # cancels and `restore` puts it back, so nothing is committed on the edge.
+    # Configurable, defaulting to the dashboard alone -- never "stop everything",
+    # because the remaining services are the ones that PRESERVE data.
+    shedUnits = pw_cfg.get("shedUnitsOnPowerLoss", DEFAULT_SHED_UNITS)
+    loadShedder = LoadShedder(shedUnits)
+
     shutdownSequencer = ShutdownSequencer(
         isOnBattery=provider.isPowerLost,
         vcell=monitor.getVcell,
@@ -934,7 +951,14 @@ def main(argv: list[str] | None = None) -> int:
         smoothingPollSec=smoothingPollSec,
         phaseEmitFn=phaseEmitFn,
         prePowerOffFn=prePowerOffFn,
-        powerLossObservedFn=lossHeartbeat.start,
+        # ⚠️ The loss-observed slot takes ONE callable and already held US-748's
+        # heartbeat. Composed with the same per-hook isolation the pre-poweroff
+        # slot uses, so a failing shed can never suppress the time-to-death
+        # instrument -- or vice versa.
+        powerLossObservedFn=composePrePowerOffHooks(
+            lossHeartbeat.start, loadShedder.shed
+        ),
+        powerRestoredFn=loadShedder.restore,
     )
 
     # TRIGGER = the X1209 GPIO6 PLD hardware line via the PowerSourceProvider

@@ -407,5 +407,17 @@ class TestSequencerStartsTheHeartbeat:
         """
         source = Path(powerwatchMain.__file__).read_text(encoding='utf-8')
 
-        assert 'powerLossObservedFn=lossHeartbeat.start' in source
+        # ⚠️ ARCH-031 widened this from the exact-spelling grep
+        # 'powerLossObservedFn=lossHeartbeat.start' to "the heartbeat is IN the
+        # loss-observed wiring". That slot is now COMPOSED -- load shedding runs
+        # on the same edge -- so the old assertion failed on a spelling change
+        # while the behaviour it guards was untouched. Scoping the search to the
+        # slot keeps the defect it was written for (constructed but never
+        # called) fully covered, without pinning the expression to one shape.
+        assert 'powerLossObservedFn=' in source
+        slot = source.split('powerLossObservedFn=', 1)[1].split('powerRestoredFn=', 1)[0]
+        assert 'lossHeartbeat.start' in slot, (
+            'the heartbeat must be WIRED into the loss-observed hook, not merely '
+            'constructed'
+        )
         assert 'emitPriorLossHeartbeat(dbPath)' in source
