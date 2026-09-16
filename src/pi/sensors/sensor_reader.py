@@ -728,7 +728,47 @@ def _makeIcm20948() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
 
     i2cBus = _makeI2c()
     icm = adafruit_icm20x.ICM20948(i2cBus, address=ADDR_IMU)
+    _recoverGyro(icm)
     return _attachDirectMagnetometer(icm, i2cBus)
+
+
+def _recoverGyro(icm: Any, recoveryFn: Callable[[Any], Any] | None = None) -> Any:
+    """Clear the A-34 latched gyro fault at startup, if it is present.
+
+    Ordered BEFORE :func:`_attachDirectMagnetometer` deliberately: both touch
+    bank 0, and the recovery writes a power-management register, so it runs
+    while the chip is in its freshly-initialised state rather than after the
+    magnetometer bypass has reconfigured the auxiliary bus.
+
+    Placed at startup because the precondition the detector needs -- a
+    STATIONARY vehicle -- is guaranteed here and nowhere else: the engine has
+    just been keyed on and the car has not moved. A latched gyro and a real turn
+    produce the same signature, so the check is only sound while we know the car
+    is still.
+
+    A failure NEVER costs the IMU. Same principle as the magnetometer degrade
+    path: losing accel, gyro and mag to fix one channel throws away valid data
+    to punish a broken one. US-749's guard still withholds pitch and grade when
+    the recovery does not take.
+
+    Args:
+        icm: The constructed ICM-20948.
+        recoveryFn: Injection seam for tests; defaults to the real recovery.
+
+    Returns:
+        The outcome, for callers that want to log or assert on it.
+    """
+    from pi.sensors.gyro_recovery import recoverGyroIfFaulted
+
+    runRecovery = recoveryFn or recoverGyroIfFaulted
+    try:
+        outcome = runRecovery(icm)
+    except Exception as exc:  # noqa: BLE001 -- a broken recovery must not cost the IMU
+        logger.error("IMU gyro startup check raised (%s); continuing without recovery", exc)
+        return None
+    if outcome is not None and getattr(outcome, "attempted", False):
+        logger.warning("IMU gyro startup check: %s", outcome.describe())
+    return outcome
 
 
 def _attachDirectMagnetometer(
