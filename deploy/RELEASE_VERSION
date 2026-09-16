@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.54",
-  "theme": "ARCH-029 -- EDR server tables + sync (v0026)",
-  "description": "ARCH-029 ships US-765 and US-766. Migration v0026 creates edr_imu_sample and edr_light_sample on the server, generated from the shared DDL contract, and the Pi's EDR tables enter sync scope. The Pi's parked-car EDR backlog was trimmed first by US-769 --apply (15.0M IMU and 0.73M light rows deleted after a verified backup). Server deploys first; the Pi follows after an applied-schema check."
+  "version": "V0.29.55",
+  "theme": "ARCH-027a -- gyro startup recovery (A-34)",
+  "description": "CIO-directed early merge, split from ARCH-027. At IMU startup the collector checks for the latched gyro fault (A-34) and clears it with a PWR_MGMT_2 gyro off/on, then re-checks; a failed recovery reports recovered=false and never costs the IMU. The faulted path was verified on real silicon 2026-09-16 (self-test 3/3 FAIL -> 3/3 PASS). The rest of ARCH-027 (calibration, probe tools, spec) follows."
 }
