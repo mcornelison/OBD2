@@ -1764,8 +1764,11 @@ step_install_states_tmpfiles() {
     # INDEPENDENT of any unit start order.  /run is a tmpfs on Raspberry Pi OS
     # (wiped every reboot), so the old deploy-time `install -d` ran once and was
     # gone on the next boot; eclipse-obd.service creates only /run/eclipse-obd
-    # (via RuntimeDirectory) on its OWN start and removes it on stop, and never
-    # makes the states/ subdir.  A tmpfiles.d entry is run by
+    # (via RuntimeDirectory) on its OWN start, and never makes the states/
+    # subdir.  The dir survives that unit's stop ONLY because every sharer
+    # declares RuntimeDirectoryPreserve=yes -- systemd does NOT ref-count a shared
+    # RuntimeDirectory (US-737, measured; comment corrected ARCH-025).  None of
+    # that helps at boot, before any unit has started.  A tmpfiles.d entry is run by
     # systemd-tmpfiles-setup early at boot, every boot -- the cold-reboot
     # invariant the bench drill proves (splash renders without eclipse-obd having
     # provisioned the dir).  This is AC#4: the boot-durable provisioning

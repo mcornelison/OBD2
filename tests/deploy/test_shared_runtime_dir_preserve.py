@@ -14,6 +14,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-13    | Rex          | Initial implementation (Sprint 85 US-737)
+# 2026-09-14    | Atlas        | ARCH-025: guard the SECOND wording of the same
+#               | (ARCH-025)   | false premise -- an unconditional "removed on
+#               |              | stop" claim. Two survived US-737 (deploy-pi.sh,
+#               |              | eclipse-obd.service), one beside the very
+#               |              | Preserve=yes that makes it false.
 # ================================================================================
 ################################################################################
 
@@ -54,6 +59,29 @@ NEGATION_RE = re.compile(r"\bnot\b", re.IGNORECASE)
 def _assertsRefCount(line: str) -> bool:
     """True when a line affirms the ref-count claim rather than denying it."""
     return bool(REF_COUNT_CLAIM_RE.search(line)) and not NEGATION_RE.search(line)
+
+
+# ARCH-025: the SECOND wording of the same false premise. US-737 retired every
+# "ref-counts it" line, but two comments still stated the unconditional
+# "removed on stop" -- one of them six lines above the Preserve=yes that makes
+# it false. With Preserve=yes on every sharer (asserted above), no unit's stop
+# removes /run/eclipse-obd, so an UNCONDITIONAL removal-on-stop claim in this
+# tree is stale by construction. A conditional statement of the hazard
+# ("without Preserve=yes ... removed on stop") is true and allowed.
+STOP_REMOVAL_CLAIM_RE = re.compile(
+    r"\b(removed|removes|deleted|deletes)\b(?:\s+\S+){0,2}\s+on\s+(?:its\s+(?:own\s+)?)?stop\b",
+    re.IGNORECASE,
+)
+CONDITIONAL_RE = re.compile(r"\b(without|would|unless|if|not)\b", re.IGNORECASE)
+
+
+def _assertsStopRemoval(line: str) -> bool:
+    """True when a line states, unconditionally, that a stop removes the dir.
+
+    Known limit: a claim wrapped across two comment lines is not seen. The scan
+    below is a line-level guard, as the ref-count guard beside it is.
+    """
+    return bool(STOP_REMOVAL_CLAIM_RE.search(line)) and not CONDITIONAL_RE.search(line)
 
 
 def _directives(unitPath: Path) -> dict[str, list[str]]:
@@ -156,3 +184,49 @@ def test_noRefCountClaimSurvives_inDeploySrcOrArchitecture():
     assert not hits, "retired 'systemd ref-counts RuntimeDirectory' claim survives:\n" + "\n".join(
         hits
     )
+
+
+def test_stopRemovalClaimPredicate_matchesTheStaleWordingOnly():
+    """
+    Given: the two stale phrasings ARCH-025 retires, and true conditional ones
+    When: the stop-removal predicate is applied
+    Then: the stale ones match -- so a zero from the scan is a real zero -- and
+          conditional statements of the hazard do not
+    """
+    stale = (
+        "# /run/eclipse-obd owned by User= on start (tmpfs, removed on stop, cleared on",
+        "    # (via RuntimeDirectory) on its OWN start and removes it on stop, and never",
+        "systemd deletes the dir on its own stop",
+    )
+    for phrase in stale:
+        assert _assertsStopRemoval(phrase), phrase
+    allowed = (
+        "# without Preserve=yes the dir is removed on stop for every sharer",
+        "# stop-before-start removes the restart race",
+        "# RuntimeDirectory=eclipse-obd here would make systemd DELETE that directory",
+    )
+    for phrase in allowed:
+        assert not _assertsStopRemoval(phrase), phrase
+
+
+def test_noUnconditionalStopRemovalClaim_inDeploySrcOrArchitecture():
+    """
+    Given: every sharer of /run/eclipse-obd declares RuntimeDirectoryPreserve=yes
+    When: deploy/, src/ and specs/architecture.md are searched for an
+          unconditional "removed on stop" claim
+    Then: zero hits -- the second wording of the retired premise is gone too
+    """
+    candidates = [p for root in CLAIM_SCAN_ROOTS for p in root.rglob("*") if p.is_file()]
+    candidates += [p for p in CLAIM_SCAN_FILES]
+    assert len(candidates) > 100, f"claim scan saw only {len(candidates)} files"
+
+    hits = []
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for lineNo, line in enumerate(text.splitlines(), start=1):
+            if _assertsStopRemoval(line):
+                hits.append(f"{path.relative_to(REPO_ROOT)}:{lineNo}: {line.strip()}")
+    assert not hits, "stale unconditional 'removed on stop' claim survives:\n" + "\n".join(hits)
