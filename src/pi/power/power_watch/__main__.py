@@ -122,6 +122,13 @@
 #                           custody hook excludes that ONE row from its verdict
 #                           and reports it beside it. The close does not move;
 #                           hook isolation is unchanged.
+# 2026-09-17    | US-776-a  | Sprint 89 / V0.29.57. The drain is bounded by the
+#                           battery, not by three timers: _buildRunSync loses its
+#                           budgetSec pass-fitting bound and pushes until the
+#                           shared backlog reader reads 0; runPipeline joins the
+#                           sync task without perTaskTimeoutSec (never
+#                           abandoned); the sequencer polls the VCELL floor
+#                           instead of waiting totalWindowCapSec.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -398,8 +405,6 @@ def _buildRunSync(
     syncClient: SyncClient,
     *,
     backlogReader=None,
-    budgetSec: float = 0.0,
-    monotonicFn=time.monotonic,
     excludeTables=(),
 ):
     """Adapt SyncClient.forcePush() to the SyncWithServerTask runSync contract.
@@ -423,25 +428,20 @@ def _buildRunSync(
     ~14,500 rows still on the Pi. A confident wrong answer, not merely a
     missing one. This now keeps pushing while rows remain.
 
-    THE BOUND IS MEASURED, NOT INVENTED. An unbounded drain would fight the
-    power budget the sequencer exists to respect (conditionalOutcome 1), so a
-    further pass only starts when the budget still has room for one that lasts
-    as long as the LAST one did. That derives the bound from the observed link
-    speed and ``perTaskTimeoutSec`` -- both already grounded -- rather than
-    inventing a new tunable or a pass count. A slow link self-limits; a fast
-    one drains fully.
-
-    The first pass ALWAYS runs, so the behaviour can never regress below the
-    single-pass drain this replaced.
+    US-776-a -- NO TIME BOUND HERE. The drain makes passes until the backlog
+    reader says 0 (the server has ACKNOWLEDGED every drive row), a pass fails
+    or moves nothing, or the backlog cannot be read. It used to stop when the
+    next pass would not fit ``perTaskTimeoutSec`` (20 s); the CIO ruled the
+    drain ends on confirmation or the battery floor, never a timer. The floor
+    is enforced by ``ShutdownSequencer``'s poll from ANOTHER thread, which is
+    the only place it can be: one pass can block inside forcePush for ~25 min
+    and never reach a pass boundary where this loop could check anything.
 
     Args:
         syncClient: The live SyncClient.
         backlogReader: Zero-arg reader returning a
             :class:`~src.pi.sync.backlog.SyncBacklog`. ``None`` disables
             multi-pass entirely (exactly one pass -- the legacy path).
-        budgetSec: Wall-clock budget for the whole drain. Production passes the
-            shutdown path's own ``perTaskTimeoutSec``.
-        monotonicFn: DI monotonic clock.
         excludeTables: Tables the drain must NOT carry (US-766). Production
             passes the EDR set. The drain budget is seconds; the EDR backlog
             was measured at 15.16M rows and grows ~1.77M/day, so a single pass
@@ -454,14 +454,8 @@ def _buildRunSync(
     """
 
     def runSync() -> None:
-        # The clock is read exactly ONCE per pass: `now` is both the end of the
-        # pass just finished and the start of the next one, so `passElapsed` is
-        # real push time and never accumulates bookkeeping reads.
-        now = monotonicFn()
-        deadline = now + budgetSec
         passes = 0
         while True:
-            passStart = now
             summary = syncClient.forcePush(excludeTables=excludeTables)
             passes += 1
             if summary.disabled:
@@ -475,7 +469,9 @@ def _buildRunSync(
             if backlog.total <= 0:
                 # Either fully delivered, or unreadable -- neither is a reason
                 # to keep pushing. UNKNOWN is not "empty", but it is also not
-                # evidence that another pass would help.
+                # evidence that another pass would help. Custody re-reads the
+                # SAME reader and records UNKNOWN, never DELIVERED, for the
+                # unreadable case.
                 logger.info(
                     "powerwatch sync: drain finished after %d pass(es) -- %s",
                     passes,
@@ -490,18 +486,6 @@ def _buildRunSync(
                     "%d row(s) outstanding -- stopping rather than spinning",
                     passes,
                     backlog.total,
-                )
-                return
-            now = monotonicFn()
-            passElapsed = now - passStart
-            if now + passElapsed > deadline:
-                logger.warning(
-                    "powerwatch sync: drain BOUNDED after %d pass(es) with "
-                    "%d row(s) still outstanding -- another pass (~%.1fs) does "
-                    "not fit the remaining shutdown budget",
-                    passes,
-                    backlog.total,
-                    passElapsed,
                 )
                 return
 
@@ -913,10 +897,11 @@ def main(argv: list[str] | None = None) -> int:
 
     syncTask = SyncWithServerTask(
         serverReachable=detector.isServerReachable,
+        # US-776-a: no budget -- the drain ends on an empty backlog or the
+        # sequencer's VCELL floor poll. Every pass excludes the EDR set.
         runSync=_buildRunSync(
             syncClient,
             backlogReader=readSyncBacklog,
-            budgetSec=perTaskTimeoutSec,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=writeRecord,
@@ -960,7 +945,9 @@ def main(argv: list[str] | None = None) -> int:
     # every case that matters most. (2) runPipeline ABANDONS a task that
     # exceeds perTaskTimeoutSec, and an abandoned thread writes nothing; a
     # custody record that disappears precisely when the queue is too big to
-    # drain would be silent in its own failure mode.
+    # drain would be silent in its own failure mode. (US-776-a: the sync task
+    # is no longer abandoned, but the floor poll can still power off with a
+    # pass in flight, and the record must be written then too.)
     custodyFn = makeSyncCustodyHook(
         recordPath=os.path.join(os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME),
         backlogReader=readSyncBacklog,
@@ -995,8 +982,14 @@ def main(argv: list[str] | None = None) -> int:
     shutdownSequencer = ShutdownSequencer(
         isOnBattery=provider.isPowerLost,
         vcell=monitor.getVcell,
+        # US-776-a: the sync task is joined without perTaskTimeoutSec -- an
+        # abandoned drain would keep pushing and writing SQLite while poweroff
+        # runs. Its bound is the sequencer's floor poll. Every other task keeps
+        # the per-task bound.
         runPipelineFn=lambda: runPipeline(
-            buildV1Tasks(syncTask), perTaskTimeoutSec=perTaskTimeoutSec
+            buildV1Tasks(syncTask),
+            perTaskTimeoutSec=perTaskTimeoutSec,
+            sequencerBoundedTasks=(syncTask.name,),
         ),
         powerOffFn=lambda: subprocess.run(
             ["systemctl", "poweroff"], timeout=poweroffTimeoutSec, check=False

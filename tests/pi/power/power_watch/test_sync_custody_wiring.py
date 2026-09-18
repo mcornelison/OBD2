@@ -15,6 +15,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-29    | Rex (US-621) | Initial -- main() wiring guards for custody.
+# 2026-09-17    | Rex (US-776-a) | The drain must NOT carry budgetSec any more.
 # ================================================================================
 ################################################################################
 """US-621 wiring guards: the service really does record sync custody."""
@@ -114,7 +115,9 @@ class TestTheDrainIsWiredToABacklogReader:
             "_buildRunSync without backlogReader silently reverts to the "
             "one-batch-per-table drain that stranded ~14,500 rows"
         )
-        assert "budgetSec" in kwargs, "the drain must be bounded"
+        # US-776-a: the drain is bounded by the sequencer's VCELL floor poll,
+        # never by a budget here.
+        assert "budgetSec" not in kwargs, "the drain must not be bounded by a timer"
 
     def test_main_sharesOneBacklogReaderBetweenDrainAndCustody(self) -> None:
         """

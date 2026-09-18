@@ -2627,6 +2627,48 @@ table with the `_sync_modified_at` cursor -- so custody counted a row the shutdo
   `<= 3.50 V` depth gate) is unchanged. The exclusion applies on the VCELL-floor fast path too, which
   uses the same pre-poweroff hook.
 
+**The drain is bounded by the battery, not by three timers (US-776-a, Sprint 89 / V0.29.57).** At
+home the drain now keeps pushing until the shared backlog reader returns total 0 -- the server has
+ACKNOWLEDGED every drive row; far-side retention is not observed -- or the VCELL floor is reached,
+whichever comes first (CIO ruling 2026-09-17: "keep syncing until sync complete or out of power").
+Three bounds used to end it first, and each is removed where it lived:
+
+1. **`_buildRunSync` budget** (`__main__.py`). A further pass only started if one as long as the
+   last still fitted `perTaskTimeoutSec` (20 s). Removed: the loop ends on an empty backlog, a failing
+   pass (`RuntimeError` -> the task's single retry -> `SYNC_FAILED_AFTER_RETRY`), a pass that moves
+   nothing, or an unreadable backlog. Custody re-reads the SAME reader, so those last cases record
+   `OUTSTANDING` or `UNKNOWN`, never `DELIVERED`. Every pass still excludes
+   `SHUTDOWN_DRAIN_EXCLUDED_TABLES`.
+2. **`runPipeline` thread abandonment** (`pipeline.py`). `th.join(timeout=perTaskTimeoutSec)` did not
+   cancel a task; it ABANDONED the daemon thread, which kept calling `forcePush` and writing SQLite
+   while `systemctl poweroff` ran. A task named in `sequencerBoundedTasks` is now joined without a
+   timeout. `main()` names only the sync task; every other task, including any future plugin appended
+   to `buildV1Tasks`, keeps the per-task bound.
+3. **The sequencer cap** (`controller.py`). The single `done.wait(totalCapSec)` (45 s) is now a poll on
+   `smoothingPollSec`. The pipeline stays on its own daemon thread. Each interval, the sequencer's
+   thread re-checks `isOnBattery` (power returned -> the existing single cancel and restore) and
+   re-reads VCELL: a SUCCESSFUL read `<= vcellFloorVolts` ends the drain and powers off, **whatever the
+   pipeline thread is doing.** The floor has to be read there. One `forcePush` pass can block for
+   ~25 min (4 attempts x 30 s + 7 s backoff = 127 s per table, x 12 delta tables, `bypassQuarantine=True`)
+   and never reach a pass boundary where the drain loop could check anything (A-24: WiFi drops
+   mid-pass).
+
+`totalCapSec` survives only as the bound while the floor is **blind**: there has been no successful
+VCELL read for `totalCapSec`, or the floor is suppressed for a bootGrace loss (US-788, where the boot
+sag can read below the floor). A hung pipeline behind an unreadable gauge would otherwise hold the Pi
+up until the hardware cut. Stopping early leaves rows for the next sync and can be recovered from; a
+hard cut mid-write cannot. This story terminates on the existing `vcellFloorVolts`; US-776-b gives the
+drain its own floor.
+
+**Why `isServerReachable` is the gate and not an SSID (Atlas ruling 1, 2026-09-17).** An SSID gate is a
+derived proxy. It says "home" when the server is down, and a drain gated on it would spend the
+battery pushing at something that cannot acknowledge a row. `SyncWithServerTask` gates on
+`HomeNetworkDetector.isServerReachable`, which asks the producer that has to confirm. Away from home it
+reads False, `forcePush` is never called, and poweroff follows exactly as before. **Caveat:
+`serverReachable()` is checked once, not polled.** It is read once, at the top of
+`SyncWithServerTask.run` (`sync_with_server.py`). A server that goes away mid-drain is not re-detected
+by this gate. The drain then ends on a failing pass, or on the floor while a pass is blocked.
+
 ### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
 
 An in-progress drain event was written once, at close. A power loss before that close lost the whole
@@ -2666,7 +2708,8 @@ coverage of the case where the observer dies with the observed.
 
 **What the flow above does NOT establish.** §10.6 describes a sequence that needs roughly
 `smoothingSec` (7) + the sync drain (`perTaskTimeoutSec` 20, capped by `totalWindowCapSec` 45) to
-reach `systemctl poweroff`. **Nothing in this section guarantees the supply keeps the Pi up that
+reach `systemctl poweroff`. (Superseded by US-776-a: at home the drain is now bounded by the VCELL
+floor, not by those two timers -- §10.6.3.) **Nothing in this section guarantees the supply keeps the Pi up that
 long.** Atlas cut power twice on 2026-09-14 (16:04:44Z, 16:40:03Z), with all services running.
 Both times:
 

@@ -5,8 +5,8 @@
 #                      (PowerSourceProvider.isPowerLost over X1209 GPIO6 PLD) it
 #                      FIRST applies smoothing -- requires sustained-lost across
 #                      smoothingSec (spec sec 3 in-V1 safety property) -- only
-#                      then runs the bounded pipeline under a total cap and
-#                      powers off. A transient blip (electrical noise, boot
+#                      then runs the pipeline, polling it for power return and
+#                      the VCELL floor, and powers off. A transient blip (electrical noise, boot
 #                      settling) aborts with NO poweroff. A failed VCELL read
 #                      NEVER forces poweroff (uncertain != lost power); the
 #                      VCELL floor is a backstop only on a SUCCESSFUL low read
@@ -61,6 +61,15 @@
 #                              inside bootGrace skips ONLY the VCELL floor fast
 #                              path, through the existing failed-read branch.
 #                              Default False = byte-identical to before.
+# 2026-09-17    | Rex (US-776-a) | The single done.wait(totalCapSec) is now a poll
+#                              on smoothingPollSec: each interval re-checks
+#                              isOnBattery and re-reads VCELL, and a successful
+#                              read <= vcellFloor ends the drain and powers off
+#                              whatever the pipeline thread is doing. totalCapSec
+#                              bounds the drain only while the floor is BLIND (no
+#                              successful read for that long, or suppressed in
+#                              bootGrace), so a hung pipeline still never blocks
+#                              poweroff.
 # ================================================================================
 ################################################################################
 #
@@ -153,13 +162,17 @@ class ShutdownSequencer:
         vcellFloor: Safety-floor in VOLTS. A SUCCESSFUL read <= this, AFTER
             sustained power-lost is confirmed, short-circuits to poweroff.
             A FAILED read never triggers poweroff.
-        totalCapSec: Hard total-window cap (SECONDS) on the pipeline.
+        totalCapSec: US-776-a -- the pipeline's bound while the VCELL floor
+            is BLIND (SECONDS): no successful VCELL read for this long, or the
+            floor suppressed for a bootGrace loss. With the floor readable the
+            pipeline is bounded by the floor, not by this.
         smoothingSec: ``isOnBattery()`` must stay True continuously for at
             least this long (SECONDS) before any poweroff -- the in-V1
             safety property (spec sec 3) that rejects transient/boot blips.
             0 = no smoothing (test only).
         smoothingPollSec: Re-sample cadence (SECONDS) during the smoothing
-            interval.
+            interval, and (US-776-a) the cadence at which the running pipeline
+            is polled for power return and the VCELL floor.
         sleepFn: DI sleep (default time.sleep); tests pass a no-op.
         monotonicFn: DI monotonic clock (default time.monotonic).
         phaseEmitFn: OPTIONAL F-103 shutdown-splash phase-emit hook. Called
@@ -362,7 +375,10 @@ class ShutdownSequencer:
 
         th = threading.Thread(target=_pipe, name="pw-pipeline", daemon=True)
         th.start()
-        done.wait(timeout=self._totalCapSec)  # total cap; a hung pipeline cannot block poweroff
+        # US-776-a: the pipeline runs on its own daemon thread and THIS thread
+        # polls it, so a pipeline blocked inside one forcePush (measured up to
+        # ~25 min per pass) can never block poweroff.
+        self._pollPipeline(done, floorReadable=not suppressFloorFastPath)
         if not self._isOnBattery():
             logger.info(
                 "shutdown-sequencer: power returned during window -- abort, resume normal op"
@@ -376,6 +392,64 @@ class ShutdownSequencer:
         self._emitPhase(PHASE_POWERING_OFF)
         self._runPrePowerOff()
         self._powerOff()
+
+    # ----- US-776-a pipeline poll (the drain's bound is the battery) ----------
+
+    def _pollPipeline(self, done: threading.Event, *, floorReadable: bool) -> None:
+        """Wait for the pipeline, re-reading its bounds every poll interval.
+
+        Returns when the first of these holds:
+
+        * the pipeline finished;
+        * ``isOnBattery()`` reads False -- power returned, and the caller's
+          single power-return check cancels (one restore call site, ARCH-031);
+        * a SUCCESSFUL VCELL read <= ``vcellFloor`` -- the battery, not a timer,
+          ends the drain;
+        * the floor has been BLIND for ``totalCapSec``: no successful read for
+          that long, or ``floorReadable`` is False (a bootGrace loss, US-788,
+          where the boot sag can read below the floor). Without this a hung
+          pipeline plus an unreadable VCELL would hold the Pi up until the
+          hardware cut -- the unrecoverable failure, where stopping early only
+          leaves rows for the next sync.
+
+        Args:
+            done: Set by the pipeline thread when it finishes.
+            floorReadable: False to leave the floor unread (bootGrace).
+        """
+        floorSeenMono = self._monotonic()
+        while not done.wait(timeout=self._smoothingPollSec):
+            if not self._isOnBattery():
+                return
+            now = self._monotonic()
+            if floorReadable:
+                try:
+                    v = self._vcell()
+                except Exception as exc:  # noqa: BLE001 -- a failed read is blind, not low
+                    logger.warning(
+                        "shutdown-sequencer: VCELL read failed during drain (%s) -- "
+                        "floor blind for %.0fs of %.0fs",
+                        exc,
+                        now - floorSeenMono,
+                        self._totalCapSec,
+                    )
+                else:
+                    floorSeenMono = now
+                    if v <= self._vcellFloor:
+                        logger.warning(
+                            "shutdown-sequencer: VCELL %.3f <= floor %.3f during drain "
+                            "-- ending the drain, poweroff now",
+                            v,
+                            self._vcellFloor,
+                        )
+                        return
+            if now - floorSeenMono >= self._totalCapSec:
+                logger.warning(
+                    "shutdown-sequencer: VCELL floor unreadable for %.0fs (cap "
+                    "%.0fs) -- ending the drain, poweroff now",
+                    now - floorSeenMono,
+                    self._totalCapSec,
+                )
+                return
 
     # ----- US-748 power-loss-observed hook (time-to-death heartbeat) ----------
 
