@@ -3429,6 +3429,45 @@ above that layer appeared to work at 0° and 180° and nowhere else.
 (B) for a superseded mount — **ARCH-034**) and the residual spread of 32–39° (that is
 A-30's soft iron, ellipticity 1.78, which needs the calibration).
 
+**🔴 ARCH-034 — THE BODY FRAME IS NOW (C), THE IDENTITY (2026-09-18).** The CIO refitted
+the board on Iris's screwless dash mount with **+X toward the nose**, bubble-levelled
+(static tilt 0.68° / −0.67°, against the old mount's −4.55°). `IMU_BODY_FRAME` binds to
+`IMU_BODY_FRAME_C = {forward:"+x", left:"+y", up:"+z"}`.
+
+**Measured, by US-745's own gate re-run offline** on the 2026-09-18 drive (lap 1, 210
+accel/decel windows, least-squares speed slope over ±1.5 s — adjacent differencing is
+useless because OBD speed is quantised to exactly 1 km/h and one step at dt≈0.1 s fakes
+2.8 m/s²): `r(ax, dv/dt) = +0.798` against `r(ay, dv/dt) = 0.401` ⇒ **X is fore-aft.**
+
+⚠️ **(B) WAS NOT A MISTAKE.** It was measured on 23,770 samples and was correct for the
+mount that existed then. A body frame is a **mounting** fact: it changes when the board
+moves. (A) and (B) stay declared as this vehicle's history.
+
+⚠️ **AND (C) DOES NOT FIX THE COMPASS.** That was **ARCH-033** (the AK09916 axis map — a
+**package** fact that never changes). Swapping this constant leaves the heading's circular
+concentration *R* unchanged at 0.170; it moves only the **offset**, which is all a rotation
+can do. The two were fixed in separate tickets precisely so the verification could tell
+them apart.
+
+🔴 **THE TESTS WERE A SECOND COPY OF THE MOUNTING, and that is the wider lesson.** Thirteen
+tests failed on a one-line change because they hand-wrote *raw board vectors* for one
+mounting (`raw = (-G·sin, 0, G·cos)  # X is the LATERAL one`). They now express
+**vehicle-frame intent** and derive the raw vector through `_toRawAxes()`, so they assert
+the contract and survive the next remount. `pitch_fusion` already warned that *"a second
+copy of the mounting is the defect, not the remedy"* — it was right about the source and
+silent about the suite.
+
+⚠️ **Three tests needed the OPPOSITE treatment and keep literal old-mount vectors:** the
+halves of `test_crownedRoadRoll`, `test_realClimb` and the heading test that record what
+the **identity** frame did wrong under US-708. The identity is now the live frame, so
+deriving those would compare it with itself and assert nothing. Likewise
+`test_gyro_bias_learning`, which replays **real recorded rest data** and is pinned to (B),
+the frame it was measured in. **Derive what asserts the contract; pin what records history.**
+
+⚠️ **Residual yaw is UNSETTLED** — 19.4° (accel vs dv/dt) against ~1.5° and ~13.7° (heading
+vs GPS, two laps), not significantly different at n=22–38 with spreads of 32–39°. This
+constant cannot express a yaw anyway. **Settle it with a square against the board.**
+
 *One transform, at the boundary.* `imu_state_bridge.IMU_BODY_FRAME` is the single
 declaration, and `resolveMountFrame` applies it **once** to each raw channel
 (accel, gyro, mag) on the way in. `_levelFrame` and `PitchFusion` both receive
