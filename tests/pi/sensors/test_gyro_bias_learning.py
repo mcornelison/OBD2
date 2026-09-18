@@ -20,7 +20,7 @@ import csv
 import math
 from pathlib import Path
 
-from pi.sensors.imu_state_bridge import resolveMountFrame
+from pi.sensors.imu_state_bridge import IMU_BODY_FRAME_B, resolveMountFrame
 from pi.sensors.pitch_fusion import (
     GYRO_BIAS_MAX_RAD_S,
     STANDARD_GRAVITY_MS2,
@@ -230,7 +230,14 @@ def test_recordedLatchedFixture_isRejected_andStopErrorIsUnchanged():
     with open(_FIXTURE, newline="") as fh:
         for row in csv.reader(line for line in fh if not line.startswith("#")):
             vals = [float(v) for v in row]
-            rows.append((resolveMountFrame(tuple(vals[0:3])), resolveMountFrame(tuple(vals[3:6]))))
+            # ARCH-034: this fixture is RECORDED data from the PREVIOUS mount,
+            # so it must be read through the frame it was taken in. Using the
+            # live binding would reinterpret a real recording as though the
+            # board had been somewhere it never was.
+            rows.append((
+                resolveMountFrame(tuple(vals[0:3]), IMU_BODY_FRAME_B),
+                resolveMountFrame(tuple(vals[3:6]), IMU_BODY_FRAME_B),
+            ))
     assert len(rows) == 1845
 
     step = 1.0 / _FIXTURE_HZ
@@ -274,7 +281,10 @@ def test_dashMountRestData_pitchCorrectionNearZero_rollAndYawCarryTheBias():
     Then:  it reports the pitch-axis correction as near zero (raw X, 0.012 deg/s)
            while roll (raw Y, forward) and yaw (raw Z, up) carry the real bias.
     """
-    gyro = resolveMountFrame(_degToRad(REST_RAW_DEG_S))
+    # ARCH-034: measured on the PREVIOUS mount -- read it in frame (B), the
+    # frame it was recorded in. The physical fact (this bias, at rest) is
+    # mount-independent; the RAW AXES it was written in are not.
+    gyro = resolveMountFrame(_degToRad(REST_RAW_DEG_S), IMU_BODY_FRAME_B)
     fusion = PitchFusion()
     _stopThenDrive(fusion, gyro)
 

@@ -336,7 +336,10 @@ def test_bridge_faultyGyro_publishesNullPitchAndGrade_withTheTypedReason(tmp_pat
            gravity-removed g-meter stays small (VC5: that path must not regress).
     """
     bridge = ImuStateBridge(None, str(tmp_path))
-    _feedBridge(bridge, (0.0, 0.0, G), (FAULTY_RATE_RAD_S, 0.0, 0.0), seconds=60.0)
+    # ARCH-034: the 09-14 signature put the faulty rate on the PITCH channel.
+    # Under (B) that was raw X; under (C) it is raw Y. The docstring's "under
+    # either mounting" was true of the two mountings that existed then.
+    _feedBridge(bridge, (0.0, 0.0, G), (0.0, FAULTY_RATE_RAD_S, 0.0), seconds=60.0)
     state = _readState(tmp_path)
 
     assert state["pitchDeg"] is None

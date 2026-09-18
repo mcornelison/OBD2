@@ -31,6 +31,7 @@ from pi.sensors.imu_state_bridge import (
     IMU_BODY_FRAME,
     IMU_BODY_FRAME_A,
     IMU_BODY_FRAME_B,
+    IMU_BODY_FRAME_C,
     IMU_STATE_FILENAME,
     STANDARD_GRAVITY_MS2,
     STATE_IMU_PRESENCE,
@@ -153,11 +154,22 @@ def test_imuBodyFrame_declaresTheMeasuredMounting_notTheIdentity():
     """
     assert IMU_BODY_FRAME_A == {"forward": "+y", "left": "-x", "up": "+z"}
     assert IMU_BODY_FRAME_B == {"forward": "-y", "left": "+x", "up": "+z"}
-    assert IMU_BODY_FRAME != _IDENTITY_FRAME, (
-        "the identity frame is the US-708 defect: it reads the LATERAL axis as "
-        "forward, which is why gradePct was computed from roll"
-    )
+    assert IMU_BODY_FRAME_C == {"forward": "+x", "left": "+y", "up": "+z"}
+    # ARCH-034: (C) IS the identity, and on THIS mount that is correct. The
+    # identity was the US-708 defect on the OLD mount, where X was lateral --
+    # never wrong as a map, only as a claim about where the board sat. A body
+    # frame is a MOUNTING fact; (A) and (B) stay declared as history.
+    assert IMU_BODY_FRAME == IMU_BODY_FRAME_C
 
+
+_MEASURED_BASIS_FOR_C = (
+    "IMU_BODY_FRAME must be candidate (C), the identity (+X = nose). MEASURED on "
+    "Iris's screwless dash mount, 2026-09-18 drive, US-745's own gate re-run offline: "
+    "r(ax, dv/dt) = +0.798 vs r(ay, dv/dt) = 0.401 over 210 accel/decel windows "
+    "=> X is FORE-AFT. Static tilt 0.68 / -0.67 deg (bubble-levelled). (B) described "
+    "the PREVIOUS mount and was correct for it; binding (B) on this board publishes "
+    "gLon, gLat and pitch in the wrong axes and rotates the heading."
+)
 
 _MEASURED_BASIS_FOR_B = (
     "IMU_BODY_FRAME must be candidate (B) (+Y = tail, +X = driver). MEASURED on the "
@@ -178,9 +190,9 @@ def test_imuBodyFrame_shippedBinding_isCandidateB_byMeasurement():
            ruling with no executable consumer is how (A) stayed shipped after the
            measurement; this is that consumer, so a revert to (A) fails loudly.
     """
-    assert IMU_BODY_FRAME == IMU_BODY_FRAME_B, _MEASURED_BASIS_FOR_B
-    forward, _, _ = resolveMountFrame((0.0, 1.0, 0.0))
-    assert forward < 0.0, _MEASURED_BASIS_FOR_B
+    assert IMU_BODY_FRAME == IMU_BODY_FRAME_C, _MEASURED_BASIS_FOR_C
+    forward, _, _ = resolveMountFrame((1.0, 0.0, 0.0))
+    assert forward > 0.0, _MEASURED_BASIS_FOR_C
 
 
 def test_imuBodyFrame_bothCandidates_areProperRotations():
@@ -192,8 +204,22 @@ def test_imuBodyFrame_bothCandidates_areProperRotations():
            the frame being right-handed (forward x left = up), so a mirror would
            silently invert the pitch rate rather than fail.
     """
-    for name, frame in (("A", IMU_BODY_FRAME_A), ("B", IMU_BODY_FRAME_B)):
+    for name, frame in (
+        ("A", IMU_BODY_FRAME_A),
+        ("B", IMU_BODY_FRAME_B),
+        ("C", IMU_BODY_FRAME_C),
+        ("the live binding", IMU_BODY_FRAME),
+    ):
         assert abs(_det3(_frameMatrix(frame)) - 1.0) < 1e-12, f"candidate {name} is not a rotation"
+
+    # Guard the guard (ARCH-034): a deliberately MIRRORED map must read as -1,
+    # or this test cannot tell a rotation from a reflection and the warning
+    # above is decorative. ARCH-033 ships the twin of this for the AK09916 map.
+    mirrored = {"forward": "+x", "left": "-y", "up": "+z"}
+    assert abs(_det3(_frameMatrix(mirrored)) + 1.0) < 1e-12, (
+        "a mirrored axis map no longer reads as determinant -1, so this guard "
+        "would pass a reflection"
+    )
 
 
 def test_candidateB_isTheHalfTurnOfCandidateA():
@@ -244,7 +270,9 @@ def test_lateralAcceleration_landsOnGLat_notGLon(tmp_path: Path):
     """
     bridge = ImuStateBridge(None, str(tmp_path), stateHz=4, gravityTauSec=5.0)
     _settle(bridge, (0.0, 0.0, G))
-    bridge.handleSample(_rawAccel((-0.4 * G, 0.0, G), seq=9000, capture=30.5))
+    # ARCH-034: DERIVED from the live frame, never hand-written for one mount.
+    # A shove to the RIGHT is negative-left in vehicle coordinates.
+    bridge.handleSample(_rawAccel(_toRawAxes((0.0, -0.4 * G, G)), seq=9000, capture=30.5))
     state = _readState(tmp_path)
     assert 0.35 <= state["gLat"] <= 0.45, "X must land on gLat (right positive)"
     assert abs(state["gLon"]) <= 0.02, "a corner is not an acceleration"
@@ -259,8 +287,8 @@ def test_foreAftAcceleration_landsOnGLon_notGLat(tmp_path: Path):
     """
     bridge = ImuStateBridge(None, str(tmp_path), stateHz=4, gravityTauSec=5.0)
     _settle(bridge, (0.0, 0.0, G))
-    # US-745: -Y is the nose under the shipped (B) mounting.
-    bridge.handleSample(_rawAccel((0.0, -0.4 * G, G), seq=9000, capture=30.5))
+    # ARCH-034: DERIVED. Accelerating = positive FORWARD in vehicle coordinates.
+    bridge.handleSample(_rawAccel(_toRawAxes((0.4 * G, 0.0, G)), seq=9000, capture=30.5))
     state = _readState(tmp_path)
     assert 0.35 <= state["gLon"] <= 0.45, "Y must land on gLon (accelerating positive)"
     assert abs(state["gLat"]) <= 0.02, "an acceleration is not a corner"
@@ -273,7 +301,12 @@ def test_identityFrame_transposesTheGAxes_theDefectThisStoryRemoves():
     Then:  it comes out on gLon -- a corner reported as an acceleration. Recorded
            so the fix is measured against the defect rather than asserted about.
     """
-    old = resolveMountFrame((0.4 * G, 0.0, G), _IDENTITY_FRAME)
+    # ARCH-034: these are the OLD MOUNT's literal raw axes, kept as HISTORY.
+    # They are not derived from any live constant, because the live frame IS the
+    # identity now -- deriving them would compare the identity with itself and
+    # the contrast this test exists to record would silently vanish.
+    oldMountRaw = (0.4 * G, 0.0, G)          # a LEFTWARD shove, X being lateral then
+    old = resolveMountFrame(oldMountRaw, _IDENTITY_FRAME)
     gravity = resolveMountFrame((0.0, 0.0, G), _IDENTITY_FRAME)
     linear = tuple(old[i] - gravity[i] for i in range(3))
     gLon, gLat = computeHorizontalG(linear, gravity)
@@ -292,13 +325,18 @@ def test_crownedRoadRoll_doesNotRenderAsAGrade(tmp_path: Path):
     rad = math.radians(11.3)
     # RAW axes, written out rather than derived from the constant: rolling the
     # car tilts gravity onto the board's X axis, and X is the LATERAL one.
-    raw = (-G * math.sin(rad), 0.0, G * math.cos(rad))
+    # ARCH-034: DERIVED -- a ROLL tilts gravity onto the vehicle's LEFT axis.
+    raw = _toRawAxes((0.0, -G * math.sin(rad), G * math.cos(rad)))
     bridge = ImuStateBridge(None, str(tmp_path), stateHz=4, gravityTauSec=5.0)
     _settle(bridge, raw)
     assert abs(_readState(tmp_path)["gradePct"]) < 0.5
 
-    # And the defect it replaces, measured on the identical reading.
-    oldGrade = gradePctFromPitchRad(pitchRadFromAccel(resolveMountFrame(raw, _IDENTITY_FRAME)))
+    # And the defect it replaced, on the OLD MOUNT's literal raw reading (X was
+    # the lateral axis then). Kept as history: under the CURRENT mount the
+    # identity is the correct map, so feeding it `raw` would compare the live
+    # frame with itself and quietly assert nothing.
+    oldMountRaw = (-G * math.sin(rad), 0.0, G * math.cos(rad))
+    oldGrade = gradePctFromPitchRad(pitchRadFromAccel(resolveMountFrame(oldMountRaw, _IDENTITY_FRAME)))
     assert abs(oldGrade) > 19.0, f"the pre-US-708 phantom hill was {oldGrade}%"
 
 
@@ -313,14 +351,17 @@ def test_realClimb_rendersAsTheGrade(tmp_path: Path):
            than fixing it" case, and asserting the signed value is what catches it.
     """
     rad = math.atan(0.04)
-    # RAW axes, written out: pitching the nose up tilts gravity onto the board's
-    # Y axis -- Y is the FORE-AFT one, and -Y points at the nose under (B) (US-745).
-    raw = (0.0, -G * math.sin(rad), G * math.cos(rad))
+    # ARCH-034: DERIVED -- a CLIMB tilts gravity onto the vehicle's FORWARD axis.
+    raw = _toRawAxes((G * math.sin(rad), 0.0, G * math.cos(rad)))
     bridge = ImuStateBridge(None, str(tmp_path), stateHz=4, gravityTauSec=5.0)
     _settle(bridge, raw)
     assert abs(_readState(tmp_path)["gradePct"] - 4.0) < 0.3
 
-    oldGrade = gradePctFromPitchRad(pitchRadFromAccel(resolveMountFrame(raw, _IDENTITY_FRAME)))
+    # History, on the OLD MOUNT's literal raw reading: the identity map hid a
+    # real hill as thoroughly as it invented fake ones. Not derived -- see the
+    # crowned-road test for why.
+    oldMountRaw = (0.0, -G * math.sin(rad), G * math.cos(rad))
+    oldGrade = gradePctFromPitchRad(pitchRadFromAccel(resolveMountFrame(oldMountRaw, _IDENTITY_FRAME)))
     assert abs(oldGrade) < 0.5, f"the pre-US-708 code read this climb as {oldGrade}%"
 
 
@@ -338,8 +379,10 @@ def test_gyroPitchRate_isIntegratedFromTheLateralAxis(tmp_path: Path):
     # rotation reads NEGATIVE on the board's X. A roll about the nose reads on Y.
     # The identity frame has these the other way round, which is why the gyro
     # half of the filter was integrating ROLL RATE as pitch (Atlas, spec s7).
-    noseUp = (-0.1, 0.0, 0.0)
-    rollRight = (0.0, 0.1, 0.0)
+    # ARCH-034: DERIVED. Nose-up is a NEGATIVE rate about the vehicle's LEFT
+    # axis (right-handed: forward x left = up); a roll is about FORWARD.
+    noseUp = _toRawAxes((0.0, -0.1, 0.0))
+    rollRight = _toRawAxes((0.1, 0.0, 0.0))
 
     def _pitchAfterOneSecond(rawGyro, statesDir: Path) -> float:
         bridge = ImuStateBridge(None, str(statesDir), stateHz=50, gravityTauSec=5.0)
@@ -373,15 +416,19 @@ def test_heading_noseAtMagneticNorth_readsZero(tmp_path: Path):
     axis fix cannot rescue a signal at the noise floor; that waits on the
     relocation gate (US-695).
     """
-    rawNorth = (0.0, -20.0, 0.0)  # US-745: -Y is the nose under (B)
+    # ARCH-034: DERIVED -- nose at magnetic north means the field lies FORWARD.
+    rawNorth = _toRawAxes((20.0, 0.0, 0.0))
     bridge = ImuStateBridge(None, str(tmp_path))
     bridge.handleSample(_rawMag(rawNorth, seq=1, capture=0.0))
     bridge.handleSample(_rawAccel((0.0, 0.0, G), seq=2, capture=0.02))
     assert _readState(tmp_path)["headingDeg"] == 0.0
 
+    # ARCH-034: the OLD MOUNT's literal raw vector, kept as history. Deriving it
+    # from the live frame would feed the identity to itself and assert nothing.
+    oldMountRawNorth = (0.0, -20.0, 0.0)
     oldHeading = computeHeadingDeg(
         resolveMountFrame((0.0, 0.0, G), _IDENTITY_FRAME),
-        resolveMountFrame(rawNorth, _IDENTITY_FRAME),
+        resolveMountFrame(oldMountRawNorth, _IDENTITY_FRAME),
     )
     # 270 rather than 90 only because the (B) raw vector points along -Y; the
     # error is the same 90 degree transposition either way.
@@ -429,7 +476,8 @@ def test_publishedState_carriesPitchStopCountAndBias(tmp_path: Path):
     bias measured yet" until you can see how many stops are behind it.
     """
     rad = math.radians(3.0)
-    tilt = (0.0, -G * math.sin(rad), G * math.cos(rad))  # RAW: Y is fore-aft
+    # ARCH-034: DERIVED -- a nose-up tilt is positive FORWARD in vehicle coords.
+    tilt = _toRawAxes((G * math.sin(rad), 0.0, G * math.cos(rad)))
     bridge = ImuStateBridge(None, str(tmp_path), pitchFusion=PitchFusion(zuptMinStops=1))
     _convergeOneStop(bridge, tilt)
 
@@ -449,7 +497,8 @@ def test_absentSensor_stillReportsTheCalibrationState(tmp_path: Path):
            vanishes exactly when you are diagnosing something is not one.
     """
     rad = math.radians(3.0)
-    tilt = (0.0, -G * math.sin(rad), G * math.cos(rad))
+    # ARCH-034: DERIVED -- a nose-up tilt is positive FORWARD in vehicle coords.
+    tilt = _toRawAxes((G * math.sin(rad), 0.0, G * math.cos(rad)))
     bridge = ImuStateBridge(None, str(tmp_path), pitchFusion=PitchFusion(zuptMinStops=1))
     at = _convergeOneStop(bridge, tilt)
 
@@ -497,6 +546,8 @@ def test_theMounting_isNotReadFromConfig(tmp_path: Path):
     bridge = createImuStateBridgeFromConfig(config, _NullBus())
     assert bridge is not None
     _settle(bridge, (0.0, 0.0, G))
-    bridge.handleSample(_rawAccel((-0.4 * G, 0.0, G), seq=9000, capture=30.5))
+    # ARCH-034: DERIVED from the live frame, never hand-written for one mount.
+    # A shove to the RIGHT is negative-left in vehicle coordinates.
+    bridge.handleSample(_rawAccel(_toRawAxes((0.0, -0.4 * G, G)), seq=9000, capture=30.5))
     state = _readState(tmp_path)
     assert 0.35 <= state["gLat"] <= 0.45, "the stale config mount must not be honoured"

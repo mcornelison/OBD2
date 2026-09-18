@@ -141,6 +141,7 @@ __all__ = [
     "IMU_BODY_FRAME",
     "IMU_BODY_FRAME_A",
     "IMU_BODY_FRAME_B",
+    "IMU_BODY_FRAME_C",
     "IMU_STATE_FILENAME",
     "MAG_MAX_AGE_POLLS",
     "MAX_GRADE_PITCH_DEG",
@@ -367,7 +368,38 @@ IMU_BODY_FRAME_B = {"forward": "-y", "left": "+x", "up": "+z"}  # +Y = tail, +X 
 # the pitch axis is raw X (left = +x; measured at rest -0.012 deg/s); raw Y is
 # FORWARD, i.e. ROLL (+0.730 deg/s), not pitch. PitchFusion learns the rate bias
 # per run at confirmed stops (US-779), downstream of this boundary.
-IMU_BODY_FRAME = IMU_BODY_FRAME_B
+# ARCH-034 (Atlas, 2026-09-18). (C) -- the CIO refitted the board on Iris's
+# screwless dash mount with +X TOWARD THE NOSE and bubble-levelled it. This is
+# the identity map, and for the first time on this vehicle that is CORRECT.
+#
+# MEASURED, NOT ASSUMED. US-745's own gate, re-run offline on the 2026-09-18
+# drive (lap 1, 210 accel/decel windows, least-squares speed slope over +/-1.5 s
+# windows -- adjacent differencing is useless here because OBD speed is
+# quantised to exactly 1 km/h and one step at dt~0.1 s fakes 2.8 m/s^2):
+#     r(ax, dv/dt) = 0.798   <- strong, POSITIVE
+#     r(ay, dv/dt) = 0.401
+#     => X is FORE-AFT
+# Static tilt on the new mount: 0.68 deg and -0.67 deg (the old one read -4.55).
+#
+# ⚠️ (B) IS NOT A MISTAKE. It was measured on 23,770 samples and was correct for
+# the mount that existed then. A body frame is a MOUNTING fact: it changes when
+# the board moves, and (A)/(B) stay declared because they are this vehicle's
+# history and the source comments above cite them.
+#
+# ⚠️ AND (C) DOES NOT FIX THE COMPASS. That was ARCH-033 (the AK09916 axis map,
+# a PACKAGE fact that never changes). Swapping this constant leaves the heading's
+# circular concentration R unchanged at 0.170 -- it moves only the OFFSET, which
+# is all a rotation can do. The two defects are independent and were deliberately
+# fixed in separate tickets so the verification could tell them apart.
+#
+# ⚠️ RESIDUAL YAW IS UNSETTLED. Three estimates -- 19.4 deg (accel vs dv/dt),
+# ~1.5 deg and ~13.7 deg (heading vs GPS, two laps) -- are not significantly
+# different at n=22-38 with spreads of 32-39 deg. This constant cannot express a
+# yaw anyway: it only permutes and signs axes. Settle it with a square against
+# the board, not another drive.
+IMU_BODY_FRAME_C = {"forward": "+x", "left": "+y", "up": "+z"}  # +X = nose, +Y = left
+
+IMU_BODY_FRAME = IMU_BODY_FRAME_C
 
 _AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
