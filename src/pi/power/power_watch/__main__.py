@@ -823,6 +823,7 @@ def main(argv: list[str] | None = None) -> int:
     perTaskTimeoutSec = float(pw_cfg["perTaskTimeoutSec"])
     totalWindowCapSec = float(pw_cfg["totalWindowCapSec"])
     vcellFloorVolts = float(pw_cfg["vcellFloorVolts"])
+    drainFloorVolts = float(pw_cfg["drainFloorVolts"])
     poweroffTimeoutSec = float(pw_cfg["poweroffTimeoutSec"])
     bootGraceSec = float(pw_cfg["bootGraceSec"])
     smoothingSec = float(pw_cfg["smoothingSec"])
@@ -995,6 +996,9 @@ def main(argv: list[str] | None = None) -> int:
             ["systemctl", "poweroff"], timeout=poweroffTimeoutSec, check=False
         ),
         vcellFloor=vcellFloorVolts,
+        # US-776-b: the running drain stops here; vcellFloor stays the
+        # pre-pipeline backstop.
+        drainFloor=drainFloorVolts,
         totalCapSec=totalWindowCapSec,
         smoothingSec=smoothingSec,
         smoothingPollSec=smoothingPollSec,

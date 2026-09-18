@@ -229,6 +229,12 @@ DEFAULTS: dict[str, Any] = {
     'pi.powerWatch.perTaskTimeoutSec': 20,
     'pi.powerWatch.totalWindowCapSec': 45,
     'pi.powerWatch.vcellFloorVolts': 3.50,
+    # US-776-b: the drain's OWN stopping point, above the vcellFloorVolts
+    # emergency backstop. PROVISIONAL (Atlas 2026-09-17): 3.585 V is the only
+    # voltage on record at a shutdown that FINISHED (in-car key-off #2,
+    # CLEAN_COMPLETE), rounded up. Derivation: specs/architecture.md 10.6.3.
+    # Do not change without the drain's VCELL trajectory data.
+    'pi.powerWatch.drainFloorVolts': 3.60,
     'pi.powerWatch.poweroffTimeoutSec': 30,
     # 2026-05-18 bricking-loop HOTFIX. UpsMonitor.getPowerSource() is a
     # VCELL-trend heuristic; its slope rule reports BATTERY on the boot
@@ -975,17 +981,20 @@ class ConfigValidator:
                     missingFields=[key],
                 )
 
-        floor = self._getNestedValue(config, 'pi.powerWatch.vcellFloorVolts')
-        if floor is not None and (
-            isinstance(floor, bool)
-            or not isinstance(floor, (int, float))
-            or not (3.0 < floor < 4.3)
+        for floorKey in (
+            'pi.powerWatch.vcellFloorVolts',
+            'pi.powerWatch.drainFloorVolts',
         ):
-            raise ConfigValidationError(
-                f"pi.powerWatch.vcellFloorVolts must be a number in "
-                f"(3.0, 4.3) volts (got {floor!r})",
-                missingFields=['pi.powerWatch.vcellFloorVolts'],
-            )
+            floor = self._getNestedValue(config, floorKey)
+            if floor is not None and (
+                isinstance(floor, bool)
+                or not isinstance(floor, (int, float))
+                or not (3.0 < floor < 4.3)
+            ):
+                raise ConfigValidationError(
+                    f"{floorKey} must be a number in (3.0, 4.3) volts (got {floor!r})",
+                    missingFields=[floorKey],
+                )
 
         php = self._getNestedValue(config, 'pi.powerWatch.pldPowerPresentHigh')
         if php is not None and not isinstance(php, bool):

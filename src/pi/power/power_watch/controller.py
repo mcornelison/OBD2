@@ -70,6 +70,9 @@
 #                              successful read for that long, or suppressed in
 #                              bootGrace), so a hung pipeline still never blocks
 #                              poweroff.
+# 2026-09-17    | Rex (US-776-b) | The drain poll stops on its own drainFloor
+#                              (pi.powerWatch.drainFloorVolts), not vcellFloor,
+#                              which stays the pre-pipeline emergency backstop.
 # ================================================================================
 ################################################################################
 #
@@ -148,6 +151,7 @@ class ShutdownSequencer:
         prePowerOffFn: Callable[[], None] | None = None,
         powerLossObservedFn: Callable[[], None] | None = None,
         powerRestoredFn: Callable[[], None] | None = None,
+        drainFloor: float | None = None,
     ):
         """Args:
         isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
@@ -216,12 +220,18 @@ class ShutdownSequencer:
             return promptly (the heartbeat writes on its own thread) and is
             guarded like ``phaseEmitFn``: a hook that raises NEVER blocks
             shutdown. ``None`` (the default) runs the exact legacy path.
+        drainFloor: US-776-b -- the VOLTS the running drain stops on
+            (``pi.powerWatch.drainFloorVolts``). A different decision from
+            ``vcellFloor``, which answers "is the battery already too low to
+            start?" before the pipeline and stays the emergency backstop.
+            ``None`` falls back to ``vcellFloor`` (the US-776-a behaviour).
         """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
         self._runPipeline = runPipelineFn
         self._powerOff = powerOffFn
         self._vcellFloor = vcellFloor
+        self._drainFloor = drainFloor if drainFloor is not None else vcellFloor
         self._totalCapSec = totalCapSec
         self._smoothingSec = smoothingSec
         self._smoothingPollSec = smoothingPollSec
@@ -403,8 +413,9 @@ class ShutdownSequencer:
         * the pipeline finished;
         * ``isOnBattery()`` reads False -- power returned, and the caller's
           single power-return check cancels (one restore call site, ARCH-031);
-        * a SUCCESSFUL VCELL read <= ``vcellFloor`` -- the battery, not a timer,
-          ends the drain;
+        * a SUCCESSFUL VCELL read <= the drain floor (US-776-b: ``drainFloor``,
+          above the ``vcellFloor`` backstop) -- the battery, not a timer, ends
+          the drain;
         * the floor has been BLIND for ``totalCapSec``: no successful read for
           that long, or ``floorReadable`` is False (a bootGrace loss, US-788,
           where the boot sag can read below the floor). Without this a hung
@@ -434,12 +445,12 @@ class ShutdownSequencer:
                     )
                 else:
                     floorSeenMono = now
-                    if v <= self._vcellFloor:
+                    if v <= self._drainFloor:
                         logger.warning(
-                            "shutdown-sequencer: VCELL %.3f <= floor %.3f during drain "
-                            "-- ending the drain, poweroff now",
+                            "shutdown-sequencer: VCELL %.3f <= drain floor %.3f during "
+                            "drain -- ending the drain, poweroff now",
                             v,
-                            self._vcellFloor,
+                            self._drainFloor,
                         )
                         return
             if now - floorSeenMono >= self._totalCapSec:

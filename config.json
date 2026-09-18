@@ -449,6 +449,7 @@
       "cleanupTimeHour": 3
     },
     "powerWatch": {
+      "drainFloorVolts": 3.60,
       "smoothingSec": 7,
       "smoothingPollSec": 1
     },

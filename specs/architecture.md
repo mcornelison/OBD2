@@ -2660,6 +2660,33 @@ up until the hardware cut. Stopping early leaves rows for the next sync and can 
 hard cut mid-write cannot. This story terminates on the existing `vcellFloorVolts`; US-776-b gives the
 drain its own floor.
 
+**The drain has its own floor, above the emergency backstop (US-776-b, Sprint 89 / V0.29.57).** Two
+different decisions, two keys. `pi.powerWatch.vcellFloorVolts` (3.50 V, **unchanged**) answers "is the
+battery already too low to START?" -- read once before the pipeline, and a successful read at or below
+it still skips the pipeline and powers off (the backstop fast path). `pi.powerWatch.drainFloorVolts`
+(**3.60 V, PROVISIONAL**) answers "stop draining NOW" -- it is what the poll in (3) above terminates on.
+Both carry the same `(3.0, 4.3)` V range check in the validator.
+
+*Derivation of 3.60 V.* 3.585 V is the only voltage on record associated with a shutdown that actually
+FINISHED (in-car key-off #2, `CLEAN_COMPLETE`). 3.60 V is that rounded up. It sits above the 3.50 V
+backstop and well above the 3.4712 V measured cliff.
+
+*Why an unmeasured quantity may license this constant (Atlas).* An unmeasured quantity can still license
+a decision, PROVIDED the decision errs in the direction the evidence cannot be wrong about. Terminating
+too EARLY leaves rows on the Pi to sync next trip -- recoverable. Terminating too LATE is a hard cut
+mid-write -- unrecoverable, and the defect this sprint exists to remove. Reading 3.585 V as headroom to
+ARRIVE at 3.50 V is unsound; reading the same endpoint as a STOPPING point can only err toward stopping
+early.
+
+**No claim of safety is made, and a short drain is not a failure.** Neither this section nor the story
+asserts the floor is safe to run to. Loaded VCELL under drain load is NOT measured: on an already
+depleted pack a 3.60 V terminator may end the drain within seconds -- VCELL between 3.50 V and 3.60 V
+starts the pipeline and the first poll ends it. **That is correct behaviour** -- a depleted pack should
+not fund a long drain. A short drain is not evidence that "the bound did not work". Do not change
+3.60 V without the drain's VCELL trajectory data -- that capture is US-790 (deferred; its storage shape
+needs an architectural ruling, because a row written to a synced table during the shutdown turns the
+custody verdict OUTSTANDING, the US-789 defect). Until US-790 ships, 3.60 V stands.
+
 **Why `isServerReachable` is the gate and not an SSID (Atlas ruling 1, 2026-09-17).** An SSID gate is a
 derived proxy. It says "home" when the server is down, and a drain gated on it would spend the
 battery pushing at something that cannot acknowledge a row. `SyncWithServerTask` gates on
