@@ -18,6 +18,9 @@
 #                                pre-poweroff sync custody record. Counts route
 #                                through sync_log.countDeltaRows so the number
 #                                reported is the number a push would send.
+# 2026-09-17    | Rex (US-789) | ROW-level exclusion (RowExclusion): one primary
+#                                key leaves the count and is reported in
+#                                SyncBacklog.excludedRows -- never a table.
 # ================================================================================
 ################################################################################
 """Read-only outstanding-row (sync backlog) reader for the poweroff path.
@@ -32,7 +35,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 
 from src.pi.data import sync_log
@@ -43,6 +46,7 @@ __all__ = [
     "BACKLOG_DELIVERED",
     "BACKLOG_OUTSTANDING",
     "BACKLOG_UNKNOWN",
+    "RowExclusion",
     "SyncBacklog",
     "countOutstandingRows",
 ]
@@ -61,6 +65,27 @@ DEFAULT_BUSY_TIMEOUT_SEC = 5.0
 
 
 @dataclass(frozen=True, slots=True)
+class RowExclusion:
+    """ONE row, named by primary key, left out of an outstanding count (US-789).
+
+    Deliberately a single primary key and never a table. Excluding a whole
+    table is ``excludeTables``' job and is a different claim ("this table is
+    not custody's business"); this type says "this ONE row is known and is
+    reported elsewhere". A table-wide exclusion would be a blind spot a
+    genuinely stranded row could hide in.
+
+    Attributes:
+        table: A delta-sync table name.
+        pk: The row's primary-key value in that table's ``PK_COLUMN``.
+        reason: Why the row is excluded, for the operator reading the record.
+    """
+
+    table: str
+    pk: int
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class SyncBacklog:
     """What the Pi still owes the server, as measured at a point in time.
 
@@ -72,11 +97,16 @@ class SyncBacklog:
             are neither counted nor assumed absent, which is what makes
             ``total`` a LOWER bound whenever this is non-empty.
         error: Free-text cause when the database could not be opened at all.
+        excludedRows: US-789 -- the requested :class:`RowExclusion` rows that
+            WERE outstanding and so were taken out of ``perTable``. A requested
+            exclusion whose row was not outstanding changed nothing and is not
+            listed, so this never claims a row was hidden that was not.
     """
 
     perTable: dict[str, int] = field(default_factory=dict)
     unreadableTables: tuple[str, ...] = ()
     error: str | None = None
+    excludedRows: tuple[RowExclusion, ...] = ()
 
     @property
     def total(self) -> int:
@@ -174,6 +204,36 @@ def _countOneTable(conn: sqlite3.Connection, tableName: str) -> int:
     )
 
 
+def _countExcludedOutstanding(
+    conn: sqlite3.Connection,
+    tableName: str,
+    pks: Collection[int],
+) -> set[int]:
+    """Which of ``pks`` are outstanding in ``tableName`` right now (US-789).
+
+    Uses the SAME delta predicate :func:`sync_log.countDeltaRows` and
+    :func:`sync_log.getDeltaRows` use -- the one US-621 extracted so that a
+    count can never disagree with what a push would send. A second,
+    hand-written "is this row outstanding?" test is exactly the kind of second
+    opinion that predicate exists to prevent.
+    """
+    lastId, _, _, _ = sync_log.getHighWaterMark(conn, tableName)
+    lastModifiedAt = None
+    if tableName in sync_log.SYNC_UPDATE_TABLES_PK:
+        lastModifiedAt = sync_log.getModifiedHighWaterMark(conn, tableName)
+    pkColumn = sync_log.PK_COLUMN[tableName]
+    whereSql, whereParams = sync_log._deltaPredicate(  # noqa: SLF001 -- the one shared predicate
+        conn, tableName, lastId, lastModifiedAt,
+    )
+    placeholders = ", ".join("?" for _ in pks)
+    rows = conn.execute(
+        f"SELECT {pkColumn} FROM {tableName} "  # noqa: S608 -- whitelisted identifiers
+        f"WHERE ({whereSql}) AND {pkColumn} IN ({placeholders})",
+        (*whereParams, *(int(pk) for pk in pks)),
+    ).fetchall()
+    return {int(row[0]) for row in rows}
+
+
 def _tablesInScope(
     excludeTables: Collection[str],
     onlyTables: Collection[str] | None,
@@ -204,6 +264,7 @@ def countOutstandingRows(
     busyTimeoutSec: float = DEFAULT_BUSY_TIMEOUT_SEC,
     excludeTables: Collection[str] = (),
     onlyTables: Collection[str] | None = None,
+    excludeRows: Iterable[RowExclusion] = (),
 ) -> SyncBacklog:
     """Measure what the Pi still owes the server. READ-ONLY. NEVER raises.
 
@@ -233,6 +294,11 @@ def countOutstandingRows(
             EDR archive must never make a clean poweroff report OUTSTANDING.
         onlyTables: When not None, count ONLY these tables. Used to report the
             EDR backlog beside the verdict rather than inside it.
+        excludeRows: US-789 -- individual rows, by primary key, to leave out
+            of the count. Each one that was actually outstanding is subtracted
+            from its table's count and listed in ``excludedRows``; every OTHER
+            row in that table still counts. A table whose count fails leaves
+            its exclusions unapplied rather than guessed.
 
     Returns:
         A :class:`SyncBacklog`. On any failure to open or read the database the
@@ -256,6 +322,10 @@ def countOutstandingRows(
         existing = _existingTables(conn)
         perTable: dict[str, int] = {}
         unreadable: list[str] = []
+        excludedByTable: dict[str, list[RowExclusion]] = {}
+        for exclusion in excludeRows:
+            excludedByTable.setdefault(exclusion.table, []).append(exclusion)
+        applied: list[RowExclusion] = []
         for tableName in _tablesInScope(excludeTables, onlyTables):
             if tableName not in existing:
                 # A table this DB has never created cannot hold unsynced rows.
@@ -263,7 +333,16 @@ def countOutstandingRows(
                 # UNKNOWN forever and the signal would be worthless.
                 continue
             try:
-                perTable[tableName] = _countOneTable(conn, tableName)
+                count = _countOneTable(conn, tableName)
+                wanted = excludedByTable.get(tableName, [])
+                if wanted and count:
+                    hit = _countExcludedOutstanding(
+                        conn, tableName, {e.pk for e in wanted},
+                    )
+                    matched = [e for e in wanted if e.pk in hit]
+                    count -= len(hit)
+                    applied.extend(matched)
+                perTable[tableName] = count
             except Exception as exc:  # noqa: BLE001 -- one bad table must not blind the rest
                 logger.warning(
                     "sync backlog: %s unreadable (%s) -- counted as UNKNOWN, "
@@ -273,7 +352,9 @@ def countOutstandingRows(
                 )
                 unreadable.append(tableName)
         return SyncBacklog(
-            perTable=perTable, unreadableTables=tuple(unreadable)
+            perTable=perTable,
+            unreadableTables=tuple(unreadable),
+            excludedRows=tuple(applied),
         )
     except Exception as exc:  # noqa: BLE001 -- runs before poweroff; never raise
         logger.warning("sync backlog: database unreadable (%s)", exc)

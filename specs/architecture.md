@@ -2604,6 +2604,29 @@ diagnostic that can hold a dying machine open is worse than no diagnostic.
 **Explicit non-goal:** a *guaranteed* full drain. On a UPS budget that is not achievable, and
 promising it would be the same over-claim this section exists to remove.
 
+**The shutdown's own drain-close row is excluded, by primary key, and reported beside the verdict
+(US-789, Sprint 89 / V0.29.57) [Atlas shape (c), 2026-09-17].** `composePrePowerOffHooks(drainCloseFn,
+custodyFn)` runs the US-526 close FIRST, and the close UPDATEs a `battery_health_log` row -- a delta
+table with the `_sync_modified_at` cursor -- so custody counted a row the shutdown had just written and
+**read `OUTSTANDING` on every graceful shutdown**. The fix:
+
+- **Named type:** `RowExclusion(table, pk, reason)` (`src/pi/sync/backlog.py`). `countOutstandingRows(...,
+  excludeRows=)` subtracts each excluded row **only if it is actually outstanding** (tested through the
+  same `_deltaPredicate` a push uses) and lists it in `SyncBacklog.excludedRows`. It is ROW-level and
+  does **not** reuse `excludeTables`: **one primary key, never a table.** A `battery_health_log` row
+  stranded by an *earlier* drain still counts and still yields `OUTSTANDING`.
+- **Handoff:** `OwnDrainCloseSlot` (`sync_custody.py`), a single slot. `buildDrainCloseHook` **clears** it,
+  closes, and records the `drain_event_id` **only when the close actually wrote the row**. Hook isolation
+  is unchanged -- return values are still discarded -- and custody never depends on the close: an empty
+  slot (close failed, raised, or found nothing) means custody counts every row.
+- **Beside the verdict:** the record's `ownDrainCloseExcluded` field
+  (`{table, drain_event_id, reason, wasOutstanding}`, or `null` when no exclusion was requested) and a
+  WARNING line under its own prefix `powerwatch: OWN DRAIN CLOSE =` -- the `edrOutstandingRows` /
+  `EDR BACKLOG =` pattern from US-766. Nothing is hidden.
+- **The close does not move.** It stays first, with its close-time UPS read, so `end_vcell_v` (Spool's
+  `<= 3.50 V` depth gate) is unchanged. The exclusion applies on the VCELL-floor fast path too, which
+  uses the same pre-poweroff hook.
+
 ### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
 
 An in-progress drain event was written once, at close. A power loss before that close lost the whole

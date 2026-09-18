@@ -23,6 +23,10 @@
 #                                floor fast-path SKIPS the pipeline, and that is
 #                                precisely the run-to-cutoff shutdown carrying
 #                                the most undelivered data.
+# 2026-09-17    | Rex (US-789) | The drain-close row THIS shutdown just wrote is
+#                                excluded from the verdict by its drain_event_id
+#                                (OwnDrainCloseSlot) and reported beside it in
+#                                ownDrainCloseExcluded. One PK, never the table.
 # ================================================================================
 ################################################################################
 """The pre-poweroff sync-custody record (US-621).
@@ -43,11 +47,13 @@ import logging
 from collections.abc import Callable
 
 from src.common.time.helper import utcIsoNow
+from src.pi.data.sync_log import PK_COLUMN
 from src.pi.power.power_watch.outcome import writeAtomicJson
 from src.pi.sync.backlog import (
     BACKLOG_DELIVERED,
     BACKLOG_OUTSTANDING,
     BACKLOG_UNKNOWN,
+    RowExclusion,
     SyncBacklog,
     countOutstandingRows,
 )
@@ -58,6 +64,10 @@ __all__ = [
     "CUSTODY_RECORD_FILENAME",
     "CUSTODY_RECORD_SCHEMA_VERSION",
     "EDR_BACKLOG_PREFIX",
+    "OWN_DRAIN_CLOSE_PREFIX",
+    "OWN_DRAIN_CLOSE_REASON",
+    "OWN_DRAIN_CLOSE_TABLE",
+    "OwnDrainCloseSlot",
     "SYNC_CUSTODY_PREFIX",
     "buildCustodyRecord",
     "emitSyncCustody",
@@ -78,6 +88,16 @@ SYNC_CUSTODY_PREFIX = "powerwatch: SYNC CUSTODY ="
 # Distinct prefix, distinct question, same shutdown.
 EDR_BACKLOG_PREFIX = "powerwatch: EDR BACKLOG ="
 
+# US-789: the row the shutdown's OWN drain close writes, reported beside the
+# verdict under its own prefix for the same reason EDR has one -- a second line
+# under SYNC_CUSTODY_PREFIX would give one question two answers.
+OWN_DRAIN_CLOSE_PREFIX = "powerwatch: OWN DRAIN CLOSE ="
+
+# The drain close writes battery_health_log (keyed by drain_event_id). Named
+# once here so the exclusion, the record and the tests cannot drift apart.
+OWN_DRAIN_CLOSE_TABLE = "battery_health_log"
+OWN_DRAIN_CLOSE_REASON = "written by this shutdown's own drain close"
+
 CUSTODY_RECORD_SCHEMA_VERSION: int = 1
 
 # Sits beside powerwatch_outcome.json in the existing data/ dir. A SEPARATE
@@ -87,11 +107,75 @@ CUSTODY_RECORD_SCHEMA_VERSION: int = 1
 CUSTODY_RECORD_FILENAME = "powerwatch_sync_custody.json"
 
 
+class OwnDrainCloseSlot:
+    """Single-slot handoff: the drain close WRITES it, custody READS it (US-789).
+
+    ``composePrePowerOffHooks`` runs each hook in isolation and discards return
+    values -- deliberately, so a failing US-526 close cannot silently delete the
+    US-621 custody record. This slot is the only channel between the two, and
+    it is shaped so custody never DEPENDS on the close: an empty slot simply
+    means "count normally".
+
+    The close clears the slot before it tries, and records an id only when it
+    actually closed a row. A close that failed, found nothing, or raised leaves
+    the slot empty, so custody can never exclude a row that was never written.
+    """
+
+    __slots__ = ("_drainEventId",)
+
+    def __init__(self) -> None:
+        self._drainEventId: int | None = None
+
+    def clear(self) -> None:
+        """Forget any previous close. Called by the close before it runs."""
+        self._drainEventId = None
+
+    def record(self, drainEventId: int) -> None:
+        """Remember the drain_event_id this shutdown's close just wrote."""
+        self._drainEventId = int(drainEventId)
+
+    @property
+    def drainEventId(self) -> int | None:
+        """The closed row's id, or None when nothing was closed."""
+        return self._drainEventId
+
+    def exclusion(self) -> RowExclusion | None:
+        """The typed ONE-row exclusion for custody, or None to count normally."""
+        if self._drainEventId is None:
+            return None
+        return RowExclusion(
+            table=OWN_DRAIN_CLOSE_TABLE,
+            pk=self._drainEventId,
+            reason=OWN_DRAIN_CLOSE_REASON,
+        )
+
+
+def _ownDrainCloseField(
+    exclusion: RowExclusion | None, backlog: SyncBacklog,
+) -> dict | None:
+    """The ``ownDrainCloseExcluded`` record field.
+
+    ``None`` means NO exclusion was requested (the close wrote nothing, failed,
+    or is unwired) -- custody counted every row. Otherwise it names the row and
+    says whether it was outstanding, i.e. whether excluding it actually moved
+    the count. Nothing is hidden: the row is always on the record.
+    """
+    if exclusion is None:
+        return None
+    return {
+        "table": exclusion.table,
+        PK_COLUMN[exclusion.table]: exclusion.pk,
+        "reason": exclusion.reason,
+        "wasOutstanding": exclusion in backlog.excludedRows,
+    }
+
+
 def buildCustodyRecord(
     backlog: SyncBacklog,
     *,
     nowIso: str,
     edrBacklog: SyncBacklog | None = None,
+    ownDrainClose: RowExclusion | None = None,
 ) -> dict:
     """Compose the durable custody record for one poweroff.
 
@@ -113,6 +197,8 @@ def buildCustodyRecord(
         edrBacklog: The EDR-only backlog, when it was measured. ``None`` means
             NOT MEASURED and is recorded as ``None`` -- never 0, which would
             claim the EDR queue was looked at and found empty.
+        ownDrainClose: US-789 -- the exclusion requested for this shutdown's
+            own drain-close row, or ``None`` when none was requested.
 
     Returns:
         A JSON-serialisable record body.
@@ -130,6 +216,8 @@ def buildCustodyRecord(
         # US-766: a typed absence, not a zero. Reported separately so it can
         # never move the verdict above.
         "edrOutstandingRows": None if edrBacklog is None else edrBacklog.total,
+        # US-789: the row this shutdown's own close wrote, BESIDE the verdict.
+        "ownDrainCloseExcluded": _ownDrainCloseField(ownDrainClose, backlog),
         "ts": nowIso,
     }
 
@@ -140,6 +228,7 @@ def emitSyncCustody(
     recordPath: str,
     nowIsoFn: Callable[[], str] | None = None,
     edrBacklog: SyncBacklog | None = None,
+    ownDrainClose: RowExclusion | None = None,
 ) -> str:
     """State sync custody for this poweroff, on BOTH channels. Never raises.
 
@@ -159,6 +248,9 @@ def emitSyncCustody(
         backlog: The backlog measured at poweroff.
         recordPath: Destination path for the durable record.
         nowIsoFn: DI clock (default UTC now).
+        edrBacklog: The EDR-only backlog, reported beside the verdict.
+        ownDrainClose: US-789 -- this shutdown's own drain-close exclusion,
+            reported beside the verdict.
 
     Returns:
         The exact line logged, so a caller can re-state it without recomposing
@@ -201,10 +293,29 @@ def emitSyncCustody(
             edrBacklog.describe(),
         )
 
+    # US-789: the row the shutdown itself just wrote, stated beside the verdict
+    # so the exclusion is never silent. WARNING for the US-566 reason above.
+    if ownDrainClose is not None:
+        logger.warning(
+            "%s %s %s=%d (%s) -- %s; excluded from the custody verdict above.",
+            OWN_DRAIN_CLOSE_PREFIX,
+            ownDrainClose.table,
+            PK_COLUMN[ownDrainClose.table],
+            ownDrainClose.pk,
+            "outstanding" if ownDrainClose in backlog.excludedRows
+            else "not outstanding",
+            ownDrainClose.reason,
+        )
+
     nowIso = nowIsoFn() if nowIsoFn is not None else utcIsoNow()
     writeAtomicJson(
         recordPath,
-        buildCustodyRecord(backlog, nowIso=nowIso, edrBacklog=edrBacklog),
+        buildCustodyRecord(
+            backlog,
+            nowIso=nowIso,
+            edrBacklog=edrBacklog,
+            ownDrainClose=ownDrainClose,
+        ),
         what="custody",
     )
     return line
@@ -217,6 +328,7 @@ def makeSyncCustodyHook(
     dbPath: str = "",
     busyTimeoutSec: float | None = None,
     edrBacklogReader: Callable[[], SyncBacklog] | None = None,
+    ownDrainCloseSlot: OwnDrainCloseSlot | None = None,
 ) -> Callable[[], None]:
     """Build the zero-arg pre-poweroff custody hook.
 
@@ -233,6 +345,12 @@ def makeSyncCustodyHook(
         busyTimeoutSec: SQLite busy timeout for the default reader. Callers
             pass the shutdown path's own bound so a locked database can never
             delay a poweroff.
+        edrBacklogReader: Zero-arg EDR-only backlog reader (US-766).
+        ownDrainCloseSlot: US-789 -- the slot the drain close writes. When it
+            holds an id, ``backlogReader`` is called with
+            ``excludeRows=(<that one row>,)``; when it is empty (the close
+            failed or wrote nothing) the reader is called with no exclusion
+            and custody counts every row.
 
     Returns:
         A zero-arg callable suitable for ``ShutdownSequencer(prePowerOffFn=)``.
@@ -240,12 +358,27 @@ def makeSyncCustodyHook(
     """
     if backlogReader is None:
         kwargs = {} if busyTimeoutSec is None else {"busyTimeoutSec": busyTimeoutSec}
-        def backlogReader() -> SyncBacklog:  # noqa: E306 -- local default reader
-            return countOutstandingRows(dbPath, **kwargs)  # type: ignore[arg-type]
+        def backlogReader(**extra) -> SyncBacklog:  # noqa: E306 -- local default reader
+            return countOutstandingRows(dbPath, **kwargs, **extra)  # type: ignore[arg-type]
 
     def _emit() -> None:
+        # US-789: read the slot WHEN THE HOOK FIRES -- the close runs first in
+        # the same composed hook, so this is the id it just wrote (or nothing).
+        ownDrainClose: RowExclusion | None = None
+        if ownDrainCloseSlot is not None:
+            try:
+                ownDrainClose = ownDrainCloseSlot.exclusion()
+            except Exception as exc:  # noqa: BLE001 -- never block a poweroff
+                logger.warning(
+                    "powerwatch: own-drain-close slot unreadable (%s) -- "
+                    "custody counts every row",
+                    exc,
+                )
         try:
-            backlog = backlogReader()
+            if ownDrainClose is None:
+                backlog = backlogReader()
+            else:
+                backlog = backlogReader(excludeRows=(ownDrainClose,))
         except Exception as exc:  # noqa: BLE001 -- never block a poweroff
             # Report UNKNOWN, never DELIVERED. Swallowing a reader fault into a
             # clean-looking record would manufacture the exact false assurance
@@ -275,7 +408,10 @@ def makeSyncCustodyHook(
 
         try:
             emitSyncCustody(
-                backlog=backlog, recordPath=recordPath, edrBacklog=edrBacklog,
+                backlog=backlog,
+                recordPath=recordPath,
+                edrBacklog=edrBacklog,
+                ownDrainClose=ownDrainClose,
             )
         except Exception as exc:  # noqa: BLE001 -- belt+braces on the poweroff path
             logger.error("powerwatch: sync-custody emit failed (%s)", exc)

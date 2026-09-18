@@ -117,6 +117,11 @@
 #                           shed, heartbeat, smoothing, pipeline and graceful
 #                           poweroff all run. Post-grace branch unchanged. No
 #                           constant changed.
+# 2026-09-17    | US-789  | Sprint 89 / V0.29.57. The drain close records the
+#                           drain_event_id it wrote in an OwnDrainCloseSlot; the
+#                           custody hook excludes that ONE row from its verdict
+#                           and reports it beside it. The close does not move;
+#                           hook isolation is unchanged.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -183,6 +188,7 @@ from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
 from src.pi.power.power_watch.pld_witness import readWitness  # noqa: E402
 from src.pi.power.power_watch.sync_custody import (  # noqa: E402
     CUSTODY_RECORD_FILENAME,
+    OwnDrainCloseSlot,
     makeSyncCustodyHook,
 )
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
@@ -558,6 +564,7 @@ def buildDrainCloseHook(
     config: dict,
     upsResolver,
     uptimeReader=None,
+    ownDrainCloseSlot: OwnDrainCloseSlot | None = None,
 ):
     """Build the pre-poweroff drain-event close (US-526 PRIMARY close).
 
@@ -582,6 +589,9 @@ def buildDrainCloseHook(
             None). Resolved at CLOSE time, never captured.
         uptimeReader: Optional uptime reader for the SoC%% cold-start guard;
             defaults to the real ``/proc/uptime`` reader.
+        ownDrainCloseSlot: US-789 -- cleared before the close and given the
+            drain_event_id only when the close actually wrote the row, so the
+            custody hook that runs next can exclude exactly that one row.
 
     Returns:
         A zero-arg callable for ``ShutdownSequencer(prePowerOffFn=...)``, or
@@ -610,7 +620,15 @@ def buildDrainCloseHook(
         # The writer swallows its own faults (it must never break a poweroff);
         # the sequencer guards this call as well -- belt and braces on the one
         # path where a raise would be worst.
-        writer.closeOpenDrainEvent(reason=CLOSE_REASON_SHUTDOWN)
+        #
+        # US-789: cleared FIRST, so a close that finds nothing, fails, or
+        # raises leaves custody counting every row -- it can never exclude a
+        # row that was never written.
+        if ownDrainCloseSlot is not None:
+            ownDrainCloseSlot.clear()
+        result = writer.closeOpenDrainEvent(reason=CLOSE_REASON_SHUTDOWN)
+        if ownDrainCloseSlot is not None and result is not None and result.closed:
+            ownDrainCloseSlot.record(result.drainEventId)
 
     return _closeDrain
 
@@ -872,11 +890,15 @@ def main(argv: list[str] | None = None) -> int:
     # because a drain that skipped EDR while its backlog reader still counted
     # EDR would never see "empty" and would spend the entire shutdown window on
     # passes that move nothing.
-    def readSyncBacklog():
+    #
+    # US-789: custody passes excludeRows (one row, by primary key) -- table
+    # membership stays identical for both callers; the drain passes none.
+    def readSyncBacklog(excludeRows=()):
         return countOutstandingRows(
             dbPath,
             busyTimeoutSec=perTaskTimeoutSec,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
+            excludeRows=excludeRows,
         )
 
     # A DIFFERENT question, deliberately not folded into the reader above: how
@@ -915,9 +937,19 @@ def main(argv: list[str] | None = None) -> int:
     # path -- the PRIMARY close. The collector opened it at wall-power loss; the
     # depth recorded here (end_vcell_v) is what Spool's gate qualifies on. The
     # UPS is resolved at close time, never captured.
+    #
+    # US-789 [Atlas shape (c)]: the close runs FIRST in the composed hook and
+    # writes a battery_health_log row that custody would otherwise count,
+    # making every graceful shutdown read OUTSTANDING. The close stays exactly
+    # where it is (end_vcell_v is its close-time depth); it just hands its
+    # drain_event_id to custody through this slot, which custody excludes and
+    # reports beside the verdict. Hook isolation is kept: an empty slot means
+    # custody counts every row.
+    ownDrainCloseSlot = OwnDrainCloseSlot()
     drainCloseFn = buildDrainCloseHook(
         config=config,
         upsResolver=lambda: monitor,
+        ownDrainCloseSlot=ownDrainCloseSlot,
     )
 
     # US-621 [same placement argument as US-526 Option C]: the custody record
@@ -933,6 +965,7 @@ def main(argv: list[str] | None = None) -> int:
         recordPath=os.path.join(os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME),
         backlogReader=readSyncBacklog,
         edrBacklogReader=readEdrBacklog,
+        ownDrainCloseSlot=ownDrainCloseSlot,
     )
     prePowerOffFn = composePrePowerOffHooks(drainCloseFn, custodyFn)
 
