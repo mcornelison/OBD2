@@ -3830,6 +3830,29 @@ because production cannot raise here. *(Raised at the Sprint 88 design gate;
 recorded because a test that patches a raise would pass while production could
 never produce one — the inert-guard shape, `specs/anti-patterns.md`.)*
 
+**`ConnectionStatus.signalReadable` — the producer records whether its read
+completed** *(built, US-767-a; Atlas ruling 2026-09-16, shape (c))*. A new
+`bool` field on `ConnectionStatus` (`src/pi/obdii/obd_connection.py`).
+`getStatus()` sets it **in the same read** that sets `connected`
+(`_readLink()` returns both). It is **False only when `is_connected()`
+raised**; `obd is None` is a *readable* verdict ("no connection object"), so it
+is True there. **`connected` is unchanged** — same value in every case it had
+before, and `_isConnected()` / `isConnected()` keep their bool return. The raise
+is no longer swallowed silently: a WARNING on the first failed read of a streak,
+DEBUG while it persists, INFO on recovery. `toDict()` is deliberately unchanged
+(no serialised consumer moves). No module other than `obd_connection.py` reads
+the field until the gate does (US-767-c); **capture-health must never read it**
+— it would reintroduce the transport-failure blind spot `validator.py` warns
+about. The raising case is reachable today only by patching (python-obd's
+`is_connected()` compares a cached status, no I/O), so US-767-c's mutation test
+is what proves the gate never closes on it.
+
+| `connected` | `signalReadable` | Gate |
+|---|---|---|
+| `False` | `True` | **CLOSED** — the link is genuinely down. Buffer. |
+| `False` | `False` | **OPEN** — we cannot tell. Fail open, rate-limited WARNING. |
+| `True` | `True` | **OPEN** — normal. |
+
 **Retention deletes only what the server already has** *(designed, US-768)*.
 `DELETE … WHERE ts_utc < cutoff AND id <= the sync high-water mark`. **Age alone
 never authorises a delete** — age is evidence about time, never about whether a
