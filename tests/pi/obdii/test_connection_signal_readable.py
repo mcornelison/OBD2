@@ -233,7 +233,10 @@ def test_signalReadable_noReaderOutsideProducer() -> None:
     """
     Given: every Python module under src/
     When: searched for the new field
-    Then: only obd_connection.py names it -- no consumer reads it until US-767-c
+    Then: only obd_connection.py and the EDR log gate name it. US-767-b built
+          the gate, whose two inputs ARE (connected, signalReadable), but wired it
+          with no signal; US-767-c is where getStatus() reaches it. Every other
+          module -- capture-health above all -- must never read it.
     """
     assert PRODUCER.is_file(), f"producer not found at {PRODUCER}"
     pattern = re.compile(r"\bsignalReadable\b")
@@ -244,7 +247,7 @@ def test_signalReadable_noReaderOutsideProducer() -> None:
         if pattern.search(path.read_text(encoding="utf-8"))
     )
 
-    assert readers == ["src/pi/obdii/obd_connection.py"]
+    assert readers == ["src/pi/bus/edr_log_gate.py", "src/pi/obdii/obd_connection.py"]
 
 
 def test_toDict_unchanged() -> None:

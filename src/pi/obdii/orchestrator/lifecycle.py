@@ -1730,12 +1730,29 @@ class LifecycleMixin:
             readers = createSensorReadersFromConfig(self._config, bus)
             if not readers:
                 return  # no sensor enabled -> ships dark
+            from pi.bus.edr_log_gate import (
+                DEFAULT_HOLD_SEC,
+                DEFAULT_PRE_ROLL_SEC,
+                EdrLogGate,
+            )
             from pi.bus.edr_persistence_subscriber import (
                 createEdrPersistenceSubscriberFromConfig,
+            )
+            # US-767-b: the log gate is wired as a PASS-THROUGH -- enabled=False
+            # (always OPEN) and no link signal, so every row is written exactly
+            # as before. US-767-c supplies the ObdConnection.getStatus() signal
+            # and honours pi.sensors.logGate.enabled.
+            gateCfg = self._config.get('pi', {}).get('sensors', {}).get('logGate', {})
+            logGate = EdrLogGate(
+                None,
+                enabled=False,
+                preRollSec=gateCfg.get('preRollSec', DEFAULT_PRE_ROLL_SEC),
+                holdSec=gateCfg.get('holdSec', DEFAULT_HOLD_SEC),
             )
             edrSubscriber = createEdrPersistenceSubscriberFromConfig(
                 self._config, bus, self._database,
                 driveDetector=self._driveDetector,
+                logGate=logGate,
             )
             if edrSubscriber is None:
                 return

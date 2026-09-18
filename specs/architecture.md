@@ -3809,6 +3809,19 @@ that ring **in order**; OPEN→HOLD keeps writing for 300 s and re-arms when the
 link returns. A parked car otherwise logs millions of rows nobody will read, and
 the moments just before a link opens are the ones worth keeping.
 
+*Built as a pass-through (US-767-b).* `EdrLogGate` (`src/pi/bus/edr_log_gate.py`)
+reads the two producer facts (`connected`, `signalReadable`) and follows the
+fail-OPEN table below; a signal callable that raises, or none at all, counts as
+unreadable → OPEN with a WARNING at most once per 60 s. `enabled=False` is
+always OPEN and never reads the signal. Config: `pi.sensors.logGate.enabled`
+(`true`), `.preRollSec` (`60`), `.holdSec` (`300`) — both windows must be
+positive. `lifecycle._startEdrSensorPath` builds the gate with **`enabled=False`
+and no signal** and hands it to `EdrPersistenceSubscriber`, which routes every
+row through `admit()` (drive_id resolved at capture, so a flushed pre-roll row
+keeps its attribution). A linked run therefore writes byte-identical rows to the
+pre-gate path. **US-767-c** supplies the `getStatus()` signal and honours
+`enabled` — that is the moment any behaviour changes.
+
 *The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.*
 `obd.py` `is_connected()` returns `status() == OBDStatus.CAR_CONNECTED` and is
 explicitly **False** at `ELM_CONNECTED` — so it is an **ECU-level** fact, not an

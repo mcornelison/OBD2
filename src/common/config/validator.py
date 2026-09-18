@@ -360,6 +360,12 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
+    # US-767-b: link-gated EDR logging (Atlas's US-734 plan, Tasks 7-8). Rows
+    # are written while the OBD link is up, plus a pre-roll written when it
+    # opens and a hold after it drops. Wired as a pass-through until US-767-c.
+    'pi.sensors.logGate.enabled': True,
+    'pi.sensors.logGate.preRollSec': 60,
+    'pi.sensors.logGate.holdSec': 300,
     # US-630 (F-138, punch-list 1.4): the DERIVED gear.  This car exposes no
     # gear PID, so gear is computed once from the realtime SPEED + RPM SSOT and
     # published -- never recomputed per consumer.  Ships DARK
@@ -1143,6 +1149,10 @@ class ConfigValidator:
         # its floor, gating a channel on two identical samples -- fast enough to
         # fire on a real scheduler hiccup. Fail fast rather than silently.
         'pi.sensors.imu.invariantDwellSeconds',
+        # US-767-b: a zero pre-roll keeps nothing from before the link, and a
+        # zero hold closes the gate on the first dropped read.
+        'pi.sensors.logGate.preRollSec',
+        'pi.sensors.logGate.holdSec',
     )
 
     def _validateImuStateBridge(self, config: dict[str, Any]) -> None:

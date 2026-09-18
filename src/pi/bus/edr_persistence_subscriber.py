@@ -24,6 +24,8 @@
 # 2026-06-30    | Rex (US-410) | Initial -- EDR sibling subscriber: burst
 #               |              | assembly, decimated persist, drive_id NULL-latch,
 #               |              | rolling-window retention purge, ships dark.
+# 2026-09-18    | Rex          | US-767-b: optional logGate; every row is
+#               |              | routed through EdrLogGate.admit() when wired.
 # ================================================================================
 ################################################################################
 
@@ -42,6 +44,7 @@ from common.edr.sensor_schema import SCHEMA_VERSION
 from common.time.helper import CANONICAL_ISO_FORMAT
 from pi.obdii.drive_id import getCurrentDriveId
 
+from .edr_log_gate import EdrLogGate
 from .sample import QoS, Sample
 
 logger = logging.getLogger(__name__)
@@ -155,6 +158,7 @@ class EdrPersistenceSubscriber:
         nowUtcFn: Callable[[], datetime] | None = None,
         monotonicFn: Callable[[], float] = time.monotonic,
         retentionCheckIntervalS: float = _DEFAULT_RETENTION_CHECK_S,
+        logGate: EdrLogGate | None = None,
     ) -> None:
         """Bind the subscriber to its source subscription + write target.
 
@@ -172,6 +176,8 @@ class EdrPersistenceSubscriber:
             nowUtcFn: Clock for the retention cutoff (default datetime.now(UTC)).
             monotonicFn: Monotonic clock for the purge cadence gate.
             retentionCheckIntervalS: Minimum seconds between purge attempts.
+            logGate: The EDR log gate every row is routed through (US-767-b).
+                None writes every row (the pre-gate behaviour).
         """
         self._sub = subscription
         self._database = database
@@ -182,6 +188,7 @@ class EdrPersistenceSubscriber:
         self._nowUtcFn = nowUtcFn if nowUtcFn is not None else (lambda: datetime.now(UTC))
         self._monotonic = monotonicFn
         self._retentionCheckIntervalS = float(retentionCheckIntervalS)
+        self._logGate = logGate
         self._lastPurgeMono = self._monotonic()
         # Per-table burst buffers: {"seq", "fields": {name: value}, "tsUtc",
         # "tsCapture", "dataSource"}. None == no burst in progress.
@@ -341,13 +348,21 @@ class EdrPersistenceSubscriber:
             return
         self._buffers[table] = None
         driveId = self._resolveDriveId()
-        try:
-            if table == "imu":
-                self._writeImuRow(buf, driveId)
-            else:
-                self._writeLightRow(buf, driveId)
-        except Exception as e:  # noqa: BLE001 -- a bad write never crashes the drain
-            logger.warning("EDR %s row write failed (seq=%s): %s", table, buf.get("seq"), e)
+        # US-767-b: every row goes through the log gate when one is wired. The
+        # drive_id is resolved at CAPTURE, so a pre-roll row flushed later keeps
+        # the attribution it had when it was read.
+        row = (buf, driveId)
+        toWrite = [(table, row)] if self._logGate is None else self._logGate.admit(table, row)
+        for rowTable, (rowBuf, rowDriveId) in toWrite:
+            try:
+                if rowTable == "imu":
+                    self._writeImuRow(rowBuf, rowDriveId)
+                else:
+                    self._writeLightRow(rowBuf, rowDriveId)
+            except Exception as e:  # noqa: BLE001 -- a bad write never crashes the drain
+                logger.warning(
+                    "EDR %s row write failed (seq=%s): %s", rowTable, rowBuf.get("seq"), e
+                )
 
     def _resolveDriveId(self) -> int | None:
         """drive_id ONLY when a drive is RUNNING, else NULL (never stale-inherit).
@@ -462,6 +477,7 @@ def createEdrPersistenceSubscriberFromConfig(
     database: Any,
     *,
     driveDetector: Any = None,
+    logGate: EdrLogGate | None = None,
 ) -> EdrPersistenceSubscriber | None:
     """Build the EDR subscriber from validated config, or None when it ships dark.
 
@@ -475,6 +491,8 @@ def createEdrPersistenceSubscriberFromConfig(
         database: ObdDatabase for the EDR row writes.
         driveDetector: Optional DriveDetector; its ``isDriving()`` gates the
             drive_id latch. Absent -> drive_id is always NULL (safe default).
+        logGate: Optional EdrLogGate handed to the subscriber (US-767-b).
+            Absent -> every row is written.
 
     Returns:
         A started-ready EdrPersistenceSubscriber, or None when disabled.
@@ -508,4 +526,5 @@ def createEdrPersistenceSubscriberFromConfig(
         retentionDays=sensors.get("retentionDays", _DEFAULT_RETENTION_DAYS),
         driveIdFn=getCurrentDriveId,
         isDrivingFn=isDrivingFn,
+        logGate=logGate,
     )
