@@ -1,0 +1,78 @@
+
+== base-shell ==
+PASS  base-shell watertight
+PASS  base-shell winding consistent
+PASS  base-shell positive volume   [11490.5 mm3]
+PASS  base-shell single body
+PASS  base-shell lowest z = 0   [0.0000]
+PASS  base-shell top z = split   [15.600]
+PASS  base-shell footprint   [68.59 x 58.42]
+PASS  flat bottom: one solid slice at z=0.05, no holes   [1 polygon(s)]
+PASS  v3.2 interior fits with >= 0.45 mm margin   [0 intrusions]
+PASS  base wall 2.0 +/- 0.1 normal to surface   [n=4416 min=1.999 max=2.046]
+
+== lid-shell ==
+PASS  lid-shell watertight
+PASS  lid-shell winding consistent
+PASS  lid-shell positive volume   [3720.9 mm3]
+PASS  lid-shell single body
+PASS  lid-shell sits on split plane   [15.596]
+PASS  lid-shell apex at 19.6   [19.600]
+PASS  lid-shell size at split   [52.59 x 42.42]
+PASS  lid wall 2.0 +/- 0.1 normal to surface   [n=3074 min=1.996 max=2.000]
+PASS  seam: lid rim ring matches base rim ring   [lid 295.9 vs base 295.9 mm2]
+
+== base ==
+PASS  base watertight
+PASS  base winding consistent
+PASS  base positive volume   [12848.0 mm3]
+PASS  base single body
+PASS  base lowest z = 0   [0.0000]
+PASS  base top = lid-post tops (17.4)   [17.400]
+PASS  nothing breaks the outer skin at z=1.0   [3245.6 vs 3245.6]
+PASS  nothing breaks the outer skin at z=12.0   [1928.2 vs 1928.2]
+PASS  nothing breaks the outer skin at z=15.0   [1856.5 vs 1856.5]
+PASS  shoulder at z=8.0 @(-10.16,-6.35)   [8.000]
+PASS  pin tip at z=10.6 @(-10.16,-6.35)   [10.600]
+PASS  shoulder at z=8.0 @(-10.16,+6.35)   [8.000]
+PASS  pin tip at z=10.6 @(-10.16,+6.35)   [10.600]
+PASS  shoulder at z=8.0 @(+10.16,-6.35)   [8.000]
+PASS  pin tip at z=10.6 @(+10.16,-6.35)   [10.600]
+PASS  shoulder at z=8.0 @(+10.16,+6.35)   [8.000]
+PASS  pin tip at z=10.6 @(+10.16,+6.35)   [10.600]
+PASS  latch lip + blade present at all 4 corners
+PASS  space under each lip is clear for the board
+PASS  board volume clear (except pins)   [0 intrusions]
+PASS  cable exit open through -Y wall at z=5   [first hit 82.8 mm in]
+
+== lid ==
+PASS  lid watertight
+PASS  lid winding consistent
+PASS  lid positive volume   [3694.7 mm3]
+PASS  lid single body
+PASS  lid print: rim on bed (z=0)   [-0.0000]
+PASS  lid print: height 4.0   [3.983]
+PASS  lid print: footprint   [52.59 x 42.42]
+PASS  socket top at 2.0 @(-18.5,-10.4)   [2.000]
+PASS  skin above socket >= 0.8 @(-18.5,-10.4)   [min 0.88]
+PASS  socket top at 2.0 @(-18.5,+10.4)   [2.000]
+PASS  skin above socket >= 0.8 @(-18.5,+10.4)   [min 0.88]
+PASS  socket top at 2.0 @(+18.5,-10.4)   [2.000]
+PASS  skin above socket >= 0.8 @(+18.5,-10.4)   [min 0.88]
+PASS  socket top at 2.0 @(+18.5,+10.4)   [2.000]
+PASS  skin above socket >= 0.8 @(+18.5,+10.4)   [min 0.88]
+
+0 failure(s)
+
+== focused probe: latch lip underside clearance (Final fix wave, 2026-09-17) ==
+Point (x=+-11.65, y=+-8.7, z=9.70) NOT inside stl/v4-base.stl -- expect False (below new lip underside z=9.75)
+Point (x=+-11.65, y=+-8.7, z=9.80) IS inside stl/v4-base.stl -- expect True (above new lip underside z=9.75)
+(-11.65, -8.7, 9.7)  inside=False  (expect False)
+(-11.65, 8.7, 9.7)  inside=False  (expect False)
+(11.65, -8.7, 9.7)  inside=False  (expect False)
+(11.65, 8.7, 9.7)  inside=False  (expect False)
+(-11.65, -8.7, 9.8)  inside=True  (expect True)
+(-11.65, 8.7, 9.8)  inside=True  (expect True)
+(11.65, -8.7, 9.8)  inside=True  (expect True)
+(11.65, 8.7, 9.8)  inside=True  (expect True)
+ALL PASS -- lip underside confirmed at z 9.75 (board_z 8.0 + board_t 1.6 + latch_catch_clear 0.15)
