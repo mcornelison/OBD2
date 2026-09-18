@@ -3815,12 +3815,28 @@ fail-OPEN table below; a signal callable that raises, or none at all, counts as
 unreadable → OPEN with a WARNING at most once per 60 s. `enabled=False` is
 always OPEN and never reads the signal. Config: `pi.sensors.logGate.enabled`
 (`true`), `.preRollSec` (`60`), `.holdSec` (`300`) — both windows must be
-positive. `lifecycle._startEdrSensorPath` builds the gate with **`enabled=False`
-and no signal** and hands it to `EdrPersistenceSubscriber`, which routes every
+positive. US-767-b had `lifecycle._startEdrSensorPath` build the gate with
+**`enabled=False` and no signal** and hand it to `EdrPersistenceSubscriber`, which routes every
 row through `admit()` (drive_id resolved at capture, so a flushed pre-roll row
 keeps its attribution). A linked run therefore writes byte-identical rows to the
-pre-gate path. **US-767-c** supplies the `getStatus()` signal and honours
-`enabled` — that is the moment any behaviour changes.
+pre-gate path.
+
+*Live (US-767-c).* `_startEdrSensorPath` now passes the gate a **lazy callable
+over `ObdConnection.getStatus()`**, resolving `self._connection` on every row
+(a rebuilt connection is honoured; no connection object raises → unreadable →
+OPEN), and honours `pi.sensors.logGate.enabled` (an absent key falls back to the
+gate's pass-through default; the validator supplies `true`). Nothing in the path
+reads a `states/` file. Every row still goes through `admit()`, so a fully
+linked run writes the same rows as no gate at all. Transitions are logged by the
+gate (`EDR log gate: CLOSED->OPEN reason=… buffered=N`) and the subscriber
+**publishes `states/edr-log-gate`** (`pi.splash.statesDir`) on the first row and
+on every state change after it — never per row:
+`{"state": "CLOSED"|"OPEN"|"HOLD", "enabled", "from", "reason", "bufferedRows",
+"ts"}` (`from`/`reason` are `null` before the first transition). The write is
+best-effort and can never cost a row. The fail-OPEN branch is pinned by a
+mutation test (`tests/pi/bus/test_edr_log_gate_live.py`): the same unreadable-
+signal run that passes on the shipped gate must fail on a copy compiled with
+that one return inverted.
 
 *The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.*
 `obd.py` `is_connected()` returns `status() == OBDStatus.CAR_CONNECTED` and is

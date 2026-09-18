@@ -16,6 +16,8 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-09-18    | Rex (US-767-b) | Initial -- pass-through wiring, routing.
+# 2026-09-18    | Rex (US-767-c) | Fixture sets logGate.enabled false (the
+#               |                | lifecycle now honours it) and a tmp statesDir.
 # ================================================================================
 ################################################################################
 """Tests for the EdrLogGate pass-through wiring (US-767-b)."""
@@ -73,13 +75,16 @@ def _rows(db: ObdDatabase) -> tuple[list, list]:
     return imu, light
 
 
-def _config() -> dict:
-    return {"pi": {"bus": {"enabled": True}, "sensors": {
+def _config(*, gateEnabled: bool = True, statesDir: str | None = None) -> dict:
+    config: dict = {"pi": {"bus": {"enabled": True}, "sensors": {
         "imu": {"enabled": True, "sampleHz": 50, "persistHz": 25},
         "light": {"enabled": True, "sampleHz": 1},
         "retentionDays": 45,
-        "logGate": {"enabled": True, "preRollSec": 45, "holdSec": 200},
+        "logGate": {"enabled": gateEnabled, "preRollSec": 45, "holdSec": 200},
     }}}
+    if statesDir is not None:
+        config["pi"]["splash"] = {"statesDir": statesDir}
+    return config
 
 
 class _Reader:
@@ -95,7 +100,12 @@ class _Reader:
 
 @pytest.fixture()
 def lifecycleSubscriber(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Run the REAL lifecycle._startEdrSensorPath with hardware stubbed out."""
+    """Run the REAL lifecycle._startEdrSensorPath with hardware stubbed out.
+
+    pi.sensors.logGate.enabled is false here: the pass-through path US-767-b
+    built is still what a config with the gate switched off gets (US-767-c's
+    enabled path is tested in test_edr_log_gate_live.py).
+    """
     import pi.sensors.imu_state_bridge as imuBridge
     import pi.sensors.light_state_bridge as lightBridge
     import pi.sensors.sensor_reader as sensorReader
@@ -105,7 +115,8 @@ def lifecycleSubscriber(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(imuBridge, "createImuStateBridgeFromConfig", lambda c, b: None)
 
     host = SimpleNamespace(
-        _config=_config(), _database=_db(tmp_path, "lifecycle.db"), _driveDetector=None,
+        _config=_config(gateEnabled=False, statesDir=str(tmp_path / "states")),
+        _database=_db(tmp_path, "lifecycle.db"), _driveDetector=None,
     )
     LifecycleMixin._startEdrSensorPath(host, SampleBus())  # type: ignore[arg-type]
     sub = getattr(host, "_edrPersistenceSubscriber", None)
@@ -117,10 +128,10 @@ def lifecycleSubscriber(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 class TestLifecyclePassThrough:
     def test_lifecycle_handsAGateToTheSubscriber_disabled(self, lifecycleSubscriber) -> None:
         """
-        Given: the production EDR start path with pi.sensors.logGate in config
+        Given: the production EDR start path with pi.sensors.logGate.enabled false
         When: it builds the subscriber
         Then: the subscriber holds an EdrLogGate that is disabled (always OPEN)
-            with the configured windows -- US-767-c turns it on
+            with the configured windows
         """
         sub, _ = lifecycleSubscriber
         gate = sub._logGate  # noqa: SLF001 -- the wiring IS the assertion

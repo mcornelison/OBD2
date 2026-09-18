@@ -26,6 +26,8 @@
 #               |              | rolling-window retention purge, ships dark.
 # 2026-09-18    | Rex          | US-767-b: optional logGate; every row is
 #               |              | routed through EdrLogGate.admit() when wired.
+# 2026-09-18    | Rex          | US-767-c: gate state published to
+#               |              | states/edr-log-gate on every state change.
 # ================================================================================
 ################################################################################
 
@@ -34,6 +36,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -50,9 +53,22 @@ from .sample import QoS, Sample
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_STATES_DIR",
+    "EDR_LOG_GATE_STATE_FILENAME",
     "EdrPersistenceSubscriber",
+    "buildEdrLogGateState",
     "createEdrPersistenceSubscriberFromConfig",
+    "makeEdrLogGateStateEmitter",
 ]
+
+# US-767-c: the state name the gate publishes to (GET /edr-log-gate).
+EDR_LOG_GATE_STATE_FILENAME = "edr-log-gate"
+
+# The tmpfs states dir every states/ writer defaults to (pi.splash.statesDir).
+DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
+
+# Matches the other state emitters' `ts` format (second resolution, UTC).
+_ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 # Additive channels this subscriber owns (never raw.obd.*).
 _IMU_PREFIX = "raw.imu."
@@ -159,6 +175,7 @@ class EdrPersistenceSubscriber:
         monotonicFn: Callable[[], float] = time.monotonic,
         retentionCheckIntervalS: float = _DEFAULT_RETENTION_CHECK_S,
         logGate: EdrLogGate | None = None,
+        gateStateEmitFn: Callable[[EdrLogGate], None] | None = None,
     ) -> None:
         """Bind the subscriber to its source subscription + write target.
 
@@ -178,6 +195,9 @@ class EdrPersistenceSubscriber:
             retentionCheckIntervalS: Minimum seconds between purge attempts.
             logGate: The EDR log gate every row is routed through (US-767-b).
                 None writes every row (the pre-gate behaviour).
+            gateStateEmitFn: Called with the gate whenever its state differs
+                from the last one published (US-767-c: states/edr-log-gate).
+                None publishes nothing.
         """
         self._sub = subscription
         self._database = database
@@ -189,6 +209,8 @@ class EdrPersistenceSubscriber:
         self._monotonic = monotonicFn
         self._retentionCheckIntervalS = float(retentionCheckIntervalS)
         self._logGate = logGate
+        self._gateStateEmitFn = gateStateEmitFn
+        self._publishedGateState: str | None = None
         self._lastPurgeMono = self._monotonic()
         # Per-table burst buffers: {"seq", "fields": {name: value}, "tsUtc",
         # "tsCapture", "dataSource"}. None == no burst in progress.
@@ -352,7 +374,11 @@ class EdrPersistenceSubscriber:
         # drive_id is resolved at CAPTURE, so a pre-roll row flushed later keeps
         # the attribution it had when it was read.
         row = (buf, driveId)
-        toWrite = [(table, row)] if self._logGate is None else self._logGate.admit(table, row)
+        if self._logGate is None:
+            toWrite = [(table, row)]
+        else:
+            toWrite = self._logGate.admit(table, row)
+            self._publishGateState(self._logGate)
         for rowTable, (rowBuf, rowDriveId) in toWrite:
             try:
                 if rowTable == "imu":
@@ -363,6 +389,21 @@ class EdrPersistenceSubscriber:
                 logger.warning(
                     "EDR %s row write failed (seq=%s): %s", rowTable, rowBuf.get("seq"), e
                 )
+
+    def _publishGateState(self, gate: EdrLogGate) -> None:
+        """Publish the gate's state when it differs from the last published one.
+
+        US-767-c. The first admit always publishes, so a gate that never leaves
+        CLOSED (parked, no link) is still visible. The emitter is best-effort
+        and a failure here must never cost the row being written.
+        """
+        if self._gateStateEmitFn is None or gate.state == self._publishedGateState:
+            return
+        try:
+            self._gateStateEmitFn(gate)
+            self._publishedGateState = gate.state
+        except Exception as e:  # noqa: BLE001 -- publishing never costs a row
+            logger.warning("EDR log gate state publish failed: %s", e)
 
     def _resolveDriveId(self) -> int | None:
         """drive_id ONLY when a drive is RUNNING, else NULL (never stale-inherit).
@@ -478,6 +519,7 @@ def createEdrPersistenceSubscriberFromConfig(
     *,
     driveDetector: Any = None,
     logGate: EdrLogGate | None = None,
+    gateStateEmitFn: Callable[[EdrLogGate], None] | None = None,
 ) -> EdrPersistenceSubscriber | None:
     """Build the EDR subscriber from validated config, or None when it ships dark.
 
@@ -493,6 +535,8 @@ def createEdrPersistenceSubscriberFromConfig(
             drive_id latch. Absent -> drive_id is always NULL (safe default).
         logGate: Optional EdrLogGate handed to the subscriber (US-767-b).
             Absent -> every row is written.
+        gateStateEmitFn: Optional gate-state publisher (US-767-c), e.g. from
+            :func:`makeEdrLogGateStateEmitter`.
 
     Returns:
         A started-ready EdrPersistenceSubscriber, or None when disabled.
@@ -527,4 +571,61 @@ def createEdrPersistenceSubscriberFromConfig(
         driveIdFn=getCurrentDriveId,
         isDrivingFn=isDrivingFn,
         logGate=logGate,
+        gateStateEmitFn=gateStateEmitFn,
     )
+
+
+def buildEdrLogGateState(gate: EdrLogGate, *, nowIso: str) -> dict[str, Any]:
+    """Build the states/edr-log-gate payload (pure, US-767-c).
+
+    States are written upper-case (``CLOSED`` / ``OPEN`` / ``HOLD``), the same
+    words the gate's transition log line uses.
+
+    Args:
+        gate: The gate whose current state is published.
+        nowIso: ISO-8601 emission timestamp (the freshness marker).
+
+    Returns:
+        ``{"state", "enabled", "from", "reason", "bufferedRows", "ts"}``;
+        ``from`` / ``reason`` are None before the gate's first transition.
+    """
+    last = gate.lastTransition
+    return {
+        "state": gate.state.upper(),
+        "enabled": gate.enabled,
+        "from": last[0].upper() if last is not None else None,
+        "reason": last[2] if last is not None else None,
+        "bufferedRows": gate.bufferedRows,
+        "ts": nowIso,
+    }
+
+
+def makeEdrLogGateStateEmitter(
+    statesDir: str,
+    *,
+    nowIsoFn: Callable[[], str] | None = None,
+) -> Callable[[EdrLogGate], None]:
+    """Build the states/edr-log-gate emit callable (US-767-c).
+
+    Args:
+        statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
+        nowIsoFn: Injected clock for ``ts`` (default UTC now, second resolution).
+
+    Returns:
+        A callable taking the gate and writing its state atomically.
+        Best-effort by contract: write failures are logged, never raised, so
+        publishing can never cost an EDR row.
+    """
+    from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
+
+    nowFn = nowIsoFn or (lambda: datetime.now(UTC).strftime(_ISO_FMT))
+    target = os.path.join(statesDir, EDR_LOG_GATE_STATE_FILENAME)
+
+    def emit(gate: EdrLogGate) -> None:
+        try:
+            ensureStatesDir(statesDir)
+            writeStateAtomic(target, buildEdrLogGateState(gate, nowIso=nowFn()))
+        except Exception as e:  # noqa: BLE001 -- never cost an EDR row
+            logger.error("states/edr-log-gate write failed (%s) -- ignored", e)
+
+    return emit
