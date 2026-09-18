@@ -108,7 +108,11 @@ def test_imu_burstPoll_publishesFourTopicsWithSharedSeq():
     assert len(seqs) == 1  # one shared seq across the whole burst
     assert byTopic[TOPIC_IMU_ACCEL].value == (0.11, 0.22, 9.81)
     assert byTopic[TOPIC_IMU_GYRO].value == (0.01, -0.02, 0.03)
-    assert byTopic[TOPIC_IMU_MAG].value == (12.0, -34.0, 56.0)
+    # ARCH-033: the AK09916's axes are mapped into the ICM frame at this seam,
+    # so the fake's raw (12, -34, 56) publishes as (y, x, -z). Asserting the
+    # TRANSFORMED value (not pass-through) is the point -- a regression that
+    # dropped the transform would make this read the raw triple again.
+    assert byTopic[TOPIC_IMU_MAG].value == (-34.0, 12.0, -56.0)
     assert byTopic[TOPIC_IMU_TEMP].value == 27.5
     assert byTopic[TOPIC_IMU_ACCEL].unit == "m/s^2"
     assert byTopic[TOPIC_IMU_TEMP].unit == "degC"
@@ -145,7 +149,11 @@ def test_imu_noTemperatureAttr_publishesAccelGyroMag_tempNone():
     # the critical trio still publishes real values
     assert byTopic[TOPIC_IMU_ACCEL].value == (0.11, 0.22, 9.81)
     assert byTopic[TOPIC_IMU_GYRO].value == (0.01, -0.02, 0.03)
-    assert byTopic[TOPIC_IMU_MAG].value == (12.0, -34.0, 56.0)
+    # ARCH-033: the AK09916's axes are mapped into the ICM frame at this seam,
+    # so the fake's raw (12, -34, 56) publishes as (y, x, -z). Asserting the
+    # TRANSFORMED value (not pass-through) is the point -- a regression that
+    # dropped the transform would make this read the raw triple again.
+    assert byTopic[TOPIC_IMU_MAG].value == (-34.0, 12.0, -56.0)
     # temp degrades to honest-null (never fabricated); the topic is still present
     assert TOPIC_IMU_TEMP in byTopic
     assert byTopic[TOPIC_IMU_TEMP].value is None

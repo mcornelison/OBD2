@@ -3387,6 +3387,48 @@ closed proof independent of the datasheet: those three are right-handed **only**
 under Z-up (`left × tail = up`); Z-down gives `right × nose = −Z`, left-handed and
 therefore impossible.
 
+**🔴 ARCH-033 — THE AK09916 DOES NOT SHARE THE ICM'S AXES, AND WE APPLIED NO TRANSFORM
+(fixed 2026-09-18).** The magnetometer die inside the ICM-20948 sits in a different
+orientation from the accel/gyro dies. The mapping is `x ← ak_y`, `y ← ak_x`,
+`z ← −ak_z` (TDK's orientation drawing; **determinant +1**, a proper rotation, which a
+die orientation must physically be). It is declared as
+`ak09916_bypass.AK09916_TO_ICM_AXES` and applied **once**, at `sensor_reader`'s burst
+read — the single seam where the bypass device and the ICM-shadow fallback converge.
+*Not* inside `ak09916_bypass.magnetic`, which would correct only the bypass; the bypass
+is the path currently failing under ARCH-032, so production runs the fallback.
+
+⚠️ **This is a SEPARATE transform from `IMU_BODY_FRAME` and must not be folded into it.**
+The body frame is a *mounting* fact and changes whenever the board is moved; this is a
+*package* fact and never changes. One is measured per install, the other is fixed by TDK.
+
+**Evidence.** Drive 2026-09-18, three laps of one loop, Strava GPX course as independent
+truth (it shares no sensor, no bus and no axis convention with the magnetometer). All 48
+axis permutations swept, scored by circular concentration *R* of the heading error, on
+two clean laps:
+
+| mag transform | det | R lap 1 | R lap 3 |
+|---|---:|---:|---:|
+| identity — what shipped | +1 | **0.170** | **0.357** |
+| **`(+y, +x, −z)`** | **+1** | **0.861** | **0.878** |
+
+🔴 **This is A-30's "the compass is UNCORRELATED WITH ROTATION".** A-30 named this exact
+hypothesis on 2026-09-09 and recorded that the data refuted it — correctly, at the time:
+the IMU then sat on the stereo amplifier at SNR ≈ 1.2, where an axis error cannot express
+itself. A-30 predicted the sequel verbatim: *"It will surface the moment SNR is fixed and
+will look like the original fault returning."*
+
+⚠️ **Two things it is NOT**, both checked and both rejected on measurement:
+`computeHeadingDeg` is **correct** (`atan2(+left, forward)` is a clockwise bearing in a
+forward/left/up frame; negating it breaks four existing tests), and `IMU_BODY_FRAME` is
+**not the tracking defect** (swapping (B) ↔ identity leaves *R* unchanged at 0.170 and
+moves only the offset). Both are rotations, and **a rotation cannot repair an axis map of
+this kind** — it can only be corrected at the sensor seam, which is why every attempt
+above that layer appeared to work at 0° and 180° and nowhere else.
+
+⚠️ **What it does NOT fix:** the absolute offset (that is `IMU_BODY_FRAME`, still set to
+(B) for a superseded mount — **ARCH-034**) and the residual spread of 32–39° (that is
+A-30's soft iron, ellipticity 1.78, which needs the calibration).
+
 *One transform, at the boundary.* `imu_state_bridge.IMU_BODY_FRAME` is the single
 declaration, and `resolveMountFrame` applies it **once** to each raw channel
 (accel, gyro, mag) on the way in. `_levelFrame` and `PitchFusion` both receive
