@@ -2452,6 +2452,31 @@ pluggable seam via `__main__.buildV1Tasks`) → window exits on
 straight to poweroff; a *failed* VCELL read never powers off
 (uncertainty ≠ power loss).
 
+**bootGrace scopes the floor fast path, NOT the trigger (US-788, Sprint 89 /
+V0.29.57).** A PLD loss inside `pi.powerWatch.bootGraceSec` (120 s) runs the
+NORMAL path — load shed + loss heartbeat (`powerLossObservedFn`), smoothing,
+bounded pipeline, drain close, graceful poweroff. The watch loop calls
+`handleOnBattery(suppressFloorFastPath=True)`, and the sequencer takes the
+existing *failed-VCELL-read* branch: no floor fast path this cycle, pipeline
+instead. There is no second poweroff path. Outside grace the call is the bare
+`handleOnBattery()`, byte-identical to before, floor fast path included.
+
+Why: bootGrace was sized for the VCELL-slope heuristic that reported BATTERY on
+the boot VCELL sag (validator.py, 2026-05-18). The GPIO6 PLD line replaced that
+heuristic as the trigger the **same day** — it is deterministic, so the trigger
+needs no grace. `smoothingSec` is the blip rejection. The boot sag still reaches
+exactly one decision, the floor fast path, and skipping the pipeline is the
+irreversible act worth protecting there. Gating the trigger instead suppressed
+the shed, the heartbeat and the drain close with it: four in-grace suppressions
+in the service's life, zero false positives, three hard cuts. No constant
+changed — un-shed carry at real load is 0.678 s, so any nonzero grace on the
+trigger is a hard cut; the fix is scope, not duration. `bootGraceSec` is kept:
+whether boot VCELL approaches the floor on AC is unmeasured.
+
+The in-grace fire is edge-triggered (one loss, one call) and does not set the
+post-grace `firedAlready` guard, so an in-grace blip followed by a post-grace
+loss still fires (the F-7 level trigger is unchanged).
+
 > **History extracted (2026-06-01):** the superseded `PowerDownOrchestrator`
 > ladder + the SOC%-calibration lesson + the Sprint-40 **F-7** (boot-grace latch)
 > and **F-8** (boot-progress instrument) bug-fix narratives + the Rule-10 gate
@@ -2669,8 +2694,8 @@ and whether power returned.
 - Otherwise the number is **time-to-death** when the prior boot has no `CLEAN_COMPLETE`, and
   **time-to-poweroff** when it does. Poweroff stops the service, which ends the rows.
 
-**Scope.** Losses ignored inside boot-grace start no heartbeat, because they never reach
-`handleOnBattery`.
+**Scope.** Since US-788, losses inside boot-grace reach `handleOnBattery` and start the
+heartbeat like any other loss (see §10.6).
 
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 

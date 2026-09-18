@@ -111,6 +111,12 @@
 #                           instead of inferred from a journal that cannot see
 #                           the last seconds. No trigger, budget or poweroff
 #                           change.
+# 2026-09-17    | US-788  | Sprint 89 / V0.29.57. bootGrace stops gating the
+#                           TRIGGER: an in-grace PLD loss (edge) now calls
+#                           handleOnBattery(suppressFloorFastPath=True), so the
+#                           shed, heartbeat, smoothing, pipeline and graceful
+#                           poweroff all run. Post-grace branch unchanged. No
+#                           constant changed.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -744,23 +750,40 @@ def _runPldWatchLoop(
     (which may never happen). See finding 2026-05-20-shutdown-sequencer-
     boot-grace-latch-bug.md for the in-car drill evidence (Atlas + CIO Test 2,
     5.5 min silence reproduced on demand).
+
+    US-788: bootGrace no longer gates the TRIGGER. An in-grace loss runs the
+    normal path (shed, heartbeat, smoothing, pipeline, graceful poweroff) with
+    only the VCELL floor fast path suppressed. Before this, the grace gate sat on
+    the branch that reaches handleOnBattery, so an in-grace loss lost the
+    mitigation and the instruments along with the poweroff: three hard cuts,
+    zero false positives.
     """
-    # Edge-triggered on a present->lost transition via the SSOT provider during
-    # boot-grace (kept edge-only there so the "ignoring" log fires once per
-    # fresh in-grace transient). Post-boot-grace fires on level (lost AND not
-    # firedAlready) so a level-stuck LOW state cannot leave the sequencer blind.
+    # In-grace: edge-triggered on a present->lost transition, so one loss fires
+    # once and a completed in-grace shutdown is not re-entered on every poll.
+    # It deliberately does NOT set firedAlready: the post-grace branch below is
+    # byte-identical to pre-US-788, including re-firing on a level-stuck LOW line
+    # after an in-grace blip (the F-7 fix). Post-boot-grace fires on level (lost
+    # AND not firedAlready) so a level-stuck LOW state cannot leave the
+    # sequencer blind.
     prevLost = isPowerLostFn()
     firedAlready = False
     while not stop.wait(timeout=pldPollSec):
         lost = isPowerLostFn()
         graceElapsed = monotonicFn() - serviceStartMono
         if graceElapsed < bootGraceSec:
-            if lost and not prevLost:
-                logger.warning(
-                    "powerwatch: PLD power-loss %.0fs into boot-grace (%.0fs) -- ignoring",
-                    graceElapsed,
-                    bootGraceSec,
-                )
+            if lost and not prevLost and handleLock.acquire(blocking=False):
+                try:
+                    logger.warning(
+                        "powerwatch: GPIO%d PLD => external power LOST %.0fs into "
+                        "boot-grace (%.0fs) -- entering bounded pre-shutdown window, "
+                        "VCELL floor fast path suppressed",
+                        pldGpioPin,
+                        graceElapsed,
+                        bootGraceSec,
+                    )
+                    shutdownSequencer.handleOnBattery(suppressFloorFastPath=True)
+                finally:
+                    handleLock.release()
         elif lost and not firedAlready:
             if handleLock.acquire(blocking=False):
                 try:
@@ -1012,8 +1035,9 @@ def main(argv: list[str] | None = None) -> int:
         # The SSOT provider is the only power-acquisition site (criterion #3);
         # the sequencer's smoothing window then re-reads the SAME line via the
         # SAME provider, so a real loss confirms and a glitch aborts. Boot-grace
-        # is cheap insurance. Loop body extracted into _runPldWatchLoop for
-        # unit-test access (US-344 F-7 fix).
+        # scopes only the VCELL floor fast path (US-788), never the trigger.
+        # Loop body extracted into _runPldWatchLoop for unit-test access
+        # (US-344 F-7 fix).
         _runPldWatchLoop(
             isPowerLostFn=provider.isPowerLost,
             stop=stop,

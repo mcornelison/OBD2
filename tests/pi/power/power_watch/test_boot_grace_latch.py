@@ -31,6 +31,9 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-05-20    | US-344  | Initial -- F-7 boot-grace latch regression gate.
+# 2026-09-17    | US-788  | In-grace losses now reach the sequencer (flagged
+#                           suppressFloorFastPath); the fake counts them apart
+#                           so these gates still pin the post-grace fires.
 # ================================================================================
 ################################################################################
 """F-7 regression gate: in-grace transient + level-stuck-LOW post-grace must
@@ -53,9 +56,15 @@ class _FakeSequencer:
 
     def __init__(self) -> None:
         self.fireCount = 0
+        self.inGraceFireCount = 0
 
-    def handleOnBattery(self) -> None:
-        self.fireCount += 1
+    def handleOnBattery(self, *, suppressFloorFastPath: bool = False) -> None:
+        # US-788: in-grace losses reach the sequencer too, flagged. The F-7
+        # gates below count POST-grace fires, the behaviour they pin.
+        if suppressFloorFastPath:
+            self.inGraceFireCount += 1
+        else:
+            self.fireCount += 1
 
 
 class _CountingStop:

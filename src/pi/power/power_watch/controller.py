@@ -57,6 +57,10 @@
 #                              loss heartbeat so time-to-death after a cut is a
 #                              number in SQLite on the next boot. Guarded: a hook
 #                              that raises never blocks shutdown. None = legacy.
+# 2026-09-17    | Rex (US-788) | handleOnBattery(suppressFloorFastPath=...): a loss
+#                              inside bootGrace skips ONLY the VCELL floor fast
+#                              path, through the existing failed-read branch.
+#                              Default False = byte-identical to before.
 # ================================================================================
 ################################################################################
 #
@@ -236,7 +240,7 @@ class ShutdownSequencer:
                 return False
         return True
 
-    def handleOnBattery(self) -> None:
+    def handleOnBattery(self, *, suppressFloorFastPath: bool = False) -> None:
         """Called when a power-LOST signal fires. Apply smoothing FIRST: only
         a sustained-lost state (held across ``smoothingSec``) is a real power
         loss; a transient blip aborts with NO poweroff. On confirmed sustained
@@ -246,6 +250,13 @@ class ShutdownSequencer:
         about voltage is not loss of power; we already confirmed sustained
         battery, so we proceed via the normal bounded pipeline (no floor
         fast-path this cycle).
+
+        Args:
+            suppressFloorFastPath: US-788. True for a loss inside bootGraceSec:
+                the floor fast path is not taken and the bounded pipeline runs,
+                via the same branch a failed VCELL read takes. Everything else
+                (witness, loss hook, smoothing, pipeline, poweroff) is unchanged.
+                False (the default) is the exact pre-US-788 path.
         """
         # ARCH-019: the PLD pin JUST MOVED. Record it durably.
         #
@@ -299,16 +310,28 @@ class ShutdownSequencer:
             "smoothing) -- entering bounded pre-shutdown window",
             self._smoothingSec,
         )
-        try:
-            v = self._vcell()
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "shutdown-sequencer: VCELL read failed (%s) -- power-lost "
-                "already confirmed sustained; proceeding via bounded pipeline "
-                "(no floor fast-path this cycle, NOT an immediate poweroff)",
-                exc,
+        if suppressFloorFastPath:
+            # US-788: inside bootGrace the boot VCELL sag can still read at or
+            # below the floor, and skipping the pipeline is the irreversible act.
+            # Take the SAME branch a failed VCELL read takes -- no second
+            # poweroff path.
+            logger.warning(
+                "shutdown-sequencer: loss inside bootGrace -- VCELL floor fast "
+                "path suppressed; proceeding via bounded pipeline (no floor "
+                "fast-path this cycle, NOT an immediate poweroff)"
             )
             v = None
+        else:
+            try:
+                v = self._vcell()
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "shutdown-sequencer: VCELL read failed (%s) -- power-lost "
+                    "already confirmed sustained; proceeding via bounded pipeline "
+                    "(no floor fast-path this cycle, NOT an immediate poweroff)",
+                    exc,
+                )
+                v = None
         if v is not None and v <= self._vcellFloor:
             logger.warning(
                 "shutdown-sequencer: VCELL %.3f <= floor %.3f (power-lost "
