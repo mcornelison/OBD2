@@ -1,0 +1,15 @@
+# Design artifacts must round-trip BYTE-IDENTICAL.
+#
+# ASCII STL looks like text to git, so without this it "helpfully" rewrites CRLF->LF on
+# checkout. The mesh stays valid, but the bytes change -- which silently breaks every
+# md5/size check used to prove a printable matches the model it was verified against.
+# The .3mf files are ZIP archives; a single mangled byte makes them unopenable.
+*.stl   -text
+*.3mf   binary
+*.gcode -text
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.pdf   binary
+
+# .scad is the authored source -- normal text, diff it.
