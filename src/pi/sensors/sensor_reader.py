@@ -71,6 +71,8 @@ from pi.sensors.plausibility_gate import (
     magnitudeAtLeast,
 )
 
+from pi.sensors.ak09916_bypass import toIcmFrame  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -566,7 +568,21 @@ class ImuReader(_BaseSensorReader):
         # this seq (atomic burst -> one edr_imu_sample row per seq).
         accel = _vec3(dev.acceleration)
         gyro = _vec3(dev.gyro)
-        mag = _vec3(dev.magnetic)
+        # ARCH-033: map the AK09916's axes into the ICM's frame ONCE, here.
+        #
+        # This is the single seam where BOTH magnetometer paths converge --
+        # ``dev`` is either the bypass device or the ICM shadow that
+        # _attachDirectMagnetometer falls back to. Applying it inside
+        # ak09916_bypass.magnetic would correct only the bypass, and the bypass
+        # is the path that is currently FAILING (ARCH-032), so production runs
+        # the fallback and would have been left uncorrected.
+        #
+        # Measured against GPS course over two clean laps, 2026-09-18:
+        # circular concentration R = 0.170 -> 0.861. See
+        # ak09916_bypass.AK09916_TO_ICM_AXES for the evidence and for why this
+        # is NOT computeHeadingDeg (correct) and NOT IMU_BODY_FRAME (a separate
+        # defect, ARCH-034, which owns the remaining constant offset).
+        mag = toIcmFrame(_vec3(dev.magnetic))
         # US-500: the genuine adafruit_icm20x.ICM20948 does NOT expose
         # .temperature (the clone/FakeImu assumption did). temp is NOT in the
         # states/imu display contract and edr_imu_sample.temp_c is nullable, so a
@@ -790,7 +806,10 @@ def _attachDirectMagnetometer(
         The wrapped device on success, or the bare ICM when the magnetometer
         cannot be identified or verified.
     """
-    from pi.sensors.ak09916_bypass import MagnetometerConfigError, makeBypassMagnetometer
+    from pi.sensors.ak09916_bypass import (
+        MagnetometerConfigError,
+        makeBypassMagnetometer,
+    )
 
     factory = bypassFactory or makeBypassMagnetometer
     try:

@@ -55,6 +55,8 @@ import logging
 from typing import Any
 
 __all__ = [
+    "AK09916_TO_ICM_AXES",
+    "toIcmFrame",
     "AK09916_I2C_ADDRESS",
     "FRAME_LENGTH",
     "FRAME_START_REGISTER",
@@ -108,6 +110,59 @@ ST2_OVERFLOW_MASK = 0x08
 
 # Datasheet sensitivity, 0.15 uT/LSB.
 UT_PER_LSB = 0.15
+
+#: ARCH-033. The AK09916 die does NOT share the ICM-20948's accel/gyro axes.
+#: Per TDK's own orientation drawing the mapping into the ICM frame is
+#: ``x <- ak_y``, ``y <- ak_x``, ``z <- -ak_z``. Encoded as (sourceIndex, sign)
+#: per output axis so the map is DATA a test can inspect, not arithmetic buried
+#: in a return statement.
+#:
+#: 🔴 WHY THIS EXISTS, AND WHY IT TOOK SO LONG. A-30 named this hypothesis on
+#: 2026-09-09 and recorded that THE DATA REFUTED IT. The data did -- the IMU was
+#: then sitting on the stereo amplifier with a rotating field of ~14.7 uT on a
+#: ~4 uT noise floor (SNR ~1.2), and an axis error cannot express itself through
+#: that. A-30 predicted the sequel verbatim: "It will surface the moment SNR is
+#: fixed and will look like the original fault returning."
+#:
+#: Measured 2026-09-18, IMU remounted, GPS course as INDEPENDENT truth, two
+#: clean laps, all 48 axis permutations swept (R = circular concentration of the
+#: heading error against GPS course):
+#:
+#:     identity -- what shipped      R = 0.170 (lap 1)  0.357 (lap 3)
+#:     (+y,+x,-z) -- this map        R = 0.861 (lap 1)  0.878 (lap 3)
+#:
+#: ⚠️ It is NOT ``computeHeadingDeg``, which was suspected first and is correct
+#: (atan2(+left, forward) IS a clockwise bearing); negating it broke four
+#: existing tests. It is NOT ``IMU_BODY_FRAME`` either -- swapping that leaves R
+#: at 0.170 and only moves the offset. Those are both ROTATIONS, and this is a
+#: fixed relationship between two dies in one package: it can only be corrected
+#: at the sensor seam, which is why every attempt above that layer failed while
+#: appearing to work at 0 deg and 180 deg.
+AK09916_TO_ICM_AXES: tuple[tuple[int, int], ...] = ((1, 1), (0, 1), (2, -1))
+
+
+def toIcmFrame(raw: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Re-express a raw AK09916 triple in the ICM-20948 accel/gyro frame.
+
+    Applied ONCE, at the single seam where both magnetometer paths converge
+    (``sensor_reader``), so the bypass device and the ICM shadow fallback cannot
+    disagree about which way the field points. Applying it inside this module's
+    ``magnetic`` property instead would fix only the bypass -- and the bypass is
+    the path that is currently FAILING (ARCH-032), so production runs the
+    fallback and would have been left uncorrected.
+
+    Args:
+        raw: ``(x, y, z)`` as the AK09916 reports it.
+
+    Returns:
+        ``(x, y, z)`` in the ICM's frame. A pure rotation: ``|B|`` is unchanged.
+
+    Raises:
+        IndexError/TypeError: If ``raw`` is not a 3-sequence. A short vector is
+            a programming error, not a sensor condition, and must not be padded.
+    """
+    return tuple(sign * float(raw[src]) for src, sign in AK09916_TO_ICM_AXES)
+
 
 # Datasheet Twait: at least 100 us in power-down before another mode is set. Held
 # generously because this runs once, at probe time, and never in the poll loop.
