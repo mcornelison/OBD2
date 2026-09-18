@@ -28,6 +28,9 @@
 #               |              | routed through EdrLogGate.admit() when wired.
 # 2026-09-18    | Rex          | US-767-c: gate state published to
 #               |              | states/edr-log-gate on every state change.
+# 2026-09-18    | Rex          | US-768: purgeExpired() is sync-gated (id <=
+#               |              | high-water mark); unreadable mark deletes
+#               |              | nothing; below 15 GB free it only WARNS.
 # ================================================================================
 ################################################################################
 
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -46,6 +50,7 @@ from typing import Any
 from common.edr.sensor_schema import SCHEMA_VERSION
 from common.time.helper import CANONICAL_ISO_FORMAT
 from pi.obdii.drive_id import getCurrentDriveId
+from src.pi.data import sync_log
 
 from .edr_log_gate import EdrLogGate
 from .sample import QoS, Sample
@@ -100,6 +105,12 @@ _DRAIN_TIMEOUT_S = 0.5
 # (no new daemon, ADR 2.6). Deleting rows older than retentionDays at most hourly
 # is ample -- retention is a coarse bound, not a real-time signal.
 _DEFAULT_RETENTION_CHECK_S = 3600.0
+
+# US-768: below this much free space the purge WARNS (and still deletes no
+# unsynced row). 15 GB is the floor the story states; decimal GB.
+_BYTES_PER_GB = 1000**3
+_LOW_DISK_WARN_GB = 15
+_LOW_DISK_WARN_BYTES = _LOW_DISK_WARN_GB * _BYTES_PER_GB
 
 # Config defaults (mirrored by the validator DEFAULTS registry -- these are the
 # safety fallbacks for a caller that passes an unvalidated config).
@@ -176,6 +187,7 @@ class EdrPersistenceSubscriber:
         retentionCheckIntervalS: float = _DEFAULT_RETENTION_CHECK_S,
         logGate: EdrLogGate | None = None,
         gateStateEmitFn: Callable[[EdrLogGate], None] | None = None,
+        freeDiskBytesFn: Callable[[], int] | None = None,
     ) -> None:
         """Bind the subscriber to its source subscription + write target.
 
@@ -198,6 +210,9 @@ class EdrPersistenceSubscriber:
             gateStateEmitFn: Called with the gate whenever its state differs
                 from the last one published (US-767-c: states/edr-log-gate).
                 None publishes nothing.
+            freeDiskBytesFn: Free bytes on the database volume, read by the
+                purge's low-disk warning (US-768). None measures the volume
+                holding ``database.dbPath``.
         """
         self._sub = subscription
         self._database = database
@@ -211,6 +226,9 @@ class EdrPersistenceSubscriber:
         self._logGate = logGate
         self._gateStateEmitFn = gateStateEmitFn
         self._publishedGateState: str | None = None
+        self._freeDiskBytesFn = (
+            freeDiskBytesFn if freeDiskBytesFn is not None else self._freeDiskBytes
+        )
         self._lastPurgeMono = self._monotonic()
         # Per-table burst buffers: {"seq", "fields": {name: value}, "tsUtc",
         # "tsCapture", "dataSource"}. None == no burst in progress.
@@ -481,7 +499,7 @@ class EdrPersistenceSubscriber:
             imuDeleted, lightDeleted = self.purgeExpired()
             if imuDeleted or lightDeleted:
                 logger.info(
-                    "EDR retention purge: deleted imu=%d light=%d (older than %d days)",
+                    "EDR retention purge: deleted imu=%d light=%d (synced, older than %d days)",
                     imuDeleted, lightDeleted, self._retentionDays,
                 )
         except Exception as e:  # noqa: BLE001 -- purge failure is non-fatal
@@ -489,7 +507,15 @@ class EdrPersistenceSubscriber:
         return True
 
     def purgeExpired(self) -> tuple[int, int]:
-        """Delete rows older than ``retentionDays`` from both EDR tables.
+        """Delete rows the server already has that are older than ``retentionDays``.
+
+        US-768: this is the ONLY EDR delete. A row goes only when it is past the
+        age cutoff AND its id is at or below its table's sync high-water mark --
+        age alone never authorises a delete. Both marks are read before any
+        delete; if either cannot be read, nothing is deleted. Below
+        :data:`_LOW_DISK_WARN_BYTES` free the purge WARNS and deletes exactly
+        what it would otherwise: a disk-space emergency never widens the delete
+        to unsynced rows. (US-762's whole-disk guard is a separate mechanism.)
 
         Returns:
             (imuRowsDeleted, lightRowsDeleted).
@@ -497,14 +523,43 @@ class EdrPersistenceSubscriber:
         cutoff = (self._nowUtcFn() - timedelta(days=self._retentionDays)).strftime(
             CANONICAL_ISO_FORMAT
         )
+        self._warnIfLowDisk()
         with self._database.connect() as conn:
+            try:
+                imuMark = sync_log.getHighWaterMark(conn, "edr_imu_sample")[0]
+                lightMark = sync_log.getHighWaterMark(conn, "edr_light_sample")[0]
+            except Exception as e:  # noqa: BLE001 -- any unreadable mark deletes nothing
+                logger.warning(
+                    "EDR retention purge: sync high-water mark unreadable (%s) -- "
+                    "deleting nothing", e,
+                )
+                return (0, 0)
             imuDeleted = conn.execute(
-                "DELETE FROM edr_imu_sample WHERE ts_utc < ?", (cutoff,)
+                "DELETE FROM edr_imu_sample WHERE ts_utc < ? AND id <= ?", (cutoff, imuMark)
             ).rowcount
             lightDeleted = conn.execute(
-                "DELETE FROM edr_light_sample WHERE ts_utc < ?", (cutoff,)
+                "DELETE FROM edr_light_sample WHERE ts_utc < ? AND id <= ?", (cutoff, lightMark)
             ).rowcount
         return (imuDeleted, lightDeleted)
+
+    def _freeDiskBytes(self) -> int:
+        """Free bytes on the volume that holds the database file."""
+        dbDir = os.path.dirname(os.path.abspath(self._database.dbPath))
+        return shutil.disk_usage(dbDir).free
+
+    def _warnIfLowDisk(self) -> None:
+        """WARN when free space is below the floor. Never changes what is deleted."""
+        try:
+            freeBytes = self._freeDiskBytesFn()
+        except Exception as e:  # noqa: BLE001 -- the warning is advisory only
+            logger.warning("EDR retention purge: free disk space unreadable (%s)", e)
+            return
+        if freeBytes < _LOW_DISK_WARN_BYTES:
+            logger.warning(
+                "EDR retention purge: free disk %.2f GB is below the %d GB floor -- "
+                "deleting only rows the server already has; unsynced EDR rows are kept",
+                freeBytes / _BYTES_PER_GB, _LOW_DISK_WARN_GB,
+            )
 
     # -- observability ---------------------------------------------------------
     def stats(self) -> Any:

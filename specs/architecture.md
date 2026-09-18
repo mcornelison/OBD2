@@ -3882,13 +3882,25 @@ is what proves the gate never closes on it.
 | `False` | `False` | **OPEN** — we cannot tell. Fail open, rate-limited WARNING. |
 | `True` | `True` | **OPEN** — normal. |
 
-**Retention deletes only what the server already has** *(designed, US-768)*.
-`DELETE … WHERE ts_utc < cutoff AND id <= the sync high-water mark`. **Age alone
-never authorises a delete** — age is evidence about time, never about whether a
-reading was preserved. Below the free-space floor the job **WARNS and still
-deletes no unsynced row**: a disk-space emergency must not become a data-loss
-event. If the high-water mark cannot be read, **delete nothing** — a purge that
-guesses at what was synced is the defect being removed.
+**Retention is sync-gated: it deletes only what the server already has**
+*(built, US-768)*. `purgeExpired()` was modified in place:
+`DELETE … WHERE ts_utc < cutoff AND id <= ?`, bound to that table's
+`sync_log.last_synced_id` (read via `sync_log.getHighWaterMark`; `PK_COLUMN` is
+`id` for both EDR tables). **Age alone never authorises a delete** — age is
+evidence about time, never about whether a reading was preserved. A table with
+no `sync_log` row has mark 0, so nothing in it is deleted. Both marks are read
+**before any delete**; if either read raises (including a missing `sync_log`
+table — the purge never creates sync schema to get a mark), the purge **deletes
+nothing** and logs a WARNING — a purge that guesses at what was synced is the
+defect being removed. Below **15 GB** free on the database volume
+(`_LOW_DISK_WARN_BYTES`, decimal GB) the job **WARNS and still deletes no
+unsynced row** — the delete is identical to the one it runs with plenty of
+space: a disk-space emergency must not become a data-loss event. An unreadable
+free-space read is logged and changes nothing. This is **not** US-762's
+whole-disk guard; the two are separate and must stay separate. Pinned by
+`tests/pi/bus/test_edr_purge_sync_gated.py`, which also greps `src/pi` for
+`DELETE FROM edr_` and requires exactly the two gated statements inside
+`purgeExpired`.
 
 ⚠️ **There must be exactly ONE EDR delete path.** `purgeExpired()` in
 `src/pi/bus/edr_persistence_subscriber.py` already deletes by `ts_utc < cutoff`
@@ -3900,7 +3912,8 @@ of the new module passes.
 **The deadline this carries.** US-761 raised retention 7 → 45 days, so Pi-side
 deletion resumes about **2026-10-22**. Until sync is live the high-water mark is
 0 and the correct behaviour is that **nothing is deleted** — an expected
-validation outcome, not a defect.
+validation outcome, not a defect. EDR sync has been live since 2026-09-16, so
+from that date the purge deletes rows the server has acknowledged.
 
 *Gate-ratification note: §10.8 added per the 2026-05-18 design-gate governance
 rule (PM Rule 10 / C-4 DoD, in-sprint) from Atlas's 2026-06-30 EDR ADR

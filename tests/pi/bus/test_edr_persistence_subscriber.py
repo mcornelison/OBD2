@@ -29,6 +29,7 @@ from pi.bus.edr_persistence_subscriber import (
 )
 from pi.bus.sample import QoS, Sample
 from pi.obdii.database import ObdDatabase
+from src.pi.data import sync_log
 
 
 @pytest.fixture()
@@ -278,12 +279,22 @@ class TestAdditiveIsolation:
 # ---------------------------------------------------------------------------
 
 class TestRetentionPurge:
+    # US-768: the purge only deletes rows the server already has, so each test
+    # here marks every row synced. The sync gate itself is pinned in
+    # test_edr_purge_sync_gated.py.
     def _insertRow(self, db: ObdDatabase, table: str, ts: str) -> None:
         with db.connect() as conn:
             conn.execute(
                 f"INSERT INTO {table} (ts_utc, ts_capture, seq) VALUES (?, 0.0, 1)",
                 (ts,),
             )
+
+    def _markAllSynced(self, db: ObdDatabase) -> None:
+        with db.connect() as conn:
+            sync_log.initDb(conn)
+            for table in ("edr_imu_sample", "edr_light_sample"):
+                maxId = conn.execute(f"SELECT MAX(id) FROM {table}").fetchone()[0] or 0
+                sync_log.updateHighWaterMark(conn, table, maxId, "test-batch")
 
     def test_purgeDeletesRowsOlderThanRetentionFromBothTables(
         self, freshDb: ObdDatabase
@@ -293,6 +304,7 @@ class TestRetentionPurge:
         for table in ("edr_imu_sample", "edr_light_sample"):
             self._insertRow(freshDb, table, old)
             self._insertRow(freshDb, table, fresh)
+        self._markAllSynced(freshDb)
 
         sub = EdrPersistenceSubscriber(None, freshDb, retentionDays=7)
         imuDeleted, lightDeleted = sub.purgeExpired()
@@ -309,7 +321,8 @@ class TestRetentionPurge:
         # A row timestamped "now" is purged once the clock advances past the window.
         ts = utcIsoNow()
         self._insertRow(freshDb, "edr_imu_sample", ts)
-        future = datetime.now(UTC) + timedelta(days=10)
+        self._markAllSynced(freshDb)
+        future =datetime.now(UTC) + timedelta(days=10)
         sub = EdrPersistenceSubscriber(
             None, freshDb, retentionDays=7, nowUtcFn=lambda: future
         )
@@ -320,6 +333,7 @@ class TestRetentionPurge:
         clock = {"t": 0.0}
         old = "2020-01-01T00:00:00Z"
         self._insertRow(freshDb, "edr_imu_sample", old)
+        self._markAllSynced(freshDb)
         sub = EdrPersistenceSubscriber(
             None, freshDb, retentionDays=7,
             monotonicFn=lambda: clock["t"], retentionCheckIntervalS=1000.0,
