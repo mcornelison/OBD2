@@ -268,6 +268,9 @@
 # 2026-09-14    | Rex (US-751) | The PENDING heartbeat is wired with the
 #               |              | orchestrator's _obdWakeEvent, so
 #               |              | requestObdLinkWake() cuts its backoff short.
+# 2026-09-18    | Rex (US-767-c)| EDR log gate reads ObdConnection.getStatus()
+#               |              | lazily, honours pi.sensors.logGate.enabled and
+#               |              | publishes states/edr-log-gate.
 # ================================================================================
 ################################################################################
 
@@ -1730,12 +1733,45 @@ class LifecycleMixin:
             readers = createSensorReadersFromConfig(self._config, bus)
             if not readers:
                 return  # no sensor enabled -> ships dark
+            from pi.bus.edr_log_gate import (
+                DEFAULT_HOLD_SEC,
+                DEFAULT_PRE_ROLL_SEC,
+                EdrLogGate,
+            )
             from pi.bus.edr_persistence_subscriber import (
+                DEFAULT_STATES_DIR,
                 createEdrPersistenceSubscriberFromConfig,
+                makeEdrLogGateStateEmitter,
+            )
+            # US-767-c: the gate reads the link from its PRODUCER --
+            # ObdConnection.getStatus() (both link facts from one read) --
+            # resolved lazily per row so a rebuilt connection is honoured. Never
+            # a states/ file or other rendered value (SSOT rule B). No connection
+            # object raises, which the gate reads as unreadable -> fail OPEN.
+            def edrLinkSignal() -> Any:
+                conn = getattr(self, '_connection', None)
+                if conn is None:
+                    raise RuntimeError("no OBD connection object")
+                return conn.getStatus()
+
+            piCfg = self._config.get('pi', {})
+            gateCfg = piCfg.get('sensors', {}).get('logGate', {})
+            logGate = EdrLogGate(
+                edrLinkSignal,
+                # Absent key -> pass-through, the gate's own never-lose-a-row
+                # default; the validator supplies true for a validated config.
+                enabled=bool(gateCfg.get('enabled', False)),
+                preRollSec=gateCfg.get('preRollSec', DEFAULT_PRE_ROLL_SEC),
+                holdSec=gateCfg.get('holdSec', DEFAULT_HOLD_SEC),
+            )
+            gateStateEmit = makeEdrLogGateStateEmitter(
+                piCfg.get('splash', {}).get('statesDir', DEFAULT_STATES_DIR)
             )
             edrSubscriber = createEdrPersistenceSubscriberFromConfig(
                 self._config, bus, self._database,
                 driveDetector=self._driveDetector,
+                logGate=logGate,
+                gateStateEmitFn=gateStateEmit,
             )
             if edrSubscriber is None:
                 return

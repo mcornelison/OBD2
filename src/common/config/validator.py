@@ -229,6 +229,12 @@ DEFAULTS: dict[str, Any] = {
     'pi.powerWatch.perTaskTimeoutSec': 20,
     'pi.powerWatch.totalWindowCapSec': 45,
     'pi.powerWatch.vcellFloorVolts': 3.50,
+    # US-776-b: the drain's OWN stopping point, above the vcellFloorVolts
+    # emergency backstop. PROVISIONAL (Atlas 2026-09-17): 3.585 V is the only
+    # voltage on record at a shutdown that FINISHED (in-car key-off #2,
+    # CLEAN_COMPLETE), rounded up. Derivation: specs/architecture.md 10.6.3.
+    # Do not change without the drain's VCELL trajectory data.
+    'pi.powerWatch.drainFloorVolts': 3.60,
     'pi.powerWatch.poweroffTimeoutSec': 30,
     # 2026-05-18 bricking-loop HOTFIX. UpsMonitor.getPowerSource() is a
     # VCELL-trend heuristic; its slope rule reports BATTERY on the boot
@@ -354,6 +360,12 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
+    # US-767-b: link-gated EDR logging (Atlas's US-734 plan, Tasks 7-8). Rows
+    # are written while the OBD link is up, plus a pre-roll written when it
+    # opens and a hold after it drops. Wired as a pass-through until US-767-c.
+    'pi.sensors.logGate.enabled': True,
+    'pi.sensors.logGate.preRollSec': 60,
+    'pi.sensors.logGate.holdSec': 300,
     # US-630 (F-138, punch-list 1.4): the DERIVED gear.  This car exposes no
     # gear PID, so gear is computed once from the realtime SPEED + RPM SSOT and
     # published -- never recomputed per consumer.  Ships DARK
@@ -975,17 +987,20 @@ class ConfigValidator:
                     missingFields=[key],
                 )
 
-        floor = self._getNestedValue(config, 'pi.powerWatch.vcellFloorVolts')
-        if floor is not None and (
-            isinstance(floor, bool)
-            or not isinstance(floor, (int, float))
-            or not (3.0 < floor < 4.3)
+        for floorKey in (
+            'pi.powerWatch.vcellFloorVolts',
+            'pi.powerWatch.drainFloorVolts',
         ):
-            raise ConfigValidationError(
-                f"pi.powerWatch.vcellFloorVolts must be a number in "
-                f"(3.0, 4.3) volts (got {floor!r})",
-                missingFields=['pi.powerWatch.vcellFloorVolts'],
-            )
+            floor = self._getNestedValue(config, floorKey)
+            if floor is not None and (
+                isinstance(floor, bool)
+                or not isinstance(floor, (int, float))
+                or not (3.0 < floor < 4.3)
+            ):
+                raise ConfigValidationError(
+                    f"{floorKey} must be a number in (3.0, 4.3) volts (got {floor!r})",
+                    missingFields=[floorKey],
+                )
 
         php = self._getNestedValue(config, 'pi.powerWatch.pldPowerPresentHigh')
         if php is not None and not isinstance(php, bool):
@@ -1134,6 +1149,10 @@ class ConfigValidator:
         # its floor, gating a channel on two identical samples -- fast enough to
         # fire on a real scheduler hiccup. Fail fast rather than silently.
         'pi.sensors.imu.invariantDwellSeconds',
+        # US-767-b: a zero pre-roll keeps nothing from before the link, and a
+        # zero hold closes the gate on the first dropped read.
+        'pi.sensors.logGate.preRollSec',
+        'pi.sensors.logGate.holdSec',
     )
 
     def _validateImuStateBridge(self, config: dict[str, Any]) -> None:

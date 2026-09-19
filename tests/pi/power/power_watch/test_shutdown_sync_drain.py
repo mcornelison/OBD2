@@ -20,6 +20,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-29    | Rex (US-621) | Initial -- bounded drain + hook composition.
+# 2026-09-17    | Rex (US-776-a) | The budgetSec pass-fitting bound is removed;
+#                                its two bound tests are replaced by no-bound
+#                                tests (test_drain_bounded_by_battery.py holds
+#                                the battery-bound chain).
 # ================================================================================
 ################################################################################
 """US-621 guards for the bounded pre-shutdown drain."""
@@ -104,8 +108,6 @@ class TestTheDrainKeepsGoingWhileRowsRemain:
         runSync = m._buildRunSync(
             client,
             backlogReader=_backlogOf(800, 300, 0),
-            budgetSec=100.0,
-            monotonicFn=_clock(),
         )
 
         # Act
@@ -125,8 +127,6 @@ class TestTheDrainKeepsGoingWhileRowsRemain:
         runSync = m._buildRunSync(
             client,
             backlogReader=_backlogOf(0),
-            budgetSec=100.0,
-            monotonicFn=_clock(),
         )
 
         # Act
@@ -136,60 +136,44 @@ class TestTheDrainKeepsGoingWhileRowsRemain:
         assert client.calls == 1
 
 
-class TestTheDrainIsBounded:
-    """An unbounded drain would fight the power budget the sequencer exists for."""
+class TestTheDrainHasNoTimeBound:
+    """US-776-a: the drain ends on an empty backlog or the floor, never a timer."""
 
-    def test_runSync_stopsWhenTheRemainingBudgetCannotFitAnotherPass(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_runSync_takesNoBudget(self) -> None:
         """
-        Given: a large backlog and passes that each consume most of the budget
-        When: the drain runs
-        Then: it stops rather than starting a pass that cannot finish in budget
+        Given: the drain adapter
+        When: its signature is inspected
+        Then: there is no budgetSec -- the pass-fitting bound (US-621) is gone
 
-        US-621 VC-3 + conditionalOutcome 1: the bound is derived from MEASURED
-        pass duration against the shutdown path's own perTaskTimeoutSec, so no
-        new tunable is invented and a slow link self-limits.
-        """
-        # Arrange -- each pass takes 8s against a 20s budget: pass 3 would not fit
-        caplog.set_level(logging.DEBUG)
-        client = _FakeSyncClient([_FakeSummary(rowsPushed=500)] * 10)
-        runSync = m._buildRunSync(
-            client,
-            backlogReader=_backlogOf(9000),
-            budgetSec=20.0,
-            monotonicFn=_clock(step=8.0),
-        )
-
-        # Act
-        runSync()
-
-        # Assert -- bounded well short of the 18 passes the backlog would need
-        assert client.calls == 2
-
-    def test_runSync_alwaysMakesAtLeastOnePass(self) -> None:
-        """
-        Given: a budget already exhausted
-        When: the drain runs
-        Then: one forcePush still happens
-
-        Today's behaviour is exactly one pass; the bound must never regress
-        below that or a shutdown would stop syncing altogether.
+        The CIO ruled the drain ends on confirmation or the battery floor. The
+        floor is the sequencer's to enforce, from its own thread.
         """
         # Arrange
-        client = _FakeSyncClient([_FakeSummary(rowsPushed=10)])
-        runSync = m._buildRunSync(
-            client,
-            backlogReader=_backlogOf(5000),
-            budgetSec=0.0,
-            monotonicFn=_clock(step=100.0),
-        )
+        import inspect
+
+        # Act
+        params = inspect.signature(m._buildRunSync).parameters
+
+        # Assert
+        assert "budgetSec" not in params
+        assert "monotonicFn" not in params
+
+    def test_runSync_keepsPassingUntilTheBacklogIsEmpty(self) -> None:
+        """
+        Given: a backlog needing 18 passes
+        When: the drain runs
+        Then: all 18 run -- the old 20 s budget would have stopped it at 2
+        """
+        # Arrange
+        client = _FakeSyncClient([_FakeSummary(rowsPushed=500)] * 18)
+        counts = [9000 - 500 * n for n in range(1, 19)]
+        runSync = m._buildRunSync(client, backlogReader=_backlogOf(*counts))
 
         # Act
         runSync()
 
         # Assert
-        assert client.calls == 1
+        assert client.calls == 18
 
     def test_runSync_stopsWhenAPassMakesNoProgress(self) -> None:
         """
@@ -207,8 +191,6 @@ class TestTheDrainIsBounded:
         runSync = m._buildRunSync(
             client,
             backlogReader=_backlogOf(700, 700),
-            budgetSec=1000.0,
-            monotonicFn=_clock(),
         )
 
         # Act
@@ -235,8 +217,6 @@ class TestTheDrainKeepsItsExistingContract:
         runSync = m._buildRunSync(
             client,
             backlogReader=_backlogOf(10),
-            budgetSec=100.0,
-            monotonicFn=_clock(),
         )
 
         # Act / Assert
@@ -254,8 +234,6 @@ class TestTheDrainKeepsItsExistingContract:
         runSync = m._buildRunSync(
             client,
             backlogReader=_backlogOf(999),
-            budgetSec=100.0,
-            monotonicFn=_clock(),
         )
 
         # Act
@@ -282,8 +260,6 @@ class TestTheDrainKeepsItsExistingContract:
         runSync = m._buildRunSync(
             client,
             backlogReader=_unknown,
-            budgetSec=100.0,
-            monotonicFn=_clock(),
         )
 
         # Act
@@ -372,14 +348,3 @@ class TestPrePowerOffHookComposition:
         """
         assert m.composePrePowerOffHooks(None, None) is None
 
-
-def _clock(step: float = 0.0):
-    """A monotonic stub advancing by ``step`` seconds on every read."""
-    state = {"t": 0.0}
-
-    def _now() -> float:
-        value = state["t"]
-        state["t"] += step
-        return value
-
-    return _now

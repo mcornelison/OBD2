@@ -2452,6 +2452,31 @@ pluggable seam via `__main__.buildV1Tasks`) → window exits on
 straight to poweroff; a *failed* VCELL read never powers off
 (uncertainty ≠ power loss).
 
+**bootGrace scopes the floor fast path, NOT the trigger (US-788, Sprint 89 /
+V0.29.57).** A PLD loss inside `pi.powerWatch.bootGraceSec` (120 s) runs the
+NORMAL path — load shed + loss heartbeat (`powerLossObservedFn`), smoothing,
+bounded pipeline, drain close, graceful poweroff. The watch loop calls
+`handleOnBattery(suppressFloorFastPath=True)`, and the sequencer takes the
+existing *failed-VCELL-read* branch: no floor fast path this cycle, pipeline
+instead. There is no second poweroff path. Outside grace the call is the bare
+`handleOnBattery()`, byte-identical to before, floor fast path included.
+
+Why: bootGrace was sized for the VCELL-slope heuristic that reported BATTERY on
+the boot VCELL sag (validator.py, 2026-05-18). The GPIO6 PLD line replaced that
+heuristic as the trigger the **same day** — it is deterministic, so the trigger
+needs no grace. `smoothingSec` is the blip rejection. The boot sag still reaches
+exactly one decision, the floor fast path, and skipping the pipeline is the
+irreversible act worth protecting there. Gating the trigger instead suppressed
+the shed, the heartbeat and the drain close with it: four in-grace suppressions
+in the service's life, zero false positives, three hard cuts. No constant
+changed — un-shed carry at real load is 0.678 s, so any nonzero grace on the
+trigger is a hard cut; the fix is scope, not duration. `bootGraceSec` is kept:
+whether boot VCELL approaches the floor on AC is unmeasured.
+
+The in-grace fire is edge-triggered (one loss, one call) and does not set the
+post-grace `firedAlready` guard, so an in-grace blip followed by a post-grace
+loss still fires (the F-7 level trigger is unchanged).
+
 > **History extracted (2026-06-01):** the superseded `PowerDownOrchestrator`
 > ladder + the SOC%-calibration lesson + the Sprint-40 **F-7** (boot-grace latch)
 > and **F-8** (boot-progress instrument) bug-fix narratives + the Rule-10 gate
@@ -2579,6 +2604,98 @@ diagnostic that can hold a dying machine open is worse than no diagnostic.
 **Explicit non-goal:** a *guaranteed* full drain. On a UPS budget that is not achievable, and
 promising it would be the same over-claim this section exists to remove.
 
+**The shutdown's own drain-close row is excluded, by primary key, and reported beside the verdict
+(US-789, Sprint 89 / V0.29.57) [Atlas shape (c), 2026-09-17].** `composePrePowerOffHooks(drainCloseFn,
+custodyFn)` runs the US-526 close FIRST, and the close UPDATEs a `battery_health_log` row -- a delta
+table with the `_sync_modified_at` cursor -- so custody counted a row the shutdown had just written and
+**read `OUTSTANDING` on every graceful shutdown**. The fix:
+
+- **Named type:** `RowExclusion(table, pk, reason)` (`src/pi/sync/backlog.py`). `countOutstandingRows(...,
+  excludeRows=)` subtracts each excluded row **only if it is actually outstanding** (tested through the
+  same `_deltaPredicate` a push uses) and lists it in `SyncBacklog.excludedRows`. It is ROW-level and
+  does **not** reuse `excludeTables`: **one primary key, never a table.** A `battery_health_log` row
+  stranded by an *earlier* drain still counts and still yields `OUTSTANDING`.
+- **Handoff:** `OwnDrainCloseSlot` (`sync_custody.py`), a single slot. `buildDrainCloseHook` **clears** it,
+  closes, and records the `drain_event_id` **only when the close actually wrote the row**. Hook isolation
+  is unchanged -- return values are still discarded -- and custody never depends on the close: an empty
+  slot (close failed, raised, or found nothing) means custody counts every row.
+- **Beside the verdict:** the record's `ownDrainCloseExcluded` field
+  (`{table, drain_event_id, reason, wasOutstanding}`, or `null` when no exclusion was requested) and a
+  WARNING line under its own prefix `powerwatch: OWN DRAIN CLOSE =` -- the `edrOutstandingRows` /
+  `EDR BACKLOG =` pattern from US-766. Nothing is hidden.
+- **The close does not move.** It stays first, with its close-time UPS read, so `end_vcell_v` (Spool's
+  `<= 3.50 V` depth gate) is unchanged. The exclusion applies on the VCELL-floor fast path too, which
+  uses the same pre-poweroff hook.
+
+**The drain is bounded by the battery, not by three timers (US-776-a, Sprint 89 / V0.29.57).** At
+home the drain now keeps pushing until the shared backlog reader returns total 0 -- the server has
+ACKNOWLEDGED every drive row; far-side retention is not observed -- or the VCELL floor is reached,
+whichever comes first (CIO ruling 2026-09-17: "keep syncing until sync complete or out of power").
+Three bounds used to end it first, and each is removed where it lived:
+
+1. **`_buildRunSync` budget** (`__main__.py`). A further pass only started if one as long as the
+   last still fitted `perTaskTimeoutSec` (20 s). Removed: the loop ends on an empty backlog, a failing
+   pass (`RuntimeError` -> the task's single retry -> `SYNC_FAILED_AFTER_RETRY`), a pass that moves
+   nothing, or an unreadable backlog. Custody re-reads the SAME reader, so those last cases record
+   `OUTSTANDING` or `UNKNOWN`, never `DELIVERED`. Every pass still excludes
+   `SHUTDOWN_DRAIN_EXCLUDED_TABLES`.
+2. **`runPipeline` thread abandonment** (`pipeline.py`). `th.join(timeout=perTaskTimeoutSec)` did not
+   cancel a task; it ABANDONED the daemon thread, which kept calling `forcePush` and writing SQLite
+   while `systemctl poweroff` ran. A task named in `sequencerBoundedTasks` is now joined without a
+   timeout. `main()` names only the sync task; every other task, including any future plugin appended
+   to `buildV1Tasks`, keeps the per-task bound.
+3. **The sequencer cap** (`controller.py`). The single `done.wait(totalCapSec)` (45 s) is now a poll on
+   `smoothingPollSec`. The pipeline stays on its own daemon thread. Each interval, the sequencer's
+   thread re-checks `isOnBattery` (power returned -> the existing single cancel and restore) and
+   re-reads VCELL: a SUCCESSFUL read `<= vcellFloorVolts` ends the drain and powers off, **whatever the
+   pipeline thread is doing.** The floor has to be read there. One `forcePush` pass can block for
+   ~25 min (4 attempts x 30 s + 7 s backoff = 127 s per table, x 12 delta tables, `bypassQuarantine=True`)
+   and never reach a pass boundary where the drain loop could check anything (A-24: WiFi drops
+   mid-pass).
+
+`totalCapSec` survives only as the bound while the floor is **blind**: there has been no successful
+VCELL read for `totalCapSec`, or the floor is suppressed for a bootGrace loss (US-788, where the boot
+sag can read below the floor). A hung pipeline behind an unreadable gauge would otherwise hold the Pi
+up until the hardware cut. Stopping early leaves rows for the next sync and can be recovered from; a
+hard cut mid-write cannot. This story terminates on the existing `vcellFloorVolts`; US-776-b gives the
+drain its own floor.
+
+**The drain has its own floor, above the emergency backstop (US-776-b, Sprint 89 / V0.29.57).** Two
+different decisions, two keys. `pi.powerWatch.vcellFloorVolts` (3.50 V, **unchanged**) answers "is the
+battery already too low to START?" -- read once before the pipeline, and a successful read at or below
+it still skips the pipeline and powers off (the backstop fast path). `pi.powerWatch.drainFloorVolts`
+(**3.60 V, PROVISIONAL**) answers "stop draining NOW" -- it is what the poll in (3) above terminates on.
+Both carry the same `(3.0, 4.3)` V range check in the validator.
+
+*Derivation of 3.60 V.* 3.585 V is the only voltage on record associated with a shutdown that actually
+FINISHED (in-car key-off #2, `CLEAN_COMPLETE`). 3.60 V is that rounded up. It sits above the 3.50 V
+backstop and well above the 3.4712 V measured cliff.
+
+*Why an unmeasured quantity may license this constant (Atlas).* An unmeasured quantity can still license
+a decision, PROVIDED the decision errs in the direction the evidence cannot be wrong about. Terminating
+too EARLY leaves rows on the Pi to sync next trip -- recoverable. Terminating too LATE is a hard cut
+mid-write -- unrecoverable, and the defect this sprint exists to remove. Reading 3.585 V as headroom to
+ARRIVE at 3.50 V is unsound; reading the same endpoint as a STOPPING point can only err toward stopping
+early.
+
+**No claim of safety is made, and a short drain is not a failure.** Neither this section nor the story
+asserts the floor is safe to run to. Loaded VCELL under drain load is NOT measured: on an already
+depleted pack a 3.60 V terminator may end the drain within seconds -- VCELL between 3.50 V and 3.60 V
+starts the pipeline and the first poll ends it. **That is correct behaviour** -- a depleted pack should
+not fund a long drain. A short drain is not evidence that "the bound did not work". Do not change
+3.60 V without the drain's VCELL trajectory data -- that capture is US-790 (deferred; its storage shape
+needs an architectural ruling, because a row written to a synced table during the shutdown turns the
+custody verdict OUTSTANDING, the US-789 defect). Until US-790 ships, 3.60 V stands.
+
+**Why `isServerReachable` is the gate and not an SSID (Atlas ruling 1, 2026-09-17).** An SSID gate is a
+derived proxy. It says "home" when the server is down, and a drain gated on it would spend the
+battery pushing at something that cannot acknowledge a row. `SyncWithServerTask` gates on
+`HomeNetworkDetector.isServerReachable`, which asks the producer that has to confirm. Away from home it
+reads False, `forcePush` is never called, and poweroff follows exactly as before. **Caveat:
+`serverReachable()` is checked once, not polled.** It is read once, at the top of
+`SyncWithServerTask.run` (`sync_with_server.py`). A server that goes away mid-drain is not re-detected
+by this gate. The drain then ends on a failing pass, or on the floor while a pass is blocked.
+
 ### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
 
 An in-progress drain event was written once, at close. A power loss before that close lost the whole
@@ -2618,7 +2735,8 @@ coverage of the case where the observer dies with the observed.
 
 **What the flow above does NOT establish.** §10.6 describes a sequence that needs roughly
 `smoothingSec` (7) + the sync drain (`perTaskTimeoutSec` 20, capped by `totalWindowCapSec` 45) to
-reach `systemctl poweroff`. **Nothing in this section guarantees the supply keeps the Pi up that
+reach `systemctl poweroff`. (Superseded by US-776-a: at home the drain is now bounded by the VCELL
+floor, not by those two timers -- §10.6.3.) **Nothing in this section guarantees the supply keeps the Pi up that
 long.** Atlas cut power twice on 2026-09-14 (16:04:44Z, 16:40:03Z), with all services running.
 Both times:
 
@@ -2669,8 +2787,8 @@ and whether power returned.
 - Otherwise the number is **time-to-death** when the prior boot has no `CLEAN_COMPLETE`, and
   **time-to-poweroff** when it does. Poweroff stops the service, which ends the rows.
 
-**Scope.** Losses ignored inside boot-grace start no heartbeat, because they never reach
-`handleOnBattery`.
+**Scope.** Since US-788, losses inside boot-grace reach `handleOnBattery` and start the
+heartbeat like any other loss (see §10.6).
 
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
@@ -3772,6 +3890,35 @@ that ring **in order**; OPEN→HOLD keeps writing for 300 s and re-arms when the
 link returns. A parked car otherwise logs millions of rows nobody will read, and
 the moments just before a link opens are the ones worth keeping.
 
+*Built as a pass-through (US-767-b).* `EdrLogGate` (`src/pi/bus/edr_log_gate.py`)
+reads the two producer facts (`connected`, `signalReadable`) and follows the
+fail-OPEN table below; a signal callable that raises, or none at all, counts as
+unreadable → OPEN with a WARNING at most once per 60 s. `enabled=False` is
+always OPEN and never reads the signal. Config: `pi.sensors.logGate.enabled`
+(`true`), `.preRollSec` (`60`), `.holdSec` (`300`) — both windows must be
+positive. US-767-b had `lifecycle._startEdrSensorPath` build the gate with
+**`enabled=False` and no signal** and hand it to `EdrPersistenceSubscriber`, which routes every
+row through `admit()` (drive_id resolved at capture, so a flushed pre-roll row
+keeps its attribution). A linked run therefore writes byte-identical rows to the
+pre-gate path.
+
+*Live (US-767-c).* `_startEdrSensorPath` now passes the gate a **lazy callable
+over `ObdConnection.getStatus()`**, resolving `self._connection` on every row
+(a rebuilt connection is honoured; no connection object raises → unreadable →
+OPEN), and honours `pi.sensors.logGate.enabled` (an absent key falls back to the
+gate's pass-through default; the validator supplies `true`). Nothing in the path
+reads a `states/` file. Every row still goes through `admit()`, so a fully
+linked run writes the same rows as no gate at all. Transitions are logged by the
+gate (`EDR log gate: CLOSED->OPEN reason=… buffered=N`) and the subscriber
+**publishes `states/edr-log-gate`** (`pi.splash.statesDir`) on the first row and
+on every state change after it — never per row:
+`{"state": "CLOSED"|"OPEN"|"HOLD", "enabled", "from", "reason", "bufferedRows",
+"ts"}` (`from`/`reason` are `null` before the first transition). The write is
+best-effort and can never cost a row. The fail-OPEN branch is pinned by a
+mutation test (`tests/pi/bus/test_edr_log_gate_live.py`): the same unreadable-
+signal run that passes on the shipped gate must fail on a copy compiled with
+that one return inverted.
+
 *The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.*
 `obd.py` `is_connected()` returns `status() == OBDStatus.CAR_CONNECTED` and is
 explicitly **False** at `ELM_CONNECTED` — so it is an **ECU-level** fact, not an
@@ -3793,13 +3940,48 @@ because production cannot raise here. *(Raised at the Sprint 88 design gate;
 recorded because a test that patches a raise would pass while production could
 never produce one — the inert-guard shape, `specs/anti-patterns.md`.)*
 
-**Retention deletes only what the server already has** *(designed, US-768)*.
-`DELETE … WHERE ts_utc < cutoff AND id <= the sync high-water mark`. **Age alone
-never authorises a delete** — age is evidence about time, never about whether a
-reading was preserved. Below the free-space floor the job **WARNS and still
-deletes no unsynced row**: a disk-space emergency must not become a data-loss
-event. If the high-water mark cannot be read, **delete nothing** — a purge that
-guesses at what was synced is the defect being removed.
+**`ConnectionStatus.signalReadable` — the producer records whether its read
+completed** *(built, US-767-a; Atlas ruling 2026-09-16, shape (c))*. A new
+`bool` field on `ConnectionStatus` (`src/pi/obdii/obd_connection.py`).
+`getStatus()` sets it **in the same read** that sets `connected`
+(`_readLink()` returns both). It is **False only when `is_connected()`
+raised**; `obd is None` is a *readable* verdict ("no connection object"), so it
+is True there. **`connected` is unchanged** — same value in every case it had
+before, and `_isConnected()` / `isConnected()` keep their bool return. The raise
+is no longer swallowed silently: a WARNING on the first failed read of a streak,
+DEBUG while it persists, INFO on recovery. `toDict()` is deliberately unchanged
+(no serialised consumer moves). No module other than `obd_connection.py` reads
+the field until the gate does (US-767-c); **capture-health must never read it**
+— it would reintroduce the transport-failure blind spot `validator.py` warns
+about. The raising case is reachable today only by patching (python-obd's
+`is_connected()` compares a cached status, no I/O), so US-767-c's mutation test
+is what proves the gate never closes on it.
+
+| `connected` | `signalReadable` | Gate |
+|---|---|---|
+| `False` | `True` | **CLOSED** — the link is genuinely down. Buffer. |
+| `False` | `False` | **OPEN** — we cannot tell. Fail open, rate-limited WARNING. |
+| `True` | `True` | **OPEN** — normal. |
+
+**Retention is sync-gated: it deletes only what the server already has**
+*(built, US-768)*. `purgeExpired()` was modified in place:
+`DELETE … WHERE ts_utc < cutoff AND id <= ?`, bound to that table's
+`sync_log.last_synced_id` (read via `sync_log.getHighWaterMark`; `PK_COLUMN` is
+`id` for both EDR tables). **Age alone never authorises a delete** — age is
+evidence about time, never about whether a reading was preserved. A table with
+no `sync_log` row has mark 0, so nothing in it is deleted. Both marks are read
+**before any delete**; if either read raises (including a missing `sync_log`
+table — the purge never creates sync schema to get a mark), the purge **deletes
+nothing** and logs a WARNING — a purge that guesses at what was synced is the
+defect being removed. Below **15 GB** free on the database volume
+(`_LOW_DISK_WARN_BYTES`, decimal GB) the job **WARNS and still deletes no
+unsynced row** — the delete is identical to the one it runs with plenty of
+space: a disk-space emergency must not become a data-loss event. An unreadable
+free-space read is logged and changes nothing. This is **not** US-762's
+whole-disk guard; the two are separate and must stay separate. Pinned by
+`tests/pi/bus/test_edr_purge_sync_gated.py`, which also greps `src/pi` for
+`DELETE FROM edr_` and requires exactly the two gated statements inside
+`purgeExpired`.
 
 ⚠️ **There must be exactly ONE EDR delete path.** `purgeExpired()` in
 `src/pi/bus/edr_persistence_subscriber.py` already deletes by `ts_utc < cutoff`
@@ -3811,7 +3993,8 @@ of the new module passes.
 **The deadline this carries.** US-761 raised retention 7 → 45 days, so Pi-side
 deletion resumes about **2026-10-22**. Until sync is live the high-water mark is
 0 and the correct behaviour is that **nothing is deleted** — an expected
-validation outcome, not a defect.
+validation outcome, not a defect. EDR sync has been live since 2026-09-16, so
+from that date the purge deletes rows the server has acknowledged.
 
 *Gate-ratification note: §10.8 added per the 2026-05-18 design-gate governance
 rule (PM Rule 10 / C-4 DoD, in-sprint) from Atlas's 2026-06-30 EDR ADR

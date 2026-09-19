@@ -111,6 +111,24 @@
 #                           instead of inferred from a journal that cannot see
 #                           the last seconds. No trigger, budget or poweroff
 #                           change.
+# 2026-09-17    | US-788  | Sprint 89 / V0.29.57. bootGrace stops gating the
+#                           TRIGGER: an in-grace PLD loss (edge) now calls
+#                           handleOnBattery(suppressFloorFastPath=True), so the
+#                           shed, heartbeat, smoothing, pipeline and graceful
+#                           poweroff all run. Post-grace branch unchanged. No
+#                           constant changed.
+# 2026-09-17    | US-789  | Sprint 89 / V0.29.57. The drain close records the
+#                           drain_event_id it wrote in an OwnDrainCloseSlot; the
+#                           custody hook excludes that ONE row from its verdict
+#                           and reports it beside it. The close does not move;
+#                           hook isolation is unchanged.
+# 2026-09-17    | US-776-a  | Sprint 89 / V0.29.57. The drain is bounded by the
+#                           battery, not by three timers: _buildRunSync loses its
+#                           budgetSec pass-fitting bound and pushes until the
+#                           shared backlog reader reads 0; runPipeline joins the
+#                           sync task without perTaskTimeoutSec (never
+#                           abandoned); the sequencer polls the VCELL floor
+#                           instead of waiting totalWindowCapSec.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -177,6 +195,7 @@ from src.pi.power.power_watch.pipeline import runPipeline  # noqa: E402
 from src.pi.power.power_watch.pld_witness import readWitness  # noqa: E402
 from src.pi.power.power_watch.sync_custody import (  # noqa: E402
     CUSTODY_RECORD_FILENAME,
+    OwnDrainCloseSlot,
     makeSyncCustodyHook,
 )
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
@@ -386,8 +405,6 @@ def _buildRunSync(
     syncClient: SyncClient,
     *,
     backlogReader=None,
-    budgetSec: float = 0.0,
-    monotonicFn=time.monotonic,
     excludeTables=(),
 ):
     """Adapt SyncClient.forcePush() to the SyncWithServerTask runSync contract.
@@ -411,25 +428,20 @@ def _buildRunSync(
     ~14,500 rows still on the Pi. A confident wrong answer, not merely a
     missing one. This now keeps pushing while rows remain.
 
-    THE BOUND IS MEASURED, NOT INVENTED. An unbounded drain would fight the
-    power budget the sequencer exists to respect (conditionalOutcome 1), so a
-    further pass only starts when the budget still has room for one that lasts
-    as long as the LAST one did. That derives the bound from the observed link
-    speed and ``perTaskTimeoutSec`` -- both already grounded -- rather than
-    inventing a new tunable or a pass count. A slow link self-limits; a fast
-    one drains fully.
-
-    The first pass ALWAYS runs, so the behaviour can never regress below the
-    single-pass drain this replaced.
+    US-776-a -- NO TIME BOUND HERE. The drain makes passes until the backlog
+    reader says 0 (the server has ACKNOWLEDGED every drive row), a pass fails
+    or moves nothing, or the backlog cannot be read. It used to stop when the
+    next pass would not fit ``perTaskTimeoutSec`` (20 s); the CIO ruled the
+    drain ends on confirmation or the battery floor, never a timer. The floor
+    is enforced by ``ShutdownSequencer``'s poll from ANOTHER thread, which is
+    the only place it can be: one pass can block inside forcePush for ~25 min
+    and never reach a pass boundary where this loop could check anything.
 
     Args:
         syncClient: The live SyncClient.
         backlogReader: Zero-arg reader returning a
             :class:`~src.pi.sync.backlog.SyncBacklog`. ``None`` disables
             multi-pass entirely (exactly one pass -- the legacy path).
-        budgetSec: Wall-clock budget for the whole drain. Production passes the
-            shutdown path's own ``perTaskTimeoutSec``.
-        monotonicFn: DI monotonic clock.
         excludeTables: Tables the drain must NOT carry (US-766). Production
             passes the EDR set. The drain budget is seconds; the EDR backlog
             was measured at 15.16M rows and grows ~1.77M/day, so a single pass
@@ -442,14 +454,8 @@ def _buildRunSync(
     """
 
     def runSync() -> None:
-        # The clock is read exactly ONCE per pass: `now` is both the end of the
-        # pass just finished and the start of the next one, so `passElapsed` is
-        # real push time and never accumulates bookkeeping reads.
-        now = monotonicFn()
-        deadline = now + budgetSec
         passes = 0
         while True:
-            passStart = now
             summary = syncClient.forcePush(excludeTables=excludeTables)
             passes += 1
             if summary.disabled:
@@ -463,7 +469,9 @@ def _buildRunSync(
             if backlog.total <= 0:
                 # Either fully delivered, or unreadable -- neither is a reason
                 # to keep pushing. UNKNOWN is not "empty", but it is also not
-                # evidence that another pass would help.
+                # evidence that another pass would help. Custody re-reads the
+                # SAME reader and records UNKNOWN, never DELIVERED, for the
+                # unreadable case.
                 logger.info(
                     "powerwatch sync: drain finished after %d pass(es) -- %s",
                     passes,
@@ -478,18 +486,6 @@ def _buildRunSync(
                     "%d row(s) outstanding -- stopping rather than spinning",
                     passes,
                     backlog.total,
-                )
-                return
-            now = monotonicFn()
-            passElapsed = now - passStart
-            if now + passElapsed > deadline:
-                logger.warning(
-                    "powerwatch sync: drain BOUNDED after %d pass(es) with "
-                    "%d row(s) still outstanding -- another pass (~%.1fs) does "
-                    "not fit the remaining shutdown budget",
-                    passes,
-                    backlog.total,
-                    passElapsed,
                 )
                 return
 
@@ -552,6 +548,7 @@ def buildDrainCloseHook(
     config: dict,
     upsResolver,
     uptimeReader=None,
+    ownDrainCloseSlot: OwnDrainCloseSlot | None = None,
 ):
     """Build the pre-poweroff drain-event close (US-526 PRIMARY close).
 
@@ -576,6 +573,9 @@ def buildDrainCloseHook(
             None). Resolved at CLOSE time, never captured.
         uptimeReader: Optional uptime reader for the SoC%% cold-start guard;
             defaults to the real ``/proc/uptime`` reader.
+        ownDrainCloseSlot: US-789 -- cleared before the close and given the
+            drain_event_id only when the close actually wrote the row, so the
+            custody hook that runs next can exclude exactly that one row.
 
     Returns:
         A zero-arg callable for ``ShutdownSequencer(prePowerOffFn=...)``, or
@@ -604,7 +604,15 @@ def buildDrainCloseHook(
         # The writer swallows its own faults (it must never break a poweroff);
         # the sequencer guards this call as well -- belt and braces on the one
         # path where a raise would be worst.
-        writer.closeOpenDrainEvent(reason=CLOSE_REASON_SHUTDOWN)
+        #
+        # US-789: cleared FIRST, so a close that finds nothing, fails, or
+        # raises leaves custody counting every row -- it can never exclude a
+        # row that was never written.
+        if ownDrainCloseSlot is not None:
+            ownDrainCloseSlot.clear()
+        result = writer.closeOpenDrainEvent(reason=CLOSE_REASON_SHUTDOWN)
+        if ownDrainCloseSlot is not None and result is not None and result.closed:
+            ownDrainCloseSlot.record(result.drainEventId)
 
     return _closeDrain
 
@@ -744,23 +752,40 @@ def _runPldWatchLoop(
     (which may never happen). See finding 2026-05-20-shutdown-sequencer-
     boot-grace-latch-bug.md for the in-car drill evidence (Atlas + CIO Test 2,
     5.5 min silence reproduced on demand).
+
+    US-788: bootGrace no longer gates the TRIGGER. An in-grace loss runs the
+    normal path (shed, heartbeat, smoothing, pipeline, graceful poweroff) with
+    only the VCELL floor fast path suppressed. Before this, the grace gate sat on
+    the branch that reaches handleOnBattery, so an in-grace loss lost the
+    mitigation and the instruments along with the poweroff: three hard cuts,
+    zero false positives.
     """
-    # Edge-triggered on a present->lost transition via the SSOT provider during
-    # boot-grace (kept edge-only there so the "ignoring" log fires once per
-    # fresh in-grace transient). Post-boot-grace fires on level (lost AND not
-    # firedAlready) so a level-stuck LOW state cannot leave the sequencer blind.
+    # In-grace: edge-triggered on a present->lost transition, so one loss fires
+    # once and a completed in-grace shutdown is not re-entered on every poll.
+    # It deliberately does NOT set firedAlready: the post-grace branch below is
+    # byte-identical to pre-US-788, including re-firing on a level-stuck LOW line
+    # after an in-grace blip (the F-7 fix). Post-boot-grace fires on level (lost
+    # AND not firedAlready) so a level-stuck LOW state cannot leave the
+    # sequencer blind.
     prevLost = isPowerLostFn()
     firedAlready = False
     while not stop.wait(timeout=pldPollSec):
         lost = isPowerLostFn()
         graceElapsed = monotonicFn() - serviceStartMono
         if graceElapsed < bootGraceSec:
-            if lost and not prevLost:
-                logger.warning(
-                    "powerwatch: PLD power-loss %.0fs into boot-grace (%.0fs) -- ignoring",
-                    graceElapsed,
-                    bootGraceSec,
-                )
+            if lost and not prevLost and handleLock.acquire(blocking=False):
+                try:
+                    logger.warning(
+                        "powerwatch: GPIO%d PLD => external power LOST %.0fs into "
+                        "boot-grace (%.0fs) -- entering bounded pre-shutdown window, "
+                        "VCELL floor fast path suppressed",
+                        pldGpioPin,
+                        graceElapsed,
+                        bootGraceSec,
+                    )
+                    shutdownSequencer.handleOnBattery(suppressFloorFastPath=True)
+                finally:
+                    handleLock.release()
         elif lost and not firedAlready:
             if handleLock.acquire(blocking=False):
                 try:
@@ -798,6 +823,7 @@ def main(argv: list[str] | None = None) -> int:
     perTaskTimeoutSec = float(pw_cfg["perTaskTimeoutSec"])
     totalWindowCapSec = float(pw_cfg["totalWindowCapSec"])
     vcellFloorVolts = float(pw_cfg["vcellFloorVolts"])
+    drainFloorVolts = float(pw_cfg["drainFloorVolts"])
     poweroffTimeoutSec = float(pw_cfg["poweroffTimeoutSec"])
     bootGraceSec = float(pw_cfg["bootGraceSec"])
     smoothingSec = float(pw_cfg["smoothingSec"])
@@ -849,11 +875,15 @@ def main(argv: list[str] | None = None) -> int:
     # because a drain that skipped EDR while its backlog reader still counted
     # EDR would never see "empty" and would spend the entire shutdown window on
     # passes that move nothing.
-    def readSyncBacklog():
+    #
+    # US-789: custody passes excludeRows (one row, by primary key) -- table
+    # membership stays identical for both callers; the drain passes none.
+    def readSyncBacklog(excludeRows=()):
         return countOutstandingRows(
             dbPath,
             busyTimeoutSec=perTaskTimeoutSec,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
+            excludeRows=excludeRows,
         )
 
     # A DIFFERENT question, deliberately not folded into the reader above: how
@@ -868,10 +898,11 @@ def main(argv: list[str] | None = None) -> int:
 
     syncTask = SyncWithServerTask(
         serverReachable=detector.isServerReachable,
+        # US-776-a: no budget -- the drain ends on an empty backlog or the
+        # sequencer's VCELL floor poll. Every pass excludes the EDR set.
         runSync=_buildRunSync(
             syncClient,
             backlogReader=readSyncBacklog,
-            budgetSec=perTaskTimeoutSec,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=writeRecord,
@@ -892,9 +923,19 @@ def main(argv: list[str] | None = None) -> int:
     # path -- the PRIMARY close. The collector opened it at wall-power loss; the
     # depth recorded here (end_vcell_v) is what Spool's gate qualifies on. The
     # UPS is resolved at close time, never captured.
+    #
+    # US-789 [Atlas shape (c)]: the close runs FIRST in the composed hook and
+    # writes a battery_health_log row that custody would otherwise count,
+    # making every graceful shutdown read OUTSTANDING. The close stays exactly
+    # where it is (end_vcell_v is its close-time depth); it just hands its
+    # drain_event_id to custody through this slot, which custody excludes and
+    # reports beside the verdict. Hook isolation is kept: an empty slot means
+    # custody counts every row.
+    ownDrainCloseSlot = OwnDrainCloseSlot()
     drainCloseFn = buildDrainCloseHook(
         config=config,
         upsResolver=lambda: monitor,
+        ownDrainCloseSlot=ownDrainCloseSlot,
     )
 
     # US-621 [same placement argument as US-526 Option C]: the custody record
@@ -905,11 +946,14 @@ def main(argv: list[str] | None = None) -> int:
     # every case that matters most. (2) runPipeline ABANDONS a task that
     # exceeds perTaskTimeoutSec, and an abandoned thread writes nothing; a
     # custody record that disappears precisely when the queue is too big to
-    # drain would be silent in its own failure mode.
+    # drain would be silent in its own failure mode. (US-776-a: the sync task
+    # is no longer abandoned, but the floor poll can still power off with a
+    # pass in flight, and the record must be written then too.)
     custodyFn = makeSyncCustodyHook(
         recordPath=os.path.join(os.path.dirname(dbPath), CUSTODY_RECORD_FILENAME),
         backlogReader=readSyncBacklog,
         edrBacklogReader=readEdrBacklog,
+        ownDrainCloseSlot=ownDrainCloseSlot,
     )
     prePowerOffFn = composePrePowerOffHooks(drainCloseFn, custodyFn)
 
@@ -939,13 +983,22 @@ def main(argv: list[str] | None = None) -> int:
     shutdownSequencer = ShutdownSequencer(
         isOnBattery=provider.isPowerLost,
         vcell=monitor.getVcell,
+        # US-776-a: the sync task is joined without perTaskTimeoutSec -- an
+        # abandoned drain would keep pushing and writing SQLite while poweroff
+        # runs. Its bound is the sequencer's floor poll. Every other task keeps
+        # the per-task bound.
         runPipelineFn=lambda: runPipeline(
-            buildV1Tasks(syncTask), perTaskTimeoutSec=perTaskTimeoutSec
+            buildV1Tasks(syncTask),
+            perTaskTimeoutSec=perTaskTimeoutSec,
+            sequencerBoundedTasks=(syncTask.name,),
         ),
         powerOffFn=lambda: subprocess.run(
             ["systemctl", "poweroff"], timeout=poweroffTimeoutSec, check=False
         ),
         vcellFloor=vcellFloorVolts,
+        # US-776-b: the running drain stops here; vcellFloor stays the
+        # pre-pipeline backstop.
+        drainFloor=drainFloorVolts,
         totalCapSec=totalWindowCapSec,
         smoothingSec=smoothingSec,
         smoothingPollSec=smoothingPollSec,
@@ -1012,8 +1065,9 @@ def main(argv: list[str] | None = None) -> int:
         # The SSOT provider is the only power-acquisition site (criterion #3);
         # the sequencer's smoothing window then re-reads the SAME line via the
         # SAME provider, so a real loss confirms and a glitch aborts. Boot-grace
-        # is cheap insurance. Loop body extracted into _runPldWatchLoop for
-        # unit-test access (US-344 F-7 fix).
+        # scopes only the VCELL floor fast path (US-788), never the trigger.
+        # Loop body extracted into _runPldWatchLoop for unit-test access
+        # (US-344 F-7 fix).
         _runPldWatchLoop(
             isPowerLostFn=provider.isPowerLost,
             stop=stop,

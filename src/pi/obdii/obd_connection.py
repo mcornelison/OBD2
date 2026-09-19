@@ -97,6 +97,10 @@
 #                |              | by the calling loop's local index, and the number
 #                |              | lands in connection_log AND status.retryCount the
 #                |              | moment the attempt fails.  Reset on success.
+# 2026-09-18    | Rex (US-767-a)| ConnectionStatus.signalReadable: False only when
+#                |              | is_connected() raised.  getStatus() sets it in the
+#                |              | same read as `connected`, whose meaning is
+#                |              | unchanged; the raise is logged, not swallowed.
 # ================================================================================
 ################################################################################
 
@@ -311,6 +315,11 @@ class ConnectionStatus:
         retryCount: Number of retry attempts for current connection
         totalConnections: Total successful connections in session
         totalErrors: Total connection errors in session
+        signalReadable: Whether the read that set ``connected`` completed
+            (US-767-a).  False ONLY when the underlying ``is_connected()``
+            raised; ``connected`` is then False too, but it means "could not
+            read the link", not "the link is down".  ``obd is None`` is a
+            readable verdict (True).  ``connected`` keeps its exact meaning.
     """
     state: ConnectionState = ConnectionState.DISCONNECTED
     macAddress: str | None = None
@@ -321,6 +330,7 @@ class ConnectionStatus:
     retryCount: int = 0
     totalConnections: int = 0
     totalErrors: int = 0
+    signalReadable: bool = True
 
     def toDict(self) -> dict[str, Any]:
         """Convert status to dictionary for logging/serialization."""
@@ -506,6 +516,9 @@ class ObdConnection:
         # already holding _ioLock, and the CPython bool read/write is atomic so
         # the worst case is one un-forced read on the tick the latch flips.
         self._forceMandatoryPids: bool = False
+        # US-767-a: True while is_connected() keeps raising, so a failed link
+        # read logs one WARNING per streak instead of one per poll.
+        self._signalFaultActive: bool = False
 
     def getStatus(self) -> ConnectionStatus:
         """
@@ -516,10 +529,16 @@ class ObdConnection:
         """
         # Update connected state from OBD object if available
         if self.obd is not None:
-            self._status.connected = self._isConnected()
+            # US-767-a: both facts come from the SAME read.
+            connected, readable = self._readLink()
+            self._status.connected = connected
+            self._status.signalReadable = readable
             if not self._status.connected and self._status.state != ConnectionState.ERROR:
                 # Only reset to DISCONNECTED if not in ERROR state (preserve error state)
                 self._status.state = ConnectionState.DISCONNECTED
+        else:
+            # No connection object is a readable verdict, not a failed read.
+            self._status.signalReadable = True
         return self._status
 
     def isConnected(self) -> bool:
@@ -595,13 +614,40 @@ class ObdConnection:
 
     def _isConnected(self) -> bool:
         """Internal connection check."""
-        if self.obd is None:
-            return False
+        return self._readLink()[0]
+
+    def _readLink(self) -> tuple[bool, bool]:
+        """Read the link once and report whether the read completed (US-767-a).
+
+        A raising ``is_connected()`` still yields ``connected=False`` -- every
+        caller keeps its bool -- but the fault is logged rather than swallowed:
+        WARNING on the first failed read of a streak, DEBUG while it persists,
+        INFO when the read recovers.
+
+        Returns:
+            ``(connected, signalReadable)``.  ``signalReadable`` is False only
+            when ``is_connected()`` raised; ``obd is None`` is readable.
+        """
+        obdConn = self.obd
+        if obdConn is None:
+            return (False, True)
         try:
-            # Check if OBD connection is active
-            return self.obd.is_connected()
-        except Exception:
-            return False
+            connected = obdConn.is_connected()
+        except Exception as e:  # noqa: BLE001 -- recorded, never swallowed
+            if self._signalFaultActive:
+                logger.debug("OBD link read still failing: %r", e)
+            else:
+                self._signalFaultActive = True
+                logger.warning(
+                    "OBD link read FAILED (is_connected raised %r) -- "
+                    "connected=False here means UNREADABLE, not link down",
+                    e,
+                )
+            return (False, False)
+        if self._signalFaultActive:
+            self._signalFaultActive = False
+            logger.info("OBD link read recovered")
+        return (connected, True)
 
     def activeGeneration(self) -> int:
         """Return the current connection generation (US-441 epoch fence).

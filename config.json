@@ -449,6 +449,7 @@
       "cleanupTimeHour": 3
     },
     "powerWatch": {
+      "drainFloorVolts": 3.60,
       "smoothingSec": 7,
       "smoothingPollSec": 1
     },
@@ -558,7 +559,12 @@
         "enabled": true,
         "sampleHz": 1
       },
-      "retentionDays": 45
+      "retentionDays": 45,
+      "logGate": {
+        "enabled": true,
+        "preRollSec": 60,
+        "holdSec": 300
+      }
     },
     "splash": {
       "enabled": true,

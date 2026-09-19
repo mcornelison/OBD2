@@ -24,6 +24,13 @@
 # 2026-06-30    | Rex (US-410) | Initial -- EDR sibling subscriber: burst
 #               |              | assembly, decimated persist, drive_id NULL-latch,
 #               |              | rolling-window retention purge, ships dark.
+# 2026-09-18    | Rex          | US-767-b: optional logGate; every row is
+#               |              | routed through EdrLogGate.admit() when wired.
+# 2026-09-18    | Rex          | US-767-c: gate state published to
+#               |              | states/edr-log-gate on every state change.
+# 2026-09-18    | Rex          | US-768: purgeExpired() is sync-gated (id <=
+#               |              | high-water mark); unreadable mark deletes
+#               |              | nothing; below 15 GB free it only WARNS.
 # ================================================================================
 ################################################################################
 
@@ -32,6 +39,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -41,15 +50,30 @@ from typing import Any
 from common.edr.sensor_schema import SCHEMA_VERSION
 from common.time.helper import CANONICAL_ISO_FORMAT
 from pi.obdii.drive_id import getCurrentDriveId
+from src.pi.data import sync_log
 
+from .edr_log_gate import EdrLogGate
 from .sample import QoS, Sample
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_STATES_DIR",
+    "EDR_LOG_GATE_STATE_FILENAME",
     "EdrPersistenceSubscriber",
+    "buildEdrLogGateState",
     "createEdrPersistenceSubscriberFromConfig",
+    "makeEdrLogGateStateEmitter",
 ]
+
+# US-767-c: the state name the gate publishes to (GET /edr-log-gate).
+EDR_LOG_GATE_STATE_FILENAME = "edr-log-gate"
+
+# The tmpfs states dir every states/ writer defaults to (pi.splash.statesDir).
+DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
+
+# Matches the other state emitters' `ts` format (second resolution, UTC).
+_ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 # Additive channels this subscriber owns (never raw.obd.*).
 _IMU_PREFIX = "raw.imu."
@@ -81,6 +105,12 @@ _DRAIN_TIMEOUT_S = 0.5
 # (no new daemon, ADR 2.6). Deleting rows older than retentionDays at most hourly
 # is ample -- retention is a coarse bound, not a real-time signal.
 _DEFAULT_RETENTION_CHECK_S = 3600.0
+
+# US-768: below this much free space the purge WARNS (and still deletes no
+# unsynced row). 15 GB is the floor the story states; decimal GB.
+_BYTES_PER_GB = 1000**3
+_LOW_DISK_WARN_GB = 15
+_LOW_DISK_WARN_BYTES = _LOW_DISK_WARN_GB * _BYTES_PER_GB
 
 # Config defaults (mirrored by the validator DEFAULTS registry -- these are the
 # safety fallbacks for a caller that passes an unvalidated config).
@@ -155,6 +185,9 @@ class EdrPersistenceSubscriber:
         nowUtcFn: Callable[[], datetime] | None = None,
         monotonicFn: Callable[[], float] = time.monotonic,
         retentionCheckIntervalS: float = _DEFAULT_RETENTION_CHECK_S,
+        logGate: EdrLogGate | None = None,
+        gateStateEmitFn: Callable[[EdrLogGate], None] | None = None,
+        freeDiskBytesFn: Callable[[], int] | None = None,
     ) -> None:
         """Bind the subscriber to its source subscription + write target.
 
@@ -172,6 +205,14 @@ class EdrPersistenceSubscriber:
             nowUtcFn: Clock for the retention cutoff (default datetime.now(UTC)).
             monotonicFn: Monotonic clock for the purge cadence gate.
             retentionCheckIntervalS: Minimum seconds between purge attempts.
+            logGate: The EDR log gate every row is routed through (US-767-b).
+                None writes every row (the pre-gate behaviour).
+            gateStateEmitFn: Called with the gate whenever its state differs
+                from the last one published (US-767-c: states/edr-log-gate).
+                None publishes nothing.
+            freeDiskBytesFn: Free bytes on the database volume, read by the
+                purge's low-disk warning (US-768). None measures the volume
+                holding ``database.dbPath``.
         """
         self._sub = subscription
         self._database = database
@@ -182,6 +223,12 @@ class EdrPersistenceSubscriber:
         self._nowUtcFn = nowUtcFn if nowUtcFn is not None else (lambda: datetime.now(UTC))
         self._monotonic = monotonicFn
         self._retentionCheckIntervalS = float(retentionCheckIntervalS)
+        self._logGate = logGate
+        self._gateStateEmitFn = gateStateEmitFn
+        self._publishedGateState: str | None = None
+        self._freeDiskBytesFn = (
+            freeDiskBytesFn if freeDiskBytesFn is not None else self._freeDiskBytes
+        )
         self._lastPurgeMono = self._monotonic()
         # Per-table burst buffers: {"seq", "fields": {name: value}, "tsUtc",
         # "tsCapture", "dataSource"}. None == no burst in progress.
@@ -341,13 +388,40 @@ class EdrPersistenceSubscriber:
             return
         self._buffers[table] = None
         driveId = self._resolveDriveId()
+        # US-767-b: every row goes through the log gate when one is wired. The
+        # drive_id is resolved at CAPTURE, so a pre-roll row flushed later keeps
+        # the attribution it had when it was read.
+        row = (buf, driveId)
+        if self._logGate is None:
+            toWrite = [(table, row)]
+        else:
+            toWrite = self._logGate.admit(table, row)
+            self._publishGateState(self._logGate)
+        for rowTable, (rowBuf, rowDriveId) in toWrite:
+            try:
+                if rowTable == "imu":
+                    self._writeImuRow(rowBuf, rowDriveId)
+                else:
+                    self._writeLightRow(rowBuf, rowDriveId)
+            except Exception as e:  # noqa: BLE001 -- a bad write never crashes the drain
+                logger.warning(
+                    "EDR %s row write failed (seq=%s): %s", rowTable, rowBuf.get("seq"), e
+                )
+
+    def _publishGateState(self, gate: EdrLogGate) -> None:
+        """Publish the gate's state when it differs from the last published one.
+
+        US-767-c. The first admit always publishes, so a gate that never leaves
+        CLOSED (parked, no link) is still visible. The emitter is best-effort
+        and a failure here must never cost the row being written.
+        """
+        if self._gateStateEmitFn is None or gate.state == self._publishedGateState:
+            return
         try:
-            if table == "imu":
-                self._writeImuRow(buf, driveId)
-            else:
-                self._writeLightRow(buf, driveId)
-        except Exception as e:  # noqa: BLE001 -- a bad write never crashes the drain
-            logger.warning("EDR %s row write failed (seq=%s): %s", table, buf.get("seq"), e)
+            self._gateStateEmitFn(gate)
+            self._publishedGateState = gate.state
+        except Exception as e:  # noqa: BLE001 -- publishing never costs a row
+            logger.warning("EDR log gate state publish failed: %s", e)
 
     def _resolveDriveId(self) -> int | None:
         """drive_id ONLY when a drive is RUNNING, else NULL (never stale-inherit).
@@ -425,7 +499,7 @@ class EdrPersistenceSubscriber:
             imuDeleted, lightDeleted = self.purgeExpired()
             if imuDeleted or lightDeleted:
                 logger.info(
-                    "EDR retention purge: deleted imu=%d light=%d (older than %d days)",
+                    "EDR retention purge: deleted imu=%d light=%d (synced, older than %d days)",
                     imuDeleted, lightDeleted, self._retentionDays,
                 )
         except Exception as e:  # noqa: BLE001 -- purge failure is non-fatal
@@ -433,7 +507,15 @@ class EdrPersistenceSubscriber:
         return True
 
     def purgeExpired(self) -> tuple[int, int]:
-        """Delete rows older than ``retentionDays`` from both EDR tables.
+        """Delete rows the server already has that are older than ``retentionDays``.
+
+        US-768: this is the ONLY EDR delete. A row goes only when it is past the
+        age cutoff AND its id is at or below its table's sync high-water mark --
+        age alone never authorises a delete. Both marks are read before any
+        delete; if either cannot be read, nothing is deleted. Below
+        :data:`_LOW_DISK_WARN_BYTES` free the purge WARNS and deletes exactly
+        what it would otherwise: a disk-space emergency never widens the delete
+        to unsynced rows. (US-762's whole-disk guard is a separate mechanism.)
 
         Returns:
             (imuRowsDeleted, lightRowsDeleted).
@@ -441,14 +523,43 @@ class EdrPersistenceSubscriber:
         cutoff = (self._nowUtcFn() - timedelta(days=self._retentionDays)).strftime(
             CANONICAL_ISO_FORMAT
         )
+        self._warnIfLowDisk()
         with self._database.connect() as conn:
+            try:
+                imuMark = sync_log.getHighWaterMark(conn, "edr_imu_sample")[0]
+                lightMark = sync_log.getHighWaterMark(conn, "edr_light_sample")[0]
+            except Exception as e:  # noqa: BLE001 -- any unreadable mark deletes nothing
+                logger.warning(
+                    "EDR retention purge: sync high-water mark unreadable (%s) -- "
+                    "deleting nothing", e,
+                )
+                return (0, 0)
             imuDeleted = conn.execute(
-                "DELETE FROM edr_imu_sample WHERE ts_utc < ?", (cutoff,)
+                "DELETE FROM edr_imu_sample WHERE ts_utc < ? AND id <= ?", (cutoff, imuMark)
             ).rowcount
             lightDeleted = conn.execute(
-                "DELETE FROM edr_light_sample WHERE ts_utc < ?", (cutoff,)
+                "DELETE FROM edr_light_sample WHERE ts_utc < ? AND id <= ?", (cutoff, lightMark)
             ).rowcount
         return (imuDeleted, lightDeleted)
+
+    def _freeDiskBytes(self) -> int:
+        """Free bytes on the volume that holds the database file."""
+        dbDir = os.path.dirname(os.path.abspath(self._database.dbPath))
+        return shutil.disk_usage(dbDir).free
+
+    def _warnIfLowDisk(self) -> None:
+        """WARN when free space is below the floor. Never changes what is deleted."""
+        try:
+            freeBytes = self._freeDiskBytesFn()
+        except Exception as e:  # noqa: BLE001 -- the warning is advisory only
+            logger.warning("EDR retention purge: free disk space unreadable (%s)", e)
+            return
+        if freeBytes < _LOW_DISK_WARN_BYTES:
+            logger.warning(
+                "EDR retention purge: free disk %.2f GB is below the %d GB floor -- "
+                "deleting only rows the server already has; unsynced EDR rows are kept",
+                freeBytes / _BYTES_PER_GB, _LOW_DISK_WARN_GB,
+            )
 
     # -- observability ---------------------------------------------------------
     def stats(self) -> Any:
@@ -462,6 +573,8 @@ def createEdrPersistenceSubscriberFromConfig(
     database: Any,
     *,
     driveDetector: Any = None,
+    logGate: EdrLogGate | None = None,
+    gateStateEmitFn: Callable[[EdrLogGate], None] | None = None,
 ) -> EdrPersistenceSubscriber | None:
     """Build the EDR subscriber from validated config, or None when it ships dark.
 
@@ -475,6 +588,10 @@ def createEdrPersistenceSubscriberFromConfig(
         database: ObdDatabase for the EDR row writes.
         driveDetector: Optional DriveDetector; its ``isDriving()`` gates the
             drive_id latch. Absent -> drive_id is always NULL (safe default).
+        logGate: Optional EdrLogGate handed to the subscriber (US-767-b).
+            Absent -> every row is written.
+        gateStateEmitFn: Optional gate-state publisher (US-767-c), e.g. from
+            :func:`makeEdrLogGateStateEmitter`.
 
     Returns:
         A started-ready EdrPersistenceSubscriber, or None when disabled.
@@ -508,4 +625,62 @@ def createEdrPersistenceSubscriberFromConfig(
         retentionDays=sensors.get("retentionDays", _DEFAULT_RETENTION_DAYS),
         driveIdFn=getCurrentDriveId,
         isDrivingFn=isDrivingFn,
+        logGate=logGate,
+        gateStateEmitFn=gateStateEmitFn,
     )
+
+
+def buildEdrLogGateState(gate: EdrLogGate, *, nowIso: str) -> dict[str, Any]:
+    """Build the states/edr-log-gate payload (pure, US-767-c).
+
+    States are written upper-case (``CLOSED`` / ``OPEN`` / ``HOLD``), the same
+    words the gate's transition log line uses.
+
+    Args:
+        gate: The gate whose current state is published.
+        nowIso: ISO-8601 emission timestamp (the freshness marker).
+
+    Returns:
+        ``{"state", "enabled", "from", "reason", "bufferedRows", "ts"}``;
+        ``from`` / ``reason`` are None before the gate's first transition.
+    """
+    last = gate.lastTransition
+    return {
+        "state": gate.state.upper(),
+        "enabled": gate.enabled,
+        "from": last[0].upper() if last is not None else None,
+        "reason": last[2] if last is not None else None,
+        "bufferedRows": gate.bufferedRows,
+        "ts": nowIso,
+    }
+
+
+def makeEdrLogGateStateEmitter(
+    statesDir: str,
+    *,
+    nowIsoFn: Callable[[], str] | None = None,
+) -> Callable[[EdrLogGate], None]:
+    """Build the states/edr-log-gate emit callable (US-767-c).
+
+    Args:
+        statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
+        nowIsoFn: Injected clock for ``ts`` (default UTC now, second resolution).
+
+    Returns:
+        A callable taking the gate and writing its state atomically.
+        Best-effort by contract: write failures are logged, never raised, so
+        publishing can never cost an EDR row.
+    """
+    from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
+
+    nowFn = nowIsoFn or (lambda: datetime.now(UTC).strftime(_ISO_FMT))
+    target = os.path.join(statesDir, EDR_LOG_GATE_STATE_FILENAME)
+
+    def emit(gate: EdrLogGate) -> None:
+        try:
+            ensureStatesDir(statesDir)
+            writeStateAtomic(target, buildEdrLogGateState(gate, nowIso=nowFn()))
+        except Exception as e:  # noqa: BLE001 -- never cost an EDR row
+            logger.error("states/edr-log-gate write failed (%s) -- ignored", e)
+
+    return emit
