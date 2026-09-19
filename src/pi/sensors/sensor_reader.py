@@ -55,6 +55,16 @@ from pi.bus.bus import SampleBus
 from pi.bus.sample import Sample
 from pi.obdii.drive_id import getCurrentDriveId
 
+# ARCH-033: the AK09916's axis map into the ICM frame. A top-level import is
+# safe here -- ak09916_bypass imports only logging and typing, so there is no
+# cycle back into this module. It was first written BELOW the import block
+# with an E402 suppression, which silenced the symptom and broke `make lint`
+# on dev (ruff I001, un-sorted import block). A suppression that needs a
+# second lint suppressed to stay quiet is the wrong fix.
+#   (And writing that suppression out longhand in this comment made ruff parse
+#    the comment itself as a directive -- so it is described, not spelled.)
+from pi.sensors.ak09916_bypass import toIcmFrame
+
 # The accel floor is the SAME constant the tilt maths already refuses to work
 # below -- imported, never retyped, so the gate and the level frame cannot drift
 # into disagreeing about what counts as a usable specific-force vector.
@@ -70,8 +80,6 @@ from pi.sensors.plausibility_gate import (
     channelStateTopic,
     magnitudeAtLeast,
 )
-
-from pi.sensors.ak09916_bypass import toIcmFrame  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
