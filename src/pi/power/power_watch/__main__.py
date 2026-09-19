@@ -771,6 +771,16 @@ def _runPldWatchLoop(
     firedAlready = False
     while not stop.wait(timeout=pldPollSec):
         lost = isPowerLostFn()
+        # US-792: a PRESENT reading ends THIS loss episode and releases the
+        # re-entry latch. firedAlready is set on all three exits of
+        # handleOnBattery -- including CANCEL -- so without this a blip that
+        # cancelled a shutdown left the trigger dead for the rest of the boot
+        # and the next genuine key-off was a hard cut. The clear lives in the
+        # loop because the loop owns the line, and carries NO debounce,
+        # deliberately asymmetric with smoothingSec. Rationale: architecture
+        # 10.6. A level-stuck LOW line never reaches here, so the guard holds.
+        if not lost:
+            firedAlready = False
         graceElapsed = monotonicFn() - serviceStartMono
         if graceElapsed < bootGraceSec:
             if lost and not prevLost and handleLock.acquire(blocking=False):

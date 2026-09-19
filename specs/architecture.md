@@ -2477,6 +2477,34 @@ The in-grace fire is edge-triggered (one loss, one call) and does not set the
 post-grace `firedAlready` guard, so an in-grace blip followed by a post-grace
 loss still fires (the F-7 level trigger is unchanged).
 
+**The `firedAlready` latch is scoped to a loss EPISODE, not to the boot (US-792,
+Sprint 89 / V0.29.57).** It means *a decision is in flight or complete for THIS
+loss episode* — and conflating that with *for this boot* was the defect. The flag
+is set after `handleOnBattery` **returns**, which is all three of its exits:
+poweroff, the VCELL-floor fast path, and **cancel**. Nothing reset it, so a power
+blip that cancelled a shutdown left the trigger dead for the rest of the boot and
+the next genuine key-off was a hard cut. `_runPldWatchLoop` now clears the flag on
+the tick that reads the line present (`if not lost: firedAlready = False`). The
+clear lives in the **loop**, which owns the line, and not on the cancel path: the
+sequencer's exits can grow, and putting the latch's lifetime in one file and its
+meaning in another is a second copy of one fact.
+
+The re-arm is **deliberately asymmetric with `smoothingSec`** and carries **no
+debounce**. Into shutdown a loss is debounced 5 s, because committing on a blip
+bricked the Pi on 2026-05-18. Back to armed, one power-present reading is enough:
+failing to re-arm costs a hard cut, and un-shed carry at real load is 0.678 s — a
+blind window would outlast the Pi's entire life on battery. Thrash protection
+already exists and is `smoothingSec` inside `handleOnBattery`, so a flicker that
+re-arms can cause a shed and a restore, never a poweroff. The re-entry guard
+itself is untouched: `not lost` is false on every tick of a level-stuck LOW line,
+so a stuck line still fires exactly once.
+
+Why it became reachable now: a cancelled shutdown used to be a brief event. US-776-a
+made the drain run until the backlog is empty or the VCELL floor is reached rather
+than until three timers expire, and US-776-b gave that drain its own floor — between
+them the post-loss window went from one sample to minutes of them, so a cancel is now
+something the loop routinely survives and must re-arm from.
+
 > **History extracted (2026-06-01):** the superseded `PowerDownOrchestrator`
 > ladder + the SOC%-calibration lesson + the Sprint-40 **F-7** (boot-grace latch)
 > and **F-8** (boot-progress instrument) bug-fix narratives + the Rule-10 gate
