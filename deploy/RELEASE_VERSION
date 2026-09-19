@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.56",
-  "theme": "ARCH-031 -- shed load on power loss (US-748)",
-  "description": "On the power-loss edge powerwatch stops the dashboard at once and restores it if power returns; the shutdown decision still waits for the 7 s debounce. Measured: shed fires 210 ms after loss; carry rises from 0.678 s to ~7 s. NOT yet a graceful shutdown: the Pi still dies ~0.1 s before the debounce commits, and smoothingSec is unchanged pending one validated cut."
+  "version": "V0.29.57",
+  "theme": "ARCH-033/034 -- AK09916 axis map and body frame",
+  "description": "The magnetometer die sits in a different orientation from the accel/gyro dies and no transform was applied, so every heading ever published came from a vector in the wrong frame. ARCH-033 maps the axes at the sensor seam (GPS truth: R 0.170 -> 0.861). ARCH-034 returns IMU_BODY_FRAME to the identity, removing the ~115 deg offset and correcting grade, pitch and g-force. Awaiting in-car validation."
 }
