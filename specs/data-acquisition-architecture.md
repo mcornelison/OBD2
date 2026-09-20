@@ -20,9 +20,24 @@ proposes, which is corroboration that 5 Hz is sufficient for the display path.
 
 ## 1. Why this exists
 
+### What the system is FOR, right now
+
+🔴 **CIO, 2026-09-20 — the priority ordering, and it decides how every story here is scoped:**
+
+> *"The goal is to pair that ECU/OBD2 data with all of the sensory data and then do analytics
+> later in a future version. Right now our core goal is data capture and making sure it is
+> synced up to the server so that I can drive anytime any day without worrying about it."*
+
+**Capture and trustworthy sync are the product NOW. Analytics is a later version.** That
+reframes `specs/storage-retention-custody.md` (ARCH-037) and the A-40 vehicle-currency work as
+**the deliverable**, not as plumbing beneath one. A story that improves analysis at the cost of
+capture or custody is scoped against the wrong goal.
+
+### The defect this document corrects
+
 The project acquires data over two independent paths — **Bluetooth → OBD dongle → ECU**, and
-the **I²C bus** — at rates chosen from what each device is *capable* of rather than from what
-the analysis *needs*. The cost is measured, not theoretical:
+the **I²C bus** — at rates chosen from what each device is *capable* of, rather than from what
+can be **paired**. The cost is measured, not theoretical:
 
 - **`edr_imu_sample`: 5,791,276 rows, 196,428 drive-coupled. 96.6% orphaned.**
 - **`obd.db` reached 2.8 GB.** Two entire days were 100% orphaned — the car never moved and
@@ -71,56 +86,100 @@ consumers applying policy rather than their own acquisition. This adds:
 Two subsystems reading the same device at different frequencies is the same defect as two
 subsystems holding different values for the same fact. It is merely harder to see.
 
-**The existing IMU chain is already the correct shape and should be the template:**
+**The existing IMU chain is already the correct SHAPE and should be the template:**
 
     sampleHz 50  ->  persistHz 25  ->  stateHz 10
     one acquisition   DB consumer     display consumer
 
-One acquisition, two decimations, consumers applying policy. **Only the root number is
-wrong.** `_decimationFactor` is `max(1, round(sampleHz / persistHz))`, so a consumer rate at
-or above the acquisition rate degrades safely to "keep every sample" — **lowering `sampleHz`
-alone is safe and requires no code change.**
+One acquisition, two decimations, consumers applying policy. **The shape is right; all three
+numbers are wrong** — every one of them sits above the 5 Hz ceiling (§4).
 
-## 4. How a rate is derived — the rule that makes "50 Hz because it can" impossible
+`_decimationFactor` is `max(1, round(sampleHz / persistHz))`, so a consumer rate at or above
+the acquisition rate degrades safely to "keep every sample". **Lowering `sampleHz` alone is
+therefore safe and needs no code change** — but it is not sufficient: a `persistHz` or
+`stateHz` left above the root is a publish rate that cannot carry new data, which is why the
+ceiling applies to the whole triple rather than to the root alone.
 
-Two different questions get confused, and separating them is the whole design:
+## 4. What may be captured, and therefore how fast
+
+### 4.1 🔴 THE PRIMARY RULE — pairing, not rate
+
+**CIO, 2026-09-20:**
+
+> *"If I have data coming in faster than the ECU, it is not very helpful… we should not be
+> capturing rows that do not line up with ECU data."*
+
+🔴 **A row that cannot pair with ECU data is not product data.**
+
+**Rate is a CONSEQUENCE of that rule, not a rule of its own.** Sampling faster than the ECU
+answers does not produce better data — it **manufactures rows that can never be paired**. The
+project has already measured exactly what that costs: **96.6% orphaned** (5,791,276 IMU rows,
+196,428 coupled) and a 2.8 GB database.
+
+⇒ **Ask "can this row be paired?" first. The rate falls out of the answer.**
+
+⚠️ **"Pair" means paired to a DRIVE, not to an individual ECU row.** That distinction is
+load-bearing and is settled in §6.3 — read it before applying this rule.
+
+### 4.2 The 5 Hz ceiling — a hard cap
+
+**CIO, 2026-09-20:** *"Nothing needs to run faster than 5 Hz for our current application. If
+the battery is only at 1 Hz, that is fine. If the light sensor is only at 1 Hz, that is fine."*
+
+🔴 **5 Hz is a CEILING on every acquisition rate in the system.** It is a practicality derived
+from §4.1, not an engineering limit: above it, rows accumulate faster than they can be paired.
+
+### 4.3 How the ceiling and the derivation fit together
+
+🔴 **Two rules, one job each. The ceiling BOUNDS; the derivation CHOOSES.** They do not
+compete, and the spec must not be read as carrying two answers:
+
+| | Governs | To exceed / justify |
+|---|---|---|
+| **The 5 Hz ceiling** | the maximum any rate may take | **CIO-level justification.** Not an architect's call. |
+| **The derivation rule** | the actual value, at or below the cap | **a NAMED PHENOMENON**, in writing |
+
+🔴 **RULE — every acquisition rate is declared in writing with the phenomenon that justifies
+it, and sits at or below the ceiling. A rate justified by DEVICE CAPABILITY is rejected at
+review.**
+
+    rate = enough to resolve the slowest phenomenon we actually analyse,
+           capped at 5 Hz
+           NEVER "what the part supports"
+
+Two questions stay separate underneath this, and confusing them is what produced 50 Hz:
 
 | | What it is | Set by |
 |---|---|---|
 | **Correlation grain** | how finely a fact can be tied to vehicle state | **the anchor: 0.43 Hz** |
 | **Signal bandwidth** | how fast the phenomenon itself changes | the physics being measured |
 
-🔴 **RULE — every acquisition rate is derived, in writing, from a NAMED PHENOMENON, and is
-justified against the anchor. A rate justified by device capability is rejected at review.**
-
-    rate = enough to resolve the slowest phenomenon we actually analyse
-           NEVER "what the part supports"
-
-**Consequences:**
-
-- Sampling **faster than the anchor** is legitimate only when a named phenomenon occurs
-  *between* ECU samples and we analyse it (braking, cornering, grade change). The extra
-  samples then describe what happened inside one 2.3 s correlation window.
-- Sampling faster than the phenomenon requires is **waste by definition**, and this project
-  has measured what that waste costs: 96.6% orphan rate and a 2.8 GB database.
+- Sampling **faster than the anchor** is legitimate — up to the ceiling — only when a named
+  phenomenon occurs *between* ECU samples and we intend to analyse it (braking, cornering,
+  grade change). Those samples describe what happened inside one 2.3 s correlation window.
+- Sampling faster than the phenomenon requires is **waste by definition**.
 - **A rate with no named phenomenon is a defect**, not a preference.
 
-### The rates, as ratified
+### 4.4 The rates, as ratified
 
-**CIO, 2026-09-20:** *"this is a device that's going to be polling during normal driving
-operations, so anything more frequent than four or five times a second isn't very
-meaningful."*
+**Measured against the ceiling — the IMU triple is the only thing above it.** Light and the UPS
+gauge already comply and do not move.
 
-| Path | Now | Target | Named phenomenon |
-|---|---|---:|---|
-| ECU / OBD | 0.43 Hz | **0.43 Hz** (anchor) | dongle+ECU round trip; not ours to set |
-| IMU | 50 Hz | **5 Hz** | braking, cornering, grade change — ~0.5–2 s events; ~10 samples each |
-| Light | 1 Hz | **1 Hz** | ambient change for display dimming; slow |
-| UPS gauge | 0.2 Hz | **0.2 Hz** | pack state; slow. ⚠️ see §7 |
+| Path | Now | vs ceiling | Target | Named phenomenon |
+|---|---|---|---:|---|
+| ECU / OBD | 0.43 Hz | — | **0.43 Hz** (anchor) | dongle+ECU round trip; not ours to set |
+| IMU `sampleHz` | 50 Hz | **10× over** | **5 Hz** | braking, cornering, grade change — ~0.5–2 s events; ~10 samples each |
+| IMU `persistHz` | 25 Hz | **5× over** | **≤ 5 Hz** | DB consumer; cannot exceed the root |
+| IMU `stateHz` | 10 Hz | **2× over** | **≤ 5 Hz** | display consumer; a publish rate above the sample rate carries no new data |
+| Light `sampleHz` | 1 Hz | compliant | **1 Hz** | ambient change for display dimming; slow |
+| UPS gauge | 0.2 Hz | compliant | **0.2 Hz** | pack state; slow. ⚠️ see §7 |
 
-⚠️ **5 Hz is a starting point derived from a stated phenomenon, not a proven optimum.** If an
-analysis later needs finer resolution it may be raised — **by naming the phenomenon that
-requires it**, and recording the change here.
+🔴 **The ceiling applies to the whole IMU triple, not to `sampleHz` alone.** A `persistHz` or
+`stateHz` left above the root publishes samples that cannot carry new data.
+
+⚠️ **5 Hz is a cap, not a target to aim at.** A rate *below* it needs only its named
+phenomenon. A rate *above* it is a CIO decision — it cannot be unlocked by naming a
+phenomenon, because the constraint is what can be paired, not what can be resolved.
 
 ## 5. The provider contract — how a new sensor is added
 
@@ -153,15 +212,19 @@ failed read lands a typed absence and its reason. The project has a live example
 `CRATE` (MAX17048 reg 0x16) reads `0xFFFF` and decodes through its signed scale to a
 **plausible −0.208 %/hr** — a fabricated discharge that never happened.
 
-## 6. Correlation — the coupling rule
+## 6. Correlation — what "paired" actually means
 
-🔴 **I²C facts are only meaningful tied to ECU facts** (CIO, 2026-09-20). L3 owns that join,
-and the existing ruling governs the window:
+§4.1 states the rule. This section defines the **unit of pairing** and owns the mechanics.
+L3 owns the join.
+
+### 6.1 The drive window
 
 > Sync and retain drive-coupled data **only inside a drive window**. **The window closes at
 > POWEROFF, not at the last ECU row** — a strict reading would delete the key-off and UPS
 > evidence. **Lead-in covers `bootGrace`** so engine crank is captured. Wall-power data is
 > development-only. *(CIO, 2026-09-19.)*
+
+### 6.2 Implementation, and the one defect in it
 
 **Implemented by `src/pi/bus/edr_log_gate.py` (US-767), shipped V0.29.58 — collapses EDR
 volume ~29×.** ⚠️ Its predicate currently reads `ConnectionStatus.connected` — the **Bluetooth
@@ -170,8 +233,57 @@ can exist in a parked car and reach no ECU. **US-793 moves the predicate to ECU 
 see that story for the fail-open trap ("unreachable" must be a readable `False`, distinct
 from "signal unreadable").
 
+🟢 **The gate itself is the right mechanism. Only its predicate is wrong.**
+
 **Rate reduction and gating are independent and compose.** 5 Hz cuts rows ~10×; the log gate
 cuts ~29×. Neither substitutes for the other.
+
+### 6.3 🔴 PAIR TO THE DRIVE, NOT TO THE ROW
+
+Two CIO rulings meet here, and a literal reading of either one destroys something:
+
+| | Ruling |
+|---|---|
+| **2026-09-20** | *"we should not be capturing rows that do not line up with ECU data"* |
+| **2026-09-19** | the drive window *"closes at POWEROFF, not at the last ECU row"* — ruled explicitly when Atlas raised that a strict reading would delete the key-off/UPS evidence |
+
+🔴 **At key-off the ECU is silent BY DEFINITION.** A literal row-level pairing rule would
+therefore delete **exactly the shutdown evidence currently under investigation** — the
+`power_loss_heartbeat` rows, the drain events, the UPS telemetry that every open power question
+depends on.
+
+🔴 **RESOLUTION — the unit of pairing is the DRIVE WINDOW, not the individual ECU row.**
+
+    drive window  =  bootGrace lead-in  ->  POWEROFF
+
+- **Inside the window**, a row is product data **even when the ECU is momentarily silent**.
+  Engine crank, a dropped link mid-drive, and the entire key-off tail all stay.
+- **Outside the window**, there is no drive to pair to, and the row is development-only (§6.4).
+
+**The single test is therefore: is there a drive window around this row?** Not: is there an ECU
+row beside it.
+
+⚠️ **Do not "simplify" this to row-level pairing.** It reads tighter and it deletes the tail of
+every drive.
+
+### 6.4 The bench / development case
+
+**Pi powered, no ECU, no drive window ⇒ development data.**
+
+This is **not a defect and not a failure** — it is the normal state of a bench. But it is also
+**not product data**: it is never retained as such, and it must be **typed at CAPTURE**, not
+sorted out afterwards by inference.
+
+🟢 **The mechanism already exists** — `data_source` (`real` / `replay` / `physics_sim` /
+`fixture` / `foreign`) and `load_class` (`production` / `test` / `sim`). **This is labelling
+discipline, not new machinery.**
+
+⚠️ **Typing after the fact does not work**, and the project has measured why: two entire days
+(09-17, 09-18) were **100% orphaned** — ~1.7M rows each day — and were only distinguishable
+from product data by reconstructing, later, that the car had never moved.
+
+**Rules out:** inferring development data from row counts or timestamps after capture; and
+treating an empty ECU stream on a bench as an error condition.
 
 ## 7. ⚠️ One open risk this design touches
 
@@ -190,29 +302,41 @@ ten candidates already ruled out). If rate reduction changes that behaviour, it 
 
 ## 8. Gates — enforceable at review
 
-1. **Every provider declares a rate and the phenomenon justifying it.** No phenomenon, no merge.
-2. **No consumer acquires.** A consumer calling a device, or a second provider for the same
+1. 🔴 **No rate exceeds the 5 Hz ceiling without CIO-level justification.** A named phenomenon
+   does not unlock it — the constraint is what can be paired, not what can be resolved.
+2. **Every provider declares a rate and the phenomenon justifying it.** No phenomenon, no merge.
+3. **No consumer acquires.** A consumer calling a device, or a second provider for the same
    fact, is rejected.
-3. **Only L3 joins across transports.**
-4. **No rate is justified by device capability.**
-5. **A failed read lands a typed absence**, never a substituted or defaulted value.
-6. **A new sensor requires no change to orchestration, correlation or decimation.** If it
+4. **Only L3 joins across transports.**
+5. **No rate is justified by device capability.**
+6. 🔴 **Pairing is assessed against the DRIVE WINDOW, never against an individual ECU row.**
+   A row-level pairing test is rejected at review: it deletes the key-off tail.
+7. **Data captured with no drive window is TYPED as development at capture**, not inferred
+   afterwards.
+8. **A failed read lands a typed absence**, never a substituted or defaulted value.
+9. **A new sensor requires no change to orchestration, correlation or decimation.** If it
    does, the abstraction is wrong.
-7. **Rates are reviewed against the anchor when the anchor changes.** A faster dongle or ECU
-   profile moves the correlation grain and every derived rate with it.
+10. **Rates are reviewed against the anchor when the anchor changes.** A faster dongle or ECU
+    profile moves the correlation grain and every derived rate with it.
 
 ## 9. Open items
 
 | Item | Owner | Blocks |
 |---|---|---|
 | Confirm 5 Hz against a real drive — do braking/cornering events resolve? | Atlas | the constant only, not the design |
-| `persistHz` / `stateHz` re-derived beneath a 5 Hz root | Atlas | the build |
 | Is the 0.43 Hz anchor a dongle limit, an ECU limit, or our polling? Worth knowing — it may be raisable | Atlas | nothing; informational |
+
+🟢 **CLOSED 2026-09-20:** ~~`persistHz` / `stateHz` re-derived beneath a 5 Hz root~~ — answered
+by the ceiling (§4.2), which applies to the whole triple rather than to the root alone. Kept
+here, struck, rather than deleted, so it is not re-opened as an unanswered question.
 
 ## 10. Out of scope
 
 - The unexplained sub-second shutdown deaths (§7).
-- Sync protocol, server-side storage, retention.
+- Sync protocol, server-side storage, retention — **owned by
+  `specs/storage-retention-custody.md` (ARCH-037)**. ⚠️ Out of scope *of this document* only:
+  per §1, capture and trustworthy sync are the current product goal, so ARCH-037 is not
+  lower-priority work — it is the other half of the same deliverable.
 - The ARCH-035 shutdown orchestration itself.
 - Any change to `PowerSourceProvider`, which is already a correct SSOT provider.
 - GPS. It fits this model as an L2 provider when it lands; no design change expected.
