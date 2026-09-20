@@ -34,6 +34,13 @@
 # 2026-09-17    | US-788  | In-grace losses now reach the sequencer (flagged
 #                           suppressFloorFastPath); the fake counts them apart
 #                           so these gates still pin the post-grace fires.
+# 2026-09-19    | US-792  | Added the latch-RELEASE gate. firedAlready is set on
+#                           all three exits of handleOnBattery, including cancel,
+#                           and nothing reset it, so a blip that cancelled a
+#                           shutdown left the trigger dead for the rest of the
+#                           boot. Its absence is what let a one-shot latch ship;
+#                           it asserts the call COUNT, because a single-call
+#                           assertion passes on the broken code.
 # ================================================================================
 ################################################################################
 """F-7 regression gate: in-grace transient + level-stuck-LOW post-grace must
@@ -194,4 +201,45 @@ def test_firedAlready_preventsDoubleFire_postGrace():
     assert sequencer.fireCount == 1, (
         f"firedAlready guard broken: {sequencer.fireCount} fires "
         f"(level-stuck-LOW should fire exactly once, not every poll)"
+    )
+
+
+def test_firedAlready_releases_whenLineReadsPresentAgain():
+    """US-792: THE LATCH MUST RELEASE. A post-grace loss that CANCELS (power
+    returned during smoothing) still sets firedAlready, because it is set on
+    ALL THREE exits of handleOnBattery -- poweroff, VCELL-floor fast path, and
+    cancel -- and nothing ever reset it. The trigger was therefore dead for the
+    rest of the boot, and the next genuine key-off was a hard cut.
+
+    The loop cannot see WHICH exit handleOnBattery took, and does not need to:
+    the line reading PRESENT is the end of that loss episode. The latch means
+    "a decision is in flight or complete for THIS episode", never "for this
+    boot" -- that conflation is the defect (specs/architecture.md 10.6).
+
+    ONE present reading re-arms, deliberately with NO debounce (asymmetric with
+    smoothingSec): iter2 below is a single present tick and it is enough.
+    Into shutdown we debounce 7 s because committing on a blip bricked the Pi
+    on 2026-05-18; back to armed we do not, because failing to re-arm costs a
+    hard cut and un-shed carry at real load is only 0.678 s.
+
+    ASSERTS THE CALL COUNT, not merely that it was called -- a single-call
+    assertion passes on the broken code and would have let this ship again.
+    """
+    sequencer = _FakeSequencer()
+    # All ticks post-grace. init: healthy. iter1 (t=100ms): loss -> FIRE #1,
+    # which CANCELS (power returned during smoothing) but still latches.
+    # iter2 (t=200ms): line reads PRESENT -> must re-arm. iter3 (t=300ms):
+    # second, genuine loss -> FIRE #2.
+    _runLoop(
+        states=[False, True, False, True],
+        times=[0.100, 0.200, 0.300],
+        bootGraceSec=0.050,
+        maxIters=3,
+        sequencer=sequencer,
+    )
+    assert sequencer.fireCount == 2, (
+        f"US-792: latch never released -- expected 2 fires (the cancelled "
+        f"loss, then the genuine key-off), got {sequencer.fireCount}. With "
+        f"1 fire the sequencer is blind for the rest of the boot and the next "
+        f"key-off is a hard cut."
     )
