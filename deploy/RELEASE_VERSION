@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.57",
-  "theme": "ARCH-033/034 -- AK09916 axis map and body frame",
-  "description": "The magnetometer die sits in a different orientation from the accel/gyro dies and no transform was applied, so every heading ever published came from a vector in the wrong frame. ARCH-033 maps the axes at the sensor seam (GPS truth: R 0.170 -> 0.861). ARCH-034 returns IMU_BODY_FRAME to the identity, removing the ~115 deg offset and correcting grade, pitch and g-force. Awaiting in-car validation."
+  "version": "V0.29.58",
+  "theme": "US-792 -- re-arm shutdown latch after a cancel",
+  "description": "Ships the Sprint 89 payload with the latch defect it exposed. firedAlready is set on all three exits of handleOnBattery, incl. cancel, and nothing reset it -- so a blip that cancelled a shutdown left the trigger dead for the whole boot and the next key-off was a hard cut. _runPldWatchLoop now clears it on the tick the PLD line reads present, no debounce. Also carries US-767 EDR drive-coupling."
 }
