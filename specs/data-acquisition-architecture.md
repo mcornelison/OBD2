@@ -7,6 +7,15 @@ is also a shutdown participant there. Same contract shape, deliberately.
 **Builds on:** `specs/ssot-design-pattern.md` (CIO directive, 2026-05-18). This document
 extends that pattern to **acquisition rate**, which it did not previously cover.
 
+**Relationship to `specs/architecture.md`:** that file records the system **as built** —
+`pi.sensors.imu.sampleHz (50)` at `:3853`. This file is the **target design**. They
+deliberately disagree until the build lands, at which point `architecture.md` is updated **in
+the same sprint** (PM Rule 10 design-gate DoD) and this file becomes the rationale for the
+values there. 🔴 **Neither file is stale; do not "fix" one to match the other before the
+build.** ⚠️ Note also `architecture.md:3786`: the carousel display consumer already polls at
+`POLL_MS = 250` (4 Hz) off the 50 Hz stream — a consumer decimating to roughly the rate §4
+proposes, which is corroboration that 5 Hz is sufficient for the display path.
+
 ---
 
 ## 1. Why this exists
