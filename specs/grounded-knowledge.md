@@ -737,6 +737,15 @@ window. **A single 2.5 mV step over ~290 s is half the 5 mV threshold and would 
 not been caught at sample resolution, because nothing persists VCELL at poll cadence.** The
 77 episodes are the observation; the per-sample mechanism is inferred and is labelled as such.
 
+🟢 **QUIESCENT FLOAT BAND, 2000 mAh cell, measured 2026-09-21 22:39–22:51Z:** 72 reads at 10 s
+spacing over **710 s** returned exactly **two** distinct values — raw 53136 and 53120, a single
+**16 LSB = 1.25 mV** step. ⇒ **Between excursions the float signal is far quieter than 5 mV per
+300 s**, which is why the detector is not permanently latched. **The ~10 events per day are
+excursions against this quiet baseline, not a continuously noisy signal.** ⚠️ **One 12-minute
+window on one cell: it bounds the quiet state, it does not characterise the excursions** — and the
+excursions are the thing that matters. Characterising those needs VCELL persisted at poll cadence,
+which nothing currently does.
+
 ⇒ **RULING (Spool, 2026-09-21): do not evaluate cell-drain health while external power is present.**
 Gate on **`PowerSourceProvider.isExternalPowerPresent()`**
 (`src/pi/power/power_source_provider.py:56`) — the GPIO6 PLD SSOT. On external power the verdict is
