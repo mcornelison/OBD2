@@ -3916,8 +3916,32 @@ the change.
   validator registry and the mirrored module fallbacks) are unchanged; they
   apply only when a key is absent. Consumers derive their windows from the
   configured `sampleHz` rather than assuming 50 Hz. What derives from the new
-  rates is re-checked by US-796-f.
+  rates is re-checked by US-796-f (below).
 - Pinned by `tests/pi/bus/test_imu_rate_triple.py`.
+
+**What derives from the rates, at 4 / 2 / 1 (US-796-f).** Two consumers compute
+a window from `sampleHz`; both take the rate from config through their
+production factories, and neither window got shorter than what it guards.
+
+| Consumer | Derivation | At 50 Hz | At 4 Hz | Wall-clock window |
+|---|---|---|---|---|
+| `PlausibilityGate` stuck-value run limit | `ceil(sampleHz × invariantDwellSeconds)` | 100 samples | **8 samples** | **2.0 s** at both rates. The dwell is stated in seconds precisely so the rate change does not move it |
+| `ImuStateBridge` mag/gyro pairing | `MAG_MAX_AGE_POLLS (5) / sampleHz` | 0.1 s | **1.25 s** | Five burst intervals at both rates, since the reader bursts accel, gyro and mag under one `seq` |
+
+- **`stateHz 1` does not starve the pairing.** Pairing is judged against the
+  burst that triggers a write, not against the display interval. Every 1 s write
+  carries a heading from its own burst. The one effect: during a mag or gyro
+  dropout, a write can still carry a reading up to 1.25 s old, where the old
+  limit was 0.1 s.
+- **Neither consumer needs the high rate to detect anything.** The gate rejects
+  a non-measurement, and a stuck channel is still refused on its 8th identical
+  sample. The pairing only rejects a stale reading.
+- The module fallbacks (`DEFAULT_IMU_SAMPLE_HZ = 50` in `sensor_reader`,
+  `imu_state_bridge` and `edr_persistence_subscriber`) still exist. US-801 owns
+  collapsing them into one definition. The tests poison the `sensor_reader` and
+  `imu_state_bridge` fallbacks (the two consumers' rate sources) and prove that
+  neither derived window moves.
+- Pinned by `tests/pi/sensors/test_imu_rate_derived_consumers.py`.
 
 ### 10.8.3 EDR reaches the server (F-142, Sprint 87–88 / V0.29.51–52) [Atlas Rule 10]
 
