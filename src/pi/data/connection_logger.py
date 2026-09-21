@@ -27,6 +27,11 @@
 #               |              | US-340b left uncovered.  First occurrence per
 #               |              | engine-off window still logs; state changes
 #               |              | still clear the tracker.
+# 2026-09-21    | Rex (US-793-c)| ecu_reachability: one row per ECU reachability
+#               |              | TRANSITION (state in error_message).  Registered
+#               |              | in shouldSuppressAsRepeat as a state-valued event:
+#               |              | a repeat of the last logged state is suppressed,
+#               |              | and it never clears the outage tracker.
 # ================================================================================
 ################################################################################
 
@@ -118,6 +123,13 @@ EVENT_DRIVE_START: str = 'drive_start'
 EVENT_DRIVE_END: str = 'drive_end'
 EVENT_DATA_CLEANUP: str = 'data_cleanup'
 
+#: US-793-c: the ECU reachability state changed (design-patterns.md §5).  The
+#: new state's value (``Reachability.value``) is in ``error_message``;
+#: ``success`` is 1 only for ``answered``.  One row per transition, none in
+#: steady state -- a Bluetooth link is not an ECU, and this is how the server
+#: sees which of the two the EDR gate was looking at.
+EVENT_ECU_REACHABILITY: str = 'ecu_reachability'
+
 
 #: Frozen set of canonical event_type values defined at US-211 time.
 #: Dynamic writers (profile switcher event.eventType, shutdown f'shutdown_{event}')
@@ -141,6 +153,7 @@ CANONICAL_EVENT_TYPES: frozenset[str] = frozenset({
     EVENT_DRIVE_START,
     EVENT_DRIVE_END,
     EVENT_DATA_CLEANUP,
+    EVENT_ECU_REACHABILITY,
     *US211_EVENT_TYPES,
 })
 
@@ -180,9 +193,27 @@ _REPEAT_SUPPRESSED_EVENTS: frozenset[str] = frozenset({
 _OUTAGE_LOGGED_TYPES_BY_MAC: dict[str | None, set[str]] = {}
 _LAST_LOGGED_LOCK: threading.Lock = threading.Lock()
 
+#: US-793-c: event types whose row records a STATE VALUE.  A row is written
+#: when the value differs from the last one logged for that mac -- log
+#: per-state-transition, the same rule as above, applied to a value instead
+#: of an outage.  These are not link state changes, so they never clear the
+#: outage tracker: an ECU going quiet must not re-arm connect_attempt rows.
+_STATE_VALUED_EVENTS: frozenset[str] = frozenset({
+    EVENT_ECU_REACHABILITY,
+})
 
-def shouldSuppressAsRepeat(macAddress: str | None, eventType: str) -> bool:
-    """Return True when ``eventType`` is a repeat of a "still trying" event.
+#: Last logged state value per (mac, state-valued event type).  Guarded by
+#: :data:`_LAST_LOGGED_LOCK`.
+_LAST_STATE_BY_MAC: dict[tuple[str | None, str], str | None] = {}
+
+
+def shouldSuppressAsRepeat(
+    macAddress: str | None,
+    eventType: str,
+    state: str | None = None,
+    initialState: str | None = None,
+) -> bool:
+    """Return True when ``eventType`` is a repeat that must not be logged.
 
     Per mac_address, the FIRST occurrence of each repeat-suppressed event
     type (connect_attempt / adapter_wait / reconnect_attempt) within an
@@ -190,11 +221,29 @@ def shouldSuppressAsRepeat(macAddress: str | None, eventType: str) -> bool:
     suppressed.  A state-change event resets the outage tracker for that
     mac so the next outage logs each type's first occurrence again.
 
+    A state-valued event (US-793-c, :data:`_STATE_VALUED_EVENTS`) is a
+    repeat when ``state`` equals the last state logged for that mac, or
+    ``initialState`` when none has been logged yet.
+
     Side effect: when this returns False, the tracker is updated so the
     next call sees this event as logged.  Callers MUST then call the
     writer -- skipping the write desynchronizes tracker from table.
+
+    Args:
+        macAddress: Adapter MAC the event is tracked under.
+        eventType: The ``connection_log.event_type`` about to be written.
+        state: For a state-valued event, the state the row records.
+        initialState: For a state-valued event, the state that holds before
+            any row has been logged -- so the starting state is not itself
+            reported as a transition.
     """
     with _LAST_LOGGED_LOCK:
+        if eventType in _STATE_VALUED_EVENTS:
+            key = (macAddress, eventType)
+            if _LAST_STATE_BY_MAC.get(key, initialState) == state:
+                return True
+            _LAST_STATE_BY_MAC[key] = state
+            return False
         if eventType not in _REPEAT_SUPPRESSED_EVENTS:
             # State change -- log it + clear the outage tracker for this
             # mac so the NEXT outage logs each type's first occurrence.
@@ -208,9 +257,10 @@ def shouldSuppressAsRepeat(macAddress: str | None, eventType: str) -> bool:
 
 
 def resetDedupStateForTests() -> None:
-    """Clear the per-mac outage tracker.  Tests call this in setUp."""
+    """Clear the per-mac dedup trackers.  Tests call this in setUp."""
     with _LAST_LOGGED_LOCK:
         _OUTAGE_LOGGED_TYPES_BY_MAC.clear()
+        _LAST_STATE_BY_MAC.clear()
 
 
 # ================================================================================
@@ -301,6 +351,7 @@ __all__ = [
     'EVENT_DRIVE_START',
     'EVENT_DRIVE_END',
     'EVENT_DATA_CLEANUP',
+    'EVENT_ECU_REACHABILITY',
     'US211_EVENT_TYPES',
     'CANONICAL_EVENT_TYPES',
     'logConnectionEvent',
