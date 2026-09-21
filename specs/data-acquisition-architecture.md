@@ -14,7 +14,7 @@ the same sprint** (PM Rule 10 design-gate DoD) and this file becomes the rationa
 values there. 🔴 **Neither file is stale; do not "fix" one to match the other before the
 build.** ⚠️ Note also `architecture.md:3786`: the carousel display consumer already polls at
 `POLL_MS = 250` (4 Hz) off the 50 Hz stream — a consumer decimating to roughly the rate §4
-proposes, which is corroboration that 5 Hz is sufficient for the display path.
+proposes, which is corroboration that a low single-digit Hz rate is sufficient for the display path.
 
 ---
 
@@ -92,7 +92,7 @@ subsystems holding different values for the same fact. It is merely harder to se
     one acquisition   DB consumer     display consumer
 
 One acquisition, two decimations, consumers applying policy. **The shape is right; all three
-numbers are wrong** — every one of them sits above the 5 Hz ceiling (§4).
+numbers are wrong** — every one of them sits above the 4 Hz ceiling (§4).
 
 `_decimationFactor` is `max(1, round(sampleHz / persistHz))`, so a consumer rate at or above
 the acquisition rate degrades safely to "keep every sample". **Lowering `sampleHz` alone is
@@ -121,12 +121,34 @@ project has already measured exactly what that costs: **96.6% orphaned** (5,791,
 ⚠️ **"Pair" means paired to a DRIVE, not to an individual ECU row.** That distinction is
 load-bearing and is settled in §6.3 — read it before applying this rule.
 
-### 4.2 The 5 Hz ceiling — a hard cap
+### 4.2 The 4 Hz ceiling — a hard cap
+
+🔴 **CIO, 2026-09-21 — TIGHTENED FROM 5 Hz TO 4 Hz:** *"max 4 per second and must align with
+ECU data... this is a flight/drive data recorder not a garage data recorder."*
+
+    ~~5 Hz~~  ->  4 Hz HARD CAP
+
+⚠️ **The 5 Hz below was faithfully recorded, not a mis-transcription.** The 2026-09-20 quote is
+preserved verbatim because it is the real record of that ruling; this is a **tightening**, not a
+correction of a bad reading.
+
+🟢 **AND 4 IS ARCHITECTURALLY BETTER THAN 5, INDEPENDENTLY OF THE RULING.**
+`_decimationFactor = max(1, round(sampleHz / persistHz))` uses **INTEGER** rounding
+(`src/pi/bus/edr_persistence_subscriber.py:122-136`):
+
+    4 Hz:   4 -> 2 -> 1     every factor an EXACT integer
+    5 Hz:   5 -> 2          round(2.5) = 2, effective 2.5 Hz while the config says 2
+
+🔴 **At 5 Hz the IMU triple cannot be expressed without a config field that lies. At 4 Hz it
+can.** Use that as the justification, not merely the ruling. See §1 of
+`specs/design-patterns.md` — *provider/consumer SSOT with decimation*.
+
+#### 4.2.1 The superseded 5 Hz ruling, preserved
 
 **CIO, 2026-09-20:** *"Nothing needs to run faster than 5 Hz for our current application. If
 the battery is only at 1 Hz, that is fine. If the light sensor is only at 1 Hz, that is fine."*
 
-🔴 **5 Hz is a CEILING on every acquisition rate in the system.** It is a practicality derived
+🔴 **4 Hz is a CEILING on every acquisition rate in the system.** It is a practicality derived
 from §4.1, not an engineering limit: above it, rows accumulate faster than they can be paired.
 
 ### 4.3 How the ceiling and the derivation fit together
@@ -136,7 +158,7 @@ compete, and the spec must not be read as carrying two answers:
 
 | | Governs | To exceed / justify |
 |---|---|---|
-| **The 5 Hz ceiling** | the maximum any rate may take | **CIO-level justification.** Not an architect's call. |
+| **The 4 Hz ceiling** | the maximum any rate may take | **CIO-level justification.** Not an architect's call. |
 | **The derivation rule** | the actual value, at or below the cap | **a NAMED PHENOMENON**, in writing |
 
 🔴 **RULE — every acquisition rate is declared in writing with the phenomenon that justifies
@@ -144,7 +166,7 @@ it, and sits at or below the ceiling. A rate justified by DEVICE CAPABILITY is r
 review.**
 
     rate = enough to resolve the slowest phenomenon we actually analyse,
-           capped at 5 Hz
+           capped at 4 Hz
            NEVER "what the part supports"
 
 Two questions stay separate underneath this, and confusing them is what produced 50 Hz:
@@ -168,16 +190,16 @@ gauge already comply and do not move.
 | Path | Now | vs ceiling | Target | Named phenomenon |
 |---|---|---|---:|---|
 | ECU / OBD | 0.43 Hz | — | **0.43 Hz** (anchor) | dongle+ECU round trip; not ours to set |
-| IMU `sampleHz` | 50 Hz | **10× over** | **5 Hz** | braking, cornering, grade change — ~0.5–2 s events; ~10 samples each |
-| IMU `persistHz` | 25 Hz | **5× over** | **≤ 5 Hz** | DB consumer; cannot exceed the root |
-| IMU `stateHz` | 10 Hz | **2× over** | **≤ 5 Hz** | display consumer; a publish rate above the sample rate carries no new data |
+| IMU `sampleHz` | 50 Hz | **12.5× over** | **4 Hz** | braking, cornering, grade change — ~0.5–2 s events; ~10 samples each |
+| IMU `persistHz` | 25 Hz | **6.25× over** | **2 Hz** | DB consumer; cannot exceed the root. Factor `_decimationFactor(4,2)=2`, EXACT |
+| IMU `stateHz` | 10 Hz | **2.5× over** | **1 Hz** | display consumer; a publish rate above the sample rate carries no new data. Factor `_decimationFactor(4,1)=4`, EXACT |
 | Light `sampleHz` | 1 Hz | compliant | **1 Hz** | ambient change for display dimming; slow |
 | UPS gauge | 0.2 Hz | compliant | **0.2 Hz** | pack state; slow. ⚠️ see §7 |
 
-🔴 **The ceiling applies to the whole IMU triple, not to `sampleHz` alone.** A `persistHz` or
+🔴 **The ceiling applies to the whole IMU triple, not to `sampleHz` alone.** Ruled 2026-09-21: **`sampleHz 4 / persistHz 2 / stateHz 1`.** A `persistHz` or
 `stateHz` left above the root publishes samples that cannot carry new data.
 
-⚠️ **5 Hz is a cap, not a target to aim at.** A rate *below* it needs only its named
+⚠️ **4 Hz is a cap, not a target to aim at.** A rate *below* it needs only its named
 phenomenon. A rate *above* it is a CIO decision — it cannot be unlocked by naming a
 phenomenon, because the constraint is what can be paired, not what can be resolved.
 
@@ -235,7 +257,7 @@ from "signal unreadable").
 
 🟢 **The gate itself is the right mechanism. Only its predicate is wrong.**
 
-**Rate reduction and gating are independent and compose.** 5 Hz cuts rows ~10×; the log gate
+**Rate reduction and gating are independent and compose.** 4 Hz cuts rows ~12.5×; the log gate
 cuts ~29×. Neither substitutes for the other.
 
 ### 6.3 🔴 PAIR TO THE DRIVE, NOT TO THE ROW
@@ -294,7 +316,7 @@ Our I²C handling is **measured to wedge devices on that bus**: ARCH-032, n=20 p
 p=0.000017 — a pure *read* of the gyro collapses the AK09916 bypass hand-over from ~70% to
 ~10%, leaving the magnetometer refusing its own address.
 
-⚠️ Reducing IMU acquisition from 50 Hz to 5 Hz cuts traffic on that bus ~10×. **That is a
+⚠️ Reducing IMU acquisition from 50 Hz to 4 Hz cuts traffic on that bus ~12.5×. **That is a
 justified change on its own merits and must NOT be presented as a fix for anything else.**
 The sub-second shutdown deaths remain unexplained (see `facts/power-and-battery.md` for the
 ten candidates already ruled out). If rate reduction changes that behaviour, it is a
@@ -302,7 +324,7 @@ ten candidates already ruled out). If rate reduction changes that behaviour, it 
 
 ## 8. Gates — enforceable at review
 
-1. 🔴 **No rate exceeds the 5 Hz ceiling without CIO-level justification.** A named phenomenon
+1. 🔴 **No rate exceeds the 4 Hz ceiling without CIO-level justification.** A named phenomenon
    does not unlock it — the constraint is what can be paired, not what can be resolved.
 2. **Every provider declares a rate and the phenomenon justifying it.** No phenomenon, no merge.
 3. **No consumer acquires.** A consumer calling a device, or a second provider for the same
@@ -323,10 +345,10 @@ ten candidates already ruled out). If rate reduction changes that behaviour, it 
 
 | Item | Owner | Blocks |
 |---|---|---|
-| Confirm 5 Hz against a real drive — do braking/cornering events resolve? | Atlas | the constant only, not the design |
+| Confirm 4 Hz against a real drive — do braking/cornering events resolve? | Atlas | the constant only, not the design |
 | Is the 0.43 Hz anchor a dongle limit, an ECU limit, or our polling? Worth knowing — it may be raisable | Atlas | nothing; informational |
 
-🟢 **CLOSED 2026-09-20:** ~~`persistHz` / `stateHz` re-derived beneath a 5 Hz root~~ — answered
+🟢 **CLOSED 2026-09-21:** ~~`persistHz` / `stateHz` re-derived beneath a 4 Hz root~~ — ruled `4 / 2 / 1` — answered
 by the ceiling (§4.2), which applies to the whole triple rather than to the root alone. Kept
 here, struck, rather than deleted, so it is not re-opened as an unanswered question.
 
@@ -340,3 +362,21 @@ here, struck, rather than deleted, so it is not re-opened as an unanswered quest
 - The ARCH-035 shutdown orchestration itself.
 - Any change to `PowerSourceProvider`, which is already a correct SSOT provider.
 - GPS. It fits this model as an L2 provider when it lands; no design change expected.
+
+
+---
+
+## 11. Recorded dissent on the ruled triple (Atlas, 2026-09-21)
+
+The CIO ruled **`sampleHz 4 / persistHz 2 / stateHz 1`** and that ruling stands. **One
+objection was raised once and decided against; it is recorded so nobody reopens it blind.**
+
+⚠️ **Sampling at 4 Hz while storing at 2 Hz DISCARDS HALF THE ACQUIRED DATA.** Against the
+standing purpose — *"land all variables unless there is a good reason not to"*, for correlation
+analysis — the dropped samples cost power and yield nothing. Either `sampleHz` should be 2, or
+`persistHz` should be 4. **Sampling faster than you store is the "device capability, not
+analysis need" shape §4.3 rejects at review**, so the config and this section disagree on that
+one point until one of them moves.
+
+🔴 **Decided by the CIO. Do not re-litigate.** `stateHz 1` is a UX call and is his.
+**This is the open thread if rate policy is ever reopened.**
