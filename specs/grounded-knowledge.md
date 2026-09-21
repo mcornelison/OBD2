@@ -596,6 +596,213 @@ own provenance header) · `offices/ralph/scripts/characterize_magnetometer.py`
 
 ---
 
+## IMU boot state — TWO discrete states, and the accel SCALE differs between them (US-783 / A-34)
+
+**Measured by Spool 2026-09-21 against `edr_imu_sample`, server tier.**
+
+The ICM-20948 latches into one of two states at every power-on. The gyro half is already
+documented in `src/pi/sensors/gyro_recovery.py` (A-34). **What is new here: the ACCELEROMETER
+SCALE differs between the two states by ~1.9 percentage points**, and nothing in the schema
+records which state produced a given row.
+
+| At rest, parked (`drive_id IS NULL`) | FAULTED | HEALTHY |
+|---|---|---|
+| `gyro_x` mean (°/s) | +0.2436 | −0.0008 |
+| `gyro_y` mean (°/s) | −0.5222 | +0.0130 |
+| `gyro_z` mean (°/s) | −0.3211 | +0.0039 |
+| **‖a‖ mean (m/s²)** | **9.79492** | **9.98255** |
+| ‖a‖ sample SD (m/s²) | 0.13460 | 0.03598 |
+| n | 379,527 | 5,706,847 |
+
+🔴 **The gyro fault biases ALL THREE axes, not only `gyro_y`.** The office record named `gyro_y`
+alone; `gyro_x` (+0.24) and `gyro_z` (−0.32) are also displaced. Classifying a boot by `gyro_y`
+alone still works — the gap between −0.10 and −0.25 is empty — but a consumer correcting bias must
+correct three axes.
+
+⚠️ **The state split is NOT a mount or temperature artefact.** Three days carry both states, and
+within each day — same mount, same ambient — HEALTHY reads higher every time:
+
+    2026-09-11   FAULTED 9.89104 (n= 86,242)   HEALTHY 10.00925 (n=  1,249)   +0.118
+    2026-09-15   FAULTED 9.84102 (n= 76,513)   HEALTHY  9.98916 (n= 53,696)   +0.148
+    2026-09-16   FAULTED 9.79748 (n= 62,131)   HEALTHY  9.98706 (n=318,759)   +0.190
+
+**‖a‖ is orientation-invariant, so a remount cannot move it.** Three same-day pairs in a consistent
+direction is the control.
+
+🟢 **The A-34 recovery works and is deployed.** Journal, 2026-09-08 → 09-21: **10 latched faults
+detected at startup, 10 cleared by the `PWR_MGMT_2` power cycle, 0 failures, 0 starts where
+recovery was skipped.** ⚠️ **But the fault is present on 100 % of observed starts** — the recovery
+is a working workaround, not a repair — and **its outcome is written only to the journal, never to
+the database.** ⇒ A consumer cannot tell from the data which state a row came from.
+
+**`void if`** — the IMU is replaced, the A-34 recovery is removed or changed, or any boot is
+observed publishing rows after recovery failed.
+
+---
+
+## Accelerometer scale factor (US-783)
+
+🔴 **`ACCEL_SCALE_CORRECTION = 0.98200`** — multiply every raw accelerometer component by this
+before use. Equivalent statement: **the ICM-20948 reads +1.83 % HIGH in the HEALTHY state.**
+
+**Derivation.** At rest the accelerometer measures local gravity. Reference from the Somigliana
+formula plus the free-air correction, at 41.88 °N and 180 m (Chicago):
+
+    g_local = 9.7803267715 * (1 + 0.0052790414 sin^2(phi) + 0.0000232718 sin^4(phi))
+              - 3.086e-6 * h
+            = 9.8028 m/s^2
+
+    observed (HEALTHY, at rest)   9.98255 m/s^2
+    ratio                         1.01833         => +1.833 % high
+    correction factor             0.98200
+
+🟢 **The reference is not a weak link.** g varies ~0.0009 m/s² per degree of latitude near 42 °N and
+~0.0003 m/s² per 100 m of elevation — **±1° and ±100 m move the answer by under 0.01 %, against a
+1.83 % effect.** Location uncertainty cannot explain this and is not a live objection.
+
+**Sample: n = 5,706,847.** **Exclusions, stated because a filter that removes the rows which would
+contradict you is indistinguishable from not having the data:**
+
+- EXCLUDED `drive_id IS NOT NULL` — any drive-attributed row (vehicle motion adds to ‖a‖).
+- EXCLUDED every FAULTED-state and intermediate row (`gyro_y <= -0.10`). **This is the load-bearing
+  exclusion** — see below.
+- EXCLUDED all rows before 2026-09-08 (they predate the current mount era).
+- Window 2026-09-08 → 2026-09-21, server tier.
+
+🔴 **THE CORRECTION IS STATE-DEPENDENT AND MUST NOT BE APPLIED BLIND TO HISTORICAL DATA.** In the
+FAULTED state the same instrument reads **9.79492 m/s², i.e. −0.08 % — essentially correct.**
+Applying the +1.83 % HEALTHY correction to a FAULTED row introduces a **1.91 percentage-point
+error** where there was almost none.
+
+⇒ **Rule for consumers.** Apply `ACCEL_SCALE_CORRECTION` **only** to rows known to be HEALTHY-state.
+Going forward that is every row, because A-34 recovery runs at startup and has succeeded 10/10.
+**For the historical corpus, classify by resting `gyro_y` first** (the −0.10 / −0.25 gap is empty)
+**or exclude rows before 2026-09-16.**
+
+⚠️ **Do NOT read the FAULTED figure as "the faulted state is better calibrated."** That state fails
+the factory self-test (0.062/0.087/0.126 against a 0.5 floor), its ‖a‖ SD is **3.7× larger**, and
+its daily means scatter across 9.694–9.891 where HEALTHY holds 9.972–9.989. **It is unstable and
+happens to straddle g. Stability, not proximity to the expected answer, is what makes a reference
+trustworthy.**
+
+⚠️ **Supersedes the office's earlier `+1.56 %`**, which stated neither its state-split nor its
+exclusions and cannot be reproduced from the current corpus. The band Atlas carried (+1.6–2.0 %)
+contains this result.
+
+**`void if`** — the IMU is replaced or moved to different hardware, the A-34 recovery changes, or the
+accelerometer full-scale range is ever set explicitly (today it is the `adafruit_icm20x` library
+default; `ICM20948()` is constructed with no range, no data rate and no DLPF argument).
+
+---
+
+## UPS slow-drain detection (F-051) — THIS NEEDS A STATE GATE, NOT A THRESHOLD
+
+🔴 **No value of `declineThresholdVolts`, `windowSeconds` or `debounceSeconds` makes this instrument
+work. Do not ship a replacement number.**
+
+**Measured by Spool 2026-09-21** from the detector's own journal output, 2026-09-14 → 09-21
+(7.7 days). Tool: `offices/tuner/scripts/slow_drain_episode_analysis.py`.
+
+    episodes                                    77   (~10 per day)
+    duration      min 40 s   median 340 s   max 1580 s
+    lasting >= one full 300 s detector window   58/76  (76 %)
+
+**The false verdicts are SUSTAINED, not transient.** A dwell — sliding `k`-of-`n` or consecutive —
+counts duration, and the duration is already long.
+
+🔴 **The disqualifying arithmetic:** suppressing a 1580 s false episode needs a dwell longer than
+1580 s, but the Pi survives **12–14 min below ~1.9 W and under one second above ~2.1 W** (Atlas,
+measured). **The dwell required to be quiet is longer than the battery lives.** A detector that can
+only be trusted after its subject is dead is not a detector.
+
+🔴 **The actual defect is a threshold grounded in one regime and evaluated in another.** The
+module's own docstring grounds `0.005 V / 300 s` on **drain tests** — on battery — then asserts it
+"stays quiet on AC-fed float noise". `_pollOnce()` (`src/pi/hardware/ups_monitor.py:889-890`) feeds
+the detector **unconditionally, including while the charger is live.** 77 episodes in 7.7 days
+falsify the quiet-on-float claim.
+
+🟢 **Live confirmation, 2026-09-21:** a `slow_drain` episode ran **22:21:05Z → 22:26:55Z (350 s)**
+with the Pi on external power throughout — `power_log` carries `power_source='ac_power',
+on_ac_power=1` on every row of the session, `states/power-source.json` read
+`externalPowerPresent: true` at 22:30Z and again at 22:46Z, and **no power-loss transition appears
+anywhere in the journal after 13:51 CDT.** The verdict was produced about a cell sitting on a
+charger.
+
+⚠️ **The sample-level trip mechanism is NOT directly observed and this spec does not claim it.**
+Direct MAX17048 reads show VCELL moving in **discrete steps with long plateaus**: it fell
+**4.15375 V → 4.15125 V (32 LSB ≈ 2.5 mV) over ~4.8 minutes**, then held **bit-identical at raw
+53136 across 40 consecutive reads spanning 400 s** — a plateau longer than the detector's whole
+window. **A single 2.5 mV step over ~290 s is half the 5 mV threshold and would NOT trip it.**
+⇒ The float signal is plainly capable of moving the detector, but **which excursion trips it has
+not been caught at sample resolution, because nothing persists VCELL at poll cadence.** The
+77 episodes are the observation; the per-sample mechanism is inferred and is labelled as such.
+
+⇒ **RULING (Spool, 2026-09-21): do not evaluate cell-drain health while external power is present.**
+Gate on **`PowerSourceProvider.isExternalPowerPresent()`**
+(`src/pi/power/power_source_provider.py:56`) — the GPIO6 PLD SSOT. On external power the verdict is
+**`UNKNOWN`, not `STABLE`**: nothing has been measured, and `UNKNOWN` is the answer the rest of this
+UI already gives. **On transition to battery, start a fresh window.**
+
+⚠️ **A correct verdict changes no behaviour yet:** `getSlowDrainState()` has zero callers in `src/`.
+**Wiring is an architecture item, not a tuning one.** Do not read a shipped gate as a working
+feature.
+
+⚠️ **If a threshold is ever wanted anyway, it must be re-derived on the CURRENT cell.** Post-swap
+episodes run **515–615 s** against a pre-swap median of **340 s** — the 2000 mAh cell's falling limb
+is LONGER, so any number carried across the 2026-09-21 18:50Z swap is wrong in the direction that
+still fires. **n = 3 post-swap episodes at time of writing; that is not a sample.**
+
+**`void if`** — the X1209 charger is replaced, or `getSlowDrainState()` acquires a consumer whose
+requirements differ.
+
+---
+
+## MAX17048 SOC after a cell change (F-048)
+
+🔴 **`REGISTER_MODE` (0x06) — the QuickStart register — is DEFINED at
+`src/pi/hardware/ups_monitor.py:248` and NEVER WRITTEN ANYWHERE IN THE REPOSITORY.** QuickStart is
+the MAX17048's designed remedy for exactly the event that occurred on 2026-09-21: a cell swapped
+underneath a running gauge. Without it the ModelGauge algorithm re-converges slowly from the
+previous cell's state.
+
+**Measured, 2026-09-21:**
+
+    18:50Z   cell swapped 450 mAh -> 2000 mAh (CIO)
+    ~18:52Z  VCELL 4.2062 V  ->  SOC 65.9 %, then 67.9 % a minute later   (Atlas)
+    +15 min  still not converged                                          (Atlas)
+    22:30Z   VCELL 4.1537 V  ->  SOC 95 %                                 (Spool, +3 h 40 m)
+
+🟢 **The "gauge is ~30 points out" reading was a TRANSIENT of re-convergence, not a standing
+calibration error, and it has self-corrected.** VCELL fell 52 mV while SOC rose 29 points — that is
+re-convergence, not a voltage/SOC curve. **95 % at 4.154 V is plausible for a single-cell LiPo.**
+
+⚠️ **Convergence time is BOUNDED, NOT MEASURED: longer than 15 min, complete by 3 h 40 min.**
+Nothing sampled the interval. **Do not quote a convergence time.**
+
+⚠️ **`socColdStartWindowSeconds = 180` is still the provisional guess the protocol was written to
+replace, and 180 s is now known to be far shorter than the observed convergence.** It must be
+re-derived against the 2000 mAh cell; the 450 mAh corpus does not transfer.
+
+🔴 **THREE INERT FIELDS ON THE SAME CARD — confirmed live 2026-09-21 22:30Z:**
+
+    socCalibrated  false   (hardcoded)
+    charging       false   } both derived from CRATE, which reads 0xFFFF on this chip
+    draining       false   }
+
+**All three were false while the cell was demonstrably on a charger.** Any calibration protocol must
+say what it does about them, or it calibrates a number nobody can act on.
+
+⇒ **RECOMMENDATION (Spool): issue a QuickStart on detected cell change**, then re-derive
+`socColdStartWindowSeconds` from the settling behaviour that follows. ⚠️ **QuickStart must be issued
+with the cell at rest, not under load** — it initialises from the instantaneous terminal voltage, so
+a loaded reading initialises the gauge low and manufactures a wrong SOC. **That is a
+land-what-you-read violation waiting to happen: it would not fail, it would answer confidently.**
+
+**`void if`** — the cell is changed again, or the X1209's gauge is replaced with a part whose CRATE
+register works.
+
+---
+
 ## Usage Rules
 
 1. **Never fabricate values.** If a threshold or range is not in this document or `specs/obd2-research.md`, the story is `blocked` until data is provided.
