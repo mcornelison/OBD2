@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.58",
-  "theme": "US-792 -- re-arm shutdown latch after a cancel",
-  "description": "Ships the Sprint 89 payload with the latch defect it exposed. firedAlready is set on all three exits of handleOnBattery, incl. cancel, and nothing reset it -- so a blip that cancelled a shutdown left the trigger dead for the whole boot and the next key-off was a hard cut. _runPldWatchLoop now clears it on the tick the PLD line reads present, no debounce. Also carries US-767 EDR drive-coupling."
+  "version": "V0.29.59",
+  "theme": "Sprint 90 -- IMU rate triple 4/2/1, shed ordering",
+  "description": "Sets the IMU triple to 4/2/1 Hz with every factor exact, and pins the two rate-derived consumers so neither falls back to a hardcoded 50. The load shed now stops the grace splash and runs before the state write. Adds a shutdown-ceremony guard proving an empty backlog shortens the drain, never the ceremony, and corrects the load_shed WHY table to separate death from commanded poweroff."
 }
