@@ -109,7 +109,7 @@ Architecture**: **§10.8.1** F-110 `SampleBus` recap (Sprint 46 / V0.29.0) +
 `raw.imu.*`/`raw.light.*` LOSSY topics on the F-110 bus (one `seq` per IMU
 burst), sibling `edr_imu_sample`/`edr_light_sample` tables authored once in the
 `src/common/edr/sensor_schema.py` versioned contract (A-4 anti-divergence),
-always-on decimated persist (`persistHz` 25) + rolling-window retention
+always-on decimated persist (`persistHz` 2 since US-796-b, was 25) + rolling-window retention
 (`retentionDays` 7), `drive_id` NULL-when-no-drive latch, graceful-absent probe,
 ships dark behind `pi.sensors.*` under `pi.bus.enabled`. Rule-10 in-sprint per
 Atlas's 2026-06-30 EDR ADR §5 (US-415). BENCH-validated (US-411 golden-master +
@@ -2550,6 +2550,35 @@ belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
 
+**Consumer-side suppression of the grace splash (US-796-a, Sprint 90 / V0.29.59).**
+`splash-grace.path` is always armed and cold-starts a **second chromium**
+(`splash-grace.service`) the instant `shutdown-state` appears. A second browser
+starting during a shutdown is wrong on its own terms, so the power-loss
+`LoadShedder` (`load_shed.py`, ARCH-031) now stops `splash-grace.path` **and**
+`splash-grace.service` alongside `eclipse-dashboard`. This is a correctness fix; it
+makes no survival claim. Visible consequence, ruled by the CIO 2026-09-20: no
+shutdown animation at key-off, and a cancelled blip shows nothing. The `grace` row
+in the table above still describes the splash's response when it is running; with
+the default shed set it no longer is.
+
+- **Ordering is the fix.** `handleOnBattery` calls `powerLossObservedFn` (heartbeat +
+  shed) **before** it emits `grace`, the first `shutdown-state` write. A `.path` unit
+  that has already fired cannot be un-fired, so a shed after the write would be a
+  no-op that looks like a fix. `systemctlRunner` issues a `.path` stop **without**
+  `--no-block`, so the path is disarmed in systemd — not merely queued — when the
+  write happens. The path is stopped before its service, so nothing re-launches it.
+- **The sequencer stays decoupled.** It never names a splash unit (F-103: it writes
+  state, consumers react). Suppression belongs to the shedder, which owns what is
+  allowed to run. Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`.
+- **Restore.** A cancel restarts the dashboard and re-arms `splash-grace.path`.
+  `splash-grace.service` is stopped but never restored (`TRIGGERED_UNITS`): a stop
+  succeeds on an inactive unit, and its only legitimate starter is the path. The
+  re-armed path sees `shutdown-state` already reading `cancelled`, fires once, and
+  the kiosk aborts on its first poll without painting — the same cancelled-abort the
+  splash always took on a blip, now after power is back rather than on battery.
+- **Unit names.** `install.sh` installs the `.wayland` / `.x11` variant under the one
+  runtime name `splash-grace.service`, so the shed set names no variant.
+
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
 A second OPTIONAL constructor dependency, `prePowerOffFn`, runs immediately
@@ -2817,6 +2846,40 @@ and whether power returned.
 
 **Scope.** Since US-788, losses inside boot-grace reach `handleOnBattery` and start the
 heartbeat like any other loss (see §10.6).
+
+### 10.6.7 The shutdown ceremony — an empty backlog shortens the drain, never the ceremony (US-796-d, Sprint 90 / V0.29.59)
+
+A confirmed power loss that reaches poweroff runs the same **ceremony** whatever the depth of
+the sync backlog. "Nothing to send" makes the **drain** shorter. It does not remove any other step.
+
+| # | Step | Owner | Mandatory at an empty backlog |
+|---|---|---|---|
+| 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
+| 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops |
+| 3 | **Drain close** — the US-526 primary close (§10.6.2) | `buildDrainCloseHook` via `prePowerOffFn` | yes; a no-op close when no row is open |
+| 4 | **Custody** — the record states its verdict (§10.6.3) | `makeSyncCustodyHook` via `prePowerOffFn` | yes; `DELIVERED` |
+| 5 | **Poweroff** — `systemctl poweroff` | `ShutdownSequencer` | yes |
+| 6 | **`CLEAN_COMPLETE`** — the finalizer's `ExecStop` | `boot-progress-finalize.service` | yes |
+| 7 | **`prior_boot_clean = 1`** on the next boot | `boot-progress-arm.service` | yes |
+
+**The animation is not a step.** The grace splash is shed (§10.6.1, CIO ruling 2026-09-20), so
+nothing is displayed at key-off and the ceremony asserts no display. A shutdown animation is
+**conditional on budget**: it comes back only when a measured budget gate earns it.
+
+**The guard.** `tests/pi/power/power_watch/test_shutdown_ceremony_guard.py` drives one sustained
+loss with an empty backlog through the real sequencer, pipeline, drain, hooks and `boot_progress`
+finalize/arm, then checks the seven steps in order. It is proved able to **fail**. A shutdown
+that reaches poweroff without `CLEAN_COMPLETE` fails it, and so does each of these, while still
+reaching poweroff:
+
+- a drain skipped because the backlog is empty;
+- unwired pre-poweroff hooks;
+- a missing shed;
+- a shed that follows the drain.
+
+The guard does not depend on what separates a survivable cut from a fatal one. It states what a
+completed shutdown must contain. It adds no bound on the drain, so a shutdown **with** a backlog
+still drains fully (§10.6.3).
 
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
@@ -3850,8 +3913,10 @@ connection.
 
 **Config (connect-when-wired).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled`
 / `pi.sensors.light.enabled` (each requires the bus gate);
-`pi.sensors.imu.sampleHz` (`50`, bus publish rate), `pi.sensors.imu.persistHz`
-(`25`, decimated persist), `pi.sensors.light.sampleHz` (`1`),
+`pi.sensors.imu.sampleHz` (**`4`** since US-796-b — was `50`; bus publish rate),
+`pi.sensors.imu.persistHz` (**`2`** — was `25`; decimated persist),
+`pi.sensors.imu.stateHz` (**`1`** — was `10`; display write cadence),
+`pi.sensors.light.sampleHz` (`1`),
 `pi.sensors.retentionDays` (**`45`** since US-761 — was `7`; rolling-window purge,
 confirm vs Pi free space at deploy). Built US-408 (schema contract + Pi tables) / US-409 (IMU + light
 readers) / US-410 (persistence subscriber + retention) / US-411 (bench harness +
@@ -3860,6 +3925,57 @@ flipped `pi.bus.enabled` + `pi.sensors.light.enabled` ON** — the TSL2591 is wi
 + I²C-addressable @0x29 (verified on the Pi 2026-07-22), so the light feed is now
 live and bridged to `states/light`; the IMU stays dark (clone boards absent — the
 graceful-absent reader stays silent, isolating the live light feed).
+
+**The IMU rate triple: 4 / 2 / 1 (US-796-b, Sprint 90 / V0.29.59).** The IMU
+runs at `sampleHz 4` → `persistHz 2` → `stateHz 1`, ruled exactly by the CIO on
+2026-09-21. **The ceiling:** nothing in the current application needs to sample
+faster than **5 Hz** — above it the data is noise that would be averaged away
+anyway, so collecting it costs power and yields nothing. The IMU now sits under
+that ceiling alongside the other feeds: light already runs at **1 Hz** and the
+battery/UPS gauge at **0.2 Hz**. The rule and its reasoning live in
+**`specs/data-acquisition-architecture.md` (ARCH-036)**; this note records only
+the change.
+
+- **Every factor is exact.** `_decimationFactor(4, 2) == 2` (the EDR subscriber
+  persists 1 of every 2 bursts) and `4 / 1` gives 4 (the state bridge's 1 s
+  write interval takes 1 of every 4 bursts). No rounding and no clamp are
+  involved at the shipped values.
+- **No silent clamp.** A consumer rate above its source still degrades safely —
+  `_decimationFactor` keeps every burst, and a state write past the sample rate
+  repeats the last burst — but `_warnImuRatesAboveSource` in the validator now
+  logs a **WARNING naming both values and the effective rate** whenever
+  `persistHz` or `stateHz` exceeds `sampleHz`, or `persistHz` does not divide
+  `sampleHz` exactly (e.g. `persistHz 3` / `sampleHz 4` actually persists 4 Hz).
+- **Only config values moved.** The code defaults (`50 / 25 / 10` in the
+  validator registry and the mirrored module fallbacks) are unchanged; they
+  apply only when a key is absent. Consumers derive their windows from the
+  configured `sampleHz` rather than assuming 50 Hz. What derives from the new
+  rates is re-checked by US-796-f (below).
+- Pinned by `tests/pi/bus/test_imu_rate_triple.py`.
+
+**What derives from the rates, at 4 / 2 / 1 (US-796-f).** Two consumers compute
+a window from `sampleHz`; both take the rate from config through their
+production factories, and neither window got shorter than what it guards.
+
+| Consumer | Derivation | At 50 Hz | At 4 Hz | Wall-clock window |
+|---|---|---|---|---|
+| `PlausibilityGate` stuck-value run limit | `ceil(sampleHz × invariantDwellSeconds)` | 100 samples | **8 samples** | **2.0 s** at both rates. The dwell is stated in seconds precisely so the rate change does not move it |
+| `ImuStateBridge` mag/gyro pairing | `MAG_MAX_AGE_POLLS (5) / sampleHz` | 0.1 s | **1.25 s** | Five burst intervals at both rates, since the reader bursts accel, gyro and mag under one `seq` |
+
+- **`stateHz 1` does not starve the pairing.** Pairing is judged against the
+  burst that triggers a write, not against the display interval. Every 1 s write
+  carries a heading from its own burst. The one effect: during a mag or gyro
+  dropout, a write can still carry a reading up to 1.25 s old, where the old
+  limit was 0.1 s.
+- **Neither consumer needs the high rate to detect anything.** The gate rejects
+  a non-measurement, and a stuck channel is still refused on its 8th identical
+  sample. The pairing only rejects a stale reading.
+- The module fallbacks (`DEFAULT_IMU_SAMPLE_HZ = 50` in `sensor_reader`,
+  `imu_state_bridge` and `edr_persistence_subscriber`) still exist. US-801 owns
+  collapsing them into one definition. The tests poison the `sensor_reader` and
+  `imu_state_bridge` fallbacks (the two consumers' rate sources) and prove that
+  neither derived window moves.
+- Pinned by `tests/pi/sensors/test_imu_rate_derived_consumers.py`.
 
 ### 10.8.3 EDR reaches the server (F-142, Sprint 87–88 / V0.29.51–52) [Atlas Rule 10]
 
@@ -4870,7 +4986,8 @@ The home slot now *becomes* the live instrument, so both edges land on **home**.
 **Transport (Atlas ruling, US-508).** A compass tape and a g-trail do not
 animate at the 4 Hz card tick, so the live feed gets its **own ~10 Hz loop**
 (`IMU_POLL_MS = 100`) against the same `states_http_server`, and the bridge
-writes at `pi.sensors.imu.stateHz` = **10 Hz** latest-wins/lossy. Deliberately a
+writes at `pi.sensors.imu.stateHz` = **10 Hz** latest-wins/lossy (**1 Hz**
+since US-796-b — see "The IMU rate triple" in §10.8.2). Deliberately a
 second loop rather than a faster shared tick: the tick reads five other state
 files, and 2.5×-ing all of them to animate one card would be five reads nobody
 can see for every one they can. The durable EDR persist stays at `persistHz` --

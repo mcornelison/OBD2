@@ -545,9 +545,9 @@
     "sensors": {
       "imu": {
         "enabled": true,
-        "sampleHz": 50,
-        "persistHz": 25,
-        "stateHz": 10,
+        "sampleHz": 4,
+        "persistHz": 2,
+        "stateHz": 1,
         "gravityTauSec": 5.0,
         "mount": {
           "forward": "+x",

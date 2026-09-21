@@ -570,6 +570,11 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+def _isPositiveNumber(value: Any) -> bool:
+    """True for an int/float above zero (a bool is not a number here)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
 class ConfigValidator:
     """
     Validates configuration dictionaries.
@@ -1185,6 +1190,48 @@ class ConfigValidator:
                     f"{key} must be a positive number (got {val!r})",
                     missingFields=[key],
                 )
+        self._warnImuRatesAboveSource(config)
+
+    def _warnImuRatesAboveSource(self, config: dict[str, Any]) -> None:
+        """WARN when an IMU consumer rate cannot be what its config field says (US-796-b).
+
+        persistHz and stateHz are consumers of sampleHz. A consumer rate above
+        its source carries no new data, and the persist path decimates by an
+        INTEGER factor (``max(1, round(sampleHz / persistHz))`` in
+        ``edr_persistence_subscriber._decimationFactor``), so a ratio that is not
+        exact silently lands on a different rate. Both degrade safely rather than
+        fail -- but a silent clamp is a config field that lies, so each one is
+        named here with both values and the rate actually delivered.
+
+        Args:
+            config: Validated configuration (post-default-application).
+        """
+        sampleHz = self._getNestedValue(config, 'pi.sensors.imu.sampleHz')
+        if not _isPositiveNumber(sampleHz):
+            return
+
+        persistHz = self._getNestedValue(config, 'pi.sensors.imu.persistHz')
+        if _isPositiveNumber(persistHz):
+            factor = max(1, round(sampleHz / persistHz))
+            effectiveHz = sampleHz / factor
+            if effectiveHz != persistHz:
+                reason = (
+                    "exceeds its source" if persistHz > sampleHz
+                    else "is not an exact divisor of its source"
+                )
+                logger.warning(
+                    "pi.sensors.imu.persistHz %g %s pi.sensors.imu.sampleHz %g -- "
+                    "every %d burst(s) persisted, effective rate %g Hz",
+                    persistHz, reason, sampleHz, factor, effectiveHz,
+                )
+
+        stateHz = self._getNestedValue(config, 'pi.sensors.imu.stateHz')
+        if _isPositiveNumber(stateHz) and stateHz > sampleHz:
+            logger.warning(
+                "pi.sensors.imu.stateHz %g exceeds its source pi.sensors.imu.sampleHz %g -- "
+                "writes past the sample rate repeat the same burst, effective rate %g Hz",
+                stateHz, sampleHz, sampleHz,
+            )
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """
