@@ -689,6 +689,16 @@ trustworthy.**
 exclusions and cannot be reproduced from the current corpus. The band Atlas carried (+1.6–2.0 %)
 contains this result.
 
+🔴 **KNOWN LIMITATION OF THIS NUMBER — THERE IS NO TEMPERATURE TERM, AND THERE CANNOT BE ONE FROM
+THIS CORPUS.** `edr_imu_sample.temp_c` is **NULL on all 6,275,515 rows since 2026-09-08** — the
+column exists and is never populated. MEMS accelerometer sensitivity is temperature-dependent, so
+`ACCEL_SCALE_CORRECTION` is **a single figure averaged over whatever thermal range the Pi actually
+saw, with the range unknown and the drift unbounded.** ⚠️ **State this whenever the number is
+quoted.** It is a real constraint on the result, not a disclaimer: the 1.83 % is solid as an
+aggregate and **no one can currently say how much of it moves with temperature.** ⇒ **Landing
+`temp_c` is the cheapest way to improve this**, and the channel is already read — it is the
+persistence that is missing, the same shape as `pitchDeg`/`stopCount`/`biasRad` in US-805.
+
 **`void if`** — the IMU is replaced or moved to different hardware, the A-34 recovery changes, or the
 accelerometer full-scale range is ever set explicitly (today it is the `adafruit_icm20x` library
 default; `ICM20948()` is constructed with no range, no data rate and no DLPF argument).
