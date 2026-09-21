@@ -817,8 +817,65 @@ with the cell at rest, not under load** — it initialises from the instantaneou
 a loaded reading initialises the gauge low and manufactures a wrong SOC. **That is a
 land-what-you-read violation waiting to happen: it would not fail, it would answer confidently.**
 
+### 🔴 The MAX17048 HAS NO TEMPERATURE REGISTER — and it expects the HOST to supply one
+
+**Researched 2026-09-21 (Spool), confirming the 2026-08-01 ruling rather than assuming it.**
+
+The MAX17048/MAX17049 register map is `VCELL 0x02` · `SOC 0x04` · `MODE 0x06` · `VERSION 0x08` ·
+`HIBRT 0x0A` · `CONFIG 0x0C` · `VALRT 0x14` · `CRATE 0x16` · `VRESET/ID 0x18` · `STATUS 0x1A` ·
+`CMD 0xFE`. **There is no temperature register and the part has no thermistor input** — it is a
+voltage-only ModelGauge. ⇒ **Any temperature tile fed from this chip is fabricated. Do not add one.**
+
+🔴 **BUT the part is designed on the assumption that the HOST compensates for temperature.** The
+`CONFIG` register's high byte is **RCOMP**, and the datasheet specifies:
+
+    RCOMP = RCOMP0 + (T - 20 degC) * TempCoUp      for T > 20 degC
+    RCOMP = RCOMP0 + (T - 20 degC) * TempCoDown    for T < 20 degC
+    typical: RCOMP0 = 0x97,  TempCoUp = -0.5,  TempCoDown = -5.0
+
+🔴 **We never write it.** `ups_monitor.py:250` defines `REGISTER_CONFIG = 0x0C` and even records
+that it *"boots to 0x971C family default"* — `0x97` **is** the uncompensated RCOMP0 — and **no code
+anywhere in the repository writes that register.** The gauge has run at the 20 °C factory default
+for the life of the project.
+
+⚠️ **This is a real SOC-accuracy gap and it grows with temperature.** At the `TempCoDown = -5.0`
+slope a cold cell is badly mis-modelled, and a car cabin in a Chicago summer reaches 50–60 °C, far
+outside the calibration point.
+
+🔴 **BUT IT IS HARDWARE-GATED, AND THE OBVIOUS FIX IS FABRICATION.** RCOMP needs the **CELL's**
+temperature. **This car has no cell-temperature sensor.** ⇒ **Do NOT substitute the ICM-20948 die
+temperature, the Pi CPU temperature, or IAT.** Each is a different body with its own self-heating,
+and feeding one into RCOMP would not fail — **it would confidently mis-model the cell.** This is the
+IAT-as-ambient ruling (US-206) applied to a second instrument: **the absence of a source is not a
+licence to use the nearest available number.**
+
+⇒ **Backlog, not a fix:** *(a)* add a cell-temperature source, then *(b)* apply RCOMP compensation.
+**(b) without (a) is worse than doing nothing.**
+
 **`void if`** — the cell is changed again, or the X1209's gauge is replaced with a part whose CRATE
-register works.
+register works, or a cell-temperature sensor is fitted.
+
+---
+
+## `edr_imu_sample.temp_c` — why it is NULL, and it is NOT an oversight
+
+**Researched 2026-09-21 (Spool).** `temp_c` is NULL on **all 6,275,515 rows since 2026-09-08**.
+**The cause is already known and the code is already honest about it:** `sensor_reader.py:594-602`
+records **US-500 — the genuine `adafruit_icm20x.ICM20948` does NOT expose `.temperature`** (a clone
+and the test fake did, which is how the assumption got in). The read is wrapped, the
+`AttributeError` degrades to `None`, and the burst is **not** dropped. ⇒ **This is honest-null, not
+a wiring defect. Nothing is being hidden.**
+
+🟢 **The measurement nevertheless EXISTS on the die.** The ICM-20948 has an internal temperature
+sensor at bank-0 `TEMP_OUT_H/L` (`0x39`/`0x3A`), `TempDegC = ((TEMP_OUT - RoomTemp_Offset) /
+333.87) + 21`. **Reaching it means a direct register read past the driver — for which this codebase
+has two established precedents that both say why they do it:** `ak09916_bypass.enableI2cBypass`
+and `gyro_recovery`'s `PWR_MGMT_2` write.
+
+⇒ **Backlog item.** It is the cheapest way to put a temperature term on
+`ACCEL_SCALE_CORRECTION` (US-783), which is currently an aggregate over an **unknown** thermal
+range. ⚠️ **It is the IMU's DIE temperature — the right input for accel scale compensation and the
+WRONG input for the UPS cell's RCOMP.** Do not let one story serve both.
 
 ---
 
