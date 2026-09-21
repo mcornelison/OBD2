@@ -109,7 +109,7 @@ Architecture**: **§10.8.1** F-110 `SampleBus` recap (Sprint 46 / V0.29.0) +
 `raw.imu.*`/`raw.light.*` LOSSY topics on the F-110 bus (one `seq` per IMU
 burst), sibling `edr_imu_sample`/`edr_light_sample` tables authored once in the
 `src/common/edr/sensor_schema.py` versioned contract (A-4 anti-divergence),
-always-on decimated persist (`persistHz` 25) + rolling-window retention
+always-on decimated persist (`persistHz` 2 since US-796-b, was 25) + rolling-window retention
 (`retentionDays` 7), `drive_id` NULL-when-no-drive latch, graceful-absent probe,
 ships dark behind `pi.sensors.*` under `pi.bus.enabled`. Rule-10 in-sprint per
 Atlas's 2026-06-30 EDR ADR §5 (US-415). BENCH-validated (US-411 golden-master +
@@ -3879,8 +3879,10 @@ connection.
 
 **Config (connect-when-wired).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled`
 / `pi.sensors.light.enabled` (each requires the bus gate);
-`pi.sensors.imu.sampleHz` (`50`, bus publish rate), `pi.sensors.imu.persistHz`
-(`25`, decimated persist), `pi.sensors.light.sampleHz` (`1`),
+`pi.sensors.imu.sampleHz` (**`4`** since US-796-b — was `50`; bus publish rate),
+`pi.sensors.imu.persistHz` (**`2`** — was `25`; decimated persist),
+`pi.sensors.imu.stateHz` (**`1`** — was `10`; display write cadence),
+`pi.sensors.light.sampleHz` (`1`),
 `pi.sensors.retentionDays` (**`45`** since US-761 — was `7`; rolling-window purge,
 confirm vs Pi free space at deploy). Built US-408 (schema contract + Pi tables) / US-409 (IMU + light
 readers) / US-410 (persistence subscriber + retention) / US-411 (bench harness +
@@ -3889,6 +3891,33 @@ flipped `pi.bus.enabled` + `pi.sensors.light.enabled` ON** — the TSL2591 is wi
 + I²C-addressable @0x29 (verified on the Pi 2026-07-22), so the light feed is now
 live and bridged to `states/light`; the IMU stays dark (clone boards absent — the
 graceful-absent reader stays silent, isolating the live light feed).
+
+**The IMU rate triple: 4 / 2 / 1 (US-796-b, Sprint 90 / V0.29.59).** The IMU
+runs at `sampleHz 4` → `persistHz 2` → `stateHz 1`, ruled exactly by the CIO on
+2026-09-21. **The ceiling:** nothing in the current application needs to sample
+faster than **5 Hz** — above it the data is noise that would be averaged away
+anyway, so collecting it costs power and yields nothing. The IMU now sits under
+that ceiling alongside the other feeds: light already runs at **1 Hz** and the
+battery/UPS gauge at **0.2 Hz**. The rule and its reasoning live in
+**`specs/data-acquisition-architecture.md` (ARCH-036)**; this note records only
+the change.
+
+- **Every factor is exact.** `_decimationFactor(4, 2) == 2` (the EDR subscriber
+  persists 1 of every 2 bursts) and `4 / 1` gives 4 (the state bridge's 1 s
+  write interval takes 1 of every 4 bursts). No rounding and no clamp are
+  involved at the shipped values.
+- **No silent clamp.** A consumer rate above its source still degrades safely —
+  `_decimationFactor` keeps every burst, and a state write past the sample rate
+  repeats the last burst — but `_warnImuRatesAboveSource` in the validator now
+  logs a **WARNING naming both values and the effective rate** whenever
+  `persistHz` or `stateHz` exceeds `sampleHz`, or `persistHz` does not divide
+  `sampleHz` exactly (e.g. `persistHz 3` / `sampleHz 4` actually persists 4 Hz).
+- **Only config values moved.** The code defaults (`50 / 25 / 10` in the
+  validator registry and the mirrored module fallbacks) are unchanged; they
+  apply only when a key is absent. Consumers derive their windows from the
+  configured `sampleHz` rather than assuming 50 Hz. What derives from the new
+  rates is re-checked by US-796-f.
+- Pinned by `tests/pi/bus/test_imu_rate_triple.py`.
 
 ### 10.8.3 EDR reaches the server (F-142, Sprint 87–88 / V0.29.51–52) [Atlas Rule 10]
 
@@ -4899,7 +4928,8 @@ The home slot now *becomes* the live instrument, so both edges land on **home**.
 **Transport (Atlas ruling, US-508).** A compass tape and a g-trail do not
 animate at the 4 Hz card tick, so the live feed gets its **own ~10 Hz loop**
 (`IMU_POLL_MS = 100`) against the same `states_http_server`, and the bridge
-writes at `pi.sensors.imu.stateHz` = **10 Hz** latest-wins/lossy. Deliberately a
+writes at `pi.sensors.imu.stateHz` = **10 Hz** latest-wins/lossy (**1 Hz**
+since US-796-b — see "The IMU rate triple" in §10.8.2). Deliberately a
 second loop rather than a faster shared tick: the tick reads five other state
 files, and 2.5×-ing all of them to animate one card would be five reads nobody
 can see for every one they can. The durable EDR persist stays at `persistHz` --
