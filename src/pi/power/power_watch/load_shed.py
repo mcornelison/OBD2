@@ -10,14 +10,30 @@
 """Reversible load shedding at power loss (ARCH-031, US-748).
 
 WHY. Measured 2026-09-16 across nine live power cuts with the CIO pulling the
-plug:
+plug. 🔴 THE THREE ROWS ARE NOT THE SAME QUANTITY. Read the label, not the
+number:
 
-    all six services (chromium dashboard up)   4.35 W bursty  -> died in 0.678 s
-    five services, dashboard stopped           1.886 W        -> ~7 s
-    all project software stopped               1.84 W         -> >= 225 s
+    six services (chromium dashboard up)  4.35 W bursty  -> 0.678 s  to DEATH
+    five services, dashboard stopped      1.886 W        -> ~7 s     to COMMANDED
+                                                            POWEROFF -- this is
+                                                            smoothingSec, NOT a
+                                                            battery limit
+    all project software stopped          1.84 W         -> >= 225 s to DEATH
+                                                            (a FLOOR: power was
+                                                            restored, not a death)
 
-**Stopping ONE service bought a ~10x survival improvement.** Everything else the
-project runs -- OBD polling, EDR persistence, powerwatch, the state server,
+Reading the middle row as a death time manufactures a "~10x survival improvement
+from a 2.5% power difference". There is no such phenomenon. That number tracks
+smoothingSec exactly, because it IS smoothingSec: the machine did not die at 7 s,
+it completed a graceful shutdown and powered itself off on schedule (startup_log
+= CLEAN_COMPLETE/graceful, three consecutive boots).
+
+The tell was in plain sight and our own instrument printed it. The LOSS HEARTBEAT
+line says, every boot: "TIME-TO-DEATH if the prior boot has no CLEAN_COMPLETE,
+time-to-poweroff if it does." The disambiguator was built, correct and durable.
+Nobody ran the check -- including me, when I wrote the finding.
+
+Everything else the project runs -- OBD polling, EDR persistence, powerwatch, the state server,
 boot-state, drain-forensics -- adds about **0.1 W combined**. The dashboard
 kiosk is essentially the entire in-car load.
 
