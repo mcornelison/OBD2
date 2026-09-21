@@ -752,17 +752,89 @@ def _makeIcm20948() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
 
     i2cBus = _makeI2c()
     icm = adafruit_icm20x.ICM20948(i2cBus, address=ADDR_IMU)
-    _recoverGyro(icm)
-    return _attachDirectMagnetometer(icm, i2cBus)
+    return _buildImuDevice(icm, i2cBus)
+
+
+def _buildImuDevice(
+    icm: Any,
+    i2cBus: Any,
+    *,
+    attachFn: Callable[[Any, Any], Any] | None = None,
+    recoverFn: Callable[[Any], Any] | None = None,
+) -> Any:
+    """Establish the magnetometer bypass, THEN run the gyro check. ORDER IS LOAD-BEARING.
+
+    🔴 ARCH-032. Reversing these two lines is the V0.29.55 defect. Measured on
+    the Pi 2026-09-20, n=20 per arm, interleaved, both I2C contenders stopped::
+
+        control -- no gyro read                      14/20 = 70%
+        DEFECT  -- 20x icm.gyro, THEN bypass          2/20 = 10%
+        FIX     -- bypass FIRST, then 20x icm.gyro   16/20 = 80%
+
+        Fisher two-sided:  fix vs defect  p = 0.000017
+                           fix vs control p = 0.7164   (parity restored)
+
+    Merely READING the gyro through the driver before the hand-over collapses
+    the 0x0C probe. Why a pure read on the primary bus disturbs a different chip
+    on the auxiliary bus is still unexplained -- this avoids the question rather
+    than settling it, which is why the order is pinned by test rather than left
+    to whoever next reads the code and finds the old argument persuasive.
+
+    ⚠️ This restores PARITY, not correctness. The control itself is only ~73%
+    pooled, so roughly one hand-over in four still fails with no gyro read
+    anywhere near it. That second, older defect is NOT this one and stays open.
+
+    Split out of :func:`_makeIcm20948` because that function is
+    ``pragma: no cover`` real-hardware glue -- the defect shipped with a GREEN
+    suite precisely because the only place the order was expressed could not be
+    tested. Both steps were called; both were individually correct.
+
+    Args:
+        icm: The constructed ICM-20948.
+        i2cBus: The primary I2C bus it was constructed on.
+        attachFn: Injection seam for tests; defaults to the real bypass attach.
+        recoverFn: Injection seam for tests; defaults to the real gyro recovery.
+
+    Returns:
+        The wrapped device from the bypass attach, or the bare ICM when the
+        magnetometer could not be brought up.
+    """
+    attach = attachFn or _attachDirectMagnetometer
+    recover = recoverFn or _recoverGyro
+    device = attach(icm, i2cBus)
+    try:
+        # The raw ICM, never `device`: recovery writes power-management
+        # registers on the chip itself. Reaching them through the bypass
+        # wrapper would work only by attribute delegation -- an accident,
+        # not a contract.
+        recover(icm)
+    except Exception as exc:  # noqa: BLE001 -- a gyro fault must not cost the mag
+        # The bypass has ALREADY succeeded here, so discarding it now would
+        # throw away a working magnetometer to punish a broken gyro -- the same
+        # degrade principle as _attachDirectMagnetometer, in the other direction.
+        logger.error(
+            "IMU gyro startup check raised after the magnetometer bypass (%s); "
+            "keeping the magnetometer and continuing without recovery",
+            exc,
+        )
+    return device
 
 
 def _recoverGyro(icm: Any, recoveryFn: Callable[[Any], Any] | None = None) -> Any:
     """Clear the A-34 latched gyro fault at startup, if it is present.
 
-    Ordered BEFORE :func:`_attachDirectMagnetometer` deliberately: both touch
-    bank 0, and the recovery writes a power-management register, so it runs
-    while the chip is in its freshly-initialised state rather than after the
-    magnetometer bypass has reconfigured the auxiliary bus.
+    🔴 ARCH-032, 2026-09-20 -- ORDERING CORRECTED. This used to run BEFORE
+    :func:`_attachDirectMagnetometer`, and its docstring argued that it must:
+    "both touch bank 0, and the recovery writes a power-management register, so
+    it runs while the chip is in its freshly-initialised state rather than after
+    the magnetometer bypass has reconfigured the auxiliary bus."
+
+    **That argument is plausible and it is wrong.** It was never measured. The
+    gyro READ alone -- not the power-management write, which the no-attempt
+    branch never performs -- collapses the subsequent bypass hand-over from
+    ~70% to ~10%. The order is now pinned by
+    ``tests/pi/sensors/test_imu_startup_order.py``. Do not restore it on the
+    strength of the reasoning above.
 
     Placed at startup because the precondition the detector needs -- a
     STATIONARY vehicle -- is guaranteed here and nowhere else: the engine has
