@@ -2550,6 +2550,35 @@ belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
 
+**Consumer-side suppression of the grace splash (US-796-a, Sprint 90 / V0.29.59).**
+`splash-grace.path` is always armed and cold-starts a **second chromium**
+(`splash-grace.service`) the instant `shutdown-state` appears. A second browser
+starting during a shutdown is wrong on its own terms, so the power-loss
+`LoadShedder` (`load_shed.py`, ARCH-031) now stops `splash-grace.path` **and**
+`splash-grace.service` alongside `eclipse-dashboard`. This is a correctness fix; it
+makes no survival claim. Visible consequence, ruled by the CIO 2026-09-20: no
+shutdown animation at key-off, and a cancelled blip shows nothing. The `grace` row
+in the table above still describes the splash's response when it is running; with
+the default shed set it no longer is.
+
+- **Ordering is the fix.** `handleOnBattery` calls `powerLossObservedFn` (heartbeat +
+  shed) **before** it emits `grace`, the first `shutdown-state` write. A `.path` unit
+  that has already fired cannot be un-fired, so a shed after the write would be a
+  no-op that looks like a fix. `systemctlRunner` issues a `.path` stop **without**
+  `--no-block`, so the path is disarmed in systemd — not merely queued — when the
+  write happens. The path is stopped before its service, so nothing re-launches it.
+- **The sequencer stays decoupled.** It never names a splash unit (F-103: it writes
+  state, consumers react). Suppression belongs to the shedder, which owns what is
+  allowed to run. Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`.
+- **Restore.** A cancel restarts the dashboard and re-arms `splash-grace.path`.
+  `splash-grace.service` is stopped but never restored (`TRIGGERED_UNITS`): a stop
+  succeeds on an inactive unit, and its only legitimate starter is the path. The
+  re-armed path sees `shutdown-state` already reading `cancelled`, fires once, and
+  the kiosk aborts on its first poll without painting — the same cancelled-abort the
+  splash always took on a blip, now after power is back rather than on battery.
+- **Unit names.** `install.sh` installs the `.wayland` / `.x11` variant under the one
+  runtime name `splash-grace.service`, so the shed set names no variant.
+
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
 A second OPTIONAL constructor dependency, `prePowerOffFn`, runs immediately

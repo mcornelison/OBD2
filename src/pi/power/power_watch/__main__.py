@@ -129,6 +129,11 @@
 #                           sync task without perTaskTimeoutSec (never
 #                           abandoned); the sequencer polls the VCELL floor
 #                           instead of waiting totalWindowCapSec.
+# 2026-09-21    | US-796-a  | Sprint 90 / V0.29.59. The default shed set gains
+#                           splash-grace.path + splash-grace.service, so no
+#                           second chromium cold-starts during a shutdown. The
+#                           wiring is unchanged: the shed already runs from
+#                           powerLossObservedFn, before the shutdown-state write.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -985,8 +990,14 @@ def main(argv: list[str] | None = None) -> int:
     #
     # Reversible by design: if the loss turns out to be a blip the sequencer
     # cancels and `restore` puts it back, so nothing is committed on the edge.
-    # Configurable, defaulting to the dashboard alone -- never "stop everything",
-    # because the remaining services are the ones that PRESERVE data.
+    # Configurable, defaulting to the dashboard and the grace splash -- never
+    # "stop everything", because the remaining services are the ones that
+    # PRESERVE data.
+    #
+    # US-796-a: the splash is suppressed HERE, on the consumer side, and it
+    # works only because the sequencer calls powerLossObservedFn BEFORE it
+    # writes shutdown-state: splash-grace.path fires on that write and cannot
+    # be un-fired. The sequencer never learns a splash unit name (F-103).
     shedUnits = pw_cfg.get("shedUnitsOnPowerLoss", DEFAULT_SHED_UNITS)
     loadShedder = LoadShedder(shedUnits)
 
