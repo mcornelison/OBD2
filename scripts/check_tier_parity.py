@@ -51,6 +51,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -59,6 +60,7 @@ from typing import Protocol
 
 __all__ = [
     "EMPTY",
+    "piHostFromConfig",
     "MISSING",
     "OK",
     "UNKNOWN",
@@ -314,8 +316,44 @@ class ServerTier:
         return TableState(exists=True, rows=self._counts.get(table))
 
 
-#: The producer tier. Fleet defaults, overridable on the CLI.
-PI_HOST = "chi-eclipse-01"
+def _repoRoot() -> Path | None:
+    """Walk up from this file for the repo root, identified by pyproject.toml.
+
+    Depth-independent on purpose -- never `parents[N]`, which breaks the moment
+    the file moves. Same idiom as `tools/pm/_paths.py`.
+    """
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return None
+
+
+def piHostFromConfig() -> str:
+    """The Pi host, read from the ONE place it is declared: `pi.network.piHost`.
+
+    ARCH-038a. The literal used to live here as well, which made this file a
+    SECOND source of truth for a fact `config.json` already owned -- the defect
+    class US-804 exists for, and `specs/design-patterns.md` 3 rejects. The
+    B-044 lint test caught it after ARCH-038 merged; `scripts/audit_address_mirrors.py`
+    already reads the same key, so this follows an established reader.
+
+    Fails soft to "": a diagnostic must never crash on an unreadable config, and
+    an empty host surfaces as an UNREACHABLE Pi -- which this checker already
+    reports honestly as UNKNOWN rather than as a defect.
+    """
+    root = _repoRoot()
+    if root is None:
+        return ""
+    try:
+        data = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    network = data.get("pi", {}).get("network", {})
+    return str(network.get("piHost", "")) if isinstance(network, dict) else ""
+
+
+#: The producer tier. Resolved from config, overridable on the CLI.
+PI_HOST = piHostFromConfig()
 PI_DB = "/home/mcornelison/Projects/Eclipse-01/data/obd.db"
 
 
