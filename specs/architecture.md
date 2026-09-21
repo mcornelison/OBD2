@@ -2847,6 +2847,40 @@ and whether power returned.
 **Scope.** Since US-788, losses inside boot-grace reach `handleOnBattery` and start the
 heartbeat like any other loss (see §10.6).
 
+### 10.6.7 The shutdown ceremony — an empty backlog shortens the drain, never the ceremony (US-796-d, Sprint 90 / V0.29.59)
+
+A confirmed power loss that reaches poweroff runs the same **ceremony** whatever the depth of
+the sync backlog. "Nothing to send" makes the **drain** shorter. It does not remove any other step.
+
+| # | Step | Owner | Mandatory at an empty backlog |
+|---|---|---|---|
+| 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
+| 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops |
+| 3 | **Drain close** — the US-526 primary close (§10.6.2) | `buildDrainCloseHook` via `prePowerOffFn` | yes; a no-op close when no row is open |
+| 4 | **Custody** — the record states its verdict (§10.6.3) | `makeSyncCustodyHook` via `prePowerOffFn` | yes; `DELIVERED` |
+| 5 | **Poweroff** — `systemctl poweroff` | `ShutdownSequencer` | yes |
+| 6 | **`CLEAN_COMPLETE`** — the finalizer's `ExecStop` | `boot-progress-finalize.service` | yes |
+| 7 | **`prior_boot_clean = 1`** on the next boot | `boot-progress-arm.service` | yes |
+
+**The animation is not a step.** The grace splash is shed (§10.6.1, CIO ruling 2026-09-20), so
+nothing is displayed at key-off and the ceremony asserts no display. A shutdown animation is
+**conditional on budget**: it comes back only when a measured budget gate earns it.
+
+**The guard.** `tests/pi/power/power_watch/test_shutdown_ceremony_guard.py` drives one sustained
+loss with an empty backlog through the real sequencer, pipeline, drain, hooks and `boot_progress`
+finalize/arm, then checks the seven steps in order. It is proved able to **fail**. A shutdown
+that reaches poweroff without `CLEAN_COMPLETE` fails it, and so does each of these, while still
+reaching poweroff:
+
+- a drain skipped because the backlog is empty;
+- unwired pre-poweroff hooks;
+- a missing shed;
+- a shed that follows the drain.
+
+The guard does not depend on what separates a survivable cut from a fatal one. It states what a
+completed shutdown must contain. It adds no bound on the drain, so a shutdown **with** a backlog
+still drains fully (§10.6.3).
+
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
 **Architectural principle (CIO 2026-05-21).** Pi = telemetry emitter +
