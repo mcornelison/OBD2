@@ -377,72 +377,98 @@ def test_dashboardCss_carriesTileLevelColors_us400():
 
 
 # ---------------------------------------------------------------------------
-# US-421 -- Power-mode badge (F-098 / BL-014). The powerTile renders the
-# `power.mode` SSOT (fed from PowerModeProvider over pi.power.mode): car -> CAR,
-# wall -> WALL, and -- honest-instrument -- ANYTHING else (unknown / invalid /
-# absent) -> the lowercase `unknown` badge, NEVER a confident wrong CAR/WALL.
-# The mode flows through the same emitter JSON the System Status card consumes,
-# so this drives the tile both directly and through systemStatusView (the DOM
-# render path) with mocked config states.
+# US-421 -- Power tile (F-098 / BL-014), REWRITTEN FOR US-668 on 2026-09-21
+# under ARCH-042. This block asserted a RETIRED contract and had been failing
+# since US-696.
+#
+# WHAT CHANGED, AND WHY IT IS NOT A REGRESSION
+#   US-421 rendered the operator-declared MODE as the tile's value -- the
+#   `pi.power.mode` SSOT fed by PowerModeProvider: car -> CAR, wall -> WALL.
+#   US-668 DELETED both the provider and the config key. The CIO's reason, kept
+#   verbatim in carousel.js (2026-09-02): "if I can see the screen then the power
+#   is on, it doesn't matter if it is car or wall, it is on."
+#   The tile now renders the SENSED SOURCE -- EXTERNAL / BATTERY -- which is the
+#   one thing a lit panel CANNOT tell the viewer. Strictly better instrument.
+#
+# THE HALF THAT SURVIVES (do not delete it again)
+#   An UNRESOLVED source must render `unavailable` and must NEVER guess a
+#   confident EXTERNAL/BATTERY. The old block made that promise about CAR/WALL;
+#   the promise is unchanged, only its vocabulary moved.
+#
+# THE HALF THAT IS NEW
+#   `mode` must NOT influence the value. If anything ever re-reads an
+#   operator-declared mode, the US-668 loop below fails -- so the retired
+#   vocabulary cannot come back silently.
+#
+# ** FIXING THIS TEST DOES NOT VALIDATE F-098. ** The regression_manifest row
+#   still describes PowerModeProvider and pi.power.mode, both deleted. A GREEN
+#   suite against a stale row claims coverage of something that no longer exists,
+#   which is worse than a red one, because it is invisible. F-098 stays NEEDS
+#   WORK until the row is corrected -- offices/pm/regression_manifest.json,
+#   Marcus's lane, not touched by ARCH-042.
 # ---------------------------------------------------------------------------
 
 _US421_NODE_SCRIPT = r"""
 const assert = require('assert');
 const c = require(process.argv[1]);
 
-// --- car / wall render the confident UPPERCASE badge (external power) --------
-const car = c.powerTile({mode: 'car', source: 'external'});
-assert.strictEqual(car.value, 'CAR', 'car -> CAR badge');
-assert.strictEqual(car.level, 'ok', 'external power -> ok');
-const wall = c.powerTile({mode: 'wall', source: 'external'});
-assert.strictEqual(wall.value, 'WALL', 'wall -> WALL badge');
-assert.strictEqual(wall.level, 'ok', 'external power -> ok');
+// --- the SENSED SOURCE is the value (US-668) --------------------------------
+const ext = c.powerTile({source: 'external'});
+assert.strictEqual(ext.value, 'EXTERNAL', 'external source -> EXTERNAL');
+assert.strictEqual(ext.level, 'ok', 'external -> ok');
+const bat = c.powerTile({source: 'battery'});
+assert.strictEqual(bat.value, 'BATTERY', 'battery source -> BATTERY');
+assert.strictEqual(bat.level, 'amber', 'battery -> amber');
+assert.ok(/UPS/.test(bat.detail), 'battery detail names the UPS');
 
-// --- honest-instrument: explicit unknown -> lowercase `unknown`, ok level -----
-const unk = c.powerTile({mode: 'unknown', source: 'external'});
-assert.strictEqual(unk.value, 'unknown', 'unknown -> lowercase unknown badge');
-
-// --- invalid / absent config -> unknown, NEVER a confident wrong CAR/WALL -----
-const badModes = ['garage', '', 'CAR', 'Wall', 'battery', 42, true, null, undefined];
-badModes.forEach(function (m) {
+// --- US-668 REGRESSION GUARD: `mode` must NOT influence the value ------------
+// The retired pi.power.mode SSOT rendered CAR/WALL in this slot. If anything
+// ever re-reads an operator-declared mode, these assertions fail.
+['car', 'wall', 'garage', '', 42, true, null, undefined].forEach(function (m) {
   const t = c.powerTile({mode: m, source: 'external'});
-  assert.strictEqual(t.value, 'unknown',
-    'invalid mode ' + JSON.stringify(m) + ' -> unknown badge');
+  assert.strictEqual(t.value, 'EXTERNAL',
+    'mode ' + JSON.stringify(m) + ' must not change the sensed value');
   assert.ok(t.value !== 'CAR' && t.value !== 'WALL',
-    'invalid mode ' + JSON.stringify(m) + ' NEVER a confident wrong mode');
+    'the retired CAR/WALL vocabulary must never return');
 });
-// mode key entirely absent -> unknown (never fabricates a mode).
-assert.strictEqual(c.powerTile({source: 'external'}).value, 'unknown',
-  'absent mode -> unknown');
 
-// --- on-UPS (battery source) surfaces the mode in the detail, amber level -----
-const onUps = c.powerTile({mode: 'car', source: 'battery'});
-assert.strictEqual(onUps.level, 'amber', 'battery -> amber');
-assert.ok(/car/.test(onUps.detail) && /UPS/.test(onUps.detail),
-  'battery detail carries the mode + UPS');
-assert.ok(/wall/.test(c.powerTile({mode: 'wall', source: 'battery'}).detail),
-  'wall mode surfaced in the UPS detail');
+// --- honest-instrument: an UNRESOLVED SOURCE never guesses -------------------
+// 'EXTERNAL' and 'Battery' are in this list deliberately: the match is
+// case-SENSITIVE, so a mis-cased source must fall through to unavailable
+// rather than quietly match.
+const badSources = ['unknown', 'garage', '', 'EXTERNAL', 'Battery', 42, true, null, undefined];
+badSources.forEach(function (s) {
+  const t = c.powerTile({source: s});
+  assert.strictEqual(t.level, 'unavailable',
+    'unresolved source ' + JSON.stringify(s) + ' -> unavailable');
+  assert.ok(t.value !== 'EXTERNAL' && t.value !== 'BATTERY',
+    'unresolved source ' + JSON.stringify(s) + ' NEVER a confident source');
+});
+// source key entirely absent -> unavailable (never fabricates a source).
+assert.strictEqual(c.powerTile({}).level, 'unavailable', 'absent source -> unavailable');
+assert.strictEqual(c.powerTile({mode: 'car'}).level, 'unavailable',
+  'a mode WITHOUT a source is still unavailable -- mode cannot stand in for it');
 
 // --- non-object payload -> unavailable, never a crash (honest-instrument) -----
 assert.strictEqual(c.powerTile(null).level, 'unavailable', 'null -> unavailable');
 assert.strictEqual(c.powerTile('x').level, 'unavailable', 'string -> unavailable');
 
 // --- the DOM render path (systemStatusView) carries the same honest badge -----
-function state(mode) {
+function state(source) {
   return {
     obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
     sync: {lastOkTs: '2026-07-01T19:41:50Z', rows: 1, pending: 0, stale: false},
-    power: {mode: mode, source: 'external'},
+    power: {source: source},
     drive: {state: 'idle', driveId: null},
     ts: '2026-07-01T19:42:00Z'
   };
 }
-assert.strictEqual(c.systemStatusView(state('car')).tiles.power.value, 'CAR',
-  'DOM path: car config -> CAR');
-assert.strictEqual(c.systemStatusView(state('wall')).tiles.power.value, 'WALL',
-  'DOM path: wall config -> WALL');
-assert.strictEqual(c.systemStatusView(state('garage')).tiles.power.value, 'unknown',
-  'DOM path: invalid config -> unknown, never confident-wrong');
+assert.strictEqual(c.systemStatusView(state('external')).tiles.power.value, 'EXTERNAL',
+  'DOM path: external -> EXTERNAL');
+assert.strictEqual(c.systemStatusView(state('battery')).tiles.power.value, 'BATTERY',
+  'DOM path: battery -> BATTERY');
+assert.strictEqual(c.systemStatusView(state('garage')).tiles.power.level, 'unavailable',
+  'DOM path: unresolved -> unavailable, never confident-wrong');
 
 console.log('US421_OK');
 """
@@ -1565,55 +1591,66 @@ def test_dashboardCss_hasLtftTrendStyles_us420():
 
 
 # ---------------------------------------------------------------------------
-# US-421 -- power-mode badge (F-098 / BL-014): the tile renders CAR / WALL /
-# unknown from the PowerModeProvider SSOT value, and NEVER coerces an
-# undeterminable/invalid mode into a confident CAR (honest-instrument).
+# US-421 -- power tile RENDER PATH (F-098 / BL-014), rewritten for US-668 on
+# 2026-09-21 under ARCH-042.
+#
+# 🔴 THIS BLOCK CARRIED A SECOND, SHADOWING DEFINITION OF `_US421_NODE_SCRIPT`.
+#   The name was bound twice at module scope -- once at the top of this file and
+#   again here -- so the later binding WON and BOTH US-421 tests ran THIS script.
+#   The earlier one was dead code that looked like coverage. Renamed to
+#   `_US421_RENDER_NODE_SCRIPT` so each test drives its own script, and the two
+#   now cover different things: the first asserts the tile's VALUE contract,
+#   this one asserts the RENDER PATH the DOM actually consumes.
+#   (A duplicate module-level name is the same family as a lookup that fails
+#   soft: nothing errors, and the result looks like a passing test.)
+#
+# The retired CAR/WALL/unknown vocabulary this block used to assert was deleted
+# by US-668 -- see the long note on the first block for the CIO's reasoning.
 # ---------------------------------------------------------------------------
 
-_US421_NODE_SCRIPT = r"""
+_US421_RENDER_NODE_SCRIPT = r"""
 const assert = require('assert');
 const c = require(process.argv[1]);
 
-// A known car mode on external power -> confident CAR badge.
-const car = c.powerTile({mode: 'car', source: 'external'});
-assert.strictEqual(car.value, 'CAR', 'car -> CAR');
+function view(power) {
+  return c.systemStatusView({
+    obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
+    sync: {lastOkTs: '2026-07-01T00:00:00Z', rows: 1, pending: 0, stale: false},
+    power: power,
+    drive: {state: 'idle', driveId: null},
+    ts: '2026-07-01T00:00:01Z'
+  });
+}
 
-// A known wall (bench) mode -> confident WALL badge.
-const wall = c.powerTile({mode: 'wall', source: 'external'});
-assert.strictEqual(wall.value, 'WALL', 'wall -> WALL');
+// --- the render path carries the sensed source, with its level --------------
+const ext = view({source: 'external'}).tiles.power;
+assert.strictEqual(ext.value, 'EXTERNAL', 'render: external -> EXTERNAL');
+assert.strictEqual(ext.level, 'ok', 'render: external -> ok');
 
-// Explicit unknown -> honest lowercase 'unknown', NOT a confident CAR/WALL.
-const unk = c.powerTile({mode: 'unknown', source: 'external'});
-assert.strictEqual(unk.value, 'unknown', 'unknown -> unknown badge');
+const bat = view({source: 'battery'}).tiles.power;
+assert.strictEqual(bat.value, 'BATTERY', 'render: battery -> BATTERY');
+assert.strictEqual(bat.level, 'amber',
+  'render: BATTERY must be amber -- it is the state a lit panel cannot reveal');
 
-// Absent mode -> unknown (never defaults to CAR -- the BL-014 bug this fixes).
-const absent = c.powerTile({source: 'external'});
-assert.strictEqual(absent.value, 'unknown', 'absent mode -> unknown, not CAR');
-
-// Invalid/garbage mode -> unknown (honest), never a confident wrong mode.
-const bad = c.powerTile({mode: 'garage', source: 'external'});
-assert.strictEqual(bad.value, 'unknown', 'invalid mode -> unknown');
-const upper = c.powerTile({mode: 'CAR', source: 'external'});
-assert.strictEqual(upper.value, 'unknown', 'case-mismatch mode -> unknown');
-
-// On battery the value is BATTERY and the MODE rides in the detail -- it must
-// still be honest (unknown mode -> 'unknown ...' in detail, never 'car ...').
-const batUnknown = c.powerTile({mode: 'unknown', source: 'battery'});
-assert.strictEqual(batUnknown.value, 'BATTERY', 'battery value unchanged');
-assert.ok(/unknown/.test(batUnknown.detail), 'battery detail honest for unknown');
-assert.ok(!/\bcar\b/.test(batUnknown.detail), 'battery detail not confidently car');
-const batWall = c.powerTile({mode: 'wall', source: 'battery'});
-assert.ok(/wall/.test(batWall.detail), 'battery detail carries wall');
-
-// End-to-end through the structured view the DOM renderer consumes.
-const view = c.systemStatusView({
-  obdLink: {state: 'linked', retries: 0, lastSeenS: 2},
-  sync: {lastOkTs: '2026-07-01T00:00:00Z', rows: 1, pending: 0, stale: false},
-  power: {mode: 'unknown', source: 'external'},
-  drive: {state: 'idle', driveId: null},
-  ts: '2026-07-01T00:00:01Z'
+// --- honest-instrument through the render path ------------------------------
+// An unresolved source must not reach the DOM as a confident value.
+[{source: 'unknown'}, {source: 'garage'}, {source: ''}, {mode: 'car'}, {}].forEach(function (p) {
+  const t = view(p).tiles.power;
+  assert.strictEqual(t.level, 'unavailable',
+    'render: ' + JSON.stringify(p) + ' -> unavailable');
+  assert.ok(t.value !== 'EXTERNAL' && t.value !== 'BATTERY',
+    'render: ' + JSON.stringify(p) + ' NEVER a confident source');
 });
-assert.strictEqual(view.tiles.power.value, 'unknown', 'view power tile honest');
+
+// --- US-668 regression guard on the render path -----------------------------
+// The retired mode must not resurface as a value anywhere downstream.
+['car', 'wall', 'unknown'].forEach(function (m) {
+  const t = view({mode: m, source: 'external'}).tiles.power;
+  assert.strictEqual(t.value, 'EXTERNAL',
+    'render: mode ' + JSON.stringify(m) + ' must not override the sensed source');
+  assert.ok(t.value !== 'CAR' && t.value !== 'WALL',
+    'render: the retired CAR/WALL vocabulary must never return');
+});
 
 console.log('US421_OK');
 """
@@ -1621,11 +1658,15 @@ console.log('US421_OK');
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_powerTile_renderLogic_carWallUnknown_us421():
-    """US-421: the power-mode badge renders CAR / WALL / unknown from the SSOT
-    value and never coerces an undeterminable/invalid mode into a confident CAR
-    (BL-014 honest-instrument)."""
+    """US-421 / US-668: the power tile's RENDER PATH (systemStatusView, what the
+    DOM consumes) carries the sensed source -- EXTERNAL ok / BATTERY amber -- and
+    never lets an unresolved source reach the DOM as a confident value. Also
+    guards that the retired CAR/WALL mode vocabulary does not resurface.
+
+    Name kept for the manifest's proof pointer; the CAR/WALL contract it was
+    written against was deleted by US-668. See ARCH-042."""
     result = subprocess.run(
-        ["node", "-e", _US421_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
+        ["node", "-e", _US421_RENDER_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
         text=True,
         encoding="utf-8",
