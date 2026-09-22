@@ -986,6 +986,22 @@ window on one cell: it bounds the quiet state, it does not characterise the excu
 excursions are the thing that matters. Characterising those needs VCELL persisted at poll cadence,
 which nothing currently does.
 
+🟢 **THE VENDOR DOCUMENTS NOW GROUND THE MECHANISM (2026-09-22, `hardware/datasheets/`).**
+
+- **X1209 charger: 4.23 V cut-off, 4.1 V recharge threshold.** On external power the cell does not
+  sit still — the charger stops at 4.23 V, the cell sags toward 4.1 V, and the charger restarts.
+  **That is a ~130 mV sawtooth by design**, the same order as the ~0.09 V charge-cycle swing Marcus
+  measured. **Every falling limb of it is a real, sustained decline of far more than 5 mV** — which is
+  why the false `slow_drain` episodes are sustained rather than transient, and why no dwell could
+  suppress them. *(Inference from the documented thresholds; the sawtooth itself has not been
+  recorded, because nothing persists VCELL.)*
+- **MAX17048 hibernate: at low charge/discharge rates the IC updates VCELL and SOC only once per
+  45 s.** That explains the multi-minute plateaus and the bit-identical runs in the direct reads
+  above — **they are the chip's own update cadence, not a frozen instrument.**
+
+⇒ **The state gate below is now grounded in the charger's documented behaviour, not only in the
+episode statistics:** on external power the cell's voltage is driven by the charger's control loop.
+
 ⇒ **RULING (Spool, 2026-09-21): do not evaluate cell-drain health while external power is present.**
 Gate on **`PowerSourceProvider.isExternalPowerPresent()`**
 (`src/pi/power/power_source_provider.py:56`) — the GPIO6 PLD SSOT. On external power the verdict is
@@ -1008,25 +1024,57 @@ requirements differ.
 
 ## MAX17048 SOC after a cell change (F-048)
 
-🔴 **`REGISTER_MODE` (0x06) — the QuickStart register — is DEFINED at
-`src/pi/hardware/ups_monitor.py:248` and NEVER WRITTEN ANYWHERE IN THE REPOSITORY.** QuickStart is
-the MAX17048's designed remedy for exactly the event that occurred on 2026-09-21: a cell swapped
-underneath a running gauge. Without it the ModelGauge algorithm re-converges slowly from the
-previous cell's state.
+**All MAX17048 facts below are now VERIFIED against datasheet 19-6171 Rev 7 and all X1209 facts
+against the vendor wiki, both held at `hardware/datasheets/` (2026-09-22).**
+
+🔴 **RETRACTED (2026-09-22): my claim that QuickStart is "the designed remedy" for a cell swap, and
+my recommendation to issue one.** The datasheet says the opposite on both counts:
+- *"If VCELL falls below VRST, the IC quick-starts when VCELL returns above VRST. **This handles
+  battery swap**; the SOC of the previous battery does not affect that of the new one."*
+- *"**Most systems should not use quick-start** because the ICs handle most startup problems
+  transparently."*
+
+⇒ 🟢 **`REGISTER_MODE` (0x06) being defined and never written is CORRECT, not a gap.** Do not build a
+QuickStart story. *(Also verified: the gauge is powered by the cell — the VDD pin is "Power-Supply
+Input … connect to positive battery terminal" — so a cell swap always power-cycles the gauge.)*
 
 **Measured, 2026-09-21:**
 
     18:50Z   cell swapped 450 mAh -> 2000 mAh (CIO)
     ~18:52Z  VCELL 4.2062 V  ->  SOC 65.9 %, then 67.9 % a minute later   (Atlas)
-    +15 min  still not converged                                          (Atlas)
+    +15 min  still rising                                                 (Atlas)
     22:30Z   VCELL 4.1537 V  ->  SOC 95 %                                 (Spool, +3 h 40 m)
 
-🟢 **The "gauge is ~30 points out" reading was a TRANSIENT of re-convergence, not a standing
-calibration error, and it has self-corrected.** VCELL fell 52 mV while SOC rose 29 points — that is
-re-convergence, not a voltage/SOC curve. **95 % at 4.154 V is plausible for a single-cell LiPo.**
+⚠️ **TWO EXPLANATIONS FIT, AND ONLY ONE HAS BEEN ARGUED UNTIL NOW.**
 
-⚠️ **Convergence time is BOUNDED, NOT MEASURED: longer than 15 min, complete by 3 h 40 min.**
-Nothing sampled the interval. **Do not quote a convergence time.**
+1. *Re-convergence (Spool, 2026-09-21):* the gauge started wrong and corrected itself. The
+   datasheet does say unrelaxed-insertion error *"diminishes over time."*
+2. 🔴 ***The gauge was RIGHT, and the cell was CHARGING (Spool, 2026-09-22, from the datasheets).***
+   - The X1209 charges at **2.1 A**. Into 2000 mAh that is **~1.75 % per minute**. Atlas observed
+     **+2.0 % in one minute.**
+   - **A cell on a charger does not show its open-circuit voltage.** The X1209 cuts off at **4.23 V**;
+     under charge current the terminal voltage sits near that limit whatever the state of charge.
+     *"4.21 V means full"* is true of a **rested** cell only — **both Atlas and I applied a resting
+     rule to a charging cell.** The datasheet says it directly: one SOC can have many VCELL values.
+   - **The insertion was probably relaxed:** the Pi died at 18:45:14Z and the cell went in at 18:50Z,
+     so the gauge's first VCELL was taken on an idle cell — the condition the datasheet names for an
+     accurate initial estimate. **A spare stored part-charged at ~65 % is unremarkable.**
+   - **95 % at 4.1537 V at 22:30Z** is then simply the cell after the charge completed and relaxed.
+
+⇒ **Explanation 2 predicts a SOC rise at the charge rate; explanation 1 has no reason to track the
+charge rate.** One minute and two points cannot separate them — **a short window proves nothing** —
+but the rate match is specific enough to take seriously. 🔴 **If explanation 2 holds, there was
+never a "30-point error" at all**, and the premise F-048 inherited from 2026-09-21 dissolves.
+
+🟢 **Falsifier — cheap, and it needs a partly discharged cell on a charger:** sample SOC every 10 s
+while the X1209 charges from mid-SOC. **Explanation 2 ⇒ SOC rises ≈ linearly at ~I / capacity in
+constant-current phase. Explanation 1 ⇒ it approaches a settled value asymptotically from wherever
+it started.** No post-swap SOC series exists in `examples/data/battery/` (all files predate 18:50Z),
+so this cannot be settled from what is held today.
+
+⚠️ **The same doubt applies to the Drive 5 record** in `docs/max17048-soc-calibration-protocol.md`
+(*"SOC 60 % at VCELL 4.200 V, a 40-point error"*): a car with the engine running charges the cell,
+so 4.200 V may again have been a charging voltage. **Unverified either way.**
 
 ⚠️ **`socColdStartWindowSeconds = 180` is still the provisional guess the protocol was written to
 replace, and 180 s is now known to be far shorter than the observed convergence.** It must be
@@ -1041,48 +1089,48 @@ re-derived against the 2000 mAh cell; the 450 mAh corpus does not transfer.
 **All three were false while the cell was demonstrably on a charger.** Any calibration protocol must
 say what it does about them, or it calibrates a number nobody can act on.
 
-⇒ **RECOMMENDATION (Spool): issue a QuickStart on detected cell change**, then re-derive
-`socColdStartWindowSeconds` from the settling behaviour that follows. ⚠️ **QuickStart must be issued
-with the cell at rest, not under load** — it initialises from the instantaneous terminal voltage, so
-a loaded reading initialises the gauge low and manufactures a wrong SOC. **That is a
-land-what-you-read violation waiting to happen: it would not fail, it would answer confidently.**
+⚠️ *Withdrawn 2026-09-22: a recommendation here to issue a QuickStart on cell change. The datasheet
+says the IC handles battery swap itself and most systems should not use quick-start (above).*
+
+⚠️ **A note on `CRATE` the datasheet raises, not settles:** `0xFFFF` as a signed 16-bit word is −1 LSb
+= **−0.208 %/hr** — a near-zero rate, which is the *correct* answer for a floating or idle cell. If
+every `0xFFFF` observation was taken on a floating cell, "CRATE is broken on this chip" may be the
+wrong-regime reading again. **Check whether `0xFFFF` was ever seen during an active charge or drain
+before treating CRATE as dead.** Not established either way.
 
 ### 🔴 The MAX17048 HAS NO TEMPERATURE REGISTER — and it expects the HOST to supply one
 
 **Researched 2026-09-21 (Spool), confirming the 2026-08-01 ruling rather than assuming it.**
 
-🔴 **PROVENANCE — read this before building on anything in this subsection.** **No MAX17048
-datasheet is held in this repository or on the share** (checked 2026-09-21: `specs/`, `docs/`,
-`hardware/`, share `examples/`, `facts/`). Two tiers of fact below, and they must not be mixed:
+🟢 **PROVENANCE — VERIFIED 2026-09-22 against MAX17048 datasheet 19-6171 Rev 7**
+(`hardware/datasheets/max17048/`). *History: until the CIO saved the datasheet, the entries below
+beyond the six in `ups_monitor.py` were recalled from memory and labelled so — the first version of
+this section had said "the datasheet specifies" without holding it. Every recalled item has now been
+checked; **all were correct except the QuickStart recommendation, retracted above.***
 
-- 🟢 **CORROBORATED in-repo** (`ups_monitor.py:246-251`, written against the part and exercised in
-  production): `VCELL 0x02` (78.125 µV/LSB) · `SOC 0x04` (high byte = integer %) · `MODE 0x06`
-  (write-only) · `VERSION 0x08` · `CONFIG 0x0C` (*"boots to 0x971C"*) · `CRATE 0x16`
-  (0.208 %/hr/LSB; reads `0xFFFF` on this chip).
-- ⚠️ **RECALLED from the Maxim MAX17048 datasheet, NOT held locally — VERIFY BEFORE ANY STORY
-  BUILDS ON THEM:** `HIBRT 0x0A` · `VALRT 0x14` · `VRESET/ID 0x18` · **`STATUS 0x1A` and its `RI`
-  bit** · `CMD 0xFE` · **the RCOMP temperature formula and both `TempCo` coefficients below.**
-  *Corrected: the first version of this section said "the datasheet specifies" for all of these.
-  It did not have the datasheet. That breaks this document's own Usage Rule 1.*
+Register map, 16-bit words only (*"8-bit writes cause no effect"*): `VCELL 0x02` 78.125 µV/cell ·
+`SOC 0x04` 1 %/256 · `MODE 0x06` W · `VERSION 0x08` · `HIBRT 0x0A` · `CONFIG 0x0C` · `VALRT 0x14`
+· `CRATE 0x16` 0.208 %/hr (*"not for conversion to ampere"*) · `VRESET/ID 0x18` · `STATUS 0x1A` ·
+`CMD 0xFE`.
 
 **There is no temperature register and the part has no thermistor input** — a voltage-only
-ModelGauge. ⇒ **Any temperature tile fed from this chip is fabricated. Do not add one.** 🟢 This
-conclusion does **not** depend on the recalled tier: none of the six corroborated registers is a
-temperature, and the in-repo driver reads none.
+ModelGauge. ⇒ **Any temperature tile fed from this chip is fabricated. Do not add one.**
 
-🔴 **The part is designed on the assumption that the HOST compensates for temperature.** The
-`CONFIG` register's high byte is **RCOMP** — 🟢 corroborated: `0x971C` puts **`0x97`** there at
-boot. ⚠️ The compensation law, **recalled, not verified**:
+🔴 **The part is designed on the assumption that the HOST compensates for temperature** —
+datasheet: *"the host microcontroller must measure battery temperature periodically, and compensate
+the RCOMP ModelGauge parameter accordingly, **at least once per minute**."* 🟢 Verified defaults and
+law:
 
-    RCOMP = RCOMP0 + (T - 20 degC) * TempCoUp      for T > 20 degC     (recalled typ. -0.5)
-    RCOMP = RCOMP0 + (T - 20 degC) * TempCoDown    for T < 20 degC     (recalled typ. -5.0)
+    RCOMP = RCOMP0 + (T - 20 degC) * TempCoUp      for T > 20 degC     (default -0.5)
+    RCOMP = RCOMP0 + (T - 20 degC) * TempCoDown    otherwise           (default -5.0)
+    RCOMP0 default 0x97
 
 🔴 **We never write it.** `ups_monitor.py:250` defines `REGISTER_CONFIG = 0x0C` and records that it
 boots to `0x971C`, and **no code anywhere in the repository writes that register** — so the gauge
 has run at its boot-default RCOMP for the life of the project. **That part is corroborated.**
 
-⚠️ **How large the SOC error is cannot be stated from here** — it depends on the recalled
-coefficients and on a cell temperature nobody has measured. A car cabin in summer can plausibly run
+⚠️ **How large the SOC error is cannot be stated from here** — the coefficients are now verified,
+but it depends on a cell temperature nobody has measured. A car cabin in summer can plausibly run
 well above the 20 °C calibration point, **but no cabin temperature has ever been measured on this
 car**, so treat the magnitude as unknown rather than large.
 
@@ -1110,11 +1158,12 @@ available proxy."*
 GAUGE.** Uptime is a proxy for a different quantity from the one the guard needs, and a register
 that answers directly exists. **That is the ruling, and it holds regardless of power topology.**
 
-⚠️ *Corrected: this section first argued that the gauge is "powered by the cell", so pulling the
-cell always resets it while the Pi keeps running. **That is a plausible hypothesis and it is NOT
-verified** — no local source states what supplies the MAX17048 (`architecture.md` says only that
-the X1209 holds up the **Pi's** 5 V rail). The ruling does not rest on it. Its falsifier stays
-useful: pull and reinsert the cell on a running Pi and watch whether `RI` sets while uptime climbs.*
+🟢 **VERIFIED 2026-09-22: the gauge IS powered by the cell.** Datasheet pin table — *"VDD:
+Power-Supply Input … MAX17048: … Connect to positive battery terminal."* ⇒ **pulling the cell always
+power-cycles the gauge while the Pi can keep running on the X1209's input** — the case the uptime
+proxy cannot see. *(Between 2026-09-21 and 09-22 this was labelled an unverified hypothesis, rightly,
+because nothing local stated it. It is now sourced.)* The falsifier is still worth running once: pull
+and reinsert the cell on a running Pi and watch `RI` set while uptime climbs.
 
 ⚠️ **On 2026-09-21 system and gauge happened to power up together** — the Pi died at 18:45:14Z and
 the cell went in at 18:50Z — **so this did not bite. A guard that is correct by coincidence has not
@@ -1123,8 +1172,11 @@ been tested.**
 🟢 **The designed instrument: `STATUS` (0x1A), `RI` (Reset Indicator) bit — set on power-on-reset,
 held until the host clears it.** 🟢 **Verified by Atlas: `STATUS` is not merely unread — it is
 ABSENT from the register map** (`ups_monitor.py:246-251`; zero hits for `0x1A`/`STATUS`/`RI` in
-`src/pi/power`). ⚠️ **`RI`'s semantics are in the RECALLED tier above — verify against the Maxim
-datasheet before building.**
+`src/pi/power`). 🟢 **`RI` semantics VERIFIED against the datasheet:** *"RI (reset indicator) is set
+when the device powers up. Any time this bit is set, the IC is not configured, so the model should be
+loaded and the bit should be cleared."* ⚠️ Note what that sentence adds: the datasheet expects the
+host to **load the model** when `RI` is set. We use the default model and never load one — so the
+single owner of the `RI` clear should also own that decision explicitly.
 
 🔴 **CONDITION OF THE RULING (Atlas): clearing `RI` is a WRITE, and the MAX17048 is polled by TWO
 processes** (`power_watch` and `main.py` — measured 2026-09-21 from the slow-drain journal: two
