@@ -761,6 +761,44 @@ class EdrImuSample(Base):
     sync_batch_id: Mapped[int | None] = mapped_column(Integer)
 
 
+class EdrImuDerived(Base):
+    """PitchFusion OUTPUTS mirrored from the Pi (US-805 / ARCH-045).
+
+    Deliberately NOT columns of :class:`EdrImuSample`. A raw reading never
+    changes; a computed value changes when the ALGORITHM changes, so mixing them
+    would leave early and late rows meaning subtly different things with nothing
+    marking where the maths moved. ``fusion_version`` is what makes the split
+    worth anything -- without it the table cannot say which algorithm produced a
+    row, and it would inherit the very defect the separation prevents.
+
+    Written beside its raw sibling in the SAME Pi-side transaction and stamped
+    with the FUSION's own ``ts_capture``, so the pair lands together and the
+    join (source_device, ts_capture) is exact rather than nearest-neighbour.
+    """
+
+    __tablename__ = "edr_imu_derived"
+    __sync_conflict_cols__ = ("source_device", "source_id", "ts_utc")
+
+    source_device: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+
+    ts_capture: Mapped[float] = mapped_column(Float, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    # NULL under gyro_implausible (US-749). That null is a FINDING -- the only
+    # evidence the plausibility guard fired -- and must never become 0.0.
+    pitch_deg: Mapped[float | None] = mapped_column(Float)
+    stop_count: Mapped[int | None] = mapped_column(Integer)
+    bias_rad: Mapped[float | None] = mapped_column(Float)
+    fusion_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    drive_id: Mapped[int | None] = mapped_column(Integer)
+    data_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+
 class EdrLightSample(Base):
     """Raw TSL2591 light samples mirrored from the Pi (US-765 / F-142).
 

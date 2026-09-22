@@ -153,6 +153,7 @@ from src.server.db.models import (
     DriveSummary,
     DtcFreezeFrame,
     DtcLog,
+    EdrImuDerived,
     EdrImuSample,
     EdrLightSample,
     PiState,
@@ -235,6 +236,7 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # else about their sync path is special: the Pi 'id' maps to source_id like
     # every other capture table.
     "edr_imu_sample": (EdrImuSample, ()),
+    "edr_imu_derived": (EdrImuDerived, ()),   # US-805
     "edr_light_sample": (EdrLightSample, ()),
 }
 

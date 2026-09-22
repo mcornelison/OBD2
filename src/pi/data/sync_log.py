@@ -250,6 +250,10 @@ PK_COLUMN: dict[str, str] = {
     # not dead weight for long.
     'edr_imu_sample':       'id',
     'edr_light_sample':     'id',
+    # US-805: the PitchFusion-output sibling of edr_imu_sample. Append-only
+    # on the same terms -- a derived row is never UPDATEd after insert, it
+    # is superseded by a later row carrying a higher fusion_version.
+    'edr_imu_derived':      'id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.
