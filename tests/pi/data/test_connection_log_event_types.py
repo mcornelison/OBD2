@@ -332,10 +332,23 @@ class TestUs340bConnectionLogDedup:
 
     def test_stateChangeEvents_alwaysLog_evenAfterRepeats(self, freshDb) -> None:
         """
-        Given: a sequence of attempts followed by a state-change
-        When: connect_attempt repeats AND THEN connect_failure fires
-        Then: 1 row for connect_attempt (deduped) + 1 row for connect_failure
-              (state change -- always logs)
+        Given: a sequence of attempts followed by a failure, then more attempts
+        When: the outage continues (attempt/failure) and only later recovers
+        Then: ONE attempt row and ONE failure row for the whole outage, then the
+              recovery -- and a NEW outage after it logs its own firsts again.
+
+        🔴 REWRITTEN BY F-077 / ARCH-047, 2026-09-22. This test previously
+        asserted that `connect_failure` CLEARS the outage tracker, so the
+        attempts after it logged a second time. That behaviour IS the F-077
+        defect: a failure is a repeat symptom of an ONGOING outage, not a
+        transition out of one, and a parked car emits alternating
+        attempt/failure forever -- ~500 rows/day with the engine off, which is
+        exactly what this feature forbids.
+
+        ⚠️ Worth recording plainly: THE DEFECT HAD A TEST PROTECTING IT. The
+        old expectation looked like a reasonable timeline, which is why the
+        defect survived a year of green runs. A test pins whatever it was
+        written against -- including a bug.
         """
         from src.pi.data.connection_logger import (
             EVENT_CONNECT_ATTEMPT,
@@ -365,12 +378,14 @@ class TestUs340bConnectionLogDedup:
                 (mac,),
             ).fetchall()
         observed = [r[0] for r in rows]
-        # The full outage timeline is still legible -- attempt, failure,
-        # attempt (new try), success.  Just without per-retry repeats.
+        # The outage timeline is still legible -- attempt, failure, success --
+        # and the FIRST of each type is always present, so the signal that
+        # suppression exists to compress is never erased. What is gone is the
+        # per-cycle repetition: the six attempts and the failure collapse to
+        # one row each, because one outage is one outage.
         assert observed == [
             'connect_attempt',
             'connect_failure',
-            'connect_attempt',
             'connect_success',
         ], (
             f"US-340b: full outage transition timeline must be preserved; "

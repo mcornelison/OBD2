@@ -179,6 +179,34 @@ _REPEAT_SUPPRESSED_EVENTS: frozenset[str] = frozenset({
     EVENT_ADAPTER_WAIT,
     EVENT_RECONNECT_ATTEMPT,
     EVENT_ECU_SILENT_WAIT,
+    # F-077: a FAILURE is a repeat symptom of an ONGOING outage, not a
+    # transition out of one. While it was absent from this set it fell into the
+    # "state change" branch below and cleared the tracker every cycle -- and a
+    # parked car emits alternating connect_attempt/connect_failure, so
+    # suppression never fired once. Measured cost: ~500 rows/day, 24/7, engine
+    # off, which is precisely what this feature forbids.
+    EVENT_CONNECT_FAILURE,
+})
+
+#: F-077: events that END an outage -- the ONLY ones that clear the per-mac
+#: tracker. A POSITIVE allowlist, deliberately.
+#:
+#: This used to be the COMPLEMENT of :data:`_REPEAT_SUPPRESSED_EVENTS`, so
+#: "state change" meant "anything I did not think to suppress" and every new
+#: event type silently became one. Naming them positively points the default the
+#: safe way (design-patterns.md SS7 -- pin the DIRECTION, not the MEMBERSHIP).
+#:
+#: An event in NEITHER set is a real event that is neither a retry symptom nor a
+#: recovery: it LOGS EVERY TIME and never touches the tracker. That third
+#: category is not an oversight -- collapsing it into "suppressed" would swallow
+#: a second `drive_start`, and losing a drive boundary to fix a chattiness
+#: defect is a far worse trade than the chattiness.
+_OUTAGE_CLEARING_EVENTS: frozenset[str] = frozenset({
+    EVENT_CONNECT_SUCCESS,
+    EVENT_RECONNECT_SUCCESS,
+    EVENT_DISCONNECT,
+    EVENT_BT_DISCONNECT,
+    EVENT_RECONNECT,
 })
 
 #: Per-mac "outage tracker": the set of "still trying" event_types already
@@ -244,10 +272,15 @@ def shouldSuppressAsRepeat(
                 return True
             _LAST_STATE_BY_MAC[key] = state
             return False
-        if eventType not in _REPEAT_SUPPRESSED_EVENTS:
-            # State change -- log it + clear the outage tracker for this
+        if eventType in _OUTAGE_CLEARING_EVENTS:
+            # A real state change -- log it + clear the outage tracker for this
             # mac so the NEXT outage logs each type's first occurrence.
             _OUTAGE_LOGGED_TYPES_BY_MAC.pop(macAddress, None)
+            return False
+        if eventType not in _REPEAT_SUPPRESSED_EVENTS:
+            # Neither a recovery nor a retry symptom -- a real event such as
+            # drive_start or data_cleanup. Log it EVERY time, and leave the
+            # outage tracker alone: it is not evidence the link came back.
             return False
         outage = _OUTAGE_LOGGED_TYPES_BY_MAC.setdefault(macAddress, set())
         if eventType in outage:
