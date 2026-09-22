@@ -151,6 +151,10 @@ tools/*
 # bench on 2026-08-27 and correctly reported the documented procedure had no
 # implementation on disk. In the repo they are versioned and reachable.
 !tools/fleet/
+# tools/sync/ is first-party too: the Pi->server reconciliation that verifies
+# a sync ACTUALLY landed (row count AND every column value), rather than
+# trusting the server's 2xx receipt -- whose `errors` field is a hardcoded 0.
+!tools/sync/
 
 # Claude settings (local only)
 .claude/settings.local.json
