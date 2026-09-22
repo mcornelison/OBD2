@@ -1970,18 +1970,20 @@
     return !!spec && spec.apply === "reload" && settingsSaveResult(res).ok;
   }
 
-  // The choices offered for one setting. A toggle is a 2-choice segmented
-  // control and power mode a 3-choice one, so BOTH render through one mechanism
-  // -- and "unknown" is expressible as *no* choice selected, which is how an
+  // The choices offered for one setting: a 2-choice segmented control, and
+  // "unknown" is expressible as *no* choice selected, which is how an
   // unreadable setting shows itself instead of defaulting to a confident Off.
+  //
+  // US-421: the 3-choice CAR/WALL/UNKNOWN branch for kind "mode" is gone.
+  // US-668 removed pi.power.mode from SETTINGS_SPECS, so no spec could reach
+  // it -- a control nothing can produce, reading as live code. Every kind the
+  // renderer branches on is now a kind the table declares, enforced as a set
+  // relation by tests/ui/test_carousel_settings_kind_coverage.py.
+  // The `spec` argument is kept: every call site passes one, and the control
+  // shape is a property OF a spec -- a future kind that needs a different
+  // control adds a branch here, and the coverage guard makes sure it is a kind
+  // the table actually declares.
   function settingsChoices(spec) {
-    if (spec && spec.kind === "mode") {
-      return [
-        { value: "car", label: "CAR" },
-        { value: "wall", label: "WALL" },
-        { value: "unknown", label: "UNKNOWN" },
-      ];
-    }
     return [
       { value: false, label: "Off" },
       { value: true, label: "On" },
@@ -1997,7 +1999,6 @@
     var kind = spec ? spec.kind : null;
     var known = false;
     var on = null;
-    var mode = null;
     var display = "Unknown";
     if (kind === "seconds") {
       known = typeof value === "number" && isFinite(value);
@@ -2021,7 +2022,6 @@
       known: known,
       value: known ? value : null,
       on: on,
-      mode: mode,
       display: display,
     };
   }
@@ -2030,7 +2030,8 @@
   // highlighting a choice would assert a stored value we do not have.
   function settingsChoiceActive(view, choiceValue) {
     if (!view || !view.known) return false;
-    if (view.kind === "mode") return view.mode === choiceValue;
+    // US-421: the kind "mode" branch (and the always-null `mode` field it read)
+    // went with the CAR/WALL control above.
     return view.on === choiceValue;
   }
 
