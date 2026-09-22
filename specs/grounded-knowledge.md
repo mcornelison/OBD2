@@ -679,6 +679,12 @@ through the 5 s pitch time constant and never cancelled.** It is **not** the lat
 carries 0.747 °/s of bias. **ZUPT is the mechanism meant to cancel it, and ZUPT needs ≥ 5 confirmed
 stops — `stopCount = 0` after hours parked, because a parked car never accumulates stops.**
 
+🟢 **Datasheet check (DS-000189 Table 1): the bias is ORDINARY, not a fault.** Initial zero-rate
+offset tolerance is **±5 dps**; our 0.747 °/s is **15 % of it.** ⇒ **#3 is not a defective part —
+it is the zero-rate offset every MEMS gyro has and every fusion must subtract.** ZRO also drifts
+**±0.05 dps/°C**, so a 20 °C swing can move it ~1 °/s — **larger than the offset itself**, which is
+a second reason the estimate must be re-taken at every boot rather than stored as a constant.
+
 ### 🟢 The input to fix #3 is ALREADY COMPUTED AT EVERY BOOT, and thrown away
 
 `gyro_recovery.gyroLooksFaulted()` takes **20 stationary samples at startup** and computes
@@ -780,6 +786,11 @@ out, while the noise does**, under the same 5 s filter that turns the bias into 
 DLPF change moves the noise and leaves the bias untouched.** ⇒ **US-782 cannot move the error that
 is actually breaking pitch and grade.**
 
+🟢 **DLPF default VERIFIED against the datasheet (DS-000189 §10.2, §10.15):** `GYRO_CONFIG_1` and
+`ACCEL_CONFIG` both reset to **`0x01`** — DLPF **enabled**, `DLPFCFG = 0`. The driver's
+`initialize()` writes only the range bits, so the running configuration is **config 0**, exactly
+the story's premise.
+
 🟢 **Its baseline is on the record** — the SDs above, n = 5,332,340, at the power-on-default DLPF —
 **so if the DLPF question is ever asked again, the "before" arm already exists.** Nothing is lost by
 dropping it.
@@ -866,7 +877,46 @@ thermal range across those days is unknown — no ambient source exists on this 
 ambient, US-206). **A cold winter start is outside the observed range and the bound does not
 extend to it.** Re-check the first time the car is driven below ~5 °C.
 
+### 🔴 DATASHEET CHECK (2026-09-22) — the error is probably an OFFSET, not a SCALE. HOLD the constant.
+
+**Checked against TDK DS-000189 rev 1.3, Table 2** (`hardware/datasheets/icm-20948/`):
+
+    accel sensitivity, initial tolerance        +/-0.5 %        (component-level)
+    accel zero-g offset, initial tolerance      +/-25 mg component, +/-50 mg board-level
+    zero-g change vs temperature                +/-0.80 mg/degC
+    sensitivity change vs temperature           +/-0.026 %/degC
+
+**Our resting excess is +0.180 m/s² = +18.3 mg on the up-facing axis.**
+
+| Reading of the same +18.3 mg | Against the datasheet |
+|---|---|
+| a **sensitivity (scale)** error of +1.83 % | 🔴 **3.7× outside** the ±0.5 % typical tolerance |
+| a **zero-g offset** of +18.3 mg on the up axis | 🟢 **inside** ±25 mg (component) and ±50 mg (board) |
+
+⇒ 🔴 **The multiplicative model this section was built on is the LESS likely one.** ‖a‖ at rest
+cannot tell scale from offset — they give **identical** corrections parked. **In motion they
+diverge:** under 0.5 g braking a scale correction trims the longitudinal axis by 1.8 % that an
+offset would leave alone, and an offset stays constant through bumps that a scale would stretch.
+**"Trust gravity while the car moves" is US-783's entire purpose, so the model is load-bearing.**
+
+⇒ **RECOMMENDATION (Spool): HOLD `0.98200` for any in-motion use until the model is settled.**
+Nothing parked is lost by waiting — the two models agree at rest.
+
+🟢 **The falsifier is a tumble test and needs hands, not code:** read ‖a‖ with a **different axis
+pointing up** (board on its side, then on its end). **Offset ⇒ each orientation reads g plus that
+axis's own offset, differently. Scale ⇒ every orientation reads the same g × 1.018.** Six
+orientations give a full per-axis offset + scale calibration. ⚠️ The IMU is mounted in the car ⇒
+**human task**, and it voids the mount-4 characterisation, so pair it with the next remount.
+
+🔴 **And the temperature bound above says less than it appeared to.** The five-day spread was
+**1.7 mg**; at the datasheet's ±0.80 mg/°C zero-g drift that implies a **nearly isothermal week**
+(≈ 2 °C effective). ⇒ **It bounds little about temperature.** A 20 °C seasonal swing could move the
+zero-g level ~16 mg — **as large as the whole effect.** That strengthens Atlas's attestation
+condition below: **the measurement window is not a footnote, it is most of the meaning.**
+
 🟢 **ACCEPTED (Atlas, 2026-09-21): ship `0.98200` without a temperature term — WITH ONE CONDITION.
+⚠️ Superseded in part by the datasheet check immediately above — for at-rest use only until the
+scale-vs-offset question is settled.**
 The constant must carry the WINDOW IT WAS MEASURED OVER, in the config, not only in this spec.**
 Record alongside it: *HEALTHY state only · n = 5,706,847 parked samples · 2026-09-08 → 09-21 ·
 one September week, car mostly parked · not a temperature coefficient.* **Otherwise a January
@@ -1193,8 +1243,9 @@ a wiring defect. Nothing is being hidden.**
 - **CIO:** *this version of the IMU does not have a temperature register.*
 - **Spool, direct I²C read** at `0x69`, bank 0, no bank switch: `WHO_AM_I = 0xEA`,
   `BANK_SEL = 0x00`, `TEMP_OUT (0x39/0x3A)` raw 1952 / 1968 / 2016 / 2064 / 1952 — a plausible,
-  **dithering** value (≈ 26.9–27.2 °C by the recalled `/333.87 + 21` formula; ⚠️ that formula is
-  from memory of the TDK datasheet, which is **not** held in the repo).
+  **dithering** value (≈ 26.9–27.2 °C by `TEMP_degC = ((TEMP_OUT − RoomTemp_Offset)/333.87) + 21`
+  — 🟢 **verified 2026-09-22 against DS-000189 rev 1.3**, now held at `hardware/datasheets/icm-20948/`;
+  `WHO_AM_I` reset value `0xEA` verified there too).
 
 **Settled by `hardware/enclosures/case-imu-icm20948/datasheets/adafruit-tdk-invensense-icm-20948-9-dof-imu.pdf`
 (the Adafruit guide for this breakout) plus the installed driver source:**
