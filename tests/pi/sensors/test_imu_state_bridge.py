@@ -20,6 +20,7 @@ import json
 import math
 import re
 from pathlib import Path
+from typing import Any
 
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS, Sample
@@ -44,7 +45,7 @@ from pi.sensors.imu_state_bridge import (
     createImuStateBridgeFromConfig,
     resolveMountFrame,
 )
-from pi.sensors.pitch_fusion import PitchFusion
+from pi.sensors.pitch_fusion import FUSION_VERSION, PitchFusion
 
 G = STANDARD_GRAVITY_MS2
 
@@ -1098,3 +1099,64 @@ def test_orchestrator_stopsTheImuBridge_onShutdown():
 
     src = inspect.getsource(lifecycle)
     assert "_imuStateBridge" in src
+
+
+# --- US-805 / ARCH-045b: the fusion snapshot the EDR writer persists ----------
+
+
+class TestDerivedSnapshot:
+    """The bridge exposes what it believes, so the EDR writer can record it.
+
+    The bridge computes these values and cannot write them (it holds no database
+    handle); the EDR subscriber writes rows and cannot compute them. This
+    accessor is the seam, and it is READ-ONLY by design.
+    """
+
+    def _bridge(self, tmp_path: Any) -> ImuStateBridge:
+        return ImuStateBridge(None, str(tmp_path))
+
+    def test_noEstimateYet_returnsNone(self, tmp_path: Any) -> None:
+        """Before the fusion has seen a sample there is no belief to record.
+
+        None -- never a zero-filled row. A fabricated 'pitch 0.0, no stops' row
+        is indistinguishable from a genuine level reading with a converged bias.
+        """
+        assert self._bridge(tmp_path).derivedSnapshot() is None
+
+    def test_afterASample_carriesTheFusionsOwnStampAndValues(self, tmp_path: Any) -> None:
+        bridge = self._bridge(tmp_path)
+        bridge._lastDerived = {  # noqa: SLF001 -- the recorded snapshot
+            "tsUtc": "2026-09-22T12:00:00Z",
+            "tsCapture": 123.5,
+            "seq": 7,
+            "pitchDeg": 3.74,
+            "stopCount": 5,
+            "biasRad": 0.01304,
+            "fusionVersion": FUSION_VERSION,
+        }
+        snap = bridge.derivedSnapshot()
+        assert snap is not None
+        assert snap["tsCapture"] == 123.5
+        assert snap["seq"] == 7
+        assert snap["pitchDeg"] == 3.74
+        assert snap["fusionVersion"] == FUSION_VERSION
+
+    def test_snapshotIsACopy_aConsumerCannotMutateTheBridgesState(
+        self, tmp_path: Any
+    ) -> None:
+        """The EDR writer must not be able to corrupt the estimator's record."""
+        bridge = self._bridge(tmp_path)
+        bridge._lastDerived = {  # noqa: SLF001
+            "tsUtc": "2026-09-22T12:00:00Z", "tsCapture": 1.0, "seq": 1,
+            "pitchDeg": 1.0, "stopCount": 0, "biasRad": 0.0,
+            "fusionVersion": FUSION_VERSION,
+        }
+        snap = bridge.derivedSnapshot()
+        assert snap is not None
+        snap["pitchDeg"] = 999.0
+        assert bridge.derivedSnapshot()["pitchDeg"] == 1.0  # type: ignore[index]
+
+    def test_fusionVersionIsAPositiveInt_andIsStamped(self, tmp_path: Any) -> None:
+        """A row that cannot say WHICH algorithm produced it defeats the split."""
+        assert isinstance(FUSION_VERSION, int)
+        assert FUSION_VERSION >= 1

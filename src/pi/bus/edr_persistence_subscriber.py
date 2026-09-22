@@ -338,6 +338,18 @@ class EdrPersistenceSubscriber:
             self.closeWriteConnection()
 
     # -- ingest ----------------------------------------------------------------
+    def setDerivedSnapshotFn(
+        self, fn: Callable[[], dict[str, Any] | None] | None
+    ) -> None:
+        """Wire the fusion snapshot source AFTER construction (US-805).
+
+        A setter rather than a constructor argument because the orchestrator
+        builds and STARTS this subscriber before the IMU state bridge exists --
+        the bridge subscribes later so no early burst is missed. Reordering the
+        boot to suit this table would trade a real guarantee for a convenience.
+        """
+        self._derivedSnapshotFn = fn
+
     def handleSample(self, sample: Sample) -> bool:
         """Route one sample into its burst buffer.
 

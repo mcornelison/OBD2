@@ -76,6 +76,7 @@ __all__ = [
     "DEFAULT_ACCEL_TRUST_BAND",
     "DEFAULT_PITCH_TAU_S",
     "DEFAULT_ZUPT_MIN_STOPS",
+    "FUSION_VERSION",
     "DEFAULT_ZUPT_SPEED_MAX_AGE_S",
     "DEFAULT_ZUPT_WINDOW_STOPS",
     "GYRO_BIAS_MAX_RAD_S",
@@ -106,6 +107,18 @@ MAX_GRADE_PITCH_DEG = 85.0
 
 # Display precision for the published grade (a display view, not the estimate).
 _GRADE_DECIMALS = 1
+
+# US-805: which ALGORITHM produced a derived row, stamped into every
+# edr_imu_derived row. The CIO's reason for a separate table is that a raw
+# reading never changes while a computed value changes when the maths does --
+# and that is only recoverable later if each row says which maths it was.
+#
+# BUMP THIS whenever the fusion's OUTPUT for the same input would differ: the
+# filter form, tau, the trust band, the ZUPT rule, the bias model. Do NOT bump
+# it for refactors, logging or diagnostics that leave the numbers identical --
+# a version that changes without the output changing is noise, and a reader
+# comparing epochs would see a boundary that is not there.
+FUSION_VERSION: int = 1
 
 # SPOOL [EXACT: 3] -- the zero-velocity gate. A stop counts only once OBD speed
 # has been OBSERVED at zero across a span longer than this. LOAD-BEARING SME
