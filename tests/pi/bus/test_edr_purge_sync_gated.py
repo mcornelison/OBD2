@@ -32,9 +32,15 @@ import pi.bus.edr_persistence_subscriber as subscriberModule
 from common.time.helper import utcIsoNow
 from pi.bus.edr_persistence_subscriber import EdrPersistenceSubscriber
 from pi.obdii.database import ObdDatabase
+
+# US-805 / ARCH-045: derived from the sync contract, not a hardcoded pair. A
+# new EDR table used to inherit NONE of this guard -- its DELETE would sit
+# outside purgeExpired, ungated, and this test would still pass. The guard
+# must cover every EDR table by construction, not by someone remembering.
+from src.common.edr.sync_contract import EDR_SYNC_TABLES  # noqa: E402
 from src.pi.data import sync_log
 
-_EDR_TABLES = ("edr_imu_sample", "edr_light_sample")
+_EDR_TABLES = tuple(EDR_SYNC_TABLES)
 _OLD_TS = "2020-01-01T00:00:00Z"
 _PLENTY_FREE = 100 * 1000**3
 _LOW_FREE = 1 * 1000**3
@@ -49,9 +55,19 @@ def freshDb(tmp_path: Path) -> ObdDatabase:
 
 
 def _insertRow(db: ObdDatabase, table: str, ts: str) -> int:
+    # US-805: edr_imu_derived carries fusion_version NOT NULL with NO DEFAULT, on
+    # purpose -- a row that cannot say WHICH algorithm produced it is exactly the
+    # thing the separate table exists to prevent, and a DEFAULT would let a
+    # forgetful writer record a plausible WRONG version instead of failing. So
+    # the column is supplied here rather than softened in the schema.
+    extraCols, extraVals = ("", "")
+    if table == "edr_imu_derived":
+        extraCols, extraVals = ", fusion_version", ", 1"
     with db.connect() as conn:
         cur = conn.execute(
-            f"INSERT INTO {table} (ts_utc, ts_capture, seq) VALUES (?, 0.0, 1)", (ts,)
+            f"INSERT INTO {table} (ts_utc, ts_capture, seq{extraCols}) "
+            f"VALUES (?, 0.0, 1{extraVals})",
+            (ts,),
         )
         return int(cur.lastrowid)
 
@@ -97,7 +113,7 @@ class TestSyncGatedPurge:
         """
         layout = _seedBothSidesOfMark(freshDb)
 
-        imuDeleted, lightDeleted = _subscriber(freshDb).purgeExpired()
+        imuDeleted, lightDeleted, _derived = _subscriber(freshDb).purgeExpired()
 
         assert (imuDeleted, lightDeleted) == (2, 2)
         for table in _EDR_TABLES:
@@ -112,7 +128,7 @@ class TestSyncGatedPurge:
         _setMark(freshDb, "edr_imu_sample", imuIds[2])
         _setMark(freshDb, "edr_light_sample", lightIds[0])
 
-        imuDeleted, lightDeleted = _subscriber(freshDb).purgeExpired()
+        imuDeleted, lightDeleted, _derived = _subscriber(freshDb).purgeExpired()
 
         assert (imuDeleted, lightDeleted) == (3, 1)
         assert _ids(freshDb, "edr_light_sample") == lightIds[1:]
@@ -124,7 +140,7 @@ class TestSyncGatedPurge:
         for table in _EDR_TABLES:
             _insertRow(freshDb, table, _OLD_TS)
 
-        assert _subscriber(freshDb).purgeExpired() == (0, 0)
+        assert _subscriber(freshDb).purgeExpired() == (0, 0, 0)
         for table in _EDR_TABLES:
             assert len(_ids(freshDb, table)) == 1
 
@@ -149,7 +165,9 @@ class TestUnreadableMark:
         with caplog.at_level(logging.WARNING, logger=subscriberModule.__name__):
             result = _subscriber(freshDb).purgeExpired()
 
-        assert result == (0, 0)
+        # US-805: THREE counts -- imu, light, derived -- never two with the
+        # derived rows folded into the imu one.
+        assert result == (0, 0, 0)
         assert {t: _ids(freshDb, t) for t in _EDR_TABLES} == before
         assert any(
             "high-water" in r.getMessage() and "disk I/O error" in r.getMessage()
@@ -172,7 +190,7 @@ class TestUnreadableMark:
 
         monkeypatch.setattr(subscriberModule.sync_log, "getHighWaterMark", _raiseOnLight)
 
-        assert _subscriber(freshDb).purgeExpired() == (0, 0)
+        assert _subscriber(freshDb).purgeExpired() == (0, 0, 0)
         assert {t: _ids(freshDb, t) for t in _EDR_TABLES} == before
 
     def test_purge_syncLogTableMissing_deletesNothing(self, freshDb: ObdDatabase) -> None:
@@ -181,7 +199,7 @@ class TestUnreadableMark:
         for table in _EDR_TABLES:
             _insertRow(freshDb, table, _OLD_TS)
 
-        assert _subscriber(freshDb).purgeExpired() == (0, 0)
+        assert _subscriber(freshDb).purgeExpired() == (0, 0, 0)
         for table in _EDR_TABLES:
             assert len(_ids(freshDb, table)) == 1
         with freshDb.connect() as conn:
@@ -226,7 +244,7 @@ class TestLowDisk:
         with caplog.at_level(logging.WARNING, logger=subscriberModule.__name__):
             result = _subscriber(freshDb, freeBytes=_LOW_FREE).purgeExpired()
 
-        assert result == (2, 2)
+        assert result == (2, 2, 2)
         for table in _EDR_TABLES:
             remaining = set(_ids(freshDb, table))
             assert set(layout[table]["oldUnsynced"]) <= remaining
@@ -241,7 +259,7 @@ class TestLowDisk:
             _insertRow(freshDb, table, _OLD_TS)
             _setMark(freshDb, table, 0)
 
-        assert _subscriber(freshDb, freeBytes=0).purgeExpired() == (0, 0)
+        assert _subscriber(freshDb, freeBytes=0).purgeExpired() == (0, 0, 0)
         for table in _EDR_TABLES:
             assert len(_ids(freshDb, table)) == 1
 
@@ -269,7 +287,7 @@ class TestLowDisk:
 
         sub = EdrPersistenceSubscriber(None, freshDb, retentionDays=7, freeDiskBytesFn=_raise)
         with caplog.at_level(logging.WARNING, logger=subscriberModule.__name__):
-            assert sub.purgeExpired() == (2, 2)
+            assert sub.purgeExpired() == (2, 2, 2)
 
         for table in _EDR_TABLES:
             assert set(layout[table]["oldUnsynced"]) <= set(_ids(freshDb, table))

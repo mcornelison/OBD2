@@ -85,7 +85,49 @@ CREATE TABLE IF NOT EXISTS edr_light_sample (
 );
 """
 
+# --- edr_imu_derived ----------------------------------------------------------
+# US-805 (ARCH-045). The PitchFusion OUTPUTS, kept OUT of edr_imu_sample by CIO
+# ruling 2026-09-22: a raw reading never changes, a computed value changes when
+# the ALGORITHM changes. Mixed into one table, early and late rows would mean
+# subtly different things with nothing marking where the maths moved.
+#
+# Written by imu_state_bridge -- the component that ALREADY HOLDS the values, so
+# no new coupling -- decimated to imu.persistHz with the SAME keep-1-of-N factor
+# edr_persistence_subscriber uses, so a row lands on the same sample index as its
+# raw sibling and ts_capture matches EXACTLY rather than approximately. NOT the
+# 4 Hz fusion rate: raw persists at 2 Hz, so a 4 Hz derived table would leave
+# half its rows with no possible sibling and force interpolation of a fusion
+# output against its own input.
+#
+# NO FOREIGN KEY to edr_imu_sample.id, deliberately: that id is the PI's id-space
+# and arrives on the server as source_id (A-45 -- a row manually minted into it
+# was silently overwritten by the Pi's own). The join is
+# (source_device, ts_capture), which is why ts_capture is NOT NULL here.
+SCHEMA_EDR_IMU_DERIVED = f"""
+CREATE TABLE IF NOT EXISTS edr_imu_derived (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_utc        TEXT    NOT NULL,          -- EVENT time (ssot-design-pattern A-double-prime)
+    ts_capture    REAL    NOT NULL,          -- monotonic seconds; THE join key to the raw sibling
+    seq           INTEGER NOT NULL,          -- per-poll producer counter, as the raw table
+    pitch_deg     REAL,                      -- NULL under gyro_implausible -- that null is a FINDING
+    stop_count    INTEGER,                   -- confirmed ZUPT stops in the rolling bias window
+    bias_rad      REAL,                      -- mount-tilt bias subtracted from the fused pitch
+    fusion_version INTEGER NOT NULL,         -- WHICH algorithm produced the row; the point of the split
+    drive_id      INTEGER,                   -- NULL when no active RUNNING drive, as the raw table
+    data_source   TEXT    NOT NULL DEFAULT 'real'
+                  CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+    schema_version INTEGER NOT NULL DEFAULT {SCHEMA_VERSION}
+);
+"""
+
 # --- Indexes (drive_id + ts on both tables) -- ADR section 2.2 ----------------
+INDEX_EDR_IMU_DERIVED_DRIVE_ID = (
+    "CREATE INDEX IF NOT EXISTS ix_edr_imu_derived_drive_id "
+    "ON edr_imu_derived(drive_id);"
+)
+INDEX_EDR_IMU_DERIVED_TS = (
+    "CREATE INDEX IF NOT EXISTS ix_edr_imu_derived_ts ON edr_imu_derived(ts_utc);"
+)
 INDEX_EDR_IMU_SAMPLE_DRIVE_ID = (
     "CREATE INDEX IF NOT EXISTS ix_edr_imu_sample_drive_id "
     "ON edr_imu_sample(drive_id);"
@@ -106,6 +148,7 @@ INDEX_EDR_LIGHT_SAMPLE_TS = (
 EDR_SCHEMAS: list[tuple[str, str]] = [
     ("edr_imu_sample", SCHEMA_EDR_IMU_SAMPLE),
     ("edr_light_sample", SCHEMA_EDR_LIGHT_SAMPLE),
+    ("edr_imu_derived", SCHEMA_EDR_IMU_DERIVED),
 ]
 
 EDR_INDEXES: list[tuple[str, str]] = [
@@ -113,6 +156,8 @@ EDR_INDEXES: list[tuple[str, str]] = [
     ("ix_edr_imu_sample_ts", INDEX_EDR_IMU_SAMPLE_TS),
     ("ix_edr_light_sample_drive_id", INDEX_EDR_LIGHT_SAMPLE_DRIVE_ID),
     ("ix_edr_light_sample_ts", INDEX_EDR_LIGHT_SAMPLE_TS),
+    ("ix_edr_imu_derived_drive_id", INDEX_EDR_IMU_DERIVED_DRIVE_ID),
+    ("ix_edr_imu_derived_ts", INDEX_EDR_IMU_DERIVED_TS),
 ]
 
 # --- Structured column list (US-764) -------------------------------------------
@@ -141,6 +186,24 @@ EDR_COLUMNS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("data_source", "label", False),
         ("schema_version", "int", False),
     ),
+    # US-805: PitchFusion OUTPUTS, deliberately NOT columns of edr_imu_sample.
+    # `pitch_deg` is NULLABLE because pitchRad returns None under
+    # gyro_implausible (US-749) and that null is the only evidence the guard
+    # fired; `fusion_version` is NOT NULL because a derived table that cannot
+    # say WHICH algorithm produced a row inherits the defect the split exists
+    # to prevent.
+    "edr_imu_derived": (
+        ("ts_utc", "iso_ts", False),
+        ("ts_capture", "monotonic_s", False),
+        ("seq", "int", False),
+        ("pitch_deg", "float", True),
+        ("stop_count", "int", True),
+        ("bias_rad", "float", True),
+        ("fusion_version", "int", False),
+        ("drive_id", "int", True),
+        ("data_source", "label", False),
+        ("schema_version", "int", False),
+    ),
     "edr_light_sample": (
         ("ts_utc", "iso_ts", False),
         ("ts_capture", "monotonic_s", False),
@@ -161,10 +224,13 @@ __all__ = [
     "SCHEMA_VERSION",
     "SCHEMA_EDR_IMU_SAMPLE",
     "SCHEMA_EDR_LIGHT_SAMPLE",
+    "SCHEMA_EDR_IMU_DERIVED",
     "INDEX_EDR_IMU_SAMPLE_DRIVE_ID",
     "INDEX_EDR_IMU_SAMPLE_TS",
     "INDEX_EDR_LIGHT_SAMPLE_DRIVE_ID",
     "INDEX_EDR_LIGHT_SAMPLE_TS",
+    "INDEX_EDR_IMU_DERIVED_DRIVE_ID",
+    "INDEX_EDR_IMU_DERIVED_TS",
     "EDR_SCHEMAS",
     "EDR_INDEXES",
     "EDR_COLUMNS",

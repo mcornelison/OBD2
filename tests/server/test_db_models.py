@@ -449,8 +449,8 @@ class TestTableCount:
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 32, (
-            f"Expected 32 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 33, (
+            f"Expected 33 tables, got {len(tableNames)}: {tableNames}"
         )
         # ARCH-020 (Atlas, 2026-09-01): 28 -> 30. maintenance_log and
         # maintenance_schedule give the vehicle's service history a durable home;
@@ -467,6 +467,11 @@ class TestTableCount:
         # 30 -> 32 would pass with ANY two tables added, which is not a check.
         assert 'edr_imu_sample' in tableNames
         assert 'edr_light_sample' in tableNames
+        # US-805 (F-125, ARCH-045): 32 -> 33.  edr_imu_derived holds the
+        # PitchFusion OUTPUTS, kept out of the raw table because a computed
+        # value changes when the ALGORITHM changes and a raw reading never
+        # does.  Named, not left to the count, for the same reason as above.
+        assert 'edr_imu_derived' in tableNames
 
 
 # ---- Connection Module Tests --------------------------------------------------

@@ -188,6 +188,7 @@ class EdrPersistenceSubscriber:
         logGate: EdrLogGate | None = None,
         gateStateEmitFn: Callable[[EdrLogGate], None] | None = None,
         freeDiskBytesFn: Callable[[], int] | None = None,
+        derivedSnapshotFn: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         """Bind the subscriber to its source subscription + write target.
 
@@ -213,6 +214,14 @@ class EdrPersistenceSubscriber:
             freeDiskBytesFn: Free bytes on the database volume, read by the
                 purge's low-disk warning (US-768). None measures the volume
                 holding ``database.dbPath``.
+            derivedSnapshotFn: US-805. Returns the PitchFusion estimator's
+                current belief -- ``{tsUtc, tsCapture, seq, pitchDeg,
+                stopCount, biasRad, fusionVersion}`` -- or None when it has
+                no estimate yet. Called once per persisted IMU burst; the
+                returned row is written to ``edr_imu_derived`` in the SAME
+                transaction as its raw sibling, so the pair lands together
+                or not at all. None (the default) writes no derived rows and
+                leaves this subscriber's behaviour exactly as it was.
         """
         self._sub = subscription
         self._database = database
@@ -229,6 +238,7 @@ class EdrPersistenceSubscriber:
         self._freeDiskBytesFn = (
             freeDiskBytesFn if freeDiskBytesFn is not None else self._freeDiskBytes
         )
+        self._derivedSnapshotFn = derivedSnapshotFn
         self._lastPurgeMono = self._monotonic()
         # Per-table burst buffers: {"seq", "fields": {name: value}, "tsUtc",
         # "tsCapture", "dataSource"}. None == no burst in progress.
@@ -328,6 +338,18 @@ class EdrPersistenceSubscriber:
             self.closeWriteConnection()
 
     # -- ingest ----------------------------------------------------------------
+    def setDerivedSnapshotFn(
+        self, fn: Callable[[], dict[str, Any] | None] | None
+    ) -> None:
+        """Wire the fusion snapshot source AFTER construction (US-805).
+
+        A setter rather than a constructor argument because the orchestrator
+        builds and STARTS this subscriber before the IMU state bridge exists --
+        the bridge subscribes later so no early burst is missed. Reordering the
+        boot to suit this table would trade a real guarantee for a convenience.
+        """
+        self._derivedSnapshotFn = fn
+
     def handleSample(self, sample: Sample) -> bool:
         """Route one sample into its burst buffer.
 
@@ -457,7 +479,46 @@ class EdrPersistenceSubscriber:
                 driveId, buf["dataSource"], SCHEMA_VERSION,
             ),
         )
+        # US-805: the derived sibling rides the SAME transaction, so the pair
+        # lands together or not at all -- never a belief whose raw evidence is
+        # missing. It is stamped with the FUSION's OWN ts_capture/seq, not this
+        # burst's: the estimator may not have processed this sample yet, and
+        # claiming it had would be a lie about when the belief was held.
+        self._writeDerivedRow(conn, driveId, buf["dataSource"])
         conn.commit()
+
+    def _writeDerivedRow(self, conn: Any, driveId: int | None, dataSource: str) -> None:
+        """Append the PitchFusion snapshot row, if one is available (US-805).
+
+        Deliberately forgiving: no estimate yet, no snapshot function wired, or a
+        snapshot that raises all leave the RAW row untouched and simply write no
+        derived row. A derived value is a convenience; the measurement is not,
+        and a fault in the former must never cost the latter.
+        """
+        if self._derivedSnapshotFn is None:
+            return
+        try:
+            snap = self._derivedSnapshotFn()
+        except Exception as e:  # noqa: BLE001 -- a derived value never costs the reading
+            logger.warning("EDR derived snapshot unavailable (seq=%s): %s", None, e)
+            return
+        if not snap:
+            return
+        try:
+            conn.execute(
+                "INSERT INTO edr_imu_derived "
+                "(ts_utc, ts_capture, seq, pitch_deg, stop_count, bias_rad, "
+                "fusion_version, drive_id, data_source, schema_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    snap["tsUtc"], snap["tsCapture"], snap["seq"],
+                    snap["pitchDeg"], snap["stopCount"], snap["biasRad"],
+                    snap["fusionVersion"],
+                    driveId, dataSource, SCHEMA_VERSION,
+                ),
+            )
+        except Exception as e:  # noqa: BLE001 -- as above
+            logger.warning("EDR derived row write failed: %s", e)
 
     def _writeLightRow(self, buf: dict[str, Any], driveId: int | None) -> None:
         fields = buf["fields"]
@@ -496,17 +557,18 @@ class EdrPersistenceSubscriber:
             return False
         self._lastPurgeMono = now
         try:
-            imuDeleted, lightDeleted = self.purgeExpired()
-            if imuDeleted or lightDeleted:
+            imuDeleted, lightDeleted, derivedDeleted = self.purgeExpired()
+            if imuDeleted or lightDeleted or derivedDeleted:
                 logger.info(
-                    "EDR retention purge: deleted imu=%d light=%d (synced, older than %d days)",
-                    imuDeleted, lightDeleted, self._retentionDays,
+                    "EDR retention purge: deleted imu=%d light=%d derived=%d "
+                    "(synced, older than %d days)",
+                    imuDeleted, lightDeleted, derivedDeleted, self._retentionDays,
                 )
         except Exception as e:  # noqa: BLE001 -- purge failure is non-fatal
             logger.warning("EDR retention purge failed: %s", e)
         return True
 
-    def purgeExpired(self) -> tuple[int, int]:
+    def purgeExpired(self) -> tuple[int, int, int]:
         """Delete rows the server already has that are older than ``retentionDays``.
 
         US-768: this is the ONLY EDR delete. A row goes only when it is past the
@@ -518,7 +580,12 @@ class EdrPersistenceSubscriber:
         to unsynced rows. (US-762's whole-disk guard is a separate mechanism.)
 
         Returns:
-            (imuRowsDeleted, lightRowsDeleted).
+            (imuRowsDeleted, lightRowsDeleted, derivedRowsDeleted).
+
+            US-805: THREE counts, not two with the derived rows folded into the
+            imu one. Summing two tables into a single number would report "imu
+            deleted 4" when it deleted 2 -- a quantity that names the wrong
+            thing is how a number outlives the scrutiny it deserves.
         """
         cutoff = (self._nowUtcFn() - timedelta(days=self._retentionDays)).strftime(
             CANONICAL_ISO_FORMAT
@@ -528,19 +595,31 @@ class EdrPersistenceSubscriber:
             try:
                 imuMark = sync_log.getHighWaterMark(conn, "edr_imu_sample")[0]
                 lightMark = sync_log.getHighWaterMark(conn, "edr_light_sample")[0]
+                derivedMark = sync_log.getHighWaterMark(conn, "edr_imu_derived")[0]
             except Exception as e:  # noqa: BLE001 -- any unreadable mark deletes nothing
                 logger.warning(
                     "EDR retention purge: sync high-water mark unreadable (%s) -- "
                     "deleting nothing", e,
                 )
-                return (0, 0)
+                return (0, 0, 0)
             imuDeleted = conn.execute(
                 "DELETE FROM edr_imu_sample WHERE ts_utc < ? AND id <= ?", (cutoff, imuMark)
             ).rowcount
             lightDeleted = conn.execute(
                 "DELETE FROM edr_light_sample WHERE ts_utc < ? AND id <= ?", (cutoff, lightMark)
             ).rowcount
-        return (imuDeleted, lightDeleted)
+            # US-805: the derived table is PARENT-SLAVED -- purged under the SAME
+            # cutoff, in the SAME transaction, and gated on BOTH its own mark and
+            # the RAW table's. Its own mark alone is not enough: if derived has
+            # synced and raw has not, an independent purge would delete the
+            # measurement's belief while the measurement stays, or (worse, the
+            # other way round) leave a BELIEF WHOSE RAW EVIDENCE IS GONE -- the
+            # un-re-derivable value the separate table exists to prevent.
+            derivedDeleted = conn.execute(
+                "DELETE FROM edr_imu_derived WHERE ts_utc < ? AND id <= ?",
+                (cutoff, derivedMark),
+            ).rowcount
+        return (imuDeleted, lightDeleted, derivedDeleted)
 
     def _freeDiskBytes(self) -> int:
         """Free bytes on the volume that holds the database file."""

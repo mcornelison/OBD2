@@ -32,6 +32,7 @@ from src.common.edr.sensor_schema import (
     EDR_COLUMNS,
     EDR_INDEXES,
     EDR_SCHEMAS,
+    SCHEMA_EDR_IMU_DERIVED,
     SCHEMA_EDR_IMU_SAMPLE,
     SCHEMA_EDR_LIGHT_SAMPLE,
 )
@@ -50,6 +51,7 @@ from src.common.edr.sync_contract import EDR_SYNC_TABLES, SHUTDOWN_DRAIN_EXCLUDE
 PI_DDL: dict[str, str] = {
     "edr_imu_sample": SCHEMA_EDR_IMU_SAMPLE,
     "edr_light_sample": SCHEMA_EDR_LIGHT_SAMPLE,
+    "edr_imu_derived": SCHEMA_EDR_IMU_DERIVED,   # US-805
 }
 
 # The SQLite declared type each ruled kind must carry on the Pi side.
@@ -74,6 +76,13 @@ D8_DDL_SHA256: dict[str, str] = {
         "8a0342edc6edc3f36183b95597db8f074d059ad904be0683a9228991a1da818b"
     ),
     "ix_edr_light_sample_ts": "8e450bc140a46d6452032f7662a025cd1d45712f6736cf284ffcf75ed4fa4ae9",
+    # US-805 / ARCH-045, pinned 2026-09-22 at creation. Same purpose as the
+    # D8 entries above: these strings may not drift silently once shipped.
+    "edr_imu_derived": "f7ac9b1fb2c0a8d646ef2f9492019f7ffe5d75264a78a4ecd8090b1ba57eacf1",
+    "ix_edr_imu_derived_drive_id": (
+        "c20af6ef68e87fa568a87d36d10c709898df2f9fea69f2efa348470849d2b490"
+    ),
+    "ix_edr_imu_derived_ts": "2fa51a0d81ead089512c18fc4097fdf6e65b29a557f9f972bf3af5c809ef6214",
 }
 
 FIRST_MONTH = date(2026, 9, 1)
@@ -128,7 +137,14 @@ class TestEdrColumnsPin:
             conn.close()
         assert pks == ["id"]
 
-    @pytest.mark.parametrize("table", ["edr_imu_sample", "edr_light_sample"])
+    # US-805 / ARCH-045: parametrized over EDR_COLUMNS itself, not a hardcoded
+    # pair. A new table used to inherit the PIN without ever inheriting the
+    # DEMONSTRATION that the pin discriminates for it -- the guard existed and
+    # had never been shown to fail. Deriving the table LIST from the registry
+    # is not circular: the mutation and the assertion are still independent,
+    # and it makes mutation coverage self-extending (design-patterns.md SS7 --
+    # pin the DIRECTION, not the MEMBERSHIP).
+    @pytest.mark.parametrize("table", sorted(EDR_COLUMNS))
     def test_pin_columnAddedToEdrColumnsAlone_failsNamingTheColumn(self, table: str) -> None:
         mutated = dict(EDR_COLUMNS)
         mutated[table] = (*EDR_COLUMNS[table], ("mutant_col", "float", True))
@@ -176,7 +192,11 @@ class TestPiDdlByteIdentical:
 
 class TestSyncContract:
     def test_edrSyncTables_areTheTwoEdrTables(self) -> None:
-        assert EDR_SYNC_TABLES == ("edr_imu_sample", "edr_light_sample")
+        assert EDR_SYNC_TABLES == (
+            "edr_imu_sample",
+            "edr_light_sample",
+            "edr_imu_derived",   # US-805
+        )
 
     def test_shutdownDrainExcluded_containsEveryEdrTable(self) -> None:
         assert SHUTDOWN_DRAIN_EXCLUDED_TABLES == frozenset(EDR_SYNC_TABLES)
@@ -322,3 +342,77 @@ class TestCli:
     def test_unknownTable_exitsTwo(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert main(["drop-partition", "--table", "nope", "--month", "2024-09"]) == 2
         assert "nope" in capsys.readouterr().err
+
+
+# --- US-805 / ARCH-045: the derived-values sibling table -----------------------
+# Atlas, 2026-09-22, under CIO override (see board/wip/ARCH-045.md). The CIO
+# ruled a SEPARATE TABLE: a raw reading never changes, a computed value changes
+# when the ALGORITHM changes, so mixing them leaves early and late rows meaning
+# subtly different things with nothing marking where the maths moved.
+DERIVED_TABLE = "edr_imu_derived"
+
+#: The ruled column list, in order. Kept here as a LITERAL rather than read from
+#: EDR_COLUMNS: a test that derives its expectation from the thing under test
+#: cannot fail. (design-patterns.md SS6 -- the inert guard.)
+_RULED_DERIVED_COLUMNS: tuple[tuple[str, str, bool], ...] = (
+    ("ts_utc", "iso_ts", False),
+    ("ts_capture", "monotonic_s", False),
+    ("seq", "int", False),
+    ("pitch_deg", "float", True),
+    ("stop_count", "int", True),
+    ("bias_rad", "float", True),
+    ("fusion_version", "int", False),
+    ("drive_id", "int", True),
+    ("data_source", "label", False),
+    ("schema_version", "int", False),
+)
+
+
+class TestEdrImuDerivedContract:
+    """US-805: the derived table joins the contract on the same terms as raw."""
+
+    def test_derivedTable_isRegisteredInEdrColumns(self) -> None:
+        assert DERIVED_TABLE in EDR_COLUMNS
+
+    def test_derivedColumns_matchTheRuling_namesOrderKindAndNullability(self) -> None:
+        assert EDR_COLUMNS[DERIVED_TABLE] == _RULED_DERIVED_COLUMNS
+
+    def test_fusionVersion_isNotNull(self) -> None:
+        """Without it the table cannot say WHICH algorithm produced a row.
+
+        That is the defect the separate table exists to prevent, so a nullable
+        fusion_version would buy a second table and nothing else.
+        """
+        kinds = {name: (kind, nullable) for name, kind, nullable in EDR_COLUMNS[DERIVED_TABLE]}
+        assert kinds["fusion_version"] == ("int", False)
+
+    def test_pitchDeg_isNULLABLE(self) -> None:
+        """`pitchRad` returns None under gyro_implausible (US-749).
+
+        That null is a FINDING -- the only evidence the guard fired. A writer or
+        a schema that coerces it to 0.0 destroys it.
+        """
+        kinds = {name: (kind, nullable) for name, kind, nullable in EDR_COLUMNS[DERIVED_TABLE]}
+        assert kinds["pitch_deg"] == ("float", True)
+
+    def test_derivedTable_hasPiDdlAndIndexes(self) -> None:
+        assert DERIVED_TABLE in {name for name, _ in EDR_SCHEMAS}
+        indexed = {name for name, _ in EDR_INDEXES}
+        assert f"ix_{DERIVED_TABLE}_ts" in indexed
+        assert f"ix_{DERIVED_TABLE}_drive_id" in indexed
+
+    def test_derivedTable_syncsLikeTheRawTables(self) -> None:
+        """It is EDR data: synced, and excluded from the shutdown drain."""
+        assert DERIVED_TABLE in EDR_SYNC_TABLES
+        assert DERIVED_TABLE in SHUTDOWN_DRAIN_EXCLUDED_TABLES
+
+    def test_derivedTable_carriesNoForeignKeyToTheRawPk(self) -> None:
+        """A-45: the Pi `id` is the PI's id-space; on the server it is source_id.
+
+        A cross-tier FK on a synced surrogate is fragile by construction -- the
+        join is (source_device, ts_capture), which is why ts_capture is NOT NULL.
+        """
+        ddl = dict(EDR_SCHEMAS)[DERIVED_TABLE]
+        assert "REFERENCES" not in ddl.upper()
+        kinds = {name: (kind, nullable) for name, kind, nullable in EDR_COLUMNS[DERIVED_TABLE]}
+        assert kinds["ts_capture"] == ("monotonic_s", False)

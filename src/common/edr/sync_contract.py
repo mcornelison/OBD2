@@ -27,7 +27,14 @@ on the next ordinary sync tick. Every EDR table is in the exclusion set.
 
 from __future__ import annotations
 
-EDR_SYNC_TABLES: tuple[str, ...] = ("edr_imu_sample", "edr_light_sample")
+EDR_SYNC_TABLES: tuple[str, ...] = (
+    "edr_imu_sample",
+    "edr_light_sample",
+    # US-805: the PitchFusion-output sibling. It is EDR data on the same
+    # terms as the raw tables -- id-cursor delta synced, and skipped by the
+    # power-loss drain, whose budget is for drive data.
+    "edr_imu_derived",
+)
 
 SHUTDOWN_DRAIN_EXCLUDED_TABLES: frozenset[str] = frozenset(EDR_SYNC_TABLES)
 

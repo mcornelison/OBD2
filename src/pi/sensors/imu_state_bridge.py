@@ -110,6 +110,7 @@ from pi.sensors.pitch_fusion import (
     DEFAULT_ZUPT_MIN_STOPS,
     DEFAULT_ZUPT_SPEED_MAX_AGE_S,
     DEFAULT_ZUPT_WINDOW_STOPS,
+    FUSION_VERSION,
     MAX_GRADE_PITCH_DEG,
     MIN_GRAVITY_MS2,
     STANDARD_GRAVITY_MS2,
@@ -778,6 +779,11 @@ class ImuStateBridge:
         self._lastWriteCapture: float | None = None
         # US-708: the last ZUPT stop count written to the log (change-only).
         self._lastLoggedStopCount = 0
+        # US-805: the estimator's latest belief, recorded at the SENSOR rate
+        # so the EDR writer can persist WHAT WAS BELIEVED and WHEN. None until
+        # the fusion has an estimate -- never a zero-filled placeholder, which
+        # would be indistinguishable from a genuine level reading.
+        self._lastDerived: dict[str, Any] | None = None
         self._lastLoggedGyroImplausible = False
         # US-564: raw channel topic -> the gate reason currently refusing it.
         self._gatedChannels: dict[str, str] = {}
@@ -950,6 +956,36 @@ class ImuStateBridge:
             "biasRad": self._pitchFusion.biasRad,
         }
 
+    def _recordDerived(self, sample: Any, capture: float) -> None:
+        """Snapshot the estimator's belief, stamped with THIS sample (US-805).
+
+        Taken at the SENSOR rate, immediately after ``update()``, so the stamp
+        names the sample the belief was computed from. The EDR writer persists
+        it at its own decimated cadence and may therefore skip snapshots -- but
+        whichever one it takes carries an HONEST ts_capture rather than the
+        timestamp of whatever burst the writer happened to be flushing.
+        """
+        pitchRad = self._pitchFusion.pitchRad
+        self._lastDerived = {
+            "tsUtc": getattr(sample, "tsUtc", None) or self._nowIsoFn(),
+            "tsCapture": capture,
+            "seq": getattr(sample, "seq", None),
+            # None under gyro_implausible -- preserved, never coerced to 0.0.
+            "pitchDeg": None if pitchRad is None else math.degrees(pitchRad),
+            "stopCount": self._pitchFusion.stopCount,
+            "biasRad": self._pitchFusion.biasRad,
+            "fusionVersion": FUSION_VERSION,
+        }
+
+    def derivedSnapshot(self) -> dict[str, Any] | None:
+        """The estimator's current belief, or None when it has none (US-805).
+
+        READ-ONLY seam: the bridge computes these values and holds no database
+        handle; the EDR persistence subscriber writes rows and cannot compute
+        them. Returns a COPY, so a consumer cannot mutate the estimator's record.
+        """
+        return None if self._lastDerived is None else dict(self._lastDerived)
+
     def _logStopCountChange(self) -> None:
         """Log the ZUPT bias whenever a stop lands in the window.
 
@@ -1004,6 +1040,7 @@ class ImuStateBridge:
         # A gyro integrated only on the ~10 Hz frames that happen to be written
         # would silently throw away four fifths of the rotation.
         self._pitchFusion.update(accel, self._freshGyro(capture), capture)
+        self._recordDerived(sample, capture)
         self._logStopCountChange()
         self._logGyroPlausibilityChange()
         if not self._shouldWrite(capture):

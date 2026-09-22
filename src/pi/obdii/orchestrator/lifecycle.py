@@ -1800,6 +1800,15 @@ class LifecycleMixin:
             imuBridge = createImuStateBridgeFromConfig(self._config, bus)
             if imuBridge is not None:
                 imuBridge.start()
+                # US-805: hand the EDR writer a READ-ONLY view of what the
+                # estimator believes, so pitch/stopCount/biasRad are persisted
+                # beside the raw sample they were computed from. Wired HERE
+                # rather than at construction because the subscriber is built
+                # and started above, before this bridge exists -- and that
+                # ordering is deliberate (readers must not publish before their
+                # consumers are subscribed). Unwired, the subscriber writes no
+                # derived rows and behaves exactly as it did before.
+                edrSubscriber.setDerivedSnapshotFn(imuBridge.derivedSnapshot)
             self._imuStateBridge = imuBridge
             for reader in readers:
                 reader.start()

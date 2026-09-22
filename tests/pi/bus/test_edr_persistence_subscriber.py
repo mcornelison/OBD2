@@ -307,7 +307,7 @@ class TestRetentionPurge:
         self._markAllSynced(freshDb)
 
         sub = EdrPersistenceSubscriber(None, freshDb, retentionDays=7)
-        imuDeleted, lightDeleted = sub.purgeExpired()
+        imuDeleted, lightDeleted, _derived = sub.purgeExpired()
 
         assert imuDeleted == 1
         assert lightDeleted == 1
@@ -326,7 +326,7 @@ class TestRetentionPurge:
         sub = EdrPersistenceSubscriber(
             None, freshDb, retentionDays=7, nowUtcFn=lambda: future
         )
-        imuDeleted, _ = sub.purgeExpired()
+        imuDeleted, _, _derived = sub.purgeExpired()
         assert imuDeleted == 1
 
     def test_maybePurgeGatedByInterval(self, freshDb: ObdDatabase) -> None:
