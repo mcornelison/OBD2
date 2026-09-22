@@ -855,9 +855,102 @@ licence to use the nearest available number.**
 **`void if`** — the cell is changed again, or the X1209's gauge is replaced with a part whose CRATE
 register works, or a cell-temperature sensor is fitted.
 
+### 🔴 The cold-start guard asks SYSTEM UPTIME a question only the GAUGE can answer
+
+`soc_calibration.py` guards the register SOC read against a cold-start window, and it derives "has
+the gauge finished calibrating?" from **`/proc/uptime`**. Its own docstring states the assumption:
+*"the MAX17048 fuel gauge starts calibrating when the rig powers up, so system uptime is the
+available proxy."*
+
+🔴 **System uptime is a proxy for GAUGE uptime, and the two only coincide when the Pi and the cell
+power up together.** The MAX17048 is powered *by the cell*, so **removing the cell always
+power-on-resets the gauge** — but the Pi can keep running on the X1209's USB-C input throughout.
+⇒ **Swap a cell on a running Pi and the gauge resets while system uptime keeps climbing. The guard
+is blind in exactly the case it exists for, and it will publish a re-converging SOC as a calibrated
+reading.**
+
+⚠️ **On 2026-09-21 the two happened to coincide** — the Pi had died at 18:45:14Z and the cell went in
+at 18:50Z — **so this did not bite, and that is luck, not design.** A guard that is correct by
+coincidence has not been tested.
+
+🟢 **THE DESIGNED INSTRUMENT EXISTS AND IS UNUSED: `STATUS` (0x1A) carries an `RI` (Reset Indicator)
+bit**, set by the gauge on power-on-reset and held until the host clears it. **That answers "did
+this gauge just reset?" directly, with no proxy and no clock.** `STATUS` is **not read anywhere in
+the repository** — `ups_monitor.py` defines VCELL/SOC/MODE/VERSION/CONFIG/CRATE and not this one.
+
+⇒ **This is `ask the instrument a question it can answer`, in the register map.** Replace the
+uptime inference with `STATUS.RI`; clear RI once the settling window has genuinely elapsed.
+
+### F-048 cold-start protocol — what to measure, and what it must say about the inert fields
+
+**Preconditions.** 2000 mAh cell (the 450 mAh corpus does not transfer). Cell at rest, **≥ 3.9 V at
+start**, no load step during the run.
+
+**Procedure.**
+1. **Power the rig fully OFF**, then cold-start. Record `t0` at first successful I²C read.
+2. Sample **`VCELL`, `SOC`, `STATUS` (for `RI`) and `CONFIG`** every 5 s for **600 s** — and 🔴
+   **persist every sample to a file, not the journal.** Nothing currently persists VCELL at poll
+   cadence, which is precisely why the F-051 excursion mechanism could not be characterised.
+3. Repeat **n ≥ 3 cold starts.** One run gives a curve, not a window.
+4. **Separately, exercise the blind case the guard cannot see:** with the Pi running, remove and
+   reinsert the cell, and record whether `RI` sets while `/proc/uptime` keeps climbing. **That is
+   the falsifier for the proxy defect above** — and it is a two-minute test.
+
+**Deriving the window.** `socColdStartWindowSeconds` = the time from `t0` until SOC is within
+**±1 %** of its 600 s value **and stays there** — clear it by a **factor**, not a margin, and state
+the sample size and every exclusion. ⚠️ **The current `180` is a guess, and 2026-09-21 showed
+convergence taking longer than 15 min after a cell change.** Expect the measured value to be much
+larger. **Do not carry `180` forward without measuring it.**
+
+🔴 **What the protocol must say about the three inert fields — Atlas's point, and it is decisive:**
+
+- **`socCalibrated`** is hardcoded `false`. ⇒ **This protocol's output is what makes it meaningful.**
+  It must become a real verdict — `true` only once `RI` is clear *and* the measured window has
+  elapsed — or the calibration produces a number no consumer can act on.
+- **`charging` / `draining`** derive from `CRATE`, which reads `0xFFFF` on this chip. 🔴 **They must
+  be typed-NA with a reason, not `false`.** On 2026-09-21 at 22:30Z both read `false` while the cell
+  was demonstrably on a charger — **`false` is an assertion, and the truthful answer is "this chip
+  cannot tell you."** ⇒ Derive charge direction from the **VCELL trend** under the F-051 state gate,
+  or publish NA. **Do not leave a field that is wrong in a knowable way.**
+
+⚠️ **The protocol needs a powered-off cold start, which is a CIO action, not a keyboard one.** It is
+written so it can be executed without me.
+
+**`void if`** — the gauge is replaced, or `CRATE` is ever found to return valid data on this part.
+
 ---
 
-## `edr_imu_sample.temp_c` — why it is NULL, and it is NOT an oversight
+## `states/imu` PUBLISHES `pitchDeg`, `stopCount` and `biasRad` — they are UNPERSISTED, not absent
+
+🔴 **CORRECTION, 2026-09-21 (Spool), to a claim Atlas made and I repeated twice.** The record says
+these three channels *"are not logged, so no pitch or grade fix is verifiable by anyone"* and that
+*"no grade defect can be reproduced"* until US-805 lands. **The first half is right about the
+DATABASE and the second half is wrong.**
+
+**They are published live, every second, in `/run/eclipse-obd/states/imu`.** `edr_imu_sample` has no
+such columns — that part is correct — but **the values exist and can be read right now.**
+
+🟢 **REPRODUCTION OF THE GRADE DEFECT, on a stationary car, 2026-09-22 03:14–03:17Z, 15 s sampling:**
+
+    ts                     pitchDeg   gradePct   stopCount   biasRad   gMag
+    03:14:57Z              -4.02      -7.0       0           0.0       0.005
+    03:15:26Z              -3.10      -5.4       0           0.0       0.009
+    03:16:12Z              -3.62      -6.3       0           0.0       0.002
+    03:17:12Z              -2.91      -5.1       0           0.0       0.004
+
+**`gMag` 0.002–0.009 — the car is not moving. `gradePct` swings 1.9 points and `pitchDeg` 1.11°.**
+
+⇒ 🔴 **The defect is reproducible TODAY, at any resolution, by anyone with SSH — US-805 is NOT a
+precondition for reproducing it.** What US-805 *is* required for: **historical analysis, and
+verifying a fix across time.** ⇒ **US-805 is a PERSISTENCE story, not a compute-and-expose story.**
+Nothing needs to be calculated; the numbers already exist and are thrown away.
+
+🟢 **Two standing findings confirmed live in the same capture:** `biasRad = 0.0` (ZUPT never engages
+below 5 confirmed stops) and `stopCount = 0` **after hours parked** — the stop deque is empty and
+the correction has never had the inputs it needs. **A parked car never accumulates stops**, so the
+bias is never cancelled, exactly as the mechanism predicts.
+
+**`void if`** — `states/imu` stops carrying these fields, or US-805 lands and persists them.
 
 **Researched 2026-09-21 (Spool).** `temp_c` is NULL on **all 6,275,515 rows since 2026-09-08**.
 **The cause is already known and the code is already honest about it:** `sensor_reader.py:594-602`
