@@ -3303,6 +3303,51 @@ produced it — a drive whose session ends with no close signal — because *abs
 not evidence of repair.* That criticism (Spool, 2026-08-28) is upheld: Root 1 was closed on one
 clean pair, and that was too narrow.
 
+### 10.7.1.4 The drive-attribution contract — a row is attributed at CAPTURE (US-777, Sprint 91 / V0.29.60)
+
+**When a `drive_id` is assigned.** A `realtime_data` row carries the drive that was live **at the
+instant the reading was captured**, and no other. The producer
+(`RealtimeDataLogger._publishReading`) stamps `Sample.driveId = getCurrentDriveId()` when it
+publishes; `PersistenceSubscriber.handleSample` hands that value to
+`ObdDataLogger.logReading(reading, capturedDriveId=sample.driveId)`, which writes it as-is. The
+inline no-bus path (no `capturedDriveId`) still resolves in `logReading` — there, write time **is**
+capture time.
+
+**The defect this closes.** With `pi.bus.enabled` (on in `config.json`) the row is written by the
+subscriber's drain thread, and before US-777 `logReading` re-resolved `getCurrentDriveId()` at
+**write** time. A drain lag that spans a drive close therefore wrote rows captured during drive *N*
+as NULL (the drive had gone stale) or as drive *N+1* (the next drive had opened). Measured
+2026-09-21: a 90 s drain lag against the 60 s bound NULLed 31 rows. 🔴 **The write-time lookup was
+the inheritance** — it attached an id that was never valid for that datum. A capture-time id *was*
+valid: at the instant of the read that drive was live and non-stale (Atlas ruling 2026-09-21).
+
+**When NULL is correct, and stays NULL.** A reading captured with **no live drive** — before any
+drive opens, or after the live drive has passed its bounded idle (§10.7.1.3) — carries
+`driveId=None`, and that is written as **explicit NULL even if a drive has opened by the time the
+drain reaches it**. A captured `None` is never upgraded.
+
+**Why a stale id is never substituted.** Guessing is worse than the defect: NULL rows are retained
+and filterable (`WHERE drive_id IS NOT NULL`), while a wrong id silently corrupts a drive's window,
+rate and statistics — the drive-51 shape of §10.7.1.3. The EDR tables keep their own rule
+(`EdrPersistenceSubscriber._resolveDriveId`: an id only while `isDrivingFn()`, else explicit NULL);
+their NULL rows during the gate's hold tail are correct by design and are **out of scope** here.
+
+**One staleness predicate.** `isDriveIdStale` (`src/pi/obdii/drive_id.py`) remains the single
+predicate: the detector's bounded-idle close (`DriveDetector._maybeCloseStaleDriveId`) and the
+attribution read (`getCurrentDriveId`, now evaluated at capture) call the **same function** with
+the **same bound** (`driveEndDurationSeconds`, armed by `_startDrive`). Pinned by
+`tests/pi/bus/test_persistence_drive_attribution.py::TestOneStalenessPredicate`. Loosening
+staleness on the attribution side alone would split the predicate and re-open drive 51.
+
+⚠️ **Not this contract's cause: the 2026-09-15 leg.** Those rows are NULL because drive detection
+never opened a drive (no `DRIVE STARTED` in the leg, per the Pi journal) — a detector/orchestrator
+defect, not a drain-lag one. Capture-time stamping correctly writes those rows NULL. The 4,259
+already-orphaned rows are untouched; no backfill.
+
+⚠️ **Still write-time: the `timestamp` column.** `logReading` stamps `utcIsoNow()` at write, so under
+drain lag a row's `timestamp` trails its capture by the lag even though its `drive_id` is now the
+capturing drive. Out of US-777's scope fence; recorded so nobody reads the two as one clock.
+
 ### 10.7.2 Derived motion signals + cross-drive comparison (F-106 / F-069, Sprint 53 / V0.29.7)
 
 **Derived motion signals (US-436, F-106).** A third server-side per-drive

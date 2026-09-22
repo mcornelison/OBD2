@@ -29,6 +29,9 @@
 #                               realtime_data INSERTs instead of relying
 #                               on the schema DEFAULT.  Closes the
 #                               simulator-tags-as-real hygiene bug.
+# 2026-09-21    | Rex (US-777) | logReading(capturedDriveId=...): the bus path
+#                               writes the drive_id stamped at CAPTURE; the
+#                               inline path still resolves at write.
 # ================================================================================
 ################################################################################
 """
@@ -66,6 +69,14 @@ from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterRe
 from .types import LoggedReading
 
 logger = logging.getLogger(__name__)
+
+
+class _ResolveAtWrite:
+    """Sentinel type: no capture-time drive_id was handed to logReading."""
+
+
+# US-777: distinct from ``None``, which is a CAPTURED "no drive live".
+RESOLVE_AT_WRITE = _ResolveAtWrite()
 
 
 # OBD library import with fallback for environments where it's not available
@@ -330,12 +341,22 @@ class ObdDataLogger:
                 details={'parameter': parameterName, 'pid': entry.pidCode, 'error': str(e)},
             ) from e
 
-    def logReading(self, reading: LoggedReading) -> bool:
+    def logReading(
+        self,
+        reading: LoggedReading,
+        capturedDriveId: int | None | _ResolveAtWrite = RESOLVE_AT_WRITE,
+    ) -> bool:
         """
         Log a reading to the database.
 
         Args:
             reading: LoggedReading to store
+            capturedDriveId: US-777 -- the drive_id stamped when the reading was
+                CAPTURED (``Sample.driveId`` on the bus path). Written as-is,
+                including ``None``: a row captured with no live drive stays an
+                explicit NULL and is never upgraded to a drive that opened
+                later. Omitted (the inline no-bus path, where write time IS
+                capture time), the drive is resolved here as before.
 
         Returns:
             True if logged successfully
@@ -362,7 +383,14 @@ class ObdDataLogger:
                 # guard retro-tags the rows written before the trip).  Only the
                 # live 'real' path is overridden -- sim/replay/fixture tags are
                 # deliberate and left intact.
-                driveId = getCurrentDriveId()
+                # US-777: the capture-time id when one was handed over -- a
+                # write-time lookup after a drain lag attaches the NEXT drive's
+                # id, or NULL, to a row captured during the previous one.
+                driveId = (
+                    getCurrentDriveId()
+                    if isinstance(capturedDriveId, _ResolveAtWrite)
+                    else capturedDriveId
+                )
                 effectiveDataSource = self.dataSource
                 if (
                     self.dataSource == DATA_SOURCE_DEFAULT
