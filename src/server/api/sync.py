@@ -200,19 +200,22 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # (source_device, source_id); see DriveSummary docstring for the
     # dual-writer contract.
     #
-    # US-563 / F-134 rename seam: the Pi's drive-start IAT snapshot was
-    # historically called ``ambient_temp_at_start_c`` on BOTH tiers.  It is fed
-    # from IAT (PID 0x0F) and is not ambient, so the server column is now
-    # ``intake_air_temp_at_start_c``.  The Pi's own queue can hold rows captured
-    # before its half of the rename lands, and a Pi that has not yet been
-    # deployed still sends the legacy key -- mapping it here LANDS WHAT WAS READ
-    # rather than dropping a real measurement because its label changed.
-    # Post-rename Pi rows arrive already spelled the new way and pass through
-    # this seam untouched.
-    "drive_summary": (
-        DriveSummary,
-        (("ambient_temp_at_start_c", "intake_air_temp_at_start_c"),),
-    ),
+    # US-689 REMOVED the US-563 / F-134 rename seam that accepted the retired
+    # pre-rename spelling of the drive-start IAT column here (the name itself
+    # is deliberately not repeated: this module must not carry a second
+    # vocabulary for the column, and the rename is recorded on the Pi side as
+    # ``drive_summary.LEGACY_INTAKE_AIR_COLUMN``).  The seam existed for the
+    # rolling deploy window and that window has closed: the Pi RENAMED its own
+    # column (``src/pi/obdii/drive_summary.py::_migrateIntakeAirColumn``), and
+    # the deployed car's APPLIED schema was read on 2026-09-22 to confirm it --
+    # so no Pi in the fleet can emit the old key.
+    # A row spelled the old way is now REJECTED rather than translated, which
+    # is the safe direction -- the alternative to translating was never
+    # "translate or drop", it was "raise or drop a real measurement silently".
+    # With this gone, NO non-PK rename remains in this registry;
+    # tests/lint/test_pi_server_contract_parity.py asserts that structurally,
+    # against this live dict.
+    "drive_summary": (DriveSummary, ()),
     # US-217: battery_health_log capture table.  drain_event_id is the
     # Pi-side PK -> renamed to 'id' on the wire by the sync client
     # -> mapped to source_id by runSyncUpsert, matching every other
@@ -418,6 +421,17 @@ def _parseDateTime(value: Any) -> Any:
     return value
 
 
+def _modelColumnNames(model: type) -> frozenset[str]:
+    """Every column name the server model declares (US-689).
+
+    Read from the mapped table rather than a list, so it cannot drift from the
+    schema it is meant to describe.
+    """
+    return frozenset(
+        c.name for c in model.__table__.columns  # type: ignore[attr-defined]
+    )
+
+
 def _coerceRowColumns(model: type, row: dict[str, Any]) -> None:
     """In-place: parse DateTime column values into datetime objects."""
     from sqlalchemy import DateTime
@@ -500,6 +514,28 @@ def runSyncUpsert(
                     serverRow[renamedKey] = value
                     serverRow["source_id"] = len(prepared) + 1
                 else:
+                    # US-689: a key the server model does not have is REFUSED,
+                    # not quietly skipped. SQLAlchemy's executemany ignores
+                    # surplus dict keys, so the row used to insert cleanly with
+                    # errors=0 while the value it carried was discarded -- a
+                    # green suite and a lost measurement, which is exactly the
+                    # shape the rename seam removed above was hiding. Raising
+                    # names the table and the key, so a Pi/server vocabulary
+                    # split is visible on the first batch instead of being
+                    # inferred later from missing data.
+                    if renamedKey not in _modelColumnNames(model):
+                        raise ValueError(
+                            f"sync: table {tableName!r} row carries column "
+                            f"{key!r}, which the server model does not have"
+                            + (
+                                f" (after rename to {renamedKey!r})"
+                                if renamedKey != key
+                                else ""
+                            )
+                            + ". Rename the column on the Pi, or migrate the "
+                            "server -- the value would otherwise be dropped "
+                            "silently (US-689).",
+                        )
                     serverRow[renamedKey] = value
             serverRow["source_device"] = deviceId
             # US-372 (F-076): mirror the Pi drive id onto drive_id.  The Pi

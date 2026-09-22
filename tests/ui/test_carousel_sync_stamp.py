@@ -466,9 +466,13 @@ def test_systemDrill_carriesTheSyncCountsAsADiagnostic():
     view = _probe("systemStatusView", _sysState())
     diags = view["drill"]["diagnostics"]
 
-    assert len(diags) == 1
-    assert diags[0]["label"] == "SYNC"
-    assert diags[0]["text"] == view["tiles"]["sync"]["counts"]
+    sync = [d for d in diags if d["key"] == "sync"]
+    assert len(sync) == 1
+    assert sync[0]["label"] == "SYNC"
+    assert sync[0]["text"] == view["tiles"]["sync"]["counts"]
+    # US-744 added the prior-shutdown verdict as a second reference fact here,
+    # listed on every real card, so this section is no longer sync-only.
+    assert [d["key"] for d in diags] == ["sync", "priorShutdown"]
 
 
 def test_systemDrill_healthySystem_isStillReachable():
@@ -494,15 +498,20 @@ def test_systemDrill_healthySystem_isStillReachable():
 
 def test_systemDrill_nothingBehindTheLine_isNotATapTarget():
     """
-    Given: no faults AND no diagnostics -- the sync source absent entirely
+    Given: the sync source absent entirely, so it contributes NO counts
     When: the summary line is built
     Then: still tappable, because an ABSENT source is itself listed as a row.
           Asserted so the widened gate is shown to be driven by content rather
           than pinned open: `tappable` still reads two independent inputs.
+
+          US-744: the sync COUNTS are still absent here -- what this test was
+          pinning -- and the prior-shutdown verdict is now listed beside them
+          on every real card. The negative self-test below (empty tiles -> an
+          empty drill) is what proves the gate is not hard-coded true.
     """
     view = _probe("systemStatusView", _sysState(sync=None))
 
-    assert view["drill"]["diagnostics"] == []
+    assert [d["key"] for d in view["drill"]["diagnostics"]] == ["priorShutdown"]
     assert view["drill"]["rows"] != []
     assert view["drill"]["tappable"] is True
 

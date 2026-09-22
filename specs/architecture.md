@@ -829,7 +829,7 @@ mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 | `calibration_sessions` | Calibration session tracking | FK to profiles | SET NULL |
 | `alert_log` | Threshold violation alerts | FK to profiles | SET NULL |
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
-| `power_log` | AC/battery power transitions (Pi-authoritative; delta-synced to server since US-412 / F-101) | No FK | — |
+| `power_log` | Power **events**, never polls — contents, writers, row kinds and retention are defined ONCE in the `src/pi/power/power_db.py` module docstring (US-798); read that, not a paraphrase. Pi-authoritative; delta-synced to server since US-412 / F-101 | No FK | — |
 | `startup_log` | Boot-progress / RTC boot markers (Pi-authoritative; natural-key snapshot-synced since US-417 / F-101) | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
@@ -4030,11 +4030,21 @@ V0.29.4 and **none of them ever left the device**. Measured on the Pi
 `edr_light_sample` rows, 2026-09-07 → 2026-09-16, accumulating at ~1.6M rows/day.
 Recorded is not the same as usable.
 
-⚠️ **Status boundary, stated so this section is not read as shipped.** US-764
-(the shared contract) **is live on `dev` at V0.29.51**. US-765/766/767/768 are
-the **ratified design** from the Sprint 88 design gate and are **not yet built**;
-this subsection is the architecture they must satisfy, not a description of
-running code. Rows in this section marked *designed* are exactly that.
+⚠️ **Status boundary — read the date on it.** **AT THE SPRINT 88 DESIGN GATE
+(2026-09-16)** US-764 (the shared contract) was live on `dev` at V0.29.51, and
+US-765/766/767/768 were the **ratified design**, not running code. That is the
+history, and it is kept because the design was ratified before it was built.
+
+🟢 **SINCE THEN, ALL FOUR SHIPPED** (recorded US-773, 2026-09-22, verified in
+the repo rather than inferred): US-765 (the server tables — `models.py`,
+`sync.py` and migration `v0026_us765_edr_raw_tables.py`), US-766 (the
+registration — `PK_COLUMN` entries for both EDR tables — and the drain
+exclusion, read by `power_watch/__main__.py` at both drain call sites), US-767
+(the log gate, `src/pi/bus/edr_log_gate.py`) and US-768 (the sync-gated purge).
+**So this subsection now describes running code**, and each row below carries
+its own marker: *designed* rows are architecture awaiting code, *built* rows
+name the story that shipped them. No story appears as both — pinned by
+`tests/lint/test_edr_section_status_consistency.py`.
 
 **One contract, two tiers — the A-4 promise, kept.** `EDR_COLUMNS` in
 `src/common/edr/sensor_schema.py` is the single column list. `server_ddl.py`
@@ -4058,12 +4068,12 @@ so two edge devices will collide the moment a second vehicle arrives. The EDR
 tables are keyed the way `drives` should have been. Do not "simplify" the
 composite key to a surrogate id; the surrogate is what loses the device.
 
-**Sync is insert-only and rides the existing path** *(designed, US-766)*.
+**Sync is insert-only and rides the existing path** *(built, US-766)*.
 Registration is an entry in `PK_COLUMN` (`src/pi/data/sync_log.py`) — the same
 id-cursor delta mechanism every other table uses. **No new transport, no new
 protocol version.**
 
-🔴 **EDR must never ride the shutdown drain** *(designed, US-766)*. The drain
+🔴 **EDR must never ride the shutdown drain** *(built, US-766)*. The drain
 budget is **seconds**; the EDR backlog is **millions of rows**. The exclusion is
 read from `SHUTDOWN_DRAIN_EXCLUDED_TABLES`, never re-listed at the call site.
 **The custody verdict (§10.6.3) must be byte-identical with and without
@@ -4073,7 +4083,7 @@ journal line. The reason is architectural, not cosmetic: sync custody answers
 archival backlog into that verdict would make every healthy shutdown report a
 failure forever, and a verdict that is always failing is a verdict nobody reads.
 
-**The log gate: record while linked, keep the seconds before** *(designed,
+**The log gate: record while linked, keep the seconds before** *(built,
 US-767)*. CLOSED holds a monotonic 60 s ring and writes nothing; opening flushes
 that ring **in order**; OPEN→HOLD keeps writing for 300 s and re-arms when the
 link returns. A parked car otherwise logs millions of rows nobody will read, and
@@ -6338,7 +6348,7 @@ ssh chi-eclipse-01 'tail -n 200 /var/log/carpi/telemetry.log | jq .'
 ssh chi-eclipse-01 'zcat /var/log/carpi/telemetry.log.1 | jq "select(.power_source==\"battery\")"'
 ```
 
-This complements `power_log` (post-US-243, every poll, schema-typed) and `battery_health_log` (one row per drain event). Where the DB tables are queryable but require a working SQLite/sync path, this file survives a database lock or sync outage.
+This complements `power_log` (an event log, not a poll log — its contract is the `src/pi/power/power_db.py` module docstring, US-798) and `battery_health_log` (one row per drain event). Where the DB tables are queryable but require a working SQLite/sync path, this file survives a database lock or sync outage.
 
 ### Non-Pi Fallback
 

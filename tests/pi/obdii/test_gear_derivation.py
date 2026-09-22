@@ -127,18 +127,25 @@ class TestTypedAbsence:
         assert result.gear is None
         assert result.reason == gd.REASON_NO_DATA
 
-    def test_update_absentRpm_returnsTypedNaWithNoDataReason(self):
+    def test_update_absentRpm_noLinkClaim_saysTheLinkIsDown(self):
         """
-        Given: SPEED is live but RPM is absent
+        Given: SPEED is live, RPM is absent, and the caller makes no claim that
+               the link is healthy (the fail-safe default)
         When:  the deriver is updated
-        Then:  the reading is unavailable with the no-data reason
+        Then:  the reading is unavailable and names the LINK
+
+        US-739 UPDATED THIS EXPECTATION, it did not relax it: the assertion is
+        still an exact typed absence, but an unusable RPM with no healthy-link
+        claim is now `link_down` rather than the `no_data` that a cold start and
+        a car mid-dwell also produced. `no_data` keeps its own meaning -- a
+        SPEED-side absence -- pinned in test_gear_typed_reasons.py.
         """
         result = _deriver().update(
             speed=gd.Reading(_SPEED_IN_3RD, 100.0), rpm=None, nowS=100.0
         )
 
         assert result.available is False
-        assert result.reason == gd.REASON_NO_DATA
+        assert result.reason == gd.REASON_LINK_DOWN
 
     def test_update_staleSpeed_returnsTypedNaWithStaleReason(self):
         """
@@ -162,9 +169,14 @@ class TestTypedAbsence:
 
     def test_update_staleRpm_returnsTypedNaWithStaleReason(self):
         """
-        Given: RPM last arrived longer ago than the freshness window
+        Given: RPM last arrived longer ago than the freshness window, with no
+               healthy-link claim
         When:  the deriver is updated
-        Then:  the reading is unavailable and says STALE
+        Then:  the reading is unavailable and names the LINK
+
+        US-739 UPDATED THIS EXPECTATION: an aged-out RPM is still refused, and
+        the reason now distinguishes WHY nothing can be read. `stale` remains
+        reachable on the SPEED side (the test above).
         """
         nowS = 100.0
         stale = nowS - gd.DEFAULT_MAX_AGE_S - 0.1
@@ -175,7 +187,7 @@ class TestTypedAbsence:
         )
 
         assert result.available is False
-        assert result.reason == gd.REASON_STALE
+        assert result.reason == gd.REASON_LINK_DOWN
 
     def test_update_noBandsConfigured_returnsTypedNaNotCalibrated(self):
         """
@@ -312,7 +324,11 @@ class TestNeverHoldsAPreviousValue:
         """
         Given: a settled gear 3
         When:  the readings stop being refreshed and go stale
-        Then:  the reading is typed NA with the stale reason, not a held 3
+        Then:  the reading is typed NA -- never a held 3
+
+        US-739: with both inputs aged out and no healthy-link claim, the typed
+        absence names the link. The load-bearing assertion here is `gear is
+        None` (the gear is DROPPED, not held), which is unchanged.
         """
         deriver = _deriver()
         _settled(deriver, _SPEED_IN_3RD, _RPM_IN_3RD)
@@ -326,7 +342,7 @@ class TestNeverHoldsAPreviousValue:
         )
 
         assert result.gear is None
-        assert result.reason == gd.REASON_STALE
+        assert result.reason == gd.REASON_LINK_DOWN
 
     def test_update_engagedThenRatioLeavesEveryBand_dropsTheGearImmediately(self):
         """

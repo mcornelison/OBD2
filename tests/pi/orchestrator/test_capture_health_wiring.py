@@ -42,6 +42,12 @@ orchestrator that never gathers it.
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import contextmanager
+
+# Sentinel so a caller can pass database=None (the "cannot consult it" case)
+# and still be distinguished from "use the default empty record".
+_UNSET = object()
 
 from pi.obdii.capture_health import (
     REASON_LOGGER_ABSENT,
@@ -102,7 +108,8 @@ class _Orch(HealthMonitorMixin, CardStateEmitterMixin):
     green init log, no file, no alert.
     """
 
-    def __init__(self, statesDir, *, powerProvider, dataLogger, stallSeconds=_STALL_S):
+    def __init__(self, statesDir, *, powerProvider, dataLogger, stallSeconds=_STALL_S,
+                 database=None):
         self._config = {
             "pi": {
                 "splash": {"statesDir": statesDir},
@@ -114,6 +121,11 @@ class _Orch(HealthMonitorMixin, CardStateEmitterMixin):
         self._driveDetector = None
         self._hardwareManager = None
         self._dataLogger = dataLogger
+        # US-727: the durable record the freshness read falls back to when the
+        # logger's in-process marker is None. A restart clears that marker, so
+        # "this process has written nothing" is no longer taken as "nothing was
+        # ever written" -- the table is asked.
+        self._database = database
         self._powerSourceProvider = powerProvider
         self._systemStatusEmitter = None
         self._batteryHealthEmitter = None
@@ -126,8 +138,33 @@ class _Orch(HealthMonitorMixin, CardStateEmitterMixin):
         self._lastSyncRows = 0
 
 
+class _EmptyCaptureDb:
+    """A database whose ``realtime_data`` exists and is EMPTY.
+
+    US-727: this is what "the Pi has genuinely never captured" looks like once
+    the freshness read consults the durable record -- MAX(timestamp) over an
+    empty table is NULL, which is still ``never_written``. Before US-727 the
+    fixture needed no database at all, because the absent in-process marker was
+    taken as proof on its own; that is the conflation the story removed.
+    """
+
+    def __init__(self, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.dbPath = str(path)
+        with sqlite3.connect(self.dbPath) as conn:
+            conn.execute("CREATE TABLE realtime_data (id INTEGER PRIMARY KEY, timestamp TEXT)")
+
+    @contextmanager
+    def connect(self):
+        conn = sqlite3.connect(self.dbPath)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+
 def _runTick(tmp_path, *, available=True, external=True, lastRow=None,
-             withLogger=True, stallSeconds=_STALL_S):
+             withLogger=True, stallSeconds=_STALL_S, database=_UNSET):
     """Drive the REAL emit path once; return the parsed states/capture-health.
 
     Everything between the fakes and the parsed JSON is production code: the
@@ -135,6 +172,8 @@ def _runTick(tmp_path, *, available=True, external=True, lastRow=None,
     the atomic write.
     """
     statesDir = str(tmp_path / "states")
+    if database is _UNSET:
+        database = _EmptyCaptureDb(tmp_path / "capture.db")
     orch = _Orch(
         statesDir,
         powerProvider=_FakePowerSourceProvider(
@@ -142,6 +181,7 @@ def _runTick(tmp_path, *, available=True, external=True, lastRow=None,
         ),
         dataLogger=_FakeDataLogger(lastRow) if withLogger else None,
         stallSeconds=stallSeconds,
+        database=database,
     )
     orch._initializeCardStateEmitters()
     orch._maybeEmitCardStates()

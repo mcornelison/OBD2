@@ -215,12 +215,17 @@ class TestParkFromAbsentRpm:
         Asserted as `gear is not P` AND on the surviving typed absence, so a
         change that swaps one absence reason for another does not read as this
         test breaking.
+
+        US-739 is exactly that swap: a healthy link with RPM unusable and the
+        dwell not yet met is now `settling_park` -- the state that resolves
+        itself by waiting -- where it used to be the undifferentiated
+        `no_data`.
         """
         result = _holdNoRpm(_deriver(), forS=gd.DEFAULT_PARK_DWELL_S - 5.0)
 
         assert result.available is False
         assert result.gear != gd.GEAR_PARK
-        assert result.reason == gd.REASON_NO_DATA
+        assert result.reason == gd.REASON_SETTLING_PARK
 
     def test_update_theVeryFirstTickWithNoRpm_isNotPark(self):
         """
@@ -232,11 +237,16 @@ class TestParkFromAbsentRpm:
         treated `_rpmUnusableSinceS is None` as "unusable since forever" would
         paint Park on the first tick of every boot, which is the exact opposite
         of what the dwell is for.
+
+        US-739: `_tick` claims a healthy link, so the first tick is
+        `settling_park` -- the dwell has started and nothing is known yet. The
+        load-bearing assertion, that this is NOT Park, is unchanged.
         """
         result = _tick(_deriver(), speed=None, rpm=None, nowS=1000.0)
 
         assert result.available is False
-        assert result.reason == gd.REASON_NO_DATA
+        assert result.gear != gd.GEAR_PARK
+        assert result.reason == gd.REASON_SETTLING_PARK
 
 
 class TestParkFromStaleRpm:
@@ -318,26 +328,32 @@ class TestParkFromStaleRpm:
     def test_update_theStaleFixtureIsGenuinelyStaleAndNotAbsent(self):
         """
         Given: the aged reading the test above feeds
-        When:  it is judged one tick past the freshness window
-        Then:  the deriver calls it STALE, not missing
+        When:  it is classified by the deriver's own freshness rule
+        Then:  it resolves to the STALE sentinel, not the MISSING one
 
         A GUARD ON THE FIXTURE, NOT ON THE CODE (US-687-a's technique). The
         test above is only worth something because its RPM reading is PRESENT
         and OLD. If a later edit "tidies" it to `None`, that test still passes
         and quietly stops testing the branch it was written for.
+
+        ⚠️ US-739 MOVED WHAT THIS ASSERTS, because the old assertion went
+        INERT. It read `reason == stale`; on a healthy link an absent RPM and
+        an aged-out RPM now BOTH report `settling_park`, so the reason can no
+        longer tell the two fixtures apart and a `None` RPM would sail past --
+        exactly the substitution the docstring warns about. It now asks the
+        classifier that actually distinguishes them.
         """
         deriver = _deriver()
         justStale = 1000.0 + gd.DEFAULT_MAX_AGE_S + 0.1
-        result = _tick(
-            deriver,
-            speed=gd.Reading(0.0, justStale),
-            rpm=gd.Reading(_MEASURED_IDLE_RPM, 1000.0),
-            nowS=justStale,
-        )
+        rpm = gd.Reading(_MEASURED_IDLE_RPM, 1000.0)
 
-        assert result.reason == gd.REASON_STALE, (
+        assert deriver._liveValue(rpm, justStale) is gd._STALE, (  # noqa: SLF001
             "the fixture is no longer exercising the STALE path, so the "
             "post-drive Park test above has stopped measuring what it names"
+        )
+        assert deriver._liveValue(None, justStale) is gd._MISSING, (  # noqa: SLF001
+            "the classifier no longer distinguishes absent from aged-out, so "
+            "this guard cannot do its job"
         )
 
 

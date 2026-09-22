@@ -55,6 +55,8 @@ Story scope (Spool 2026-05-08 inbox note BUG-2):
 from __future__ import annotations
 
 import logging
+import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -360,8 +362,32 @@ class TestHandleConnectionRestoredRestartsDataLogger:
 # ================================================================================
 
 
+class _EmptyCaptureDb:
+    """A database whose ``realtime_data`` exists and is EMPTY (US-727).
+
+    The stub needs one because the freshness read now falls back to the DURABLE
+    record when the logger's in-process marker is None: a restart clears that
+    marker, so "this process wrote nothing" is no longer taken as proof that
+    nothing was ever written. An empty table is what a Pi that has genuinely
+    never captured looks like, so the ``never_written`` sentinel this file
+    asserts stays reachable -- and stays TRUE.
+    """
+
+    def __init__(self) -> None:
+        self._conn = sqlite3.connect(":memory:")
+        self._conn.execute(
+            "CREATE TABLE realtime_data (id INTEGER PRIMARY KEY, timestamp TEXT)"
+        )
+        self.dbPath = ":memory:"
+
+    @contextmanager
+    def connect(self):
+        yield self._conn
+
+
 def _buildHealthMonitorStub(
     dataLogger: Any,
+    database: Any = None,
 ) -> HealthMonitorMixin:
     """Stub satisfying HealthMonitorMixin.  ``_checkConnectionStatus`` and
     ``_collectComponentStats`` are bound via direct attribute set so the
@@ -376,6 +402,7 @@ def _buildHealthMonitorStub(
         _lastDataRateLogTime=datetime.now() - timedelta(seconds=60),
         _lastDataRateLogCount=0,
         _dataLogger=dataLogger,
+        _database=database if database is not None else _EmptyCaptureDb(),
         _driveDetector=None,
         _checkConnectionStatus=lambda: True,
     )
@@ -397,6 +424,11 @@ def _buildHealthMonitorStub(
     # UNCHANGED: the health line's contract is exactly what it was.
     stub._readDataLoggerRowFreshness = (
         lambda: HealthMonitorMixin._readDataLoggerRowFreshness(stub)
+    )
+    # US-727: and the DURABLE fallback the reader above delegates to when the
+    # in-process marker is None, for the same delegation-resolves reason.
+    stub._readDurableRowFreshness = (
+        lambda: HealthMonitorMixin._readDurableRowFreshness(stub)
     )
     return stub  # type: ignore[return-value]
 

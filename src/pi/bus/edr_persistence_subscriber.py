@@ -31,6 +31,8 @@
 # 2026-09-18    | Rex          | US-768: purgeExpired() is sync-gated (id <=
 #               |              | high-water mark); unreadable mark deletes
 #               |              | nothing; below 15 GB free it only WARNS.
+# 2026-09-22    | Rex (US-801) | IMU sample/persist defaults imported from the
+#               |              | single definition in common.config.validator.
 # ================================================================================
 ################################################################################
 
@@ -47,6 +49,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+# US-801: the IMU rate defaults are DEFINED once, in the validator.
+from common.config.validator import DEFAULT_IMU_PERSIST_HZ as _DEFAULT_IMU_PERSIST_HZ
+from common.config.validator import DEFAULT_IMU_SAMPLE_HZ as _DEFAULT_IMU_SAMPLE_HZ
 from common.edr.sensor_schema import SCHEMA_VERSION
 from common.time.helper import CANONICAL_ISO_FORMAT
 from pi.obdii.drive_id import getCurrentDriveId
@@ -112,10 +117,9 @@ _BYTES_PER_GB = 1000**3
 _LOW_DISK_WARN_GB = 15
 _LOW_DISK_WARN_BYTES = _LOW_DISK_WARN_GB * _BYTES_PER_GB
 
-# Config defaults (mirrored by the validator DEFAULTS registry -- these are the
-# safety fallbacks for a caller that passes an unvalidated config).
-_DEFAULT_IMU_SAMPLE_HZ = 50
-_DEFAULT_IMU_PERSIST_HZ = 25
+# Config defaults -- the safety fallbacks for a caller that passes an
+# unvalidated config. The IMU sample/persist rates are imported above (US-801);
+# retentionDays is mirrored by the validator DEFAULTS registry.
 _DEFAULT_RETENTION_DAYS = 7
 
 

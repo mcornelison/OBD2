@@ -36,6 +36,8 @@
 #               |              | into the EXISTING failed-poll path (no new
 #               |              | silence mechanism) + a retained per-channel gate
 #               |              | STATE; failed-poll WARNING rate-limited.
+# 2026-09-22    | Rex (US-801) | DEFAULT_IMU_SAMPLE_HZ imported from the single
+#               |              | definition in common.config.validator (now 4).
 # ================================================================================
 ################################################################################
 
@@ -50,6 +52,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+# US-801: the IMU rate default is DEFINED once, in the validator, and imported
+# here under this module's historical name (tests monkeypatch it).
+from common.config.validator import DEFAULT_IMU_SAMPLE_HZ
 from common.time.helper import utcIsoNow
 from pi.bus.bus import SampleBus
 from pi.bus.sample import Sample
@@ -138,10 +143,9 @@ UNIT_RANGE = "gain/ms"
 ADDR_IMU = 0x69
 ADDR_TSL = 0x29
 
-# Default bus publish rates (ADR section 1.2 / 4). Mirrored by the validator
-# DEFAULTS registry (pi.sensors.{imu,light}.sampleHz) -- these are the safety
-# fallbacks used when a caller passes an unvalidated config.
-DEFAULT_IMU_SAMPLE_HZ = 50
+# Default bus publish rates (ADR section 1.2 / 4) -- the safety fallbacks used
+# when a caller passes an unvalidated config. The IMU rate is imported above
+# (US-801); the light rate is mirrored by the validator DEFAULTS registry.
 DEFAULT_LIGHT_SAMPLE_HZ = 1
 
 # Fallback poll interval when a non-positive sampleHz slips through (defensive;

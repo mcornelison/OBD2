@@ -83,10 +83,12 @@ __all__ = [
     "REASON_ENGAGED",
     "REASON_NEUTRAL",
     "REASON_NOT_CALIBRATED",
+    "REASON_LINK_DOWN",
     "REASON_NO_BAND",
     "REASON_NO_DATA",
     "REASON_PARK",
     "REASON_SETTLING",
+    "REASON_SETTLING_PARK",
     "REASON_STALE",
     "Reading",
     "TIRE_CIRCUMFERENCE_M",
@@ -109,6 +111,13 @@ REASON_BELOW_THRESHOLD = "below_threshold"
 REASON_NO_BAND = "no_band_match"
 REASON_AMBIGUOUS = "ambiguous"
 REASON_SETTLING = "settling"
+# US-739: the two absences that used to reach the tile as `no_data`, which made
+# a DEAD LINK and a car one dwell away from Park indistinguishable from a cold
+# start (design-patterns.md 5: unreachable != unreadable != not-yet-attempted).
+# Both are emitted ONLY while RPM is unusable; a speed-side absence keeps its
+# own reason.
+REASON_LINK_DOWN = "link_down"
+REASON_SETTLING_PARK = "settling_park"
 
 # --------------------------------------------------------------------------
 # Spool's semantics, transcribed from the US-508 contract already recorded in
@@ -555,9 +564,19 @@ class GearDeriver:
             if self._rpmUnusableSinceS is None:
                 self._rpmUnusableSinceS = nowS
             heldS = nowS - self._rpmUnusableSinceS
-            if linkHealthy and heldS >= self._parkDwellS:
+            if not linkHealthy:
+                # US-739: we cannot ask the engine anything, and the tile now
+                # says THAT instead of "no reading" -- the string a cold start
+                # and a car mid-dwell also produced. The dwell clock above keeps
+                # running, so a link that returns still reaches Park on the
+                # outage already in progress.
+                return self._absent(REASON_LINK_DOWN)
+            if heldS >= self._parkDwellS:
                 return self._park()
-            return None
+            # US-739: healthy link, RPM unusable, dwell not yet met. The only
+            # one of the three that resolves itself by waiting, and the only one
+            # where "keep watching" is the right operator instruction.
+            return self._absent(REASON_SETTLING_PARK)
 
         # RPM is usable again: the CURRENT outage is over. Cleared rather than
         # accumulated, because two 18 s stalls on a flaky link are not one 36 s

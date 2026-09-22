@@ -81,6 +81,9 @@
 #                                legibility. Checked on EFFECTIVE values (raising
 #                                minLevel alone is the 2026-08-29 case) and
 #                                REJECTED, never clamped at runtime.
+# 2026-09-22    | Rex (US-801) | DEFAULT_IMU_{SAMPLE,PERSIST,STATE}_HZ = 4/2/1:
+#                                the ONE definition of the IMU rate triple;
+#                                DEFAULTS and the pi module fallbacks import it.
 # ================================================================================
 ################################################################################
 
@@ -126,6 +129,19 @@ REQUIRED_KEYS: list[str] = [
 
 # Top-level sections that must exist as dicts on a valid config.json.
 REQUIRED_SECTIONS: tuple[str, ...] = ('pi', 'server')
+
+# US-801: THE single definition of the IMU rate triple. Every other site --
+# the DEFAULTS entries below and the fallbacks in pi.sensors.sensor_reader,
+# pi.sensors.imu_state_bridge and pi.bus.edr_persistence_subscriber --
+# imports these names; none re-declares a literal. The values equal the
+# shipped config.json triple, 4 / 2 / 1 (US-796-b; the CIO's 4 Hz HARD CAP on
+# every acquisition rate, tightened from 5 Hz on 2026-09-21 --
+# specs/data-acquisition-architecture.md §4.2, ARCH-036). Consumers still read config first; these apply only when a key
+# is absent. Pinned against config.json by
+# tests/pi/sensors/test_imu_rate_single_source.py.
+DEFAULT_IMU_SAMPLE_HZ = 4
+DEFAULT_IMU_PERSIST_HZ = 2
+DEFAULT_IMU_STATE_HZ = 1
 
 # Define default values for optional settings. Paths use the tier-aware
 # nested shape (pi.*, server.*) introduced in sweep 4. Legacy leaf paths
@@ -310,17 +326,16 @@ DEFAULTS: dict[str, Any] = {
     # retentionDays bounds the Pi-local rolling window -- both consumed by the
     # EDR persistence subscriber (US-410 / ADR 2.3, 2.6).
     'pi.sensors.imu.enabled': False,
-    'pi.sensors.imu.sampleHz': 50,
-    'pi.sensors.imu.persistHz': 25,
+    # US-801: the rate triple is DEFINED ONCE, above (DEFAULT_IMU_*_HZ = 4/2/1);
+    # these entries reference it and must never carry a literal.
+    'pi.sensors.imu.sampleHz': DEFAULT_IMU_SAMPLE_HZ,
+    'pi.sensors.imu.persistHz': DEFAULT_IMU_PERSIST_HZ,
     # US-478 (F-113): the raw.imu.* -> states/imu DERIVED display bridge.
-    # stateHz is the state-file write cadence and is grounded to the CONSUMER,
-    # not the sensor.  Writing tmpfs faster than the only reader polls is churn
-    # with no observable effect -- so when the reader got faster, this did too.
-    # US-508 raised it 4 -> 10 Hz per Atlas's transport ruling: the live card is
-    # now the HOME slot and animates a compass tape + a g-trail, which do not
-    # animate at 4 Hz.  It is still far under the 50 Hz sensor rate, still
-    # latest-wins/lossy (no history on the display path), and the DURABLE EDR
-    # persist is untouched at persistHz -- one producer, two cadences.
+    # stateHz is the state-file write cadence -- latest-wins/lossy (no history
+    # on the display path); the DURABLE EDR persist is the separate persistHz
+    # -- one producer, two cadences.  US-508 once raised it 4 -> 10 Hz for the
+    # home-slot card; US-796-b set the shipped triple to 4/2/1 under the CIO's
+    # 4 Hz hard cap (ARCH-036), and US-801 moved this default to match.
     # gravityTauSec is the gravity low-pass time constant that separates static
     # mount tilt / road grade (slow) from vehicle acceleration (fast) -- without
     # it a board bolted in at a 10-degree tilt pins a phantom 0.17 g on the
@@ -333,7 +348,7 @@ DEFAULTS: dict[str, Any] = {
     # now lives beside the sensor definition as imu_state_bridge.IMU_BODY_FRAME,
     # with the measurement that established it in the comment.  A stale mount
     # block left in config.json is inert -- nothing reads it.
-    'pi.sensors.imu.stateHz': 10,
+    'pi.sensors.imu.stateHz': DEFAULT_IMU_STATE_HZ,
     'pi.sensors.imu.gravityTauSec': 5.0,
     # US-521 (F-125) gyro-fused pitch + ZUPT.  An accelerometer cannot
     # distinguish grade from acceleration, so a 0.3 g pull reads as a

@@ -347,14 +347,28 @@ def acquireMariaDb() -> Iterator[tuple[Any, str]]:
 
     from testcontainers.mysql import MySqlContainer  # noqa: PLC0415
 
-    container = MySqlContainer(MARIADB_TEST_IMAGE)
+    # US-807: the CONSTRUCTOR is INSIDE the try, and that placement is the whole
+    # fix. MySqlContainer.__init__ builds a DockerClient, so with no daemon the
+    # DockerException is raised HERE, not in start(). Constructed outside, it
+    # escaped as a raw DockerException that never became MariaDbUnavailable --
+    # so the caller's `except MariaDbUnavailable: pytest.skip(...)` never ran,
+    # and the one gate standing on the Pi/server seam reported a FAILURE where
+    # the honest answer is "not checked". Measured on this bench 2026-09-21:
+    # 73 passed, 1 raw DockerException.
+    container = None
     try:
+        container = MySqlContainer(MARIADB_TEST_IMAGE)
         container.start()
-    except Exception as err:  # noqa: BLE001 -- Docker down / image pull failure
+    except Exception as err:  # noqa: BLE001 -- Docker absent / down / pull failure
+        # Names BOTH acquisition paths and refuses the substitute, so the skip
+        # reads the same whether testcontainers is missing or Docker is.
         raise MariaDbUnavailable(
-            f'the "testcontainers" package is installed but the MariaDB '
-            f'{MARIADB_TEST_IMAGE} container failed to start ({err}); is Docker '
-            'running?',
+            f'the "testcontainers" package is installed but no MariaDB '
+            f'{MARIADB_TEST_IMAGE} container could be started '
+            f'({type(err).__name__}: {err}); is Docker running? Start Docker, '
+            f'or point {MARIADB_TEST_DSN_ENV} at a MariaDB 11.x service. '
+            '(SQLite / create_all is NOT a valid substitute -- that is the '
+            'BL-019/020/021 trap this test exists to close.)',
         ) from err
     try:
         url = make_url(container.get_connection_url())
