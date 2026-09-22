@@ -395,6 +395,39 @@ stationary system, whose readings really are nearly constant.
 quantization **even in a perfectly constant field**. So N consecutive bit-identical samples cannot occur
 naturally, at any threshold, in any environment. The test needs no calibration and cannot cry wolf.
 
+> 🔴 **CORRECTED 2026-09-21 (Spool, who wrote the paragraph above and was wrong in it).** The
+> sentence *"cannot occur naturally, at any threshold, in any environment"* is **TOO STRONG, and it
+> produced a false accusation the same week it was cited.** It holds for a **high-resolution raw ADC
+> channel** — the IMU and magnetometer it was derived from. It does **NOT** hold for a **coarsely
+> quantized OBD-II PID.**
+>
+> **THE PRECONDITION THE RULE DEPENDS ON, now stated:** bit-identity detects a latched channel only
+> where **the physical dither is LARGER than one LSB.** That is what makes the noise floor a
+> detector. Where the quantization step is coarser than the real variation, **a bit-identical run is
+> the correct reading of a quiet input**, and the test has no signal to work with.
+>
+> **MEASURED FALSIFICATION (2026-09-21).** `THROTTLE_POS` (PID `$11`) returned the identical byte —
+> raw `2`, i.e. `2/255 × 100 = 0.784314 %` — for **374 consecutive samples across an entire day**,
+> and that is **CORRECT**: one LSB is `1/255` = **0.39 % of throttle travel**, and a throttle plate
+> resting on its mechanical stop does not move 0.39 %. **The dither is below one LSB, so the byte is
+> genuinely constant.** On the one day in that window when the engine actually ran, the same channel
+> returned **59 distinct values from 1.18 % to 69.41 %.**
+>
+> 🔴 **THE DISCRIMINATOR IS ENGINE STATE, NOT VARIANCE.** Across 2026-09-17 → 09-21 the correlation
+> is exact — with `RPM = 0`, `THROTTLE_POS`, `TIMING_ADVANCE` (const `5.0`) and `O2_B1S1` (const
+> `0.04`) are all single-valued; with `RPM` 644–5260 they carry 59, 33 and 51 distinct values
+> respectively. **Three channels, one cause, and the cause is that the engine was off.**
+>
+> ⇒ **RULE, AMENDED: apply bit-identity to engine PIDs ONLY behind a state gate (`RPM > 0`).**
+> Unqualified, it accuses a parked car of fabricating data. Applied to raw high-resolution sensor
+> channels the original statement stands unchanged — that is where it was derived and where its
+> proof lives.
+>
+> ⚠️ **Why this belongs in the spec rather than a footnote:** this is the SAME failure shape as
+> F-051 — *a rule grounded in one regime and evaluated in another* — and here the regime boundary is
+> invisible, because a latched channel and a quiet channel are **bit-for-bit identical**. **The data
+> cannot tell them apart. Only the state gate can.**
+
 **Measured proof (2026-08-20).** A device held stationary, then hand-rotated, sampled 90 s:
 
 ```
