@@ -97,8 +97,15 @@ class TestTableColumns:
 
 
 class TestIndexes:
-    def test_allFourAdrIndexesExist(self, conn: sqlite3.Connection) -> None:
-        """The 4 ADR section 2.2 indexes (drive_id + ts on both tables) exist."""
+    def test_everyRegisteredIndexExists(self, conn: sqlite3.Connection) -> None:
+        """Every index in EDR_INDEXES is actually created (drive_id + ts per table).
+
+        US-805 / ARCH-045: was `test_allFourAdrIndexesExist` against a hardcoded
+        set of four. A table added to the registry inherited no index check at
+        all, so the assertion is now derived from EDR_INDEXES -- the set it is
+        supposed to be verifying -- and a new table cannot be added without its
+        indexes being covered.
+        """
         names = {
             r[0]
             for r in conn.execute(
@@ -106,12 +113,7 @@ class TestIndexes:
                 "AND name LIKE 'ix_edr_%'"
             )
         }
-        assert names == {
-            "ix_edr_imu_sample_drive_id",
-            "ix_edr_imu_sample_ts",
-            "ix_edr_light_sample_drive_id",
-            "ix_edr_light_sample_ts",
-        }
+        assert names == {name for name, _ in EDR_INDEXES}
 
 
 class TestDataSourceCheck:
@@ -165,6 +167,8 @@ class TestIdempotency:
                     "AND name LIKE 'edr_%'"
                 )
             }
-            assert tables == {"edr_imu_sample", "edr_light_sample"}
+            # US-805: derived from the registry so a new EDR table is covered
+            # by the idempotency guarantee automatically.
+            assert tables == {name for name, _ in EDR_SCHEMAS}
         finally:
             connection.close()
