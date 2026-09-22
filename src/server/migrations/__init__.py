@@ -196,6 +196,9 @@ from src.server.migrations.versions.v0025_arch020_maintenance_record import (
 from src.server.migrations.versions.v0026_us765_edr_raw_tables import (
     MIGRATION as _V0026,
 )
+from src.server.migrations.versions.v0027_us805_edr_imu_derived import (
+    MIGRATION as _V0027,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -228,6 +231,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0024,
     _V0025,
     _V0026,
+    _V0027,
 )
 
 
