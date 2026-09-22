@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.60",
-  "theme": "Sprint 91 -- the link is not the engine",
-  "description": "The EDR gate opened on a Bluetooth link, not ECU reachability. The OBD port is permanently powered, so the dongle answers with the key out and a parked car kept logging. The gate now reads four reachability states: every 'we do not know' opens it loudly, only a definite negative closes it. Also: a row is attributed to the drive it was captured during."
+  "version": "V0.29.61",
+  "theme": "Datasheets, design patterns, event-time rule",
+  "description": "Documentation and specifications only, no runtime code change. Adds hardware/datasheets/ holding the TDK ICM-20948, Maxim MAX17048 and Geekworm X1209 sources locally for the first time; lands the event-time rule in ssot-design-pattern.md; adds design-patterns section 9; and carries verified sensor-calibration facts into grounded-knowledge.md."
 }
