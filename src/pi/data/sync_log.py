@@ -247,6 +247,10 @@ PK_COLUMN: dict[str, str] = {
     # after insert, so the parallel modified_at cursor would be dead weight --
     # and an opt-in that costs a trigger on a table taking ~1.77M rows/day is
     # not dead weight for long.
+    #
+    # The EDR sync contract itself -- both tiers, the drain exclusion and what
+    # each story delivered -- is specs/architecture.md section 10.8.3 (US-773).
+    # Pointed at, never restated here.
     'edr_imu_sample':       'id',
     'edr_light_sample':     'id',
 }

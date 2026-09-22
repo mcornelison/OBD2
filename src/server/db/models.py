@@ -730,6 +730,9 @@ class EdrImuSample(Base):
     ~25 Hz, always-on (key-on including engine-off -- true black box).  Until
     this table existed the Pi recorded them faithfully and an hourly age-based
     purge deleted them, because there was nowhere for them to go.
+
+    The cross-tier contract this mirror belongs to is ``specs/architecture.md``
+    section 10.8.3 (US-773): pointed at, never restated here.
     """
 
     __tablename__ = "edr_imu_sample"
