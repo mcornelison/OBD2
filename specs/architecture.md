@@ -4063,7 +4063,11 @@ mutation test (`tests/pi/bus/test_edr_log_gate_live.py`): the same unreadable-
 signal run that passes on the shipped gate must fail on a copy compiled with
 that one return inverted.
 
-*The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.*
+*~~The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.~~*
+**SUPERSEDED by US-793-b (Sprint 91)** — see *"Three layers, and the ECU gates
+capture"* below. The reasoning that follows was the Sprint 88 premise; in the
+car the link reads connected with the key out, so a parked car still logged.
+It is kept because the rendered-value and capture-health warnings still hold.
 `obd.py` `is_connected()` returns `status() == OBDStatus.CAR_CONNECTED` and is
 explicitly **False** at `ELM_CONNECTED` — so it is an **ECU-level** fact, not an
 adapter-level one, and a powered dongle on a parked car does not open the gate.
@@ -4072,6 +4076,49 @@ second acquisition of one fact). ⚠️ **And do not substitute the capture-heal
 freshness signal**, which stays alive on adapter-only `ATRV` reads with the key
 out — a different consumer with a different defect. The two must not be
 "reconciled".
+
+**Three layers, and the ECU gates capture** *(built, US-793-b; Atlas rulings
+2026-09-21)*. "Connected" names three different facts, and they must never be
+collapsed into one another:
+
+| Layer | Fact | Where it is read | Gates capture? |
+|---|---|---|---|
+| **Powered** | the dongle has power | nowhere in software; the OBDLink LX is powered with the key **out** | no |
+| **Bluetooth-connected** | the RFCOMM link to the dongle is up | `ConnectionStatus.connected` (+ `signalReadable`, US-767-a) | **no** — up on a parked car |
+| **ECU-connected** | an ECU read the data path already made **returned data** | `ConnectionStatus.reachability` (US-793-a), one of `answered` / `did_not_answer` / `not_yet_attempted` / `could_not_determine` | **yes — this is the gate signal** |
+
+🔴 **A `connect_success` (or `reconnect_success`) connection_log row is NOT
+evidence of ECU reachability.** It records the Bluetooth layer. ECU reachability
+is its own state-valued row, `ecu_reachability` (US-793-c), written on each
+transition; only that row says whether the engine answered.
+
+`EdrLogGate._readLink` reads **only** `reachability`, never `connected`. The
+mapping is explicit per state, and **only a definite negative closes the gate**:
+
+| Signal | Gate |
+|---|---|
+| `answered` | OPEN (reason `ecu_answered`) |
+| `did_not_answer` | CLOSED — buffer (`ecu_did_not_answer`) |
+| `not_yet_attempted` | CLOSED — buffer (`ecu_not_yet_attempted`); the cold-boot state on a parked car |
+| `could_not_determine` | OPEN + the rate-limited WARNING (`signal_unreadable`) |
+| the signal callable raises — **any** exception | OPEN + WARNING |
+| no callable wired (`linkSignalFn=None`) | OPEN + WARNING |
+| a status **without** a `reachability` field | OPEN + WARNING — **never** a fallback to `connected` |
+| any other value | OPEN + WARNING |
+
+*Why the asymmetry:* closing wrongly loses rows that cannot be recovered;
+opening wrongly costs disk and is trivially filtered later — so every "we do not
+know" fails toward the recoverable error. A silent fallback to `connected` for a
+producer lacking the field would keep the Bluetooth-link defect with nothing
+reporting it (the inert-guard shape, `specs/anti-patterns.md`). The gate compares
+the producer's **string values** and imports nothing from `pi.obdii`; the only
+`pi.obdii` module that may import the gate is the composition root
+`orchestrator/lifecycle.py`. Both directions are pinned by
+`tests/lint/test_edr_log_gate_import_direction.py` (a one-entry literal
+allowlist, with a scanner self-test that goes red on a deliberate import). The
+pre-roll (60 s) and hold (300 s) are unchanged; `did_not_answer → answered`
+releases the buffered pre-roll exactly as US-767-b specified, so a driving car
+captures the same rows as before.
 
 🔴 **The gate must distinguish "link down" from "signal unreadable."**
 `ObdConnection._isConnected()` wraps its read in `try/except Exception: return

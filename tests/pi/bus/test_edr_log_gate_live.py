@@ -6,7 +6,9 @@
 #                      real ObdConnection here with only python-obd faked), honours
 #                      pi.sensors.logGate.enabled, and the subscriber publishes the
 #                      gate's state to states/edr-log-gate. Includes the mutation
-#                      test for the fail-OPEN branch.
+#                      test for the fail-OPEN branch. US-793-b: the producer's
+#                      ECU reachability is driven through REAL ObdConnection
+#                      query() calls, so the gate reads what production reads.
 # Author: Rex (US-767-c)
 # Creation Date: 2026-09-18
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -16,6 +18,8 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-09-18    | Rex (US-767-c) | Initial -- live signal, publish, mutation.
+# 2026-09-21    | Rex (US-793-b) | Gate reads reachability: linked-but-silent
+#               |                | runs close, unreadable = a raising ECU read.
 # ================================================================================
 ################################################################################
 """Tests for the live EDR log gate (US-767-c)."""
@@ -56,22 +60,53 @@ _FAIL_OPEN_LINE = 'return True, "signal_unreadable"'
 _FAIL_CLOSED_LINE = 'return False, "signal_unreadable"'
 
 
+class _Response:
+    """A python-obd response: data, or null (the ECU did not answer)."""
+
+    def __init__(self, isNull: bool) -> None:
+        self._isNull = isNull
+
+    def is_null(self) -> bool:
+        return self._isNull
+
+
 class _FakeObd:
-    """A python-obd double whose ``is_connected()`` returns or raises."""
+    """A python-obd double: ``is_connected()`` (the Bluetooth link) and
+    ``query()`` (the ECU) are INDEPENDENT, as on a parked car."""
 
     def __init__(self, result: Any) -> None:
         self.result = result
+        self.ecu: Any = None  # "data" | "null" | an exception to raise
 
     def is_connected(self) -> bool:
         if isinstance(self.result, BaseException):
             raise self.result
         return bool(self.result)
 
+    def query(self, command: Any, force: bool = False) -> _Response:
+        if isinstance(self.ecu, BaseException):
+            raise self.ecu
+        return _Response(isNull=self.ecu != "data")
 
-def _connection(result: Any) -> ObdConnection:
-    """A REAL ObdConnection (the producer) over a faked python-obd object."""
+
+def _ecu(conn: ObdConnection, answer: Any) -> None:
+    """One ECU read through the REAL ObdConnection.query() (US-793-a)."""
+    conn.obd.ecu = answer
+    try:
+        conn.query("RPM")
+    except Exception:  # noqa: BLE001 -- a raising read is the case under test
+        pass
+
+
+def _connection(result: Any, ecu: Any = None) -> ObdConnection:
+    """A REAL ObdConnection (the producer) over a faked python-obd object.
+
+    ``ecu`` None leaves reachability NOT_YET_ATTEMPTED (no read yet).
+    """
     conn = ObdConnection({"pi": {"bluetooth": {"macAddress": "00:11:22:33:44:55"}}})
     conn.obd = _FakeObd(result)
+    if ecu is not None:
+        _ecu(conn, ecu)
     return conn
 
 
@@ -192,7 +227,7 @@ class TestLifecycleSignal:
         Then: the subscriber's gate is enabled and every admit reads
             ObdConnection.getStatus()
         """
-        conn = _connection(True)
+        conn = _connection(True, ecu="data")
         calls: list[int] = []
         realGetStatus = conn.getStatus
 
@@ -211,15 +246,16 @@ class TestLifecycleSignal:
 
     def test_signalIsLazy_aRebuiltConnectionIsHonoured(self, startLive) -> None:
         """
-        Given: the path started on a linked connection
-        When: the orchestrator's connection is replaced by one whose link is down
+        Given: the path started on a connection whose ECU answers
+        When: the orchestrator's connection is replaced by one whose link is UP
+            but whose ECU does not answer
         Then: the gate follows the NEW connection (resolved per row, not captured)
         """
-        live = startLive(_connection(True))
+        live = startLive(_connection(True, ecu="data"))
         _run(live.sub, bursts=4)
         assert live.sub._logGate.state == GATE_OPEN  # noqa: SLF001
 
-        live.host._connection = _connection(False)
+        live.host._connection = _connection(True, ecu="null")
         # The hold keeps writing after the drop; only the gate's read matters here.
         _run(live.sub, bursts=4, start=4)
         assert live.sub._logGate.lastTransition[1] == GATE_HOLD  # noqa: SLF001
@@ -241,13 +277,13 @@ class TestLifecycleSignal:
     ) -> None:
         """
         Given: states/ files that all CLAIM the link is up (the rendered and
-            derived values a gate must never read), and a producer that says the
-            link is genuinely down
+            derived values a gate must never read), and a producer whose link is
+            up but whose ECU did not answer
         When: rows arrive
         Then: the gate follows the producer (zero rows, CLOSED), and no file in
             the states dir is opened for reading
         """
-        live = startLive(_connection(False))
+        live = startLive(_connection(True, ecu="null"))
         live.statesDir.mkdir(parents=True, exist_ok=True)
         for name, payload in {
             "system-status": {"obdConnected": True, "linkState": "connected"},
@@ -294,11 +330,13 @@ class TestLifecycleSignal:
 class TestRowCounts:
     def test_fullyLinkedRun_sameRowsAsWithoutTheGate(self, startLive, tmp_path: Path) -> None:
         """
-        Given: the live path on a linked producer, and a subscriber with no gate
+        Given: the live path on a producer whose ECU answers, and a subscriber
+            with no gate
         When: both are fed the same run
-        Then: the same row count -- and the same rows -- land in both
+        Then: the same row count -- and the same rows -- land in both (a driving
+            car captures exactly what it captured before US-793-b)
         """
-        live = startLive(_connection(True))
+        live = startLive(_connection(True, ecu="data"))
         _run(live.sub)
 
         gatedImu, gatedLight = _rows(live.sub, live.db)
@@ -309,13 +347,20 @@ class TestRowCounts:
         assert gatedLight == plainLight
         assert _readGateState(live.statesDir)["state"] == "OPEN"
 
-    def test_unlinkedReadableRun_writesNothing_andPublishesClosed(self, startLive) -> None:
+    @pytest.mark.parametrize("ecu", ["null", None], ids=["did_not_answer", "not_yet_attempted"])
+    def test_parkedCarRun_linkUp_writesNothing_andPublishesClosed(
+        self, startLive, ecu: Any
+    ) -> None:
         """
-        Given: the live path on a producer whose link is down and readable
+        Given: the live path on a producer whose Bluetooth link is UP but whose
+            ECU did not answer -- or has not been read yet (cold boot)
         When: a run is fed
-        Then: zero rows are written and states/edr-log-gate reads CLOSED
+        Then: zero rows are written and states/edr-log-gate reads CLOSED; the
+            pre-US-793-b gate, reading ``connected``, wrote every row here
         """
-        live = startLive(_connection(False))
+        conn = _connection(True, ecu=ecu)
+        assert conn.getStatus().connected is True
+        live = startLive(conn)
         _run(live.sub)
 
         assert _rows(live.sub, live.db) == ([], [])
@@ -346,24 +391,24 @@ class TestPublish:
         self, startLive, caplog: pytest.LogCaptureFixture
     ) -> None:
         """
-        Given: the gate CLOSED on a down link, with the file reading CLOSED
-        When: the link opens and a row arrives
+        Given: the gate CLOSED on a linked but silent ECU, file reading CLOSED
+        When: the ECU answers and a row arrives
         Then: the transition is logged and states/edr-log-gate reads OPEN, from
-            CLOSED, reason link_linked; the pre-roll lands before the live row
+            CLOSED, reason ecu_answered; the pre-roll lands before the live row
         """
-        conn = _connection(False)
+        conn = _connection(True, ecu="null")
         live = startLive(conn)
         _run(live.sub, bursts=4)
         assert _readGateState(live.statesDir)["state"] == "CLOSED"
 
-        conn.obd.result = True
+        _ecu(conn, "data")
         with caplog.at_level(logging.INFO, logger="pi.bus.edr_log_gate"):
             _run(live.sub, bursts=2, start=4)
 
         state = _readGateState(live.statesDir)
         assert state["state"] == "OPEN"
         assert state["from"] == "CLOSED"
-        assert state["reason"] == "link_linked"
+        assert state["reason"] == "ecu_answered"
         assert any("CLOSED->OPEN" in r.getMessage() for r in caplog.records)
         imu, _ = _rows(live.sub, live.db)
         assert [r[3] for r in imu] == [0, 2, 4]  # seq, pre-roll first, in order
@@ -374,7 +419,7 @@ class TestPublish:
         When: rows arrive on a linked gate
         Then: every row still lands
         """
-        link = SimpleNamespace(connected=True, signalReadable=True)
+        link = SimpleNamespace(reachability="answered")
         gate = EdrLogGate(lambda: link, enabled=True)
 
         def boom(_gate: EdrLogGate) -> None:
@@ -394,7 +439,7 @@ class TestPublish:
         When: many rows arrive
         Then: the state is published once, not once per row
         """
-        link = SimpleNamespace(connected=True, signalReadable=True)
+        link = SimpleNamespace(reachability="answered")
         gate = EdrLogGate(lambda: link, enabled=True)
         published: list[str] = []
         sub = EdrPersistenceSubscriber(
@@ -420,7 +465,7 @@ def _mutantGateClass() -> type:
     mutant = module.EdrLogGate
     # The mutation is APPLIED, not just written: the compiled gate closes on an
     # unreadable signal, where the shipped one opens.
-    probe = mutant(lambda: SimpleNamespace(connected=False, signalReadable=False), enabled=True)
+    probe = mutant(lambda: SimpleNamespace(reachability="could_not_determine"), enabled=True)
     assert probe._readLink(0.0) == (False, "signal_unreadable")  # noqa: SLF001
     return mutant
 
@@ -433,7 +478,7 @@ def _unreadableRunKeepsRecording(
     The invariant: after the first row the gate is never CLOSED, every row
     lands, and states/edr-log-gate never reads CLOSED.
     """
-    live = startLive(_connection(RuntimeError("port gone")))
+    live = startLive(_connection(RuntimeError("port gone"), ecu=RuntimeError("port gone")))
     gate = live.sub._logGate  # noqa: SLF001
     assert type(gate) is expectGateCls, "the live path did not build the gate under test"
 
@@ -460,7 +505,7 @@ def _unreadableRunKeepsRecording(
 class TestFailOpenMutation:
     def test_unreadableSignal_neverCloses_andRowsLand(self, startLive) -> None:
         """
-        Given: a producer whose is_connected() raises (signalReadable False)
+        Given: a producer whose ECU read raises (COULD_NOT_DETERMINE)
         When: a full run is fed through the live path
         Then: the gate never goes CLOSED and every row lands
         """
