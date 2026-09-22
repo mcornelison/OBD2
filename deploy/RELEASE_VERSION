@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.61",
-  "theme": "Datasheets, design patterns, event-time rule",
-  "description": "Documentation and specifications only, no runtime code change. Adds hardware/datasheets/ holding the TDK ICM-20948, Maxim MAX17048 and Geekworm X1209 sources locally for the first time; lands the event-time rule in ssot-design-pattern.md; adds design-patterns section 9; and carries verified sensor-calibration facts into grounded-knowledge.md."
+  "version": "V0.29.62",
+  "theme": "US-805 derived IMU persistence; Sprint 92",
+  "description": "US-805: pitchDeg, stopCount and biasRad now persist to a separate edr_imu_derived table on both tiers (migration v0027). This was the V0.29 closure blocker -- no pitch or grade fix could be verified while the values were published live but never stored. Adds tools/sync/reconcile.py to verify a sync landed. Sprint 92 single-sources the IMU rate and wires the prior-shutdown verdict to the kiosk."
 }
