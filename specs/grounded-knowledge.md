@@ -616,7 +616,12 @@ records which state produced a given row.
 
 ⚠️ **UNIT CORRECTED 2026-09-21 (Spool).** This table first went out labelled °/s, and so did the
 office's S44 boot-state finding. **The column is rad/s** — `UNIT_GYRO = "rad/s"`
-(`sensor_reader.py:130`) and `-- rad/s` (`sensor_schema.py:56`). Swept the same session:
+(`sensor_reader.py:130`) and `-- rad/s` (`sensor_schema.py:56`). 🟢 **Fact-checked to the source:**
+the installed driver, `adafruit_icm20x` 2.1.10, documents `gyro` as *"radians / second"* and
+converts at line 313 by `_ICM20X_RAD_PER_DEG = 0.017453293`. ⚠️ **The vendor's own breakout guide
+is internally inconsistent** — its prose says *"gyro … in degrees/sec"* while its example code prints
+`"rads/s"`. **The driver source is the authority; the guide's prose is wrong.** Anyone checking only
+the PDF would re-introduce this error. Swept the same session:
 `facts/imu-and-motion.md` and shared `MEMORY.md`, both with verified backups. **It is the SPEED
 km/h-as-mph phantom's shape — pin the unit before the magnitude — and it matters here for a reason
 that only appears once the unit is right** (next section).
@@ -681,45 +686,91 @@ stops — `stopCount = 0` after hours parked, because a parked car never accumul
 to 0.10 rad/s to classify the state, and **discards the means.** The post-recovery check samples
 again, on a HEALTHY gyro, and discards those too.
 
-⇒ **Hand the post-recovery `axisMeans` to pitch fusion as its initial bias.** That cancels #3 at
-boot instead of waiting for five stops a parked car will never make.
+🔴 **Atlas's precise reading (verified in code, 2026-09-21): `axisMeans` is not merely discarded —
+it is COLLAPSED TO A BOOLEAN on the next line** (`gyro_recovery.py:103-104`). A three-axis bias
+estimate becomes one bit, and the bit is all that survives.
 
-**Precision, stated with its uncertainty rather than its best case.** HEALTHY per-sample SD is
-**0.00279 rad/s** on `gyro_y`. **If** the 20 reads are independent, the mean has SE 0.00062 rad/s —
-the bias is determined at ~21σ and the residual pitch error falls from **3.74° to ~0.18°** (~20×).
-⚠️ **But `_sampleGyro` reads in a tight loop with no delay, very likely faster than the gyro's
-output data rate, so consecutive reads can return the same sample** — the effective N may be 2–4,
-not 20. At N = 3 the residual is ~0.46° (~8×). ⇒ **The improvement is bounded between ~8× and
-~20×, and I have not measured which.** Either way it is large. **Recommendation: sample across a
-deliberate 2–5 s window at the ODR, not a tight loop**, so N is genuinely independent and stated.
+**RULED (Atlas, 2026-09-21): #3 is TWO obligations with different gates.**
+
+**(a) 🔴 LAND IT — a compliance duty, independent of any fusion change.** `ssot-design-pattern.md`
+§A′ (CIO 2026-08-29): *"if we read, touch, or HAVE ACCESS TO any data we must land it."* **Land the
+PRE-recovery and POST-recovery `axisMeans` separately** — the pair is the only record of what
+recovery did to the bias — **stamped with SAMPLE time, not write time**, per the CIO's standing
+rule A″ issued 2026-09-21 (*event time is the record for ALL data*; `ARCH-043`). **This also closes
+the US-778 gap below** — the recovery outcome is otherwise journal-only.
+
+**(b) ⚠️ USE IT as pitch fusion's initial bias — accepted in principle, GATED on fixing the
+sampler first.** An estimate whose error bar cannot be stated must not be injected as a correction.
+Two further conditions:
+1. **ONLY the POST-recovery means.** The pre-recovery sample is taken on a FAULTED gyro
+   (0.25–0.52 rad/s); feeding it to fusion would inject the fault as a correction. The two call
+   sites (`before = _sampleGyro(...)`, `after = _sampleGyro(...)`) are eleven lines apart.
+2. **The estimate is valid for THAT boot only, and fusion must record which estimate it used** —
+   the same attribution requirement as `fusion_version` in the US-805 ruling. *A correction that
+   cannot be attributed cannot be audited.*
+
+**Precision — MEASURED, and it settles the range I left open.**
+
+    _sampleGyro: for _ in range(count): readings.append(tuple(icm.gyro))   -- no delay (Atlas, verified)
+    gyro ODR:    1100 / (1 + 10) = 100 Hz   -- adafruit_icm20x 2.1.10 initialize(), installed on the Pi
+    measured:    20 raw reads of GYRO_XOUT (0x33) take 18.3-22.8 ms, 6 trials,
+                 and return only 2-3 DISTINCT samples each time    (BANK_SEL 0x00 before and after)
+
+**Effective N ≈ 3, not 20** — the loop finishes inside two or three 10 ms output periods. HEALTHY
+per-sample SD is 0.00279 rad/s, so at N = 3 the mean's SE is 0.00161 rad/s and the residual pitch
+error is **~0.46° — an ~8× improvement, not ~20×.** 🔴 ***Withdrawn: the "~20× / 0.18°" figure I
+published earlier the same day. It assumed N = 20 and the device does not deliver it.*** ⚠️ The
+raw `smbus2` loop is likely a little faster than the driver's `busio` path, so the driver may catch
+one or two more samples — **N ≈ 2–5 in practice, still nowhere near 20.**
+
+⇒ **The sampler fix is required, not optional:** sample across a deliberate **2–5 s window paced
+at the 100 Hz ODR** (200–500 genuinely independent samples) and **state N in the landed record.**
 
 ⚠️ **Precondition, owned by the caller and already true at startup:** the car must be stationary.
 `gyroLooksFaulted`'s own docstring makes the same point — at key-on the car has not moved.
+
+🔴 **Neither half is filed.** #3 needs the CIO's permission to join the punch list (standing rule,
+2026-09-21). Routed to Marcus by Atlas.
 
 ### Story consequences
 
 - **US-778** (latch recovery) — 🟢 **the work exists, is deployed, and is validated in the field:
   10 detected, 10 cleared, 0 failed, 0 skipped, journal 2026-09-08 → 09-21.** It reads `pending`
   on the punch list. ⇒ **Candidate for closure against that evidence**, subject to the PM checking
-  its acceptance criteria — which I cannot see from here. ⚠️ **One gap if the ACs require it: the
-  outcome is journal-only, never persisted**, so the state of any given row is not queryable.
-- **US-749** (70° runaway guard) — the **triggering condition no longer occurs**: since recovery
-  landed, pitch has not approached 70° (tonight ~−3.3°). **The guard stays correct as defence in
-  depth** for a recovery that fails. If it is `blocked` on US-778, **that dependency is now met.**
+  its acceptance criteria. ⚠️ **One gap if the ACs require it: the outcome is journal-only** — which
+  obligation (a) above closes.
+- **US-749** (70° runaway guard) — **RULED NOT OBSOLETE (Atlas, 2026-09-21), and it must not be
+  closed on the evidence above.** Its trigger has stopped firing because recovery succeeds; **that
+  shows the guard is UNEXERCISED, not UNNECESSARY.** `0 failed` and `no guard needed` write an
+  identical journal — the quiet-counter ambiguity of F-076 (`consecutive_failures = 0` reads the
+  same on a working quarantine and on one that is never called). **US-749 exists for the boot where
+  recovery FAILS.** Its dependency on US-778 is met; **what fences it is the PM's to state.**
 - 🔴 **Neither story fixes the defect Atlas saw on 09-21 and I reproduced the same night.** That is
-  #3 and it needs its own item — or US-805/US-750 scope that explicitly names residual bias.
-- **US-782** (rest noise, DLPF 0 vs 4) — see below: **it optimises noise, and the measured error is
-  bias.**
+  #3, and it needs its own item — see the two obligations above.
+- **US-782** — **DROPPED** (Atlas, 2026-09-21). See below.
 
 ---
 
-## US-782 — the spike measures NOISE, and the pitch error is BIAS
+## US-782 — DROPPED. It measures NOISE, and the pitch error is BIAS.
 
-`ICM20948()` is constructed with **no DLPF argument** — there is no DLPF configuration anywhere in
-the repository, so there is no "config 0 vs config 4" to compare without writing bank-2 registers
-behind the driver on a live bus two processes are polling.
+**RULED (Atlas, 2026-09-21): dropped from V0.29, not re-scoped.** Re-scoping a spike into a fix is
+shape drift — US-782 is sized and justified as a measurement, and #3 is a code change with a
+precondition. #3 gets its own row or none.
 
-🔴 **More importantly, it would tune the wrong term.** At the current (default) config:
+🔴 **CORRECTION — the first version of this section gave a false reason alongside the true one.**
+It said reaching DLPF meant *"writing bank-2 registers behind the driver on a live bus."* **False.**
+The installed driver, `adafruit_icm20x` 2.1.10, exposes **`gyro_dlpf_cutoff` and
+`accel_dlpf_cutoff` as supported properties with setters**, and handles the bank switch itself. Our
+code never sets them, so the chip runs at its power-on default — **which makes the story's "config
+0" premise coherent, not empty.** ⇒ **US-782 was executable through the supported API.** The drop
+rests on the argument below **alone**, which is sufficient; the feasibility objection is withdrawn.
+
+⚠️ **One real caution the correction does not remove:** the driver's DLPF setters write
+`REG_BANK_SEL` to reach bank 2. Any code doing so at runtime must own the IMU exclusively for that
+moment. **I have NOT established how many processes read the IMU** — the two-process finding is
+about the MAX17048, and I should not have carried it across to this device.
+
+🔴 **Why the drop stands anyway — it would tune the wrong term.** At the current (default) config:
 
     per-sample gyro SD  (HEALTHY, parked)   x 0.00342   y 0.00279   z 0.00295  rad/s
     residual gyro BIAS  (HEALTHY, parked)   x -0.00088  y 0.01304   z 0.00392  rad/s
@@ -729,9 +780,9 @@ out, while the noise does**, under the same 5 s filter that turns the bias into 
 DLPF change moves the noise and leaves the bias untouched.** ⇒ **US-782 cannot move the error that
 is actually breaking pitch and grade.**
 
-🟢 **Its baseline is now free and on the record** — the SDs above, n = 5,332,340 — **so if the spike
-is ever run, the "before" arm already exists.** ⇒ **Recommendation: re-scope to residual-bias
-cancellation (above), or drop.** Tuning noise first is optimising the smaller term.
+🟢 **Its baseline is on the record** — the SDs above, n = 5,332,340, at the power-on-default DLPF —
+**so if the DLPF question is ever asked again, the "before" arm already exists.** Nothing is lost by
+dropping it.
 
 **`void if`** — the IMU is replaced or its DLPF is ever set explicitly.
 
@@ -815,9 +866,22 @@ thermal range across those days is unknown — no ambient source exists on this 
 ambient, US-206). **A cold winter start is outside the observed range and the bound does not
 extend to it.** Re-check the first time the car is driven below ~5 °C.
 
+🟢 **ACCEPTED (Atlas, 2026-09-21): ship `0.98200` without a temperature term — WITH ONE CONDITION.
+The constant must carry the WINDOW IT WAS MEASURED OVER, in the config, not only in this spec.**
+Record alongside it: *HEALTHY state only · n = 5,706,847 parked samples · 2026-09-08 → 09-21 ·
+one September week, car mostly parked · not a temperature coefficient.* **Otherwise a January
+measurement that disagrees will read as a REGRESSION rather than as the out-of-bound case already
+predicted here.** ⚠️ The config file is not this office's surface — the attestation is specified
+here and **the config half belongs to whoever implements US-783.**
+
+**Measurement conditions, fact-checked against the installed driver** (`adafruit_icm20x` 2.1.10,
+`initialize()`): accelerometer range **±8 g**, accelerometer ODR **~53.6 Hz** (divisor 20), gyro
+range **±500 dps**, gyro ODR **100 Hz** (divisor 10). *Corrected: an earlier line here said the
+range was unset because our code passes no range argument — the driver's own `initialize()` sets
+it explicitly. The factor is valid at ±8 g.*
+
 **`void if`** — the IMU is replaced or moved to different hardware, the A-34 recovery changes, or the
-accelerometer full-scale range is ever set explicitly (today it is the `adafruit_icm20x` library
-default; `ICM20948()` is constructed with no range, no data rate and no DLPF argument).
+accelerometer range is ever changed from the driver's ±8 g default.
 
 ---
 
@@ -937,26 +1001,40 @@ land-what-you-read violation waiting to happen: it would not fail, it would answ
 
 **Researched 2026-09-21 (Spool), confirming the 2026-08-01 ruling rather than assuming it.**
 
-The MAX17048/MAX17049 register map is `VCELL 0x02` · `SOC 0x04` · `MODE 0x06` · `VERSION 0x08` ·
-`HIBRT 0x0A` · `CONFIG 0x0C` · `VALRT 0x14` · `CRATE 0x16` · `VRESET/ID 0x18` · `STATUS 0x1A` ·
-`CMD 0xFE`. **There is no temperature register and the part has no thermistor input** — it is a
-voltage-only ModelGauge. ⇒ **Any temperature tile fed from this chip is fabricated. Do not add one.**
+🔴 **PROVENANCE — read this before building on anything in this subsection.** **No MAX17048
+datasheet is held in this repository or on the share** (checked 2026-09-21: `specs/`, `docs/`,
+`hardware/`, share `examples/`, `facts/`). Two tiers of fact below, and they must not be mixed:
 
-🔴 **BUT the part is designed on the assumption that the HOST compensates for temperature.** The
-`CONFIG` register's high byte is **RCOMP**, and the datasheet specifies:
+- 🟢 **CORROBORATED in-repo** (`ups_monitor.py:246-251`, written against the part and exercised in
+  production): `VCELL 0x02` (78.125 µV/LSB) · `SOC 0x04` (high byte = integer %) · `MODE 0x06`
+  (write-only) · `VERSION 0x08` · `CONFIG 0x0C` (*"boots to 0x971C"*) · `CRATE 0x16`
+  (0.208 %/hr/LSB; reads `0xFFFF` on this chip).
+- ⚠️ **RECALLED from the Maxim MAX17048 datasheet, NOT held locally — VERIFY BEFORE ANY STORY
+  BUILDS ON THEM:** `HIBRT 0x0A` · `VALRT 0x14` · `VRESET/ID 0x18` · **`STATUS 0x1A` and its `RI`
+  bit** · `CMD 0xFE` · **the RCOMP temperature formula and both `TempCo` coefficients below.**
+  *Corrected: the first version of this section said "the datasheet specifies" for all of these.
+  It did not have the datasheet. That breaks this document's own Usage Rule 1.*
 
-    RCOMP = RCOMP0 + (T - 20 degC) * TempCoUp      for T > 20 degC
-    RCOMP = RCOMP0 + (T - 20 degC) * TempCoDown    for T < 20 degC
-    typical: RCOMP0 = 0x97,  TempCoUp = -0.5,  TempCoDown = -5.0
+**There is no temperature register and the part has no thermistor input** — a voltage-only
+ModelGauge. ⇒ **Any temperature tile fed from this chip is fabricated. Do not add one.** 🟢 This
+conclusion does **not** depend on the recalled tier: none of the six corroborated registers is a
+temperature, and the in-repo driver reads none.
 
-🔴 **We never write it.** `ups_monitor.py:250` defines `REGISTER_CONFIG = 0x0C` and even records
-that it *"boots to 0x971C family default"* — `0x97` **is** the uncompensated RCOMP0 — and **no code
-anywhere in the repository writes that register.** The gauge has run at the 20 °C factory default
-for the life of the project.
+🔴 **The part is designed on the assumption that the HOST compensates for temperature.** The
+`CONFIG` register's high byte is **RCOMP** — 🟢 corroborated: `0x971C` puts **`0x97`** there at
+boot. ⚠️ The compensation law, **recalled, not verified**:
 
-⚠️ **This is a real SOC-accuracy gap and it grows with temperature.** At the `TempCoDown = -5.0`
-slope a cold cell is badly mis-modelled, and a car cabin in a Chicago summer reaches 50–60 °C, far
-outside the calibration point.
+    RCOMP = RCOMP0 + (T - 20 degC) * TempCoUp      for T > 20 degC     (recalled typ. -0.5)
+    RCOMP = RCOMP0 + (T - 20 degC) * TempCoDown    for T < 20 degC     (recalled typ. -5.0)
+
+🔴 **We never write it.** `ups_monitor.py:250` defines `REGISTER_CONFIG = 0x0C` and records that it
+boots to `0x971C`, and **no code anywhere in the repository writes that register** — so the gauge
+has run at its boot-default RCOMP for the life of the project. **That part is corroborated.**
+
+⚠️ **How large the SOC error is cannot be stated from here** — it depends on the recalled
+coefficients and on a cell temperature nobody has measured. A car cabin in summer can plausibly run
+well above the 20 °C calibration point, **but no cabin temperature has ever been measured on this
+car**, so treat the magnitude as unknown rather than large.
 
 🔴 **BUT IT IS HARDWARE-GATED, AND THE OBVIOUS FIX IS FABRICATION.** RCOMP needs the **CELL's**
 temperature. **This car has no cell-temperature sensor.** ⇒ **Do NOT substitute the ICM-20948 die
@@ -978,45 +1056,74 @@ the gauge finished calibrating?" from **`/proc/uptime`**. Its own docstring stat
 *"the MAX17048 fuel gauge starts calibrating when the rig powers up, so system uptime is the
 available proxy."*
 
-🔴 **System uptime is a proxy for GAUGE uptime, and the two only coincide when the Pi and the cell
-power up together.** The MAX17048 is powered *by the cell*, so **removing the cell always
-power-on-resets the gauge** — but the Pi can keep running on the X1209's USB-C input throughout.
-⇒ **Swap a cell on a running Pi and the gauge resets while system uptime keeps climbing. The guard
-is blind in exactly the case it exists for, and it will publish a re-converging SOC as a calibrated
-reading.**
+🔴 **RULED (Atlas, 2026-09-21): `/proc/uptime` measures the SYSTEM; the question is about the
+GAUGE.** Uptime is a proxy for a different quantity from the one the guard needs, and a register
+that answers directly exists. **That is the ruling, and it holds regardless of power topology.**
 
-⚠️ **On 2026-09-21 the two happened to coincide** — the Pi had died at 18:45:14Z and the cell went in
-at 18:50Z — **so this did not bite, and that is luck, not design.** A guard that is correct by
-coincidence has not been tested.
+⚠️ *Corrected: this section first argued that the gauge is "powered by the cell", so pulling the
+cell always resets it while the Pi keeps running. **That is a plausible hypothesis and it is NOT
+verified** — no local source states what supplies the MAX17048 (`architecture.md` says only that
+the X1209 holds up the **Pi's** 5 V rail). The ruling does not rest on it. Its falsifier stays
+useful: pull and reinsert the cell on a running Pi and watch whether `RI` sets while uptime climbs.*
 
-🟢 **THE DESIGNED INSTRUMENT EXISTS AND IS UNUSED: `STATUS` (0x1A) carries an `RI` (Reset Indicator)
-bit**, set by the gauge on power-on-reset and held until the host clears it. **That answers "did
-this gauge just reset?" directly, with no proxy and no clock.** `STATUS` is **not read anywhere in
-the repository** — `ups_monitor.py` defines VCELL/SOC/MODE/VERSION/CONFIG/CRATE and not this one.
+⚠️ **On 2026-09-21 system and gauge happened to power up together** — the Pi died at 18:45:14Z and
+the cell went in at 18:50Z — **so this did not bite. A guard that is correct by coincidence has not
+been tested.**
 
-⇒ **This is `ask the instrument a question it can answer`, in the register map.** Replace the
-uptime inference with `STATUS.RI`; clear RI once the settling window has genuinely elapsed.
+🟢 **The designed instrument: `STATUS` (0x1A), `RI` (Reset Indicator) bit — set on power-on-reset,
+held until the host clears it.** 🟢 **Verified by Atlas: `STATUS` is not merely unread — it is
+ABSENT from the register map** (`ups_monitor.py:246-251`; zero hits for `0x1A`/`STATUS`/`RI` in
+`src/pi/power`). ⚠️ **`RI`'s semantics are in the RECALLED tier above — verify against the Maxim
+datasheet before building.**
 
-### F-048 cold-start protocol — what to measure, and what it must say about the inert fields
+🔴 **CONDITION OF THE RULING (Atlas): clearing `RI` is a WRITE, and the MAX17048 is polled by TWO
+processes** (`power_watch` and `main.py` — measured 2026-09-21 from the slow-drain journal: two
+logger families, 95 pids, one gauge). **Whoever clears `RI` first destroys the evidence for the
+other reader**, which then sees a clean bit on a gauge that has just reset. **The story must name ONE
+owner of the clear, and every other reader treats `RI` as read-only.** Atlas recommends the
+calibration guard owns it; the alternative is that **nobody clears it** and the guard latches its
+own "seen-reset-at" timestamp. **Either is acceptable. Silence on the question is not.** ⚠️
+Whether both processes would actually read `STATUS` depends on where the guard lands — **check
+before sizing.**
 
-**Preconditions.** 2000 mAh cell (the 450 mAh corpus does not transfer). Cell at rest, **≥ 3.9 V at
-start**, no load step during the run.
+### F-048 cold-start protocol — THE PROTOCOL ALREADY EXISTS. This section amends it.
 
-**Procedure.**
-1. **Power the rig fully OFF**, then cold-start. Record `t0` at first successful I²C read.
-2. Sample **`VCELL`, `SOC`, `STATUS` (for `RI`) and `CONFIG`** every 5 s for **600 s** — and 🔴
-   **persist every sample to a file, not the journal.** Nothing currently persists VCELL at poll
-   cadence, which is precisely why the F-051 excursion mechanism could not be characterised.
-3. Repeat **n ≥ 3 cold starts.** One run gives a curve, not a window.
-4. **Separately, exercise the blind case the guard cannot see:** with the Pi running, remove and
-   reinsert the cell, and record whether `RI` sets while `/proc/uptime` keeps climbing. **That is
-   the falsifier for the proxy defect above** — and it is a two-minute test.
+🔴 *Corrected: the first version of this section wrote a new protocol. **One already exists and is
+better grounded:** `docs/max17048-soc-calibration-protocol.md` (US-431), with tooling
+`scripts/calibrate_max17048.py`. It is the SSOT for the procedure. I wrote mine without reading
+it — which is exactly how two versions of one truth are made.*
 
-**Deriving the window.** `socColdStartWindowSeconds` = the time from `t0` until SOC is within
-**±1 %** of its 600 s value **and stays there** — clear it by a **factor**, not a margin, and state
-the sample size and every exclusion. ⚠️ **The current `180` is a guess, and 2026-09-21 showed
-convergence taking longer than 15 min after a cell change.** Expect the measured value to be much
-larger. **Do not carry `180` forward without measuring it.**
+**What the existing protocol already does — and did before I proposed it:** 600 s at 5 s,
+**logged to a CSV file** (so "persist to a file, not the journal" was already met), settle =
+**±2 pct held ≥ 30 s** (grounded: the SOC register is integer-percent, so ±2 is 2 LSB), window padded
+**×1.5** and rounded up to 10 s, CIO runs the physical cycle, Spool interprets.
+⚠️ **My ±1 % is withdrawn** — it is one LSB of an integer register, tighter than the instrument can
+resolve. **The existing ±2 pct is correct.**
+
+🟢 **It also holds independent corroboration of the 2026-09-21 transient:** *Drive 5 — SOC 60 % at
+VCELL 4.200 V, a 40-point error* at cold power-up. Atlas's 65.9 % at 4.2062 V is the **second
+recorded instance** of the same ModelGauge behaviour, which strengthens the "re-convergence
+transient, not a standing error" reading.
+
+**AMENDMENTS — these are new and belong in that doc (not this office's surface; for its owner):**
+
+1. 🔴 **HOLD — do not run it now** (Atlas, 2026-09-21). A **third cell epoch** is coming:
+   `→18:50Z` 450 mAh pouch · `18:50Z→` 2000 mAh pouch · **then an 18650 pack, ordered, not
+   fitted.** Measuring now characterises a cell that is about to leave. **Run it on the cell we
+   keep.** 🟢 Design intent agrees: `architecture.md:243` specifies the X1209 as **"18650 battery
+   backup"** — that is what the board is built for. *(`facts/power-and-battery.md:89` calls the
+   docs' "18650" WRONG — correctly, as a description of the pouch that was actually fitted. Both
+   are true about different things; it becomes true of the fitted cell again when the pack lands.)*
+2. 🔴 **Record the window WITH THE CELL IT WAS MEASURED ON**, and make the config key
+   re-derivable — otherwise a well-measured number silently expires on the next cell change.
+3. **The settle clock is system uptime** (*"start promptly"*) — the same proxy the ruling above
+   retires. **Record `STATUS.RI` alongside each sample**, once verified against the datasheet.
+4. **n ≥ 3 cold starts.** One run gives a curve, not a window.
+5. **Add the two-minute falsifier:** pull and reinsert the cell on a running Pi; record `RI` and
+   `/proc/uptime`.
+
+⚠️ **The existing `180` does not survive** — 2026-09-21 showed convergence past 15 minutes after a
+cell change. **Do not carry it forward.**
 
 🔴 **What the protocol must say about the three inert fields — Atlas's point, and it is decisive:**
 
@@ -1068,6 +1175,10 @@ bias is never cancelled, exactly as the mechanism predicts.
 
 **`void if`** — `states/imu` stops carrying these fields, or US-805 lands and persists them.
 
+---
+
+## `edr_imu_sample.temp_c` — why it is NULL, and it is NOT an oversight
+
 **Researched 2026-09-21 (Spool).** `temp_c` is NULL on **all 6,275,515 rows since 2026-09-08**.
 **The cause is already known and the code is already honest about it:** `sensor_reader.py:594-602`
 records **US-500 — the genuine `adafruit_icm20x.ICM20948` does NOT expose `.temperature`** (a clone
@@ -1075,29 +1186,37 @@ and the test fake did, which is how the assumption got in). The read is wrapped,
 `AttributeError` degrades to `None`, and the burst is **not** dropped. ⇒ **This is honest-null, not
 a wiring defect. Nothing is being hidden.**
 
-### ⚠️ UNRESOLVED — whether this IMU has a usable temperature register
+### 🟢 RECONCILED BY THE VENDOR'S OWN DOCUMENT — the DRIVER we run has no temperature; the CHIP does
 
-**Two statements conflict, and this spec records both rather than choosing.**
+**Two statements appeared to conflict on 2026-09-21:**
 
-- **CIO, 2026-09-21:** *this version of the IMU does not have a temperature register.* The CIO is
-  the vehicle owner and knows this hardware first-hand.
-- **Spool, measured 2026-09-21, direct I²C read at `0x69`, bank 0, no bank switch:**
+- **CIO:** *this version of the IMU does not have a temperature register.*
+- **Spool, direct I²C read** at `0x69`, bank 0, no bank switch: `WHO_AM_I = 0xEA`,
+  `BANK_SEL = 0x00`, `TEMP_OUT (0x39/0x3A)` raw 1952 / 1968 / 2016 / 2064 / 1952 — a plausible,
+  **dithering** value (≈ 26.9–27.2 °C by the recalled `/333.87 + 21` formula; ⚠️ that formula is
+  from memory of the TDK datasheet, which is **not** held in the repo).
 
-      WHO_AM_I (0x00) = 0xEA         genuine ICM-20948 signature
-      BANK_SEL (0x7F) = 0x00
-      TEMP_OUT (0x39/0x3A) raw = 1952, 1968, 2016, 2064, 1952  ->  26.85 - 27.18 degC
+**Settled by `hardware/enclosures/case-imu-icm20948/datasheets/adafruit-tdk-invensense-icm-20948-9-dof-imu.pdf`
+(the Adafruit guide for this breakout) plus the installed driver source:**
 
-  The register responds with a plausible, **dithering** (not latched) value, decoded with the
-  ICM-20948 datasheet formula `((TEMP_OUT - 0) / 333.87) + 21`.
+| Layer | Temperature? | Source |
+|---|---|---|
+| **The part** — Adafruit ICM-20948 breakout, default I²C `0x69` | 🟢 **yes** | guide p.3 (`0x69`, `SDO/ADR` → `0x68`); `WHO_AM_I 0xEA` read live |
+| **Adafruit's Arduino driver** | 🟢 **yes** | guide: `icm.getEvent(&accel, &gyro, &temp, &mag)` → `temp.temperature` |
+| **Adafruit's CircuitPython driver — the one we run** | 🔴 **NO** | guide lists only `acceleration`, `gyro`, `magnetic`; installed `adafruit_icm20x` **2.1.10** has **no `def temperature`** |
 
-**Candidate reconciliations, none confirmed:** *(a)* the **MAX17048** genuinely has no temperature
-register (verified the same day) and the two were conflated; *(b)* the **driver** has none — US-500
-is exactly that — which reads the same from software; *(c)* the CIO knows something about this
-specific breakout that a register read cannot show — e.g. that the value is not trustworthy even
-though it responds. **(c) would outrank the read.**
+⇒ 🟢 **The CIO is right about the version we use — our driver has no temperature.** The chip under
+it does. **Both statements were true; they were about different layers.** This is US-500's exact
+finding, now confirmed from the vendor's own document.
 
-🔴 **RULING: do NOT build on this register until the CIO resolves it.** No story should read
-`TEMP_OUT` on the strength of this measurement alone.
+⇒ 🟢 **Part identity is settled.** Atlas raised (2026-09-21) that a dithering register on a part
+said to lack one could mean *the part is not what we believe*, which would put A-34's register
+assumptions in doubt. **It is what we believe:** genuine Adafruit ICM-20948 breakout, `WHO_AM_I
+0xEA`, default address as documented. **A-34's register assumptions are not undermined by this.**
+
+🔴 **RULING UNCHANGED — the CIO's call: whether to read `TEMP_OUT` by going past the driver** (the
+`ak09916_bypass` / `gyro_recovery` precedent) **is a decision, not a derivation.** No story reads it
+until he says so.
 
 🟢 **Nothing is blocked by leaving it open:** US-783 ships without a temperature term (the static
 factor captures ~91 % of the error, bounded above), so this is a refinement, not a gate.
