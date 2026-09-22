@@ -178,12 +178,13 @@ class TestMariaDbCommandRunnerHermetic:
 
 
 class TestAcquireHonestSkip:
-    """With no service DSN and no testcontainers, acquisition skips HONESTLY."""
+    """With no service DSN and no reachable Docker, acquisition skips HONESTLY."""
 
     def test_raises_mariadb_unavailable_naming_both_paths(self, monkeypatch):
         monkeypatch.delenv(MARIADB_TEST_DSN_ENV, raising=False)
-        # testcontainers is genuinely absent on the dev bench; assert the raise
-        # names both acquisition paths + refuses the create_all substitute.
+        # Whether testcontainers is ABSENT (the dev bench) or present with no
+        # Docker daemon (US-807), the raise names both acquisition paths and
+        # refuses the create_all substitute.
         with pytest.raises(MariaDbUnavailable) as excInfo:
             with acquireMariaDb():
                 pass
@@ -191,6 +192,41 @@ class TestAcquireHonestSkip:
         assert MARIADB_TEST_DSN_ENV in msg
         assert "testcontainers" in msg
         assert "create_all" in msg  # explicitly refuses the trap
+
+    def test_aDaemonlessDockerRaisingInTheCONSTRUCTOR_isStillAnHonestSkip(
+        self, monkeypatch
+    ):
+        """
+        Given: testcontainers installed and no Docker daemon -- MySqlContainer
+            builds its DockerClient in __init__, so the DockerException comes
+            from the CONSTRUCTOR, not from start()
+        When: the harness acquires
+        Then: MariaDbUnavailable, so the caller's pytest.skip runs.
+
+        US-807: the constructor used to sit OUTSIDE the try whose except is
+        commented "Docker down", so this exception escaped raw and the one gate
+        standing on the Pi/server seam reported a FAILURE where the honest
+        answer is "not checked". This goes red if it is ever moved back out.
+        """
+        pytest.importorskip("testcontainers.mysql")
+        import testcontainers.mysql as tcMysql
+
+        monkeypatch.delenv(MARIADB_TEST_DSN_ENV, raising=False)
+
+        class _NoDaemon:
+            def __init__(self, *_a, **_k):
+                raise RuntimeError("Error while fetching server API version")
+
+        monkeypatch.setattr(tcMysql, "MySqlContainer", _NoDaemon)
+
+        with pytest.raises(MariaDbUnavailable) as excInfo:
+            with acquireMariaDb():
+                pass
+
+        msg = str(excInfo.value)
+        assert "Docker" in msg
+        assert MARIADB_TEST_DSN_ENV in msg
+        assert "create_all" in msg
 
 
 class TestSeedDdlShape:
