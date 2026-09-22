@@ -269,6 +269,54 @@ numbers that were never the same kind of thing.
 
 ---
 
+## 9. A constant carries its BASIS — express a relationship, not a frozen absolute
+
+**Pattern.** A constant whose correct value depends on a measurable property is expressed as a
+**relationship to that property**, and records what it was derived from. A frozen absolute is
+correct only for the conditions that produced it, and it does not announce when those change —
+**it just becomes quietly wrong.**
+
+**When it applies.** Any constant derived from a measurement of a part, a bus, a corpus or a
+vehicle — i.e. anything that can wear, grow, be replaced or be re-fitted.
+
+**Instances.**
+1. 🔴 **The OBD speed scale factor (Spool, 2026-09-21).** A measured **+1.50 %** speed-high
+   reading is explained by **tyre TREAD WEAR** — a worn tyre is smaller, so the wheel turns
+   faster for the same road speed. **Do NOT ship a software speed correction:** it would be
+   calibrated against worn tyres and become **silently wrong the day they are replaced.** If
+   a scale factor is ever needed it must be **derived from tread state**, not frozen.
+2. 🔴 **`3.4712 V` hardened into "the pack cutoff."** It is not a cutoff — it is where **one
+   run's load** lost the 5 V rail. Four runs ended at **3.39 / 3.46 / 3.63 / 4.19 V**. The
+   constant recorded a *number* and dropped the *condition that produced it*.
+3. 🔴 **`smoothingSec = 7` was sized to a 7.5 s splash animation** that is now shed. The basis
+   disappeared; the constant did not.
+4. 🔴 **`parkDwellSec = 20` was floored by a "13 s worst in-drive bus gap."** A wider corpus
+   measured **18 s over 71 drives** — the earlier figure came from 5. **The floor moved 38 %
+   because the sample grew; the constant stayed put**, leaving an 11 % margin above a maximum
+   that is still growing with sample size.
+5. **`sampleHz 50` was chosen from what the sensor CAN do**, not from a named phenomenon — an
+   absolute with no basis recorded at all.
+
+**Anti-pattern prevented.** A constant that was right once, is wrong now, and cannot say so.
+
+🔴 **The test for this pattern: name what the constant was derived FROM, and state what would
+invalidate it.** If you cannot, it is a magic number regardless of how carefully it was chosen.
+That is the `void if` discipline (`facts/README.md` rule 7) applied to code rather than to facts
+— and instance 4 is a **ruling** that needed one and did not have one.
+
+⚠️ **A maximum measured over a finite corpus is a LOWER BOUND on the true maximum.** It grows
+with sample size. A threshold placed just above it is §1's anti-pattern wearing a measurement
+as justification.
+
+⏸️ **FORWARD NOTE, NOT A WORK ITEM — deferred by the CIO 2026-09-21** (*"before we worry about
+the BMW, lets get the pi and eclipse working 100%"*). Spool ruled that **no Eclipse timing
+constant ports to another protocol**: the Eclipse is K-line at 10,400 bps with a measured
+**2.21–2.25 s** per-PID period; CAN is 24–48× faster. `pi.gear.maxAgeSec = 3.0` is 1.33× the
+Eclipse period but would be **~1000× too large on CAN — it would never trip, so a frozen
+reading would render as LIVE for three seconds.** A fabricated reading (§8), not a tuning
+looseness. **Recorded here because it is the cleanest statement of this pattern we have. Do
+not act on it until the Eclipse platform is signed off.**
+
 ## Cross-references
 
 - `specs/anti-patterns.md` — the catalogue of defect *shapes*; this file is the catalogue of
