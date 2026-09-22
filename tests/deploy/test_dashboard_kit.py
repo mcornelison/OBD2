@@ -476,10 +476,15 @@ console.log('US421_OK');
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_powerTile_modeBadgeHonestInstrument_us421():
-    """US-421 / BL-014: the power tile renders the pi.power.mode SSOT -- car->CAR,
-    wall->WALL, and anything else (unknown / invalid / absent) -> the lowercase
-    `unknown` badge, never a confident wrong mode. Verified both directly and
-    through the systemStatusView DOM render path with mocked config states."""
+    """US-421 / US-668: the power tile renders the SENSED SOURCE as its value --
+    external -> EXTERNAL (ok), battery -> BATTERY (amber) -- and an UNRESOLVED
+    source renders `unavailable`, never a confident guess. Also guards that the
+    retired pi.power.mode CAR/WALL vocabulary cannot resurface: `mode` must not
+    influence the value.
+
+    Name kept for the manifest's proof pointer. The car->CAR/wall->WALL contract
+    this was written against was deleted by US-668; see the block comment above
+    _US421_NODE_SCRIPT and ARCH-042."""
     result = subprocess.run(
         ["node", "-e", _US421_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
         capture_output=True,
