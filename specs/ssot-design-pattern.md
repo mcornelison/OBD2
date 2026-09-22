@@ -98,6 +98,57 @@ IR-dominated lux computation is published as `null`, **not clamped to 0**, becau
 stops A′ becoming a fabrication mandate**, and it is the half most likely to be dropped when
 somebody is trying to satisfy the letter of "land everything".
 
+### A″. WHICH time — event time is the record (CIO directive, 2026-09-21)
+
+> **"We record the time the data was created. We can additionally have the write time/date, but
+> the time of the event is the most important date/time for ALL data."**
+
+A′ made a stamp **mandatory**. It never said **which** time, and that gap is load-bearing:
+**a row stamped with its write time satisfies A′ while destroying the information A′ exists to
+preserve.** A″ closes it.
+
+| | A′ (2026-08-29) | A″ (2026-09-21) |
+|---|---|---|
+| **Stamp** | a date+time stamp is MANDATORY | **the EVENT time is the record** |
+| **Write time** | not distinguished | **optional metadata, never the substitute** |
+| **Scope** | every landed row | **ALL data, both tiers, no exceptions** |
+
+**Event time is when the thing HAPPENED — when the sensor was sampled, when the ECU answered, when
+the rail dropped. Write time is when a row reached storage.** Under normal load they differ by
+milliseconds and nothing shows. **The difference only appears when it matters.**
+
+🔴 **WHY IT MATTERS — write-time stamps SMOOTH OVER GAPS, and a smoothed gap is invisible.**
+When a queue backs up, a batch of readings lands together and the rows come out evenly spaced at
+*write* cadence. **A discontinuous capture is rendered as a continuous one.** Nothing is missing
+from the table, nothing errors, and the defect is not merely hidden — **the record now positively
+asserts that the system was healthy during the interval it was failing.** Worked example: the
+2026-09-15 leg whose row timestamps looked gapless, which cost an investigation (US-777, US-809).
+
+**Consequences, in force from this date:**
+
+1. **A row's timestamp column means EVENT time** unless the column is explicitly named otherwise.
+   A `timestamp` that silently holds write time is a **mislabelled measurement**, not a detail.
+2. **Keeping write time as well is encouraged, in its own column.** A″ adds a requirement; it
+   removes nothing. Two honest columns beat one ambiguous one.
+3. 🔴 **A pipeline may not RESTAMP.** Discarding a caller's measured time and substituting "now"
+   at the final write is the specific defect this rule names. Worked example, measured
+   2026-09-21: `src/pi/obdii/data/logger.py:380` passes `utcIsoNow()` into the INSERT and discards
+   `reading.timestamp` — **on the shared path both persistence routes run through.**
+4. **Where event time is genuinely unavailable, land a typed absence and say so** — never
+   substitute write time silently. **The §A corollary governs here exactly as elsewhere: a
+   substituted timestamp is a MANUFACTURED reading.**
+
+⚠️ **A″ does not weaken A′ §2's clock caveat — it compounds with it.** The Pi's RTC has no charged
+backup cell, so an *event* time is only as trustworthy as the clock at the moment of the event.
+**Land the monotonic reading and the `clockSynced` flag alongside, as ARCH-003 already does.**
+An event time that might be wrong and does not say so is still a fabricated timestamp.
+
+⚠️ **Scope note for anyone auditing against this:** `utcIsoNow()` appears at **27 call sites across
+18 files** in `src/pi` (measured 2026-09-21). **That is an upper bound on where A″ lands, NOT a
+defect count** — many are legitimate "what time is it now" uses (alert timing, retention sweeps,
+boot progress). **Separating them is an audit, and the audit is not the rule.** Do not cite the
+number as a finding.
+
 ### B. Read once → persist → publish → subscribe
 
 **Never read the same source twice, and never acquire it separately for two display locations.**
