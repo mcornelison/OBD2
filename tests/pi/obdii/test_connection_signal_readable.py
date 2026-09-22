@@ -14,6 +14,9 @@
 # ================================================================================
 # 2026-09-18    | Rex (US-767-a)| Initial -- signalReadable contract, `connected`
 #               |              | unchanged table, reader enumeration.
+# 2026-09-21    | Rex (US-793-b)| The EDR gate no longer reads signalReadable
+#               |              | (it gates on reachability): the producer is
+#               |              | now the ONLY module naming the field.
 # ================================================================================
 ################################################################################
 
@@ -233,9 +236,9 @@ def test_signalReadable_noReaderOutsideProducer() -> None:
     """
     Given: every Python module under src/
     When: searched for the new field
-    Then: only obd_connection.py and the EDR log gate name it. US-767-b built
-          the gate, whose two inputs ARE (connected, signalReadable), but wired it
-          with no signal; US-767-c is where getStatus() reaches it. Every other
+    Then: only obd_connection.py names it. US-767-b/c built the EDR gate on
+          (connected, signalReadable); US-793-b moved the gate to ECU
+          reachability, so it no longer reads this field either. Every other
           module -- capture-health above all -- must never read it.
     """
     assert PRODUCER.is_file(), f"producer not found at {PRODUCER}"
@@ -247,7 +250,7 @@ def test_signalReadable_noReaderOutsideProducer() -> None:
         if pattern.search(path.read_text(encoding="utf-8"))
     )
 
-    assert readers == ["src/pi/bus/edr_log_gate.py", "src/pi/obdii/obd_connection.py"]
+    assert readers == ["src/pi/obdii/obd_connection.py"]
 
 
 def test_toDict_unchanged() -> None:
