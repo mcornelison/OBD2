@@ -358,7 +358,12 @@ class TestTheOrchestratorFeedsIt:
         """
         Given: a settled 3rd gear
         When:  the OBD feed stops dead and only the card-state tick keeps running
-        Then:  the file reports a typed `stale` -- never the last real gear
+        Then:  the file reports a typed absence -- never the last real gear
+
+        US-739 UPDATED THE TOKEN, not the claim: this harness has no connection,
+        so `linkHealthy` is False and an unusable RPM now names the link. The
+        load-bearing assertions -- `available is False` and `gear is None` --
+        are unchanged, and they are what "never a held previous one" means.
 
         THE DEFECT THIS EXISTS TO PREVENT is a producer wired ONLY to the
         reading callback. Derivation and file would both be perfect, and a
@@ -376,23 +381,32 @@ class TestTheOrchestratorFeedsIt:
         state = _readGear(tmp_path)
         assert state["available"] is False
         assert state["gear"] is None
-        assert state["reason"] == gd.REASON_STALE
+        assert state["reason"] == gd.REASON_LINK_DOWN
 
-    def test_noReadingEverArrives_theCardTickPublishesNoData(self, tmp_path):
+    def test_noReadingEverArrives_theCardTickPublishesATypedAbsence(self, tmp_path):
         """
-        Given: a booted Pi that has never seen a SPEED or RPM reading
+        Given: a booted Pi that has never seen a SPEED or RPM reading, with no
+               connection wired
         When:  the card-state tick runs
-        Then:  the file says no_data -- distinguishable from a stopped feed
+        Then:  the file names the LINK rather than claiming a gear
 
-        `no_data` and `stale` are two different operator facts: never connected
-        versus connected and gone quiet. Collapsing them would make a dead
-        dongle look like a car that has simply stopped reporting.
+        ⚠️ US-739 CHANGED WHAT DISTINGUISHES THIS CASE. It used to assert
+        `no_data` against the `stale` of a stopped feed -- but with the link
+        down BOTH of those now read `link_down`, because "we cannot ask" is the
+        honest answer to both and is the fact the operator needs. What the two
+        new tokens separate is a dead link from a car settling into Park; the
+        SPEED-side `no_data`/`stale` distinction is pinned, unchanged, by
+        test_bothInputParameters_areRoutedToTheDeriver below and by
+        tests/pi/obdii/test_gear_typed_reasons.py.
         """
         orch = _Orch(str(tmp_path / "states"))
 
         assert orch._maybeEmitCardStates() is True
 
-        assert _readGear(tmp_path)["reason"] == gd.REASON_NO_DATA
+        state = _readGear(tmp_path)
+        assert state["available"] is False
+        assert state["gear"] is None
+        assert state["reason"] == gd.REASON_LINK_DOWN
 
     def test_handleReading_belowTheSpeedFloor_reportsTheThresholdNotAGear(
         self, tmp_path
@@ -496,6 +510,12 @@ def test_bothInputParameters_areRoutedToTheDeriver(tmp_path, param):
     Held per-parameter because a wiring that routed only SPEED (or only RPM)
     would pass every whole-cycle test above: the other value would simply stay
     at its last-seen sample forever and the ratio would look plausible.
+
+    US-739: the two sides now report DIFFERENT typed absences, and that is the
+    point of the story -- an unusable RPM with no link claim is `link_down`,
+    while an unusable SPEED under a live RPM keeps `stale`. Asserting the
+    per-side token also proves the new branches did not swallow the speed-side
+    absence (AC2).
     """
     orch = _Orch(str(tmp_path / "states"))
     assert _settleThirdGear(orch, tmp_path)["gear"] == 3
@@ -511,4 +531,6 @@ def test_bothInputParameters_areRoutedToTheDeriver(tmp_path, param):
 
     state = _readGear(tmp_path)
     assert state["available"] is False
-    assert state["reason"] == gd.REASON_STALE
+    assert state["reason"] == (
+        gd.REASON_LINK_DOWN if param == "RPM" else gd.REASON_STALE
+    )

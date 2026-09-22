@@ -3406,7 +3406,16 @@
     below_threshold: "too slow to tell",
     no_band_match: "no gear match",
     ambiguous: "ambiguous",
-    settling: "settling"
+    settling: "settling",
+    // US-739, PM-ruled operator wording (not the developer's). Both are
+    // EXPLICIT entries rather than left to the underscore fallback below:
+    // "link down" / "settling park" would be the machine tokens with the
+    // underscore taken out, and the fallback renders them underscore-free, so
+    // the existing sweep would have passed while the driver read vocabulary
+    // nobody chose. Both sit inside the <=16-character envelope the strings
+    // above establish ("too slow to tell" is the longest, at 16).
+    link_down: "no link",
+    settling_park: "confirming park"
   };
 
   function gearReasonText(reason) {

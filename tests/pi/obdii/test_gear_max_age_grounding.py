@@ -403,11 +403,16 @@ class TestTheWidenedWindowStillRejectsDeadData:
     within roughly the duration of the shift that invalidated it.
     """
 
-    def test_aReadingOlderThanTheWindow_isStillStale(self) -> None:
+    def test_aReadingOlderThanTheWindow_isStillRejected(self) -> None:
         """
         Given: a deriver at the ruled 3.0 s window
         When: both readings are 3.5 s old -- older than the window
-        Then: the gear is absent with reason `stale`, exactly as before
+        Then: the gear is absent, exactly as before
+
+        US-739 UPDATED THE REASON, not the rejection: with `linkHealthy=False`
+        an unusable RPM now reports `link_down`. What this test pins -- that a
+        reading past the window yields NO GEAR -- is unchanged, and both
+        `available is False` and `gear is None` still assert it.
         """
         d = _deriver(3.0)
         reading = d.update(
@@ -418,13 +423,16 @@ class TestTheWidenedWindowStillRejectsDeadData:
         )
         assert reading.available is False
         assert reading.gear is None
-        assert reading.reason == gd.REASON_STALE
+        assert reading.reason == gd.REASON_LINK_DOWN
 
     def test_aReadingTwoPollsOld_isRejected(self) -> None:
         """
         Given: the ruled window and the measured period
         When: a reading has missed TWO polls (aged 2 x 2.249 = 4.498 s)
-        Then: it is stale -- the widened window does not admit dead data
+        Then: it is refused -- the widened window does not admit dead data
+
+        US-739: the refusal is now reported as `link_down` (no healthy-link
+        claim in this fixture). The window behaviour under test is unchanged.
         """
         agedTwoPolls = 2 * MEASURED_SPEED_PERIOD_MAX_S
         assert agedTwoPolls > gd.DEFAULT_MAX_AGE_S, (
@@ -438,7 +446,8 @@ class TestTheWidenedWindowStillRejectsDeadData:
             nowS=agedTwoPolls,
             linkHealthy=False,
         )
-        assert reading.reason == gd.REASON_STALE
+        assert reading.available is False
+        assert reading.reason == gd.REASON_LINK_DOWN
 
     def test_aReadingOnePollOld_isNowAccepted_whichIsThePoint(self) -> None:
         """
@@ -465,7 +474,8 @@ class TestTheWidenedWindowStillRejectsDeadData:
         """
         Given: the 2.0 s window this story supersedes
         When: fed the identical one-poll-old sample the test above accepts
-        Then: it reports `stale` -- the defect, reproduced by name
+        Then: it is REFUSED -- the defect, reproduced (US-739: reported as
+        `link_down`, since this fixture makes no healthy-link claim)
 
         The two tests are the same fixture and differ only in the window, so
         this pins the WINDOW as the cause rather than anything about the sample.
@@ -477,7 +487,8 @@ class TestTheWidenedWindowStillRejectsDeadData:
             nowS=MEASURED_SPEED_PERIOD_MAX_S,
             linkHealthy=False,
         )
-        assert reading.reason == gd.REASON_STALE
+        assert reading.available is False
+        assert reading.reason == gd.REASON_LINK_DOWN
 
 
 # ---------------------------------------------------------------------------
