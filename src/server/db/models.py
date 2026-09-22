@@ -855,9 +855,9 @@ class BatteryHealthLog(Base):
 class PowerLog(Base):
     """Pi power-event log, mirrored from Pi (US-412 / F-101).
 
-    One row per power-source / shutdown-stage transition -- NOT per poll,
-    so volume is naturally bounded by real power events (raw-every-event;
-    no sampling needed).  Append-only with an integer ``id`` PK, so it
+    WHAT the table holds -- writers, row kinds, retention -- is defined ONCE
+    in the ``src/pi/power/power_db.py`` module docstring (US-798); this
+    mirror stores the same rows.  Append-only with an integer ``id`` PK, so it
     delta-syncs on ``id`` -> ``source_id`` exactly like every other synced
     capture table (the battery_health_log pattern).
 

@@ -34,15 +34,74 @@
 #                               the OBSERVATION rather than from monitor state,
 #                               which is what made every power-LOSS row read
 #                               power_source='ac_power'.
+# 2026-09-22    | Rex (US-798) | Module docstring is now THE power_log contract:
+#                               the five writers, their event types, what one
+#                               event writes (measured on the car) and retention.
 # ================================================================================
 ################################################################################
 
 """
-Database logging helpers for PowerMonitor.
+Database logging helpers for PowerMonitor -- and THE statement of what
+``power_log`` contains (US-798).  Every other description of the table points
+here; do not restate it anywhere else.
 
-Module-level functions that write power log rows to the DB. Each takes
-the database (or None) + the data to write; PowerMonitor keeps the state
-and delegates row-writing here.
+power_log CONTRACT
+==================
+
+``power_log`` is an EVENT log, never a poll log.  A row is written when
+something about power HAPPENS -- an observer session opens, an observer's
+reading changes, or power-saving is switched (and, historically, the shutdown
+ladder crossed a stage) -- and at no other time.  The only per-poll path,
+``PowerMonitor.start()``'s polling loop, is never started in production:
+``checkPowerStatus`` is reached only from the ``_PowerSourceUiBridge`` sink,
+which fires on an observed CHANGE.
+
+Writers -- every INSERT INTO power_log in src/ is one of these five, and each
+emits only the event types listed beside it (pinned by
+tests/pi/power/test_power_log_contract.py):
+
+    logPowerObservation -> observer_session_start, transition_to_ac, transition_to_battery
+    logPowerTransition -> transition_to_ac, transition_to_battery
+    logPowerSavingEvent -> power_saving_enabled, power_saving_disabled
+    logPowerReading -> ac_power, battery_power
+    logShutdownStage -> stage_warning, stage_imminent, stage_trigger
+
+What each row means:
+
+* ``observer_session_start`` / ``transition_to_*`` with ``observed_by`` SET --
+  one per process start, then one per change in the GPIO6 observer's
+  three-state reading (present / lost / unknown), stamped with
+  ``observer_state``.  These are the rows to COUNT transitions from.
+* ``transition_to_*`` with ``observed_by`` NULL -- PowerMonitor's own record of
+  the same power-source change.  A real change therefore writes its
+  transition TWICE; counting every ``transition_to_*`` row double-counts.
+* ``power_saving_enabled`` / ``power_saving_disabled`` -- PowerMonitor entering
+  or leaving power-saving: on a transition to or from battery, and
+  ``power_saving_disabled`` also when the monitor stops while saving
+  (shutdown on battery).
+* ``ac_power`` / ``battery_power`` -- the source reading that accompanies each
+  change PowerMonitor handles, including the first one of a session.
+* ``stage_warning`` / ``stage_imminent`` / ``stage_trigger`` -- HISTORICAL.
+  Written by the power-down ladder crossing a stage on battery, carrying
+  ``vcell``.  That ladder was deleted (commit 9adb0fbf; eclipse-powerwatch is
+  the sole shutdown decider and writes none), so nothing writes these now:
+  lifecycle still builds the writer and hands it to HardwareManager, which
+  stores it and never calls it.  The last such row on the car is 2026-05-16.
+
+What one event writes, as measured on chi-eclipse-01 (rows 2799-2809,
+2026-09-21/22): a process start writes ``observer_session_start`` +
+``ac_power``; one power LOSS writes four rows -- the observer's
+``transition_to_battery``, ``power_saving_enabled``, PowerMonitor's
+``transition_to_battery`` and ``battery_power``.
+
+Retention: NOTHING purges power_log, on the Pi or on the server (it
+delta-syncs by ``id``).  Growth is bounded by power EVENTS and process starts,
+not by time: 2,809 rows from 2026-05-01 to 2026-09-22 on the car (~20 a day).
+Starting the per-poll loop would change that to one row per poll interval and
+needs a retention rule first.
+
+Each writer below takes the database (or None) + the data to write;
+PowerMonitor keeps the state and delegates row-writing here.
 """
 
 import logging

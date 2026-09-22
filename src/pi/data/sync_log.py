@@ -213,12 +213,11 @@ PK_COLUMN: dict[str, str] = {
     # (the cross-tier vehicle_info_vin -> server vehicle_info_id resolution
     # happens server-side in src/server/api/sync.py).
     'dtc_freeze_frame':     'id',
-    # US-412 (F-101): power_log -- one row per power-source / shutdown-stage
-    # transition (NOT per poll), append-only with an integer 'id' PK, so it
+    # US-412 (F-101): power_log -- append-only with an integer 'id' PK, so it
     # delta-syncs exactly like the other capture tables.  Local-only Pi
     # health telemetry until US-412 mirrored it to the server so power/boot
-    # history is queryable server-side.  Volume is naturally bounded by real
-    # power events (raw-every-event; no sampling needed).
+    # history is queryable server-side.  What it holds is defined ONCE in the
+    # src/pi/power/power_db.py module docstring (US-798).
     'power_log':            'id',
     # US-453 (D-7 / F-082): pi_state -- the Pi operational-state singleton
     # (id pinned to 1; carries the US-225 no_new_drives gate flag).  It is

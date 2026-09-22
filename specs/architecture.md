@@ -829,7 +829,7 @@ mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 | `calibration_sessions` | Calibration session tracking | FK to profiles | SET NULL |
 | `alert_log` | Threshold violation alerts | FK to profiles | SET NULL |
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
-| `power_log` | AC/battery power transitions (Pi-authoritative; delta-synced to server since US-412 / F-101) | No FK | — |
+| `power_log` | Power **events**, never polls — contents, writers, row kinds and retention are defined ONCE in the `src/pi/power/power_db.py` module docstring (US-798); read that, not a paraphrase. Pi-authoritative; delta-synced to server since US-412 / F-101 | No FK | — |
 | `startup_log` | Boot-progress / RTC boot markers (Pi-authoritative; natural-key snapshot-synced since US-417 / F-101) | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
@@ -6338,7 +6338,7 @@ ssh chi-eclipse-01 'tail -n 200 /var/log/carpi/telemetry.log | jq .'
 ssh chi-eclipse-01 'zcat /var/log/carpi/telemetry.log.1 | jq "select(.power_source==\"battery\")"'
 ```
 
-This complements `power_log` (post-US-243, every poll, schema-typed) and `battery_health_log` (one row per drain event). Where the DB tables are queryable but require a working SQLite/sync path, this file survives a database lock or sync outage.
+This complements `power_log` (an event log, not a poll log — its contract is the `src/pi/power/power_db.py` module docstring, US-798) and `battery_health_log` (one row per drain event). Where the DB tables are queryable but require a working SQLite/sync path, this file survives a database lock or sync outage.
 
 ### Non-Pi Fallback
 
