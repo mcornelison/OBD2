@@ -3303,6 +3303,51 @@ produced it — a drive whose session ends with no close signal — because *abs
 not evidence of repair.* That criticism (Spool, 2026-08-28) is upheld: Root 1 was closed on one
 clean pair, and that was too narrow.
 
+### 10.7.1.4 The drive-attribution contract — a row is attributed at CAPTURE (US-777, Sprint 91 / V0.29.60)
+
+**When a `drive_id` is assigned.** A `realtime_data` row carries the drive that was live **at the
+instant the reading was captured**, and no other. The producer
+(`RealtimeDataLogger._publishReading`) stamps `Sample.driveId = getCurrentDriveId()` when it
+publishes; `PersistenceSubscriber.handleSample` hands that value to
+`ObdDataLogger.logReading(reading, capturedDriveId=sample.driveId)`, which writes it as-is. The
+inline no-bus path (no `capturedDriveId`) still resolves in `logReading` — there, write time **is**
+capture time.
+
+**The defect this closes.** With `pi.bus.enabled` (on in `config.json`) the row is written by the
+subscriber's drain thread, and before US-777 `logReading` re-resolved `getCurrentDriveId()` at
+**write** time. A drain lag that spans a drive close therefore wrote rows captured during drive *N*
+as NULL (the drive had gone stale) or as drive *N+1* (the next drive had opened). Measured
+2026-09-21: a 90 s drain lag against the 60 s bound NULLed 31 rows. 🔴 **The write-time lookup was
+the inheritance** — it attached an id that was never valid for that datum. A capture-time id *was*
+valid: at the instant of the read that drive was live and non-stale (Atlas ruling 2026-09-21).
+
+**When NULL is correct, and stays NULL.** A reading captured with **no live drive** — before any
+drive opens, or after the live drive has passed its bounded idle (§10.7.1.3) — carries
+`driveId=None`, and that is written as **explicit NULL even if a drive has opened by the time the
+drain reaches it**. A captured `None` is never upgraded.
+
+**Why a stale id is never substituted.** Guessing is worse than the defect: NULL rows are retained
+and filterable (`WHERE drive_id IS NOT NULL`), while a wrong id silently corrupts a drive's window,
+rate and statistics — the drive-51 shape of §10.7.1.3. The EDR tables keep their own rule
+(`EdrPersistenceSubscriber._resolveDriveId`: an id only while `isDrivingFn()`, else explicit NULL);
+their NULL rows during the gate's hold tail are correct by design and are **out of scope** here.
+
+**One staleness predicate.** `isDriveIdStale` (`src/pi/obdii/drive_id.py`) remains the single
+predicate: the detector's bounded-idle close (`DriveDetector._maybeCloseStaleDriveId`) and the
+attribution read (`getCurrentDriveId`, now evaluated at capture) call the **same function** with
+the **same bound** (`driveEndDurationSeconds`, armed by `_startDrive`). Pinned by
+`tests/pi/bus/test_persistence_drive_attribution.py::TestOneStalenessPredicate`. Loosening
+staleness on the attribution side alone would split the predicate and re-open drive 51.
+
+⚠️ **Not this contract's cause: the 2026-09-15 leg.** Those rows are NULL because drive detection
+never opened a drive (no `DRIVE STARTED` in the leg, per the Pi journal) — a detector/orchestrator
+defect, not a drain-lag one. Capture-time stamping correctly writes those rows NULL. The 4,259
+already-orphaned rows are untouched; no backfill.
+
+⚠️ **Still write-time: the `timestamp` column.** `logReading` stamps `utcIsoNow()` at write, so under
+drain lag a row's `timestamp` trails its capture by the lag even though its `drive_id` is now the
+capturing drive. Out of US-777's scope fence; recorded so nobody reads the two as one clock.
+
 ### 10.7.2 Derived motion signals + cross-drive comparison (F-106 / F-069, Sprint 53 / V0.29.7)
 
 **Derived motion signals (US-436, F-106).** A third server-side per-drive
@@ -4063,7 +4108,11 @@ mutation test (`tests/pi/bus/test_edr_log_gate_live.py`): the same unreadable-
 signal run that passes on the shipped gate must fail on a copy compiled with
 that one return inverted.
 
-*The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.*
+*~~The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.~~*
+**SUPERSEDED by US-793-b (Sprint 91)** — see *"Three layers, and the ECU gates
+capture"* below. The reasoning that follows was the Sprint 88 premise; in the
+car the link reads connected with the key out, so a parked car still logged.
+It is kept because the rendered-value and capture-health warnings still hold.
 `obd.py` `is_connected()` returns `status() == OBDStatus.CAR_CONNECTED` and is
 explicitly **False** at `ELM_CONNECTED` — so it is an **ECU-level** fact, not an
 adapter-level one, and a powered dongle on a parked car does not open the gate.
@@ -4072,6 +4121,49 @@ second acquisition of one fact). ⚠️ **And do not substitute the capture-heal
 freshness signal**, which stays alive on adapter-only `ATRV` reads with the key
 out — a different consumer with a different defect. The two must not be
 "reconciled".
+
+**Three layers, and the ECU gates capture** *(built, US-793-b; Atlas rulings
+2026-09-21)*. "Connected" names three different facts, and they must never be
+collapsed into one another:
+
+| Layer | Fact | Where it is read | Gates capture? |
+|---|---|---|---|
+| **Powered** | the dongle has power | nowhere in software; the OBDLink LX is powered with the key **out** | no |
+| **Bluetooth-connected** | the RFCOMM link to the dongle is up | `ConnectionStatus.connected` (+ `signalReadable`, US-767-a) | **no** — up on a parked car |
+| **ECU-connected** | an ECU read the data path already made **returned data** | `ConnectionStatus.reachability` (US-793-a), one of `answered` / `did_not_answer` / `not_yet_attempted` / `could_not_determine` | **yes — this is the gate signal** |
+
+🔴 **A `connect_success` (or `reconnect_success`) connection_log row is NOT
+evidence of ECU reachability.** It records the Bluetooth layer. ECU reachability
+is its own state-valued row, `ecu_reachability` (US-793-c), written on each
+transition; only that row says whether the engine answered.
+
+`EdrLogGate._readLink` reads **only** `reachability`, never `connected`. The
+mapping is explicit per state, and **only a definite negative closes the gate**:
+
+| Signal | Gate |
+|---|---|
+| `answered` | OPEN (reason `ecu_answered`) |
+| `did_not_answer` | CLOSED — buffer (`ecu_did_not_answer`) |
+| `not_yet_attempted` | CLOSED — buffer (`ecu_not_yet_attempted`); the cold-boot state on a parked car |
+| `could_not_determine` | OPEN + the rate-limited WARNING (`signal_unreadable`) |
+| the signal callable raises — **any** exception | OPEN + WARNING |
+| no callable wired (`linkSignalFn=None`) | OPEN + WARNING |
+| a status **without** a `reachability` field | OPEN + WARNING — **never** a fallback to `connected` |
+| any other value | OPEN + WARNING |
+
+*Why the asymmetry:* closing wrongly loses rows that cannot be recovered;
+opening wrongly costs disk and is trivially filtered later — so every "we do not
+know" fails toward the recoverable error. A silent fallback to `connected` for a
+producer lacking the field would keep the Bluetooth-link defect with nothing
+reporting it (the inert-guard shape, `specs/anti-patterns.md`). The gate compares
+the producer's **string values** and imports nothing from `pi.obdii`; the only
+`pi.obdii` module that may import the gate is the composition root
+`orchestrator/lifecycle.py`. Both directions are pinned by
+`tests/lint/test_edr_log_gate_import_direction.py` (a one-entry literal
+allowlist, with a scanner self-test that goes red on a deliberate import). The
+pre-roll (60 s) and hold (300 s) are unchanged; `did_not_answer → answered`
+releases the buffered pre-roll exactly as US-767-b specified, so a driving car
+captures the same rows as before.
 
 🔴 **The gate must distinguish "link down" from "signal unreadable."**
 `ObdConnection._isConnected()` wraps its read in `try/except Exception: return

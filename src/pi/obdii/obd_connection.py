@@ -101,6 +101,17 @@
 #                |              | is_connected() raised.  getStatus() sets it in the
 #                |              | same read as `connected`, whose meaning is
 #                |              | unchanged; the raise is logged, not swallowed.
+# 2026-09-21    | Rex (US-793-a)| ConnectionStatus.reachability: FOUR states
+#                |              | (Reachability) from the outcomes of ECU reads
+#                |              | query() already makes -- no new poll.  ANSWERED
+#                |              | goes stale after driveEndDurationSeconds; a new
+#                |              | generation is NOT_YET_ATTEMPTED.  `connected`
+#                |              | and signalReadable are unchanged.
+# 2026-09-21    | Rex (US-793-c)| A reachability TRANSITION writes one
+#                |              | connection_log `ecu_reachability` row (after each
+#                |              | query and generation bump, outside _ioLock);
+#                |              | steady state writes none.  getStatus() and
+#                |              | toDict() unchanged.
 # ================================================================================
 ################################################################################
 
@@ -138,7 +149,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from . import bluetooth_helper, bond_self_heal
+from . import bluetooth_helper, bond_self_heal, decoders
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +311,26 @@ class ConnectionState(Enum):
     ERROR = 'error'
 
 
+class Reachability(Enum):
+    """Whether the ECU answered, as observed by the data path (US-793-a).
+
+    A Bluetooth link is not an ECU: the dongle is powered and linked with the
+    key out, so ``connected`` is True on a parked car.  This is the separate
+    fact.  The four states must never collapse into one another:
+
+    * ``ANSWERED`` -- an ECU read returned data within the freshness bound.
+    * ``DID_NOT_ANSWER`` -- ECU reads completed with no data, or the last
+      answer is older than the bound.  An answer never latches.
+    * ``COULD_NOT_DETERMINE`` -- the latest ECU read WAS attempted and raised.
+    * ``NOT_YET_ATTEMPTED`` -- no ECU read in this connection generation.  The
+      cold-boot state on a parked car; it is NOT ``COULD_NOT_DETERMINE``.
+    """
+    ANSWERED = 'answered'
+    DID_NOT_ANSWER = 'did_not_answer'
+    COULD_NOT_DETERMINE = 'could_not_determine'
+    NOT_YET_ATTEMPTED = 'not_yet_attempted'
+
+
 @dataclass
 class ConnectionStatus:
     """
@@ -320,6 +351,9 @@ class ConnectionStatus:
             raised; ``connected`` is then False too, but it means "could not
             read the link", not "the link is down".  ``obd is None`` is a
             readable verdict (True).  ``connected`` keeps its exact meaning.
+        reachability: Whether the ECU answered (US-793-a); see
+            :class:`Reachability`.  Independent of ``connected``: linked to
+            the dongle with no ECU is ``connected=True`` + ``DID_NOT_ANSWER``.
     """
     state: ConnectionState = ConnectionState.DISCONNECTED
     macAddress: str | None = None
@@ -331,6 +365,7 @@ class ConnectionStatus:
     totalConnections: int = 0
     totalErrors: int = 0
     signalReadable: bool = True
+    reachability: Reachability = Reachability.NOT_YET_ATTEMPTED
 
     def toDict(self) -> dict[str, Any]:
         """Convert status to dictionary for logging/serialization."""
@@ -345,6 +380,49 @@ class ConnectionStatus:
             'totalConnections': self.totalConnections,
             'totalErrors': self.totalErrors
         }
+
+
+# US-793-a: python-obd command names that the ADAPTER answers, not the ECU.
+# Derived from the US-229 decoder registry (isEcuDependent=False), so the
+# DriveDetector's ECU-silence check and reachability share one classification.
+_ADAPTER_LEVEL_COMMAND_NAMES: frozenset[str] = frozenset(
+    entry.obdCommand
+    for entry in decoders.PARAMETER_DECODERS.values()
+    if not entry.isEcuDependent
+)
+
+# ELM327 adapter commands are sent as "AT..." (ATRV, ATI); ECU requests are
+# mode+PID hex ("010C").
+_ELM_AT_PREFIX = b'AT'
+
+
+def _isAdapterLevelCommand(command: Any) -> bool:
+    """True when ``command`` is answered by the dongle, not the ECU (US-793-a).
+
+    Args:
+        command: python-obd command object, or its bare name string.
+    """
+    name = command if isinstance(command, str) else getattr(command, 'name', None)
+    if name in _ADAPTER_LEVEL_COMMAND_NAMES:
+        return True
+    request = getattr(command, 'command', None)
+    return isinstance(request, bytes) and request.upper().startswith(_ELM_AT_PREFIX)
+
+
+def _responseOutcome(response: Any) -> Reachability:
+    """Classify a completed ECU read: data is ANSWERED, null is DID_NOT_ANSWER.
+
+    A response whose ``is_null()`` raises could not be read.
+    """
+    if response is None:
+        return Reachability.DID_NOT_ANSWER
+    isNull = getattr(response, 'is_null', None)
+    if not callable(isNull):
+        return Reachability.ANSWERED
+    try:
+        return Reachability.DID_NOT_ANSWER if isNull() else Reachability.ANSWERED
+    except Exception:  # noqa: BLE001 -- recorded as its own state, not swallowed
+        return Reachability.COULD_NOT_DETERMINE
 
 
 # ================================================================================
@@ -420,6 +498,7 @@ class ObdConnection:
         database: Any | None = None,
         obdFactory: Callable[..., Any] | None = None,
         shutdownEvent: threading.Event | None = None,
+        monotonicFn: Callable[[], float] = time.monotonic,
     ):
         """
         Initialize OBD connection manager.
@@ -434,6 +513,8 @@ class ObdConnection:
                 ``False`` within a few ms instead of sleeping the full
                 ``retryDelays`` entry (worst case ~90s). Main-thread signal
                 handlers installed by the orchestrator set the event.
+            monotonicFn: Monotonic clock for reachability freshness (US-793-a);
+                injected by tests.
         """
         self.config = config
         self.database = database
@@ -519,6 +600,29 @@ class ObdConnection:
         # US-767-a: True while is_connected() keeps raising, so a failed link
         # read logs one WARNING per streak instead of one per poll.
         self._signalFaultActive: bool = False
+        # US-793-a: what ECU reads through query() observed, for reachability.
+        # One tuple replaced whole, so getStatus() reads it coherently without
+        # taking _ioLock -- which a slow query holds, and the EDR gate must
+        # never block behind:
+        #   (generation, lastAnswerAt | None, latest ECU-read outcome | None)
+        self._now = monotonicFn
+        self._ecuObservation: tuple[int, float | None, Reachability | None] = (
+            self._generation, None, None
+        )
+        # ANSWERED goes stale after the drive detector's own ECU-silence bound
+        # (US-229 _checkEcuSilenceDriveEnd): the silence that ends a drive is the
+        # silence that ends "the ECU is answering" -- one bound, not two.
+        # Read through the detector's own acquisition point.  A non-positive
+        # value is the detector's "silence check disabled" test knob; here it
+        # would mean "never fresh" or, worse, a latch, so it takes the default.
+        # Imported here, not at module level, to keep the import graph as it is.
+        from .drive.helpers import getDriveDetectionConfig
+        from .drive.types import DEFAULT_DRIVE_END_DURATION_SECONDS
+
+        freshness = float(getDriveDetectionConfig(config)['driveEndDurationSeconds'])
+        self.reachabilityFreshnessSeconds = (
+            freshness if freshness > 0 else float(DEFAULT_DRIVE_END_DURATION_SECONDS)
+        )
 
     def getStatus(self) -> ConnectionStatus:
         """
@@ -539,7 +643,66 @@ class ObdConnection:
         else:
             # No connection object is a readable verdict, not a failed read.
             self._status.signalReadable = True
+        # US-793-a: derived from reads already made -- this issues none.
+        self._status.reachability = self._readReachability()
         return self._status
+
+    def _readReachability(self) -> Reachability:
+        """Derive ECU reachability from what :meth:`query` observed (US-793-a).
+
+        Side-effect free: no OBD request, no lock.  An observation from an
+        earlier connection generation counts as none at all.
+        """
+        generation, lastAnswerAt, latest = self._ecuObservation
+        if generation != self._generation or latest is None:
+            return Reachability.NOT_YET_ATTEMPTED
+        if (
+            lastAnswerAt is not None
+            and self._now() - lastAnswerAt <= self.reachabilityFreshnessSeconds
+        ):
+            return Reachability.ANSWERED
+        if latest is Reachability.COULD_NOT_DETERMINE:
+            return Reachability.COULD_NOT_DETERMINE
+        # A null read, or an answer that went stale: never a latched ANSWERED.
+        return Reachability.DID_NOT_ANSWER
+
+    def _recordEcuRead(self, command: Any, outcome: Reachability) -> None:
+        """Record one completed ECU read's outcome (US-793-a).
+
+        Adapter-level commands (ELM327 ``AT``, e.g. ``ELM_VOLTAGE``/ATRV) are
+        ignored: the dongle answers them with the key out, so they say nothing
+        about the ECU.  Called with ``_ioLock`` held.
+        """
+        if _isAdapterLevelCommand(command):
+            return
+        generation, lastAnswerAt, _ = self._ecuObservation
+        if generation != self._generation:
+            lastAnswerAt = None
+        if outcome is Reachability.ANSWERED:
+            lastAnswerAt = self._now()
+        self._ecuObservation = (self._generation, lastAnswerAt, outcome)
+
+    def _logReachabilityTransition(self) -> None:
+        """Write one ``ecu_reachability`` row if reachability changed (US-793-c).
+
+        Called where the observation can change -- after each :meth:`query`
+        and each connection generation bump -- never from :meth:`getStatus`,
+        which stays side-effect free.  Whether the state is a repeat is
+        decided by ``shouldSuppressAsRepeat``, the one connection_log dedup;
+        a steady state writes nothing.  Freshness decay with no reads in
+        between surfaces at the next read.
+        """
+        if self.database is None:
+            return
+        from src.pi.data.connection_logger import EVENT_ECU_REACHABILITY
+
+        reachability = self._readReachability()
+        self._logConnectionEvent(
+            EVENT_ECU_REACHABILITY,
+            success=reachability is Reachability.ANSWERED,
+            errorMessage=reachability.value,
+            state=reachability.value,
+        )
 
     def isConnected(self) -> bool:
         """
@@ -800,36 +963,50 @@ class ObdConnection:
             ObdConnectionSupersededError: If ``callerGeneration`` is stale.
             ObdConnectionError: If there is no live OBD interface (obd is None).
         """
-        with self._ioLock:
-            if callerGeneration is not None and callerGeneration != self._generation:
-                logger.warning(
-                    "query() fenced -- caller generation %d superseded by "
-                    "current %d; dropping orphaned read (US-441 epoch fence)",
-                    callerGeneration,
-                    self._generation,
-                )
-                raise ObdConnectionSupersededError(
-                    "OBD query dropped: caller generation superseded by a "
-                    "newer connection",
-                    details={
-                        'callerGeneration': callerGeneration,
-                        'currentGeneration': self._generation,
-                    },
-                )
-            if self.obd is None:
-                raise ObdConnectionError(
-                    "Cannot query: OBD interface is not connected (obd is None)"
-                )
-            # US-432 (BL-016): while the engine-confirmed latch is armed, force
-            # known-mandatory Mode-01 PIDs (RPM) past python-obd's dark-ECU
-            # support cache.  SCOPED to MANDATORY_MODE01_PIDS -- never blanket.
-            if self._shouldForceMandatory(command):
-                logger.debug(
-                    "query() force-reading mandatory Mode-01 PID past the "
-                    "dark-ECU support cache (US-432 engine-confirmed latch)"
-                )
-                return self.obd.query(command, force=True)
-            return self.obd.query(command)
+        try:
+            with self._ioLock:
+                if callerGeneration is not None and callerGeneration != self._generation:
+                    logger.warning(
+                        "query() fenced -- caller generation %d superseded by "
+                        "current %d; dropping orphaned read (US-441 epoch fence)",
+                        callerGeneration,
+                        self._generation,
+                    )
+                    raise ObdConnectionSupersededError(
+                        "OBD query dropped: caller generation superseded by a "
+                        "newer connection",
+                        details={
+                            'callerGeneration': callerGeneration,
+                            'currentGeneration': self._generation,
+                        },
+                    )
+                if self.obd is None:
+                    raise ObdConnectionError(
+                        "Cannot query: OBD interface is not connected (obd is None)"
+                    )
+                # US-432 (BL-016): while the engine-confirmed latch is armed, force
+                # known-mandatory Mode-01 PIDs (RPM) past python-obd's dark-ECU
+                # support cache.  SCOPED to MANDATORY_MODE01_PIDS -- never blanket.
+                # US-793-a: every outcome of this read is recorded for reachability.
+                # This is the read the data path was making anyway -- never a poll.
+                try:
+                    if self._shouldForceMandatory(command):
+                        logger.debug(
+                            "query() force-reading mandatory Mode-01 PID past the "
+                            "dark-ECU support cache (US-432 engine-confirmed latch)"
+                        )
+                        response = self.obd.query(command, force=True)
+                    else:
+                        response = self.obd.query(command)
+                except Exception:
+                    self._recordEcuRead(command, Reachability.COULD_NOT_DETERMINE)
+                    raise
+                self._recordEcuRead(command, _responseOutcome(response))
+                return response
+        finally:
+            # US-793-c: a changed reachability is written once, AFTER _ioLock is
+            # released -- a SQLite write never holds the serial port.
+            self._logReachabilityTransition()
 
     def _shouldForceMandatory(self, command: Any) -> bool:
         """Return True when ``command`` must be force-read (US-432).
@@ -1003,6 +1180,8 @@ class ObdConnection:
                             success=True,
                             retryCount=outageAttempt
                         )
+                        # US-793-c: a new generation has not been read yet.
+                        self._logReachabilityTransition()
 
                         logger.info(f"Connected to OBD-II dongle | mac={self.macAddress} | attempts={attempt + 1}")
                         return True
@@ -1454,6 +1633,8 @@ class ObdConnection:
         self._status.connected = False
 
         self._logConnectionEvent(EVENT_TYPE_DISCONNECT)
+        # US-793-c: the generation bump reset reachability to NOT_YET_ATTEMPTED.
+        self._logReachabilityTransition()
 
     def reconnect(self) -> bool:
         """
@@ -1503,7 +1684,8 @@ class ObdConnection:
         eventType: str,
         success: bool = False,
         errorMessage: str | None = None,
-        retryCount: int = 0
+        retryCount: int = 0,
+        state: str | None = None,
     ) -> None:
         """
         Log connection event to database.
@@ -1513,6 +1695,9 @@ class ObdConnection:
             success: Whether the event was successful
             errorMessage: Error message if failed
             retryCount: Number of retry attempts
+            state: For a state-valued event (US-793-c ``ecu_reachability``),
+                the state the row records; a repeat of the last one is not
+                written.  Reachability starts at NOT_YET_ATTEMPTED.
         """
         if self.database is None:
             return
@@ -1521,7 +1706,10 @@ class ObdConnection:
         # Shared module-level dedup so this writer + connection_logger.py
         # writer see the same "last logged event_type" state.
         from src.pi.data.connection_logger import shouldSuppressAsRepeat
-        if shouldSuppressAsRepeat(self.macAddress, eventType):
+        if shouldSuppressAsRepeat(
+            self.macAddress, eventType,
+            state=state, initialState=Reachability.NOT_YET_ATTEMPTED.value,
+        ):
             return
 
         try:

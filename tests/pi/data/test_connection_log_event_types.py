@@ -12,6 +12,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-211) | Initial -- Spool Session 6 amended Story 2.
+# 2026-09-21    | Rex (US-793-c)| Canonical set pinned exactly (ecu_reachability);
+#               |              | transition rows round-trip the sync path with
+#               |              | Pi/server count parity.
 # ================================================================================
 ################################################################################
 
@@ -35,6 +38,7 @@ from src.pi.data.connection_logger import (
     CANONICAL_EVENT_TYPES,
     EVENT_ADAPTER_WAIT,
     EVENT_BT_DISCONNECT,
+    EVENT_ECU_REACHABILITY,
     EVENT_ECU_SILENT_WAIT,
     EVENT_RECONNECT_ATTEMPT,
     EVENT_RECONNECT_SUCCESS,
@@ -92,6 +96,28 @@ def test_canonical_eventTypes_includesPreUs211Literals():
     }
     assert expectedPreUs211.issubset(CANONICAL_EVENT_TYPES)
     assert US211_EVENT_TYPES.issubset(CANONICAL_EVENT_TYPES)
+
+
+def test_canonical_eventTypes_exactSet():
+    """US-793-c: the canonical set is pinned EXACTLY, so a new type lands here
+    in the same change that adds it (lockstep), never silently."""
+    assert CANONICAL_EVENT_TYPES == frozenset({
+        'connect_attempt',
+        'connect_success',
+        'connect_failure',
+        'disconnect',
+        'reconnect',
+        'drive_start',
+        'drive_end',
+        'data_cleanup',
+        'ecu_reachability',
+        'bt_disconnect',
+        'adapter_wait',
+        'reconnect_attempt',
+        'reconnect_success',
+        'ecu_silent_wait',
+    })
+    assert EVENT_ECU_REACHABILITY == 'ecu_reachability'
 
 
 # ================================================================================
@@ -478,3 +504,113 @@ class TestUs340bConnectionLogDedup:
             f"US-418: first ecu_silent_wait per engine-off window must survive "
             f"the dedup; got {observed}"
         )
+
+
+# ================================================================================
+# US-793-c -- reachability transition rows round-trip the existing sync path
+# ================================================================================
+
+
+class TestUs793cReachabilityRowsSync:
+    """The ecu_reachability row is additive: no schema change on either tier,
+    and the server's transition history is COMPLETE, not merely present."""
+
+    @pytest.fixture(autouse=True)
+    def _resetDedupState(self) -> Generator[None, None, None]:
+        from src.pi.data import connection_logger as cl
+        cl.resetDedupStateForTests()
+        yield
+        cl.resetDedupStateForTests()
+
+    @staticmethod
+    def _driveTransitions(freshDb: ObdDatabase) -> None:
+        """Walk a real ObdConnection through key-on, key-off and a disconnect."""
+        from src.pi.obdii.obd_connection import ObdConnection
+
+        class _Response:
+            def __init__(self, null: bool) -> None:
+                self._null = null
+
+            def is_null(self) -> bool:
+                return self._null
+
+        class _Obd:
+            def __init__(self) -> None:
+                self.null = False
+
+            def is_connected(self) -> bool:
+                return True
+
+            def query(self, command: object, force: bool = False) -> _Response:
+                return _Response(self.null)
+
+            def close(self) -> None:
+                pass
+
+        clock = [1000.0]
+        conn = ObdConnection(
+            {'pi': {'bluetooth': {'macAddress': '00:04:3E:85:0D:FB'}}},
+            freshDb,
+            monotonicFn=lambda: clock[0],
+        )
+        fake = _Obd()
+        conn.obd = fake
+        for _ in range(20):  # key on, steady driving
+            conn.query('RPM')
+        fake.null = True  # key off: the ECU stops answering
+        clock[0] += conn.reachabilityFreshnessSeconds + 1.0
+        for _ in range(20):
+            conn.query('RPM')
+        conn.disconnect()  # new generation: not yet attempted
+
+    def test_transitionRows_roundTripSync_serverCountEqualsPi(self, freshDb) -> None:
+        """
+        Given: reachability transitions written on the Pi, among other rows
+        When: the Pi's connection_log delta goes through the existing sync
+              path (getDeltaRows -> runSyncUpsert) unmodified
+        Then: the server's ecu_reachability count EQUALS the Pi's, and each
+              row arrives with the same state and success
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from src.pi.data import sync_log
+        from src.server.api.sync import runSyncUpsert
+        from src.server.db.models import Base, ConnectionLog
+
+        self._driveTransitions(freshDb)
+        with freshDb.connect() as conn:
+            piRows = conn.execute(
+                "SELECT id, error_message, success FROM connection_log "
+                "WHERE event_type = ? ORDER BY id",
+                (EVENT_ECU_REACHABILITY,),
+            ).fetchall()
+            delta = sync_log.getDeltaRows(conn, 'connection_log', 0, 1000)
+        assert [(r[1], r[2]) for r in piRows] == [
+            ('answered', 1),
+            ('did_not_answer', 0),
+            ('not_yet_attempted', 0),
+        ]
+
+        engine = create_engine('sqlite:///:memory:')
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            result = runSyncUpsert(
+                session,
+                deviceId='chi-eclipse-01',
+                batchId='batch-1',
+                tables={'connection_log': {'rows': delta}},
+                syncHistoryId=1,
+            )
+            session.commit()
+            serverRows = [
+                (row.source_id, row.error_message, row.success)
+                for row in session.query(ConnectionLog)
+                .filter(ConnectionLog.event_type == EVENT_ECU_REACHABILITY)
+                .order_by(ConnectionLog.source_id)
+                .all()
+            ]
+
+        assert result['connection_log']['errors'] == 0
+        assert len(serverRows) == len(piRows)
+        assert serverRows == [(r[0], r[1], r[2]) for r in piRows]

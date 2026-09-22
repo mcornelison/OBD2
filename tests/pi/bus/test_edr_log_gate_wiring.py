@@ -18,6 +18,7 @@
 # 2026-09-18    | Rex (US-767-b) | Initial -- pass-through wiring, routing.
 # 2026-09-18    | Rex (US-767-c) | Fixture sets logGate.enabled false (the
 #               |                | lifecycle now honours it) and a tmp statesDir.
+# 2026-09-21    | Rex (US-793-b) | Routing test drives the gate by reachability.
 # ================================================================================
 ################################################################################
 """Tests for the EdrLogGate pass-through wiring (US-767-b)."""
@@ -187,14 +188,14 @@ class TestSubscriberRouting:
         self, tmp_path: Path
     ) -> None:
         """
-        Given: a subscriber whose gate is enabled and the link genuinely down
-        When: rows arrive, then the link opens
+        Given: a subscriber whose gate is enabled, the link up, the ECU silent
+        When: rows arrive, then the ECU answers
         Then: nothing lands while CLOSED; on opening the buffered rows land in
             order, before the live one
         """
         db = _db(tmp_path, "route.db")
         clock = [0.0]
-        link = SimpleNamespace(connected=False, signalReadable=True)
+        link = SimpleNamespace(connected=True, reachability="did_not_answer")
         gate = EdrLogGate(lambda: link, enabled=True, monotonicFn=lambda: clock[0])
         sub = EdrPersistenceSubscriber(None, db, imuSampleHz=50, imuPersistHz=50, logGate=gate)
 
@@ -203,7 +204,7 @@ class TestSubscriberRouting:
         assert _rows(db) == ([], [])
         assert gate.state == GATE_CLOSED
 
-        link.connected = True
+        link.reachability = "answered"
         clock[0] = 1.0
         sub.handleSample(_sample("raw.light.lux", 99.0, 3))
         sub.flushPending()

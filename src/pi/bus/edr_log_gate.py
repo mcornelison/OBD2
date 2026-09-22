@@ -1,15 +1,18 @@
 ################################################################################
 # File Name: edr_log_gate.py
 # Purpose/Description: US-767-b -- decides WHEN EDR sensor rows are written.
-#                      OPEN while the OBD link is up; CLOSED holds a monotonic
+#                      OPEN while the ECU answers; CLOSED holds a monotonic
 #                      pre-roll ring and writes nothing, and opening flushes that
 #                      ring in order; OPEN->HOLD keeps writing for holdSec after
-#                      the link drops and re-arms if it returns. The gate reads
-#                      two producer facts (ConnectionStatus.connected and
-#                      .signalReadable) and follows Atlas's fail-OPEN table: a
-#                      signal it cannot read -- unreadable, raising, or not wired
-#                      -- keeps the gate OPEN. A black box that silently drops
-#                      drive data is worse than keeping garage rows.
+#                      the ECU goes quiet and re-arms if it returns. US-793-b:
+#                      the gate reads ONE producer fact,
+#                      ConnectionStatus.reachability -- not the Bluetooth link
+#                      (`connected`), which is up on a parked car. Only a
+#                      definite negative closes it; every "we do not know" --
+#                      could-not-determine, a raise, no signal, a status without
+#                      the field -- keeps the gate OPEN and loud. A black box
+#                      that silently drops drive data is worse than keeping
+#                      garage rows.
 #                      Design: Atlas, superpowers/plans/2026-09-14-us734-edr-
 #                      server-sync.md Task 7; spec: specs/architecture.md 10.8.
 # Author: Rex (US-767-b)
@@ -22,9 +25,13 @@
 # ================================================================================
 # 2026-09-18    | Rex (US-767-b) | Initial -- two-input gate, pre-roll, hold,
 #               |                | fail-OPEN, enabled=False pass-through.
+# 2026-09-21    | Rex (US-793-b) | Gate on ECU reachability, not the link. Values
+#               |                | compared as strings: this module imports
+#               |                | nothing from pi.obdii (pinned by tests/lint/
+#               |                | test_edr_log_gate_import_direction.py).
 # ================================================================================
 ################################################################################
-"""Link-gated EDR logging state machine (US-767-b)."""
+"""ECU-reachability-gated EDR logging state machine (US-767-b, US-793-b)."""
 
 from __future__ import annotations
 
@@ -58,32 +65,52 @@ DEFAULT_HOLD_SEC = 300.0
 # Minimum seconds between "signal unreadable" WARNINGs (Atlas's plan, Task 7).
 _WARN_INTERVAL_S = 60.0
 
+# US-793-b: the DEFINITE reachability states, by the producer's string values
+# (pi.obdii.obd_connection.Reachability -- compared as strings so this module
+# never imports pi.obdii). Anything absent here -- could_not_determine, or a
+# value outside the vocabulary -- is "we do not know" and fails OPEN.
+_DEFINITE_REACHABILITY: dict[str, tuple[bool, str]] = {
+    "answered": (True, "ecu_answered"),
+    "did_not_answer": (False, "ecu_did_not_answer"),
+    "not_yet_attempted": (False, "ecu_not_yet_attempted"),
+}
+
 
 class LinkSignal(Protocol):
-    """The two producer facts the gate reads (``ObdConnection.getStatus()``)."""
+    """The producer fact the gate reads (``ObdConnection.getStatus()``).
 
-    connected: bool
-    signalReadable: bool
+    ``reachability`` is the producer's ``Reachability`` enum (or its string
+    value). ``connected`` -- the Bluetooth link -- is deliberately NOT read.
+    """
+
+    reachability: Any
 
 
 class EdrLogGate:
-    """Admit EDR rows only while linked, with a pre-roll and a hold.
+    """Admit EDR rows only while the ECU answers, with a pre-roll and a hold.
 
     ``admit(table, row)`` returns the ``(table, row)`` pairs to write NOW, oldest
     first. Rows are opaque to the gate; it only orders and buffers them.
 
-    Atlas's fail-OPEN table (specs/architecture.md 10.8):
+    The reachability table (US-793-b, Atlas 2026-09-21; specs/architecture.md
+    10.8.3). Only a definite negative closes the gate -- closing wrongly loses
+    rows for good, opening wrongly costs disk:
 
-    ============  ================  ======
-    connected     signalReadable    gate
-    ============  ================  ======
-    False         True              CLOSED -- link genuinely down, buffer
-    False         False             OPEN -- cannot tell; rate-limited WARNING
-    True          True              OPEN
-    ============  ================  ======
+    =========================  ======
+    reachability               gate
+    =========================  ======
+    answered                   OPEN
+    did_not_answer             CLOSED -- buffer
+    not_yet_attempted          CLOSED -- buffer (cold boot, parked car)
+    could_not_determine        OPEN + rate-limited WARNING
+    signal callable raises     OPEN + rate-limited WARNING (any exception)
+    no callable wired          OPEN + rate-limited WARNING
+    status has no field        OPEN + rate-limited WARNING -- NEVER a fallback
+                               to ``connected`` (the Bluetooth-link defect)
+    any other value            OPEN + rate-limited WARNING
+    =========================  ======
 
-    A signal callable that raises, or no callable at all, is signalReadable
-    False. ``enabled=False`` is always OPEN and never reads the signal.
+    ``enabled=False`` is always OPEN and never reads the signal.
     """
 
     def __init__(
@@ -98,9 +125,9 @@ class EdrLogGate:
         """Build the gate.
 
         Args:
-            linkSignalFn: Returns the current link facts (``connected``,
-                ``signalReadable``). None means no signal is wired, which the
-                gate treats as unreadable -> OPEN.
+            linkSignalFn: Returns the producer status carrying
+                ``reachability``. None means no signal is wired, which the gate
+                treats as unreadable -> OPEN.
             enabled: False (the default) makes the gate a pass-through: always
                 OPEN, never buffering, never reading the signal. Defaulting off
                 means a caller that forgets the flag never loses a row.
@@ -157,21 +184,30 @@ class EdrLogGate:
         return len(self._ring)
 
     def _readLink(self, now: float) -> tuple[bool, str]:
-        """Return (openGate, reason) from the signal, failing OPEN."""
+        """Return (openGate, reason) from ECU reachability, failing OPEN."""
         failure: object
         if self._linkSignalFn is None:
             failure = "no link signal wired"
         else:
             try:
                 status = self._linkSignalFn()
-                connected = bool(status.connected)
-                readable = bool(status.signalReadable)
             except Exception as exc:  # noqa: BLE001 -- fail OPEN, never closed
                 failure = exc
             else:
-                if readable:
-                    return connected, "link_linked" if connected else "link_lost"
-                failure = "signalReadable=False"
+                # A status without the field is "could not determine" -- never
+                # a fallback to `connected`, which is the link, not the ECU.
+                reachability = getattr(status, "reachability", None)
+                value = getattr(reachability, "value", reachability)
+                definite = (
+                    _DEFINITE_REACHABILITY.get(value) if isinstance(value, str) else None
+                )
+                if definite is not None:
+                    return definite
+                failure = (
+                    "status has no reachability field"
+                    if not hasattr(status, "reachability")
+                    else f"reachability={value!r}"
+                )
         if self._lastWarn is None or now - self._lastWarn >= _WARN_INTERVAL_S:
             self._lastWarn = now
             logger.warning(

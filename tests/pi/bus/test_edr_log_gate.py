@@ -4,7 +4,8 @@
 #                      buffers a monotonic pre-roll ring and writes nothing,
 #                      opening flushes the ring in order, OPEN->HOLD keeps writing
 #                      for holdSec and re-arms when the link returns. Two inputs
-#                      (connected, signalReadable) follow Atlas's fail-OPEN table.
+#                      US-793-b: the gate reads ECU reachability, not the
+#                      Bluetooth link, and only a definite negative closes it.
 # Author: Rex (US-767-b)
 # Creation Date: 2026-09-18
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -14,9 +15,12 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-09-18    | Rex (US-767-b) | Initial -- state machine, fail-OPEN, disabled.
+# 2026-09-21    | Rex (US-793-b) | Driven by reachability (ANSWERED in place of
+#               |                | connected=True, DID_NOT_ANSWER in place of
+#               |                | False; Atlas option ii); one test per gate path.
 # ================================================================================
 ################################################################################
-"""Tests for EdrLogGate (US-767-b): pre-roll, hold, fail-OPEN, disabled."""
+"""Tests for EdrLogGate (US-767-b, US-793-b): pre-roll, hold, fail-OPEN, disabled."""
 
 from __future__ import annotations
 
@@ -33,6 +37,12 @@ from pi.bus.edr_log_gate import (
     GATE_OPEN,
     EdrLogGate,
 )
+from pi.obdii.obd_connection import Reachability
+
+ANSWERED = Reachability.ANSWERED
+DID_NOT_ANSWER = Reachability.DID_NOT_ANSWER
+NOT_YET_ATTEMPTED = Reachability.NOT_YET_ATTEMPTED
+COULD_NOT_DETERMINE = Reachability.COULD_NOT_DETERMINE
 
 
 class _Clock:
@@ -45,26 +55,35 @@ class _Clock:
 
 @dataclass
 class _Status:
-    """The two producer fields the gate reads (ConnectionStatus shape)."""
+    """The producer fields (ConnectionStatus shape). Only reachability gates."""
+
+    reachability: Reachability
+    connected: bool = True
+    signalReadable: bool = True
+
+
+@dataclass
+class _LegacyStatus:
+    """A status WITHOUT reachability -- the pre-US-793-a producer shape."""
 
     connected: bool
     signalReadable: bool = True
 
 
 class _Link:
-    """A mutable link signal; ``raises`` makes the read itself fail."""
+    """A mutable signal; ``raises`` makes the read itself fail."""
 
-    def __init__(self, connected: bool, signalReadable: bool = True) -> None:
+    def __init__(self, reachability: Reachability, connected: bool = True) -> None:
+        self.reachability = reachability
         self.connected = connected
-        self.signalReadable = signalReadable
-        self.raises = False
+        self.raises: BaseException | None = None
         self.reads = 0
 
     def __call__(self) -> _Status:
         self.reads += 1
-        if self.raises:
-            raise RuntimeError("no connection")
-        return _Status(self.connected, self.signalReadable)
+        if self.raises is not None:
+            raise self.raises
+        return _Status(self.reachability, self.connected)
 
 
 def _gate(link: _Link, clock: _Clock) -> EdrLogGate:
@@ -103,7 +122,7 @@ class TestClosedAndPreRoll:
         When: rows are admitted
         Then: nothing is returned for writing and the gate is CLOSED
         """
-        clock, link = _Clock(), _Link(connected=False)
+        clock, link = _Clock(), _Link(DID_NOT_ANSWER)
         gate = _gate(link, clock)
         for i in range(5):
             clock.t = float(i)
@@ -116,17 +135,17 @@ class TestClosedAndPreRoll:
         When: the link opens and a row of another table arrives
         Then: the ring is flushed oldest first, then the live row
         """
-        clock, link = _Clock(), _Link(connected=False)
+        clock, link = _Clock(), _Link(DID_NOT_ANSWER)
         gate = _gate(link, clock)
         for i in range(3):
             clock.t = float(i)
             gate.admit("imu", (i,))
-        link.connected = True
+        link.reachability = ANSWERED
         clock.t = 3.0
         out = gate.admit("light", ("L",))
         assert out == [("imu", (0,)), ("imu", (1,)), ("imu", (2,)), ("light", ("L",))]
         assert gate.state == GATE_OPEN
-        assert gate.lastTransition == (GATE_CLOSED, GATE_OPEN, "link_linked")
+        assert gate.lastTransition == (GATE_CLOSED, GATE_OPEN, "ecu_answered")
         clock.t = 4.0
         assert gate.admit("imu", (4,)) == [("imu", (4,))]
 
@@ -137,7 +156,7 @@ class TestClosedAndPreRoll:
         Then: nothing was written while closed; exactly rows t=240..299 (the
             last 60 s) come out, in order, followed by the live row
         """
-        clock, link = _Clock(), _Link(connected=False)
+        clock, link = _Clock(), _Link(DID_NOT_ANSWER)
         gate = _gate(link, clock)
         written = []
         for i in range(300):
@@ -145,7 +164,7 @@ class TestClosedAndPreRoll:
             written.extend(gate.admit("imu", (i,)))
         assert written == []
 
-        link.connected = True
+        link.reachability = ANSWERED
         clock.t = 300.0
         out = gate.admit("imu", (300,))
 
@@ -157,7 +176,7 @@ class TestClosedAndPreRoll:
         When: rows keep arriving
         Then: the ring never holds more than the pre-roll window
         """
-        clock, link = _Clock(), _Link(connected=False)
+        clock, link = _Clock(), _Link(DID_NOT_ANSWER)
         gate = _gate(link, clock)
         for i in range(1000):
             clock.t = float(i)
@@ -172,10 +191,10 @@ class TestHold:
         When: the link drops
         Then: rows keep landing for holdSec, then the gate CLOSES
         """
-        clock, link = _Clock(), _Link(connected=True)
+        clock, link = _Clock(), _Link(ANSWERED)
         gate = _gate(link, clock)
         gate.admit("imu", (0,))
-        link.connected = False
+        link.reachability = DID_NOT_ANSWER
         clock.t = 10.0
         assert gate.admit("imu", (1,)) == [("imu", (1,))]
         assert gate.state == GATE_HOLD
@@ -193,18 +212,18 @@ class TestHold:
         Then: every row is written (inside the 300 s hold) and the gate re-arms
             to OPEN
         """
-        clock, link = _Clock(), _Link(connected=True)
+        clock, link = _Clock(), _Link(ANSWERED)
         gate = _gate(link, clock)
         written = []
         for i in range(100):
             clock.t = float(i)
-            link.connected = not (40 <= i < 70)
+            link.reachability = DID_NOT_ANSWER if 40 <= i < 70 else ANSWERED
             written.extend(gate.admit("imu", (i,)))
             if 40 <= i < 70:
                 assert gate.state == GATE_HOLD
         assert written == [("imu", (i,)) for i in range(100)]
         assert gate.state == GATE_OPEN
-        assert gate.lastTransition == (GATE_HOLD, GATE_OPEN, "link_linked")
+        assert gate.lastTransition == (GATE_HOLD, GATE_OPEN, "ecu_answered")
 
     def test_hold_reArmsFromTheSecondDrop(self) -> None:
         """
@@ -212,16 +231,16 @@ class TestHold:
         When: the link drops again
         Then: the hold window counts from the SECOND drop
         """
-        clock, link = _Clock(), _Link(connected=True)
+        clock, link = _Clock(), _Link(ANSWERED)
         gate = _gate(link, clock)
         gate.admit("imu", (0,))
-        link.connected = False
+        link.reachability = DID_NOT_ANSWER
         clock.t = 10.0
         gate.admit("imu", (1,))
-        link.connected = True
+        link.reachability = ANSWERED
         clock.t = 20.0
         gate.admit("imu", (2,))
-        link.connected = False
+        link.reachability = DID_NOT_ANSWER
         clock.t = 25.0
         gate.admit("imu", (3,))
         clock.t = 320.0  # 300 s after the first drop is 310; after the second, 325
@@ -229,21 +248,21 @@ class TestHold:
 
 
 class TestFailOpenTable:
-    def test_disconnected_readable_isClosed(self) -> None:
-        """connected False + signalReadable True -> CLOSED (buffer)."""
-        gate = _gate(_Link(connected=False, signalReadable=True), _Clock())
+    def test_didNotAnswer_isClosed(self) -> None:
+        """DID_NOT_ANSWER -> CLOSED (buffer)."""
+        gate = _gate(_Link(DID_NOT_ANSWER), _Clock())
         assert gate.admit("imu", (0,)) == []
         assert gate.state == GATE_CLOSED
 
-    def test_unreadable_isOpen_withOneRateLimitedWarning(
+    def test_couldNotDetermine_isOpen_withOneRateLimitedWarning(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """
-        Given: signalReadable False (connected False with it)
+        Given: reachability COULD_NOT_DETERMINE
         When: rows arrive over 30 s
         Then: every row is written (OPEN) and exactly one WARNING is logged
         """
-        clock, link = _Clock(), _Link(connected=False, signalReadable=False)
+        clock, link = _Clock(), _Link(COULD_NOT_DETERMINE)
         gate = _gate(link, clock)
         with caplog.at_level(logging.WARNING, logger="pi.bus.edr_log_gate"):
             for i in range(30):
@@ -255,15 +274,15 @@ class TestFailOpenTable:
         assert len(warnings) == 1
         assert "unreadable" in warnings[0].getMessage()
 
-    def test_unreadable_warnsAgain_afterTheInterval(
+    def test_couldNotDetermine_warnsAgain_afterTheInterval(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """
-        Given: a persistently unreadable signal
+        Given: a persistently undeterminable signal
         When: more than the warning interval passes
         Then: a second WARNING -- rate-limited, not silenced
         """
-        clock, link = _Clock(), _Link(connected=False, signalReadable=False)
+        clock, link = _Clock(), _Link(COULD_NOT_DETERMINE)
         gate = _gate(link, clock)
         with caplog.at_level(logging.WARNING, logger="pi.bus.edr_log_gate"):
             gate.admit("imu", (0,))
@@ -272,9 +291,9 @@ class TestFailOpenTable:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 2
 
-    def test_connected_isOpen(self) -> None:
-        """connected True -> OPEN."""
-        gate = _gate(_Link(connected=True), _Clock())
+    def test_answered_isOpen(self) -> None:
+        """ANSWERED -> OPEN."""
+        gate = _gate(_Link(ANSWERED), _Clock())
         assert gate.admit("imu", (0,)) == [("imu", (0,))]
         assert gate.state == GATE_OPEN
 
@@ -284,10 +303,10 @@ class TestFailOpenTable:
         """
         Given: an input callable that RAISES
         When: a row is admitted
-        Then: it is treated as signalReadable False -- OPEN, row written, WARNING
+        Then: OPEN, row written, WARNING naming the failure
         """
-        link = _Link(connected=False)
-        link.raises = True
+        link = _Link(DID_NOT_ANSWER)
+        link.raises = RuntimeError("no connection")
         gate = _gate(link, _Clock())
         with caplog.at_level(logging.WARNING, logger="pi.bus.edr_log_gate"):
             assert gate.admit("imu", (0,)) == [("imu", (0,))]
@@ -296,16 +315,16 @@ class TestFailOpenTable:
         assert gate.lastTransition == (GATE_CLOSED, GATE_OPEN, "signal_unreadable")
         assert any("no connection" in r.getMessage() for r in caplog.records)
 
-    def test_unreadableWhileBuffering_flushesTheRing(self) -> None:
+    def test_undeterminableWhileBuffering_flushesTheRing(self) -> None:
         """
-        Given: rows buffered while genuinely down
-        When: the signal becomes unreadable
+        Given: rows buffered while the ECU did not answer
+        When: reachability becomes COULD_NOT_DETERMINE
         Then: the gate fails OPEN and the buffered pre-roll is written too
         """
-        clock, link = _Clock(), _Link(connected=False)
+        clock, link = _Clock(), _Link(DID_NOT_ANSWER)
         gate = _gate(link, clock)
         gate.admit("imu", (0,))
-        link.signalReadable = False
+        link.reachability = COULD_NOT_DETERMINE
         clock.t = 1.0
         assert gate.admit("imu", (1,)) == [("imu", (0,)), ("imu", (1,))]
 
@@ -316,6 +335,156 @@ class TestFailOpenTable:
         assert gate.state == GATE_OPEN
 
 
+class TestReachabilityGatesCapture:
+    """US-793-b: the ECU gates capture, not the Bluetooth link.
+
+    Only a definite negative closes the gate; every "we do not know" is OPEN
+    and loud (Atlas 2026-09-21: closing wrongly loses rows for good, opening
+    wrongly costs disk).
+    """
+
+    def test_linkedButEcuSilent_isClosed(self) -> None:
+        """
+        Given: connected=True (dongle linked) and DID_NOT_ANSWER (no ECU)
+        When: a row is admitted
+        Then: CLOSED and buffering -- the pre-fix gate, reading ``connected``,
+            is OPEN here, which is the parked-car defect
+        """
+        gate = _gate(_Link(DID_NOT_ANSWER, connected=True), _Clock())
+        assert gate.admit("imu", (0,)) == []
+        assert gate.state == GATE_CLOSED
+        assert gate.bufferedRows == 1
+
+    def test_notYetAttempted_isClosed_evenWhenLinked(self) -> None:
+        """
+        Given: a cold boot on a parked car -- linked, no ECU read yet
+        When: a row is admitted
+        Then: CLOSED; NOT_YET_ATTEMPTED is a known state, not "cannot tell"
+        """
+        gate = _gate(_Link(NOT_YET_ATTEMPTED, connected=True), _Clock())
+        assert gate.admit("imu", (0,)) == []
+        assert gate.state == GATE_CLOSED
+
+    def test_answered_isOpen_evenWhenLinkReadsDown(self) -> None:
+        """
+        Given: ANSWERED with connected=False
+        When: a row is admitted
+        Then: OPEN -- the link field is not read at all
+        """
+        gate = _gate(_Link(ANSWERED, connected=False), _Clock())
+        assert gate.admit("imu", (0,)) == [("imu", (0,))]
+        assert gate.state == GATE_OPEN
+        assert gate.lastTransition == (GATE_CLOSED, GATE_OPEN, "ecu_answered")
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            RuntimeError("no OBD connection object"),
+            ValueError("bad status"),
+            AttributeError("half-built connection"),
+            OSError("port gone"),
+            KeyError("config"),
+        ],
+        ids=lambda e: type(e).__name__,
+    )
+    def test_everyRaise_isOpen_andWarns(
+        self, exc: Exception, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """
+        Given: a signal callable raising any exception, not only no-connection
+        When: a row is admitted
+        Then: OPEN and the rate-limited WARNING
+        """
+        link = _Link(DID_NOT_ANSWER)
+        link.raises = exc
+        gate = _gate(link, _Clock())
+        with caplog.at_level(logging.WARNING, logger="pi.bus.edr_log_gate"):
+            assert gate.admit("imu", (0,)) == [("imu", (0,))]
+        assert gate.state == GATE_OPEN
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+
+    @pytest.mark.parametrize("connected", [False, True])
+    def test_statusWithoutReachability_isOpen_neverFallsBackToConnected(
+        self, connected: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """
+        Given: a producer whose status has NO reachability field, including a
+            readable connected=False (which the legacy table closed on)
+        When: a row is admitted
+        Then: COULD_NOT_DETERMINE semantics -- OPEN + WARNING. A silent
+            fallback to ``connected`` would keep the Bluetooth-link defect for
+            any producer lacking the field, with nothing reporting it
+        """
+        gate = _gate(lambda: _LegacyStatus(connected=connected), _Clock())
+        with caplog.at_level(logging.WARNING, logger="pi.bus.edr_log_gate"):
+            assert gate.admit("imu", (0,)) == [("imu", (0,))]
+        assert gate.state == GATE_OPEN
+        assert gate.lastTransition == (GATE_CLOSED, GATE_OPEN, "signal_unreadable")
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "reachability" in warnings[0].getMessage()
+
+    @pytest.mark.parametrize("value", ["garbage", None, "", 3])
+    def test_valueOutsideTheVocabulary_isOpen_andWarns(
+        self, value: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """
+        Given: a reachability value that is none of the four states
+        When: a row is admitted
+        Then: OPEN + WARNING -- only a DEFINITE negative closes the gate
+        """
+        gate = _gate(lambda: _Status(value), _Clock())  # type: ignore[arg-type]
+        with caplog.at_level(logging.WARNING, logger="pi.bus.edr_log_gate"):
+            assert gate.admit("imu", (0,)) == [("imu", (0,))]
+        assert gate.state == GATE_OPEN
+        assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+    @pytest.mark.parametrize(
+        ("state", "isOpen"),
+        [
+            (ANSWERED, True),
+            (DID_NOT_ANSWER, False),
+            (NOT_YET_ATTEMPTED, False),
+            (COULD_NOT_DETERMINE, True),
+        ],
+    )
+    def test_everyProducerState_hasAnExplicitMapping(
+        self, state: Reachability, isOpen: bool
+    ) -> None:
+        """
+        Given: each of the producer's reachability states, by its real enum
+        When: a row is admitted to a fresh gate
+        Then: the ruled mapping
+        """
+        gate = _gate(_Link(state), _Clock())
+        written = gate.admit("imu", (0,))
+        assert (written == [("imu", (0,))]) is isOpen
+        assert gate.state == (GATE_OPEN if isOpen else GATE_CLOSED)
+
+    def test_mappingCoversEveryProducerState(self) -> None:
+        """The four-state table above is the producer's whole vocabulary --
+        a fifth state fails here until the gate maps it explicitly."""
+        assert set(Reachability) == {
+            ANSWERED, DID_NOT_ANSWER, NOT_YET_ATTEMPTED, COULD_NOT_DETERMINE,
+        }
+
+    def test_didNotAnswerThenAnswered_releasesPreRollUnchanged(self) -> None:
+        """
+        Given: rows buffered on DID_NOT_ANSWER
+        When: reachability becomes ANSWERED
+        Then: the pre-roll is released in order, exactly as US-767-b specified
+        """
+        clock, link = _Clock(), _Link(DID_NOT_ANSWER, connected=True)
+        gate = _gate(link, clock)
+        for i in range(3):
+            clock.t = float(i)
+            assert gate.admit("imu", (i,)) == []
+        link.reachability = ANSWERED
+        clock.t = 3.0
+        assert gate.admit("imu", (3,)) == [("imu", (i,)) for i in range(4)]
+
+
 class TestDisabled:
     def test_disabled_isAlwaysOpen_andNeverReadsTheSignal(self) -> None:
         """
@@ -323,7 +492,7 @@ class TestDisabled:
         When: rows are admitted over a long stretch
         Then: every row is written as-is, the signal is never read, state OPEN
         """
-        clock, link = _Clock(), _Link(connected=False)
+        clock, link = _Clock(), _Link(DID_NOT_ANSWER)
         gate = EdrLogGate(link, enabled=False, monotonicFn=clock)
         for i in range(1000):
             clock.t = float(i)
@@ -335,6 +504,6 @@ class TestDisabled:
 
     def test_enabledDefaultsFalse(self) -> None:
         """A gate built without ``enabled`` is pass-through (never loses a row)."""
-        gate = EdrLogGate(_Link(connected=False))
+        gate = EdrLogGate(_Link(DID_NOT_ANSWER))
         assert gate.enabled is False
         assert gate.admit("imu", (0,)) == [("imu", (0,))]

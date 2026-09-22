@@ -19,6 +19,9 @@
 # 2026-06-19    | Rex          | Initial implementation for US-383 (raw.obd.*
 #               |              | PersistenceSubscriber + byte-identical golden
 #               |              | master via ObdDataLogger.logReading reuse)
+# 2026-09-21    | Rex (US-777) | Hand logReading the CAPTURE-time drive_id
+#               |              | (sample.driveId) instead of re-resolving it at
+#               |              | write -- drain lag no longer mis-attributes.
 # ================================================================================
 ################################################################################
 """The bus subscriber that writes raw.obd.* samples into realtime_data."""
@@ -106,9 +109,12 @@ class PersistenceSubscriber:
 
         Reconstructs a :class:`LoggedReading` from the sample (the parameter name
         is the topic tail after ``raw.obd.``) and delegates the INSERT to the
-        bound ObdDataLogger. ``drive_id`` and ``data_source`` are derived inside
-        ``logReading`` exactly as on the pre-bus inline path, so rows stay
-        byte-identical.
+        bound ObdDataLogger. ``data_source`` is derived inside ``logReading``
+        exactly as on the pre-bus inline path. ``drive_id`` is the one the
+        producer stamped at CAPTURE (``sample.driveId``, US-777) -- never
+        re-resolved here, because a drain lag that spans a drive close would
+        attach the NEXT drive's id, or NULL, to a row captured during the
+        previous one. A captured ``None`` stays explicit NULL.
 
         Args:
             sample: The bus sample to persist.
@@ -127,5 +133,5 @@ class PersistenceSubscriber:
             unit=sample.unit,
             profileId=None,  # logReading falls back to the dataLogger's profileId
         )
-        self._dataLogger.logReading(reading)
+        self._dataLogger.logReading(reading, capturedDriveId=sample.driveId)
         return True
