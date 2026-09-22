@@ -107,7 +107,7 @@ def _piShapePayload(driveId: int, *, allNull: bool = False) -> dict:
         return {
             'id': driveId,
             'drive_start_timestamp': '2026-04-29T13:39:18Z',
-            'ambient_temp_at_start_c': None,
+            'intake_air_temp_at_start_c': None,
             'starting_battery_v': None,
             'barometric_kpa_at_start': None,
             'data_source': 'real',
@@ -115,7 +115,7 @@ def _piShapePayload(driveId: int, *, allNull: bool = False) -> dict:
     return {
         'id': driveId,
         'drive_start_timestamp': '2026-04-29T13:39:18Z',
-        'ambient_temp_at_start_c': 15.0,
+        'intake_air_temp_at_start_c': 15.0,
         'starting_battery_v': 12.6,
         'barometric_kpa_at_start': 101.3,
         'data_source': 'real',

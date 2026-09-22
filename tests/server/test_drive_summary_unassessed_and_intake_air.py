@@ -300,16 +300,34 @@ class TestIntakeAirNotAmbient:
         assert INTAKE_AIR_COLUMN in cols
         assert RETIRED_AMBIENT_COLUMN not in cols
 
-    def test_piWireKeyStillLandsInTheRenamedColumn(self, session: Session) -> None:
-        """A Pi that still sends the OLD key must not silently drop its reading.
+    def test_piWireKeyIsNowREFUSED_theSeamIsGone(self, session: Session) -> None:
+        """The legacy wire key is REJECTED. This test was INVERTED, not deleted.
 
-        Deploy is lockstep, but the Pi's own queue can hold rows captured before
-        the deploy.  The sync registry's rename seam maps the legacy wire key
-        onto the honest column -- landing what was read (SSOT rule A), rather
-        than discarding it because the label changed.
+        🔴 IT USED TO ASSERT THE OPPOSITE, and that inversion is a RULING, not
+        a refactor. US-563's seam mapped the legacy key onto the honest column
+        so a Pi whose queue held pre-deploy rows did not lose a real reading.
+        It had a live contract, and this test was its evidence.
+
+        WHY THAT CONTRACT ENDED (US-689, CIO ruling 2026-09-22):
+
+        * The Pi RENAMED its own column, so the old key cannot be produced.
+          VERIFIED AGAINST THE CAR rather than against the migration source:
+          the deployed Pi's APPLIED ``drive_summary`` schema was read
+          (read-only) on 2026-09-22 and carries ``intake_air_temp_at_start_c``.
+        * Removing the seam did not make the old key fail -- it made it
+          silently discarded (measured: ``inserted:1, errors:0``, value gone),
+          because SQLAlchemy's executemany ignores surplus dict keys. The CIO
+          ruled that an unknown column must RAISE: reporting success while
+          losing a measurement is the worse of the two failures.
+
+        The fact this test protects -- a real reading is never dropped because
+        its label changed -- is therefore unchanged. What changed is the
+        mechanism: no longer translated, now refused loudly.
         """
-        row = _syncOneDrive(session, driveId=43, ambientKey=RETIRED_AMBIENT_COLUMN)
-        assert getattr(row, INTAKE_AIR_COLUMN) == pytest.approx(47.0)
+        with pytest.raises(ValueError) as excInfo:
+            _syncOneDrive(session, driveId=43, ambientKey=RETIRED_AMBIENT_COLUMN)
+
+        assert RETIRED_AMBIENT_COLUMN in str(excInfo.value)
 
     def test_newPiWireKeyAlsoLands(self, session: Session) -> None:
         # The rename seam must not break the post-deploy Pi, which sends the new

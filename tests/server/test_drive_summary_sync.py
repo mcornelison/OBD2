@@ -23,6 +23,7 @@ correctly.
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -111,7 +112,7 @@ class TestRunSyncUpsertDriveSummary:
             {
                 "id": 7,
                 "drive_start_timestamp": "2026-04-20T12:00:00Z",
-                "ambient_temp_at_start_c": 18.5,
+                "intake_air_temp_at_start_c": 18.5,
                 "starting_battery_v": 12.4,
                 "barometric_kpa_at_start": 101.2,
                 "data_source": "real",
@@ -142,7 +143,7 @@ class TestRunSyncUpsertDriveSummary:
         first = {
             "id": 8,
             "drive_start_timestamp": "2026-04-20T12:00:00Z",
-            "ambient_temp_at_start_c": 18.5,
+            "intake_air_temp_at_start_c": 18.5,
             "starting_battery_v": 12.4,
             "barometric_kpa_at_start": 101.2,
             "data_source": "real",
@@ -171,7 +172,7 @@ class TestRunSyncUpsertDriveSummary:
             {
                 "id": 9,
                 "drive_start_timestamp": "2026-04-20T13:00:00Z",
-                "ambient_temp_at_start_c": None,  # Pi wrote NULL (warm restart)
+                "intake_air_temp_at_start_c": None,  # Pi wrote NULL (warm restart)
                 "starting_battery_v": 13.6,
                 "barometric_kpa_at_start": 100.9,
                 "data_source": "real",
@@ -192,7 +193,7 @@ class TestRunSyncUpsertDriveSummary:
         row = {
             "id": 1,
             "drive_start_timestamp": "2026-04-20T12:00:00Z",
-            "ambient_temp_at_start_c": 20.0,
+            "intake_air_temp_at_start_c": 20.0,
             "starting_battery_v": 12.5,
             "barometric_kpa_at_start": 101.0,
             "data_source": "real",
@@ -213,3 +214,124 @@ class TestRunSyncUpsertDriveSummary:
         assert {r.source_device for r in rows} == {
             "chi-eclipse-01", "chi-eclipse-02",
         }
+
+
+# ================================================================================
+# US-689 -- the retired spelling is REFUSED, and spelling is exact
+# ================================================================================
+
+
+class TestRetiredSpellingIsRefused:
+    """The US-563 rename seam is gone: the server no longer accepts the old
+    ``ambient_temp_at_start_c`` key.
+
+    ⚠️ IT RAISES RATHER THAN DROPPING. With the seam removed and no check,
+    SQLAlchemy's executemany simply ignores a surplus dict key -- MEASURED
+    here before the fix: ``{"inserted": 1, "errors": 0}`` with the temperature
+    silently discarded. A green batch that loses a real measurement is the
+    worse failure, so an unknown column now fails the batch and names itself.
+
+    Safe against the shipped fleet: the Pi RENAMED its own column, and the
+    deployed car's applied schema was read on 2026-09-22 to confirm it --
+    ``intake_air_temp_at_start_c`` is what it has, so no Pi can emit the old
+    key. The Pi-local columns (``_sync_modified_at``, ``data_quality``,
+    ``observed_by``, ``observer_state``) never reach the wire: sync_log strips
+    them before the push.
+    """
+
+    def test_theRetiredSpellingRaises_ratherThanSilentlyDroppingTheValue(self) -> None:
+        session = _newSession()
+        rows = [
+            {
+                "id": 79,
+                "drive_start_timestamp": "2026-04-20T12:00:00Z",
+                "ambient_temp_at_start_c": 18.5,  # the RETIRED spelling
+                "data_source": "real",
+            },
+        ]
+
+        with pytest.raises(ValueError) as excInfo:
+            runSyncUpsert(
+                session, deviceId="chi-eclipse-01", batchId="legacy",
+                tables={"drive_summary": {"rows": rows}}, syncHistoryId=1,
+            )
+
+        message = str(excInfo.value)
+        assert "ambient_temp_at_start_c" in message
+        assert "drive_summary" in message
+        # And nothing landed: a refused batch does not half-write.
+        assert session.query(DriveSummary).count() == 0
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "Intake_Air_Temp_At_Start_C",
+            "INTAKE_AIR_TEMP_AT_START_C",
+            "intake-air-temp-at-start-c",
+            "intakeAirTempAtStartC",
+            "intake_air_temp_at_start_c ",
+        ],
+        ids=["titleCase", "upperCase", "dashes", "camelCase", "trailingSpace"],
+    )
+    def test_theSpellingMustBeEXACT_caseAndSeparatorsIncluded(
+        self, spelling: str,
+    ) -> None:
+        """
+        Given: the right column under a near-miss spelling
+        When: it is pushed
+        Then: REFUSED. The wire contract is the column name exactly as both
+            tiers declare it -- case, underscores and all. Accepting a variant
+            would mean one fact with two names, and the engines this data lands
+            in do not agree with each other about case folding
+        """
+        session = _newSession()
+        rows = [{"id": 81, "drive_start_timestamp": "2026-04-20T12:00:00Z", spelling: 18.5}]
+
+        with pytest.raises(ValueError) as excInfo:
+            runSyncUpsert(
+                session, deviceId="chi-eclipse-01", batchId="spelling",
+                tables={"drive_summary": {"rows": rows}}, syncHistoryId=1,
+            )
+
+        assert spelling in str(excInfo.value)
+
+    def test_theCurrentSpellingStillLandsItsVALUE(self) -> None:
+        """The other half of the same assertion: refusing near-misses must not
+        cost the real column."""
+        session = _newSession()
+        rows = [
+            {
+                "id": 82,
+                "drive_start_timestamp": "2026-04-20T12:00:00Z",
+                "intake_air_temp_at_start_c": 18.5,
+                "data_source": "real",
+            },
+        ]
+
+        result = runSyncUpsert(
+            session, deviceId="chi-eclipse-01", batchId="current",
+            tables={"drive_summary": {"rows": rows}}, syncHistoryId=1,
+        )
+
+        assert result["drive_summary"] == {"inserted": 1, "updated": 0, "errors": 0}
+        assert session.query(DriveSummary).one().intake_air_temp_at_start_c == 18.5
+
+    def test_aDeliberatelyNullIatStillLandsAsNull(self) -> None:
+        """The warm-restart row: NULL is a real answer and must not be coerced
+        into a default by the new check."""
+        session = _newSession()
+        rows = [
+            {
+                "id": 83,
+                "drive_start_timestamp": "2026-04-20T12:00:00Z",
+                "intake_air_temp_at_start_c": None,
+                "data_source": "real",
+            },
+        ]
+
+        runSyncUpsert(
+            session, deviceId="chi-eclipse-01", batchId="null",
+            tables={"drive_summary": {"rows": rows}}, syncHistoryId=1,
+        )
+
+        assert session.query(DriveSummary).one().intake_air_temp_at_start_c is None

@@ -165,7 +165,7 @@ def _piShapePayload(driveId: int) -> dict:
     return {
         'id': driveId,
         'drive_start_timestamp': '2026-05-01T05:30:24Z',
-        'ambient_temp_at_start_c': 18.5,
+        'intake_air_temp_at_start_c': 18.5,
         'starting_battery_v': 12.7,
         'barometric_kpa_at_start': 100.2,
         'data_source': 'real',

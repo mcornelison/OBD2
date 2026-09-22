@@ -703,6 +703,100 @@ class TestA4PkRenameParity:
     def test_idPkTablesAreNotRequiredToDeclareARename(self) -> None:
         assert checkPkRenameParity({'power_log': 'id'}, {}, {}) == []
 
+    def test_everyRenameInTheAcceptSetSourcesFromThePiPk(self) -> None:
+        """
+        Given: the LIVE _TABLE_REGISTRY the server accepts sync payloads with
+        When: every declared rename is inspected
+        Then: each sources from 'id' -- it is a PK rename, the one kind
+            runSyncUpsert branches on.
+
+        US-689: the converse of this class's sentence. A NON-PK rename is a
+        column-spelling seam -- the server quietly accepting a name the Pi no
+        longer sends, which reads as compatibility and ages into a second
+        vocabulary for one fact. The drive_summary IAT seam was the last one
+        and it is gone; this goes red on the commit that adds another.
+
+        Read from the IMPORTED dict, never a copied literal: a copy would pass
+        while the shipped registry drifted.
+        """
+        from src.server.api.sync import _TABLE_REGISTRY
+
+        offenders = {
+            table: [(src, dst) for src, dst in renames if src != 'id']
+            for table, (_model, renames) in _TABLE_REGISTRY.items()
+            if any(src != 'id' for src, _dst in renames)
+        }
+
+        assert offenders == {}, (
+            f"non-PK rename(s) in the sync accept-set: {offenders}. A rename "
+            "that does not source from the Pi PK is a column-spelling seam; "
+            "rename the column on the Pi instead (US-689)."
+        )
+
+    def test_everyColumnThePiSENDS_existsOnTheServerWithTheSameSpelling(
+        self, piSchema: dict, serverSchema: dict,
+    ) -> None:
+        """
+        Given: the APPLIED Pi schema and the server models -- both loaded, not
+            described
+        When: every column a delta-sync payload would carry is resolved (the
+            Pi PK renamed to id -> source_id, the wire-stripped Pi-local
+            columns removed)
+        Then: each exists on the server table under the IDENTICAL spelling.
+
+        US-689 made this a runtime rule: an unknown column now RAISES instead
+        of being dropped by executemany. That makes exact spelling -- case,
+        underscores and all -- part of the wire contract, so it has to be
+        checked against the real schemas rather than asserted in a comment.
+        Before US-689 a mismatch here cost one silently discarded value; now it
+        fails the batch, which is why this guard sits beside the change.
+        """
+        from src.pi.data.sync_log import (
+            _WIRE_STRIPPED_COLUMNS,
+            DELTA_SYNC_TABLES,
+            PK_COLUMN,
+        )
+        from src.server.api.sync import _TABLE_REGISTRY
+
+        offenders: dict[str, list[str]] = {}
+        for table in sorted(set(DELTA_SYNC_TABLES) & set(_TABLE_REGISTRY)):
+            piCols = piSchema.get(table)
+            serverCols = serverSchema.get(table)
+            if not piCols or not serverCols:
+                continue
+            renames = dict(_TABLE_REGISTRY[table][1])
+            missing = []
+            for name in piCols:
+                if name in _WIRE_STRIPPED_COLUMNS:
+                    continue
+                # The Pi PK travels as 'id' and lands in source_id.
+                if name == PK_COLUMN.get(table):
+                    continue
+                wireName = renames.get(name, name)
+                if wireName not in serverCols:
+                    missing.append(f"{name} -> {wireName}")
+            if missing:
+                offenders[table] = missing
+
+        assert offenders == {}, (
+            "a Pi column would be sent under a spelling the server model does "
+            f"not declare, and US-689 now makes that RAISE: {offenders}"
+        )
+
+    def test_theRegistryIsPopulated_soTheRenameCheckIsNotVacuous(self) -> None:
+        """A registry that failed to import, or one with no renames at all,
+        would make the check above pass by having nothing to look at."""
+        from src.server.api.sync import _TABLE_REGISTRY
+
+        assert len(_TABLE_REGISTRY) > 5
+        assert 'drive_summary' in _TABLE_REGISTRY
+        # At least one PK rename still exists, so "sources from id" is a real
+        # filter rather than a statement about an empty set.
+        assert any(
+            any(src == 'id' for src, _dst in renames)
+            for _model, renames in _TABLE_REGISTRY.values()
+        )
+
 
 # ================================================================================
 # A5 -- Pi ensure-schema coverage
