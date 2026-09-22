@@ -607,12 +607,19 @@ records which state produced a given row.
 
 | At rest, parked (`drive_id IS NULL`) | FAULTED | HEALTHY |
 |---|---|---|
-| `gyro_x` mean (°/s) | +0.2436 | −0.0008 |
-| `gyro_y` mean (°/s) | −0.5222 | +0.0130 |
-| `gyro_z` mean (°/s) | −0.3211 | +0.0039 |
+| `gyro_x` mean (**rad/s**) | +0.2436 | −0.0008 |
+| `gyro_y` mean (**rad/s**) | −0.5222 (≈ −29.9 °/s) | +0.0130 (≈ +0.745 °/s) |
+| `gyro_z` mean (**rad/s**) | −0.3211 | +0.0039 |
 | **‖a‖ mean (m/s²)** | **9.79492** | **9.98255** |
 | ‖a‖ sample SD (m/s²) | 0.13460 | 0.03598 |
 | n | 379,527 | 5,706,847 |
+
+⚠️ **UNIT CORRECTED 2026-09-21 (Spool).** This table first went out labelled °/s, and so did the
+office's S44 boot-state finding. **The column is rad/s** — `UNIT_GYRO = "rad/s"`
+(`sensor_reader.py:130`) and `-- rad/s` (`sensor_schema.py:56`). Swept the same session:
+`facts/imu-and-motion.md` and shared `MEMORY.md`, both with verified backups. **It is the SPEED
+km/h-as-mph phantom's shape — pin the unit before the magnitude — and it matters here for a reason
+that only appears once the unit is right** (next section).
 
 🔴 **The gyro fault biases ALL THREE axes, not only `gyro_y`.** The office record named `gyro_y`
 alone; `gyro_x` (+0.24) and `gyro_z` (−0.32) are also displaced. Classifying a boot by `gyro_y`
@@ -637,6 +644,96 @@ the database.** ⇒ A consumer cannot tell from the data which state a row came 
 
 **`void if`** — the IMU is replaced, the A-34 recovery is removed or changed, or any boot is
 observed publishing rows after recovery failed.
+
+---
+
+## THREE pitch defects, not one — and the grade error on a parked car is the one nothing fixes
+
+**Spool, 2026-09-21. Once the gyro unit is pinned to rad/s, three findings recorded separately
+turn out to be one quantity.**
+
+    HEALTHY residual gyro_y bias      0.01304 rad/s  =  0.747 deg/s     (n = 5,332,340, parked)
+    x DEFAULT_PITCH_TAU_S             5.0 s
+    => predicted pitch error          3.74 deg
+    S42 finding (office, 2026-09-01)  0.7145 deg/s bias -> 3.57 deg predicted, 3.81 deg observed
+    live, parked, 2026-09-22 03:15Z   pitchDeg -2.91 .. -4.02 deg;  gradePct -5.1 .. -7.0 %
+                                      tan(3.3 deg) = 5.8 %  -- consistent
+
+🔴 **The grade that moves on a stationary car is the HEALTHY-state residual gyro bias, integrated
+through the 5 s pitch time constant and never cancelled.** It is **not** the latch.
+
+⇒ **The three mechanisms, kept separate because each has a different fix:**
+
+| # | Mechanism | Size | Status |
+|---|---|---|---|
+| 1 | **Latched gyro** (FAULTED, 0.2457–0.52 rad/s) → runaway to ~70° | catastrophic | 🟢 **FIXED by A-34 recovery (US-778)** — 10/10 cleared since 09-08 |
+| 2 | **Guard on the runaway** (US-749 / US-750) — withhold pitch/grade when implausible | defence | ✅ correct; now defends against a *failed* recovery |
+| 3 | **HEALTHY residual bias** 0.013 rad/s → 3.7° → ~6 % phantom grade | chronic | 🔴 **UNFIXED — and neither US-749 nor US-778 addresses it** |
+
+🔴 **Fixing #1 cannot fix #3.** The recovery takes the gyro from FAULTED to HEALTHY; HEALTHY still
+carries 0.747 °/s of bias. **ZUPT is the mechanism meant to cancel it, and ZUPT needs ≥ 5 confirmed
+stops — `stopCount = 0` after hours parked, because a parked car never accumulates stops.**
+
+### 🟢 The input to fix #3 is ALREADY COMPUTED AT EVERY BOOT, and thrown away
+
+`gyro_recovery.gyroLooksFaulted()` takes **20 stationary samples at startup** and computes
+**`axisMeans` on all three axes** — which is a per-boot gyro bias estimate. It compares the largest
+to 0.10 rad/s to classify the state, and **discards the means.** The post-recovery check samples
+again, on a HEALTHY gyro, and discards those too.
+
+⇒ **Hand the post-recovery `axisMeans` to pitch fusion as its initial bias.** That cancels #3 at
+boot instead of waiting for five stops a parked car will never make.
+
+**Precision, stated with its uncertainty rather than its best case.** HEALTHY per-sample SD is
+**0.00279 rad/s** on `gyro_y`. **If** the 20 reads are independent, the mean has SE 0.00062 rad/s —
+the bias is determined at ~21σ and the residual pitch error falls from **3.74° to ~0.18°** (~20×).
+⚠️ **But `_sampleGyro` reads in a tight loop with no delay, very likely faster than the gyro's
+output data rate, so consecutive reads can return the same sample** — the effective N may be 2–4,
+not 20. At N = 3 the residual is ~0.46° (~8×). ⇒ **The improvement is bounded between ~8× and
+~20×, and I have not measured which.** Either way it is large. **Recommendation: sample across a
+deliberate 2–5 s window at the ODR, not a tight loop**, so N is genuinely independent and stated.
+
+⚠️ **Precondition, owned by the caller and already true at startup:** the car must be stationary.
+`gyroLooksFaulted`'s own docstring makes the same point — at key-on the car has not moved.
+
+### Story consequences
+
+- **US-778** (latch recovery) — 🟢 **the work exists, is deployed, and is validated in the field:
+  10 detected, 10 cleared, 0 failed, 0 skipped, journal 2026-09-08 → 09-21.** It reads `pending`
+  on the punch list. ⇒ **Candidate for closure against that evidence**, subject to the PM checking
+  its acceptance criteria — which I cannot see from here. ⚠️ **One gap if the ACs require it: the
+  outcome is journal-only, never persisted**, so the state of any given row is not queryable.
+- **US-749** (70° runaway guard) — the **triggering condition no longer occurs**: since recovery
+  landed, pitch has not approached 70° (tonight ~−3.3°). **The guard stays correct as defence in
+  depth** for a recovery that fails. If it is `blocked` on US-778, **that dependency is now met.**
+- 🔴 **Neither story fixes the defect Atlas saw on 09-21 and I reproduced the same night.** That is
+  #3 and it needs its own item — or US-805/US-750 scope that explicitly names residual bias.
+- **US-782** (rest noise, DLPF 0 vs 4) — see below: **it optimises noise, and the measured error is
+  bias.**
+
+---
+
+## US-782 — the spike measures NOISE, and the pitch error is BIAS
+
+`ICM20948()` is constructed with **no DLPF argument** — there is no DLPF configuration anywhere in
+the repository, so there is no "config 0 vs config 4" to compare without writing bank-2 registers
+behind the driver on a live bus two processes are polling.
+
+🔴 **More importantly, it would tune the wrong term.** At the current (default) config:
+
+    per-sample gyro SD  (HEALTHY, parked)   x 0.00342   y 0.00279   z 0.00295  rad/s
+    residual gyro BIAS  (HEALTHY, parked)   x -0.00088  y 0.01304   z 0.00392  rad/s
+
+On `gyro_y` **the bias is 4.7× the per-sample noise — and it is systematic, so it does not average
+out, while the noise does**, under the same 5 s filter that turns the bias into a 3.7° error. **A
+DLPF change moves the noise and leaves the bias untouched.** ⇒ **US-782 cannot move the error that
+is actually breaking pitch and grade.**
+
+🟢 **Its baseline is now free and on the record** — the SDs above, n = 5,332,340 — **so if the spike
+is ever run, the "before" arm already exists.** ⇒ **Recommendation: re-scope to residual-bias
+cancellation (above), or drop.** Tuning noise first is optimising the smaller term.
+
+**`void if`** — the IMU is replaced or its DLPF is ever set explicitly.
 
 ---
 
@@ -689,15 +786,34 @@ trustworthy.**
 exclusions and cannot be reproduced from the current corpus. The band Atlas carried (+1.6–2.0 %)
 contains this result.
 
-🔴 **KNOWN LIMITATION OF THIS NUMBER — THERE IS NO TEMPERATURE TERM, AND THERE CANNOT BE ONE FROM
-THIS CORPUS.** `edr_imu_sample.temp_c` is **NULL on all 6,275,515 rows since 2026-09-08** — the
-column exists and is never populated. MEMS accelerometer sensitivity is temperature-dependent, so
-`ACCEL_SCALE_CORRECTION` is **a single figure averaged over whatever thermal range the Pi actually
-saw, with the range unknown and the drift unbounded.** ⚠️ **State this whenever the number is
-quoted.** It is a real constraint on the result, not a disclaimer: the 1.83 % is solid as an
-aggregate and **no one can currently say how much of it moves with temperature.** ⇒ **Landing
-`temp_c` is the cheapest way to improve this**, and the channel is already read — it is the
-persistence that is missing, the same shape as `pitchDeg`/`stopCount`/`biasRad` in US-805.
+🔴 **KNOWN LIMITATION OF THIS NUMBER — THERE IS NO TEMPERATURE TERM.** `edr_imu_sample.temp_c` is
+**NULL on all 6,275,515 rows since 2026-09-08.** MEMS accelerometer sensitivity is
+temperature-dependent, so `ACCEL_SCALE_CORRECTION` is a single figure over whatever thermal range
+the Pi actually saw. ⚠️ **State this whenever the number is quoted.**
+
+⚠️ *Corrected 2026-09-21: this paragraph first said the temperature "channel is already read — it is
+the persistence that is missing." **False.** US-500 (`sensor_reader.py:594-602`): the
+`adafruit_icm20x` driver raises on `.temperature`, the read degrades to `None`, and **nothing is
+read at all.** See the `temp_c` section below.*
+
+🟢 **BUT THE TEMPERATURE TERM CAN BE BOUNDED WITHOUT A TEMPERATURE CHANNEL — and it is small.**
+HEALTHY-state, parked, daily mean ‖a‖:
+
+    2026-09-17   9.98850      2026-09-20   9.97616
+    2026-09-18   9.97650      2026-09-21   9.97150
+    2026-09-19   9.98318
+    spread       0.01700 m/s^2   =  0.173 % of g
+
+**Everything that varied across those five days — temperature included — moved the scale by at most
+0.17 %, against a 1.83 % static error.** ⇒ **The static correction captures ~91 % of the error in
+the conditions observed.** ⇒ 🟢 **US-783 does NOT need to block on a temperature term.** Ship the
+static factor; a temperature term is a refinement.
+
+⚠️ **What this bound does and does NOT say.** It bounds the *combined* day-to-day effect over one
+September week with the car mostly parked. **It is not a temperature coefficient**, because the
+thermal range across those days is unknown — no ambient source exists on this car (IAT is not
+ambient, US-206). **A cold winter start is outside the observed range and the bound does not
+extend to it.** Re-check the first time the car is driven below ~5 °C.
 
 **`void if`** — the IMU is replaced or moved to different hardware, the A-34 recovery changes, or the
 accelerometer full-scale range is ever set explicitly (today it is the `adafruit_icm20x` library
@@ -959,16 +1075,36 @@ and the test fake did, which is how the assumption got in). The read is wrapped,
 `AttributeError` degrades to `None`, and the burst is **not** dropped. ⇒ **This is honest-null, not
 a wiring defect. Nothing is being hidden.**
 
-🟢 **The measurement nevertheless EXISTS on the die.** The ICM-20948 has an internal temperature
-sensor at bank-0 `TEMP_OUT_H/L` (`0x39`/`0x3A`), `TempDegC = ((TEMP_OUT - RoomTemp_Offset) /
-333.87) + 21`. **Reaching it means a direct register read past the driver — for which this codebase
-has two established precedents that both say why they do it:** `ak09916_bypass.enableI2cBypass`
-and `gyro_recovery`'s `PWR_MGMT_2` write.
+### ⚠️ UNRESOLVED — whether this IMU has a usable temperature register
 
-⇒ **Backlog item.** It is the cheapest way to put a temperature term on
-`ACCEL_SCALE_CORRECTION` (US-783), which is currently an aggregate over an **unknown** thermal
-range. ⚠️ **It is the IMU's DIE temperature — the right input for accel scale compensation and the
-WRONG input for the UPS cell's RCOMP.** Do not let one story serve both.
+**Two statements conflict, and this spec records both rather than choosing.**
+
+- **CIO, 2026-09-21:** *this version of the IMU does not have a temperature register.* The CIO is
+  the vehicle owner and knows this hardware first-hand.
+- **Spool, measured 2026-09-21, direct I²C read at `0x69`, bank 0, no bank switch:**
+
+      WHO_AM_I (0x00) = 0xEA         genuine ICM-20948 signature
+      BANK_SEL (0x7F) = 0x00
+      TEMP_OUT (0x39/0x3A) raw = 1952, 1968, 2016, 2064, 1952  ->  26.85 - 27.18 degC
+
+  The register responds with a plausible, **dithering** (not latched) value, decoded with the
+  ICM-20948 datasheet formula `((TEMP_OUT - 0) / 333.87) + 21`.
+
+**Candidate reconciliations, none confirmed:** *(a)* the **MAX17048** genuinely has no temperature
+register (verified the same day) and the two were conflated; *(b)* the **driver** has none — US-500
+is exactly that — which reads the same from software; *(c)* the CIO knows something about this
+specific breakout that a register read cannot show — e.g. that the value is not trustworthy even
+though it responds. **(c) would outrank the read.**
+
+🔴 **RULING: do NOT build on this register until the CIO resolves it.** No story should read
+`TEMP_OUT` on the strength of this measurement alone.
+
+🟢 **Nothing is blocked by leaving it open:** US-783 ships without a temperature term (the static
+factor captures ~91 % of the error, bounded above), so this is a refinement, not a gate.
+
+⚠️ **If it is ever resolved in favour of the register:** it is the IMU's **die** temperature — the
+right input for accel scale compensation and the **WRONG** input for the UPS cell's RCOMP. **Do not
+let one story serve both.**
 
 ---
 
