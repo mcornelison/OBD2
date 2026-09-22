@@ -19,6 +19,8 @@
 # 2026-05-19    | Plan (SS-T5)  | T2 alias DEATH: assertion flipped to assert
 #                                 confirm* are GONE from cfg (the stated
 #                                 death date arrived; rename completed).
+# 2026-09-22    | Rex (US-801)  | IMU rate pins assert against the single
+#                                 definition, not a second literal.
 # ================================================================================
 ################################################################################
 
@@ -38,7 +40,13 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from common.config.validator import ConfigValidationError, ConfigValidator, validateConfig
+from common.config.validator import (
+    DEFAULT_IMU_PERSIST_HZ,
+    DEFAULT_IMU_SAMPLE_HZ,
+    ConfigValidationError,
+    ConfigValidator,
+    validateConfig,
+)
 
 
 @pytest.fixture
@@ -983,11 +991,13 @@ def test_validate_busEnabled_explicitValuePreserved():
 
 def test_validate_sensorFlags_defaultDarkWithDefaultRates():
     """US-409 (EDR sensor readers): both per-sensor enable flags default False
-    (ships dark) with their bus publish rates (imu 50 Hz, light 1 Hz)."""
+    (ships dark) with their bus publish rates -- imu at the single definition
+    (US-801; its equality with config.json is pinned in
+    tests/pi/sensors/test_imu_rate_single_source.py), light 1 Hz."""
     cfg = ConfigValidator().validate(_baseCfg())
     sensors = cfg["pi"]["sensors"]
     assert sensors["imu"]["enabled"] is False
-    assert sensors["imu"]["sampleHz"] == 50
+    assert sensors["imu"]["sampleHz"] == DEFAULT_IMU_SAMPLE_HZ
     assert sensors["light"]["enabled"] is False
     assert sensors["light"]["sampleHz"] == 1
 
@@ -1003,10 +1013,11 @@ def test_validate_sensorEnabled_explicitValuePreserved():
 
 
 def test_validate_sensorPersistenceKeys_defaults():
-    """US-410 (EDR persistence): imu.persistHz decimates the 50 Hz bus to a
-    25 Hz baseline; retentionDays bounds the Pi-local rolling window at 7 days."""
+    """US-410 (EDR persistence): imu.persistHz decimates the bus to a baseline
+    persist cadence (the single definition, US-801); retentionDays bounds the
+    Pi-local rolling window at 7 days."""
     cfg = ConfigValidator().validate(_baseCfg())
     sensors = cfg["pi"]["sensors"]
-    assert sensors["imu"]["persistHz"] == 25
+    assert sensors["imu"]["persistHz"] == DEFAULT_IMU_PERSIST_HZ
     assert sensors["retentionDays"] == 7
 

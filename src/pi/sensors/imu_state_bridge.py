@@ -86,6 +86,8 @@
 # 2026-09-14    | Rex (US-749) | pitchDeg/gradePct publish typed-null
 #               |              | gyro_implausible when PitchFusion's plausibility
 #               |              | guard trips (the 09-14 confident 70 deg pitch).
+# 2026-09-22    | Rex (US-801) | DEFAULT_IMU_SAMPLE_HZ / DEFAULT_STATE_HZ imported
+#               |              | from the single definition (now 4 / 1).
 # ================================================================================
 ################################################################################
 
@@ -100,6 +102,10 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+# US-801: the IMU sample and state rates are DEFINED once, in the validator,
+# and imported under this module's historical names (tests monkeypatch them).
+from common.config.validator import DEFAULT_IMU_SAMPLE_HZ
+from common.config.validator import DEFAULT_IMU_STATE_HZ as DEFAULT_STATE_HZ
 from common.time.helper import utcIsoNow
 
 # US-521: the pitch estimator owns the gravity/tilt constants US-478 defined
@@ -221,18 +227,15 @@ _SUB_NAME = "imu-state"
 # How long the drain loop blocks waiting for a sample before re-checking _stop.
 _DRAIN_TIMEOUT_S = 0.5
 
-# Default state-file write cadence. GROUNDED to the consumer, not the sensor:
-# writing the file faster than the only consumer reads it is pure tmpfs churn
-# with no observable effect. The IMU bursts at 50 Hz; this is the DISPLAY view.
+# Default state-file write cadence: DEFAULT_STATE_HZ, imported above from the
+# single definition (US-801). This is the DISPLAY view, latest-wins/lossy with
+# no history; the durable EDR persist is a SEPARATE cadence (persistHz) off the
+# same producer. Overridable via pi.sensors.imu.stateHz.
 #
-# US-508 raised it 4 -> 10 Hz because the consumer got faster, not because the
-# sensor did. The live instrument moved onto the carousel's HOME slot and polls
-# states/imu on its own ~10 Hz loop (carousel.js IMU_POLL_MS = 100) -- a
-# scrolling compass tape and a g-trail simply do not animate at 4 Hz. Per
-# Atlas's transport ruling this stays latest-wins/lossy with no history on the
-# display path; the durable EDR persist is a SEPARATE cadence (persistHz) off
-# the same producer. Overridable via pi.sensors.imu.stateHz.
-DEFAULT_STATE_HZ = 10
+# History: US-508 raised it 4 -> 10 Hz to match the card's ~10 Hz poll
+# (carousel.js IMU_POLL_MS = 100). US-796-b set the shipped triple to 4/2/1
+# under the CIO's 4 Hz hard cap (ARCH-036), so the card re-reads an unchanged
+# file between 1 Hz writes; US-801 moved this default to the shipped 1.
 
 # Default gravity low-pass time constant, seconds. Chosen so the estimate tracks
 # mount tilt / road grade (which change over tens of seconds) while rejecting
@@ -242,9 +245,8 @@ DEFAULT_STATE_HZ = 10
 # against a real drive -- it is a filter constant, not a tuning value.
 DEFAULT_GRAVITY_TAU_S = 5.0
 
-# Default IMU burst rate (mirrors sensor_reader.DEFAULT_IMU_SAMPLE_HZ) -- used to
-# derive the magnetometer freshness window below.
-DEFAULT_IMU_SAMPLE_HZ = 50
+# Default IMU burst rate: DEFAULT_IMU_SAMPLE_HZ, imported above from the single
+# definition (US-801) -- used to derive the magnetometer freshness window below.
 
 # A magnetometer reading is paired with an accel reading only if it is within
 # this many poll intervals. Derived from the configured sampleHz (not a second

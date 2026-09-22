@@ -111,7 +111,10 @@ import render_harness as rh  # noqa: E402
 from pi.bus.sample import Sample  # noqa: E402
 from pi.sensors.imu_state_bridge import (  # noqa: E402
     CHANNEL_STATE_ACCEL,
+    DEFAULT_IMU_SAMPLE_HZ,
+    DEFAULT_STATE_HZ,
     IMU_STATE_FILENAME,
+    MAG_MAX_AGE_POLLS,
     REASON_NO_MAG,
     REASON_SENSOR_ABSENT,
     STANDARD_GRAVITY_MS2,
@@ -132,6 +135,22 @@ pytestmark = pytest.mark.skipif(
 
 # The shipped panel, not the harness default.
 PANEL = (480, 320)
+
+# US-801: the bridge here runs on its DEFAULT rates (the shipped 4 Hz burst,
+# 1 Hz state write). These tails were 0.2 s when the defaults were 50/10 Hz;
+# they are now derived from the bridge's own constants so each test keeps its
+# meaning at whatever the defaults are.
+#   _NEXT_WRITE_INSIDE_WINDOW_S: the next state write, while the last mag is
+#       still INSIDE the pairing window -- so a bridge that ignored the gate
+#       would still have a real bearing to print.
+#   _PAST_PAIRING_WINDOW_S: past both the next write and the pairing window.
+_PAIRING_WINDOW_S = MAG_MAX_AGE_POLLS / DEFAULT_IMU_SAMPLE_HZ
+_NEXT_WRITE_INSIDE_WINDOW_S = 1.0 / DEFAULT_STATE_HZ
+_PAST_PAIRING_WINDOW_S = max(_PAIRING_WINDOW_S, _NEXT_WRITE_INSIDE_WINDOW_S) + 1.0
+assert _NEXT_WRITE_INSIDE_WINDOW_S < _PAIRING_WINDOW_S, (
+    "the default state interval no longer falls inside the pairing window -- "
+    "the gate-refusal tests below would pass on the window lapse alone"
+)
 
 _REPO = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
@@ -924,7 +943,8 @@ def test_gateRefusal_dropsTheHeldBearingAndCarriesTheGatesOwnReason(tmp_path):
     nothing instead.
     """
     state = _afterALiveBearing(
-        tmp_path, _magGate(REASON_SENSOR_STALE), _accel(seq=3, capture=0.2)
+        tmp_path, _magGate(REASON_SENSOR_STALE),
+        _accel(seq=3, capture=_NEXT_WRITE_INSIDE_WINDOW_S),
     )
 
     assert state["headingDeg"] is None
@@ -949,7 +969,8 @@ def test_gateRefusal_paintsTheRawCodeBecauseTheCardCannotSpellIt(tmp_path):
     must not change: an unspellable reason still renders a typed absence.
     """
     state = _afterALiveBearing(
-        tmp_path, _magGate(REASON_SENSOR_STALE), _accel(seq=3, capture=0.2)
+        tmp_path, _magGate(REASON_SENSOR_STALE),
+        _accel(seq=3, capture=_NEXT_WRITE_INSIDE_WINDOW_S),
     )
     tile = _tile(_run(state), "HEADING")
 
@@ -1019,7 +1040,7 @@ def test_pairingWindowLapse_dropsTheHeldBearingRatherThanReusingIt(tmp_path):
     this, and the failure it prevents is a bearing that stays on the card looking
     current while nothing behind it is reading.
     """
-    state = _afterALiveBearing(tmp_path, _accel(seq=9, capture=0.2))
+    state = _afterALiveBearing(tmp_path, _accel(seq=9, capture=_PAST_PAIRING_WINDOW_S))
 
     assert state["headingDeg"] is None
     assert state["reasons"]["headingDeg"] == REASON_NO_MAG

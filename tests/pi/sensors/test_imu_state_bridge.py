@@ -11,6 +11,9 @@
 # Author: Rex (US-478)
 # Creation Date: 2026-07-31
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# 2026-09-22 Rex (US-801): the two US-508 default-rate pins now pin the shipped
+#     1 Hz default and the CIO's 4 Hz hard cap (ARCH-036), per the CIO.
 ################################################################################
 """Unit tests for the IMU-state bridge (bus raw.imu.* -> states/imu)."""
 
@@ -24,6 +27,7 @@ from pathlib import Path
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS, Sample
 from pi.sensors.imu_state_bridge import (
+    DEFAULT_IMU_SAMPLE_HZ,
     DEFAULT_STATE_HZ,
     IMU_BODY_FRAME,
     IMU_STATE_FILENAME,
@@ -570,7 +574,7 @@ def test_bridge_decimatesTheFiftyHzBurstToTheStateRate(tmp_path: Path):
 
           This test pins the DECIMATION at whatever rate it is handed, which is
           why it still passes 4 explicitly. What that cadence should DEFAULT to
-          is a separate fact with its own test above -- US-508 moved it to 10 Hz
+          is a separate fact with its own test below -- US-801 moved it to 1 Hz
           and this docstring used to assert the old grounding as if it were the
           rule.
     """
@@ -582,53 +586,50 @@ def test_bridge_decimatesTheFiftyHzBurstToTheStateRate(tmp_path: Path):
     assert 4 <= len(writes) <= 5
 
 
-def test_bridge_defaultStateRate_isTheOneTheLiveHomeCardActuallyNeeds(tmp_path: Path):
+def test_bridge_defaultStateRate_isTheShippedOneHz(tmp_path: Path):
     """
     Given: a bridge built WITHOUT an explicit stateHz -- the way production wires
            it whenever pi.sensors.imu.stateHz is absent from config
-    When: one second of the 50 Hz burst is drained
-    Then: it writes about DEFAULT_STATE_HZ times, and that default is 10.
+    When: eight seconds of the default 4 Hz burst are drained
+    Then: it writes about DEFAULT_STATE_HZ times a second -- one per second.
 
-          THE GAP THIS CLOSES: every other rate test in this file passes
-          stateHz=4 explicitly, so not one of them exercises the default. US-508
-          raised it 4 -> 10 because the consumer moved onto the home slot and
-          animates a compass tape and a g-trail; a silent revert to 4 would leave
-          the whole suite green while the instrument visibly stutters on the
-          panel -- a defect only a human in a moving car would ever report.
+          THE GAP THIS CLOSES: every other rate test in this file passes stateHz
+          explicitly, so not one of them exercises the default. US-801 moved the
+          default from US-508's 10 Hz to the shipped 1 Hz (US-796-b, the CIO's
+          4 Hz hard cap, ARCH-036). A silent revert to 10 -- or to 4 -- writes on
+          every burst (32 writes here) and fails this band.
     """
     writes = []
     bridge = ImuStateBridge(None, str(tmp_path))
     bridge._writeState = lambda payload: writes.append(payload)  # type: ignore[method-assign]
-    for i in range(50):
-        bridge.handleSample(_accel(_level(), seq=i + 1, capture=i * 0.02))
-    assert DEFAULT_STATE_HZ == 10
-    # The band is quantised by the 0.02 s sample grid (the 4 Hz test above takes
-    # the same slack), so it is stated loosely enough to be honest and tightly
-    # enough that a revert to 4 -- which lands at ~4-5 writes -- still fails it.
-    assert 8 <= len(writes) <= 11, len(writes)
+    for i in range(32):
+        bridge.handleSample(_accel(_level(), seq=i + 1, capture=i * 0.25))
+    assert DEFAULT_STATE_HZ == 1
+    # One write per 1 s interval over 8 s, quantised by the 0.25 s burst grid.
+    assert 7 <= len(writes) <= 9, len(writes)
 
 
-def test_defaultStateRate_sitsInsideAtlasRuledTransportBand():
+def test_defaultRates_sitUnderTheCioHardCap():
     """
-    Given: Atlas's US-508 transport ruling -- the bridge writes the derived file
-           at ~10-15 Hz and the card polls it at ~10 Hz
-    When: the shipped default is compared against the SHIPPED card
-    Then: the producer is never SLOWER than its consumer polls, and never faster
-          than the ruled band.
+    Given: the CIO's acquisition ceiling, read from its ratified source
+           (specs/data-acquisition-architecture.md §4.2, ARCH-036: "4 Hz HARD
+           CAP", tightened from 5 Hz on 2026-09-21)
+    When: the shipped IMU defaults are compared against it
+    Then: the state write rate never exceeds its source burst rate, and the burst
+          rate never exceeds the cap.
 
-          This is a CROSS-ARTIFACT pin and that is the point: the constant's own
-          docstring claims it is grounded to carousel.js IMU_POLL_MS, but a claim
-          in a comment is not a check. The failure it catches is the one this
-          sprint keeps meeting -- two correct halves that stopped agreeing.
-          Writing slower than the reader polls does not slow the poll; it makes
-          the reader re-read a file that has not changed and animate nothing.
+          This REPLACES the US-508 transport-band pin (10-15 Hz, grounded to the
+          card's 100 ms poll), which the CIO's ruling superseded: the card now
+          re-reads an unchanged file between 1 Hz writes, by design. It stays a
+          CROSS-ARTIFACT pin -- the cap is parsed from the ruling, not retyped, so
+          a comment claiming agreement is never the only check.
     """
-    js = Path(__file__).resolve().parents[3] / "src/pi/ui/dashboard/carousel.js"
-    m = re.search(r"IMU_POLL_MS\s*=\s*(\d+)", js.read_text(encoding="utf-8"))
-    assert m, "carousel.js no longer declares IMU_POLL_MS -- re-ground this pin"
-    cardPollHz = 1000.0 / float(m.group(1))
-    assert DEFAULT_STATE_HZ >= cardPollHz, "the bridge writes slower than the card polls"
-    assert DEFAULT_STATE_HZ <= 15, "above Atlas's ruled band -- tmpfs churn no one reads"
+    doc = Path(__file__).resolve().parents[3] / "specs/data-acquisition-architecture.md"
+    m = re.search(r"(\d+)\s*Hz\s+HARD\s+CAP", doc.read_text(encoding="utf-8"))
+    assert m, "ARCH-036 no longer states an 'N Hz HARD CAP' -- re-ground this pin"
+    capHz = int(m.group(1))
+    assert DEFAULT_STATE_HZ <= DEFAULT_IMU_SAMPLE_HZ, "state writes faster than its source"
+    assert DEFAULT_IMU_SAMPLE_HZ <= capHz, "the IMU default exceeds the CIO's hard cap"
 
 
 def test_bridge_settledOnATiltedMount_readsZeroGButNonZeroGrade(tmp_path: Path):
