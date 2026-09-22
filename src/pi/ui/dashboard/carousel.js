@@ -900,6 +900,67 @@
     return { label: "POWER", value: "—", detail: "unavailable", level: "unavailable" };
   }
 
+  // -------------------------------------------------------------------------
+  // US-744 -- the PREVIOUS shutdown's verdict, rendered.
+  //
+  // US-728 computed this on every boot, published it at `priorShutdown`, and
+  // nothing read it: a grep of src/pi/ui/ for the key returned zero. (US-744
+  // also found the producer never passed it, so the car published null.)
+  //
+  // READ-ONLY. The verdict, its words and its caveat are the producer's; this
+  // renders them. It classifies nothing -- two producers of one fact is the
+  // SSOT defect, not the feature.
+  //
+  // LEVEL IS ALWAYS `neutral`, including UNGRACEFUL. The verdict is HISTORY:
+  // it describes a shutdown that already happened, not a live fault. An amber
+  // tile would hold the card at "SYSTEM · 1 ISSUE" for the whole session over
+  // something no longer happening -- the crying-wolf failure the US-509 row
+  // floor already refuses for DRIVE=IDLE.
+  // -------------------------------------------------------------------------
+
+  // The producer's verdict vocabulary -> the tile's words. An unrecognised
+  // verdict is a typed absence, never a guess: a NEW producer state must not
+  // be able to render as CLEAN here (the fabricated-green failure).
+  var PRIOR_SHUTDOWN_WORDS = {
+    clean: "CLEAN",
+    ungraceful: "UNGRACEFUL",
+    no_record: "NO RECORD",
+  };
+
+  function priorShutdownAbsent(reason) {
+    return { label: "LAST STOP", value: "—", detail: reason, level: "neutral" };
+  }
+
+  function priorShutdownTile(ps, nowTs) {
+    // No block at all: the producer could not read a startup_log row. That is
+    // "not read", a DIFFERENT fact from the NO RECORD verdict below, and the
+    // two must never collapse into one string.
+    if (!isObj(ps)) return priorShutdownAbsent("not read (no startup_log row)");
+
+    var word = Object.prototype.hasOwnProperty.call(PRIOR_SHUTDOWN_WORDS, ps.verdict)
+      ? PRIOR_SHUTDOWN_WORDS[ps.verdict]
+      : null;
+    if (word == null) {
+      return priorShutdownAbsent(
+        ps.verdict == null
+          ? "no verdict recorded"
+          : "unrecognised verdict: " + String(ps.verdict)
+      );
+    }
+
+    // AC3: the verdict carries the boot it describes. `notAfterTs` is the
+    // recording boot's own stamp -- the only boot reference in the published
+    // block -- rendered through the dashboard's existing age idiom, never a
+    // second one.
+    var age = agoText(nowTs, typeof ps.notAfterTs === "string" ? ps.notAfterTs : null);
+    // The Pi has no RTC battery, so most of these stamps were written before
+    // NTP settled (198 of 296 rows on the car). An age derived from one is
+    // MARKED rather than silently trusted -- and rather than suppressed, which
+    // would throw away the only boot reference there is.
+    var detail = ps.dataQuality === "clock_unsynced" ? age + " (clock unsynced)" : age;
+    return { label: "LAST STOP", value: word, detail: detail, level: "neutral" };
+  }
+
   // Drive tile: recording -> active (ok); idle -> neutral (no warning, no green).
   function driveTile(d) {
     if (!isObj(d)) {
@@ -1184,12 +1245,37 @@
   // Taken VERBATIM off the tile the grid renders. The overlay presents a fact
   // the card already computed; it never re-derives one, so the two cannot
   // disagree -- the same rule the issue rows follow.
-  function systemDiagnostics(tiles) {
+  // US-744 adds the PREVIOUS shutdown's verdict here, and deliberately NOT as a
+  // sixth grid tile: the card is held to a 4-fact ceiling (US-557 / Iris), which
+  // a sixth tile breaks -- and the story forbids re-budgeting the band or
+  // shrinking type to make room. It belongs in this section on its own merits
+  // anyway: it is a REFERENCE FACT about a boot that already ended, not a live
+  // source, so it is neither a fault (it would cry wolf all session) nor a
+  // status tile (it describes the past, not now).
+  function systemDiagnostics(tiles, data) {
     var diags = [];
     if (!isObj(tiles)) return diags;
     var sync = tiles.sync;
     if (isObj(sync) && typeof sync.counts === "string" && sync.counts !== "") {
       diags.push({ key: "sync", label: sync.label, text: sync.counts });
+    }
+    // Built from the payload the card was rendered from -- one read, so the
+    // overlay can never contradict it. Listed on every REAL card, including
+    // when the verdict is absent: the absence is itself the fact worth reading
+    // ("not read"), and a row that vanishes when the producer goes dark is how
+    // this verdict stayed invisible from US-728 until US-744 found it.
+    //
+    // Gated on the card having tiles at all, which keeps US-509's guarantee
+    // intact: a drill built over NO card still has nothing behind it and stays
+    // untappable. Pinning that gate open is the inert-guard shape its own test
+    // (test_systemDrill_nothingBehindTheLine_isStillNotATapTarget) forbids.
+    if (isObj(data) && Object.keys(tiles).length > 0) {
+      var ps = priorShutdownTile(data.priorShutdown, data.ts);
+      diags.push({
+        key: "priorShutdown",
+        label: ps.label,
+        text: ps.value + " · " + ps.detail,
+      });
     }
     return diags;
   }
@@ -1205,7 +1291,7 @@
   // deleted. The gate still reads real content -- it is not pinned open.
   function systemDrill(tiles, data) {
     var rows = systemIssueRows(tiles, data);
-    var diagnostics = systemDiagnostics(tiles);
+    var diagnostics = systemDiagnostics(tiles, data);
     return {
       rows: rows,
       diagnostics: diagnostics,
@@ -3914,6 +4000,7 @@
     systemDrill: systemDrill,
     systemStatusView: systemStatusView,
     captureTile: captureTile,
+    priorShutdownTile: priorShutdownTile,
     healthCheckLine: healthCheckLine,
     vcellTile: vcellTile,
     socTile: socTile,

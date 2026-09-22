@@ -764,9 +764,48 @@ class CardStateEmitterMixin:
             driveState=driveState,
             driveId=driveId,
             lastDrive=self._gatherLastDriveSummary(),
+            # US-744: the US-728 verdict was computed on every boot and then
+            # discarded. The emitter has taken this parameter since US-728, but
+            # nothing ever passed it -- so the car published
+            # "priorShutdown": null with 296 startup_log rows on disk
+            # (measured on chi-eclipse-01, 2026-09-22).
+            priorShutdown=self._gatherPriorShutdown(),
             obdAvailable=obdAvailable,
             obdUnavailableReason=obdReason,
         )
+
+    def _gatherPriorShutdown(self) -> dict | None:
+        """Return the US-728 prior-shutdown block, or None when unreadable.
+
+        Read through the US-728 reader and transported VERBATIM: the verdict is
+        the producer's and is never recomputed here -- two producers of one fact
+        is the SSOT defect, not the feature.
+
+        The database is resolved through ``getattr`` AT USE TIME for the same
+        boot-order reason :meth:`_gatherLastDriveSummary` documents: the
+        emitters are built before the DB lands, so a captured reference stays
+        None for the life of the process -- a permanently empty tile with fully
+        green unit tests.
+
+        Returns:
+            The ``toStatePayload()`` block, or None when no ``startup_log`` row
+            can be read -- which the card renders as "not read", a DIFFERENT
+            fact from the NO RECORD verdict.
+        """
+        database = getattr(self, "_database", None)
+        dbPath = getattr(database, "dbPath", None)
+        if not dbPath:
+            return None
+        try:
+            from pi.diagnostics.prior_shutdown_summary import (
+                readPriorShutdownSummaryFromPath,
+            )
+
+            summary = readPriorShutdownSummaryFromPath(str(dbPath))
+            return summary.toStatePayload() if summary is not None else None
+        except Exception as e:  # noqa: BLE001 -- never block the emit loop
+            logger.debug("prior-shutdown summary unavailable: %s", e)
+            return None
 
     def _gatherObdLinkState(self) -> tuple[str, int, bool, str | None]:
         """Map the ObdConnection state -> (linkState, retries, available, reason).
