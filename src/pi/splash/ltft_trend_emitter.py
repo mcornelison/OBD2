@@ -174,6 +174,12 @@ TREND_STABLE = "stable"
 REASON_WARMING = "WARMING - NOT YET MEANINGFUL"
 REASON_INSUFFICIENT_HISTORY = "not enough qualifying drives yet"
 REASON_NO_DRIVES = "no real drives recorded"
+#: F-096: the reader hit its limit without finding an adaptive-memory reset,
+#: so the epoch may extend further back than we looked. A baseline computed
+#: over a window that MAY straddle a boundary is exactly what the spec
+#: forbids -- so we publish a typed absence rather than a number we cannot
+#: stand behind. This is the honest-instrument rule: unknown, and WHY.
+REASON_EPOCH_CLIPPED = "epoch longer than the fetched window -- boundary unknown"
 
 # The ISO-8601 instant format the F-103 emitters stamp (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -195,6 +201,7 @@ __all__ = [
     "LTFT_PID",
     "LTFT_TREND_FILENAME",
     "REASON_INSUFFICIENT_HISTORY",
+    "REASON_EPOCH_CLIPPED",
     "REASON_NO_DRIVES",
     "REASON_WARMING",
     "STFT_PID",
@@ -404,22 +411,54 @@ def buildDriveRecords(
     return records
 
 
-def _currentEpoch(records: list[dict]) -> tuple[list[dict], bool, int | None]:
+def _currentEpoch(
+    records: list[dict], *, historyExhausted: bool
+) -> tuple[list[dict], bool, int | None, bool]:
     """Split off the drives since the most recent epoch boundary.
 
+    F-096: the epoch is bounded by the RESET BOUNDARY, never by a drive count.
+
+    ``epochBreak`` alone cannot carry this. It is False both when no reset
+    exists in all of history AND when the reader simply did not look far enough
+    -- and the old signature returned the identical value for both, reporting
+    the oldest FETCHED drive as the epoch start. On the live 47-drive epoch
+    against a 20-drive window that means it reports drive 64 where the epoch
+    starts at 37, and the baseline is a window mean where the spec demands an
+    epoch mean. Today the error is 0.119 pp so no verdict flips; the next
+    adaptive-memory reset scrolls out of the window and the card then joins the
+    series ACROSS a boundary, which the spec forbids outright.
+
+    ⚠️ Raising the drive count does not fix this. A bigger window recreates the
+    same defect on the next longer epoch -- a COUNT cannot express "back to the
+    boundary". Hence a fourth return value rather than a larger default.
+
+    Args:
+        records: Per-drive records, oldest first.
+        historyExhausted: True when the reader reached the end of recorded
+            history -- i.e. it returned FEWER rows than it asked for. False
+            means the fetch hit its limit and older drives may exist.
+
     Returns:
-        ``(epochRecords, epochBreak, epochStartDriveId)``. The reset drive
-        itself is the BOUNDARY and belongs to neither side, so it is excluded.
+        ``(epochRecords, epochBreak, epochStartDriveId, epochClipped)``. The
+        reset drive itself is the BOUNDARY and belongs to neither side, so it is
+        excluded. When ``epochClipped`` is True the start is **None**: a clipped
+        epoch has no KNOWN start, and naming the oldest fetched drive would be a
+        guess wearing a fact's clothes.
     """
     lastResetIndex: int | None = None
     for index, record in enumerate(records):
         if record["isReset"]:
             lastResetIndex = index
-    if lastResetIndex is None:
-        epoch = list(records)
-        return (epoch, False, epoch[0]["driveId"] if epoch else None)
-    epoch = records[lastResetIndex + 1 :]
-    return (epoch, True, epoch[0]["driveId"] if epoch else None)
+    if lastResetIndex is not None:
+        # The boundary is IN the window, so nothing older can matter.
+        epoch = records[lastResetIndex + 1 :]
+        return (epoch, True, epoch[0]["driveId"] if epoch else None, False)
+    epoch = list(records)
+    if not epoch:
+        return (epoch, False, None, False)
+    if not historyExhausted:
+        return (epoch, False, None, True)
+    return (epoch, False, epoch[0]["driveId"], False)
 
 
 def _trendDirection(medians: list[float]) -> str | None:
@@ -459,6 +498,7 @@ def buildLtftTrendState(
     nowIso: str,
     pid: str = LTFT_PID,
     medianWindow: int = TREND_MEDIAN_WINDOW,
+    historyExhausted: bool = True,
 ) -> dict:
     """Assemble the `ltft-trend` payload (pure; the card's pinned schema).
 
@@ -471,6 +511,11 @@ def buildLtftTrendState(
         nowIso: ISO-8601 emission timestamp (freshness marker).
         pid: The source PID, carried into the payload for provenance.
         medianWindow: Width of the rolling median, in drives.
+        historyExhausted: F-096. True when ``driveRecords`` is ALL of recorded
+            history; False when a reader's LIMIT may have cut it short. The
+            default is True because a caller handing in a complete list has, by
+            definition, exhausted it -- only a LIMIT-applying reader can say
+            otherwise, and there is exactly one of those.
 
     Returns:
         The `ltft-trend` dict. When the gate or the history is unmet, a TYPED
@@ -478,7 +523,9 @@ def buildLtftTrendState(
         ``points`` is empty or short, ``level`` is ``insufficient`` and
         ``reason`` says WHICH absence it is.
     """
-    epoch, epochBreak, epochStartDriveId = _currentEpoch(driveRecords)
+    epoch, epochBreak, epochStartDriveId, epochClipped = _currentEpoch(
+        driveRecords, historyExhausted=historyExhausted
+    )
     points = [
         {
             "driveId": record["driveId"],
@@ -508,6 +555,7 @@ def buildLtftTrendState(
         "minDrives": medianWindow,
         "epochBreak": epochBreak,
         "epochStartDriveId": epochStartDriveId,
+        "epochClipped": epochClipped,
         "epochDriveCount": len(epoch),
         "noiseFloorPp": LTFT_NOISE_FLOOR_PP,
         "faultAbs": LTFT_FAULT_ABS,
@@ -521,6 +569,12 @@ def buildLtftTrendState(
 
     if not driveRecords:
         state["reason"] = REASON_NO_DRIVES
+        return state
+    if epochClipped:
+        # F-096: we did not reach the boundary, so we do not know where the
+        # epoch starts. Publishing a baseline over this window would be a
+        # number computed across a reset we simply did not see.
+        state["reason"] = REASON_EPOCH_CLIPPED
         return state
     if not points:
         # Drives exist but none cleared the warm closed-loop gate. Spool measured
@@ -699,8 +753,18 @@ def makeLtftTrendEmitter(
     nowIsoFn: Callable[[], str] | None = None,
     pid: str = LTFT_PID,
     medianWindow: int = TREND_MEDIAN_WINDOW,
+    driveLimit: int = DEFAULT_TREND_DRIVES,
 ) -> Callable[[], None]:
     """Build the `ltft-trend` emit callable (F-096 / US-420 / US-661).
+
+    ⚠️ ``driveLimit`` MUST equal the limit the injected ``driveRowsReader``
+    actually applies. It cannot be derived here -- the reader is a closure and a
+    deliberate DB seam -- so the two default to the SAME module constant
+    (:data:`DEFAULT_TREND_DRIVES`) and agree unless a caller overrides one and
+    not the other. That is a real coupling and it is named rather than hidden:
+    if they diverge, a short fetch reads as a clipped epoch (a visible typed
+    absence) rather than as a silent wrong baseline -- the failure points the
+    safe way, but it is still a failure.
 
     The returned zero-arg callable reads one drive-rows batch via the injected
     ``driveRowsReader`` (the DB seam -- kept out of this module so the builders
@@ -724,11 +788,16 @@ def makeLtftTrendEmitter(
 
     def emit() -> None:
         try:
+            rows = driveRowsReader()
+            # F-096: fewer rows back than the window asked for means we reached
+            # the end of history; exactly the limit means older drives MAY exist
+            # and the epoch boundary may lie beyond what we fetched.
             payload = buildLtftTrendState(
-                driveRecords=buildDriveRecords(driveRowsReader()),
+                driveRecords=buildDriveRecords(rows),
                 nowIso=nowFn(),
                 pid=pid,
                 medianWindow=medianWindow,
+                historyExhausted=len(rows) < driveLimit,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
