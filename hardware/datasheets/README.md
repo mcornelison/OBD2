@@ -13,8 +13,8 @@ This folder is for the **electrical / register** documents that code and specs r
 | Part | Document | Rev | Retrieved | Source | SHA-256 |
 |---|---|---|---|---|---|
 | TDK InvenSense **ICM-20948** 9-DoF IMU | [`icm-20948/DS-000189-ICM-20948-v1.3.pdf`](icm-20948/DS-000189-ICM-20948-v1.3.pdf) | 1.3 | 2026-09-22 | `https://cdn.sparkfun.com/assets/7/f/e/c/d/DS-000189-ICM-20948-v1.3.pdf` (SparkFun mirror of the revision Adafruit's own link `adafru.it/MC5` resolves to) | `5a6c1b7b71633986bec05439335844a91769e46f9d90c2602d0f7c1a559ae016` |
-| Analog Devices (Maxim) **MAX17048** fuel gauge | **MISSING — human task** | — | — | `https://www.analog.com/media/en/technical-documentation/data-sheets/max17048-max17049.pdf` — the host resets automated requests | — |
-| Geekworm **X1209** UPS HAT | **MISSING — human task** (vendor wiki page, save as PDF) | — | — | `https://wiki.geekworm.com/X1209` — returns 403 to automated requests | — |
+| Analog Devices (Maxim) **MAX17048** fuel gauge | [`max17048/max17048-max17049.pdf`](max17048/max17048-max17049.pdf) | 19-6171 Rev 7, 11/16 | 2026-09-22 (saved by the CIO — the host resets automated requests) | `https://www.analog.com/media/en/technical-documentation/data-sheets/max17048-max17049.pdf` | `70dc8eef0e012276dcdc58b6dce64af08258304bcf865ceace64e856b8029330` |
+| Geekworm **X1209** UPS HAT | [`x1209/X1209 - Geekworm Wiki.html`](x1209/) + its `_files/` folder (keep together — the page links them) | wiki page, incl. comments to 2026-05-20 | 2026-09-22 (saved by the CIO — the site returns 403 to automated requests) | `https://wiki.geekworm.com/X1209` | `262823681866e7e221020fe167633059bf94a30ba8cfe4cc3ff2d96b13fac4b3` |
 
 ## Traps found while sourcing these — read before trusting a link
 
@@ -43,3 +43,28 @@ This folder is for the **electrical / register** documents that code and specs r
 
 ⚠️ Tolerances marked note 2 in the datasheet are *"derived from validation or characterization of
 parts, not guaranteed in production."* They bound what is typical, not what is possible.
+
+## Facts verified against MAX17048 datasheet 19-6171 Rev 7 (2026-09-22)
+
+| Fact | Datasheet |
+|---|---|
+| Registers (16-bit words only; 8-bit writes have no effect) | `VCELL 0x02` 78.125 µV/cell · `SOC 0x04` 1 %/256 (upper byte = 1 %) · `MODE 0x06` W, default 0x0000 · `VERSION 0x08` · `HIBRT 0x0A` default 0x8030 · `CONFIG 0x0C` · `VALRT 0x14` · `CRATE 0x16` · `VRESET/ID 0x18` · `STATUS 0x1A` · `CMD 0xFE` |
+| **What powers it** | **VDD pin: "Power-Supply Input … MAX17048: connect to positive battery terminal."** VCELL is measured VDD–GND. ⇒ the gauge is powered by the cell |
+| `STATUS.RI` | *"set when the device powers up. Any time this bit is set, the IC is not configured, so the model should be loaded and the bit should be cleared."* |
+| **Battery swap** | *"If VCELL falls below VRST, the IC quick-starts when VCELL returns above VRST. **This handles battery swap.**"* |
+| **Quick-start** | *"**Most systems should not use quick-start** because the ICs handle most startup problems transparently."* POR includes a quick-start. |
+| Battery insertion | Assuming a relaxed cell, the first VCELL becomes the initial SOC estimate; unrelaxed error *"diminishes over time … no long-lasting impact."* |
+| Temperature | **No temperature measurement.** Host must compensate RCOMP *"at least once per minute"*: `RCOMP = RCOMP0 + (T−20)·TempCoUp` (T>20) or `·TempCoDown`; defaults **RCOMP0 0x97, TempCoUp −0.5, TempCoDown −5.0** |
+| `CRATE` | 1 LSb = 0.208 %/hr, *"not for conversion to ampere"* |
+| Hibernate | Entered automatically at low charge/discharge rate; **VCELL and SOC then update only once per 45 s** |
+
+## Facts verified against the Geekworm X1209 wiki (saved 2026-09-22)
+
+| Fact | Wiki |
+|---|---|
+| **Charge current** | **2.1 A default** — *"IMPORTANT!! Please confirm before connecting your battery"* |
+| Charge cut-off / recharge | **4.23 V cut-off; recharge threshold 4.1 V** |
+| Cells | 3.7 V lithium, full charge 4.2 V — 18650, 21700, 4680 and similar. **Parallel only — series burns the board out** |
+| **Protected cells** | Geekworm reply in the page comments: *"Please do not use batteries with built-in protection circuits. The X1209 already integrates protection circuitry, and protected batteries may conflict."* ⚠️ a comment reply, not the spec table |
+| Output | 5.1 V, up to 6 A, with 2.1 A charging while powering the system; power-path management |
+| Charging control | Via GPIO |
