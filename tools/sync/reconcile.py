@@ -64,9 +64,33 @@ import subprocess
 import sys
 from typing import Any
 
-PI_HOST = "chi-eclipse-01"
+#: B-044: read from config.json rather than hardcoded. The values already live
+#: there (`pi.network.piHost`, `pi.network.piDeviceId`), so this needs no
+#: exemption -- and an exemption would have been the wrong fix anyway: it is
+#: where a guard goes blind, and the guard was right.
+_CONFIG_HOST_KEY = ("pi", "network", "piHost")
+_CONFIG_DEVICE_KEY = ("pi", "network", "piDeviceId")
+_CONFIG_PI_DB_KEY = ("pi", "network", "piDbPath")
+
+#: Fallbacks used only when config.json cannot be read at all. Deliberately
+#: NOT the real host: a tool that silently targets production when its config
+#: is missing is worse than one that fails.
+_NO_HOST = ""
+
+
+def _configValue(path: tuple[str, ...], default: str = _NO_HOST) -> str:
+    """Read a dotted key out of config.json, or return ``default``."""
+    try:
+        with open("config.json", encoding="utf-8") as fh:
+            node: Any = json.load(fh)
+        for key in path:
+            node = node[key]
+        return str(node)
+    except Exception:  # noqa: BLE001 -- a missing config must not crash the tool
+        return default
+
+
 PI_DB = "/home/mcornelison/Projects/Eclipse-01/data/obd.db"
-SOURCE_DEVICE = "chi-eclipse-01"
 
 #: Columns the EDR contract declares as kind ``float`` -> MariaDB FLOAT (4-byte).
 #: ``ts_capture`` is kind ``monotonic_s`` -> DOUBLE and is deliberately ABSENT.
@@ -152,9 +176,9 @@ def summarise(
     }
 
 
-def _piQuery(sql: str) -> list[dict]:
+def _piQuery(sql: str, piHost: str) -> list[dict]:
     r = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", PI_HOST, f'sqlite3 -json {PI_DB} "{sql}"'],
+        ["ssh", "-o", "BatchMode=yes", piHost, f'sqlite3 -json {PI_DB} "{sql}"'],
         capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     if r.returncode != 0:
@@ -179,11 +203,15 @@ def _columnsOf(table: str) -> list[str]:
     return [name for name, _kind, _null in EDR_COLUMNS[table]]
 
 
-def reconcile(table: str, idLo: int, idHi: int, repoRoot: str) -> dict[str, Any]:
+def reconcile(
+    table: str, idLo: int, idHi: int, repoRoot: str,
+    *, piHost: str, sourceDevice: str,
+) -> dict[str, Any]:
     cols = _columnsOf(table)
     piRows = _piQuery(
         f"SELECT id, {', '.join(cols)} FROM {table} "
-        f"WHERE id BETWEEN {idLo} AND {idHi} ORDER BY id"
+        f"WHERE id BETWEEN {idLo} AND {idHi} ORDER BY id",
+        piHost,
     )
     # CAST every float to DECIMAL: we want the VALUE, not the client's rendering.
     sel = ", ".join(
@@ -191,7 +219,7 @@ def reconcile(table: str, idLo: int, idHi: int, repoRoot: str) -> dict[str, Any]
     )
     raw = _serverQuery(
         f"SELECT source_id, {sel} FROM {table} "
-        f"WHERE source_device='{SOURCE_DEVICE}' AND source_id BETWEEN {idLo} AND {idHi} "
+        f"WHERE source_device='{sourceDevice}' AND source_id BETWEEN {idLo} AND {idHi} "
         f"ORDER BY source_id",
         repoRoot,
     )
@@ -223,10 +251,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--from", dest="idLo", type=int)
     ap.add_argument("--to", dest="idHi", type=int)
     ap.add_argument("--repo-root", dest="repoRoot", default=".")
+    ap.add_argument("--pi-host", dest="piHost", default=None,
+                    help="overrides pi.network.piHost from config.json")
+    ap.add_argument("--source-device", dest="sourceDevice", default=None,
+                    help="overrides pi.network.piDeviceId from config.json")
     a = ap.parse_args(argv)
+    piHost = a.piHost or _configValue(_CONFIG_HOST_KEY)
+    sourceDevice = a.sourceDevice or _configValue(_CONFIG_DEVICE_KEY)
+    if not piHost or not sourceDevice:
+        ap.error(
+            'no Pi host/device: config.json was unreadable and no --pi-host / '
+            '--source-device given. Refusing to guess -- a tool that silently '
+            'targets the wrong device is worse than one that fails.'
+        )
 
     if a.last:
-        rows = _piQuery(f"SELECT MAX(id) AS hi, COUNT(*) AS n FROM {a.table}")
+        rows = _piQuery(f"SELECT MAX(id) AS hi, COUNT(*) AS n FROM {a.table}", piHost)
         hi = rows[0]["hi"]
         if hi is None:
             print("NO ROWS IN RANGE -- the Pi table is empty; this is NOT a pass")
@@ -236,7 +276,10 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("give --last N, or both --from and --to. A bounded range is REQUIRED: "
                  "whole-table counts diverge by design under the 7-day retention window.")
 
-    out = reconcile(a.table, a.idLo, a.idHi, a.repoRoot)
+    out = reconcile(
+        a.table, a.idLo, a.idHi, a.repoRoot,
+        piHost=piHost, sourceDevice=sourceDevice,
+    )
     print(f"=== SYNC RECONCILIATION  {out['table']}  source_id {out['idLo']}..{out['idHi']} ===")
     for k in ("piCount", "serverCount", "missing", "mismatches"):
         print(f"  {k:14} {out[k]}")
