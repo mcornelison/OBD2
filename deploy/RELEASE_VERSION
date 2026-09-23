@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.62",
-  "theme": "US-805 derived IMU persistence; Sprint 92",
-  "description": "US-805: pitchDeg, stopCount and biasRad now persist to a separate edr_imu_derived table on both tiers (migration v0027). This was the V0.29 closure blocker -- no pitch or grade fix could be verified while the values were published live but never stored. Adds tools/sync/reconcile.py to verify a sync landed. Sprint 92 single-sources the IMU rate and wires the prior-shutdown verdict to the kiosk."
+  "version": "V0.29.63",
+  "theme": "Sprint 92 tail: shipped IMU rates in the spec",
+  "description": "Docs and test-guard only -- NO runtime change; zero diff under src/ and deploy/ since V0.29.62. specs/architecture.md now leads with the SHIPPED IMU rates (sampleHz 4 / persistHz 2 / stateHz 1) and the 4 Hz hard cap per ARCH-036 4.2. The US-773 docs-only guard is re-pinned to its own commit and parent; it had compared against dev and went red when dev moved."
 }
