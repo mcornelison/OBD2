@@ -178,31 +178,49 @@ def _astOf(source: str) -> str:
     return ast.dump(_stripDocstrings(ast.parse(source)))
 
 
-@pytest.mark.parametrize("relPath", _TOUCHED_SOURCES)
-def test_thisStoryChangedNoCode(relPath: str) -> None:
-    """
-    Given: each src/ file this docs story touched
-    When: its AST (docstrings stripped) is compared with dev's
-    Then: identical. That is the property "docs only", and it is stronger than
-        reading the diff -- a reviewer skims prose and can miss a moved line
+# The US-773 commit itself. The docs-only property is HISTORICAL -- it is about
+# what that commit did -- so it is pinned to that commit and its parent.
+#
+# ⚠️ IT WAS FIRST WRITTEN AGAINST `dev`, WHICH WAS WRONG AND WENT RED THE SAME
+# DAY: dev moved (Sprint 92 merged, then ARCH-045b added EdrImuDerived to
+# models.py) and the test reported a "code change" that was somebody else's
+# legitimate work. A guard on a MOVING baseline measures the baseline, not the
+# property, and it would have gone on failing for every future merge until
+# someone deleted it -- which is how a guard dies.
+_STORY_COMMIT = "36b322a7"
 
-    Skips when dev is not fetched (a clean checkout without the remote), which
-    is honest: the check cannot run, and saying so beats passing silently.
-    """
+
+def _showAt(rev: str, relPath: str) -> str | None:
+    """File contents at a revision, or None when the revision is not here."""
     try:
-        onDev = subprocess.run(
-            ["git", "show", f"dev:{relPath}"],
+        result = subprocess.run(
+            ["git", "show", f"{rev}:{relPath}"],
             cwd=_REPO_ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
-    except (OSError, subprocess.SubprocessError) as e:  # pragma: no cover
-        pytest.skip(f"git unavailable: {e}")
-    if onDev.returncode != 0:
-        pytest.skip(f"dev:{relPath} not readable here: {onDev.stderr.strip()[:120]}")
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover -- no git
+        return None
+    return result.stdout if result.returncode == 0 else None
 
-    current = (_REPO_ROOT / relPath).read_text(encoding="utf-8")
 
-    assert _astOf(current) == _astOf(onDev.stdout), (
-        f"{relPath} differs from dev in CODE, not just documentation -- "
-        "US-773 is a docs story and a code change here is a finding to report, "
-        "not something to land inside it"
+@pytest.mark.parametrize("relPath", _TOUCHED_SOURCES)
+def test_us773ChangedNoCode(relPath: str) -> None:
+    """
+    Given: each src/ file the US-773 docs story touched
+    When: its AST at that commit (docstrings stripped) is compared with its AST
+        at the commit BEFORE it
+    Then: identical. That is the property "docs only", and it is stronger than
+        reading the diff -- a reviewer skims prose and can miss a moved line.
+
+    Skips when the commit is not in this clone (a shallow checkout), which is
+    honest: the check cannot run, and saying so beats passing silently.
+    """
+    after = _showAt(_STORY_COMMIT, relPath)
+    before = _showAt(f"{_STORY_COMMIT}^", relPath)
+    if after is None or before is None:
+        pytest.skip(f"{_STORY_COMMIT} not in this clone -- cannot check {relPath}")
+
+    assert _astOf(after) == _astOf(before), (
+        f"{relPath} changed in CODE at {_STORY_COMMIT}, not just documentation "
+        "-- US-773 was a docs story, and a code change there is a finding to "
+        "report rather than something to land inside it"
     )

@@ -3569,7 +3569,9 @@ authored once in the versioned `src/common/edr/sensor_schema.py` contract (A-4
 anti-divergence: the future server table derives from the same module — **that
 promise was kept by US-764; see §10.8.3**).
 Persistence is **always-on** (key-on incl. engine-off — true black-box) at a
-decimated baseline (`persistHz`, default 25 Hz); rows stamp `drive_id` only when
+decimated baseline (`persistHz`, **2** since US-796-b — was 25; one definition
+since US-801, `common.config.validator.DEFAULT_IMU_PERSIST_HZ`); rows stamp
+`drive_id` only when
 a drive is RUNNING, else explicit NULL (the A-9/DTC-KOEO latch rule). A
 rolling-window purge job (`retentionDays`, **45** since US-761 — this paragraph
 said `7` until 2026-09-16) bounds the Pi-local volume.
@@ -3890,8 +3892,10 @@ number; the gyro offset itself must be fixed upstream.
 US-519/US-520 build the altitude display on top.
 
 *Config (all under `pi.sensors.imu.*`, validated in `_validateImuStateBridge`).*
-`stateHz` (default 4) is the state-file write cadence, grounded to the
-**consumer** — `carousel.js POLL_MS = 250` — not the sensor's 50 Hz burst;
+`stateHz` (**1** since US-796-b — 4 when this paragraph was written, then 10
+under US-508) is the state-file write cadence, grounded to the **consumer** —
+`carousel.js POLL_MS = 250` — not the sensor's burst (**4 Hz** since US-796-b,
+50 Hz before it);
 writing tmpfs faster than the only reader polls is churn with no observable
 effect. 🔴 **`mount.{forward,left,up}` was RETIRED by US-708** — it is a mounting
 fact, not a knob, and it now lives as `imu_state_bridge.IMU_BODY_FRAME` with the
@@ -3973,9 +3977,13 @@ graceful-absent reader stays silent, isolating the live light feed).
 
 **The IMU rate triple: 4 / 2 / 1 (US-796-b, Sprint 90 / V0.29.59).** The IMU
 runs at `sampleHz 4` → `persistHz 2` → `stateHz 1`, ruled exactly by the CIO on
-2026-09-21. **The ceiling:** nothing in the current application needs to sample
-faster than **5 Hz** — above it the data is noise that would be averaged away
-anyway, so collecting it costs power and yields nothing. The IMU now sits under
+2026-09-21. **The ceiling:** **4 Hz, a HARD CAP on every acquisition rate in the
+system** — above it the data is noise that would be averaged away anyway, so
+collecting it costs power and yields nothing. 🔴 The CIO tightened this from
+5 Hz to 4 Hz on 2026-09-21 (*"max 4 per second and must align with ECU data...
+this is a flight/drive data recorder not a garage data recorder"*); the 5 Hz
+figure was faithfully recorded on 2026-09-20 and is preserved as the superseded
+ruling in ARCH-036 §4.2.1, not repeated as current. The IMU now sits under
 that ceiling alongside the other feeds: light already runs at **1 Hz** and the
 battery/UPS gauge at **0.2 Hz**. The rule and its reasoning live in
 **`specs/data-acquisition-architecture.md` (ARCH-036)**; this note records only
@@ -5088,8 +5096,10 @@ The home slot now *becomes* the live instrument, so both edges land on **home**.
 **Transport (Atlas ruling, US-508).** A compass tape and a g-trail do not
 animate at the 4 Hz card tick, so the live feed gets its **own ~10 Hz loop**
 (`IMU_POLL_MS = 100`) against the same `states_http_server`, and the bridge
-writes at `pi.sensors.imu.stateHz` = **10 Hz** latest-wins/lossy (**1 Hz**
-since US-796-b — see "The IMU rate triple" in §10.8.2). Deliberately a
+writes at `pi.sensors.imu.stateHz` = **1 Hz** latest-wins/lossy (**10 Hz** when
+US-508 ruled this transport; lowered by US-796-b under the CIO's 4 Hz cap — see
+"The IMU rate triple" in §10.8.2, and note the card now re-reads an unchanged
+file between writes, by design). Deliberately a
 second loop rather than a faster shared tick: the tick reads five other state
 files, and 2.5×-ing all of them to animate one card would be five reads nobody
 can see for every one they can. The durable EDR persist stays at `persistHz` --
@@ -5142,7 +5152,7 @@ distinguishable from *"the producer is refusing to guess right now"*.
 
 | Constant | Value | Grounding |
 |---|---|---|
-| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508**: at the new 10 Hz `stateHz` this is *20* missed writes, not the 8 it was at 4 Hz. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
 | `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
 | `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
 | `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |
