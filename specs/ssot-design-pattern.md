@@ -69,13 +69,25 @@ and those two values were exactly what separated *"mis-ranged sensor"* from *"IR
 when the negative-lux defect appeared (ARCH-010). The diagnosis was impossible because the answer
 had been thrown away.
 
-**2. Stamp — and a caveat that is now precise.** Every landed row carries a date + time stamp.
-⚠️ **On this Pi the stamp is only as good as the clock, and the clock has a narrow, known defect:**
-the RTC has no charged backup cell, so **every boot starts at 1970** and NTP repairs it within
-seconds *wherever a network is reachable*. At home the repair is invisible. **In the car there is no
-network and nothing repairs it, so a wrong time stands for the whole drive** (A-23 / US-620).
-Therefore: **land a monotonic reading alongside the wall clock, and land whether the clock was
-disciplined when the row was written.** ARCH-003 does exactly this for I2C health records
+**2. Stamp — and a caveat that is now HISTORICAL.** Every landed row carries a date + time stamp.
+🔴 **CORRECTED 2026-09-23. This paragraph previously said the RTC "has no charged backup cell, so
+every boot starts at 1970". THAT HAS BEEN FALSE SINCE 2026-09-01**, when the CIO fitted a
+rechargeable cell to the Pi 5 `J5`/`BAT` connector. **MEASURED on `chi-eclipse-01` 2026-09-23:**
+`rpi-rtc: trickle charging enabled at 3000000uV` **and** `rpi-rtc: setting system clock to
+2026-09-21T23:20:35 UTC` — **the correct time, read off the chip at device probe, before any network
+stack exists.** The boot before it ended 64 s earlier, so the cell demonstrably bridged a real
+power-off. ⇒ **cross-boot timestamps are trustworthy from 2026-09-01 forward, including off-network
+in the car.**
+⚠️ **The correction was recorded in shared `MEMORY.md` on 2026-09-01 and this spec repeated the dead
+fact for three weeks anyway** — §A″ below was *written* on 2026-09-21, twenty days after the fix.
+**A fact corrected in one store is not corrected until every consumer copy is swept** (the keeper-of-
+`specs/` duty). ⚠️ **`trickle charging enabled` alone is NOT evidence a cell is present** — it is
+logged on every boot, including boots that then set 1970. **The discriminator is the `setting system
+clock to <a real date>` line**, which the kernel emits before userspace NTP.
+⚠️ **HISTORICAL DATA IS NOT RETROACTIVELY REPAIRED:** any in-car boot before 2026-09-01 may still
+carry wrong timestamps (the drives 45/46 exclusion stands).
+**The durable rule is unchanged and still governs: land a monotonic reading alongside the wall
+clock, and land whether the clock was disciplined when the row was written.** ARCH-003 does exactly this for I2C health records
 (`monotonic` + `clockSynced`). A stamp that might be wrong and does not say so is a fabricated
 timestamp, which rule A's corollary already forbids.
 
@@ -138,8 +150,11 @@ asserts that the system was healthy during the interval it was failing.** Worked
    substitute write time silently. **The §A corollary governs here exactly as elsewhere: a
    substituted timestamp is a MANUFACTURED reading.**
 
-⚠️ **A″ does not weaken A′ §2's clock caveat — it compounds with it.** The Pi's RTC has no charged
-backup cell, so an *event* time is only as trustworthy as the clock at the moment of the event.
+⚠️ **A″ compounds with A′ §2's clock caveat — but read that caveat's 2026-09-23 correction first.**
+🔴 **The RTC backup cell was fitted 2026-09-01 and is MEASURED working**; the "every boot starts at
+1970" claim this line used to rest on is dead. The durable point survives it: an *event* time is only
+as trustworthy as the clock at the moment of the event, and the clock is now trustworthy across
+boots.
 **Land the monotonic reading and the `clockSynced` flag alongside, as ARCH-003 already does.**
 An event time that might be wrong and does not say so is still a fabricated timestamp.
 

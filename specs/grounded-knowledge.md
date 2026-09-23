@@ -247,7 +247,9 @@ argument for the 5-drive median. Resolving it needs **ECMLink** per-cell trim ta
 >
 > **Perfectly disjoint, a 66-row gap, zero crossings in either direction.** Two concurrent pollers cannot produce that.
 >
-> 🔴 **The real cause is A-23 — the Pi 5 RTC has no charged backup cell, so every boot starts at 1970 and NTP repairs it only where a network is reachable. In the car there is no network and nothing repairs it.** The timestamps are wrong; the rows are not duplicated. **A-9 Root 1 stays CLOSED — do not groom a refix.**
+> 🔴 **The real cause is A-23 — at the time, the Pi 5 RTC had no charged backup cell, so every boot started at 1970 and NTP repaired it only where a network was reachable. In the car there was no network and nothing repaired it.** The timestamps are wrong; the rows are not duplicated. **A-9 Root 1 stays CLOSED — do not groom a refix.**
+>
+> 🟢 **STATUS CORRECTED 2026-09-23: the CAUSE is FIXED, the HISTORICAL DATA IS NOT.** The CIO fitted a rechargeable cell on 2026-09-01; **MEASURED 2026-09-23**, `chi-eclipse-01` boots with `rpi-rtc: setting system clock to 2026-09-21T23:20:35 UTC` — a real date off the chip, before any network. ⇒ **this failure mode cannot recur on data captured from 2026-09-01 forward.** The paragraph above is kept in the PAST TENSE because it explains rows that already exist; **do not cite it as a live defect.**
 >
 > ⚠ **This also retires the "three occurrences" framing below.** Drives **23/24** and **28/29** were counted as the same defect on the strength of the same rows/s reasoning, which is exactly the reasoning a bad clock defeats. Their true cause is **unestablished**; they are not evidence for a concurrency defect.
 
