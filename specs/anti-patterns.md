@@ -720,8 +720,10 @@ class Orchestrator:
 > - *currency* — a record cited as current is not evidence about today
 > - *the write fence that reads like a test boundary* — a limit on what you may EDIT is not
 >   evidence about what you have BROKEN
+> - *the tool's PASS as the verdict* — an instrument that answers one question is not evidence
+>   about the question you are actually asking
 >
-> All six pass review, because in all six something **looks like information and is not.**
+> All seven pass review, because in all seven something **looks like information and is not.**
 >
 > ⚠️ *scope* carries a sub-case worth knowing by name — **the restated gate**, where the wrong
 > scope came from the **contract** rather than from the author, so the agent who satisfied their
@@ -1104,6 +1106,65 @@ When you encounter a new anti-pattern:
 2. Include: Problem, Why It's Bad, Solution, Example
 3. Keep examples concise and clear
 4. Update the "Last Updated" date
+
+### The tool's PASS as the verdict — ACTION → DATA → ANALYSIS → VERDICT
+
+**The pattern.** A validation runs a tool, the tool reports PASS, and the PASS is recorded as the
+verdict. But a verdict is the end of a four-link chain, and **every link can be complete while the
+next is absent**:
+
+    ACTION  ->  DATA  ->  ANALYSIS  ->  VERDICT
+    (we did   (it       (somebody    (and concluded
+     the       produced  actually     something about
+     thing)    rows)     read them)   the CLAIM)
+
+**Doing the action is not producing the data. Producing the data is not analysing it. Analysing it
+is not a verdict about the claim.** A row closed at link 2 has been closed on evidence that nobody
+looked at; a row closed at link 3 has been closed on an analysis of the wrong question.
+
+🔴 **THE SHARPEST CASE IS A TOOL THAT IS WORKING PERFECTLY.**
+`tools/sync/reconcile.py` compares Pi rows against server rows column by column. Run it with the
+parked-phantom-grade defect live (F-140) and the Pi faithfully records a 6 % grade on a stationary
+car, syncs it, and the tool reports **PASS — 200 rows, every column equal.**
+
+**It is telling the truth.** We faithfully transported a wrong number.
+
+⇒ the tool answers **"did what we recorded ARRIVE INTACT?"** It has never answered **"was what we
+recorded RIGHT?"** — and no amount of making it greener will change which question it answers.
+
+**Ask of any green instrument: WHICH of the two questions did it just answer?**
+
+| The tool validates | It says nothing about |
+|---|---|
+| fidelity of transport | correctness of content |
+| the rows that are present | the rows that are missing (F-114's four absent days) |
+| the window you gave it | any interval outside it |
+| that a check ran | that the check could have failed (*the inert guard*) |
+
+**Consequences:**
+
+1. 🔴 **No single instrument closes a row.** A tool's PASS is **one contributor** to a verdict,
+   never the verdict. (CIO, 2026-09-22.)
+2. 🔴 **A Definition of Done must ENUMERATE its contributors.** If the DoD does not say what else
+   has to be true, then whichever instrument runs first becomes the verdict by default. F-140's
+   four numbered closing items are this done right.
+3. **A tool built FOR a validation is a `closingAction`, not a new story.** The manifest already
+   carries `closingAction` / `closingAnalysis`, and the split exists precisely because the action
+   and the analysis are different links. Use the field.
+4. ⚠️ **State what the instrument CANNOT show, in the same breath as the result.** A green run
+   reported without its scope is read as a verdict about everything.
+
+**Worked example of the chain breaking at link 3, 2026-09-22:** a cross-tier comparison produced
+1,190 "data loss" mismatches. Action done, data produced. The analysis was wrong — the query client
+renders FLOAT to ~6 significant figures, so a rendered `0.220267` was being compared against a
+stored `0.220266550779342650`. **The tell was that the float-aware count came back IDENTICAL to the
+naive one: a correction that changes nothing is evidence you are correcting the wrong thing.**
+
+**Related:** *the inert guard* (a check that cannot fail) and *ask the instrument a question it can
+answer* (a proxy that reads the same either way). This one is their sibling at the other end of the
+pipeline: **the instrument is sound, the reading is real, and the INFERENCE from it is the defect.**
+
+---
 
 ---
 
