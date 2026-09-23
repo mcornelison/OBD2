@@ -4022,6 +4022,78 @@ production factories, and neither window got shorter than what it guards.
   neither derived window moves.
 - Pinned by `tests/pi/sensors/test_imu_rate_derived_consumers.py`.
 
+
+#### F-114 measured state, 2026-09-22 (V0.29.61) [Atlas Rule 10]
+
+**Four sub-defects were open against this feature. Three are now settled as FACTS and one is
+honestly undetermined. Recorded here so none of them is re-derived at full cost.**
+
+**1. 🟢 `temp_c` — SETTLED. The register works; the gap is in our DRIVER.**
+`temp_c` is NULL in **6,940,143 of 6,940,143 rows across both tiers** — every row that exists
+anywhere. This bounced for two days between *"the vendor guide says the part has one"* and *"the
+column is empty"*, because **one side argued from the DRIVER and the other from the COLUMN and
+neither read the CHIP.**
+**MEASURED on `chi-eclipse-01` with `eclipse-obd` stopped, 120 samples over 60 s, read-only raw
+SMBus** (`tools/imu/temp_register_probe.py`):
+
+    WHO_AM_I    0xEA                        the genuine part, bank 0
+    PWR_MGMT_1  0x01  TEMP_DIS(bit3) CLEAR  the sensor is ENABLED
+    TEMP_OUT    raw 1408..1648  =>  25.217 .. 25.936 degC
+    CONTROL     accel 63 distinct, gyro 53 distinct, 0 read errors
+
+⇒ **The register EXISTS, is ENABLED and WORKS. The NULLs are purely a driver gap** —
+`adafruit_icm20x` 2.1.10 exposes no `temperature` property. **Nothing is wrong with the part, the bus
+or the configuration.** Reading it costs 2 bytes per burst;
+`degC = ((raw − 0) / 333.87) + 21` (DS-000189 §8.31), pinned by a test. **Whether to read it in
+production is a decision, not a research question.**
+⚠️ **The probe carries a CONTROL and reports VOID, never "dead register", when accel and gyro are
+frozen too.** A frozen reading proves nothing unless the read path is proven live in the same run —
+and it distinguishes **three** outcomes (works / dead / enabled-but-`TEMP_DIS`-disabled), the third
+of which was nobody's hypothesis.
+
+**2. 🔴 `mag_x` — NOT "intermittent across boots". A DATED REGRESSION.**
+The row described a 71 % NULL rate as flaky I²C. **71 % is an average across a regime change.**
+Server-side, per day: `09-10 0.0 % · 09-14 0.1 % · 09-15 0.1 % · 09-16 44.9 % · 09-17 97.6 % ·
+09-18 100 % · 09-19 75.8 % · 09-21 26.3 %`. **The step is on 09-16, and 44.9 % is the partial-day
+signature of a mid-afternoon deploy** — V0.29.55 / ARCH-027a, reported the same day
+(`_attachDirectMagnetometer: No I2C device at address: 0xc`, 15:58:46).
+⚠️ **Accepting 71 % as this row's threshold would enshrine a regression as the healthy baseline.**
+
+**3. 🔴 The "~89 % Pi-local shortfall" — the framing is wrong, and the cause is UNDETERMINED.**
+⚠️ **CORRECTION, 2026-09-22: retention does NOT explain it.** An earlier analysis of mine claimed
+most of the gap was the rolling window working, on the strength of
+`'pi.sensors.retentionDays': 7` in the validator. **That 7 is a FALLBACK for unvalidated config.
+`config.json` — repo and car alike — sets 45**, so the cutoff is ~2026-08-09 and **no September day
+is eligible for purge at all.** The doc above was right; the reading of the default was not.
+
+What IS measured:
+
+    Pi      664,628 rows   ids 41,165,863 .. 58,491,390   =  3.8 % of a 17,325,528 id span
+    server 6,275,515 rows  ids 41,165,484 .. 58,491,390   = 36.2 % of the same span
+    => ~11 MILLION ids are on NEITHER tier
+
+**FOUR days are absent locally, not two — 09-12, 09-13, 09-17 and 09-18** — and the row's premise of
+"a CONTIGUOUS id space" is false. 🟢 **09-20 and 09-21 match Pi↔server EXACTLY** (310,897 and 81,238,
+identical ranges), so the recent pipeline is provably lossless.
+🔴 **The evidence used to EXCLUDE the purge is itself unreliable:** `maybePurge` logs only
+`if imuDeleted or lightDeleted`, and runs every loop iteration regardless of samples, so **a purge
+that deletes zero rows logs nothing** — the journal cannot distinguish "ran and deleted nothing" from
+"never ran", and *"last run 09-14"* is an inference from a conditional log line.
+⇒ **Cause UNDETERMINED and deliberately not guessed.**
+
+**4. 🟢 Zero rows since the last reboot is THE GATE WORKING, not a fault.**
+`edr_log_gate` is documented OPEN only while the OBD link is up. Verified at V0.29.62, parked:
+gate `CLOSED`, and **`edr_imu_sample` is equally static** (max id 58,491,390, newest
+2026-09-21T19:05:45Z) while `states/imu` publishes live. **Both tables gated identically ⇒ zero rows
+is correct behaviour.** ⚠️ `bufferedRows` reads 1; the CLOSED ring's depth is still unmeasured, so
+how much pre-link data survives a long park is **assumed, not known**.
+
+⚠️ **Verifying a sync is a separate instrument:** `tools/sync/reconcile.py` compares a **bounded**
+`source_id` range Pi→server, row count and every column value. It **requires** a bounded range —
+whole-table counts diverge by design — which means **it can PASS while sub-defect 3 above is
+completely untouched.** It answers *"did the rows in THIS range arrive intact?"*, never *"is any range
+missing?"*
+
 ### 10.8.3 EDR reaches the server (F-142, Sprint 87–88 / V0.29.51–52) [Atlas Rule 10]
 
 **The distance this closes.** The Pi has recorded EDR samples faithfully since
@@ -4260,6 +4332,100 @@ server tier in-sprint rather than as follow-up. Verified against the tree at
 **Rule-10 design-gate deliverable for ARCH-020.** Server-only; the Pi neither
 produces nor consumes these tables, so they are outside the A-4 Pi↔server parity
 contract by design rather than by omission.
+
+
+### 10.8.4 EDR derived values — `edr_imu_derived` (US-805, Sprint 92 / V0.29.62) [Atlas Rule 10]
+
+**The distance this closes.** `pitchDeg`, `stopCount` and `biasRad` were computed every sample,
+published live to `states/imu`, and **never stored**. The state file is a tmpfs snapshot of *now*; it
+has no history. So **no pitch or grade fix was verifiable by anyone** — you could see what the car
+believed this second and never what it believed during the drive you were trying to explain. That is
+why US-805 was the V0.29 closure blocker.
+
+#### The ruling: a SEPARATE TABLE, not new columns (CIO, 2026-09-22)
+
+**A raw reading never changes. A computed value changes when the ALGORITHM changes.** Mixed into
+`edr_imu_sample`, the early `pitchDeg` values and the late ones would mean subtly different things
+with nothing in the table marking where the maths moved — and the raw data could no longer be
+re-derived and compared against what the car actually believed at the time.
+
+🔴 **`fusion_version` is what makes the separation worth anything.** A derived table that cannot say
+WHICH algorithm produced a row inherits the exact defect the split prevents. It is `NOT NULL` **with
+no DEFAULT**, deliberately: a default would let a forgetful writer record a plausible *wrong* version
+instead of failing. **Bump it when the fusion's OUTPUT for the same input would differ** — filter
+form, tau, trust band, ZUPT rule, bias model — and **never** for refactors or logging that leave the
+numbers identical. A version that changes without the output changing shows a reader an epoch
+boundary that is not there.
+
+🔴 **`pitch_deg` is NULLABLE and the NULL is a FINDING.** `PitchFusion.pitchRad` returns `None` under
+`gyroImplausible` (US-749). That null is the only evidence the plausibility guard fired. **A writer
+or schema that coerces it to 0.0 destroys it.**
+
+⚠️ **No foreign key to `edr_imu_sample.id`.** That `id` is the **Pi's** id-space and arrives on the
+server as `source_id` (A-45: a row minted into it from the server side was silently overwritten by
+the Pi's own, with no error and no log). **The join is `(source_device, ts_capture)`.**
+
+#### Who writes it, and why not the obvious component
+
+The values live in `ImuStateBridge` (it owns `PitchFusion`); the rows are written by
+`EdrPersistenceSubscriber`. **The bridge does NOT write them, and the reason is not style:**
+
+- **The bridge holds no database handle at all** — it is a pure bus→tmpfs state writer. Giving it one
+  is new coupling too, so "no new coupling" does not select it.
+- **ATOMICITY.** One component, one connection, one transaction: the raw row and its derived sibling
+  land together or not at all. Two writers cannot give that, and an **orphaned belief** — a derived
+  row whose raw evidence is gone — is precisely the un-re-derivable value this table exists to
+  prevent.
+- **THE LOG GATE.** `EdrLogGate` admits rows here. A writer outside this component would produce
+  derived rows for periods the gate excluded from the raw table: **orphans by construction.**
+
+The seam is an injected read-only `derivedSnapshotFn`, wired **after** construction
+(`setDerivedSnapshotFn`) because the subscriber is built and started *before* the bridge exists —
+readers must not publish before their consumers are subscribed, and reordering boot to suit this
+table would trade a real guarantee for a convenience.
+
+#### Cadence: `persistHz`, NOT the fusion rate
+
+**Fusion updates at `sampleHz` (4 Hz); raw persists at `persistHz` (2 Hz); the derived table writes
+at `persistHz`.** The intuitive choice — write at the rate the value updates — is wrong: a 4 Hz
+derived table leaves **half its rows with no possible raw sibling**, and every derived-vs-raw
+comparison then needs interpolation. **Interpolating a fusion output against its own input
+manufactures agreement.**
+
+🟢 **Alignment is structural, not lucky.** Both subscriptions are `QoS.LOSSY` with independent queues,
+so they can drop different samples — but **decimation is `seq % N`, a function of the SAMPLE and not
+of arrival order**, so a dropped burst costs both rows or neither. **LOSSY divergence costs COVERAGE
+of the comparison, never its correctness.**
+
+⚠️ **The stamp is the FUSION's own `ts_utc`/`ts_capture`/`seq`, not the burst being flushed.** The
+estimator may not have processed that sample yet; claiming it had would be a lie about when the
+belief was held (`ssot-design-pattern.md` §A″ — event time is the record).
+
+#### Retention: parent-slaved
+
+The purge deletes derived rows under the **same cutoff, in the same transaction** as the raw table.
+An independent purge would diverge the first time the two tables' sync progress differed, leaving
+either a widowed raw row or — worse — **a belief whose raw evidence is gone**.
+`purgeExpired` returns **three** counts (imu, light, derived), never two with the derived folded into
+the imu one: a quantity that names the wrong thing is how a number outlives the scrutiny it deserves.
+
+#### Cross-tier
+
+`EDR_COLUMNS` in `src/common/edr/sensor_schema.py` is the single source; `server_ddl.py` derives the
+MariaDB table from it and `tests/common/test_edr_contract.py` pins the two together, so parity is
+**structural rather than remembered**. Server table created by migration **v0027**, partitioned on
+the same monthly window as v0026 — derived rows are written beside their raw siblings from the same
+sample, and retention is a partition DROP, so a different floor would let a pair straddle a partition
+that exists on one table and not the other.
+
+#### 🔴 What closing US-805 does NOT mean
+
+**It does not fix the parked-grade defect.** It makes it **visible and falsifiable** for the first
+time — the three values become queryable history instead of a live file nobody stores. **It changes
+no fusion behaviour.** Measured on the car at V0.29.62, parked: `states/imu` reports
+`pitchDeg −3.62°, stopCount 0, biasRad 0.0` — the phantom grade, within ~3 % of the 3.74° predicted
+from the healthy residual gyro bias (0.01304 rad/s × the 5 s tau). **That defect is unaddressed and
+has no row.**
 
 ### 10.9.1 Why it exists
 
