@@ -37,3 +37,27 @@
 # tests/server/_mariadb_chain_harness.py (MARIADB_TEST_IMAGE). testcontainers
 # 4.x provides `testcontainers.mysql.MySqlContainer`, which the harness imports.
 testcontainers>=4.0.0
+
+# -----------------------------------------------------------------------------
+# Offline IMU analysis tooling (ARCH-027)
+# -----------------------------------------------------------------------------
+# tools/imu/fusion_bench.py and tools/imu/gps_truth.py score pitch-fusion output
+# against GPS truth; tests/pi/sensors/test_fusion_bench_units.py and
+# test_gps_truth.py exercise them.  All four import numpy.
+#
+# It goes HERE and not in requirements.txt because requirements.txt IS a
+# production install -- the Pi runs `requirements.txt + requirements-pi.txt` and
+# the server runs `requirements.txt + requirements-server.txt`.  numpy is a large
+# binary wheel that no runtime code imports; landing it on the car to satisfy an
+# offline bench tool would be paying for it on the constrained tier.  Every bench
+# and the CI runner install this file (New-Bench.ps1 installs
+# requirements.txt + requirements-dev.txt + requirements-server.txt), so the two
+# tests collect wherever they are actually run.
+#
+# WHY IT WAS MISSING: numpy was deliberately REMOVED from requirements.txt as
+# dead scaffolding when nothing imported it (see the note at the foot of that
+# file).  ARCH-027 then added four importers without re-declaring it, so the two
+# tests were UNCOLLECTABLE on a fresh bench -- and an uncollected test is an
+# INERT test: it cannot fail, so it protects nothing.  The suite was green
+# because those tests never ran.
+numpy>=1.24.0
