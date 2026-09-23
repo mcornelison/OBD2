@@ -3609,6 +3609,40 @@ accel/gyro/mag stay on the bus and in the versioned `edr_imu_sample` store; this
 file is the *derived* view and holds no raw axes at all. **The reader computes,
 the display consumes** (Atlas DELTA-2) — the card never fuses.
 
+**Startup gyro recovery (A-34 / ARCH-027, 2026-09-16).** The ICM-20948's gyro
+channel can latch into a faulted analog state reporting **14–30 °/s on a
+motionless car**. It **survives `DEVICE_RESET`** (0 of 16 collector inits cleared
+it) and **fails the factory self-test** (0.062/0.087/0.126 against a 0.5 floor),
+while the **same silicon self-tests at 1.007–1.016 once recovered** — so the part
+is healthy and the state is recoverable. `src/pi/sensors/gyro_recovery.py` detects
+it at startup and clears it with a **`PWR_MGMT_2` gyro off/on** (cleared it 3 of 3,
+plus live on 2026-09-15), wired via `sensor_reader._recoverGyro` **before** the
+magnetometer bypass (both touch bank 0). *Startup is the only sound place for the
+check: a latched gyro and a real turn are the same signature, and at key-on we
+know the car has not moved.* The driver exposes no `PWR_MGMT_2` symbol and no step
+that could recover the gyro, so the register is written through its own
+`i2c_device` — the precedent `ak09916_bypass.enableI2cBypass` set. 🔴 **The
+post-check is not optional:** writing the register is not evidence the gyro
+recovered, so a failed recovery reports `recovered=False` and US-749's guard keeps
+withholding pitch and grade. **A failure never costs the IMU** (same principle as
+the magnetometer degrade path). ⚠️ **Hardware-verified on the no-op path only**
+(healthy gyro ⇒ zero writes to 0x07); the **faulted path awaits a natural latch**
+and must not be reported as verified until then.
+
+**Accel-trust diagnostic (ARCH-027, 2026-09-16).** `PitchFusion` trusts the
+accelerometer as gravity only while `|a|/g − 1 ≤ accelTrustBand`; outside it the
+correction is skipped and **pitch advances on gyro integration alone, which
+drifts**. `accelIgnored` (last update) and `accelIgnoredFraction` (rolling ~2 s)
+expose that decision, which was previously invisible to every consumer of pitch
+and grade. It **records** the decision `update()` already makes rather than
+recomputing it (a second copy could disagree — SSOT rule B), counts the re-seed
+branch, and clears on `reset()`. ⚠️ **Reporting only — no filter behaviour
+changes.** ⚠️ **NOT part of the `states/imu` contract below**; publishing it is a
+contract change routed to the PM. *Measured relevance: rest reading **1.0184 g**
+against a 0.02 band — inside by 0.0016, while in-car readings of 1.020–1.021 g
+fall outside. **The fix is a scale calibration, never a wider band**, which would
+also admit braking.*
+
 *Contract (Atlas Q-A, 2026-07-30; `pitchDeg` added by US-521; `stopCount` /
 `biasRad` by US-708).* `{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg,
 gradePct, altitude, stopCount, biasRad, reasons}`:
@@ -3751,19 +3785,43 @@ reading was reasonable; the drive disproved it, which is exactly why it was a ga
 `tests/pi/sensors/test_imu_body_frame.py` pins the binding to (B) with this basis
 in its failure message, so a revert to (A) fails loudly. ⚠️ Drives on or before
 2026-09-09 are all the OLD mount and will confirm (B) whatever the dash is doing.
-⚠️ The residual grade error left after the flip is an **uncancelled gyro rate
-bias** (a separate defect), not an orientation error — the constant is not tuned
-to absorb it. 🔴 **CORRECTED 2026-09-16 (Atlas): this line previously read
-"gyro-**Y** bias", and that is the WRONG AXIS.** Under (B) `left = +x`, and
-`pitch_fusion._pitchRateFromGyro` returns `-vec[1]` — the **left** component,
-i.e. raw **X**. Raw **Y** is `forward`, so a raw-Y rate is **roll** and never
-reaches pitch at all. Measured on the dash mount at rest: raw X **−0.012 °/s**
-(pitch), raw Y **+0.730** (roll), raw Z **+0.156** (yaw) — so the pitch-axis bias
-is roughly **60× smaller** than the figure this line used to carry, and anyone
-sizing a bias-learning story from it would have sized that story ~60× too large.
-⚠️ **Re-derive the axis at the point of use; a remembered mapping is not a
-derivation** — this error survived here precisely because it was quoted rather
-than re-derived. The flip does **not** fix the compass (A-30, stuck magnetometer).
+
+🟢 **(B) IS NOW SETTLED BY A DIRECT PHYSICAL TEST, independent of any drive
+(ARCH-027, 2026-09-16).** The drive correlations above are remote inferences and
+carry the caveat on the line before. A 15-second manipulation does not: with the
+collector recording, the CIO **lifted the NOSE-facing edge** of the board ~30°.
+An accelerometer at rest reads `f = −g_body`, so **whichever end RISES reads
+POSITIVE on its axis**.
+
+| | `accel_x` | `accel_y` | `accel_z` |
+|---|---|---|---|
+| baseline (2,000+ samples, flat) | +0.05 | **−0.27** | 9.98 |
+| nose lifted | +0.95 | **−5.19** | 8.54 |
+
+`accel_y` went strongly **negative** ⇒ the nose is on the **−Y** side ⇒ **+Y = tail
+= (B)**. `accel_z` 9.98 → 8.54 confirms ~31° of lift. ⇒ **Three independent lines
+agree** (this tilt test; `accel_y` vs `d(SPEED)/dt` at **r = −0.94** drive 77 and
+**−0.85** drive 71), and **grade is NOT inverted**. 🔴 **The silkscreen Y arrow is
+MISLABELLED** — do not use it as a source. *(Precedent on this same board: the
+AK09916 die does not share the accel/gyro axes either.)* **Re-run this test after
+any remount; it costs 15 seconds and needs no drive.**
+
+⚠️ 🔴 **CORRECTED (ARCH-027, 2026-09-16): the residual grade error is NOT the
+"gyro-Y bias".** Under (B) `left = +x` and `PitchFusion._pitchRateFromGyro`
+returns `−vec[1]` — the **left** axis — so the **pitch-relevant raw axis is X**,
+and **raw Y is ROLL**. Measured at rest on the dash mount (455 samples):
+raw **X = −0.012 °/s**, raw Y = +0.730, raw Z = +0.156. The pitch-axis bias is
+therefore ~**60× smaller** than the figure this paragraph previously named, and
+any story sized from it (US-779) must be re-sized. *The wrong-axis attribution is
+an easy one to repeat — it was made twice in one day before being caught — so
+re-derive the mapping from the frame constant and the consuming function at the
+point of use, never from recollection.* The flip does **not** fix the compass, which is a
+separate defect: the residual grade error is an **uncancelled gyro RATE bias**, and
+`IMU_BODY_FRAME` is **not tuned to absorb it**.
+⚠️ **A-30 UPDATED 2026-09-18 — neither "stuck" nor "uncalibrated" is still correct.**
+The compass fault was the **AK09916 axis map** (`x<-ak_y, y<-ak_x, z<--ak_z`, TDK,
+det +1), fixed in **ARCH-033** `a8478d23`. What remains open is only A-30's
+**soft-iron** residual (ellipticity 1.78, 32-39 deg spread), now unblocked by a firm mount.
 
 *The mounting is not config.* It lived at `pi.sensors.imu.mount.*` until US-708,
 where it pinned the identity map and **overrode the code default** — so correcting
