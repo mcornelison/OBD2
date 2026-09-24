@@ -192,7 +192,15 @@ class RealtimeData(Base):
     # sync.py RAISE on any Pi column the server model lacks, because the
     # alternative was a silent drop. realtime_data is the highest-volume
     # table on the car, so a Pi-only column would break it on the first batch.
-    written_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # US-809-b2: the schema supplies the write instant, because at INSERT
+    # time "now" IS the write time. NULLABLE by CIO ruling 2026-09-24 -- rows
+    # that predate the column have no recorded write time, and NOT NULL could
+    # only be satisfied by inventing one. The default fills every new row, so
+    # nothing observable is lost; only the constraint's proof that no future
+    # row is blank.
+    written_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
 
 
 class Statistic(Base):

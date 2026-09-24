@@ -142,8 +142,8 @@ def test_freshRealtimeDataAcceptsForeign():
         conn.execute(database_schema.SCHEMA_REALTIME_DATA)
         conn.execute(
             "INSERT INTO realtime_data "
-            "(parameter_name, value, data_source, drive_id) "
-            "VALUES (?, ?, ?, ?)",
+            "(timestamp, parameter_name, value, data_source, drive_id) "
+            "VALUES ('2026-09-24T10:00:00Z', ?, ?, ?, ?)",
             ("RPM", 3000.0, "foreign", 33),
         )
         (count,) = conn.execute(
@@ -162,7 +162,8 @@ def test_freshRealtimeDataStillRejectsGarbage():
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO realtime_data "
-                "(parameter_name, value, data_source) VALUES (?, ?, ?)",
+                "(timestamp, parameter_name, value, data_source) "
+                "VALUES ('2026-09-24T10:00:00Z', ?, ?, ?)",
                 ("RPM", 3000.0, "martian"),
             )
     finally:
@@ -198,7 +199,8 @@ def narrowDb() -> Generator[sqlite3.Connection, None, None]:
     )
     conn.executemany(
         "INSERT INTO realtime_data "
-        "(parameter_name, value, data_source, drive_id) VALUES (?, ?, ?, ?)",
+        "(timestamp, parameter_name, value, data_source, drive_id) "
+        "VALUES ('2026-09-24T10:00:00Z', ?, ?, ?, ?)",
         [
             ("RPM", 800.0, "real", 33),
             ("SPEED", 0.0, "real", 33),

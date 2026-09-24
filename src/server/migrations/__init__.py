@@ -205,6 +205,9 @@ from src.server.migrations.versions.v0028_us795a_sync_history_residual import (
 from src.server.migrations.versions.v0029_us809b1_realtime_written_at import (
     MIGRATION as _V0029,
 )
+from src.server.migrations.versions.v0030_us809b2_written_at_default import (
+    MIGRATION as _V0030,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -240,6 +243,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0027,
     _V0028,
     _V0029,
+    _V0030,
 )
 
 

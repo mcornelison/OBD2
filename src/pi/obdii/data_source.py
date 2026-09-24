@@ -226,6 +226,91 @@ def ensureWrittenAtColumn(
     return True
 
 
+#: The DEFAULT the write column carries from US-809-b2 onward. Matches the
+#: canonical ISO-8601 UTC format every capture table uses.
+WRITTEN_AT_DEFAULT_SQL: str = "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+
+
+def ensureWrittenAtDefault(
+    conn: sqlite3.Connection, tableName: str,
+) -> bool:
+    """Put the system-clock DEFAULT on ``written_at`` (US-809-b2).
+
+    SQLite cannot change a column's DEFAULT in place, and it REFUSES to
+    ``ADD COLUMN`` with a non-constant default at all ("Cannot add a column
+    with non-constant default" -- measured 2026-09-24).  So the default can
+    only reach an existing table through a REBUILD, using the same
+    create/copy/drop/rename shape as :func:`ensureDataSourceCheckWidened`;
+    ``realtime_data`` has no inbound foreign keys, which is what makes that
+    safe here.
+
+    🔴 **THE REBUILD IS ONLY SAFE BECAUSE THE COLUMN IS NULLABLE.**  The CIO
+    ruled on 2026-09-24 that ``written_at`` stays nullable, and that ruling is
+    what this function depends on: ``INSERT ... SELECT *`` carries the
+    existing NULLs straight through, so the 405,536 rows on the car whose
+    write time was never recorded keep an honest absence.  Were the column
+    NOT NULL, the same rebuild would have to INVENT a value for every one of
+    them -- and every available value is a fabrication.
+
+    Idempotent: a table whose stored DDL already carries the default is a
+    no-op, which matters because the Pi has no migration ledger and every
+    schema step runs on every boot.  Rebuilding a 191 MB table repeatedly is
+    not an option.
+
+    Args:
+        conn: Open sqlite3 connection.  The caller owns commit semantics.
+        tableName: Capture-table name.
+
+    Returns:
+        True if the table was rebuilt, False if it already carried the
+        default, lacks the column, or does not exist.
+    """
+    if not _tableExists(conn, tableName):
+        return False
+    if not _hasColumn(conn, tableName, WRITTEN_AT_COLUMN):
+        return False
+
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?",
+        (tableName,),
+    ).fetchone()
+    if not row or not row[0]:
+        return False
+    currentSql = row[0]
+
+    if WRITTEN_AT_DEFAULT_SQL in currentSql:
+        return False  # already carries it (fresh schema, or a prior run)
+
+    newTableSql = currentSql.replace(
+        f'{WRITTEN_AT_COLUMN} DATETIME',
+        f'{WRITTEN_AT_COLUMN} DATETIME DEFAULT ({WRITTEN_AT_DEFAULT_SQL})',
+        1,
+    )
+    if newTableSql == currentSql:
+        # The stored DDL did not match the expected shape -- refuse rather
+        # than silently produce an unchanged table.
+        return False
+
+    tmpName = f"{tableName}__written_at_default_new"
+    newTableSql = _renameCreateTarget(newTableSql, tableName, tmpName)
+
+    indexRows = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name = ? "
+        "AND sql IS NOT NULL",
+        (tableName,),
+    ).fetchall()
+
+    conn.execute(f"DROP TABLE IF EXISTS {tmpName}")
+    conn.execute(newTableSql)
+    # SELECT * preserves existing NULLs in written_at -- the whole point.
+    conn.execute(f"INSERT INTO {tmpName} SELECT * FROM {tableName}")
+    conn.execute(f"DROP TABLE {tableName}")
+    conn.execute(f"ALTER TABLE {tmpName} RENAME TO {tableName}")
+    for (indexSql,) in indexRows:
+        conn.execute(indexSql)
+    return True
+
+
 def ensureAllCaptureTables(conn: sqlite3.Connection) -> list[str]:
     """Run :func:`ensureDataSourceColumn` across every capture table.
 
@@ -246,6 +331,11 @@ def ensureAllCaptureTables(conn: sqlite3.Connection) -> list[str]:
     # changes nobody asked for on the highest-risk device in the system.
     if ensureWrittenAtColumn(conn, REALTIME_DATA_TABLE):
         migrated.append(f'{REALTIME_DATA_TABLE}.{WRITTEN_AT_COLUMN}')
+    # US-809-b2: and the system-clock DEFAULT on it. Separate from the ADD
+    # above because SQLite REFUSES to add a column with a non-constant
+    # default -- the default can only arrive by rebuild.
+    if ensureWrittenAtDefault(conn, REALTIME_DATA_TABLE):
+        migrated.append(f'{REALTIME_DATA_TABLE}.{WRITTEN_AT_COLUMN}.default')
     return migrated
 
 
