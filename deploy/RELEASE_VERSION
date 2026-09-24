@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.63",
-  "theme": "Sprint 92 tail: shipped IMU rates in the spec",
-  "description": "Docs and test-guard only -- NO runtime change; zero diff under src/ and deploy/ since V0.29.62. specs/architecture.md now leads with the SHIPPED IMU rates (sampleHz 4 / persistHz 2 / stateHz 1) and the 4 Hz hard cap per ARCH-036 4.2. The US-773 docs-only guard is re-pinned to its own commit and parent; it had compared against dev and went red when dev moved."
+  "version": "V0.29.65",
+  "theme": "IMU RCA lands: calibration, mag fit, recovery",
+  "description": "ARCH-027b + ARCH-027c merged together -- 027c alone is an unused dependency, 027b alone lands 39 uncollectable tests. Adds accel_cal, mag_fit, pitch_fusion and sensor_reader capability: 366 insertions, ZERO deletions, purely additive. The ARCH-032 bypass-before-gyro order is preserved and was VERIFIED by reading _buildImuDevice, not inferred from a green suite. Plus ARCH-050."
 }
