@@ -1,6 +1,6 @@
 # Design Patterns — Eclipse OBD-II
 
-**Last Updated: 2026-09-21** · Owner: Atlas (architect) · Authored to the CIO's charter
+**Last Updated: 2026-09-24** · Owner: Atlas (architect) · Authored to the CIO's charter
 amendment of 2026-09-20: *identify patterns, catalogue them, and route Ralph to them by name
 in every design-gate review.*
 
@@ -316,6 +316,60 @@ Eclipse period but would be **~1000× too large on CAN — it would never trip, 
 reading would render as LIVE for three seconds.** A fabricated reading (§8), not a tuning
 looseness. **Recorded here because it is the cleanest statement of this pattern we have. Do
 not act on it until the Eclipse platform is signed off.**
+
+## 10. A schema step is REPLAY-SAFE, and the transform it depends on FAILS LOUD
+
+**Pattern.** Where there is no migration ledger, **every schema step runs on every boot** — so a
+step must be a no-op the second time, and any transform it depends on must **raise when it cannot
+do its job**, never return its input unchanged. A silent identity return is indistinguishable from
+*"nothing needed doing"*, and the caller cannot tell the two apart.
+
+**When it applies.** Every schema change on the Pi, which has no ledger. More generally: any
+rewrite whose no-match case is representable as *"unchanged"* — regex substitution, string
+replacement, path normalisation, config merging.
+
+**Instances.**
+1. 🔴 **`ensureWrittenAtDefault` (US-809-b2) took the collector down on 2026-09-24, V0.29.66.**
+   `_renameCreateTarget` matched a **bare** identifier. The car's `realtime_data` carried the name
+   **double-quoted** in its stored DDL, so `re.sub` returned the statement **unchanged**; the
+   caller then issued a `CREATE` for the live table and SQLite refused it with
+   `table "realtime_data" already exists`. `eclipse-obd` could not start — **deterministic across
+   11 attempts**, on a five-month-old database with 400,755 rows.
+2. 🔴 **`ensureDataSourceCheckWidened` (US-424) uses the same helper — and is the step that
+   CREATED the quoted DDL**, via its own `ALTER TABLE ... RENAME TO`. It would have failed
+   identically on the next already-renamed table it met. ⇒ **The defect was latent in a shared
+   helper from US-424 until US-809-b2**, which was merely the first caller to meet a table that
+   had already been renamed.
+
+**The mechanism, recorded because it is not guessable from reading the code.**
+🔴 **`ALTER TABLE x RENAME TO y` makes SQLite REWRITE the stored DDL as `CREATE TABLE "y" (...)`
+— with quotes.** Any table that has *ever* been rebuilt therefore carries a quoted name in
+`sqlite_master` from that moment on, and a matcher written against the unquoted form silently
+stops matching. **A migration's own success is what breaks the next one.** ⇒ Match all four
+identifier forms: `x`, `"x"`, `[x]`, `` `x` ``.
+
+⚠️ **The word boundary belongs ONLY on the bare form.** A trailing `\b` after a quoted name never
+matches — the closing quote and the following space are both non-word characters, so there is no
+boundary between them to assert. **The first attempt at this fix still failed on the exact DDL it
+was written for**, because the `\b` sat outside the alternation instead of inside it.
+
+**Anti-pattern prevented.** A schema step that is correct once and fatal thereafter — and its
+enabling half, a transform that reports success by saying nothing.
+
+🔴 **THE EXIT TEST, and it is the part that generalises past SQLite: run the step TWICE against
+the SAME POPULATED database, and assert on the statements EXECUTED (a trace callback), not on the
+resulting rows.** An outcome check cannot distinguish a rebuild that faithfully reproduced the
+same rows from one that never ran at all. **A gate on a FRESH database cannot distinguish a
+rebuild from a create in the first place** — which is exactly why every gate on V0.29.66 was
+green while the car could not boot. Fresh-database coverage is not evidence about a populated
+one; see `specs/anti-patterns.md` › *evidence that cannot do the job it is cited for*.
+
+⚠️ **THE FIRST DIAGNOSIS WAS WRONG IN A WAY THAT WOULD HAVE MISDIRECTED THE FIX.** It was reported
+— and recorded — as a **second-boot idempotency** failure: the migration *"ran correctly ONCE and
+is NOT idempotent on the second boot."* It had **never succeeded**; `written_at` carried no
+`DEFAULT`. A remedy aimed at the already-applied detection would have been aimed at a step that
+never applied. **Wrong description → wrong remedy → wrong exit test** — the exit test being the
+one that writes *"done"*. Re-derive the predicate, never just the defect.
 
 ## Cross-references
 
