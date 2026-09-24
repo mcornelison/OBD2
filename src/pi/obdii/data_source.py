@@ -352,6 +352,16 @@ def ensureAllCaptureTables(conn: sqlite3.Connection) -> list[str]:
 # migration only catches Pi databases deployed before US-424.
 
 
+#: Every way SQLite may spell a table name in a stored ``CREATE TABLE``.
+#: 🔴 THE DOUBLE-QUOTED FORM IS NOT HYPOTHETICAL -- SQLite WRITES IT ITSELF.
+#: After ``ALTER TABLE x RENAME TO y`` the stored DDL comes back as
+#: ``CREATE TABLE "y" (...)``, so ANY table that has ever been rebuilt carries
+#: quotes from then on. Brackets and backticks are accepted by SQLite too;
+#: covering all four costs nothing and removes the next variant of this
+#: outage rather than waiting to be surprised by it.
+_IDENTIFIER_FORMS: tuple[str, ...] = ('"{0}"', '[{0}]', '`{0}`', '{0}')
+
+
 def _renameCreateTarget(sql: str, oldName: str, newName: str) -> str:
     """Rewrite the ``CREATE TABLE [IF NOT EXISTS] <oldName>`` target to newName.
 
@@ -359,14 +369,63 @@ def _renameCreateTarget(sql: str, oldName: str, newName: str) -> str:
     (e.g. realtime_data -> profiles) are left untouched.  ``IF NOT EXISTS`` is
     dropped in the process, which is correct -- the caller DROPs the temp table
     first so the rebuilt table must be created unconditionally.
+
+    🔴 **HOTFIX 2026-09-24 -- THIS TOOK THE COLLECTOR DOWN.** The pattern
+    matched a BARE identifier only. The car's ``realtime_data`` carries the
+    name DOUBLE-QUOTED in its stored DDL (left by the US-424 CHECK-widen
+    rebuild's own ``RENAME TO``), so the rewrite was a **silent no-op**:
+    :func:`re.sub` returns the string unchanged when nothing matches, the
+    caller then executed a CREATE for the LIVE table, and SQLite refused it
+    with ``table "realtime_data" already exists``. ``eclipse-obd`` could not
+    start, deterministically, on a five-month-old database.
+
+    ⚠️ **A NO-MATCH IS NOW LOUD.** Returning the input unchanged is
+    indistinguishable from "no rename was needed", and that ambiguity is what
+    turned a pattern gap into an outage instead of an error. A caller that
+    asks for a rename it cannot get should hear about it.
+
+    Args:
+        sql: The stored ``CREATE TABLE`` statement.
+        oldName: The table being rebuilt, unquoted.
+        newName: The temp table to create instead.
+
+    Returns:
+        The statement with its create target rewritten.
+
+    Raises:
+        ValueError: If no create target matched -- the rebuild must not
+            proceed on an unchanged statement.
     """
-    return re.sub(
-        r"(CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?" + re.escape(oldName) + r"\b",
-        r"\g<1>" + newName,
+    # ⚠️ THE WORD BOUNDARY BELONGS ONLY ON THE BARE FORM. A trailing `\b` after
+    # a QUOTED name never matches: the closing quote and the following space are
+    # both non-word characters, so there is no boundary between them. Putting it
+    # outside the alternation is how the first attempt at this fix still failed
+    # on the exact DDL it was written for.
+    escaped = re.escape(oldName)
+    alternatives = '|'.join((
+        f'"{escaped}"',
+        rf'\[{escaped}\]',
+        f'`{escaped}`',
+        rf'{escaped}\b',
+    ))
+    pattern = (
+        r"(CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?(?:" + alternatives + r")"
+    )
+    rewritten, count = re.subn(
+        pattern,
+        lambda match: match.group(1) + newName,
         sql,
         count=1,
         flags=re.IGNORECASE,
     )
+    if not count:
+        raise ValueError(
+            f"could not find a CREATE TABLE target for {oldName!r} in the stored "
+            "DDL, so the rebuild would have re-created the LIVE table. Refusing "
+            f"rather than proceeding on an unchanged statement. DDL starts: "
+            f"{sql[:120]!r}"
+        )
+    return rewritten
 
 
 def ensureDataSourceCheckWidened(
