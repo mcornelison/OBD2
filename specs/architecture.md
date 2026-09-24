@@ -4091,8 +4091,9 @@ production factories, and neither window got shorter than what it guards.
 
 #### F-114 measured state, 2026-09-22 (V0.29.61) [Atlas Rule 10]
 
-**Four sub-defects were open against this feature. Three are now settled as FACTS and one is
-honestly undetermined. Recorded here so none of them is re-derived at full cost.**
+**Four sub-defects were open against this feature. ALL FOUR ARE NOW SETTLED AS FACTS** (sub-defect 3
+closed 2026-09-24), **leaving one bounded residual — two days, 09-17/09-18 — explicitly undetermined.
+Recorded here so none of them is re-derived at full cost.**
 
 **1. 🟢 `temp_c` — SETTLED. The register works; the gap is in our DRIVER.**
 `temp_c` is NULL in **6,940,143 of 6,940,143 rows across both tiers** — every row that exists
@@ -4125,28 +4126,62 @@ signature of a mid-afternoon deploy** — V0.29.55 / ARCH-027a, reported the sam
 (`_attachDirectMagnetometer: No I2C device at address: 0xc`, 15:58:46).
 ⚠️ **Accepting 71 % as this row's threshold would enshrine a regression as the healthy baseline.**
 
-**3. 🔴 The "~89 % Pi-local shortfall" — the framing is wrong, and the cause is UNDETERMINED.**
-⚠️ **CORRECTION, 2026-09-22: retention does NOT explain it.** An earlier analysis of mine claimed
-most of the gap was the rolling window working, on the strength of
-`'pi.sensors.retentionDays': 7` in the validator. **That 7 is a FALLBACK for unvalidated config.
-`config.json` — repo and car alike — sets 45**, so the cutoff is ~2026-08-09 and **no September day
-is eligible for purge at all.** The doc above was right; the reading of the default was not.
+**3. 🟢 The "~89 % Pi-local shortfall" — CAUSE FOUND 2026-09-24. A 7-DAY WINDOW, ~1.77M ROWS/DAY.**
+🔴 **AND THE RETRACTION THIS BLOCK USED TO CARRY WAS WRONG. Read that first, because it was mine.**
 
-What IS measured:
+**The mechanism, from the car's own journal** (`journalctl -u eclipse-obd`, 67 matching lines,
+journal covering 09-11 → 09-23):
 
-    Pi      664,628 rows   ids 41,165,863 .. 58,491,390   =  3.8 % of a 17,325,528 id span
-    server 6,275,515 rows  ids 41,165,484 .. 58,491,390   = 36.2 % of the same span
-    => ~11 MILLION ids are on NEITHER tier
+    Sep 13 11:12:08  EDR retention purge: deleted imu=73798 light=3575 (older than 7 days)
+    Sep 13 12:12:08  EDR retention purge: deleted imu=73797 light=3575 (older than 7 days)
+    ...  ~73,800 EVERY HOUR, hour after hour, near-constant  ...
+    Sep 14 13:41:49  EDR retention purge: deleted imu=73828 light=3575 (older than 7 days)
 
-**FOUR days are absent locally, not two — 09-12, 09-13, 09-17 and 09-18** — and the row's premise of
-"a CONTIGUOUS id space" is false. 🟢 **09-20 and 09-21 match Pi↔server EXACTLY** (310,897 and 81,238,
-identical ranges), so the recent pipeline is provably lossless.
-🔴 **The evidence used to EXCLUDE the purge is itself unreliable:** `maybePurge` logs only
-`if imuDeleted or lightDeleted`, and runs every loop iteration regardless of samples, so **a purge
-that deletes zero rows logs nothing** — the journal cannot distinguish "ran and deleted nothing" from
-"never ran", and *"last run 09-14"* is an inference from a conditional log line.
-⇒ **Cause UNDETERMINED and deliberately not guessed.**
+**One hour of capture at the measured 20.4 Hz is 73,440 rows. The purge was deleting exactly one
+hour of data per hour** — a 7-day rolling window in steady state against a sensor that ran 24/7,
+parked or not (the garage gate came later, US-793-b). ⇒ **~1.77 MILLION rows/day destroyed by
+design. That is the "~11 million ids on neither tier."** It is not a pipeline defect.
 
+🟢 **ALREADY FIXED:** `b25acc7d`, 2026-09-14 — *"raise pi.sensors.retentionDays 7 -> 45 (US-761
+stop-loss)"*. **MEASURED on `chi-eclipse-01` 2026-09-24: `pi.sensors.retentionDays = 45`** — the
+deployed artefact, not the repo — and **no purge has deleted anything since Sep 14 13:41.**
+**Do not groom a retention fix.**
+
+🟢 **THE GUARD IS SOUND — the purge cannot destroy undelivered data:**
+
+    imuMark = sync_log.getHighWaterMark(conn, "edr_imu_sample")[0]
+    DELETE FROM edr_imu_sample WHERE ts_utc < ? AND id <= ?        (cutoff, imuMark)
+
+It deletes only at or below the **synced** high-water mark and deletes **nothing** if the mark is
+unreadable. Everything it removed had already landed — which is why the server holds 6.28M of them,
+and why **09-20 / 09-21 / 09-24 match Pi↔server EXACTLY**. The recent pipeline is provably lossless.
+
+🔴 **THE CORRECTION, AND IT IS A RETRACTION OF A RETRACTION.** This block previously read *"retention
+does NOT explain it… retention explains NONE of the gap."* **That was wrong.** The 2026-09-22 claim
+it overturned — *"most of the shortfall is the rolling window working"* — was **substantially
+RIGHT**; it merely cited the wrong artefact (`'pi.sensors.retentionDays': 7` from the validator's
+DEFAULTS registry) instead of the running system. On 09-23 I found `config.json` sets 45 and inverted
+the conclusion. **The config was right; the car was RUNNING 7.**
+⇒ 🔴 **WHEN THE EVIDENCE FOR A CLAIM COLLAPSES, RE-DERIVE THE CLAIM — DO NOT INVERT IT.** A bad
+reason for a belief is not a reason for its opposite. One `git log -S` and one `journalctl` would
+have settled it; neither was run. ⚠️ **The over-correction was convincing because it was
+SELF-CRITICAL** — retracting my own claim read as rigour and drew less scrutiny than the claim had.
+**A correction is an assertion and carries the same burden of proof.**
+
+⚠️ **ONE RESIDUAL REMAINS, BOUNDED, AND DELIBERATELY NOT GUESSED.** The Pi is missing
+**ids 52,564,225–57,917,001** — a **contiguous** ~5.35M block covering **09-17 and 09-18** — which
+the **server holds at 100 % density**. The id sequence ran *through* the gap (09-19 resumes at
+57,917,002) and `sqlite_sequence` is intact at 58,492,373, so those rows were written to this
+database and later removed. **Ruled out:** the retention purge (logged nothing in that window; at 45
+days nothing in September is eligible), any other code path (`DELETE FROM edr_*` appears in exactly
+one file), and a restore-from-backup (the sequence would have resumed lower). **Nearby:** a backup at
+Sep 17 03:00 and a reboot at Sep 17 15:22–15:28. ⇒ **CAUSE UNDETERMINED — a bounded question about
+TWO DAYS, not a claim about the dataset.**
+
+🔴 **THE ONE CODE CHANGE THIS FEATURE STILL NEEDS: `maybePurge` must log when it deletes ZERO.**
+It logs `if imuDeleted or lightDeleted`, so **"ran and deleted nothing" is indistinguishable from
+"never ran."** That ambiguity is why this row could not exclude the purge for two days, and it is
+what made the 09-23 inversion possible. One line converts silence into evidence.
 **4. 🟢 Zero rows since the last reboot is THE GATE WORKING, not a fault.**
 `edr_log_gate` is documented OPEN only while the OBD link is up. Verified at V0.29.62, parked:
 gate `CLOSED`, and **`edr_imu_sample` is equally static** (max id 58,491,390, newest
