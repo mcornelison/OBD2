@@ -207,6 +207,9 @@ def _baseConfig() -> dict[str, Any]:
         "schemaVersion": "1.0.0",
         "deviceId": "chi-eclipse-01",
         "pi": {
+            # US-809-a: the realtime_data writers convert the capture instant
+            # against the DECLARED zone; without it the write REFUSES.
+            "time": {"localZone": "America/Chicago"},
             "database": {"path": ":memory:"},
             "obdii": {
                 "orchestrator": {
@@ -385,6 +388,9 @@ def engineOnHarness(lifecycleDb: ObdDatabase) -> dict[str, Any]:
         database=lifecycleDb,
         profileId='daily',
         dataSource='real',
+        # US-809-a: the writer converts the capture instant against the
+        # DECLARED zone, so the direct construction needs it too.
+        config={'pi': {'time': {'localZone': 'America/Chicago'}}},
     )
     outerDataLogger = MagicMock()
     outerDataLogger._dataLogger = innerLogger

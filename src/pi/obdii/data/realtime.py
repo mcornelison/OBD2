@@ -77,7 +77,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from common.time.helper import utcIsoNow
+from common.time.helper import localNaiveToCanonicalIso
 from pi.bus.sample import Sample
 
 from ..drive_id import getCurrentDriveId
@@ -222,6 +222,9 @@ class RealtimeDataLogger:
         self._dataLogger = ObdDataLogger(
             connection, database,
             profileId=self.profileId, dataSource=dataSource,
+            # US-809-a: the writer converts capture instants against the
+            # declared zone (pi.time.localZone), so it needs this config.
+            config=config,
         )
 
         # US-384 (EDR bus slice 1): optional publish seam.  With a bus wired,
@@ -562,14 +565,18 @@ class RealtimeDataLogger:
                 break
 
             try:
-                # Query the parameter - use high-precision timestamp
-                timestamp = datetime.now()  # Includes microseconds
-
                 reading = self._queryParameterSafe(paramName)
 
                 if reading is not None:
-                    # Override timestamp for millisecond precision
-                    reading.timestamp = timestamp
+                    # US-809-c: the capture instant is taken WHEN THE READING
+                    # ARRIVES, not before the query is issued. This clock read
+                    # used to sit ABOVE the Bluetooth round-trip, so the stored
+                    # 'read time' was when we ASKED -- early by the whole
+                    # round-trip, and on a slow or retrying link that gap is not
+                    # small. Under spec A-double-prime the column means EVENT
+                    # time, and the event is the ECU answering.
+                    # (datetime.now() includes microseconds.)
+                    reading.timestamp = datetime.now()
 
                     # Log to database
                     self._logReadingSafe(reading)
@@ -760,9 +767,17 @@ class RealtimeDataLogger:
 
         US-384: the OBD poll loop's producer side.  Stamps a per-producer
         monotonic ``seq`` so the bus / subscribers can detect drops or gaps.
-        ``tsUtc``/``driveId``/``dataSource`` mirror exactly what the inline
-        write path stamps (``utcIsoNow``/``getCurrentDriveId``), so a
-        downstream PersistenceSubscriber reproduces byte-identical rows.
+        ``driveId``/``dataSource`` mirror exactly what the inline write path
+        stamps, so a downstream PersistenceSubscriber reproduces byte-identical
+        rows.
+
+        US-809-c: ``tsUtc`` carries THE READING'S OWN INSTANT, converted
+        against the declared zone (``pi.time.localZone``), rather than
+        ``utcIsoNow()``. Publishing the clock here discarded the capture time
+        two hops before the logger, where no later fix could recover it. The
+        conversion REFUSES when no zone is declared rather than guessing the
+        host's -- a guessed zone yields a plausible instant that is wrong by a
+        whole-hour offset, which is worse than a loud failure.
 
         Args:
             reading: LoggedReading to publish.
@@ -776,7 +791,7 @@ class RealtimeDataLogger:
             source=self._producerSource,
             value=reading.value,
             unit=reading.unit,
-            tsUtc=utcIsoNow(),
+            tsUtc=localNaiveToCanonicalIso(reading.timestamp, self.config),
             tsCapture=time.monotonic(),
             driveId=getCurrentDriveId(),
             dataSource=self._dataSource or "real",

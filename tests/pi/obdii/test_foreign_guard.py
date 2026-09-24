@@ -42,6 +42,13 @@ from src.pi.obdii.foreign_guard import (
     setForeignGuard,
 )
 
+# US-809-a: the realtime_data writers convert the capture instant against
+# the DECLARED zone, so every writer under test needs one. Declared here
+# rather than defaulted: a writer given no zone REFUSES rather than
+# guessing the host's, which is the property US-809-0 exists to provide.
+_ZONE_CFG = {"pi": {"time": {"localZone": "America/Chicago"}}}
+
+
 
 class FakeClock:
     """A manually advanced monotonic clock."""
@@ -364,7 +371,7 @@ def test_writerStampsForeignForLatchedDrive(tmp_path):
 
     db = ObdDatabase(str(tmp_path / "obd.db"), walMode=False)
     db.initialize()
-    dataLogger = ObdDataLogger(_StubConnection(), db)
+    dataLogger = ObdDataLogger(_StubConnection(), db, config=_ZONE_CFG)
 
     now = datetime.now()
     setCurrentDriveId(33)

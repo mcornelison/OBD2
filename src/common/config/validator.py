@@ -105,6 +105,7 @@ Usage:
 
 import ipaddress
 import logging
+import zoneinfo
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -311,6 +312,18 @@ DEFAULTS: dict[str, Any] = {
     'pi.sync.enabled': True,
     'pi.sync.intervalSeconds': 60,
     'pi.sync.triggerOn': ['interval', 'drive_end'],
+    # US-809-0: the zone naive timestamps are expressed in, DECLARED rather than
+    # inherited from whatever OS the code booted on. PREVENTIVE -- measured on
+    # chi-eclipse-01 2026-09-23: it already reads America/Chicago and keeps its
+    # RTC in UTC, so nothing is shifted today. What this removes is the reimage
+    # or raspi-config change that would move every converted timestamp with no
+    # code change and no failing test.
+    # (The same reading showed `System clock synchronized: no` with NTP active,
+    # which is why A-double-prime wants the clockSynced flag landed BESIDE the
+    # event time. A declared zone does not make a clock trustworthy.)
+    # Ratified by the CIO 2026-09-23. Do NOT derive it or seed it from the host.
+    # b044-exempt: DEFAULTS registry mirrors config.json.
+    'pi.time.localZone': 'America/Chicago',
     # Pi-tier EDR in-process pub/sub bus (US-384 / F-110, EDR slice 1).
     # Defaults False so slice 1 ships DARK: the SampleBus publish seam in
     # RealtimeDataLogger + the PersistenceSubscriber are wired but dormant
@@ -674,6 +687,7 @@ class ConfigValidator:
         self._validatePowerWatch(config)
         self._validateDisplayAutoDim(config)
         self._validateImuStateBridge(config)
+        self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
         return config
@@ -1247,6 +1261,65 @@ class ConfigValidator:
                 "writes past the sample rate repeat the same burst, effective rate %g Hz",
                 stateHz, sampleHz, sampleHz,
             )
+
+    def _validateLocalZone(self, config: dict[str, Any]) -> None:
+        """Reject a declared timezone the host's IANA database cannot resolve (US-809-0).
+
+        Called after defaults are applied. The key is present for the shipped
+        config, but NOT for a caller that injects its own narrow defaults dict,
+        which is why absence returns rather than raising (see the comment on
+        that branch).
+
+        WHY A WELL-FORMEDNESS CHECK IS WORTH HAVING HERE, when US-708 removed
+        the IMU mount-axis check on the grounds that validating a well-formed
+        value proves nothing: a mount axis could be well-formed and describe
+        the wrong board, so the check was theatre. A zone name cannot. Either
+        the database resolves it or it does not, and an unresolvable zone makes
+        every conversion refuse at runtime. This check moves that failure from
+        the first timestamp of a drive to boot, which is the whole difference.
+
+        ZoneInfo signals the two bad cases differently -- ZoneInfoNotFoundError
+        (a KeyError) for an unknown key, ValueError for a malformed one such as
+        '../etc/passwd'. Catching only the first would admit the second.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the zone is PRESENT but empty, not a
+                string, or not resolvable on this host. An absent key is left
+                to DEFAULTS and to resolveLocalZone()'s refusal.
+        """
+        key = 'pi.time.localZone'
+        declared = self._getNestedValue(config, key)
+
+        # ABSENCE IS NOT THIS METHOD'S BUSINESS, per the idiom every sibling
+        # post-default validator follows (see _validateHomeNetwork's
+        # `if pingPath is not None`). DEFAULTS supplies the key for the shipped
+        # config; a caller that INJECTS a narrow defaults dict -- as
+        # tests/test_config_validator.py legitimately does with
+        # {'logging.level': 'INFO'} -- is entitled to omit it, and raising here
+        # would make this method reject configs that are not its to judge.
+        # A MISSING zone is still caught, at the layer the story names for it:
+        # resolveLocalZone() refuses and produces no timestamp.
+        if declared is None:
+            return
+
+        if not declared or not isinstance(declared, str):
+            raise ConfigValidationError(
+                f"{key} must be an IANA zone name (got {declared!r})",
+                missingFields=[key],
+            )
+
+        try:
+            zoneinfo.ZoneInfo(declared)
+        except (KeyError, ValueError) as exc:
+            raise ConfigValidationError(
+                f"{key} is {declared!r}, which this host's IANA time-zone "
+                f"database cannot resolve ({type(exc).__name__}). Declare a "
+                "valid zone; the host zone is deliberately not substituted.",
+                missingFields=[key],
+            ) from exc
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """

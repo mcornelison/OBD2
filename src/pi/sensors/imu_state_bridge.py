@@ -291,6 +291,10 @@ REASON_NO_MAG = "no_mag_reading"
 REASON_TILT_UNRESOLVED = "tilt_unresolved"
 REASON_PITCH_OUT_OF_RANGE = "pitch_out_of_range"
 REASON_NO_SOURCE = "no_source"
+# US-809-c: the capture instant was not carried. Typed, because the alternative
+# -- substituting the clock -- produces a freshness marker that is ALWAYS fresh,
+# so every staleness check downstream silently stops being able to fail.
+REASON_NO_TIMESTAMP = "no_timestamp"
 # US-521: the fusion has not yet seen an UNCONTAMINATED reading to seed from
 # (e.g. the process started mid-drive under power). Distinct from
 # tilt_unresolved -- the sensor is fine, the attitude is simply not yet known.
@@ -574,8 +578,11 @@ def buildImuState(
     """Assemble the states/imu payload (pure -- the Atlas Q-A contract).
 
     Args:
-        tsUtc: The reading's ISO-8601 read-time (the freshness marker US-497
-            compares against before falling back to the idle card).
+        tsUtc: The reading's ISO-8601 EVENT instant (the freshness marker
+            US-497 compares against before falling back to the idle card).
+            Empty means the producer did not carry one: ``ts`` is then null
+            with reason ``no_timestamp`` rather than a substituted clock
+            reading (US-809-c).
         gravity: The gravity estimate in vehicle coordinates, or None.
         linear: The gravity-removed acceleration in vehicle coordinates, or None.
         mag: The magnetometer reading in vehicle coordinates, or None when no
@@ -614,9 +621,13 @@ def buildImuState(
         this pitch; a future GPS/baro supersedes that, not this bridge).
     """
     reasons: dict[str, str] = {"altitude": REASON_NO_SOURCE}
+    # US-809-c: an absent instant is reported as absent. Centralised here so
+    # all three callers get it, rather than each deciding for itself.
+    if not tsUtc:
+        reasons["ts"] = REASON_NO_TIMESTAMP
     state: dict[str, Any] = {
         "available": False,
-        "ts": tsUtc,
+        "ts": tsUtc or None,
         "gLat": None,
         "gLon": None,
         "gMag": None,
@@ -882,7 +893,9 @@ class ImuStateBridge:
         # survives (see PitchFusion.reset): how the board is bolted in did not
         # change, and re-converging it costs another five stoplights.
         self._pitchFusion.reset()
-        tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
+        # US-809-c: carry the absence; buildImuState types it. Substituting
+        # the clock here publishes a fabricated freshness marker.
+        tsUtc = getattr(sample, "tsUtc", "")
         self._writeState(
             buildImuState(
                 tsUtc=tsUtc,
@@ -931,7 +944,9 @@ class ImuStateBridge:
         self._gyro = None
         self._gyroCapture = None
         self._pitchFusion.reset()
-        tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
+        # US-809-c: carry the absence; buildImuState types it. Substituting
+        # the clock here publishes a fabricated freshness marker.
+        tsUtc = getattr(sample, "tsUtc", "")
         self._writeState(
             buildImuState(tsUtc=tsUtc, unavailableReason=reason, **self._pitchDiagnostics())
         )
@@ -969,7 +984,10 @@ class ImuStateBridge:
         """
         pitchRad = self._pitchFusion.pitchRad
         self._lastDerived = {
-            "tsUtc": getattr(sample, "tsUtc", None) or self._nowIsoFn(),
+            # US-809-c: None, never the clock -- this snapshot claims to be
+            # "stamped with THIS sample", and a substituted stamp makes that
+            # claim false exactly when it matters.
+            "tsUtc": getattr(sample, "tsUtc", None) or None,
             "tsCapture": capture,
             "seq": getattr(sample, "seq", None),
             # None under gyro_implausible -- preserved, never coerced to 0.0.
@@ -1050,7 +1068,9 @@ class ImuStateBridge:
         gravity = self._gravity
         assert gravity is not None  # set by _updateGravity
         linear = (accel[0] - gravity[0], accel[1] - gravity[1], accel[2] - gravity[2])
-        tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
+        # US-809-c: carry the absence; buildImuState types it. Substituting
+        # the clock here publishes a fabricated freshness marker.
+        tsUtc = getattr(sample, "tsUtc", "")
         self._writeState(
             buildImuState(
                 tsUtc=tsUtc,

@@ -21,6 +21,13 @@ from pi.obdii.data.logger import ObdDataLogger
 from pi.obdii.data.types import LoggedReading
 from pi.obdii.database import ObdDatabase
 
+# US-809-a: the realtime_data writers convert the capture instant against
+# the DECLARED zone, so every writer under test needs one. Declared here
+# rather than defaulted: a writer given no zone REFUSES rather than
+# guessing the host's, which is the property US-809-0 exists to provide.
+_ZONE_CFG = {"pi": {"time": {"localZone": "America/Chicago"}}}
+
+
 # The columns the byte-identical invariant pins (id + write-time timestamp excluded).
 _COLS = "parameter_name, value, unit, profile_id, drive_id, data_source"
 
@@ -59,7 +66,8 @@ def test_busPathProducesByteIdenticalRealtimeRows(tmp_path):
     # (a) old path: logReading directly.
     dbA = _newDb(tmp_path, "a.db")
     loggerA = ObdDataLogger(
-        connection=None, database=dbA, profileId=_PROFILE_ID, dataSource="real"
+        connection=None, database=dbA, profileId=_PROFILE_ID, dataSource="real",
+        config=_ZONE_CFG,
     )
     for name, val, unit in READINGS:
         loggerA.logReading(LoggedReading(name, val, datetime.now(), unit, None))
@@ -67,7 +75,8 @@ def test_busPathProducesByteIdenticalRealtimeRows(tmp_path):
     # (b) new path: publish -> PersistenceSubscriber -> the same logReading.
     dbB = _newDb(tmp_path, "b.db")
     loggerB = ObdDataLogger(
-        connection=None, database=dbB, profileId=_PROFILE_ID, dataSource="real"
+        connection=None, database=dbB, profileId=_PROFILE_ID, dataSource="real",
+        config=_ZONE_CFG,
     )
     bus = SampleBus()
     sub = bus.subscribe(["raw.obd.*"], QoS.LOSSLESS, "persistence")

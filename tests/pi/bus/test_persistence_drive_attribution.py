@@ -52,6 +52,13 @@ from pi.obdii.drive_id import (
     setCurrentDriveId,
 )
 
+# US-809-a: the realtime_data writers convert the capture instant against
+# the DECLARED zone, so every writer under test needs one. Declared here
+# rather than defaulted: a writer given no zone REFUSES rather than
+# guessing the host's, which is the property US-809-0 exists to provide.
+_ZONE_CFG = {"pi": {"time": {"localZone": "America/Chicago"}}}
+
+
 _PROFILE_ID = "daily"
 # Production driveEndDurationSeconds; the drive_id idle bound reuses it.
 _IDLE_BOUND_S = 60.0
@@ -91,6 +98,7 @@ class _Rig:
         self.bus = SampleBus()
         self.sub = self.bus.subscribe(["raw.obd.*"], QoS.LOSSLESS, "persistence")
         self.dataLogger = ObdDataLogger(
+            config=_ZONE_CFG,
             connection=None, database=self.db, profileId=_PROFILE_ID, dataSource="real"
         )
         self.persistence = PersistenceSubscriber(self.sub, self.dataLogger)
@@ -98,6 +106,9 @@ class _Rig:
         self._producer = SimpleNamespace(
             _seq=0, _producerSource="obd", _dataSource="real", _bus=self.bus,
             _stats=SimpleNamespace(totalLogged=0), _markRowWritten=lambda: None,
+            # US-809-c: the publish branch converts the reading's instant
+            # against the declared zone, so it reads config too.
+            config={"pi": {"time": {"localZone": "America/Chicago"}}},
         )
 
     def capture(self, n: int, name: str = "RPM") -> None:
@@ -219,6 +230,7 @@ class TestInlinePathUnchanged:
         """
         db = _db(tmp_path)
         dataLogger = ObdDataLogger(
+            config=_ZONE_CFG,
             connection=None, database=db, profileId=_PROFILE_ID, dataSource="real"
         )
         setCurrentDriveId(45)

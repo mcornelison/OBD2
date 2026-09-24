@@ -238,9 +238,21 @@ CREATE TABLE IF NOT EXISTS realtime_data (
     -- Primary key
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Timestamp with second-resolution canonical ISO-8601 UTC format
-    timestamp DATETIME NOT NULL
-        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    -- CAPTURE time: when the reading was TAKEN. Second-resolution canonical
+    -- ISO-8601 UTC.
+    --
+    -- US-809-b2: NOT NULL with NO DEFAULT, and the missing DEFAULT is the
+    -- point. The default was never the problem -- its LOCATION was. On the
+    -- WRITE column below, a default of 'now' is exactly right: at the instant
+    -- of INSERT, now IS the write time. HERE the same default is a
+    -- FABRICATION -- it guesses about the past and yields a plausible value
+    -- wrong by however long the row waited. Python always has a clock at
+    -- receipt, so an omitted capture time is a CODE DEFECT, not a data state:
+    -- this INSERT must RAISE rather than quietly invent one.
+    -- Retention reads THIS column, which is the other reason it stays NOT
+    -- NULL: `NULL < ?` is NULL, so a nullable predicate column would leak
+    -- rows past the purge forever.
+    timestamp DATETIME NOT NULL,
 
     -- Parameter data
     parameter_name TEXT NOT NULL,
@@ -258,6 +270,35 @@ CREATE TABLE IF NOT EXISTS realtime_data (
     -- pre-US-200 rows and rows written while no drive is active remain
     -- NULL; populated rows carry the drive_counter-minted id.
     drive_id INTEGER,
+
+    -- WRITE time (US-809-b1).  `timestamp` above holds the EVENT instant --
+    -- when the reading was TAKEN (spec A-double-prime, US-809-a).  This holds
+    -- when the row reached storage.  Under normal load they differ by
+    -- milliseconds; the difference only appears when it matters, which is
+    -- exactly when a queue has backed up and a batch lands together.
+    -- Keeping BOTH is what makes queueing visible AS queueing instead of as
+    -- driving.
+    --
+    -- 🔴 NULLABLE, RULED BY THE CIO 2026-09-24, and the nullability is what
+    -- makes the whole design land. US-809-b2 originally asked for NOT NULL.
+    -- That is UNSATISFIABLE on a database that already has rows: the car
+    -- holds 405,536 realtime_data rows over five months whose write time was
+    -- never recorded and cannot be recovered. NOT NULL could only be met by
+    -- INVENTING one -- the migration clock (claiming all 405,536 were written
+    -- that afternoon) or the capture time (claiming each was written the
+    -- instant it was measured, which is the exact false continuity
+    -- A-double-prime exists to remove and is indistinguishable afterwards
+    -- from a genuinely prompt write). Sprint 93 constraint 4 governs: a typed
+    -- absence beats a fabricated value, every time.
+    --
+    -- 🟢 Nothing observable is lost. The DEFAULT fills every new row, and
+    -- nothing can write a blank one because it fires on every INSERT that
+    -- omits the column. What is given up is only the constraint's PROOF that
+    -- no future row is blank -- and dropping it is what lets the migration
+    -- put this DEFAULT on an existing table while leaving history honestly
+    -- blank.
+    written_at DATETIME
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
     -- Constraints
     CONSTRAINT FK_realtime_data_profile FOREIGN KEY (profile_id)

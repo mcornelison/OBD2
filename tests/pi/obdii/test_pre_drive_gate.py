@@ -209,6 +209,10 @@ def _benchConfig(pids: list[str]) -> dict[str, Any]:
     return {
         "pi": {
             "bluetooth": {},
+            # US-809-a: the writer converts the capture instant against the
+            # DECLARED zone. Without it the write REFUSES, and the symptom here
+            # is 'no realtime_data rows landed' rather than a timestamp error.
+            "time": {"localZone": "America/Chicago"},
             "realtimeData": {
                 "pollingIntervalMs": 100,
                 "parameters": [{"name": p, "logData": True} for p in pids],

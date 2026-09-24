@@ -181,6 +181,26 @@ class RealtimeData(Base):
     # per-drive analytics queries.  NULL = pre-US-200 row or row written
     # outside an active drive.
     drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    # US-809-b1: the Pi's WRITE instant, carried across the tier boundary.
+    # `timestamp` is the EVENT instant (US-809-a); this is when the row
+    # reached storage ON THE PI.  Distinct from `synced_at` above, which is
+    # when the row reached the SERVER -- three different questions, and the
+    # CIO's landing-versus-collection distinction needs all three to be
+    # separately answerable.
+    #
+    # 🔴 THIS COLUMN MUST EXIST HERE OR realtime_data SYNC STOPS. US-689 made
+    # sync.py RAISE on any Pi column the server model lacks, because the
+    # alternative was a silent drop. realtime_data is the highest-volume
+    # table on the car, so a Pi-only column would break it on the first batch.
+    # US-809-b2: the schema supplies the write instant, because at INSERT
+    # time "now" IS the write time. NULLABLE by CIO ruling 2026-09-24 -- rows
+    # that predate the column have no recorded write time, and NOT NULL could
+    # only be satisfied by inventing one. The default fills every new row, so
+    # nothing observable is lost; only the constraint's proof that no future
+    # row is blank.
+    written_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
 
 
 class Statistic(Base):
@@ -1052,6 +1072,26 @@ class SyncHistory(Base):
     )
     tables_synced: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
+    # US-795-a: what the car STILL held when this session closed -- the only
+    # statement about the Pi that stays true after it goes dark. rows_synced
+    # says what MOVED; these say what REMAINED.
+    #
+    # BOTH ARE NULLABLE WITH NO DEFAULT, and that is the load-bearing part.
+    # Three states must stay distinguishable:
+    #   (0,    True )  the car owed nothing, and every table could be read
+    #   (12,   False)  AT LEAST 12 -- some tables were unreadable
+    #   (NULL, NULL )  we could not determine what the car owed
+    # A NOT NULL column defaulting to 0 would collapse the third into the
+    # first, so every row that predates these columns -- and every session
+    # that could not measure -- would claim the car owed nothing. That is
+    # reporting a healthy car on the evidence of a failed measurement.
+    residual_rows: Mapped[int | None] = mapped_column(Integer)
+    # SyncBacklog.total is documented as a LOWER BOUND whenever
+    # unreadableTables is non-empty. Persisting the integer without this
+    # qualifier would turn a measured lower bound into an apparent exact count
+    # at the moment it is written down, and nothing downstream could recover
+    # the difference.
+    residual_complete: Mapped[bool | None] = mapped_column(Boolean)
 
 
 class AnalysisHistory(Base):

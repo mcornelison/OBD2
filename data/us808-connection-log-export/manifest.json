@@ -1,0 +1,87 @@
+{
+  "deletionPerformed": false,
+  "exportedAt": "2026-09-24T04:52:00Z",
+  "exports": [
+    {
+      "columns": [
+        "id",
+        "timestamp",
+        "event_type",
+        "mac_address",
+        "success",
+        "error_message",
+        "retry_count",
+        "data_source",
+        "drive_id"
+      ],
+      "firstTimestamp": "2026-04-23 03:14:40",
+      "lastTimestamp": "2026-05-31 23:59:13",
+      "path": "data\\us808-connection-log-export\\pi_connection_log_before_2026-06-01.csv",
+      "perEventType": {
+        "connect_attempt": 33566,
+        "connect_failure": 8236,
+        "connect_success": 34,
+        "disconnect": 2822,
+        "drive_end": 16,
+        "drive_start": 25,
+        "reconnect": 5
+      },
+      "rowsReadBack": 44704,
+      "rowsReported": 44704,
+      "sampled": false,
+      "sizeBytes": 3908664,
+      "tier": "pi"
+    },
+    {
+      "columns": [
+        "id",
+        "source_id",
+        "source_device",
+        "synced_at",
+        "sync_batch_id",
+        "timestamp",
+        "event_type",
+        "mac_address",
+        "success",
+        "error_message",
+        "retry_count",
+        "data_source",
+        "drive_id"
+      ],
+      "firstTimestamp": "2026-04-23 03:12:39",
+      "lastTimestamp": "2026-05-31 23:59:13",
+      "path": "data\\us808-connection-log-export\\server_connection_log_before_2026-06-01.csv",
+      "perEventType": {
+        "connect_attempt": 11675,
+        "connect_failure": 4598,
+        "connect_success": 34,
+        "disconnect": 33,
+        "drive_end": 16,
+        "drive_start": 25,
+        "reconnect": 5
+      },
+      "rowsReadBack": 16386,
+      "rowsReported": 16386,
+      "sampled": false,
+      "sizeBytes": 2503278,
+      "tier": "server"
+    }
+  ],
+  "liveCountsAtExport": {
+    "pi": 44704,
+    "server": 16386
+  },
+  "referenceCounts2026_09_14": {
+    "explicitKeeps": 80,
+    "piRowsBeforeWindowEnd": 44704,
+    "serverRetryRowsBeforeWindowEnd": 16306,
+    "unexplainedDifference": 28318
+  },
+  "retryEventTypes": [
+    "connect_attempt",
+    "connect_failure",
+    "disconnect"
+  ],
+  "story": "US-808-a",
+  "windowEnd": "2026-06-01"
+}

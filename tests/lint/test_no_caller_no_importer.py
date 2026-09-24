@@ -211,6 +211,25 @@ KNOWN_DEAD: dict[str, str] = {
     "src/common/contracts/protocol.py": _SKELETON,
     "src/common/contracts/recommendations.py": _SKELETON,
     "src/common/contracts/vehicle.py": _SKELETON,
+    "src/server/api/currency.py": (
+        "US-795-b, UNWIRED ON PURPOSE for exactly one release. The story's own "
+        "fence says 'DO NOT surface this in any UI -- the answer is data this "
+        "sprint; the screen is V0.30', so the module has tests and no "
+        "production importer by design. DELETE THIS ENTRY when the V0.30 "
+        "consumer lands; test_everyLedgerEntryIsStillAFinding goes red if you "
+        "forget."
+    ),
+    "src/pi/diagnostics/disk_space_guard.py": (
+        "US-762. The guard is COMPLETE and tested; what is missing is a "
+        "CALLER, and choosing one is a design decision rather than an "
+        "oversight: how often it runs, which host task owns it, and whether "
+        "the breach walk is acceptable in that task's budget are Atlas's "
+        "call, and the story's touches list is scoped to src/pi/diagnostics/ "
+        "with no orchestrator file in it. FLAGGED LOUDLY IN THE STORY "
+        "EVIDENCE, because an unwired guard is a guard that never runs -- "
+        "which is the same shape as the unwatched retention margin this "
+        "story exists to fix. DELETE THIS ENTRY when it is wired."
+    ),
     "src/pi/clients/ollama_client.py": _SKELETON,
     "src/pi/clients/uploader.py": _SKELETON,
     "src/pi/inbox/reader.py": _SKELETON,

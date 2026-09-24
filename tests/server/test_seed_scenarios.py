@@ -123,6 +123,7 @@ class TestSingleScenario:
                 "profile_id",
                 "data_source",  # US-195 / Spool CR #4
                 "drive_id",  # US-200 / Spool Data v2 Story 2
+                "written_at",  # US-809-b1 -- the WRITE instant, beside the event one
             }
             assert expected == columns
         finally:
