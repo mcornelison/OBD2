@@ -28,6 +28,9 @@
       "version": "1.0.0",
       "environment": "${APP_ENVIRONMENT:production}"
     },
+    "time": {
+      "localZone": "America/Chicago"
+    },
     "runtime": {
       "singleInstanceGuard": {
         "enabled": true,

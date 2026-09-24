@@ -61,3 +61,26 @@ testcontainers>=4.0.0
 # INERT test: it cannot fail, so it protects nothing.  The suite was green
 # because those tests never ran.
 numpy>=1.24.0
+
+# -----------------------------------------------------------------------------
+# IANA time-zone database on Windows benches (US-809-0)
+# -----------------------------------------------------------------------------
+# US-809-0 declares `pi.time.localZone` and resolves it through
+# `zoneinfo.ZoneInfo`, which is the project's FIRST use of zoneinfo. ZoneInfo
+# reads the host's IANA database (`/usr/share/zoneinfo`) and falls back to the
+# `tzdata` PyPI package only when that is absent.
+#
+# The Pi (Raspberry Pi OS) and the server (Debian 13) both ship the system
+# database, so neither runtime tier needs this package -- which is why it is
+# here and not in requirements.txt, per the same rule that put numpy here.
+#
+# WINDOWS BENCHES HAVE NO SYSTEM DATABASE AT ALL. Measured on this bench
+# 2026-09-23: `ZoneInfo('America/Chicago')` raised ZoneInfoNotFoundError before
+# this line existed -- NOT for the configured zone specifically, but for EVERY
+# zone, because there was no database to look in. Without this declaration the
+# US-809-0 tests fail on a fresh Windows bench for an environment reason that
+# reads exactly like a wrong zone name, and the config validator rejects a
+# perfectly valid config.
+#
+# The marker keeps it off Linux, where the system database already wins.
+tzdata>=2024.1; sys_platform == "win32"
