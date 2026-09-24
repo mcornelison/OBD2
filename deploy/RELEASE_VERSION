@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.65",
-  "theme": "IMU RCA lands: calibration, mag fit, recovery",
-  "description": "ARCH-027b + ARCH-027c merged together -- 027c alone is an unused dependency, 027b alone lands 39 uncollectable tests. Adds accel_cal, mag_fit, pitch_fusion and sensor_reader capability: 366 insertions, ZERO deletions, purely additive. The ARCH-032 bypass-before-gyro order is preserved and was VERIFIED by reading _buildImuDevice, not inferred from a green suite. Plus ARCH-050."
+  "version": "V0.29.66",
+  "theme": "Sprint 93: event time is the record",
+  "description": "Sprint 93, 9 of 10 (US-808 held back -- its modules were never committed). The US-809 chain closes end to end: a declared timezone, the bus carrying the capture instant, both writers storing it, the column crossing tiers, each column filled where it is correct. Plus sync_history residual and vehicle currency (US-795) and the Pi low-disk guard (US-762). THREE migrations: v0028-v0030."
 }
