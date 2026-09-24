@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.66",
-  "theme": "Sprint 93: event time is the record",
-  "description": "Sprint 93, 9 of 10 (US-808 held back -- its modules were never committed). The US-809 chain closes end to end: a declared timezone, the bus carrying the capture instant, both writers storing it, the column crossing tiers, each column filled where it is correct. Plus sync_history residual and vehicle currency (US-795) and the Pi low-disk guard (US-762). THREE migrations: v0028-v0030."
+  "version": "V0.29.67",
+  "theme": "Hotfix: Pi schema rebuild on a quoted table",
+  "description": "HOTFIX: production outage. eclipse-obd could not start -- table \"realtime_data\" already exists. _renameCreateTarget matched a BARE identifier only, but SQLite stores the name double-quoted after ALTER TABLE RENAME TO, so the rewrite was a silent no-op and the rebuild re-created the LIVE table. Latent since US-424. All four quoting forms now handled; a no-match raises. 15 tests, 11 red at V0.29.66."
 }
