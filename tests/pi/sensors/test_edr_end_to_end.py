@@ -48,6 +48,13 @@ from pi.sensors.sensor_reader import (
     LightReader,
 )
 
+# US-809-a: the realtime_data writers convert the capture instant against
+# the DECLARED zone, so every writer under test needs one. Declared here
+# rather than defaulted: a writer given no zone REFUSES rather than
+# guessing the host's, which is the property US-809-0 exists to provide.
+_ZONE_CFG = {"pi": {"time": {"localZone": "America/Chicago"}}}
+
+
 # The synthetic bench uses the honest 'fixture' data_source tag (the CHECK enum
 # accepts it) so no bench row is ever mistaken for a real ('real') capture.
 _FIXTURE = "fixture"
@@ -292,7 +299,8 @@ def _realtimeRows(db: ObdDatabase) -> list[tuple]:
 def _logInline(db: ObdDatabase) -> None:
     """The pre-bus reference path: ObdDataLogger.logReading directly."""
     logger = ObdDataLogger(
-        connection=None, database=db, profileId=_PROFILE_ID, dataSource="real"
+        connection=None, database=db, profileId=_PROFILE_ID, dataSource="real",
+        config=_ZONE_CFG,
     )
     for name, val, unit in _OBD_READINGS:
         logger.logReading(LoggedReading(name, val, datetime.now(), unit, None))
@@ -320,7 +328,8 @@ class TestGoldenMasterRegression:
         # (b) bus OBD path with the EDR path NOT built (flags off -> factory None).
         dbB = _seededDb(tmp_path, "gm_off_b.db")
         loggerB = ObdDataLogger(
-            connection=None, database=dbB, profileId=_PROFILE_ID, dataSource="real"
+            connection=None, database=dbB, profileId=_PROFILE_ID, dataSource="real",
+        config=_ZONE_CFG,
         )
         bus = SampleBus()
         obdSub = bus.subscribe(["raw.obd.*"], QoS.LOSSLESS, "persistence")
@@ -351,7 +360,8 @@ class TestGoldenMasterRegression:
         # subscribes raw.imu.*/raw.light.* only, so raw.obd.* cannot reach it.
         dbB = _seededDb(tmp_path, "gm_on_b.db")
         loggerB = ObdDataLogger(
-            connection=None, database=dbB, profileId=_PROFILE_ID, dataSource="real"
+            connection=None, database=dbB, profileId=_PROFILE_ID, dataSource="real",
+        config=_ZONE_CFG,
         )
         bus = SampleBus()
         obdSub = bus.subscribe(["raw.obd.*"], QoS.LOSSLESS, "persistence")

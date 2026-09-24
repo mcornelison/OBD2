@@ -59,7 +59,7 @@ import threading
 from datetime import datetime
 from typing import Any
 
-from common.time.helper import utcIsoNow
+from common.time.helper import localNaiveToCanonicalIso
 from pi.obdii.decoders import PARAMETER_DECODERS, DecodedReading, ParameterDecoderEntry
 
 from ..data_source import DATA_SOURCE_DEFAULT, DATA_SOURCE_VALUES
@@ -147,6 +147,7 @@ class ObdDataLogger:
         database: Any,
         profileId: str | None = None,
         dataSource: str | None = None,
+        config: dict[str, Any] | None = None,
     ):
         """
         Initialize the data logger.
@@ -155,6 +156,14 @@ class ObdDataLogger:
             connection: ObdConnection instance for OBD-II communication.
             database: ObdDatabase instance for data storage.
             profileId: Optional profile ID for associating logged data.
+            config: Validated configuration, supplying ``pi.time.localZone``
+                (US-809-a). Capture rows store the reading's EVENT instant, and
+                a NAIVE ``reading.timestamp`` cannot be converted to UTC without
+                a declared zone -- so a writer given no config REFUSES a naive
+                timestamp rather than guessing the host's zone. Constructor
+                injection per the Developer Rules; the two production factories
+                (``createDataLoggerFromConfig``, ``RealtimeDataLogger``) both
+                already hold a config and pass it.
             dataSource: Tag stamped on every row written by this logger.
                 Must be one of :data:`DATA_SOURCE_VALUES`.  When omitted
                 (the default), the tag is derived from the connection
@@ -170,6 +179,7 @@ class ObdDataLogger:
         """
         self.connection = connection
         self.database = database
+        self.config = config
         self.profileId = profileId
         self.dataSource = _resolveDataSource(connection, dataSource)
 
@@ -372,8 +382,16 @@ class ObdDataLogger:
                 cursor = conn.cursor()
                 # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
                 # reading.timestamp may be naive local-time (upstream creates
-                # it via naive datetime.now() in realtime.py:399 and in
+                # it via naive datetime.now() in realtime.py and in
                 # queryParameter above); capture rows must be UTC canonical.
+                # US-809-a: that canonical-UTC guarantee is UNCHANGED -- what
+                # changed is WHICH instant is made canonical. This used to
+                # discard reading.timestamp for utcIsoNow(), which satisfied
+                # TD-027 while destroying the information the column exists to
+                # hold: a batch drained after a queue backs up lands evenly
+                # spaced at WRITE cadence, so a discontinuous capture renders
+                # as a continuous one and the record positively asserts the
+                # system was healthy during the interval it was failing.
                 # US-200: stamp the active drive_id (or NULL if no drive).
                 # US-212: pass self.dataSource explicitly so simulator runs
                 # land as 'physics_sim' instead of inheriting the live-path
@@ -405,7 +423,7 @@ class ObdDataLogger:
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        utcIsoNow(),
+                        localNaiveToCanonicalIso(reading.timestamp, self.config),
                         reading.parameterName,
                         reading.value,
                         reading.unit,

@@ -51,6 +51,13 @@ import pytest
 from src.common.time.helper import CANONICAL_ISO_REGEX, utcIsoNow
 from src.pi.obdii.database_schema import ALL_SCHEMAS
 
+# US-809-a: the realtime_data writers convert the capture instant against
+# the DECLARED zone, so every writer under test needs one. Declared here
+# rather than defaulted: a writer given no zone REFUSES rather than
+# guessing the host's, which is the property US-809-0 exists to provide.
+_ZONE_CFG = {"pi": {"time": {"localZone": "America/Chicago"}}}
+
+
 _CANONICAL_RE = re.compile(CANONICAL_ISO_REGEX)
 
 # Tables whose `timestamp` (or `analysis_date`) column the TD-027 fix
@@ -400,7 +407,8 @@ class TestExplicitPathWriters:
         from src.pi.obdii.data.types import LoggedReading
 
         dbLogger = ObdDataLogger(
-            connection=None, database=_FakeDatabase(freshDb), profileId=None
+            connection=None, database=_FakeDatabase(freshDb), profileId=None,
+            config=_ZONE_CFG,
         )
         # Naive local-time reading -- must be coerced at insert boundary.
         reading = LoggedReading(
@@ -433,7 +441,7 @@ class TestExplicitPathWriters:
             timestamp=datetime(2026, 4, 19, 7, 18, 50),
             profileId=None,
         )
-        logReading(_FakeDatabase(freshDb), reading)
+        logReading(_FakeDatabase(freshDb), reading, config=_ZONE_CFG)
 
         stored = freshDb.execute(
             'SELECT timestamp FROM realtime_data ORDER BY rowid DESC LIMIT 1'

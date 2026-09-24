@@ -222,6 +222,9 @@ class RealtimeDataLogger:
         self._dataLogger = ObdDataLogger(
             connection, database,
             profileId=self.profileId, dataSource=dataSource,
+            # US-809-a: the writer converts capture instants against the
+            # declared zone (pi.time.localZone), so it needs this config.
+            config=config,
         )
 
         # US-384 (EDR bus slice 1): optional publish seam.  With a bus wired,
