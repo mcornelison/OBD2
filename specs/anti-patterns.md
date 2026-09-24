@@ -722,8 +722,14 @@ class Orchestrator:
 >   evidence about what you have BROKEN
 > - *the tool's PASS as the verdict* — an instrument that answers one question is not evidence
 >   about the question you are actually asking
+> - *the fresh-substrate gate* — a test run against an EMPTY store is not evidence about a
+>   POPULATED one. **On a fresh database a rebuild and a create are indistinguishable**, so a
+>   green suite says nothing about the only case that matters. This took the collector down on
+>   2026-09-24 (V0.29.66) with **every gate green**: the car's database was five months and
+>   400,755 rows old, and nothing anywhere had run a schema step against a populated one.
+>   Mechanism and remedy: `specs/design-patterns.md` §10.
 >
-> All seven pass review, because in all seven something **looks like information and is not.**
+> All eight pass review, because in all eight something **looks like information and is not.**
 >
 > ⚠️ *scope* carries a sub-case worth knowing by name — **the restated gate**, where the wrong
 > scope came from the **contract** rather than from the author, so the agent who satisfied their
