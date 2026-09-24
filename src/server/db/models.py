@@ -181,6 +181,18 @@ class RealtimeData(Base):
     # per-drive analytics queries.  NULL = pre-US-200 row or row written
     # outside an active drive.
     drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    # US-809-b1: the Pi's WRITE instant, carried across the tier boundary.
+    # `timestamp` is the EVENT instant (US-809-a); this is when the row
+    # reached storage ON THE PI.  Distinct from `synced_at` above, which is
+    # when the row reached the SERVER -- three different questions, and the
+    # CIO's landing-versus-collection distinction needs all three to be
+    # separately answerable.
+    #
+    # 🔴 THIS COLUMN MUST EXIST HERE OR realtime_data SYNC STOPS. US-689 made
+    # sync.py RAISE on any Pi column the server model lacks, because the
+    # alternative was a silent drop. realtime_data is the highest-volume
+    # table on the car, so a Pi-only column would break it on the first batch.
+    written_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Statistic(Base):

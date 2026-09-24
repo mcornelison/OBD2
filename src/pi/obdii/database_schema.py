@@ -259,6 +259,22 @@ CREATE TABLE IF NOT EXISTS realtime_data (
     -- NULL; populated rows carry the drive_counter-minted id.
     drive_id INTEGER,
 
+    -- WRITE time (US-809-b1).  `timestamp` above holds the EVENT instant --
+    -- when the reading was TAKEN (spec A-double-prime, US-809-a).  This holds
+    -- when the row reached storage.  Under normal load they differ by
+    -- milliseconds; the difference only appears when it matters, which is
+    -- exactly when a queue has backed up and a batch lands together.
+    -- Keeping BOTH is what makes queueing visible AS queueing instead of as
+    -- driving.
+    --
+    -- NULLABLE IN b1 BY DESIGN, and US-809-b2 makes it NOT NULL DEFAULT the
+    -- system clock.  Rows that predate this column read NULL: a typed
+    -- absence.  They are NOT backfilled from `timestamp`, which would assert
+    -- that every historical row was written the instant it was captured --
+    -- the exact false continuity A-double-prime exists to remove, and
+    -- indistinguishable afterwards from a genuinely prompt write.
+    written_at DATETIME,
+
     -- Constraints
     CONSTRAINT FK_realtime_data_profile FOREIGN KEY (profile_id)
         REFERENCES profiles(id)

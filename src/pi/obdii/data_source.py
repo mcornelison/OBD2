@@ -91,6 +91,9 @@ DATA_SOURCE_DEFAULT: str = 'real'
 # excluded because they cannot receive sim/replay/fixture data (per sprint
 # contract doNotTouch list).  (battery_log was also excluded until US-223
 # deleted the table with its sole writer BatteryMonitor.)
+#: The capture table that carries a write-time column (US-809-b1).
+REALTIME_DATA_TABLE: str = 'realtime_data'
+
 CAPTURE_TABLES: tuple[str, ...] = (
     'realtime_data',
     'connection_log',
@@ -184,6 +187,45 @@ def ensureDataSourceColumn(
     return True
 
 
+WRITTEN_AT_COLUMN: str = 'written_at'
+
+#: Plain nullable DATETIME. No DEFAULT here in b1 -- US-809-b2 moves the DDL
+#: default onto this column. And deliberately NO BACKFILL from ``timestamp``:
+#: copying the capture instant would assert that every historical row was
+#: written the moment it was captured, which is the false continuity spec
+#: A-double-prime exists to remove and is indistinguishable afterwards from a
+#: genuinely prompt write. NULL means "we do not know when this was written",
+#: which is the truth about every pre-migration row.
+WRITTEN_AT_COLUMN_DDL: str = f'{WRITTEN_AT_COLUMN} DATETIME'
+
+
+def ensureWrittenAtColumn(
+    conn: sqlite3.Connection, tableName: str,
+) -> bool:
+    """Add ``written_at`` to ``tableName`` if not already present (US-809-b1).
+
+    Idempotent, and a no-op when the table does not exist yet: the Pi has no
+    migration ledger, so every schema step runs on every boot and has to be
+    safe to re-run.  Mirrors :func:`ensureDataSourceColumn`.
+
+    Args:
+        conn: Open sqlite3 connection.  The caller owns commit semantics.
+        tableName: Capture-table name.
+
+    Returns:
+        True if an ALTER TABLE ran, False if the column was already present
+        or the table did not exist.
+    """
+    if not _tableExists(conn, tableName):
+        return False
+    if _hasColumn(conn, tableName, WRITTEN_AT_COLUMN):
+        return False
+    conn.execute(
+        f"ALTER TABLE {tableName} ADD COLUMN {WRITTEN_AT_COLUMN_DDL}"
+    )
+    return True
+
+
 def ensureAllCaptureTables(conn: sqlite3.Connection) -> list[str]:
     """Run :func:`ensureDataSourceColumn` across every capture table.
 
@@ -198,6 +240,12 @@ def ensureAllCaptureTables(conn: sqlite3.Connection) -> list[str]:
     for tableName in CAPTURE_TABLES:
         if ensureDataSourceColumn(conn, tableName):
             migrated.append(tableName)
+    # US-809-b1: the write-time column, on the capture table that has one.
+    # Scoped to realtime_data deliberately -- the other capture tables are
+    # not part of this story and widening the sweep would land schema
+    # changes nobody asked for on the highest-risk device in the system.
+    if ensureWrittenAtColumn(conn, REALTIME_DATA_TABLE):
+        migrated.append(f'{REALTIME_DATA_TABLE}.{WRITTEN_AT_COLUMN}')
     return migrated
 
 

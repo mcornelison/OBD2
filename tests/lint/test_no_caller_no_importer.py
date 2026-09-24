@@ -211,6 +211,14 @@ KNOWN_DEAD: dict[str, str] = {
     "src/common/contracts/protocol.py": _SKELETON,
     "src/common/contracts/recommendations.py": _SKELETON,
     "src/common/contracts/vehicle.py": _SKELETON,
+    "src/server/api/currency.py": (
+        "US-795-b, UNWIRED ON PURPOSE for exactly one release. The story's own "
+        "fence says 'DO NOT surface this in any UI -- the answer is data this "
+        "sprint; the screen is V0.30', so the module has tests and no "
+        "production importer by design. DELETE THIS ENTRY when the V0.30 "
+        "consumer lands; test_everyLedgerEntryIsStillAFinding goes red if you "
+        "forget."
+    ),
     "src/pi/clients/ollama_client.py": _SKELETON,
     "src/pi/clients/uploader.py": _SKELETON,
     "src/pi/inbox/reader.py": _SKELETON,
