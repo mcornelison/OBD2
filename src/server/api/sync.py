@@ -338,6 +338,28 @@ class DriveCounterData(BaseModel):
     )
 
 
+class ResidualReport(BaseModel):
+    """What the Pi still held when this sync session closed (US-795-a).
+
+    Carried from the Pi's :class:`SyncBacklog`, never recomputed here: a second
+    implementation of the same measurement would be a second source of truth
+    for it. ``complete`` is the qualifier that keeps the number honest --
+    ``SyncBacklog.total`` is a LOWER BOUND whenever any table was unreadable,
+    and an integer stored without that fact reads as an exact count forever
+    after.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    outstandingRows: int = Field(
+        ..., ge=0, description="Rows the Pi still held at close, per SyncBacklog.",  # b044-exempt: pydantic Field description
+    )
+    complete: bool = Field(
+        ...,
+        description="False when any table was unreadable, making the count a lower bound.",  # b044-exempt: pydantic Field description
+    )
+
+
 class SyncRequest(BaseModel):
     """Top-level sync request body."""
 
@@ -355,6 +377,10 @@ class SyncRequest(BaseModel):
     driveCounter: DriveCounterData | None = Field(
         default=None,
         description="Optional Pi drive_counter singleton snapshot (US-314).",  # b044-exempt: pydantic Field description
+    )
+    residual: ResidualReport | None = Field(
+        default=None,
+        description="Optional residual the Pi still held at session close (US-795-a).",  # b044-exempt: pydantic Field description
     )
 
     @field_validator("tables")
@@ -1114,21 +1140,38 @@ async def _completeSyncHistoryRow(
     historyId: int,
     tablesProcessed: dict[str, dict[str, int]],
     syncedAt: datetime,
+    residual: ResidualReport | None = None,
 ) -> None:
-    """Mark the sync_history row completed with row counts + per-table summary."""
+    """Mark the sync_history row completed with row counts + per-table summary.
+
+    US-795-a: ``rows_synced`` says what MOVED; ``residual_rows`` /
+    ``residual_complete`` say what REMAINED. When the Pi reported no residual
+    the columns are LEFT UNSET rather than written as 0 -- an unmeasured
+    residual is unknown, and a 0 would assert the car owed nothing on the
+    evidence of a measurement that never happened.
+
+    Args:
+        engine: Async engine.
+        historyId: The sync_history row to complete.
+        tablesProcessed: Per-table inserted/updated counts.
+        syncedAt: Session completion instant.
+        residual: What the Pi still held at close, when it reported it.
+    """
     totalRows = sum(c["inserted"] + c["updated"] for c in tablesProcessed.values())
     tablesSyncedBlob = json.dumps(tablesProcessed, sort_keys=True)
+    values: dict[str, Any] = {
+        "status": "completed",
+        "rows_synced": totalRows,
+        "tables_synced": tablesSyncedBlob,
+        "completed_at": syncedAt,
+    }
+    if residual is not None:
+        values["residual_rows"] = residual.outstandingRows
+        values["residual_complete"] = residual.complete
     factory = getAsyncSession(engine)
     async with factory() as session:
         await session.execute(
-            update(SyncHistory)
-            .where(SyncHistory.id == historyId)
-            .values(
-                status="completed",
-                rows_synced=totalRows,
-                tables_synced=tablesSyncedBlob,
-                completed_at=syncedAt,
-            ),
+            update(SyncHistory).where(SyncHistory.id == historyId).values(**values),
         )
         await session.commit()
 
@@ -1258,7 +1301,9 @@ async def postSync(request: Request) -> SyncResponse:
 
     # 6) Update sync_history to completed.
     syncedAt = datetime.now(UTC).replace(tzinfo=None)
-    await _completeSyncHistoryRow(engine, historyId, tablesProcessed, syncedAt)
+    await _completeSyncHistoryRow(
+        engine, historyId, tablesProcessed, syncedAt, syncRequest.residual,
+    )
 
     # 7) US-350 / B-104 Step 1a (V0.27.17): the V0.27.7-V0.27.16
     #    auto-analysis trigger is retired.  Server-side drive analytics now

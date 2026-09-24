@@ -2881,6 +2881,57 @@ The guard does not depend on what separates a survivable cut from a fatal one. I
 completed shutdown must contain. It adds no bound on the drain, so a shutdown **with** a backlog
 still drains fully (§10.6.3).
 
+### 10.6.8 A sync session records the RESIDUAL, never the count alone (US-795-a, Sprint 93 / V0.29.64) [Atlas Rule 10]
+
+`sync_history` recorded what **moved** — `rows_synced` — and never what **remained**. That single
+omission was the whole gap, because **the residual is the only statement about the Pi that stays
+true after it goes dark.** Row counts describe a transfer that already succeeded; the residual
+describes the device, and the device is what you cannot ask once it stops answering.
+
+Two columns, added by `v0028`, both **nullable with no default**:
+
+| `residual_rows` | `residual_complete` | Means |
+|---|---|---|
+| `0` | `TRUE` | the car owed nothing, and every table could be read |
+| `12` | `FALSE` | **at least** 12 — some tables were unreadable |
+| `NULL` | `NULL` | we could not determine what the car owed |
+
+🔴 **The count may never travel alone.** `SyncBacklog.total` is documented as a **lower bound**
+whenever `unreadableTables` is non-empty — its own docstring says so. Persisting the integer
+without that qualifier converts a measured lower bound into an apparent exact count at the moment
+it is written down, and nothing downstream can recover the difference afterwards. A schema able to
+store the number without the qualifier is the defect, not a write path that happens to set both.
+
+🔴 **Zero and unknown are different facts and must stay differently stored.** A `NOT NULL DEFAULT
+0` would collapse the third row of that table into the first, so every session that failed to
+measure — and every row predating the migration — would assert that the car owed nothing. That is
+reporting a healthy car **on the evidence of a failed measurement**, which is the same shape of
+defect as a substituted timestamp (§A″): a manufactured value is indistinguishable from a measured
+one once it lands. `v0028` therefore backfills **nothing**.
+
+⚠️ **What the residual still cannot answer, and the worked case that proves it.** At 19:35:30Z
+session 216962 completed: 216 rows, zero errors, and the Pi genuinely *was* caught up. The CIO then
+drove, and the Pi never contacted the server again. **A residual of 0 would have been entirely
+correct and entirely useless** — the queue did not exist yet at the last contact. The residual
+answers *"was it current **as of** t"*, never *"is it current now"*. Anything that reads this
+column and says "synced" is making a claim about the present out of a fact about the past; §10.6.9
+(US-795-b) is where that distinction is spoken out loud.
+
+**Not a heartbeat.** One was proposed and withdrawn within the hour, correctly: a heartbeat needs
+the Pi to be alive to be informative, and the case that matters is exactly the one where it is not.
+
+**Measured, never recomputed.** The value is carried from the Pi's `SyncBacklog` (US-789,
+`3c921c65`) through the sync request and written at session close. The server does not recount:
+a second implementation of the same measurement would be a second source of truth for one fact.
+
+⚠️ **Producer gap, recorded rather than hidden:** the server accepts and stores the residual, and
+US-795-b consumes it. The Pi does not yet *send* it — `countOutstandingRows` is today called only
+from the power-watch shutdown path, and the residual deliberately belongs to session close instead
+(a row written to a synced table during shutdown recreates the custody defect). Until the Pi
+reports it, every new row stores `NULL` — **which reads as `unknown`, the honest answer, not as a
+false zero.** The open question is *when* the Pi should measure: per-batch is a full delta walk in
+a hot path, so the natural point is once per sync run rather than once per POST.
+
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
 **Architectural principle (CIO 2026-05-21).** Pi = telemetry emitter +
