@@ -211,14 +211,6 @@ KNOWN_DEAD: dict[str, str] = {
     "src/common/contracts/protocol.py": _SKELETON,
     "src/common/contracts/recommendations.py": _SKELETON,
     "src/common/contracts/vehicle.py": _SKELETON,
-    "src/common/time/helper.py::localNaiveToCanonicalIso": (
-        "US-809-0 STAGED, and wired by US-809-a in this same sprint. US-809-0's "
-        "scope fence is 'declaring and validating the zone ... NOT converting "
-        "anything (US-809-a)', while its own acceptance requires the refusal "
-        "path to exist and be tested -- so the conversion necessarily lands one "
-        "story ahead of its first producer. DELETE THIS ENTRY when US-809-a "
-        "wires it; test_everyLedgerEntryIsStillAFinding goes red if you forget."
-    ),
     "src/pi/clients/ollama_client.py": _SKELETON,
     "src/pi/clients/uploader.py": _SKELETON,
     "src/pi/inbox/reader.py": _SKELETON,

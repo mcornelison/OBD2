@@ -98,6 +98,9 @@ class _Rig:
         self._producer = SimpleNamespace(
             _seq=0, _producerSource="obd", _dataSource="real", _bus=self.bus,
             _stats=SimpleNamespace(totalLogged=0), _markRowWritten=lambda: None,
+            # US-809-c: the publish branch converts the reading's instant
+            # against the declared zone, so it reads config too.
+            config={"pi": {"time": {"localZone": "America/Chicago"}}},
         )
 
     def capture(self, n: int, name: str = "RPM") -> None:

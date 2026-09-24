@@ -25,6 +25,10 @@ def _logger(bus):
     the test is independent of the full constructor.
     """
     rdl = RealtimeDataLogger.__new__(RealtimeDataLogger)
+    # US-809-c: tsUtc is now converted from the reading's own instant against
+    # the DECLARED zone, so the publish branch reads config. Without this the
+    # failure reads as a missing attribute rather than a behaviour change.
+    rdl.config = {"pi": {"time": {"localZone": "America/Chicago"}}}
     rdl._bus = bus
     rdl._producerSource = "obd"
     rdl._seq = 0

@@ -49,6 +49,34 @@ _RAW_OBD_PREFIX = "raw.obd."
 _DRAIN_TIMEOUT_S = 0.5
 
 
+
+def _parseCaptureInstant(tsUtc: str) -> datetime:
+    """Parse a Sample's ``tsUtc`` back into the instant the producer measured.
+
+    US-809-c. The wire value is canonical ISO-8601 UTC (``...Z``); the returned
+    datetime is TZ-AWARE, because that is what the string actually means and
+    because ``toCanonicalIso`` -- which US-809-a routes this through -- refuses
+    a naive value by design.
+
+    Args:
+        tsUtc: The sample's capture instant, canonical ISO-8601 UTC.
+
+    Returns:
+        The parsed instant, tz-aware.
+
+    Raises:
+        ValueError: If the string is empty or not parseable. The caller turns
+            that into a REFUSED write rather than a substituted clock reading:
+            a row whose capture time was invented is worse than a row that is
+            not there, because the invented one is indistinguishable from a
+            measured one once it lands.
+    """
+    if not tsUtc:
+        raise ValueError('sample carries no tsUtc; refusing to invent one')
+    # fromisoformat accepts the trailing 'Z' from Python 3.11.
+    return datetime.fromisoformat(tsUtc)
+
+
 class PersistenceSubscriber:
     """Drains a :class:`Subscription` and writes each raw.obd.* sample to the DB.
 
@@ -126,10 +154,29 @@ class PersistenceSubscriber:
         if not sample.topic.startswith(_RAW_OBD_PREFIX):
             return False
         parameterName = sample.topic[len(_RAW_OBD_PREFIX):]
+        try:
+            capturedAt = _parseCaptureInstant(sample.tsUtc)
+        except ValueError:
+            # No honest capture instant -> no row. Loud, and never silent:
+            # substituting the drain clock here is exactly the fabrication
+            # US-809-c exists to remove.
+            logger.error(
+                "refusing to persist %s: unusable capture instant %r "
+                "(US-809-c -- a substituted timestamp is a manufactured reading)",
+                sample.topic, sample.tsUtc,
+            )
+            return False
         reading = LoggedReading(
             parameterName=parameterName,
             value=sample.value,
-            timestamp=datetime.now(),  # logReading restamps utcIsoNow() anyway
+            # US-809-c: CARRY the producer's capture instant. This line used
+            # to manufacture datetime.now(), and its own comment was the
+            # confession -- 'logReading restamps utcIsoNow() anyway'. That was
+            # true and harmless while link 3 discarded the value; the day
+            # US-809-a stops restamping, a manufactured instant would be
+            # converted faithfully and stored LABELLED as a capture time. A
+            # manufactured instant is a manufactured reading.
+            timestamp=capturedAt,
             unit=sample.unit,
             profileId=None,  # logReading falls back to the dataLogger's profileId
         )

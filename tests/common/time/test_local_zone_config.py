@@ -242,14 +242,21 @@ class TestTheKeyHasExactlyOneConsumer:
     def test_exactlyOneModuleOutsideConfigConsumesTheKey(self) -> None:
         """
         Given: the src/ tree
-        When: every module mentioning the key is collected
+        When: every module naming the key IN EXECUTABLE CODE is collected
         Then: exactly one lies outside src/common/config, and it is the helper
+
+        DOCSTRINGS ARE STRIPPED, and that is not a convenience. US-809-c gave
+        realtime.py a docstring that names ``pi.time.localZone`` to explain
+        where its conversion gets the zone -- documentation of a call it makes
+        THROUGH the helper, not a second read of the key. A text scan counts
+        that as a consumer and goes red on a tree that is correct, which is how
+        a guard earns its deletion. The same correction US-773 needed.
         """
         srcRoot = _REPO_ROOT / "src"
         consumers = sorted(
             path.relative_to(_REPO_ROOT).as_posix()
             for path in srcRoot.rglob("*.py")
-            if "localZone" in path.read_text(encoding="utf-8")
+            if _namesKeyInCode(path)
             and "common/config/" not in path.relative_to(_REPO_ROOT).as_posix()
         )
 
@@ -276,3 +283,27 @@ class TestTheKeyHasExactlyOneConsumer:
 
         assert "resolveLocalZone" in functions
         assert LOCAL_ZONE_CONFIG_KEY == "pi.time.localZone"
+
+
+def _namesKeyInCode(path: Path) -> bool:
+    """True when the module names the zone key outside a docstring.
+
+    Walks the AST and ignores every string that is a module, class or function
+    docstring, so prose about the key is not mistaken for a read of it.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(node, "body", None)
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                docstrings.add(id(body[0].value))
+
+    return any(
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "localZone" in node.value
+        and id(node) not in docstrings
+        for node in ast.walk(tree)
+    )

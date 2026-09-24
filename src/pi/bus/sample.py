@@ -46,7 +46,14 @@ class Sample:
             None for an honest-instrument "unreadable" reading (e.g. a
             saturated ``raw.light.lux`` -- never ``inf``; US-409).
         unit: Unit of measurement, or None.
-        tsUtc: ISO-8601 UTC wall-clock string -- the value that persists.
+        tsUtc: ISO-8601 UTC wall-clock string -- the value that persists,
+            and it holds the EVENT instant: when the reading was TAKEN,
+            not when it was published, drained or written. Spec
+            A-double-prime (2026-09-21) is newer than this file and
+            already determines this; stating it here is US-809-c. A
+            producer that cannot measure the event instant lands a typed
+            absence rather than substituting its own clock -- a
+            substituted timestamp is a MANUFACTURED reading.
         tsCapture: High-resolution monotonic seconds, for time-alignment.
         driveId: Active drive id, or None.
         dataSource: Origin tag, e.g. ``"real"`` / ``"physics_sim"``.

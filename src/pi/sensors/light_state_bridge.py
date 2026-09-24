@@ -101,14 +101,16 @@ def buildLightState(*, lux: float | None, tsUtc: str) -> dict:
     Args:
         lux: The latest lux reading, or None when saturated/unreadable. A
             non-finite value is coerced to None (never inf/nan in the file).
-        tsUtc: The reading's ISO-8601 read-time (the freshness marker the
-            US-483-b consumer compares against ``luxStaleSec``).
+        tsUtc: The reading's ISO-8601 EVENT instant (the freshness marker
+            the US-483-b consumer compares against ``luxStaleSec``). Empty
+            yields ``ts: null`` rather than a substituted clock reading,
+            which would be permanently fresh (US-809-c).
 
     Returns:
         ``{"lux": <float|None>, "ts": <tsUtc>}`` -- the exact shape mirroring the
         US-480-a states/ writers.
     """
-    return {"lux": _coerceLux(lux), "ts": tsUtc}
+    return {"lux": _coerceLux(lux), "ts": tsUtc or None}
 
 
 class LightStateBridge:
@@ -186,7 +188,10 @@ class LightStateBridge:
         """
         if getattr(sample, "topic", None) != TOPIC_LIGHT_LUX:
             return False
-        tsUtc = getattr(sample, "tsUtc", "") or self._nowIsoFn()
+        # US-809-c: carry the absence rather than substituting the clock. A
+        # fabricated ts is always fresh, so the US-483-b luxStaleSec check
+        # would still be there and would have stopped being able to fire.
+        tsUtc = getattr(sample, "tsUtc", "")
         self._writeState(buildLightState(lux=sample.value, tsUtc=tsUtc))
         return True
 
