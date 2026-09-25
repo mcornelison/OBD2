@@ -59,6 +59,8 @@
 #               |              | stops, applied before integration; a stop whose
 #               |              | standing rate reaches GYRO_BIAS_MAX_RAD_S (A-34
 #               |              | latch) is rejected, never absorbed.
+# 2026-09-24    | Rex (US-802-c)| Comments only: the pitchTauSec/accelTrustBand
+#               |              | notes now say where the config key lives.
 # ================================================================================
 ################################################################################
 
@@ -127,9 +129,12 @@ ZUPT_MIN_STOP_S = 3.0
 
 # Complementary-filter time constant, seconds: how fast a TRUSTED accel reading
 # pulls the gyro-integrated pitch back. Rex-derived (mirrors US-478's gravity
-# low-pass, which was sized the same way and flagged the same way) and
-# config-parameterized via pi.sensors.imu.pitchTauSec. Routed to Spool with the
-# sample rates under the story's SPOOL SIZING acceptance criterion.
+# low-pass, which was sized the same way and flagged the same way). Routed to
+# Spool with the sample rates under the story's SPOOL SIZING acceptance criterion.
+# To CHANGE it, set pi.sensors.imu.pitchTauSec in config.json (shipped at 5.0 by
+# US-802-a, 2026-09-24); imu_state_bridge.buildImuStateBridge reads that key and
+# passes it to PitchFusion. This constant is only the fallback when the key is
+# absent -- editing it here does not change a car running the shipped config.
 DEFAULT_PITCH_TAU_S = 5.0
 
 # The "near 1 g" window, as a FRACTION of standard gravity, inside which the
@@ -143,7 +148,10 @@ DEFAULT_PITCH_TAU_S = 5.0
 # correct it. The residual -- a sustained sub-0.2 g pull still leaks in -- is
 # bounded by the tau blend above and erased by the next ZUPT, which is precisely
 # why Spool specified both mechanisms rather than either alone. Rex-derived,
-# config-parameterized (pi.sensors.imu.accelTrustBand), routed to Spool.
+# routed to Spool. To CHANGE it, set pi.sensors.imu.accelTrustBand in config.json
+# (shipped at 0.02 by US-802-a, 2026-09-24); imu_state_bridge.buildImuStateBridge
+# reads that key and passes it to PitchFusion. This constant is only the fallback
+# when the key is absent.
 DEFAULT_ACCEL_TRUST_BAND = 0.02
 
 # How stale an OBD speed reading may be and still count as evidence about the
