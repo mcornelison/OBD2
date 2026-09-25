@@ -56,6 +56,9 @@ from typing import Any
 
 __all__ = [
     "AK09916_TO_ICM_AXES",
+    "MAG_SOURCE_BYPASS",
+    "MAG_SOURCE_ICM_SHADOW",
+    "MAG_SOURCE_NONE",
     "toIcmFrame",
     "AK09916_I2C_ADDRESS",
     "FRAME_LENGTH",
@@ -139,6 +142,22 @@ UT_PER_LSB = 0.15
 #: at the sensor seam, which is why every attempt above that layer failed while
 #: appearing to work at 0 deg and 180 deg.
 AK09916_TO_ICM_AXES: tuple[tuple[int, int], ...] = ((1, 1), (0, 1), (2, -1))
+
+# ============================ ARCH-056: WHICH PATH READ IT ====================
+#: Which acquisition path produced a magnetometer reading. Defined HERE, at the
+#: seam that chooses the path, and re-exported from ``imu_state_bridge``.
+#:
+#: 🔴 WHY A VOCABULARY AND NOT A BOOLEAN. These two paths do not merely differ in
+#: quality -- one of them is KNOWN BROKEN. ``dev.magnetic`` returns a FROZEN
+#: vector because its read does not extend through ST2 (US-565 measured it on
+#: this chip, with CNTL2=0x08 and ST1.DRDY set while the value did not move), and
+#: ``_attachDirectMagnetometer`` silently falls back to it. MEASURED 2026-09-24:
+#: five of twelve drives persisted that frozen channel and every hard-iron fit
+#: was then made on the mixture. A reading whose provenance is unrecorded cannot
+#: be excluded from a corpus afterwards -- which is exactly what happened.
+MAG_SOURCE_BYPASS: str = "bypass"          # this module, ST1..ST2 -- the correct read
+MAG_SOURCE_ICM_SHADOW: str = "icm_shadow"  # bare ICM dev.magnetic -- KNOWN FROZEN
+MAG_SOURCE_NONE: str = "none"              # no magnetometer attached at all
 
 
 def toIcmFrame(raw: tuple[float, float, float]) -> tuple[float, float, float]:

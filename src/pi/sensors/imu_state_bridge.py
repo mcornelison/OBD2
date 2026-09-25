@@ -100,6 +100,7 @@ import math
 import os
 import threading
 from collections.abc import Callable
+from enum import Enum
 from typing import Any
 
 # US-801: the IMU sample and state rates are DEFINED once, in the validator,
@@ -107,6 +108,14 @@ from typing import Any
 from common.config.validator import DEFAULT_IMU_SAMPLE_HZ
 from common.config.validator import DEFAULT_IMU_STATE_HZ as DEFAULT_STATE_HZ
 from common.time.helper import utcIsoNow
+
+# US-564: the gate-state topic derivation, imported rather than re-spelled so
+# producer and consumer cannot bind to two different names for one channel.
+from pi.sensors.ak09916_bypass import (
+    MAG_SOURCE_BYPASS,
+    MAG_SOURCE_ICM_SHADOW,
+    MAG_SOURCE_NONE,
+)
 
 # US-521: the pitch estimator owns the gravity/tilt constants US-478 defined
 # here; they are re-exported below so there is exactly ONE definition of each.
@@ -124,9 +133,6 @@ from pi.sensors.pitch_fusion import (
     PitchFusion,
     gradePctFromPitchRad,
 )
-
-# US-564: the gate-state topic derivation, imported rather than re-spelled so
-# producer and consumer cannot bind to two different names for one channel.
 from pi.sensors.plausibility_gate import channelStateTopic
 
 # Reuse the boot-state primitives (one provisioning + atomic-write impl, no dup).
@@ -151,8 +157,16 @@ __all__ = [
     "IMU_BODY_FRAME_C",
     "IMU_STATE_FILENAME",
     "MAG_MAX_AGE_POLLS",
+    "MAG_ROTATION_MIN_RATIO",
+    "MAG_ROTATION_MIN_YAW_RAD",
+    "MAG_SOURCE_BYPASS",
+    "MAG_SOURCE_ICM_SHADOW",
+    "MAG_SOURCE_NONE",
     "MAX_GRADE_PITCH_DEG",
+    "MagRotation",
+    "REASON_MAG_FROZEN",
     "REASON_NO_MAG",
+    "assessMagRotation",
     "REASON_NO_SOURCE",
     "REASON_PITCH_OUT_OF_RANGE",
     "REASON_PITCH_UNSEEDED",
@@ -304,6 +318,117 @@ REASON_PITCH_UNSEEDED = "pitch_unseeded"
 # known yet) and pitch_out_of_range (a number past tan's range): here the number
 # exists and the estimator has evidence it is wrong.
 REASON_GYRO_IMPLAUSIBLE = "gyro_implausible"
+# ARCH-056: the mag channel IS reading, and what it reads does not TURN when the
+# car turns. Deliberately NOT ``REASON_NO_MAG``: that reason fires on AGE, and
+# collapsing the two would report "stale" for a CONTENT failure, sending the
+# operator after a timing problem that is not there.
+REASON_MAG_FROZEN = "mag_frozen"
+
+# =========================== ARCH-056: THE FROZEN CHANNEL =====================
+# 🔴 WHY THIS GATE EXISTS, AND WHY THE EXISTING ONES CANNOT DO IT.
+#
+# ``dev.magnetic`` (the Adafruit path) returns a FROZEN vector unless the read
+# extends through ST2 -- US-565 measured that on this chip, with CNTL2=0x08 and
+# ST1.DRDY set while the value did not move. ``ak09916_bypass`` reads ST1..ST2
+# and is correct; but when it fails, ``_attachDirectMagnetometer`` returns the
+# BARE ICM, silently reinstating the known-frozen path. Its comment defends that
+# with "the US-564 gate will refuse it as stale".
+#
+# 🔴 IT DOES NOT, AND THE RECORD PROVES IT. MEASURED 2026-09-24 over
+# ``edr_imu_sample``, per-axis excursion across a whole drive:
+#     drives 70 / 77 / 78          : 12.45 -- 46.50 uT   (healthy)
+#     drives 69 / 72 / 74 / 75 / 76:  5.25 --  9.30 uT   (frozen)
+# A turning car must sweep the horizontal field through ~2H ~ 40 uT. Those five
+# drives moved ~6 uT and every row was PERSISTED, then calibrated against -- which
+# is why no hard-iron fit has ever transferred.
+#
+# ⚠️ THE TWO EXISTING GUARDS TEST THE WRONG PROPERTY.
+#   * ``REASON_NO_MAG`` fires on AGE. A frozen channel is FRESH -- new
+#     timestamps, unchanging content -- so an age gate cannot see it.
+#   * The project's bit-identity rule cannot see it either: the frozen readback
+#     dithers by a few LSB, so it is not bit-identical. That rule is correct for
+#     a LATCHED channel and blind to a DITHERING one.
+# The discriminating property is ROTATION, and nothing tested it.
+#
+# 🔴 IT IS A COMPOUND CONDITION, NOT A BARE THRESHOLD, and that is deliberate:
+# a raw excursion floor would nuisance-fire on every straight highway mile. The
+# expectation only exists once the GYRO says the vehicle actually yawed.
+
+#: The yaw a window must accumulate before the magnetometer can be judged at all.
+#: Below this there is NO EXPECTATION, so the verdict is UNDETERMINED -- never
+#: healthy. A car driving straight cannot testify about its own compass.
+MAG_ROTATION_MIN_YAW_RAD: float = math.radians(45.0)
+
+#: Minimum observed-mag-rotation / vehicle-yaw ratio for a LIVE channel.
+#:
+#: 🔴 DERIVED, NOT CHOSEN, and the basis is measured. Drive 77: hard-iron
+#: |offset| = 17.59 uT against a rotating radius of 16.43 uT. The offset EXCEEDS
+#: the radius, so the uncorrected horizontal locus does NOT enclose the origin --
+#: the raw bearing physically cannot sweep a full circle. It is bounded to about
+#: +/- asin(R/|offset|), i.e. ~138 deg of arc for 360 deg of yaw, a ratio of
+#: ~0.38. US-695 is NOT shipped, so the live channel is uncorrected TODAY and a
+#: threshold at or above 0.38 would condemn a perfectly healthy sensor.
+#: A frozen channel scores ~0.06 (9.30 uT of wander on a 16.43 uT circle).
+#: 0.15 sits an order of magnitude clear of the frozen case and well below the
+#: uncorrected-but-live case.
+#: ⚠️ VOID IF US-695 lands: once the offset is removed the live ratio rises
+#: toward 1.0, and this floor should be RAISED rather than left slack.
+MAG_ROTATION_MIN_RATIO: float = 0.15
+
+#: Longest sample gap the rotation window will integrate across. Past this the
+#: yaw integral has a hole in it, and carrying that hole would understate the
+#: turn and manufacture a FROZEN verdict on a live channel. Sized at 10x the
+#: 1.25 s pairing window so an ordinary scheduler hiccup does not reset it.
+_MAG_ROT_MAX_GAP_S: float = 12.5
+
+#: MAG_SOURCE_* are DEFINED IN ``ak09916_bypass`` -- the acquisition seam that
+#: actually chooses the path -- and re-exported here, the same way the pitch
+#: constants are, so there is exactly ONE definition of each.
+
+
+class MagRotation(Enum):
+    """Whether the mag channel demonstrably turns with the vehicle.
+
+    THREE VALUES, NOT TWO. ``UNDETERMINED`` is the honest answer when the car
+    has not yawed enough to produce an expectation, and it must never be read as
+    a pass: the difference between "proven live" and "not yet asked" is exactly
+    what the age gate lost.
+    """
+
+    HEALTHY = "healthy"
+    FROZEN = "frozen"
+    UNDETERMINED = "undetermined"
+
+
+def assessMagRotation(*, yawRad: float, magRotationRad: float) -> MagRotation:
+    """Compare observed magnetic-bearing rotation against gyro-measured yaw.
+
+    Args:
+        yawRad: Magnitude of vehicle yaw accumulated over the window, radians.
+        magRotationRad: Magnitude of the horizontal magnetic bearing's rotation
+            over the same window, radians.
+
+    Returns:
+        ``FROZEN`` only when the vehicle demonstrably turned and the field did
+        not follow; ``HEALTHY`` when it followed; ``UNDETERMINED`` whenever the
+        question could not be asked -- too little yaw, or a non-finite input.
+
+    A non-finite rotation resolves to ``UNDETERMINED``, not ``FROZEN``: reporting
+    a fault on the strength of having failed to measure it is the same inversion
+    as calling a disk healthy because the filesystem could not be read.
+    """
+    if not math.isfinite(yawRad) or not math.isfinite(magRotationRad):
+        return MagRotation.UNDETERMINED
+    if yawRad < MAG_ROTATION_MIN_YAW_RAD:
+        return MagRotation.UNDETERMINED
+    if magRotationRad < 0.0:
+        return MagRotation.UNDETERMINED
+    return (
+        MagRotation.FROZEN
+        if (magRotationRad / yawRad) < MAG_ROTATION_MIN_RATIO
+        else MagRotation.HEALTHY
+    )
+
 
 # The derived fields, in payload order (the reasons map is keyed by these).
 _DERIVED_FIELDS = (
@@ -572,6 +697,7 @@ def buildImuState(
     stopCount: int = 0,
     biasRad: float = 0.0,
     gyroImplausible: bool = False,
+    magRotation: str = MagRotation.UNDETERMINED.value,
     unavailableReason: str | None = None,
     fieldReasons: dict[str, str] | None = None,
 ) -> dict:
@@ -642,6 +768,11 @@ def buildImuState(
         # not change -- PitchFusion deliberately keeps it across reset.
         "stopCount": stopCount,
         "biasRad": biasRad,
+        # ARCH-056 diagnostic, NOT in _DERIVED_FIELDS and never gated: it
+        # describes whether the mag channel was DEMONSTRATED to turn with the
+        # car, and it is most wanted exactly when headingDeg has gone null.
+        # Three-valued on purpose -- "undetermined" is not "healthy".
+        "magRotation": magRotation,
         "reasons": reasons,
     }
 
@@ -798,6 +929,15 @@ class ImuStateBridge:
         # would be indistinguishable from a genuine level reading.
         self._lastDerived: dict[str, Any] | None = None
         self._lastLoggedGyroImplausible = False
+        # ARCH-056: the rolling gyro-vs-magnetometer rotation comparison. The
+        # VERDICT starts UNDETERMINED and stays until a window accumulates
+        # enough yaw to earn one -- never HEALTHY by default, because "not yet
+        # asked" and "proven live" are the two states the age gate conflated.
+        self._magRotation: MagRotation = MagRotation.UNDETERMINED
+        self._magYawAccumRad: float = 0.0
+        self._magRotAccumRad: float = 0.0
+        self._magBearingPrevDeg: float | None = None
+        self._magRotLastCapture: float | None = None
         # US-564: raw channel topic -> the gate reason currently refusing it.
         self._gatedChannels: dict[str, str] = {}
 
@@ -958,7 +1098,75 @@ class ImuStateBridge:
         for rawTopic, reason in self._gatedChannels.items():
             for field in _CHANNEL_DERIVED_FIELDS.get(rawTopic, ()):
                 out[field] = reason
+        # ARCH-056: a channel that reads but does not TURN is not a channel.
+        # Applied here rather than inside buildImuState so it travels the same
+        # path as every other gate and cannot be forgotten by a caller.
+        # ⚠️ ONLY on a positive FROZEN verdict -- UNDETERMINED must not gate,
+        # or a straight highway leg would blank a working heading.
+        if self._magRotation is MagRotation.FROZEN:
+            out["headingDeg"] = REASON_MAG_FROZEN
         return out
+
+    def _updateMagRotation(self, capture: float) -> None:
+        """Accumulate vehicle yaw against magnetic-bearing rotation (ARCH-056).
+
+        Two independent instruments are compared over a rolling window: the gyro
+        says how far the chassis turned, the magnetometer says how far the field
+        appeared to turn. A frozen mag channel cannot follow a real yaw, and no
+        age or bit-identity check can see that -- the readings are fresh and they
+        dither.
+
+        The window is evaluated and reset only once it has accumulated enough
+        yaw to HAVE an expectation, so a straight leg simply never asks.
+        """
+        gyro = self._freshGyro(capture)
+        mag = self._freshMag(capture)
+        gravity = self._gravity
+        if gyro is None or mag is None or gravity is None:
+            # Not a verdict and not a reset: an unanswerable window stays open.
+            self._magRotLastCapture = capture
+            return
+        bearing = computeHeadingDeg(gravity, mag)
+        last = self._magRotLastCapture
+        self._magRotLastCapture = capture
+        if last is None:
+            self._magBearingPrevDeg = bearing
+            return
+        dt = capture - last
+        if dt <= 0.0 or dt > _MAG_ROT_MAX_GAP_S:
+            # A gap longer than this makes the integral meaningless. Restart the
+            # window rather than carry a hole in it as though it were rotation.
+            self._resetMagRotationWindow(bearing)
+            return
+        # gyro is (fwd, left, up) after resolveMountFrame, so index 2 is YAW.
+        self._magYawAccumRad += abs(gyro[2]) * dt
+        prevBearing = self._magBearingPrevDeg
+        if bearing is not None and prevBearing is not None:
+            delta = abs((bearing - prevBearing + 180.0) % 360.0 - 180.0)
+            self._magRotAccumRad += math.radians(delta)
+        self._magBearingPrevDeg = bearing
+        if self._magYawAccumRad >= MAG_ROTATION_MIN_YAW_RAD:
+            verdict = assessMagRotation(
+                yawRad=self._magYawAccumRad, magRotationRad=self._magRotAccumRad
+            )
+            if verdict is not self._magRotation:
+                logger.warning(
+                    "imu mag rotation verdict %s -> %s (yaw=%.1f deg, "
+                    "mag bearing moved %.1f deg, ratio=%.3f, floor=%.2f)",
+                    self._magRotation.value, verdict.value,
+                    math.degrees(self._magYawAccumRad),
+                    math.degrees(self._magRotAccumRad),
+                    self._magRotAccumRad / self._magYawAccumRad,
+                    MAG_ROTATION_MIN_RATIO,
+                )
+            self._magRotation = verdict
+            self._resetMagRotationWindow(bearing)
+
+    def _resetMagRotationWindow(self, bearing: float | None) -> None:
+        """Drop the accumulators; the VERDICT persists until the next window."""
+        self._magYawAccumRad = 0.0
+        self._magRotAccumRad = 0.0
+        self._magBearingPrevDeg = bearing
 
     def _pitchDiagnostics(self) -> dict[str, Any]:
         """The pitch estimator's calibration state, for publication (US-708).
@@ -1063,6 +1271,9 @@ class ImuStateBridge:
         self._recordDerived(sample, capture)
         self._logStopCountChange()
         self._logGyroPlausibilityChange()
+        # ARCH-056: runs at SENSOR rate, not display rate -- the yaw integral
+        # needs every burst, and decimating it to 1 Hz would lose most of a turn.
+        self._updateMagRotation(capture)
         if not self._shouldWrite(capture):
             return
         gravity = self._gravity
@@ -1079,6 +1290,7 @@ class ImuStateBridge:
                 mag=self._freshMag(capture),
                 pitchRad=self._pitchFusion.pitchRad,
                 gyroImplausible=self._pitchFusion.gyroImplausible,
+                magRotation=self._magRotation.value,
                 fieldReasons=self._fieldReasons(),
                 **self._pitchDiagnostics(),
             )
