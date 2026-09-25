@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.67",
-  "theme": "Hotfix: Pi schema rebuild on a quoted table",
-  "description": "HOTFIX: production outage. eclipse-obd could not start -- table \"realtime_data\" already exists. _renameCreateTarget matched a BARE identifier only, but SQLite stores the name double-quoted after ALTER TABLE RENAME TO, so the rewrite was a silent no-op and the rebuild re-created the LIVE table. Latent since US-424. All four quoting forms now handled; a no-match raises. 15 tests, 11 red at V0.29.66."
+  "version": "V0.29.68",
+  "theme": "ARCH-056: mag provenance and rotation gate",
+  "description": "DIAGNOSTIC, not a calibration: changes no heading value, only whether a live magnetometer channel can be told from a frozen one. ARCH-032 broke the AK09916 bypass, so _attachDirectMagnetometer returned the bare ICM, reinstating the dev.magnetic path US-565 proved FROZEN. The US-564 guard fires on AGE; a frozen channel is FRESH, so it never saw this. 5 of 12 drives persisted one. Zero regressions."
 }
