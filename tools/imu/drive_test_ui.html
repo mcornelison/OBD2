@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<!--
+  ARCH-058 -- the zero-interaction drive console screen.
+
+  🔴 WHY EVERYTHING IS ENORMOUS. The OSOYOO HDMI35 is a SCALER panel: it
+  advertises no 480x320 mode, so the shipping configuration is 720p (BL-034).
+  That means a 1280x720 viewport on a 3.5-inch screen -- roughly 420 DPI. Text
+  that looks generous in a desktop browser is about 2 mm tall on the dash. To be
+  readable at arm's length while DRIVING, the headline numbers have to be 100-160
+  CSS px. The CIO asked for "very large. Very large." He is right, and this is
+  why.
+
+  🔴 THE DRIVER TOUCHES NOTHING. He is driving, off WiFi, with no keyboard. The
+  phase advances on a clock, the session ends itself, and this page is a STATUS
+  DISPLAY -- glanceable, not interactive. END SESSION remains only as an escape
+  hatch and is deliberately small and hold-to-fire so it cannot be hit by accident
+  on a bumpy road.
+
+  Poll contract: GET /status every 500 ms. Same shape as the 2026-09-18 console
+  with the phase fields added.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drive console</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --fg: #e8eef5;
+    --dim: #7d8b9a;
+    --ok: #35d07f;
+    --bad: #ff4d4d;
+    --warn: #ffc043;
+    --accent: #4aa3ff;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body {
+    height: 100%; background: var(--bg); color: var(--fg);
+    font-family: "DejaVu Sans", system-ui, sans-serif;
+    overflow: hidden; -webkit-user-select: none; user-select: none;
+  }
+  body { display: flex; flex-direction: column; padding: 14px 20px; gap: 6px; }
+
+  /* Phase identity -- the first thing a glance should land on. */
+  #phase   { font-size: 46px; font-weight: 700; color: var(--accent);
+             letter-spacing: 1px; line-height: 1; }
+  #mech    { font-size: 68px; font-weight: 800; line-height: 1.02; }
+
+  /* The countdown. Largest element on the screen by design: it is the only
+     number that tells him what is about to happen. */
+  #countWrap { display: flex; align-items: baseline; gap: 18px; margin-top: 2px; }
+  #countK  { font-size: 34px; color: var(--dim); text-transform: uppercase; }
+  #count   { font-size: 150px; font-weight: 800; line-height: 0.92;
+             font-variant-numeric: tabular-nums; }
+  #count.open { font-size: 92px; color: var(--dim); }
+
+  /* The circle prompt. Amber, because it is an INSTRUCTION, not a status. */
+  #circles { font-size: 52px; font-weight: 800; color: var(--warn);
+             display: none; line-height: 1.05; }
+  #circles.on { display: block; }
+
+  /* Magnetometer state -- the whole experiment in one word. */
+  #magRow  { display: flex; align-items: baseline; gap: 22px; margin-top: 4px; }
+  #magK    { font-size: 34px; color: var(--dim); }
+  #mag     { font-size: 84px; font-weight: 800; line-height: 1; }
+  #mag.live   { color: var(--ok); }
+  #mag.frozen { color: var(--bad); }
+  #mag.unknown{ color: var(--dim); }
+
+  #stats   { display: flex; gap: 34px; font-size: 32px; color: var(--dim);
+             margin-top: auto; align-items: center; flex-wrap: wrap; }
+  #stats b { color: var(--fg); font-size: 40px; font-variant-numeric: tabular-nums; }
+
+  /* Transition banner -- full width, ~10 s, impossible to miss at a glance. */
+  #banner {
+    position: fixed; inset: 0; background: var(--accent); color: #04121f;
+    display: none; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; padding: 20px; z-index: 9;
+  }
+  #banner.on { display: flex; }
+  #bTop { font-size: 54px; font-weight: 700; opacity: .85; }
+  #bMech{ font-size: 104px; font-weight: 900; line-height: 1.02; }
+
+  /* Escape hatch: small, cornered, hold-to-fire. */
+  #end {
+    position: fixed; right: 10px; bottom: 10px; width: 190px; height: 74px;
+    border: 2px solid #33414f; border-radius: 10px; background: #131a22;
+    color: var(--dim); font-size: 20px; font-weight: 700; overflow: hidden;
+    position: fixed; z-index: 10;
+  }
+  #fill { position: absolute; inset: 0 auto 0 0; width: 0; background: #3a2a2a; }
+  #end span { position: relative; }
+  #err { color: var(--bad); font-size: 26px; min-height: 28px; }
+</style>
+
+<div id="phase">PHASE — of —</div>
+<div id="mech">starting…</div>
+
+<div id="countWrap">
+  <div id="countK">next in</div>
+  <div id="count">--:--</div>
+</div>
+
+<div id="circles">▶ DO SLOW CIRCLES NOW</div>
+
+<div id="magRow">
+  <div id="magK">MAG</div>
+  <div id="mag" class="unknown">—</div>
+</div>
+
+<div id="stats">
+  <span>rows <b id="rows">0</b></span>
+  <span>restores <b id="res">0</b></span>
+  <span>elapsed <b id="elapsed">0:00</b></span>
+  <span id="obdWrap">obd <b id="obd">—</b></span>
+</div>
+<div id="err"></div>
+
+<button id="end"><div id="fill"></div><span>hold 2 s<br>end session</span></button>
+
+<div id="banner">
+  <div id="bTop">NOW COLLECTING</div>
+  <div id="bMech">—</div>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const BANNER_MS = 10000;
+  let lastPhase = null, bannerUntil = 0, ended = false;
+
+  const mmss = s => {
+    if (s === null || s === undefined) return null;
+    s = Math.max(0, Math.round(s));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  };
+
+  function paint(s) {
+    const idx = s.phaseIndex, tot = s.phaseTotal;
+    $('phase').textContent =
+      (idx === null || idx === undefined) ? 'PHASE — of —'
+                                          : `PHASE ${idx + 1} of ${tot}`;
+    $('mech').textContent = s.phaseLabel || '—';
+
+    const c = mmss(s.remainingS);
+    // An open-ended phase shows "until you park", never a fabricated countdown.
+    // A number counting toward an end that does not exist is the same class of
+    // lie as a zero-filled sensor reading.
+    $('count').textContent = c === null ? 'until you park' : c;
+    $('count').classList.toggle('open', c === null);
+
+    $('circles').classList.toggle('on', !!s.promptCircles);
+
+    const m = $('mag');
+    if (s.magLive === true)       { m.textContent = 'LIVE';   m.className = 'live'; }
+    else if (s.magLive === false) { m.textContent = 'FROZEN'; m.className = 'frozen'; }
+    else                          { m.textContent = '—';      m.className = 'unknown'; }
+
+    $('rows').textContent    = s.rows ?? 0;
+    $('res').textContent     = s.magRestores ?? 0;
+    $('elapsed').textContent = mmss(s.elapsedS) || '0:00';
+    $('obd').textContent     = s.obd || '—';
+    $('err').textContent     = s.error || '';
+
+    // Edge-triggered banner: only on an actual phase change, and it must clear
+    // itself. A banner that never clears stops meaning "something just changed".
+    if (lastPhase !== null && idx !== null && idx !== lastPhase) {
+      $('bMech').textContent = s.phaseLabel || '—';
+      $('banner').classList.add('on');
+      bannerUntil = performance.now() + BANNER_MS;
+    }
+    if (idx !== null && idx !== undefined) lastPhase = idx;
+    if (bannerUntil && performance.now() > bannerUntil) {
+      $('banner').classList.remove('on');
+      bannerUntil = 0;
+    }
+    if (s.sessionOver) {
+      $('mech').textContent = 'SESSION ENDED';
+      $('count').textContent = s.collectorRestored ? 'collector restored'
+                                                   : 'CHECK THE CAR';
+      $('count').classList.add('open');
+    }
+  }
+
+  async function poll() {
+    if (ended) return;
+    try { paint(await (await fetch('/status', { cache: 'no-store' })).json()); }
+    catch (e) { $('err').textContent = 'console unreachable'; }
+  }
+
+  (() => {  // hold-to-end, so a bump cannot fire it
+    const HOLD = 2000; let t0 = null, raf = null;
+    const fill = $('fill');
+    const reset = () => { t0 = null; cancelAnimationFrame(raf); fill.style.width = '0'; };
+    const tick = () => {
+      if (t0 === null) return;
+      const p = Math.min(1, (performance.now() - t0) / HOLD);
+      fill.style.width = (p * 100) + '%';
+      if (p >= 1) { fire(); return; }
+      raf = requestAnimationFrame(tick);
+    };
+    const fire = async () => {
+      reset(); ended = true;
+      $('mech').textContent = 'ending…';
+      try { await fetch('/end', { method: 'POST' }); } catch (e) { /* shutting down */ }
+    };
+    const down = e => { e.preventDefault(); if (ended) return;
+                        t0 = performance.now(); raf = requestAnimationFrame(tick); };
+    $('end').addEventListener('pointerdown', down);
+    $('end').addEventListener('pointerup', reset);
+    $('end').addEventListener('pointerleave', reset);
+    $('end').addEventListener('pointercancel', reset);
+  })();
+
+  setInterval(poll, 500);
+  poll();
+</script>
