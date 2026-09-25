@@ -38,11 +38,20 @@ drift is silently attributed to A or B.
 🔴 WHY THE SCREEN ASKS FOR CIRCLES. MEASURED from the CIO's own 2026-09-15 GPX:
 worst-case coverage of 36 heading bins was **3% at a 2-minute window** and only
 **81% at 15 minutes**. A hard-iron offset is the CENTRE OF A CIRCLE and cannot be
-located from an arc, so a phase containing no continuous turn cannot produce a fit
-however long it runs. ⚠️ A rectangular block has FOUR headings -- lapping it three
-times yields three times as many samples at the same four, and adds no
-information. Continuous slow circles are the only part of a drive that can
-calibrate a magnetometer, which is why the prompt exists and why it leads.
+located from an arc, so angular SPREAD -- not distance and not lap count -- is what
+gates a fit. Continuous slow circles reach it in well under a minute, which is why
+the prompt leads each phase.
+
+⚠️ CORRECTION TO MY OWN EARLIER CLAIM (Atlas, 2026-09-25). I told the CIO that a
+rectangular block gives "FOUR headings, 4/36 = 11%, forever" and could never
+calibrate a magnetometer. **That is WRONG, and the test that now guards it is
+`test_aRectangularBlockDOESReachFittableCoverage` -- its first version asserted my
+claim and FAILED.** A vehicle's heading is CONTINUOUS: it cannot teleport from
+north to east, so every 90 deg corner sweeps through all the intermediate bearings
+and four corners traverse the full circle. ⇒ **Three laps of a block ARE fittable
+and no parking lot is required.** What circles buy is faster and more EVENLY
+WEIGHTED coverage -- the fit is better conditioned -- not the difference between
+possible and impossible.
 
 ⚠️ WHAT THIS MODULE DOES NOT DECIDE. It does not choose or configure the
 acquisition mechanisms -- it only says which one should be running and for how
@@ -57,6 +66,10 @@ from dataclasses import dataclass
 
 __all__ = [
     "CIRCLE_PROMPT_S",
+    "COVERAGE_BINS",
+    "COVERAGE_FITTABLE",
+    "COVERAGE_MAX_GAP_S",
+    "TurnCoverage",
     "DEFAULT_PHASES",
     "MECH_KEEPALIVE",
     "MECH_KEEPALIVE_DRDY",
@@ -85,6 +98,20 @@ MECH_KEEPALIVE_DRDY = "keepalive_drdy"
 #: Two circles at a walking-to-jogging pace take roughly 70 s; 120 s leaves room
 #: to reach the open space without the prompt expiring on the way.
 CIRCLE_PROMPT_S: float = 120.0
+
+#: Sectors the compass is divided into for the coverage readout.
+COVERAGE_BINS: int = 36
+
+#: Coverage at which a phase is worth advancing from. Chosen from the CIO's
+#: own 2026-09-15 GPX, where worst-case coverage was 3% at a 2-minute window
+#: and 81% at 15 minutes: 0.70 is comfortably above what a block can ever
+#: reach (4/36 = 0.11) and reachable by two slow circles in well under a
+#: minute. ⚠️ It is ADVISORY on the screen and never disables the button --
+#: see the UI comment for why.
+COVERAGE_FITTABLE: float = 0.70
+
+#: Longest sample gap the yaw integral will cross.
+COVERAGE_MAX_GAP_S: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -270,3 +297,81 @@ class ParkDetector:
         ):
             self._parked = True
         return self._parked
+
+
+# ============================ BUTTON ADVANCE (CIO, 2026-09-25) ================
+#
+# 🔴 THE CIO CHOSE THE BUTTON OVER THE CLOCK, and he is right: *"I will be at a
+# stop sign each lap so it will not be a big issue."* The button mechanism is also
+# the one already BENCH-CHECKED on the Pi (2026-09-18, two rounds), and its label
+# always says what pressing it does.
+#
+# ⚠️ BUT A BUTTON INTRODUCES A RISK A TIMER DID NOT: he can advance before the
+# phase has collected enough to be FITTABLE. A timer at least guaranteed duration.
+# So the screen has to tell him when it is safe to press -- which is what
+# :class:`TurnCoverage` is for.
+#
+# 🔴 AND COVERAGE MUST BE MEASURED FROM THE GYRO, NOT THE MAGNETOMETER. Phase 0 is
+# EXPECTED to freeze -- it is the control -- and a frozen magnetometer would report
+# a confident, wrong coverage figure for the one phase whose job is to be broken.
+# The gyro is independent of the channel under test, which is the whole point of
+# choosing it: ask the instrument a question it can actually answer.
+
+
+class TurnCoverage:
+    """How much of the compass the vehicle has actually turned through.
+
+    Integrates yaw RATE into a heading and bins it into
+    :data:`COVERAGE_BINS` sectors. The absolute heading is meaningless (the
+    integral starts wherever the phase started and drifts); what matters is the
+    SPREAD of directions visited, which is exactly what a hard-iron fit needs.
+
+    ⚠️ Drift is acceptable here and would not be for navigation: over a few
+    minutes an in-spec gyro drifts by degrees, which moves a sample between
+    adjacent bins and cannot manufacture coverage of a sector the car never faced.
+    """
+
+    def __init__(self, bins: int = 36) -> None:
+        self._bins = max(4, int(bins))
+        self._seen: set[int] = set()
+        self._headingRad = 0.0
+
+    @property
+    def fraction(self) -> float:
+        """Fraction of sectors visited, 0.0-1.0."""
+        return len(self._seen) / self._bins
+
+    @property
+    def fittable(self) -> bool:
+        """Whether there is enough angular spread to locate a circle's centre.
+
+        🔴 The floor is :data:`COVERAGE_FITTABLE`. A rectangular block visits FOUR
+        headings -- 4/36 = 11% -- however many times it is lapped, so this is the
+        signal that separates "lapped a block" from "drove a circle".
+        """
+        return self.fraction >= COVERAGE_FITTABLE
+
+    def reset(self) -> None:
+        """Start a fresh phase. Coverage is PER PHASE: each mechanism needs its
+        own fit, so inheriting the previous phase's spread would report a phase as
+        ready when it had turned through nothing."""
+        self._seen.clear()
+        self._headingRad = 0.0
+
+    def note(self, *, yawRateRadS: float | None, dtS: float) -> None:
+        """Integrate one yaw-rate sample.
+
+        Args:
+            yawRateRadS: Rotation about the vertical axis, rad/s. None when
+                unavailable -- which advances nothing rather than assuming zero.
+            dtS: Interval since the previous sample.
+        """
+        if yawRateRadS is None or not math.isfinite(yawRateRadS):
+            return
+        if not math.isfinite(dtS) or dtS <= 0.0 or dtS > COVERAGE_MAX_GAP_S:
+            # A gap this long makes the integral a guess about what happened in
+            # between; skipping it loses a sample, inventing it loses the truth.
+            return
+        self._headingRad += yawRateRadS * dtS
+        sector = int((math.degrees(self._headingRad) % 360.0) / (360.0 / self._bins))
+        self._seen.add(sector)

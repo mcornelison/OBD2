@@ -40,6 +40,7 @@ Hence the on-screen circle prompt at the head of each phase.
 """
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -52,12 +53,15 @@ for p in (str(REPO_ROOT), str(REPO_ROOT / "src")):
 
 from tools.imu.drive_phases import (  # noqa: E402
     CIRCLE_PROMPT_S,
+    COVERAGE_BINS,
+    COVERAGE_FITTABLE,
     DEFAULT_PHASES,
     MECH_KEEPALIVE,
     MECH_KEEPALIVE_DRDY,
     MECH_ORIGINAL,
     ParkDetector,
     PhaseSchedule,
+    TurnCoverage,
 )
 
 # --------------------------------------------------------------------------
@@ -220,3 +224,97 @@ def test_gravityOnlyIsStill_butVibrationIsNot():
         d2.note(magnitudeMs2=9.81 + (0.6 if i % 2 else -0.6), nowS=float(t),
                 sessionElapsedS=float(t))
     assert d2.parked is False
+
+
+# --------------------------------------------------------------------------
+# TurnCoverage -- the readiness signal the BUTTON needs (CIO chose the button
+# over the clock, 2026-09-25, so duration is no longer guaranteed).
+# --------------------------------------------------------------------------
+
+def _turnThrough(cov, degrees, *, rateDegS=30.0, dt=0.1):
+    """Drive the coverage tracker through a continuous turn."""
+    steps = int(abs(degrees) / (rateDegS * dt))
+    rate = math.radians(rateDegS if degrees >= 0 else -rateDegS)
+    for _ in range(steps):
+        cov.note(yawRateRadS=rate, dtS=dt)
+
+
+def test_aFullCircleIsFittable():
+    """🔴 Continuous rotation is the ONLY thing that can locate a circle centre."""
+    cov = TurnCoverage()
+    _turnThrough(cov, 360)
+    assert cov.fittable is True
+    assert cov.fraction == pytest.approx(1.0, abs=0.05)
+
+
+def test_aRectangularBlockDOESReachFittableCoverage():
+    """🔴 CORRECTION TO MY OWN CLAIM (Atlas, 2026-09-25), CAUGHT BY THIS TEST.
+
+    I told the CIO that a block gives "FOUR headings, 4/36 = 11%, forever" and
+    that three laps of one could never calibrate a magnetometer. **That is WRONG.**
+    A vehicle's heading is CONTINUOUS -- it cannot teleport from north to east --
+    so every 90 deg corner SWEEPS THROUGH all the intermediate bearings. Four
+    corners traverse the whole 360 deg.
+
+    The first version of this test asserted the opposite and FAILED, which is how
+    the error was found before it shipped as advice. Recorded as a passing test of
+    the true property rather than deleted, so the claim cannot come back.
+
+    ⇒ The CIO's "three laps around the block" plan is SOUND and needs no parking
+    lot. What continuous circles buy is faster and more EVENLY WEIGHTED coverage,
+    not the difference between possible and impossible.
+    """
+    cov = TurnCoverage()
+    for _ in range(3):
+        for _corner in range(4):
+            _turnThrough(cov, 90)
+            for _straight in range(200):
+                cov.note(yawRateRadS=0.0, dtS=0.1)
+    assert cov.fittable is True
+    assert cov.fraction > COVERAGE_FITTABLE
+
+
+def test_straightDrivingAddsNoCoverage():
+    cov = TurnCoverage()
+    for _ in range(600):
+        cov.note(yawRateRadS=0.0, dtS=0.1)
+    assert cov.fraction == pytest.approx(1.0 / 36, abs=0.01)
+
+
+def test_coverageIsIndependentOfTurnDirection():
+    """Circling either way sweeps the same compass."""
+    cw, ccw = TurnCoverage(), TurnCoverage()
+    _turnThrough(cw, 360)
+    _turnThrough(ccw, -360)
+    assert cw.fittable and ccw.fittable
+
+
+def test_resetIsPerPhase():
+    """Each mechanism needs its OWN fit, so inheriting the previous phase's
+    spread would report a phase ready when it had turned through nothing."""
+    cov = TurnCoverage()
+    _turnThrough(cov, 360)
+    cov.reset()
+    assert cov.fraction < 0.1
+    assert cov.fittable is False
+
+
+def test_absentYawRateDoesNotAdvanceCoverage():
+    """None is 'we do not know', not 'not turning'."""
+    cov = TurnCoverage()
+    for _ in range(300):
+        cov.note(yawRateRadS=None, dtS=0.1)
+    assert cov.fraction == 0.0
+
+
+def test_aLongGapIsNotIntegratedAcross():
+    """Crossing a multi-second gap would invent rotation nobody observed."""
+    cov = TurnCoverage()
+    cov.note(yawRateRadS=math.radians(30.0), dtS=600.0)
+    assert cov.fraction <= 1.0 / 36
+
+
+def test_theFittableFloorIsAboveWhatABlockCanReach():
+    """The threshold's BASIS, pinned so it cannot silently drift below 4/36."""
+    assert COVERAGE_FITTABLE > 4 / COVERAGE_BINS
+    assert 0.0 < COVERAGE_FITTABLE <= 1.0
