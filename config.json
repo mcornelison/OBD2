@@ -452,7 +452,7 @@
       "cleanupTimeHour": 3
     },
     "powerWatch": {
-      "drainFloorVolts": 3.60,
+      "drainFloorVolts": 3.6,
       "smoothingSec": 7,
       "smoothingPollSec": 1
     },
@@ -549,6 +549,7 @@
       "imu": {
         "enabled": true,
         "sampleHz": 4,
+        "magMode": "master",
         "persistHz": 2,
         "stateHz": 1,
         "gravityTauSec": 5.0,
