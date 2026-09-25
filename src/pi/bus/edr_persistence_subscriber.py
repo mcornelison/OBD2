@@ -33,6 +33,8 @@
 #               |              | nothing; below 15 GB free it only WARNS.
 # 2026-09-22    | Rex (US-801) | IMU sample/persist defaults imported from the
 #               |              | single definition in common.config.validator.
+# 2026-09-24    | Rex (US-810) | Derived row writes the five gyro RATE bias
+#               |              | columns from the bridge snapshot.
 # ================================================================================
 ################################################################################
 
@@ -512,13 +514,20 @@ class EdrPersistenceSubscriber:
             conn.execute(
                 "INSERT INTO edr_imu_derived "
                 "(ts_utc, ts_capture, seq, pitch_deg, stop_count, bias_rad, "
-                "fusion_version, drive_id, data_source, schema_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "fusion_version, drive_id, data_source, schema_version, "
+                "gyro_bias_roll_rad_s, gyro_bias_pitch_rad_s, gyro_bias_yaw_rad_s, "
+                "gyro_bias_stops, gyro_bias_rejected_stops) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     snap["tsUtc"], snap["tsCapture"], snap["seq"],
                     snap["pitchDeg"], snap["stopCount"], snap["biasRad"],
                     snap["fusionVersion"],
                     driveId, dataSource, SCHEMA_VERSION,
+                    # US-810: gyro RATE bias, rad/s. None -> NULL (unlearned),
+                    # never 0.0.
+                    snap["gyroBiasRollRadS"], snap["gyroBiasPitchRadS"],
+                    snap["gyroBiasYawRadS"],
+                    snap["gyroBiasStops"], snap["gyroBiasRejectedStops"],
                 ),
             )
         except Exception as e:  # noqa: BLE001 -- as above

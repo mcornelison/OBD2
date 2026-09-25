@@ -89,6 +89,8 @@
 #               |              | 'unassessed'; drive_summary.is_real DEFAULTs
 #               |              | NULL; ambient_temp_at_start_c renamed to
 #               |              | intake_air_temp_at_start_c).  Forward-only.
+# 2026-09-24    | Rex (US-810) | Sprint 94 -- registered v0031 (edr_imu_derived
+#               |              | gyro RATE bias columns).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -208,6 +210,9 @@ from src.server.migrations.versions.v0029_us809b1_realtime_written_at import (
 from src.server.migrations.versions.v0030_us809b2_written_at_default import (
     MIGRATION as _V0030,
 )
+from src.server.migrations.versions.v0031_us810_edr_gyro_rate_bias import (
+    MIGRATION as _V0031,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -244,6 +249,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0028,
     _V0029,
     _V0030,
+    _V0031,
 )
 
 

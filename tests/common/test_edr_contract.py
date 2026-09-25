@@ -78,7 +78,10 @@ D8_DDL_SHA256: dict[str, str] = {
     "ix_edr_light_sample_ts": "8e450bc140a46d6452032f7662a025cd1d45712f6736cf284ffcf75ed4fa4ae9",
     # US-805 / ARCH-045, pinned 2026-09-22 at creation. Same purpose as the
     # D8 entries above: these strings may not drift silently once shipped.
-    "edr_imu_derived": "f7ac9b1fb2c0a8d646ef2f9492019f7ffe5d75264a78a4ecd8090b1ba57eacf1",
+    # US-810, re-pinned 2026-09-24: five gyro RATE bias columns appended
+    # (was f7ac9b1f...eacf1). Existing Pi tables reach the same shape via
+    # ensureEdrImuDerivedGyroRateBiasColumns, the server via v0031.
+    "edr_imu_derived": "bcfb0d054e4ce57eec0f5927aee2664c8e129483183df27f15ba60e28d865c77",
     "ix_edr_imu_derived_drive_id": (
         "c20af6ef68e87fa568a87d36d10c709898df2f9fea69f2efa348470849d2b490"
     ),
@@ -365,6 +368,12 @@ _RULED_DERIVED_COLUMNS: tuple[tuple[str, str, bool], ...] = (
     ("drive_id", "int", True),
     ("data_source", "label", False),
     ("schema_version", "int", False),
+    # US-810: the gyro RATE bias (rad/s) and its stop counts, all nullable.
+    ("gyro_bias_roll_rad_s", "float", True),
+    ("gyro_bias_pitch_rad_s", "float", True),
+    ("gyro_bias_yaw_rad_s", "float", True),
+    ("gyro_bias_stops", "int", True),
+    ("gyro_bias_rejected_stops", "int", True),
 )
 
 

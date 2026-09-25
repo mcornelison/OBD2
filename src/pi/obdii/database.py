@@ -25,6 +25,9 @@
 # 2026-08-29    | Rex (US-626) | Wired ensurePowerLogObserverColumns idempotent
 #                               migration into initialize() so existing Pi
 #                               databases gain observed_by + observer_state.
+# 2026-09-24    | Rex (US-810) | Wired ensureEdrImuDerivedGyroRateBiasColumns so
+#                               existing Pi databases gain the five gyro RATE
+#                               bias columns on edr_imu_derived.
 # ================================================================================
 ################################################################################
 
@@ -66,6 +69,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from common.edr.sensor_schema import ensureEdrImuDerivedGyroRateBiasColumns
 from src.pi.power.battery_health import (
     ensureBatteryHealthLogSocPctColumns,
     ensureBatteryHealthLogTable,
@@ -385,6 +389,19 @@ class ObdDatabase:
                     logger.info(
                         "Added observed_by/observer_state columns to "
                         "power_log (US-626)"
+                    )
+
+                # US-810 idempotent migration: add the five gyro RATE bias
+                # columns to edr_imu_derived (created above from EDR_SCHEMAS).
+                # PRAGMA-guarded ADD COLUMN only -- no rebuild, no row moved;
+                # existing rows read NULL (bias never recorded).  Must run
+                # here, not in the EDR writer: its sync partner is server v0031.
+                addedGyroBias = ensureEdrImuDerivedGyroRateBiasColumns(conn)
+                if addedGyroBias:
+                    logger.info(
+                        "Added gyro rate bias columns to edr_imu_derived "
+                        "(US-810): %s",
+                        ', '.join(addedGyroBias),
                     )
 
                 # US-351 retirement migration: drop the legacy Pi-side

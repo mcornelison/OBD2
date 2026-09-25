@@ -88,6 +88,8 @@
 #               |              | guard trips (the 09-14 confident 70 deg pitch).
 # 2026-09-22    | Rex (US-801) | DEFAULT_IMU_SAMPLE_HZ / DEFAULT_STATE_HZ imported
 #               |              | from the single definition (now 4 / 1).
+# 2026-09-24    | Rex (US-810) | derivedSnapshot carries the gyro RATE bias
+#               |              | (None -> three Nones) and its stop counts.
 # ================================================================================
 ################################################################################
 
@@ -983,6 +985,13 @@ class ImuStateBridge:
         timestamp of whatever burst the writer happened to be flushing.
         """
         pitchRad = self._pitchFusion.pitchRad
+        # US-810: the gyro RATE bias (rad/s, roll/pitch/yaw) -- NOT biasRad, the
+        # mount-tilt ANGLE. None until a stop is accepted this run, carried
+        # through as three Nones: an unlearned bias is never written as 0.0.
+        gyroRateBias = self._pitchFusion.gyroBiasRadS
+        rollRadS, pitchRadS, yawRadS = (
+            (None, None, None) if gyroRateBias is None else gyroRateBias
+        )
         self._lastDerived = {
             # US-809-c: None, never the clock -- this snapshot claims to be
             # "stamped with THIS sample", and a substituted stamp makes that
@@ -995,6 +1004,11 @@ class ImuStateBridge:
             "stopCount": self._pitchFusion.stopCount,
             "biasRad": self._pitchFusion.biasRad,
             "fusionVersion": FUSION_VERSION,
+            "gyroBiasRollRadS": rollRadS,
+            "gyroBiasPitchRadS": pitchRadS,
+            "gyroBiasYawRadS": yawRadS,
+            "gyroBiasStops": self._pitchFusion.gyroBiasStopCount,
+            "gyroBiasRejectedStops": self._pitchFusion.gyroBiasRejectedStops,
         }
 
     def derivedSnapshot(self) -> dict[str, Any] | None:

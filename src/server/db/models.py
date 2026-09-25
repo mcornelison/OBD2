@@ -817,6 +817,15 @@ class EdrImuDerived(Base):
     drive_id: Mapped[int | None] = mapped_column(Integer)
     data_source: Mapped[str] = mapped_column(String(16), nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # US-810: PitchFusion's learned gyro RATE bias, rad/s -- not bias_rad, the
+    # mount-tilt ANGLE.  NULL is the unlearned state, never 0.0; the rejected
+    # count tells "never learned" from "every stop rejected as a latch".
+    # Added to the live table by migration v0031.
+    gyro_bias_roll_rad_s: Mapped[float | None] = mapped_column(Float)
+    gyro_bias_pitch_rad_s: Mapped[float | None] = mapped_column(Float)
+    gyro_bias_yaw_rad_s: Mapped[float | None] = mapped_column(Float)
+    gyro_bias_stops: Mapped[int | None] = mapped_column(Integer)
+    gyro_bias_rejected_stops: Mapped[int | None] = mapped_column(Integer)
 
     synced_at: Mapped[datetime | None] = mapped_column(DateTime)
     sync_batch_id: Mapped[int | None] = mapped_column(Integer)

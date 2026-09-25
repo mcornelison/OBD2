@@ -97,7 +97,11 @@ def _snapshot(
     stopCount: int = 5,
     biasRad: float = 0.0131,
     fusionVersion: int = 1,
+    gyroBiasRadS: tuple[float, float, float] | None = None,
+    gyroBiasStops: int = 0,
+    gyroBiasRejectedStops: int = 0,
 ) -> dict[str, Any]:
+    roll, pitch, yaw = gyroBiasRadS if gyroBiasRadS is not None else (None, None, None)
     return {
         "tsUtc": tsUtc,
         "tsCapture": tsCapture,
@@ -106,6 +110,11 @@ def _snapshot(
         "stopCount": stopCount,
         "biasRad": biasRad,
         "fusionVersion": fusionVersion,
+        "gyroBiasRollRadS": roll,
+        "gyroBiasPitchRadS": pitch,
+        "gyroBiasYawRadS": yaw,
+        "gyroBiasStops": gyroBiasStops,
+        "gyroBiasRejectedStops": gyroBiasRejectedStops,
     }
 
 
