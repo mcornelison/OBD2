@@ -385,6 +385,30 @@ DEFAULTS: dict[str, Any] = {
     # hiccup re-serving one buffered frame.  Seconds, not samples, so a 50 Hz
     # and a 1 Hz channel wait the same wall-clock time.
     'pi.sensors.imu.invariantDwellSeconds': 2.0,
+    # ARCH-057: which magnetometer ACQUISITION path runs. 'master' | 'bypass'.
+    #
+    # 🔴 'master' IS THE DEFAULT BECAUSE IT IS THE CONFIGURATION THE FIX WAS
+    # MEASURED IN. The runtime keep-alive (0/20 -> 20/20 on this hardware,
+    # 2026-09-18) repairs the channel by re-running adafruit's
+    # _magnetometer_init(), which sets BYPASS_EN=False and re-enables the ICM's
+    # internal I2C master. It is a MASTER-MODE repair, incompatible with the
+    # bypass by construction: calling it on a bypassed chip would convert the
+    # acquisition path mid-drive and the direct 0x0C reads would start failing.
+    # Shipping the measured repair therefore MEANS shipping master mode -- that is
+    # a consequence of the evidence, not a preference.
+    #
+    # ⚠️ 'bypass' IS RETAINED DELIBERATELY and is not dead config. It is the
+    # pre-ARCH-057 path (ak09916_bypass: direct 0x0C, ST1..ST2, with a real DRDY
+    # and HOFL check that master mode does NOT get, because adafruit's burst
+    # starts at 0x11 and never decodes ST2). It is the escape hatch: if master
+    # mode misbehaves in the car, revert with this key and a service restart
+    # rather than waiting for a deploy. It gets no keep-alive, per the above.
+    #
+    # ⚠️ The 20/20 was measured with eclipse-obd STOPPED, i.e. sole owner of the
+    # bus. ARCH-032 measured contention taking the magnetometer hand-over from
+    # ~80% to ~12%, so that figure is UNCONTENDED and is not yet demonstrated in
+    # production. Do not quote it as a production number.
+    'pi.sensors.imu.magMode': 'master',
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
