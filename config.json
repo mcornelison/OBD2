@@ -552,6 +552,12 @@
         "persistHz": 2,
         "stateHz": 1,
         "gravityTauSec": 5.0,
+        "pitchTauSec": 5.0,
+        "accelTrustBand": 0.02,
+        "zuptMinStopSec": 3.0,
+        "zuptSpeedMaxAgeSec": 2.0,
+        "zuptMinStops": 5,
+        "zuptWindowStops": 20,
         "mount": {
           "forward": "+x",
           "left": "+y",
