@@ -68,7 +68,11 @@ from pi.obdii.drive_id import getCurrentDriveId
 # second lint suppressed to stay quiet is the wrong fix.
 #   (And writing that suppression out longhand in this comment made ruff parse
 #    the comment itself as a directive -- so it is described, not spelled.)
-from pi.sensors.ak09916_bypass import toIcmFrame
+from pi.sensors.ak09916_bypass import (
+    MAG_SOURCE_BYPASS,
+    MAG_SOURCE_ICM_SHADOW,
+    toIcmFrame,
+)
 
 # The accel floor is the SAME constant the tilt maths already refuses to work
 # below -- imported, never retyped, so the gate and the level frame cannot drift
@@ -938,11 +942,26 @@ def _attachDirectMagnetometer(
     try:
         return factory(icm, i2cBus)
     except (MagnetometerConfigError, OSError, ValueError) as exc:
-        logger.warning(
-            "IMU magnetometer bypass unavailable (%s) -- accel/gyro continue; the "
-            "mag channel falls back to the ICM shadow and the US-564 gate will "
-            "refuse it as stale rather than publish a latched heading",
-            exc,
+        # ARCH-056: this was a WARNING promising "the US-564 gate will refuse it as
+        # stale rather than publish a latched heading". 🔴 THAT PROMISE WAS FALSE,
+        # and the record proves it: five of twelve drives (69/72/74/75/76)
+        # PERSISTED a frozen channel -- 5.25-9.30 uT of per-axis excursion where a
+        # turning car must sweep ~40 uT -- and every hard-iron fit was then made on
+        # that corpus, which is why none of them ever transferred. The US-564 gate
+        # fires on AGE, and a frozen channel is FRESH: new timestamps, unchanging
+        # content. It never could have caught this.
+        #
+        # ⇒ ERROR rather than WARNING, and it names the MECHANISM instead of
+        # citing a guard that cannot fire. The channel is now judged on ROTATION
+        # (imu_state_bridge.assessMagRotation), which compares the magnetometer
+        # against the gyro and can actually tell frozen from merely uncalibrated.
+        logger.error(
+            "IMU magnetometer bypass unavailable (%s) -- mag source is %r, NOT %r. "
+            "That is the adafruit dev.magnetic path, which US-565 MEASURED returning "
+            "a FROZEN vector because its read does not extend through ST2. Accel and "
+            "gyro continue; heading from this path is judged by the ARCH-056 rotation "
+            "gate, never by staleness.",
+            exc, MAG_SOURCE_ICM_SHADOW, MAG_SOURCE_BYPASS,
         )
         return icm
 
