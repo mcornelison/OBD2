@@ -30,6 +30,9 @@
 #                               column would have gone missing exactly as
 #                               `end_vcell_v` did.  Covers WHERE-clause filter
 #                               columns too, not just the SELECT list.
+# 2026-09-24    | Rex (US-683) | The gate now reads close_reason, and the guard
+#                               fired as designed: the fixture writes 'clean' on
+#                               closed rows (NULL while open), like a real close.
 # ================================================================================
 ################################################################################
 
@@ -79,7 +82,11 @@ _FIXTURE_COLUMNS: tuple[str, ...] = (
     "runtime_seconds",
     "load_class",
     "end_vcell_v",
+    "close_reason",
 )
+
+#: US-683: a closed row carries the reason a real close writes; an open row NULL.
+_CLEAN_CLOSE_REASON = "clean"
 
 _INSERT_SQL: str = (
     f"INSERT INTO battery_health_log ({', '.join(_FIXTURE_COLUMNS)}) "
@@ -156,6 +163,7 @@ class _FakeDatabase:
                     runtimeSeconds,
                     loadClass,
                     endVcellV if closed else None,
+                    _CLEAN_CLOSE_REASON if closed else None,
                 ),
             )
         self._conn.commit()
@@ -365,7 +373,8 @@ def test_fixtureGuard_aSixthColumnInTheSelectList_failsAndNamesIt():
     """
     _assertGuardCatches(
         _QUALIFYING_ROW_SQL.replace(
-            "       end_vcell_v ", f"       end_vcell_v, {_A_NOT_YET_REQUIRED_COLUMN} "
+            "       end_vcell_v, close_reason ",
+            f"       end_vcell_v, close_reason, {_A_NOT_YET_REQUIRED_COLUMN} ",
         )
     )
 
@@ -428,7 +437,8 @@ def test_emit_rereadsTheLogEachTick_notCachedAtStartup(tmp_path):
 
     db._conn.execute(
         _INSERT_SQL,
-        (_iso(0.2), _iso(0.1), 727, "production", _CUTOFF_END_VCELL_V),
+        (_iso(0.2), _iso(0.1), 727, "production", _CUTOFF_END_VCELL_V,
+         _CLEAN_CLOSE_REASON),
     )
     db._conn.commit()
 

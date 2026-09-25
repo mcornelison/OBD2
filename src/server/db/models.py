@@ -50,6 +50,9 @@
 # 2026-07-01    | Rex (US-412) | F-101: PowerLog model mirroring Pi's power_log
 #               |              | table (one row per power-source / shutdown-stage
 #               |              | transition).  power_log was Pi-only until US-412.
+# 2026-09-24    | Rex (US-683) | BatteryHealthLog.close_reason (typed close
+#               |              | discriminator) + its named CHECK.  Live table
+#               |              | gains it via migration v0032.
 # ================================================================================
 ################################################################################
 
@@ -862,6 +865,15 @@ class EdrLightSample(Base):
     sync_batch_id: Mapped[int | None] = mapped_column(Integer)
 
 
+#: US-683: battery_health_log.close_reason vocabulary.  Mirrors the Pi SSOT
+#: (src/pi/power/battery_health.py::CLOSE_REASON_VALUES); the two tuples are
+#: pinned equal by tests/server/test_battery_health_close_reason_crosses_tiers.py.
+BATTERY_HEALTH_CLOSE_REASON_VALUES: tuple[str, ...] = (
+    'clean', 'reaped_uncheckpointed', 'reaped_checkpointed',
+)
+CK_BATTERY_HEALTH_LOG_CLOSE_REASON: str = 'ck_battery_health_log_close_reason'
+
+
 class BatteryHealthLog(Base):
     """UPS drain-event records, mirrored from Pi (US-217 / Spool Session 6).
 
@@ -883,6 +895,12 @@ class BatteryHealthLog(Base):
     __tablename__ = "battery_health_log"
     __table_args__ = (
         UniqueConstraint("source_device", "source_id"),
+        CheckConstraint(
+            "close_reason IN ("
+            + ",".join(f"'{v}'" for v in BATTERY_HEALTH_CLOSE_REASON_VALUES)
+            + ")",
+            name=CK_BATTERY_HEALTH_LOG_CLOSE_REASON,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -920,6 +938,11 @@ class BatteryHealthLog(Base):
     data_source: Mapped[str | None] = mapped_column(
         String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
     )
+    # US-683: how the drain row was closed -- the typed discriminator that
+    # replaces the notes prose (notes is preserved on upsert, so the server
+    # could never learn a reap from it).  NULL exactly while the row is open.
+    # Added to the live table, and backfilled, by migration v0032.
+    close_reason: Mapped[str | None] = mapped_column(String(32))
 
 
 class PowerLog(Base):
@@ -2268,6 +2291,8 @@ __all__ = [
     "DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES",
     "DRIVE_SUMMARY_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
+    "BATTERY_HEALTH_CLOSE_REASON_VALUES",
+    "CK_BATTERY_HEALTH_LOG_CLOSE_REASON",
     "DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_FULL",
     "DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT",

@@ -28,6 +28,9 @@
 # 2026-09-24    | Rex (US-810) | Wired ensureEdrImuDerivedGyroRateBiasColumns so
 #                               existing Pi databases gain the five gyro RATE
 #                               bias columns on edr_imu_derived.
+# 2026-09-24    | Rex (US-683) | Wired ensureBatteryHealthLogCloseReasonColumn so
+#                               existing Pi databases gain the typed
+#                               battery_health_log.close_reason, backfilled once.
 # ================================================================================
 ################################################################################
 
@@ -71,6 +74,7 @@ from typing import Any
 
 from common.edr.sensor_schema import ensureEdrImuDerivedGyroRateBiasColumns
 from src.pi.power.battery_health import (
+    ensureBatteryHealthLogCloseReasonColumn,
     ensureBatteryHealthLogSocPctColumns,
     ensureBatteryHealthLogTable,
     ensureBatteryHealthLogVcellColumns,
@@ -355,6 +359,17 @@ class ObdDatabase:
                         "Rebuilt battery_health_log: dropped legacy "
                         "start_soc/end_soc, added start_soc_pct/end_soc_pct "
                         "(US-426)"
+                    )
+
+                # US-683 idempotent migration: typed close_reason on
+                # battery_health_log.  PRAGMA-guarded ADD COLUMN plus a
+                # one-shot backfill of closed rows -- no rebuild.  Runs after
+                # the US-426 rebuild, whose target lacks this column.  Its
+                # sync partner is server v0032.
+                if ensureBatteryHealthLogCloseReasonColumn(conn):
+                    logger.info(
+                        "Added close_reason to battery_health_log and "
+                        "backfilled closed rows (US-683)"
                     )
 
                 # US-225 idempotent migration: pi_state singleton for
