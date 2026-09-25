@@ -166,6 +166,12 @@ tools/*
 # added here to be skipped exactly the same way.
 !tools/imu/
 
+# tools/connlog/ is first-party too (US-808-d): the connection_log window export
+# and gap analysis. Their Sprint 93 originals sat directly under tools/, were
+# matched by `tools/*`, and were lost -- a package directory plus this one
+# negation is the fix, never a per-file negation.
+!tools/connlog/
+
 
 # Claude settings (local only)
 .claude/settings.local.json
