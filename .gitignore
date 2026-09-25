@@ -142,6 +142,9 @@ offices/
 # Downloaded tools (SQLite CLI, etc.). NOTE: `tools/*` not `tools/` so git can
 # descend and the negation below works -- tools/pm/ is first-party source (the
 # PM tool cluster, moved out of offices/pm/scripts/ in the offices decouple).
+# A NEW first-party tools/ directory needs its own `!tools/<dir>/` negation below,
+# or `git add` skips it silently (US-808). tests/lint/test_tools_not_gitignored.py
+# fails on any tracked tools/ path these rules match -- stage, then run it.
 tools/*
 !tools/pm/
 # tools/fleet/ is first-party too: New-Bench.ps1 and Invoke-FleetMerge.ps1.
