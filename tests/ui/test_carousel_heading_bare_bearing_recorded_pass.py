@@ -111,10 +111,9 @@ import render_harness as rh  # noqa: E402
 from pi.bus.sample import Sample  # noqa: E402
 from pi.sensors.imu_state_bridge import (  # noqa: E402
     CHANNEL_STATE_ACCEL,
-    DEFAULT_IMU_SAMPLE_HZ,
+    DEFAULT_MAG_MAX_AGE_S,
     DEFAULT_STATE_HZ,
     IMU_STATE_FILENAME,
-    MAG_MAX_AGE_POLLS,
     REASON_NO_MAG,
     REASON_SENSOR_ABSENT,
     STANDARD_GRAVITY_MS2,
@@ -144,7 +143,9 @@ PANEL = (480, 320)
 #       still INSIDE the pairing window -- so a bridge that ignored the gate
 #       would still have a real bearing to print.
 #   _PAST_PAIRING_WINDOW_S: past both the next write and the pairing window.
-_PAIRING_WINDOW_S = MAG_MAX_AGE_POLLS / DEFAULT_IMU_SAMPLE_HZ
+# US-803-b: the window is now carried in seconds (magMaxAgeSec), so it is read
+# directly rather than derived as polls / sampleHz.
+_PAIRING_WINDOW_S = DEFAULT_MAG_MAX_AGE_S
 _NEXT_WRITE_INSIDE_WINDOW_S = 1.0 / DEFAULT_STATE_HZ
 _PAST_PAIRING_WINDOW_S = max(_PAIRING_WINDOW_S, _NEXT_WRITE_INSIDE_WINDOW_S) + 1.0
 assert _NEXT_WRITE_INSIDE_WINDOW_S < _PAIRING_WINDOW_S, (
@@ -1036,7 +1037,7 @@ def test_pairingWindowLapse_dropsTheHeldBearingRatherThanReusingIt(tmp_path):
     Then: the heading is null with "no_mag_reading" and 90 reaches no pixel
 
     The quieter of the two stale paths, and the one with no gate to announce it:
-    the compass simply stopped answering. `MAG_MAX_AGE_POLLS` is what decides
+    the compass simply stopped answering. `magMaxAgeSec` is what decides
     this, and the failure it prevents is a bearing that stays on the card looking
     current while nothing behind it is reading.
     """

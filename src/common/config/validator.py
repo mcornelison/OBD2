@@ -395,6 +395,9 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.imu.gyroFaultMinRadS': 0.10,
     'pi.sensors.imu.gyroRecoverySampleCount': 20,
     'pi.sensors.imu.gyroRecoverySettleSec': 1.0,
+    # US-803-b: the mag/gyro pairing window in SECONDS (was 5 polls, whose
+    # duration moved with sampleHz). 1.25 = 5 polls at the shipped 4 Hz.
+    'pi.sensors.imu.magMaxAgeSec': 1.25,
     # US-564 (F-135) plausibility gate: how long a channel must stay BIT-
     # IDENTICAL before it is reported sensor_stale.  A DWELL, not a physical
     # threshold -- bit-identity is a proof (real sensors dither +/-1 LSB, so a
@@ -1206,6 +1209,8 @@ class ConfigValidator:
         'pi.sensors.imu.gyroFaultMinRadS',
         'pi.sensors.imu.gyroRecoverySampleCount',
         'pi.sensors.imu.gyroRecoverySettleSec',
+        # US-803-b: a zero window never pairs a mag, so heading goes NA forever.
+        'pi.sensors.imu.magMaxAgeSec',
         # US-767-b: a zero pre-roll keeps nothing from before the link, and a
         # zero hold closes the gate on the first dropped read.
         'pi.sensors.logGate.preRollSec',

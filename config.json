@@ -561,6 +561,7 @@
         "gyroFaultMinRadS": 0.10,
         "gyroRecoverySampleCount": 20,
         "gyroRecoverySettleSec": 1.0,
+        "magMaxAgeSec": 1.25,
         "mount": {
           "forward": "+x",
           "left": "+y",
