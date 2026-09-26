@@ -30,6 +30,8 @@
 #                               POWER_LOG_EVENT_OBSERVER_SESSION_START, so a
 #                               power_log row records WHICH instrument saw it
 #                               and whether that instrument could see at all.
+# 2026-09-25    | Rex (US-790) | Added DRAIN_TERMINATION_* -- the typed reason a
+#                               shutdown drain's VCELL series ended.
 # ================================================================================
 ################################################################################
 """
@@ -104,6 +106,28 @@ POWER_OBSERVER_PLD_GPIO6 = "pld_gpio6"
 OBSERVER_STATE_PRESENT = "present"
 OBSERVER_STATE_LOST = "lost"
 OBSERVER_STATE_UNKNOWN = "unknown"
+
+# US-790: the per-poll VCELL series of a shutdown drain.  DDL in
+# src/pi/obdii/database_schema.py; writer in power_db.py.
+DRAIN_VCELL_TRAJECTORY_TABLE = "drain_vcell_trajectory"
+
+# US-790: why a shutdown drain's VCELL series ended.  Written on the LAST row of
+# each drain in drain_vcell_trajectory.termination_reason, and on no other row.
+# ``shutdown`` and ``power_restored`` are the drain close's own spellings
+# (drain_event_writer.CLOSE_REASON_SHUTDOWN / _POWER_RESTORED, pinned equal by
+# test) for the same two endings; the other three name which bound ended it.
+DRAIN_TERMINATION_SHUTDOWN = "shutdown"
+DRAIN_TERMINATION_POWER_RESTORED = "power_restored"
+DRAIN_TERMINATION_DRAIN_FLOOR = "drain_floor"
+DRAIN_TERMINATION_VCELL_FLOOR = "vcell_floor"
+DRAIN_TERMINATION_VCELL_UNREADABLE = "vcell_unreadable"
+DRAIN_TERMINATION_VALUES: tuple[str, ...] = (
+    DRAIN_TERMINATION_SHUTDOWN,
+    DRAIN_TERMINATION_POWER_RESTORED,
+    DRAIN_TERMINATION_DRAIN_FLOOR,
+    DRAIN_TERMINATION_VCELL_FLOOR,
+    DRAIN_TERMINATION_VCELL_UNREADABLE,
+)
 
 
 # ================================================================================

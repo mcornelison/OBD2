@@ -91,6 +91,8 @@
 #                               _WIRE_STRIPPED_COLUMNS -- Pi-local power_log
 #                               forensic columns, per the US-419 data_quality
 #                               precedent (the server has no such columns).
+# 2026-09-25    | Rex (US-790) | Registered drain_vcell_trajectory (PK 'id') --
+#                               delta-synced, never an UPDATE table.
 # ================================================================================
 ################################################################################
 
@@ -257,6 +259,12 @@ PK_COLUMN: dict[str, str] = {
     # on the same terms -- a derived row is never UPDATEd after insert, it
     # is superseded by a later row carrying a higher fusion_version.
     'edr_imu_derived':      'id',
+    # US-790 (F-138): the shutdown drain's per-poll VCELL series.  INSERT-only
+    # on the id cursor and deliberately NOT in SYNC_UPDATE_TABLES_PK: a row
+    # pushed during the drain is never re-stamped outstanding, so only rows
+    # written after the last push remain (custody names them, US-789 shape).
+    # NOT an EDR table either, so the shutdown drain CARRIES it.
+    'drain_vcell_trajectory': 'id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.

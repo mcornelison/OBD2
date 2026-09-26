@@ -84,6 +84,8 @@
 # 2026-09-22    | Rex (US-801) | DEFAULT_IMU_{SAMPLE,PERSIST,STATE}_HZ = 4/2/1:
 #                                the ONE definition of the IMU rate triple;
 #                                DEFAULTS and the pi module fallbacks import it.
+# 2026-09-25    | Rex (US-790) | pi.power.cellEpoch: default 'unknown', closed
+#                                vocabulary CELL_EPOCH_VALUES.
 # ================================================================================
 ################################################################################
 
@@ -154,6 +156,21 @@ DEFAULT_IMU_STATE_HZ = 1
 # OFF. (Not the datasheet's +/-250 dps: that is the RESET value, not this Pi.)
 GYRO_FULL_SCALE_RAD_S = math.radians(500)
 
+# US-790: pi.power.cellEpoch -- WHICH cell was fitted, stamped on every
+# drain_vcell_trajectory row so a floor measured from them is never an average
+# across batteries. CIO ruling 2026-09-25. Vocabulary from
+# specs/grounded-knowledge.md: the 450 mAh pouch until the 2026-09-21 18:50Z
+# swap and the 2000 mAh pouch after it (:1045), the 18650 pack ordered but not
+# fitted (:1214-1215). 'unknown' is the default so an absent key is recorded
+# honestly -- never a guessed epoch.
+CELL_EPOCH_UNKNOWN = 'unknown'
+CELL_EPOCH_VALUES: tuple[str, ...] = (
+    '450mah-pouch',
+    '2000mah-pouch',
+    '18650-pack',
+    CELL_EPOCH_UNKNOWN,
+)
+
 # Define default values for optional settings. Paths use the tier-aware
 # nested shape (pi.*, server.*) introduced in sweep 4. Legacy leaf paths
 # (hardware.*, backup.*, retry.*) predate the tier split and remain as
@@ -213,6 +230,9 @@ DEFAULTS: dict[str, Any] = {
     # the next deploy populates power_log; the gate is kept for tests +
     # any future legacy fallback.
     'pi.power.power_monitor.enabled': True,
+    # US-790: which cell is fitted (CELL_EPOCH_VALUES). 'unknown' so an absent
+    # key stamps an honest value on drain rows, never a guessed epoch.
+    'pi.power.cellEpoch': CELL_EPOCH_UNKNOWN,
     # US-421 / BL-014: static config-key SSOT for the power-MODE fact (in-car
     # vs bench/wall deployment) -- distinct from the AC-vs-battery power SOURCE.
     # Default 'unknown' so an absent key renders an honest badge, never a
@@ -706,6 +726,7 @@ class ConfigValidator:
         self._validatePiSync(config)
         self._validateBootProgress(config)
         self._validatePowerWatch(config)
+        self._validateCellEpoch(config)
         self._validateDisplayAutoDim(config)
         self._validateImuStateBridge(config)
         self._validateLocalZone(config)
@@ -1063,6 +1084,28 @@ class ConfigValidator:
                 f"pi.powerWatch.pldPowerPresentHigh must be a bool "
                 f"(got {php!r})",
                 missingFields=['pi.powerWatch.pldPowerPresentHigh'],
+            )
+
+    def _validateCellEpoch(self, config: dict[str, Any]) -> None:
+        """Validate pi.power.cellEpoch against CELL_EPOCH_VALUES (US-790).
+
+        A closed vocabulary, compared exactly: a near-miss spelling would file
+        drain rows under an epoch no query groups with the rest.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the value is not one of CELL_EPOCH_VALUES.
+        """
+        key = 'pi.power.cellEpoch'
+        value = self._getNestedValue(config, key)
+        if value is not None and (
+            not isinstance(value, str) or value not in CELL_EPOCH_VALUES
+        ):
+            raise ConfigValidationError(
+                f"{key} must be one of {list(CELL_EPOCH_VALUES)} (got {value!r})",
+                missingFields=[key],
             )
 
     def _validateDisplayAutoDim(self, config: dict[str, Any]) -> None:

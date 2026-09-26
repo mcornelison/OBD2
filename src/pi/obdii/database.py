@@ -31,6 +31,7 @@
 # 2026-09-24    | Rex (US-683) | Wired ensureBatteryHealthLogCloseReasonColumn so
 #                               existing Pi databases gain the typed
 #                               battery_health_log.close_reason, backfilled once.
+# 2026-09-25    | Rex (US-790) | Wired ensureDrainVcellTrajectoryTable.
 # ================================================================================
 ################################################################################
 
@@ -90,6 +91,7 @@ from .database_schema import (
     ALL_INDEXES,
     ALL_SCHEMAS,
     ensureBatteryLogRetired,
+    ensureDrainVcellTrajectoryTable,
     ensureDriveStatisticsRetired,
 )
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
@@ -418,6 +420,13 @@ class ObdDatabase:
                         "(US-810): %s",
                         ', '.join(addedGyroBias),
                     )
+
+                # US-790 replay-safe schema step: drain_vcell_trajectory, the
+                # per-poll VCELL series of a shutdown drain.  A sqlite_master
+                # probe decides; an existing table is never touched.  Its sync
+                # partner is server v0033.
+                if ensureDrainVcellTrajectoryTable(conn):
+                    logger.info("Created drain_vcell_trajectory table (US-790)")
 
                 # US-351 retirement migration: drop the legacy Pi-side
                 # ``drive_statistics`` table on first boot post-V0.27.17.
