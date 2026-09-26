@@ -1,9 +1,8 @@
 ################################################################################
 # File Name: test_mag_keepalive.py
-# Purpose/Description: ARCH-057 -- the magnetometer runtime keep-alive. Ports the
-#                      repair MEASURED at 20/20 on this hardware 2026-09-18 and
-#                      left unshipped for a week while production ran at 0/20.
-# Author: Atlas (architect) -- CIO-directed build, override on ARCH-057
+# Purpose/Description: The magnetometer frozen-dwell DETECTOR. The repair itself is
+#   tested in test_mag_keepalive_nonblocking.py (ARCH-059).
+# Author: Atlas (architect)
 # Creation Date: 2026-09-25
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
 #
@@ -11,32 +10,28 @@
 # ================================================================================
 # Date          | Author         | Description
 # ================================================================================
-# 2026-09-25    | Atlas          | Initial -- liveness by CHANGE, cooldown, retry,
-#               | (ARCH-057)     | never-raises, dwell expressed in SECONDS.
+# 2026-09-25    | Atlas          | Initial (ARCH-057) -- dwell + blocking restore.
+# 2026-09-25    | Atlas          | ARCH-059: the blocking-restore and magIsLive
+#               |                | tests REMOVED with their API. See below.
 # ================================================================================
 ################################################################################
-"""Is the magnetometer demonstrably alive, and can it be revived in place?
+"""The frozen-dwell detector: has this channel stopped changing?
 
-WHY THIS EXISTS, AND WHY IT IS A RUNTIME WATCHDOG.
+⚠️ WHAT WAS REMOVED HERE, AND WHY, SO NOBODY RESTORES IT.
+ARCH-057 tested ``magIsLive()`` -- an 8 x 30 ms blocking sample loop -- and a
+synchronous ``restore()`` that retried it three times. Those tests passed and the
+design they described **took 87% of a real drive**: three attempts x (adafruit's
+~4 s reset-and-settle + 240 ms of sleep) stalled the IMU poll thread for ~12.4 s,
+repeatedly, and the CIO's 82 s of calibration circles yielded 32 usable samples out
+of 328.
 
-MEASURED on this hardware 2026-09-18 (``evidence/2026-09-18-heading-algorithm-comparison``):
+🔴 The tests were green because they asked whether the repair WORKED. Nothing asked
+what it COST. ARCH-059 moved the repair off the poll thread and made cost the
+acceptance criterion; ``test_mag_keepalive_nonblocking.py`` is where that lives, and
+its first test fails if the caller ever blocks again.
 
-    do nothing (production today)      0 / 20
-    re-init once                      17 / 20 = 85%
-    re-init + verify + retry x3       20 / 20 = 100%
-
-🔴 THE INIT'S RETURN VALUE IS NOT EVIDENCE. ``_magnetometer_init()`` returned True on
-every hand run INCLUDING the one where the sensor stayed frozen. So liveness is
-established by SAMPLING -- the readings must actually CHANGE -- and never by a
-success flag.
-
-🔴 AND IT CANNOT BE A STARTUP CHECK. The freeze arrives AFTER a period of good
-readings (0.1-1.2 s in both bench runs), so a startup-only probe passes and then
-dies one second into the drive.
-
-⚠️ (0,0,0) is physically impossible for a magnetometer -- Earth's field is never
-zero -- and is what an uninitialised AK09916 reports. It is the measured source of
-the 98 all-zero rows in ``edr_imu_sample``.
+**Verification is now the poll loop itself** -- it already samples at 4 Hz, so it IS
+a liveness test. A blocking check to build a second one was redundant and expensive.
 """
 from __future__ import annotations
 
@@ -54,53 +49,18 @@ from pi.sensors.mag_keepalive import (  # noqa: E402
     MAG_FROZEN_DWELL_S,
     MagKeepAlive,
     frozenRepeatsForRate,
-    magIsLive,
 )
 
 # --------------------------------------------------------------------------
-# magIsLive -- liveness is CHANGE, not a flag
-# --------------------------------------------------------------------------
-
-def test_changingReadings_areLive():
-    vals = [(1.0, 2.0, 3.0), (1.15, 2.0, 3.0), (1.0, 2.1, 3.0)]
-    assert magIsLive(lambda: vals.pop(0), samples=3, sleepFn=lambda _s: None) is True
-
-
-def test_identicalReadings_areNotLive():
-    """The whole point: a frozen channel returns the same triple forever."""
-    assert magIsLive(
-        lambda: (11.85, 21.45, 38.25), samples=8, sleepFn=lambda _s: None
-    ) is False
-
-
-def test_allZeroReadings_areNotLive_evenIfTheyChanged():
-    """🔴 (0,0,0) is physically impossible -- Earth's field is never zero.
-
-    An uninitialised AK09916 reports it, and it is the measured source of the 98
-    all-zero rows in edr_imu_sample. It must fail liveness even if some other
-    component varies, because the vector is not a measurement at all.
-    """
-    assert magIsLive(
-        lambda: (0.0, 0.0, 0.0), samples=4, sleepFn=lambda _s: None
-    ) is False
-
-
-def test_aRaisingReaderIsNotLive_andDoesNotPropagate():
-    def boom():
-        raise OSError("i2c bus error")
-
-    assert magIsLive(boom, samples=4, sleepFn=lambda _s: None) is False
-
-
-# --------------------------------------------------------------------------
-# The dwell is expressed in SECONDS and the count derived from the rate.
+# The dwell is a WALL-CLOCK quantity; the count is derived from the rate.
 # --------------------------------------------------------------------------
 
 def test_frozenRepeatsScaleWithSampleRate():
     """🔴 A threshold in POLLS silently changes meaning when the rate changes.
 
-    This is the US-803-b lesson applied at the point of use: the invariant is a
-    wall-clock dwell, so the COUNT is derived from the rate rather than frozen.
+    The 2026-09-18 console used a bare count of 20, which was 2 s at its 10 Hz and
+    would have become 5 s at production's 4 Hz. Same defect shape as US-803-b, so
+    the invariant kept here is the wall clock.
     """
     assert frozenRepeatsForRate(4.0) == pytest.approx(MAG_FROZEN_DWELL_S * 4.0, abs=1)
     assert frozenRepeatsForRate(10.0) > frozenRepeatsForRate(4.0)
@@ -108,110 +68,48 @@ def test_frozenRepeatsScaleWithSampleRate():
 
 @pytest.mark.parametrize("rate", [0.0, -1.0, None, float("nan")])
 def test_degenerateRateFallsBackToASafeFloor(rate):
-    """A bad rate must not produce a zero threshold -- that would restore on
-    every single sample and stall the poll loop permanently."""
+    """A bad rate must not yield a zero threshold -- that would request a repair on
+    every single poll and put the loop in a permanent repair cycle."""
     assert frozenRepeatsForRate(rate) >= 2
 
 
 # --------------------------------------------------------------------------
-# MagKeepAlive -- retry, verify, cooldown, and never raise
+# The detector itself
 # --------------------------------------------------------------------------
 
-def _keepAlive(reinit, live, *, clock):
-    return MagKeepAlive(
-        reinitFn=reinit, livenessFn=live, monotonicFn=clock, sleepFn=lambda _s: None
-    )
+def _ka():
+    return MagKeepAlive(reinitFn=lambda: None, monotonicFn=lambda: 100.0)
 
 
-def test_restoreSucceedsOnFirstAttempt():
-    calls = []
-    ka = _keepAlive(lambda: calls.append("init"), lambda: True, clock=lambda: 100.0)
-    assert ka.restore("test") is True
-    assert calls == ["init"]
-    assert ka.restores == 1
-    assert ka.failures == 0
-
-
-def test_restoreRetriesUpToTheLimitThenReportsFailure():
-    calls = []
-    ka = _keepAlive(lambda: calls.append("init"), lambda: False, clock=lambda: 100.0)
-    assert ka.restore("test") is False
-    assert len(calls) == MagKeepAlive.ATTEMPTS
-    assert ka.failures == 1
-    assert ka.restores == 0
-
-
-def test_livenessIsCheckedAFTEReachAttempt_notOnce():
-    """Verify-per-attempt is what took 85% to 100%."""
-    outcomes = [False, True]
-    checks = []
-
-    def live():
-        checks.append(1)
-        return outcomes.pop(0)
-
-    ka = _keepAlive(lambda: None, live, clock=lambda: 100.0)
-    assert ka.restore("test") is True
-    assert len(checks) == 2
-
-
-def test_aRaisingReinitIsSwallowedAndCountedAsAnAttempt():
-    """🔴 A watchdog that can raise is worse than none: it would take down the
-    poll loop it exists to protect."""
-    def boom():
-        raise OSError("i2c write failed")
-
-    ka = _keepAlive(boom, lambda: False, clock=lambda: 100.0)
-    assert ka.restore("test") is False
-    assert ka.failures == 1
-
-
-def test_cooldownSuppressesBackToBackRestores():
-    """Without a cooldown a genuinely dead sensor stalls the loop every sample."""
-    calls = []
-    now = [100.0]
-    ka = _keepAlive(lambda: calls.append(1), lambda: True, clock=lambda: now[0])
-    assert ka.restore("first") is True
-    assert ka.restore("immediately after") is False   # suppressed, not attempted
-    assert len(calls) == 1
-    now[0] += MagKeepAlive.COOLDOWN_S + 0.01
-    assert ka.restore("after the cooldown") is True
-    assert len(calls) == 2
-
-
-def test_suppressedRestoreIsNotCountedAsAFailure():
-    """A cooldown suppression is 'not asked', not 'asked and failed'.
-
-    Conflating them would make the failure counter useless as a health signal --
-    the same three-valued discipline as the rotation gate's UNDETERMINED.
-    """
-    ka = _keepAlive(lambda: None, lambda: True, clock=lambda: 100.0)
-    ka.restore("first")
-    ka.restore("suppressed")
-    assert ka.failures == 0
-    assert ka.suppressed == 1
-
-
-def test_trackerFiresOnlyAfterTheDwellOfIdenticalTriples():
-    ka = _keepAlive(lambda: None, lambda: True, clock=lambda: 100.0)
-    threshold = frozenRepeatsForRate(4.0)
+def test_dwellFiresOnlyAfterEnoughIdenticalTriples():
+    ka = _ka()
     triple = (11.85, 21.45, 38.25)
-    for _ in range(threshold - 1):
+    for _ in range(frozenRepeatsForRate(4.0) - 1):
         assert ka.noteSample(triple, sampleHz=4.0) is False
     assert ka.noteSample(triple, sampleHz=4.0) is True
 
 
-def test_anyChangeResetsTheRepeatRun():
-    ka = _keepAlive(lambda: None, lambda: True, clock=lambda: 100.0)
+def test_oneLsbOfDitherResetsTheRun():
+    """A real sensor dithers, which is exactly why bit-identity is the predicate."""
+    ka = _ka()
     for _ in range(frozenRepeatsForRate(4.0) - 1):
         ka.noteSample((1.0, 2.0, 3.0), sampleHz=4.0)
-    ka.noteSample((1.15, 2.0, 3.0), sampleHz=4.0)          # one LSB of dither
+    ka.noteSample((1.15, 2.0, 3.0), sampleHz=4.0)
     assert ka.noteSample((1.15, 2.0, 3.0), sampleHz=4.0) is False
 
 
-def test_noneSampleDoesNotCountAsARepeat():
-    """An absent reading is not a repeated one. Counting it would let a dead
-    channel look frozen for the wrong reason and trigger a pointless restore."""
-    ka = _keepAlive(lambda: None, lambda: True, clock=lambda: 100.0)
+def test_noneSampleIsNotARepeat():
+    """An absent reading is not an unchanging one. Counting absence as repetition
+    would schedule a repair for a channel that is missing, not frozen."""
+    ka = _ka()
     for _ in range(frozenRepeatsForRate(4.0) + 3):
         assert ka.noteSample(None, sampleHz=4.0) is False
+
+
+def test_forgetClearsTheRun():
+    ka = _ka()
+    triple = (1.0, 2.0, 3.0)
+    for _ in range(frozenRepeatsForRate(4.0)):
+        ka.noteSample(triple, sampleHz=4.0)
+    ka.forget()
+    assert ka.noteSample(triple, sampleHz=4.0) is False

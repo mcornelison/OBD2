@@ -77,6 +77,7 @@ from pi.sensors.ak09916_bypass import (
 # The accel floor is the SAME constant the tilt maths already refuses to work
 # below -- imported, never retyped, so the gate and the level frame cannot drift
 # into disagreeing about what counts as a usable specific-force vector.
+from pi.sensors.mag_keepalive import MAG_PLAUSIBLE_MAX_UT
 from pi.sensors.pitch_fusion import MIN_GRAVITY_MS2
 
 # US-564: the gate owns the MECHANISM (bit-identity + magnitude); this module
@@ -88,6 +89,7 @@ from pi.sensors.plausibility_gate import (
     PlausibilityGate,
     channelStateTopic,
     magnitudeAtLeast,
+    magnitudeAtMost,
 )
 
 logger = logging.getLogger(__name__)
@@ -555,7 +557,16 @@ class ImuReader(_BaseSensorReader):
             plausible=magnitudeAtLeast(MIN_GRAVITY_MS2), invariance=True
         ),
         TOPIC_IMU_GYRO: ChannelPolicy(invariance=True),
-        TOPIC_IMU_MAG: ChannelPolicy(invariance=True),
+        # ARCH-059: a magnitude CEILING as well as invariance. The 18 overflow rows
+        # measured on drive 84 (+/-4895..4915 uT) passed the old policy because
+        # invariance only catches a channel that has stopped MOVING, and a
+        # saturated channel still dithers. NO FLOOR: that would be invented
+        # physics (the pinned enrolment test says so) and invariance already
+        # catches a stuck-at-zero channel. Earth's field is 25-65 uT globally.
+        TOPIC_IMU_MAG: ChannelPolicy(
+            plausible=magnitudeAtMost(MAG_PLAUSIBLE_MAX_UT),
+            invariance=True,
+        ),
     }
 
     # Accel is the burst's load-bearing channel: without it there is no gravity
@@ -646,10 +657,14 @@ class ImuReader(_BaseSensorReader):
         # stayed frozen.
         keepAlive = self._keepAlive()
         if keepAlive is not None and keepAlive.noteSample(mag, sampleHz=self._sampleHz):
-            if keepAlive.restore("bit-identical dwell reached"):
-                # Re-read so this seq carries the REPAIRED value rather than the
-                # frozen one it was about to publish.
-                mag = toIcmFrame(_vec3(dev.magnetic))
+            # 🔴 requestRestore RETURNS IMMEDIATELY (ARCH-059). ARCH-057 called a
+            # synchronous restore here and blocked this thread for up to 12.4 s --
+            # measured on drive 84 as 154 intervals over 0.6 s and 87% of the
+            # samples lost. The repair now runs on its own thread and THIS SEQ
+            # publishes the frozen value it already has; the plausibility gate and
+            # the ARCH-056 rotation gate are what mark it. A poll is never traded
+            # for a repair again.
+            keepAlive.requestRestore("bit-identical dwell reached")
         # US-500: the genuine adafruit_icm20x.ICM20948 does NOT expose
         # .temperature (the clone/FakeImu assumption did). temp is NOT in the
         # states/imu display contract and edr_imu_sample.temp_c is nullable, so a
@@ -807,7 +822,7 @@ def makeMagKeepAlive(device: Any) -> Any | None:
     failing. So the watchdog binds ONLY where the repair is valid, and
     ``pi.sensors.imu.magMode`` is what selects between them.
     """
-    from pi.sensors.mag_keepalive import MagKeepAlive, magIsLive  # noqa: PLC0415
+    from pi.sensors.mag_keepalive import MagKeepAlive  # noqa: PLC0415
 
     reinit = getattr(device, "_magnetometer_init", None)
     if not callable(reinit):
@@ -817,10 +832,11 @@ def makeMagKeepAlive(device: Any) -> Any | None:
             type(device).__name__,
         )
         return None
-    return MagKeepAlive(
-        reinitFn=reinit,
-        livenessFn=lambda: magIsLive(lambda: device.magnetic),
-    )
+    # 🔴 NO livenessFn (ARCH-059). Verification used to be an 8 x 30 ms blocking
+    # sample loop ON THE POLL THREAD. The poll loop already samples at 4 Hz and IS
+    # a liveness test, so the dwell recurring is the verification and it costs
+    # nothing.
+    return MagKeepAlive(reinitFn=reinit)
 
 
 def _makeIcm20948(*, magMode: str = MAG_MODE_MASTER) -> Any:  # pragma: no cover
