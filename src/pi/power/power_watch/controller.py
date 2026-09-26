@@ -73,6 +73,10 @@
 # 2026-09-17    | Rex (US-776-b) | The drain poll stops on its own drainFloor
 #                              (pi.powerWatch.drainFloorVolts), not vcellFloor,
 #                              which stays the pre-pipeline emergency backstop.
+# 2026-09-25    | Rex (US-790) | OPTIONAL drainSampleFn: the start read and every
+#                              drain poll become rows of the VCELL series, and
+#                              each drain ends with exactly one row carrying
+#                              its typed termination reason. None = legacy.
 # ================================================================================
 ################################################################################
 #
@@ -94,9 +98,17 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from src.pi.power.power_watch.pld_witness import recordTransitionWitnessed
+from src.pi.power.types import (
+    DRAIN_TERMINATION_DRAIN_FLOOR,
+    DRAIN_TERMINATION_POWER_RESTORED,
+    DRAIN_TERMINATION_SHUTDOWN,
+    DRAIN_TERMINATION_VCELL_FLOOR,
+    DRAIN_TERMINATION_VCELL_UNREADABLE,
+)
 
 logger = logging.getLogger(__name__)
 __all__ = [
@@ -131,6 +143,23 @@ def _defaultNowIso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+@dataclass(frozen=True, slots=True)
+class _DrainEnd:
+    """How the drain poll ended (US-790).
+
+    Attributes:
+        reason: A ``DRAIN_TERMINATION_*`` value, or None when the pipeline
+            finished on its own.
+        vcell: The ending poll's successful read, if it had one.
+        pollRead: True when the ending poll attempted a read, so the terminal
+            row must not read again (a failed attempt stays NULL).
+    """
+
+    reason: str | None = None
+    vcell: float | None = None
+    pollRead: bool = False
+
+
 class ShutdownSequencer:
     def __init__(
         self,
@@ -152,6 +181,7 @@ class ShutdownSequencer:
         powerLossObservedFn: Callable[[], None] | None = None,
         powerRestoredFn: Callable[[], None] | None = None,
         drainFloor: float | None = None,
+        drainSampleFn: Callable[..., None] | None = None,
     ):
         """Args:
         isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
@@ -225,6 +255,16 @@ class ShutdownSequencer:
             ``vcellFloor``, which answers "is the battery already too low to
             start?" before the pipeline and stays the emergency backstop.
             ``None`` falls back to ``vcellFloor`` (the US-776-a behaviour).
+        drainSampleFn: US-790 -- OPTIONAL recorder for the drain's VCELL series,
+            called as ``drainSampleFn(vcellV, terminationReason=None)``: once
+            for the start read, once per drain poll, and once more with a
+            ``DRAIN_TERMINATION_*`` reason when the drain ends -- exactly one
+            terminal call per drain, on every exit. ``vcellV`` is the read that
+            poll took, or None when it has none. A terminal row whose poll took
+            no read (pipeline finished, power returned) reads VCELL once for
+            it; every other row costs no extra read. Guarded like
+            ``phaseEmitFn``: a recorder that raises never delays the drain.
+            ``None`` (the default) runs the exact legacy path.
         """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
@@ -241,6 +281,7 @@ class ShutdownSequencer:
         self._prePowerOffFn = prePowerOffFn
         self._powerLossObservedFn = powerLossObservedFn
         self._powerRestoredFn = powerRestoredFn
+        self._drainSampleFn = drainSampleFn
         self._shutdownReason = shutdownReason
         self._nowIso = nowIsoFn if nowIsoFn is not None else _defaultNowIso
         # Grace-window bookkeeping (set when the grace phase is emitted).
@@ -362,6 +403,8 @@ class ShutdownSequencer:
                 v,
                 self._vcellFloor,
             )
+            # US-790: a one-row drain -- its only read ended it.
+            self._recordDrainSample(v, DRAIN_TERMINATION_VCELL_FLOOR)
             # Floor backstop skips the pipeline -> no `flushing` phase happened;
             # emit `powering_off` directly (honest instrument).
             self._emitPhase(PHASE_POWERING_OFF)
@@ -370,6 +413,8 @@ class ShutdownSequencer:
             self._runPrePowerOff()
             self._powerOff()
             return
+        # US-790: the drain's first row is the read that let it start.
+        self._recordDrainSample(v)
         # F-103 [A-2]: smoothing confirmed + above floor -> the bounded pipeline
         # is about to run. `flushing` per the spec enum.
         self._emitPhase(PHASE_FLUSHING)
@@ -388,8 +433,10 @@ class ShutdownSequencer:
         # US-776-a: the pipeline runs on its own daemon thread and THIS thread
         # polls it, so a pipeline blocked inside one forcePush (measured up to
         # ~25 min per pass) can never block poweroff.
-        self._pollPipeline(done, floorReadable=not suppressFloorFastPath)
+        floorReadable = not suppressFloorFastPath
+        drainEnd = self._pollPipeline(done, floorReadable=floorReadable)
         if not self._isOnBattery():
+            self._recordDrainEnd(DRAIN_TERMINATION_POWER_RESTORED, drainEnd, floorReadable)
             logger.info(
                 "shutdown-sequencer: power returned during window -- abort, resume normal op"
             )
@@ -398,6 +445,9 @@ class ShutdownSequencer:
             self._emitPhase(PHASE_CANCELLED)
             self._notifyPowerRestored()  # ARCH-031: undo the reversible shed
             return
+        self._recordDrainEnd(
+            drainEnd.reason or DRAIN_TERMINATION_SHUTDOWN, drainEnd, floorReadable,
+        )
         logger.warning("shutdown-sequencer: pre-shutdown window resolved -- graceful poweroff")
         self._emitPhase(PHASE_POWERING_OFF)
         self._runPrePowerOff()
@@ -423,15 +473,23 @@ class ShutdownSequencer:
           hardware cut -- the unrecoverable failure, where stopping early only
           leaves rows for the next sync.
 
+        US-790: every poll that does NOT end the drain is a row of the VCELL
+        series; the poll that ends it is returned instead, so the caller writes
+        the single terminal row once it knows whether power came back.
+
         Args:
             done: Set by the pipeline thread when it finishes.
             floorReadable: False to leave the floor unread (bootGrace).
+
+        Returns:
+            How the drain ended. ``reason`` is None when the pipeline finished.
         """
         floorSeenMono = self._monotonic()
         while not done.wait(timeout=self._smoothingPollSec):
             if not self._isOnBattery():
-                return
+                return _DrainEnd(reason=DRAIN_TERMINATION_POWER_RESTORED)
             now = self._monotonic()
+            v: float | None = None
             if floorReadable:
                 try:
                     v = self._vcell()
@@ -452,7 +510,9 @@ class ShutdownSequencer:
                             v,
                             self._drainFloor,
                         )
-                        return
+                        return _DrainEnd(
+                            reason=DRAIN_TERMINATION_DRAIN_FLOOR, vcell=v, pollRead=True,
+                        )
             if now - floorSeenMono >= self._totalCapSec:
                 logger.warning(
                     "shutdown-sequencer: VCELL floor unreadable for %.0fs (cap "
@@ -460,7 +520,45 @@ class ShutdownSequencer:
                     now - floorSeenMono,
                     self._totalCapSec,
                 )
-                return
+                return _DrainEnd(reason=DRAIN_TERMINATION_VCELL_UNREADABLE, pollRead=True)
+            self._recordDrainSample(v)
+        return _DrainEnd()
+
+    # ----- US-790 drain VCELL series -------------------------------------------
+
+    def _recordDrainEnd(self, reason: str, end: _DrainEnd, floorReadable: bool) -> None:
+        """Write the drain's single terminal row.
+
+        The read comes from the poll that ended the drain when that poll took
+        one; otherwise (pipeline finished, power returned) VCELL is read once
+        here -- unless the floor is suppressed (bootGrace), where nothing is
+        read and the row carries NULL.
+        """
+        if self._drainSampleFn is None:
+            return
+        v = end.vcell
+        if not end.pollRead and floorReadable:
+            try:
+                v = self._vcell()
+            except Exception as exc:  # noqa: BLE001 -- a failed read is recorded as NULL
+                logger.warning(
+                    "shutdown-sequencer: VCELL read failed at drain end (%s)", exc,
+                )
+                v = None
+        self._recordDrainSample(v, reason)
+
+    def _recordDrainSample(self, v: float | None, reason: str | None = None) -> None:
+        """Hand one row to the drain series recorder (best-effort, never raises)."""
+        if self._drainSampleFn is None:
+            return
+        try:
+            self._drainSampleFn(v, terminationReason=reason)
+        except Exception as exc:  # noqa: BLE001 -- a lost row, never a stalled drain
+            logger.error(
+                "shutdown-sequencer: drain VCELL row not recorded (%s) -- ignored, "
+                "the drain continues",
+                exc,
+            )
 
     # ----- US-748 power-loss-observed hook (time-to-death heartbeat) ----------
 

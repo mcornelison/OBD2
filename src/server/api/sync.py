@@ -84,6 +84,7 @@
 #               |              | registry path AND from dtc_freeze_frame's FK
 #               |              | resolver (left untouched).  Registry + model
 #               |              | registry ship empty; startup_log registers US-417.
+# 2026-09-25    | Rex (US-790) | Registered drain_vcell_trajectory (no rename).
 # ================================================================================
 ################################################################################
 
@@ -149,6 +150,7 @@ from src.server.db.models import (
     BatteryHealthLog,
     CalibrationSession,
     ConnectionLog,
+    DrainVcellTrajectory,
     DriveCounter,
     DriveSummary,
     DtcFreezeFrame,
@@ -225,6 +227,10 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # source_id by runSyncUpsert.  One row per power-source / shutdown-stage
     # transition (NOT per poll).  Formerly Pi-only health telemetry.
     "power_log": (PowerLog, ()),
+    # US-790 (F-138): the shutdown drain's VCELL series -- one row per drain
+    # POLL, which is exactly why it is not power_log.  Integer 'id' PK ->
+    # source_id, no rename.  INSERT-only on the Pi.
+    "drain_vcell_trajectory": (DrainVcellTrajectory, ()),
     # US-453 (D-7 / F-082): pi_state operational-state singleton.  Integer 'id'
     # PK (pinned to 1 on the Pi) -> mapped to source_id; the generic upsert on
     # (source_device, source_id) applies the Pi's no_new_drives flips (the Pi

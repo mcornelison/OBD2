@@ -93,6 +93,8 @@
 #               |              | gyro RATE bias columns).  Forward-only.
 # 2026-09-24    | Rex (US-683) | Sprint 94 -- registered v0032 (battery_health_log
 #               |              | close_reason + backfill).  Forward-only.
+# 2026-09-25    | Rex (US-790) | Sprint 94 -- registered v0033 (drain_vcell_trajectory
+#               |              | table).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -218,6 +220,9 @@ from src.server.migrations.versions.v0031_us810_edr_gyro_rate_bias import (
 from src.server.migrations.versions.v0032_us683_battery_health_close_reason import (
     MIGRATION as _V0032,
 )
+from src.server.migrations.versions.v0033_us790_drain_vcell_trajectory import (
+    MIGRATION as _V0033,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -256,6 +261,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0030,
     _V0031,
     _V0032,
+    _V0033,
 )
 
 

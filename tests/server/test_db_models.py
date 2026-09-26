@@ -449,9 +449,13 @@ class TestTableCount:
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 33, (
-            f"Expected 33 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 34, (
+            f"Expected 34 tables, got {len(tableNames)}: {tableNames}"
         )
+        # US-790 (F-138): 33 -> 34.  drain_vcell_trajectory is the shutdown
+        # drain's per-poll VCELL series (migration v0033).  Named so a bare
+        # +1 from any other table does not pass this.
+        assert 'drain_vcell_trajectory' in tableNames
         # ARCH-020 (Atlas, 2026-09-01): 28 -> 30. maintenance_log and
         # maintenance_schedule give the vehicle's service history a durable home;
         # before them, 47 dated events lived only as Markdown on a share with no

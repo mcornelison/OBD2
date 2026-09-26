@@ -660,7 +660,8 @@
     "power": {
       "power_monitor": {
         "enabled": true
-      }
+      },
+      "cellEpoch": "2000mah-pouch"
     }
   },
   "server": {

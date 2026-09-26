@@ -37,6 +37,9 @@
 # 2026-09-22    | Rex (US-798) | Module docstring is now THE power_log contract:
 #                               the five writers, their event types, what one
 #                               event writes (measured on the car) and retention.
+# 2026-09-25    | Rex (US-790) | Added DrainVcellTrajectoryWriter: one durable
+#                               row per shutdown-drain poll into
+#                               drain_vcell_trajectory (NOT power_log).
 # ================================================================================
 ################################################################################
 
@@ -107,6 +110,7 @@ PowerMonitor keeps the state and delegates row-writing here.
 import logging
 import os
 import sqlite3
+import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -114,7 +118,13 @@ from typing import Any
 from src.common.time.helper import utcIsoNow
 from src.pi.diagnostics.clock_sync import classifyClockQuality
 
-from .types import PowerObservation, PowerReading, PowerSource
+from .types import (
+    DRAIN_TERMINATION_VALUES,
+    DRAIN_VCELL_TRAJECTORY_TABLE,
+    PowerObservation,
+    PowerReading,
+    PowerSource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -539,6 +549,143 @@ def ensurePowerLogDataQuality(conn: sqlite3.Connection) -> bool:
 
     conn.execute("ALTER TABLE power_log ADD COLUMN data_quality TEXT")
     return True
+
+
+class DrainVcellTrajectoryWriter:
+    """Durable writer for ``drain_vcell_trajectory`` -- one row per drain poll (US-790).
+
+    NOT a power_log writer: that table is an event log (contract above), and
+    this is a series.  ``ShutdownSequencer`` calls :meth:`record` with the
+    VCELL it just read on each drain poll, and once more with the
+    ``terminationReason`` that ended the drain.  A terminal row closes the
+    drain: the next row starts a new one at ``seq`` 0.
+
+    ``seq`` advances on every call, including one whose row fails to land, so
+    a gap in ``seq`` is a lost row rather than a missing poll.
+
+    Durable per row (PRAGMA synchronous = FULL + a commit per row, the US-267
+    chain): the drain ends in a poweroff or a hard cut, and a buffered row is
+    exactly the row either loses.  Never creates the database or the table --
+    ``ObdDatabase.initialize()`` owns the schema -- and never raises: it runs on
+    the drain's own poll thread.
+    """
+
+    def __init__(
+        self,
+        *,
+        dbPath: str,
+        cellEpoch: str,
+        busyTimeoutSec: float = 1.0,
+        onRowWritten: Callable[[int], None] | None = None,
+        monotonicFn: Callable[[], float] | None = None,
+        nowIsoFn: Callable[[], str] | None = None,
+    ) -> None:
+        """Args:
+            dbPath: ``pi.database.path``.
+            cellEpoch: ``pi.power.cellEpoch`` from the validated config,
+                stamped on every row ('unknown' when the key is absent).
+            busyTimeoutSec: sqlite busy timeout.  Callers pass one poll
+                interval, so a lock held by the collector costs this row its
+                slot and never delays the drain's floor check.
+            onRowWritten: Called with the id of each row that actually landed
+                -- custody's own-rows set (sync_custody.OwnTrajectoryRows.add).
+                Never called for a row that failed.
+            monotonicFn: DI monotonic clock (default :func:`time.monotonic`).
+            nowIsoFn: DI canonical UTC stamp (default :func:`utcIsoNow`).
+        """
+        self._dbPath = dbPath
+        self._cellEpoch = str(cellEpoch)
+        self._busyTimeoutSec = float(busyTimeoutSec)
+        self._onRowWritten = onRowWritten
+        self._monotonic = monotonicFn or time.monotonic
+        self._nowIso = nowIsoFn or utcIsoNow
+        self._conn: sqlite3.Connection | None = None
+        self._seq = 0
+        self._openFailureLogged = False
+
+    def record(self, vcellV: float | None, *, terminationReason: str | None = None) -> None:
+        """Write one poll's row.  Never raises.
+
+        Args:
+            vcellV: The VCELL volts this poll read, or None when it has no
+                reading (a failed read).  Stored as NULL, never a sentinel.
+            terminationReason: One of ``DRAIN_TERMINATION_VALUES`` on the drain's
+                LAST row; None on every other row.
+        """
+        tsUtc = self._nowIso()
+        tsCapture = self._monotonic()
+        seq = self._seq
+        terminal = terminationReason is not None
+        self._seq = 0 if terminal else seq + 1
+        try:
+            if terminal and terminationReason not in DRAIN_TERMINATION_VALUES:
+                logger.error(
+                    "drain-trajectory: termination reason %r is not one of %s -- "
+                    "row %d NOT written", terminationReason, DRAIN_TERMINATION_VALUES, seq,
+                )
+                return
+            conn = self._connection()
+            if conn is None:
+                return
+            cursor = conn.execute(
+                _INSERT_DRAIN_TRAJECTORY_SQL,
+                (
+                    tsUtc,
+                    float(tsCapture),
+                    int(seq),
+                    float(vcellV) if vcellV is not None else None,
+                    terminationReason,
+                    self._cellEpoch,
+                ),
+            )
+            conn.commit()
+            rowId = cursor.lastrowid
+        except Exception as exc:  # noqa: BLE001 -- one lost row, never a stalled drain
+            logger.warning("drain-trajectory: row %d not written (%s)", seq, exc)
+            return
+        finally:
+            if terminal:
+                self._closeConnection()
+        if rowId is not None and self._onRowWritten is not None:
+            try:
+                self._onRowWritten(int(rowId))
+            except Exception as exc:  # noqa: BLE001 -- bookkeeping must not stall the drain
+                logger.warning("drain-trajectory: row %d id not reported (%s)", seq, exc)
+
+    def _connection(self) -> sqlite3.Connection | None:
+        """The drain's durable write connection, opened on first use."""
+        if self._conn is not None:
+            return self._conn
+        if not os.path.exists(self._dbPath):
+            if not self._openFailureLogged:
+                logger.error(
+                    "drain-trajectory: database %s not found -- NOT creating one; "
+                    "this drain's VCELL series is not recorded", self._dbPath,
+                )
+                self._openFailureLogged = True
+            return None
+        conn = sqlite3.connect(
+            self._dbPath, timeout=self._busyTimeoutSec, check_same_thread=False,
+        )
+        conn.execute("PRAGMA synchronous = FULL")
+        self._conn = conn
+        return conn
+
+    def _closeConnection(self) -> None:
+        conn, self._conn = self._conn, None
+        self._openFailureLogged = False
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001, S110 -- closing is best-effort
+                pass
+
+
+_INSERT_DRAIN_TRAJECTORY_SQL: str = (
+    f"INSERT INTO {DRAIN_VCELL_TRAJECTORY_TABLE} "
+    "(ts_utc, ts_capture, seq, vcell_v, termination_reason, cell_epoch) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
 
 
 def getPowerHistory(

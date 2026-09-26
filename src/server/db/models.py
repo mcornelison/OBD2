@@ -53,6 +53,9 @@
 # 2026-09-24    | Rex (US-683) | BatteryHealthLog.close_reason (typed close
 #               |              | discriminator) + its named CHECK.  Live table
 #               |              | gains it via migration v0032.
+# 2026-09-25    | Rex (US-790) | DrainVcellTrajectory: the shutdown drain's VCELL
+#               |              | series (one row per poll) + its termination
+#               |              | CHECK.  Created by migration v0033.
 # ================================================================================
 ################################################################################
 
@@ -988,6 +991,60 @@ class PowerLog(Base):
     # US-252: LiPo cell voltage at stage transition; NULL for legacy
     # power-source-transition rows that carry no voltage reading.
     vcell: Mapped[float | None] = mapped_column(Float)
+
+
+#: US-790: drain_vcell_trajectory.termination_reason vocabulary.  Mirrors the Pi
+#: SSOT (src/pi/power/types.py::DRAIN_TERMINATION_VALUES); the two tuples are
+#: pinned equal by tests/server/test_drain_vcell_trajectory_crosses_tiers.py.
+DRAIN_TERMINATION_REASON_VALUES: tuple[str, ...] = (
+    'shutdown', 'power_restored', 'drain_floor', 'vcell_floor', 'vcell_unreadable',
+)
+CK_DRAIN_VCELL_TRAJECTORY_TERMINATION_REASON: str = (
+    'ck_drain_vcell_trajectory_termination_reason'
+)
+
+
+class DrainVcellTrajectory(Base):
+    """The shutdown drain's VCELL series, mirrored from the Pi (US-790 / F-138).
+
+    One row per drain poll (1 s), the reason the drain ended on its last row
+    only.  It is what replaces the PROVISIONAL ``drainFloorVolts`` with a
+    measurement, so every row carries the ``cell_epoch`` it was written under:
+    a floor averaged across two batteries would be a number nobody could
+    defend.  Group by ``cell_epoch`` before deriving anything.
+
+    INSERT-only with an integer ``id`` PK on the Pi, delta-synced on
+    ``id`` -> ``source_id`` like power_log.  ``vcell_v`` NULL means that poll
+    had no reading -- never a sentinel.  Pi DDL:
+    ``src/pi/obdii/database_schema.py::SCHEMA_DRAIN_VCELL_TRAJECTORY``.
+    """
+
+    __tablename__ = "drain_vcell_trajectory"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+        CheckConstraint(
+            "termination_reason IN ("
+            + ",".join(f"'{v}'" for v in DRAIN_TERMINATION_REASON_VALUES)
+            + ")",
+            name=CK_DRAIN_VCELL_TRAJECTORY_TERMINATION_REASON,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns (mirror SCHEMA_DRAIN_VCELL_TRAJECTORY)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    ts_capture: Mapped[float] = mapped_column(Float(precision=53), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    vcell_v: Mapped[float | None] = mapped_column(Float)
+    termination_reason: Mapped[str | None] = mapped_column(String(32))
+    cell_epoch: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
 class StartupLog(Base):

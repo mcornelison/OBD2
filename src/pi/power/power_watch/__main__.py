@@ -134,6 +134,11 @@
 #                           second chromium cold-starts during a shutdown. The
 #                           wiring is unchanged: the shed already runs from
 #                           powerLossObservedFn, before the shutdown-state write.
+# 2026-09-25    | US-790  | Sprint 94. The sequencer feeds a
+#                           DrainVcellTrajectoryWriter (one row per drain poll,
+#                           stamped with pi.power.cellEpoch); the ids it commits
+#                           form an OwnTrajectoryRows set that the drain's exit
+#                           check and custody both exclude.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -167,7 +172,10 @@ from src.common.config.secrets_loader import (  # noqa: E402
     getSecret,
     loadConfigWithSecrets,
 )
-from src.common.config.validator import ConfigValidator  # noqa: E402
+from src.common.config.validator import (  # noqa: E402
+    CELL_EPOCH_UNKNOWN,
+    ConfigValidator,
+)
 from src.common.edr.sync_contract import (  # noqa: E402
     EDR_SYNC_TABLES,
     SHUTDOWN_DRAIN_EXCLUDED_TABLES,
@@ -180,6 +188,7 @@ from src.pi.power.drain_event_writer import (  # noqa: E402
     CLOSE_REASON_SHUTDOWN,
     makeDrainEventWriterForPath,
 )
+from src.pi.power.power_db import DrainVcellTrajectoryWriter  # noqa: E402
 from src.pi.power.power_source_provider import PowerSourceProvider  # noqa: E402
 from src.pi.power.power_source_pubsub import (  # noqa: E402
     POWER_SOURCE_FILENAME,
@@ -201,6 +210,7 @@ from src.pi.power.power_watch.pld_witness import readWitness  # noqa: E402
 from src.pi.power.power_watch.sync_custody import (  # noqa: E402
     CUSTODY_RECORD_FILENAME,
     OwnDrainCloseSlot,
+    OwnTrajectoryRows,
     makeSyncCustodyHook,
 )
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
@@ -891,8 +901,9 @@ def main(argv: list[str] | None = None) -> int:
     # EDR would never see "empty" and would spend the entire shutdown window on
     # passes that move nothing.
     #
-    # US-789: custody passes excludeRows (one row, by primary key) -- table
-    # membership stays identical for both callers; the drain passes none.
+    # US-789: custody passes excludeRows (rows, by primary key) -- table
+    # membership stays identical for both callers. US-790: the drain passes
+    # this shutdown's own VCELL series rows (readDrainBacklog below).
     def readSyncBacklog(excludeRows=()):
         return countOutstandingRows(
             dbPath,
@@ -911,13 +922,38 @@ def main(argv: list[str] | None = None) -> int:
             onlyTables=EDR_SYNC_TABLES,
         )
 
+    # US-790: the drain's own VCELL series. The sequencer hands the writer one
+    # row per drain poll; each id that lands joins this APPEND-ONLY set (Atlas
+    # 2026-09-19, decision 2), built empty once, here.
+    #
+    # The DRAIN's exit check excludes the same set as custody. The drain CARRIES
+    # the table (it is not EDR), so rows written before a pass are pushed by it;
+    # but a row lands every second, and without this every pass would find the
+    # one written since the last push and go again -- the rows chasing
+    # backlog == 0. Only this shutdown's own rows are excluded, by id, and
+    # custody reports them beside the verdict: one membership, both readers.
+    ownTrajectoryRows = OwnTrajectoryRows()
+    cellEpoch = str(
+        ((config.get("pi") or {}).get("power") or {}).get("cellEpoch") or CELL_EPOCH_UNKNOWN
+    )
+    drainTrajectory = DrainVcellTrajectoryWriter(
+        dbPath=dbPath,
+        cellEpoch=cellEpoch,
+        # One poll interval: a lock costs a row its slot, never the floor check.
+        busyTimeoutSec=smoothingPollSec,
+        onRowWritten=ownTrajectoryRows.add,
+    )
+
+    def readDrainBacklog():
+        return readSyncBacklog(excludeRows=ownTrajectoryRows.exclusions())
+
     syncTask = SyncWithServerTask(
         serverReachable=detector.isServerReachable,
         # US-776-a: no budget -- the drain ends on an empty backlog or the
         # sequencer's VCELL floor poll. Every pass excludes the EDR set.
         runSync=_buildRunSync(
             syncClient,
-            backlogReader=readSyncBacklog,
+            backlogReader=readDrainBacklog,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=writeRecord,
@@ -969,6 +1005,7 @@ def main(argv: list[str] | None = None) -> int:
         backlogReader=readSyncBacklog,
         edrBacklogReader=readEdrBacklog,
         ownDrainCloseSlot=ownDrainCloseSlot,
+        ownTrajectoryRows=ownTrajectoryRows,
     )
     prePowerOffFn = composePrePowerOffHooks(drainCloseFn, custodyFn)
 
@@ -1020,6 +1057,8 @@ def main(argv: list[str] | None = None) -> int:
         # US-776-b: the running drain stops here; vcellFloor stays the
         # pre-pipeline backstop.
         drainFloor=drainFloorVolts,
+        # US-790: the start read and every drain poll become rows.
+        drainSampleFn=drainTrajectory.record,
         totalCapSec=totalWindowCapSec,
         smoothingSec=smoothingSec,
         smoothingPollSec=smoothingPollSec,

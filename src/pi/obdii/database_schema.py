@@ -106,6 +106,9 @@
 #                               power transition, and its honest three-state
 #                               read.  Idempotent ALTER in
 #                               ensurePowerLogObserverColumns (power_db.py).
+# 2026-09-25    | Rex (US-790) | Added drain_vcell_trajectory (one row per drain
+#                               poll) + ensureDrainVcellTrajectoryTable, a
+#                               probe-guarded explicit CREATE.
 # ================================================================================
 ################################################################################
 
@@ -141,6 +144,7 @@ import sqlite3
 # diverge (A-4 anti-divergence, US-408). The Pi imports the DDL and appends it to
 # ALL_SCHEMAS / ALL_INDEXES below -- it never re-declares the columns here.
 from common.edr.sensor_schema import EDR_INDEXES, EDR_SCHEMAS
+from src.pi.power.types import DRAIN_TERMINATION_VALUES, DRAIN_VCELL_TRAJECTORY_TABLE
 
 # ================================================================================
 # Schema Definitions
@@ -623,6 +627,69 @@ INDEX_POWER_LOG_EVENT_TYPE = """
 CREATE INDEX IF NOT EXISTS IX_power_log_event_type
     ON power_log(event_type);
 """
+
+# US-790 (F-138): the VCELL series of a shutdown drain -- one row per drain
+# poll, the reason on the last row only.  NOT power_log: that is an EVENT log
+# and tests/pi/power/test_power_log_contract.py enforces it.  Append-only with
+# an ``id`` PK (no drive_id, no data_source), so it delta-syncs on the id
+# cursor and stays out of SYNC_UPDATE_TABLES_PK -- a row pushed during the
+# drain is never re-stamped outstanding (the US-789 defect).  It is NOT an EDR
+# table, so the shutdown drain CARRIES it: the rows only exist because the
+# power is going away.  Writer: src/pi/power/power_db.py; the table name lives
+# in src/pi/power/types.py so that writer never imports pi.obdii.
+# No IF NOT EXISTS: ensureDrainVcellTrajectoryTable probes sqlite_master and
+# issues this only for an absent table (specs/design-patterns.md section 10).
+SCHEMA_DRAIN_VCELL_TRAJECTORY = f"""
+CREATE TABLE {DRAIN_VCELL_TRAJECTORY_TABLE} (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- EVENT time: the instant of this poll's VCELL read (canonical ISO-8601
+    -- UTC).  The record -- never a write time in its place.
+    ts_utc TEXT NOT NULL,
+
+    -- Monotonic seconds at the same read; wall clock can step at boot.
+    ts_capture REAL NOT NULL,
+
+    -- 0-based poll number within one drain; 0 opens the next drain.
+    seq INTEGER NOT NULL,
+
+    -- MAX17048 VCELL volts.  NULL = no reading this poll, never a sentinel.
+    vcell_v REAL,
+
+    -- Why the drain ended; set on its LAST row only (DRAIN_TERMINATION_VALUES).
+    termination_reason TEXT
+        CHECK (termination_reason IN ({
+            ', '.join(f"'{value}'" for value in DRAIN_TERMINATION_VALUES)
+        })),
+
+    -- Which cell was fitted: pi.power.cellEpoch, stamped at write time.
+    -- 'unknown' when the key is absent -- never a guess.
+    cell_epoch TEXT NOT NULL
+);
+"""
+
+
+def ensureDrainVcellTrajectoryTable(conn: sqlite3.Connection) -> bool:
+    """Create ``drain_vcell_trajectory`` when it is absent (US-790).
+
+    Replay-safe by construction: the decision is a ``sqlite_master`` lookup by
+    ``name``, which SQLite stores unquoted whatever form the stored DDL takes,
+    and an existing table is never touched -- no CREATE, DROP, RENAME or ALTER.
+
+    Args:
+        conn: Open sqlite3 connection; the caller owns commit semantics.
+
+    Returns:
+        True iff the table was created on this call.
+    """
+    present = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (DRAIN_VCELL_TRAJECTORY_TABLE,),
+    ).fetchone()
+    if present is not None:
+        return False
+    conn.execute(SCHEMA_DRAIN_VCELL_TRAJECTORY)
+    return True
 
 # ================================================================================
 # US-200 / Spool Data v2 Story 2: drive_id indexes

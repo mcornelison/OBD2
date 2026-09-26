@@ -27,6 +27,11 @@
 #                                excluded from the verdict by its drain_event_id
 #                                (OwnDrainCloseSlot) and reported beside it in
 #                                ownDrainCloseExcluded. One PK, never the table.
+# 2026-09-25    | Rex (US-790) | OwnTrajectoryRows: the drain VCELL series' ids,
+#                                an append-only own-rows set excluded from the
+#                                verdict and reported beside it (count, min,
+#                                max) under OWN DRAIN TRAJECTORY. Record schema
+#                                1 -> 2.
 # ================================================================================
 ################################################################################
 """The pre-poweroff sync-custody record (US-621).
@@ -44,11 +49,13 @@ them. This module is that distinction.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 
 from src.common.time.helper import utcIsoNow
 from src.pi.data.sync_log import PK_COLUMN
 from src.pi.power.power_watch.outcome import writeAtomicJson
+from src.pi.power.types import DRAIN_VCELL_TRAJECTORY_TABLE
 from src.pi.sync.backlog import (
     BACKLOG_DELIVERED,
     BACKLOG_OUTSTANDING,
@@ -67,7 +74,11 @@ __all__ = [
     "OWN_DRAIN_CLOSE_PREFIX",
     "OWN_DRAIN_CLOSE_REASON",
     "OWN_DRAIN_CLOSE_TABLE",
+    "OWN_TRAJECTORY_PREFIX",
+    "OWN_TRAJECTORY_REASON",
+    "OWN_TRAJECTORY_TABLE",
     "OwnDrainCloseSlot",
+    "OwnTrajectoryRows",
     "SYNC_CUSTODY_PREFIX",
     "buildCustodyRecord",
     "emitSyncCustody",
@@ -98,7 +109,16 @@ OWN_DRAIN_CLOSE_PREFIX = "powerwatch: OWN DRAIN CLOSE ="
 OWN_DRAIN_CLOSE_TABLE = "battery_health_log"
 OWN_DRAIN_CLOSE_REASON = "written by this shutdown's own drain close"
 
-CUSTODY_RECORD_SCHEMA_VERSION: int = 1
+# US-790: the second own-row class -- the drain's VCELL series, one row per
+# poll. Its OWN prefix, per the one-prefix-per-question rule above: a line
+# under OWN DRAIN CLOSE would answer a different question.
+OWN_TRAJECTORY_PREFIX = "powerwatch: OWN DRAIN TRAJECTORY ="
+OWN_TRAJECTORY_TABLE = DRAIN_VCELL_TRAJECTORY_TABLE
+OWN_TRAJECTORY_REASON = "written by this shutdown's own drain VCELL series"
+
+# 2 (US-790): ownTrajectoryExcluded joined the record. A consumer parsing v1
+# must not silently accept a record carrying a field it does not know.
+CUSTODY_RECORD_SCHEMA_VERSION: int = 2
 
 # Sits beside powerwatch_outcome.json in the existing data/ dir. A SEPARATE
 # file, deliberately: the outcome record is written with os.replace to a fixed
@@ -150,6 +170,67 @@ class OwnDrainCloseSlot:
         )
 
 
+class OwnTrajectoryRows:
+    """The ids this shutdown's drain VCELL series wrote -- an own-rows SET (US-790).
+
+    The drain writes a row every poll, so one slot cannot hold them. Atlas's
+    ruling (2026-09-19, decision 2) fixes the semantics: the set is APPEND-ONLY,
+    built empty once when the hooks are composed, and a writer adds an id only
+    after its own write is known to have landed. No speculative adds, so no
+    clear-before-attempt: a failed write adds nothing, and custody can never
+    exclude a row that does not exist.
+
+    Read by BOTH the drain's exit check and custody, so the two cannot
+    disagree about which rows are this shutdown's own. Thread-safe: the
+    sequencer's poll thread adds while the pipeline thread reads.
+    """
+
+    __slots__ = ("_ids", "_lock")
+
+    def __init__(self) -> None:
+        self._ids: list[int] = []
+        self._lock = threading.Lock()
+
+    def add(self, rowId: int) -> None:
+        """Remember one id the trajectory writer just committed."""
+        with self._lock:
+            self._ids.append(int(rowId))
+
+    def exclusions(self) -> tuple[RowExclusion, ...]:
+        """One typed exclusion per id, in write order; empty when none landed."""
+        with self._lock:
+            ids = tuple(self._ids)
+        return tuple(
+            RowExclusion(table=OWN_TRAJECTORY_TABLE, pk=pk, reason=OWN_TRAJECTORY_REASON)
+            for pk in ids
+        )
+
+
+def _ownTrajectoryField(
+    exclusions: tuple[RowExclusion, ...], backlog: SyncBacklog,
+) -> dict | None:
+    """The ``ownTrajectoryExcluded`` record field (US-790).
+
+    At ~1,500 rows a drain, naming every id is useless; the class is reported
+    as its count and id range instead -- still falsifiable, still one line.
+    ``None`` means NO exclusion was requested (nothing landed, or unwired).
+    ``outstandingRows`` is how many of them actually moved the count; the rest
+    had already been pushed during the drain.
+    """
+    if not exclusions:
+        return None
+    ids = [e.pk for e in exclusions]
+    applied = {e.pk for e in backlog.excludedRows if e.table == OWN_TRAJECTORY_TABLE}
+    return {
+        "table": OWN_TRAJECTORY_TABLE,
+        "reason": OWN_TRAJECTORY_REASON,
+        "requestedRows": len(ids),
+        "minId": min(ids),
+        "maxId": max(ids),
+        "outstandingRows": len(applied),
+    }
+
+
 def _ownDrainCloseField(
     exclusion: RowExclusion | None, backlog: SyncBacklog,
 ) -> dict | None:
@@ -176,6 +257,7 @@ def buildCustodyRecord(
     nowIso: str,
     edrBacklog: SyncBacklog | None = None,
     ownDrainClose: RowExclusion | None = None,
+    ownTrajectory: tuple[RowExclusion, ...] = (),
 ) -> dict:
     """Compose the durable custody record for one poweroff.
 
@@ -199,6 +281,8 @@ def buildCustodyRecord(
             claim the EDR queue was looked at and found empty.
         ownDrainClose: US-789 -- the exclusion requested for this shutdown's
             own drain-close row, or ``None`` when none was requested.
+        ownTrajectory: US-790 -- the exclusions requested for this shutdown's
+            own drain VCELL series rows; empty when none were requested.
 
     Returns:
         A JSON-serialisable record body.
@@ -218,6 +302,8 @@ def buildCustodyRecord(
         "edrOutstandingRows": None if edrBacklog is None else edrBacklog.total,
         # US-789: the row this shutdown's own close wrote, BESIDE the verdict.
         "ownDrainCloseExcluded": _ownDrainCloseField(ownDrainClose, backlog),
+        # US-790: this shutdown's own VCELL series, BESIDE the verdict.
+        "ownTrajectoryExcluded": _ownTrajectoryField(ownTrajectory, backlog),
         "ts": nowIso,
     }
 
@@ -229,6 +315,7 @@ def emitSyncCustody(
     nowIsoFn: Callable[[], str] | None = None,
     edrBacklog: SyncBacklog | None = None,
     ownDrainClose: RowExclusion | None = None,
+    ownTrajectory: tuple[RowExclusion, ...] = (),
 ) -> str:
     """State sync custody for this poweroff, on BOTH channels. Never raises.
 
@@ -251,6 +338,8 @@ def emitSyncCustody(
         edrBacklog: The EDR-only backlog, reported beside the verdict.
         ownDrainClose: US-789 -- this shutdown's own drain-close exclusion,
             reported beside the verdict.
+        ownTrajectory: US-790 -- this shutdown's own VCELL series exclusions,
+            reported beside the verdict as a count and id range.
 
     Returns:
         The exact line logged, so a caller can re-state it without recomposing
@@ -307,6 +396,21 @@ def emitSyncCustody(
             ownDrainClose.reason,
         )
 
+    # US-790: the drain's own VCELL series, one line for the whole class.
+    trajectory = _ownTrajectoryField(ownTrajectory, backlog)
+    if trajectory is not None:
+        logger.warning(
+            "%s %s %d row(s), min id=%d, max id=%d, %d outstanding (%s); "
+            "excluded from the custody verdict above -- they sync on the next run home.",
+            OWN_TRAJECTORY_PREFIX,
+            trajectory["table"],
+            trajectory["requestedRows"],
+            trajectory["minId"],
+            trajectory["maxId"],
+            trajectory["outstandingRows"],
+            trajectory["reason"],
+        )
+
     nowIso = nowIsoFn() if nowIsoFn is not None else utcIsoNow()
     writeAtomicJson(
         recordPath,
@@ -315,6 +419,7 @@ def emitSyncCustody(
             nowIso=nowIso,
             edrBacklog=edrBacklog,
             ownDrainClose=ownDrainClose,
+            ownTrajectory=ownTrajectory,
         ),
         what="custody",
     )
@@ -329,6 +434,7 @@ def makeSyncCustodyHook(
     busyTimeoutSec: float | None = None,
     edrBacklogReader: Callable[[], SyncBacklog] | None = None,
     ownDrainCloseSlot: OwnDrainCloseSlot | None = None,
+    ownTrajectoryRows: OwnTrajectoryRows | None = None,
 ) -> Callable[[], None]:
     """Build the zero-arg pre-poweroff custody hook.
 
@@ -351,6 +457,8 @@ def makeSyncCustodyHook(
             ``excludeRows=(<that one row>,)``; when it is empty (the close
             failed or wrote nothing) the reader is called with no exclusion
             and custody counts every row.
+        ownTrajectoryRows: US-790 -- the set the drain VCELL series writer
+            fills. Its ids join ``excludeRows``; an empty set adds nothing.
 
     Returns:
         A zero-arg callable suitable for ``ShutdownSequencer(prePowerOffFn=)``.
@@ -374,11 +482,22 @@ def makeSyncCustodyHook(
                     "custody counts every row",
                     exc,
                 )
+        ownTrajectory: tuple[RowExclusion, ...] = ()
+        if ownTrajectoryRows is not None:
+            try:
+                ownTrajectory = ownTrajectoryRows.exclusions()
+            except Exception as exc:  # noqa: BLE001 -- never block a poweroff
+                logger.warning(
+                    "powerwatch: own-trajectory set unreadable (%s) -- "
+                    "custody counts every row",
+                    exc,
+                )
+        excludeRows = ((ownDrainClose,) if ownDrainClose is not None else ()) + ownTrajectory
         try:
-            if ownDrainClose is None:
+            if not excludeRows:
                 backlog = backlogReader()
             else:
-                backlog = backlogReader(excludeRows=(ownDrainClose,))
+                backlog = backlogReader(excludeRows=excludeRows)
         except Exception as exc:  # noqa: BLE001 -- never block a poweroff
             # Report UNKNOWN, never DELIVERED. Swallowing a reader fault into a
             # clean-looking record would manufacture the exact false assurance
@@ -412,6 +531,7 @@ def makeSyncCustodyHook(
                 recordPath=recordPath,
                 edrBacklog=edrBacklog,
                 ownDrainClose=ownDrainClose,
+                ownTrajectory=ownTrajectory,
             )
         except Exception as exc:  # noqa: BLE001 -- belt+braces on the poweroff path
             logger.error("powerwatch: sync-custody emit failed (%s)", exc)
