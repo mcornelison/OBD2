@@ -83,8 +83,22 @@ __all__ = [
 #: The acquisition mechanisms, in the order they are exercised.
 #:
 #: ``MECH_ORIGINAL``  -- production's pre-ARCH-057 path (bypass, no keep-alive).
-#:                       MEASURED 0/20 for liveness, so it is expected to FREEZE.
-#:                       That is the point: it is the control.
+#:   ~~MEASURED 0/20 for liveness, so it is expected to FREEZE. That is the
+#:   point: it is the control.~~
+#:   🔴 **THAT IS STALE AND IS CORRECTED (Atlas, 2026-09-26). BYPASS DOES NOT
+#:   FREEZE ON CURRENT CODE.** MEASURED on chi-eclipse-01 at V0.29.70 `cb6a411f`,
+#:   parked, 100 s: **99 of 99 state samples carried a non-null headingDeg, 19
+#:   DISTINCT values (302-321 deg), magRotation `healthy` throughout.** Master mode
+#:   measured the same morning gave 16 distinct over 90 s -- **the same order.**
+#:   ⇒ **Phase 0 is NO LONGER A KNOWN-DEAD CONTROL. It is a live candidate**, and
+#:   the schedule is now A/B/C of three plausible mechanisms bracketed by a repeat
+#:   of the first -- not "control, candidate, candidate, control".
+#:   ⚠️ The 0/20 figure was taken before ARCH-056 (rotation gate + provenance)
+#:   and ARCH-059. **Bypass-then is not bypass-now.**
+#:   ⚠️ What the 100 s does NOT show: behaviour under vibration or cabin
+#:   temperature, and what reaches the PERSISTED corpus -- the state file publishes
+#:   at `stateHz` 1 while persistence is gated separately. Drives 81/82/83 (bypass,
+#:   OLD code) carried **zero** mag rows across 63,845 samples.
 #: ``MECH_KEEPALIVE``  -- master mode + the runtime keep-alive. MEASURED 20/20.
 #: ``MECH_KEEPALIVE_DRDY`` -- as above, plus slave-0 reconfigured to start at ST1
 #:                       so DRDY and HOFL are actually read. NEVER MEASURED on
