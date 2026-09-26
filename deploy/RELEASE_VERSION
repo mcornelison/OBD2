@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.69",
-  "theme": "ARCH-057: mag master mode + keep-alive",
-  "description": "The MEASURED repair for ARCH-032: _magnetometer_init() re-run at RUNTIME and verified by SAMPLING, not by the init's return value, which returned True on a run where the sensor stayed frozen. This hardware 2026-09-18: nothing 0/20, re-init 17/20, +verify+retry 20/20. Behind pi.sensors.imu.magMode = master | bypass. The 20/20 was measured with eclipse-obd STOPPED -- UNCONTENDED."
+  "version": "V0.29.70",
+  "theme": "ARCH-059/060: mag stall fix + purge log",
+  "description": "ARCH-059 takes the mag keep-alive OFF the IMU poll thread. ARCH-057 blocked it up to 12.4 s and cost 87% of drive 84's samples and 90% of the calibration circles. requestRestore() returns inside 20 ms, one attempt not three, blocking liveness loop deleted, plus a magnitude ceiling via the US-564 gate for the 18 saturated rows. ARCH-060: maybePurge logs EVERY due run."
 }
