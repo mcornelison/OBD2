@@ -70,6 +70,15 @@ from pi.obdii.drive_id import getCurrentDriveId
 #    the comment itself as a directive -- so it is described, not spelled.)
 from pi.sensors.ak09916_bypass import toIcmFrame
 
+# US-803-a: the A-34 recovery tunables and their absent-key fallbacks.
+# gyro_recovery imports only the standard library, so there is no cycle.
+from pi.sensors.gyro_recovery import (
+    DEFAULT_SAMPLE_COUNT,
+    DEFAULT_SETTLE_S,
+    GYRO_FAULT_MIN_RAD_S,
+    GyroRecoverySettings,
+)
+
 # The accel floor is the SAME constant the tilt maths already refuses to work
 # below -- imported, never retyped, so the gate and the level frame cannot drift
 # into disagreeing about what counts as a usable specific-force vector.
@@ -562,7 +571,12 @@ class ImuReader(_BaseSensorReader):
         deviceFactory: Callable[[], Any] | None = None,
         dataSource: str = "real",
         invariantDwellSeconds: float = DEFAULT_INVARIANT_DWELL_S,
+        gyroRecovery: GyroRecoverySettings | None = None,
     ) -> None:
+        # US-803-a: held for the real device factory, which is the only path
+        # that runs the A-34 startup recovery. An injected deviceFactory never
+        # reaches it.
+        self._gyroRecovery = gyroRecovery or GyroRecoverySettings()
         super().__init__(
             bus,
             sampleHz=sampleHz,
@@ -572,7 +586,7 @@ class ImuReader(_BaseSensorReader):
         )
 
     def _defaultDeviceFactory(self) -> Any:
-        return _makeIcm20948()
+        return _makeIcm20948(self._gyroRecovery)
 
     def _readAndPublish(self, seq: int) -> None:
         dev = self._device
@@ -736,8 +750,13 @@ def _makeI2c() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
     return busio.I2C(board.SCL, board.SDA)
 
 
-def _makeIcm20948() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
+def _makeIcm20948(
+    gyroRecovery: GyroRecoverySettings | None = None,
+) -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
     """Construct the ICM-20948 IMU handle (@0x69). Raises when absent/non-Pi.
+
+    ``gyroRecovery`` carries the config-resolved A-34 recovery tunables
+    (US-803-a) through to :func:`_buildImuDevice`.
 
     US-565: the magnetometer is read DIRECTLY at 0x0C rather than through the
     ICM's auxiliary-I2C shadow. MEASURED 2026-08-21 -- the shadow's cyclic slave0
@@ -756,7 +775,7 @@ def _makeIcm20948() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
 
     i2cBus = _makeI2c()
     icm = adafruit_icm20x.ICM20948(i2cBus, address=ADDR_IMU)
-    return _buildImuDevice(icm, i2cBus)
+    return _buildImuDevice(icm, i2cBus, gyroRecovery=gyroRecovery)
 
 
 def _buildImuDevice(
@@ -765,6 +784,7 @@ def _buildImuDevice(
     *,
     attachFn: Callable[[Any, Any], Any] | None = None,
     recoverFn: Callable[[Any], Any] | None = None,
+    gyroRecovery: GyroRecoverySettings | None = None,
 ) -> Any:
     """Establish the magnetometer bypass, THEN run the gyro check. ORDER IS LOAD-BEARING.
 
@@ -798,13 +818,15 @@ def _buildImuDevice(
         i2cBus: The primary I2C bus it was constructed on.
         attachFn: Injection seam for tests; defaults to the real bypass attach.
         recoverFn: Injection seam for tests; defaults to the real gyro recovery.
+        gyroRecovery: Config-resolved recovery tunables (US-803-a) for the
+            real recovery; ``None`` means the gyro_recovery module defaults.
 
     Returns:
         The wrapped device from the bypass attach, or the bare ICM when the
         magnetometer could not be brought up.
     """
     attach = attachFn or _attachDirectMagnetometer
-    recover = recoverFn or _recoverGyro
+    recover = recoverFn or (lambda chip: _recoverGyro(chip, settings=gyroRecovery))
     device = attach(icm, i2cBus)
     try:
         # The raw ICM, never `device`: recovery writes power-management
@@ -824,7 +846,11 @@ def _buildImuDevice(
     return device
 
 
-def _recoverGyro(icm: Any, recoveryFn: Callable[[Any], Any] | None = None) -> Any:
+def _recoverGyro(
+    icm: Any,
+    recoveryFn: Callable[[Any], Any] | None = None,
+    settings: GyroRecoverySettings | None = None,
+) -> Any:
     """Clear the A-34 latched gyro fault at startup, if it is present.
 
     🔴 ARCH-032, 2026-09-20 -- ORDERING CORRECTED. This used to run BEFORE
@@ -854,52 +880,24 @@ def _recoverGyro(icm: Any, recoveryFn: Callable[[Any], Any] | None = None) -> An
     Args:
         icm: The constructed ICM-20948.
         recoveryFn: Injection seam for tests; defaults to the real recovery.
+        settings: The config-resolved tunables (US-803-a) handed to the real
+            recovery; ``None`` means the gyro_recovery module defaults. Ignored
+            when ``recoveryFn`` is injected.
 
     Returns:
         The outcome, for callers that want to log or assert on it.
     """
     from pi.sensors.gyro_recovery import recoverGyroIfFaulted
 
-    runRecovery = recoveryFn or recoverGyroIfFaulted
-    try:
-        outcome = runRecovery(icm)
-    except Exception as exc:  # noqa: BLE001 -- a broken recovery must not cost the IMU
-        logger.error("IMU gyro startup check raised (%s); continuing without recovery", exc)
-        return None
-    if outcome is not None and getattr(outcome, "attempted", False):
-        logger.warning("IMU gyro startup check: %s", outcome.describe())
-    return outcome
-
-
-def _recoverGyro(icm: Any, recoveryFn: Callable[[Any], Any] | None = None) -> Any:
-    """Clear the A-34 latched gyro fault at startup, if it is present.
-
-    Ordered BEFORE :func:`_attachDirectMagnetometer` deliberately: both touch
-    bank 0, and the recovery writes a power-management register, so it runs
-    while the chip is in its freshly-initialised state rather than after the
-    magnetometer bypass has reconfigured the auxiliary bus.
-
-    Placed at startup because the precondition the detector needs -- a
-    STATIONARY vehicle -- is guaranteed here and nowhere else: the engine has
-    just been keyed on and the car has not moved. A latched gyro and a real turn
-    produce the same signature, so the check is only sound while we know the car
-    is still.
-
-    A failure NEVER costs the IMU. Same principle as the magnetometer degrade
-    path: losing accel, gyro and mag to fix one channel throws away valid data
-    to punish a broken one. US-749's guard still withholds pitch and grade when
-    the recovery does not take.
-
-    Args:
-        icm: The constructed ICM-20948.
-        recoveryFn: Injection seam for tests; defaults to the real recovery.
-
-    Returns:
-        The outcome, for callers that want to log or assert on it.
-    """
-    from pi.sensors.gyro_recovery import recoverGyroIfFaulted
-
-    runRecovery = recoveryFn or recoverGyroIfFaulted
+    tunables = settings or GyroRecoverySettings()
+    runRecovery = recoveryFn or (
+        lambda chip: recoverGyroIfFaulted(
+            chip,
+            sampleCount=tunables.sampleCount,
+            settleS=tunables.settleS,
+            faultMinRadS=tunables.faultMinRadS,
+        )
+    )
     try:
         outcome = runRecovery(icm)
     except Exception as exc:  # noqa: BLE001 -- a broken recovery must not cost the IMU
@@ -987,6 +985,14 @@ def createSensorReadersFromConfig(
                 # it can be changed without a code edit.
                 invariantDwellSeconds=imu.get(
                     "invariantDwellSeconds", DEFAULT_INVARIANT_DWELL_S
+                ),
+                # US-803-a: the A-34 startup-recovery tunables. The validator
+                # has already bounded each one; the module constants apply
+                # only when a key is absent.
+                gyroRecovery=GyroRecoverySettings(
+                    faultMinRadS=imu.get("gyroFaultMinRadS", GYRO_FAULT_MIN_RAD_S),
+                    sampleCount=imu.get("gyroRecoverySampleCount", DEFAULT_SAMPLE_COUNT),
+                    settleS=imu.get("gyroRecoverySettleSec", DEFAULT_SETTLE_S),
                 ),
             )
         )

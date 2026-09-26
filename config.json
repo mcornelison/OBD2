@@ -558,6 +558,9 @@
         "zuptSpeedMaxAgeSec": 2.0,
         "zuptMinStops": 5,
         "zuptWindowStops": 20,
+        "gyroFaultMinRadS": 0.10,
+        "gyroRecoverySampleCount": 20,
+        "gyroRecoverySettleSec": 1.0,
         "mount": {
           "forward": "+x",
           "left": "+y",

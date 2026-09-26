@@ -51,6 +51,12 @@ PWR_MGMT_2_ALL_ON = 0x00
 # starts at 0.487-0.553, with NOTHING observed in between across 10,313
 # classified minutes. 0.10 is in that empty gap: high enough that real sensor
 # noise can never reach it, low enough that the 14-30 deg/s fault always does.
+#
+# US-803-a: these three are the ABSENT-KEY FALLBACKS for pi.sensors.imu
+# gyroFaultMinRadS / gyroRecoverySampleCount / gyroRecoverySettleSec in
+# config.json, which ImuReader reads (sensor_reader.createSensorReadersFromConfig)
+# and threads down to recoverGyroIfFaulted. The validator bounds the threshold
+# by the gyro's +/-500 dps full scale and requires the count to be an integer.
 GYRO_FAULT_MIN_RAD_S = 0.10
 
 DEFAULT_SAMPLE_COUNT = 20
@@ -84,7 +90,19 @@ class GyroRecoveryOutcome:
         )
 
 
-def gyroLooksFaulted(readings: list[tuple[float, float, float]]) -> bool:
+@dataclass(frozen=True)
+class GyroRecoverySettings:
+    """The three startup-recovery tunables, as resolved from config (US-803-a)."""
+
+    faultMinRadS: float = GYRO_FAULT_MIN_RAD_S
+    sampleCount: int = DEFAULT_SAMPLE_COUNT
+    settleS: float = DEFAULT_SETTLE_S
+
+
+def gyroLooksFaulted(
+    readings: list[tuple[float, float, float]],
+    faultMinRadS: float = GYRO_FAULT_MIN_RAD_S,
+) -> bool:
     """True when a set of at-rest readings shows the latched offset.
 
     ⚠️ PRECONDITION, owned by the caller: the vehicle must be STATIONARY. A car
@@ -101,7 +119,7 @@ def gyroLooksFaulted(readings: list[tuple[float, float, float]]) -> bool:
         # the gyro on the strength of having failed to read it.
         return False
     axisMeans = [sum(r[axis] for r in readings) / len(readings) for axis in range(3)]
-    return max(abs(mean) for mean in axisMeans) >= GYRO_FAULT_MIN_RAD_S
+    return max(abs(mean) for mean in axisMeans) >= faultMinRadS
 
 
 def _sampleGyro(icm: Any, count: int) -> list[tuple[float, float, float]]:
@@ -126,6 +144,7 @@ def recoverGyroIfFaulted(
     icm: Any,
     sampleCount: int = DEFAULT_SAMPLE_COUNT,
     settleS: float = DEFAULT_SETTLE_S,
+    faultMinRadS: float = GYRO_FAULT_MIN_RAD_S,
 ) -> GyroRecoveryOutcome:
     """Check the gyro at startup and power-cycle the block if it is latched.
 
@@ -148,7 +167,7 @@ def recoverGyroIfFaulted(
             attempted=False, before="unknown", after="unknown", recovered=False, error=str(exc)
         )
 
-    if not gyroLooksFaulted(before):
+    if not gyroLooksFaulted(before, faultMinRadS):
         return GyroRecoveryOutcome(
             attempted=False, before="healthy", after="healthy", recovered=False, error=None
         )
@@ -156,7 +175,7 @@ def recoverGyroIfFaulted(
     logger.warning(
         "IMU gyro latched fault detected at startup (mean rate above %.2f rad/s on a "
         "stationary vehicle); attempting PWR_MGMT_2 power cycle (A-34)",
-        GYRO_FAULT_MIN_RAD_S,
+        faultMinRadS,
     )
 
     try:
@@ -177,7 +196,7 @@ def recoverGyroIfFaulted(
             attempted=True, before="faulted", after="unknown", recovered=False, error=str(exc)
         )
 
-    stillFaulted = gyroLooksFaulted(after)
+    stillFaulted = gyroLooksFaulted(after, faultMinRadS)
     outcome = GyroRecoveryOutcome(
         attempted=True,
         before="faulted",

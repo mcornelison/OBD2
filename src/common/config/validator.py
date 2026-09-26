@@ -105,6 +105,7 @@ Usage:
 
 import ipaddress
 import logging
+import math
 import zoneinfo
 from typing import Any
 
@@ -143,6 +144,15 @@ REQUIRED_SECTIONS: tuple[str, ...] = ('pi', 'server')
 DEFAULT_IMU_SAMPLE_HZ = 4
 DEFAULT_IMU_PERSIST_HZ = 2
 DEFAULT_IMU_STATE_HZ = 1
+
+# US-803-a: the gyro's full scale, the ceiling on pi.sensors.imu.gyroFaultMinRadS.
+# MEASURED, not chosen: the Pi runs the ICM-20948 gyro at +/-500 dps --
+# GYRO_CONFIG_1 = 0x03 read off the deployed Pi 2026-09-14 decodes to FS_SEL=1
+# (tools/imu/imu_probe.py), and specs/grounded-knowledge.md states the same from
+# the installed adafruit_icm20x 2.1.10 driver's initialize(). A fault threshold
+# above full scale can never be reached, so fault detection would be silently
+# OFF. (Not the datasheet's +/-250 dps: that is the RESET value, not this Pi.)
+GYRO_FULL_SCALE_RAD_S = math.radians(500)
 
 # Define default values for optional settings. Paths use the tier-aware
 # nested shape (pi.*, server.*) introduced in sweep 4. Legacy leaf paths
@@ -377,6 +387,14 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.imu.zuptSpeedMaxAgeSec': 2.0,
     'pi.sensors.imu.zuptMinStops': 5,
     'pi.sensors.imu.zuptWindowStops': 20,
+    # US-803-a: the A-34 gyro startup recovery (pi.sensors.gyro_recovery).
+    # gyroFaultMinRadS sits in the measured empty gap between quiet (0.013-0.015
+    # rad/s) and latched (0.487-0.553) starts; the count is how many at-rest
+    # reads each side of the power cycle; the settle is each wait in the cycle.
+    # Values equal the module constants, which apply only when a key is absent.
+    'pi.sensors.imu.gyroFaultMinRadS': 0.10,
+    'pi.sensors.imu.gyroRecoverySampleCount': 20,
+    'pi.sensors.imu.gyroRecoverySettleSec': 1.0,
     # US-564 (F-135) plausibility gate: how long a channel must stay BIT-
     # IDENTICAL before it is reported sensor_stale.  A DWELL, not a physical
     # threshold -- bit-identity is a proof (real sensors dither +/-1 LSB, so a
@@ -1183,6 +1201,11 @@ class ConfigValidator:
         # its floor, gating a channel on two identical samples -- fast enough to
         # fire on a real scheduler hiccup. Fail fast rather than silently.
         'pi.sensors.imu.invariantDwellSeconds',
+        # US-803-a: a zero sample count reads nothing, and gyroLooksFaulted
+        # treats no samples as healthy -- fault detection silently off.
+        'pi.sensors.imu.gyroFaultMinRadS',
+        'pi.sensors.imu.gyroRecoverySampleCount',
+        'pi.sensors.imu.gyroRecoverySettleSec',
         # US-767-b: a zero pre-roll keeps nothing from before the link, and a
         # zero hold closes the gate on the first dropped read.
         'pi.sensors.logGate.preRollSec',
@@ -1219,7 +1242,43 @@ class ConfigValidator:
                     f"{key} must be a positive number (got {val!r})",
                     missingFields=[key],
                 )
+        self._validateGyroRecovery(config)
         self._warnImuRatesAboveSource(config)
+
+    def _validateGyroRecovery(self, config: dict[str, Any]) -> None:
+        """Bound the A-34 gyro-recovery keys beyond positivity (US-803-a).
+
+        Runs after the positive check, so each value here is already a
+        positive int or float.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the sample count is not an integer, or
+                the fault threshold exceeds the gyro's full scale.
+        """
+        countKey = 'pi.sensors.imu.gyroRecoverySampleCount'
+        count = self._getNestedValue(config, countKey)
+        # An INTEGER, not merely positive: a float reaches range(count) in
+        # gyro_recovery._sampleGyro and raises TypeError, which the recovery
+        # does not catch and _recoverGyro swallows -- so 2.5 (or 20.0) would
+        # silently disable the recovery on every boot while the IMU looks healthy.
+        if count is not None and not isinstance(count, int):
+            raise ConfigValidationError(
+                f"{countKey} must be an integer (got {count!r})",
+                missingFields=[countKey],
+            )
+
+        thresholdKey = 'pi.sensors.imu.gyroFaultMinRadS'
+        threshold = self._getNestedValue(config, thresholdKey)
+        if threshold is not None and threshold > GYRO_FULL_SCALE_RAD_S:
+            raise ConfigValidationError(
+                f"{thresholdKey} {threshold!r} exceeds the gyro's full scale "
+                f"({GYRO_FULL_SCALE_RAD_S:.3f} rad/s = 500 dps) -- the sensor can "
+                f"never report that rate, so fault detection would be silently off",
+                missingFields=[thresholdKey],
+            )
 
     def _warnImuRatesAboveSource(self, config: dict[str, Any]) -> None:
         """WARN when an IMU consumer rate cannot be what its config field says (US-796-b).
