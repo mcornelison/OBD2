@@ -555,6 +555,37 @@ class EdrPersistenceSubscriber:
         """Run the rolling-window purge if the cadence interval has elapsed.
 
         Returns True iff a purge attempt ran this call (cadence due), else False.
+
+        🔴 EVERY RUN LOGS, INCLUDING THE RUNS THAT DELETE NOTHING (ARCH-060).
+        This used to log only ``if imuDeleted or lightDeleted or derivedDeleted``,
+        so a purge that deleted nothing was SILENT -- and silence in this journal
+        meant two things that could not be told apart:
+
+          * "the purge ran and removed those rows"
+          * "the purge never ran; something else removed them"
+
+        When ~5.35 M rows went missing from ``edr_imu_sample`` (F-114) the journal
+        was silent. That ambiguity is why the cause was first attributed to the
+        purge, then WITHDRAWN, then re-derived -- and why it was got backwards once
+        along the way. The eventual exclusion only worked by measuring the ABSENCE
+        of purge lines across a 229 MB journal, which is possible only because the
+        purge had been noisy in an earlier period. **Had it been quiet throughout,
+        the question would have been unanswerable.**
+
+        ⚠️ This is ``specs/anti-patterns.md``'s inert-guard family seen from the
+        other side: not a check that cannot fail, but a RECORD that cannot testify.
+        **The presence of a log line is evidence about activity only if its absence
+        is also evidence.**
+
+        ⚠️ A run suppressed by the CADENCE still logs nothing, deliberately. If
+        not-yet-due calls also spoke, the journal would fill with lines that do not
+        describe a run and "the purge ran" would stop meaning anything. Silence
+        there is correct precisely BECAUSE the due case is now unambiguous.
+
+        🔴 The retention WINDOW is in every line. F-114's cause was the window
+        running at 7 days while ``config.json`` said 45; a line reporting deletions
+        without the window it applied cannot answer "which retention was in
+        force?", which is the question that finally settled it.
         """
         now = self._monotonic()
         if now - self._lastPurgeMono < self._retentionCheckIntervalS:
@@ -562,14 +593,23 @@ class EdrPersistenceSubscriber:
         self._lastPurgeMono = now
         try:
             imuDeleted, lightDeleted, derivedDeleted = self.purgeExpired()
-            if imuDeleted or lightDeleted or derivedDeleted:
+            total = imuDeleted + lightDeleted + derivedDeleted
+            if total:
                 logger.info(
-                    "EDR retention purge: deleted imu=%d light=%d derived=%d "
+                    "EDR retention purge: RAN, deleted imu=%d light=%d derived=%d "
                     "(synced, older than %d days)",
                     imuDeleted, lightDeleted, derivedDeleted, self._retentionDays,
                 )
+            else:
+                # The line that did not exist. "Nothing was eligible" is a
+                # measurement; it is not the same fact as "nobody looked".
+                logger.info(
+                    "EDR retention purge: RAN, deleted nothing -- no synced rows "
+                    "older than %d days were eligible",
+                    self._retentionDays,
+                )
         except Exception as e:  # noqa: BLE001 -- purge failure is non-fatal
-            logger.warning("EDR retention purge failed: %s", e)
+            logger.warning("EDR retention purge FAILED: %s", e)
         return True
 
     def purgeExpired(self) -> tuple[int, int, int]:
