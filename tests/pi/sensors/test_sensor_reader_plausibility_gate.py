@@ -514,19 +514,40 @@ class TestChannelEnrolmentIsPinned:
         assert all(p.invariance for p in policies.values())
         assert TOPIC_IMU_TEMP not in policies
 
-    def test_imuReader_onlyAccelCarriesAMagnitudeFloor(self):
+    def test_imuReader_accelCarriesAFloorAndMagCarriesACeiling(self):
         """
         Given: the IMU's declared policies
         When: the check-1 predicates are read
-        Then: only accel has one. A magnetometer field floor and a gyro rate
-              floor would both be invented physics -- a stationary gyro really
-              does read ~0 rad/s, so a floor there would gate a parked car.
+        Then: accel has a magnitude FLOOR, mag has a magnitude CEILING, and gyro
+              has neither.
+
+        ⚠️ UPDATED BY ARCH-059, AND THE ORIGINAL REASONING SURVIVES INTACT. This
+        test used to assert mag had NO predicate, because "a magnetometer field
+        floor would be invented physics". That is still true and mag still has no
+        floor -- a stuck-at-zero channel is caught by INVARIANCE, which mag is
+        enrolled in, so a floor would add nothing.
+
+        🔴 What changed is a CEILING, and it is not invented: MEASURED on drive 84
+        (2026-09-25), 18 rows were pinned at +/-4895..4915 uT -- the AK09916's full
+        scale -- and published as data against an Earth field of ~50 uT. The bypass
+        path had read ST2 and RAISED on the overflow flag; making master mode the
+        default dropped that, because adafruit's dev.magnetic covers ST2 but never
+        decodes it. Saturation is not geomagnetism.
+
+        🟢 Gyro still has neither, for the original reason: a stationary gyro really
+        does read ~0 rad/s, so a floor there would gate a parked car.
         """
         policies = ImuReader.channelPolicies
 
         assert policies[TOPIC_IMU_ACCEL].plausible is not None
         assert policies[TOPIC_IMU_GYRO].plausible is None
-        assert policies[TOPIC_IMU_MAG].plausible is None
+        assert policies[TOPIC_IMU_MAG].plausible is not None
+
+        # And the mag predicate is a CEILING, not a floor: a small real reading
+        # passes, a saturated one does not.
+        magCheck = policies[TOPIC_IMU_MAG].plausible
+        assert magCheck((0.5, 0.5, 0.5)) is True
+        assert magCheck((4895.85, 4915.05, -4895.85)) is False
 
     def test_imuReader_onlyAccelIsBurstCritical(self):
         """

@@ -56,18 +56,19 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from collections.abc import Callable
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "MAG_FROZEN_DWELL_S",
-    "MAG_LIVENESS_GAP_S",
-    "MAG_LIVENESS_SAMPLES",
+    "MAG_PLAUSIBLE_MAX_UT",
     "MagKeepAlive",
+    "RestoreOutcome",
     "frozenRepeatsForRate",
-    "magIsLive",
 ]
 
 #: How long a run of BIT-IDENTICAL triples must persist before the channel is
@@ -87,11 +88,23 @@ __all__ = [
 #: actually dead.
 MAG_FROZEN_DWELL_S: float = 2.0
 
-#: Samples taken to decide liveness, and the gap between them. 8 x 30 ms = 240 ms,
-#: which spans ~24 conversions at the chip's 100 Hz -- enough that a live sensor
-#: must move, short enough that the poll loop barely notices.
-MAG_LIVENESS_SAMPLES: int = 8
-MAG_LIVENESS_GAP_S: float = 0.03
+#: ⚠️ ARCH-057's MAG_LIVENESS_SAMPLES / MAG_LIVENESS_GAP_S ARE GONE, deliberately.
+#: They drove an 8 x 30 ms = 240 ms BLOCKING sample loop on the poll thread to
+#: verify a repair. The poll loop already samples at 4 Hz and IS a liveness test,
+#: so that verification was redundant and -- at 4 Hz -- expensive. Liveness is now
+#: judged by whether the dwell RECURS.
+#:
+#: The CEILING for a real magnetometer reading. Earth's total field is 25-65 uT
+#: globally and the AK09916's full scale is +/-4912 uT, so 250 uT sits far above
+#: any real reading and far below saturation -- it catches the 18 overflow rows
+#: measured on drive 84 without clipping anything real.
+#:
+#: ⚠️ DECLARED HERE, ENFORCED IN plausibility_gate.magnitudeAtMost. There is no
+#: second predicate in this module: the reader gates through the existing
+#: US-564 mechanism, and a private copy of one rule with no caller is the A-28
+#: shape. NO FLOOR, deliberately -- a stuck-at-zero channel is already caught
+#: by invariance, and a field floor would be invented physics.
+MAG_PLAUSIBLE_MAX_UT: float = 250.0
 
 #: Never derive a threshold below this. A zero or one-sample threshold would fire
 #: on every poll and stall the loop in a permanent restore cycle -- the watchdog
@@ -120,90 +133,72 @@ def frozenRepeatsForRate(sampleHz: float | None) -> int:
     return max(_MIN_FROZEN_REPEATS, int(round(MAG_FROZEN_DWELL_S * sampleHz)))
 
 
-def magIsLive(
-    readFn: Callable[[], tuple[float, float, float]],
-    *,
-    samples: int = MAG_LIVENESS_SAMPLES,
-    gapS: float = MAG_LIVENESS_GAP_S,
-    sleepFn: Callable[[float], None] = time.sleep,
-) -> bool:
-    """True only when the readings demonstrably CHANGE and are not all-zero.
+class RestoreOutcome(Enum):
+    """What :meth:`MagKeepAlive.requestRestore` did.
 
-    Args:
-        readFn: Returns one ``(x, y, z)`` triple. May raise; a raising reader is
-            not live.
-        samples: How many triples to take.
-        gapS: Delay between samples.
-        sleepFn: Injected for tests.
-
-    Returns:
-        True when at least two distinct, non-all-zero triples were seen.
-
-    A raising reader resolves to NOT live rather than propagating: this runs
-    inside a poll loop whose other channels must survive a magnetometer fault.
+    Three values, because collapsing them would make the counters useless as a
+    health signal: SUPPRESSED and BUSY are both "not attempted", for different
+    reasons, and neither is a failure.
     """
-    seen: list[tuple[float, float, float]] = []
-    for _ in range(max(2, samples)):
-        try:
-            seen.append(tuple(readFn()))  # type: ignore[arg-type]
-        except Exception:  # noqa: BLE001 -- any read failure means "not live"
-            return False
-        sleepFn(gapS)
-    if all(v == _IMPOSSIBLE_TRIPLE for v in seen):
-        return False
-    return len(set(seen)) > 1
+
+    STARTED = "started"
+    BUSY = "busy"
+    SUPPRESSED = "suppressed"
 
 
 class MagKeepAlive:
-    """Runtime watchdog: notice a frozen channel, re-init it, verify by sampling.
+    """Notice a frozen mag channel, and repair it WITHOUT blocking the caller.
 
-    Stateful but not thread-safe by design -- one reader thread owns the sensor,
-    and a lock here would only hide a caller that had introduced a second one
-    (the same reasoning as :class:`PitchFusion`).
+    🔴 THE DESIGN CONSTRAINT, AND IT IS THE WHOLE TICKET. ARCH-057 ran the repair
+    inline on the IMU poll thread: three attempts x (adafruit's ~4 s
+    reset-and-settle + a 240 ms blocking liveness loop) = the ~12.4 s stalls
+    measured on drive 84, which cost 87% of that drive's samples and 90% of the
+    CIO's deliberate calibration circles.
+
+    ⇒ Here the caller only does bookkeeping. One background worker performs at
+    most one re-init. Verification is the POLL LOOP itself: after a repair the
+    dwell is cleared and the next window decides, so a check that used to cost
+    240 ms of sleep now costs nothing.
+
+    Not thread-safe for concurrent CALLERS by design -- one reader thread owns the
+    sensor, and a lock here would only hide a second one.
     """
 
-    #: Re-init attempts per restore. 85% -> 100% came from retrying.
-    ATTEMPTS: int = 3
+    #: One attempt. With verification off the hot path, retrying inline buys
+    #: nothing: if the channel is still frozen the dwell fires again and the next
+    #: request past the cooldown IS the retry.
+    ATTEMPTS: int = 1
 
-    #: Minimum gap between restores. Without it a genuinely dead sensor triggers
-    #: a ~0.7 s stall on every poll and the watchdog becomes the outage.
+    #: Minimum gap between repairs. Bounds how often a dead sensor can schedule
+    #: work, and leaves the poll loop several windows to judge the last repair.
     COOLDOWN_S: float = 5.0
 
     def __init__(
         self,
         *,
         reinitFn: Callable[[], None],
-        livenessFn: Callable[[], bool],
         monotonicFn: Callable[[], float] = time.monotonic,
-        sleepFn: Callable[[float], None] = time.sleep,
     ) -> None:
         self._reinit = reinitFn
-        self._liveness = livenessFn
         self._monotonic = monotonicFn
-        self._sleep = sleepFn
-        self.restores = 0
+        self.repairsIssued = 0
         self.failures = 0
         self.suppressed = 0
-        self._lastRestore: float | None = None
+        self.busy = 0
+        self._lastRepair: float | None = None
+        self._worker: threading.Thread | None = None
         self._lastTriple: tuple[float, float, float] | None = None
         self._repeats = 0
 
-    # -- detection -------------------------------------------------------------
+    # -- detection (runs on EVERY poll -- bookkeeping only) ---------------------
     def noteSample(
         self, triple: tuple[float, float, float] | None, *, sampleHz: float | None
     ) -> bool:
         """Fold one reading in; True when the frozen dwell has been reached.
 
-        Args:
-            triple: The reading, or None when the poll produced nothing.
-            sampleHz: The poll rate, so the dwell stays a wall-clock quantity.
-
-        Returns:
-            True exactly when this sample completes a frozen run.
-
-        ⚠️ A ``None`` sample is NOT a repeat. An absent reading and an unchanging
-        one are different facts, and counting absence as repetition would trigger
-        a restore for a channel that is not frozen but missing.
+        ⚠️ A ``None`` sample is NOT a repeat. Absence and unchanging-ness are
+        different facts, and counting absence as repetition would schedule a
+        repair for a channel that is missing rather than frozen.
         """
         if triple is None:
             return False
@@ -216,58 +211,63 @@ class MagKeepAlive:
         return self._repeats >= frozenRepeatsForRate(sampleHz)
 
     def forget(self) -> None:
-        """Drop the repeat run -- called after a restore so the next detection
-        starts from the repaired channel rather than from its frozen history."""
+        """Drop the repeat run so the next window judges the repaired channel."""
         self._lastTriple = None
         self._repeats = 0
 
-    # -- repair ----------------------------------------------------------------
-    def restore(self, why: str) -> bool:
-        """Re-init until the sensor is demonstrably live. Never raises.
+    # -- repair (NEVER blocks the caller) --------------------------------------
+    def requestRestore(self, why: str) -> RestoreOutcome:
+        """Ask for a repair. Returns immediately, always.
 
         Args:
             why: Recorded in the log so the journal says what prompted it.
 
         Returns:
-            True when liveness was demonstrated; False when suppressed by the
-            cooldown OR when every attempt failed. ⚠️ Those two are different and
-            the counters distinguish them -- ``suppressed`` is "not asked", not
-            "asked and failed". Collapsing them would make the failure count
-            useless as a health signal, the same three-valued discipline as the
-            rotation gate's UNDETERMINED.
+            ``STARTED`` when a worker was launched, ``BUSY`` when one is already
+            running, ``SUPPRESSED`` when inside the cooldown.
+
+        🔴 BUSY IS NOT A QUEUE. Queueing would let a permanently frozen sensor
+        schedule dozens of re-inits -- the ARCH-057 failure wearing a thread pool.
         """
+        if self._worker is not None and self._worker.is_alive():
+            self.busy += 1
+            return RestoreOutcome.BUSY
         now = self._monotonic()
-        if self._lastRestore is not None and (now - self._lastRestore) < self.COOLDOWN_S:
+        if self._lastRepair is not None and (now - self._lastRepair) < self.COOLDOWN_S:
             self.suppressed += 1
-            return False
-        self._lastRestore = now
-
-        for attempt in range(1, self.ATTEMPTS + 1):
-            try:
-                self._reinit()
-            except Exception as exc:  # noqa: BLE001 -- a watchdog must not raise
-                logger.warning(
-                    "mag keep-alive (%s): re-init attempt %d raised %s: %s",
-                    why, attempt, type(exc).__name__, exc,
-                )
-                continue
-            try:
-                live = self._liveness()
-            except Exception:  # noqa: BLE001
-                live = False
-            if live:
-                self.restores += 1
-                self.forget()
-                logger.warning(
-                    "mag keep-alive (%s): channel LIVE again after attempt %d "
-                    "(%d restore(s) this run)", why, attempt, self.restores,
-                )
-                return True
-
-        self.failures += 1
-        logger.error(
-            "mag keep-alive (%s): STILL FROZEN after %d attempts -- heading from "
-            "this channel is not trustworthy (%d failure(s) this run)",
-            why, self.ATTEMPTS, self.failures,
+            return RestoreOutcome.SUPPRESSED
+        self._lastRepair = now
+        # Cleared HERE rather than in the worker, so the poll loop stops re-firing
+        # the dwell the instant a repair is scheduled, not several polls later.
+        self.forget()
+        self._worker = threading.Thread(
+            target=self._repair, args=(why,), name="mag-keepalive", daemon=True
         )
-        return False
+        self._worker.start()
+        return RestoreOutcome.STARTED
+
+    def join(self, timeout: float | None = None) -> None:
+        """Wait for an in-flight repair. Tests and orderly shutdown ONLY -- the
+        poll loop must never call this, which is the point of the whole ticket."""
+        w = self._worker
+        if w is not None:
+            w.join(timeout)
+
+    def _repair(self, why: str) -> None:
+        """The off-thread repair. Never raises; this thread is the only victim."""
+        try:
+            self._reinit()
+        except Exception as exc:  # noqa: BLE001 -- a watchdog must not raise
+            self.failures += 1
+            logger.error(
+                "mag keep-alive (%s): re-init FAILED with %s: %s -- heading from "
+                "this channel is not trustworthy (%d failure(s) this run)",
+                why, type(exc).__name__, exc, self.failures,
+            )
+            return
+        self.repairsIssued += 1
+        logger.warning(
+            "mag keep-alive (%s): re-init issued off-thread (%d this run); "
+            "liveness is judged by the next dwell window, not by this call",
+            why, self.repairsIssued,
+        )
