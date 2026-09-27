@@ -59,6 +59,8 @@ def html() -> str:
         "res",       # restore count
         "banner",    # the transition banner
         "end",       # the escape hatch
+        "next",      # 2026-09-27: THE button -- NEXT / RETRY
+        "sw",        # 2026-09-27: switching / NOT-RECORDING notice
     ],
 )
 def test_requiredElementIsPresent(html: str, element: str) -> None:
@@ -94,10 +96,32 @@ def test_mechanismLabelIsLargeEnoughForThePanel(html: str) -> None:
     assert _fontPx(html, "#mech") >= MIN_MECH_PX
 
 
-def test_openEndedPhaseDoesNotShowAFabricatedCountdown(html: str) -> None:
-    """🔴 A countdown toward an end that does not exist is the same class of lie
-    as a zero-filled sensor reading. The final phase runs until he parks."""
-    assert "until you park" in html
+def test_buttonDrivenPhasesShowTimeINThePhase_notACountdown(html: str) -> None:
+    """🔴 2026-09-27: phases advance on the BUTTON, so there is no switch time to
+    count down to. A countdown toward an end that does not exist is the same
+    class of lie as a zero-filled sensor reading -- the screen shows elapsed
+    time IN the phase instead."""
+    assert "in phase" in html
+    assert "elapsedInPhaseS" in html
+
+
+def test_theNextButtonIsHoldToFire_andPostsAdvance(html: str) -> None:
+    """A bump on the road must not switch the mechanism. Hold-to-fire, like END."""
+    assert "/advance" in html
+    assert "NEXT_HOLD" in html
+
+
+def test_aFailedSwitchSaysNotRecording(html: str) -> None:
+    """🔴 After a failed draw the driver must be TOLD the algorithm is not
+    running -- a phase silently on the wrong channel looks fine and means
+    nothing."""
+    assert "NOT RECORDING" in html
+    assert "RETRY" in html
+
+
+def test_theSwitchingNoticeSaysStayParked(html: str) -> None:
+    """A switch restarts the collector for ~1-4 minutes; it is done at a stop."""
+    assert "STAY PARKED" in html
 
 
 def test_magnetometerStateHasThreeVisualStates(html: str) -> None:
