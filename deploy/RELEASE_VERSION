@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.67",
-  "theme": "Hotfix: Pi schema rebuild on a quoted table",
-  "description": "HOTFIX: production outage. eclipse-obd could not start -- table \"realtime_data\" already exists. _renameCreateTarget matched a BARE identifier only, but SQLite stores the name double-quoted after ALTER TABLE RENAME TO, so the rewrite was a silent no-op and the rebuild re-created the LIVE table. Latent since US-424. All four quoting forms now handled; a no-match raises. 15 tests, 11 red at V0.29.66."
+  "version": "V0.29.70",
+  "theme": "ARCH-059/060: mag stall fix + purge log",
+  "description": "ARCH-059 takes the mag keep-alive OFF the IMU poll thread. ARCH-057 blocked it up to 12.4 s and cost 87% of drive 84's samples and 90% of the calibration circles. requestRestore() returns inside 20 ms, one attempt not three, blocking liveness loop deleted, plus a magnitude ceiling via the US-564 gate for the 18 saturated rows. ARCH-060: maybePurge logs EVERY due run."
 }

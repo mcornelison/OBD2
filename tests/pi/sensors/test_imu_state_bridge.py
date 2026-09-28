@@ -71,6 +71,11 @@ _EXPECTED_KEYS = {
     # unavailable -- which is why they are outside _DERIVED_FIELDS.
     "stopCount",
     "biasRad",
+    # ARCH-056. Outside _DERIVED_FIELDS and never gated, for the same reason: it
+    # describes whether the mag channel was DEMONSTRATED to turn with the
+    # vehicle, so it is wanted most precisely when headingDeg has gone null.
+    # Three-valued -- "undetermined" is not "healthy".
+    "magRotation",
     "reasons",
 }
 

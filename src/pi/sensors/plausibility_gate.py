@@ -74,6 +74,7 @@ __all__ = [
     "bitKey",
     "channelStateTopic",
     "magnitudeAtLeast",
+    "magnitudeAtMost",
 ]
 
 # The refusal vocabulary. Both are deliberately DISTINCT from the existing
@@ -152,6 +153,45 @@ def bitKey(value: Any) -> bytes | None:
     if not parts:
         return None
     return struct.pack(f"<{len(parts)}d", *parts)
+
+
+def magnitudeAtMost(ceiling: float) -> Callable[[Any], bool]:
+    """Build a check-1 predicate: the vector's length must not EXCEED ``ceiling``.
+
+    🔴 WHY A CEILING, AND WHY ONLY A CEILING (ARCH-059). ``magnitudeAtLeast``
+    catches a channel reading near zero; nothing caught a SATURATED one. MEASURED
+    on drive 84 (2026-09-25): 18 magnetometer rows pinned at +/-4895..4915 uT --
+    the AK09916's full scale -- published as data against an Earth field of ~50 uT.
+    They got through because the bypass path used to read ST2 and RAISE on the
+    overflow flag, and making master mode the default silently dropped that check:
+    adafruit's ``dev.magnetic`` covers ST2 but never DECODES it.
+
+    ⚠️ NO FLOOR, DELIBERATELY. ``test_imuReader_onlyAccelCarriesAMagnitudeFloor``
+    records that a magnetometer field floor would be invented physics, and it is
+    also redundant: a stuck-at-zero channel is already caught by INVARIANCE, which
+    mag is enrolled in. A ceiling asserts only the physically impossible.
+
+    ⚠️ It is weaker than reading HOFL and it is honest about that -- it refuses
+    saturation, not merely the improbable.
+
+    Args:
+        ceiling: The largest magnitude that can be a real reading, inclusive.
+
+    Returns:
+        A predicate that is False for a saturated, non-finite or malformed vector,
+        and never raises -- it runs inside a sensor thread.
+    """
+
+    def _plausible(value: Any) -> bool:
+        try:
+            parts = [float(v) for v in value]
+        except (TypeError, ValueError):
+            return False
+        if len(parts) != 3 or not all(math.isfinite(p) for p in parts):
+            return False
+        return math.sqrt(sum(p * p for p in parts)) <= ceiling
+
+    return _plausible
 
 
 def magnitudeAtLeast(floor: float) -> Callable[[Any], bool]:

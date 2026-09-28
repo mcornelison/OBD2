@@ -68,7 +68,11 @@ from pi.obdii.drive_id import getCurrentDriveId
 # second lint suppressed to stay quiet is the wrong fix.
 #   (And writing that suppression out longhand in this comment made ruff parse
 #    the comment itself as a directive -- so it is described, not spelled.)
-from pi.sensors.ak09916_bypass import toIcmFrame
+from pi.sensors.ak09916_bypass import (
+    MAG_SOURCE_BYPASS,
+    MAG_SOURCE_ICM_SHADOW,
+    toIcmFrame,
+)
 
 # US-803-a: the A-34 recovery tunables and their absent-key fallbacks.
 # gyro_recovery imports only the standard library, so there is no cycle.
@@ -82,6 +86,7 @@ from pi.sensors.gyro_recovery import (
 # The accel floor is the SAME constant the tilt maths already refuses to work
 # below -- imported, never retyped, so the gate and the level frame cannot drift
 # into disagreeing about what counts as a usable specific-force vector.
+from pi.sensors.mag_keepalive import MAG_PLAUSIBLE_MAX_UT
 from pi.sensors.pitch_fusion import MIN_GRAVITY_MS2
 
 # US-564: the gate owns the MECHANISM (bit-identity + magnitude); this module
@@ -93,6 +98,7 @@ from pi.sensors.plausibility_gate import (
     PlausibilityGate,
     channelStateTopic,
     magnitudeAtLeast,
+    magnitudeAtMost,
 )
 
 logger = logging.getLogger(__name__)
@@ -147,6 +153,13 @@ UNIT_TEMP = "degC"
 UNIT_LUX = "lux"
 UNIT_COUNT = "count"
 UNIT_RANGE = "gain/ms"
+
+#: ARCH-057: the magnetometer acquisition modes. See
+#: ``validator.py: 'pi.sensors.imu.magMode'`` for why 'master' is the default and
+#: why 'bypass' is retained rather than deleted.
+MAG_MODE_MASTER = "master"
+MAG_MODE_BYPASS = "bypass"
+
 
 # I2C addresses (ADR: ICM-20948 @0x69, TSL2591 @0x29).
 ADDR_IMU = 0x69
@@ -553,7 +566,16 @@ class ImuReader(_BaseSensorReader):
             plausible=magnitudeAtLeast(MIN_GRAVITY_MS2), invariance=True
         ),
         TOPIC_IMU_GYRO: ChannelPolicy(invariance=True),
-        TOPIC_IMU_MAG: ChannelPolicy(invariance=True),
+        # ARCH-059: a magnitude CEILING as well as invariance. The 18 overflow rows
+        # measured on drive 84 (+/-4895..4915 uT) passed the old policy because
+        # invariance only catches a channel that has stopped MOVING, and a
+        # saturated channel still dithers. NO FLOOR: that would be invented
+        # physics (the pinned enrolment test says so) and invariance already
+        # catches a stuck-at-zero channel. Earth's field is 25-65 uT globally.
+        TOPIC_IMU_MAG: ChannelPolicy(
+            plausible=magnitudeAtMost(MAG_PLAUSIBLE_MAX_UT),
+            invariance=True,
+        ),
     }
 
     # Accel is the burst's load-bearing channel: without it there is no gravity
@@ -572,6 +594,8 @@ class ImuReader(_BaseSensorReader):
         dataSource: str = "real",
         invariantDwellSeconds: float = DEFAULT_INVARIANT_DWELL_S,
         gyroRecovery: GyroRecoverySettings | None = None,
+        magKeepAliveFactory: Callable[[Any], Any | None] | None = None,
+        magMode: str = MAG_MODE_MASTER,
     ) -> None:
         # US-803-a: held for the real device factory, which is the only path
         # that runs the A-34 startup recovery. An injected deviceFactory never
@@ -584,9 +608,40 @@ class ImuReader(_BaseSensorReader):
             dataSource=dataSource,
             invariantDwellSeconds=invariantDwellSeconds,
         )
+        # ARCH-057. Bound LAZILY: the device does not exist at construction time
+        # and the watchdog must hold a handle to it.
+        self._magKeepAliveFactory = (
+            magKeepAliveFactory if magKeepAliveFactory is not None
+            else makeMagKeepAlive
+        )
+        self._magKeepAlive: Any | None = None
+        self._magKeepAliveBound = False
+        self._magMode = magMode
 
     def _defaultDeviceFactory(self) -> Any:
-        return _makeIcm20948(self._gyroRecovery)
+        return _makeIcm20948(
+            magMode=self._magMode, gyroRecovery=self._gyroRecovery
+        )
+
+    def _keepAlive(self) -> Any | None:
+        """The magnetometer watchdog for the current device, or None.
+
+        Bound once. A factory that raises disables the WATCHDOG, not the reader:
+        accel and gyro must survive a magnetometer fault, the same degrade
+        principle as :func:`_attachDirectMagnetometer`.
+        """
+        if not self._magKeepAliveBound:
+            self._magKeepAliveBound = True
+            try:
+                self._magKeepAlive = self._magKeepAliveFactory(self._device)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "mag keep-alive unavailable (%s: %s) -- the channel will be "
+                    "judged by the ARCH-056 rotation gate alone",
+                    type(exc).__name__, exc,
+                )
+                self._magKeepAlive = None
+        return self._magKeepAlive
 
     def _readAndPublish(self, seq: int) -> None:
         dev = self._device
@@ -609,6 +664,23 @@ class ImuReader(_BaseSensorReader):
         # is NOT computeHeadingDeg (correct) and NOT IMU_BODY_FRAME (a separate
         # defect, ARCH-034, which owns the remaining constant offset).
         mag = toIcmFrame(_vec3(dev.magnetic))
+        # ARCH-057: the RUNTIME keep-alive. MEASURED 2026-09-18 on this hardware:
+        # doing nothing 0/20, re-init once 17/20, re-init + verify + retry x3
+        # 20/20. The freeze arrives AFTER good readings, so this cannot be a
+        # startup check. Detection is a bit-identical dwell (2 s of wall clock,
+        # count derived from sampleHz); repair is verified by SAMPLING, never by
+        # the init's return value -- that returned True on a run where the sensor
+        # stayed frozen.
+        keepAlive = self._keepAlive()
+        if keepAlive is not None and keepAlive.noteSample(mag, sampleHz=self._sampleHz):
+            # 🔴 requestRestore RETURNS IMMEDIATELY (ARCH-059). ARCH-057 called a
+            # synchronous restore here and blocked this thread for up to 12.4 s --
+            # measured on drive 84 as 154 intervals over 0.6 s and 87% of the
+            # samples lost. The repair now runs on its own thread and THIS SEQ
+            # publishes the frozen value it already has; the plausibility gate and
+            # the ARCH-056 rotation gate are what mark it. A poll is never traded
+            # for a repair again.
+            keepAlive.requestRestore("bit-identical dwell reached")
         # US-500: the genuine adafruit_icm20x.ICM20948 does NOT expose
         # .temperature (the clone/FakeImu assumption did). temp is NOT in the
         # states/imu display contract and edr_imu_sample.temp_c is nullable, so a
@@ -750,7 +822,42 @@ def _makeI2c() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
     return busio.I2C(board.SCL, board.SDA)
 
 
+def makeMagKeepAlive(device: Any) -> Any | None:
+    """Bind an ARCH-057 keep-alive to ``device``, or None when unsupported.
+
+    The repair is ``_magnetometer_init()`` -- adafruit's own API, and the function
+    the 20/20 measurement was taken on. A device that does not expose it (the
+    bypass wrapper, a fake, a bare 6-DoF part) gets no watchdog rather than a
+    broken one.
+
+    🔴 AND THAT ABSENCE IS ARCHITECTURALLY LOAD-BEARING, NOT AN OVERSIGHT.
+    ``_magnetometer_init()`` sets ``_bypass_i2c_master = False`` and re-enables the
+    ICM's internal I2C master -- it is a MASTER-MODE repair and is incompatible
+    with our bypass by construction. Calling it on a bypassed chip would silently
+    convert the acquisition path mid-drive and the direct 0x0C reads would start
+    failing. So the watchdog binds ONLY where the repair is valid, and
+    ``pi.sensors.imu.magMode`` is what selects between them.
+    """
+    from pi.sensors.mag_keepalive import MagKeepAlive  # noqa: PLC0415
+
+    reinit = getattr(device, "_magnetometer_init", None)
+    if not callable(reinit):
+        logger.info(
+            "mag keep-alive not bound: %s exposes no _magnetometer_init "
+            "(expected for the bypass path -- see ARCH-057)",
+            type(device).__name__,
+        )
+        return None
+    # 🔴 NO livenessFn (ARCH-059). Verification used to be an 8 x 30 ms blocking
+    # sample loop ON THE POLL THREAD. The poll loop already samples at 4 Hz and IS
+    # a liveness test, so the dwell recurring is the verification and it costs
+    # nothing.
+    return MagKeepAlive(reinitFn=reinit)
+
+
 def _makeIcm20948(
+    *,
+    magMode: str = MAG_MODE_MASTER,
     gyroRecovery: GyroRecoverySettings | None = None,
 ) -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
     """Construct the ICM-20948 IMU handle (@0x69). Raises when absent/non-Pi.
@@ -775,7 +882,9 @@ def _makeIcm20948(
 
     i2cBus = _makeI2c()
     icm = adafruit_icm20x.ICM20948(i2cBus, address=ADDR_IMU)
-    return _buildImuDevice(icm, i2cBus, gyroRecovery=gyroRecovery)
+    return _buildImuDevice(
+        icm, i2cBus, magMode=magMode, gyroRecovery=gyroRecovery
+    )
 
 
 def _buildImuDevice(
@@ -784,6 +893,7 @@ def _buildImuDevice(
     *,
     attachFn: Callable[[Any, Any], Any] | None = None,
     recoverFn: Callable[[Any], Any] | None = None,
+    magMode: str = MAG_MODE_MASTER,
     gyroRecovery: GyroRecoverySettings | None = None,
 ) -> Any:
     """Establish the magnetometer bypass, THEN run the gyro check. ORDER IS LOAD-BEARING.
@@ -827,7 +937,21 @@ def _buildImuDevice(
     """
     attach = attachFn or _attachDirectMagnetometer
     recover = recoverFn or (lambda chip: _recoverGyro(chip, settings=gyroRecovery))
-    device = attach(icm, i2cBus)
+    # ARCH-057: in MASTER mode the bypass is never attempted, so the chip stays in
+    # the configuration adafruit's _magnetometer_init() expects -- which is what
+    # the runtime keep-alive re-runs to repair a frozen channel. Attempting the
+    # bypass first would set BYPASS_EN and make that repair convert the
+    # acquisition path out from under the reader mid-drive.
+    #
+    # ⚠️ An explicit attachFn always wins, so tests keep driving both paths.
+    if attachFn is None and magMode == MAG_MODE_MASTER:
+        logger.info(
+            "IMU magnetometer: MASTER mode (%r) -- bypass not attempted; the "
+            "ARCH-057 runtime keep-alive owns liveness", MAG_MODE_MASTER,
+        )
+        device = icm
+    else:
+        device = attach(icm, i2cBus)
     try:
         # The raw ICM, never `device`: recovery writes power-management
         # registers on the chip itself. Reaching them through the bypass
@@ -936,11 +1060,26 @@ def _attachDirectMagnetometer(
     try:
         return factory(icm, i2cBus)
     except (MagnetometerConfigError, OSError, ValueError) as exc:
-        logger.warning(
-            "IMU magnetometer bypass unavailable (%s) -- accel/gyro continue; the "
-            "mag channel falls back to the ICM shadow and the US-564 gate will "
-            "refuse it as stale rather than publish a latched heading",
-            exc,
+        # ARCH-056: this was a WARNING promising "the US-564 gate will refuse it as
+        # stale rather than publish a latched heading". 🔴 THAT PROMISE WAS FALSE,
+        # and the record proves it: five of twelve drives (69/72/74/75/76)
+        # PERSISTED a frozen channel -- 5.25-9.30 uT of per-axis excursion where a
+        # turning car must sweep ~40 uT -- and every hard-iron fit was then made on
+        # that corpus, which is why none of them ever transferred. The US-564 gate
+        # fires on AGE, and a frozen channel is FRESH: new timestamps, unchanging
+        # content. It never could have caught this.
+        #
+        # ⇒ ERROR rather than WARNING, and it names the MECHANISM instead of
+        # citing a guard that cannot fire. The channel is now judged on ROTATION
+        # (imu_state_bridge.assessMagRotation), which compares the magnetometer
+        # against the gyro and can actually tell frozen from merely uncalibrated.
+        logger.error(
+            "IMU magnetometer bypass unavailable (%s) -- mag source is %r, NOT %r. "
+            "That is the adafruit dev.magnetic path, which US-565 MEASURED returning "
+            "a FROZEN vector because its read does not extend through ST2. Accel and "
+            "gyro continue; heading from this path is judged by the ARCH-056 rotation "
+            "gate, never by staleness.",
+            exc, MAG_SOURCE_ICM_SHADOW, MAG_SOURCE_BYPASS,
         )
         return icm
 
@@ -994,6 +1133,10 @@ def createSensorReadersFromConfig(
                     sampleCount=imu.get("gyroRecoverySampleCount", DEFAULT_SAMPLE_COUNT),
                     settleS=imu.get("gyroRecoverySettleSec", DEFAULT_SETTLE_S),
                 ),
+                # ARCH-057: which acquisition path to use. Config, not code,
+                # so the CIO can revert master->bypass in the car with a
+                # restart instead of waiting for a deploy.
+                magMode=imu.get("magMode", MAG_MODE_MASTER),
             )
         )
     light = sensors.get("light", {})
