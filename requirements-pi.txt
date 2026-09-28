@@ -35,6 +35,8 @@ smbus2>=0.4.0                 # I2C communication for X1209 UPS telemetry
 adafruit-circuitpython-tsl2591>=1.3.0   # TSL2591 light sensor (@0x29)
 adafruit-circuitpython-icm20x>=1.0.0    # ICM-20948 9-DoF IMU (@0x69)
 sparkfun-qwiic-icm20948>=2.0.1          # ARCH-064 magMode "direct": clean-reset ICM-20948 build, I2C master never enabled (@0x69)
+imufusion>=1.3.3                        # ARCH-064 x-io Fusion AHRS (pi.sensors.ahrs_fusion): pitch/roll/heading + gyro bias
+numpy                                   # imufusion's array type (its wheel does not declare the dependency)
 
 # Display rendering
 # pygame is intentionally NOT pip-managed on the Pi.
