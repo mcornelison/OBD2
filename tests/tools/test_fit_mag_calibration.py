@@ -109,11 +109,28 @@ turning" about the ORIGIN, which fails when |h| ~ R -- this car's geometry):
   never turned).
 * ``test_noGyroDenseIdleDwellIsRefused`` + its centroid-binning proof, the
   >1.2 horizontal-gain warning + its proof, and ``TestVerticalFieldWarning``.
+
+Fix round 5 (Ruling 29a, from the reviewer's measurements on 91efa164):
+
+* ``TestTrimmedProvisionalCentre`` -- a COUNT-trimmed midrange survives one
+  and three +40 uT spikes, and 97 % parked dwell; RED proofs remove the trim
+  and swap in a percentile(2, 98) midrange.
+* ``TestNoiseAwareQualityFloor`` -- honest weak circles (R 5.8 / sigma 0.3,
+  R 5.8 / sigma 0.6, R 3.9 / sigma 0.3) are accepted (round 4's fixed 5 %
+  refused all three); a three-lobed locus at the same radius is still
+  refused.
+* ``TestNoiseScaledStationaryThreshold`` -- the stationary threshold grows
+  with sigmaHat / R, so most parked rows qualify on a weak noisy circle.
+* ``TestNoGyroParkedRowsAreNotMoving`` -- with no gyro, magnetometer-parked
+  rows no longer count as moving. The no-gyro helpers' timestamps are now
+  those of a real 0.3 rad/s turn (``_NO_GYRO_DT_S``): at round 4's 1 s per
+  1-degree step every row read as parked.
 """
 
 from __future__ import annotations
 
 import csv
+import dataclasses
 import json
 import math
 
@@ -182,20 +199,27 @@ def _ellipsePoints(
     return points
 
 
+# Ruling 29a: the no-gyro path now asks the MAGNETOMETER which rows are
+# parked, so no-gyro rows need timestamps consistent with a real turn too.
+# The ``_ellipsePoints`` sweeps step ~1 degree per point; stamped 1 s apart
+# (round 4) that is 1 deg/s = 0.017 rad/s -- slower than the stationary
+# threshold, so every row read as parked. Stamping them at the time a 0.3
+# rad/s turn takes to cover 1 degree (0.058 s) makes them the honest turn
+# they were always meant to be.
+_NO_GYRO_DT_S = math.radians(1.0) / 0.3
+
+
 def _rowsFromMagPoints(
     points: list[Vector3],
     accel: Vector3 = _LEVEL_ACCEL,
     gyroRaw: Vector3 | None = None,
     tsStart: float = 0.0,
-    tsStepS: float = 1.0,
+    tsStepS: float = _NO_GYRO_DT_S,
 ) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
-    """Body-frame rows with no gyro column by default (Ruling 23 all-moving fallback).
+    """Body-frame rows with no gyro column by default (the no-gyro path).
 
-    ``tsStepS`` defaults to 1.0 (not the realistic ~2 Hz EDR rate) because
-    most callers pass ``gyroRaw=None``, where Ruling 25's stationary-window
-    logic never runs at all and exact timestamps are irrelevant; callers
-    that DO pass a real gyro and care about physically-consistent timing
-    pass ``_EDR_PERSIST_DT_S`` explicitly (see ``_stationaryRows``).
+    ``tsStepS`` defaults to ``_NO_GYRO_DT_S`` -- a ~1-degree-per-point
+    sweep stamped as a 0.3 rad/s turn (see above).
     """
     return [
         (tsStart + i * tsStepS, accel, mag, gyroRaw) for i, mag in enumerate(points)
@@ -240,8 +264,13 @@ def _driveRows(
     accel: Vector3 = _LEVEL_ACCEL,
     seed: int = 0,
     includeGyro: bool = True,
+    lobe3: float = 0.0,
 ) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
     """One row per entry of ``rates`` (rad/s, signed; 0 = parked).
+
+    ``lobe3`` makes the locus deliberately NOT an ellipse (radius scaled by
+    1 + lobe3 * cos(3 * heading)) -- a systematic misfit no ellipse can
+    absorb, for the Ruling 29a quality-floor test.
 
     The mag vector is the ellipse point at the CURRENT heading plus noise;
     the heading then advances by ``rate * dtS`` -- so the magnetometer moves
@@ -253,8 +282,9 @@ def _driveRows(
     rows: list[tuple[float, Vector3, Vector3, Vector3 | None]] = []
     headingRad = startHeadingRad
     for i, rate in enumerate(rates):
-        rx = r1 * math.cos(headingRad)
-        ry = r2 * math.sin(headingRad)
+        lobe = 1.0 + lobe3 * math.cos(3.0 * headingRad)
+        rx = r1 * lobe * math.cos(headingRad)
+        ry = r2 * lobe * math.sin(headingRad)
         magBody = (
             centerP + rx * cosT - ry * sinT + float(rng.normal(scale=noiseUt)),
             centerQ + rx * sinT + ry * cosT + float(rng.normal(scale=noiseUt)),
@@ -326,6 +356,7 @@ def _withBookends(
     geometry: dict[str, float],
     gyroBias: Vector3,
     seed: int,
+    noiseUt: float = _MAG_NOISE_UT,
 ) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
     """The Ruling 25b procedure: parked at the start and at the end.
 
@@ -336,7 +367,13 @@ def _withBookends(
     """
     leadS = bookendRows * _EDR_PERSIST_DT_S
     opening = _stationaryRows(
-        count=bookendRows, headingDeg=0.0, gyroBias=gyroBias, tsStart=0.0, seed=seed, **geometry
+        count=bookendRows,
+        headingDeg=0.0,
+        gyroBias=gyroBias,
+        tsStart=0.0,
+        seed=seed,
+        noiseUt=noiseUt,
+        **geometry,
     )
     shifted = [(ts + leadS, a, m, g) for ts, a, m, g in middle]
     lastTs, _, lastMag, _ = shifted[-1]
@@ -351,6 +388,7 @@ def _withBookends(
         gyroBias=gyroBias,
         tsStart=lastTs + _EDR_PERSIST_DT_S,
         seed=seed + 1000,
+        noiseUt=noiseUt,
         **geometry,
     )
     return opening + shifted + closing
@@ -730,9 +768,11 @@ class TestCoverageExploit:
             fitMagCalibration(idleRows + movingRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
 
     def test_noGyroDenseIdleDwellIsRefused(self) -> None:
-        """Ruling 28: the same exploit on the NO-GYRO fallback path, where
-        every row counts as moving (Ruling 23) and so the only defence left
-        is the fitted-centre, >=3-per-bin coverage count. Must refuse.
+        """Ruling 28: the same exploit on the NO-GYRO path. Round 4 counted
+        every row as moving there, leaving the fitted-centre, >=3-per-bin
+        coverage count as the only defence; since Ruling 29a the
+        magnetometer's stationary mask also drops the parked rows. Must
+        refuse, on coverage.
         """
         rows = self._noGyroIdlePlusNinetyDegreeSweep()
         with pytest.raises(ValueError, match="coverage"):
@@ -1084,6 +1124,244 @@ class TestProvisionalCentreStationarity:
         parked = _stationaryRows(count=500, headingDeg=30.0, seed=51, **_TRUE_GEOMETRY)
         with pytest.raises(ValueError, match="never turned"):
             fitMagCalibration(parked, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+
+
+def _weakCircleGeometry(radiusUt: float) -> dict[str, float]:
+    """A weak circle (horizontal gain ~0.2-0.3, Ruling 26) with hard iron (3, -2)."""
+    return {
+        "centerP": 3.0,
+        "centerQ": -2.0,
+        "r1": radiusUt,
+        "r2": radiusUt,
+        "rotationDeg": 0.0,
+        "hz": _TRUE_RAW_MEAN_VERTICAL_UT,
+    }
+
+
+def _bookendedCircling(
+    geometry: dict[str, float],
+    *,
+    noiseUt: float = _MAG_NOISE_UT,
+    rate: float = 0.3,
+    lobe3: float = 0.0,
+    seed: int = 100,
+) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+    """60 parked + 2500 circling + 60 parked, fault bias 0.5 rad/s, the SAME
+    noise on every row (parked rows included)."""
+    faultBias = (_FAULT_BIAS_RAD_S, 0.0, 0.0)
+    middle = _circlingRows(
+        count=2500,
+        angularRateRadS=rate,
+        gyroBias=faultBias,
+        noiseUt=noiseUt,
+        seed=seed,
+        lobe3=lobe3,
+        **geometry,
+    )
+    return _withBookends(
+        middle, bookendRows=60, geometry=geometry, gyroBias=faultBias, seed=seed + 1, noiseUt=noiseUt
+    )
+
+
+def _withMagSpikes(
+    rows: list[tuple[float, Vector3, Vector3, Vector3 | None]], indices: list[int]
+) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+    """+40 uT on mag p at ``indices`` (all in the parked bookends here: a
+    spike on a MOVING row also enters the conic fit, which the quality
+    floor judges, not the provisional centre)."""
+    return [
+        (ts, accel, (mag[0] + 40.0, mag[1], mag[2]) if i in indices else mag, gyro)
+        for i, (ts, accel, mag, gyro) in enumerate(rows)
+    ]
+
+
+def _percentileMidrange(values: np.ndarray) -> tuple[float, float]:
+    """The REJECTED alternative (Ruling 29a): a percentile(2, 98) midrange."""
+    low, high = float(np.percentile(values, 2.0)), float(np.percentile(values, 98.0))
+    return (high + low) / 2.0, (high - low) / 2.0
+
+
+class TestTrimmedProvisionalCentre:
+    """Ruling 29a item 1: the provisional centre is a COUNT-trimmed midrange
+    (k = 3 per side, per axis) -- robust to spikes AND to heavy dwell.
+    """
+
+    @pytest.mark.parametrize("spikeIndices", [[30], [10, 30, 2600]])
+    def test_magSpikesLeaveTheFitIntact(self, spikeIndices: list[int]) -> None:
+        """One, then three, +40 uT spikes. Gentle 0.1 rad/s turns, where a
+        displaced centre shrinks the apparent rotation below the threshold."""
+        rows = _withMagSpikes(_bookendedCircling(_TRUE_GEOMETRY, rate=0.1, seed=200), spikeIndices)
+        fit = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.hardIronUt[0] == pytest.approx(_TRUE_CENTER_P, abs=0.5)
+        assert fit.hardIronUt[1] == pytest.approx(_TRUE_CENTER_Q, abs=0.5)
+        assert fit.gyroBiasRadS[0] == pytest.approx(_FAULT_BIAS_RAD_S, abs=0.01)
+
+    @pytest.mark.parametrize("spikeIndices", [[30], [10, 30, 2600]])
+    def test_magSpikesDiscriminate(self, monkeypatch, spikeIndices: list[int]) -> None:
+        """RED with the trim removed (round 4's plain midrange -- MEASURED:
+        one spike -> "not an ellipse", three -> coverage 2/36); GREEN restored."""
+        rows = _withMagSpikes(_bookendedCircling(_TRUE_GEOMETRY, rate=0.1, seed=200), spikeIndices)
+        monkeypatch.setattr(fit_mag_calibration_module, "_CENTRE_TRIM_COUNT", 0)
+        with pytest.raises(ValueError):
+            fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        monkeypatch.undo()
+        fit = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.hardIronUt[0] == pytest.approx(_TRUE_CENTER_P, abs=0.5)
+
+    @staticmethod
+    def _heavyDwellHorizontal() -> tuple[np.ndarray, np.ndarray]:
+        """97 % parked at the max-p heading (heading 0 on this unrotated
+        circle) plus a full circle and a bit (100 rows at 0.3 rad/s)."""
+        circling = _circlingRows(count=100, angularRateRadS=0.3, seed=61, **_BIG_IRON_GEOMETRY)
+        parked = _stationaryRows(
+            count=3234,
+            headingDeg=0.0,
+            tsStart=100.0 * _EDR_PERSIST_DT_S,
+            seed=62,
+            **_BIG_IRON_GEOMETRY,
+        )
+        rows = circling + parked
+        return np.array([r[2][0] for r in rows]), np.array([r[2][1] for r in rows])
+
+    def test_heavyParkedDwellLeavesTheCentreWithinOneMicrotesla(self) -> None:
+        p, q = self._heavyDwellHorizontal()
+        centreP, centreQ = fit_mag_calibration_module._provisionalCentre(p, q)
+        assert math.hypot(centreP - _BIG_IRON_P, centreQ - _BIG_IRON_Q) < 1.0
+
+    def test_heavyParkedDwellDiscriminates(self, monkeypatch) -> None:
+        """RED with a percentile(2, 98) midrange swapped in -- both
+        percentiles land inside the parked cluster; GREEN restored."""
+        p, q = self._heavyDwellHorizontal()
+        monkeypatch.setattr(fit_mag_calibration_module, "_trimmedMidrange", _percentileMidrange)
+        centreP, centreQ = fit_mag_calibration_module._provisionalCentre(p, q)
+        assert math.hypot(centreP - _BIG_IRON_P, centreQ - _BIG_IRON_Q) > 1.0
+        monkeypatch.undo()
+        centreP, centreQ = fit_mag_calibration_module._provisionalCentre(p, q)
+        assert math.hypot(centreP - _BIG_IRON_P, centreQ - _BIG_IRON_Q) < 1.0
+
+
+class TestNoiseAwareQualityFloor:
+    """Ruling 29a item 2: refuse only if the RMS residual exceeds
+    max(5 % of R, 2 sigmaHat); sigmaHat from the parked rows' local scatter.
+    """
+
+    @pytest.mark.parametrize(("radiusUt", "noiseUt"), [(5.8, 0.3), (5.8, 0.6), (3.9, 0.3)])
+    def test_honestWeakCirclesAreAccepted(self, radiusUt: float, noiseUt: float) -> None:
+        rows = _bookendedCircling(_weakCircleGeometry(radiusUt), noiseUt=noiseUt)
+        fit = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.gyroBiasRadS[0] == pytest.approx(_FAULT_BIAS_RAD_S, abs=0.01)
+        assert fit.hardIronUt[0] == pytest.approx(3.0, abs=0.5)
+        assert fit.hardIronUt[1] == pytest.approx(-2.0, abs=0.5)
+        assert fit.sigmaHatUt == pytest.approx(noiseUt, rel=0.25)
+        assert fit.qualityForced is False
+
+    @pytest.mark.parametrize(("radiusUt", "noiseUt"), [(5.8, 0.3), (5.8, 0.6), (3.9, 0.3)])
+    def test_honestWeakCirclesDiscriminate(self, monkeypatch, radiusUt: float, noiseUt: float) -> None:
+        """RED with the noise term removed (round 4's fixed 5 % floor --
+        MEASURED 5.18 / 10.32 / 7.69 % spread, all refused); GREEN restored."""
+        rows = _bookendedCircling(_weakCircleGeometry(radiusUt), noiseUt=noiseUt)
+        monkeypatch.setattr(fit_mag_calibration_module, "_QUALITY_NOISE_SIGMAS", 0.0)
+        with pytest.raises(ValueError, match="quality floor"):
+            fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        monkeypatch.undo()
+        assert fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT).qualityForced is False
+
+    def test_aSystematicMisfitAtTheSameRadiusIsStillRefused(self) -> None:
+        """A three-lobed locus (radius x (1 + 0.25 cos 3 heading)) at R 5.8,
+        sigma 0.3: no ellipse fits it, and the misfit is several sigma."""
+        rows = _bookendedCircling(_weakCircleGeometry(5.8), noiseUt=0.3, lobe3=0.25)
+        with pytest.raises(ValueError, match="quality floor"):
+            fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+
+    def test_sigmaHatFallsBackWhenNothingWasParked(self) -> None:
+        """No parked rows to measure the noise from (no gyro, pure circle):
+        sigmaHat is None and the floor assumes 1.0 uT -- 2 uT here."""
+        points = _ellipsePoints(
+            centerP=_TRUE_CENTER_P,
+            centerQ=_TRUE_CENTER_Q,
+            r1=_TRUE_R1,
+            r2=_TRUE_R2,
+            rotationDeg=_TRUE_ROTATION_DEG,
+            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
+            noiseUt=0.15,
+        )
+        fit = fitMagCalibration(_rowsFromMagPoints(points), earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.sigmaHatUt is None
+        assert fit.qualityFloorUt == pytest.approx(max(0.05 * fit.radiusTargetUt, 2.0))
+
+
+class TestNoiseScaledStationaryThreshold:
+    """Ruling 29a item 3: threshold = max(5.7 deg, degrees(3 sigmaHat / R)),
+    bootstrapped from the 5.7-degree floor.
+    """
+
+    @staticmethod
+    def _weakNoisyAnalysis():
+        rows = _bookendedCircling(_weakCircleGeometry(5.8), noiseUt=0.6)
+        ts = np.array([r[0] for r in rows])
+        p = np.array([r[2][0] for r in rows])
+        q = np.array([r[2][1] for r in rows])
+        parked = np.r_[np.ones(60, dtype=bool), np.zeros(2500, dtype=bool), np.ones(60, dtype=bool)]
+        return fit_mag_calibration_module._analyseStationarity(ts, p, q), parked
+
+    def test_mostParkedRowsQualifyOnAWeakNoisyCircle(self) -> None:
+        analysis, parked = self._weakNoisyAnalysis()
+        assert int(np.sum(analysis.mask[parked])) >= 90  # of 120; MEASURED 97
+        assert int(np.sum(analysis.mask[~parked])) <= 10  # turning rows kept out
+        assert analysis.thresholdDeg > 10.0
+
+    def test_mostParkedRowsQualifyDiscriminates(self, monkeypatch) -> None:
+        """RED with the noise term removed (threshold pinned at 5.7 deg --
+        the reviewer MEASURED 15/120 at round 4's head); GREEN restored."""
+        monkeypatch.setattr(fit_mag_calibration_module, "_THRESHOLD_NOISE_SIGMAS", 0.0)
+        analysis, parked = self._weakNoisyAnalysis()
+        assert int(np.sum(analysis.mask[parked])) < 60
+        monkeypatch.undo()
+        analysis, parked = self._weakNoisyAnalysis()
+        assert int(np.sum(analysis.mask[parked])) >= 90
+
+
+class TestNoGyroParkedRowsAreNotMoving:
+    """Ruling 29a item 4: with no gyro columns, rows the magnetometer judges
+    stationary are excluded from movingSamples (round 4 counted them all).
+    """
+
+    @staticmethod
+    def _noGyroCirclePlusParked() -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+        circling = _circlingRows(
+            count=360, angularRateRadS=0.3, includeGyro=False, seed=71, **_TRUE_GEOMETRY
+        )
+        parked = _stationaryRows(
+            count=2000,
+            headingDeg=math.degrees(360 * 0.3 * _EDR_PERSIST_DT_S) % 360.0,
+            includeGyro=False,
+            tsStart=360.0 * _EDR_PERSIST_DT_S,
+            seed=72,
+            **_TRUE_GEOMETRY,
+        )
+        return circling + parked
+
+    def test_parkedRowsAreExcluded(self) -> None:
+        fit = fitMagCalibration(self._noGyroCirclePlusParked(), earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert 350 <= fit.movingSamples <= 360
+        assert fit.hardIronUt[0] == pytest.approx(_TRUE_CENTER_P, abs=0.5)
+        assert fit.hardIronUt[1] == pytest.approx(_TRUE_CENTER_Q, abs=0.5)
+
+    def test_parkedRowsAreExcludedDiscriminates(self, monkeypatch) -> None:
+        """RED with the mask emptied (round 4's all-moving fallback:
+        movingSamples 2360); GREEN restored."""
+        rows = self._noGyroCirclePlusParked()
+        real = fit_mag_calibration_module._analyseStationarity
+
+        def emptyMask(tsArray, p, q):
+            analysis = real(tsArray, p, q)
+            return dataclasses.replace(analysis, mask=np.zeros(len(p), dtype=bool))
+
+        monkeypatch.setattr(fit_mag_calibration_module, "_analyseStationarity", emptyMask)
+        broken = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT, force=True)
+        assert broken.movingSamples == 2360
+        monkeypatch.undo()
+        assert fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT).movingSamples <= 360
 
 
 class TestVerticalFieldWarning:
@@ -1507,7 +1785,7 @@ class TestTiltedEmbedding:
             headingsDeg=headingsDeg,
         )
         rows = [
-            (float(i), gravityBody, magBody, None)
+            (i * _NO_GYRO_DT_S, gravityBody, magBody, None)
             for i, magBody in enumerate(magBodyByHeading.values())
         ]
 
@@ -1616,7 +1894,7 @@ class TestHeadingRegressionAtDifferentEvaluationTilt:
         captureRows = []
         for i, psi in enumerate(capturePsiValues):
             accelBody, ironedField, _ = _fieldAndAccelAtTilt(captureTiltDeg, psi)
-            captureRows.append((float(i), tuple(accelBody), tuple(ironedField), None))
+            captureRows.append((i * _NO_GYRO_DT_S, tuple(accelBody), tuple(ironedField), None))
         fit = fitMagCalibration(captureRows, earthVerticalUt=_R24_V_TRUE_UT)
 
         for deltaDeg in (3.0, 6.0):
@@ -1648,7 +1926,7 @@ class TestHeadingRegressionAtDifferentEvaluationTilt:
         captureRows = []
         for i, psi in enumerate(capturePsiValues):
             accelBody, ironedField, _ = _fieldAndAccelAtTilt(captureTiltDeg, psi)
-            captureRows.append((float(i), tuple(accelBody), tuple(ironedField), None))
+            captureRows.append((i * _NO_GYRO_DT_S, tuple(accelBody), tuple(ironedField), None))
         buggyFit = fitMagCalibration(captureRows, earthVerticalUt=0.0)
 
         evalTiltDeg = captureTiltDeg + 3.0
@@ -1697,7 +1975,7 @@ class TestMainCli:
             noiseUt=0.1,
         )
         rows = [
-            (float(i), 42, _deviceFrameFromBody(_LEVEL_ACCEL), _deviceFrameFromBody(mag))
+            (i * _NO_GYRO_DT_S, 42, _deviceFrameFromBody(_LEVEL_ACCEL), _deviceFrameFromBody(mag))
             for i, mag in enumerate(points)
         ]
         csvPath = tmp_path / "capture.csv"
@@ -1724,6 +2002,11 @@ class TestMainCli:
         # HORIZONTAL_UT (19.4), so no warning is expected here.
         assert "horizontalGain" in output["fitQuality"]
         assert output["fitQuality"]["horizontalGainWarning"] is None
+        # Ruling 29a: the noise the floor was judged against is reported --
+        # null here (no gyro, nothing parked: the 1.0 uT fallback applies).
+        assert "sigmaHatUt" in output["fitQuality"]
+        assert output["fitQuality"]["sigmaHatUt"] is None
+        assert output["fitQuality"]["qualityFloorUt"] == pytest.approx(2.0, abs=1e-3)
 
     def test_horizontalGainWarningPrintsAStderrLineNotARefusal(self, tmp_path, capsys) -> None:
         """Ruling 26: an attenuated horizontal field WARNS (exit 0, stdout
@@ -1740,7 +2023,7 @@ class TestMainCli:
             hz=_TRUE_RAW_MEAN_VERTICAL_UT,
         )
         rows = [
-            (float(i), None, _deviceFrameFromBody(_LEVEL_ACCEL), _deviceFrameFromBody(mag))
+            (i * _NO_GYRO_DT_S, None, _deviceFrameFromBody(_LEVEL_ACCEL), _deviceFrameFromBody(mag))
             for i, mag in enumerate(points)
         ]
         csvPath = tmp_path / "capture.csv"
@@ -1768,7 +2051,7 @@ class TestMainCli:
             spanDeg=90.0,
         )
         rows = [
-            (float(i), None, _deviceFrameFromBody(_LEVEL_ACCEL), _deviceFrameFromBody(mag))
+            (i * _NO_GYRO_DT_S, None, _deviceFrameFromBody(_LEVEL_ACCEL), _deviceFrameFromBody(mag))
             for i, mag in enumerate(points)
         ]
         csvPath = tmp_path / "capture.csv"
@@ -1792,7 +2075,7 @@ class TestMainCli:
             noiseUt=3.0,
         )
         rows = [
-            (float(i), None, _deviceFrameFromBody(_LEVEL_ACCEL), _deviceFrameFromBody(mag))
+            (i * _NO_GYRO_DT_S, None, _deviceFrameFromBody(_LEVEL_ACCEL), _deviceFrameFromBody(mag))
             for i, mag in enumerate(points)
         ]
         csvPath = tmp_path / "capture.csv"

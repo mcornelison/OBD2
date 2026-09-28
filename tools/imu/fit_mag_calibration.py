@@ -73,9 +73,9 @@ it carries almost no real heading information. Fixed three ways together:
    DEFAULT_MAX_GYRO_RAD_S`` -- its own documented meaning, "gyro magnitude
    below which a sample counts as not being moved", is exactly this
    boundary, used from the other side). When the CSV carries no gyro columns
-   at all, every sample is treated as moving (a documented, weaker fallback --
-   there is no signal to filter on, so refusing to fit at all would be worse
-   than fitting without this particular defence).
+   at all, a sample is moving unless the MAGNETOMETER judges it stationary
+   (Ruling 29a; until round 5 every such sample counted as moving, so
+   movingSamples over-reported by the whole parked dwell).
 3. A bin only counts occupied with at least ``MIN_SAMPLES_PER_BIN`` (3)
    samples in it -- a single noise-scattered outlier can no longer buy a bin.
 
@@ -133,10 +133,15 @@ Round 3 blamed the drive in both cases.
 rows were recorded under the pre-ARCH-064 AK09916 axis map; feeding them here
 would fit a calibration for an axis convention the sensor no longer uses.
 
-QUALITY FLOOR (m7). Even a fit that passes coverage can be untrustworthy --
-noisy, or a genuinely non-elliptical field. The fit REFUSES when the corrected
-horizontal radius spread exceeds ``maxRadiusSpreadPercent`` (``--force`` /
-``force=True`` accepts it anyway and the result is marked ``qualityForced``).
+QUALITY FLOOR (m7, noise-aware since Ruling 29a). Even a fit that passes
+coverage can be untrustworthy -- a genuinely non-elliptical field, or a
+capture that moved the sensor. The fit REFUSES when the corrected radius RMS
+residual exceeds max(``maxRadiusSpreadPercent`` of R, 2 x sigmaHat), sigmaHat
+being the magnetometer noise measured on the parked rows (1.0 uT when too few
+were parked to measure it; reported as ``sigmaHatUt``). A fixed percentage of
+R alone refused every honest weak circle -- its residual is noise, and noise
+does not shrink with R (MEASURED: R 5.8 uT, sigma 0.3 -> 5.14 %, refused).
+``--force`` / ``force=True`` accepts it anyway and marks ``qualityForced``.
 
 UNOBSERVABLE: HORIZONTAL/VERTICAL GAIN (Ruling 26). A PLANAR capture -- one
 level circle -- cannot tell a correctly-scaled sensor from one whose
@@ -281,19 +286,68 @@ _STATIONARY_MAX_SPAN_S = 2.0 * STATIONARY_WINDOW_S
 # rows -- which is why the procedure asks for a parked stretch.
 STATIONARY_HEADING_DELTA_DEG = math.degrees(MOVING_MIN_GYRO_RAD_S * STATIONARY_WINDOW_S)
 #
-# Below this mean half-extent of the horizontal field's bounding box, the
-# magnetometer saw no turn at all and angles about the provisional centre are
-# meaningless (see _stationaryMaskAboutProvisionalCentre). 4 uT sits between
-# a parked noise cluster (thousands of rows at sigma 0.6 uT span about
-# +/-2.3 uT, ~3.8 sigma) and the weakest circle Ruling 26 contemplates
-# (horizontal gain 0.3 x 19.4 uT = 5.8 uT radius).
-_MIN_PROVISIONAL_RADIUS_UT = 4.0
+# That 5.7 degrees is the FLOOR of the threshold, not the threshold (Ruling
+# 29a): the threshold used is max(5.7 deg, degrees(3 * sigmaHat / R)), R the
+# provisional radius. A fixed 5.7 deg assumes the noise is small against R;
+# on a weak circle it is not -- MEASURED at R 5.8 uT, sigma 0.6 uT, only 15 of
+# 120 parked rows qualified (one comparison's noise is sqrt(2) * 0.6 / 5.8 =
+# 8.4 deg, so 5.7 deg rejects most of them). 3 sigma of a single row's angle
+# is ~2.1 sigma of a comparison: most parked rows pass. The price: on a weak,
+# noisy circle, slow turns (below 3 sigma / R / window rad/s) also pass, and
+# contaminate the bias median by at most their rate.
+_THRESHOLD_NOISE_SIGMAS = 3.0
+#
+# The threshold needs sigmaHat, and sigmaHat is measured on the rows the
+# threshold selects. Bootstrap: start at the 5.7-degree floor, measure
+# sigmaHat on the rows it selects, re-derive the threshold, re-select -- up
+# to this many passes, stopping once the threshold moves by under 0.1 deg.
+# The first pass UNDER-estimates sigma (a tight threshold keeps the rows that
+# happen to scatter least), so the threshold climbs toward the fixed point
+# from below; it never starts above the true noise. If a pass finds fewer
+# than _MIN_STATIONARY_SAMPLES usable rows, the threshold stays where it is
+# (the 1.0 uT fallback below is for the quality floor only -- widening the
+# stationary test on a GUESSED noise would let gentle turns in).
+_THRESHOLD_BOOTSTRAP_PASSES = 4
+#
+# Ruling 29a: when too few stationary rows exist to measure the noise,
+# sigmaHat for the QUALITY FLOOR falls back to this (a typical AK09916 noise
+# figure is 0.3-0.6 uT; 1.0 is deliberately generous, so a capture that gave
+# us nothing to measure is judged by the 5 % floor or a 2 uT one).
+_SIGMA_HAT_FALLBACK_UT = 1.0
+#
+# Ruling 29a: the quality floor is max(5 % of R, this many sigmaHat). A
+# circle's radial RMS residual is ~sigma from noise alone, so a fixed 5 % of
+# R refuses every honest weak circle (MEASURED: R 5.8, sigma 0.3 -> 5.14 %,
+# REFUSED). 2 sigma leaves room for noise; a systematic misfit (a
+# non-elliptical locus) still exceeds it.
+_QUALITY_NOISE_SIGMAS = 2.0
+#
+# Ruling 29a: the provisional centre is a COUNT-TRIMMED midrange -- drop this
+# many most extreme rows at each end, per axis. A COUNT, not a percentile: at
+# 95-99 % parked dwell both percentiles of a (2, 98) midrange land INSIDE the
+# parked cluster (MEASURED by the reviewer: 6.5 / 13.9 / 18.0 uT centre error),
+# while a fixed count of 3 still reaches the circle's own extremes and
+# survives up to three spikes per side (0.24-0.43 uT).
+_CENTRE_TRIM_COUNT = 3
+#
+# Degenerate locus: the magnetometer saw no turn at all (an all-parked
+# capture) and the provisional centre lands INSIDE the parked cluster, where
+# angles about it are pure noise. Detected by CONTINUITY, not size (round 4's
+# fixed 4 uT radius floor would refuse an honest R 3.9 uT circle) and not
+# shape (a "rows near the centre" test was MEASURED to flag an honest
+# 120-degree arc, whose box midpoint sits close to the arc): about a centre
+# inside a noise cluster the direction jumps at random from one row to the
+# next -- median jump 90 degrees -- while on any real locus, parked or
+# turning, it moves smoothly (the fastest plausible turn, 1 rad/s at the
+# ~2 Hz EDR rate, is 29 degrees per row). The line sits at 60 degrees.
+_DEGENERATE_MEDIAN_STEP_DEG = 60.0
 #
 # A median needs enough points to be a robust centre, not a coincidence; 10
 # is a practical floor, well under what even a few seconds of the brief's
 # own "~30 s parked" bookend would provide, while still catching a capture
 # that truly never held still (continuous circling with no parked stretch).
 _MIN_STATIONARY_SAMPLES = 10
+
 # m7: refuse a fit whose corrected radius disagrees with itself by more than
 # this many percent, unless the caller explicitly overrides it.
 MAX_RADIUS_SPREAD_PERCENT_DEFAULT = 5.0
@@ -384,6 +438,11 @@ class MagCalibrationFit:
     # Ruling 25/28: the per-axis gyro bias subtracted before the moving gate,
     # rad/s, raw DEVICE axes. None when the CSV carried no gyro columns.
     gyroBiasRadS: Vector3 | None = None
+    # Ruling 29a: magnetometer noise measured from the parked rows (None when
+    # too few; the quality floor then assumes _SIGMA_HAT_FALLBACK_UT), and
+    # the RMS-residual floor it produced.
+    sigmaHatUt: float | None = None
+    qualityFloorUt: float = 0.0
 
     def toConfigBlock(self) -> dict[str, object]:
         """The ``pi.sensors.imu.magCalibration`` config block, verbatim shape."""
@@ -578,31 +637,64 @@ def _headingBinCoverage(
     return int(np.sum(counts >= minPerBin))
 
 
-def _provisionalCentre(p: np.ndarray, q: np.ndarray) -> tuple[float, float]:
-    """Ruling 28: a first guess at the ellipse centre, BEFORE any fit.
+def _trimmedMidrange(values: np.ndarray) -> tuple[float, float]:
+    """(midpoint, half-extent) of ``values`` after dropping the
+    ``_CENTRE_TRIM_COUNT`` most extreme rows at EACH end (Ruling 29a).
 
-    The bounding-box MIDRANGE of the horizontal field, ((max + min) / 2) per
-    axis. Chosen over a first-pass conic fit because it is immune to idle
-    dwell: a parked car's raw vector lies ON the ellipse, i.e. inside the
-    box, so any number of parked rows leave the box -- and its midpoint --
-    exactly where the moving rows put it; a conic fit weights every row, and
-    2000 parked rows at one point drag it (that is the Ruling 23 exploit). A
-    rotated ellipse's bounding box is centred on the ellipse centre, so with
-    full heading coverage the midrange IS the centre up to noise in the four
-    extreme rows. It is NOT robust to a single wild outlier (a spike moves
-    it by half the excursion); the consumer tolerates a centre error of a
-    good fraction of R, and a capture with spikes that large fails the m7
-    quality floor downstream regardless. With partial coverage the midrange
-    is off-centre, but such a capture is refused on coverage anyway.
+    Untrimmed when there are too few rows to spare them.
     """
-    return (
-        (float(np.max(p)) + float(np.min(p))) / 2.0,
-        (float(np.max(q)) + float(np.min(q))) / 2.0,
-    )
+    ordered = np.sort(values)
+    trim = _CENTRE_TRIM_COUNT if len(ordered) > 2 * _CENTRE_TRIM_COUNT + 1 else 0
+    low, high = float(ordered[trim]), float(ordered[len(ordered) - 1 - trim])
+    return (high + low) / 2.0, (high - low) / 2.0
+
+
+def _provisionalCentre(p: np.ndarray, q: np.ndarray) -> tuple[float, float]:
+    """Rulings 28/29a: a first guess at the ellipse centre, BEFORE any fit.
+
+    The COUNT-TRIMMED midrange per axis (``_trimmedMidrange``). A midrange
+    rather than a first-pass conic fit because parked rows lie ON the
+    ellipse, inside its bounding box, so dwell cannot move the box's middle;
+    a conic fit weights every row, and 2000 parked rows at one point would
+    drag it (the Ruling 23 exploit, again). A rotated ellipse's bounding box
+    is centred on the ellipse centre, so with full heading coverage this IS
+    the centre up to noise in the extreme rows. Trimmed by a fixed COUNT, not
+    a percentile: round 4's plain midrange moved by half of any spike
+    (one +40 uT row moved it 20 uT), and a percentile midrange lands inside
+    the parked cluster once dwell is heavy -- see ``_CENTRE_TRIM_COUNT``.
+    With partial coverage the midrange is off-centre, but such a capture is
+    refused on coverage anyway.
+    """
+    return _trimmedMidrange(p)[0], _trimmedMidrange(q)[0]
+
+
+def _provisionalRadius(p: np.ndarray, q: np.ndarray) -> float:
+    """Mean trimmed half-extent of the horizontal field -- the R that the
+    angle noise (sigma / R) is scaled by."""
+    return (_trimmedMidrange(p)[1] + _trimmedMidrange(q)[1]) / 2.0
+
+
+def _locusIsDegenerate(
+    tsArray: np.ndarray, p: np.ndarray, q: np.ndarray, centreP: float, centreQ: float
+) -> bool:
+    """True when the provisional centre sits inside the data (the car never
+    turned): the direction about it jumps at random between consecutive
+    rows -- see ``_DEGENERATE_MEDIAN_STEP_DEG``."""
+    if len(p) < 2:
+        return True
+    order = np.argsort(tsArray, kind="stable")
+    phi = np.arctan2(q[order] - centreQ, p[order] - centreP)
+    step = np.abs((np.diff(phi) + math.pi) % (2.0 * math.pi) - math.pi)
+    return math.degrees(float(np.median(step))) > _DEGENERATE_MEDIAN_STEP_DEG
 
 
 def _stationaryMask(
-    tsArray: np.ndarray, p: np.ndarray, q: np.ndarray, centreP: float, centreQ: float
+    tsArray: np.ndarray,
+    p: np.ndarray,
+    q: np.ndarray,
+    centreP: float,
+    centreQ: float,
+    thresholdDeg: float = STATIONARY_HEADING_DELTA_DEG,
 ) -> np.ndarray:
     """Ruling 28: rows whose horizontal field direction, seen from the
     PROVISIONAL CENTRE, held still for ``STATIONARY_WINDOW_S`` -- a
@@ -616,17 +708,17 @@ def _stationaryMask(
 
     A row is stationary when, on EITHER side (earlier or later), every row
     out to the first one at least ``STATIONARY_WINDOW_S`` away stays within
-    ``STATIONARY_HEADING_DELTA_DEG`` of it. Checking every row in the
-    window, not just the far end, stops a fast turn that happens to come
-    full circle from reading as held still; allowing either side lets the
-    first and last rows of a parked stretch qualify. A side whose far row is
-    beyond ``_STATIONARY_MAX_SPAN_S`` (a gap in the capture) does not count.
+    ``thresholdDeg`` of it. Checking every row in the window, not just the
+    far end, stops a fast turn that happens to come full circle from reading
+    as held still; allowing either side lets the first and last rows of a
+    parked stretch qualify. A side whose far row is beyond
+    ``_STATIONARY_MAX_SPAN_S`` (a gap in the capture) does not count.
     """
     order = np.argsort(tsArray, kind="stable")
     ts = tsArray[order]
     phi = np.arctan2(q[order] - centreQ, p[order] - centreP)
     n = len(ts)
-    thresholdRad = math.radians(STATIONARY_HEADING_DELTA_DEG)
+    thresholdRad = math.radians(thresholdDeg)
     # First row at or after ts + window; last row at or before ts - window.
     forwardEnd = np.searchsorted(ts, ts + STATIONARY_WINDOW_S, side="left")
     backwardEnd = np.searchsorted(ts, ts - STATIONARY_WINDOW_S, side="right") - 1
@@ -651,25 +743,98 @@ def _stationaryMask(
     return stationary
 
 
+def _sigmaHatUt(
+    tsArray: np.ndarray, p: np.ndarray, q: np.ndarray, stationary: np.ndarray
+) -> float | None:
+    """Ruling 29a: per-axis magnetometer noise, uT, from the STATIONARY rows'
+    scatter about their LOCAL mean. None when fewer than
+    ``_MIN_STATIONARY_SAMPLES`` rows can be used.
+
+    Local = the stationary rows of the same unbroken parked run (no turning
+    row, no ts gap over ``_STATIONARY_MAX_SPAN_S`` between them) within
+    ``STATIONARY_WINDOW_S`` of the row. A local mean, not a run-wide one, so
+    slow drift over a long parked stretch is not read as noise. Each residual
+    is scaled by sqrt(m / (m - 1)) for its window of m rows (a mean of m
+    noisy rows absorbs 1/m of each one's variance); rows with m < 3 are
+    skipped. The scale is 1.4826 x the median |residual| over both axes --
+    the MAD, so a few turning rows that slipped into the mask do not inflate it.
+    """
+    order = np.argsort(tsArray, kind="stable")
+    ts, pS, qS, mask = tsArray[order], p[order], q[order], stationary[order]
+    gaps = np.concatenate([[False], np.diff(ts) > _STATIONARY_MAX_SPAN_S])
+    runId = np.cumsum(~mask | gaps)
+    low = np.searchsorted(ts, ts - STATIONARY_WINDOW_S, side="left")
+    high = np.searchsorted(ts, ts + STATIONARY_WINDOW_S, side="right")
+
+    residuals: list[float] = []
+    usedRows = 0
+    for k in np.flatnonzero(mask):
+        window = slice(low[k], high[k])
+        local = mask[window] & (runId[window] == runId[k])
+        m = int(np.sum(local))
+        if m < 3:
+            continue
+        scale = math.sqrt(m / (m - 1.0))
+        residuals.append((pS[k] - float(np.mean(pS[window][local]))) * scale)
+        residuals.append((qS[k] - float(np.mean(qS[window][local]))) * scale)
+        usedRows += 1
+    if usedRows < _MIN_STATIONARY_SAMPLES:
+        return None
+    return 1.4826 * float(np.median(np.abs(residuals)))
+
+
+@dataclass(frozen=True)
+class _StationaryAnalysis:
+    mask: np.ndarray
+    sigmaHatUt: float | None  # None: too few usable stationary rows
+    thresholdDeg: float
+    degenerate: bool
+
+
+def _analyseStationarity(
+    tsArray: np.ndarray, p: np.ndarray, q: np.ndarray
+) -> _StationaryAnalysis:
+    """Rulings 28/29a: the stationary mask about the provisional centre,
+    with its noise-scaled threshold (bootstrapped -- see
+    ``_THRESHOLD_BOOTSTRAP_PASSES``) and the noise it measured.
+
+    Degenerate locus (``_locusIsDegenerate``, the car never turned): every
+    row is stationary -- the magnetometer's answer is unambiguous -- and the
+    fit refuses downstream saying the capture never turned. (MEASURED in
+    round 4: without this, an all-parked capture found 0 stationary rows and
+    was refused for having nothing parked.)
+    """
+    centreP, centreQ = _provisionalCentre(p, q)
+    if _locusIsDegenerate(tsArray, p, q, centreP, centreQ):
+        allRows = np.ones(len(p), dtype=bool)
+        return _StationaryAnalysis(
+            allRows, _sigmaHatUt(tsArray, p, q, allRows), STATIONARY_HEADING_DELTA_DEG, True
+        )
+
+    radius = _provisionalRadius(p, q)
+    thresholdDeg = STATIONARY_HEADING_DELTA_DEG
+    mask = _stationaryMask(tsArray, p, q, centreP, centreQ, thresholdDeg)
+    sigmaHat = _sigmaHatUt(tsArray, p, q, mask)
+    for _ in range(_THRESHOLD_BOOTSTRAP_PASSES):
+        if sigmaHat is None or radius <= 0.0:
+            break
+        nextDeg = max(
+            STATIONARY_HEADING_DELTA_DEG,
+            math.degrees(_THRESHOLD_NOISE_SIGMAS * sigmaHat / radius),
+        )
+        if abs(nextDeg - thresholdDeg) < 0.1:
+            break
+        thresholdDeg = nextDeg
+        mask = _stationaryMask(tsArray, p, q, centreP, centreQ, thresholdDeg)
+        sigmaHat = _sigmaHatUt(tsArray, p, q, mask)
+    return _StationaryAnalysis(mask, sigmaHat, thresholdDeg, False)
+
+
 def _stationaryMaskAboutProvisionalCentre(
     tsArray: np.ndarray, p: np.ndarray, q: np.ndarray
 ) -> np.ndarray:
-    """``_stationaryMask`` about ``_provisionalCentre`` -- the one pairing.
-
-    Degenerate case: when the horizontal field barely moved at all (the
-    bounding box's mean half-extent is under ``_MIN_PROVISIONAL_RADIUS_UT``)
-    the provisional centre lands INSIDE the parked cluster and angles about
-    it are pure noise. The magnetometer's answer there is unambiguous -- the
-    car never turned -- so every row is stationary, the bias is the median
-    of the whole capture, and the fit refuses downstream saying the capture
-    never turned (MEASURED: without this, an all-parked capture found 0
-    stationary rows and was refused for having nothing parked).
-    """
-    centreP, centreQ = _provisionalCentre(p, q)
-    halfExtent = (float(np.ptp(p)) + float(np.ptp(q))) / 4.0
-    if halfExtent < _MIN_PROVISIONAL_RADIUS_UT:
-        return np.ones(len(p), dtype=bool)
-    return _stationaryMask(tsArray, p, q, centreP, centreQ)
+    """The stationary mask alone -- see ``_analyseStationarity``."""
+    return _analyseStationarity(tsArray, p, q).mask
 
 
 def _estimateGyroBias(
@@ -687,17 +852,17 @@ def _estimateGyroBias(
     Raises:
         ValueError: too few stationary samples to trust the median.
     """
-    stationaryMask = _stationaryMaskAboutProvisionalCentre(tsArray, p, q)
-    stationaryCount = int(np.sum(stationaryMask))
+    analysis = _analyseStationarity(tsArray, p, q)
+    stationaryCount = int(np.sum(analysis.mask))
     if stationaryCount < _MIN_STATIONARY_SAMPLES:
         raise ValueError(
             f"too few parked, non-turning samples to estimate the gyro bias: "
             f"{stationaryCount} rows held their magnetometer heading within "
-            f"{STATIONARY_HEADING_DELTA_DEG:.1f} deg for {STATIONARY_WINDOW_S:.0f} s, "
+            f"{analysis.thresholdDeg:.1f} deg for {STATIONARY_WINDOW_S:.0f} s, "
             f"need at least {_MIN_STATIONARY_SAMPLES}. Start and end the "
             "capture with roughly 30 seconds parked, engine running."
         )
-    return np.median(gyroMatrix[stationaryMask], axis=0)
+    return np.median(gyroMatrix[analysis.mask], axis=0)
 
 
 def _fitConic(p: np.ndarray, q: np.ndarray) -> tuple[float, float, float, float, float, float]:
@@ -807,6 +972,10 @@ def fitMagCalibration(
     # stability about a provisional centre (Rulings 25, 28), NOT a
     # whole-capture median (Ruling 24's approach, which fails on steady
     # circling -- see module docstring).
+    # Ruling 29a: the magnetometer's own stationarity analysis, once -- its
+    # sigmaHat sets the quality floor below, and its mask is the no-gyro
+    # path's only way to tell a parked row from a moving one.
+    stationarity = _analyseStationarity(tsArray, p, q)
     gyroBiasPerAxis: np.ndarray | None = None
     if all(g is not None for g in gyroRaw):
         gyroMatrix = np.array(gyroRaw)  # shape (N, 3)
@@ -814,8 +983,11 @@ def fitMagCalibration(
         gyroMagRadS = np.linalg.norm(gyroMatrix - gyroBiasPerAxis, axis=1)
         movingMask = gyroMagRadS > MOVING_MIN_GYRO_RAD_S
     else:
-        # Ruling 23's documented fallback: no gyro signal to filter on.
-        movingMask = np.ones(len(rows), dtype=bool)
+        # No gyro columns (Ruling 23's fallback, tightened by Ruling 29a): a
+        # row the magnetometer judges stationary is parked, not moving.
+        # Round 4 counted every row as moving here, so movingSamples
+        # over-reported by the whole parked dwell.
+        movingMask = ~stationarity.mask
     movingCount = int(np.sum(movingMask))
     if movingCount < _MIN_SAMPLES:
         raise ValueError(_tooFewMovingMessage(tsArray, p, q, movingCount, total, gyroBiasPerAxis))
@@ -874,15 +1046,35 @@ def fitMagCalibration(
         residualRmsUt / radiusTarget * 100.0 if radiusTarget > 0 else float("inf")
     )
 
-    # m7: a fit that passed coverage can still be untrustworthy.
+    # m7, made noise-aware by Ruling 29a: refuse only when the residual
+    # exceeds BOTH what the percentage allows AND what the measured noise
+    # explains (_QUALITY_NOISE_SIGMAS x sigmaHat) -- a fixed percentage of R
+    # refused every honest weak circle, whose residual is noise, not misfit.
+    sigmaForFloorUt = (
+        stationarity.sigmaHatUt
+        if stationarity.sigmaHatUt is not None
+        else _SIGMA_HAT_FALLBACK_UT
+    )
+    qualityFloorUt = max(
+        maxRadiusSpreadPercent / 100.0 * radiusTarget,
+        _QUALITY_NOISE_SIGMAS * sigmaForFloorUt,
+    )
     qualityForced = False
-    if radiusSpreadPercent > maxRadiusSpreadPercent:
+    if residualRmsUt > qualityFloorUt:
+        sigmaNote = (
+            f"measured noise sigma {stationarity.sigmaHatUt:.2f} uT"
+            if stationarity.sigmaHatUt is not None
+            else f"noise not measurable (too few parked rows), assumed {_SIGMA_HAT_FALLBACK_UT} uT"
+        )
         if not force:
             raise ValueError(
-                f"corrected radius spread {radiusSpreadPercent:.2f}% exceeds the "
-                f"{maxRadiusSpreadPercent}% quality floor -- this fit is not "
-                "trustworthy (noisy capture, or a genuinely non-elliptical "
-                "field). Pass --force / force=True to accept it anyway."
+                f"corrected radius RMS residual {residualRmsUt:.2f} uT "
+                f"({radiusSpreadPercent:.2f}% of R) exceeds the quality floor "
+                f"{qualityFloorUt:.2f} uT (the larger of {maxRadiusSpreadPercent}% of "
+                f"R and {_QUALITY_NOISE_SIGMAS:g} x sigma; {sigmaNote}) -- the locus "
+                "is not the ellipse this fit assumes (a non-elliptical field, or "
+                "a capture that moved the sensor). Pass --force / force=True to "
+                "accept it anyway."
             )
         qualityForced = True
 
@@ -954,6 +1146,8 @@ def fitMagCalibration(
         horizontalGainWarning=horizontalGainWarning,
         verticalFieldRatio=verticalFieldRatio,
         verticalFieldWarning=verticalFieldWarning,
+        sigmaHatUt=stationarity.sigmaHatUt,
+        qualityFloorUt=qualityFloorUt,
         gyroBiasRadS=(
             None if gyroBiasPerAxis is None else tuple(float(v) for v in gyroBiasPerAxis)
         ),
@@ -1055,6 +1249,8 @@ def main(argv: list[str] | None = None) -> int:
             "horizontalGainWarning": fit.horizontalGainWarning,
             "verticalFieldRatio": _finiteOrNone(fit.verticalFieldRatio),
             "verticalFieldWarning": fit.verticalFieldWarning,
+            "sigmaHatUt": None if fit.sigmaHatUt is None else round(fit.sigmaHatUt, 4),
+            "qualityFloorUt": round(fit.qualityFloorUt, 4),
             "gyroBiasRadS": (
                 None if fit.gyroBiasRadS is None else [round(v, 5) for v in fit.gyroBiasRadS]
             ),
