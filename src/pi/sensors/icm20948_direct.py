@@ -102,15 +102,6 @@ ACCEL_DLPF_NEAR_50HZ = 0x03  # acc_d50bw4_n68bw8 -- 50.4 Hz 3 dB BW
 GYRO_DLPF_NEAR_50HZ = 0x03  # gyr_d51bw2_n73bw3 -- 51.2 Hz 3 dB BW
 
 
-def _s16(v: int) -> int:
-    """Sign-extend a 16-bit two's-complement value the driver hands back as an
-    unsigned Python int (qwiic_icm20948.getAgmt already does this itself for
-    axRaw/gxRaw/etc, but ToSignedInt is a driver internal, not a public API --
-    this is the same conversion, owned here rather than borrowed by reaching
-    into the driver)."""
-    return v - 65536 if v & 0x8000 else v
-
-
 class Icm20948Direct:
     """ICM-20948 accel/gyro + directly-read AK09916, built from a clean reset
     with the I2C master never enabled (ARCH-064 acquisition C).
@@ -138,10 +129,18 @@ class Icm20948Direct:
 
     @property
     def acceleration(self) -> tuple[float, float, float]:
-        """(x, y, z) m/s^2. Reads a fresh burst; ``.gyro`` reuses it (below)."""
+        """(x, y, z) m/s^2. Reads a fresh burst; ``.gyro`` reuses it (below).
+
+        ``getAgmt()`` (qwiic_icm20948.py) already runs its own
+        ``ToSignedInt`` on axRaw/ayRaw/azRaw before returning -- MEASURED by
+        reading the installed module (~L679-683) -- so these are trusted as
+        already-signed and only SCALED here. Re-sign-extending an
+        already-signed value is not idempotent (it corrupts every negative
+        axis); see test_accelNegativeAxis_isNotDoubleSignExtended.
+        """
         self._read()
         i = self._icm
-        return tuple(_s16(r) / ACCEL_LSB_PER_G * G for r in (i.axRaw, i.ayRaw, i.azRaw))
+        return tuple(r / ACCEL_LSB_PER_G * G for r in (i.axRaw, i.ayRaw, i.azRaw))
 
     @property
     def gyro(self) -> tuple[float, float, float]:
@@ -149,10 +148,12 @@ class Icm20948Direct:
 
         Relies on the reader calling accel before gyro each poll (as
         ``sensor_reader.ImuReader._readAndPublish`` does) -- issuing a second
-        I2C burst here would cost a transaction for no benefit.
+        I2C burst here would cost a transaction for no benefit. gxRaw/gyRaw/
+        gzRaw are already signed by ``getAgmt()`` itself -- see
+        ``.acceleration``'s docstring above -- and only scaled here.
         """
         i = self._icm
-        return tuple(math.radians(_s16(r) / GYRO_LSB_PER_DPS) for r in (i.gxRaw, i.gyRaw, i.gzRaw))
+        return tuple(math.radians(r / GYRO_LSB_PER_DPS) for r in (i.gxRaw, i.gyRaw, i.gzRaw))
 
     @property
     def magnetic(self) -> tuple[float, float, float]:
@@ -250,11 +251,15 @@ class GyroRecoveryHandle:
 
     @property
     def gyro(self) -> tuple[float, float, float]:
-        """A fresh gyro triple in rad/s (triggers its own getAgmt burst)."""
+        """A fresh gyro triple in rad/s (triggers its own getAgmt burst).
+
+        gxRaw/gyRaw/gzRaw are already signed by ``getAgmt()`` itself -- see
+        ``Icm20948Direct.acceleration``'s docstring -- and only scaled here.
+        """
         icm = self._icm
         icm.getAgmt()
         return tuple(
-            math.radians(_s16(r) / GYRO_LSB_PER_DPS) for r in (icm.gxRaw, icm.gyRaw, icm.gzRaw)
+            math.radians(r / GYRO_LSB_PER_DPS) for r in (icm.gxRaw, icm.gyRaw, icm.gzRaw)
         )
 
     @property

@@ -41,7 +41,14 @@ from pi.sensors.icm20948_direct import (
 class FakeIcm:
     """Mimics qwiic_icm20948.QwiicIcm20948 closely enough to drive the build
     sequence: every method call is recorded, and ``getAgmt`` sets the raw
-    fields the SparkFun driver itself sets on the instance."""
+    fields the SparkFun driver itself sets on the instance.
+
+    axRaw/ayRaw/azRaw/gxRaw/gyRaw/gzRaw are set here as ALREADY-SIGNED Python
+    ints -- the real driver's ``getAgmt()`` runs its own ``ToSignedInt`` on
+    each of them before returning (qwiic_icm20948.py ~L679-687), so a fake
+    that stored an unsigned 16-bit pattern instead would not match production
+    and could hide a double sign-extension bug (see
+    test_accelNegativeAxis_isNotDoubleSignExtended)."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple]] = []
@@ -116,6 +123,32 @@ def test_gyroIsScaledToRadPerSec() -> None:
     assert dev.gyro[0] == math.radians(655 / GYRO_LSB_PER_DPS)
 
 
+def test_accelNegativeAxis_isNotDoubleSignExtended() -> None:
+    """The real ``getAgmt()`` already sign-extends axRaw/ayRaw/azRaw
+    (qwiic_icm20948.py's own ``ToSignedInt``, run inside ``getAgmt`` itself --
+    MEASURED by reading the installed module, ~L679-683). A CONSUMER that
+    re-applies a 16-bit sign-extension to an already-signed negative value is
+    not idempotent and corrupts it (e.g. treating -8192 as an unsigned 16-bit
+    pattern would read it back as -73828). -8192 raw at +-4 g FS is exactly
+    -1 g.
+    """
+    icm = FakeIcm()
+    icm.azRaw = -8192
+    dev = makeIcm20948Direct(lambda: icm, lambda: FakeAk())
+    assert abs(dev.acceleration[2] - (-G)) < 1e-6
+
+
+def test_gyroNegativeAxis_isNotDoubleSignExtended() -> None:
+    """Same defect class as the accel case, on the gyro channel. -655 raw at
+    65.5 LSB/dps is exactly -10.0 dps."""
+    import math
+
+    icm = FakeIcm()
+    icm.gxRaw = -655
+    dev = makeIcm20948Direct(lambda: icm, lambda: FakeAk())
+    assert dev.gyro[0] == math.radians(-10.0)
+
+
 def test_magneticReturnsTheRawAkFrame_readerAppliesToIcmFrame() -> None:
     """``.magnetic`` returns the RAW AK triple -- the reader (not this device)
     applies ``toIcmFrame`` (see sensor_reader.ImuReader._readAndPublish)."""
@@ -188,7 +221,12 @@ class _FakeI2cDriver:
 class _FakeSparkFunIcm:
     """A SparkFun-shaped fake: setBank + getAgmt + the underlying _i2c driver
     the real writes go through (see qwiic_icm20948.QwiicIcm20948.setBank /
-    i2cMasterEnable, which call ``self._i2c.writeByte(self.address, reg, val)``)."""
+    i2cMasterEnable, which call ``self._i2c.writeByte(self.address, reg, val)``).
+
+    ``getAgmt`` hands back gxRaw/gyRaw/gzRaw as ALREADY-SIGNED Python ints,
+    same real-driver contract as ``FakeIcm`` above -- ``_dpsToRaw`` below
+    produces a signed value directly (``round(-20.0 * 65.5) == -1310``), never
+    an unsigned 16-bit pattern."""
 
     def __init__(self, gyroTriples: list[tuple[float, float, float]]) -> None:
         self.address = 0x69
@@ -216,6 +254,17 @@ def test_gyroRecoveryHandle_exposesGyroInRadPerSecond() -> None:
     icm = _FakeSparkFunIcm([( _dpsToRaw(20.0), 0, 0)])
     handle = GyroRecoveryHandle(icm)
     assert handle.gyro[0] == math.radians(20.0)
+
+
+def test_gyroRecoveryHandle_negativeAxis_isNotDoubleSignExtended() -> None:
+    """Same real-driver contract as Icm20948Direct.gyro: getAgmt() already
+    hands back a signed int, so GyroRecoveryHandle must not re-sign-extend
+    it either."""
+    import math
+
+    icm = _FakeSparkFunIcm([(_dpsToRaw(-20.0), 0, 0)])
+    handle = GyroRecoveryHandle(icm)
+    assert handle.gyro[0] == math.radians(-20.0)
 
 
 def test_gyroRecoveryHandle_bankSetterCallsSetBank() -> None:
