@@ -81,6 +81,16 @@ it carries almost no real heading information. Fixed three ways together:
 
 The fit REFUSES when fewer than ``MIN_OCCUPIED_BINS`` (25) of 36 qualify.
 
+Ruling 24: the gyro used for (2) is BIAS-CORRECTED, not raw. ``edr_imu_sample``
+carries the RAW gyro (no bias removed upstream), and the A-34 faulted-offset
+defect puts a constant ~0.5 rad/s offset on one axis -- well above
+``MOVING_MIN_GYRO_RAD_S`` (0.05), which would mark every idle sample "moving"
+on a faulted board and make this whole defence inert. The PER-AXIS MEDIAN
+gyro reading across the capture is subtracted before the magnitude/threshold
+test: a capture is typically idle or near-idle for much of its length, so the
+median survives a genuinely-moving minority and estimates the constant bias
+(faulted or not) without needing a separate calibration step.
+
 ⚠️ ONLY DRIVES CAPTURED **AFTER** ARCH-064 DEPLOYS ARE VALID INPUT. Earlier
 rows were recorded under the pre-ARCH-064 AK09916 axis map; feeding them here
 would fit a calibration for an axis convention the sensor no longer uses.
@@ -274,17 +284,19 @@ def _resolveColumnSet(
 
 def loadRows(
     path: str, driveId: int | None = None
-) -> list[tuple[float, Vector3, Vector3, float | None]]:
-    """Load ``(tsCaptureS, accelBody, magBody, gyroMagRadS)`` from an ``edr_imu_sample`` CSV.
+) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+    """Load ``(tsCaptureS, accelBody, magBody, gyroRaw)`` from an ``edr_imu_sample`` CSV.
 
     Every accel and mag vector passes through ``resolveMountFrame`` (default
     mount) exactly once, here, so every consumer downstream is already in the
-    BODY frame ``AhrsFusion`` applies the calibration in -- Ruling 18. Gyro
-    magnitude is used directly from the DEVICE-frame reading without mount
-    conversion: a mount is a signed permutation of axes, which cannot change a
-    vector's magnitude, so there is nothing for ``resolveMountFrame`` to do to
-    it here (unlike accel/mag, whose individual AXES are used, not just their
-    magnitude).
+    BODY frame ``AhrsFusion`` applies the calibration in -- Ruling 18. Gyro is
+    returned RAW (DEVICE-frame, no mount conversion, no bias correction): the
+    per-capture bias median (Ruling 24) needs the WHOLE loaded set at once, so
+    that step belongs to ``fitMagCalibration``, not this per-row loader; a
+    mount conversion would not change anything the bias subtraction or the
+    resulting magnitude cares about (magnitude is invariant under a signed
+    axis permutation applied identically to both the reading and its bias),
+    so it is skipped here rather than performed and then subtracted through.
 
     Args:
         path: CSV path. Accepts either the real ``edr_imu_sample`` column
@@ -299,7 +311,7 @@ def loadRows(
             alias spelling of a REQUIRED column group (``ts_capture``, accel,
             mag). Gyro columns are optional -- see ``GYRO_COLUMNS_PRIMARY``.
     """
-    rows: list[tuple[float, Vector3, Vector3, float | None]] = []
+    rows: list[tuple[float, Vector3, Vector3, Vector3 | None]] = []
     with open(path, newline="") as handle:
         reader = csv.DictReader(handle)
         fieldnames = set(reader.fieldnames or ())
@@ -328,10 +340,10 @@ def loadRows(
                 tsCaptureS = float(row[TS_COLUMN])
                 ax, ay, az = (float(row[c]) for c in accelCols)
                 mx, my, mz = (float(row[c]) for c in magCols)
-                gyroMagRadS: float | None = None
+                gyroRaw: Vector3 | None = None
                 if gyroCols is not None:
                     gx, gy, gz = (float(row[c]) for c in gyroCols)
-                    gyroMagRadS = math.sqrt(gx * gx + gy * gy + gz * gz)
+                    gyroRaw = (gx, gy, gz)
             except (KeyError, TypeError, ValueError):
                 # A row with a missing or unparseable field is skipped rather
                 # than defaulted: a fabricated zero would enter the fit as data.
@@ -341,7 +353,7 @@ def loadRows(
                     tsCaptureS,
                     resolveMountFrame((ax, ay, az)),
                     resolveMountFrame((mx, my, mz)),
-                    gyroMagRadS,
+                    gyroRaw,
                 )
             )
     return rows
@@ -456,7 +468,7 @@ def _ellipseParams(
 
 
 def fitMagCalibration(
-    rows: list[tuple[float, Vector3, Vector3, float | None]],
+    rows: list[tuple[float, Vector3, Vector3, Vector3 | None]],
     *,
     earthVerticalUt: float = DEFAULT_EARTH_VERTICAL_UT,
     maxRadiusSpreadPercent: float = MAX_RADIUS_SPREAD_PERCENT_DEFAULT,
@@ -465,9 +477,11 @@ def fitMagCalibration(
     """Fit the planar hard/soft-iron calibration from BODY-frame capture rows.
 
     Args:
-        rows: ``(tsCaptureS, accelBody, magBody, gyroMagRadS)`` as returned by
-            ``loadRows``. ``gyroMagRadS`` may be None (no gyro columns in the
-            source CSV) -- see Ruling 23's moving/idle fallback.
+        rows: ``(tsCaptureS, accelBody, magBody, gyroRaw)`` as returned by
+            ``loadRows``. ``gyroRaw`` may be None (no gyro columns in the
+            source CSV) -- see Ruling 23's moving/idle fallback. When present
+            it is RAW (bias not yet removed); the per-axis median bias is
+            estimated and subtracted here (Ruling 24) before gating.
         earthVerticalUt: Earth's expected vertical field component, BODY-UP
             sign convention (Ruling 22). Defaults to the DOCUMENTED Chicago
             WMM-2025 value; override for a different location.
@@ -488,7 +502,7 @@ def fitMagCalibration(
 
     accelBody = [r[1] for r in rows]
     magBody = [r[2] for r in rows]
-    gyroMagRadS = [r[3] for r in rows]
+    gyroRaw = [r[3] for r in rows]
 
     gravity = _meanGravity(accelBody)
     forward, left, up = _levelBasis(gravity)
@@ -497,8 +511,21 @@ def fitMagCalibration(
     q = np.array([m[0] * left[0] + m[1] * left[1] + m[2] * left[2] for m in magBody])
     r = np.array([m[0] * up[0] + m[1] * up[1] + m[2] * up[2] for m in magBody])
 
-    # Ruling 23: idle dwell must not enter the fit or the coverage count.
-    movingMask = np.array([g is None or g > MOVING_MIN_GYRO_RAD_S for g in gyroMagRadS])
+    # Ruling 23/24: idle dwell must not enter the fit or the coverage count.
+    # The gyro is RAW (no bias removed upstream -- edr_imu_sample carries the
+    # sensor's own reading, and the A-34 faulted-offset defect puts a
+    # constant ~0.5 rad/s on one axis, well above MOVING_MIN_GYRO_RAD_S). The
+    # per-axis MEDIAN over the whole capture is a robust bias estimate (a
+    # capture is typically idle/near-idle for much of its length) and is
+    # subtracted before the magnitude/threshold test -- see module docstring.
+    if all(g is not None for g in gyroRaw):
+        gyroMatrix = np.array(gyroRaw)  # shape (N, 3)
+        gyroBiasPerAxis = np.median(gyroMatrix, axis=0)
+        gyroMagRadS = np.linalg.norm(gyroMatrix - gyroBiasPerAxis, axis=1)
+        movingMask = gyroMagRadS > MOVING_MIN_GYRO_RAD_S
+    else:
+        # Ruling 23's documented fallback: no gyro signal to filter on.
+        movingMask = np.ones(len(rows), dtype=bool)
     movingCount = int(np.sum(movingMask))
     if movingCount < _MIN_SAMPLES:
         raise ValueError(
@@ -615,8 +642,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    rows = loadRows(args.csv, driveId=args.drive_id)
+    # Ruling 24: loadRows raising (e.g. the wrong CSV columns, C1) is a
+    # refusal like any other -- it must come out as this CLI's {"refused":
+    # ...} JSON, not an uncaught traceback, so it is inside the same try.
+    rows: list[tuple[float, Vector3, Vector3, Vector3 | None]] = []
     try:
+        rows = loadRows(args.csv, driveId=args.drive_id)
         fit = fitMagCalibration(
             rows, earthVerticalUt=args.earth_vertical_ut, force=args.force
         )

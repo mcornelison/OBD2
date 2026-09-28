@@ -35,6 +35,28 @@ Fix round 1 (reviewer rejected da39bc16) additions, by finding:
   (``m_c = S @ (m_u - h)``, src/pi/sensors/ahrs_fusion.py:310).
 * m7/m8 -- the radius-spread quality floor and the (now clearly labelled)
   major-axis rotation.
+
+Fix round 2 (reviewer rejected 143d0976; C1/C3/I4/I5/m7/m8 accepted, C2's
+FORMULA accepted, but its "hz is decoupled by construction" claim REFUTED by
+measurement through the production AhrsFusion), by finding, per Ruling 24:
+
+* ``test_hardIronZDoesNotLeakIntoHeadingByConstruction`` is DELETED -- it
+  evaluated heading using the SAME tilt/basis the calibration was fit from,
+  comparing an attitude against itself, and so passed on the bug it existed
+  to catch. See ``TestHeadingRegressionAtDifferentEvaluationTilt`` below.
+* Real regression: a calibration fit from a capture at ONE gravity/tilt is
+  evaluated at a DIFFERENT one, matching both the real-world case (a car is
+  calibrated once; pitch varies afterward) and the reviewer's own repro.
+* ``TestMainCli.test_loadColumnErrorsComeOutAsRefusedJsonNotATraceback`` --
+  ``loadRows`` now runs inside ``main``'s try, so a C1 column error becomes
+  this CLI's ``{"refused": ...}`` JSON, not an uncaught traceback.
+* The moving/idle gyro gate now subtracts the per-axis MEDIAN gyro over the
+  whole capture before comparing to ``MOVING_MIN_GYRO_RAD_S`` -- raw gyro
+  carries whatever constant offset the sensor has (A-34: ~0.5 rad/s on one
+  axis), which would otherwise mark every idle sample "moving" and make the
+  Ruling 23 coverage defence inert. ``loadRows`` now returns the RAW gyro
+  3-vector (not a precomputed magnitude); the bias estimate needs the whole
+  loaded capture at once, so it lives in ``fitMagCalibration``.
 """
 
 from __future__ import annotations
@@ -63,9 +85,12 @@ Vector3 = tuple[float, float, float]
 _LEVEL_ACCEL: Vector3 = (0.0, 0.0, 9.80665)
 _STANDARD_GRAVITY_MS2 = 9.80665
 # Comfortably above MOVING_MIN_GYRO_RAD_S (accel_cal.DEFAULT_MAX_GYRO_RAD_S,
-# 0.05 rad/s) so a row tagged "moving" in a test is unambiguously moving.
-_MOVING_GYRO_RAD_S = MOVING_MIN_GYRO_RAD_S * 10.0
-_IDLE_GYRO_RAD_S = MOVING_MIN_GYRO_RAD_S * 0.1
+# 0.05 rad/s) so a row tagged "moving" in a test is unambiguously moving,
+# even after the Ruling 24 per-axis median bias subtraction (both are simple
+# single-axis vectors with no bias applied, so the median IS the idle value
+# and these margins survive unchanged).
+_MOVING_GYRO_RAD_VEC: Vector3 = (MOVING_MIN_GYRO_RAD_S * 10.0, 0.0, 0.0)
+_IDLE_GYRO_RAD_VEC: Vector3 = (MOVING_MIN_GYRO_RAD_S * 0.1, 0.0, 0.0)
 
 
 def _ellipsePoints(
@@ -108,10 +133,10 @@ def _ellipsePoints(
 def _rowsFromMagPoints(
     points: list[Vector3],
     accel: Vector3 = _LEVEL_ACCEL,
-    gyroMagRadS: float | None = None,
-) -> list[tuple[float, Vector3, Vector3, float | None]]:
+    gyroRaw: Vector3 | None = None,
+) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
     """Body-frame rows with no gyro column by default (Ruling 23 all-moving fallback)."""
-    return [(float(i), accel, mag, gyroMagRadS) for i, mag in enumerate(points)]
+    return [(float(i), accel, mag, gyroRaw) for i, mag in enumerate(points)]
 
 
 # ARCH-064 Task 6 brief's exact synthetic parameters for the horizontal shape.
@@ -361,6 +386,33 @@ class TestQualityFloor:
         assert fit.qualityForced is False
 
 
+def _alternatingGyroSeries(
+    count: int, low: float, high: float, bias: float = 0.0
+) -> list[Vector3]:
+    """Alternating two-level single-axis gyro reading, plus an optional
+    constant bias on the same axis. For an EVEN ``count`` split exactly in
+    half, the true per-axis MEDIAN is ``bias + (low + high) / 2`` exactly.
+
+    Ruling 24's median bias estimate treats a perfectly CONSTANT reading as
+    its own baseline -- exactly zero after subtraction -- which a real turn's
+    gyro trace never is (the rate varies). Alternating between two distinct
+    nonzero levels keeps every sample comfortably clear of the moving
+    threshold after de-biasing, the way genuine motion would; a nonzero
+    ``bias`` on top models a faulted constant offset (A-34) without changing
+    that property.
+    """
+    return [(bias + (low if i % 2 == 0 else high), 0.0, 0.0) for i in range(count)]
+
+
+def _rowsFromMagPointsWithGyroSeries(
+    points: list[Vector3], gyroSeries: list[Vector3], accel: Vector3 = _LEVEL_ACCEL
+) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+    return [
+        (float(i), accel, mag, gyro)
+        for i, (mag, gyro) in enumerate(zip(points, gyroSeries, strict=True))
+    ]
+
+
 class TestCoverageExploit:
     """C3 (Ruling 23): the dense-idle exploit that fit round 1 accepted."""
 
@@ -396,8 +448,10 @@ class TestCoverageExploit:
             noiseUt=0.6,
             seed=2,
         )
-        rows = _rowsFromMagPoints(idlePoints, gyroMagRadS=_IDLE_GYRO_RAD_S) + _rowsFromMagPoints(
-            movingPoints, gyroMagRadS=_MOVING_GYRO_RAD_S
+        rows = _rowsFromMagPoints(
+            idlePoints, gyroRaw=(0.0, 0.0, 0.0)
+        ) + _rowsFromMagPointsWithGyroSeries(
+            movingPoints, _alternatingGyroSeries(len(movingPoints), 0.3, 0.7)
         )
         with pytest.raises(ValueError, match="coverage"):
             fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
@@ -416,7 +470,9 @@ class TestCoverageExploit:
             hz=_TRUE_RAW_MEAN_VERTICAL_UT,
             count=360,
         )
-        movingRows = _rowsFromMagPoints(movingPoints, gyroMagRadS=_MOVING_GYRO_RAD_S)
+        movingRows = _rowsFromMagPointsWithGyroSeries(
+            movingPoints, _alternatingGyroSeries(len(movingPoints), 0.3, 0.7)
+        )
         withoutIdle = fitMagCalibration(movingRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
 
         idlePoints = _ellipsePoints(
@@ -431,13 +487,59 @@ class TestCoverageExploit:
             noiseUt=0.6,
             seed=3,
         )
-        idleRows = _rowsFromMagPoints(idlePoints, gyroMagRadS=_IDLE_GYRO_RAD_S)
+        idleRows = _rowsFromMagPoints(idlePoints, gyroRaw=(0.0, 0.0, 0.0))
         withIdle = fitMagCalibration(
             movingRows + idleRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
         )
 
         assert withIdle.hardIronUt == pytest.approx(withoutIdle.hardIronUt, abs=1e-6)
         assert withIdle.movingSamples == withoutIdle.movingSamples
+
+    def test_denseIdleWithAFaultedGyroBiasIsStillRefused(self) -> None:
+        """Ruling 24: edr_imu_sample's gyro is RAW, and the A-34 faulted
+        offset (~0.5 rad/s on one axis) sits well above MOVING_MIN_GYRO_RAD_S
+        (0.05). Comparing raw magnitude against that floor would mark EVERY
+        idle sample "moving" (the bias alone clears the threshold) and make
+        this whole defence inert -- re-opening the exact exploit
+        ``test_denseIdleDwellIsRefused`` pins. The per-axis MEDIAN subtraction
+        must still isolate the true (near-zero) idle rate and refuse.
+        """
+        faultBiasRadS = 0.5
+        idlePoints = _ellipsePoints(
+            centerP=_TRUE_CENTER_P,
+            centerQ=_TRUE_CENTER_Q,
+            r1=_TRUE_R1,
+            r2=_TRUE_R2,
+            rotationDeg=_TRUE_ROTATION_DEG,
+            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
+            count=2000,
+            spanDeg=0.001,
+            noiseUt=0.6,
+            seed=1,
+        )
+        movingPoints = _ellipsePoints(
+            centerP=_TRUE_CENTER_P,
+            centerQ=_TRUE_CENTER_Q,
+            r1=_TRUE_R1,
+            r2=_TRUE_R2,
+            rotationDeg=_TRUE_ROTATION_DEG,
+            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
+            count=300,
+            spanDeg=90.0,
+            noiseUt=0.6,
+            seed=2,
+        )
+        # The SAME +0.5 rad/s fault sits on every reading (it is a hardware
+        # offset, not a per-row choice) -- idle rows carry the bias alone,
+        # moving rows carry the bias PLUS genuine (alternating) movement.
+        rows = _rowsFromMagPoints(
+            idlePoints, gyroRaw=(faultBiasRadS, 0.0, 0.0)
+        ) + _rowsFromMagPointsWithGyroSeries(
+            movingPoints,
+            _alternatingGyroSeries(len(movingPoints), 0.3, 0.7, bias=faultBiasRadS),
+        )
+        with pytest.raises(ValueError, match="coverage"):
+            fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
 
 
 def _deviceFrameFromBody(vecBody: Vector3, mount: dict[str, str] = IMU_BODY_FRAME) -> Vector3:
@@ -532,11 +634,11 @@ class TestLoadRows:
 
         rows = loadRows(str(csvPath))
         assert len(rows) == 1
-        tsCaptureS, loadedAccel, loadedMag, gyroMagRadS = rows[0]
+        tsCaptureS, loadedAccel, loadedMag, gyroRaw = rows[0]
         assert tsCaptureS == pytest.approx(1.0)
         assert loadedAccel == pytest.approx(accelBody)
         assert loadedMag == pytest.approx(magBody)
-        assert gyroMagRadS is None  # no gyro columns in this CSV
+        assert gyroRaw is None  # no gyro columns in this CSV
 
     def test_roundTripUnderANonIdentityMountDiscriminates(self, tmp_path, monkeypatch) -> None:
         """I4: IMU_BODY_FRAME is currently the identity, so a round-trip test
@@ -612,11 +714,14 @@ class TestLoadRows:
 
         rows = loadRows(str(csvPath))
         assert len(rows) == 1
-        tsCaptureS, loadedAccel, loadedMag, gyroMagRadS = rows[0]
+        tsCaptureS, loadedAccel, loadedMag, gyroRaw = rows[0]
         assert tsCaptureS == pytest.approx(12.5)
         assert loadedAccel == pytest.approx(accelBody)
         assert loadedMag == pytest.approx(magBody)
-        assert gyroMagRadS == pytest.approx(math.sqrt(sum(c * c for c in gyroDevice)))
+        # Ruling 24: gyro is returned RAW here (device frame, no bias
+        # correction) -- the per-axis median bias subtraction is
+        # fitMagCalibration's job, over the whole loaded capture at once.
+        assert gyroRaw == pytest.approx(gyroDevice)
 
         assert loadRows(str(csvPath), driveId=99) == rows
         assert loadRows(str(csvPath), driveId=1) == []
@@ -653,10 +758,10 @@ class TestLoadRows:
         with pytest.raises(ValueError, match="header"):
             loadRows(str(csvPath))
 
-    def test_parsesGyroMagnitudeWhenGyroColumnsArePresent(self, tmp_path) -> None:
+    def test_parsesRawGyroWhenGyroColumnsArePresent(self, tmp_path) -> None:
         accelBody: Vector3 = (0.0, 0.0, 9.80665)
         magBody: Vector3 = (1.0, 2.0, 3.0)
-        gyroDevice: Vector3 = (0.3, 0.4, 0.0)  # magnitude 0.5, well above the floor
+        gyroDevice: Vector3 = (0.3, 0.4, 0.0)
         csvPath = tmp_path / "capture.csv"
         _writeCsv(
             str(csvPath),
@@ -665,7 +770,9 @@ class TestLoadRows:
             gyroDevice=gyroDevice,
         )
         rows = loadRows(str(csvPath))
-        assert rows[0][3] == pytest.approx(0.5)
+        # Ruling 24: returned RAW (not a magnitude, no bias correction) --
+        # the median bias estimate needs the whole capture at once.
+        assert rows[0][3] == pytest.approx(gyroDevice)
 
     def test_filtersByDriveId(self, tmp_path) -> None:
         driveRows = [
@@ -762,39 +869,32 @@ def _magBodyRows(
 
 
 class TestTiltedEmbedding:
-    """I5: the B^T C B embedding, exercised off-level; C2's heading-accuracy claim.
+    """I5: the B^T C B embedding, exercised off-level with a genuinely
+    anisotropic ellipse. Only the SHAPE claim (corrected locus is a circle)
+    is asserted here -- a general hard/soft-iron fit from shape alone cannot
+    recover an absolute heading REFERENCE (a circle has full rotational
+    symmetry; nothing in the ellipse's shape says which point on it is
+    heading zero), so asserting recovered angle == true parametrized heading
+    for an ANISOTROPIC ellipse is not a sound thing to test -- that is what
+    ``TestHeadingRegressionAtDifferentEvaluationTilt`` (Ruling 24, below) is
+    for, with a pure circle, and evaluated at a DIFFERENT tilt than the
+    capture that produced the calibration.
 
-    Two DIFFERENT synthetic shapes are used deliberately:
-
-    * I5 uses the full rotated ELLIPSE (soft-iron genuinely anisotropic) and
-      only asserts the corrected locus is a circle -- a general hard/soft-iron
-      fit from shape alone cannot recover an absolute heading REFERENCE (a
-      circle has full rotational symmetry; nothing in the ellipse's shape says
-      which point on it is heading zero), so asserting recovered angle ==
-      true parametrized heading for an ANISOTROPIC ellipse is not a sound
-      thing to test.
-    * C2 uses a pure CIRCLE (r1 == r2): with no shape anisotropy the fitted
-      soft-iron matrix reduces to an isotropic scale (V diag(k,k) V^T == k*I
-      for ANY orthonormal V, so the eigenvector-order ambiguity cannot rotate
-      the answer either), which removes the reference-ambiguity confound and
-      isolates z hard-iron correctness under tilt.
-
-    INVESTIGATED AND WORTH RECORDING: a WRONG hz does NOT, in this fitter's
-    construction, move the corrected HEADING at all -- proven algebraically
-    and pinned by ``test_hardIronZDoesNotLeakIntoHeadingByConstruction``
-    below. The level-frame decomposition used to build the embedding is EXACT
-    (an orthonormal basis, B @ B^T == I), and the correction matrix C is
-    block-diagonal (the brief's own "z row/col identity"), so the vertical
-    and horizontal channels never mix, at any tilt. This is DIFFERENT from
-    the reviewer's reported 8.6/17.6 degree figures -- those were measured
-    against the fuller AhrsFusion pipeline (a recursive attitude filter whose
-    magnetometer correction is not a single instantaneous atan2 off a
-    mean-gravity level frame), which this test suite does not reconstruct.
-    What IS verified here is the literal ask: with Ruling 22 applied, heading
-    recovers to within 1 degree of truth at 3 and 6 degrees of pitch --  and,
-    as a bonus, WHY the z-only bug specifically cannot be the heading-error
-    mechanism for this fitter's own math, only for hz's OWN correctness
-    (pinned separately by ``test_hardIronZDoesNotAbsorbEarthsField``).
+    Ruling 24 correction: fix round 1 had a test here
+    (``test_hardIronZDoesNotLeakIntoHeadingByConstruction``) claiming a wrong
+    hz provably cannot move corrected heading, "proven algebraically" from
+    the embedding's block-diagonal structure. That test evaluated heading
+    using the SAME tilt/basis the calibration was fitted from -- so it
+    compared an attitude against itself and passed on the bug by
+    construction. REFUTED BY MEASUREMENT: run through the production
+    ``pi.sensors.ahrs_fusion.AhrsFusion`` with the capture level and heading
+    evaluated at a genuinely DIFFERENT pitch, the pre-fix hz gives 8.6 degree
+    error at +3 degrees and 17.1 at +6; the fixed default gives 0.5 and 1.0.
+    The mechanism (module docstring, Ruling 22 section) was right all along:
+    hard iron is fixed in BODY coordinates, so a wrong hz applied against a
+    reading taken at a tilt OTHER than the fit's own re-introduces exactly
+    the leak the algebra above wrongly ruled out. The disproven test has been
+    deleted, not reworked -- it asserted a property that does not hold.
     """
 
     def test_correctedEllipseLocusIsACircleAtRealisticMountTilt(self) -> None:
@@ -832,97 +932,166 @@ class TestTiltedEmbedding:
         )
         assert spreadPercent < 1.0, f"corrected locus is not a circle: spread {spreadPercent}%"
 
-    @pytest.mark.parametrize("tiltDeg", [3.0, 6.0])
-    def test_correctedHeadingStaysWithinOneDegreeOfTruth(self, tiltDeg: float) -> None:
-        """C2: a pure circle isolates z hard-iron correctness from the
-        (separate, inherent) horizontal-rotation reference ambiguity.
-        """
-        headingsDeg = [float(d) for d in range(0, 360, 2)]
-        circleH = 18.0
-        (forward, left, up), gravityBody, magBodyByHeading = _magBodyRows(
-            tiltDeg=tiltDeg,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            r1=circleH,
-            r2=circleH,
-            rotationDeg=0.0,
-            rLevel=_TRUE_RAW_MEAN_VERTICAL_UT,
-            headingsDeg=headingsDeg,
-        )
-        rows = [
-            (float(i), gravityBody, magBody, None)
-            for i, magBody in enumerate(magBodyByHeading.values())
+
+def _pitchRotationMatrix(tiltDeg: float) -> np.ndarray:
+    """R(theta): LEVEL-frame (forward, left, up) coords -> BODY (x, y, z)
+    coords, nose-up pitch of ``tiltDeg`` about the left axis. Matches
+    ``_tiltedBasis`` (``bodyVec = p*forward + q*left + r*up``), as a matrix.
+    """
+    theta = math.radians(tiltDeg)
+    return np.array(
+        [
+            [math.cos(theta), 0.0, math.sin(theta)],
+            [0.0, 1.0, 0.0],
+            [-math.sin(theta), 0.0, math.cos(theta)],
         ]
+    )
 
-        fit = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
 
+def _headingFromAccelAndMag(accelBody: np.ndarray, magBody: np.ndarray) -> float:
+    """Tilt-compensated heading, degrees 0..360, from the CURRENT accel.
+
+    Ruling 24's formula: west = ghat x m; north = west x ghat;
+    heading = atan2(-west.xhat, north.xhat). Verified by hand: level, facing
+    north (m purely along body +x) gives heading 0; facing east (m purely
+    along body +y) gives heading 90 -- both match the standard 0=north,
+    90=east, clockwise convention.
+    """
+    ghat = accelBody / np.linalg.norm(accelBody)
+    west = np.cross(ghat, magBody)
+    north = np.cross(west, ghat)
+    xhat = np.array([1.0, 0.0, 0.0])
+    return math.degrees(math.atan2(-np.dot(west, xhat), np.dot(north, xhat))) % 360.0
+
+
+# Ruling 24's own synthetic parameters -- deliberately NOT
+# DEFAULT_EARTH_VERTICAL_UT, so a test that accidentally used the module
+# default instead of the value actually passed in would be caught.
+_R24_H_UT = 18.0
+_R24_V_TRUE_UT = -52.0
+_R24_IRON: Vector3 = (12.0, -7.0, 3.0)
+
+
+def _fieldAndAccelAtTilt(
+    tiltDeg: float, psiDeg: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(accelBody, ironedMagBody, pureFieldBody) at a given tilt and heading psi.
+
+    Ruling 24's exact construction: the PURE field (H cos psi, -H sin psi,
+    V_true), expressed in the level frame, is rotated into body coordinates
+    by R(tiltDeg); hard iron is added AFTER that rotation, directly in BODY
+    coordinates, because it is a property of the sensor/chassis and does NOT
+    rotate with vehicle pitch (unlike the ambient field).
+    """
+    rot = _pitchRotationMatrix(tiltDeg)
+    levelField = np.array(
+        [
+            _R24_H_UT * math.cos(math.radians(psiDeg)),
+            -_R24_H_UT * math.sin(math.radians(psiDeg)),
+            _R24_V_TRUE_UT,
+        ]
+    )
+    pureFieldBody = rot @ levelField
+    ironedFieldBody = pureFieldBody + np.array(_R24_IRON)
+    accelBody = rot @ np.array([0.0, 0.0, _STANDARD_GRAVITY_MS2])
+    return accelBody, ironedFieldBody, pureFieldBody
+
+
+class TestHeadingRegressionAtDifferentEvaluationTilt:
+    """Ruling 24: the calibration is fit from a capture at ONE gravity/tilt
+    and then applied to readings at a DIFFERENT one -- exactly the real-world
+    case (a car is calibrated once; its pitch varies afterward with mount
+    tilt, hills, braking dive) and exactly what fix round 1's disproven
+    ``test_hardIronZDoesNotLeakIntoHeadingByConstruction`` did NOT do (it
+    fit and evaluated at the SAME tilt, comparing an attitude against
+    itself). H=18, V_true=-52 (deliberately not the module default), iron
+    (12, -7, 3), a pure circle (no soft-iron shape distortion, matching the
+    reviewer's own repro through the production ``AhrsFusion``).
+    """
+
+    @pytest.mark.parametrize("captureTiltDeg", [0.0, 2.5])
+    def test_fixedCalibrationHoldsWithinHalfADegreeAcrossPitch(
+        self, captureTiltDeg: float
+    ) -> None:
+        # The CAPTURE is denser than the evaluation sweep purely so the fit
+        # clears MIN_SAMPLES_PER_BIN (Ruling 23, >=3 moving samples/bin) --
+        # the coordinator's "psi in 0..350" is the EVALUATION sweep below.
+        capturePsiValues = list(range(0, 360, 2))
+        evalPsiValues = list(range(0, 360, 10))  # psi in 0..350
+
+        captureRows = []
+        for i, psi in enumerate(capturePsiValues):
+            accelBody, ironedField, _ = _fieldAndAccelAtTilt(captureTiltDeg, psi)
+            captureRows.append((float(i), tuple(accelBody), tuple(ironedField), None))
+        fit = fitMagCalibration(captureRows, earthVerticalUt=_R24_V_TRUE_UT)
+
+        for deltaDeg in (3.0, 6.0):
+            evalTiltDeg = captureTiltDeg + deltaDeg
+            worstDiff = 0.0
+            for psi in evalPsiValues:
+                accelBody, ironedField, pureField = _fieldAndAccelAtTilt(evalTiltDeg, psi)
+                corrected = _applyCalibrationLikeAhrsFusion(
+                    tuple(ironedField), fit.hardIronUt, fit.softIron
+                )
+                headingCalibrated = _headingFromAccelAndMag(accelBody, corrected)
+                headingTrue = _headingFromAccelAndMag(accelBody, pureField)
+                diff = abs((headingCalibrated - headingTrue + 180.0) % 360.0 - 180.0)
+                worstDiff = max(worstDiff, diff)
+            assert worstDiff < 0.5, (
+                f"worst heading error {worstDiff} deg: capture {captureTiltDeg} deg, "
+                f"eval {evalTiltDeg} deg"
+            )
+
+    def test_skippingEarthSubtractionDegradesHeadingAtDifferentEvaluationTilt(self) -> None:
+        """Discrimination arm: earthVerticalUt=0.0 (fit round 1's exact bug,
+        capture level per the reviewer's own repro) must show clearly worse
+        heading error than the fixed default at the SAME +3 degree eval tilt.
+        """
+        capturePsiValues = list(range(0, 360, 2))
+        evalPsiValues = list(range(0, 360, 10))
+        captureTiltDeg = 0.0
+
+        captureRows = []
+        for i, psi in enumerate(capturePsiValues):
+            accelBody, ironedField, _ = _fieldAndAccelAtTilt(captureTiltDeg, psi)
+            captureRows.append((float(i), tuple(accelBody), tuple(ironedField), None))
+        buggyFit = fitMagCalibration(captureRows, earthVerticalUt=0.0)
+
+        evalTiltDeg = captureTiltDeg + 3.0
         worstDiff = 0.0
-        for headingDeg, magBody in magBodyByHeading.items():
-            corrected = _applyCalibrationLikeAhrsFusion(magBody, fit.hardIronUt, fit.softIron)
-            pC = float(np.dot(corrected, forward))
-            qC = float(np.dot(corrected, left))
-            recoveredHeadingDeg = math.degrees(math.atan2(qC, pC)) % 360.0
-            diff = abs((recoveredHeadingDeg - headingDeg + 180.0) % 360.0 - 180.0)
+        for psi in evalPsiValues:
+            accelBody, ironedField, pureField = _fieldAndAccelAtTilt(evalTiltDeg, psi)
+            corrected = _applyCalibrationLikeAhrsFusion(
+                tuple(ironedField), buggyFit.hardIronUt, buggyFit.softIron
+            )
+            headingCalibrated = _headingFromAccelAndMag(accelBody, corrected)
+            headingTrue = _headingFromAccelAndMag(accelBody, pureField)
+            diff = abs((headingCalibrated - headingTrue + 180.0) % 360.0 - 180.0)
             worstDiff = max(worstDiff, diff)
 
-        assert worstDiff < 1.0, f"worst heading error {worstDiff} deg at tilt {tiltDeg}"
-
-    @pytest.mark.parametrize("tiltDeg", [3.0, 6.0])
-    def test_hardIronZDoesNotLeakIntoHeadingByConstruction(self, tiltDeg: float) -> None:
-        """Why C2's heading-accuracy claim holds even off-level: the B^T C B
-        embedding decouples the vertical channel from the horizontal one
-        EXACTLY (the "z row/col identity" the brief specifies), because the
-        level-frame projection undoing it is built from the SAME orthonormal
-        basis. So a WRONG hz (earthVerticalUt=0, fit round 1's exact bug)
-        changes the recovered hard-iron z and (pinned above) MUST still be
-        caught by ``test_hardIronZDoesNotAbsorbEarthsField`` -- but it cannot,
-        in THIS fitter's construction, move the corrected heading at all.
-        This is a real, load-bearing property of the design (not a rounding
-        coincidence): it is what a clean "z row/col identity" embedding
-        buys, and a future change that accidentally coupled the channels
-        would be caught by this test going red.
-        """
-        headingsDeg = [float(d) for d in range(0, 360, 2)]
-        circleH = 18.0
-        (forward, left, up), gravityBody, magBodyByHeading = _magBodyRows(
-            tiltDeg=tiltDeg,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            r1=circleH,
-            r2=circleH,
-            rotationDeg=0.0,
-            rLevel=_TRUE_RAW_MEAN_VERTICAL_UT,
-            headingsDeg=headingsDeg,
-        )
-        rows = [
-            (float(i), gravityBody, magBody, None)
-            for i, magBody in enumerate(magBodyByHeading.values())
-        ]
-
-        buggyFit = fitMagCalibration(rows, earthVerticalUt=0.0)
-        correctFit = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
-        # The bug is real -- hz itself is very wrong -- just not visible in
-        # heading. Confirms this test exercises the intended defect.
-        assert abs(buggyFit.hardIronUt[2] - correctFit.hardIronUt[2]) > 10.0
-
-        for headingDeg, magBody in magBodyByHeading.items():
-            buggyCorrected = _applyCalibrationLikeAhrsFusion(
-                magBody, buggyFit.hardIronUt, buggyFit.softIron
-            )
-            correctCorrected = _applyCalibrationLikeAhrsFusion(
-                magBody, correctFit.hardIronUt, correctFit.softIron
-            )
-            buggyHeadingDeg = math.degrees(
-                math.atan2(np.dot(buggyCorrected, left), np.dot(buggyCorrected, forward))
-            ) % 360.0
-            correctHeadingDeg = math.degrees(
-                math.atan2(np.dot(correctCorrected, left), np.dot(correctCorrected, forward))
-            ) % 360.0
-            diff = abs((buggyHeadingDeg - correctHeadingDeg + 180.0) % 360.0 - 180.0)
-            assert diff < 1e-6, f"hz leaked into heading at heading {headingDeg}, tilt {tiltDeg}"
+        # Reviewer MEASURED 8.6 deg at +3 deg (production AhrsFusion).
+        assert worstDiff > 5.0, f"expected the old bug to degrade heading, got only {worstDiff} deg"
 
 
 class TestMainCli:
+    def test_loadColumnErrorsComeOutAsRefusedJsonNotATraceback(self, tmp_path, capsys) -> None:
+        """Ruling 24: loadRows raising (C1's wrong-column case) must be a
+        refusal like any other -- caught inside main's try -- not an
+        uncaught traceback out of the CLI process.
+        """
+        csvPath = tmp_path / "capture.csv"
+        with open(csvPath, "w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_capture", "accel_x", "accel_y", "accel_z"])  # no mag columns
+            writer.writerow([1.0, 0.0, 0.0, 9.8])
+
+        exitCode = main([str(csvPath)])
+        assert exitCode == 1
+        output = json.loads(capsys.readouterr().out)
+        assert "refused" in output
+        assert "mag" in output["refused"]
+        assert output["samples"] == 0
+
     def test_printsMagCalibrationAndFitQuality(self, tmp_path, capsys) -> None:
         points = _ellipsePoints(
             centerP=_TRUE_CENTER_P,
