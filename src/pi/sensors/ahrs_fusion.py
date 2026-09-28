@@ -60,6 +60,9 @@
 #               | (ARCH-064)   | OBD speed -> a_long = dv/dt (clamped 0.6 g) and
 #               |              | centripetal v*omega_z are subtracted from the
 #               |              | accel before the AHRS; off when speed is stale.
+# 2026-09-28    | Atlas        | Review fix: heading coasts on the gyro for at
+#               | (ARCH-064)   | most MAG_MAX_COAST_S after the last mag reading,
+#               |              | then reads None until a fresh one.
 # ================================================================================
 ################################################################################
 
@@ -81,6 +84,7 @@ __all__ = [
     "BIAS_STATIONARY_THRESHOLD_DPS",
     "FUSION_VERSION_AHRS",
     "MAGNETIC_REJECTION_DEG",
+    "MAG_MAX_COAST_S",
     "MAX_LONGITUDINAL_ACCEL_G",
     "MAX_SAMPLE_PERIOD_S",
     "SPEED_STALE_S",
@@ -124,6 +128,13 @@ SPEED_STALE_S = 3.0
 # larger derivative is a quantised/glitched speed pair, not a measurement.
 MAX_LONGITUDINAL_ACCEL_G = 0.6
 _KMH_PER_MS = 3.6
+
+# Heading may COAST on the gyro for at most this long after the last valid
+# magnetometer reading, then reads None. Coasting across a short mag gap is
+# intended AHRS behaviour; past this, an unaided integrated yaw drifts without
+# bound (review probe: 0.05 rad/s over 10 s moved 90.0 -> 73.7 deg) and is not
+# a measured heading. A fresh mag reading restores it.
+MAG_MAX_COAST_S = 5.0
 
 _IDENTITY_3X3 = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 _ZERO_3 = (0.0, 0.0, 0.0)
@@ -296,7 +307,7 @@ class AhrsFusion:
         else:
             magCal = self._softIron @ (np.asarray(magVec, dtype=float) - self._hardIron)
             self._ahrs.update(gyroDps, accelG, magCal)
-            self._magSeen = True
+            self._lastMagCapture = capture
         self._updated = True
 
         roll, pitch, yaw = imufusion.quaternion_to_euler(self._ahrs.get_quaternion())
@@ -328,7 +339,7 @@ class AhrsFusion:
         self._bias.set_offset(np.zeros(3))
         self._lastCapture: float | None = None
         self._updated = False
-        self._magSeen = False
+        self._lastMagCapture: float | None = None
         self._pitchRad = 0.0
         self._rollRad = 0.0
         self._headingDeg = 0.0
@@ -349,9 +360,14 @@ class AhrsFusion:
         """Heading, degrees 0-360 clockwise from TRUE north, or None.
 
         None until initialised and until a magnetometer reading has been supplied
-        since the last reset -- a gyro-only yaw has no north to be measured from.
+        since the last reset -- a gyro-only yaw has no north to be measured from
+        -- and None again once the last valid mag reading is more than
+        MAG_MAX_COAST_S older than the last update (bounded gyro coasting).
         """
-        if not self._initialised() or not self._magSeen:
+        if not self._initialised() or self._lastMagCapture is None:
+            return None
+        assert self._lastCapture is not None  # set by the update that set the mag
+        if self._lastCapture - self._lastMagCapture > MAG_MAX_COAST_S:
             return None
         return self._headingDeg
 

@@ -25,7 +25,7 @@ import math
 
 import pytest
 
-from pi.sensors.ahrs_fusion import FUSION_VERSION_AHRS, AhrsFusion
+from pi.sensors.ahrs_fusion import FUSION_VERSION_AHRS, MAG_MAX_COAST_S, AhrsFusion
 
 G = 9.80665
 HZ = 50.0
@@ -409,3 +409,47 @@ def test_speedAided_reset_dropsSpeedHistory():
     fusion.observeSpeed(36.0, 2.0)
     fusion.reset()
     assert fusion.longitudinalAccelMs2 is None
+
+
+# ---------------------------------------------------------------------------
+# Heading coast bound (review fix round 1): between mag readings the heading
+# coasts on the gyro -- intended AHRS behaviour -- but for at most
+# MAG_MAX_COAST_S; after that an unaided yaw is not a heading and reads None.
+# ---------------------------------------------------------------------------
+
+
+def _coast(fusion: AhrsFusion, seconds: float, start: float) -> float:
+    """Feed ``seconds`` of level samples turning at 0.05 rad/s with NO magnetometer."""
+    return _run(fusion, seconds, LEVEL, gyro=(0.0, 0.0, 0.05), mag=None, start=start)
+
+
+def test_magCoastConstant_isFiveSeconds():
+    assert MAG_MAX_COAST_S == 5.0
+
+
+def test_heading_coastsOnGyroWithinBound():
+    fusion = AhrsFusion(sampleHz=HZ)
+    t = _run(fusion, 5.0, LEVEL, mag=EAST_FIELD_UT)
+    lastMag = t - DT
+    t = _coast(fusion, 4.9, t)
+    assert (t - DT) - lastMag <= 4.9 + 1e-6
+    assert fusion.headingDeg is not None
+
+
+def test_heading_isNonePastCoastBound_andAFreshMagRestoresIt():
+    fusion = AhrsFusion(sampleHz=HZ)
+    t = _run(fusion, 5.0, LEVEL, mag=EAST_FIELD_UT)
+    t = _coast(fusion, 5.1, t)
+    assert fusion.headingDeg is None
+    assert fusion.pitchRad is not None  # only heading is withheld
+    fusion.update(LEVEL, NO_ROTATION, t, mag_ut=EAST_FIELD_UT)
+    assert fusion.headingDeg is not None
+
+
+def test_heading_afterResetWithoutMag_isNone():
+    fusion = AhrsFusion(sampleHz=HZ)
+    t = _run(fusion, 5.0, LEVEL, mag=EAST_FIELD_UT)
+    fusion.reset()
+    _run(fusion, 5.0, LEVEL, start=t)
+    assert fusion.pitchRad is not None
+    assert fusion.headingDeg is None
