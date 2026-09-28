@@ -51,6 +51,16 @@
 #   fixed HERE and only here: patching _levelFrame and pitch_fusion separately
 #   would be two copies of one mounting (SSOT rule B).
 #
+#   THE ENGINE IS SELECTABLE (ARCH-064). pi.sensors.imu.fusionEngine picks the
+#   x-io Fusion AHRS (pi.sensors.ahrs_fusion, "imufusion", the default) or the
+#   US-521 PitchFusion ("legacy", byte-identical to before). With the AHRS the
+#   published headingDeg is the ENGINE's (hard/soft-iron calibrated, TRUE north
+#   via magDeclinationDeg) instead of computeHeadingDeg's raw magnetic bearing,
+#   and two diagnostics say which instrument is behind the numbers:
+#     fusionEngine       -- the engine ACTUALLY running (a failed AHRS build
+#                           falls back to legacy, and this says so)
+#     headingCalibrated  -- AHRS only: a non-default calibration was supplied
+#
 #   This module opens no I2C device and starts no OBD connection -- bus subscriber
 #   only, so it cannot re-introduce the A-17 second-connection race. Gated behind
 #   pi.bus.enabled + pi.sensors.imu.enabled (built only by
@@ -88,6 +98,14 @@
 #               |              | guard trips (the 09-14 confident 70 deg pitch).
 # 2026-09-22    | Rex (US-801) | DEFAULT_IMU_SAMPLE_HZ / DEFAULT_STATE_HZ imported
 #               |              | from the single definition (now 4 / 1).
+# 2026-09-28    | Atlas        | Fusion engine selected by pi.sensors.imu.
+#               | (ARCH-064)   | fusionEngine ("imufusion" default | "legacy");
+#               |              | an engine that cannot be built falls back to
+#               |              | PitchFusion with an ERROR. With the AHRS,
+#               |              | headingDeg comes from the ENGINE (calibrated,
+#               |              | declination-corrected) and fusionEngine /
+#               |              | headingCalibrated are published; the EDR
+#               |              | snapshot carries the running engine's version.
 # ================================================================================
 ################################################################################
 
@@ -101,7 +119,7 @@ import os
 import threading
 from collections.abc import Callable
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # US-801: the IMU sample and state rates are DEFINED once, in the validator,
 # and imported under this module's historical names (tests monkeypatch them).
@@ -138,6 +156,11 @@ from pi.sensors.plausibility_gate import channelStateTopic
 # Reuse the boot-state primitives (one provisioning + atomic-write impl, no dup).
 from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 
+if TYPE_CHECKING:
+    # Type-only: the runtime import is LOCAL to the factory, so a Pi without the
+    # imufusion wheel still imports this module and falls back to PitchFusion.
+    from pi.sensors.ahrs_fusion import AhrsFusion
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -145,12 +168,15 @@ __all__ = [
     "CHANNEL_STATE_GYRO",
     "CHANNEL_STATE_MAG",
     "DEFAULT_ACCEL_TRUST_BAND",
+    "DEFAULT_FUSION_ENGINE",
     "DEFAULT_GRAVITY_TAU_S",
     "DEFAULT_PITCH_TAU_S",
     "DEFAULT_STATE_HZ",
     "DEFAULT_ZUPT_MIN_STOPS",
     "DEFAULT_ZUPT_SPEED_MAX_AGE_S",
     "DEFAULT_ZUPT_WINDOW_STOPS",
+    "FUSION_ENGINE_IMUFUSION",
+    "FUSION_ENGINE_LEGACY",
     "IMU_BODY_FRAME",
     "IMU_BODY_FRAME_A",
     "IMU_BODY_FRAME_B",
@@ -164,6 +190,7 @@ __all__ = [
     "MAG_SOURCE_NONE",
     "MAX_GRADE_PITCH_DEG",
     "MagRotation",
+    "REASON_HEADING_UNSEEDED",
     "REASON_MAG_FROZEN",
     "REASON_NO_MAG",
     "assessMagRotation",
@@ -203,6 +230,8 @@ STATE_IMU_PRESENCE = "state.sensor.imu"
 # (realtime._publishReading), so this is one more subscription, not a second
 # acquisition path. The value is used as a boolean "is it zero", never as a
 # magnitude, so the reading's UNIT is deliberately irrelevant here.
+# ARCH-064: NOT irrelevant to the AHRS engine, which subtracts the car's own
+# acceleration computed from this magnitude -- it expects the OBD-native km/h.
 TOPIC_OBD_SPEED = "raw.obd.SPEED"
 
 # US-564: the retained per-channel gate STATE topics the reader publishes when a
@@ -232,6 +261,23 @@ _CHANNEL_DERIVED_FIELDS = {
     TOPIC_IMU_GYRO: ("pitchDeg", "gradePct"),
     TOPIC_IMU_MAG: ("headingDeg",),
 }
+
+# ARCH-064: the fusion engines pi.sensors.imu.fusionEngine may name. "imufusion"
+# is the x-io Fusion AHRS (pi.sensors.ahrs_fusion) and the default; "legacy" is
+# the US-521 PitchFusion, kept selectable and byte-identical to before so a bad
+# drive can be rolled back by config instead of by redeploy. Any other value is
+# treated as legacy WITH a warning -- an unknown name must not silently pick
+# whichever engine happens to be the default this release.
+FUSION_ENGINE_IMUFUSION = "imufusion"
+FUSION_ENGINE_LEGACY = "legacy"
+DEFAULT_FUSION_ENGINE = FUSION_ENGINE_IMUFUSION
+_FUSION_ENGINES = (FUSION_ENGINE_IMUFUSION, FUSION_ENGINE_LEGACY)
+
+# buildImuState's "no engine heading supplied" marker. A sentinel, not None:
+# None is a MEANINGFUL engine answer ("no heading yet", heading_unseeded), and
+# collapsing the two would silently route an AHRS bridge back onto
+# computeHeadingDeg's uncalibrated bearing.
+_NO_HEADING_OVERRIDE: Any = object()
 
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
@@ -323,6 +369,12 @@ REASON_GYRO_IMPLAUSIBLE = "gyro_implausible"
 # collapsing the two would report "stale" for a CONTENT failure, sending the
 # operator after a timing problem that is not there.
 REASON_MAG_FROZEN = "mag_frozen"
+# ARCH-064: the AHRS engine has a fresh magnetometer reading but no heading YET
+# (Fusion's ~3 s startup after boot or any reset). The heading twin of
+# pitch_unseeded, and deliberately NOT no_mag_reading: the mag IS arriving, so
+# that reason would send the operator after an acquisition fault that is not
+# there. Never replaced by a zero -- 0 deg reads as "facing north".
+REASON_HEADING_UNSEEDED = "heading_unseeded"
 
 # =========================== ARCH-056: THE FROZEN CHANNEL =====================
 # 🔴 WHY THIS GATE EXISTS, AND WHY THE EXISTING ONES CANNOT DO IT.
@@ -700,6 +752,9 @@ def buildImuState(
     magRotation: str = MagRotation.UNDETERMINED.value,
     unavailableReason: str | None = None,
     fieldReasons: dict[str, str] | None = None,
+    headingDegOverride: Any = _NO_HEADING_OVERRIDE,
+    headingCalibrated: bool | None = None,
+    fusionEngine: str | None = None,
 ) -> dict:
     """Assemble the states/imu payload (pure -- the Atlas Q-A contract).
 
@@ -737,6 +792,19 @@ def buildImuState(
             still be holding a perfectly derivable number from a channel that has
             since been proven not to be measuring, and the arithmetic working is
             not evidence that the input was real.
+        headingDegOverride: ARCH-064 -- the AHRS engine's heading (degrees,
+            0-360, TRUE north), or None while the engine has none yet. When
+            supplied it REPLACES computeHeadingDeg; None publishes
+            ``heading_unseeded``. Every other heading null path still applies
+            first: no fresh ``mag`` is still ``no_mag_reading`` (the engine is
+            only ever as current as the magnetometer feeding it), and a gated or
+            FROZEN channel in ``fieldReasons`` still wins. Omitted (the default
+            sentinel), the legacy computeHeadingDeg path runs unchanged.
+        headingCalibrated: ARCH-064 diagnostic -- published only when given
+            (AHRS): whether a non-default hard/soft-iron calibration is applied.
+        fusionEngine: ARCH-064 diagnostic -- the engine ACTUALLY running,
+            published only when given. Like stopCount it describes the
+            estimator, so it is outside _DERIVED_FIELDS and never gated.
 
     Returns:
         ``{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg, gradePct,
@@ -775,6 +843,12 @@ def buildImuState(
         "magRotation": magRotation,
         "reasons": reasons,
     }
+    # ARCH-064 estimator diagnostics: only when supplied, so a caller that does
+    # not know about engines (and the pinned contract key set) is unchanged.
+    if fusionEngine is not None:
+        state["fusionEngine"] = fusionEngine
+    if headingCalibrated is not None:
+        state["headingCalibrated"] = bool(headingCalibrated)
 
     blanketReason = unavailableReason
     if blanketReason is None and (gravity is None or _norm(gravity) < _MIN_GRAVITY_MS2):
@@ -819,11 +893,23 @@ def buildImuState(
         else:
             state["gradePct"] = grade
 
-    heading = computeHeadingDeg(gravity, mag) if mag is not None else None
-    if heading is None:
-        reasons["headingDeg"] = REASON_NO_MAG
+    if headingDegOverride is not _NO_HEADING_OVERRIDE and mag is not None:
+        # ARCH-064: the AHRS engine's heading. None is "not yet" (Fusion's
+        # startup), typed as such -- never a 0 that reads as due north.
+        if headingDegOverride is None:
+            reasons["headingDeg"] = REASON_HEADING_UNSEEDED
+        else:
+            # Same whole-degree display rule and wrap-after-round as
+            # computeHeadingDeg (ARCH-012): 359.7 must not publish as 360.
+            state["headingDeg"] = (
+                round(float(headingDegOverride) % 360.0, _HEADING_DECIMALS) % 360.0
+            )
     else:
-        state["headingDeg"] = heading
+        heading = computeHeadingDeg(gravity, mag) if mag is not None else None
+        if heading is None:
+            reasons["headingDeg"] = REASON_NO_MAG
+        else:
+            state["headingDeg"] = heading
     _applyFieldReasons(state, reasons, fieldReasons)
     return state
 
@@ -882,7 +968,7 @@ class ImuStateBridge:
         stateHz: float = DEFAULT_STATE_HZ,
         gravityTauSec: float = DEFAULT_GRAVITY_TAU_S,
         sampleHz: int = DEFAULT_IMU_SAMPLE_HZ,
-        pitchFusion: PitchFusion | None = None,
+        pitchFusion: PitchFusion | AhrsFusion | None = None,
         nowIsoFn: Callable[[], str] | None = None,
     ) -> None:
         """Bind the bridge to its source subscription + states dir.
@@ -899,7 +985,11 @@ class ImuStateBridge:
             pitchFusion: US-521 gyro-fused pitch estimator. Defaults to one built
                 with the shipped constants; injectable so a caller can pass a
                 config-tuned estimator without this class growing six more
-                parameters that only pass through.
+                parameters that only pass through. ARCH-064: may instead be an
+                ``AhrsFusion`` -- recognised by its ``headingDeg`` surface, which
+                makes the bridge feed it the magnetometer and publish ITS heading.
+                The attribute keeps its historical name so the legacy wiring and
+                its tests are untouched.
             nowIsoFn: Fallback clock for ``ts`` when a sample carries no tsUtc.
         """
         self._sub = subscription
@@ -911,6 +1001,15 @@ class ImuStateBridge:
         self._magMaxAgeS = MAG_MAX_AGE_POLLS / float(rate)
         self._nowIsoFn = nowIsoFn if nowIsoFn is not None else utcIsoNow
         self._pitchFusion = pitchFusion if pitchFusion is not None else PitchFusion()
+        # ARCH-064: an engine that carries a heading is the AHRS. Checked on the
+        # TYPE, so the property is not evaluated at construction.
+        self._engineHasHeading = hasattr(type(self._pitchFusion), "headingDeg")
+        self._fusionEngineName = (
+            FUSION_ENGINE_IMUFUSION if self._engineHasHeading else FUSION_ENGINE_LEGACY
+        )
+        # The running engine's algorithm stamp for the EDR rows (US-805). An
+        # engine that does not declare one is the legacy PitchFusion.
+        self._fusionVersion = getattr(self._pitchFusion, "fusionVersion", FUSION_VERSION)
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         # Running state (single-threaded: only the drain thread touches these).
@@ -999,6 +1098,10 @@ class ImuStateBridge:
             return True
         if topic == TOPIC_OBD_SPEED:
             # US-521 ZUPT gate. Consumed as "is it zero", never as a magnitude.
+            # ARCH-064: the AHRS DOES use the magnitude (km/h -> dv/dt and
+            # v*omega compensation), so there the unit matters. Both engines get
+            # the sample's OWN tsCapture -- the same time.monotonic() clock the
+            # IMU reader stamps, so dv/dt and staleness compare like with like.
             self._pitchFusion.observeSpeed(
                 getattr(sample, "value", None), float(getattr(sample, "tsCapture", 0.0))
             )
@@ -1176,10 +1279,16 @@ class ImuStateBridge:
         from the panel: a wrong body frame and a merely unconverged bias produce
         the same suspicious grade, and nothing on screen told them apart.
         """
-        return {
+        diagnostics: dict[str, Any] = {
             "stopCount": self._pitchFusion.stopCount,
             "biasRad": self._pitchFusion.biasRad,
+            # ARCH-064: which engine produced the numbers -- the one ACTUALLY
+            # running, so a failed AHRS build reads "legacy", not the config.
+            "fusionEngine": self._fusionEngineName,
         }
+        if self._engineHasHeading:
+            diagnostics["headingCalibrated"] = self._pitchFusion.headingCalibrated
+        return diagnostics
 
     def _recordDerived(self, sample: Any, capture: float) -> None:
         """Snapshot the estimator's belief, stamped with THIS sample (US-805).
@@ -1202,7 +1311,9 @@ class ImuStateBridge:
             "pitchDeg": None if pitchRad is None else math.degrees(pitchRad),
             "stopCount": self._pitchFusion.stopCount,
             "biasRad": self._pitchFusion.biasRad,
-            "fusionVersion": FUSION_VERSION,
+            # ARCH-064: the RUNNING engine's version (2 = AHRS, 1 = PitchFusion)
+            # -- two filters must never share one stamp.
+            "fusionVersion": self._fusionVersion,
         }
 
     def derivedSnapshot(self) -> dict[str, Any] | None:
@@ -1264,10 +1375,17 @@ class ImuStateBridge:
         accel = resolveMountFrame(raw)
         capture = float(getattr(sample, "tsCapture", 0.0))
         self._updateGravity(accel, capture)
+        mag = self._freshMag(capture)
         # US-521: the fusion is fed at the SENSOR rate, not the display rate.
         # A gyro integrated only on the ~10 Hz frames that happen to be written
         # would silently throw away four fifths of the rotation.
-        self._pitchFusion.update(accel, self._freshGyro(capture), capture)
+        if self._engineHasHeading:
+            # ARCH-064: the AHRS takes the SAME fresh, body-frame reading the
+            # heading path pairs with this burst -- None when stale or gated, so
+            # the engine coasts on the gyro rather than on an old bearing.
+            self._pitchFusion.update(accel, self._freshGyro(capture), capture, mag_ut=mag)
+        else:
+            self._pitchFusion.update(accel, self._freshGyro(capture), capture)
         self._recordDerived(sample, capture)
         self._logStopCountChange()
         self._logGyroPlausibilityChange()
@@ -1282,16 +1400,22 @@ class ImuStateBridge:
         # US-809-c: carry the absence; buildImuState types it. Substituting
         # the clock here publishes a fabricated freshness marker.
         tsUtc = getattr(sample, "tsUtc", "")
+        # ARCH-064: with the AHRS the heading is the ENGINE's; omitted, the
+        # legacy computeHeadingDeg path runs exactly as before.
+        engineHeading: dict[str, Any] = {}
+        if self._engineHasHeading:
+            engineHeading["headingDegOverride"] = self._pitchFusion.headingDeg
         self._writeState(
             buildImuState(
                 tsUtc=tsUtc,
                 gravity=gravity,
                 linear=linear,
-                mag=self._freshMag(capture),
+                mag=mag,
                 pitchRad=self._pitchFusion.pitchRad,
                 gyroImplausible=self._pitchFusion.gyroImplausible,
                 magRotation=self._magRotation.value,
                 fieldReasons=self._fieldReasons(),
+                **engineHeading,
                 **self._pitchDiagnostics(),
             )
         )
@@ -1422,19 +1546,72 @@ def createImuStateBridgeFromConfig(
         QoS.LOSSY,
         _SUB_NAME,
     )
+    sampleHz = imu.get("sampleHz", DEFAULT_IMU_SAMPLE_HZ)
     return ImuStateBridge(
         subscription,
         statesDir,
         stateHz=imu.get("stateHz", DEFAULT_STATE_HZ),
         gravityTauSec=imu.get("gravityTauSec", DEFAULT_GRAVITY_TAU_S),
-        sampleHz=imu.get("sampleHz", DEFAULT_IMU_SAMPLE_HZ),
-        pitchFusion=PitchFusion(
-            pitchTauSec=imu.get("pitchTauSec", DEFAULT_PITCH_TAU_S),
-            accelTrustBand=imu.get("accelTrustBand", DEFAULT_ACCEL_TRUST_BAND),
-            zuptMinStopSec=imu.get("zuptMinStopSec", ZUPT_MIN_STOP_S),
-            zuptSpeedMaxAgeSec=imu.get("zuptSpeedMaxAgeSec", DEFAULT_ZUPT_SPEED_MAX_AGE_S),
-            zuptMinStops=imu.get("zuptMinStops", DEFAULT_ZUPT_MIN_STOPS),
-            zuptWindowStops=imu.get("zuptWindowStops", DEFAULT_ZUPT_WINDOW_STOPS),
-        ),
+        sampleHz=sampleHz,
+        pitchFusion=_buildFusionEngine(imu, sampleHz),
         nowIsoFn=nowIsoFn,
     )
+
+
+def _buildFusionEngine(imu: dict[str, Any], sampleHz: Any) -> PitchFusion | AhrsFusion:
+    """Select and build the fusion engine named by ``imu.fusionEngine`` (ARCH-064).
+
+    Never raises and never returns None: the IMU state must not be lost to an
+    engine problem. An unknown name is legacy + WARNING; an AHRS that cannot be
+    built (imufusion missing, a malformed calibration) is legacy + ERROR, and
+    the bridge then publishes ``fusionEngine: "legacy"`` -- the engine actually
+    running, not the one configured.
+    """
+    requested = imu.get("fusionEngine", DEFAULT_FUSION_ENGINE)
+    if requested not in _FUSION_ENGINES:
+        logger.warning(
+            "imu fusionEngine %r is not one of %s -- running %r",
+            requested, list(_FUSION_ENGINES), FUSION_ENGINE_LEGACY,
+        )
+        requested = FUSION_ENGINE_LEGACY
+    if requested == FUSION_ENGINE_IMUFUSION:
+        engine = _buildAhrsFusion(imu, sampleHz)
+        if engine is not None:
+            return engine
+    return PitchFusion(
+        pitchTauSec=imu.get("pitchTauSec", DEFAULT_PITCH_TAU_S),
+        accelTrustBand=imu.get("accelTrustBand", DEFAULT_ACCEL_TRUST_BAND),
+        zuptMinStopSec=imu.get("zuptMinStopSec", ZUPT_MIN_STOP_S),
+        zuptSpeedMaxAgeSec=imu.get("zuptSpeedMaxAgeSec", DEFAULT_ZUPT_SPEED_MAX_AGE_S),
+        zuptMinStops=imu.get("zuptMinStops", DEFAULT_ZUPT_MIN_STOPS),
+        zuptWindowStops=imu.get("zuptWindowStops", DEFAULT_ZUPT_WINDOW_STOPS),
+    )
+
+
+def _buildAhrsFusion(imu: dict[str, Any], sampleHz: Any) -> AhrsFusion | None:
+    """Build the x-io Fusion AHRS from config, or None (ERROR logged) on any failure.
+
+    The import is LOCAL on purpose: ``ahrs_fusion`` imports the imufusion wheel
+    at module load, and a Pi without it must still get a working IMU state.
+    Defaults are the uncalibrated identity: zero hard-iron, identity soft-iron,
+    zero declination (``headingCalibrated`` then reads False).
+    """
+    try:
+        from pi.sensors.ahrs_fusion import AhrsFusion
+
+        rate = sampleHz if sampleHz and sampleHz > 0 else DEFAULT_IMU_SAMPLE_HZ
+        calibration = imu.get("magCalibration") or {}
+        return AhrsFusion(
+            float(rate),
+            declinationDeg=float(imu.get("magDeclinationDeg", 0.0)),
+            hardIronUt=calibration.get("hardIronUt", (0.0, 0.0, 0.0)),
+            softIron=calibration.get(
+                "softIron", ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            ),
+        )
+    except Exception as e:  # noqa: BLE001 -- ANY failure falls back; state must not be lost
+        logger.error(
+            "imu fusionEngine %r could not be built (%s: %s) -- falling back to %r",
+            FUSION_ENGINE_IMUFUSION, type(e).__name__, e, FUSION_ENGINE_LEGACY,
+        )
+        return None

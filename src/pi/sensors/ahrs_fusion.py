@@ -63,6 +63,8 @@
 # 2026-09-28    | Atlas        | Review fix: heading coasts on the gyro for at
 #               | (ARCH-064)   | most MAG_MAX_COAST_S after the last mag reading,
 #               |              | then reads None until a fresh one.
+# 2026-09-28    | Atlas        | ``fusionVersion`` property, so the IMU bridge
+#               | (ARCH-064)   | stamps EDR rows with the running engine's version.
 # ================================================================================
 ################################################################################
 
@@ -370,6 +372,11 @@ class AhrsFusion:
         if self._lastCapture - self._lastMagCapture > MAG_MAX_COAST_S:
             return None
         return self._headingDeg
+
+    @property
+    def fusionVersion(self) -> int:
+        """US-805 algorithm stamp for derived rows: FUSION_VERSION_AHRS (2)."""
+        return FUSION_VERSION_AHRS
 
     @property
     def headingCalibrated(self) -> bool:

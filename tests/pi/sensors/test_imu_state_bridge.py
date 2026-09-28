@@ -14,6 +14,9 @@
 #
 # 2026-09-22 Rex (US-801): the two US-508 default-rate pins now pin the shipped
 #     1 Hz default and the CIO's 4 Hz hard cap (ARCH-036), per the CIO.
+# 2026-09-28 Atlas (ARCH-064): the pitch/ZUPT factory pin selects
+#     fusionEngine "legacy" explicitly -- those knobs belong to PitchFusion, and
+#     the default engine is now the imufusion AHRS.
 ################################################################################
 """Unit tests for the IMU-state bridge (bus raw.imu.* -> states/imu)."""
 
@@ -1045,8 +1048,10 @@ def test_factory_passesTheConfiguredPitchAndZuptSettingsThrough():
           and the shipped constants are unreachable magic numbers
     """
     config = _config()
+    # ARCH-064: these are PitchFusion's knobs, and PitchFusion is now the
+    # "legacy" engine -- the default is the imufusion AHRS, which has none.
     config["pi"]["sensors"]["imu"].update(
-        {"pitchTauSec": 2.5, "accelTrustBand": 0.01, "zuptMinStops": 2}
+        {"fusionEngine": "legacy", "pitchTauSec": 2.5, "accelTrustBand": 0.01, "zuptMinStops": 2}
     )
     bridge = createImuStateBridgeFromConfig(config, SampleBus())
     assert bridge is not None
