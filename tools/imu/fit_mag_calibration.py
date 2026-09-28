@@ -21,11 +21,21 @@ only moves with pitch/roll, and a car is ~level). So:
   offset and whose ECCENTRICITY/ROTATION is the soft-iron distortion. Fitting
   a scale+rotation that maps that ellipse onto a circle IS the soft-iron
   correction.
-* **Hard-iron z** is just the MEAN of the vertical component across the whole
-  capture (the brief's "mean vertical residual"): since the vertical
-  component does not depend on heading, averaging over many headings cancels
-  any horizontal leakage and leaves Earth's (constant) vertical field plus the
-  z hard-iron offset.
+* **Hard-iron z** is the mean VERTICAL component across the capture, MINUS
+  Earth's own expected vertical field (Ruling 22 -- see ``DEFAULT_EARTH_
+  VERTICAL_UT`` below). Earth's vertical field does not depend on heading, so
+  averaging over many headings cancels horizontal leakage and leaves Earth's
+  (roughly constant) vertical field plus the z hard-iron offset SUMMED
+  together; subtracting the expected Earth component is what isolates the
+  hard-iron term alone. Skipping that subtraction (fit round 1's bug) makes
+  z hard-iron absorb almost all of Earth's field instead -- MEASURED: fitted
+  h_z = -49 uT against a true +3 uT, because Earth's vertical field here is
+  ~-49 uT and dwarfs the real hard-iron term by more than an order of
+  magnitude. That corrupted h_z then leaks into HEADING the moment the car's
+  pitch is nonzero (mount tilt, a hill, braking dive): MEASURED heading error
+  8.6 degrees at 3 degrees of pitch, 17.6 degrees at 6 degrees -- a wrong
+  z-offset rotates partway into the horizontal plane precisely in proportion
+  to how far from level the car sits.
 
 LEVEL PROJECTION -- CHOICE MADE, AND WHY. The brief allows either gyro-gated
 quasi-static rows (as ``pi.sensors.accel_cal.quasiStaticSamples`` selects for
@@ -47,25 +57,61 @@ Every accel and mag row is converted with the PRODUCTION
 anything else runs, so the fit -- and the calibration it emits -- lives in the
 same BODY/VEHICLE frame ``AhrsFusion`` applies it in.
 
-COVERAGE REFUSAL. A capture that never turned through most of the compass
-cannot determine an ellipse -- the fit would return numbers for headings it
-never saw. The horizontal locus is binned into 36 10-degree heading buckets
-(relative to the raw centroid, before any calibration is known) and the fit
-REFUSES when fewer than 25 of 36 are occupied.
+COVERAGE REFUSAL (Ruling 23). Fit round 1 binned heading coverage around the
+RAW CENTROID of every sample, moving or not. MEASURED EXPLOIT: 2000 idle
+samples (parked, small noise) plus a real 90-degree sweep of 300 moving
+samples were ACCEPTED at 32/36 bins with the hard-iron offset off by 12 uT.
+The idle cluster sat off the true ellipse centre, so the naive centroid was
+pulled toward it; angles measured FROM a reference point close to a dense
+cluster are numerically unstable (dividing by a near-zero radius vector), and
+noise alone scattered the idle cluster across many spurious bins even though
+it carries almost no real heading information. Fixed three ways together:
+
+1. Bins are centred on the FITTED ellipse centre, not the raw centroid.
+2. Only samples judged MOVING count toward coverage: gyro magnitude above
+   ``MOVING_MIN_GYRO_RAD_S`` (reused from ``pi.sensors.accel_cal.
+   DEFAULT_MAX_GYRO_RAD_S`` -- its own documented meaning, "gyro magnitude
+   below which a sample counts as not being moved", is exactly this
+   boundary, used from the other side). When the CSV carries no gyro columns
+   at all, every sample is treated as moving (a documented, weaker fallback --
+   there is no signal to filter on, so refusing to fit at all would be worse
+   than fitting without this particular defence).
+3. A bin only counts occupied with at least ``MIN_SAMPLES_PER_BIN`` (3)
+   samples in it -- a single noise-scattered outlier can no longer buy a bin.
+
+The fit REFUSES when fewer than ``MIN_OCCUPIED_BINS`` (25) of 36 qualify.
 
 ⚠️ ONLY DRIVES CAPTURED **AFTER** ARCH-064 DEPLOYS ARE VALID INPUT. Earlier
 rows were recorded under the pre-ARCH-064 AK09916 axis map; feeding them here
 would fit a calibration for an axis convention the sensor no longer uses.
 
+QUALITY FLOOR (m7). Even a fit that passes coverage can be untrustworthy --
+noisy, or a genuinely non-elliptical field. The fit REFUSES when the corrected
+horizontal radius spread exceeds ``maxRadiusSpreadPercent`` (``--force`` /
+``force=True`` accepts it anyway and the result is marked ``qualityForced``).
+
 Input: a CSV exported from ``edr_imu_sample`` (see
-``src/common/edr/sensor_schema.py``) with columns ``ts_capture``,
-``accel_x_ms2``/``accel_y_ms2``/``accel_z_ms2``, ``mag_x_ut``/``mag_y_ut``/
-``mag_z_ut`` and (optionally, for ``--drive-id``) ``drive_id`` -- the same
-unit-suffixed naming ``tools/imu/accel_cal_cli.py`` and ``tools/imu/fit_csv.py``
-already use for this export shape.
+``src/common/edr/sensor_schema.py``), e.g.::
+
+    sqlite3 -csv -header obd.db "select * from edr_imu_sample where drive_id=N"
+
+Ruling 20 (fit round 1 bug): that export's REAL column names --
+``ts_capture``, ``accel_x``/``accel_y``/``accel_z``, ``gyro_x``/``gyro_y``/
+``gyro_z``, ``mag_x``/``mag_y``/``mag_z``, ``drive_id`` -- are the PRIMARY
+names this loader looks for. The unit-suffixed spelling
+(``accel_x_ms2``/etc, ``mag_x_ut``/etc, as ``tools/imu/accel_cal_cli.py`` and
+``tools/imu/fit_csv.py`` use) is accepted as an ALIAS. Extra columns in the
+export (``id``, ``ts_utc``, ``seq``, ``temp_c``, ``data_source``,
+``schema_version``, ...) are ignored. Gyro columns are OPTIONAL (see the
+coverage-refusal fallback above); accel, mag and ``ts_capture`` are required,
+and a header matching NEITHER naming scheme for a required group raises
+immediately, naming what is missing -- fit round 1's bug was that a header
+match failure silently produced zero rows, surfacing only as a generic
+too-few-samples error with no indication the columns were ever wrong.
 
 Usage:
     python -m tools.imu.fit_mag_calibration capture.csv [--drive-id 42]
+        [--earth-vertical-ut -49.0] [--force]
 """
 
 from __future__ import annotations
@@ -79,9 +125,24 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pi.sensors.accel_cal import DEFAULT_MAX_GYRO_RAD_S
 from pi.sensors.imu_state_bridge import resolveMountFrame
 
 Vector3 = tuple[float, float, float]
+
+# --- CSV column names (Ruling 20) ---------------------------------------------
+# PRIMARY = the real edr_imu_sample columns (src/common/edr/sensor_schema.py).
+# ALIAS = the unit-suffixed spelling tools/imu/accel_cal_cli.py and
+# tools/imu/fit_csv.py already use for a hand-shaped export. Either is
+# accepted; ts_capture and drive_id have only ever had the one spelling.
+TS_COLUMN = "ts_capture"
+DRIVE_ID_COLUMN = "drive_id"
+ACCEL_COLUMNS_PRIMARY = ("accel_x", "accel_y", "accel_z")
+ACCEL_COLUMNS_ALIAS = ("accel_x_ms2", "accel_y_ms2", "accel_z_ms2")
+MAG_COLUMNS_PRIMARY = ("mag_x", "mag_y", "mag_z")
+MAG_COLUMNS_ALIAS = ("mag_x_ut", "mag_y_ut", "mag_z_ut")
+GYRO_COLUMNS_PRIMARY = ("gyro_x", "gyro_y", "gyro_z")
+GYRO_COLUMNS_ALIAS = ("gyro_x_rads", "gyro_y_rads", "gyro_z_rads")
 
 # 36 buckets of 10 degrees span the compass. Fewer than 25 occupied means more
 # than a third of the compass was never sampled -- the ellipse the ordinate
@@ -91,16 +152,57 @@ HEADING_BINS = 36
 BIN_WIDTH_DEG = 360.0 / HEADING_BINS
 MIN_OCCUPIED_BINS = 25
 
+# Ruling 23: a bin only counts as occupied with at least this many MOVING
+# samples in it -- a single noise-scattered point (see the module docstring's
+# dense-idle exploit) can no longer buy a bin on its own.
+MIN_SAMPLES_PER_BIN = 3
+
 # A conic has 6 coefficients (5 degrees of freedom); well under this many
 # points the "fit" is closer to an exact interpolation than a measurement.
 # In practice MIN_OCCUPIED_BINS is the binding constraint -- occupying 25 of
 # 36 bins already requires at least 25 samples -- this is only a defensive
-# floor against a pathological CSV with heavy duplication.
+# floor against a pathological CSV with heavy duplication. Applied to BOTH the
+# total sample count and (separately) the moving-sample count.
 _MIN_SAMPLES = HEADING_BINS
+
+# Ruling 23: the moving/idle boundary. Reused, not reinvented -- see the
+# module docstring's coverage-refusal section for why this exact constant.
+MOVING_MIN_GYRO_RAD_S = DEFAULT_MAX_GYRO_RAD_S
+
+# m7: refuse a fit whose corrected radius disagrees with itself by more than
+# this many percent, unless the caller explicitly overrides it.
+MAX_RADIUS_SPREAD_PERCENT_DEFAULT = 5.0
 
 # Below this, a would-be unit vector (gravity, or a horizontal-plane basis
 # vector) is numerically indistinguishable from zero.
 _MIN_VECTOR_NORM = 1e-6
+
+# Ruling 22: Earth's own vertical field component, BODY-UP sign convention
+# (positive = pointing away from Earth, i.e. toward the sky; Earth's real
+# field points mostly DOWN in the northern hemisphere, so this is negative).
+#
+# DOCUMENTED, computed 2026-09-28 for Chicago (lat 41.88, lon -87.63), decimal
+# year 2026.6658 (2026-09-01): WMM-2025 vertical intensity Z = 49002.75 nT in
+# the standard geomagnetic convention (X=north, Y=east, Z=DOWN-positive), so
+# in THIS module's body-up convention the expected reading is -49.0 uT.
+#
+# Computed via `pygeomag` (PyPI; a tested Python port of NOAA's own WMM/IGRF
+# reference C code, using the bundled official WMM.COF WMM-2025 coefficients)
+# rather than NOAA/NCEI's live `calculateIgrfwmm` API -- that endpoint (the one
+# that reports vertical intensity) requires its OWN registered API key;
+# CONFIRMED via curl that NOAA's demo keys are scoped per-calculator (the
+# `calculateDeclination` demo key `zNEw7` and the `calculateUshistoric` demo
+# key `yKc9F` are both rejected by `calculateIgrfwmm` with "key ... is wrong").
+# CROSS-VALIDATED instead: pygeomag's declination for this exact lat/lon/date
+# is -4.18228 deg, matching NOAA/NCEI's live `calculateDeclination` API to 5
+# decimal places --
+#   https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination?lat1=41.88&lon1=-87.63&resultFormat=json&key=zNEw7&startYear=2026&startMonth=9&startDay=1
+#   fetched 2026-09-28, model WMM-2025 v1.2.1, declination -4.18228 -- so both
+# tools read the same WMM-2025 coefficient set, and the vertical-intensity
+# figure is trusted on that basis rather than on a self-implemented
+# calculation alone. (pygeomag is not a project dependency; this constant is
+# the only artefact of using it.)
+DEFAULT_EARTH_VERTICAL_UT = -49.0
 
 
 @dataclass(frozen=True)
@@ -109,14 +211,17 @@ class MagCalibrationFit:
 
     hardIronUt: Vector3
     softIron: tuple[Vector3, Vector3, Vector3]
-    samples: int
+    totalSamples: int
+    movingSamples: int
     headingBinsOccupied: int
     headingBinsTotal: int
-    semiAxesUt: tuple[float, float]
-    rotationDeg: float
+    semiAxesUt: tuple[float, float]  # (major, minor)
+    majorAxisRotationDeg: float  # m8: the LARGER semi-axis's angle, degrees
+    # from the level-frame forward axis (counter-clockwise, standard math sign)
     radiusTargetUt: float
     radiusSpreadPercent: float
     residualRmsUt: float
+    qualityForced: bool = False
 
     def toConfigBlock(self) -> dict[str, object]:
         """The ``pi.sensors.imu.magCalibration`` config block, verbatim shape."""
@@ -127,57 +232,118 @@ class MagCalibrationFit:
 
     def describe(self) -> str:
         """One line for a log or a report."""
+        forced = " (FORCED past the quality floor)" if self.qualityForced else ""
         return (
             f"hard iron ({self.hardIronUt[0]:+.2f}, {self.hardIronUt[1]:+.2f}, "
-            f"{self.hardIronUt[2]:+.2f}) uT, ellipse axes "
-            f"({self.semiAxesUt[0]:.2f}, {self.semiAxesUt[1]:.2f}) uT rotated "
-            f"{self.rotationDeg:.1f} deg, {self.headingBinsOccupied}/"
+            f"{self.hardIronUt[2]:+.2f}) uT, ellipse major/minor axes "
+            f"({self.semiAxesUt[0]:.2f}, {self.semiAxesUt[1]:.2f}) uT, major axis "
+            f"rotated {self.majorAxisRotationDeg:.1f} deg, {self.headingBinsOccupied}/"
             f"{self.headingBinsTotal} heading bins, corrected radius spread "
-            f"{self.radiusSpreadPercent:.2f}% over {self.samples} samples"
+            f"{self.radiusSpreadPercent:.2f}% over {self.movingSamples}/"
+            f"{self.totalSamples} moving samples{forced}"
         )
 
 
-def loadRows(path: str, driveId: int | None = None) -> list[tuple[float, Vector3, Vector3]]:
-    """Load ``(tsCaptureS, accelBody, magBody)`` rows from an ``edr_imu_sample`` CSV.
+def _resolveColumnSet(
+    fieldnames: set[str],
+    label: str,
+    primary: tuple[str, ...],
+    alias: tuple[str, ...],
+    *,
+    required: bool = True,
+) -> tuple[str, ...] | None:
+    """Pick whichever of ``primary``/``alias`` the CSV header actually has.
+
+    Ruling 20: never silently return an empty result set because a header
+    matched neither spelling -- raise immediately, naming what is missing, so
+    a real export with the wrong assumed column names fails LOUDLY here
+    rather than surfacing as an opaque "0 rows loaded" downstream.
+    """
+    if all(c in fieldnames for c in primary):
+        return primary
+    if all(c in fieldnames for c in alias):
+        return alias
+    if not required:
+        return None
+    raise ValueError(
+        f"CSV is missing {label} columns: need either {primary} (the real "
+        f"edr_imu_sample names, src/common/edr/sensor_schema.py) or {alias} "
+        f"(the unit-suffixed export alias). Header has: {sorted(fieldnames)}"
+    )
+
+
+def loadRows(
+    path: str, driveId: int | None = None
+) -> list[tuple[float, Vector3, Vector3, float | None]]:
+    """Load ``(tsCaptureS, accelBody, magBody, gyroMagRadS)`` from an ``edr_imu_sample`` CSV.
 
     Every accel and mag vector passes through ``resolveMountFrame`` (default
     mount) exactly once, here, so every consumer downstream is already in the
-    BODY frame ``AhrsFusion`` applies the calibration in -- Ruling 18.
+    BODY frame ``AhrsFusion`` applies the calibration in -- Ruling 18. Gyro
+    magnitude is used directly from the DEVICE-frame reading without mount
+    conversion: a mount is a signed permutation of axes, which cannot change a
+    vector's magnitude, so there is nothing for ``resolveMountFrame`` to do to
+    it here (unlike accel/mag, whose individual AXES are used, not just their
+    magnitude).
 
     Args:
-        path: CSV path, columns as the module docstring documents.
+        path: CSV path. Accepts either the real ``edr_imu_sample`` column
+            names or the unit-suffixed alias -- see the module docstring.
         driveId: When given, only rows whose ``drive_id`` column matches are
             kept. A row with an unparseable or missing ``drive_id`` is
             dropped rather than assumed to match -- an ambiguous drive
             membership must not silently enter the fit.
+
+    Raises:
+        ValueError: the CSV has no header, or is missing both the primary and
+            alias spelling of a REQUIRED column group (``ts_capture``, accel,
+            mag). Gyro columns are optional -- see ``GYRO_COLUMNS_PRIMARY``.
     """
-    rows: list[tuple[float, Vector3, Vector3]] = []
+    rows: list[tuple[float, Vector3, Vector3, float | None]] = []
     with open(path, newline="") as handle:
-        for row in csv.DictReader(handle):
+        reader = csv.DictReader(handle)
+        fieldnames = set(reader.fieldnames or ())
+        if not fieldnames:
+            raise ValueError(f"CSV has no header row: {path}")
+        if TS_COLUMN not in fieldnames:
+            raise ValueError(
+                f"CSV is missing the required '{TS_COLUMN}' column. "
+                f"Header has: {sorted(fieldnames)}"
+            )
+        accelCols = _resolveColumnSet(fieldnames, "accel", ACCEL_COLUMNS_PRIMARY, ACCEL_COLUMNS_ALIAS)
+        magCols = _resolveColumnSet(fieldnames, "mag", MAG_COLUMNS_PRIMARY, MAG_COLUMNS_ALIAS)
+        gyroCols = _resolveColumnSet(
+            fieldnames, "gyro", GYRO_COLUMNS_PRIMARY, GYRO_COLUMNS_ALIAS, required=False
+        )
+
+        for row in reader:
             if driveId is not None:
                 try:
-                    rowDriveId = int(row["drive_id"])
+                    rowDriveId = int(row[DRIVE_ID_COLUMN])
                 except (KeyError, TypeError, ValueError):
                     continue
                 if rowDriveId != driveId:
                     continue
             try:
-                tsCaptureS = float(row["ts_capture"])
-                accelDevice = (
-                    float(row["accel_x_ms2"]),
-                    float(row["accel_y_ms2"]),
-                    float(row["accel_z_ms2"]),
-                )
-                magDevice = (
-                    float(row["mag_x_ut"]),
-                    float(row["mag_y_ut"]),
-                    float(row["mag_z_ut"]),
-                )
+                tsCaptureS = float(row[TS_COLUMN])
+                ax, ay, az = (float(row[c]) for c in accelCols)
+                mx, my, mz = (float(row[c]) for c in magCols)
+                gyroMagRadS: float | None = None
+                if gyroCols is not None:
+                    gx, gy, gz = (float(row[c]) for c in gyroCols)
+                    gyroMagRadS = math.sqrt(gx * gx + gy * gy + gz * gz)
             except (KeyError, TypeError, ValueError):
                 # A row with a missing or unparseable field is skipped rather
                 # than defaulted: a fabricated zero would enter the fit as data.
                 continue
-            rows.append((tsCaptureS, resolveMountFrame(accelDevice), resolveMountFrame(magDevice)))
+            rows.append(
+                (
+                    tsCaptureS,
+                    resolveMountFrame((ax, ay, az)),
+                    resolveMountFrame((mx, my, mz)),
+                    gyroMagRadS,
+                )
+            )
     return rows
 
 
@@ -229,13 +395,18 @@ def _levelBasis(gravity: Vector3) -> tuple[Vector3, Vector3, Vector3]:
     return forward, left, up
 
 
-def _headingBinCoverage(p: np.ndarray, q: np.ndarray) -> int:
-    """Count occupied 10-degree heading bins around the raw (uncalibrated) centroid."""
-    centroidP = float(np.mean(p))
-    centroidQ = float(np.mean(q))
-    angleDeg = np.degrees(np.arctan2(q - centroidQ, p - centroidP)) % 360.0
+def _headingBinCoverage(
+    p: np.ndarray, q: np.ndarray, centerP: float, centerQ: float, minPerBin: int
+) -> int:
+    """Count 10-degree heading bins with at least ``minPerBin`` samples (Ruling 23).
+
+    Centred on the caller-supplied (FITTED) centre, not a raw centroid -- see
+    the module docstring's dense-idle exploit for why that distinction matters.
+    """
+    angleDeg = np.degrees(np.arctan2(q - centerQ, p - centerP)) % 360.0
     binIdx = (angleDeg // BIN_WIDTH_DEG).astype(int) % HEADING_BINS
-    return int(np.unique(binIdx).size)
+    counts = np.bincount(binIdx, minlength=HEADING_BINS)
+    return int(np.sum(counts >= minPerBin))
 
 
 def _fitConic(p: np.ndarray, q: np.ndarray) -> tuple[float, float, float, float, float, float]:
@@ -284,21 +455,40 @@ def _ellipseParams(
     return float(x0), float(y0), float(axes[0]), float(axes[1]), eigvecs
 
 
-def fitMagCalibration(rows: list[tuple[float, Vector3, Vector3]]) -> MagCalibrationFit:
+def fitMagCalibration(
+    rows: list[tuple[float, Vector3, Vector3, float | None]],
+    *,
+    earthVerticalUt: float = DEFAULT_EARTH_VERTICAL_UT,
+    maxRadiusSpreadPercent: float = MAX_RADIUS_SPREAD_PERCENT_DEFAULT,
+    force: bool = False,
+) -> MagCalibrationFit:
     """Fit the planar hard/soft-iron calibration from BODY-frame capture rows.
 
     Args:
-        rows: ``(tsCaptureS, accelBody, magBody)`` as returned by ``loadRows``.
+        rows: ``(tsCaptureS, accelBody, magBody, gyroMagRadS)`` as returned by
+            ``loadRows``. ``gyroMagRadS`` may be None (no gyro columns in the
+            source CSV) -- see Ruling 23's moving/idle fallback.
+        earthVerticalUt: Earth's expected vertical field component, BODY-UP
+            sign convention (Ruling 22). Defaults to the DOCUMENTED Chicago
+            WMM-2025 value; override for a different location.
+        maxRadiusSpreadPercent: m7 quality floor -- see module docstring.
+        force: m7 -- accept a fit whose radius spread exceeds
+            ``maxRadiusSpreadPercent`` anyway (``qualityForced=True`` on the
+            result) instead of refusing.
 
     Raises:
-        ValueError: too few samples, insufficient heading coverage (< 25/36
-            bins), no usable gravity reference, or a degenerate/non-ellipse fit.
+        ValueError: too few total or moving samples, insufficient heading
+            coverage (Ruling 23), no usable gravity reference, a degenerate/
+            non-ellipse fit, or (unless ``force``) a radius spread over the
+            quality floor.
     """
-    if len(rows) < _MIN_SAMPLES:
-        raise ValueError(f"need at least {_MIN_SAMPLES} samples, got {len(rows)}")
+    total = len(rows)
+    if total < _MIN_SAMPLES:
+        raise ValueError(f"need at least {_MIN_SAMPLES} samples, got {total}")
 
     accelBody = [r[1] for r in rows]
     magBody = [r[2] for r in rows]
+    gyroMagRadS = [r[3] for r in rows]
 
     gravity = _meanGravity(accelBody)
     forward, left, up = _levelBasis(gravity)
@@ -307,21 +497,38 @@ def fitMagCalibration(rows: list[tuple[float, Vector3, Vector3]]) -> MagCalibrat
     q = np.array([m[0] * left[0] + m[1] * left[1] + m[2] * left[2] for m in magBody])
     r = np.array([m[0] * up[0] + m[1] * up[1] + m[2] * up[2] for m in magBody])
 
-    occupied = _headingBinCoverage(p, q)
+    # Ruling 23: idle dwell must not enter the fit or the coverage count.
+    movingMask = np.array([g is None or g > MOVING_MIN_GYRO_RAD_S for g in gyroMagRadS])
+    movingCount = int(np.sum(movingMask))
+    if movingCount < _MIN_SAMPLES:
+        raise ValueError(
+            f"need at least {_MIN_SAMPLES} moving samples (gyro magnitude > "
+            f"{MOVING_MIN_GYRO_RAD_S} rad/s), got {movingCount} moving out of "
+            f"{total} total -- a capture that mostly idled cannot fit a "
+            "heading-dependent ellipse from its idle dwell."
+        )
+    pM, qM, rM = p[movingMask], q[movingMask], r[movingMask]
+
+    # Ruling 22: subtract Earth's own vertical field before what remains is
+    # called hard iron -- see module docstring and DEFAULT_EARTH_VERTICAL_UT.
+    hz = float(np.mean(rM)) - earthVerticalUt
+
+    pMean, qMean = float(np.mean(pM)), float(np.mean(qM))
+    coeffs = _fitConic(pM - pMean, qM - qMean)
+    x0c, y0c, r1, r2, eigvecs = _ellipseParams(*coeffs)
+    x0, y0 = x0c + pMean, y0c + qMean
+
+    # Ruling 23: bins centred on the FITTED centre, moving samples only.
+    occupied = _headingBinCoverage(pM, qM, x0, y0, MIN_SAMPLES_PER_BIN)
     if occupied < MIN_OCCUPIED_BINS:
         raise ValueError(
             f"heading coverage insufficient: {occupied}/{HEADING_BINS} 10-degree "
-            f"bins occupied, need at least {MIN_OCCUPIED_BINS}. Drive through more "
-            "headings -- a capture that only ever turned through part of the "
-            "compass cannot determine an ellipse for the rest of it."
+            f"bins occupied (>= {MIN_SAMPLES_PER_BIN} moving samples each, "
+            "centred on the fitted ellipse centre), need at least "
+            f"{MIN_OCCUPIED_BINS}. Drive through more headings -- a capture "
+            "that only ever turned through part of the compass cannot "
+            "determine an ellipse for the rest of it."
         )
-
-    hz = float(np.mean(r))
-
-    pMean, qMean = float(np.mean(p)), float(np.mean(q))
-    coeffs = _fitConic(p - pMean, q - qMean)
-    x0c, y0c, r1, r2, eigvecs = _ellipseParams(*coeffs)
-    x0, y0 = x0c + pMean, y0c + qMean
 
     # Map the fitted ellipse onto a circle of the geometric-mean radius: this
     # preserves the field's total horizontal magnitude (r1 * r2 == target^2)
@@ -331,7 +538,7 @@ def fitMagCalibration(rows: list[tuple[float, Vector3, Vector3]]) -> MagCalibrat
     scaleDiag = np.diag([radiusTarget / r1, radiusTarget / r2])
     softIron2D = rotationMatrix @ scaleDiag @ rotationMatrix.T
 
-    centred = np.column_stack([p - x0, q - y0])
+    centred = np.column_stack([pM - x0, qM - y0])
     corrected = centred @ softIron2D.T
     correctedRadii = np.hypot(corrected[:, 0], corrected[:, 1])
     residualRmsUt = float(np.sqrt(np.mean((correctedRadii - radiusTarget) ** 2)))
@@ -343,6 +550,25 @@ def fitMagCalibration(rows: list[tuple[float, Vector3, Vector3]]) -> MagCalibrat
     radiusSpreadPercent = (
         residualRmsUt / radiusTarget * 100.0 if radiusTarget > 0 else float("inf")
     )
+
+    # m7: a fit that passed coverage can still be untrustworthy.
+    qualityForced = False
+    if radiusSpreadPercent > maxRadiusSpreadPercent:
+        if not force:
+            raise ValueError(
+                f"corrected radius spread {radiusSpreadPercent:.2f}% exceeds the "
+                f"{maxRadiusSpreadPercent}% quality floor -- this fit is not "
+                "trustworthy (noisy capture, or a genuinely non-elliptical "
+                "field). Pass --force / force=True to accept it anyway."
+            )
+        qualityForced = True
+
+    # m8: report the MAJOR (larger) axis's rotation, not an arbitrary one --
+    # eigh's ascending eigenvalue order does not correspond to "major first".
+    axes = (r1, r2)
+    majorIdx = 0 if r1 >= r2 else 1
+    minorIdx = 1 - majorIdx
+    majorAxisRotationDeg = math.degrees(math.atan2(eigvecs[1, majorIdx], eigvecs[0, majorIdx]))
 
     # Embed: B's rows are (forward, left, up) -- body vector v -> level coords
     # is B @ v. The 2-D soft-iron correction (plus an identity z row/col) is
@@ -357,14 +583,16 @@ def fitMagCalibration(rows: list[tuple[float, Vector3, Vector3]]) -> MagCalibrat
     return MagCalibrationFit(
         hardIronUt=tuple(float(v) for v in hardIronBody),
         softIron=tuple(tuple(float(v) for v in row) for row in softIronBody),
-        samples=len(rows),
+        totalSamples=total,
+        movingSamples=movingCount,
         headingBinsOccupied=occupied,
         headingBinsTotal=HEADING_BINS,
-        semiAxesUt=(r1, r2),
-        rotationDeg=math.degrees(math.atan2(eigvecs[1, 0], eigvecs[0, 0])),
+        semiAxesUt=(axes[majorIdx], axes[minorIdx]),
+        majorAxisRotationDeg=majorAxisRotationDeg,
         radiusTargetUt=radiusTarget,
         radiusSpreadPercent=radiusSpreadPercent,
         residualRmsUt=residualRmsUt,
+        qualityForced=qualityForced,
     )
 
 
@@ -374,11 +602,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("csv")
     parser.add_argument("--drive-id", type=int, default=None)
+    parser.add_argument(
+        "--earth-vertical-ut",
+        type=float,
+        default=DEFAULT_EARTH_VERTICAL_UT,
+        help="Earth's expected vertical field, body-up sign convention (Ruling 22)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="accept a fit whose radius spread exceeds the quality floor (m7)",
+    )
     args = parser.parse_args(argv)
 
     rows = loadRows(args.csv, driveId=args.drive_id)
     try:
-        fit = fitMagCalibration(rows)
+        fit = fitMagCalibration(
+            rows, earthVerticalUt=args.earth_vertical_ut, force=args.force
+        )
     except ValueError as exc:
         print(json.dumps({"refused": str(exc), "samples": len(rows)}, indent=2))
         return 1
@@ -386,14 +627,16 @@ def main(argv: list[str] | None = None) -> int:
     result = {
         "magCalibration": fit.toConfigBlock(),
         "fitQuality": {
-            "samples": fit.samples,
+            "totalSamples": fit.totalSamples,
+            "movingSamples": fit.movingSamples,
             "headingBinsOccupied": fit.headingBinsOccupied,
             "headingBinsTotal": fit.headingBinsTotal,
             "semiAxesUt": [round(v, 3) for v in fit.semiAxesUt],
-            "rotationDeg": round(fit.rotationDeg, 2),
+            "majorAxisRotationDeg": round(fit.majorAxisRotationDeg, 2),
             "radiusTargetUt": round(fit.radiusTargetUt, 3),
             "radiusSpreadPercent": round(fit.radiusSpreadPercent, 3),
             "residualRmsUt": round(fit.residualRmsUt, 3),
+            "qualityForced": fit.qualityForced,
             "describe": fit.describe(),
         },
     }
