@@ -662,7 +662,7 @@
       "power_monitor": {
         "enabled": true
       },
-      "cellEpoch": "2000mah-pouch"
+      "cellEpoch": "18650-pack"
     }
   },
   "server": {

@@ -71,7 +71,7 @@ class TestCellEpoch:
     def test_shippedConfig_carriesTheFittedCell(self) -> None:
         validated = ConfigValidator().validate(_shippedConfig())
 
-        assert validated["pi"]["power"]["cellEpoch"] == "2000mah-pouch"
+        assert validated["pi"]["power"]["cellEpoch"] == "18650-pack"
 
     @pytest.mark.parametrize("value", sorted(CELL_EPOCH_VALUES))
     def test_everyVocabularyValue_isAccepted(self, value: str) -> None:

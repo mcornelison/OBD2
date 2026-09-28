@@ -160,9 +160,11 @@ GYRO_FULL_SCALE_RAD_S = math.radians(500)
 # drain_vcell_trajectory row so a floor measured from them is never an average
 # across batteries. CIO ruling 2026-09-25. Vocabulary from
 # specs/grounded-knowledge.md: the 450 mAh pouch until the 2026-09-21 18:50Z
-# swap and the 2000 mAh pouch after it (:1045), the 18650 pack ordered but not
-# fitted (:1214-1215). 'unknown' is the default so an absent key is recorded
-# honestly -- never a guessed epoch.
+# swap and the 2000 mAh pouch after it (:1045), then the 18650 pack from its
+# INSTALLATION on 2026-09-26 (battery epoch 3; Atlas ruled 2026-09-27 that the
+# epoch names the physical battery from installation, not from first
+# discharge -- charge state is vcellV's job). 'unknown' is the default so an
+# absent key is recorded honestly -- never a guessed epoch.
 CELL_EPOCH_UNKNOWN = 'unknown'
 CELL_EPOCH_VALUES: tuple[str, ...] = (
     '450mah-pouch',
