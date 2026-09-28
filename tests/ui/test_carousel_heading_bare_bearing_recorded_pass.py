@@ -115,6 +115,7 @@ from pi.sensors.imu_state_bridge import (  # noqa: E402
     DEFAULT_STATE_HZ,
     IMU_STATE_FILENAME,
     MAG_MAX_AGE_POLLS,
+    MIN_PAIRING_WINDOW_S,
     REASON_NO_MAG,
     REASON_SENSOR_ABSENT,
     STANDARD_GRAVITY_MS2,
@@ -144,7 +145,10 @@ PANEL = (480, 320)
 #       still INSIDE the pairing window -- so a bridge that ignored the gate
 #       would still have a real bearing to print.
 #   _PAST_PAIRING_WINDOW_S: past both the next write and the pairing window.
-_PAIRING_WINDOW_S = MAG_MAX_AGE_POLLS / DEFAULT_IMU_SAMPLE_HZ
+# ARCH-064 Rulings 14/16: the bridge's actual pairing window is floored at
+# MIN_PAIRING_WINDOW_S (raised to EXACTLY the pre-ARCH-064 4-poll window by
+# Ruling 16), so this must match _magMaxAgeS's own max(), not the raw ratio.
+_PAIRING_WINDOW_S = max(MAG_MAX_AGE_POLLS / DEFAULT_IMU_SAMPLE_HZ, MIN_PAIRING_WINDOW_S)
 _NEXT_WRITE_INSIDE_WINDOW_S = 1.0 / DEFAULT_STATE_HZ
 _PAST_PAIRING_WINDOW_S = max(_PAIRING_WINDOW_S, _NEXT_WRITE_INSIDE_WINDOW_S) + 1.0
 assert _NEXT_WRITE_INSIDE_WINDOW_S < _PAIRING_WINDOW_S, (
