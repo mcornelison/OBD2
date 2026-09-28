@@ -108,6 +108,12 @@
 #               |              | snapshot carries the running engine's version.
 # 2026-09-28    | Atlas        | Ruling 13: the mag is withheld from the AHRS
 #               | (ARCH-064)   | while the rotation verdict is FROZEN.
+# 2026-09-28    | Atlas        | Ruling 14 (Task 5 fix round): the mag/gyro
+#               | (ARCH-064)   | pairing window (_magMaxAgeS) is now floored at
+#               |              | MIN_PAIRING_WINDOW_S = 0.5 s -- sampleHz 50
+#               |              | (Ruling from the same date) collapsed
+#               |              | MAG_MAX_AGE_POLLS / sampleHz to 0.1 s, too tight
+#               |              | for scheduler jitter.
 # ================================================================================
 ################################################################################
 
@@ -191,6 +197,7 @@ __all__ = [
     "MAG_SOURCE_ICM_SHADOW",
     "MAG_SOURCE_NONE",
     "MAX_GRADE_PITCH_DEG",
+    "MIN_PAIRING_WINDOW_S",
     "MagRotation",
     "REASON_HEADING_UNSEEDED",
     "REASON_MAG_FROZEN",
@@ -316,6 +323,21 @@ DEFAULT_GRAVITY_TAU_S = 5.0
 # independent constant): the reader bursts accel+gyro+mag under ONE seq, so the
 # freshest mag is at most one interval old; 5 is slack for scheduler jitter.
 MAG_MAX_AGE_POLLS = 5
+
+# ARCH-064 Ruling 14 (Controller, fix round 1). MAG_MAX_AGE_POLLS / sampleHz
+# was fine at the old 4 Hz burst rate (1.25 s), but ARCH-064 raised sampleHz to
+# 50 Hz for the AHRS's internal read (specs/data-acquisition-architecture.md
+# §4.2.a), which collapses the SAME poll-count window to 0.1 s. At 0.1 s a
+# single scheduler hiccup over ~100 ms drops the paired gyro reading, and the
+# AHRS update path (imu_state_bridge -> AhrsFusion.update) integrates a
+# missing gyro as ZERO rate rather than holding the last one -- a silent
+# attitude freeze that looks like a healthy read. The window is a WALL-CLOCK
+# guarantee (data must be fresh enough to describe "now"), not a sample-count
+# guarantee, so it gets a floor in seconds: 0.5 s is generous slack above one
+# 100 Hz burst period (0.01 s) and comfortably covers the scheduler jitter
+# MAG_MAX_AGE_POLLS was already sized for at 4 Hz. Applied to BOTH the mag and
+# gyro pairing windows (they share one window, self._magMaxAgeS).
+MIN_PAIRING_WINDOW_S = 0.5
 
 # Local alias for the shared gravity floor (defined in pitch_fusion, one home).
 _MIN_GRAVITY_MS2 = MIN_GRAVITY_MS2
@@ -983,7 +1005,10 @@ class ImuStateBridge:
                 sensor's burst rate.
             gravityTauSec: Gravity low-pass time constant, seconds.
             sampleHz: The reader's burst rate; the magnetometer AND gyro pairing
-                windows are derived from it (MAG_MAX_AGE_POLLS intervals).
+                windows are derived from it (MAG_MAX_AGE_POLLS intervals), floored
+                at MIN_PAIRING_WINDOW_S seconds (ARCH-064 Ruling 14) so a fast
+                sampleHz cannot shrink the window below what a scheduler hiccup
+                needs.
             pitchFusion: US-521 gyro-fused pitch estimator. Defaults to one built
                 with the shipped constants; injectable so a caller can pass a
                 config-tuned estimator without this class growing six more
@@ -1000,7 +1025,8 @@ class ImuStateBridge:
         self._writeIntervalS = 1.0 / stateHz if stateHz and stateHz > 0 else 1.0 / DEFAULT_STATE_HZ
         self._tauS = gravityTauSec if gravityTauSec and gravityTauSec > 0 else DEFAULT_GRAVITY_TAU_S
         rate = sampleHz if sampleHz and sampleHz > 0 else DEFAULT_IMU_SAMPLE_HZ
-        self._magMaxAgeS = MAG_MAX_AGE_POLLS / float(rate)
+        # ARCH-064 Ruling 14: floored at MIN_PAIRING_WINDOW_S -- see its comment.
+        self._magMaxAgeS = max(MAG_MAX_AGE_POLLS / float(rate), MIN_PAIRING_WINDOW_S)
         self._nowIsoFn = nowIsoFn if nowIsoFn is not None else utcIsoNow
         self._pitchFusion = pitchFusion if pitchFusion is not None else PitchFusion()
         # ARCH-064: an engine that carries a heading is the AHRS. Checked on the

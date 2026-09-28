@@ -28,6 +28,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from common.config.validator import DEFAULT_IMU_PERSIST_HZ
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS, Sample
 from pi.sensors.imu_state_bridge import (
@@ -622,23 +623,49 @@ def test_defaultRates_sitUnderTheCioHardCap():
     """
     Given: the CIO's acquisition ceiling, read from its ratified source
            (specs/data-acquisition-architecture.md §4.2, ARCH-036: "4 Hz HARD
-           CAP", tightened from 5 Hz on 2026-09-21)
-    When: the shipped IMU defaults are compared against it
-    Then: the state write rate never exceeds its source burst rate, and the burst
-          rate never exceeds the cap.
+           CAP", tightened from 5 Hz on 2026-09-21), AND its §4.2.a amendment
+           (ARCH-064, Controller Ruling 15, 2026-09-28: the ceiling governs
+           what is STORED -- persistHz/stateHz -- not the IMU's internal
+           acquisition/fusion read, which the amendment names explicitly)
+    When: the shipped IMU defaults are compared against both
+    Then: (a) the STORED rates (persistHz, stateHz) stay at or under the cap,
+          and stateHz never exceeds its persisted source; (b)
+          DEFAULT_IMU_SAMPLE_HZ equals the internal-read value the amendment
+          states -- not "under the cap", which is no longer what it means.
 
           This REPLACES the US-508 transport-band pin (10-15 Hz, grounded to the
           card's 100 ms poll), which the CIO's ruling superseded: the card now
           re-reads an unchanged file between 1 Hz writes, by design. It stays a
-          CROSS-ARTIFACT pin -- the cap is parsed from the ruling, not retyped, so
-          a comment claiming agreement is never the only check.
+          CROSS-ARTIFACT pin -- both numbers are parsed from the spec, not
+          retyped, so a comment claiming agreement is never the only check.
     """
     doc = Path(__file__).resolve().parents[3] / "specs/data-acquisition-architecture.md"
-    m = re.search(r"(\d+)\s*Hz\s+HARD\s+CAP", doc.read_text(encoding="utf-8"))
-    assert m, "ARCH-036 no longer states an 'N Hz HARD CAP' -- re-ground this pin"
-    capHz = int(m.group(1))
-    assert DEFAULT_STATE_HZ <= DEFAULT_IMU_SAMPLE_HZ, "state writes faster than its source"
-    assert DEFAULT_IMU_SAMPLE_HZ <= capHz, "the IMU default exceeds the CIO's hard cap"
+    text = doc.read_text(encoding="utf-8")
+
+    capMatch = re.search(r"(\d+)\s*Hz\s+HARD\s+CAP", text)
+    assert capMatch, "ARCH-036 no longer states an 'N Hz HARD CAP' -- re-ground this pin"
+    capHz = int(capMatch.group(1))
+
+    internalMatch = re.search(
+        r"INTERNAL\s+acquisition/fusion\s+read\s+may\s+run\s+at\s+`sampleHz`\s+(\d+)\s*Hz",
+        text,
+    )
+    assert internalMatch, (
+        "§4.2.a no longer names the internal-read sampleHz value -- re-ground this pin"
+    )
+    internalReadHz = int(internalMatch.group(1))
+
+    # (a) STORED rates -- what the ceiling actually bounds since the amendment.
+    assert DEFAULT_IMU_PERSIST_HZ <= capHz, "the persisted default exceeds the CIO's hard cap"
+    assert DEFAULT_STATE_HZ <= capHz, "the state-write default exceeds the CIO's hard cap"
+    assert DEFAULT_STATE_HZ <= DEFAULT_IMU_PERSIST_HZ, (
+        "state writes faster than its persisted source"
+    )
+
+    # (b) The internal read -- named by the amendment, not bounded by the cap.
+    assert DEFAULT_IMU_SAMPLE_HZ == internalReadHz, (
+        "the IMU default no longer matches §4.2.a's stated internal-read rate"
+    )
 
 
 def test_bridge_settledOnATiltedMount_readsZeroGButNonZeroGrade(tmp_path: Path):
