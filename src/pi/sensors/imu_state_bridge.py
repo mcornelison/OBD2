@@ -106,6 +106,8 @@
 #               |              | declination-corrected) and fusionEngine /
 #               |              | headingCalibrated are published; the EDR
 #               |              | snapshot carries the running engine's version.
+# 2026-09-28    | Atlas        | Ruling 13: the mag is withheld from the AHRS
+#               | (ARCH-064)   | while the rotation verdict is FROZEN.
 # ================================================================================
 ################################################################################
 
@@ -1132,9 +1134,12 @@ class ImuStateBridge:
         # behind would out-rank it on the next re-plug.
         self._gatedChannels.clear()
         # Drop the attitude too -- a frozen pitch left over from before the
-        # unplug would render as a live grade. The ZUPT bias deliberately
-        # survives (see PitchFusion.reset): how the board is bolted in did not
-        # change, and re-converging it costs another five stoplights.
+        # unplug would render as a live grade. What else goes depends on the
+        # engine: legacy PitchFusion deliberately KEEPS its ZUPT mount bias
+        # (see PitchFusion.reset) -- how the board is bolted in did not change,
+        # and re-converging it costs another five stoplights. The ARCH-064 AHRS
+        # (AhrsFusion.reset) CLEARS its learned gyro bias: a re-powered die has
+        # a new rate bias, and imufusion.Bias relearns it within seconds of rest.
         self._pitchFusion.reset()
         # US-809-c: carry the absence; buildImuState types it. Substituting
         # the clock here publishes a fabricated freshness marker.
@@ -1383,7 +1388,15 @@ class ImuStateBridge:
             # ARCH-064: the AHRS takes the SAME fresh, body-frame reading the
             # heading path pairs with this burst -- None when stale or gated, so
             # the engine coasts on the gyro rather than on an old bearing.
-            self._pitchFusion.update(accel, self._freshGyro(capture), capture, mag_ut=mag)
+            # Ruling 13: WITHHELD while the rotation verdict is FROZEN -- Fusion
+            # would reject a frozen vector through a turn, then its recovery
+            # would SNAP heading onto it, still wrong for up to ~5 s after the
+            # verdict clears. The verdict itself is fed from ``mag`` (the
+            # bridge's own _freshMag) below, so withholding cannot stop it clearing.
+            engineMag = None if self._magRotation is MagRotation.FROZEN else mag
+            self._pitchFusion.update(
+                accel, self._freshGyro(capture), capture, mag_ut=engineMag
+            )
         else:
             self._pitchFusion.update(accel, self._freshGyro(capture), capture)
         self._recordDerived(sample, capture)

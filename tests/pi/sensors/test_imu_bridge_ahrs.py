@@ -31,6 +31,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -504,3 +505,77 @@ def test_clock_bothProducersStampTsCaptureFromTimeMonotonic():
     imuSrc = inspect.getsource(sensor_reader.ImuReader._publish)
     assert "tsCapture=time.monotonic()" in obdSrc
     assert "tsCapture=time.monotonic()" in imuSrc
+
+
+# ------------------------------------------- Ruling 13: a FROZEN mag is withheld
+
+
+def _turningBursts(bridge: ImuStateBridge, *, seconds: float, yawRateRadS: float,
+                   startAt: float = 0.0) -> float:
+    """A level car yawing LEFT at a constant rate, with a mag that TURNS with it.
+
+    Earth field fixed; the body rotates by +psi, so in the body frame the
+    horizontal field rotates by -psi. Returns the next capture time.
+    """
+    capture = startAt
+    for i in range(int(round(seconds * HZ))):
+        capture = startAt + i * DT
+        psi = yawRateRadS * (capture - startAt)
+        field = (22.5 * math.cos(-psi), 22.5 * math.sin(-psi), -53.0)
+        bridge.handleSample(_gyro((0.0, 0.0, yawRateRadS), capture=capture, seq=i + 1))
+        bridge.handleSample(_mag(field, capture=capture, seq=i + 1))
+        bridge.handleSample(_accel(LEVEL, capture=capture, seq=i + 1))
+    return capture + DT
+
+
+def test_ruling13_frozenVerdict_withholdsTheMagFromTheAhrs(tmp_path: Path):
+    """
+    Given: the AHRS engine, a fresh mag reading, and a FROZEN rotation verdict
+    When: the burst's accel arrives
+    Then: update() receives mag_ut=None -- a frozen vector must not anchor the
+          engine's yaw (rejection + recovery would SNAP heading onto it)
+    """
+    engine = _RecordingAhrs(HZ)
+    bridge = ImuStateBridge(None, str(tmp_path), sampleHz=50, pitchFusion=engine)
+    bridge._magRotation = MagRotation.FROZEN  # noqa: SLF001 -- the verdict under test
+    bridge.handleSample(_mag(NORTH_FIELD_UT, capture=0.0))
+    bridge.handleSample(_accel(LEVEL, capture=0.0))
+    assert bridge._freshMag(0.0) is not None  # noqa: SLF001 -- mag IS fresh
+    assert engine.updates[-1]["mag_ut"] is None
+
+
+def test_ruling13_verdictStillClears_whenTheMagTurnsWithTheGyro(tmp_path: Path):
+    """
+    Given: the AHRS engine and a FROZEN verdict
+    When: the car yaws ~69 deg and the real mag turns with it
+    Then: the verdict clears to HEALTHY (the bridge's own _freshMag path kept
+          feeding the rotation gate), and only THEN does the engine get the mag
+    """
+    engine = _RecordingAhrs(HZ)
+    bridge = ImuStateBridge(None, str(tmp_path), sampleHz=50, pitchFusion=engine)
+    bridge._magRotation = MagRotation.FROZEN  # noqa: SLF001
+    _turningBursts(bridge, seconds=2.4, yawRateRadS=0.5)
+    assert bridge._magRotation is MagRotation.HEALTHY  # noqa: SLF001
+    fed = [u["mag_ut"] is not None for u in engine.updates]
+    firstFed = fed.index(True)
+    assert firstFed > 0 and not any(fed[:firstFed]) and all(fed[firstFed:])
+
+
+def test_ruling13_legacyEngine_isUnchangedUnderAFrozenVerdict(tmp_path: Path):
+    """
+    Given: the legacy PitchFusion and a FROZEN verdict
+    When: a burst with a fresh mag arrives
+    Then: update() is called exactly as before -- (accel, gyro, capture)
+    """
+    calls: list[tuple] = []
+
+    class _Spy(PitchFusion):
+        def update(self, *args, **kwargs):  # noqa: D102
+            calls.append((args, kwargs))
+            return super().update(*args, **kwargs)
+
+    bridge = ImuStateBridge(None, str(tmp_path), sampleHz=50, pitchFusion=_Spy())
+    bridge._magRotation = MagRotation.FROZEN  # noqa: SLF001
+    bridge.handleSample(_mag(NORTH_FIELD_UT, capture=0.0))
+    bridge.handleSample(_accel(LEVEL, capture=0.0))
+    assert len(calls[-1][0]) == 3 and calls[-1][1] == {}
