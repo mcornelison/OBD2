@@ -31,6 +31,18 @@
 #   and  heading = (-eulerYaw + declination) mod 360  (clockwise from TRUE
 #   north). Both are pinned by tests/pi/sensors/test_ahrs_fusion.py.
 #
+#   SPEED AIDING (ARCH-064 C2/C3, MEASURED): Fusion alone still absorbs the
+#   car's own acceleration -- 0.15 g (8.5 deg, under the 10-deg rejection angle)
+#   is never rejected and settles at 8.5 deg of phantom pitch; 0.3 g is rejected
+#   for the 5 s timeout and then climbs to ~16.7 deg; sustained cornering puts
+#   the same phantom into roll. That is inherent to gravity-from-accel with no
+#   velocity aiding, so the standard vehicle-AHRS remedy is applied: subtract
+#   the vehicle's own specific force before the update --
+#       x -= a_long            (a_long = dv/dt from consecutive OBD SPEED samples)
+#       y -= v * omega_z       (centripetal; left turn omega_z > 0 -> +y)
+#   Skipped when speed is STALE (> 3 s since the last sample) or the sample has
+#   no gyro. Signs are pinned by tests.
+#
 #   Pure and I/O-free: no bus, no device, no clock -- the caller supplies body-
 #   frame vectors and monotonic capture times, as with PitchFusion.
 # Author: Atlas (ARCH-064)
@@ -44,6 +56,10 @@
 # 2026-09-28    | Atlas        | Initial -- imufusion Ahrs + Bias behind the
 #               | (ARCH-064)   | PitchFusion surface; heading with hard/soft-iron
 #               |              | calibration and declination.
+# 2026-09-28    | Atlas        | Speed-aided acceleration compensation (C2/C3):
+#               | (ARCH-064)   | OBD speed -> a_long = dv/dt (clamped 0.6 g) and
+#               |              | centripetal v*omega_z are subtracted from the
+#               |              | accel before the AHRS; off when speed is stale.
 # ================================================================================
 ################################################################################
 
@@ -65,7 +81,9 @@ __all__ = [
     "BIAS_STATIONARY_THRESHOLD_DPS",
     "FUSION_VERSION_AHRS",
     "MAGNETIC_REJECTION_DEG",
+    "MAX_LONGITUDINAL_ACCEL_G",
     "MAX_SAMPLE_PERIOD_S",
+    "SPEED_STALE_S",
     "REJECTION_TIMEOUT_S",
 ]
 
@@ -77,7 +95,17 @@ STANDARD_GRAVITY_MS2 = 9.80665
 
 # ARCH-064 ruling (settings exactly as ruled -- do not tune blindly).
 AHRS_GAIN = 0.5
-ACCELERATION_REJECTION_DEG = 10.0
+# 7, not the ruled 10 -- tuned with a stated reason (controller permission,
+# ARCH-064 C2): speed aiding cannot see an acceleration ONSET until the next OBD
+# SPEED sample, up to ~2.3 s later, so the rejection angle is what must hold the
+# attitude through that blind window. At 10 deg a 0.15 g pull (atan = 8.5 deg)
+# is never rejected and leaks ~5 deg of phantom pitch before the first dv/dt
+# arrives (MEASURED: 2.76 deg still present 4 s in). 7 deg rejects any pull
+# >= tan(7) = 0.123 g at onset with 1.5 deg margin on the 0.15 g case; smaller
+# pulls still leak, bounded (0.12 g: 4.2 deg peak). A lower angle ignores the
+# accel more often under road vibration -- unmeasured on the car; revisit with
+# drive data.
+ACCELERATION_REJECTION_DEG = 7.0
 MAGNETIC_REJECTION_DEG = 10.0
 # MEASURED: imufusion 1.3.3 takes rejection_timeout in SECONDS (see header).
 REJECTION_TIMEOUT_S = 5.0
@@ -88,6 +116,14 @@ BIAS_STATIONARY_PERIOD_S = 3.0
 # current rate across it would invent rotation nobody measured. Such an update
 # falls back to the nominal period (1 / sampleHz).
 MAX_SAMPLE_PERIOD_S = 0.5
+
+# Speed aiding. OBD SPEED arrives only ~every 2.3 s; a sample older than this is
+# no evidence about what the car is doing now, so compensation switches OFF.
+SPEED_STALE_S = 3.0
+# Sanity bound on dv/dt: a road car does not exceed ~0.6 g longitudinally, so a
+# larger derivative is a quantised/glitched speed pair, not a measurement.
+MAX_LONGITUDINAL_ACCEL_G = 0.6
+_KMH_PER_MS = 3.6
 
 _IDENTITY_3X3 = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 _ZERO_3 = (0.0, 0.0, 0.0)
@@ -183,7 +219,40 @@ class AhrsFusion:
         return False
 
     def observeSpeed(self, speed, capture: float) -> None:
-        """Accepted no-op: Fusion's Bias learns at rest from the gyro itself."""
+        """Record one OBD SPEED sample for acceleration compensation.
+
+        Args:
+            speed: OBD SPEED, km/h, or None/non-finite (ignored).
+            capture: Monotonic capture time, seconds (same clock as ``update``).
+
+        a_long = dv/dt between this sample and the previous one, clamped to
+        +/- MAX_LONGITUDINAL_ACCEL_G, and HELD until the next sample. A pair
+        more than SPEED_STALE_S apart yields no derivative (a_long unknown).
+        """
+        try:
+            kmh = float(speed)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(kmh):
+            return
+        speedMs = kmh / _KMH_PER_MS
+        prev = self._lastSpeed
+        if prev is not None:
+            prevCapture, prevSpeedMs = prev
+            dt = capture - prevCapture
+            if dt <= 0.0:
+                return  # a duplicate or out-of-order sample carries no derivative
+            if dt <= SPEED_STALE_S:
+                limit = MAX_LONGITUDINAL_ACCEL_G * STANDARD_GRAVITY_MS2
+                self._aLongMs2 = max(-limit, min(limit, (speedMs - prevSpeedMs) / dt))
+            else:
+                self._aLongMs2 = None
+        self._lastSpeed = (capture, speedMs)
+
+    @property
+    def longitudinalAccelMs2(self) -> float | None:
+        """The held dv/dt from OBD speed, m/s^2 (None until two usable samples)."""
+        return self._aLongMs2
 
     def update(self, accel, gyro, capture: float, mag_ut=None) -> None:
         """Fold one IMU sample into the attitude.
@@ -205,6 +274,7 @@ class AhrsFusion:
         accelG = np.asarray(accelVec, dtype=float) / STANDARD_GRAVITY_MS2
 
         gyroVec = _finiteVec3(gyro)
+        accelG = self._compensate(accelG, gyroVec, capture)
         if gyroVec is None:
             gyroDps = np.zeros(3)
         else:
@@ -262,6 +332,9 @@ class AhrsFusion:
         self._pitchRad = 0.0
         self._rollRad = 0.0
         self._headingDeg = 0.0
+        self._lastSpeed: tuple[float, float] | None = None
+        self._aLongMs2: float | None = None
+        self._speedCompensated = False
 
     # -- new surface -----------------------------------------------------------
     @property
@@ -301,8 +374,30 @@ class AhrsFusion:
             "magnetometerIgnored": bool(s.magnetometer_ignored),
             "accelerationErrorDeg": float(s.acceleration_error),
             "magneticErrorDeg": float(s.magnetic_error),
+            "speedCompensated": self._speedCompensated,
         }
 
     # -- internals -------------------------------------------------------------
+    def _compensate(self, accelG: np.ndarray, gyroVec, capture: float) -> np.ndarray:
+        """Remove the vehicle's own specific force (g units) when speed is fresh.
+
+        Off (accel returned unchanged) when there is no speed, the latest is
+        stale, or this sample has no gyro -- never compensate on old data or a
+        fabricated rate. With one sample only, the lateral term applies and the
+        longitudinal one (no derivative yet) does not.
+        """
+        self._speedCompensated = False
+        if self._lastSpeed is None or gyroVec is None:
+            return accelG
+        speedCapture, speedMs = self._lastSpeed
+        if capture - speedCapture > SPEED_STALE_S:
+            return accelG
+        out = accelG.copy()
+        if self._aLongMs2 is not None:
+            out[0] -= self._aLongMs2 / STANDARD_GRAVITY_MS2
+        out[1] -= speedMs * gyroVec[2] / STANDARD_GRAVITY_MS2
+        self._speedCompensated = True
+        return out
+
     def _initialised(self) -> bool:
         return self._updated and not self._ahrs.get_flags().startup

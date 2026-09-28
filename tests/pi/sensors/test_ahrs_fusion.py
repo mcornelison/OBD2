@@ -260,3 +260,152 @@ def test_realElapsedTime_drivesGyroIntegration():
         fusion.update(LEVEL, (0.0, 0.0, rate), t, mag_ut=mag)
     # Turning left from east heads toward north: heading DECREASES by ~10 deg.
     assert _angleDiffDeg(fusion.headingDeg, before) == pytest.approx(-10.0, abs=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Speed-aided acceleration compensation (ARCH-064 Task 3, C2/C3)
+#
+# An accelerometer cannot tell gravity from the car's own acceleration. OBD
+# SPEED (km/h, ~every 2.3 s) supplies the car's own specific force: forward
+# a_long = dv/dt, lateral v * omega_z. Both are subtracted before the AHRS sees
+# the accel. Signs are pinned here: each test fails if its sign is flipped.
+# ---------------------------------------------------------------------------
+
+SPEED_PERIOD_S = 2.3
+KMH_PER_MS = 3.6
+
+
+def _driveScenario(fusion: AhrsFusion, aLongG: float, seconds: float, *, feedSpeed: bool = True) -> list[tuple[float, float]]:
+    """5 s level at rest, then ``seconds`` of forward acceleration ``aLongG`` on flat ground.
+
+    OBD speed is sampled on a fixed 2.3 s grid from t=0 (not phase-aligned with
+    the onset, as on the car). Returns (secondsSinceOnset, pitchDeg) per sample
+    during the acceleration.
+    """
+    onset = 5.0
+    aMs2 = aLongG * G
+    nextSpeed = 0.0
+    trace = []
+    t = 0.0
+    end = onset + seconds
+    while t < end - 1e-9:
+        if feedSpeed and t >= nextSpeed - 1e-9:
+            v = max(0.0, aMs2 * (t - onset))
+            fusion.observeSpeed(v * KMH_PER_MS, t)
+            nextSpeed += SPEED_PERIOD_S
+        accelerating = t >= onset
+        accel = (aMs2 if accelerating else 0.0, 0.0, G)
+        fusion.update(accel, NO_ROTATION, t)
+        if accelerating:
+            trace.append((t - onset, math.degrees(fusion.pitchRad)))
+        t += DT
+    return trace
+
+
+def test_speedAided_longitudinal015g_8s_pitchUnderTwoDegreesInLast4s():
+    trace = _driveScenario(AhrsFusion(sampleHz=HZ), 0.15, 8.0)
+    worst = max(abs(p) for s, p in trace if s >= 4.0)
+    assert worst < 2.0
+
+
+def test_speedAided_longitudinal03g_10s_pitchUnderThreeDegreesInLast4s():
+    trace = _driveScenario(AhrsFusion(sampleHz=HZ), 0.3, 10.0)
+    worst = max(abs(p) for s, p in trace if s >= 6.0)
+    assert worst < 3.0
+
+
+def test_speedAided_longitudinal_uncompensatedControl_isContaminated():
+    """Negative control: without speed the same drive DOES read a phantom grade."""
+    trace = _driveScenario(AhrsFusion(sampleHz=HZ), 0.15, 8.0, feedSpeed=False)
+    worst = max(abs(p) for s, p in trace if s >= 4.0)
+    assert worst > 5.0
+
+
+def test_speedAided_longitudinalAccel_isDerivedFromSpeedAndClamped():
+    fusion = AhrsFusion(sampleHz=HZ)
+    assert fusion.longitudinalAccelMs2 is None
+    fusion.observeSpeed(0.0, 0.0)
+    assert fusion.longitudinalAccelMs2 is None  # one sample is not a derivative
+    fusion.observeSpeed(36.0, 2.0)  # 0 -> 10 m/s in 2 s
+    assert fusion.longitudinalAccelMs2 == pytest.approx(5.0)
+    fusion.observeSpeed(None, 3.0)  # ignored
+    assert fusion.longitudinalAccelMs2 == pytest.approx(5.0)
+    fusion.observeSpeed(0.0, 3.0)  # 10 -> 0 m/s in 1 s = -1.02 g: clamp to 0.6 g
+    assert fusion.longitudinalAccelMs2 == pytest.approx(-0.6 * G)
+
+
+def test_speedAided_lateral_leftTurn_rollAndPitchUnderTwoDegrees():
+    """Level car, 15 m/s, left turn omega_z=+0.2 rad/s: accel y = +v*omega_z for 20 s."""
+    fusion = AhrsFusion(sampleHz=HZ)
+    speed, omega = 15.0, 0.2
+    t = 0.0
+    nextSpeed = 0.0
+    for _ in range(int(5.0 * HZ)):  # settle at speed, straight
+        if t >= nextSpeed - 1e-9:
+            fusion.observeSpeed(speed * KMH_PER_MS, t)
+            nextSpeed += SPEED_PERIOD_S
+        fusion.update(LEVEL, NO_ROTATION, t)
+        t += DT
+    worstRoll = worstPitch = 0.0
+    for _ in range(int(20.0 * HZ)):
+        if t >= nextSpeed - 1e-9:
+            fusion.observeSpeed(speed * KMH_PER_MS, t)
+            nextSpeed += SPEED_PERIOD_S
+        fusion.update((0.0, speed * omega, G), (0.0, 0.0, omega), t)
+        t += DT
+        worstRoll = max(worstRoll, abs(math.degrees(fusion.rollRad)))
+        worstPitch = max(worstPitch, abs(math.degrees(fusion.pitchRad)))
+    assert worstRoll < 2.0
+    assert worstPitch < 2.0
+
+
+def test_speedAided_staleSpeed_equalsUncompensatedFilter():
+    """> 3 s without a speed sample: compensation OFF -- it cannot act on old data."""
+    aided = AhrsFusion(sampleHz=HZ)
+    plain = AhrsFusion(sampleHz=HZ)
+    aided.observeSpeed(0.0, 0.0)
+    aided.observeSpeed(36.0, 2.0)  # a_long = 5 m/s^2, held
+    assert aided.longitudinalAccelMs2 == pytest.approx(5.0)
+    t = 5.1  # > 3.0 s after the last speed sample
+    for _ in range(int(6.0 * HZ)):
+        accel = (0.15 * G, 0.05 * G, G)
+        gyro = (0.0, 0.0, 0.1)
+        aided.update(accel, gyro, t)
+        plain.update(accel, gyro, t)
+        t += DT
+        if plain.pitchRad is not None:
+            assert aided.pitchRad == plain.pitchRad
+            assert aided.rollRad == plain.rollRad
+    assert aided.flags["speedCompensated"] is False
+
+
+def test_speedAided_freshSpeed_changesTheOutput():
+    """Positive control for the stale test: a FRESH speed does change the output."""
+    aided = AhrsFusion(sampleHz=HZ)
+    plain = AhrsFusion(sampleHz=HZ)
+    aided.observeSpeed(0.0, 0.0)
+    aided.observeSpeed(36.0, 2.0)
+    t = 2.0
+    for _ in range(int(0.9 * HZ)):  # stays within 3 s of the last sample
+        accel = (0.15 * G, 0.0, G)
+        aided.update(accel, NO_ROTATION, t)
+        plain.update(accel, NO_ROTATION, t)
+        t += DT
+    assert aided.flags["speedCompensated"] is True
+    assert aided._ahrs.get_quaternion().tolist() != plain._ahrs.get_quaternion().tolist()
+
+
+def test_speedAided_gyroNone_skipsCompensation():
+    fusion = AhrsFusion(sampleHz=HZ)
+    fusion.observeSpeed(0.0, 0.0)
+    fusion.observeSpeed(36.0, 2.0)
+    fusion.update(LEVEL, None, 2.1)
+    assert fusion.flags["speedCompensated"] is False
+
+
+def test_speedAided_reset_dropsSpeedHistory():
+    fusion = AhrsFusion(sampleHz=HZ)
+    fusion.observeSpeed(0.0, 0.0)
+    fusion.observeSpeed(36.0, 2.0)
+    fusion.reset()
+    assert fusion.longitudinalAccelMs2 is None
