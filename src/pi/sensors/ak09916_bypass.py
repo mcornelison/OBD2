@@ -44,6 +44,11 @@
 # ================================================================================
 # 2026-08-21    | Rex (US-565) | Initial -- bypass enable, verified CNTL2 config,
 #               |              | ST1..ST2 burst, overflow refusal, ICM wrapper.
+# 2026-09-28    | Atlas        | ARCH-064: corrected AK09916_TO_ICM_AXES to
+#               | (ARCH-064)   | DS-000189 p.83 Fig. 13 -- (x,-y,-z), not the
+#               |              | ARCH-033 permutation -- which a garage
+#               |              | measurement against a known heading showed
+#               |              | reads 90 deg off (E read as S).
 # ================================================================================
 ################################################################################
 
@@ -114,34 +119,50 @@ ST2_OVERFLOW_MASK = 0x08
 # Datasheet sensitivity, 0.15 uT/LSB.
 UT_PER_LSB = 0.15
 
-#: ARCH-033. The AK09916 die does NOT share the ICM-20948's accel/gyro axes.
-#: Per TDK's own orientation drawing the mapping into the ICM frame is
-#: ``x <- ak_y``, ``y <- ak_x``, ``z <- -ak_z``. Encoded as (sourceIndex, sign)
-#: per output axis so the map is DATA a test can inspect, not arithmetic buried
-#: in a return statement.
+#: ARCH-064 (supersedes ARCH-033). The AK09916 die does NOT share the
+#: ICM-20948's accel/gyro axes. The correct mapping is DS-000189 (TDK ICM-20948
+#: datasheet) p.83 Fig. 13, the manufacturer's own orientation drawing:
+#: mag +X == accel +X, mag +Y is OPPOSITE accel +Y, mag +Z points DOWN while
+#: accel +Z points UP. Into the ICM frame that is ``x <- ak_x``, ``y <- -ak_y``,
+#: ``z <- -ak_z``. Encoded as (sourceIndex, sign) per output axis so the map is
+#: DATA a test can inspect, not arithmetic buried in a return statement.
 #:
-#: 🔴 WHY THIS EXISTS, AND WHY IT TOOK SO LONG. A-30 named this hypothesis on
-#: 2026-09-09 and recorded that THE DATA REFUTED IT. The data did -- the IMU was
-#: then sitting on the stereo amplifier with a rotating field of ~14.7 uT on a
-#: ~4 uT noise floor (SNR ~1.2), and an axis error cannot express itself through
-#: that. A-30 predicted the sequel verbatim: "It will surface the moment SNR is
-#: fixed and will look like the original fault returning."
+#: 🔴 ARCH-033 SHIPPED THE WRONG MAP, ``x <- ak_y``, ``y <- ak_x``, ``z <- -ak_z``,
+#: AND A HEADING-CONCENTRATION SWEEP COULD NOT TELL THE TWO APART. Both maps are
+#: proper rotations (determinant +1), and they differ from each other by a PURE
+#: 90-degree rotation about the shared z axis:
 #:
-#: Measured 2026-09-18, IMU remounted, GPS course as INDEPENDENT truth, two
-#: clean laps, all 48 axis permutations swept (R = circular concentration of the
-#: heading error against GPS course):
+#:     ARCH-033 map   [[0,1],[1,0]]
+#:     Fig. 13 map    [[1,0],[0,-1]]
+#:     [[0,1],[1,0]] . [[1,0],[0,-1]]^-1 = [[0,-1],[1,0]]   -- a 90-deg rotation
 #:
-#:     identity -- what shipped      R = 0.170 (lap 1)  0.357 (lap 3)
-#:     (+y,+x,-z) -- this map        R = 0.861 (lap 1)  0.878 (lap 3)
+#: The statistic ARCH-033 swept (R, circular concentration of the heading error
+#: against GPS course) is invariant under a constant heading offset by
+#: construction -- that is the whole reason it can separate "tracks" from
+#: "does not track" without also knowing the true north offset. A map that is
+#: wrong by exactly one more fixed rotation still tracks GPS course perfectly;
+#: it just tracks it 90 degrees off north. The sweep scored the ARCH-033 map
+#: R = 0.861 (lap 1) / 0.878 (lap 3) and had no way to prefer Fig. 13 over it --
+#: both concentrate the error into a constant, and "constant" is all R measures.
+#: Only an INDEPENDENT absolute reference -- a known heading, not a heading
+#: difference -- can discriminate the two, which is what the garage measurement
+#: below is.
 #:
-#: ⚠️ It is NOT ``computeHeadingDeg``, which was suspected first and is correct
-#: (atan2(+left, forward) IS a clockwise bearing); negating it broke four
-#: existing tests. It is NOT ``IMU_BODY_FRAME`` either -- swapping that leaves R
-#: at 0.170 and only moves the offset. Those are both ROTATIONS, and this is a
-#: fixed relationship between two dies in one package: it can only be corrected
-#: at the sensor seam, which is why every attempt above that layer failed while
-#: appearing to work at 0 deg and 180 deg.
-AK09916_TO_ICM_AXES: tuple[tuple[int, int], ...] = ((1, 1), (0, 1), (2, -1))
+#: MEASURED 2026-09-28, garage, car nose pointing EAST (independently known),
+#: stationary, raw AK09916 (-2.77, -22.52, +53.34) uT. Transformed by THIS map:
+#: horizontal bearing atan2(y, x) ~= 97 deg (EAST, matches the known heading);
+#: z ~= -53 uT, i.e. the field points DOWN, correct for the northern hemisphere.
+#: Transformed by the RETIRED ARCH-033 map the same raw sample reads ~187 deg
+#: (SOUTH) -- exactly the 90-degree rotation predicted above, and wrong by a
+#: heading no free-offset statistic could have caught.
+#:
+#: ⚠️ It is NOT ``computeHeadingDeg``, which was suspected first (ARCH-033) and
+#: is correct (atan2(+left, forward) IS a clockwise bearing); negating it broke
+#: four existing tests. It is NOT ``IMU_BODY_FRAME`` either -- swapping that
+#: leaves the ARCH-033 sweep's R at 0.170 (identity) and only moves the offset.
+#: This is a fixed relationship between two dies in one package: it can only be
+#: corrected at the sensor seam.
+AK09916_TO_ICM_AXES: tuple[tuple[int, int], ...] = ((0, 1), (1, -1), (2, -1))
 
 # ============================ ARCH-056: WHICH PATH READ IT ====================
 #: Which acquisition path produced a magnetometer reading. Defined HERE, at the

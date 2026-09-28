@@ -212,11 +212,12 @@ class TestMockSensorHarness:
         (row,) = _imuRows(freshDb)
         assert row[1:4] == (0.10, 0.20, 9.81)   # accel x/y/z
         assert row[4:7] == (1.10, 1.20, 1.30)   # gyro x/y/z
-        # ARCH-033: mag is mapped from the AK09916's axes into the ICM frame
-        # at the reader seam, so raw (10, 20, 30) lands as (y, x, -z). The EDR
-        # store therefore holds VEHICLE-frame-ready components, which is what
-        # every downstream consumer assumes it holds.
-        assert row[7:10] == (20.0, 10.0, -30.0)  # mag x/y/z, ARCH-033 transformed
+        # ARCH-064 (DS-000189 p.83 Fig. 13, supersedes ARCH-033): mag is mapped
+        # from the AK09916's axes into the ICM frame at the reader seam, so raw
+        # (10, 20, 30) lands as (x, -y, -z). The EDR store therefore holds
+        # VEHICLE-frame-ready components, which is what every downstream
+        # consumer assumes it holds.
+        assert row[7:10] == (10.0, -20.0, -30.0)  # mag x/y/z, ARCH-064 transformed
         assert row[10] == 26.5                  # temp_c
         assert row[11] == _FIXTURE              # data_source (honest synthetic tag)
 
