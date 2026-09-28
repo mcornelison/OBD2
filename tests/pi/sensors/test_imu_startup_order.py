@@ -132,3 +132,74 @@ def test_a_failing_gyro_check_does_not_cost_the_magnetometer() -> None:
     )
 
     assert device == ("wrapped", "icm")
+
+
+# ============================================================================
+# ARCH-064 Task 2, mode "direct": the SAME ordering invariant -- clean-reset
+# bypass FIRST, A-34 gyro recovery SECOND -- carried over onto
+# _buildImuDeviceDirect. Acquisition C never touches _buildImuDevice above (it
+# is adafruit-shaped); this is its own seam, so the ordering claim needs its
+# own test rather than inheriting coverage from the master/bypass path.
+# ============================================================================
+def test_direct_mode_gyroRecovery_runsAfterTheDirectBuild() -> None:
+    calls: list[str] = []
+
+    def buildFn(icmFactory: Any, akFactory: Any) -> Any:  # noqa: ARG001
+        calls.append("build")
+        return ("direct-device", icmFactory())
+
+    def recover(handle: Any) -> Any:  # noqa: ARG001
+        calls.append("gyro")
+        return None
+
+    device = sensor_reader._buildImuDeviceDirect(
+        lambda: "icm", lambda: "ak", buildFn=buildFn, recoverFn=recover
+    )
+
+    assert calls == ["build", "gyro"], (
+        f"direct-mode IMU startup ran {calls}; the clean-reset bypass build MUST "
+        "come first, same as ARCH-032 for master/bypass mode."
+    )
+    assert device == ("direct-device", "icm")
+
+
+def test_direct_mode_gyroRecovery_receivesAGyroRecoveryHandleOverTheRawIcm() -> None:
+    """Recovery writes ICM power-management registers, so it needs a handle onto
+    the REAL chip -- never the Icm20948Direct wrapper. See icm20948_direct.
+    GyroRecoveryHandle, which is what that handle must be here.
+    """
+    from pi.sensors.icm20948_direct import GyroRecoveryHandle
+
+    seen: dict[str, Any] = {}
+
+    def buildFn(icmFactory: Any, akFactory: Any) -> Any:  # noqa: ARG001
+        return icmFactory()
+
+    def recover(handle: Any) -> Any:
+        seen["handle"] = handle
+        return None
+
+    sensor_reader._buildImuDeviceDirect(
+        lambda: "raw-icm", lambda: "ak", buildFn=buildFn, recoverFn=recover
+    )
+
+    handle = seen["handle"]
+    assert isinstance(handle, GyroRecoveryHandle)
+    assert handle._icm == "raw-icm"  # noqa: SLF001 -- test introspection
+
+
+def test_direct_mode_failingGyroRecovery_doesNotCostTheDevice() -> None:
+    """Same degrade principle as master/bypass mode: a gyro recovery that
+    raises must not discard an already-built device."""
+
+    def buildFn(icmFactory: Any, akFactory: Any) -> Any:  # noqa: ARG001
+        return "the-direct-device"
+
+    def recover(handle: Any) -> Any:  # noqa: ARG001
+        raise OSError("gyro recovery exploded")
+
+    device = sensor_reader._buildImuDeviceDirect(
+        lambda: "icm", lambda: "ak", buildFn=buildFn, recoverFn=recover
+    )
+
+    assert device == "the-direct-device"

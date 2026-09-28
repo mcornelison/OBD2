@@ -18,6 +18,7 @@ import math
 
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS
+from pi.sensors.icm20948_direct import Icm20948Direct
 from pi.sensors.sensor_reader import (
     ABSENT,
     PRESENT,
@@ -33,6 +34,7 @@ from pi.sensors.sensor_reader import (
     ImuReader,
     LightReader,
     createSensorReadersFromConfig,
+    makeMagKeepAlive,
 )
 
 
@@ -161,6 +163,62 @@ def test_imu_noTemperatureAttr_publishesAccelGyroMag_tempNone():
     assert byTopic[TOPIC_IMU_TEMP].value is None
     # the whole burst still shares one seq
     assert len({s.seq for s in samples}) == 1
+
+
+class FakeImuMagRaises:
+    """Mimics a device whose accel/gyro are healthy but the magnetometer read
+    fails (ARCH-064 Task 2, Review Focus 1) -- e.g. Icm20948Direct.magnetic
+    propagating an OSError from the AK09916 bypass read."""
+
+    def __init__(self) -> None:
+        self.acceleration = (0.11, 0.22, 9.81)
+        self.gyro = (0.01, -0.02, 0.03)
+        self.temperature = 27.5
+
+    @property
+    def magnetic(self):
+        raise OSError("121")
+
+
+def test_imu_magReadError_dropsOnlyMagChannel_keepsAccelGyroTemp():
+    """Review Focus 1 (ARCH-064 Task 2): a magnetometer read error must drop
+    ONLY the mag channel for that burst -- accel and gyro are still published.
+
+    Pre-fix, ``mag = toIcmFrame(_vec3(dev.magnetic))`` raised BEFORE
+    ``_publishBurst`` ran at all, so ``pollOnce``'s outer ``except Exception``
+    (the 'read failed -- no sample this poll' path) discarded the accel and
+    gyro readings too, even though they had already been read successfully.
+    """
+    bus = SampleBus()
+    sub = bus.subscribe(["raw.imu.*"], QoS.LOSSY, "t")
+    reader = ImuReader(bus, deviceFactory=lambda: FakeImuMagRaises())
+    reader.probe()
+
+    reader.pollOnce()
+
+    samples = _drain(sub)
+    byTopic = {s.topic: s for s in samples}
+    assert byTopic[TOPIC_IMU_ACCEL].value == (0.11, 0.22, 9.81)
+    assert byTopic[TOPIC_IMU_GYRO].value == (0.01, -0.02, 0.03)
+    assert TOPIC_IMU_TEMP in byTopic
+    assert byTopic[TOPIC_IMU_TEMP].value == 27.5
+    # the mag channel is silenced (honest None), never fabricated and never
+    # allowed to take the rest of the burst down with it
+    assert TOPIC_IMU_MAG in byTopic
+    assert byTopic[TOPIC_IMU_MAG].value is None
+    assert len({s.seq for s in samples}) == 1  # still one atomic burst
+
+
+# --- ARCH-057 mag keep-alive: NOT bound in mode "direct" ---------------------
+def test_makeMagKeepAlive_notBound_forIcm20948Direct():
+    """ARCH-057's keep-alive repair is ``_magnetometer_init()``, an adafruit
+    master-mode API that mode "direct" never uses (there is no master to
+    repair -- see icm20948_direct.py's module header). ``Icm20948Direct``
+    exposes no such method, so the keep-alive must not bind to it; the poll
+    loop's own 4 Hz sampling is the only liveness check in that mode.
+    """
+    dev = Icm20948Direct(icm=object(), ak=object())
+    assert makeMagKeepAlive(dev) is None
 
 
 def test_imu_seqIncrementsPerBurstNotPerTopic():
