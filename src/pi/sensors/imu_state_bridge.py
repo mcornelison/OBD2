@@ -110,10 +110,20 @@
 #               | (ARCH-064)   | while the rotation verdict is FROZEN.
 # 2026-09-28    | Atlas        | Ruling 14 (Task 5 fix round): the mag/gyro
 #               | (ARCH-064)   | pairing window (_magMaxAgeS) is now floored at
-#               |              | MIN_PAIRING_WINDOW_S = 0.5 s -- sampleHz 50
-#               |              | (Ruling from the same date) collapsed
+#               |              | MIN_PAIRING_WINDOW_S -- sampleHz 50 collapsed
 #               |              | MAG_MAX_AGE_POLLS / sampleHz to 0.1 s, too tight
 #               |              | for scheduler jitter.
+# 2026-09-28    | Atlas        | Ruling 16 (Task 5 fix round 2): raised
+#               | (ARCH-064)   | MIN_PAIRING_WINDOW_S 0.5 -> 1.25 s. 1.25 s is
+#               |              | EXACTLY the pre-ARCH-064 window (5 polls at
+#               |              | 4 Hz), so pairing behaviour is unchanged from
+#               |              | before; it keeps the display's 1.0 s state-
+#               |              | write interval (stateHz 1) INSIDE the pairing
+#               |              | window (the invariant
+#               |              | test_carousel_heading_bare_bearing_recorded_-
+#               |              | pass.py pins); and it still protects against
+#               |              | >100 ms poll jitter dropping the gyro
+#               |              | (Ruling 14's purpose).
 # ================================================================================
 ################################################################################
 
@@ -324,20 +334,31 @@ DEFAULT_GRAVITY_TAU_S = 5.0
 # freshest mag is at most one interval old; 5 is slack for scheduler jitter.
 MAG_MAX_AGE_POLLS = 5
 
-# ARCH-064 Ruling 14 (Controller, fix round 1). MAG_MAX_AGE_POLLS / sampleHz
-# was fine at the old 4 Hz burst rate (1.25 s), but ARCH-064 raised sampleHz to
-# 50 Hz for the AHRS's internal read (specs/data-acquisition-architecture.md
-# §4.2.a), which collapses the SAME poll-count window to 0.1 s. At 0.1 s a
-# single scheduler hiccup over ~100 ms drops the paired gyro reading, and the
-# AHRS update path (imu_state_bridge -> AhrsFusion.update) integrates a
-# missing gyro as ZERO rate rather than holding the last one -- a silent
-# attitude freeze that looks like a healthy read. The window is a WALL-CLOCK
-# guarantee (data must be fresh enough to describe "now"), not a sample-count
-# guarantee, so it gets a floor in seconds: 0.5 s is generous slack above one
-# 100 Hz burst period (0.01 s) and comfortably covers the scheduler jitter
-# MAG_MAX_AGE_POLLS was already sized for at 4 Hz. Applied to BOTH the mag and
-# gyro pairing windows (they share one window, self._magMaxAgeS).
-MIN_PAIRING_WINDOW_S = 0.5
+# ARCH-064 Ruling 14 (Controller, fix round 1), raised by Ruling 16 (fix
+# round 2). MAG_MAX_AGE_POLLS / sampleHz was fine at the old 4 Hz burst rate
+# (1.25 s), but ARCH-064 raised sampleHz to 50 Hz for the AHRS's internal
+# read (specs/data-acquisition-architecture.md §4.2.a), which collapses the
+# SAME poll-count window to 0.1 s. At 0.1 s a single scheduler hiccup over
+# ~100 ms drops the paired gyro reading, and the AHRS update path
+# (imu_state_bridge -> AhrsFusion.update) integrates a missing gyro as ZERO
+# rate rather than holding the last one -- a silent attitude freeze that
+# looks like a healthy read. The window is a WALL-CLOCK guarantee (data must
+# be fresh enough to describe "now"), not a sample-count guarantee, so it
+# gets a floor in seconds.
+#
+# 1.25 s (Ruling 16), not the fix round 1 value of 0.5 s: 1.25 s is EXACTLY
+# the pre-ARCH-064 window (MAG_MAX_AGE_POLLS(5) / 4 Hz), so pairing
+# behaviour at the shipped rate is UNCHANGED from before this whole change --
+# not merely "safe", identical. It also keeps the display's 1.0 s
+# state-write interval (pi.sensors.imu.stateHz default 1) INSIDE the pairing
+# window, which tests/ui/test_carousel_heading_bare_bearing_recorded_pass.py
+# pins as an invariant (a magnetometer that stops must not go stale before
+# the NEXT regular display write, or headingDeg flickers absent on every
+# ordinary write cycle, not just a real dropout). And it still comfortably
+# covers the >100 ms scheduler jitter Ruling 14 was written for. Applied to
+# BOTH the mag and gyro pairing windows (they share one window,
+# self._magMaxAgeS).
+MIN_PAIRING_WINDOW_S = 1.25
 
 # Local alias for the shared gravity floor (defined in pitch_fusion, one home).
 _MIN_GRAVITY_MS2 = MIN_GRAVITY_MS2
