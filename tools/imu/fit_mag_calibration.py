@@ -107,16 +107,27 @@ Fixed by estimating the bias from WHICH SAMPLES, not by aggregating ALL of
 them: a sample's raw gyro reading IS the bias exactly when the car is not
 turning, and "not turning" is answered independently of the (possibly
 faulted) gyro by asking whether the horizontal MAGNETOMETER direction held
-still over a short window (``_stationaryMask`` -- the angle between the raw,
-uncalibrated horizontal (p, q) vector at nearby-in-time samples; this needs
-no hard-iron centre and so has none of Ruling 23's near-cluster instability).
-See ``STATIONARY_WINDOW_S`` / ``STATIONARY_HEADING_DELTA_DEG`` for the exact
-sizing and its justification against the sample rates. Too few stationary
+still over a short window (``_stationaryMask``).
+
+Ruling 28 (fit round 4) -- round 3 measured that direction about the ORIGIN,
+claiming this "needs no hard-iron centre". MEASURED wrong on this car: with
+the hard-iron offset |h| comparable to or larger than the circle radius R,
+the origin sits near or outside the circle, the apparent rotation seen from
+it shrinks on the far side and is zero at the tangent points, and turning
+rows were classed as parked -- gyro bias 0.80 against a true 0.50, and the
+recommended parked-bookend procedure REFUSED. Now the direction is measured
+about a PROVISIONAL CENTRE (``_provisionalCentre``: the bounding-box
+midrange of the horizontal field, which parked rows cannot move because they
+lie on the ellipse), against every row out to >= 2 s away. See
+``STATIONARY_WINDOW_S`` / ``STATIONARY_HEADING_DELTA_DEG`` for the sizing
+and its justification against the sample rate and noise. Too few stationary
 samples (a capture that never held still, e.g. continuous circling with no
-parked stretch) REFUSES with a distinct message naming that specifically --
-not the "too few moving samples" message, which now means what it says
-(never turned enough), not "mostly idled" (a diagnosis Ruling 25 showed is
-sometimes exactly backwards).
+parked stretch) REFUSES with a distinct message naming that specifically.
+Too few MOVING samples (Ruling 28 item 5) now asks the magnetometer which of
+two causes it is: if the magnetometer shows the car turning, the message
+blames the gyro (frozen/faulted, or a wrong bias estimate); only if the
+magnetometer agrees nothing turned does it say the capture never turned.
+Round 3 blamed the drive in both cases.
 
 ⚠️ ONLY DRIVES CAPTURED **AFTER** ARCH-064 DEPLOYS ARE VALID INPUT. Earlier
 rows were recorded under the pre-ARCH-064 AK09916 axis map; feeding them here
@@ -143,6 +154,14 @@ silently. ``horizontalGain`` (the fitted circle's radius divided by
 value unless overridden) is always reported; outside 0.8-1.2 it comes with a
 WARNING (never a refusal -- there is nothing a planar fit can do about it
 except say so) that heading on graded roads may be biased.
+
+VERTICAL COMPANION (Ruling 28 item 4). ``verticalFieldRatio`` (the mean
+body-up field of the moving rows divided by ``earthVerticalUt``) is always
+reported; when the two differ by more than ``VERTICAL_FIELD_WARN_FRACTION``
+(10 %) of ``|earthVerticalUt|`` it WARNS, never refuses: the car alters the
+vertical field, or there is large z iron, or ``--earth-vertical-ut`` is
+wrong for the capture location. Hard-iron z absorbs the difference in every
+case; the warning makes it visible.
 
 Input: a CSV exported from ``edr_imu_sample`` (see
 ``src/common/edr/sensor_schema.py``), e.g.::
@@ -223,33 +242,58 @@ _MIN_SAMPLES = HEADING_BINS
 # module docstring's coverage-refusal section for why this exact constant.
 MOVING_MIN_GYRO_RAD_S = DEFAULT_MAX_GYRO_RAD_S
 
-# Ruling 25: stationary-window sizing for gyro bias estimation.
+# Ruling 28 (fix round 4): stationary-window sizing for gyro bias estimation.
+# Round 3 judged "not turning" by the change in the RAW (p, q) direction seen
+# from the ORIGIN, against the immediate neighbours (~0.5 s), at 2 degrees.
+# MEASURED wrong on this car's geometry: when the hard-iron offset |h| is
+# comparable to or larger than the circle radius R (drive 77: 17.59 vs 16.43
+# uT, RECALLED, pre-fix axis map), the origin sits near or outside the circle,
+# so the apparent rotation seen from it shrinks on the far side and is ZERO at
+# the tangent points -- turning rows read as parked, their gyro (bias + rate)
+# enters the median, and the bias came out 0.80 instead of 0.50. Gentle turns
+# failed the same way even with |h| < R: 0.1 rad/s moves only 2.9 degrees in
+# 0.5 s, which the noise band swallows.
 #
-# STATIONARY_WINDOW_S -- edr_imu_sample rows persist at the EDR persistHz
-# (~2 Hz; see imu_state_bridge's persistHz/sampleHz split -- the IMU itself
-# bursts internally at up to 50 Hz, sampleHz, but that is NOT the rate rows
-# land in the table at), so consecutive rows are ~0.5 s apart. A 1.0 s
-# window comfortably covers a sample's two immediate chronological
-# neighbours (~2-3 rows total) without stretching so wide that real motion
-# spanning the window would partly cancel and read as smaller than it is.
-STATIONARY_WINDOW_S = 1.0
+# STATIONARY_WINDOW_S -- each row is compared against rows at least this far
+# away in ts_capture (rows arrive at the ~2 Hz EDR persistHz, so ~4 rows).
+# Over 2 s a gentle 0.1 rad/s turn moves 11.5 degrees -- far clear of the
+# per-comparison noise (0.3-0.6 uT on R ~16 uT: sqrt(2) * sigma / R = 1.5-3.0
+# degrees, 1 sigma). A 0.5 s window would put that same turn at 2.9 degrees,
+# inside the noise.
+STATIONARY_WINDOW_S = 2.0
 #
-# STATIONARY_HEADING_DELTA_DEG -- magnetometer noise here is ~0.3-0.6 uT on
-# an ~18 uT horizontal field (Task 6's own worked example), i.e. an APPARENT
-# heading wobble of asin(0.6/18) ~= 1.9 degrees between two otherwise-
-# identical readings. 2.0 degrees sits at the top of that band: genuine
-# noise on a truly-stationary pair only rarely exceeds it (and a sample
-# needs just ONE qualifying neighbour, not both), while a 0.3 rad/s turn
-# (~17.2 deg/s) crosses it in under 0.12 s -- far inside even the shortest
-# realistic inter-sample gap, so real motion is never mistaken for held-still.
-STATIONARY_HEADING_DELTA_DEG = 2.0
+# The comparison row must lie within this span of the row being judged. A
+# gap in ts_capture (a dropped burst, a paused capture) must not turn two
+# rows a lap apart into a "held still" pair.
+_STATIONARY_MAX_SPAN_S = 2.0 * STATIONARY_WINDOW_S
+#
+# STATIONARY_HEADING_DELTA_DEG -- chosen so the stationary test and the
+# moving gate meet at the SAME rate: a row is "held still" only if its
+# apparent rotation over the window is below MOVING_MIN_GYRO_RAD_S (0.05 rad/s
+# x 2 s = 5.7 degrees). One threshold, two views of it -- the gyro's and the
+# magnetometer's. Against the noise: 5.7 degrees is 1.9-3.8 sigma of a single
+# comparison, and a row needs only ONE side (earlier or later) to hold. Against
+# motion: a 0.1 rad/s turn reads 11.5 degrees over the window, still 9.2 after
+# the worst apparent-rate shrink the brief's 20/16 ellipse imposes (x0.8), so
+# every turn at or above 0.1 rad/s is excluded. Rows creeping below ~0.06
+# rad/s can pass; their gyro then contaminates the median by at most that
+# rate, and only in proportion to how many of them there are versus parked
+# rows -- which is why the procedure asks for a parked stretch.
+STATIONARY_HEADING_DELTA_DEG = math.degrees(MOVING_MIN_GYRO_RAD_S * STATIONARY_WINDOW_S)
+#
+# Below this mean half-extent of the horizontal field's bounding box, the
+# magnetometer saw no turn at all and angles about the provisional centre are
+# meaningless (see _stationaryMaskAboutProvisionalCentre). 4 uT sits between
+# a parked noise cluster (thousands of rows at sigma 0.6 uT span about
+# +/-2.3 uT, ~3.8 sigma) and the weakest circle Ruling 26 contemplates
+# (horizontal gain 0.3 x 19.4 uT = 5.8 uT radius).
+_MIN_PROVISIONAL_RADIUS_UT = 4.0
 #
 # A median needs enough points to be a robust centre, not a coincidence; 10
 # is a practical floor, well under what even a few seconds of the brief's
 # own "~30 s parked" bookend would provide, while still catching a capture
 # that truly never held still (continuous circling with no parked stretch).
 _MIN_STATIONARY_SAMPLES = 10
-
 # m7: refuse a fit whose corrected radius disagrees with itself by more than
 # this many percent, unless the caller explicitly overrides it.
 MAX_RADIUS_SPREAD_PERCENT_DEFAULT = 5.0
@@ -297,6 +341,18 @@ DEFAULT_EARTH_VERTICAL_UT = -49.0
 # calibration itself.
 DEFAULT_EARTH_HORIZONTAL_UT = 19.4
 
+# Ruling 26: horizontalGain outside this band WARNS (never refuses). Module
+# constants, not literals, so a test can prove it reads each edge.
+HORIZONTAL_GAIN_WARN_LOW = 0.8
+HORIZONTAL_GAIN_WARN_HIGH = 1.2
+
+# Ruling 28 item 4, the vertical companion to horizontalGain: warn when the
+# mean body-up field differs from earthVerticalUt by more than this fraction
+# of |earthVerticalUt|. Either the car alters the vertical field, or there is
+# large z iron, or --earth-vertical-ut is wrong for where the capture was
+# made. h_z absorbs all three, so this is a WARNING, never a refusal.
+VERTICAL_FIELD_WARN_FRACTION = 0.10
+
 
 @dataclass(frozen=True)
 class MagCalibrationFit:
@@ -320,6 +376,14 @@ class MagCalibrationFit:
     # a planar capture cannot correct this, only flag it.
     horizontalGain: float = 1.0
     horizontalGainWarning: str | None = None
+    # Ruling 28: mean body-up field / earthVerticalUt. Always reported;
+    # verticalFieldWarning is set (never raised) when the two differ by more
+    # than VERTICAL_FIELD_WARN_FRACTION of |earthVerticalUt|.
+    verticalFieldRatio: float = 1.0
+    verticalFieldWarning: str | None = None
+    # Ruling 25/28: the per-axis gyro bias subtracted before the moving gate,
+    # rad/s, raw DEVICE axes. None when the CSV carried no gyro columns.
+    gyroBiasRadS: Vector3 | None = None
 
     def toConfigBlock(self) -> dict[str, object]:
         """The ``pi.sensors.imu.magCalibration`` config block, verbatim shape."""
@@ -332,6 +396,8 @@ class MagCalibrationFit:
         """One line for a log or a report."""
         forced = " (FORCED past the quality floor)" if self.qualityForced else ""
         warned = " [WARNING: unobserved horizontal/vertical gain]" if self.horizontalGainWarning else ""
+        if self.verticalFieldWarning:
+            warned += " [WARNING: vertical field differs from Earth's expected]"
         return (
             f"hard iron ({self.hardIronUt[0]:+.2f}, {self.hardIronUt[1]:+.2f}, "
             f"{self.hardIronUt[2]:+.2f}) uT, ellipse major/minor axes "
@@ -512,75 +578,124 @@ def _headingBinCoverage(
     return int(np.sum(counts >= minPerBin))
 
 
-def _angleBetweenDeg(p1: float, q1: float, p2: float, q2: float) -> float:
-    """Angle between two horizontal-plane vectors, degrees, 0..180.
+def _provisionalCentre(p: np.ndarray, q: np.ndarray) -> tuple[float, float]:
+    """Ruling 28: a first guess at the ellipse centre, BEFORE any fit.
 
-    Deliberately NOT centred on any hard-iron estimate -- the RAW
-    (uncalibrated) (p, q) vector's own direction is what is compared, which
-    is well-conditioned as long as the horizontal field itself is not near
-    zero (true of Earth's field at any reasonable latitude, hard iron or
-    not) and needs no prior knowledge of the ellipse centre Ruling 25 is
-    trying to help determine in the first place.
+    The bounding-box MIDRANGE of the horizontal field, ((max + min) / 2) per
+    axis. Chosen over a first-pass conic fit because it is immune to idle
+    dwell: a parked car's raw vector lies ON the ellipse, i.e. inside the
+    box, so any number of parked rows leave the box -- and its midpoint --
+    exactly where the moving rows put it; a conic fit weights every row, and
+    2000 parked rows at one point drag it (that is the Ruling 23 exploit). A
+    rotated ellipse's bounding box is centred on the ellipse centre, so with
+    full heading coverage the midrange IS the centre up to noise in the four
+    extreme rows. It is NOT robust to a single wild outlier (a spike moves
+    it by half the excursion); the consumer tolerates a centre error of a
+    good fraction of R, and a capture with spikes that large fails the m7
+    quality floor downstream regardless. With partial coverage the midrange
+    is off-centre, but such a capture is refused on coverage anyway.
     """
-    crossVal = p1 * q2 - q1 * p2
-    dotVal = p1 * p2 + q1 * q2
-    return abs(math.degrees(math.atan2(crossVal, dotVal)))
+    return (
+        (float(np.max(p)) + float(np.min(p))) / 2.0,
+        (float(np.max(q)) + float(np.min(q))) / 2.0,
+    )
 
 
-def _stationaryMask(tsArray: np.ndarray, p: np.ndarray, q: np.ndarray) -> np.ndarray:
-    """Ruling 25: samples whose horizontal mag direction barely moved versus
-    a chronologically close neighbour -- a non-turning sample's raw gyro
-    reading IS the bias, independent of whether the gyro itself is faulted.
+def _stationaryMask(
+    tsArray: np.ndarray, p: np.ndarray, q: np.ndarray, centreP: float, centreQ: float
+) -> np.ndarray:
+    """Ruling 28: rows whose horizontal field direction, seen from the
+    PROVISIONAL CENTRE, held still for ``STATIONARY_WINDOW_S`` -- a
+    non-turning row's raw gyro reading IS the bias, whatever the gyro fault.
 
-    Only the two chronologically NEAREST neighbours (one earlier, one later)
-    are checked, matching ``STATIONARY_WINDOW_S``'s own sizing (~2-3 rows at
-    the nominal EDR persist rate); a sample is stationary if EITHER
-    qualifies (so the first/last row of a held-still stretch, which only has
-    one usable neighbour, is not penalised for it).
+    Angles are measured about ``(centreP, centreQ)``, not the origin: about
+    the centre, a real turn at rate w moves the direction at ~w on every
+    side of the ellipse (between b/a and a/b of it), whereas about the
+    origin it shrinks to zero at the tangent points once |h| ~ R (the
+    round-3 defect).
+
+    A row is stationary when, on EITHER side (earlier or later), every row
+    out to the first one at least ``STATIONARY_WINDOW_S`` away stays within
+    ``STATIONARY_HEADING_DELTA_DEG`` of it. Checking every row in the
+    window, not just the far end, stops a fast turn that happens to come
+    full circle from reading as held still; allowing either side lets the
+    first and last rows of a parked stretch qualify. A side whose far row is
+    beyond ``_STATIONARY_MAX_SPAN_S`` (a gap in the capture) does not count.
     """
-    order = np.argsort(tsArray)
-    n = len(order)
-    stationary = np.zeros(n, dtype=bool)
+    order = np.argsort(tsArray, kind="stable")
+    ts = tsArray[order]
+    phi = np.arctan2(q[order] - centreQ, p[order] - centreP)
+    n = len(ts)
+    thresholdRad = math.radians(STATIONARY_HEADING_DELTA_DEG)
+    # First row at or after ts + window; last row at or before ts - window.
+    forwardEnd = np.searchsorted(ts, ts + STATIONARY_WINDOW_S, side="left")
+    backwardEnd = np.searchsorted(ts, ts - STATIONARY_WINDOW_S, side="right") - 1
+
+    stationarySorted = np.zeros(n, dtype=bool)
     for k in range(n):
-        i = order[k]
-        for neighborK in (k - 1, k + 1):
-            if neighborK < 0 or neighborK >= n:
+        sides = (
+            (forwardEnd[k], slice(k + 1, forwardEnd[k] + 1)),
+            (backwardEnd[k], slice(backwardEnd[k], k)),
+        )
+        for endIdx, window in sides:
+            if endIdx < 0 or endIdx >= n:
                 continue
-            j = order[neighborK]
-            if abs(tsArray[j] - tsArray[i]) > STATIONARY_WINDOW_S:
+            if abs(ts[endIdx] - ts[k]) > _STATIONARY_MAX_SPAN_S:
                 continue
-            if _angleBetweenDeg(p[i], q[i], p[j], q[j]) <= STATIONARY_HEADING_DELTA_DEG:
-                stationary[i] = True
+            delta = (phi[window] - phi[k] + math.pi) % (2.0 * math.pi) - math.pi
+            if float(np.max(np.abs(delta))) <= thresholdRad:
+                stationarySorted[k] = True
                 break
+    stationary = np.zeros(n, dtype=bool)
+    stationary[order] = stationarySorted
     return stationary
+
+
+def _stationaryMaskAboutProvisionalCentre(
+    tsArray: np.ndarray, p: np.ndarray, q: np.ndarray
+) -> np.ndarray:
+    """``_stationaryMask`` about ``_provisionalCentre`` -- the one pairing.
+
+    Degenerate case: when the horizontal field barely moved at all (the
+    bounding box's mean half-extent is under ``_MIN_PROVISIONAL_RADIUS_UT``)
+    the provisional centre lands INSIDE the parked cluster and angles about
+    it are pure noise. The magnetometer's answer there is unambiguous -- the
+    car never turned -- so every row is stationary, the bias is the median
+    of the whole capture, and the fit refuses downstream saying the capture
+    never turned (MEASURED: without this, an all-parked capture found 0
+    stationary rows and was refused for having nothing parked).
+    """
+    centreP, centreQ = _provisionalCentre(p, q)
+    halfExtent = (float(np.ptp(p)) + float(np.ptp(q))) / 4.0
+    if halfExtent < _MIN_PROVISIONAL_RADIUS_UT:
+        return np.ones(len(p), dtype=bool)
+    return _stationaryMask(tsArray, p, q, centreP, centreQ)
 
 
 def _estimateGyroBias(
     tsArray: np.ndarray, p: np.ndarray, q: np.ndarray, gyroMatrix: np.ndarray
 ) -> np.ndarray:
-    """Ruling 25: per-axis gyro bias, the median RAW reading over samples
-    judged stationary by ``_stationaryMask`` -- never the whole capture
-    (Ruling 24's approach; see module docstring for why that measurably
-    fails on steady circling, the calibration procedure this tool expects).
+    """Ruling 25/28: per-axis gyro bias, the median RAW reading over rows
+    judged stationary by the magnetometer about the provisional centre --
+    never the whole capture (Ruling 24's approach; see module docstring for
+    why that measurably fails on steady circling).
 
-    Split out from ``fitMagCalibration`` as its own function specifically so
-    it is a clean, direct patch target: fix round 2's discrimination test
-    for this exact mechanism was measured to be INERT (it passed even with
-    the bias forced to zero, because the fitted-centre/>=3-per-bin coverage
-    defences alone already refused that scenario) -- a future test for this
-    function can patch it directly and prove it is exercised, the way
-    ``tests/tools/test_fit_mag_calibration.py`` now does.
+    Kept as its own function, with this signature, so it is a clean, direct
+    patch target: the tests prove each acceptance case goes RED when this is
+    swapped for round 3's origin-based version, or for zero.
 
     Raises:
         ValueError: too few stationary samples to trust the median.
     """
-    stationaryMask = _stationaryMask(tsArray, p, q)
+    stationaryMask = _stationaryMaskAboutProvisionalCentre(tsArray, p, q)
     stationaryCount = int(np.sum(stationaryMask))
     if stationaryCount < _MIN_STATIONARY_SAMPLES:
         raise ValueError(
-            f"no non-turning samples to estimate gyro bias ({stationaryCount} "
-            f"found, need at least {_MIN_STATIONARY_SAMPLES}): start and end "
-            "the capture with roughly 30 seconds parked."
+            f"too few parked, non-turning samples to estimate the gyro bias: "
+            f"{stationaryCount} rows held their magnetometer heading within "
+            f"{STATIONARY_HEADING_DELTA_DEG:.1f} deg for {STATIONARY_WINDOW_S:.0f} s, "
+            f"need at least {_MIN_STATIONARY_SAMPLES}. Start and end the "
+            "capture with roughly 30 seconds parked, engine running."
         )
     return np.median(gyroMatrix[stationaryMask], axis=0)
 
@@ -689,8 +804,10 @@ def fitMagCalibration(
     # sensor's own reading, and the A-34 faulted-offset defect puts a
     # constant ~0.5 rad/s on one axis, well above MOVING_MIN_GYRO_RAD_S). The
     # bias is estimated from samples judged STATIONARY by mag-heading
-    # stability (Ruling 25), NOT a whole-capture median (Ruling 24's
-    # approach, which fails on steady circling -- see module docstring).
+    # stability about a provisional centre (Rulings 25, 28), NOT a
+    # whole-capture median (Ruling 24's approach, which fails on steady
+    # circling -- see module docstring).
+    gyroBiasPerAxis: np.ndarray | None = None
     if all(g is not None for g in gyroRaw):
         gyroMatrix = np.array(gyroRaw)  # shape (N, 3)
         gyroBiasPerAxis = _estimateGyroBias(tsArray, p, q, gyroMatrix)
@@ -701,12 +818,7 @@ def fitMagCalibration(
         movingMask = np.ones(len(rows), dtype=bool)
     movingCount = int(np.sum(movingMask))
     if movingCount < _MIN_SAMPLES:
-        raise ValueError(
-            f"need at least {_MIN_SAMPLES} moving samples (bias-corrected gyro "
-            f"magnitude > {MOVING_MIN_GYRO_RAD_S} rad/s), got {movingCount} "
-            f"moving out of {total} total -- the capture never turned enough "
-            "to trace a heading-dependent ellipse."
-        )
+        raise ValueError(_tooFewMovingMessage(tsArray, p, q, movingCount, total, gyroBiasPerAxis))
     pM, qM, rM = p[movingMask], q[movingMask], r[movingMask]
 
     # Ruling 22: subtract Earth's own vertical field before what remains is
@@ -715,7 +827,18 @@ def fitMagCalibration(
 
     pMean, qMean = float(np.mean(pM)), float(np.mean(qM))
     coeffs = _fitConic(pM - pMean, qM - qMean)
-    x0c, y0c, r1, r2, eigvecs = _ellipseParams(*coeffs)
+    try:
+        x0c, y0c, r1, r2, eigvecs = _ellipseParams(*coeffs)
+    except ValueError as exc:
+        # Item 5: say what went INTO the fit, so a bad moving/idle split (a
+        # wrong gyro bias letting parked rows in) is visible, not hidden
+        # behind "too noisy".
+        biasNote = (
+            ""
+            if gyroBiasPerAxis is None
+            else f", gyro bias subtracted ({', '.join(f'{v:+.3f}' for v in gyroBiasPerAxis)}) rad/s"
+        )
+        raise ValueError(f"{exc} [{movingCount} of {total} rows judged moving{biasNote}]") from exc
     x0, y0 = x0c + pMean, y0c + qMean
 
     # Ruling 23: bins centred on the FITTED centre, moving samples only.
@@ -786,12 +909,32 @@ def fitMagCalibration(
     # gated on.
     horizontalGain = radiusTarget / earthHorizontalUt if earthHorizontalUt > 0 else float("inf")
     horizontalGainWarning = None
-    if not (0.8 <= horizontalGain <= 1.2):
+    if not (HORIZONTAL_GAIN_WARN_LOW <= horizontalGain <= HORIZONTAL_GAIN_WARN_HIGH):
         horizontalGainWarning = (
             f"horizontal:vertical gain ratio is unobserved from a planar capture "
-            f"(fitted horizontal gain {horizontalGain:.2f}, outside 0.8-1.2) -- "
+            f"(fitted horizontal gain {horizontalGain:.2f}, outside "
+            f"{HORIZONTAL_GAIN_WARN_LOW}-{HORIZONTAL_GAIN_WARN_HIGH}) -- "
             "heading on grades (nonzero pitch/roll) may be biased; this fit "
             "cannot correct for it, only flag it."
+        )
+
+    # Ruling 28 item 4: the vertical companion. Same contract -- reported for
+    # every fit, warned on, never gated on.
+    meanVerticalUt = float(np.mean(rM))
+    verticalFieldRatio = (
+        meanVerticalUt / earthVerticalUt if earthVerticalUt != 0 else float("inf")
+    )
+    verticalFieldWarning = None
+    if abs(meanVerticalUt - earthVerticalUt) > VERTICAL_FIELD_WARN_FRACTION * abs(earthVerticalUt):
+        verticalFieldWarning = (
+            f"mean vertical field {meanVerticalUt:+.1f} uT differs from the "
+            f"expected Earth vertical {earthVerticalUt:+.1f} uT by "
+            f"{meanVerticalUt - earthVerticalUt:+.1f} uT (more than "
+            f"{VERTICAL_FIELD_WARN_FRACTION:.0%} of it) -- the car is altering "
+            "the vertical field, or there is large z hard iron, or "
+            "--earth-vertical-ut is wrong for where this was captured. "
+            "Hard-iron z absorbs it; if the car's own iron is the cause, "
+            "heading on grades may be biased."
         )
 
     return MagCalibrationFit(
@@ -809,6 +952,48 @@ def fitMagCalibration(
         qualityForced=qualityForced,
         horizontalGain=horizontalGain,
         horizontalGainWarning=horizontalGainWarning,
+        verticalFieldRatio=verticalFieldRatio,
+        verticalFieldWarning=verticalFieldWarning,
+        gyroBiasRadS=(
+            None if gyroBiasPerAxis is None else tuple(float(v) for v in gyroBiasPerAxis)
+        ),
+    )
+
+
+def _tooFewMovingMessage(
+    tsArray: np.ndarray,
+    p: np.ndarray,
+    q: np.ndarray,
+    movingCount: int,
+    total: int,
+    gyroBiasPerAxis: np.ndarray | None,
+) -> str:
+    """Ruling 28 item 5: name the REAL cause of a too-few-moving refusal.
+
+    Two very different captures end here. Either the car genuinely did not
+    turn, or the magnetometer shows it turning and the bias-corrected gyro
+    does not -- a frozen/latched gyro (A-34), or a bias estimate that is
+    wrong. The magnetometer decides which, and the message says so; round 3
+    blamed the drive in both cases.
+    """
+    head = (
+        f"need at least {_MIN_SAMPLES} moving samples (bias-corrected gyro "
+        f"magnitude > {MOVING_MIN_GYRO_RAD_S} rad/s), got {movingCount} of {total}"
+    )
+    if gyroBiasPerAxis is None:
+        return f"{head} -- the capture never turned enough to trace a heading-dependent ellipse."
+    turningByMag = total - int(np.sum(_stationaryMaskAboutProvisionalCentre(tsArray, p, q)))
+    bias = ", ".join(f"{v:+.3f}" for v in gyroBiasPerAxis)
+    if turningByMag >= _MIN_SAMPLES:
+        return (
+            f"{head}, but the magnetometer shows {turningByMag} rows turning -- "
+            f"the gyro disagrees with the magnetometer. The gyro is frozen or "
+            f"faulted, or its bias estimate ({bias}) rad/s is wrong; this is a "
+            "gyro problem, not a drive that failed to turn."
+        )
+    return (
+        f"{head}, and the magnetometer agrees (only {turningByMag} rows turning) "
+        "-- the capture never turned enough to trace a heading-dependent ellipse."
     )
 
 
@@ -866,17 +1051,30 @@ def main(argv: list[str] | None = None) -> int:
             "radiusSpreadPercent": round(fit.radiusSpreadPercent, 3),
             "residualRmsUt": round(fit.residualRmsUt, 3),
             "qualityForced": fit.qualityForced,
-            "horizontalGain": round(fit.horizontalGain, 3),
+            "horizontalGain": _finiteOrNone(fit.horizontalGain),
             "horizontalGainWarning": fit.horizontalGainWarning,
+            "verticalFieldRatio": _finiteOrNone(fit.verticalFieldRatio),
+            "verticalFieldWarning": fit.verticalFieldWarning,
+            "gyroBiasRadS": (
+                None if fit.gyroBiasRadS is None else [round(v, 5) for v in fit.gyroBiasRadS]
+            ),
             "describe": fit.describe(),
         },
     }
     print(json.dumps(result, indent=2))
-    # Ruling 26: a WARNING line, not a refusal -- printed separately (stderr)
-    # so it is visible even when stdout is piped/redirected to save the JSON.
-    if fit.horizontalGainWarning is not None:
-        print(f"WARNING: {fit.horizontalGainWarning}", file=sys.stderr)
+    # Rulings 26/28: WARNING lines, not refusals -- printed separately
+    # (stderr) so they are visible even when stdout is redirected to save
+    # the JSON.
+    for warning in (fit.horizontalGainWarning, fit.verticalFieldWarning):
+        if warning is not None:
+            print(f"WARNING: {warning}", file=sys.stderr)
     return 0
+
+
+def _finiteOrNone(value: float) -> float | None:
+    """Round for JSON; a non-finite ratio (zero denominator) becomes null,
+    because ``json.dumps`` would otherwise emit the non-standard ``Infinity``."""
+    return round(value, 3) if math.isfinite(value) else None
 
 
 if __name__ == "__main__":

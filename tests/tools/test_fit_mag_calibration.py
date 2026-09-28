@@ -90,6 +90,25 @@ Ruling 26 was added mid-round), by finding:
 * Ruling 26 (added mid-round): a PLANAR capture cannot observe a horizontal/
   vertical gain mismatch (``TestHorizontalGainWarning``) -- ``horizontalGain``
   is always reported and a WARNING (never a refusal) fires outside 0.8-1.2.
+
+Fix round 4 (Ruling 28; re-review of 8e3e6875 found round 3 judged "not
+turning" about the ORIGIN, which fails when |h| ~ R -- this car's geometry):
+
+* The synthetic helpers are physically honest (``_driveRows``): mag and gyro
+  noise on every row, parked rows ON the ellipse at the heading the car
+  stopped at (never at its centre), heading integrating the gyro's own rate
+  at ~2 Hz. Round 3's helpers (noiseless, parked at the centre, all
+  |h| < R) are exactly the conditions under which the origin test works --
+  they hid the defect.
+* ``TestProvisionalCentreStationarity``: |h| > R with parked bookends, and
+  gentle 0.1 rad/s turns with bookends, are ACCEPTED with the right bias --
+  each paired with a PROOF that it goes RED when ``_estimateGyroBias`` is
+  swapped for round 3's origin-based version (``_round3OriginBias``,
+  verified identical to round 3's function on these inputs). Refusals name
+  the real cause (nothing parked; gyro disagrees with the magnetometer;
+  never turned).
+* ``test_noGyroDenseIdleDwellIsRefused`` + its centroid-binning proof, the
+  >1.2 horizontal-gain warning + its proof, and ``TestVerticalFieldWarning``.
 """
 
 from __future__ import annotations
@@ -183,10 +202,29 @@ def _rowsFromMagPoints(
     ]
 
 
-def _circlingRows(
+# Fix round 4 (Ruling 28): the gyro-bearing helpers below are PHYSICALLY
+# HONEST, because round 3's were not and that hid a real defect. Round 3's
+# moving rows were noiseless and its "parked" rows sat at the ellipse CENTRE
+# -- a place a parked car's raw vector can never be (the raw vector is Earth's
+# horizontal field plus iron, i.e. ON the ellipse, at whatever heading the car
+# stopped at). Every round-3 scenario was also |h| < R. Those are exactly the
+# conditions under which judging stationarity about the ORIGIN happens to
+# work; the car's recorded geometry (|h| 17.59 uT against R 16.43, RECALLED,
+# pre-fix axis map) is not one of them. So now:
+#
+# * every row carries mag noise (default _MAG_NOISE_UT) and gyro noise
+#   (default _GYRO_NOISE_RAD_S) -- the reviewer's measured figures;
+# * a parked row (rate 0) sits ON the ellipse at the heading the car last
+#   reached, not at the centre;
+# * the heading integrates the SAME rate the synthetic gyro reports, at the
+#   ~2 Hz EDR persist rate, so timestamps, gyro and mag agree.
+_MAG_NOISE_UT = 0.3
+_GYRO_NOISE_RAD_S = 0.005
+
+
+def _driveRows(
     *,
-    count: int,
-    angularRateRadS: float | list[float],
+    rates: list[float],
     centerP: float,
     centerQ: float,
     r1: float,
@@ -194,32 +232,59 @@ def _circlingRows(
     rotationDeg: float,
     hz: float,
     gyroBias: Vector3 = (0.0, 0.0, 0.0),
+    noiseUt: float = _MAG_NOISE_UT,
+    gyroNoiseRadS: float = _GYRO_NOISE_RAD_S,
+    startHeadingRad: float = 0.0,
     dtS: float = _EDR_PERSIST_DT_S,
     tsStart: float = 0.0,
     accel: Vector3 = _LEVEL_ACCEL,
+    seed: int = 0,
+    includeGyro: bool = True,
 ) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
-    """Continuous circling (any total span, repeated laps as needed), at a
-    constant or per-sample rate list -- the mag heading accumulates at the
-    SAME rate the synthetic gyro reading claims, sampled at a realistic
-    ~2 Hz, so the two are physically consistent (see ``_EDR_PERSIST_DT_S``).
+    """One row per entry of ``rates`` (rad/s, signed; 0 = parked).
+
+    The mag vector is the ellipse point at the CURRENT heading plus noise;
+    the heading then advances by ``rate * dtS`` -- so the magnetometer moves
+    exactly as fast as the gyro says, and a parked row stays ON the ellipse.
     """
-    rates = (
-        angularRateRadS if isinstance(angularRateRadS, list) else [angularRateRadS] * count
-    )
+    rng = np.random.default_rng(seed)
     theta = math.radians(rotationDeg)
     cosT, sinT = math.cos(theta), math.sin(theta)
     rows: list[tuple[float, Vector3, Vector3, Vector3 | None]] = []
-    headingRad = 0.0
-    for i in range(count):
+    headingRad = startHeadingRad
+    for i, rate in enumerate(rates):
         rx = r1 * math.cos(headingRad)
         ry = r2 * math.sin(headingRad)
-        pLevel = centerP + rx * cosT - ry * sinT
-        qLevel = centerQ + rx * sinT + ry * cosT
-        magBody = (pLevel, qLevel, hz)
-        gyroRawRow = (gyroBias[0] + rates[i], gyroBias[1], gyroBias[2])
+        magBody = (
+            centerP + rx * cosT - ry * sinT + float(rng.normal(scale=noiseUt)),
+            centerQ + rx * sinT + ry * cosT + float(rng.normal(scale=noiseUt)),
+            hz + float(rng.normal(scale=noiseUt)),
+        )
+        gyroRawRow: Vector3 | None = None
+        if includeGyro:
+            gyroRawRow = (
+                gyroBias[0] + rate + float(rng.normal(scale=gyroNoiseRadS)),
+                gyroBias[1] + float(rng.normal(scale=gyroNoiseRadS)),
+                gyroBias[2] + float(rng.normal(scale=gyroNoiseRadS)),
+            )
         rows.append((tsStart + i * dtS, accel, magBody, gyroRawRow))
-        headingRad += rates[i] * dtS
+        headingRad += rate * dtS
     return rows
+
+
+def _circlingRows(
+    *,
+    count: int,
+    angularRateRadS: float | list[float],
+    **kwargs: object,
+) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+    """Continuous circling at a constant or per-sample rate (see ``_driveRows``)."""
+    rates = (
+        list(angularRateRadS)
+        if isinstance(angularRateRadS, list)
+        else [angularRateRadS] * count
+    )
+    return _driveRows(rates=rates, **kwargs)
 
 
 def _boundedSweepRows(
@@ -227,73 +292,68 @@ def _boundedSweepRows(
     count: int,
     angularRateRadS: float,
     spanDeg: float,
-    centerP: float,
-    centerQ: float,
-    r1: float,
-    r2: float,
-    rotationDeg: float,
-    hz: float,
-    gyroBias: Vector3 = (0.0, 0.0, 0.0),
-    dtS: float = _EDR_PERSIST_DT_S,
-    tsStart: float = 0.0,
-    accel: Vector3 = _LEVEL_ACCEL,
+    **kwargs: object,
 ) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
-    """Like ``_circlingRows``, but the heading bounces within ``[0, spanDeg]``
-    (a triangle wave) instead of sweeping the full compass -- dense,
-    physically-consistent samples confined to a limited arc, for tests where
-    insufficient heading COVERAGE is the point. Only the gyro MAGNITUDE ever
-    matters to the fitter, so a direction reversal at each bounce is modelled
-    as a constant-magnitude reading throughout, matching a real gyro's |rate|.
+    """Heading bounces back and forth across ``spanDeg`` at +/- the rate --
+    dense, physically consistent samples confined to a limited arc, for
+    tests where insufficient heading COVERAGE is the point. The gyro reports
+    the SIGNED rate, as a real one does through a reversal.
     """
-    stepDeg = math.degrees(angularRateRadS * dtS)
-    period = 2.0 * spanDeg
-    theta = math.radians(rotationDeg)
-    cosT, sinT = math.cos(theta), math.sin(theta)
-    rows: list[tuple[float, Vector3, Vector3, Vector3 | None]] = []
-    for i in range(count):
-        position = (i * stepDeg) % period
-        headingDeg = position if position <= spanDeg else period - position
-        t = math.radians(headingDeg)
-        rx = r1 * math.cos(t)
-        ry = r2 * math.sin(t)
-        pLevel = centerP + rx * cosT - ry * sinT
-        qLevel = centerQ + rx * sinT + ry * cosT
-        magBody = (pLevel, qLevel, hz)
-        gyroRawRow = (gyroBias[0] + angularRateRadS, gyroBias[1], gyroBias[2])
-        rows.append((tsStart + i * dtS, accel, magBody, gyroRawRow))
-    return rows
+    rowsPerLeg = max(1, round(math.radians(spanDeg) / (angularRateRadS * _EDR_PERSIST_DT_S)))
+    rates = [
+        angularRateRadS if (i // rowsPerLeg) % 2 == 0 else -angularRateRadS
+        for i in range(count)
+    ]
+    return _driveRows(rates=rates, **kwargs)
 
 
 def _stationaryRows(
     *,
     count: int,
-    centerP: float,
-    centerQ: float,
-    hz: float,
-    noiseUt: float = 0.0,
-    gyroBias: Vector3 = (0.0, 0.0, 0.0),
-    dtS: float = _EDR_PERSIST_DT_S,
-    tsStart: float = 0.0,
-    accel: Vector3 = _LEVEL_ACCEL,
-    seed: int = 0,
+    headingDeg: float = 0.0,
+    **kwargs: object,
 ) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
-    """Parked at one heading (small noise only), realistic ~2 Hz spacing --
-    so Ruling 25's window-based stationary check sees genuinely close-in-time
-    neighbours, the way a real parked stretch would.
+    """Parked at ``headingDeg``: ON the ellipse (never at its centre),
+    noise only, ~2 Hz spacing, gyro reading its bias alone.
     """
-    points = _ellipsePoints(
-        centerP=centerP,
-        centerQ=centerQ,
-        r1=1.0,
-        r2=1.0,
-        rotationDeg=0.0,
-        hz=hz,
-        count=count,
-        spanDeg=0.001,
-        noiseUt=noiseUt,
-        seed=seed,
+    return _driveRows(rates=[0.0] * count, startHeadingRad=math.radians(headingDeg), **kwargs)
+
+
+def _withBookends(
+    middle: list[tuple[float, Vector3, Vector3, Vector3 | None]],
+    *,
+    bookendRows: int,
+    geometry: dict[str, float],
+    gyroBias: Vector3,
+    seed: int,
+) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+    """The Ruling 25b procedure: parked at the start and at the end.
+
+    The opening bookend sits at heading 0 (where the middle segment starts);
+    the closing one is parked at wherever the middle segment's last row was
+    -- recovered from that row's timestamp-consistent position, so the car
+    does not teleport.
+    """
+    leadS = bookendRows * _EDR_PERSIST_DT_S
+    opening = _stationaryRows(
+        count=bookendRows, headingDeg=0.0, gyroBias=gyroBias, tsStart=0.0, seed=seed, **geometry
     )
-    return [(tsStart + i * dtS, accel, mag, gyroBias) for i, mag in enumerate(points)]
+    shifted = [(ts + leadS, a, m, g) for ts, a, m, g in middle]
+    lastTs, _, lastMag, _ = shifted[-1]
+    theta = math.radians(geometry["rotationDeg"])
+    dp, dq = lastMag[0] - geometry["centerP"], lastMag[1] - geometry["centerQ"]
+    # Undo the ellipse rotation and axis scaling to recover the heading.
+    u = (dp * math.cos(theta) + dq * math.sin(theta)) / geometry["r1"]
+    v = (-dp * math.sin(theta) + dq * math.cos(theta)) / geometry["r2"]
+    closing = _stationaryRows(
+        count=bookendRows,
+        headingDeg=math.degrees(math.atan2(v, u)),
+        gyroBias=gyroBias,
+        tsStart=lastTs + _EDR_PERSIST_DT_S,
+        seed=seed + 1000,
+        **geometry,
+    )
+    return opening + shifted + closing
 
 
 # ARCH-064 Task 6 brief's exact synthetic parameters for the horizontal shape.
@@ -310,6 +370,33 @@ _TRUE_ROTATION_DEG = 25.0
 _TRUE_EARTH_VERTICAL_UT = -52.0
 _TRUE_IRON_Z_UT = 3.0
 _TRUE_RAW_MEAN_VERTICAL_UT = _TRUE_EARTH_VERTICAL_UT + _TRUE_IRON_Z_UT  # -49.0
+
+# The brief's ellipse as helper kwargs (|h| = 13.9 uT < R ~ 17.9 uT).
+_TRUE_GEOMETRY: dict[str, float] = {
+    "centerP": _TRUE_CENTER_P,
+    "centerQ": _TRUE_CENTER_Q,
+    "r1": _TRUE_R1,
+    "r2": _TRUE_R2,
+    "rotationDeg": _TRUE_ROTATION_DEG,
+    "hz": _TRUE_RAW_MEAN_VERTICAL_UT,
+}
+
+# Ruling 28: this car's shape -- the hard-iron offset EXCEEDS the circle
+# radius (|h| = 17.2 uT against R = 16.4), as drive 77 recorded (17.59 vs
+# 16.43, RECALLED). Seen from the origin, the far side of this circle turns
+# slowly and the tangent points not at all.
+_BIG_IRON_P = 14.0
+_BIG_IRON_Q = -10.0
+_BIG_IRON_R = 16.4
+_BIG_IRON_GEOMETRY: dict[str, float] = {
+    "centerP": _BIG_IRON_P,
+    "centerQ": _BIG_IRON_Q,
+    "r1": _BIG_IRON_R,
+    "r2": _BIG_IRON_R,
+    "rotationDeg": 0.0,
+    "hz": _TRUE_RAW_MEAN_VERTICAL_UT,
+}
+_FAULT_BIAS_RAD_S = 0.5
 
 
 class TestFitMagCalibration:
@@ -568,6 +655,38 @@ class TestHorizontalGainWarning:
         assert "heading" in fit.horizontalGainWarning
         assert "grade" in fit.horizontalGainWarning
 
+    def _amplifiedCircleRows(self, scale: float) -> list[tuple[float, Vector3, Vector3, None]]:
+        radius = DEFAULT_EARTH_HORIZONTAL_UT * scale
+        points = _ellipsePoints(
+            centerP=0.0,
+            centerQ=0.0,
+            r1=radius,
+            r2=radius,
+            rotationDeg=0.0,
+            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
+        )
+        return _rowsFromMagPoints(points)
+
+    def test_amplifiedHorizontalFieldAboveTheBandWarns(self) -> None:
+        """Ruling 28: the UPPER edge of the 0.8-1.2 band warns too."""
+        fit = fitMagCalibration(
+            self._amplifiedCircleRows(1.5), earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
+        )
+        assert fit.horizontalGain == pytest.approx(1.5, abs=0.02)
+        assert fit.horizontalGainWarning is not None
+        assert "heading" in fit.horizontalGainWarning
+
+    def test_amplifiedHorizontalFieldDiscriminates(self, monkeypatch) -> None:
+        """PROOF the test above reads the upper bound: remove it and the
+        same 1.5x circle no longer warns; restored, it does."""
+        rows = self._amplifiedCircleRows(1.5)
+        monkeypatch.setattr(fit_mag_calibration_module, "HORIZONTAL_GAIN_WARN_HIGH", math.inf)
+        unbounded = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert unbounded.horizontalGainWarning is None
+        monkeypatch.undo()
+        restored = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert restored.horizontalGainWarning is not None
+
     def test_unscaledFieldDoesNotWarn(self) -> None:
         points = _ellipsePoints(
             centerP=0.0,
@@ -595,62 +714,83 @@ class TestCoverageExploit:
         scattered it across many spurious bins. Moving-only, fitted-centre,
         >=3-per-bin binning must refuse this instead -- on insufficient
         coverage (a 90-degree arc reaches at most 9 of the 36 bins, however
-        densely sampled).
+        densely sampled). Round 4: the idle cluster is parked ON the ellipse
+        (heading 45, inside the swept arc), where a parked car actually is.
         """
+        idleRows = _stationaryRows(count=2000, headingDeg=45.0, seed=1, **_TRUE_GEOMETRY)
+        movingRows = _boundedSweepRows(
+            count=300,
+            angularRateRadS=0.3,
+            spanDeg=90.0,
+            tsStart=2000.0 * _EDR_PERSIST_DT_S + 60.0,  # well after the idle block
+            seed=2,
+            **_TRUE_GEOMETRY,
+        )
+        with pytest.raises(ValueError, match="coverage"):
+            fitMagCalibration(idleRows + movingRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+
+    def test_noGyroDenseIdleDwellIsRefused(self) -> None:
+        """Ruling 28: the same exploit on the NO-GYRO fallback path, where
+        every row counts as moving (Ruling 23) and so the only defence left
+        is the fitted-centre, >=3-per-bin coverage count. Must refuse.
+        """
+        rows = self._noGyroIdlePlusNinetyDegreeSweep()
+        with pytest.raises(ValueError, match="coverage"):
+            fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+
+    def test_noGyroDenseIdleDiscriminates(self, monkeypatch) -> None:
+        """PROOF the test above exercises the coverage defence: bin around
+        the RAW CENTROID of the rows (fit round 1's bug) instead of the
+        fitted centre and the same capture is ACCEPTED; restored, refused.
+        """
+        rows = self._noGyroIdlePlusNinetyDegreeSweep()
+
+        def centroidCoverage(p, q, centerP, centerQ, minPerBin):
+            angleDeg = np.degrees(np.arctan2(q - np.mean(q), p - np.mean(p))) % 360.0
+            counts = np.bincount((angleDeg // 10.0).astype(int) % 36, minlength=36)
+            return int(np.sum(counts >= minPerBin))
+
+        monkeypatch.setattr(fit_mag_calibration_module, "_headingBinCoverage", centroidCoverage)
+        fit = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT, force=True)
+        assert fit.headingBinsOccupied >= MIN_OCCUPIED_BINS  # RED: exploit accepted
+        monkeypatch.undo()
+
+        with pytest.raises(ValueError, match="coverage"):
+            fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+
+    @staticmethod
+    def _noGyroIdlePlusNinetyDegreeSweep() -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
         idleRows = _stationaryRows(
-            count=2000,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            noiseUt=0.6,
-            gyroBias=(0.0, 0.0, 0.0),
-            tsStart=0.0,
-            seed=1,
+            count=2000, headingDeg=45.0, includeGyro=False, seed=11, **_TRUE_GEOMETRY
         )
         movingRows = _boundedSweepRows(
             count=300,
             angularRateRadS=0.3,
             spanDeg=90.0,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            r1=_TRUE_R1,
-            r2=_TRUE_R2,
-            rotationDeg=_TRUE_ROTATION_DEG,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            tsStart=2000.0 * _EDR_PERSIST_DT_S + 60.0,  # well after the idle block
+            includeGyro=False,
+            tsStart=2000.0 * _EDR_PERSIST_DT_S + 60.0,
+            seed=12,
+            **_TRUE_GEOMETRY,
         )
-        with pytest.raises(ValueError, match="coverage"):
-            fitMagCalibration(idleRows + movingRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        return idleRows + movingRows
 
     def test_idleSamplesDoNotCountEvenWhenCoverageWouldOtherwisePass(self) -> None:
         """A full-coverage moving sweep plus a huge idle cluster must fit
         (and refuse-or-not) IDENTICALLY to the moving sweep alone -- proving
-        idle rows are excluded, not merely down-weighted.
+        idle rows are excluded, not merely down-weighted. The idle cluster is
+        parked ON the ellipse (heading 200) with its own noise, so including
+        it WOULD move the fit, just not by 1e-6.
         """
-        movingRows = _circlingRows(
-            count=360,
-            angularRateRadS=0.3,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            r1=_TRUE_R1,
-            r2=_TRUE_R2,
-            rotationDeg=_TRUE_ROTATION_DEG,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            tsStart=0.0,
-        )
+        movingRows = _circlingRows(count=360, angularRateRadS=0.3, seed=5, **_TRUE_GEOMETRY)
         # Ruling 25: even the "moving-only" baseline needs SOME stationary
         # samples to estimate a bias from (a pure, unbroken turn refuses --
-        # see TestStationaryWindowBiasEstimation) -- a small bookend, at the
-        # true centre so it cannot itself bias hardIronUt away from the
-        # moving-only shape.
+        # see TestStationaryWindowBiasEstimation).
         baselineBookend = _stationaryRows(
             count=60,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            gyroBias=(0.0, 0.0, 0.0),
+            headingDeg=100.0,
             tsStart=360.0 * _EDR_PERSIST_DT_S + 30.0,
             seed=6,
+            **_TRUE_GEOMETRY,
         )
         withoutIdle = fitMagCalibration(
             movingRows + baselineBookend, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
@@ -659,13 +799,11 @@ class TestCoverageExploit:
 
         idleRows = _stationaryRows(
             count=2000,
-            centerP=_TRUE_CENTER_P + 5.0,  # deliberately off-centre
-            centerQ=_TRUE_CENTER_Q - 5.0,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
+            headingDeg=200.0,
             noiseUt=0.6,
-            gyroBias=(0.0, 0.0, 0.0),
             tsStart=360.0 * _EDR_PERSIST_DT_S + 60.0,  # well after the moving block
             seed=3,
+            **_TRUE_GEOMETRY,
         )
         withIdle = fitMagCalibration(
             movingRows + idleRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
@@ -673,6 +811,42 @@ class TestCoverageExploit:
 
         assert withIdle.hardIronUt == pytest.approx(withoutIdle.hardIronUt, abs=1e-6)
         assert withIdle.movingSamples == withoutIdle.movingSamples == 360
+
+
+def _alternatingFaultedSweepPlusIdle() -> tuple[
+    list[tuple[float, Vector3, Vector3, Vector3 | None]],
+    list[tuple[float, Vector3, Vector3, Vector3 | None]],
+    list[tuple[float, Vector3, Vector3, Vector3 | None]],
+]:
+    """(movingRows, idleRows, baselineBookend) for TestGyroBiasEstimation.
+
+    A full-coverage 360-row sweep (alternating 0.3/0.7 rad/s yaw) + 2000
+    parked rows ON the ellipse at heading 200 + a 60-row bookend, every row
+    carrying the +0.5 rad/s fault bias.
+    """
+    faultBias = (_FAULT_BIAS_RAD_S, 0.0, 0.0)
+    alternatingRates = [0.3 if i % 2 == 0 else 0.7 for i in range(360)]
+    movingRows = _circlingRows(
+        count=360, angularRateRadS=alternatingRates, gyroBias=faultBias, seed=8, **_TRUE_GEOMETRY
+    )
+    idleRows = _stationaryRows(
+        count=2000,
+        headingDeg=200.0,
+        noiseUt=0.6,
+        gyroBias=faultBias,  # the fault alone, no real rate
+        tsStart=360.0 * _EDR_PERSIST_DT_S + 60.0,
+        seed=4,
+        **_TRUE_GEOMETRY,
+    )
+    baselineBookend = _stationaryRows(
+        count=60,
+        headingDeg=100.0,
+        gyroBias=faultBias,
+        tsStart=360.0 * _EDR_PERSIST_DT_S + 30.0,
+        seed=7,
+        **_TRUE_GEOMETRY,
+    )
+    return movingRows, idleRows, baselineBookend
 
 
 class TestGyroBiasEstimation:
@@ -684,69 +858,23 @@ class TestGyroBiasEstimation:
     defences alone already refused that scenario regardless. Replaced here
     with the reviewer's own construction, which does discriminate, PROVEN
     below by patching ``_estimateGyroBias`` directly (not asserted blind).
-
-    Ruling 25 replaced the whole-capture-median mechanism itself: it fails
-    MEASURABLY on steady circling with no idle dwell -- the actual
-    calibration procedure this tool expects -- because a uniformly-circling
-    signal's own median converges toward the moving rate, self-cancelling.
-    See ``TestStationaryWindowBiasEstimation`` below.
     """
 
     def test_denseIdleWithAFaultedGyroBiasIsExcludedFromTheFit(self) -> None:
-        """Item A's exact construction: a full-coverage 360-row moving sweep
-        (alternating 0.3/0.7 rad/s yaw, plus a +0.5 rad/s fault bias) plus
-        2000 off-centre idle rows carrying the SAME fault bias alone. The
-        idle rows must be excluded entirely: movingSamples stays at 360 and
-        hardIronUt matches a moving-only fit, recovering the true iron
-        (12, -7, 3).
+        """The idle rows must be excluded entirely: movingSamples stays at
+        360 and hardIronUt matches a moving-only fit, recovering the true
+        iron (12, -7, 3).
         """
-        faultBiasRadS = 0.5
-        alternatingRates = [0.3 if i % 2 == 0 else 0.7 for i in range(360)]
-        movingRows = _circlingRows(
-            count=360,
-            angularRateRadS=alternatingRates,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            r1=_TRUE_R1,
-            r2=_TRUE_R2,
-            rotationDeg=_TRUE_ROTATION_DEG,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            gyroBias=(faultBiasRadS, 0.0, 0.0),
-            tsStart=0.0,
-        )
-        # Ruling 25: the moving-only baseline needs its own small stationary
-        # bookend to estimate the fault bias from (a pure, unbroken turn
-        # refuses); placed at the TRUE centre so it cannot itself bias
-        # hardIronUt away from the moving-only shape.
-        baselineBookend = _stationaryRows(
-            count=60,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            gyroBias=(faultBiasRadS, 0.0, 0.0),
-            tsStart=360.0 * _EDR_PERSIST_DT_S + 30.0,
-            seed=7,
-        )
+        movingRows, idleRows, baselineBookend = _alternatingFaultedSweepPlusIdle()
         withoutIdle = fitMagCalibration(
             movingRows + baselineBookend, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
         )
         assert withoutIdle.movingSamples == 360
         assert withoutIdle.hardIronUt == pytest.approx((12.0, -7.0, 3.0), abs=0.5)
 
-        idleRows = _stationaryRows(
-            count=2000,
-            centerP=_TRUE_CENTER_P + 5.0,  # off-centre
-            centerQ=_TRUE_CENTER_Q - 5.0,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            noiseUt=0.6,
-            gyroBias=(faultBiasRadS, 0.0, 0.0),  # the fault alone, no real rate
-            tsStart=360.0 * _EDR_PERSIST_DT_S + 60.0,
-            seed=4,
-        )
         combined = fitMagCalibration(
             movingRows + idleRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
         )
-
         assert combined.movingSamples == 360
         assert combined.hardIronUt == pytest.approx(withoutIdle.hardIronUt, abs=1e-6)
 
@@ -755,66 +883,26 @@ class TestGyroBiasEstimation:
         (the reviewer's own mutation) and confirm the test above's assertion
         actually goes RED, before trusting that the real code is GREEN.
         """
-        faultBiasRadS = 0.5
-        alternatingRates = [0.3 if i % 2 == 0 else 0.7 for i in range(360)]
-        movingRows = _circlingRows(
-            count=360,
-            angularRateRadS=alternatingRates,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            r1=_TRUE_R1,
-            r2=_TRUE_R2,
-            rotationDeg=_TRUE_ROTATION_DEG,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            gyroBias=(faultBiasRadS, 0.0, 0.0),
-            tsStart=0.0,
-        )
-        idleRows = _stationaryRows(
-            count=2000,
-            centerP=_TRUE_CENTER_P + 5.0,
-            centerQ=_TRUE_CENTER_Q - 5.0,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            noiseUt=0.6,
-            gyroBias=(faultBiasRadS, 0.0, 0.0),
-            tsStart=360.0 * _EDR_PERSIST_DT_S + 60.0,
-            seed=4,
-        )
-        baselineBookend = _stationaryRows(
-            count=60,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            gyroBias=(faultBiasRadS, 0.0, 0.0),
-            tsStart=360.0 * _EDR_PERSIST_DT_S + 30.0,
-            seed=7,
-        )
-        withoutIdle = fitMagCalibration(
-            movingRows + baselineBookend, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
-        )
+        movingRows, idleRows, _ = _alternatingFaultedSweepPlusIdle()
 
-        originalEstimate = fit_mag_calibration_module._estimateGyroBias
-        fit_mag_calibration_module._estimateGyroBias = (
-            lambda tsArray, p, q, gyroMatrix: np.zeros(3)
+        monkeypatch.setattr(
+            fit_mag_calibration_module,
+            "_estimateGyroBias",
+            lambda tsArray, p, q, gyroMatrix: np.zeros(3),
         )
-        try:
-            # RED: with the bias forced to zero, the fault (0.5 rad/s) is
-            # never removed, so the 2000 off-centre idle rows clear the
-            # moving threshold too and corrupt the fit -- MEASURED by the
-            # reviewer to land the radius spread at 22.6%, past the m7
-            # quality floor.
-            with pytest.raises(ValueError, match="quality floor"):
-                fitMagCalibration(
-                    movingRows + idleRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
-                )
-        finally:
-            fit_mag_calibration_module._estimateGyroBias = originalEstimate
+        # RED: the 0.5 rad/s fault is never removed, so all 2000 parked rows
+        # clear the moving threshold and enter the fit.
+        broken = fitMagCalibration(
+            movingRows + idleRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT, force=True
+        )
+        assert broken.movingSamples == 2360
+        monkeypatch.undo()
 
-        # GREEN: restored, the real code excludes the idle rows correctly.
+        # GREEN: restored, the real code excludes the idle rows.
         combined = fitMagCalibration(
             movingRows + idleRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
         )
         assert combined.movingSamples == 360
-        assert combined.hardIronUt == pytest.approx(withoutIdle.hardIronUt, abs=1e-6)
 
 
 class TestStationaryWindowBiasEstimation:
@@ -825,35 +913,22 @@ class TestStationaryWindowBiasEstimation:
     def test_circlingWithStationaryBookendsIsAcceptedWithAFaultedBias(self) -> None:
         """MEASURED regression: 2500 samples circling at 0.3 rad/s (no idle
         at all) used to be REFUSED as "mostly idled" -- the old whole-capture
-        median self-cancelled toward the moving rate itself, since there was
-        no idle contrast to anchor it, misclassifying the ENTIRE capture as
-        idle despite the car never stopping turning. Adding a stationary
-        bookend (300 rows, ~30 s parked) gives the stationary-window
-        estimate something real to find; a +0.5 rad/s fault bias on every
-        row must not change the outcome.
+        median self-cancelled toward the moving rate itself. A 300-row parked
+        stretch (ON the ellipse) gives the stationary-window estimate
+        something real to find; a +0.5 rad/s fault bias on every row must
+        not change the outcome.
         """
-        faultBiasRadS = 0.5
+        faultBias = (_FAULT_BIAS_RAD_S, 0.0, 0.0)
         stationaryRows = _stationaryRows(
-            count=300,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            noiseUt=0.6,
-            gyroBias=(faultBiasRadS, 0.0, 0.0),
-            tsStart=0.0,
-            seed=5,
+            count=300, headingDeg=0.0, noiseUt=0.6, gyroBias=faultBias, seed=5, **_TRUE_GEOMETRY
         )
         circlingRows = _circlingRows(
             count=2500,
             angularRateRadS=0.3,
-            centerP=_TRUE_CENTER_P,
-            centerQ=_TRUE_CENTER_Q,
-            r1=_TRUE_R1,
-            r2=_TRUE_R2,
-            rotationDeg=_TRUE_ROTATION_DEG,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            gyroBias=(faultBiasRadS, 0.0, 0.0),
-            tsStart=300.0 * _EDR_PERSIST_DT_S + 60.0,
+            gyroBias=faultBias,
+            tsStart=300.0 * _EDR_PERSIST_DT_S,
+            seed=9,
+            **_TRUE_GEOMETRY,
         )
 
         fit = fitMagCalibration(
@@ -862,25 +937,203 @@ class TestStationaryWindowBiasEstimation:
 
         assert fit.hardIronUt[0] == pytest.approx(_TRUE_CENTER_P, abs=0.5)
         assert fit.hardIronUt[1] == pytest.approx(_TRUE_CENTER_Q, abs=0.5)
+        assert fit.gyroBiasRadS[0] == pytest.approx(_FAULT_BIAS_RAD_S, abs=0.01)
 
     def test_circlingWithNoStationaryRowsIsRefusedWithTheNewMessage(self) -> None:
         """No parked stretch anywhere in the capture -- there is nothing a
         gyro bias can be estimated FROM -- refuses with Ruling 25's own
         message, not the old (and here actively wrong) "mostly idled" one.
         """
-        circlingRows = _circlingRows(
+        circlingRows = _circlingRows(count=2500, angularRateRadS=0.3, seed=10, **_TRUE_GEOMETRY)
+        with pytest.raises(ValueError, match="non-turning samples"):
+            fitMagCalibration(circlingRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+
+
+def _round3OriginBias(
+    tsArray: np.ndarray, p: np.ndarray, q: np.ndarray, gyroMatrix: np.ndarray
+) -> np.ndarray:
+    """Fix round 3's ``_estimateGyroBias``, reproduced for RED proofs.
+
+    Stationarity judged by the angle of the RAW (p, q) vector about the
+    ORIGIN, against the immediate chronological neighbours within 1.0 s, at
+    2.0 degrees; median over >= 10 such rows. This is the Ruling 28 defect:
+    when |h| is comparable to R the apparent rotation seen from the origin
+    shrinks on the far side of the circle and vanishes at the tangents.
+    """
+    order = np.argsort(tsArray)
+    n = len(order)
+    stationary = np.zeros(n, dtype=bool)
+    for k in range(n):
+        i = order[k]
+        for neighborK in (k - 1, k + 1):
+            if neighborK < 0 or neighborK >= n:
+                continue
+            j = order[neighborK]
+            if abs(tsArray[j] - tsArray[i]) > 1.0:
+                continue
+            crossVal = p[i] * q[j] - q[i] * p[j]
+            dotVal = p[i] * p[j] + q[i] * q[j]
+            if abs(math.degrees(math.atan2(crossVal, dotVal))) <= 2.0:
+                stationary[i] = True
+                break
+    if int(np.sum(stationary)) < 10:
+        raise ValueError("no non-turning samples to estimate gyro bias (round 3)")
+    return np.median(gyroMatrix[stationary], axis=0)
+
+
+def _bigIronCircleWithBookends() -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+    """|h| > R, 60 parked + 2500 circling at 0.3 rad/s + 60 parked, all
+    carrying the 0.5 rad/s fault bias -- the reviewer's first measured case.
+    """
+    faultBias = (_FAULT_BIAS_RAD_S, 0.0, 0.0)
+    circling = _circlingRows(
+        count=2500, angularRateRadS=0.3, gyroBias=faultBias, seed=21, **_BIG_IRON_GEOMETRY
+    )
+    return _withBookends(
+        circling, bookendRows=60, geometry=_BIG_IRON_GEOMETRY, gyroBias=faultBias, seed=22
+    )
+
+
+def _gentleTurnsWithBookends() -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+    """|h| < R (the brief's ellipse), 2500 rows at a gentle 0.1 rad/s,
+    60-row parked bookends, fault bias 0.5 rad/s.
+    """
+    faultBias = (_FAULT_BIAS_RAD_S, 0.0, 0.0)
+    gentle = _circlingRows(
+        count=2500, angularRateRadS=0.1, gyroBias=faultBias, seed=31, **_TRUE_GEOMETRY
+    )
+    return _withBookends(
+        gentle, bookendRows=60, geometry=_TRUE_GEOMETRY, gyroBias=faultBias, seed=32
+    )
+
+
+class TestProvisionalCentreStationarity:
+    """Ruling 28: "not turning" is judged about a PROVISIONAL CENTRE (the
+    bounding-box midrange of the horizontal field), against rows >= 2 s away
+    -- never about the origin. Every acceptance test here is paired with a
+    PROOF that it goes RED under round 3's origin-based estimate.
+    """
+
+    def test_hardIronLargerThanRadiusWithBookendsIsAccepted(self) -> None:
+        fit = fitMagCalibration(
+            _bigIronCircleWithBookends(), earthVerticalUt=_TRUE_EARTH_VERTICAL_UT
+        )
+        assert fit.gyroBiasRadS[0] == pytest.approx(_FAULT_BIAS_RAD_S, abs=0.01)
+        assert fit.hardIronUt[0] == pytest.approx(_BIG_IRON_P, abs=0.5)
+        assert fit.hardIronUt[1] == pytest.approx(_BIG_IRON_Q, abs=0.5)
+
+    def test_hardIronLargerThanRadiusDiscriminates(self, monkeypatch) -> None:
+        """RED under round 3's origin mask (MEASURED: bias ~0.80, refused
+        "not an ellipse"); GREEN restored."""
+        rows = _bigIronCircleWithBookends()
+        monkeypatch.setattr(fit_mag_calibration_module, "_estimateGyroBias", _round3OriginBias)
+        with pytest.raises(ValueError):
+            fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        monkeypatch.undo()
+        fit = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.gyroBiasRadS[0] == pytest.approx(_FAULT_BIAS_RAD_S, abs=0.01)
+
+    def test_gentleTurnsWithBookendsAreAccepted(self) -> None:
+        fit = fitMagCalibration(_gentleTurnsWithBookends(), earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.gyroBiasRadS[0] == pytest.approx(_FAULT_BIAS_RAD_S, abs=0.02)
+        assert fit.hardIronUt[0] == pytest.approx(_TRUE_CENTER_P, abs=0.5)
+        assert fit.hardIronUt[1] == pytest.approx(_TRUE_CENTER_Q, abs=0.5)
+
+    def test_gentleTurnsDiscriminates(self, monkeypatch) -> None:
+        """RED under round 3's origin mask (MEASURED: bias ~0.60 -- every
+        0.1 rad/s row passes a 2-degree/0.5-s test -- refused on coverage);
+        GREEN restored."""
+        rows = _gentleTurnsWithBookends()
+        monkeypatch.setattr(fit_mag_calibration_module, "_estimateGyroBias", _round3OriginBias)
+        with pytest.raises(ValueError):
+            fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        monkeypatch.undo()
+        fit = fitMagCalibration(rows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.gyroBiasRadS[0] == pytest.approx(_FAULT_BIAS_RAD_S, abs=0.02)
+
+    def test_hardIronLargerThanRadiusWithNoParkingNamesTheRealCause(self) -> None:
+        """Item 5: |h| > R, circling only. Round 3 found 'stationary' rows at
+        the tangent points, mis-estimated the bias, and refused with "need at
+        least 36 moving samples" -- blaming a drive that never stopped
+        turning. The real cause is that nothing was parked."""
+        circling = _circlingRows(
             count=2500,
             angularRateRadS=0.3,
+            gyroBias=(_FAULT_BIAS_RAD_S, 0.0, 0.0),
+            seed=41,
+            **_BIG_IRON_GEOMETRY,
+        )
+        with pytest.raises(ValueError, match="non-turning samples") as excInfo:
+            fitMagCalibration(circling, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert "parked" in str(excInfo.value)
+
+    def test_aFrozenGyroIsNamedAsTheCauseNotTheDrive(self) -> None:
+        """Item 5: the magnetometer shows the car circling while the gyro
+        reads its bias alone (a latched/frozen gyro, A-34). The refusal must
+        say the GYRO disagrees with the magnetometer, not that the capture
+        never turned."""
+        frozenGyro = [
+            (ts, a, m, (_FAULT_BIAS_RAD_S, 0.0, 0.0))
+            for ts, a, m, _ in _gentleTurnsWithBookends()
+        ]
+        with pytest.raises(ValueError, match="magnetometer") as excInfo:
+            fitMagCalibration(frozenGyro, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert "never turned" not in str(excInfo.value)
+
+    def test_aCaptureThatNeverTurnedSaysSo(self) -> None:
+        parked = _stationaryRows(count=500, headingDeg=30.0, seed=51, **_TRUE_GEOMETRY)
+        with pytest.raises(ValueError, match="never turned"):
+            fitMagCalibration(parked, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+
+
+class TestVerticalFieldWarning:
+    """Ruling 28 item 4: the companion to Ruling 26's horizontalGain. A mean
+    body-up field more than 10 % away from Earth's expected vertical means
+    the car alters the vertical field, or there is large z iron -- a WARNING,
+    never a refusal (h_z absorbs it either way; this says so out loud).
+    """
+
+    def _circleWithIronZ(self, ironZ: float) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
+        points = _ellipsePoints(
             centerP=_TRUE_CENTER_P,
             centerQ=_TRUE_CENTER_Q,
             r1=_TRUE_R1,
             r2=_TRUE_R2,
             rotationDeg=_TRUE_ROTATION_DEG,
-            hz=_TRUE_RAW_MEAN_VERTICAL_UT,
-            tsStart=0.0,
+            hz=_TRUE_EARTH_VERTICAL_UT + ironZ,
+            noiseUt=0.15,
         )
-        with pytest.raises(ValueError, match="non-turning samples"):
-            fitMagCalibration(circlingRows, earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        return _rowsFromMagPoints(points)
+
+    def test_largeZIronWarnsButStillFits(self) -> None:
+        # 8 uT of z iron against |V| = 52 is 15 %, over the 10 % line.
+        fit = fitMagCalibration(self._circleWithIronZ(8.0), earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.hardIronUt[2] == pytest.approx(8.0, abs=0.5)
+        assert fit.verticalFieldRatio == pytest.approx((-52.0 + 8.0) / -52.0, abs=0.01)
+        assert fit.verticalFieldWarning is not None
+        assert "vertical" in fit.verticalFieldWarning
+
+    def test_smallZIronDoesNotWarn(self) -> None:
+        # 3 uT against |V| = 52 is 5.8 %, inside the 10 % line.
+        fit = fitMagCalibration(self._circleWithIronZ(3.0), earthVerticalUt=_TRUE_EARTH_VERTICAL_UT)
+        assert fit.verticalFieldWarning is None
+
+    def test_warnsOnTheCliStderrAndExitsZero(self, tmp_path, capsys) -> None:
+        rows = [
+            (ts, None, _deviceFrameFromBody(accel), _deviceFrameFromBody(mag))
+            for ts, accel, mag, _ in self._circleWithIronZ(8.0)
+        ]
+        csvPath = tmp_path / "capture.csv"
+        _writeCsv(str(csvPath), rows)
+
+        exitCode = main([str(csvPath), "--earth-vertical-ut", str(_TRUE_EARTH_VERTICAL_UT)])
+        assert exitCode == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["fitQuality"]["verticalFieldWarning"] is not None
+        assert output["fitQuality"]["verticalFieldRatio"] == pytest.approx(44.0 / 52.0, abs=0.01)
+        assert "WARNING:" in captured.err
+        assert "vertical" in captured.err
 
 
 def _deviceFrameFromBody(vecBody: Vector3, mount: dict[str, str] = IMU_BODY_FRAME) -> Vector3:
