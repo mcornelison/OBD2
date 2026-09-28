@@ -143,6 +143,50 @@ correction of a bad reading.
 can.** Use that as the justification, not merely the ruling. See §1 of
 `specs/design-patterns.md` — *provider/consumer SSOT with decimation*.
 
+#### 4.2.a 🔴 AMENDMENT (CIO, 2026-09-28) — the ceiling governs what is STORED, not the internal read
+
+**This amendment narrows what "4 Hz ceiling" means; it does not lift it.** ARCH-064 (reliable IMU
+— acquisition C + an x-io Fusion AHRS, `src/pi/sensors/ahrs_fusion.py`) needed a faster gyro read
+than 4 Hz to hold attitude between corrections, and the CIO ruled: **the IMU's INTERNAL
+acquisition/fusion read may run at `sampleHz` 50 Hz; what is STORED — `persistHz` / `stateHz` —
+stays under the ceiling, unchanged at 2 / 1.**
+
+⚠️ **§4.4's table below predates this split and still describes `sampleHz` as if it were one
+number subject to the ceiling.** It is not superseded on `persistHz` / `stateHz` — those readings
+hold — but its `IMU sampleHz` row now describes only the OLD, single-purpose meaning. Read this
+amendment as authoritative for what `sampleHz` means today; §4.4 is not rewritten so the
+2026-09-21 derivation history stays intact (nothing here reopens the ceiling itself).
+
+**Why 50 Hz, not a number below the ceiling:** every proven AHRS this project evaluated
+(x-io Fusion — see `offices/architect/findings/2026-09-28-PLAN-ARCH-064-reliable-imu.md`)
+assumes a fast gyro read; the complementary-filter math that holds attitude between accelerometer
+corrections integrates gyro rate over short, frequent steps, and a 4 Hz gyro read under-resolves a
+vehicle's actual angular rate during braking/cornering (the phenomena §4.1/§4.3 exist to capture).
+This is an ACQUISITION need, internal to the sensor-fusion computation — it produces no new
+STORED row.
+
+**Why this does not reopen §4.1's pairing rule:** the rule is about what is **captured and
+retained** — a row that cannot pair with ECU data is not product data. The AHRS's 50 Hz internal
+read never becomes a row; only its OUTPUT (fused pitch/heading, at the bridge's existing
+`stateHz`/`persistHz` cadence) is published and stored, still paired to the drive window exactly
+as before. **Nothing crosses the ceiling into storage.**
+
+**The decimation stays EXACT, at a different factor:**
+
+    _decimationFactor = max(1, round(sampleHz / persistHz))   (src/pi/bus/edr_persistence_subscriber.py)
+
+    50 Hz -> 2 Hz:   50 / 25 = 2     EXACT — factor 25, no config field that lies
+    (unchanged)      4 Hz  -> 2 Hz:   4 / 2  = 2     EXACT — factor 2 (persistHz/stateHz path, §4.2's own case)
+
+🔴 **The factor is exact either way — §4.2's own architectural argument (integer decimation, no
+lying config field) is preserved, not undercut, by raising `sampleHz`.** `persistHz` and `stateHz`
+did not move; only the number they decimate FROM did, and 50 divides into 2 exactly as cleanly as
+4 does.
+
+See `specs/architecture.md`'s IMU section for the AHRS engine itself (settings, axis map, speed
+aiding, revert paths) — this amendment states only the RATE ruling; the mechanism lives there, not
+duplicated here.
+
 #### 4.2.1 The superseded 5 Hz ruling, preserved
 
 **CIO, 2026-09-20:** *"Nothing needs to run faster than 5 Hz for our current application. If

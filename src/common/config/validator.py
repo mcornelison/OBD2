@@ -84,6 +84,17 @@
 # 2026-09-22    | Rex (US-801) | DEFAULT_IMU_{SAMPLE,PERSIST,STATE}_HZ = 4/2/1:
 #                                the ONE definition of the IMU rate triple;
 #                                DEFAULTS and the pi module fallbacks import it.
+# 2026-09-28    | Atlas        | ARCH-064 Task 5, CIO ruling 2026-09-28:
+#               |              | DEFAULT_IMU_SAMPLE_HZ 4 -> 50. sampleHz is now
+#               |              | the IMU's INTERNAL acquisition/fusion read rate
+#               |              | (every proven AHRS assumes a fast gyro read;
+#               |              | see specs/data-acquisition-architecture.md
+#               |              | §4.2 amendment). persistHz/stateHz (the STORED,
+#               |              | 4 Hz-ceilinged rows paired to the drive window)
+#               |              | are UNCHANGED at 2/1 -- this ruling does not
+#               |              | touch the ceiling. Added magMode 'direct'
+#               |              | default + allowed-set, and fusionEngine /
+#               |              | magDeclinationDeg / magCalibration DEFAULTS.
 # ================================================================================
 ################################################################################
 
@@ -134,13 +145,21 @@ REQUIRED_SECTIONS: tuple[str, ...] = ('pi', 'server')
 # US-801: THE single definition of the IMU rate triple. Every other site --
 # the DEFAULTS entries below and the fallbacks in pi.sensors.sensor_reader,
 # pi.sensors.imu_state_bridge and pi.bus.edr_persistence_subscriber --
-# imports these names; none re-declares a literal. The values equal the
-# shipped config.json triple, 4 / 2 / 1 (US-796-b; the CIO's 4 Hz HARD CAP on
-# every acquisition rate, tightened from 5 Hz on 2026-09-21 --
-# specs/data-acquisition-architecture.md §4.2, ARCH-036). Consumers still read config first; these apply only when a key
-# is absent. Pinned against config.json by
-# tests/pi/sensors/test_imu_rate_single_source.py.
-DEFAULT_IMU_SAMPLE_HZ = 4
+# imports these names; none re-declares a literal. Consumers still read
+# config first; these apply only when a key is absent. Pinned against
+# config.json by tests/pi/sensors/test_imu_rate_single_source.py.
+#
+# ARCH-064 (CIO ruling 2026-09-28) split what "sampleHz" means. It is now the
+# IMU's INTERNAL acquisition/fusion read rate -- every proven AHRS (the x-io
+# Fusion engine, pi.sensors.ahrs_fusion) assumes a fast gyro read, and
+# acquisition C (src/pi/sensors/icm20948_direct.py) is measured live at up to
+# 100 Hz -- raised from the 4 Hz US-796-b/ARCH-036 value accordingly. The 4 Hz
+# HARD CAP (tightened from 5 Hz on 2026-09-21) still governs what is STORED:
+# persistHz/stateHz are UNCHANGED at 2/1 and stay under it, paired to the
+# drive window. See specs/data-acquisition-architecture.md §4.2's 2026-09-28
+# amendment for the full reasoning and the decimation factor this produces
+# (50 -> 2 = 25, exact).
+DEFAULT_IMU_SAMPLE_HZ = 50
 DEFAULT_IMU_PERSIST_HZ = 2
 DEFAULT_IMU_STATE_HZ = 1
 
@@ -385,30 +404,78 @@ DEFAULTS: dict[str, Any] = {
     # hiccup re-serving one buffered frame.  Seconds, not samples, so a 50 Hz
     # and a 1 Hz channel wait the same wall-clock time.
     'pi.sensors.imu.invariantDwellSeconds': 2.0,
-    # ARCH-057: which magnetometer ACQUISITION path runs. 'master' | 'bypass'.
+    # Which magnetometer ACQUISITION path runs. One of three, in the order
+    # they were shipped: 'bypass' (A) -> 'master' (B) -> 'direct' (C, current
+    # default). Allowed set enforced in _validateImuStateBridge.
     #
-    # 🔴 'master' IS THE DEFAULT BECAUSE IT IS THE CONFIGURATION THE FIX WAS
+    # 🔴 ARCH-064 (2026-09-28) MADE 'direct' (C) THE DEFAULT, SUPERSEDING THE
+    # ARCH-057 'master' RULING BELOW. MEASURED on the real hardware: with the
+    # ICM-20948's internal I2C master enabled -- what 'master' is -- the
+    # AK09916 freezes after exactly one reading, under BOTH the adafruit AND
+    # the SparkFun libraries, with every other project process stopped (see
+    # src/pi/sensors/icm20948_direct.py header). 'direct' configures the chip
+    # from a clean software reset with the I2C master NEVER enabled and reads
+    # the AK09916 in bypass per its own datasheet -- live at 100 Hz, no
+    # freeze. ⚠️ Switching to bypass AFTER the master has already run (i.e.
+    # falling back from 'master' to 'bypass' at runtime rather than from a
+    # clean boot) can hang the whole I2C bus -- a second, worse failure mode;
+    # a magMode change is a config edit + service RESTART, never a live flip.
+    #
+    # ⚠️ 'master' and 'bypass' are BOTH RETAINED DELIBERATELY as revert paths,
+    # not dead config -- switch to either with a service restart if 'direct'
+    # misbehaves in the car. Their original ARCH-057/pre-ARCH-057 rationale is
+    # preserved below verbatim; it is superseded as the DEFAULT, not deleted.
+    #
+    # --- ARCH-057 (2026-09-18), superseded as the default by ARCH-064 above ---
+    # 🔴 'master' WAS THE DEFAULT BECAUSE IT WAS THE CONFIGURATION THE FIX WAS
     # MEASURED IN. The runtime keep-alive (0/20 -> 20/20 on this hardware,
     # 2026-09-18) repairs the channel by re-running adafruit's
     # _magnetometer_init(), which sets BYPASS_EN=False and re-enables the ICM's
     # internal I2C master. It is a MASTER-MODE repair, incompatible with the
     # bypass by construction: calling it on a bypassed chip would convert the
     # acquisition path mid-drive and the direct 0x0C reads would start failing.
-    # Shipping the measured repair therefore MEANS shipping master mode -- that is
-    # a consequence of the evidence, not a preference.
+    # Shipping the measured repair therefore MEANT shipping master mode -- that
+    # was a consequence of the evidence, not a preference. ARCH-064 measured
+    # that master mode itself freezes the magnetometer on this board (above),
+    # which is why it is now a revert path rather than the default.
     #
-    # ⚠️ 'bypass' IS RETAINED DELIBERATELY and is not dead config. It is the
-    # pre-ARCH-057 path (ak09916_bypass: direct 0x0C, ST1..ST2, with a real DRDY
-    # and HOFL check that master mode does NOT get, because adafruit's burst
-    # starts at 0x11 and never decodes ST2). It is the escape hatch: if master
-    # mode misbehaves in the car, revert with this key and a service restart
-    # rather than waiting for a deploy. It gets no keep-alive, per the above.
+    # 'bypass' (A) is the pre-ARCH-057 path (ak09916_bypass: direct 0x0C,
+    # ST1..ST2, with a real DRDY and HOFL check that master mode does NOT get,
+    # because adafruit's burst starts at 0x11 and never decodes ST2). It gets
+    # no runtime keep-alive, per the above.
     #
     # ⚠️ The 20/20 was measured with eclipse-obd STOPPED, i.e. sole owner of the
     # bus. ARCH-032 measured contention taking the magnetometer hand-over from
     # ~80% to ~12%, so that figure is UNCONTENDED and is not yet demonstrated in
     # production. Do not quote it as a production number.
-    'pi.sensors.imu.magMode': 'master',
+    'pi.sensors.imu.magMode': 'direct',
+    # ARCH-064: which AHRS fusion engine imu_state_bridge builds. 'imufusion'
+    # (the x-io Fusion AHRS, pi.sensors.ahrs_fusion) is the default; 'legacy'
+    # is the US-521 PitchFusion, kept selectable and byte-identical to before
+    # so a bad drive can be rolled back by config instead of a redeploy.
+    # Allowed set enforced in _validateImuStateBridge. 🔴 Under 'imufusion' the
+    # legacy pitch knobs above (pitchTauSec, accelTrustBand, zupt*) have NO
+    # EFFECT -- Fusion has no ZUPT stop detector and no mount-tilt bias
+    # (AhrsFusion.stopCount / .biasRad are always 0 for surface parity only).
+    # They still apply, unchanged, when fusionEngine is 'legacy'.
+    'pi.sensors.imu.fusionEngine': 'imufusion',
+    # ARCH-064: magnetic declination, degrees, EAST positive (true heading =
+    # magnetic heading + declination). Consumed only by AhrsFusion -- the
+    # legacy engine's headingDeg is magnetic, uncorrected. 0.0 here is an
+    # inert module default; the real value (car's location) belongs in config.json
+    # and is DOCUMENTED there with its NOAA/WMM source and date.
+    'pi.sensors.imu.magDeclinationDeg': 0.0,
+    # ARCH-064: hard/soft-iron magnetometer calibration, consumed only by
+    # AhrsFusion (m_c = softIron . (m_uncalibrated - hardIronUt)). Zero/
+    # identity is a NO-OP -- uncalibrated readings pass through unchanged --
+    # so an unset car ships with the same (uncorrected) heading accuracy as
+    # before rather than a silently wrong correction. Fit with
+    # tools/imu/fit_mag_calibration.py (ARCH-064 Task 6) once drive data
+    # exists.
+    'pi.sensors.imu.magCalibration': {
+        'hardIronUt': [0.0, 0.0, 0.0],
+        'softIron': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    },
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
@@ -1213,6 +1280,15 @@ class ConfigValidator:
         'pi.sensors.logGate.holdSec',
     )
 
+    # ARCH-064: the three magnetometer acquisition paths a build can name, and
+    # the two fusion engines a build can select. See the DEFAULTS comments
+    # above for what each value means and why an unknown one is rejected
+    # rather than silently coerced to the default -- a typo'd magMode must not
+    # quietly ship whichever acquisition path happens to be this release's
+    # default.
+    _IMU_MAG_MODES = frozenset({'direct', 'bypass', 'master'})
+    _IMU_FUSION_ENGINES = frozenset({'imufusion', 'legacy'})
+
     def _validateImuStateBridge(self, config: dict[str, Any]) -> None:
         """Validate pi.sensors.imu.{rates,pitch,zupt} (US-478, US-521, US-708).
 
@@ -1243,7 +1319,38 @@ class ConfigValidator:
                     f"{key} must be a positive number (got {val!r})",
                     missingFields=[key],
                 )
+        self._validateImuEnums(config)
         self._warnImuRatesAboveSource(config)
+
+    def _validateImuEnums(self, config: dict[str, Any]) -> None:
+        """Reject a ``magMode`` or ``fusionEngine`` outside its allowed set (ARCH-064).
+
+        Called after defaults are applied, so an absent key never reaches
+        here -- only an explicit, wrong value does.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If ``pi.sensors.imu.magMode`` is not one of
+                'direct' / 'bypass' / 'master', or ``pi.sensors.imu.fusionEngine``
+                is not one of 'imufusion' / 'legacy'.
+        """
+        magMode = self._getNestedValue(config, 'pi.sensors.imu.magMode')
+        if magMode is not None and magMode not in self._IMU_MAG_MODES:
+            raise ConfigValidationError(
+                f"pi.sensors.imu.magMode has unknown value {magMode!r}; "
+                f"allowed: {sorted(self._IMU_MAG_MODES)}",
+                missingFields=['pi.sensors.imu.magMode'],
+            )
+
+        fusionEngine = self._getNestedValue(config, 'pi.sensors.imu.fusionEngine')
+        if fusionEngine is not None and fusionEngine not in self._IMU_FUSION_ENGINES:
+            raise ConfigValidationError(
+                f"pi.sensors.imu.fusionEngine has unknown value {fusionEngine!r}; "
+                f"allowed: {sorted(self._IMU_FUSION_ENGINES)}",
+                missingFields=['pi.sensors.imu.fusionEngine'],
+            )
 
     def _warnImuRatesAboveSource(self, config: dict[str, Any]) -> None:
         """WARN when an IMU consumer rate cannot be what its config field says (US-796-b).
