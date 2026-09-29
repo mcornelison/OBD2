@@ -223,3 +223,101 @@ def test_configJson_imuTriple_decimatesExactly():
     factor = _decimationFactor(imu["sampleHz"], imu["persistHz"])
     assert factor == 25
     assert imu["sampleHz"] / factor == imu["persistHz"]
+
+
+# ---------------------------------------------------------------------------
+# ARCH-064 Task 6b: pi.sensors.imu.accelCalibration {offsetMs2, matrix}
+# ---------------------------------------------------------------------------
+
+_IDENTITY = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def test_validatorDefaults_accelCalibration_isZeroOffsetIdentityMatrix():
+    """
+    Given: no pi.sensors.imu.accelCalibration
+    When: the validator applies defaults
+    Then: zero offset / identity matrix -- a NO-OP, the accel passes unchanged
+    """
+    result = ConfigValidator().validate(_baseCfg({}))
+    cal = result["pi"]["sensors"]["imu"]["accelCalibration"]
+    assert cal["offsetMs2"] == [0.0, 0.0, 0.0]
+    assert cal["matrix"] == _IDENTITY
+
+
+def test_validatorDefaults_accelCalibration_partialBlockIsCompleted():
+    """
+    Given: an accelCalibration carrying only offsetMs2
+    When: defaults apply
+    Then: the missing matrix is the identity (per-leaf defaults), not absent
+    """
+    result = ConfigValidator().validate(_baseCfg({"accelCalibration": {"offsetMs2": [0.1, 0.2, 0.3]}}))
+    cal = result["pi"]["sensors"]["imu"]["accelCalibration"]
+    assert cal["offsetMs2"] == [0.1, 0.2, 0.3]
+    assert cal["matrix"] == _IDENTITY
+
+
+def test_validator_acceptsAFittedAccelCalibration():
+    cal = {"offsetMs2": [0.2, -0.1, 0.18], "matrix": [[0.98, 0.01, 0.0], [0.01, 1.01, 0.0], [0.0, 0.0, 0.982]]}
+    result = ConfigValidator().validate(_baseCfg({"accelCalibration": cal}))
+    assert result["pi"]["sensors"]["imu"]["accelCalibration"] == cal
+
+
+@pytest.mark.parametrize(
+    "cal, fragment",
+    [
+        ({"offsetMs2": [0.1, 0.2]}, "offsetMs2"),
+        ({"offsetMs2": [0.1, 0.2, 0.3, 0.4]}, "offsetMs2"),
+        ({"offsetMs2": "0,0,0"}, "offsetMs2"),
+        ({"offsetMs2": [0.1, True, 0.3]}, "offsetMs2"),
+        ({"offsetMs2": [0.1, float("nan"), 0.3]}, "offsetMs2"),
+        ({"offsetMs2": [0.1, None, 0.3]}, "offsetMs2"),
+        ({"matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]}, "matrix"),
+        ({"matrix": [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]}, "matrix"),
+        ({"matrix": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]}, "matrix"),
+        ({"matrix": [[1.0, 0.0, 0.0], [0.0, float("inf"), 0.0], [0.0, 0.0, 1.0]]}, "matrix"),
+        ({"matrix": [[1.0, 0.0, 0.0], [0.0, "1", 0.0], [0.0, 0.0, 1.0]]}, "matrix"),
+        ("not-a-block", "accelCalibration"),
+    ],
+)
+def test_validator_rejectsMalformedAccelCalibration(cal, fragment):
+    """
+    Given: an accelCalibration whose offset is not a finite 3-vector or whose
+           matrix is not a finite 3x3
+    When: the validator runs
+    Then: ConfigValidationError naming the field -- AhrsFusion would otherwise
+          refuse it at runtime and silently fall back to the legacy engine
+    """
+    with pytest.raises(ConfigValidationError) as excinfo:
+        ConfigValidator().validate(_baseCfg({"accelCalibration": cal}))
+    assert fragment in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "matrix",
+    [
+        [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],  # a reflection: det -1
+        [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],  # an axis swap: det -1
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],  # singular: det 0
+    ],
+)
+def test_validator_rejectsANonPositiveDeterminant(matrix):
+    """
+    Given: a matrix with det <= 0 (a mirror, an axis swap, or a collapse)
+    When: the validator runs
+    Then: rejected -- a calibration is a small correction near the identity;
+          det <= 0 flips handedness (gravity reads upside-down on one axis)
+    """
+    with pytest.raises(ConfigValidationError) as excinfo:
+        ConfigValidator().validate(_baseCfg({"accelCalibration": {"matrix": matrix}}))
+    assert "determinant" in str(excinfo.value)
+
+
+def test_configJson_accelCalibration_shipsAsTheNoOp():
+    """
+    Given: the shipped config.json
+    When: pi.sensors.imu.accelCalibration is read
+    Then: it is present, beside magCalibration, as zero/identity -- real
+          values are Task 8's, not this task's
+    """
+    imu = _shippedImu()
+    assert imu["accelCalibration"] == {"offsetMs2": [0.0, 0.0, 0.0], "matrix": _IDENTITY}

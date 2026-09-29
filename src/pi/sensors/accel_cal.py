@@ -31,7 +31,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pi.sensors.mag_fit import sphereFit
+from pi.sensors.mag_fit import ellipsoidFit, sphereFit
 
 STANDARD_GRAVITY_MS2 = 9.80665
 
@@ -41,6 +41,23 @@ STANDARD_GRAVITY_MS2 = 9.80665
 DEFAULT_MAX_GYRO_RAD_S = 0.05
 
 Vector3 = tuple[float, float, float]
+Matrix3 = tuple[Vector3, Vector3, Vector3]
+
+# ARCH-064 Task 6b: the ellipsoid fit has 9 unknowns (offset + symmetric 3x3).
+# Six held faces (+x, -x, +y, -y, +z, -z up) are the minimum that constrain
+# every per-axis offset and gain from both sides; five still SPAN 3D, so the
+# generic span test cannot catch them -- this count does.
+MIN_DISTINCT_ORIENTATIONS = 6
+
+# Two gravity directions closer than this are the SAME orientation. The six
+# faces are 90 degrees apart, so anything under 45 separates them; 30 absorbs a
+# hand that holds a face 10-15 degrees off-axis.
+ORIENTATION_CLUSTER_DEG = 30.0
+
+# A cluster needs this many quasi-static samples to count as a held face --
+# three samples caught as the hand passes through do not constrain anything.
+# 10 is 0.2 s at 50 Hz; the tumble procedure holds each face for 10 s.
+MIN_SAMPLES_PER_ORIENTATION = 10
 
 
 @dataclass(frozen=True)
@@ -99,4 +116,92 @@ def calibrateAccel(points: Sequence[Vector3]) -> AccelCalibration:
         errorPercent=(measuredG / STANDARD_GRAVITY_MS2 - 1.0) * 100.0,
         residualRmsMs2=fit.residualRms,
         samples=fit.samples,
+    )
+
+
+@dataclass(frozen=True)
+class AccelEllipsoidCalibration:
+    """Offset + 3x3 correction, ``a_c = matrix . (a - offsetMs2)``, DEVICE frame.
+
+    ARCH-064 Task 6b. Unlike :class:`AccelCalibration` (per-axis bias + ONE
+    scalar scale), this corrects per-axis gain and cross-axis coupling.
+    """
+
+    offsetMs2: Vector3
+    matrix: Matrix3
+    residualRmsMs2: float
+    samples: int
+    orientations: int
+
+    def describe(self) -> str:
+        """One line for a log or a report."""
+        o = self.offsetMs2
+        diag = tuple(self.matrix[i][i] for i in range(3))
+        return (
+            f"accel ellipsoid: offset ({o[0]:+.4f}, {o[1]:+.4f}, {o[2]:+.4f}) m/s^2, "
+            f"gain diagonal ({diag[0]:.5f}, {diag[1]:.5f}, {diag[2]:.5f}), "
+            f"residual {self.residualRmsMs2:.4f} m/s^2 over {self.samples} samples "
+            f"in {self.orientations} orientations"
+        )
+
+
+def countDistinctOrientations(points: Sequence[Vector3]) -> int:
+    """Count held orientations: clusters of gravity DIRECTION.
+
+    Greedy clustering of the unit vectors: a sample joins the nearest existing
+    cluster within ``ORIENTATION_CLUSTER_DEG`` of that cluster's seed, else it
+    seeds a new one. Only clusters with at least
+    ``MIN_SAMPLES_PER_ORIENTATION`` samples count.
+    """
+    cosLimit = math.cos(math.radians(ORIENTATION_CLUSTER_DEG))
+    seeds: list[Vector3] = []
+    counts: list[int] = []
+    for p in points:
+        norm = math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2])
+        if norm <= 0.0 or not math.isfinite(norm):
+            continue
+        u = (p[0] / norm, p[1] / norm, p[2] / norm)
+        best, bestDot = -1, cosLimit
+        for index, seed in enumerate(seeds):
+            dot = u[0] * seed[0] + u[1] * seed[1] + u[2] * seed[2]
+            if dot >= bestDot:
+                best, bestDot = index, dot
+        if best < 0:
+            seeds.append(u)
+            counts.append(1)
+        else:
+            counts[best] += 1
+    return sum(1 for c in counts if c >= MIN_SAMPLES_PER_ORIENTATION)
+
+
+def calibrateAccelEllipsoid(points: Sequence[Vector3]) -> AccelEllipsoidCalibration:
+    """Fit offset + 3x3 from quasi-static accel vectors (ARCH-064 Task 6b).
+
+    Feed it :func:`quasiStaticSamples` output -- the same input gate as
+    :func:`calibrateAccel`. The fit is ``mag_fit.ellipsoidFit`` referenced to
+    standard gravity, so ``|matrix . (a - offset)| = g`` at rest in every
+    orientation. Fitted and returned in the frame the points are in (DEVICE,
+    for a tumble capture); the config block is conjugated to BODY by the tool
+    that emits it (Ruling 30).
+
+    Raises:
+        ValueError: fewer than ``MIN_DISTINCT_ORIENTATIONS`` held orientations,
+            or anything ``ellipsoidFit`` refuses (too few points, not 3D).
+    """
+    pts = [(float(p[0]), float(p[1]), float(p[2])) for p in points]
+    orientations = countDistinctOrientations(pts)
+    if orientations < MIN_DISTINCT_ORIENTATIONS:
+        raise ValueError(
+            f"accel ellipsoid calibration needs at least {MIN_DISTINCT_ORIENTATIONS} "
+            f"distinct orientations (each held for >= {MIN_SAMPLES_PER_ORIENTATION} "
+            f"quasi-static samples); found {orientations}. Hold each of the six faces "
+            "(+x, -x, +y, -y, +z, -z up) still."
+        )
+    fit = ellipsoidFit(pts, referenceNorm=STANDARD_GRAVITY_MS2)
+    return AccelEllipsoidCalibration(
+        offsetMs2=fit.offset,
+        matrix=fit.matrix,
+        residualRmsMs2=fit.residualRms,
+        samples=fit.samples,
+        orientations=orientations,
     )

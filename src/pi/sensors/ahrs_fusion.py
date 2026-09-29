@@ -43,6 +43,11 @@
 #   Skipped when speed is STALE (> 3 s since the last sample) or the sample has
 #   no gyro. Signs are pinned by tests.
 #
+#   ACCEL CALIBRATION (ARCH-064 Task 6b): ``a_c = M . (a - o)`` in the BODY
+#   frame, applied to every accel sample FIRST -- before the speed-aided
+#   compensation above (which subtracts a TRUE vehicle acceleration, so it must
+#   see a TRUE specific force) and before Fusion. Zero/identity is a no-op.
+#
 #   Pure and I/O-free: no bus, no device, no clock -- the caller supplies body-
 #   frame vectors and monotonic capture times, as with PitchFusion.
 # Author: Atlas (ARCH-064)
@@ -65,6 +70,9 @@
 #               |              | then reads None until a fresh one.
 # 2026-09-28    | Atlas        | ``fusionVersion`` property, so the IMU bridge
 #               | (ARCH-064)   | stamps EDR rows with the running engine's version.
+# 2026-09-28    | Atlas        | Task 6b: accelerometer calibration
+#               | (ARCH-064)   | a_c = M . (a - o), body frame, applied BEFORE
+#               |              | speed-aided compensation and the AHRS update.
 # ================================================================================
 ################################################################################
 
@@ -174,6 +182,8 @@ class AhrsFusion:
         hardIronUt: Sequence[float] = _ZERO_3,
         softIron: Sequence[Sequence[float]] = _IDENTITY_3X3,
         gyroRangeDps: float = 500.0,
+        accelOffsetMs2: Sequence[float] = _ZERO_3,
+        accelMatrix: Sequence[Sequence[float]] = _IDENTITY_3X3,
     ) -> None:
         """Build the filter.
 
@@ -187,6 +197,13 @@ class AhrsFusion:
             softIron: Soft-iron matrix ``S`` (3x3); ``m_c = S . (m_u - h)``.
             gyroRangeDps: Gyro full-scale range, deg/s (Fusion's overrange
                 detection).
+            accelOffsetMs2: Accelerometer offset ``o``, m/s^2, body frame.
+            accelMatrix: Accelerometer correction ``M`` (3x3);
+                ``a_c = M . (a - o)``, applied before speed compensation.
+
+        Raises:
+            ValueError: a non-finite ``sampleHz``, or an accel calibration that
+                is not a finite 3-vector / 3x3.
         """
         if not (sampleHz > 0.0 and math.isfinite(sampleHz)):
             raise ValueError(f"sampleHz must be a positive finite number, got {sampleHz!r}")
@@ -196,6 +213,13 @@ class AhrsFusion:
         self._hardIron = np.asarray(hardIronUt, dtype=float).reshape(3)
         self._softIron = np.asarray(softIron, dtype=float).reshape(3, 3)
         self._gyroRangeDps = float(gyroRangeDps)
+        self._accelOffset = np.asarray(accelOffsetMs2, dtype=float).reshape(3)
+        self._accelMatrix = np.asarray(accelMatrix, dtype=float).reshape(3, 3)
+        if not (np.all(np.isfinite(self._accelOffset)) and np.all(np.isfinite(self._accelMatrix))):
+            raise ValueError("accel calibration must be finite (accelOffsetMs2, accelMatrix)")
+        self._accelCalibrated = bool(
+            np.any(self._accelOffset != 0.0) or np.any(self._accelMatrix != np.eye(3))
+        )
         self._headingCalibrated = bool(
             np.any(self._hardIron != 0.0) or np.any(self._softIron != np.eye(3))
         )
@@ -284,7 +308,11 @@ class AhrsFusion:
         accelVec = _finiteVec3(accel)
         if accelVec is None:
             return
-        accelG = np.asarray(accelVec, dtype=float) / STANDARD_GRAVITY_MS2
+        accelMs2 = np.asarray(accelVec, dtype=float)
+        if self._accelCalibrated:
+            accelMs2 = self._accelMatrix @ (accelMs2 - self._accelOffset)
+        self._lastAccelMs2 = (float(accelMs2[0]), float(accelMs2[1]), float(accelMs2[2]))
+        accelG = accelMs2 / STANDARD_GRAVITY_MS2
 
         gyroVec = _finiteVec3(gyro)
         accelG = self._compensate(accelG, gyroVec, capture)
@@ -348,6 +376,7 @@ class AhrsFusion:
         self._lastSpeed: tuple[float, float] | None = None
         self._aLongMs2: float | None = None
         self._speedCompensated = False
+        self._lastAccelMs2: tuple[float, float, float] | None = None
 
     # -- new surface -----------------------------------------------------------
     @property
@@ -382,6 +411,17 @@ class AhrsFusion:
     def headingCalibrated(self) -> bool:
         """True only when a non-default hard- or soft-iron calibration was supplied."""
         return self._headingCalibrated
+
+    @property
+    def accelCalibrated(self) -> bool:
+        """True only when a non-default accel offset or matrix was supplied."""
+        return self._accelCalibrated
+
+    @property
+    def lastAccelMs2(self) -> tuple[float, float, float] | None:
+        """The last accepted accel sample AFTER calibration, before speed
+        compensation, body frame, m/s^2 (None until one arrives)."""
+        return self._lastAccelMs2
 
     @property
     def flags(self) -> dict:

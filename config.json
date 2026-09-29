@@ -556,6 +556,10 @@
           "hardIronUt": [0.0, 0.0, 0.0],
           "softIron": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         },
+        "accelCalibration": {
+          "offsetMs2": [0.0, 0.0, 0.0],
+          "matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        },
         "persistHz": 2,
         "stateHz": 1,
         "gravityTauSec": 5.0,

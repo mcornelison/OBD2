@@ -289,6 +289,37 @@ def test_factory_passesDeclinationAndCalibrationToTheEngine(tmp_path: Path):
     assert engine.headingCalibrated is True
 
 
+def test_factory_passesAccelCalibrationToTheEngine(tmp_path: Path):
+    """
+    Given: an accelCalibration {offsetMs2, matrix} in config (ARCH-064 Task 6b)
+    When: the factory builds the AHRS
+    Then: it reaches the engine and is applied (otherwise the key is decorative)
+    """
+    cal = {"offsetMs2": [0.2, -0.1, 0.18], "matrix": [[0.98, 0.0, 0.0], [0, 1.01, 0], [0, 0, 0.982]]}
+    bridge = createImuStateBridgeFromConfig(_config(tmp_path, accelCalibration=cal), _NullBus())
+    assert bridge is not None
+    engine = bridge._pitchFusion  # noqa: SLF001
+    assert isinstance(engine, AhrsFusion)
+    assert engine.accelCalibrated is True
+    engine.update((0.2, -0.1, 10.18), (0.0, 0.0, 0.0), 0.0)
+    assert engine.lastAccelMs2 == pytest.approx((0.0, 0.0, 0.982 * 10.0))
+
+
+def test_factory_absentAccelCalibrationIsANoOp(tmp_path: Path):
+    bridge = createImuStateBridgeFromConfig(_config(tmp_path), _NullBus())
+    engine = bridge._pitchFusion  # noqa: SLF001
+    assert isinstance(engine, AhrsFusion)
+    assert engine.accelCalibrated is False
+
+
+def test_factory_malformedAccelCalibration_fallsBackToLegacy(tmp_path: Path, caplog):
+    bad = {"offsetMs2": [0.1, 0.2], "matrix": [[1.0, 0.0]]}
+    with caplog.at_level(logging.ERROR, logger="pi.sensors.imu_state_bridge"):
+        bridge = createImuStateBridgeFromConfig(_config(tmp_path, accelCalibration=bad), _NullBus())
+    assert isinstance(bridge._pitchFusion, PitchFusion)  # noqa: SLF001
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+
+
 # --------------------------------------------------------------- AHRS wiring
 
 

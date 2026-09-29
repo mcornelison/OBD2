@@ -453,3 +453,130 @@ def test_heading_afterResetWithoutMag_isNone():
     _run(fusion, 5.0, LEVEL, start=t)
     assert fusion.pitchRad is not None
     assert fusion.headingDeg is None
+
+
+# ---------------------------------------------------------------------------
+# ARCH-064 Task 6b: accelerometer calibration a_c = M . (a - o), BODY frame,
+# applied BEFORE speed-aided compensation and Fusion.
+# ---------------------------------------------------------------------------
+
+# A sensor that reads 2 % high, with cross-coupling and an offset. A pure scale
+# would not move pitch (Fusion uses the accel's DIRECTION), so the offset and
+# the cross term are what make the pitch comparison below able to fail.
+_ACCEL_DISTORTION = (
+    (1.02, 0.0, 0.012),
+    (0.0, 1.02, 0.0),
+    (-0.008, 0.0, 1.02),
+)
+_ACCEL_OFFSET_MS2 = (0.15, -0.05, 0.02)
+
+
+def _matVec(m, v):
+    return tuple(sum(m[i][j] * v[j] for j in range(3)) for i in range(3))
+
+
+def _inverse3(m):
+    import numpy as np
+
+    return tuple(tuple(float(c) for c in row) for row in np.linalg.inv(np.asarray(m, dtype=float)))
+
+
+def _rawAccel(ideal):
+    """What the distorted sensor reads when the true specific force is ``ideal``."""
+    return tuple(d + o for d, o in zip(_matVec(_ACCEL_DISTORTION, ideal), _ACCEL_OFFSET_MS2, strict=True))
+
+
+def _accelCalibrated() -> AhrsFusion:
+    return AhrsFusion(
+        sampleHz=HZ, accelOffsetMs2=_ACCEL_OFFSET_MS2, accelMatrix=_inverse3(_ACCEL_DISTORTION)
+    )
+
+
+def test_accelCal_rawReading102g_correctsToExactlyOneG_andIdealPitch():
+    ideal = _tilted(3.0)
+    raw = _rawAccel(ideal)
+    rawG = math.sqrt(sum(c * c for c in raw)) / G
+    assert rawG == pytest.approx(1.02, abs=0.005)  # the sensor under test reads ~1.02 g
+
+    calibrated = _accelCalibrated()
+    reference = AhrsFusion(sampleHz=HZ)
+    _run(calibrated, 5.0, raw)
+    _run(reference, 5.0, ideal)
+
+    corrected = calibrated.lastAccelMs2
+    assert math.sqrt(sum(c * c for c in corrected)) / G == pytest.approx(1.000, abs=1e-9)
+    assert math.degrees(calibrated.pitchRad) == pytest.approx(math.degrees(reference.pitchRad), abs=1e-6)
+    assert math.degrees(reference.pitchRad) == pytest.approx(3.0, abs=0.05)
+
+
+def test_accelCal_uncalibratedDistortedReading_pitchIsWrong():
+    """Negative control: the distortion DOES move pitch when not removed."""
+    ideal = _tilted(3.0)
+    uncal = AhrsFusion(sampleHz=HZ)
+    reference = AhrsFusion(sampleHz=HZ)
+    _run(uncal, 5.0, _rawAccel(ideal))
+    _run(reference, 5.0, ideal)
+    assert abs(math.degrees(uncal.pitchRad) - math.degrees(reference.pitchRad)) > 0.5
+    assert math.sqrt(sum(c * c for c in uncal.lastAccelMs2)) / G == pytest.approx(1.02, abs=0.005)
+
+
+def test_accelCal_isAppliedBeforeSpeedCompensation():
+    """Speed aiding subtracts the car's own acceleration from the CORRECTED
+    accel: calibrating the raw reading and then compensating must equal the
+    uncalibrated filter fed the ideal reading, with the same speed history."""
+
+    def drive(fusion, accelFn):
+        t = 0.0
+        nextSpeed = 0.0
+        aMs2 = 0.3 * G
+        while t < 12.0 - 1e-9:
+            if t >= nextSpeed - 1e-9:
+                fusion.observeSpeed(max(0.0, aMs2 * (t - 4.0)) * 3.6, t)
+                nextSpeed += 2.3
+            ideal = (aMs2 if t >= 4.0 else 0.0, 0.0, G)
+            fusion.update(accelFn(ideal), NO_ROTATION, t)
+            t += DT
+        return math.degrees(fusion.pitchRad)
+
+    calibrated = drive(_accelCalibrated(), _rawAccel)
+    reference = drive(AhrsFusion(sampleHz=HZ), lambda ideal: ideal)
+    assert calibrated == pytest.approx(reference, abs=1e-6)
+
+
+def test_accelCal_defaultsAreANoOp():
+    default = AhrsFusion(sampleHz=HZ)
+    explicit = AhrsFusion(
+        sampleHz=HZ,
+        accelOffsetMs2=(0.0, 0.0, 0.0),
+        accelMatrix=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+    )
+    raw = _tilted(4.0)
+    _run(default, 5.0, raw)
+    _run(explicit, 5.0, raw)
+    assert default.lastAccelMs2 == raw
+    assert default.pitchRad == explicit.pitchRad
+    assert default.accelCalibrated is False
+    assert _accelCalibrated().accelCalibrated is True
+
+
+def test_accelCal_gyroAndMagAreUntouched():
+    """The accel correction must not leak into heading (mag) or rotation (gyro)."""
+    calibrated = _accelCalibrated()
+    reference = AhrsFusion(sampleHz=HZ)
+    _run(calibrated, 5.0, _rawAccel(LEVEL), mag=EAST_FIELD_UT)
+    _run(reference, 5.0, LEVEL, mag=EAST_FIELD_UT)
+    assert calibrated.headingDeg == pytest.approx(reference.headingDeg, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"accelOffsetMs2": (0.0, 0.0)},
+        {"accelMatrix": ((1.0, 0.0), (0.0, 1.0))},
+        {"accelOffsetMs2": (float("nan"), 0.0, 0.0)},
+        {"accelMatrix": ((1.0, 0.0, 0.0), (0.0, float("inf"), 0.0), (0.0, 0.0, 1.0))},
+    ],
+)
+def test_accelCal_malformedCalibrationRaises(kwargs):
+    with pytest.raises(ValueError):
+        AhrsFusion(sampleHz=HZ, **kwargs)

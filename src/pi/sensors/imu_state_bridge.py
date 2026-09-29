@@ -1654,19 +1654,26 @@ def _buildAhrsFusion(imu: dict[str, Any], sampleHz: Any) -> AhrsFusion | None:
     The import is LOCAL on purpose: ``ahrs_fusion`` imports the imufusion wheel
     at module load, and a Pi without it must still get a working IMU state.
     Defaults are the uncalibrated identity: zero hard-iron, identity soft-iron,
-    zero declination (``headingCalibrated`` then reads False).
+    zero declination (``headingCalibrated`` then reads False), and zero offset /
+    identity matrix for ``accelCalibration`` (ARCH-064 Task 6b).
     """
     try:
         from pi.sensors.ahrs_fusion import AhrsFusion
 
         rate = sampleHz if sampleHz and sampleHz > 0 else DEFAULT_IMU_SAMPLE_HZ
         calibration = imu.get("magCalibration") or {}
+        accelCalibration = imu.get("accelCalibration") or {}
         return AhrsFusion(
             float(rate),
             declinationDeg=float(imu.get("magDeclinationDeg", 0.0)),
             hardIronUt=calibration.get("hardIronUt", (0.0, 0.0, 0.0)),
             softIron=calibration.get(
                 "softIron", ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            ),
+            # ARCH-064 Task 6b: a_c = matrix . (a - offsetMs2), body frame.
+            accelOffsetMs2=accelCalibration.get("offsetMs2", (0.0, 0.0, 0.0)),
+            accelMatrix=accelCalibration.get(
+                "matrix", ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
             ),
         )
     except Exception as e:  # noqa: BLE001 -- ANY failure falls back; state must not be lost

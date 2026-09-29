@@ -95,6 +95,9 @@
 #               |              | touch the ceiling. Added magMode 'direct'
 #               |              | default + allowed-set, and fusionEngine /
 #               |              | magDeclinationDeg / magCalibration DEFAULTS.
+# 2026-09-28    | Atlas        | ARCH-064 Task 6b: accelCalibration default
+#               | (ARCH-064)   | (zero/identity) + validation (finite 3-vector,
+#               |              | finite 3x3, determinant > 0).
 # ================================================================================
 ################################################################################
 
@@ -116,6 +119,7 @@ Usage:
 
 import ipaddress
 import logging
+import math
 import zoneinfo
 from typing import Any
 
@@ -475,6 +479,16 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.imu.magCalibration': {
         'hardIronUt': [0.0, 0.0, 0.0],
         'softIron': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    },
+    # ARCH-064 Task 6b: accelerometer calibration, consumed only by AhrsFusion
+    # (a_c = matrix . (a - offsetMs2), BODY frame, m/s^2, applied before
+    # speed-aided compensation). Zero/identity is a NO-OP. Fit from a hand
+    # tumble with tools/imu/accel_cal_cli.py --ellipsoid, which emits this
+    # block already conjugated into the body frame. A partial block is
+    # completed leaf-by-leaf in _validateImuAccelCalibration.
+    'pi.sensors.imu.accelCalibration': {
+        'offsetMs2': [0.0, 0.0, 0.0],
+        'matrix': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     },
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
@@ -1320,6 +1334,7 @@ class ConfigValidator:
                     missingFields=[key],
                 )
         self._validateImuEnums(config)
+        self._validateImuAccelCalibration(config)
         self._warnImuRatesAboveSource(config)
 
     def _validateImuEnums(self, config: dict[str, Any]) -> None:
@@ -1350,6 +1365,73 @@ class ConfigValidator:
                 f"pi.sensors.imu.fusionEngine has unknown value {fusionEngine!r}; "
                 f"allowed: {sorted(self._IMU_FUSION_ENGINES)}",
                 missingFields=['pi.sensors.imu.fusionEngine'],
+            )
+
+    def _validateImuAccelCalibration(self, config: dict[str, Any]) -> None:
+        """Validate (and complete) ``pi.sensors.imu.accelCalibration`` (ARCH-064 Task 6b).
+
+        ``offsetMs2`` must be a finite 3-vector and ``matrix`` a finite 3x3 with
+        a POSITIVE determinant: a calibration is a small correction near the
+        identity, and det <= 0 is a mirror or a collapse -- gravity would read
+        upside-down on an axis. A missing leaf is filled with its no-op value
+        (zero offset / identity), so a partial block means what it says.
+
+        Rejected here rather than left to AhrsFusion, which would refuse it at
+        runtime and silently fall back to the legacy engine.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the block, the offset or the matrix is
+                malformed, non-finite, or the matrix determinant is <= 0.
+        """
+        key = 'pi.sensors.imu.accelCalibration'
+        block = self._getNestedValue(config, key)
+        if block is None:
+            return
+        if not isinstance(block, dict):
+            raise ConfigValidationError(
+                f"{key} must be an object {{offsetMs2, matrix}} (got {block!r})",
+                missingFields=[key],
+            )
+
+        def finite(value: Any) -> bool:
+            return (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+
+        offset = block.setdefault('offsetMs2', [0.0, 0.0, 0.0])
+        if not (
+            isinstance(offset, (list, tuple)) and len(offset) == 3 and all(finite(v) for v in offset)
+        ):
+            raise ConfigValidationError(
+                f"{key}.offsetMs2 must be 3 finite numbers (got {offset!r})",
+                missingFields=[f"{key}.offsetMs2"],
+            )
+
+        matrix = block.setdefault('matrix', [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        if not (
+            isinstance(matrix, (list, tuple))
+            and len(matrix) == 3
+            and all(
+                isinstance(row, (list, tuple)) and len(row) == 3 and all(finite(v) for v in row)
+                for row in matrix
+            )
+        ):
+            raise ConfigValidationError(
+                f"{key}.matrix must be a 3x3 of finite numbers (got {matrix!r})",
+                missingFields=[f"{key}.matrix"],
+            )
+        (a, b, c), (d, e, f), (g, h, i) = matrix
+        determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+        if not determinant > 0.0:
+            raise ConfigValidationError(
+                f"{key}.matrix determinant must be > 0 (got {determinant:g}): a mirror "
+                "or singular matrix is not a calibration",
+                missingFields=[f"{key}.matrix"],
             )
 
     def _warnImuRatesAboveSource(self, config: dict[str, Any]) -> None:
