@@ -187,9 +187,20 @@ immediately, naming what is missing -- fit round 1's bug was that a header
 match failure silently produced zero rows, surfacing only as a generic
 too-few-samples error with no indication the columns were ever wrong.
 
+STAGE 1 -> STAGE 2 (Ruling 27, ARCH-064 Task 6b). ``--sensor-cal PATH`` takes
+the hand-tumble's sensor-intrinsic calibration (``tools/imu/fit_mag_tumble.py``
+output: DEVICE-frame ``A_s . (m - b_s)``) and applies it to every row's mag
+BEFORE ``resolveMountFrame``; the planar fit above then runs UNCHANGED on the
+sensor-corrected rows, and the emitted ``magCalibration`` is the COMPOSED
+body-frame block for ``m_c = S . (m_u - h)`` on the RAW body reading:
+``S = S_car . R A_s R^T``, ``h = R b_s + (R A_s R^T)^-1 . h_car``
+(``tools/imu/cal_frames.py`` derives it). The car-only block and the sensor
+cal are reported under ``composition``; ``fitQuality`` describes the stage-2
+fit. Without ``--sensor-cal`` nothing here changes.
+
 Usage:
     python -m tools.imu.fit_mag_calibration capture.csv [--drive-id 42]
-        [--earth-vertical-ut -49.0] [--force]
+        [--earth-vertical-ut -49.0] [--force] [--sensor-cal sensor_mag_cal.json]
 """
 
 from __future__ import annotations
@@ -203,8 +214,16 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pi.sensors import imu_state_bridge
 from pi.sensors.accel_cal import DEFAULT_MAX_GYRO_RAD_S
 from pi.sensors.imu_state_bridge import resolveMountFrame
+from tools.imu.cal_frames import (
+    applyDeviceCorrection,
+    composeMagCalibration,
+    loadSensorCal,
+    toMatrix,
+    toVector,
+)
 
 Vector3 = tuple[float, float, float]
 
@@ -498,7 +517,9 @@ def _resolveColumnSet(
 
 
 def loadRows(
-    path: str, driveId: int | None = None
+    path: str,
+    driveId: int | None = None,
+    sensorCal: tuple[Vector3, tuple[Vector3, Vector3, Vector3]] | None = None,
 ) -> list[tuple[float, Vector3, Vector3, Vector3 | None]]:
     """Load ``(tsCaptureS, accelBody, magBody, gyroRaw)`` from an ``edr_imu_sample`` CSV.
 
@@ -521,6 +542,9 @@ def loadRows(
             kept. A row with an unparseable or missing ``drive_id`` is
             dropped rather than assumed to match -- an ambiguous drive
             membership must not silently enter the fit.
+        sensorCal: Ruling 27 stage 1, DEVICE-frame ``(offset, matrix)``:
+            when given, each mag row becomes ``matrix . (m - offset)`` BEFORE
+            ``resolveMountFrame``. None (the default) changes nothing.
 
     Raises:
         ValueError: the CSV has no header, or is missing both the primary and
@@ -556,6 +580,8 @@ def loadRows(
                 tsCaptureS = float(row[TS_COLUMN])
                 ax, ay, az = (float(row[c]) for c in accelCols)
                 mx, my, mz = (float(row[c]) for c in magCols)
+                if sensorCal is not None:
+                    mx, my, mz = applyDeviceCorrection((mx, my, mz), sensorCal[0], sensorCal[1])
                 gyroRaw: Vector3 | None = None
                 if gyroCols is not None:
                     gx, gy, gz = (float(row[c]) for c in gyroCols)
@@ -1214,14 +1240,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="accept a fit whose radius spread exceeds the quality floor (m7)",
     )
+    parser.add_argument(
+        "--sensor-cal",
+        default=None,
+        help="stage-1 sensor-intrinsic cal (fit_mag_tumble.py output); emits the COMPOSED block (Ruling 27)",
+    )
     args = parser.parse_args(argv)
 
     # Ruling 24: loadRows raising (e.g. the wrong CSV columns, C1) is a
     # refusal like any other -- it must come out as this CLI's {"refused":
     # ...} JSON, not an uncaught traceback, so it is inside the same try.
     rows: list[tuple[float, Vector3, Vector3, Vector3 | None]] = []
+    sensorCal = None
     try:
-        rows = loadRows(args.csv, driveId=args.drive_id)
+        if args.sensor_cal is not None:
+            sensorCal = loadSensorCal(args.sensor_cal)
+        rows = loadRows(args.csv, driveId=args.drive_id, sensorCal=sensorCal)
         fit = fitMagCalibration(
             rows,
             earthVerticalUt=args.earth_vertical_ut,
@@ -1257,6 +1291,26 @@ def main(argv: list[str] | None = None) -> int:
             "describe": fit.describe(),
         },
     }
+    if sensorCal is not None:
+        hComposed, sComposed = composeMagCalibration(
+            sensorCal[0], sensorCal[1], fit.hardIronUt, fit.softIron
+        )
+        carStage = result["magCalibration"]
+        result["magCalibration"] = {
+            "hardIronUt": toVector(hComposed, 4),
+            "softIron": toMatrix(sComposed, 6),
+        }
+        result["composition"] = {
+            "sensorCal": args.sensor_cal,
+            "sensorMagCalibration": {
+                "frame": "device",
+                "offsetUt": [round(v, 4) for v in sensorCal[0]],
+                "matrix": [[round(v, 6) for v in row] for row in sensorCal[1]],
+            },
+            "carStageMagCalibration": carStage,
+            "mount": dict(imu_state_bridge.IMU_BODY_FRAME),
+            "formula": "S = S_car . R A_s R^T ; h = R b_s + (R A_s R^T)^-1 . h_car",
+        }
     print(json.dumps(result, indent=2))
     # Rulings 26/28: WARNING lines, not refusals -- printed separately
     # (stderr) so they are visible even when stdout is redirected to save
