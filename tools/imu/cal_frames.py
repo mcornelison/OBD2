@@ -129,11 +129,17 @@ def loadSensorCal(path: str) -> tuple[Vector3, Matrix3]:
     """Read the stage-1 DEVICE-frame ``(offsetUt, matrix)`` this tool emits.
 
     Raises:
-        ValueError: missing block, a frame other than ``device``, a malformed
+        ValueError: an unreadable or non-JSON file, a missing block, a frame
+            other than ``device``, a malformed
             or non-finite offset/matrix, or a matrix determinant <= 0.
     """
-    with open(path, encoding="utf-8") as handle:
-        document = json.load(handle)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        # Fix round 1 (m2): a missing, unreadable or non-JSON file is a
+        # REFUSAL the CLI reports as JSON, never a traceback.
+        raise ValueError(f"{path}: cannot read the sensor cal ({type(exc).__name__}: {exc})") from exc
     block = document.get(SENSOR_CAL_KEY) if isinstance(document, dict) else None
     if not isinstance(block, dict):
         raise ValueError(f"{path}: no '{SENSOR_CAL_KEY}' block (is this fit_mag_tumble output?)")

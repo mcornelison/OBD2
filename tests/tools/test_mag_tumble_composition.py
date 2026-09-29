@@ -206,6 +206,22 @@ class TestComposition:
         assert "device" in json.loads(out)["refused"]
 
 
+@pytest.mark.parametrize("content", [None, "{not json", b"\xff\xfe\x00garbage"])
+def test_aMissingOrUnreadableSensorCalIsARefusalNotATraceback(tmp_path, content) -> None:
+    """m2 (fix round 1): a path that does not exist, is not JSON, or is not
+    text comes out as the CLI's {"refused": ...} JSON with exit 1."""
+    calPath = tmp_path / "sensor_cal.json"
+    if isinstance(content, str):
+        calPath.write_text(content, encoding="utf-8")
+    elif isinstance(content, bytes):
+        calPath.write_bytes(content)
+    drivePath = tmp_path / "drive.csv"
+    writeDriveCsv(drivePath, np.eye(3))
+    code, out = _runCli(fit_mag_calibration_module, [str(drivePath), "--sensor-cal", str(calPath)])
+    assert code == 1
+    assert "sensor_cal.json" in json.loads(out)["refused"]
+
+
 # --- without --sensor-cal the output is byte-identical to Task 6 (a85d0f16) ----
 
 # sha256 of main([drive.csv])'s stdout, captured from a85d0f16 BEFORE this task

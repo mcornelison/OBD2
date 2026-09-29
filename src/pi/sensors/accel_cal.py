@@ -59,6 +59,14 @@ ORIENTATION_CLUSTER_DEG = 30.0
 # 10 is 0.2 s at 50 Hz; the tumble procedure holds each face for 10 s.
 MIN_SAMPLES_PER_ORIENTATION = 10
 
+# ARCH-064 fix round 1 (I1): the held orientations must not all lie in one
+# plane. Smallest eigenvalue of the mean u u^T over the held-orientation seeds
+# (unit vectors): 1/3 for the six faces (and for faces + corners), 0 for any
+# set of coplanar directions -- eight orientations in the plane normal to
+# (1,1,1) passed the count and were fitted (MEASURED, 1.38-1.45 g out of
+# plane). 0.05 is one sixth of the faces' value.
+MIN_ORIENTATION_SPREAD = 0.05
+
 
 @dataclass(frozen=True)
 class AccelCalibration:
@@ -153,6 +161,25 @@ def countDistinctOrientations(points: Sequence[Vector3]) -> int:
     seeds a new one. Only clusters with at least
     ``MIN_SAMPLES_PER_ORIENTATION`` samples count.
     """
+    return len(_heldOrientationSeeds(points))
+
+
+def orientationSpread(points: Sequence[Vector3]) -> float:
+    """Smallest eigenvalue of mean(u u^T) over the held-orientation seeds.
+
+    0 when every held orientation lies in one plane (in any orientation);
+    1/3 for the six faces. 0.0 when fewer than one orientation is held.
+    """
+    import numpy as np  # noqa: PLC0415 -- mag_fit's rule: numpy only where needed
+
+    seeds = _heldOrientationSeeds(points)
+    if not seeds:
+        return 0.0
+    u = np.asarray(seeds, dtype=float)
+    return float(np.linalg.eigvalsh(u.T @ u / len(seeds))[0])
+
+
+def _heldOrientationSeeds(points: Sequence[Vector3]) -> list[Vector3]:
     cosLimit = math.cos(math.radians(ORIENTATION_CLUSTER_DEG))
     seeds: list[Vector3] = []
     counts: list[int] = []
@@ -171,7 +198,7 @@ def countDistinctOrientations(points: Sequence[Vector3]) -> int:
             counts.append(1)
         else:
             counts[best] += 1
-    return sum(1 for c in counts if c >= MIN_SAMPLES_PER_ORIENTATION)
+    return [seed for seed, c in zip(seeds, counts, strict=True) if c >= MIN_SAMPLES_PER_ORIENTATION]
 
 
 def calibrateAccelEllipsoid(points: Sequence[Vector3]) -> AccelEllipsoidCalibration:
@@ -186,6 +213,7 @@ def calibrateAccelEllipsoid(points: Sequence[Vector3]) -> AccelEllipsoidCalibrat
 
     Raises:
         ValueError: fewer than ``MIN_DISTINCT_ORIENTATIONS`` held orientations,
+            held orientations that lie near one plane (``MIN_ORIENTATION_SPREAD``),
             or anything ``ellipsoidFit`` refuses (too few points, not 3D).
     """
     pts = [(float(p[0]), float(p[1]), float(p[2])) for p in points]
@@ -196,6 +224,13 @@ def calibrateAccelEllipsoid(points: Sequence[Vector3]) -> AccelEllipsoidCalibrat
             f"distinct orientations (each held for >= {MIN_SAMPLES_PER_ORIENTATION} "
             f"quasi-static samples); found {orientations}. Hold each of the six faces "
             "(+x, -x, +y, -y, +z, -z up) still."
+        )
+    spread = orientationSpread(pts)
+    if spread < MIN_ORIENTATION_SPREAD:
+        raise ValueError(
+            f"the {orientations} held orientations lie near one plane (spread {spread:.3f} < "
+            f"{MIN_ORIENTATION_SPREAD}); an ellipsoid is not determined out of that plane. "
+            "Hold the six faces."
         )
     fit = ellipsoidFit(pts, referenceNorm=STANDARD_GRAVITY_MS2)
     return AccelEllipsoidCalibration(

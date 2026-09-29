@@ -210,3 +210,64 @@ class TestRefusals:
         pts[10] = (float("nan"), 1.0, 2.0)
         with pytest.raises(ValueError, match="finite"):
             ellipsoidFit(pts)
+
+
+# --- fix round 1, I1: a rotation-invariant span test --------------------------------
+
+
+def _planeNormal111Points(seed: int = 6) -> np.ndarray:
+    """MEASURED reviewer case: 8 held orientations in the plane with normal
+    (1,1,1). Every AXIS spans widely, so the axis-aligned check passes."""
+    e1 = np.array([1.0, -1.0, 0.0]) / np.sqrt(2.0)
+    e2 = np.array([1.0, 1.0, -2.0]) / np.sqrt(6.0)
+    dirs = np.array([np.cos(t) * e1 + np.sin(t) * e2 for t in np.linspace(0, 2 * np.pi, 8, endpoint=False)])
+    return accelLikePoints(np.repeat(dirs, 50, axis=0), seed=seed)
+
+
+def _band(normal, halfAngleDeg: float, count: int = 3000, seed: int = 4) -> np.ndarray:
+    """Directions within +/-halfAngle of the great circle perpendicular to ``normal``."""
+    rng = np.random.default_rng(seed)
+    n = np.asarray(normal, dtype=float) / np.linalg.norm(normal)
+    e1 = np.cross(n, [1.0, 0.0, 0.0] if abs(n[0]) < 0.9 else [0.0, 1.0, 0.0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n, e1)
+    t = rng.uniform(0.0, 2.0 * np.pi, count)
+    lat = np.radians(rng.uniform(-halfAngleDeg, halfAngleDeg, count))
+    return (np.cos(lat)[:, None] * (np.cos(t)[:, None] * e1 + np.sin(t)[:, None] * e2)
+            + np.sin(lat)[:, None] * n)
+
+
+class TestRotationInvariantSpan:
+    def test_aTiltedPlaneIsRefused(self) -> None:
+        from pi.sensors.mag_fit import _assertSpansThreeDimensions
+
+        pts = [tuple(p) for p in _planeNormal111Points()]
+        _assertSpansThreeDimensions(pts)  # guard: the axis-aligned check is blind to it
+        with pytest.raises(ValueError, match="do not span 3D"):
+            ellipsoidFit(pts, referenceNorm=STANDARD_GRAVITY_MS2)
+
+    @pytest.mark.parametrize("normal", [(0.0, 0.0, 1.0), (1.0, 1.0, 1.0), (0.3, -1.0, 0.5)])
+    def test_aTenDegreeBandAroundARingPassesTheSpanTestInAnyOrientation(self, normal) -> None:
+        """The thinnest capture the axis-aligned check accepts is a band about
+        +/-8.6 degrees (0.15 span ratio); a +/-10 degree band must pass the new
+        check whichever way the ring is tilted -- it changes the ORIENTATION
+        dependence, not the thickness floor."""
+        from pi.sensors.mag_fit import _assertSpansThreeDimensionsAnyOrientation
+
+        pts = [tuple(p) for p in 50.0 * _band(normal, 10.0)]
+        _assertSpansThreeDimensionsAnyOrientation(pts)  # does not raise
+
+    def test_facesAndCornersPassWithAWideMargin(self) -> None:
+        from pi.sensors.mag_fit import MIN_SINGULAR_VALUE_RATIO, singularValueRatio
+
+        corners = np.array([(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]) / np.sqrt(3.0)
+        dirs = np.vstack([sixFaceDirections(50), np.repeat(corners, 50, axis=0)])
+        assert singularValueRatio([tuple(p) for p in accelLikePoints(dirs, seed=1)]) > 5 * MIN_SINGULAR_VALUE_RATIO
+
+    def test_theFloorSitsBetweenANoisyPlaneAndTheThinnestAcceptedBand(self) -> None:
+        from pi.sensors.mag_fit import MIN_SINGULAR_VALUE_RATIO, singularValueRatio
+
+        plane = singularValueRatio([tuple(p) for p in _planeNormal111Points()])
+        band = singularValueRatio([tuple(p) for p in 50.0 * _band((1, 1, 1), 8.6)])
+        assert plane < MIN_SINGULAR_VALUE_RATIO / 5
+        assert band > MIN_SINGULAR_VALUE_RATIO * 2

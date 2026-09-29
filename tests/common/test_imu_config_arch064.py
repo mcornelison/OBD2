@@ -321,3 +321,56 @@ def test_configJson_accelCalibration_shipsAsTheNoOp():
     """
     imu = _shippedImu()
     assert imu["accelCalibration"] == {"offsetMs2": [0.0, 0.0, 0.0], "matrix": _IDENTITY}
+
+
+# ---------------------------------------------------------------------------
+# ARCH-064 Task 6b fix round 1 (Ruling 32): magCalibration shape validation,
+# mirroring accelCalibration.
+# ---------------------------------------------------------------------------
+
+
+def test_validator_acceptsAFittedMagCalibration():
+    cal = {"hardIronUt": [21.1, -11.4, 22.6], "softIron": [[0.87, -0.09, 0.0], [-0.09, 1.16, 0.0], [0.0, 0.0, 1.0]]}
+    result = ConfigValidator().validate(_baseCfg({"magCalibration": cal}))
+    assert result["pi"]["sensors"]["imu"]["magCalibration"] == cal
+
+
+def test_validatorDefaults_magCalibration_partialBlockIsCompleted():
+    result = ConfigValidator().validate(_baseCfg({"magCalibration": {"hardIronUt": [1.0, 2.0, 3.0]}}))
+    cal = result["pi"]["sensors"]["imu"]["magCalibration"]
+    assert cal["hardIronUt"] == [1.0, 2.0, 3.0]
+    assert cal["softIron"] == _IDENTITY
+
+
+@pytest.mark.parametrize(
+    "cal, fragment",
+    [
+        ({"hardIronUt": [1.0, 2.0]}, "hardIronUt"),
+        ({"hardIronUt": [1.0, 2.0, 3.0, 4.0]}, "hardIronUt"),
+        ({"hardIronUt": [1.0, False, 3.0]}, "hardIronUt"),
+        ({"hardIronUt": [1.0, float("inf"), 3.0]}, "hardIronUt"),
+        ({"hardIronUt": "1,2,3"}, "hardIronUt"),
+        ({"softIron": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]}, "softIron"),
+        ({"softIron": [[1.0, 0.0, 0.0], [0.0, float("nan"), 0.0], [0.0, 0.0, 1.0]]}, "softIron"),
+        ({"softIron": [[1.0, 0.0, 0.0], [0.0, None, 0.0], [0.0, 0.0, 1.0]]}, "softIron"),
+        ([1.0, 2.0, 3.0], "magCalibration"),
+    ],
+)
+def test_validator_rejectsMalformedMagCalibration(cal, fragment):
+    with pytest.raises(ConfigValidationError) as excinfo:
+        ConfigValidator().validate(_baseCfg({"magCalibration": cal}))
+    assert fragment in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "matrix",
+    [
+        [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+    ],
+)
+def test_validator_rejectsASoftIronWithANonPositiveDeterminant(matrix):
+    with pytest.raises(ConfigValidationError) as excinfo:
+        ConfigValidator().validate(_baseCfg({"magCalibration": {"softIron": matrix}}))
+    assert "determinant" in str(excinfo.value) and "softIron" in str(excinfo.value)

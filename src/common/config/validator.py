@@ -98,6 +98,8 @@
 # 2026-09-28    | Atlas        | ARCH-064 Task 6b: accelCalibration default
 #               | (ARCH-064)   | (zero/identity) + validation (finite 3-vector,
 #               |              | finite 3x3, determinant > 0).
+# 2026-09-28    | Atlas        | Ruling 32: the same shape validation for
+#               | (ARCH-064)   | magCalibration (shared _validateCalibrationBlock).
 # ================================================================================
 ################################################################################
 
@@ -1335,6 +1337,7 @@ class ConfigValidator:
                 )
         self._validateImuEnums(config)
         self._validateImuAccelCalibration(config)
+        self._validateImuMagCalibration(config)
         self._warnImuRatesAboveSource(config)
 
     def _validateImuEnums(self, config: dict[str, Any]) -> None:
@@ -1370,29 +1373,50 @@ class ConfigValidator:
     def _validateImuAccelCalibration(self, config: dict[str, Any]) -> None:
         """Validate (and complete) ``pi.sensors.imu.accelCalibration`` (ARCH-064 Task 6b).
 
-        ``offsetMs2`` must be a finite 3-vector and ``matrix`` a finite 3x3 with
-        a POSITIVE determinant: a calibration is a small correction near the
-        identity, and det <= 0 is a mirror or a collapse -- gravity would read
-        upside-down on an axis. A missing leaf is filled with its no-op value
-        (zero offset / identity), so a partial block means what it says.
+        ``offsetMs2`` a finite 3-vector, ``matrix`` a finite 3x3 with det > 0.
+        See :meth:`_validateCalibrationBlock`.
+        """
+        self._validateCalibrationBlock(config, 'pi.sensors.imu.accelCalibration', 'offsetMs2', 'matrix')
+
+    def _validateImuMagCalibration(self, config: dict[str, Any]) -> None:
+        """Validate (and complete) ``pi.sensors.imu.magCalibration`` (Ruling 32).
+
+        ``hardIronUt`` a finite 3-vector, ``softIron`` a finite 3x3 with det > 0.
+        Before this, a malformed block reached AhrsFusion, which refused it at
+        runtime and silently fell back to the legacy engine.
+        """
+        self._validateCalibrationBlock(config, 'pi.sensors.imu.magCalibration', 'hardIronUt', 'softIron')
+
+    def _validateCalibrationBlock(
+        self, config: dict[str, Any], key: str, vectorKey: str, matrixKey: str
+    ) -> None:
+        """Validate (and complete) one ``{vector, matrix}`` calibration block.
+
+        The vector must be 3 finite numbers and the matrix a finite 3x3 with a
+        POSITIVE determinant: a calibration is a correction near the identity,
+        and det <= 0 is a mirror or a collapse -- an axis would read reversed.
+        A missing leaf is filled with its no-op value (zero / identity), so a
+        partial block means what it says.
 
         Rejected here rather than left to AhrsFusion, which would refuse it at
         runtime and silently fall back to the legacy engine.
 
         Args:
             config: Validated configuration (post-default-application).
+            key: Dot path of the block.
+            vectorKey: Name of the offset leaf.
+            matrixKey: Name of the matrix leaf.
 
         Raises:
-            ConfigValidationError: If the block, the offset or the matrix is
+            ConfigValidationError: If the block, the vector or the matrix is
                 malformed, non-finite, or the matrix determinant is <= 0.
         """
-        key = 'pi.sensors.imu.accelCalibration'
         block = self._getNestedValue(config, key)
         if block is None:
             return
         if not isinstance(block, dict):
             raise ConfigValidationError(
-                f"{key} must be an object {{offsetMs2, matrix}} (got {block!r})",
+                f"{key} must be an object {{{vectorKey}, {matrixKey}}} (got {block!r})",
                 missingFields=[key],
             )
 
@@ -1403,16 +1427,16 @@ class ConfigValidator:
                 and math.isfinite(value)
             )
 
-        offset = block.setdefault('offsetMs2', [0.0, 0.0, 0.0])
+        vector = block.setdefault(vectorKey, [0.0, 0.0, 0.0])
         if not (
-            isinstance(offset, (list, tuple)) and len(offset) == 3 and all(finite(v) for v in offset)
+            isinstance(vector, (list, tuple)) and len(vector) == 3 and all(finite(v) for v in vector)
         ):
             raise ConfigValidationError(
-                f"{key}.offsetMs2 must be 3 finite numbers (got {offset!r})",
-                missingFields=[f"{key}.offsetMs2"],
+                f"{key}.{vectorKey} must be 3 finite numbers (got {vector!r})",
+                missingFields=[f"{key}.{vectorKey}"],
             )
 
-        matrix = block.setdefault('matrix', [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        matrix = block.setdefault(matrixKey, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
         if not (
             isinstance(matrix, (list, tuple))
             and len(matrix) == 3
@@ -1422,16 +1446,16 @@ class ConfigValidator:
             )
         ):
             raise ConfigValidationError(
-                f"{key}.matrix must be a 3x3 of finite numbers (got {matrix!r})",
-                missingFields=[f"{key}.matrix"],
+                f"{key}.{matrixKey} must be a 3x3 of finite numbers (got {matrix!r})",
+                missingFields=[f"{key}.{matrixKey}"],
             )
         (a, b, c), (d, e, f), (g, h, i) = matrix
         determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
         if not determinant > 0.0:
             raise ConfigValidationError(
-                f"{key}.matrix determinant must be > 0 (got {determinant:g}): a mirror "
+                f"{key}.{matrixKey} determinant must be > 0 (got {determinant:g}): a mirror "
                 "or singular matrix is not a calibration",
-                missingFields=[f"{key}.matrix"],
+                missingFields=[f"{key}.{matrixKey}"],
             )
 
     def _warnImuRatesAboveSource(self, config: dict[str, Any]) -> None:

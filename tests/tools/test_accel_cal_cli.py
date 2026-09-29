@@ -207,3 +207,46 @@ def test_defaultModeNowReadsTheRealEdrColumnNames(tmp_path) -> None:
     code, out, _ = _run([str(path)])
     assert code == 0
     assert out["totalRows"] == 6000
+
+
+# --- fix round 1 (I1): the CLI WITHHOLDS the block unless the fit is validated ---------
+
+
+def test_aTiltedPlaneCaptureIsRefusedWithNoBlock(tmp_path) -> None:
+    from tests.pi.sensors.test_ellipsoid_fit import _planeNormal111Points
+
+    path = tmp_path / "plane.csv"
+    raw = _planeNormal111Points()
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(CSV_COLUMNS)
+        for i, a in enumerate(raw):
+            writer.writerow([repr(i * 0.02), "hold", *map(repr, map(float, a)), "0.001", "0.0", "-0.002", "", "", ""])
+    code, out, _ = _run([str(path), "--ellipsoid"])
+    assert code == 1
+    assert "accelCalibration" not in out
+    assert "plane" in out["overall"]["refused"]
+
+
+def test_anUnstableVerdictWithholdsTheBlockAndExitsNonZero(tmp_path, monkeypatch) -> None:
+    """A fit whose interleaved subsets disagree must not be pasted into config.
+    Forced here by tightening the offset bar to zero on a good capture."""
+    monkeypatch.setattr(accel_cal_cli, "ELLIPSOID_OFFSET_SPREAD_MAX_MS2", 0.0)
+    path = tmp_path / "tumble.csv"
+    _writeTumble(path, cornerHolds=200)
+    code, out, _ = _run([str(path), "--ellipsoid"])
+    assert out["stability"]["verdict"] == "unstable"
+    assert code == 1
+    assert "accelCalibration" not in out
+    assert "withheld" in out
+
+
+def test_aStableVerdictPrintsTheBlockAndExitsZero(tmp_path) -> None:
+    """The control for the test above: same capture, default bars."""
+    path = tmp_path / "tumble.csv"
+    _writeTumble(path, cornerHolds=200)
+    code, out, _ = _run([str(path), "--ellipsoid"])
+    assert out["stability"]["verdict"] == "stable"
+    assert code == 0
+    assert "accelCalibration" in out
+    assert "withheld" not in out

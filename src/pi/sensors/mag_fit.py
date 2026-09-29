@@ -119,6 +119,40 @@ def sphereFit(points: Sequence[Vector3]) -> SphereFit:
 
 Matrix3 = tuple[Vector3, Vector3, Vector3]
 
+# ARCH-064 fix round 1 (I1): ROTATION-INVARIANT span floor for the ellipsoid
+# fit. ``_assertSpansThreeDimensions`` measures per-AXIS spans, so a plane that
+# is not axis-aligned passes it (MEASURED: 8 accel orientations in the plane
+# with normal (1,1,1) were ACCEPTED and read 1.38-1.45 g out of plane). The
+# ratio of the smallest to the largest singular value of the centred points
+# does not depend on orientation.
+#   * A noisy PLANE: ratio ~ noise / field -- 0.002 (accel, 0.02 m/s^2 at g),
+#     0.006 (mag, 0.3 uT at 50 uT). MEASURED < 0.01 on the reviewer's case.
+#   * The THINNEST capture the axis check already accepts is a band about
+#     +/-8.6 degrees around a ring (span ratio 0.15): singular ratio ~0.12.
+# 0.05 sits ~5x above the noisy plane and ~2.5x below that band, so it refuses
+# tilted planes without refusing anything the axis check accepts level.
+MIN_SINGULAR_VALUE_RATIO = 0.05
+
+
+def singularValueRatio(points: Sequence[Vector3]) -> float:
+    """Smallest / largest singular value of the centred points (0 = coplanar)."""
+    import numpy as np  # noqa: PLC0415 -- see ellipsoidFit
+
+    raw = np.asarray(points, dtype=float)
+    singular = np.linalg.svd(raw - raw.mean(axis=0), compute_uv=False)
+    return 0.0 if singular[0] <= 0.0 else float(singular[-1] / singular[0])
+
+
+def _assertSpansThreeDimensionsAnyOrientation(points: Sequence[Vector3]) -> None:
+    ratio = singularValueRatio(points)
+    if ratio < MIN_SINGULAR_VALUE_RATIO:
+        raise ValueError(
+            f"samples do not span 3D: smallest/largest singular value {ratio:.4f} is under "
+            f"{MIN_SINGULAR_VALUE_RATIO} -- they lie near a plane (in ANY orientation, not "
+            "only an axis-aligned one). Rotate through more orientations."
+        )
+
+
 # A general quadric has 10 coefficients (9 degrees of freedom). Below this the
 # "fit" is an interpolation, not a measurement.
 _MIN_ELLIPSOID_POINTS = 10
@@ -198,7 +232,8 @@ def ellipsoidFit(
 
     Raises:
         ValueError: too few points, a non-finite value, points that do not
-            span 3D (same test as :func:`sphereFit`), a non-positive
+            span 3D (the axis test :func:`sphereFit` uses, AND the
+            rotation-invariant singular-value floor), a non-positive
             ``referenceNorm``, or a fit that is not an ellipsoid.
     """
     import numpy as np  # noqa: PLC0415 -- deliberate, see docstring
@@ -213,6 +248,7 @@ def ellipsoidFit(
     if referenceNorm is not None and not (referenceNorm > 0.0 and math.isfinite(referenceNorm)):
         raise ValueError(f"referenceNorm must be a positive finite number, got {referenceNorm!r}")
     _assertSpansThreeDimensions(pts)
+    _assertSpansThreeDimensionsAnyOrientation(pts)
 
     raw = np.asarray(pts, dtype=float)
     mu = raw.mean(axis=0)

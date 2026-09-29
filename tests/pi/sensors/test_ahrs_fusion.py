@@ -580,3 +580,22 @@ def test_accelCal_gyroAndMagAreUntouched():
 def test_accelCal_malformedCalibrationRaises(kwargs):
     with pytest.raises(ValueError):
         AhrsFusion(sampleHz=HZ, **kwargs)
+
+
+def test_accelCal_offsetOnlyIsApplied():
+    """m1 (fix round 1): an offset with an IDENTITY matrix is a real calibration
+    -- a gate that looked only at the matrix would skip it."""
+    offset = (0.3, -0.1, 0.05)
+    fusion = AhrsFusion(sampleHz=HZ, accelOffsetMs2=offset)
+    assert fusion.accelCalibrated is True
+    raw = _tilted(2.0)
+    fusion.update(tuple(r + o for r, o in zip(raw, offset, strict=True)), NO_ROTATION, 0.0)
+    assert fusion.lastAccelMs2 == pytest.approx(raw, abs=1e-12)
+
+
+def test_accelCal_matrixOnlyIsApplied():
+    """The mirror image: a matrix with a zero offset."""
+    fusion = AhrsFusion(sampleHz=HZ, accelMatrix=((0.98, 0.0, 0.0), (0.0, 0.98, 0.0), (0.0, 0.0, 0.98)))
+    assert fusion.accelCalibrated is True
+    fusion.update((0.0, 0.0, 10.0), NO_ROTATION, 0.0)
+    assert fusion.lastAccelMs2 == pytest.approx((0.0, 0.0, 9.8), abs=1e-12)

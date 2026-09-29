@@ -159,6 +159,19 @@ def _mainEllipsoid(still: list[tuple[float, float, float]], result: dict[str, ob
     if "deviceFrame" not in overall:
         print(json.dumps(result, indent=2))
         return 1
+    # Fix round 1 (I1): a block goes out only when the interleaved subsets
+    # VALIDATED it. "unstable" (offset or per-axis gain disagree), or too few
+    # subsets fitted to judge, withholds it and exits non-zero -- a fit nobody
+    # could reproduce must not reach config. "crossAxisUnobserved" still prints
+    # it (offset and gains are solid) with the warning in the verdict.
+    verdict = result.get("stability", {}).get("verdict")  # type: ignore[union-attr]
+    if verdict not in ("stable", "crossAxisUnobserved"):
+        result["withheld"] = (
+            f"accelCalibration withheld: stability verdict is {verdict or 'not computable'} "
+            "(the interleaved subsets did not reproduce the fit). Recapture."
+        )
+        print(json.dumps(result, indent=2))
+        return 1
     device = overall["deviceFrame"]
     bodyOffset, bodyMatrix = conjugateToBody(device["offsetMs2"], device["matrix"])  # type: ignore[index]
     result["accelCalibration"] = {

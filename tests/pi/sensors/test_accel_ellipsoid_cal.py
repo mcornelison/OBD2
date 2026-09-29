@@ -104,3 +104,50 @@ class TestCountDistinctOrientations:
         dirs = np.array([_rotation((1.0, 0.0, 0.0), 15.0) @ up] * 30 + [up] * 30)
         raw = accelLikePoints(dirs, seed=5)
         assert countDistinctOrientations(_pts(raw)) == 1
+
+
+# --- fix round 1 -----------------------------------------------------------------------
+
+_CORNERS = np.array([(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)], dtype=float) / np.sqrt(3.0)
+
+
+class TestTiltedPlane:
+    def test_eightOrientationsInATiltedPlaneAreRefused(self) -> None:
+        """I1, MEASURED by the reviewer: 8 orientations in the plane with normal
+        (1,1,1) were ACCEPTED (offset (0.354, 0.048, 0.317), |a| 1.38-1.45 g out
+        of plane). Eight clusters pass the count; their directions are coplanar."""
+        from tests.pi.sensors.test_ellipsoid_fit import _planeNormal111Points
+
+        raw = _planeNormal111Points()
+        assert countDistinctOrientations(_pts(raw)) == 8  # guard: the count alone passes
+        with pytest.raises(ValueError, match="plane"):
+            calibrateAccelEllipsoid(_pts(raw))
+
+    def test_orientationSpreadIsFullRankForFacesAndZeroForAPlane(self) -> None:
+        from pi.sensors.accel_cal import MIN_ORIENTATION_SPREAD, orientationSpread
+        from tests.pi.sensors.test_ellipsoid_fit import _planeNormal111Points
+
+        faces = orientationSpread(_pts(accelLikePoints(sixFaceDirections(50), seed=3)))
+        plane = orientationSpread(_pts(_planeNormal111Points()))
+        assert faces == pytest.approx(1.0 / 3.0, abs=0.02)
+        assert plane < MIN_ORIENTATION_SPREAD / 5
+
+
+class TestCornersMakeCrossAxisObservable:
+    """Ruling 31: the 0.3 % measurement. Six faces alone err > 0.3 % at the
+    corners (cross terms unobserved); faces + eight corner holds correct every
+    orientation within 0.3 %."""
+
+    def _worstError(self, cal, directions) -> float:
+        clean = accelLikePoints(directions, seed=0, noise=0.0)
+        return float(np.max(np.abs(_correctedNorms(cal, clean) / STANDARD_GRAVITY_MS2 - 1.0)))
+
+    def test_facesPlusCornersCorrectEveryOrientation(self) -> None:
+        dirs = np.vstack([sixFaceDirections(500), np.repeat(_CORNERS, 500, axis=0)])
+        cal = calibrateAccelEllipsoid(_pts(accelLikePoints(dirs, seed=3)))
+        assert cal.orientations == 14
+        assert self._worstError(cal, _randomUnitVectors(2000, np.random.default_rng(9))) < 0.003
+
+    def test_facesAloneDoNot(self) -> None:
+        cal = calibrateAccelEllipsoid(_pts(accelLikePoints(sixFaceDirections(500), seed=3)))
+        assert self._worstError(cal, _CORNERS) > 0.003
