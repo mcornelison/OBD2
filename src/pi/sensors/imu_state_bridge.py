@@ -152,6 +152,7 @@ from pi.sensors.ak09916_bypass import (
     MAG_SOURCE_ICM_SHADOW,
     MAG_SOURCE_NONE,
 )
+from pi.sensors.gyro_recovery import GYRO_FAULT_MIN_RAD_S
 
 # US-521: the pitch estimator owns the gravity/tilt constants US-478 defined
 # here; they are re-exported below so there is exactly ONE definition of each.
@@ -203,6 +204,7 @@ __all__ = [
     "MAG_MAX_AGE_POLLS",
     "MAG_ROTATION_MIN_RATIO",
     "MAG_ROTATION_MIN_YAW_RAD",
+    "MAG_ROT_STEP_S",
     "MAG_SOURCE_BYPASS",
     "MAG_SOURCE_ICM_SHADOW",
     "MAG_SOURCE_NONE",
@@ -471,6 +473,13 @@ MAG_ROTATION_MIN_YAW_RAD: float = math.radians(45.0)
 #: ⚠️ VOID IF US-695 lands: once the offset is removed the live ratio rises
 #: toward 1.0, and this floor should be RAISED rather than left slack.
 MAG_ROTATION_MIN_RATIO: float = 0.15
+
+#: ARCH-064 Ruling 35 (I4): the rotation score is accumulated in steps of at
+#: least this much CAPTURE time. The ratio above and the ~0.06 frozen score were
+#: measured at 4 Hz; at 50 Hz a per-sample sum of |d bearing| counts a dithering
+#: channel's noise 12.5x as often and FROZEN never fires. Stepping at 0.25 s
+#: keeps the score what it was when it was measured, at any sample rate.
+MAG_ROT_STEP_S: float = 0.25
 
 #: Longest sample gap the rotation window will integrate across. Past this the
 #: yaw integral has a hole in it, and carrying that hole would understate the
@@ -828,7 +837,10 @@ def buildImuState(
             from the fused pitch, radians.
         gyroImplausible: US-749 -- the fusion's plausibility guard has tripped.
             ``pitchDeg`` and ``gradePct`` are then null with
-            ``gyro_implausible``, never the contradicted number.
+            ``gyro_implausible``, never the contradicted number. ARCH-064
+            Ruling 35: with an engine heading (``headingDegOverride``) the
+            heading is withheld with the same reason too -- the AHRS heading
+            integrates the same gyro. The legacy mag-only heading is not.
         unavailableReason: When set, the whole instrument is reported absent with
             this reason (e.g. the sensor is not wired) and every derived field is
             null -- silence reported as silence.
@@ -941,7 +953,10 @@ def buildImuState(
     if headingDegOverride is not _NO_HEADING_OVERRIDE and mag is not None:
         # ARCH-064: the AHRS engine's heading. None is "not yet" (Fusion's
         # startup), typed as such -- never a 0 that reads as due north.
-        if headingDegOverride is None:
+        if gyroImplausible:
+            # Ruling 35 (I2): the engine's heading integrates the latched gyro.
+            reasons["headingDeg"] = REASON_GYRO_IMPLAUSIBLE
+        elif headingDegOverride is None:
             reasons["headingDeg"] = REASON_HEADING_UNSEEDED
         else:
             # Same whole-degree display rule and wrap-after-round as
@@ -1085,6 +1100,9 @@ class ImuStateBridge:
         self._magYawAccumRad: float = 0.0
         self._magRotAccumRad: float = 0.0
         self._magBearingPrevDeg: float | None = None
+        # Ruling 35 (I4): the 4 Hz sub-sampling step (see _updateMagRotation).
+        self._magYawStepRad: float = 0.0
+        self._magRotStepStart: float = 0.0
         self._magRotLastCapture: float | None = None
         # US-564: raw channel topic -> the gate reason currently refusing it.
         self._gatedChannels: dict[str, str] = {}
@@ -1285,7 +1303,7 @@ class ImuStateBridge:
         last = self._magRotLastCapture
         self._magRotLastCapture = capture
         if last is None:
-            self._magBearingPrevDeg = bearing
+            self._resetMagRotationWindow(bearing)
             return
         dt = capture - last
         if dt <= 0.0 or dt > _MAG_ROT_MAX_GAP_S:
@@ -1294,7 +1312,19 @@ class ImuStateBridge:
             self._resetMagRotationWindow(bearing)
             return
         # gyro is (fwd, left, up) after resolveMountFrame, so index 2 is YAW.
-        self._magYawAccumRad += abs(gyro[2]) * dt
+        # Integrated SIGNED over the sub-sample step, so the step's yaw is the
+        # NET rotation across it -- the same quantity |d bearing| is for the mag.
+        self._magYawStepRad += gyro[2] * dt
+        # ARCH-064 Ruling 35 (I4): MAG_ROTATION_MIN_RATIO and the frozen score
+        # were MEASURED at 4 Hz. Summing |d bearing| per SAMPLE at 50 Hz adds a
+        # dithering channel's noise 12.5x as often, lifting a frozen score of
+        # ~0.06 past the 0.15 floor so FROZEN never fires. Accumulate only once
+        # MAG_ROT_STEP_S of capture time has passed, whatever the sample rate.
+        if capture - self._magRotStepStart < MAG_ROT_STEP_S:
+            return
+        self._magRotStepStart = capture
+        self._magYawAccumRad += abs(self._magYawStepRad)
+        self._magYawStepRad = 0.0
         prevBearing = self._magBearingPrevDeg
         if bearing is not None and prevBearing is not None:
             delta = abs((bearing - prevBearing + 180.0) % 360.0 - 180.0)
@@ -1322,6 +1352,8 @@ class ImuStateBridge:
         self._magYawAccumRad = 0.0
         self._magRotAccumRad = 0.0
         self._magBearingPrevDeg = bearing
+        self._magYawStepRad = 0.0
+        self._magRotStepStart = self._magRotLastCapture if self._magRotLastCapture is not None else 0.0
 
     def _pitchDiagnostics(self) -> dict[str, Any]:
         """The pitch estimator's calibration state, for publication (US-708).
@@ -1410,7 +1442,18 @@ class ImuStateBridge:
         self._lastLoggedGyroImplausible = implausible
         rawPitch = self._pitchFusion.rawPitchRad
         rawDeg = f"{math.degrees(rawPitch):.2f}" if rawPitch is not None else "None"
-        if implausible:
+        if implausible and self._engineHasHeading:
+            # ARCH-064 Ruling 35: the AHRS latch has a different trigger and
+            # withholds more -- say which, or the log describes a guard that is
+            # not the one running.
+            logger.warning(
+                "imu pitch: gyro_implausible -- A-34 latch: gyro reads >= %.2f rad/s "
+                "above its learned offset while fresh OBD speed 0 for >= 3 s "
+                "(rawPitchDeg=%s); pitchDeg/gradePct/headingDeg withheld",
+                GYRO_FAULT_MIN_RAD_S,
+                rawDeg,
+            )
+        elif implausible:
             logger.warning(
                 "imu pitch: gyro_implausible -- trusted accel contradicts fused pitch "
                 "(rawPitchDeg=%s); pitchDeg/gradePct withheld",

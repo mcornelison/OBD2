@@ -53,6 +53,17 @@ PWR_MGMT_2_ALL_ON = 0x00
 # noise can never reach it, low enough that the 14-30 deg/s fault always does.
 GYRO_FAULT_MIN_RAD_S = 0.10
 
+# ARCH-064 Ruling 35 (I2): what happens to pitch/grade after a failed recovery
+# depends on the RUNNING fusion engine, and each withholds only once its own
+# guard trips. The log used to promise "stay withheld" unconditionally, which
+# was false under imufusion (its guard was hard-wired off). Say WHEN, per engine.
+WITHHOLD_CONDITION = (
+    "pitch/grade are withheld only once the running engine's gyro guard trips "
+    "(legacy: a trusted accel contradicts the fused pitch for > 3 tau; "
+    "imufusion: fresh OBD speed 0 for >= 3 s with the gyro above its learned "
+    "offset -- heading too)"
+)
+
 DEFAULT_SAMPLE_COUNT = 20
 DEFAULT_SETTLE_S = 1.0
 
@@ -76,7 +87,7 @@ class GyroRecoveryOutcome:
         if self.error:
             return (
                 f"gyro {self.before}; recovery FAILED with {self.error}; "
-                f"pitch and grade stay withheld"
+                f"{WITHHOLD_CONDITION}"
             )
         return (
             f"gyro {self.before} -> {self.after}; "
@@ -137,8 +148,9 @@ def recoverGyroIfFaulted(
     🔴 The post-check is not optional. Writing the register is not evidence the
     gyro recovered; the sequence cleared the fault 3 of 3 times in testing,
     which is not "always". When the post-check still reads faulted, this reports
-    ``recovered=False`` so US-749's guard keeps withholding pitch and grade
-    instead of publishing a confident wrong angle.
+    ``recovered=False``. Pitch and grade are then withheld by the running
+    engine's own guard once it trips (see WITHHOLD_CONDITION) -- not by this
+    function, and not unconditionally.
     """
     try:
         before = _sampleGyro(icm, sampleCount)
@@ -165,7 +177,7 @@ def recoverGyroIfFaulted(
         _writePwrMgmt2(icm, PWR_MGMT_2_ALL_ON)
         time.sleep(settleS)
     except OSError as exc:
-        logger.error("IMU gyro recovery failed on the bus (%s); pitch/grade stay withheld", exc)
+        logger.error("IMU gyro recovery failed on the bus (%s); %s", exc, WITHHOLD_CONDITION)
         return GyroRecoveryOutcome(
             attempted=True, before="faulted", after="unknown", recovered=False, error=str(exc)
         )
@@ -189,8 +201,8 @@ def recoverGyroIfFaulted(
         logger.warning("IMU gyro recovered by power cycle (A-34): %s", outcome.describe())
     else:
         logger.error(
-            "IMU gyro STILL faulted after power cycle (A-34): %s -- pitch and grade "
-            "remain withheld by the plausibility guard",
+            "IMU gyro STILL faulted after power cycle (A-34): %s -- %s",
             outcome.describe(),
+            WITHHOLD_CONDITION,
         )
     return outcome

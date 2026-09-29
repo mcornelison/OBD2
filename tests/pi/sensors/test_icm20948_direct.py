@@ -309,3 +309,68 @@ def test_gyroRecoveryHandle_recoverGyroIfFaulted_writesPwrMgmt2() -> None:
         (0x69, REG_PWR_MGMT_2, PWR_MGMT_2_GYRO_OFF),
         (0x69, REG_PWR_MGMT_2, PWR_MGMT_2_ALL_ON),
     ]
+
+
+# --- Ruling 35 / I5: settle after swReset, and before the A-34 sampling ------
+#
+# SparkFun's own startupDefault() waits 50 ms between swReset() and
+# sleep(false) (ICM_20948.cpp, DOCUMENTED), and the reference reader that
+# proved direct mode live did the same. Writing to a chip mid-reset can be
+# lost. The sleeps are injected, so the ORDER is asserted, not just the delay.
+
+
+class _Clock:
+    """Records sleeps into the SAME call log as the fake ICM."""
+
+    def __init__(self, icm: FakeIcm) -> None:
+        self.icm = icm
+
+    def sleep(self, seconds: float) -> None:
+        self.icm.calls.append(("<sleep>", (seconds,)))
+
+
+def test_i5_resetIsFollowedBySettle_beforeAnyOtherWrite() -> None:
+    from pi.sensors.icm20948_direct import RESET_SETTLE_S
+
+    icm = FakeIcm()
+    makeIcm20948Direct(lambda: icm, lambda: FakeAk(), sleepFn=_Clock(icm).sleep)
+    names = [c[0] for c in icm.calls]
+    reset = names.index("swReset")
+    assert icm.calls[reset + 1] == ("<sleep>", (RESET_SETTLE_S,))
+    assert names.index("sleep") == reset + 2  # the chip's sleep(False), AFTER the wait
+    assert RESET_SETTLE_S >= 0.05
+
+
+def test_i5_defaultResetSettle_isFiftyMilliseconds() -> None:
+    from pi.sensors.icm20948_direct import RESET_SETTLE_S
+
+    assert RESET_SETTLE_S == 0.05
+
+
+def test_i5_settleBeforeRecoverySampling_isTheLastThingTheBuildDoes() -> None:
+    """The A-34 recovery samples the gyro the moment the build returns; the
+    gyro must have started up and the DLPF filled first."""
+    from pi.sensors.icm20948_direct import GYRO_SETTLE_S
+
+    icm = FakeIcm()
+    log = icm.calls
+
+    class _RecordingAk(FakeAk):
+        def configure(self):
+            log.append(("akConfigure", ()))
+            return 0x08
+
+    makeIcm20948Direct(lambda: icm, lambda: _RecordingAk(), sleepFn=_Clock(icm).sleep)
+    assert log[-1] == ("<sleep>", (GYRO_SETTLE_S,))
+    assert log[-2] == ("akConfigure", ())
+    assert GYRO_SETTLE_S > 0.0
+
+
+def test_i5_defaultSleep_isRealTimeSleep(monkeypatch) -> None:
+    """Without an injected sleep the build really waits (production path)."""
+    import pi.sensors.icm20948_direct as direct
+
+    slept: list[float] = []
+    monkeypatch.setattr(direct.time, "sleep", slept.append)
+    makeIcm20948Direct(lambda: FakeIcm(), lambda: FakeAk())
+    assert slept == [direct.RESET_SETTLE_S, direct.GYRO_SETTLE_S]

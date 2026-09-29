@@ -43,6 +43,7 @@ from pi.sensors.ahrs_fusion import FUSION_VERSION_AHRS, AhrsFusion
 from pi.sensors.imu_state_bridge import (
     CHANNEL_STATE_MAG,
     IMU_STATE_FILENAME,
+    REASON_GYRO_IMPLAUSIBLE,
     REASON_HEADING_UNSEEDED,
     REASON_MAG_FROZEN,
     REASON_NO_MAG,
@@ -55,6 +56,7 @@ from pi.sensors.imu_state_bridge import (
     TOPIC_OBD_SPEED,
     ImuStateBridge,
     MagRotation,
+    buildImuState,
     createImuStateBridgeFromConfig,
     resolveMountFrame,
 )
@@ -610,3 +612,172 @@ def test_ruling13_legacyEngine_isUnchangedUnderAFrozenVerdict(tmp_path: Path):
     bridge.handleSample(_mag(NORTH_FIELD_UT, capture=0.0))
     bridge.handleSample(_accel(LEVEL, capture=0.0))
     assert len(calls[-1][0]) == 3 and calls[-1][1] == {}
+
+
+# ------------------------------- Ruling 35 / I2: the A-34 latch under the AHRS
+#
+# gyroImplausible used to be hard-wired False under the AHRS, so a latched gyro
+# (the recorded fault: a motionless car reporting 14-30 dps) published pitch
+# -44..-90 deg with NO reason code while parked. The engine now latches, and the
+# bridge must withhold exactly as it did for the legacy guard -- plus heading,
+# because the AHRS heading integrates the same gyro.
+
+
+def _parkedBursts(bridge: ImuStateBridge, *, seconds: float, gyroVehicle, startAt: float = 0.0,
+                  seed: int = 35) -> list[tuple[float, dict]]:
+    """Parked car, fresh OBD SPEED 0 on the 2.3 s grid, 50 Hz bursts with noise.
+    Returns (capture, payload) for every state the bridge writes."""
+    import random
+
+    rng = random.Random(seed)
+    written: list[tuple[float, dict]] = []
+    current = [startAt]
+    bridge._writeState = lambda payload: written.append((current[0], payload))  # noqa: SLF001
+    nextSpeed = startAt
+    for i in range(int(round(seconds * HZ))):
+        capture = startAt + i * DT
+        current[0] = capture
+        if capture >= nextSpeed - 1e-9:
+            bridge.handleSample(_speed(0.0, capture=capture))
+            nextSpeed += 2.3
+        gyro = tuple(g + rng.gauss(0.0, 0.004) for g in gyroVehicle)
+        mag = tuple(m + rng.gauss(0.0, 0.3) for m in NORTH_FIELD_UT)
+        accel = tuple(a + rng.gauss(0.0, 0.05) for a in LEVEL)
+        bridge.handleSample(_gyro(gyro, capture=capture, seq=i + 1))
+        bridge.handleSample(_mag(mag, capture=capture, seq=i + 1))
+        bridge.handleSample(_accel(accel, capture=capture, seq=i + 1))
+    return written
+
+
+_LATCHED_Y = (0.0, math.radians(20.0), math.radians(0.75))
+_HEALTHY = (math.radians(0.3), math.radians(-0.4), math.radians(0.75))
+
+
+def test_i2_latchedGyroParked_withholdsPitchGradeHeading_withTheReason(tmp_path: Path):
+    """
+    Given: the AHRS engine, a parked car (fresh speed 0), a y-gyro latched at 20 dps
+    When: ~3-5 s of bursts arrive
+    Then: pitchDeg, gradePct AND headingDeg are null with gyro_implausible, and
+          stay so while the fault persists -- never a published -44..-90 deg
+    """
+    bridge = ImuStateBridge(None, str(tmp_path), sampleHz=50, pitchFusion=AhrsFusion(HZ))
+    written = _parkedBursts(bridge, seconds=12.0, gyroVehicle=_LATCHED_Y)
+    withheld = [t for t, p in written if p["reasons"].get("pitchDeg") == REASON_GYRO_IMPLAUSIBLE]
+    assert withheld and withheld[0] <= 5.0
+    for t, p in written:
+        if t >= withheld[0]:
+            for field in ("pitchDeg", "gradePct", "headingDeg"):
+                assert p[field] is None
+                assert p["reasons"][field] == REASON_GYRO_IMPLAUSIBLE
+    # And no confident wrong pitch was published before the verdict either.
+    assert all(p["pitchDeg"] is None or abs(p["pitchDeg"]) < 5.0 for _, p in written)
+    assert bridge.derivedSnapshot()["pitchDeg"] is None
+
+
+def test_i2_healthyGyroParked_neverWithheldForImplausibility(tmp_path: Path):
+    bridge = ImuStateBridge(None, str(tmp_path), sampleHz=50, pitchFusion=AhrsFusion(HZ))
+    written = _parkedBursts(bridge, seconds=30.0, gyroVehicle=_HEALTHY)
+    assert not any(REASON_GYRO_IMPLAUSIBLE in p["reasons"].values() for _, p in written)
+    assert written[-1][1]["pitchDeg"] is not None
+    assert written[-1][1]["headingDeg"] is not None
+
+
+def test_i2_ahrsLatchLog_namesTheAhrsCondition_notTheLegacyOne(tmp_path: Path, caplog):
+    """The transition log must be true for the engine that is running."""
+    bridge = ImuStateBridge(None, str(tmp_path), sampleHz=50, pitchFusion=AhrsFusion(HZ))
+    with caplog.at_level(logging.WARNING, logger="pi.sensors.imu_state_bridge"):
+        _parkedBursts(bridge, seconds=6.0, gyroVehicle=_LATCHED_Y)
+    lines = [r.getMessage() for r in caplog.records if "gyro_implausible" in r.getMessage()]
+    assert lines, "the latch transition was not logged"
+    assert "trusted accel contradicts" not in lines[0]
+    assert "OBD speed 0" in lines[0] and "headingDeg" in lines[0]
+
+
+def test_i2_buildImuState_withholdsEngineHeading_butNotLegacyHeading():
+    """The legacy heading is mag-only and was never withheld for the gyro; the
+    AHRS heading integrates the gyro, so it is."""
+    common = {"tsUtc": "2026-09-28T00:00:00Z", "gravity": LEVEL, "mag": NORTH_FIELD_UT,
+              "pitchRad": None, "gyroImplausible": True}
+    engine = buildImuState(headingDegOverride=12.0, **common)
+    assert engine["headingDeg"] is None
+    assert engine["reasons"]["headingDeg"] == REASON_GYRO_IMPLAUSIBLE
+    legacy = buildImuState(**common)
+    assert legacy["headingDeg"] is not None
+
+
+# --------------------------- Ruling 35 / I4: the frozen verdict at 50 Hz
+#
+# MAG_ROTATION_MIN_RATIO (0.15) and the frozen score (~0.06) were MEASURED at
+# 4 Hz. Summing |d bearing| per sample at 50 Hz inflates a dithering frozen
+# channel's score x12.5, so FROZEN never fires. The accumulation is sub-sampled
+# to >= 0.25 s (capture time) so the score means what it meant when measured.
+
+_LSB_UT = 0.15  # AK09916 resolution
+
+
+def _rotationRun(tmp_path: Path, *, frozen: bool, noiseUt: float = 0.0, ditherP: float = 0.0,
+                 yawRateDps: float = 10.0, turnDeg: float = 90.0, parked: bool = False,
+                 seed: int = 1, hz: float = HZ) -> set[MagRotation]:
+    """Bursts at ``hz`` through the LEGACY-engine bridge (the gate is engine-agnostic).
+    ``ditherP``: per-sample chance each horizontal axis reads +-1 LSB off."""
+    import random
+
+    rng = random.Random(seed)
+    bridge = ImuStateBridge(None, str(tmp_path), sampleHz=int(hz))
+    bridge._writeState = lambda payload: None  # noqa: SLF001
+    dt = 1.0 / hz
+    radius, psi = 16.43, 0.0
+    turnS = 0.0 if parked else turnDeg / yawRateDps
+    total = 120.0 if parked else 5.0 + turnS + 5.0
+    verdicts: set[MagRotation] = set()
+    for i in range(int(total * hz)):
+        t = i * dt
+        turning = (not parked) and 5.0 <= t < 5.0 + turnS
+        wz = math.radians(yawRateDps) if turning else 0.0
+        psi += wz * dt
+        p = 0.0 if frozen else psi
+        mx, my, mz = radius * math.cos(p), -radius * math.sin(p), -49.0
+        if ditherP:
+            mx += rng.choice((-_LSB_UT, _LSB_UT)) if rng.random() < ditherP else 0.0
+            my += rng.choice((-_LSB_UT, _LSB_UT)) if rng.random() < ditherP else 0.0
+        if noiseUt:
+            mx, my, mz = (mx + rng.gauss(0, noiseUt), my + rng.gauss(0, noiseUt), mz + rng.gauss(0, noiseUt))
+        gyroNoise = rng.gauss(0.0, 0.004)
+        bridge.handleSample(_gyro((0.0, 0.0, wz + gyroNoise), capture=t, seq=i + 1))
+        bridge.handleSample(_mag((mx, my, mz), capture=t, seq=i + 1))
+        bridge.handleSample(_accel(LEVEL, capture=t, seq=i + 1))
+        verdicts.add(bridge._magRotation)  # noqa: SLF001
+    return verdicts
+
+
+# A 1-LSB dither on 5 % of reads scores ~0.06 at 4 Hz -- the recorded frozen
+# score -- and ~0.4-3 when summed per sample at 50 Hz (MEASURED, pre-fix).
+_FROZEN_DITHER_P = 0.05
+
+
+@pytest.mark.parametrize("ditherP", [0.0, _FROZEN_DITHER_P])
+def test_i4_frozenMag_at50Hz_underRealYaw_isFROZEN(tmp_path: Path, ditherP: float):
+    """Bit-identical and LSB-dithering frozen channels through a 90 deg turn at
+    10 dps, sampled at 50 Hz."""
+    assert MagRotation.FROZEN in _rotationRun(tmp_path, frozen=True, ditherP=ditherP)
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_i4_frozenVerdict_isTheSameAt4HzAnd50Hz(tmp_path: Path, seed: int):
+    """The score must mean what it meant when it was measured (4 Hz)."""
+    at4 = _rotationRun(tmp_path, frozen=True, ditherP=_FROZEN_DITHER_P, hz=4.0, seed=seed)
+    at50 = _rotationRun(tmp_path, frozen=True, ditherP=_FROZEN_DITHER_P, seed=seed)
+    assert MagRotation.FROZEN in at4
+    assert MagRotation.FROZEN in at50
+
+
+def test_i4_liveMag_at50Hz_turning_isHEALTHY(tmp_path: Path):
+    verdicts = _rotationRun(tmp_path, frozen=False, noiseUt=0.3)
+    assert MagRotation.HEALTHY in verdicts and MagRotation.FROZEN not in verdicts
+
+
+def test_i4_liveMagNoisy_parked_isNeverFROZEN(tmp_path: Path):
+    """A live channel with sigma 0.74 uT, parked for two minutes while the gyro
+    noise slowly accumulates |yaw|: never condemned."""
+    verdicts = _rotationRun(tmp_path, frozen=False, noiseUt=0.74, parked=True)
+    assert MagRotation.FROZEN not in verdicts

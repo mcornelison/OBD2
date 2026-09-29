@@ -374,3 +374,33 @@ def test_validator_rejectsASoftIronWithANonPositiveDeterminant(matrix):
     with pytest.raises(ConfigValidationError) as excinfo:
         ConfigValidator().validate(_baseCfg({"magCalibration": {"softIron": matrix}}))
     assert "determinant" in str(excinfo.value) and "softIron" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# ARCH-064 Ruling 35 (M1): magDeclinationDeg must be a finite angle
+#
+# It was only DEFAULTED. A NaN reached AhrsFusion and every heading became NaN;
+# a string raised inside the engine build and fell back to legacy; 200 deg is a
+# typo that no declination on Earth produces.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["-4.1", float("nan"), float("inf"), 200.0, -180.5, True],
+)
+def test_validator_rejectsANonFiniteOrOutOfRangeDeclination(bad):
+    with pytest.raises(ConfigValidationError, match="magDeclinationDeg"):
+        ConfigValidator().validate(_baseCfg({"magDeclinationDeg": bad}))
+
+
+@pytest.mark.parametrize("good", [0, -4.1, 180, -180.0, 12.25])
+def test_validator_acceptsAFiniteDeclinationWithinPlusMinus180(good):
+    result = ConfigValidator().validate(_baseCfg({"magDeclinationDeg": good}))
+    assert result["pi"]["sensors"]["imu"]["magDeclinationDeg"] == good
+
+
+def test_validator_explicitNullDeclination_isDefaultedNotPassedThrough():
+    """An explicit null is treated as absent by the defaults pass -> 0.0."""
+    result = ConfigValidator().validate(_baseCfg({"magDeclinationDeg": None}))
+    assert result["pi"]["sensors"]["imu"]["magDeclinationDeg"] == 0.0

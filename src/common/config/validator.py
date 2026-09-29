@@ -1336,6 +1336,7 @@ class ConfigValidator:
                     missingFields=[key],
                 )
         self._validateImuEnums(config)
+        self._validateImuDeclination(config)
         self._validateImuAccelCalibration(config)
         self._validateImuMagCalibration(config)
         self._warnImuRatesAboveSource(config)
@@ -1368,6 +1369,32 @@ class ConfigValidator:
                 f"pi.sensors.imu.fusionEngine has unknown value {fusionEngine!r}; "
                 f"allowed: {sorted(self._IMU_FUSION_ENGINES)}",
                 missingFields=['pi.sensors.imu.fusionEngine'],
+            )
+
+    def _validateImuDeclination(self, config: dict[str, Any]) -> None:
+        """Require ``pi.sensors.imu.magDeclinationDeg`` to be a finite angle in [-180, 180].
+
+        ARCH-064 Ruling 35 (M1). It used to be only DEFAULTED: a NaN reached
+        AhrsFusion and made every published heading NaN, and a string failed
+        inside the engine build and silently fell back to the legacy engine.
+        Called after defaults, so an absent key is already 0.0 here.
+
+        Raises:
+            ConfigValidationError: a non-number (bools included), a NaN/inf,
+                or a magnitude above 180 degrees.
+        """
+        key = 'pi.sensors.imu.magDeclinationDeg'
+        val = self._getNestedValue(config, key)
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or abs(val) > 180.0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number of degrees within [-180, 180] "
+                f"(EAST positive), got {val!r}",
+                missingFields=[key],
             )
 
     def _validateImuAccelCalibration(self, config: dict[str, Any]) -> None:

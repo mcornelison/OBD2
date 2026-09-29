@@ -39,6 +39,9 @@ still at the car:
   A-34 faulted gyro offset does not condemn every hold;
 * a gyro offset that looks faulted (A-34): median raw |gyro| over the holds
   above ``FAULTED_GYRO_OFFSET_RAD_S``;
+* a smaller gyro offset that the accel FITTER will still refuse: median raw
+  |gyro| above ``accel_cal.DEFAULT_MAX_GYRO_RAD_S`` (0.05) -- the fitter's
+  quasi-static gate rejects such holds (ARCH-064 Ruling 35, T6b);
 * a hold whose mean gravity direction is more than ``WRONG_HOLD_DEG`` from the
   one its prompt asked for (held the wrong way up);
 * a magnetometer bit-identical for >= 2 s (frozen, ARCH-057);
@@ -288,12 +291,23 @@ def _holdWarnings(schedule: list[Phase], perPhase: dict[str, _PhaseStats]) -> li
                     f"orientation (> {WRONG_HOLD_DEG:.0f}) -- the enclosure was held the "
                     "wrong way; redo that hold"
                 )
-    if holdGyroNorms and statistics.median(holdGyroNorms) > FAULTED_GYRO_OFFSET_RAD_S:
+    medianGyro = statistics.median(holdGyroNorms) if holdGyroNorms else None
+    if medianGyro is not None and medianGyro > FAULTED_GYRO_OFFSET_RAD_S:
         warnings.append(
             f"gyro offset looks faulted (A-34): median raw |gyro| during the still holds "
-            f"was {statistics.median(holdGyroNorms):.3f} rad/s (> {FAULTED_GYRO_OFFSET_RAD_S}); "
+            f"was {medianGyro:.3f} rad/s (> {FAULTED_GYRO_OFFSET_RAD_S}); "
             "the accel fit's quasi-static gate will reject the holds -- restart the "
             "capture so A-34 recovery runs"
+        )
+    elif medianGyro is not None and medianGyro > DEFAULT_MAX_GYRO_RAD_S:
+        # ARCH-064 Ruling 35 (T6b): accel_cal_cli drops every hold whose RAW
+        # |gyro| exceeds DEFAULT_MAX_GYRO_RAD_S (0.05), but the A-34 warning
+        # above starts at 0.1 -- between the two, every hold was silently thrown
+        # away by the fitter with nothing said at capture time.
+        warnings.append(
+            f"median raw |gyro| during the still holds was {medianGyro:.3f} rad/s "
+            f"(> {DEFAULT_MAX_GYRO_RAD_S}, the accel fitter's limit): the fitter's "
+            "quasi-static gate will reject these holds; recover the gyro and re-run"
         )
     return warnings
 

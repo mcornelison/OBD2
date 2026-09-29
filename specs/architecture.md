@@ -4051,7 +4051,7 @@ tuned blindly:
 | `acceleration_rejection` | **7°** | Not the ruled 10° — tightened with a stated, measured reason: speed aiding cannot see an acceleration ONSET until the next OBD SPEED sample (up to ~2.3 s later), so the rejection angle alone must hold attitude through that blind window. At 10° a 0.15 g pull (atan = 8.5°) is never rejected and leaks ~5° of phantom pitch before the first `dv/dt` arrives (measured: 2.76° still present 4 s in). 7° rejects any pull ≥ 0.123 g at onset with margin |
 | `magnetic_rejection` | 10° | ARCH-064 ruling |
 | `rejection_timeout` | 5 s | ARCH-064 ruling (`imufusion` 1.3.3 takes this in seconds) |
-| `Bias` stationary threshold | 3 dps over 3 s | Gyro bias re-learned only when genuinely at rest |
+| `Bias` stationary threshold | 3 dps over 3 s | Gyro bias re-learned only when genuinely at rest — **and only when OBD speed does not say the car is rolling** (below) |
 
 **Speed-aided compensation** (`AhrsFusion._compensate`) removes the vehicle's own specific force
 before the AHRS sees it, so sustained acceleration is not read as tilt (the same phantom §"Why the
@@ -4059,7 +4059,28 @@ low-pass above was not enough for pitch" describes for the legacy engine): longi
 Δv/Δt` from OBD `SPEED` (held between samples, clamped to ±0.6 g — a road car does not exceed that
 longitudinally); lateral `v · ω_z` (centripetal, from the gyro's yaw rate). **Both switch OFF when
 the last OBD `SPEED` sample is more than 3 s stale (`SPEED_STALE_S`)** — never compensate on old
-data or a fabricated rate.
+data or a fabricated rate. The centripetal term uses the **bias-corrected** yaw rate (gyro − the
+learned offset): with the raw rate, a 0.747 dps bias at 30 m/s was a fake lateral force worth 5.77°
+of heading and 2.28° of roll on a straight road (final review I1, Ruling 35).
+
+**Gyro-bias learning is gated on speed (Ruling 35, I3).** Fusion's `Bias` calls anything under
+3 dps for 3 s "stationary", so a 1.5 dps highway curve held 60 s was learned as a −1.5 dps offset
+(2.97° heading error). The learner is not fed while the latest OBD `SPEED` — fresh **or stale** —
+exceeds `BIAS_LEARN_MAX_SPEED_KMH` (1 km/h); a dropout mid-curve is not evidence of a stop. With no
+speed ever seen, or a last reading of 0, Fusion's own detector is used. ⚠️ Cost: a bias not yet
+converged when the car pulls away stays unconverged until the next stop (15 s parked, 1 dps bias:
+1.84° heading / 0.58° roll at 30 m/s, against 7.7° / 3.06° before the fix).
+
+**The A-34 latch under the AHRS (Ruling 35, I2).** `AhrsFusion.gyroImplausible` latches when fresh
+OBD speed has read 0 for ≥ 3 s and the largest per-axis mean of (gyro − learned offset) over that
+window reaches `gyro_recovery.GYRO_FAULT_MIN_RAD_S` (0.10 rad/s, the bimodal cut). While latched,
+`pitchRad`/`rollRad`/`headingDeg` read `None` and the bridge publishes `pitchDeg`, `gradePct` **and
+`headingDeg`** as null with `gyro_implausible` (heading too, because this heading integrates the
+gyro; the legacy mag-only heading is not withheld). It clears on `reset()` or on a parked window
+that reads quiet (a successful power cycle), and the attitude is then restarted so the integrated
+fault is never published. **It cannot latch without fresh speed** — a turning car and a latched
+gyro are the same signal. Before this, the flag was hard-wired `False` and a latched gyro
+published pitch −44…−90° parked, with no reason code.
 
 **Heading is TRUE north, not magnetic**, once `magDeclinationDeg` is set
 (`headingDeg = (-yaw + declinationDeg) mod 360`, east-positive convention) — the legacy engine's
@@ -4077,7 +4098,10 @@ heading 90.0° → 73.7° with no correcting mag). A fresh mag reading restores 
 `FROZEN`, `imu_state_bridge` passes `mag_ut=None` to the AHRS rather than the frozen vector: Fusion
 would reject it through a turn, then its recovery would **snap** heading onto it, wrong for up to
 ~5 s after the verdict clears. The rotation gate itself still reads the bridge's own `_freshMag`,
-so withholding the AHRS's copy cannot stop the verdict clearing.
+so withholding the AHRS's copy cannot stop the verdict clearing. The rotation score is accumulated
+in steps of ≥ `MAG_ROT_STEP_S` = 0.25 s of capture time (Ruling 35, I4): its 0.15 floor and the
+~0.06 frozen score were measured at 4 Hz, and summing |Δbearing| per sample at 50 Hz counts a
+dithering channel's noise 12.5× as often, so `FROZEN` never fired.
 
 ⚠️ **Under `fusionEngine: "imufusion"` the legacy pitch knobs above have NO EFFECT** —
 `pitchTauSec`, `accelTrustBand`, `zuptMinStopSec`, `zuptSpeedMaxAgeSec`, `zuptMinStops`,

@@ -1082,8 +1082,9 @@ def _recoverGyro(icm: Any, recoveryFn: Callable[[Any], Any] | None = None) -> An
 
     A failure NEVER costs the IMU. Same principle as the magnetometer degrade
     path: losing accel, gyro and mag to fix one channel throws away valid data
-    to punish a broken one. US-749's guard still withholds pitch and grade when
-    the recovery does not take.
+    to punish a broken one. When the recovery does not take, the RUNNING
+    engine's gyro guard withholds pitch and grade once it trips
+    (``gyro_recovery.WITHHOLD_CONDITION``; ARCH-064 Ruling 35).
 
     Args:
         icm: The constructed ICM-20948.
@@ -1121,8 +1122,9 @@ def _recoverGyro(icm: Any, recoveryFn: Callable[[Any], Any] | None = None) -> An
 
     A failure NEVER costs the IMU. Same principle as the magnetometer degrade
     path: losing accel, gyro and mag to fix one channel throws away valid data
-    to punish a broken one. US-749's guard still withholds pitch and grade when
-    the recovery does not take.
+    to punish a broken one. When the recovery does not take, the RUNNING
+    engine's gyro guard withholds pitch and grade once it trips
+    (``gyro_recovery.WITHHOLD_CONDITION``; ARCH-064 Ruling 35).
 
     Args:
         icm: The constructed ICM-20948.

@@ -43,6 +43,33 @@
 #   Skipped when speed is STALE (> 3 s since the last sample) or the sample has
 #   no gyro. Signs are pinned by tests.
 #
+#   BIAS LEARNING IS GATED ON SPEED, AND THE COMPENSATION USES THE CORRECTED
+#   RATE (ARCH-064 Ruling 35, I1/I3 -- MEASURED by the final review):
+#     * imufusion.Bias calls anything under 3 dps for 3 s "stationary", so a
+#       1.5 dps highway curve held for 60 s was learned as a -1.5 dps offset
+#       (2.97 deg of heading error). The learner is therefore NOT fed while the
+#       car is known to be moving: the latest OBD speed above
+#       BIAS_LEARN_MAX_SPEED_KMH -- fresh OR stale, because an OBD dropout
+#       mid-curve is not evidence the car stopped. With no speed ever seen
+#       (bench, OBD absent) or a last reading of 0, Fusion's own stationary
+#       detector is the only evidence there is and it is used: without it a raw
+#       bias integrates into heading with nothing to remove it. While learning
+#       is off the rate is corrected with the HELD offset.
+#     * v * omega_z used the RAW gyro, so the bias became a fake lateral force
+#       (30 m/s, 0.747 dps: 5.77 deg heading, 2.28 deg roll on a straight
+#       road). It now uses the bias-corrected rate.
+#
+#   A-34 LATCH (Ruling 35, I2): the latched gyro (14-30 dps on a motionless
+#   car) is detected here too -- ``gyroImplausible`` latches when fresh OBD
+#   speed has read 0 for >= GYRO_FAULT_WINDOW_S and the largest per-axis mean
+#   of (gyro - learned offset) over that window reaches GYRO_FAULT_MIN_RAD_S
+#   (the bimodal cut gyro_recovery.py measured, reused not copied). While
+#   latched, pitch, roll and heading read None. The latch clears on reset() or
+#   on a parked window that reads quiet again (a successful power-cycle
+#   recovery), and the attitude is then restarted so the integrated fault is
+#   never published. Without fresh speed it cannot latch: a turning car and a
+#   latched gyro are the same signal, and only speed tells them apart.
+#
 #   ACCEL CALIBRATION (ARCH-064 Task 6b): ``a_c = M . (a - o)`` in the BODY
 #   frame, applied to every accel sample FIRST -- before the speed-aided
 #   compensation above (which subtracts a TRUE vehicle acceleration, so it must
@@ -73,6 +100,9 @@
 # 2026-09-28    | Atlas        | Task 6b: accelerometer calibration
 #               | (ARCH-064)   | a_c = M . (a - o), body frame, applied BEFORE
 #               |              | speed-aided compensation and the AHRS update.
+# 2026-09-28    | Atlas        | Final review (Ruling 35): bias learning gated
+#               | (ARCH-064)   | on speed; centripetal term uses the corrected
+#               |              | rate; A-34 parked-gyro latch (gyroImplausible).
 # ================================================================================
 ################################################################################
 
@@ -86,11 +116,16 @@ from collections.abc import Sequence
 import imufusion
 import numpy as np
 
+from pi.sensors.gyro_recovery import GYRO_FAULT_MIN_RAD_S
+
 __all__ = [
     "AHRS_GAIN",
     "ACCELERATION_REJECTION_DEG",
     "AhrsFusion",
+    "BIAS_LEARN_MAX_SPEED_KMH",
     "BIAS_STATIONARY_PERIOD_S",
+    "GYRO_FAULT_MIN_RAD_S",
+    "GYRO_FAULT_WINDOW_S",
     "BIAS_STATIONARY_THRESHOLD_DPS",
     "FUSION_VERSION_AHRS",
     "MAGNETIC_REJECTION_DEG",
@@ -125,6 +160,14 @@ MAGNETIC_REJECTION_DEG = 10.0
 REJECTION_TIMEOUT_S = 5.0
 BIAS_STATIONARY_THRESHOLD_DPS = 3.0
 BIAS_STATIONARY_PERIOD_S = 3.0
+# Ruling 35 (I3): above this OBD speed the car is MOVING and a slow yaw is a
+# curve, not a bias. ~1 km/h, not 0: OBD SPEED is integer km/h, so anything
+# above 1 is unambiguously rolling.
+BIAS_LEARN_MAX_SPEED_KMH = 1.0
+# Ruling 35 (I2): how long fresh OBD speed must read 0 before a parked-gyro
+# window is judged against GYRO_FAULT_MIN_RAD_S -- the same 3 s of evidence the
+# Bias learner itself requires before it calls the board stationary.
+GYRO_FAULT_WINDOW_S = 3.0
 
 # A capture gap longer than this is not a sample period -- integrating the
 # current rate across it would invent rotation nobody measured. Such an update
@@ -230,15 +273,21 @@ class AhrsFusion:
     # -- PitchFusion surface ---------------------------------------------------
     @property
     def pitchRad(self) -> float | None:
-        """Chassis pitch, radians, nose-UP positive; None until initialised."""
-        if not self._initialised():
+        """Chassis pitch, radians, nose-UP positive; None until initialised
+        and while ``gyroImplausible`` (a number the engine has evidence is wrong)."""
+        if not self._initialised() or self._gyroLatched:
             return None
         return self._pitchRad
 
     @property
     def rawPitchRad(self) -> float | None:
-        """Same as ``pitchRad`` -- Fusion has no separate mount-tilt bias."""
-        return self.pitchRad
+        """The fused pitch EVEN while ``gyroImplausible`` -- diagnostics only.
+
+        Fusion has no separate mount-tilt bias; None until initialised.
+        """
+        if not self._initialised():
+            return None
+        return self._pitchRad
 
     @property
     def stopCount(self) -> int:
@@ -252,8 +301,14 @@ class AhrsFusion:
 
     @property
     def gyroImplausible(self) -> bool:
-        """Always False: superseded by Fusion's rejection/recovery ``flags``."""
-        return False
+        """True while the A-34 parked-gyro latch holds (Ruling 35, I2).
+
+        Set when fresh OBD speed has read 0 for >= GYRO_FAULT_WINDOW_S and the
+        largest per-axis mean of (gyro - learned offset) over that window is
+        >= GYRO_FAULT_MIN_RAD_S. Cleared by ``reset()`` or by a later parked
+        window that reads quiet. While True, pitch/roll/heading read None.
+        """
+        return self._gyroLatched
 
     def observeSpeed(self, speed, capture: float) -> None:
         """Record one OBD SPEED sample for acceleration compensation.
@@ -273,6 +328,9 @@ class AhrsFusion:
         if not math.isfinite(kmh):
             return
         speedMs = kmh / _KMH_PER_MS
+        if kmh > 0.0:
+            # Rolling: a parked-gyro window must be contiguous, so it ends here.
+            self._faultWindowReset()
         prev = self._lastSpeed
         if prev is not None:
             prevCapture, prevSpeedMs = prev
@@ -315,11 +373,22 @@ class AhrsFusion:
         accelG = accelMs2 / STANDARD_GRAVITY_MS2
 
         gyroVec = _finiteVec3(gyro)
-        accelG = self._compensate(accelG, gyroVec, capture)
+        correctedRad: np.ndarray | None = None
         if gyroVec is None:
             gyroDps = np.zeros(3)
         else:
-            gyroDps = self._bias.update(np.degrees(np.asarray(gyroVec, dtype=float)))
+            rawDps = np.degrees(np.asarray(gyroVec, dtype=float))
+            if self._biasLearningAllowed():
+                gyroDps = np.asarray(self._bias.update(rawDps), dtype=float)
+            else:
+                # I3: moving -- a slow yaw is a curve, not a bias. Correct with
+                # the HELD offset and leave the learner untouched.
+                gyroDps = rawDps - np.asarray(self._bias.get_offset(), dtype=float)
+            correctedRad = np.radians(gyroDps)
+            self._trackGyroFault(correctedRad, capture)
+        # I1: the centripetal term takes the BIAS-CORRECTED rate, never the raw
+        # one -- a raw bias is a fake lateral force of v * bias.
+        accelG = self._compensate(accelG, correctedRad, capture)
 
         # Real elapsed time where it is a plausible sample period; otherwise the
         # nominal one (first sample, a clock step backwards, or a gap).
@@ -377,12 +446,15 @@ class AhrsFusion:
         self._aLongMs2: float | None = None
         self._speedCompensated = False
         self._lastAccelMs2: tuple[float, float, float] | None = None
+        self._gyroLatched = False
+        self._faultWindowReset()
 
     # -- new surface -----------------------------------------------------------
     @property
     def rollRad(self) -> float | None:
-        """Roll, radians, Fusion NWU sign (left side UP positive); None until initialised."""
-        if not self._initialised():
+        """Roll, radians, Fusion NWU sign (left side UP positive); None until
+        initialised and while ``gyroImplausible``."""
+        if not self._initialised() or self._gyroLatched:
             return None
         return self._rollRad
 
@@ -394,8 +466,9 @@ class AhrsFusion:
         since the last reset -- a gyro-only yaw has no north to be measured from
         -- and None again once the last valid mag reading is more than
         MAG_MAX_COAST_S older than the last update (bounded gyro coasting).
+        Also None while ``gyroImplausible``: this heading integrates the gyro.
         """
-        if not self._initialised() or self._lastMagCapture is None:
+        if not self._initialised() or self._lastMagCapture is None or self._gyroLatched:
             return None
         assert self._lastCapture is not None  # set by the update that set the mag
         if self._lastCapture - self._lastMagCapture > MAG_MAX_COAST_S:
@@ -416,6 +489,12 @@ class AhrsFusion:
     def accelCalibrated(self) -> bool:
         """True only when a non-default accel offset or matrix was supplied."""
         return self._accelCalibrated
+
+    @property
+    def gyroOffsetDps(self) -> tuple[float, float, float]:
+        """The gyro rate bias the Bias learner currently holds, deg/s, body frame."""
+        off = self._bias.get_offset()
+        return (float(off[0]), float(off[1]), float(off[2]))
 
     @property
     def lastAccelMs2(self) -> tuple[float, float, float] | None:
@@ -444,6 +523,9 @@ class AhrsFusion:
     def _compensate(self, accelG: np.ndarray, gyroVec, capture: float) -> np.ndarray:
         """Remove the vehicle's own specific force (g units) when speed is fresh.
 
+        ``gyroVec`` is the BIAS-CORRECTED body rate, rad/s (Ruling 35, I1): the
+        raw rate would turn the gyro bias into a lateral force of v * bias.
+
         Off (accel returned unchanged) when there is no speed, the latest is
         stale, or this sample has no gyro -- never compensate on old data or a
         fabricated rate. With one sample only, the lateral term applies and the
@@ -461,6 +543,55 @@ class AhrsFusion:
         out[1] -= speedMs * gyroVec[2] / STANDARD_GRAVITY_MS2
         self._speedCompensated = True
         return out
+
+    def _biasLearningAllowed(self) -> bool:
+        """Whether the Bias learner may be fed this sample (Ruling 35, I3).
+
+        OFF whenever the latest OBD speed -- fresh OR stale -- says the car was
+        rolling (> BIAS_LEARN_MAX_SPEED_KMH). A stale reading still counts:
+        losing OBD mid-curve is not evidence of a stop. ON with no speed ever
+        seen or a last reading at/below the threshold: Fusion's own stationary
+        detector is then the only evidence available, and not learning would
+        let a raw bias integrate into heading unopposed.
+        """
+        if self._lastSpeed is None:
+            return True
+        return self._lastSpeed[1] * _KMH_PER_MS <= BIAS_LEARN_MAX_SPEED_KMH
+
+    def _faultWindowReset(self) -> None:
+        """Drop the parked-gyro evidence window (the VERDICT is kept)."""
+        self._faultStart: float | None = None
+        self._faultSum = np.zeros(3)
+        self._faultCount = 0
+
+    def _trackGyroFault(self, correctedRad: np.ndarray, capture: float) -> None:
+        """Accumulate parked-gyro evidence and latch/clear the A-34 verdict.
+
+        Only while FRESH OBD speed reads 0. The statistic is the one
+        ``gyro_recovery.gyroLooksFaulted`` uses at startup -- the largest
+        per-axis MEAN, so one spike cannot trip it -- on the offset-corrected
+        rate. A window that reads quiet clears the latch (a recovered gyro).
+        """
+        last = self._lastSpeed
+        parked = last is not None and capture - last[0] <= SPEED_STALE_S and last[1] <= 0.0
+        if not parked:
+            self._faultWindowReset()
+            return
+        if self._faultStart is None:
+            self._faultStart = capture
+        self._faultSum = self._faultSum + correctedRad
+        self._faultCount += 1
+        if capture - self._faultStart < GYRO_FAULT_WINDOW_S:
+            return
+        meanRad = self._faultSum / self._faultCount
+        faulted = float(np.max(np.abs(meanRad))) >= GYRO_FAULT_MIN_RAD_S
+        if self._gyroLatched and not faulted:
+            # Recovered. The attitude on hand was integrated from the fault, so
+            # restart it -- Fusion's ~3 s startup reads None, honestly -- rather
+            # than publish it. The learned offset is kept.
+            self._ahrs.restart()
+        self._gyroLatched = faulted
+        self._faultWindowReset()
 
     def _initialised(self) -> bool:
         return self._updated and not self._ahrs.get_flags().startup

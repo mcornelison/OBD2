@@ -37,6 +37,8 @@
 # ================================================================================
 # 2026-09-28    | Atlas        | Initial (ARCH-064 Task 2) -- Icm20948Direct,
 #               | (ARCH-064)   | makeIcm20948Direct, GyroRecoveryHandle.
+# 2026-09-28    | Atlas        | Final review I5: injectable settle after
+#               | (ARCH-064)   | swReset (50 ms) and before A-34 sampling.
 # ================================================================================
 ################################################################################
 
@@ -48,6 +50,7 @@ SparkFun with all other project software stopped."""
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -59,6 +62,8 @@ __all__ = [
     "GYRO_DLPF_NEAR_50HZ",
     "GYRO_FS_500DPS",
     "GYRO_LSB_PER_DPS",
+    "GYRO_SETTLE_S",
+    "RESET_SETTLE_S",
     "MAG_SOURCE_DIRECT",
     "SAMPLE_MODE_CONTINUOUS",
     "SENSORS_ACCEL_GYRO",
@@ -100,6 +105,19 @@ ACCEL_FS_4G = 0x01  # gpm4
 GYRO_FS_500DPS = 0x01  # dps500
 ACCEL_DLPF_NEAR_50HZ = 0x03  # acc_d50bw4_n68bw8 -- 50.4 Hz 3 dB BW
 GYRO_DLPF_NEAR_50HZ = 0x03  # gyr_d51bw2_n73bw3 -- 51.2 Hz 3 dB BW
+
+# ARCH-064 Ruling 35 (I5). DOCUMENTED: SparkFun's own ICM_20948::startupDefault()
+# waits ``delay(50)`` between swReset() and sleep(false), and the reference
+# reader that proved direct mode live on this board slept 0.05 s there too. A
+# write issued while the chip is still resetting can be dropped silently, and
+# nothing downstream would notice -- the registers would simply hold defaults.
+RESET_SETTLE_S = 0.05
+# Settle between the end of configuration and the caller's first gyro read --
+# the A-34 recovery samples the gyro the instant the build returns, and a
+# just-woken gyro behind a freshly-enabled DLPF is not yet a measurement.
+# 0.1 s is well past the DLPF's time constant at ~51 Hz; the datasheet's gyro
+# start-up time row is not legible in our text extraction (RECALLED ~35 ms).
+GYRO_SETTLE_S = 0.1
 
 
 class Icm20948Direct:
@@ -175,7 +193,10 @@ class Icm20948Direct:
 
 
 def makeIcm20948Direct(
-    icmFactory: Callable[[], Any], akFactory: Callable[[], Any]
+    icmFactory: Callable[[], Any],
+    akFactory: Callable[[], Any],
+    *,
+    sleepFn: Callable[[float], None] | None = None,
 ) -> Icm20948Direct:
     """Configure the ICM-20948 from a clean software reset and hand back a
     device that never once enables the internal I2C master.
@@ -195,12 +216,18 @@ def makeIcm20948Direct(
             one at 0x69).
         akFactory: Returns the ``ak09916_bypass.Ak09916Direct`` handle bound to
             0x0C on the primary bus (injectable for tests).
+        sleepFn: Injection seam for the two settles (RESET_SETTLE_S after
+            ``swReset``; GYRO_SETTLE_S before returning, so the A-34 recovery
+            never samples a gyro that has not started). Defaults to
+            ``time.sleep``, looked up at call time.
 
     Returns:
         The configured :class:`Icm20948Direct`.
     """
+    pause = sleepFn if sleepFn is not None else time.sleep
     icm = icmFactory()
     icm.swReset()
+    pause(RESET_SETTLE_S)  # I5: SparkFun startupDefault's delay(50)
     icm.sleep(False)
     icm.lowPower(False)
 
@@ -224,6 +251,7 @@ def makeIcm20948Direct(
 
     ak = akFactory()
     ak.configure()  # WIA2 identity check, CNTL2 0x00 -> 0x08, verified by readback
+    pause(GYRO_SETTLE_S)  # I5: before the caller's A-34 gyro sampling
     return Icm20948Direct(icm, ak)
 
 

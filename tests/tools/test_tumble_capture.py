@@ -349,6 +349,23 @@ def test_aFaultedGyroOffsetIsNamedAndDoesNotCondemnTheHolds():
     assert all(p["stillFraction"] == 1.0 for n, p in summary["phases"].items() if n != PHASE_TUMBLE)
 
 
+@pytest.mark.parametrize("offset", [0.06, 0.09])
+def test_aGyroOffsetAboveTheFittersGate_butBelowA34_isWarned(offset):
+    """Ruling 35 (T6b): accel_cal_cli rejects any hold whose raw |gyro| exceeds
+    DEFAULT_MAX_GYRO_RAD_S (0.05), but the A-34 warning only fires above 0.1.
+    Between the two, every hold would be silently thrown away by the fitter."""
+    summary, _, err = _honest(gyroOffset=(offset, 0.0, 0.0))
+    assert len(summary["warnings"]) == 1
+    assert "quasi-static gate will reject these holds" in summary["warnings"][0]
+    assert "recover the gyro and re-run" in summary["warnings"][0]
+    assert "WARNING" in err
+
+
+def test_aGyroOffsetJustBelowTheFittersGate_isNotWarned():
+    summary, _, _ = _honest(gyroOffset=(0.04, 0.0, 0.0))
+    assert summary["warnings"] == []
+
+
 def test_aHoldHeldTheWrongWayIsReported():
     """m6: -x face held with +z up is 90 degrees off its label."""
     summary, _, _ = _honest(wrongPhase="face_-x_up")

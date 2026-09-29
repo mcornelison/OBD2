@@ -80,13 +80,16 @@ def test_pitchRad_isNoneBeforeAnyUpdate():
 
 
 def test_parityProperties_haveInertValues():
+    """stopCount / biasRad are surface parity only. ``gyroImplausible`` is NOT
+    inert any more -- it used to be pinned False here, which protected the A-34
+    defect (final review I2); its behaviour is pinned in
+    test_ahrs_road_bias_and_gyro_latch.py."""
     fusion = AhrsFusion(sampleHz=HZ)
     _run(fusion, 5.0, LEVEL)
     assert fusion.stopCount == 0
     assert fusion.biasRad == 0.0
-    assert fusion.gyroImplausible is False
-    fusion.observeSpeed(0.0, 5.0)  # accepted no-op
-    fusion.observeSpeed(None, 5.1)
+    fusion.observeSpeed(0.0, 5.0)
+    fusion.observeSpeed(None, 5.1)  # ignored
     assert isinstance(fusion.flags, dict)
     assert set(fusion.flags) >= {"startup", "accelerationRecovery", "magneticRecovery", "overrangeRecovery"}
 
