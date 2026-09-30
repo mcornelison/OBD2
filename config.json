@@ -389,12 +389,12 @@
     },
     "tieredThresholds": {
       "coolantTemp": {
-        "unit": "fahrenheit",
-        "normalMin": 180,
-        "cautionMin": 210,
-        "dangerMin": 220,
-        "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
-        "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
+        "unit": "celsius",
+        "normalMin": 85,
+        "cautionMin": 103.5,
+        "dangerMin": 109.5,
+        "cautionMessage": "Coolant temperature elevated ({value} C). Check fan, coolant level and water pump; reduce load.",
+        "dangerMessage": "DANGER: Coolant temperature critical ({value} C). Pull over. Risk of head gasket failure."
       },
       "stft": {
         "unit": "percent",
