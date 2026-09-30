@@ -53,7 +53,7 @@ Authoritative, fact-based sources for the Eclipse OBD-II Performance Monitoring 
 | VIN | `4A3AK54F8WE122916` | CIO (Eclipse 1998 Projects spreadsheet) |
 | Engine | 4G63 turbocharged | CIO / DSMTuners |
 | OBD-II Protocol | ISO 9141-2 (K-Line, 10,400 bps) | OBD-II spec + DSMTuners |
-| Max polling rate | ~4-5 PIDs/sec via Bluetooth | Research (specs/obd2-research.md) |
+| Max polling rate | ~4-5 PIDs/sec via Bluetooth | Research (specs/obd2-research.md) — **pre-measurement estimate.** Measured: see §Real-World K-Line Throughput (11 PIDs) and §Corpus hygiene #2 (16 PIDs). Device rates, storage rates and the averaging rule → `facts/data-rates.md` (CIO 2026-09-28). |
 | Core PIDs (Phase 1) | STFT (0x06), Coolant (0x05), RPM (0x0C), Timing (0x0E), Load (0x04) | Research + CIO approval |
 | Current ECU | **MD326328** (mfr **E2T61683**) — 1997 2G DSM ECU, ECMLink V3 flash-modifiable, plug-installed in 98 chassis 2026-05-22 (drives ≥25). Running prior-tuner ECMLink tune; Mode 09 + Mode 22 silent over OBD. Earlier mis-recorded as MD335287; corrected 2026-06-01 from case label + mfr P/N (same physical box). | CIO + Spool knowledge.md (ECU Identity) |
 | Prior ECU | **MD346675** — 1998 factory FWD-turbo ECU (ROM 6675, mfr E2T68273), drives ≤24. **100% STOCK factory tune, never flashed (CIO-confirmed 2026-05-29).** Flash-hardware but NOT ECMLink-flashable (copy-protected) — which is why it was swapped. Photo-identified 2026-05-29. | CIO photos + CIO confirmation + DSM sourcing |
@@ -72,7 +72,7 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 
 | Parameter | Safe Range | Alert Threshold | Notes |
 |-----------|-----------|-----------------|-------|
-| Coolant Temp | ≤101 °C (214°F) | 🟡 ≥104 °C **sustained ≥30 s** · 🔴 ≥110 °C any duration, or ≥104 °C ≥120 s | **CORRECTED 2026-08-20 (Spool, measured).** Threshold+dwell, NOT a bare threshold — 101 °C is this car's normal **fan-cycle ceiling**. A bare 🟡 inside a cycling signal's oscillation band nuisance-fires (a bare 100 °C would have fired on 6 of the last 7 *healthy* captures). **RE-VALIDATED a 4th time 2026-08-28** (drives 45–51): peak **101.0 °C**, and **zero samples >=102 °C in 16,166** across the entire corpus. The withdrawn bare 100 °C absolute would have nuisance-fired across the whole session. ⚠ Every drive on file is a ~24–27 °C ambient day — **re-check after a ~35 °C day.** The 30 s dwell remains untested against a real excursion because the engine never gets there. Derivation: `$FLEET_SHARE/tuner/knowledge/knowledge.md` §Cooling. |
+| Coolant Temp | ≤101 °C (214°F) | 🟡 ≥104 °C **sustained ≥30 s** · 🔴 ≥110 °C any duration, or ≥104 °C ≥120 s | **CORRECTED 2026-08-20 (Spool, measured).** Threshold+dwell, NOT a bare threshold — 101 °C is this car's normal **fan-cycle ceiling**. A bare 🟡 inside a cycling signal's oscillation band nuisance-fires (a bare 100 °C would have fired on 6 of the last 7 *healthy* captures). **RE-VALIDATED a 4th time 2026-08-28** (drives 45–51): peak **101.0 °C**, and **zero samples >=102 °C in 16,166** across the entire corpus. The withdrawn bare 100 °C absolute would have nuisance-fired across the whole session. ~~⚠ Every drive on file is a ~24–27 °C ambient day — re-check after a ~35 °C day.~~ **Hot-day re-check DISCHARGED 2026-09-04** (office advisory `edr-alert-live-instrument-thresholds-advisory.md` §1.1). **Clear hysteresis (TUNER-008, 2026-09-28):** 🟡→🟢 only after dropping **below 102 °C and holding 10 s** — prevents flapping at the fan-cycle edge; never exercised, since the corpus has zero samples ≥102 °C. The 30 s dwell remains untested against a real excursion because the engine never gets there. Derivation: `$FLEET_SHARE/tuner/knowledge/knowledge.md` §Cooling. |
 | Boost (stock turbo) | ~12 psi | >15 psi on stock | Stock wastegate actuator limit |
 | AFR at WOT | 11.0-11.8:1 | >12.5:1 under boost (lean danger) | Rich is safe, lean kills engines |
 | Knock count | 0 | >0 sustained | Any knock is bad; transient single counts can be noise. **ECMLink USB+PC only — NOT readable over the OBD pipe** (Mode 22 silent on this ECU). |
@@ -82,7 +82,7 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 | **Engine Load** | **15–25% idle · 30–50% cruise · up to 100% at WOT** | ⚠ **Compound condition only** — high load **with** positive STFT under boost, or with knock | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured).** 🔴 **A ">90% sustained = danger" threshold was WITHDRAWN — this car has now reached 100% load on THREE WOT pulls with no thermal or knock distress** (drives 7 and 11 on the prior ECU; **drive 51 on the current ECU, 2026-08-28**). 35 samples exceed 90 % across the corpus. **Load alone is not a danger signal on a turbo engine**; it is the *expected* reading at full throttle. Only meaningful paired with a lean indication or knock. |
 | **MAF** | **2–4 g/s idle; scales with RPM/load** | ⚠ **~150 g/s = stock sensor SATURATION, not a fault** | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured).** All-time max **158.7 g/s** (Drive 7 WOT) — unchanged; this car **does** reach the stock MAF ceiling at full load. The current-ECU WOT pull (drive 51) peaked at **147.7 g/s — just *below* saturation**, which is why that sample is usable for the VE inference and Drive 7's is not. A MAF pinned ~150+ during a pull is **expected**; treat it as a *measurement limit*, not an engine problem. ✅ Also the basis for the **MAF→VE boost inference** (below) on a car where boost is unreadable. |
 | **RPM** | **700–800 idle; redline 7000 (97–99 2G)** | 🔴 >7000 (valve float on stock springs) | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool).** ⚠ **Manufacturer spec — still NEVER exercised. All-time max is now 5,896 RPM** (drive 51, 2026-08-28 — the first WOT under the current ECU; supersedes 5,441 from Drive 11, which was the *prior* ECU). Everything above 5,896 remains unmeasured. |
-| **Fuel Trims (LTFT / STFT)** | **LTFT ±4 pp of the CURRENT EPOCH's baseline · STFT oscillates, judge only its mean** | 🟡 5-drive median ≥ **4.0 pp** from epoch baseline, sustained ≥3 qualifying drives · 🔴 \|LTFT\| ≥ **10 %** *(convention, NEVER fired here — untested)* | **ADDED 2026-08-31 (Spool, measured — 17,634 LTFT + 17,638 STFT samples, 56 drives).** 🔴 **Resolution is 0.78125 pp** (one raw ECU count, 100/128); the parameter has taken **18 distinct values in this engine's recorded lifetime** — any threshold finer than one count is below the instrument. 🔴 **Noise floor: drive means spread up to 3.72 pp BETWEEN DRIVES ON THE SAME DAY** on a healthy engine (drives 45–51); between-drive SD **1.43 pp**; worst healthy deviation from epoch mean **2.50 pp**. ⇒ **a single-drive delta carries no information and must trigger nothing.** ⚠ **Epoch-scoped, always** — see the trend contract below. |
+| **Fuel Trims (LTFT / STFT)** | **LTFT ±4 pp of the CURRENT EPOCH's baseline · STFT oscillates, judge only its mean** | 🟡 5-drive median ≥ **4.0 pp** from epoch baseline, sustained ≥3 **consecutive** qualifying drives · 🔴 \|LTFT\| ≥ **10 %** **on the 5-drive median** *(convention, NEVER fired here — untested)* *(both qualifiers restored 2026-09-28, TUNER-008 — they were in the office advisory and had been dropped here)* | **ADDED 2026-08-31 (Spool, measured — 17,634 LTFT + 17,638 STFT samples, 56 drives).** 🔴 **Resolution is 0.78125 pp** (one raw ECU count, 100/128); the parameter has taken **18 distinct values in this engine's recorded lifetime** — any threshold finer than one count is below the instrument. 🔴 **Noise floor: drive means spread up to 3.72 pp BETWEEN DRIVES ON THE SAME DAY** on a healthy engine (drives 45–51); between-drive SD **1.43 pp**; worst healthy deviation from epoch mean **2.50 pp**. ⇒ **a single-drive delta carries no information and must trigger nothing.** ⚠ **Epoch-scoped, always** — see the trend contract below. |
 
 | **Battery Voltage** | see §Battery Voltage via ELM_VOLTAGE below | ⚠ **Engine-running only** — gate on `RPM > 0` and not within ~3 s of a crank | **QUALIFIER ADDED 2026-08-27 (Spool, measured — 14,221 samples).** The bands are correct but **unconditioned**: the <12.0 V floor **trips on cranking** (13 samples, all-time min 11.0 V), and 1,083 samples (7.6%) sit below the 13.5 V "normal" floor — key-on-engine-off, cranking, and immediate post-start. Without an engine-state gate the alert misgrades normal starting as a charging fault. Healthy reference: drives 42–44 cruised at **14.4 V**; drives 50/51 (2026-08-28) cruised at **13.8 V avg, 14.2 V max**, min 12.3 V (engine state at that sample not established — do not read a cause into it). |
 
@@ -231,7 +231,7 @@ argument for the 5-drive median. Resolving it needs **ECMLink** per-cell trim ta
 
 **1. Always scope `WHERE drive_id IS NOT NULL`.** The unattributed pool contains bench-probe artefacts: `TIMING_ADVANCE` holds repeated **61.0°** samples from 2026-05-20/21, physically impossible on a 4G63 (raw byte `0xFA` through the `A/2 − 64` decode). An unscoped `MAX(TIMING_ADVANCE)` returns **61°** instead of the true **34.5°** — wrong by 27°.
 
-**2. EXCLUDE drives 45 and 46 between `2026-08-28 16:32:30` and `16:35:35` UTC** (2,643 rows). The window logs the car at **0 km/h and 16 km/h at identical timestamps**, and an apparent combined **14.3 rows/s** against an ISO 9141-2 K-line that physically delivers **~7 rows/s** across 16 PIDs.
+**2. EXCLUDE drives 45 and 46 between `2026-08-28 16:32:30` and `16:35:35` UTC** (2,643 rows). The window logs the car at **0 km/h and 16 km/h at identical timestamps**, and an apparent combined **14.3 rows/s** against an ISO 9141-2 K-line that physically delivers **~7 rows/s** across 16 PIDs *(the 16-PID poll set on the current code, ≈ 0.43 Hz per PID — `facts/data-rates.md`)*.
 
 > ### ⚠ CAUSE CORRECTED 2026-08-31 — the exclusion stands, the reason changed
 >
@@ -284,6 +284,30 @@ Consequences are emissions-only: the charcoal canister does not purge, readiness
 **Pi-side power-management** (data-collection device, separate from vehicle engine ranges): Pi 5 UPS HAT (MAX17048-managed LiPo cell) — buck-converter dropout knee at VCELL ≈ 3.30 V; ~16-min runtime under typical load (Drain Test 7, 2026-05-02 empirical). Authoritative writeup with full empirical baseline + operational implications: `$FLEET_SHARE/tuner/knowledge/ups-drain-characteristics.md` (split out of `knowledge.md` on 2026-09-01; the old section anchor no longer resolves).
 
 ---
+
+## Values promoted from office advisories (TUNER-008, 2026-09-28)
+
+CIO ruling 2026-09-28: every threshold number has ONE home — this spec. These values previously lived only in
+Spool's office advisories; the advisories now keep the rationale and point here. **Status matters: an
+UNVALIDATED value is a design default, not a measured band — re-test it against the healthy corpus before
+any alert is built on it** (standing method rule).
+
+| Value | Setting | Status | Rationale lives in |
+|---|---|---|---|
+| Knock-retard envelope | normal: 10–15° retard **that recovers above 5,000 RPM**; 🟢 0–2°; 🔴 ≥ ~15–18° that does **not** recover, or a knock-sum spike under boost | 🔴 **UNVALIDATED — ECMLink-gated.** Knock is not an OBD PID; no alert without ECMLink logging | `tuner/edr-alert-…-advisory.md` §1.2 |
+| Low-voltage escalation | low system voltage **+ boost/load** escalates toward 🔴 (longer injector dead-time → leaner under boost) | Rule, no number; bands per §Battery Voltage | same, §1.3 |
+| O2 under boost (narrowband) | lean flag: **< 0.7 V** with high load/boost and trims pegged; expected rich: **0.9+ V** | UNVALIDATED; narrowband is not an AFR instrument — superseded by the wideband when fitted | same, §1.4 |
+| Gear-display suppression | show `—` when speed **< 5 km/h** OR RPM **< 900**, or implied ratio **> 15 %** off the nearest gear; debounce **≥ 2 s** | Validated on drive 30 (gear derivation) | same, §2.1 |
+| G-force amber | **> 0.6 g**, informational, **never a takeover** | Design placeholder | same, §2.2 |
+| DTC severity tiers | 🔴 STOP (never clearable): misfire **P0300–P0304**; knock/detonation-related; lean-at-load **P0171 under boost**; overheat-linked; oil-pressure; cam/crank correlation; **P0325**. 🟡 WATCH (not clearable): moderate fuel trim; single O2/HO2S circuit **P0130–P0167**; **P0401**; **P0420**; intermittent sensor. 🟢 MINOR (conditionally clearable): **P0440 / P0442 / P0455**; non-powertrain body/comfort; **P0443** (emissions-only on this car) | Policy, CIO-ratified 2026-06-05 | `tuner/dtc-display-clear-safety-advisory.md` §3 |
+| DTC clear gate | Clear enabled **only when every stored code is 🟢 MINOR**; log-before-clear with sync ACK; **refuse a 2nd clear** of a code that re-set in the same session | Policy, CIO-ratified 2026-06-05 | same, §4 |
+| DTC capture cadence | Mode 03 every **30 s** during drive + Mode 07 at drive end (built: `dtc_logger.py`) | Implemented | same, §1 |
+| Polling tiers (K-line) | Tier 1 every cycle ~1.2 Hz: COOLANT_TEMP, RPM, ENGINE_LOAD · Tier 2 every 3rd ~0.41 Hz: THROTTLE_POS, SPEED, SHORT_FUEL_TRIM_1, TIMING_ADVANCE, O2_B1S1, MIL_ON · Tier 3 every 10th ~0.12 Hz: LONG_FUEL_TRIM_1, INTAKE_TEMP, O2_B1S2, FUEL_SYSTEM_STATUS · voltage off-K-line via `ATRV` | Allocation (Spool 2026-07-26); rates scale with poll-set size | `tuner/edr-pid-priority-allocation.md` §3 |
+
+**Not promoted, deliberately:** the drive-review checklist's community heuristics (O2 switching range/rate, idle
+variation bands, warm-up ramp, cruise MAF/STFT, connected ratio, minimum capture duration). They were never
+validated on this car; they stay in `tuner/drive-review-checklist.md` as prompts, never pass/fail, until a
+corpus test earns them a row here.
 
 ## Real Vehicle Data
 
@@ -348,17 +372,21 @@ Sprint 14 US-199 promoted `BATTERY_V` to a first-class parameter_name polled fro
 | Level | Range | Action |
 |-------|-------|--------|
 | Normal | 13.5-14.5V (engine running) | Charging system healthy |
-| Caution | 12.5-13.5V OR 14.5-14.8V | Low = weak alternator. High = voltage regulator starting to fail. |
+| Caution | 12.0-13.5V OR 14.5-15.0V | Low = weak alternator. High = voltage regulator starting to fail. |
 | Danger | <12.0V OR >15.0V | **Low = charging failure, engine may stall. High = regulator failed, will cook battery and electronics.** |
 
-Config path: `pi.tieredThresholds.batteryVoltage` in `config.json`. Consumers must read from config — do not hard-code thresholds. `BATTERY_V` rows carry `unit='V'` and are independent of the K-line bandwidth envelope (ELM327 pin-16 read is an adapter-local operation).
+**Gate (all three levels):** engine running only — `RPM > 0` and not within ~3 s of a crank (see the Safe Operating Ranges *Battery Voltage* row). Ungated, the floor trips on every crank.
+
+**TUNER-008 (2026-09-28, Spool, measured — CIO ruling: these spec bands stand).** Two unclassified gaps closed: Caution previously stopped at 12.5 V and 14.8 V, leaving **12.0–12.5 V and 14.8–15.0 V in no band**. Tested against the current-ECU corpus (drives 25–95, **21,787** `BATTERY_V` samples, ungated): max **14.6 V**, **0** samples in 14.8–15.0, **19** in 12.0–12.5 and **14** below 12.0 (engine state at those samples not established — the gate is expected to remove crank/KOEO samples; re-test once the gate is implemented). An office advisory's alternative bands (🔴 < 12.8 V) were ruled superseded.
+
+🔴 **CORRECTED 2026-09-28: `pi.tieredThresholds.batteryVoltage` DOES NOT EXIST in `config.json`.** This paragraph previously named it as the config path and told consumers to read it — **no code enforces these bands.** The config's tiered thresholds cover only coolant, STFT, RPM, IAT and timing (and those predate this spec's measured corrections — routed to the PM/architect as a separate defect). Implementing the voltage bands is a code story. `BATTERY_V` rows carry `unit='V'` and are independent of the K-line bandwidth envelope (ELM327 pin-16 read is an adapter-local operation).
 
 ### Real-World K-Line Throughput (Session 23)
 
 | Metric | Theoretical (from research) | Measured (Session 23) |
 |--------|----------------------------|----------------------|
-| Per-PID update rate | ~0.5-1 Hz per PID | **~0.6 Hz per PID** (6.4 rows/sec across 11 PIDs) |
-| Total PID throughput | ~6-8 PIDs/sec | **~6.4 rows/sec** |
+| Per-PID update rate | ~0.5-1 Hz per PID | **~0.6 Hz per PID** (6.4 rows/sec across **11 PIDs**, Session 23, 2026-04-19, prior code) |
+| Total PID throughput | ~6-8 PIDs/sec | **~6.4 rows/sec** (11 PIDs). *Labelled 2026-09-28: the aggregate scales with the poll-set size — ~7 rows/s at 16 PIDs; these figures are consistent, not contradictory.* |
 | Per-request round trip | 120-200 ms | Consistent with measured throughput |
 
 **Theoretical and empirical match.** Polling strategy designed against theoretical numbers is sound. Adding the Sprint 14 PIDs (fuel system status, runtime, barometric, MIL) will proportionally reduce per-PID rate on the bus — account for this in tiered polling design.
