@@ -45,6 +45,12 @@
 #               |              | now drops only the mag channel -- previously it
 #               |              | aborted the whole burst, discarding an already-
 #               |              | read accel/gyro too.
+# 2026-09-30    | Atlas        | FIXED-RATE poll loop (nextPollDeadline). The loop
+#               | (ARCH-064d,  | waited a full interval AFTER each poll's work, so
+#               | CIO-directed)| the real period was 1/sampleHz + work: MEASURED on
+#               |              | drive 96 at 24.72 ms vs 20 ms configured (40.5 Hz,
+#               |              | not 50). Deadlines are now anchored to the schedule;
+#               |              | an overrun skips missed ticks, never bursts.
 # ================================================================================
 ################################################################################
 
@@ -177,6 +183,35 @@ DEFAULT_LIGHT_SAMPLE_HZ = 1
 # the validated config always carries a positive rate).
 _FALLBACK_INTERVAL_S = 1.0
 
+
+def nextPollDeadline(prevDue: float, *, now: float, intervalS: float) -> float:
+    """Return the next poll deadline on a FIXED-RATE schedule (ARCH-064d).
+
+    The schedule is anchored to ``prevDue``, never to ``now``: a poll's own work
+    time is absorbed by the interval instead of being added to it. Waiting a
+    full interval after the work (the old loop) made the real period
+    ``1/sampleHz + work`` -- MEASURED on drive 96 as 24.72 ms against a
+    configured 20 ms, so a "50 Hz" reader ran at 40.5 Hz.
+
+    An overrun (work longer than the time left in the slot) SKIPS the missed
+    ticks and returns the first tick strictly in the future, on the original
+    phase. It never returns a deadline in the past, so the loop cannot fire a
+    catch-up burst of back-to-back polls after a stall.
+
+    Args:
+        prevDue: The deadline the poll that just finished was scheduled for.
+        now: The current monotonic time.
+        intervalS: The poll interval (1 / sampleHz), seconds.
+
+    Returns:
+        The next deadline, in the same monotonic time base.
+    """
+    due = prevDue + intervalS
+    if due <= now:
+        missed = math.floor((now - due) / intervalS) + 1
+        due += missed * intervalS
+    return due
+
 # TSL2591 raises on a saturated/overflow lux read; treat these as "unreadable"
 # (publish None) rather than a fabricated value.
 _SATURATION_ERRORS = (RuntimeError, OverflowError, ValueError, ZeroDivisionError)
@@ -288,20 +323,25 @@ class _BaseSensorReader:
         deviceFactory: Callable[[], Any] | None = None,
         dataSource: str = "real",
         invariantDwellSeconds: float = DEFAULT_INVARIANT_DWELL_S,
+        clockFn: Callable[[], float] = time.monotonic,
     ) -> None:
         """Bind a reader to the bus.
 
         Args:
             bus: The SampleBus this reader publishes onto (producer role).
-            sampleHz: Bus publish rate in Hz (poll interval = 1 / sampleHz).
+            sampleHz: Bus publish rate in Hz. The poll loop keeps a FIXED-RATE
+                schedule of 1 / sampleHz (ARCH-064d), so this is the rate the
+                reader actually runs at while a poll takes less than one interval.
             deviceFactory: callable() -> device handle; DI'd for tests/non-Pi.
                 Defaults to the subclass's real-hardware factory, which raises
                 on a non-Pi host or an absent sensor (the graceful-absent path).
             dataSource: Origin tag stamped on every sample (US-195 contract).
             invariantDwellSeconds: US-564 check-2 dwell -- how long a channel
                 must stay BIT-IDENTICAL before it is reported ``sensor_stale``.
+            clockFn: Monotonic clock for the poll schedule (injection seam).
         """
         self._bus = bus
+        self._clock = clockFn
         self._sampleHz = sampleHz
         self._intervalS = 1.0 / sampleHz if sampleHz and sampleHz > 0 else _FALLBACK_INTERVAL_S
         self._deviceFactory = deviceFactory if deviceFactory is not None else self._defaultDeviceFactory
@@ -429,10 +469,12 @@ class _BaseSensorReader:
             self._faultLog.clear("read", "%s read recovered (seq=%d)", self.source, self._seq)
 
     def _loop(self) -> None:
-        """Poll at the configured rate until stopped."""
+        """Poll on a fixed-rate schedule of 1 / sampleHz until stopped (ARCH-064d)."""
+        due = self._clock()
         while not self._stop.is_set():
             self.pollOnce()
-            self._stop.wait(self._intervalS)
+            due = nextPollDeadline(due, now=self._clock(), intervalS=self._intervalS)
+            self._stop.wait(max(0.0, due - self._clock()))
 
     # -- publishing ------------------------------------------------------------
     def _publishBurst(

@@ -91,13 +91,14 @@ CREATE TABLE IF NOT EXISTS edr_light_sample (
 # the ALGORITHM changes. Mixed into one table, early and late rows would mean
 # subtly different things with nothing marking where the maths moved.
 #
-# Written by imu_state_bridge -- the component that ALREADY HOLDS the values, so
-# no new coupling -- decimated to imu.persistHz with the SAME keep-1-of-N factor
-# edr_persistence_subscriber uses, so a row lands on the same sample index as its
-# raw sibling and ts_capture matches EXACTLY rather than approximately. NOT the
-# 4 Hz fusion rate: raw persists at 2 Hz, so a 4 Hz derived table would leave
-# half its rows with no possible sibling and force interpolation of a fusion
-# output against its own input.
+# The VALUES come from imu_state_bridge's snapshot -- the component that ALREADY
+# HOLDS them, so no new coupling. The ROW is written by edr_persistence_subscriber
+# in the SAME transaction as each stored raw row (_writeImuRow -> _writeDerivedRow),
+# so the two share one keep decision (ARCH-064d: the burst's UTC grid slot at
+# imu.persistHz) and land together or not at all. It is stamped with the FUSION's
+# own ts_capture/seq, not the raw burst's. NOT the fusion rate: raw persists at
+# persistHz, so a faster derived table would leave rows with no possible sibling
+# and force interpolation of a fusion output against its own input.
 #
 # NO FOREIGN KEY to edr_imu_sample.id, deliberately: that id is the PI's id-space
 # and arrives on the server as source_id (A-45 -- a row manually minted into it

@@ -94,6 +94,7 @@ subsystems holding different values for the same fact. It is merely harder to se
 One acquisition, two decimations, consumers applying policy. **The shape is right; all three
 numbers are wrong** — every one of them sits above the 4 Hz ceiling (§4).
 
+*(Historical — `_decimationFactor` was deleted in ARCH-064d; storage is a UTC time grid, §4.2.b.)*
 `_decimationFactor` is `max(1, round(sampleHz / persistHz))`, so a consumer rate at or above
 the acquisition rate degrades safely to "keep every sample". **Lowering `sampleHz` alone is
 therefore safe and needs no code change** — but it is not sufficient: a `persistHz` or
@@ -140,7 +141,9 @@ correction of a bad reading.
     5 Hz:   5 -> 2          round(2.5) = 2, effective 2.5 Hz while the config says 2
 
 🔴 **At 5 Hz the IMU triple cannot be expressed without a config field that lies. At 4 Hz it
-can.** Use that as the justification, not merely the ruling. See §1 of
+can.** Use that as the justification, not merely the ruling. *(The integer-factor argument is
+historical since ARCH-064d, §4.2.b: a UTC time grid stores any `persistHz` exactly. The 4 Hz
+ceiling itself is unchanged.)* See §1 of
 `specs/design-patterns.md` — *provider/consumer SSOT with decimation*.
 
 #### 4.2.a 🔴 AMENDMENT (CIO, 2026-09-28) — the ceiling governs what is STORED, not the internal read
@@ -171,6 +174,10 @@ read never becomes a row; only its OUTPUT (fused pitch/heading, at the bridge's 
 `stateHz`/`persistHz` cadence) is published and stored, still paired to the drive window exactly
 as before. **Nothing crosses the ceiling into storage.**
 
+🔴 **SUPERSEDED by §4.2.b (2026-09-30).** The claim below — "EXACT, no config field that lies" —
+was **refuted by measurement on drive 96**: the stored cadence was **1.62 Hz**, not 2. The factor
+was exact; its premise (that the read loop runs at `sampleHz`) was not. Kept as the record.
+
 **The decimation stays EXACT, at a different factor:**
 
     _decimationFactor = max(1, round(sampleHz / persistHz))   (src/pi/bus/edr_persistence_subscriber.py)
@@ -186,6 +193,59 @@ did not move; only the number they decimate FROM did, and 50 divides into 2 exac
 See `specs/architecture.md`'s IMU section for the AHRS engine itself (settings, axis map, speed
 aiding, revert paths) — this amendment states only the RATE ruling; the mechanism lives there, not
 duplicated here.
+
+#### 4.2.b 🔴 AMENDMENT (ARCH-064d, CIO-directed, 2026-09-30) — the stored rate is a UTC TIME GRID; the read loop is FIXED-RATE
+
+**CIO, 2026-09-30:** *"the practicality of what we're trying to achieve is not mid sub-second
+analysis… we just want to make sure that it's easily matchable or linked up to the ECM data"* and
+*"you can always sample at whatever is easiest, but from a data recording standpoint 4 Hz, 2 Hz or
+1 Hz is desirable."*
+
+**MEASURED on drive 96** (`ts_capture` intervals, 605 rows; control drive 95):
+
+    drive 96 (sampleHz 50 / persistHz 2):  interval mean = median = mode 0.618 s, sd 8 ms  -> 1.62 Hz
+    drive 95 (sampleHz 4  / persistHz 2):  interval 0.509 s                               -> 1.96 Hz
+    per-poll period = interval / factor:   24.72 ms vs 20 ms   |   254.5 ms vs 250 ms
+    => ~4.5-4.7 ms of work per poll on BOTH builds; the loop ran 40.5 Hz, not 50.
+
+**Two defects, one per layer, both fixed:**
+
+1. **Acquisition — the read loop added its work to its interval.** `_BaseSensorReader._loop` did
+   `pollOnce(); wait(1/sampleHz)`, so the real period was `1/sampleHz + work`. It is now a
+   **fixed-rate schedule** (`sensor_reader.nextPollDeadline`): deadlines are anchored to the
+   schedule, an overrun skips missed ticks on phase and never fires a catch-up burst. `sampleHz` is
+   now the rate the reader actually runs at while a poll takes less than one interval.
+2. **Storage — keep-1-of-N made the stored rate a function of the loop's REAL speed.** It is now a
+   **UTC time grid** (`edr_persistence_subscriber._UtcGridSelector`): the first burst captured in
+   each UTC slot of `1 / persistHz` s is stored, decided once per `seq` so a burst is kept or
+   dropped whole. `_decimationFactor` is deleted (no caller remained).
+
+**Why a grid rather than only fixing the loop.** Either fix alone would store 2 Hz at today's
+numbers. Only the grid stores `persistHz` **whatever the loop does** (CPU load in the car, a slow
+bus), and only the grid delivers the CIO's purpose: slots are anchored to the **UTC epoch**, so at
+1, 2 or 4 Hz every boundary is a whole second or an exact half/quarter of one. **Each stored IMU row
+shares its `ts_utc` second with the whole-second ECU rows in `realtime_data`** — a plain join on the
+second, 1, 2 or 4 IMU rows per ECU second, no interpolation. It also makes 4 Hz possible at all:
+under keep-1-of-N, 50 → 4 rounded to a factor of 12 and stored 4.17 Hz.
+
+**The parameters — all in `config.json` `pi.sensors.imu`:**
+
+| Key | Meaning now | Guidance |
+|---|---|---|
+| `sampleHz` | the fixed-rate internal read (fusion) rate — "whatever is easiest" | 50 today (§4.2.a) |
+| `persistHz` | stored rows per second, on a UTC grid of `1/persistHz` s | **1, 2 or 4** (`RECOMMENDED_IMU_PERSIST_HZ`); any other value is stored exactly and WARNED |
+| `stateHz` | display write cadence (the bridge's own time interval; unchanged) | 1 |
+
+⚠️ **What the grid does NOT promise.** A stored row sits within **one read period** (~20 ms at
+50 Hz) after its slot boundary, not exactly on it; the precise instant is `ts_capture`. `ts_utc`
+stays whole-second (`utcIsoNow`) — the grid is placed from `ts_capture` through the monotonic→UTC
+offset, which is re-read per decision so an NTP step moves the grid with the wall clock (a step
+backwards never silences storage). If the loop reads less often than `persistHz`, every burst is
+stored. **Light is unchanged** (1 Hz read, every burst stored). `edr_imu_derived` still rides the
+same transaction as each stored raw row, so the pair cannot diverge.
+
+**Not yet shown:** that the in-car loop now measures 50.0 Hz and the stored cadence 2.00 Hz aligned
+to the grid. That is an observational check on the next drive (bigDoD), not a test result.
 
 #### 4.2.1 The superseded 5 Hz ruling, preserved
 
@@ -235,8 +295,8 @@ gauge already comply and do not move.
 |---|---|---|---:|---|
 | ECU / OBD | 0.43 Hz | — | **0.43 Hz** (anchor) | dongle+ECU round trip; not ours to set |
 | IMU `sampleHz` | 50 Hz | **12.5× over** | **4 Hz** | braking, cornering, grade change — ~0.5–2 s events; ~10 samples each |
-| IMU `persistHz` | 25 Hz | **6.25× over** | **2 Hz** | DB consumer; cannot exceed the root. Factor `_decimationFactor(4,2)=2`, EXACT |
-| IMU `stateHz` | 10 Hz | **2.5× over** | **1 Hz** | display consumer; a publish rate above the sample rate carries no new data. Factor `_decimationFactor(4,1)=4`, EXACT |
+| IMU `persistHz` | 25 Hz | **6.25× over** | **2 Hz** | DB consumer; cannot exceed the root. Factor `_decimationFactor(4,2)=2`, EXACT *(since ARCH-064d: a UTC grid, §4.2.b)* |
+| IMU `stateHz` | 10 Hz | **2.5× over** | **1 Hz** | display consumer; a publish rate above the sample rate carries no new data. Factor `_decimationFactor(4,1)=4`, EXACT *(the bridge writes on its own 1/stateHz time interval; that function was never its mechanism)* |
 | Light `sampleHz` | 1 Hz | compliant | **1 Hz** | ambient change for display dimming; slow |
 | UPS gauge | 0.2 Hz | compliant | **0.2 Hz** | pack state; slow. ⚠️ see §7 |
 

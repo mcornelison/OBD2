@@ -6,11 +6,10 @@
 #     magDeclinationDeg, magCalibration) and their defaults; it REJECTS a
 #     magMode outside {direct, bypass, master} and a fusionEngine outside
 #     {imufusion, legacy}; the shipped config.json imu block validates as-is;
-#     and the sampleHz 50 / persistHz 2 split decimates by an EXACT factor of
-#     25 (edr_persistence_subscriber._decimationFactor(50, 2) == 25) -- the
-#     storage-side consequence of the CIO 2026-09-28 ruling that sampleHz is
-#     now the IMU's internal fusion read rate while persistHz/stateHz stay
-#     under the 4 Hz ceiling.
+#     and the shipped persistHz is an ECU-matchable recording rate at or below
+#     sampleHz -- the storage-side consequence of the CIO 2026-09-28 ruling that
+#     sampleHz is now the IMU's internal fusion read rate while persistHz/stateHz
+#     stay under the 4 Hz ceiling.
 # Author: Atlas (architect)
 # Creation Date: 2026-09-28
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -22,6 +21,10 @@
 # 2026-09-28    | Atlas        | Initial -- ARCH-064 Task 5.
 # 2026-09-29    | Atlas        | Shipped accelCalibration is now the measured
 #               |              | tumble fit: the no-op pin becomes a plausibility pin.
+# 2026-09-30    | Atlas        | ARCH-064d: persist is a UTC time grid, so the two
+#               | (ARCH-064d)  | _decimationFactor pins (a function no longer
+#               |              | called by any src) become one pin on the shipped
+#               |              | persistHz being a recommended 1/2/4 Hz rate.
 # ================================================================================
 ################################################################################
 """ARCH-064 Task 5: config.json / validator agreement for acquisition C + AHRS."""
@@ -34,8 +37,11 @@ from pathlib import Path
 
 import pytest
 
-from src.common.config.validator import ConfigValidationError, ConfigValidator
-from src.pi.bus.edr_persistence_subscriber import _decimationFactor
+from src.common.config.validator import (
+    RECOMMENDED_IMU_PERSIST_HZ,
+    ConfigValidationError,
+    ConfigValidator,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -200,32 +206,21 @@ def test_configJson_magDeclinationDeg_isDocumentedNoaaValue():
 
 
 # ---------------------------------------------------------------------------
-# Storage-side decimation: sampleHz 50 / persistHz 2 -> EXACT factor 25
+# Storage-side cadence: the shipped persistHz is ECU-matchable (ARCH-064d)
 # ---------------------------------------------------------------------------
 
 
-def test_decimationFactor_fiftyToTwo_isExactlyTwentyFive():
-    """
-    Given: sampleHz 50 (the IMU's internal fusion read rate, ARCH-064) and
-           persistHz 2 (the STORED rate, unchanged under the 4 Hz ceiling)
-    When: edr_persistence_subscriber derives the keep-1-of-N decimation factor
-    Then: it is exactly 25 -- an integer factor, no config field that lies
-          about its effective persisted rate
-    """
-    assert _decimationFactor(50, 2) == 25
-    assert 50 / _decimationFactor(50, 2) == 2
-
-
-def test_configJson_imuTriple_decimatesExactly():
+def test_configJson_persistHz_isARecommendedRate_atOrBelowSampleHz():
     """
     Given: the shipped config.json sampleHz / persistHz
-    When: the decimation factor is derived
-    Then: it is exactly 25, and the effective persisted rate equals persistHz
+    When: compared against the CIO's recording rates (1, 2, 4 Hz, 2026-09-30)
+    Then: persistHz is one of them and does not exceed sampleHz -- so the UTC
+          persist grid stores exactly persistHz rows/s, each sharing its ts_utc
+          second with the whole-second ECU rows
     """
     imu = _shippedImu()
-    factor = _decimationFactor(imu["sampleHz"], imu["persistHz"])
-    assert factor == 25
-    assert imu["sampleHz"] / factor == imu["persistHz"]
+    assert imu["persistHz"] in RECOMMENDED_IMU_PERSIST_HZ
+    assert imu["persistHz"] <= imu["sampleHz"]
 
 
 # ---------------------------------------------------------------------------
