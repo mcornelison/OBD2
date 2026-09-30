@@ -20,6 +20,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-28    | Atlas        | Initial -- ARCH-064 Task 5.
+# 2026-09-29    | Atlas        | Shipped accelCalibration is now the measured
+#               |              | tumble fit: the no-op pin becomes a plausibility pin.
 # ================================================================================
 ################################################################################
 """ARCH-064 Task 5: config.json / validator agreement for acquisition C + AHRS."""
@@ -27,6 +29,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -312,15 +315,29 @@ def test_validator_rejectsANonPositiveDeterminant(matrix):
     assert "determinant" in str(excinfo.value)
 
 
-def test_configJson_accelCalibration_shipsAsTheNoOp():
+def test_configJson_accelCalibration_shipsAPlausibleMeasuredFit():
     """
-    Given: the shipped config.json
+    Given: the shipped config.json, carrying the ARCH-064 tumble fit
+           (2026-09-29, 14 still holds in litter, residual 0.0164 m/s^2,
+           interleaved offset spread 0.0024 -> verdict stable; evidence
+           offices/architect/evidence/2026-09-29-arch064-tumble/run2/accel.json)
     When: pi.sensors.imu.accelCalibration is read
-    Then: it is present, beside magCalibration, as zero/identity -- real
-          values are Task 8's, not this task's
+    Then: it is a real calibration of THIS part, not a no-op and not junk:
+          offsets inside the datasheet zero-g envelope (|b| < 0.5 m/s^2),
+          matrix near identity (|M - I| < 0.05), symmetric, det > 0 -- and
+          the validator accepts it unchanged
     """
     imu = _shippedImu()
-    assert imu["accelCalibration"] == {"offsetMs2": [0.0, 0.0, 0.0], "matrix": _IDENTITY}
+    cal = imu["accelCalibration"]
+    offset, matrix = cal["offsetMs2"], cal["matrix"]
+    assert any(abs(v) > 0.0 for v in offset), "shipped as the no-op: the tumble fit was not committed"
+    assert all(math.isfinite(v) and abs(v) < 0.5 for v in offset)
+    for i in range(3):
+        for j in range(3):
+            assert abs(matrix[i][j] - _IDENTITY[i][j]) < 0.05
+            assert matrix[i][j] == matrix[j][i]
+    result = ConfigValidator().validate(_baseCfg({"accelCalibration": cal}))
+    assert result["pi"]["sensors"]["imu"]["accelCalibration"] == cal
 
 
 # ---------------------------------------------------------------------------
