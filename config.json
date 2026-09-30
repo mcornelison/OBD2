@@ -553,6 +553,16 @@
         "persistHz": 2,
         "stateHz": 1,
         "gravityTauSec": 5.0,
+        "pitchTauSec": 5.0,
+        "accelTrustBand": 0.02,
+        "zuptMinStopSec": 3.0,
+        "zuptSpeedMaxAgeSec": 2.0,
+        "zuptMinStops": 5,
+        "zuptWindowStops": 20,
+        "gyroFaultMinRadS": 0.10,
+        "gyroRecoverySampleCount": 20,
+        "gyroRecoverySettleSec": 1.0,
+        "magMaxAgeSec": 1.25,
         "mount": {
           "forward": "+x",
           "left": "+y",
@@ -651,7 +661,8 @@
     "power": {
       "power_monitor": {
         "enabled": true
-      }
+      },
+      "cellEpoch": "18650-pack"
     }
   },
   "server": {

@@ -88,6 +88,8 @@
 #               |              | guard trips (the 09-14 confident 70 deg pitch).
 # 2026-09-22    | Rex (US-801) | DEFAULT_IMU_SAMPLE_HZ / DEFAULT_STATE_HZ imported
 #               |              | from the single definition (now 4 / 1).
+# 2026-09-24    | Rex (US-810) | derivedSnapshot carries the gyro RATE bias
+#               |              | (None -> three Nones) and its stop counts.
 # ================================================================================
 ################################################################################
 
@@ -156,7 +158,7 @@ __all__ = [
     "IMU_BODY_FRAME_B",
     "IMU_BODY_FRAME_C",
     "IMU_STATE_FILENAME",
-    "MAG_MAX_AGE_POLLS",
+    "DEFAULT_MAG_MAX_AGE_S",
     "MAG_ROTATION_MIN_RATIO",
     "MAG_ROTATION_MIN_YAW_RAD",
     "MAG_SOURCE_BYPASS",
@@ -260,14 +262,15 @@ _DRAIN_TIMEOUT_S = 0.5
 # against a real drive -- it is a filter constant, not a tuning value.
 DEFAULT_GRAVITY_TAU_S = 5.0
 
-# Default IMU burst rate: DEFAULT_IMU_SAMPLE_HZ, imported above from the single
-# definition (US-801) -- used to derive the magnetometer freshness window below.
-
-# A magnetometer reading is paired with an accel reading only if it is within
-# this many poll intervals. Derived from the configured sampleHz (not a second
-# independent constant): the reader bursts accel+gyro+mag under ONE seq, so the
-# freshest mag is at most one interval old; 5 is slack for scheduler jitter.
-MAG_MAX_AGE_POLLS = 5
+# A magnetometer (and gyro) reading is paired with an accel reading only if it
+# is at most this many SECONDS older (pi.sensors.imu.magMaxAgeSec). US-803-b:
+# this was MAG_MAX_AGE_POLLS = 5, counted in polls, so its wall-clock meaning
+# moved whenever sampleHz did. 1.25 s is exactly the window the car ran --
+# 5 polls at the shipped 4 Hz. It bounds BUS DELIVERY, not acquisition: the
+# reader bursts accel+gyro+mag under ONE seq, so the window only bites when the
+# lossy bus drops a mag sample. It does NOT cover the ICM master-mode
+# EXT_SLV_SENS_DATA cache age, which is a separate, unmeasured quantity.
+DEFAULT_MAG_MAX_AGE_S = 1.25
 
 # Local alias for the shared gravity floor (defined in pitch_fusion, one home).
 _MIN_GRAVITY_MS2 = MIN_GRAVITY_MS2
@@ -882,6 +885,7 @@ class ImuStateBridge:
         stateHz: float = DEFAULT_STATE_HZ,
         gravityTauSec: float = DEFAULT_GRAVITY_TAU_S,
         sampleHz: int = DEFAULT_IMU_SAMPLE_HZ,
+        magMaxAgeSec: float = DEFAULT_MAG_MAX_AGE_S,
         pitchFusion: PitchFusion | None = None,
         nowIsoFn: Callable[[], str] | None = None,
     ) -> None:
@@ -894,8 +898,12 @@ class ImuStateBridge:
             stateHz: State-file write cadence -- the DISPLAY's poll rate, not the
                 sensor's burst rate.
             gravityTauSec: Gravity low-pass time constant, seconds.
-            sampleHz: The reader's burst rate; the magnetometer AND gyro pairing
-                windows are derived from it (MAG_MAX_AGE_POLLS intervals).
+            sampleHz: The reader's burst rate. It no longer sizes the pairing
+                window (US-803-b); it is used only to log the poll count that
+                window spans.
+            magMaxAgeSec: The magnetometer AND gyro pairing window, seconds --
+                one shared window. A non-positive value falls back to the
+                shipped DEFAULT_MAG_MAX_AGE_S.
             pitchFusion: US-521 gyro-fused pitch estimator. Defaults to one built
                 with the shipped constants; injectable so a caller can pass a
                 config-tuned estimator without this class growing six more
@@ -908,7 +916,17 @@ class ImuStateBridge:
         self._writeIntervalS = 1.0 / stateHz if stateHz and stateHz > 0 else 1.0 / DEFAULT_STATE_HZ
         self._tauS = gravityTauSec if gravityTauSec and gravityTauSec > 0 else DEFAULT_GRAVITY_TAU_S
         rate = sampleHz if sampleHz and sampleHz > 0 else DEFAULT_IMU_SAMPLE_HZ
-        self._magMaxAgeS = MAG_MAX_AGE_POLLS / float(rate)
+        self._magMaxAgeS = (
+            float(magMaxAgeSec) if magMaxAgeSec and magMaxAgeSec > 0 else DEFAULT_MAG_MAX_AGE_S
+        )
+        # Log the values IN FORCE, after both fallbacks: `rate` can differ from
+        # what config declares, so the poll count the window spans can too.
+        logger.info(
+            "imu pairing window: magMaxAgeSec=%.3f s at sampleHz=%s = %.2f polls",
+            self._magMaxAgeS,
+            rate,
+            self._magMaxAgeS * rate,
+        )
         self._nowIsoFn = nowIsoFn if nowIsoFn is not None else utcIsoNow
         self._pitchFusion = pitchFusion if pitchFusion is not None else PitchFusion()
         self._thread: threading.Thread | None = None
@@ -1191,6 +1209,13 @@ class ImuStateBridge:
         timestamp of whatever burst the writer happened to be flushing.
         """
         pitchRad = self._pitchFusion.pitchRad
+        # US-810: the gyro RATE bias (rad/s, roll/pitch/yaw) -- NOT biasRad, the
+        # mount-tilt ANGLE. None until a stop is accepted this run, carried
+        # through as three Nones: an unlearned bias is never written as 0.0.
+        gyroRateBias = self._pitchFusion.gyroBiasRadS
+        rollRadS, pitchRadS, yawRadS = (
+            (None, None, None) if gyroRateBias is None else gyroRateBias
+        )
         self._lastDerived = {
             # US-809-c: None, never the clock -- this snapshot claims to be
             # "stamped with THIS sample", and a substituted stamp makes that
@@ -1203,6 +1228,11 @@ class ImuStateBridge:
             "stopCount": self._pitchFusion.stopCount,
             "biasRad": self._pitchFusion.biasRad,
             "fusionVersion": FUSION_VERSION,
+            "gyroBiasRollRadS": rollRadS,
+            "gyroBiasPitchRadS": pitchRadS,
+            "gyroBiasYawRadS": yawRadS,
+            "gyroBiasStops": self._pitchFusion.gyroBiasStopCount,
+            "gyroBiasRejectedStops": self._pitchFusion.gyroBiasRejectedStops,
         }
 
     def derivedSnapshot(self) -> dict[str, Any] | None:
@@ -1428,6 +1458,7 @@ def createImuStateBridgeFromConfig(
         stateHz=imu.get("stateHz", DEFAULT_STATE_HZ),
         gravityTauSec=imu.get("gravityTauSec", DEFAULT_GRAVITY_TAU_S),
         sampleHz=imu.get("sampleHz", DEFAULT_IMU_SAMPLE_HZ),
+        magMaxAgeSec=imu.get("magMaxAgeSec", DEFAULT_MAG_MAX_AGE_S),
         pitchFusion=PitchFusion(
             pitchTauSec=imu.get("pitchTauSec", DEFAULT_PITCH_TAU_S),
             accelTrustBand=imu.get("accelTrustBand", DEFAULT_ACCEL_TRUST_BAND),

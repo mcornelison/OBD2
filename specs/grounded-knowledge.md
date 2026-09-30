@@ -932,8 +932,19 @@ range **±500 dps**, gyro ODR **100 Hz** (divisor 10). *Corrected: an earlier li
 range was unset because our code passes no range argument — the driver's own `initialize()` sets
 it explicitly. The factor is valid at ±8 g.*
 
-**`void if`** — the IMU is replaced or moved to different hardware, the A-34 recovery changes, or the
-accelerometer range is ever changed from the driver's ±8 g default.
+**A-34 recovery is config-driven (US-803-a, 2026-09-25).** The recovery's three tunables — fault
+threshold, sample count, settle time — are now read from `pi.sensors.imu.gyroFaultMinRadS` /
+`gyroRecoverySampleCount` / `gyroRecoverySettleSec`, shipped at the former constants (0.10 rad/s,
+20, 1.0 s). The ±500 dps range is what bounds `gyroFaultMinRadS` from above (8.727 rad/s) in the
+validator. **This did NOT void the measurement above (Atlas ruling, 2026-09-24):** ±500 dps is a
+property of the `adafruit_icm20x` 2.1.10 driver default and the `GYRO_CONFIG_1` register, not of the
+recovery logic, and US-803-a changed only the recovery's config plumbing. The clause below was
+re-aimed accordingly — it used to read "the A-34 recovery changes". *Fix the clause, keep the
+measurement.*
+
+**`void if`** — the IMU is replaced or moved to different hardware, the gyro range is set explicitly,
+`adafruit_icm20x` is bumped, or the accelerometer range is ever changed from the driver's ±8 g
+default.
 
 ---
 

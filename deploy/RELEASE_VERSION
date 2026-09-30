@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.70",
-  "theme": "ARCH-059/060: mag stall fix + purge log",
-  "description": "ARCH-059 takes the mag keep-alive OFF the IMU poll thread. ARCH-057 blocked it up to 12.4 s and cost 87% of drive 84's samples and 90% of the calibration circles. requestRestore() returns inside 20 ms, one attempt not three, blocking liveness loop deleted, plus a magnitude ceiling via the US-564 gate for the 18 saturated rows. ARCH-060: maybePurge logs EVERY due run."
+  "version": "V0.29.71",
+  "theme": "Sprint 94: tunables, gitignore guard, cell epoch",
+  "description": "Sprint 94, 11 of 12 stories (US-802-b carried, blocked). US-802/803: IMU mag-age and A-34 gyro-recovery tunables to config; US-790 drain_vcell_trajectory with per-row cellEpoch, now 18650-pack from its 2026-09-26 install; US-808-c/d, US-810, US-683, US-815-a/b. Merged with V0.29.70: magMode attach runs first, gyro recovery second, both keyword-only."
 }

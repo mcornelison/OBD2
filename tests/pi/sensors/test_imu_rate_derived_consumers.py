@@ -27,8 +27,8 @@ import pi.sensors.sensor_reader as readerModule
 from pi.bus.bus import SampleBus
 from pi.bus.sample import Sample
 from pi.sensors.imu_state_bridge import (
+    DEFAULT_MAG_MAX_AGE_S,
     IMU_BODY_FRAME,
-    MAG_MAX_AGE_POLLS,
     STANDARD_GRAVITY_MS2,
     ImuStateBridge,
     createImuStateBridgeFromConfig,
@@ -214,12 +214,13 @@ def test_bridgeAtFourHz_pairingWindowIsOnePointTwoFiveSeconds():
     """
     Given: the bridge at the shipped 4 Hz sample rate
     When: the mag/gyro pairing window is derived
-    Then: it is MAG_MAX_AGE_POLLS (5) * 0.25 s = 1.25 s
+    Then: it is 1.25 s -- the magMaxAgeSec default (US-803-b), which is the
+          5 polls * 0.25 s the window was counted in before the key carried seconds
     """
     bridge = ImuStateBridge(None, "unused", sampleHz=_SAMPLE_HZ, stateHz=_STATE_HZ)
 
     assert bridge._magMaxAgeS == _EXPECTED_PAIRING_WINDOW_AT_4HZ_S
-    assert bridge._magMaxAgeS == MAG_MAX_AGE_POLLS * _BURST_INTERVAL_S
+    assert bridge._magMaxAgeS == DEFAULT_MAG_MAX_AGE_S == 5 * _BURST_INTERVAL_S
 
 
 def test_bridgeFromShippedConfig_pairingWindowIsTheFourHzValue():
@@ -238,8 +239,9 @@ def test_bridgeFromConfig_ignoresTheModuleDefaultRate(monkeypatch: pytest.Monkey
     """
     Given: the bridge module's fallback IMU rate poisoned to 1000 Hz
     When: the bridge is built from a config that states sampleHz 4
-    Then: the pairing window is still 1.25 s -- had the rate come from the
-          default it would be 0.005 s and no burst would ever pair
+    Then: the pairing window is still 1.25 s. Since US-803-b the window is the
+          magMaxAgeSec key in seconds and no rate sizes it; before, a rate
+          taken from the default would have made it 0.005 s and nothing paired
     """
     monkeypatch.setattr(bridgeModule, "DEFAULT_IMU_SAMPLE_HZ", _POISON_HZ)
 
