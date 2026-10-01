@@ -15,6 +15,8 @@
 # 2026-04-18    | Rex          | Initial implementation for US-188
 # 2026-09-13    | Rex          | US-743: case-insensitive SSID guard (casefold)
 # 2026-09-30    | Rex          | US-776-b: nmcli SSID reader tests
+# 2026-10-01    | Rex          | US-776-c: three-way IP reader; only a positive
+#               |              | AWAY (foreign SSID / no home-subnet IP) is AWAY
 # ================================================================================
 ################################################################################
 
@@ -198,11 +200,11 @@ class TestHomeNetworkStateBranches:
         assert httpOpener.calls == []  # type: ignore[attr-defined]
 
     def test_noWifiInfra_returnsUnknown(self) -> None:
-        """nmcli command missing (returns None) -> UNKNOWN."""
+        """nmcli command missing (returns None) + home-subnet IP -> UNKNOWN."""
         detector = HomeNetworkDetector(
             _baseConfig(),
             ssidReader=lambda: None,
-            ipReader=lambda: [],
+            ipReader=lambda: ["10.27.27.28"],
             httpOpener=_openerReturning(_FakeResponse(status=200)),
             apiKey="test-key",
         )
@@ -663,11 +665,53 @@ class TestSubprocessHelpers:
             result = _readLocalIps()
         assert result == ["10.27.27.28", "fe80::1%wlan0"]
 
-    def test_readLocalIps_fileNotFound_returnsEmpty(self) -> None:
+    def test_readLocalIps_fileNotFound_returnsNone(self) -> None:
+        """US-776-c: a failed read is None, never [] (which reads as AWAY)."""
         with patch("src.pi.network.home_detector.subprocess.run",
                    side_effect=FileNotFoundError("hostname not found")):
             result = _readLocalIps()
+        assert result is None
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            subprocess.TimeoutExpired(cmd="hostname", timeout=2.0),
+            OSError("exec format error"),
+        ],
+        ids=["timeout", "osError"],
+    )
+    def test_readLocalIps_infraFailure_returnsNone(self, failure: BaseException) -> None:
+        with patch("src.pi.network.home_detector.subprocess.run", side_effect=failure):
+            result = _readLocalIps()
+        assert result is None
+
+    def test_readLocalIps_nonZeroReturn_returnsNone(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["hostname", "-I"], returncode=1, stdout="", stderr="boom",
+        )
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   return_value=completed):
+            result = _readLocalIps()
+        assert result is None
+
+    def test_readLocalIps_successNoAddresses_returnsEmptyList(self) -> None:
+        """A SUCCESSFUL read with no addresses is a genuine [] -- not a failure."""
+        completed = subprocess.CompletedProcess(
+            args=["hostname", "-I"], returncode=0, stdout="\n", stderr="",
+        )
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   return_value=completed):
+            result = _readLocalIps()
         assert result == []
+
+    def test_readLocalIps_timeoutNoLongerThanSsidReader(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["hostname", "-I"], returncode=0, stdout="10.27.27.28\n", stderr="",
+        )
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   return_value=completed) as run:
+            _readLocalIps()
+        assert 0 < run.call_args.kwargs["timeout"] <= home_detector._NMCLI_TIMEOUT_SECONDS
 
 
 # =============================================================================
@@ -728,6 +772,78 @@ class TestNmcliReaderThroughState:
     def test_nmcliTimeout_unknown(self) -> None:
         state = self._state(subprocess.TimeoutExpired(cmd="nmcli", timeout=2.0))
         assert state == HomeNetworkState.UNKNOWN
+
+
+# =============================================================================
+# US-776-c: a failed IP read never counts as a positive AWAY
+# =============================================================================
+
+
+class TestThreeWayIpRead:
+    """Only a positive AWAY -- a foreign SSID, or a SUCCESSFUL IP read with no
+    home-subnet address -- is AWAY. A dead SSID or IP reader is UNKNOWN."""
+
+    def _state(self, ssid: str | None, ips: list[str] | None) -> HomeNetworkState:
+        detector = HomeNetworkDetector(
+            _baseConfig(),
+            ssidReader=lambda: ssid,
+            ipReader=lambda: ips,
+            httpOpener=_openerReturning(_FakeResponse(status=200)),
+            apiKey="test-key",
+        )
+        return detector.getHomeNetworkState()
+
+    def test_homeSsid_failedIpRead_unknown(self) -> None:
+        assert self._state("DeathStarWiFi", None) == HomeNetworkState.UNKNOWN
+
+    def test_noneSsid_failedIpRead_unknown(self) -> None:
+        assert self._state(None, None) == HomeNetworkState.UNKNOWN
+
+    def test_noneSsid_homeIp_unknown(self) -> None:
+        assert self._state(None, ["10.27.27.28"]) == HomeNetworkState.UNKNOWN
+
+    def test_noneSsid_foreignIp_away(self) -> None:
+        assert self._state(None, ["192.168.1.42"]) == HomeNetworkState.AWAY
+
+    def test_noneSsid_noAddresses_away(self) -> None:
+        assert self._state(None, []) == HomeNetworkState.AWAY
+
+    @pytest.mark.parametrize("ips", [["10.27.27.28"], None, []], ids=["homeIp", "failed", "none"])
+    def test_foreignSsid_awayWhateverTheIpRead(self, ips: list[str] | None) -> None:
+        assert self._state("CoffeeShopWiFi", ips) == HomeNetworkState.AWAY
+
+    def test_homeSsid_failedIpRead_noServerProbe(self) -> None:
+        """UNKNOWN is decided without a network call."""
+        opener = _openerReturning(_FakeResponse(status=200))
+        detector = HomeNetworkDetector(
+            _baseConfig(),
+            ssidReader=lambda: "DeathStarWiFi",
+            ipReader=lambda: None,
+            httpOpener=opener,
+            apiKey="test-key",
+        )
+        assert detector.getHomeNetworkState() == HomeNetworkState.UNKNOWN
+        assert opener.calls == []  # type: ignore[attr-defined]
+
+    def test_failedIpRead_isAtHomeWifiFalse(self) -> None:
+        """isAtHomeWifi keeps its bool contract: a failed read is not home."""
+        detector = HomeNetworkDetector(
+            _baseConfig(),
+            ssidReader=lambda: "DeathStarWiFi",
+            ipReader=lambda: None,
+        )
+        assert detector.isAtHomeWifi() is False
+
+    def test_defaultIpReader_hostnameMissing_homeSsid_unknown(self) -> None:
+        """The DEFAULT IP reader, failing, lands UNKNOWN -- not AWAY."""
+        detector = HomeNetworkDetector(
+            _baseConfig(),
+            ssidReader=lambda: "DeathStarWiFi",
+            httpOpener=_openerReturning(_FakeResponse(status=200)),
+        )
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   side_effect=FileNotFoundError("hostname")):
+            assert detector.getHomeNetworkState() == HomeNetworkState.UNKNOWN
 
 
 # =============================================================================

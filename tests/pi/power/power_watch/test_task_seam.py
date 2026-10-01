@@ -20,6 +20,7 @@
 ################################################################################
 """SS-T6: ShutdownTask Protocol + V1 task-registry seam."""
 
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.power_watch.contract import ShutdownTask
 from src.pi.power.power_watch.tasks.sync_with_server import SyncWithServerTask
 
@@ -29,7 +30,7 @@ def test_v1_hasExactlyOneShutdownTask_andSeamIsPluggable():
     ShutdownTask Protocol (`name` + `run()`), and the explicit single-point
     registry seam ``buildV1Tasks(syncTask)`` must exist in __main__.py."""
     t = SyncWithServerTask(
-        serverReachable=lambda: False,
+        homeState=lambda: HomeNetworkState.AWAY,
         runSync=lambda: None,
         writeRecord=lambda _x: None,
     )

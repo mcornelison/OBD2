@@ -12,8 +12,10 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-05-17    | Plan    | Initial -- P2-T5 sync_with_server tests.
+# 2026-10-01    | Rex     | US-776-c: gated on the home state (AWAY skips).
 # ================================================================================
 ################################################################################
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.tasks.sync_with_server import SyncWithServerTask
 
@@ -29,13 +31,15 @@ def _task(reachable, syncSeq, rec):
             raise item
 
     return SyncWithServerTask(
-        serverReachable=lambda: reachable,
+        homeState=lambda: (
+            HomeNetworkState.AT_HOME_SERVER_REACHABLE if reachable else HomeNetworkState.AWAY
+        ),
         runSync=runSync,
         writeRecord=rec,
     )
 
 
-def test_server_unavailable_is_benign_skip():
+def test_away_is_benign_skip():
     recs = []
     result = _task(False, [], recs.append).run()
     assert result == OutcomeKind.SERVER_UNAVAILABLE

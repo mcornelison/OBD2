@@ -129,16 +129,21 @@
 #                           sync task without perTaskTimeoutSec (never
 #                           abandoned); the sequencer polls the VCELL floor
 #                           instead of waiting totalWindowCapSec.
-# 2026-09-21    | US-796-a  | Sprint 90 / V0.29.59. The default shed set gains
-#                           splash-grace.path + splash-grace.service, so no
-#                           second chromium cold-starts during a shutdown. The
-#                           wiring is unchanged: the shed already runs from
-#                           powerLossObservedFn, before the shutdown-state write.
+# 2026-09-21    | US-796-a  | Sprint 90 / V0.29.59. The default shed set gained
+#                           splash-grace.path + splash-grace.service. REVERSED
+#                           by US-796 (Sprint 95): the stop failed on every cut
+#                           and the CIO kept the animation, so the shed set no
+#                           longer names a splash unit.
 # 2026-09-25    | US-790  | Sprint 94. The sequencer feeds a
 #                           DrainVcellTrajectoryWriter (one row per drain poll,
 #                           stamped with pi.power.cellEpoch); the ids it commits
 #                           form an OwnTrajectoryRows set that the drain's exit
 #                           check and custody both exclude.
+# 2026-10-01    | US-776-c  | Sprint 95. The sync task is gated on
+#                           detector.getHomeNetworkState, not on one
+#                           isServerReachable probe: a positive AWAY skips with
+#                           no wait; AT_HOME_* drains; UNKNOWN (a dead SSID/IP
+#                           reader) drains as UNKNOWN_NETWORK at WARNING.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -183,7 +188,10 @@ from src.common.edr.sync_contract import (  # noqa: E402
 from src.common.logging.setup import setupLogging  # noqa: E402
 from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
 from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
-from src.pi.network.home_detector import HomeNetworkDetector  # noqa: E402
+from src.pi.network.home_detector import (  # noqa: E402
+    HomeNetworkDetector,
+    HomeNetworkState,
+)
 from src.pi.power.drain_event_writer import (  # noqa: E402
     CLOSE_REASON_SHUTDOWN,
     makeDrainEventWriterForPath,
@@ -648,7 +656,7 @@ def _runOneShotForTest(
     in this module's transitive graph fails this test loudly because it runs
     the real `python -m src.pi.power.power_watch` under the unit's PYTHONPATH.
 
-    Deterministic scenario: server reachable, sync raises (transient) on both
+    Deterministic scenario: at home (server reachable), sync raises (transient) on both
     the call and the retry -> SYNC_FAILED_AFTER_RETRY -> a real outcome record
     is produced; the bounded controller then reaches the (stubbed) poweroff.
     """
@@ -665,7 +673,7 @@ def _runOneShotForTest(
         Path(marker).write_text("poweroff-invoked", encoding="utf-8")
 
     syncTask = SyncWithServerTask(
-        serverReachable=lambda: True,
+        homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
         runSync=_failingSync,
         writeRecord=_writeRecord,
     )
@@ -951,7 +959,10 @@ def main(argv: list[str] | None = None) -> int:
         return readSyncBacklog(excludeRows=ownTrajectoryRows.exclusions())
 
     syncTask = SyncWithServerTask(
-        serverReachable=detector.isServerReachable,
+        # US-776-c: the drain decision. A positive AWAY skips at once (no wait,
+        # no HTTP call); at home, or UNKNOWN with no positive AWAY, it drains.
+        # Every nmcli / hostname -I / HTTP call behind it is timeout-bounded.
+        homeState=detector.getHomeNetworkState,
         # US-776-a: no budget -- the drain ends on an empty backlog or the
         # sequencer's VCELL floor poll. Every pass excludes the EDR set.
         runSync=_buildRunSync(
@@ -1030,14 +1041,13 @@ def main(argv: list[str] | None = None) -> int:
     #
     # Reversible by design: if the loss turns out to be a blip the sequencer
     # cancels and `restore` puts it back, so nothing is committed on the edge.
-    # Configurable, defaulting to the dashboard and the grace splash -- never
-    # "stop everything", because the remaining services are the ones that
-    # PRESERVE data.
+    # Configurable, defaulting to the dashboard alone -- never "stop
+    # everything", because the remaining services are the ones that PRESERVE
+    # data.
     #
-    # US-796-a: the splash is suppressed HERE, on the consumer side, and it
-    # works only because the sequencer calls powerLossObservedFn BEFORE it
-    # writes shutdown-state: splash-grace.path fires on that write and cannot
-    # be un-fired. The sequencer never learns a splash unit name (F-103).
+    # US-796: the grace splash is NOT shed. The CIO kept the shutdown
+    # animation, and the stop of splash-grace failed on every cut anyway. The
+    # sequencer never learns a splash unit name (F-103).
     shedUnits = pw_cfg.get("shedUnitsOnPowerLoss", DEFAULT_SHED_UNITS)
     loadShedder = LoadShedder(shedUnits)
 

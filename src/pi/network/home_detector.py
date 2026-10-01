@@ -16,6 +16,9 @@
 # 2026-09-13    | Rex          | US-743: SSID compared case-insensitively (casefold)
 # 2026-09-30    | Rex          | US-776-a: serverPingPath fallback /api/v1/health
 # 2026-09-30    | Rex          | US-776-b: SSID read via nmcli (no iwgetid on Pi)
+# 2026-10-01    | Rex          | US-776-c: three-way IP reader (None on a failed
+#               |              | read); only a positive AWAY is AWAY, a dead SSID
+#               |              | or IP reader is UNKNOWN
 # ================================================================================
 ################################################################################
 
@@ -47,15 +50,20 @@ States
 
 * ``AT_HOME_SERVER_REACHABLE`` -- SSID + subnet both match AND ping 2xx
 * ``AT_HOME_SERVER_DOWN``      -- SSID + subnet both match but ping fails
-* ``AWAY``                     -- not on home WiFi (by either check)
-* ``UNKNOWN``                  -- SSID-detection infra is unavailable
-  (``nmcli`` missing or timing out).  Distinguished from AWAY so the
-  orchestrator can decide separately (e.g., "wait and retry" vs
-  "definitely shut down without sync").
+* ``AWAY``                     -- a POSITIVE not-home answer: a foreign
+  SSID (whatever the IP read says), or a successful IP read with no
+  address in the home subnet
+* ``UNKNOWN``                  -- no positive AWAY, but home cannot be
+  confirmed: the SSID reader is unavailable (``nmcli`` missing or timing
+  out) and the IP read did not rule home out, or the IP read itself
+  failed.  The shutdown sync DRAINS on UNKNOWN (US-776-c): a dead
+  instrument must never disable the drain.
 
 Note that ``nmcli`` listing no active AP, or exiting non-zero (i.e.,
 "not connected to anything") maps to ``AWAY`` -- that is a deterministic
-"not home" answer, not a lack of information.
+"not home" answer, not a lack of information.  The same holds for a
+``hostname -I`` that succeeds with no addresses; a ``hostname -I`` that
+FAILS returns ``None`` and is a lack of information.
 """
 
 from __future__ import annotations
@@ -154,12 +162,17 @@ def _readSsidViaNmcli(timeout: float = _NMCLI_TIMEOUT_SECONDS) -> str | None:
     return ""
 
 
-def _readLocalIps(timeout: float = _HOSTNAME_TIMEOUT_SECONDS) -> list[str]:
+def _readLocalIps(timeout: float = _HOSTNAME_TIMEOUT_SECONDS) -> list[str] | None:
     """Return the list of local IPs reported by ``hostname -I``.
 
-    Empty list on any subprocess failure -- callers treat empty as
-    "can't determine home-subnet membership" which collapses to False in
-    :meth:`HomeNetworkDetector.isAtHomeWifi`.
+    Three-way, like :func:`_readSsidViaNmcli` (US-776-c):
+
+    Returns:
+        * ``None`` if the read itself failed (``hostname`` missing,
+          subprocess timeout, OS error, non-zero exit).  A failed read says
+          nothing about where the Pi is, so it must never read as AWAY.
+        * A list of address strings on a successful read -- possibly empty,
+          which is a genuine "no addresses".
     """
     try:
         result = subprocess.run(
@@ -167,9 +180,9 @@ def _readLocalIps(timeout: float = _HOSTNAME_TIMEOUT_SECONDS) -> list[str]:
             capture_output=True, text=True, encoding="utf-8", timeout=timeout,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return []
+        return None
     if result.returncode != 0:
-        return []
+        return None
     return [ip for ip in result.stdout.strip().split() if ip]
 
 
@@ -191,7 +204,7 @@ class HomeNetworkDetector:
         config: dict[str, Any],
         *,
         ssidReader: Callable[[], str | None] | None = None,
-        ipReader: Callable[[], list[str]] | None = None,
+        ipReader: Callable[[], list[str] | None] | None = None,
         httpOpener: Callable[..., Any] | None = None,
         apiKey: str | None = None,
     ) -> None:
@@ -203,8 +216,9 @@ class HomeNetworkDetector:
             ssidReader: Callable returning the current SSID, ``""`` for
                 "not connected", or ``None`` for "infra unavailable".
                 Defaults to :func:`_readSsidViaNmcli`.
-            ipReader: Callable returning the list of local IPs (strings).
-                Defaults to :func:`_readLocalIps`.
+            ipReader: Callable returning the list of local IPs (strings),
+                or ``None`` when the read itself failed.  Defaults to
+                :func:`_readLocalIps`.
             httpOpener: :func:`urllib.request.urlopen`-compatible callable
                 for the server-ping HTTP call.  Defaults to the stdlib
                 function.
@@ -228,7 +242,7 @@ class HomeNetworkDetector:
         self._baseUrl: str = str(companion.get("baseUrl", "")).rstrip("/")
 
         self._ssidReader: Callable[[], str | None] = ssidReader or _readSsidViaNmcli
-        self._ipReader: Callable[[], list[str]] = ipReader or _readLocalIps
+        self._ipReader: Callable[[], list[str] | None] = ipReader or _readLocalIps
         self._httpOpener: Callable[..., Any] = httpOpener or urllib.request.urlopen
         self._apiKey: str | None = apiKey
 
@@ -247,7 +261,8 @@ class HomeNetworkDetector:
         ssid = self._ssidReader()
         if not ssid or not self._isHomeSsid(ssid):
             return False
-        return self._hasIpInHomeSubnet()
+        # A failed IP read (None) is not home either: this stays a bool.
+        return self._hasIpInHomeSubnet() is True
 
     def isServerReachable(self) -> bool:
         """Return True if a GET against the configured ping endpoint is 2xx.
@@ -293,14 +308,20 @@ class HomeNetworkDetector:
     # ---- internals ---------------------------------------------------------
 
     def _computeState(self) -> HomeNetworkState:
+        # US-776-c: only a POSITIVE answer is AWAY -- a foreign SSID, or a
+        # successful IP read with no home-subnet address.  A dead SSID or IP
+        # reader is UNKNOWN, never AWAY: a dead instrument gating the shutdown
+        # drain is how the drain stayed off for weeks (Atlas gap 2,
+        # design-patterns section 6).
         ssid = self._ssidReader()
-        if ssid is None:
-            return HomeNetworkState.UNKNOWN
-        if not self._isHomeSsid(ssid):
+        if ssid is not None and not self._isHomeSsid(ssid):
             # Includes the empty-string "not connected" case.
             return HomeNetworkState.AWAY
-        if not self._hasIpInHomeSubnet():
+        inHomeSubnet = self._hasIpInHomeSubnet()
+        if inHomeSubnet is False:
             return HomeNetworkState.AWAY
+        if ssid is None or inHomeSubnet is None:
+            return HomeNetworkState.UNKNOWN
         if self.isServerReachable():
             return HomeNetworkState.AT_HOME_SERVER_REACHABLE
         return HomeNetworkState.AT_HOME_SERVER_DOWN
@@ -315,8 +336,11 @@ class HomeNetworkDetector:
         # still gates AT_HOME. (US-743)
         return ssid.casefold() == self._ssid.casefold()
 
-    def _hasIpInHomeSubnet(self) -> bool:
+    def _hasIpInHomeSubnet(self) -> bool | None:
+        """True/False from a successful IP read; None when the read failed."""
         ips = self._ipReader()
+        if ips is None:
+            return None
         if not ips:
             return False
         try:

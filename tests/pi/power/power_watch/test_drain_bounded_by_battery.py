@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.common.edr.sync_contract import SHUTDOWN_DRAIN_EXCLUDED_TABLES
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.power_watch import __main__ as m
 from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.controller import ShutdownSequencer
@@ -168,7 +169,7 @@ class TestTheDrainOutlivesAllThreeTimers:
         backlog = [6 * 500]
         client = _DrainingClient(clock=clock, passSec=15.0, backlog=backlog)
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: True,
+            homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
                 client,
                 backlogReader=_readerOver(backlog),
@@ -238,7 +239,7 @@ class TestTheDrainOutlivesAllThreeTimers:
             clock=clock, passSec=15.0, backlog=backlog, wallSecPerPass=0.1
         )
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: True,
+            homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
                 client,
                 backlogReader=_readerOver(backlog),
@@ -338,7 +339,7 @@ class TestTheFloorEndsADrainThatNeverReachesAPassBoundary:
             return SyncBacklog(perTable={"realtime_data": 1})
 
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: True,
+            homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
                 _BlockedClient(),
                 backlogReader=_reader,
@@ -488,9 +489,9 @@ class TestTheFloorEndsADrainThatNeverReachesAPassBoundary:
 class TestNegativeCases:
     """Away from home nothing changes; a bad reading never becomes DELIVERED."""
 
-    def test_serverUnreachable_forcePushNeverCalled_poweroffWithoutWaiting(self) -> None:
+    def test_away_forcePushNeverCalled_poweroffWithoutWaiting(self) -> None:
         """
-        Given: serverReachable False
+        Given: the home detector reads AWAY
         When: the shutdown runs
         Then: forcePush is never called and poweroff proceeds without waiting
             out a poll interval (regressionCheck: same time-to-poweroff)
@@ -501,7 +502,7 @@ class TestNegativeCases:
         backlog = [9000]
         client = _DrainingClient(clock=clock, passSec=15.0, backlog=backlog)
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: False,
+            homeState=lambda: HomeNetworkState.AWAY,
             runSync=m._buildRunSync(
                 client,
                 backlogReader=_readerOver(backlog),
@@ -538,7 +539,7 @@ class TestNegativeCases:
         events: list[str] = []
         recordPath = tmp_path / "custody.json"
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: True,
+            homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
                 client,
                 backlogReader=reader,
