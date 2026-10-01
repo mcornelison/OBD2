@@ -21,6 +21,8 @@
 #               |              | or IP reader is UNKNOWN
 # 2026-10-01    | Rex          | US-776-d: probeServer() -> ProbeResult sibling;
 #               |              | isServerReachable() is its 2xx; lastProbe
+# 2026-10-01    | Rex          | US-776-e: AT_HOME_JOINING -- home SSID in the
+#               |              | cached scan list, not associated (scanReader)
 # ================================================================================
 ################################################################################
 
@@ -48,10 +50,13 @@ future PowerLossOrchestrator (US-189, Sprint 14) owns the glue.
 States
 ------
 
-:class:`HomeNetworkState` has four values:
+:class:`HomeNetworkState` has five values:
 
 * ``AT_HOME_SERVER_REACHABLE`` -- SSID + subnet both match AND ping 2xx
 * ``AT_HOME_SERVER_DOWN``      -- SSID + subnet both match but ping fails
+* ``AT_HOME_JOINING``          -- not associated, but the home SSID is in
+  NetworkManager's cached scan list: the rejoin is pending (US-776-e).
+  The shutdown sync waits for the association inside its ceiling.
 * ``AWAY``                     -- a POSITIVE not-home answer: a foreign
   SSID (whatever the IP read says), or a successful IP read with no
   address in the home subnet
@@ -62,7 +67,8 @@ States
   instrument must never disable the drain.
 
 Note that ``nmcli`` listing no active AP, or exiting non-zero (i.e.,
-"not connected to anything") maps to ``AWAY`` -- that is a deterministic
+"not connected to anything") with the home SSID absent from the cached
+scan list maps to ``AWAY`` -- that is a deterministic
 "not home" answer, not a lack of information.  The same holds for a
 ``hostname -I`` that succeeds with no addresses; a ``hostname -I`` that
 FAILS returns ``None`` and is a lack of information.
@@ -110,6 +116,7 @@ class HomeNetworkState(StrEnum):
 
     AT_HOME_SERVER_REACHABLE = "at_home_server_reachable"
     AT_HOME_SERVER_DOWN = "at_home_server_down"
+    AT_HOME_JOINING = "at_home_joining"  # US-776-e: home SSID cached, not associated
     AWAY = "away"
     UNKNOWN = "unknown"
 
@@ -158,22 +165,17 @@ def _unescapeNmcliTerse(value: str) -> str:
     return _NMCLI_TERSE_ESCAPE.sub(r"\1", value)
 
 
-def _readSsidViaNmcli(timeout: float = _NMCLI_TIMEOUT_SECONDS) -> str | None:
-    """Return the current WiFi SSID, or a signal value.
+def _listWifiRows(timeout: float) -> list[tuple[str, str]] | None:
+    """Run ``nmcli -t -f ACTIVE,SSID device wifi list --rescan no``.
 
-    Runs ``nmcli -t -f ACTIVE,SSID device wifi list --rescan no`` and takes
-    the SSID of the row whose ACTIVE field is ``yes``.  ``--rescan no``
-    reads NetworkManager's cached AP list: the default rescan can outlast
-    the timeout, and the associated AP is always in the cache.
+    ``--rescan no`` reads NetworkManager's cached AP list: the default
+    rescan can outlast the timeout, and a forced rescan needs polkit rights
+    the service user lacks (US-776-e, measured).
 
     Returns:
-        * ``None`` if the detection infrastructure is unavailable
-          (``nmcli`` binary missing, subprocess timeout, OS error).
-          Callers interpret this as :attr:`HomeNetworkState.UNKNOWN`.
-        * An empty string if ``nmcli`` exited non-zero or listed no active
-          AP (not connected to any WiFi).  Callers interpret this as
-          :attr:`HomeNetworkState.AWAY`.
-        * The unescaped SSID string on success.
+        ``None`` when nmcli is unavailable (missing, timeout, OS error);
+        ``[]`` when it exited non-zero; otherwise one ``(active, ssid)`` pair
+        per listed AP, the SSID unescaped.
     """
     try:
         result = subprocess.run(
@@ -194,14 +196,56 @@ def _readSsidViaNmcli(timeout: float = _NMCLI_TIMEOUT_SECONDS) -> str | None:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
     if result.returncode != 0:
-        return ""
+        return []
+    rows: list[tuple[str, str]] = []
     for line in result.stdout.splitlines():
         # ACTIVE is yes/no and never contains ':', so the first ':' always
         # separates it from the (possibly escaped) SSID.
         active, separator, ssid = line.partition(":")
-        if separator and active == "yes":
-            return _unescapeNmcliTerse(ssid)
+        if separator:
+            rows.append((active, _unescapeNmcliTerse(ssid)))
+    return rows
+
+
+def _readSsidViaNmcli(timeout: float = _NMCLI_TIMEOUT_SECONDS) -> str | None:
+    """Return the current WiFi SSID, or a signal value.
+
+    Takes the SSID of the :func:`_listWifiRows` row whose ACTIVE field is
+    ``yes`` -- the associated AP is always in the cache.
+
+    Returns:
+        * ``None`` if the detection infrastructure is unavailable
+          (``nmcli`` binary missing, subprocess timeout, OS error).
+          Callers interpret this as :attr:`HomeNetworkState.UNKNOWN`.
+        * An empty string if ``nmcli`` exited non-zero or listed no active
+          AP (not connected to any WiFi).  Callers then consult the scan
+          cache: the home SSID in it is :attr:`HomeNetworkState.AT_HOME_JOINING`,
+          otherwise :attr:`HomeNetworkState.AWAY`.
+        * The unescaped SSID string on success.
+    """
+    rows = _listWifiRows(timeout)
+    if rows is None:
+        return None
+    for active, ssid in rows:
+        if active == "yes":
+            return ssid
     return ""
+
+
+def _readVisibleSsidsViaNmcli(timeout: float = _NMCLI_TIMEOUT_SECONDS) -> list[str] | None:
+    """Return every SSID in NetworkManager's cached scan list (US-776-e).
+
+    Associated or not; hidden networks (empty SSID) are skipped.  Reads the
+    cache only -- never forces a rescan or ``nmcli con up``.
+
+    Returns:
+        ``None`` when nmcli is unavailable, ``[]`` when it exited non-zero or
+        lists nothing, otherwise the SSIDs in listed order.
+    """
+    rows = _listWifiRows(timeout)
+    if rows is None:
+        return None
+    return [ssid for _active, ssid in rows if ssid]
 
 
 def _readLocalIps(timeout: float = _HOSTNAME_TIMEOUT_SECONDS) -> list[str] | None:
@@ -249,6 +293,7 @@ class HomeNetworkDetector:
         ipReader: Callable[[], list[str] | None] | None = None,
         httpOpener: Callable[..., Any] | None = None,
         apiKey: str | None = None,
+        scanReader: Callable[[], list[str] | None] | None = None,
     ) -> None:
         """Construct a detector bound to a validated Pi config.
 
@@ -272,6 +317,10 @@ class HomeNetworkDetector:
                 auth -- the server still responds with 401 in that case
                 and ``isServerReachable`` returns False, which is the
                 safe answer.
+            scanReader: Callable returning the SSIDs in NetworkManager's
+                cached scan list, or ``None`` when it cannot be read.  Read
+                only when the SSID reader says "not associated" (US-776-e).
+                Defaults to :func:`_readVisibleSsidsViaNmcli`.
         """
         piConfig: dict[str, Any] = config.get("pi", {}) or {}
         homeNet: dict[str, Any] = piConfig.get("homeNetwork", {}) or {}
@@ -285,6 +334,9 @@ class HomeNetworkDetector:
 
         self._ssidReader: Callable[[], str | None] = ssidReader or _readSsidViaNmcli
         self._ipReader: Callable[[], list[str] | None] = ipReader or _readLocalIps
+        self._scanReader: Callable[[], list[str] | None] = (
+            scanReader or _readVisibleSsidsViaNmcli
+        )
         self._httpOpener: Callable[..., Any] = httpOpener or urllib.request.urlopen
         self._apiKey: str | None = apiKey
 
@@ -394,6 +446,11 @@ class HomeNetworkDetector:
         # probe's answer.
         self._lastProbe = None
         ssid = self._ssidReader()
+        if ssid == "" and self._isHomeSsidVisible():
+            # US-776-e: not associated, but the home AP is in range -- the
+            # rejoin is pending (measured ~49 s after arriving, drive 96).
+            # Decided before the IP read: unassociated, there is no home IP.
+            return HomeNetworkState.AT_HOME_JOINING
         if ssid is not None and not self._isHomeSsid(ssid):
             # Includes the empty-string "not connected" case.
             return HomeNetworkState.AWAY
@@ -415,6 +472,17 @@ class HomeNetworkDetector:
         # Exact match otherwise -- no strip, no prefix -- and the subnet check
         # still gates AT_HOME. (US-743)
         return ssid.casefold() == self._ssid.casefold()
+
+    def _isHomeSsidVisible(self) -> bool:
+        """True when the home SSID is in the cached scan list.
+
+        A failed cache read (``None``) is False: nmcli already answered "not
+        associated", the AWAY it gave before US-776-e.
+        """
+        visible = self._scanReader()
+        if not visible:
+            return False
+        return any(self._isHomeSsid(ssid) for ssid in visible)
 
     def _hasIpInHomeSubnet(self) -> bool | None:
         """True/False from a successful IP read; None when the read failed."""

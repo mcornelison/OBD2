@@ -17,6 +17,8 @@
 # 2026-09-30    | Rex          | US-776-b: nmcli SSID reader tests
 # 2026-10-01    | Rex          | US-776-c: three-way IP reader; only a positive
 #               |              | AWAY (foreign SSID / no home-subnet IP) is AWAY
+# 2026-10-01    | Rex          | US-776-e: disconnected with the home SSID cached
+#               |              | is AT_HOME_JOINING, not AWAY
 # ================================================================================
 ################################################################################
 
@@ -221,6 +223,7 @@ class TestHomeNetworkStateBranches:
             _baseConfig(),
             ssidReader=lambda: "",
             ipReader=lambda: [],
+            scanReader=lambda: [],
             httpOpener=_openerReturning(_FakeResponse(status=200)),
             apiKey="test-key",
         )
@@ -761,9 +764,14 @@ class TestNmcliReaderThroughState:
         state = self._state(_nmcliCompleted("yes:CoffeeShop\n"))
         assert state == HomeNetworkState.AWAY
 
-    def test_disconnected_away(self) -> None:
-        state = self._state(_nmcliCompleted("no:DeathStarWiFi\nno:CoffeeShop\n"))
+    def test_disconnected_homeNotInCache_away(self) -> None:
+        state = self._state(_nmcliCompleted("no:Neighbour\nno:CoffeeShop\n"))
         assert state == HomeNetworkState.AWAY
+
+    def test_disconnected_homeInCache_joining(self) -> None:
+        """US-776-e: the home AP in range but not associated is a pending rejoin."""
+        state = self._state(_nmcliCompleted("no:DeathStarWiFi\nno:CoffeeShop\n"))
+        assert state == HomeNetworkState.AT_HOME_JOINING
 
     def test_nmcliMissing_unknown(self) -> None:
         state = self._state(FileNotFoundError("nmcli"))

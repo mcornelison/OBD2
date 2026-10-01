@@ -28,6 +28,10 @@
 #               |         | backlog before the first attempt and after the last.
 #               |         | A failed drain at home tells a misconfigured probe
 #               |         | from a down server.
+# 2026-10-01    | Rex     | US-776-e: AT_HOME_JOINING polls for the WiFi
+#               |         | association inside the same ceiling, then drains;
+#               |         | still joining at the ceiling is
+#               |         | AT_HOME_JOINING_TIMEOUT.
 # ================================================================================
 ################################################################################
 """The CIO pre-shutdown server-sync pipeline task (Phase-2 power-watch)."""
@@ -43,6 +47,7 @@ from src.pi.power.power_watch.contract import OutcomeKind
 
 logger = logging.getLogger(__name__)
 __all__ = [
+    "JOIN_POLL_SEC",
     "RETRY_FIRST_WAIT_SEC",
     "RETRY_WAIT_GROWTH",
     "SyncOutcomeRecord",
@@ -54,6 +59,12 @@ __all__ = [
 #: worked example); how long the loop runs is the configured ceiling, not these.
 RETRY_FIRST_WAIT_SEC = 2.0
 RETRY_WAIT_GROWTH = 2.0
+
+#: US-776-e: how often AT_HOME_JOINING is re-read while waiting for the WiFi
+#: association. Fixed, not growing: the drain should start within one poll
+#: of the rejoin. The shortest wait this task already makes, and the nmcli
+#: read behind each poll is itself bounded at 2 s.
+JOIN_POLL_SEC = RETRY_FIRST_WAIT_SEC
 
 #: Log level of the one outcome line each run() emits. A positive AWAY and a
 #: delivery are the expected cases; an unconfirmed home is the dead-instrument
@@ -96,7 +107,12 @@ class SyncWithServerTask:
       0. Ask the home detector ONCE, and read the backlog (``backlog_start``).
          ``AWAY`` (a positive not-home answer) -> ``AWAY`` (skip: no wait,
          no network call of its own).
-         ``AT_HOME_*`` -> drain.
+         ``AT_HOME_JOINING`` (home SSID in range, not associated; US-776-e)
+         -> re-read the state every ``JOIN_POLL_SEC`` until it is something
+         else, then apply this step to that state. The wait counts against
+         the same ceiling as the drain; still joining when it is spent ->
+         ``AT_HOME_JOINING_TIMEOUT`` (no attempt).
+         ``AT_HOME_SERVER_*`` -> drain.
          ``UNKNOWN`` (a dead SSID/IP reader, or a detector that raised) ->
          drain anyway, logged ``UNKNOWN_NETWORK`` at WARNING. A dead
          instrument must never disable the drain (design-patterns sec 6).
@@ -142,7 +158,8 @@ class SyncWithServerTask:
         lastProbe: Callable[[], ProbeResult | None] | None = None,
     ):
         """Args:
-        homeState: Zero-arg home-network read, called once per ``run()``.
+        homeState: Zero-arg home-network read, called once per ``run()``,
+            then once per poll while it reads ``AT_HOME_JOINING``.
             Production passes ``HomeNetworkDetector.getHomeNetworkState``;
             every subprocess and HTTP call behind it is timeout-bounded.
         runSync: Zero-arg one-shot DB sync; returns on success, raises on
@@ -151,7 +168,7 @@ class SyncWithServerTask:
             the :class:`SyncOutcomeRecord`.
         ceilingSec: US-776-g -- ``pi.homeNetwork.shutdownSyncCeilingSec``.
             No attempt starts once this long has passed since the drain
-            began. The sequencer's floor poll (and, with a blind gauge, its
+            began -- or since a JOINING wait began (US-776-e). The sequencer's floor poll (and, with a blind gauge, its
             ``totalWindowCapSec``) may end the shutdown sooner.
         sleepFn: Wait between attempts; ``time.sleep`` when None.
         monotonic: Clock the ceiling is measured on; ``time.monotonic``
@@ -180,6 +197,28 @@ class SyncWithServerTask:
         """Run the CIO sync state machine and record its outcome. Never raises."""
         state = self._readHomeState()
         backlogStart = self._readBacklog()
+        startMono: float | None = None
+        if state is HomeNetworkState.AT_HOME_JOINING:
+            # US-776-e: the wait and the drain share ONE ceiling, measured
+            # from the start of the wait.
+            startMono = self._monotonic()
+            state = self._awaitAssociation(startMono)
+            if state is HomeNetworkState.AT_HOME_JOINING:
+                return self._record(
+                    OutcomeKind.AT_HOME_JOINING_TIMEOUT,
+                    f"still joining the home WiFi at the {self._ceilingSec:.0f}s ceiling",
+                    backlogStart,
+                    backlogStart,
+                )
+            spent = self._monotonic() - startMono
+            if spent >= self._ceilingSec and state is not HomeNetworkState.AWAY:
+                return self._record(
+                    OutcomeKind.AT_HOME_JOINING_TIMEOUT,
+                    f"joined as {state.name} after {spent:.0f}s -- the "
+                    f"{self._ceilingSec:.0f}s ceiling left no time to drain",
+                    backlogStart,
+                    backlogStart,
+                )
         if state is HomeNetworkState.AWAY:
             logger.info(
                 "powerwatch sync_with_server: AWAY from home -- skipping the "
@@ -195,8 +234,52 @@ class SyncWithServerTask:
                 "confirmed (SSID or IP reader unavailable) and nothing says "
                 "AWAY -- draining anyway"
             )
-        kind, detail = self._drain(state)
+        kind, detail = self._drain(state, startMono)
         return self._record(kind, detail, backlogStart, self._readBacklog())
+
+    def _awaitAssociation(self, startMono: float) -> HomeNetworkState:
+        """Poll the home state while it reads AT_HOME_JOINING (US-776-e).
+
+        Waits for NetworkManager's own association -- never forces a rescan or
+        a connection. No poll wait is begun that would end at or past the
+        ceiling. Never raises.
+
+        Returns:
+            The first state that is not AT_HOME_JOINING, or AT_HOME_JOINING
+            when the ceiling (or a broken wait) ended the polling.
+        """
+        logger.info(
+            "powerwatch sync_with_server: AT_HOME_JOINING -- home WiFi in range "
+            "but not associated; waiting up to %.0fs for the rejoin",
+            self._ceilingSec,
+        )
+        polls = 0
+        while self._monotonic() - startMono + JOIN_POLL_SEC < self._ceilingSec:
+            try:
+                self._sleep(JOIN_POLL_SEC)
+            except Exception as exc:  # noqa: BLE001 -- never raise; a broken wait ends the polling
+                logger.error(
+                    "powerwatch sync_with_server: join wait failed (%s) -- giving up", exc
+                )
+                break
+            polls += 1
+            state = self._readHomeState()
+            if state is not HomeNetworkState.AT_HOME_JOINING:
+                logger.info(
+                    "powerwatch sync_with_server: rejoin resolved as %s after %.0fs "
+                    "(%d poll(s))",
+                    state.name,
+                    self._monotonic() - startMono,
+                    polls,
+                )
+                return state
+        logger.warning(
+            "powerwatch sync_with_server: still AT_HOME_JOINING after %d poll(s) "
+            "-- the %.0fs ceiling is spent",
+            polls,
+            self._ceilingSec,
+        )
+        return HomeNetworkState.AT_HOME_JOINING
 
     def _readHomeState(self) -> HomeNetworkState:
         """The detector's state, or UNKNOWN when the detector itself raises."""
@@ -220,16 +303,24 @@ class SyncWithServerTask:
             logger.warning("powerwatch sync_with_server: backlog read failed (%s)", exc)
             return None
 
-    def _drain(self, state: HomeNetworkState) -> tuple[OutcomeKind, str]:
+    def _drain(
+        self, state: HomeNetworkState, startMono: float | None = None
+    ) -> tuple[OutcomeKind, str]:
         """Retry a transient failure with growing waits until the ceiling.
 
-        No attempt starts once ``ceilingSec`` has elapsed since the drain
-        began, and no wait is begun that would end at or past it. Never raises.
+        No attempt starts once ``ceilingSec`` has elapsed since ``startMono``,
+        and no wait is begun that would end at or past it. Never raises.
+
+        Args:
+            state: The home state the drain was decided on.
+            startMono: When the ceiling started -- the start of a JOINING
+                wait (US-776-e), so wait and drain share it; now when None.
 
         Returns:
             The outcome kind and its detail text.
         """
-        startMono = self._monotonic()
+        if startMono is None:
+            startMono = self._monotonic()
         wait = RETRY_FIRST_WAIT_SEC
         attempt = 0
         lastError: RuntimeError | None = None
