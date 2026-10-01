@@ -813,7 +813,7 @@ class TestHomeNetworkConfig:
         assert hn['ssid'] == 'DeathStarWiFi'
         assert hn['subnet'] == '10.27.27.0/24'
         assert hn['pingTimeoutSeconds'] == 3
-        assert hn['serverPingPath'] == '/api/v1/ping'
+        assert hn['serverPingPath'] == '/api/v1/health'
 
     def test_homeNetwork_fullyPopulated_roundTripPreserved(self):
         validator = ConfigValidator(requiredKeys=[])
