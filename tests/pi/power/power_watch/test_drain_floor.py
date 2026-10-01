@@ -100,6 +100,7 @@ def _pipelineFor(client: _PassClient, backlog: list[int]):
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=lambda _r: None,
+        ceilingSec=60.0,
     )
     return lambda: runPipeline(
         m.buildV1Tasks(syncTask),

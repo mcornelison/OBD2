@@ -33,6 +33,7 @@ def test_v1_hasExactlyOneShutdownTask_andSeamIsPluggable():
         homeState=lambda: HomeNetworkState.AWAY,
         runSync=lambda: None,
         writeRecord=lambda _x: None,
+        ceilingSec=60.0,
     )
     assert isinstance(t, ShutdownTask)  # satisfies the runtime-checkable protocol
 

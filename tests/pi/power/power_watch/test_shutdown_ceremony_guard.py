@@ -207,6 +207,7 @@ def runShutdown(
         homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
         runSync=runSync,
         writeRecord=lambda _kd: None,
+        ceilingSec=60.0,
     )
 
     slot = OwnDrainCloseSlot()

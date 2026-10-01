@@ -19,6 +19,7 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-09-17    | Rex (US-776-a) | Initial -- the drain is bounded by the battery.
+# 2026-10-01    | Rex (US-776-g) | A failing pass is retried to the 60 s ceiling.
 # ================================================================================
 ################################################################################
 """US-776-a: the drain ends on an empty backlog or the VCELL floor, not a timer."""
@@ -176,6 +177,7 @@ class TestTheDrainOutlivesAllThreeTimers:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: events.append("fault-record"),
+            ceilingSec=60.0,
         )
 
         def _pipeline() -> None:
@@ -246,6 +248,7 @@ class TestTheDrainOutlivesAllThreeTimers:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
+            ceilingSec=60.0,
         )
 
         # Act
@@ -346,6 +349,7 @@ class TestTheFloorEndsADrainThatNeverReachesAPassBoundary:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
+            ceilingSec=60.0,
         )
         # Healthy at the pre-pipeline read and while the push is in flight,
         # then at the floor. The clock also races past the old 45 s cap first,
@@ -509,6 +513,7 @@ class TestNegativeCases:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: events.append("fault-record"),
+            ceilingSec=60.0,
         )
         slowPoll = 5.0
         seq = ShutdownSequencer(
@@ -538,6 +543,13 @@ class TestNegativeCases:
         clock = _FakeClock()
         events: list[str] = []
         recordPath = tmp_path / "custody.json"
+        # US-776-g: the task's retry waits run on their own virtual clock, so
+        # a failing pass walks the whole ceiling without sleeping for real.
+        taskNow = [0.0]
+
+        def _taskSleep(seconds: float) -> None:
+            taskNow[0] += seconds
+
         syncTask = SyncWithServerTask(
             homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
@@ -546,6 +558,9 @@ class TestNegativeCases:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
+            ceilingSec=60.0,
+            sleepFn=_taskSleep,
+            monotonic=lambda: taskNow[0],
         )
         seq = _sequencer(
             events=events,
@@ -584,8 +599,8 @@ class TestNegativeCases:
         """
         Given: a pass that fails (tables failed after retries)
         When: the drain runs
-        Then: the drain ends (after the task's one retry) and custody records
-            OUTSTANDING, never DELIVERED
+        Then: the drain ends (once the task's retries reach the 60 s ceiling)
+            and custody records OUTSTANDING, never DELIVERED
         """
         # Arrange
         backlog = [2000]
@@ -602,7 +617,8 @@ class TestNegativeCases:
             tmp_path, client=_FailingClient(), reader=_readerOver(backlog)
         )
 
-        # Assert -- first attempt + SyncWithServerTask's single retry
-        assert _FailingClient.calls == 2
+        # Assert -- US-776-g: attempts at 0, 2, 6, 14 and 30 s; the next
+        # would start at 62 s, past the 60 s ceiling
+        assert _FailingClient.calls == 5
         assert record["verdict"] == BACKLOG_OUTSTANDING
         assert record["verdict"] != BACKLOG_DELIVERED

@@ -144,6 +144,10 @@
 #                           isServerReachable probe: a positive AWAY skips with
 #                           no wait; AT_HOME_* drains; UNKNOWN (a dead SSID/IP
 #                           reader) drains as UNKNOWN_NETWORK at WARNING.
+# 2026-10-01    | US-776-g  | Sprint 95. The sync task gets
+#                           pi.homeNetwork.shutdownSyncCeilingSec: a transient
+#                           failure is retried with backoff until the ceiling.
+#                           PW_TEST_ONESHOT walks it on a virtual clock.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -646,6 +650,7 @@ def _runOneShotForTest(
     perTaskTimeoutSec: float,
     totalWindowCapSec: float,
     vcellFloorVolts: float,
+    shutdownSyncCeilingSec: float,
 ) -> int:
     """PW_TEST_ONESHOT hook: exercise the REAL import + controller/pipeline/
     task/outcome chain EXACTLY as systemd invokes the entrypoint, but WITHOUT
@@ -656,8 +661,8 @@ def _runOneShotForTest(
     in this module's transitive graph fails this test loudly because it runs
     the real `python -m src.pi.power.power_watch` under the unit's PYTHONPATH.
 
-    Deterministic scenario: at home (server reachable), sync raises (transient) on both
-    the call and the retry -> SYNC_FAILED_AFTER_RETRY -> a real outcome record
+    Deterministic scenario: at home (server reachable), sync raises (transient) on
+    every attempt up to the ceiling -> SYNC_FAILED_AFTER_RETRY -> a real outcome record
     is produced; the bounded controller then reaches the (stubbed) poweroff.
     """
 
@@ -672,10 +677,20 @@ def _runOneShotForTest(
         marker = os.environ["PW_TEST_POWEROFF_MARKER"]
         Path(marker).write_text("poweroff-invoked", encoding="utf-8")
 
+    # US-776-g: the retry backoff runs on a virtual clock that only its own
+    # waits advance, so the guard walks the whole ceiling without sleeping.
+    virtualNow = [0.0]
+
+    def _virtualSleep(seconds: float) -> None:
+        virtualNow[0] += seconds
+
     syncTask = SyncWithServerTask(
         homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
         runSync=_failingSync,
         writeRecord=_writeRecord,
+        ceilingSec=shutdownSyncCeilingSec,
+        sleepFn=_virtualSleep,
+        monotonic=lambda: virtualNow[0],
     )
     shutdownSequencer = ShutdownSequencer(
         isOnBattery=lambda: True,
@@ -864,6 +879,7 @@ def main(argv: list[str] | None = None) -> int:
     pldGpioPin = int(pw_cfg["pldGpioPin"])
     pldPowerPresentHigh = bool(pw_cfg["pldPowerPresentHigh"])
     pldPollSec = float(pw_cfg["pldPollSec"])
+    shutdownSyncCeilingSec = float(config["pi"]["homeNetwork"]["shutdownSyncCeilingSec"])
 
     # Outcome record sits next to the SQLite db (the existing data/ dir) --
     # reuse pi.database.path rather than hardcode or add an un-specced key.
@@ -878,6 +894,7 @@ def main(argv: list[str] | None = None) -> int:
             perTaskTimeoutSec=perTaskTimeoutSec,
             totalWindowCapSec=totalWindowCapSec,
             vcellFloorVolts=vcellFloorVolts,
+            shutdownSyncCeilingSec=shutdownSyncCeilingSec,
         )
 
     companion = config.get("pi", {}).get("companionService", {}) or {}
@@ -971,6 +988,9 @@ def main(argv: list[str] | None = None) -> int:
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=writeRecord,
+        # US-776-g: a transient failure is retried with backoff; no attempt
+        # starts after this ceiling (CIO: 60 s).
+        ceilingSec=shutdownSyncCeilingSec,
     )
 
     # F-103 [A-2]: wire the shutdown-splash phase-emit hook. The sequencer emits

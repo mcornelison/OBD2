@@ -2679,7 +2679,9 @@ Three bounds used to end it first, and each is removed where it lived:
 
 1. **`_buildRunSync` budget** (`__main__.py`). A further pass only started if one as long as the
    last still fitted `perTaskTimeoutSec` (20 s). Removed: the loop ends on an empty backlog, a failing
-   pass (`RuntimeError` -> the task's single retry -> `SYNC_FAILED_AFTER_RETRY`), a pass that moves
+   pass (`RuntimeError` -> the task retries with doubling waits of 2, 4, 8, 16 s ... and starts
+   no attempt after `pi.homeNetwork.shutdownSyncCeilingSec`, 60 s (US-776-g) ->
+   `SYNC_FAILED_AFTER_RETRY`), a pass that moves
    nothing, or an unreadable backlog. Custody re-reads the SAME reader, so those last cases record
    `OUTSTANDING` or `UNKNOWN`, never `DELIVERED`. Every pass still excludes
    `SHUTDOWN_DRAIN_EXCLUDED_TABLES`.

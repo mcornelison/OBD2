@@ -107,6 +107,7 @@ def _task(
         homeState=homeState,
         runSync=lambda: syncCalls.append("sync"),
         writeRecord=lambda _kd: None,
+        ceilingSec=60.0,
     )
 
 
@@ -172,6 +173,7 @@ class TestAwaySkipsAtOnce:
             homeState=lambda: HomeNetworkState.AWAY,
             runSync=lambda: None,
             writeRecord=records.append,
+            ceilingSec=60.0,
         )
 
         task.run()

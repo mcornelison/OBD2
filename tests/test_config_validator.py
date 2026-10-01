@@ -883,6 +883,26 @@ class TestHomeNetworkConfig:
 
         assert 'pi.homeNetwork.serverPingPath' in excInfo.value.missingFields
 
+    def test_homeNetwork_shutdownSyncCeiling_defaultIs60(self):
+        """US-776-g: the CIO's 60 s shutdown-sync ceiling is the default."""
+        validator = ConfigValidator(requiredKeys=[])
+
+        result = validator.validate(self._minimalTierConfig())
+
+        assert result['pi']['homeNetwork']['shutdownSyncCeilingSec'] == 60
+
+    @pytest.mark.parametrize('badValue', [0, -5, -0.5, True, '60', [60]])
+    def test_homeNetwork_badShutdownSyncCeiling_raises(self, badValue):
+        """US-776-g: a non-positive or non-numeric ceiling is rejected."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'shutdownSyncCeilingSec': badValue}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.shutdownSyncCeilingSec' in excInfo.value.missingFields
+
 
 def _baseCfg():
     return {"protocolVersion": "1", "schemaVersion": "1", "deviceId": "d",
