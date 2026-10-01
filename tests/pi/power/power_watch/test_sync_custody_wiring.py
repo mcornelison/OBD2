@@ -16,6 +16,8 @@
 # ================================================================================
 # 2026-08-29    | Rex (US-621) | Initial -- main() wiring guards for custody.
 # 2026-09-17    | Rex (US-776-a) | The drain must NOT carry budgetSec any more.
+# 2026-09-25    | Rex (US-790) | The drain reads through readDrainBacklog, the
+#                                shared reader plus the own VCELL series set.
 # ================================================================================
 ################################################################################
 """US-621 wiring guards: the service really does record sync custody."""
@@ -133,9 +135,22 @@ class TestTheDrainIsWiredToABacklogReader:
         # Arrange
         source = inspect.getsource(m.main)
 
-        # Assert -- one definition, two uses
+        # Assert -- one reader definition. Custody is given it directly.
         assert source.count("def readSyncBacklog(") == 1
-        assert source.count("backlogReader=readSyncBacklog") == 2
+        assert source.count("backlogReader=readSyncBacklog") == 1
+        # US-790: the drain reaches the SAME reader through readDrainBacklog,
+        # which differs only by excluding this shutdown's own VCELL series rows
+        # -- the set custody excludes too -- so the two still cannot disagree
+        # about which tables, or which rows, count.
+        assert source.count("backlogReader=readDrainBacklog") == 1
+        tree = ast.parse(source)
+        drainReader = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "readDrainBacklog"
+        )
+        assert [ast.unparse(stmt) for stmt in drainReader.body] == [
+            "return readSyncBacklog(excludeRows=ownTrajectoryRows.exclusions())"
+        ]
 
 
 class TestTheCustodyRecordHasItsOwnFile:

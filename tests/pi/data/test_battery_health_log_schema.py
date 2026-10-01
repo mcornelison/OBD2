@@ -68,6 +68,7 @@ class TestFreshSchema:
             'load_class',
             'notes',
             'data_source',
+            'close_reason',    # US-683: typed close discriminator
         }
         # US-426 dropped the misnamed legacy start_soc / end_soc (VCELL volts).
         assert set(cols.keys()) == expected

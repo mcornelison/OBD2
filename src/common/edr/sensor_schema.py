@@ -21,6 +21,8 @@
 # 2026-09-15    | Rex (US-764) | EDR_COLUMNS structured column list for the server
 #                               DDL generator (server_ddl.py). DDL strings untouched
 #                               (D8; SHA-256 pinned in tests/common/test_edr_contract.py).
+# 2026-09-24    | Rex (US-810) | edr_imu_derived gains the five gyro RATE bias
+#                               columns + ensureEdrImuDerivedGyroRateBiasColumns.
 # ================================================================================
 ################################################################################
 """Versioned single-source DDL for the EDR raw-sensor tables (F-114).
@@ -37,6 +39,8 @@ EXISTS`` (idempotent), snake_case columns, the ``data_source`` CHECK contract
 """
 
 from __future__ import annotations
+
+import sqlite3
 
 # Bare-int module constant, mirroring ``power_watch.RECORD_SCHEMA_VERSION``.
 # Stamped into every row (DDL DEFAULT below + the persistence subscriber, US-410).
@@ -116,9 +120,59 @@ CREATE TABLE IF NOT EXISTS edr_imu_derived (
     drive_id      INTEGER,                   -- NULL when no active RUNNING drive, as the raw table
     data_source   TEXT    NOT NULL DEFAULT 'real'
                   CHECK (data_source IN ('real','replay','physics_sim','fixture')),
-    schema_version INTEGER NOT NULL DEFAULT {SCHEMA_VERSION}
+    schema_version INTEGER NOT NULL DEFAULT {SCHEMA_VERSION},
+    gyro_bias_roll_rad_s  REAL,              -- learned gyro RATE bias, rad/s; NULL = unlearned this run
+    gyro_bias_pitch_rad_s REAL,
+    gyro_bias_yaw_rad_s   REAL,
+    gyro_bias_stops       INTEGER,           -- accepted stops in the rate-bias window
+    gyro_bias_rejected_stops INTEGER         -- stops refused as a latched rate (A-34) this run
 );
 """
+
+# --- edr_imu_derived gyro RATE bias (US-810) ----------------------------------
+# PitchFusion's learned gyro RATE bias (rad/s, 3-vector) -- NOT bias_rad, which
+# is the mount-tilt ANGLE. Appended LAST in the DDL above so a fresh table and
+# one upgraded by ensureEdrImuDerivedGyroRateBiasColumns (ADD COLUMN appends)
+# have the same column order. The three rate columns are NULL until a stop is
+# accepted in this run: an unlearned bias and a measured zero never share a
+# stored value. gyro_bias_rejected_stops is what tells "never learned" apart
+# from "every stop rejected as a latch" -- both leave the rates NULL.
+EDR_IMU_DERIVED_GYRO_RATE_BIAS_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("gyro_bias_roll_rad_s", "REAL"),
+    ("gyro_bias_pitch_rad_s", "REAL"),
+    ("gyro_bias_yaw_rad_s", "REAL"),
+    ("gyro_bias_stops", "INTEGER"),
+    ("gyro_bias_rejected_stops", "INTEGER"),
+)
+
+
+def ensureEdrImuDerivedGyroRateBiasColumns(conn: sqlite3.Connection) -> list[str]:
+    """Add the US-810 gyro RATE bias columns to an existing ``edr_imu_derived``.
+
+    Replay-safe per specs/design-patterns.md section 10: the Pi has no migration
+    ledger, so this runs on EVERY boot. Each column is an explicit ADD COLUMN
+    guarded by PRAGMA table_info, so a second run issues no ALTER at all and no
+    row is read, copied or rewritten. Existing rows read NULL in every new
+    column -- their bias was never recorded, and says so.
+
+    A missing table is NOT treated as "nothing to do": the probe then reports
+    every column absent and the ALTER raises ``no such table``. The caller
+    creates the table first, so reaching that is a defect that must be loud.
+
+    Args:
+        conn: Open SQLite connection to the Pi database.
+
+    Returns:
+        The column names added by THIS call, in order; empty when all present.
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(edr_imu_derived)")}
+    added: list[str] = []
+    for name, sqliteType in EDR_IMU_DERIVED_GYRO_RATE_BIAS_COLUMNS:
+        if name in existing:
+            continue
+        conn.execute(f"ALTER TABLE edr_imu_derived ADD COLUMN {name} {sqliteType}")
+        added.append(name)
+    return added
 
 # --- Indexes (drive_id + ts on both tables) -- ADR section 2.2 ----------------
 INDEX_EDR_IMU_DERIVED_DRIVE_ID = (
@@ -203,6 +257,12 @@ EDR_COLUMNS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("drive_id", "int", True),
         ("data_source", "label", False),
         ("schema_version", "int", False),
+        # US-810: gyro RATE bias (rad/s), nullable -- NULL is the unlearned state.
+        ("gyro_bias_roll_rad_s", "float", True),
+        ("gyro_bias_pitch_rad_s", "float", True),
+        ("gyro_bias_yaw_rad_s", "float", True),
+        ("gyro_bias_stops", "int", True),
+        ("gyro_bias_rejected_stops", "int", True),
     ),
     "edr_light_sample": (
         ("ts_utc", "iso_ts", False),
@@ -234,4 +294,6 @@ __all__ = [
     "EDR_SCHEMAS",
     "EDR_INDEXES",
     "EDR_COLUMNS",
+    "EDR_IMU_DERIVED_GYRO_RATE_BIAS_COLUMNS",
+    "ensureEdrImuDerivedGyroRateBiasColumns",
 ]

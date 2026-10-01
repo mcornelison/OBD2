@@ -8,55 +8,11 @@
 #     config (a poisoned module default must not move it), and the regression
 #     check holds: a genuinely stuck sensor is still detected, and the mag/gyro
 #     pairing still pairs at stateHz 1.
-#
-#     2026-09-28 (ARCH-064, Controller Rulings 14/15/16, Task 5 fix rounds 1-2):
-#     `sampleHz` is no longer 4 -- ARCH-064 raised it to 50 Hz as the IMU's
-#     INTERNAL acquisition/fusion read rate (persistHz/stateHz, the STORED
-#     rates, stay under the 4 Hz ceiling; see
-#     specs/data-acquisition-architecture.md §4.2.a). The "shipped config"
-#     tests below are updated to the amended relationship rather than deleted
-#     -- they still prove the same two properties (rate comes from config,
-#     not a poisoned module default) at the NEW shipped rate. The gate's
-#     stuck-value window is unaffected in WALL-CLOCK terms (still 2.0 s; only
-#     the sample-count it takes to cover that changed, 8 -> 100). The bridge's
-#     mag/gyro pairing window is NOT unaffected -- at 50 Hz the naive
-#     MAG_MAX_AGE_POLLS/sampleHz collapses to 0.1 s, tight enough that an
-#     ordinary scheduler hiccup drops a paired gyro reading, so Ruling 14
-#     floors it at MIN_PAIRING_WINDOW_S
-#     (`imu_state_bridge.ImuStateBridge.__init__`). Ruling 16 set that floor
-#     to 1.25 s -- EXACTLY the pre-ARCH-064 window (5 polls at 4 Hz) -- so
-#     pairing behaviour at the shipped rate is unchanged from before, and the
-#     display's 1.0 s state-write interval stays INSIDE the window (the
-#     invariant tests/ui/test_carousel_heading_bare_bearing_recorded_pass.py
-#     pins).
 # Author: Rex (US-796-f)
 # Creation Date: 2026-09-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
-#
-# Modification History:
-# ================================================================================
-# Date          | Author       | Description
-# ================================================================================
-# 2026-09-21    | Rex (US-796-f) | Initial -- pinned at the shipped 4 Hz triple.
-# 2026-09-28    | Atlas          | ARCH-064 Rulings 14/15 (Task 5 fix round 1):
-#               | (ARCH-064)     | updated the four tests that read the shipped
-#               |                | config.json to the amended sampleHz 50
-#               |                | relationship -- gate run-limit 8 -> 100
-#               |                | (same 2.0 s wall-clock window); bridge
-#               |                | pairing window 1.25 s -> 0.5 s (Ruling 14's
-#               |                | floor, not the un-floored 0.1 s).
-# 2026-09-28    | Atlas          | ARCH-064 Ruling 16 (Task 5 fix round 2):
-#               | (ARCH-064)     | MIN_PAIRING_WINDOW_S raised 0.5 -> 1.25 s
-#               |                | (exactly the pre-ARCH-064 window) --
-#               |                | re-pinned the bridge pairing-window tests
-#               |                | to 1.25 s at BOTH 4 Hz and the shipped
-#               |                | 50 Hz; the two rates now agree exactly.
-# ================================================================================
 ################################################################################
-"""US-796-f: the rate-derived IMU consumers. Updated 2026-09-28 (ARCH-064) for
-sampleHz 50 (internal read) / persistHz 2 / stateHz 1 (stored, under the 4 Hz
-ceiling); the bridge's mag/gyro pairing window is floored at 1.25 s
-(Ruling 16), so it reads the same at 4 Hz and 50 Hz."""
+"""US-796-f: the rate-derived IMU consumers, pinned at 4 Hz / stateHz 1."""
 
 from __future__ import annotations
 
@@ -71,9 +27,8 @@ import pi.sensors.sensor_reader as readerModule
 from pi.bus.bus import SampleBus
 from pi.bus.sample import Sample
 from pi.sensors.imu_state_bridge import (
+    DEFAULT_MAG_MAX_AGE_S,
     IMU_BODY_FRAME,
-    MAG_MAX_AGE_POLLS,
-    MIN_PAIRING_WINDOW_S,
     STANDARD_GRAVITY_MS2,
     ImuStateBridge,
     createImuStateBridgeFromConfig,
@@ -89,51 +44,24 @@ from pi.sensors.sensor_reader import TOPIC_IMU_MAG, createSensorReadersFromConfi
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# A general low-rate test point (US-796-b's 2026-09-21 shipped triple; no
-# longer the shipped sampleHz after ARCH-064 -- see _SHIPPED_SAMPLE_HZ below
-# -- but still a valid, explicit rate to construct consumers at directly, and
-# BELOW Ruling 14's MIN_PAIRING_WINDOW_S floor is not engaged here).
+# The shipped triple (US-796-b, CIO ruling 2026-09-21). Exact values.
 _SAMPLE_HZ = 4
 _STATE_HZ = 1
 
-# The rate these windows were designed at before US-796-b, AND (ARCH-064,
-# 2026-09-28) the rate config.json ships again today, for a different reason:
-# the IMU's internal acquisition/fusion read, not a stored rate. Two separate
-# rulings landing on the same number is a coincidence worth naming so it is
-# not misread as one.
+# The rate these windows were designed at before US-796-b.
 _LEGACY_SAMPLE_HZ = 50
-
-# The rate config.json actually ships (ARCH-064, 2026-09-28): sampleHz 50 as
-# the internal fusion read; persistHz/stateHz stay 2/1 under the 4 Hz ceiling
-# (specs/data-acquisition-architecture.md §4.2.a). Named separately from
-# _LEGACY_SAMPLE_HZ above even though the value is the same, so a reader does
-# not have to infer "shipped" from a comment about the past.
-_SHIPPED_SAMPLE_HZ = 50
-
-# At 50 Hz: 2.0 s dwell * 50 samples/s = 100 bit-identical samples -- the SAME
-# 2.0 s wall-clock window the 8-sample limit covered at 4 Hz (8/4 == 100/50).
-_EXPECTED_RUN_LIMIT_AT_SHIPPED_HZ = 100
-
-# At 50 Hz: 5 polls / 50 Hz = 0.1 s, BELOW Ruling 14/16's
-# MIN_PAIRING_WINDOW_S (1.25 s) floor -- the floor applies, so the actual
-# pairing window is 1.25 s, not the un-floored 0.1 s. 1.25 s is also EXACTLY
-# the 4 Hz window (Ruling 16): the two rates now agree.
-_EXPECTED_PAIRING_WINDOW_AT_SHIPPED_HZ_S = MIN_PAIRING_WINDOW_S
 
 # A module default no config would ever carry. If a consumer resolves its rate
 # from the default instead of from config, its derived window moves to this
 # rate's value and the assertion names the defect.
-_POISON_HZ = 1000
+# ARCH-064 (CIO ruling 2026-09-28): the SHIPPED sampleHz is 50 -- the AHRS's internal
+# read rate -- so the invariance gate's run limit at the shipped rate is 2.0 s x 50 = 100.
+# The 4 Hz values above stay for the tests that build a 4 Hz reader explicitly.
+# (Merged 2026-10-01 with Sprint 94's US-803-b version of this file.)
+_SHIPPED_SAMPLE_HZ = 50
+_EXPECTED_RUN_LIMIT_AT_SHIPPED_HZ = 100
 
-# A SEPARATE poison rate for the bridge's pairing-window test only (Ruling 14
-# fix round). At the shipped 50 Hz, both the correct rate (5/50=0.1 s) and
-# _POISON_HZ=1000 (5/1000=0.005 s) land BELOW MIN_PAIRING_WINDOW_S and are
-# floored to the SAME value -- the floor would silently defeat the "config
-# wins over the poisoned default" check. A poison rate whose window survives
-# the floor un-collapsed keeps the check discriminating: 5/2=2.5 s, clearly
-# not 1.25 s (Ruling 16's floor), if the poisoned default were used instead
-# of config.
-_POISON_HZ_ABOVE_FLOOR = 2
+_POISON_HZ = 1000
 
 # At 4 Hz: 4 samples/s * 2.0 s dwell = 8 bit-identical samples, which spans
 # 8 / 4 = 2.0 s of wall clock -- the SAME window 100 samples spanned at 50 Hz.
@@ -289,84 +217,49 @@ def test_ditheringMagAtFourHz_isNeverStale():
 
 
 # ---------------------------------------------------------------------------
-# State bridge: the magnetometer/gyro pairing window, and Ruling 14/16's floor
+# State bridge: the magnetometer/gyro pairing window at 4 Hz
 # ---------------------------------------------------------------------------
 
 
 def test_bridgeAtFourHz_pairingWindowIsOnePointTwoFiveSeconds():
     """
-    Given: the bridge at a 4 Hz sample rate
+    Given: the bridge at the shipped 4 Hz sample rate
     When: the mag/gyro pairing window is derived
-    Then: it is MAG_MAX_AGE_POLLS (5) * 0.25 s = 1.25 s -- Ruling 16 set
-          MIN_PAIRING_WINDOW_S to EXACTLY this value, so the floor and the
-          4 Hz window now coincide (>=, not >): pairing behaviour at 4 Hz is
-          unchanged, by design, not merely "still above some other floor"
+    Then: it is 1.25 s -- the magMaxAgeSec default (US-803-b), which is the
+          5 polls * 0.25 s the window was counted in before the key carried seconds
     """
     bridge = ImuStateBridge(None, "unused", sampleHz=_SAMPLE_HZ, stateHz=_STATE_HZ)
 
     assert bridge._magMaxAgeS == _EXPECTED_PAIRING_WINDOW_AT_4HZ_S
-    assert bridge._magMaxAgeS == MAG_MAX_AGE_POLLS * _BURST_INTERVAL_S
-    assert bridge._magMaxAgeS >= MIN_PAIRING_WINDOW_S
-    assert bridge._magMaxAgeS == MIN_PAIRING_WINDOW_S, (
-        "Ruling 16: the floor IS the pre-ARCH-064 4 Hz window, not merely below it"
-    )
+    assert bridge._magMaxAgeS == DEFAULT_MAG_MAX_AGE_S == 5 * _BURST_INTERVAL_S
 
 
-def test_bridgeAtShippedHz_pairingWindowIsFlooredAtOnePointTwoFiveSeconds_notPointOne():
+def test_bridgeFromShippedConfig_pairingWindowIsTheFourHzValue():
     """
-    Given: the bridge at the shipped 50 Hz sample rate (ARCH-064 Ruling 14,
-           floor raised to 1.25 s by Ruling 16)
-    When: the mag/gyro pairing window is derived
-    Then: it is MIN_PAIRING_WINDOW_S (1.25 s), NOT the un-floored
-          MAG_MAX_AGE_POLLS / 50 = 0.1 s, and EQUAL to the 4 Hz window (Ruling
-          16: 1.25 s is exactly the pre-ARCH-064 window, so a scheduler hiccup
-          up to ~1.25 s must not drop a paired gyro reading, and the display's
-          1.0 s state-write interval stays inside the window)
-    """
-    bridge = ImuStateBridge(None, "unused", sampleHz=_SHIPPED_SAMPLE_HZ, stateHz=_STATE_HZ)
-
-    assert bridge._magMaxAgeS == _EXPECTED_PAIRING_WINDOW_AT_SHIPPED_HZ_S
-    assert bridge._magMaxAgeS == MIN_PAIRING_WINDOW_S
-    assert bridge._magMaxAgeS == _EXPECTED_PAIRING_WINDOW_AT_4HZ_S
-    unflooredWindow = MAG_MAX_AGE_POLLS / _SHIPPED_SAMPLE_HZ
-    assert unflooredWindow < MIN_PAIRING_WINDOW_S, "the floor must actually be engaging here"
-    assert bridge._magMaxAgeS != unflooredWindow
-
-
-def test_bridgeFromShippedConfig_pairingWindowIsFlooredAtOnePointTwoFiveSeconds():
-    """
-    Given: the shipped config.json IMU section (sampleHz 50, ARCH-064)
+    Given: the shipped config.json IMU section
     When: the bridge is built through the production factory
-    Then: its pairing window is 1.25 s (Ruling 16's floor), not the
-          un-floored 0.1 s -- and IS the pre-ARCH-064 4 Hz value, not merely
-          close to it
+    Then: its pairing window is 1.25 s (4 Hz), not 0.1 s (50 Hz)
     """
     bridge = createImuStateBridgeFromConfig(_busConfig(_shippedImu()), SampleBus())
 
     assert bridge is not None
-    assert bridge._magMaxAgeS == _EXPECTED_PAIRING_WINDOW_AT_SHIPPED_HZ_S
     assert bridge._magMaxAgeS == _EXPECTED_PAIRING_WINDOW_AT_4HZ_S
 
 
 def test_bridgeFromConfig_ignoresTheModuleDefaultRate(monkeypatch: pytest.MonkeyPatch):
     """
-    Given: the bridge module's fallback IMU rate poisoned to a rate whose
-           window survives Ruling 16's floor un-collapsed (2 Hz -> 2.5 s),
-           so flooring cannot make the poisoned path coincidentally match
-           the correct answer
-    When: the bridge is built from a config that states sampleHz 50
-    Then: the pairing window is still 1.25 s (the floored, shipped-rate
-          value) -- had the rate come from the poisoned default it would be
-          2.5 s
+    Given: the bridge module's fallback IMU rate poisoned to 1000 Hz
+    When: the bridge is built from a config that states sampleHz 4
+    Then: the pairing window is still 1.25 s. Since US-803-b the window is the
+          magMaxAgeSec key in seconds and no rate sizes it; before, a rate
+          taken from the default would have made it 0.005 s and nothing paired
     """
-    monkeypatch.setattr(bridgeModule, "DEFAULT_IMU_SAMPLE_HZ", _POISON_HZ_ABOVE_FLOOR)
+    monkeypatch.setattr(bridgeModule, "DEFAULT_IMU_SAMPLE_HZ", _POISON_HZ)
 
     bridge = createImuStateBridgeFromConfig(_busConfig(_shippedImu()), SampleBus())
 
     assert bridge is not None
-    assert bridge._magMaxAgeS == _EXPECTED_PAIRING_WINDOW_AT_SHIPPED_HZ_S
-    poisonedWindow = MAG_MAX_AGE_POLLS / _POISON_HZ_ABOVE_FLOOR
-    assert bridge._magMaxAgeS != poisonedWindow
+    assert bridge._magMaxAgeS == _EXPECTED_PAIRING_WINDOW_AT_4HZ_S
 
 
 @pytest.mark.parametrize(
