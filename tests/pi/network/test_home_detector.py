@@ -14,6 +14,7 @@
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-188
 # 2026-09-13    | Rex          | US-743: case-insensitive SSID guard (casefold)
+# 2026-09-30    | Rex          | US-776-b: nmcli SSID reader tests
 # ================================================================================
 ################################################################################
 
@@ -27,14 +28,14 @@ therefore asserts on the four ``HomeNetworkState`` branches plus:
 
 * Defense in depth: SSID match AND subnet match must BOTH be true for
   ``isAtHomeWifi()`` -- catches a spoofed home-SSID on a foreign router.
-* Subprocess infrastructure failure (iwgetid missing, timeout) surfaces
+* Subprocess infrastructure failure (nmcli missing, timeout) surfaces
   as ``UNKNOWN`` -- distinct from AWAY.
 * Transition logging: a state change from one HomeNetworkState to another
   emits an INFO log line with old + new state.  First observation does
   NOT log (there is no "previous").
 
 The detector module is Windows-testable -- all subprocess / HTTP boundaries
-are injection seams.  No real sockets, no real ``iwgetid``.
+are injection seams.  No real sockets, no real ``nmcli``.
 """
 
 from __future__ import annotations
@@ -49,8 +50,8 @@ from unittest.mock import patch
 
 import pytest
 
-from src.pi.network import HomeNetworkDetector, HomeNetworkState
-from src.pi.network.home_detector import _readLocalIps, _readSsidViaIwgetid
+from src.pi.network import HomeNetworkDetector, HomeNetworkState, home_detector
+from src.pi.network.home_detector import _readLocalIps, _readSsidViaNmcli
 
 # =============================================================================
 # Fixtures
@@ -79,6 +80,34 @@ def _baseConfig(**overrides: Any) -> dict[str, Any]:
             cursor = cursor.setdefault(key, {})
         cursor[keys[-1]] = value
     return config
+
+
+def _nmcliCompleted(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
+    """A finished ``nmcli -t -f ACTIVE,SSID device wifi`` run."""
+    return subprocess.CompletedProcess(
+        args=["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi", "list"],
+        returncode=returncode, stdout=stdout, stderr="",
+    )
+
+
+def _fakeRun(
+    nmcli: subprocess.CompletedProcess[str] | BaseException,
+    hostnameStdout: str,
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """A ``subprocess.run`` stand-in that answers nmcli and ``hostname -I``."""
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if argv[0] == "nmcli":
+            if isinstance(nmcli, BaseException):
+                raise nmcli
+            return nmcli
+        if argv[0] == "hostname":
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout=hostnameStdout, stderr="",
+            )
+        raise AssertionError(f"unexpected subprocess call: {argv}")
+
+    return run
 
 
 class _FakeResponse:
@@ -169,7 +198,7 @@ class TestHomeNetworkStateBranches:
         assert httpOpener.calls == []  # type: ignore[attr-defined]
 
     def test_noWifiInfra_returnsUnknown(self) -> None:
-        """iwgetid command missing (returns None) -> UNKNOWN."""
+        """nmcli command missing (returns None) -> UNKNOWN."""
         detector = HomeNetworkDetector(
             _baseConfig(),
             ssidReader=lambda: None,
@@ -181,7 +210,7 @@ class TestHomeNetworkStateBranches:
         assert detector.getHomeNetworkState() == HomeNetworkState.UNKNOWN
 
     def test_ssidReaderReturnsEmpty_returnsAway(self) -> None:
-        """iwgetid returns empty string (not connected) -> AWAY, not UNKNOWN.
+        """SSID reader returns empty string (not connected) -> AWAY, not UNKNOWN.
 
         UNKNOWN is reserved for infra-missing (tool unavailable / timeout).
         Plain 'not connected to any WiFi' is a deterministic AWAY answer.
@@ -533,46 +562,96 @@ class TestTransitionLogging:
 
 
 # =============================================================================
-# Helpers (_readSsidViaIwgetid, _readLocalIps)
+# Helpers (_readSsidViaNmcli, _readLocalIps)
 # =============================================================================
 
 
 class TestSubprocessHelpers:
     """The default subprocess helpers must degrade gracefully off-Pi."""
 
-    def test_readSsidViaIwgetid_fileNotFound_returnsNone(self) -> None:
-        """iwgetid command missing -> None (UNKNOWN signal)."""
+    def test_readSsidViaNmcli_connected_returnsActiveSsid(self) -> None:
+        """The 'yes' row is the associated AP; its SSID is returned."""
+        completed = _nmcliCompleted("no:CoffeeShop\nyes:DeathstarWifi\nno:Other\n")
         with patch("src.pi.network.home_detector.subprocess.run",
-                   side_effect=FileNotFoundError("iwgetid not found")):
-            result = _readSsidViaIwgetid()
+                   return_value=completed):
+            result = _readSsidViaNmcli()
+        assert result == "DeathstarWifi"
+
+    def test_readSsidViaNmcli_noActiveRow_returnsEmptyString(self) -> None:
+        """nmcli ran but no AP is active -> "" (AWAY signal)."""
+        completed = _nmcliCompleted("no:CoffeeShop\nno:Other\n")
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   return_value=completed):
+            result = _readSsidViaNmcli()
+        assert result == ""
+
+    def test_readSsidViaNmcli_emptyList_returnsEmptyString(self) -> None:
+        completed = _nmcliCompleted("")
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   return_value=completed):
+            result = _readSsidViaNmcli()
+        assert result == ""
+
+    def test_readSsidViaNmcli_nonZeroReturn_returnsEmptyString(self) -> None:
+        """nmcli exits non-zero (e.g. no WiFi device) -> "" as before."""
+        completed = _nmcliCompleted("", returncode=10)
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   return_value=completed):
+            result = _readSsidViaNmcli()
+        assert result == ""
+
+    def test_readSsidViaNmcli_fileNotFound_returnsNone(self) -> None:
+        """nmcli binary missing -> None (UNKNOWN signal)."""
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   side_effect=FileNotFoundError("nmcli not found")):
+            result = _readSsidViaNmcli()
         assert result is None
 
-    def test_readSsidViaIwgetid_timeout_returnsNone(self) -> None:
+    def test_readSsidViaNmcli_timeout_returnsNone(self) -> None:
         """Subprocess timeout -> None (UNKNOWN signal)."""
         with patch("src.pi.network.home_detector.subprocess.run",
-                   side_effect=subprocess.TimeoutExpired(cmd="iwgetid", timeout=2.0)):
-            result = _readSsidViaIwgetid()
+                   side_effect=subprocess.TimeoutExpired(cmd="nmcli", timeout=2.0)):
+            result = _readSsidViaNmcli()
         assert result is None
 
-    def test_readSsidViaIwgetid_success_returnsStrippedSsid(self) -> None:
-        completed = subprocess.CompletedProcess(
-            args=["iwgetid", "-r"], returncode=0, stdout="DeathStarWiFi\n",
-            stderr="",
-        )
+    def test_readSsidViaNmcli_osError_returnsNone(self) -> None:
         with patch("src.pi.network.home_detector.subprocess.run",
-                   return_value=completed):
-            result = _readSsidViaIwgetid()
-        assert result == "DeathStarWiFi"
+                   side_effect=OSError("exec format error")):
+            result = _readSsidViaNmcli()
+        assert result is None
 
-    def test_readSsidViaIwgetid_nonZeroReturn_returnsEmptyString(self) -> None:
-        """Not connected -> iwgetid exits non-zero -> "" (AWAY signal)."""
-        completed = subprocess.CompletedProcess(
-            args=["iwgetid", "-r"], returncode=255, stdout="", stderr="",
-        )
+    def test_readSsidViaNmcli_escapedColonAndBackslash_unescaped(self) -> None:
+        """Terse mode escapes ':' and '\\' inside values; the SSID is unescaped."""
+        completed = _nmcliCompleted("yes:Net\\:Work\\\\5G\n")
         with patch("src.pi.network.home_detector.subprocess.run",
                    return_value=completed):
-            result = _readSsidViaIwgetid()
-        assert result == ""
+            result = _readSsidViaNmcli()
+        assert result == "Net:Work\\5G"
+
+    def test_readSsidViaNmcli_command_isTerseActiveSsidWithBoundedTimeout(self) -> None:
+        """nmcli, terse ACTIVE,SSID, UTF-8 decode, timeout no longer than iwgetid's 2 s."""
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   return_value=_nmcliCompleted("yes:DeathstarWifi\n")) as run:
+            _readSsidViaNmcli()
+        argv = run.call_args.args[0]
+        kwargs = run.call_args.kwargs
+        assert argv[0] == "nmcli"
+        assert argv[argv.index("-t")] == "-t"
+        assert argv[argv.index("-f") + 1] == "ACTIVE,SSID"
+        assert kwargs["encoding"] == "utf-8"
+        assert 0 < kwargs["timeout"] <= 2.0
+
+    def test_defaultSsidReader_isNmcli(self) -> None:
+        detector = HomeNetworkDetector(_baseConfig())
+        assert detector._ssidReader is _readSsidViaNmcli
+        assert not hasattr(home_detector, "_readSsidViaIwgetid")
+
+    def test_readSsidViaNmcli_isOnlyNmcliCall_noIwgetid(self) -> None:
+        """The production reader never shells out to iwgetid (absent on the Pi)."""
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   return_value=_nmcliCompleted("")) as run:
+            _readSsidViaNmcli()
+        assert [c.args[0][0] for c in run.call_args_list] == ["nmcli"]
 
     def test_readLocalIps_success_returnsList(self) -> None:
         completed = subprocess.CompletedProcess(
@@ -589,6 +668,66 @@ class TestSubprocessHelpers:
                    side_effect=FileNotFoundError("hostname not found")):
             result = _readLocalIps()
         assert result == []
+
+
+# =============================================================================
+# Default nmcli reader through _computeState (US-776-b)
+# =============================================================================
+
+
+class TestNmcliReaderThroughState:
+    """The DEFAULT reader, fed faked nmcli output, lands on each state.
+
+    No ``ssidReader`` is injected, so these run the production nmcli parse.
+    The SSID-plus-subnet double check and the US-743 casefold must hold.
+    """
+
+    def _state(
+        self,
+        nmcli: subprocess.CompletedProcess[str] | BaseException,
+        hostnameStdout: str = "10.27.27.28 \n",
+        status: int = 200,
+    ) -> HomeNetworkState:
+        detector = HomeNetworkDetector(
+            _baseConfig(),
+            httpOpener=_openerReturning(_FakeResponse(status=status)),
+            apiKey="test-key",
+        )
+        with patch("src.pi.network.home_detector.subprocess.run",
+                   side_effect=_fakeRun(nmcli, hostnameStdout)):
+            return detector._computeState()
+
+    def test_connectedHomeSsid_homeSubnet_serverUp_atHomeReachable(self) -> None:
+        # Live router case ("DeathstarWifi") vs config "DeathStarWiFi" -- US-743.
+        state = self._state(_nmcliCompleted("no:Neighbour\nyes:DeathstarWifi\n"))
+        assert state == HomeNetworkState.AT_HOME_SERVER_REACHABLE
+
+    def test_connectedHomeSsid_homeSubnet_serverDown_atHomeDown(self) -> None:
+        state = self._state(_nmcliCompleted("yes:DeathStarWiFi\n"), status=503)
+        assert state == HomeNetworkState.AT_HOME_SERVER_DOWN
+
+    def test_connectedHomeSsid_foreignSubnet_away(self) -> None:
+        """SSID match alone is not home: the subnet check still gates AT_HOME."""
+        state = self._state(
+            _nmcliCompleted("yes:DeathStarWiFi\n"), hostnameStdout="192.168.1.42\n",
+        )
+        assert state == HomeNetworkState.AWAY
+
+    def test_connectedOtherSsid_homeSubnet_away(self) -> None:
+        state = self._state(_nmcliCompleted("yes:CoffeeShop\n"))
+        assert state == HomeNetworkState.AWAY
+
+    def test_disconnected_away(self) -> None:
+        state = self._state(_nmcliCompleted("no:DeathStarWiFi\nno:CoffeeShop\n"))
+        assert state == HomeNetworkState.AWAY
+
+    def test_nmcliMissing_unknown(self) -> None:
+        state = self._state(FileNotFoundError("nmcli"))
+        assert state == HomeNetworkState.UNKNOWN
+
+    def test_nmcliTimeout_unknown(self) -> None:
+        state = self._state(subprocess.TimeoutExpired(cmd="nmcli", timeout=2.0))
+        assert state == HomeNetworkState.UNKNOWN
 
 
 # =============================================================================

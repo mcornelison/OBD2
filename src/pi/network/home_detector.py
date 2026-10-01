@@ -15,6 +15,7 @@
 # 2026-04-18    | Rex          | Initial implementation for US-188
 # 2026-09-13    | Rex          | US-743: SSID compared case-insensitively (casefold)
 # 2026-09-30    | Rex          | US-776-a: serverPingPath fallback /api/v1/health
+# 2026-09-30    | Rex          | US-776-b: SSID read via nmcli (no iwgetid on Pi)
 # ================================================================================
 ################################################################################
 
@@ -23,7 +24,8 @@ Pi home-network detection.
 
 :class:`HomeNetworkDetector` composes three signals:
 
-1. ``iwgetid -r`` for the currently-associated WiFi SSID
+1. ``nmcli -t -f ACTIVE,SSID device wifi`` for the currently-associated
+   WiFi SSID
 2. ``hostname -I`` for the Pi's local IPv4/IPv6 addresses
 3. An HTTP GET against ``{companionService.baseUrl}{serverPingPath}`` with
    the ``X-API-Key`` header and a bounded timeout
@@ -47,11 +49,11 @@ States
 * ``AT_HOME_SERVER_DOWN``      -- SSID + subnet both match but ping fails
 * ``AWAY``                     -- not on home WiFi (by either check)
 * ``UNKNOWN``                  -- SSID-detection infra is unavailable
-  (``iwgetid`` missing or timing out).  Distinguished from AWAY so the
+  (``nmcli`` missing or timing out).  Distinguished from AWAY so the
   orchestrator can decide separately (e.g., "wait and retry" vs
   "definitely shut down without sync").
 
-Note that ``iwgetid`` returning a non-zero exit code with no SSID (i.e.,
+Note that ``nmcli`` listing no active AP, or exiting non-zero (i.e.,
 "not connected to anything") maps to ``AWAY`` -- that is a deterministic
 "not home" answer, not a lack of information.
 """
@@ -60,6 +62,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 import subprocess
 import urllib.error
 import urllib.request
@@ -73,9 +76,12 @@ logger = logging.getLogger(__name__)
 
 
 # Subprocess budgets -- both helpers shell out briefly.  Keep them short
-# so a hung iwgetid can't stall the whole detector for more than a blink.
-_IWGETID_TIMEOUT_SECONDS = 2.0
+# so a hung nmcli can't stall the whole detector for more than a blink.
+_NMCLI_TIMEOUT_SECONDS = 2.0
 _HOSTNAME_TIMEOUT_SECONDS = 2.0
+
+# nmcli terse mode backslash-escapes ':' and '\' inside field values.
+_NMCLI_TERSE_ESCAPE = re.compile(r"\\(.)")
 
 
 # =============================================================================
@@ -97,21 +103,35 @@ class HomeNetworkState(StrEnum):
 # =============================================================================
 
 
-def _readSsidViaIwgetid(timeout: float = _IWGETID_TIMEOUT_SECONDS) -> str | None:
+def _unescapeNmcliTerse(value: str) -> str:
+    """Undo nmcli terse-mode escaping (``\\:`` -> ``:``, ``\\\\`` -> ``\\``)."""
+    return _NMCLI_TERSE_ESCAPE.sub(r"\1", value)
+
+
+def _readSsidViaNmcli(timeout: float = _NMCLI_TIMEOUT_SECONDS) -> str | None:
     """Return the current WiFi SSID, or a signal value.
+
+    Runs ``nmcli -t -f ACTIVE,SSID device wifi list --rescan no`` and takes
+    the SSID of the row whose ACTIVE field is ``yes``.  ``--rescan no``
+    reads NetworkManager's cached AP list: the default rescan can outlast
+    the timeout, and the associated AP is always in the cache.
 
     Returns:
         * ``None`` if the detection infrastructure is unavailable
-          (``iwgetid`` binary missing, subprocess timeout, OS error).
+          (``nmcli`` binary missing, subprocess timeout, OS error).
           Callers interpret this as :attr:`HomeNetworkState.UNKNOWN`.
-        * An empty string if ``iwgetid`` ran but returned non-zero
-          (not connected to any WiFi).  Callers interpret this as
+        * An empty string if ``nmcli`` exited non-zero or listed no active
+          AP (not connected to any WiFi).  Callers interpret this as
           :attr:`HomeNetworkState.AWAY`.
-        * The stripped SSID string on success.
+        * The unescaped SSID string on success.
     """
     try:
         result = subprocess.run(
-            ["iwgetid", "-r"],
+            # US-776-b: replaced `iwgetid -r` -- iwgetid is not installed on
+            # the Pi, so the reader returned None on every call and the Pi
+            # never believed it was home.  nmcli is installed.
+            ["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi", "list",
+             "--rescan", "no"],
             # An SSID is USER-AUTHORED and routinely non-ASCII, so this is the
             # one site in the tree where the locale-default codec is not a
             # theoretical exposure: a household name with an accent in it
@@ -125,7 +145,13 @@ def _readSsidViaIwgetid(timeout: float = _IWGETID_TIMEOUT_SECONDS) -> str | None
         return None
     if result.returncode != 0:
         return ""
-    return result.stdout.strip()
+    for line in result.stdout.splitlines():
+        # ACTIVE is yes/no and never contains ':', so the first ':' always
+        # separates it from the (possibly escaped) SSID.
+        active, separator, ssid = line.partition(":")
+        if separator and active == "yes":
+            return _unescapeNmcliTerse(ssid)
+    return ""
 
 
 def _readLocalIps(timeout: float = _HOSTNAME_TIMEOUT_SECONDS) -> list[str]:
@@ -155,7 +181,7 @@ def _readLocalIps(timeout: float = _HOSTNAME_TIMEOUT_SECONDS) -> list[str]:
 class HomeNetworkDetector:
     """Detect whether the Pi is at home and whether the server is reachable.
 
-    Construction is side-effect-free.  Every external call (iwgetid,
+    Construction is side-effect-free.  Every external call (nmcli,
     hostname -I, HTTP ping) is deferred until :meth:`isAtHomeWifi`,
     :meth:`isServerReachable`, or :meth:`getHomeNetworkState` is invoked.
     """
@@ -176,7 +202,7 @@ class HomeNetworkDetector:
                 ``pi.homeNetwork`` + ``pi.companionService.baseUrl``.
             ssidReader: Callable returning the current SSID, ``""`` for
                 "not connected", or ``None`` for "infra unavailable".
-                Defaults to :func:`_readSsidViaIwgetid`.
+                Defaults to :func:`_readSsidViaNmcli`.
             ipReader: Callable returning the list of local IPs (strings).
                 Defaults to :func:`_readLocalIps`.
             httpOpener: :func:`urllib.request.urlopen`-compatible callable
@@ -201,7 +227,7 @@ class HomeNetworkDetector:
         self._pingPath: str = str(homeNet.get("serverPingPath", "/api/v1/health"))
         self._baseUrl: str = str(companion.get("baseUrl", "")).rstrip("/")
 
-        self._ssidReader: Callable[[], str | None] = ssidReader or _readSsidViaIwgetid
+        self._ssidReader: Callable[[], str | None] = ssidReader or _readSsidViaNmcli
         self._ipReader: Callable[[], list[str]] = ipReader or _readLocalIps
         self._httpOpener: Callable[..., Any] = httpOpener or urllib.request.urlopen
         self._apiKey: str | None = apiKey
