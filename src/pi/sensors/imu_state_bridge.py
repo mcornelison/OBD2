@@ -98,6 +98,8 @@
 #               |              | guard trips (the 09-14 confident 70 deg pitch).
 # 2026-09-22    | Rex (US-801) | DEFAULT_IMU_SAMPLE_HZ / DEFAULT_STATE_HZ imported
 #               |              | from the single definition (now 4 / 1).
+# 2026-09-24    | Rex (US-810) | derivedSnapshot carries the gyro RATE bias
+#               |              | (None -> three Nones) and its stop counts.
 # 2026-09-28    | Atlas        | Fusion engine selected by pi.sensors.imu.
 #               | (ARCH-064)   | fusionEngine ("imufusion" default | "legacy");
 #               |              | an engine that cannot be built falls back to
@@ -201,7 +203,7 @@ __all__ = [
     "IMU_BODY_FRAME_B",
     "IMU_BODY_FRAME_C",
     "IMU_STATE_FILENAME",
-    "MAG_MAX_AGE_POLLS",
+    "DEFAULT_MAG_MAX_AGE_S",
     "MAG_ROTATION_MIN_RATIO",
     "MAG_ROTATION_MIN_YAW_RAD",
     "MAG_ROT_STEP_S",
@@ -209,7 +211,6 @@ __all__ = [
     "MAG_SOURCE_ICM_SHADOW",
     "MAG_SOURCE_NONE",
     "MAX_GRADE_PITCH_DEG",
-    "MIN_PAIRING_WINDOW_S",
     "MagRotation",
     "REASON_HEADING_UNSEEDED",
     "REASON_MAG_FROZEN",
@@ -327,40 +328,23 @@ _DRAIN_TIMEOUT_S = 0.5
 # against a real drive -- it is a filter constant, not a tuning value.
 DEFAULT_GRAVITY_TAU_S = 5.0
 
-# Default IMU burst rate: DEFAULT_IMU_SAMPLE_HZ, imported above from the single
-# definition (US-801) -- used to derive the magnetometer freshness window below.
+# A magnetometer (and gyro) reading is paired with an accel reading only if it
+# is at most this many SECONDS older (pi.sensors.imu.magMaxAgeSec). US-803-b:
+# this was MAG_MAX_AGE_POLLS = 5, counted in polls, so its wall-clock meaning
+# moved whenever sampleHz did. 1.25 s is exactly the window the car ran --
+# 5 polls at the shipped 4 Hz. It bounds BUS DELIVERY, not acquisition: the
+# reader bursts accel+gyro+mag under ONE seq, so the window only bites when the
+# lossy bus drops a mag sample. It does NOT cover the ICM master-mode
+# EXT_SLV_SENS_DATA cache age, which is a separate, unmeasured quantity.
+DEFAULT_MAG_MAX_AGE_S = 1.25
 
-# A magnetometer reading is paired with an accel reading only if it is within
-# this many poll intervals. Derived from the configured sampleHz (not a second
-# independent constant): the reader bursts accel+gyro+mag under ONE seq, so the
-# freshest mag is at most one interval old; 5 is slack for scheduler jitter.
-MAG_MAX_AGE_POLLS = 5
-
-# ARCH-064 Ruling 14 (Controller, fix round 1), raised by Ruling 16 (fix
-# round 2). MAG_MAX_AGE_POLLS / sampleHz was fine at the old 4 Hz burst rate
-# (1.25 s), but ARCH-064 raised sampleHz to 50 Hz for the AHRS's internal
-# read (specs/data-acquisition-architecture.md §4.2.a), which collapses the
-# SAME poll-count window to 0.1 s. At 0.1 s a single scheduler hiccup over
-# ~100 ms drops the paired gyro reading, and the AHRS update path
-# (imu_state_bridge -> AhrsFusion.update) integrates a missing gyro as ZERO
-# rate rather than holding the last one -- a silent attitude freeze that
-# looks like a healthy read. The window is a WALL-CLOCK guarantee (data must
-# be fresh enough to describe "now"), not a sample-count guarantee, so it
-# gets a floor in seconds.
-#
-# 1.25 s (Ruling 16), not the fix round 1 value of 0.5 s: 1.25 s is EXACTLY
-# the pre-ARCH-064 window (MAG_MAX_AGE_POLLS(5) / 4 Hz), so pairing
-# behaviour at the shipped rate is UNCHANGED from before this whole change --
-# not merely "safe", identical. It also keeps the display's 1.0 s
-# state-write interval (pi.sensors.imu.stateHz default 1) INSIDE the pairing
-# window, which tests/ui/test_carousel_heading_bare_bearing_recorded_pass.py
-# pins as an invariant (a magnetometer that stops must not go stale before
-# the NEXT regular display write, or headingDeg flickers absent on every
-# ordinary write cycle, not just a real dropout). And it still comfortably
-# covers the >100 ms scheduler jitter Ruling 14 was written for. Applied to
-# BOTH the mag and gyro pairing windows (they share one window,
-# self._magMaxAgeS).
-MIN_PAIRING_WINDOW_S = 1.25
+# ARCH-064 Rulings 14/16 floored the OLD poll-count window at 1.25 s, because sampleHz
+# 50 collapsed MAG_MAX_AGE_POLLS / sampleHz to 0.1 s. US-803-b (Sprint 94) made the window
+# a key in SECONDS, so no rate can shrink it and the floor was retired at the merge
+# (2026-10-01). The reasons the default IS 1.25 s still hold: it keeps the 1.0 s state
+# write (stateHz 1) inside the window (tests/ui/test_carousel_heading_bare_bearing_
+# recorded_pass.py) and covers >100 ms scheduler jitter, which would otherwise drop
+# the paired gyro and make the AHRS integrate a missing gyro as ZERO rate.
 
 # Local alias for the shared gravity floor (defined in pitch_fusion, one home).
 _MIN_GRAVITY_MS2 = MIN_GRAVITY_MS2
@@ -1028,6 +1012,7 @@ class ImuStateBridge:
         stateHz: float = DEFAULT_STATE_HZ,
         gravityTauSec: float = DEFAULT_GRAVITY_TAU_S,
         sampleHz: int = DEFAULT_IMU_SAMPLE_HZ,
+        magMaxAgeSec: float = DEFAULT_MAG_MAX_AGE_S,
         pitchFusion: PitchFusion | AhrsFusion | None = None,
         nowIsoFn: Callable[[], str] | None = None,
     ) -> None:
@@ -1040,11 +1025,12 @@ class ImuStateBridge:
             stateHz: State-file write cadence -- the DISPLAY's poll rate, not the
                 sensor's burst rate.
             gravityTauSec: Gravity low-pass time constant, seconds.
-            sampleHz: The reader's burst rate; the magnetometer AND gyro pairing
-                windows are derived from it (MAG_MAX_AGE_POLLS intervals), floored
-                at MIN_PAIRING_WINDOW_S seconds (ARCH-064 Ruling 14) so a fast
-                sampleHz cannot shrink the window below what a scheduler hiccup
-                needs.
+            sampleHz: The reader's burst rate. It no longer sizes the pairing
+                window (US-803-b); it is used only to log the poll count that
+                window spans.
+            magMaxAgeSec: The magnetometer AND gyro pairing window, seconds --
+                one shared window. A non-positive value falls back to the
+                shipped DEFAULT_MAG_MAX_AGE_S.
             pitchFusion: US-521 gyro-fused pitch estimator. Defaults to one built
                 with the shipped constants; injectable so a caller can pass a
                 config-tuned estimator without this class growing six more
@@ -1061,8 +1047,17 @@ class ImuStateBridge:
         self._writeIntervalS = 1.0 / stateHz if stateHz and stateHz > 0 else 1.0 / DEFAULT_STATE_HZ
         self._tauS = gravityTauSec if gravityTauSec and gravityTauSec > 0 else DEFAULT_GRAVITY_TAU_S
         rate = sampleHz if sampleHz and sampleHz > 0 else DEFAULT_IMU_SAMPLE_HZ
-        # ARCH-064 Ruling 14: floored at MIN_PAIRING_WINDOW_S -- see its comment.
-        self._magMaxAgeS = max(MAG_MAX_AGE_POLLS / float(rate), MIN_PAIRING_WINDOW_S)
+        self._magMaxAgeS = (
+            float(magMaxAgeSec) if magMaxAgeSec and magMaxAgeSec > 0 else DEFAULT_MAG_MAX_AGE_S
+        )
+        # Log the values IN FORCE, after both fallbacks: `rate` can differ from
+        # what config declares, so the poll count the window spans can too.
+        logger.info(
+            "imu pairing window: magMaxAgeSec=%.3f s at sampleHz=%s = %.2f polls",
+            self._magMaxAgeS,
+            rate,
+            self._magMaxAgeS * rate,
+        )
         self._nowIsoFn = nowIsoFn if nowIsoFn is not None else utcIsoNow
         self._pitchFusion = pitchFusion if pitchFusion is not None else PitchFusion()
         # ARCH-064: an engine that carries a heading is the AHRS. Checked on the
@@ -1384,6 +1379,13 @@ class ImuStateBridge:
         timestamp of whatever burst the writer happened to be flushing.
         """
         pitchRad = self._pitchFusion.pitchRad
+        # US-810: the gyro RATE bias (rad/s, roll/pitch/yaw) -- NOT biasRad, the
+        # mount-tilt ANGLE. None until a stop is accepted this run, carried
+        # through as three Nones: an unlearned bias is never written as 0.0.
+        gyroRateBias = self._pitchFusion.gyroBiasRadS
+        rollRadS, pitchRadS, yawRadS = (
+            (None, None, None) if gyroRateBias is None else gyroRateBias
+        )
         self._lastDerived = {
             # US-809-c: None, never the clock -- this snapshot claims to be
             # "stamped with THIS sample", and a substituted stamp makes that
@@ -1398,6 +1400,11 @@ class ImuStateBridge:
             # ARCH-064: the RUNNING engine's version (2 = AHRS, 1 = PitchFusion)
             # -- two filters must never share one stamp.
             "fusionVersion": self._fusionVersion,
+            "gyroBiasRollRadS": rollRadS,
+            "gyroBiasPitchRadS": pitchRadS,
+            "gyroBiasYawRadS": yawRadS,
+            "gyroBiasStops": self._pitchFusion.gyroBiasStopCount,
+            "gyroBiasRejectedStops": self._pitchFusion.gyroBiasRejectedStops,
         }
 
     def derivedSnapshot(self) -> dict[str, Any] | None:
@@ -1656,6 +1663,7 @@ def createImuStateBridgeFromConfig(
         stateHz=imu.get("stateHz", DEFAULT_STATE_HZ),
         gravityTauSec=imu.get("gravityTauSec", DEFAULT_GRAVITY_TAU_S),
         sampleHz=sampleHz,
+        magMaxAgeSec=imu.get("magMaxAgeSec", DEFAULT_MAG_MAX_AGE_S),
         pitchFusion=_buildFusionEngine(imu, sampleHz),
         nowIsoFn=nowIsoFn,
     )

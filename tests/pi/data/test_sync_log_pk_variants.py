@@ -14,6 +14,9 @@
 #               |              | INTEGER non-id PK (calibration_sessions),
 #               |              | TEXT natural PK (vehicle_info) + missing
 #               |              | column error surfaces
+# 2026-09-25    | Rex (US-790) | drain_vcell_trajectory registered: count 16,
+#               |              | expected mapping gains it and the stale
+#               |              | US-805 edr_imu_derived entry.
 # ================================================================================
 ################################################################################
 
@@ -74,6 +77,8 @@ EXPECTED_PK_COLUMN: dict[str, str] = {
     'pi_state':            'id',  # US-453 (D-7 / F-082) -- mutable singleton
     'edr_imu_sample':      'id',  # US-766 (F-142) -- EDR raw, append-only
     'edr_light_sample':    'id',  # US-766 (F-142) -- EDR raw, append-only
+    'edr_imu_derived':     'id',  # US-805 -- EDR derived, append-only
+    'drain_vcell_trajectory': 'id',  # US-790 (F-138) -- drain VCELL series
 }
 
 # Tables excluded from delta-by-PK sync.  These are upsert/snapshot style --
@@ -222,18 +227,20 @@ class TestDeltaSyncTables:
             sync_log.PK_COLUMN.keys()
         )
 
-    def test_DELTA_SYNC_TABLES_has_fourteen_entries(self) -> None:
+    def test_DELTA_SYNC_TABLES_has_sixteen_entries(self) -> None:
         """Crystalize the expected count so additions are deliberate.
 
         Was 6 pre-US-204; 7 with dtc_log; 8 with US-206 drive_summary;
         9 with US-217 battery_health_log; 10 with US-369 dtc_freeze_frame;
         11 with US-412 power_log (F-101); 12 with US-453 pi_state (D-7);
-        14 with US-766 edr_imu_sample + edr_light_sample (F-142).
+        14 with US-766 edr_imu_sample + edr_light_sample (F-142);
+        15 with US-805 edr_imu_derived (registered without bumping this);
+        16 with US-790 drain_vcell_trajectory (F-138).
 
         This test did its job: registering EDR flipped it red, which is the
         whole point of pinning a count rather than deriving one.
         """
-        assert len(sync_log.DELTA_SYNC_TABLES) == 14
+        assert len(sync_log.DELTA_SYNC_TABLES) == 16
 
     def test_DELTA_SYNC_TABLES_excludes_profiles(self) -> None:
         assert 'profiles' not in sync_log.DELTA_SYNC_TABLES

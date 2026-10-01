@@ -602,3 +602,41 @@ def test_accelCal_matrixOnlyIsApplied():
     assert fusion.accelCalibrated is True
     fusion.update((0.0, 0.0, 10.0), NO_ROTATION, 0.0)
     assert fusion.lastAccelMs2 == pytest.approx((0.0, 0.0, 9.8), abs=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# The US-810 snapshot surface (merge with Sprint 94, 2026-10-01). The bridge's
+# derived snapshot reads gyroBiasRadS / gyroBiasStopCount / gyroBiasRejectedStops
+# from WHICHEVER engine runs. Before this, AhrsFusion had none of them, the
+# snapshot raised AttributeError, and the EDR writer (which swallows a snapshot
+# fault by design) silently wrote no edr_imu_derived rows at all.
+# ---------------------------------------------------------------------------
+
+def test_gyroBiasRadS_isNoneUntilLearned() -> None:
+    """US-810's contract: an unlearned bias is None, never 0.0."""
+    fusion = AhrsFusion(sampleHz=HZ)
+    assert fusion.gyroBiasRadS is None
+    fusion.update(LEVEL, NO_ROTATION, 0.0)
+    assert fusion.gyroBiasRadS is None
+
+
+def test_gyroBiasRadS_isTheLearnedOffsetInRadPerSecond_onTheSameAxis() -> None:
+    """A still board reading a steady 0.5 dps on the PITCH axis (y) is learned as
+    radians(0.5) on y -- the same vehicle-frame vector, same order, PitchFusion uses."""
+    fusion = AhrsFusion(sampleHz=HZ)
+    biasDps = 0.5
+    _run(fusion, 20.0, LEVEL, gyro=(0.0, math.radians(biasDps), 0.0))
+    learned = fusion.gyroBiasRadS
+    assert learned is not None
+    roll, pitch, yaw = learned
+    assert pitch == pytest.approx(math.radians(biasDps), rel=0.2)
+    assert abs(roll) < math.radians(0.05) and abs(yaw) < math.radians(0.05)
+
+
+def test_stopCounts_areNone_becauseTheAhrsHasNoStopDetector() -> None:
+    """Typed absence: the columns are nullable and a fabricated 0 would claim
+    'zero stops accepted' about an engine that never counts stops."""
+    fusion = AhrsFusion(sampleHz=HZ)
+    _run(fusion, 5.0, LEVEL)
+    assert fusion.gyroBiasStopCount is None
+    assert fusion.gyroBiasRejectedStops is None

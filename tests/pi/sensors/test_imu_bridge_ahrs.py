@@ -192,6 +192,27 @@ def test_factory_defaultEngine_isTheImufusionAhrs(tmp_path: Path):
     assert _readState(tmp_path)["fusionEngine"] == "imufusion"
 
 
+def test_ahrsEngine_derivedSnapshot_carriesTheUs810Fields_withoutRaising(tmp_path: Path):
+    """
+    Given: the default (AHRS) engine, after the merge with Sprint 94's US-810
+    When: a burst is fed and the derived snapshot is taken
+    Then: it exists, carries all five US-810 keys, the stop counts are None
+          (typed absence) and an unlearned rate bias is three Nones -- never 0.0
+    The seam this pins: the snapshot reads gyroBiasRadS/StopCount/RejectedStops
+    from the running engine. AhrsFusion lacked them, the snapshot raised, and the
+    EDR writer (which swallows a snapshot fault by design) wrote no derived rows.
+    """
+    bridge = createImuStateBridgeFromConfig(_config(tmp_path), _NullBus())
+    assert bridge is not None and isinstance(bridge._pitchFusion, AhrsFusion)  # noqa: SLF001
+    bridge.handleSample(_accel(LEVEL, capture=0.0))
+    snap = bridge.derivedSnapshot()
+    assert snap is not None
+    assert snap["fusionVersion"] == FUSION_VERSION_AHRS
+    for key in ("gyroBiasRollRadS", "gyroBiasPitchRadS", "gyroBiasYawRadS"):
+        assert snap[key] is None
+    assert snap["gyroBiasStops"] is None and snap["gyroBiasRejectedStops"] is None
+
+
 def test_factory_legacyEngine_isPitchFusion_withVersionOne(tmp_path: Path):
     """
     Given: fusionEngine "legacy"

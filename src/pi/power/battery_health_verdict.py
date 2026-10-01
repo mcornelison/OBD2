@@ -35,6 +35,9 @@
 #                               to Spool's DEPTH gate (end_vcell_v <= 3.50 V
 #                               AND runtime_seconds >= 60).  Bands UNCHANGED
 #                               (Spool ruling c72677e) and now fully reachable.
+# 2026-09-24    | Rex (US-683) | Qualifying query + _parseRow key on the typed
+#                               close_reason: an un-checkpointed reap is
+#                               excluded by type.  No other eligibility change.
 # ================================================================================
 ################################################################################
 
@@ -61,6 +64,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
+
+from src.pi.power.battery_health import CLOSE_REASON_REAPED_UNCHECKPOINTED
 
 logger = logging.getLogger(__name__)
 
@@ -243,11 +248,18 @@ DEGRADED_MIN_RUNTIME_S: int = round(
 # The canonical ISO-8601 UTC instant format every Pi writer stamps (TD-027).
 _CANONICAL_ISO_FORMAT: str = '%Y-%m-%dT%H:%M:%SZ'
 
+#: US-683: eligibility keys on the TYPED ``close_reason``, never on ``notes``
+#: prose.  An un-checkpointed reap is excluded by type as well as by its NULL
+#: runtime/depth.  ``IS NOT`` keeps a closed row with no recorded reason (a
+#: close written outside the three writers) on its measured values, exactly as
+#: before.  A checkpointed reap still votes: whether it should be excluded or
+#: flagged is an open architect ruling, not a change this query makes.
 _QUALIFYING_ROW_SQL: str = (
     "SELECT start_timestamp, end_timestamp, runtime_seconds, load_class, "
-    "       end_vcell_v "
+    "       end_vcell_v, close_reason "
     "FROM battery_health_log "
     "WHERE end_timestamp IS NOT NULL "
+    f"  AND close_reason IS NOT '{CLOSE_REASON_REAPED_UNCHECKPOINTED}' "
     "  AND load_class = ? "
     "  AND runtime_seconds IS NOT NULL "
     "  AND runtime_seconds >= ? "
@@ -441,6 +453,7 @@ def readBatteryHealthVerdict(
             'runtime_seconds': row[2],
             'load_class': row[3],
             'end_vcell_v': row[4],
+            'close_reason': row[5],
         }
         for row in fetched
     ]
@@ -490,9 +503,12 @@ def _parseRow(
     reaper deliberately leaves ``runtime_seconds`` AND ``end_vcell_v`` NULL on a
     reaped orphan (nothing knew the voltage at power-off), so such a row is
     excluded twice over -- belt and braces on a value that feeds a health
-    verdict.
+    verdict.  US-683 makes it three times: its typed ``close_reason`` excludes
+    it here as well as in the SQL.
     """
     if row.get('end_timestamp') is None:
+        return None
+    if row.get('close_reason') == CLOSE_REASON_REAPED_UNCHECKPOINTED:
         return None
     if row.get('load_class') != QUALIFYING_LOAD_CLASS:
         return None

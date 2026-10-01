@@ -127,8 +127,15 @@ def test_wallClockStepBackwards_losesNoRows(freshDb: ObdDatabase) -> None:
 
 
 def test_derivedSiblingStaysOneToOneWithRaw(freshDb: ObdDatabase) -> None:
+    # The full snapshot contract: since the merge with Sprint 94 the derived writer
+    # also writes US-810's five gyro-rate-bias columns. Values as the AHRS produces
+    # them (unlearned bias, no stop detector). A snapshot missing them makes the
+    # writer skip the derived row -- swallowed by design -- which is the exact
+    # one-to-one break this test exists to catch.
     snap = {"tsUtc": "2026-09-30T20:28:08Z", "tsCapture": 1.0, "seq": 1, "pitchDeg": 0.1,
-            "stopCount": 0, "biasRad": 0.0, "fusionVersion": "t"}
+            "stopCount": 0, "biasRad": 0.0, "fusionVersion": "t",
+            "gyroBiasRollRadS": None, "gyroBiasPitchRadS": None, "gyroBiasYawRadS": None,
+            "gyroBiasStops": None, "gyroBiasRejectedStops": None}
     sub = _sub(freshDb, sampleHz=50, persistHz=2, derivedSnapshotFn=lambda: snap)
     _stream(sub, periodS=0.020, seconds=6.0)
     with freshDb.connect() as conn:

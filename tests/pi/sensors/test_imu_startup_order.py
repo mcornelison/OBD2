@@ -203,3 +203,27 @@ def test_direct_mode_failingGyroRecovery_doesNotCostTheDevice() -> None:
     )
 
     assert device == "the-direct-device"
+
+
+def test_direct_mode_passesTheConfiguredRecoveryTunables(monkeypatch: Any) -> None:
+    """The merge seam (ARCH-064 x Sprint 94 US-803-a, 2026-10-01): the default
+    recovery on the direct path must receive the config-resolved tunables. Before
+    this, `_buildImuDeviceDirect` fell back to a bare `_recoverGyro` and the
+    car's mode (`direct`) silently ran the gyro_recovery module defaults.
+    """
+    from pi.sensors.gyro_recovery import GyroRecoverySettings
+
+    seen: dict[str, Any] = {}
+
+    def fakeRecoverGyro(handle: Any, recoveryFn: Any = None, settings: Any = None) -> Any:  # noqa: ARG001
+        seen["settings"] = settings
+        return None
+
+    monkeypatch.setattr(sensor_reader, "_recoverGyro", fakeRecoverGyro)
+    tunables = GyroRecoverySettings(sampleCount=7, settleS=0.2, faultMinRadS=0.3)
+
+    sensor_reader._buildImuDeviceDirect(
+        lambda: "icm", lambda: "ak", buildFn=lambda i, a: i(), gyroRecovery=tunables
+    )
+
+    assert seen["settings"] is tunables

@@ -389,12 +389,12 @@
     },
     "tieredThresholds": {
       "coolantTemp": {
-        "unit": "fahrenheit",
-        "normalMin": 180,
-        "cautionMin": 210,
-        "dangerMin": 220,
-        "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
-        "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
+        "unit": "celsius",
+        "normalMin": 85,
+        "cautionMin": 103.5,
+        "dangerMin": 109.5,
+        "cautionMessage": "Coolant temperature elevated ({value} C). Check fan, coolant level and water pump; reduce load.",
+        "dangerMessage": "DANGER: Coolant temperature critical ({value} C). Pull over. Risk of head gasket failure."
       },
       "stft": {
         "unit": "percent",
@@ -563,6 +563,16 @@
         "persistHz": 2,
         "stateHz": 1,
         "gravityTauSec": 5.0,
+        "pitchTauSec": 5.0,
+        "accelTrustBand": 0.02,
+        "zuptMinStopSec": 3.0,
+        "zuptSpeedMaxAgeSec": 2.0,
+        "zuptMinStops": 5,
+        "zuptWindowStops": 20,
+        "gyroFaultMinRadS": 0.10,
+        "gyroRecoverySampleCount": 20,
+        "gyroRecoverySettleSec": 1.0,
+        "magMaxAgeSec": 1.25,
         "mount": {
           "forward": "+x",
           "left": "+y",
@@ -661,7 +671,8 @@
     "power": {
       "power_monitor": {
         "enabled": true
-      }
+      },
+      "cellEpoch": "18650-pack"
     }
   },
   "server": {

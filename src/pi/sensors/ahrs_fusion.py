@@ -300,6 +300,36 @@ class AhrsFusion:
         return 0.0
 
     @property
+    def gyroBiasRadS(self) -> tuple[float, float, float] | None:
+        """The learned gyro RATE bias, vehicle frame, rad/s -- or None (US-810 surface).
+
+        Fusion's ``Bias`` offset, converted from deg/s. It is learned on the SAME
+        vehicle-frame gyro vector the bridge hands both engines, so its order and
+        sign match ``PitchFusion.gyroBiasRadS`` with no remapping.
+
+        None until learned. ``Bias`` starts from an exact zero offset and only
+        moves it while the board is stationary, so an all-zero offset means "not
+        learned yet" -- and US-810's contract is that an unlearned bias is never
+        written as 0.0. Added at the merge with Sprint 94 (2026-10-01): without
+        it the derived snapshot raised and no edr_imu_derived row was written.
+        """
+        offset = np.asarray(self._bias.get_offset(), dtype=float)
+        if not np.any(offset != 0.0):
+            return None
+        rad = np.radians(offset)
+        return (float(rad[0]), float(rad[1]), float(rad[2]))
+
+    @property
+    def gyroBiasStopCount(self) -> int | None:
+        """None: Fusion has no ZUPT stop detector (typed absence, US-810 surface)."""
+        return None
+
+    @property
+    def gyroBiasRejectedStops(self) -> int | None:
+        """None: no stops exist to accept or reject (typed absence, US-810 surface)."""
+        return None
+
+    @property
     def gyroImplausible(self) -> bool:
         """True while the A-34 parked-gyro latch holds (Ruling 35, I2).
 

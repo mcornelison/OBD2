@@ -434,7 +434,10 @@ def loadPiSchema() -> dict[str, set[str]]:
     with _piImportPath():
         from src.pi.calibration.types import SCHEMA_CALIBRATION_DATA
         from src.pi.data.sync_log import SYNC_LOG_SCHEMA
-        from src.pi.obdii.database_schema import ALL_SCHEMAS
+        from src.pi.obdii.database_schema import (
+            ALL_SCHEMAS,
+            SCHEMA_DRAIN_VCELL_TRAJECTORY,
+        )
         from src.pi.obdii.drive_summary import SCHEMA_DRIVE_SUMMARY
         from src.pi.obdii.dtc_freeze_frame_schema import SCHEMA_DTC_FREEZE_FRAME
         from src.pi.obdii.dtc_log_schema import SCHEMA_DTC_LOG
@@ -456,6 +459,9 @@ def loadPiSchema() -> dict[str, set[str]]:
         ('pi_state', SCHEMA_PI_STATE),
         ('sync_log', SYNC_LOG_SCHEMA),
         ('calibration_data', SCHEMA_CALIBRATION_DATA),
+        # US-790 (F-138).  Created by a sqlite_master-probed ensure step, not
+        # ALL_SCHEMAS, so it reaches this registry only by hand (TD-079).
+        ('drain_vcell_trajectory', SCHEMA_DRAIN_VCELL_TRAJECTORY),
     ]
 
     schema: dict[str, set[str]] = {}
