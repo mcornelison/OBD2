@@ -271,6 +271,10 @@
 # 2026-09-18    | Rex (US-767-c)| EDR log gate reads ObdConnection.getStatus()
 #               |              | lazily, honours pi.sensors.logGate.enabled and
 #               |              | publishes states/edr-log-gate.
+# 2026-09-30    | Rex (US-780) | A component stop-timeout no longer sets
+#               |              | EXIT_CODE_FORCED: it logs a WARNING naming the
+#               |              | component and its elapsed stop time and the
+#               |              | orderly stop exits 0.
 # ================================================================================
 ################################################################################
 
@@ -296,7 +300,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..reconnect_loop import runReconnectHeartbeat
-from .types import EXIT_CODE_FORCED, ComponentInitializationError, ShutdownState
+from .types import ComponentInitializationError, ShutdownState
 
 # Unified logger name matches the original monolith module so existing tests
 # that filter caplog by logger name continue to work unchanged.
@@ -2622,17 +2626,21 @@ class LifecycleMixin:
                 stopComplete.set()
 
         stopThread = threading.Thread(target=doStop, daemon=True)
+        stopStart = time.monotonic()
         stopThread.start()
 
         # Wait for stop with timeout
         cleanStop = stopComplete.wait(timeout=self._shutdownTimeout)
 
         if not cleanStop:
+            # US-780: a bounded force-stop of one component is not a failed
+            # stop, so it leaves the exit code alone.  Exiting 1 here made
+            # systemd mark every such orderly stop 'failed' (mechanism B).
+            elapsed = time.monotonic() - stopStart
             logger.warning(
                 f"{componentName} did not stop within {self._shutdownTimeout}s, "
-                f"force-stopping"
+                f"force-stopping | elapsed={elapsed:.2f}s"
             )
-            self._exitCode = EXIT_CODE_FORCED
             return False
         elif stopError is not None:
             logger.warning(f"Error stopping {componentName}: {stopError}")
