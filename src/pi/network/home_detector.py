@@ -19,6 +19,8 @@
 # 2026-10-01    | Rex          | US-776-c: three-way IP reader (None on a failed
 #               |              | read); only a positive AWAY is AWAY, a dead SSID
 #               |              | or IP reader is UNKNOWN
+# 2026-10-01    | Rex          | US-776-d: probeServer() -> ProbeResult sibling;
+#               |              | isServerReachable() is its 2xx; lastProbe
 # ================================================================================
 ################################################################################
 
@@ -75,10 +77,16 @@ import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-__all__ = ["HomeNetworkDetector", "HomeNetworkState"]
+__all__ = [
+    "PROBE_MISCONFIGURED_STATUSES",
+    "HomeNetworkDetector",
+    "HomeNetworkState",
+    "ProbeResult",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +112,40 @@ class HomeNetworkState(StrEnum):
     AT_HOME_SERVER_DOWN = "at_home_server_down"
     AWAY = "away"
     UNKNOWN = "unknown"
+
+
+# =============================================================================
+# Server probe result (US-776-d)
+# =============================================================================
+
+#: Atlas ruling 4 (Sprint 95): a server that answers the probe with one of
+#: these is UP -- the configured route (404/405) or key (401/403) is wrong.
+#: Every other non-2xx answer, and no answer at all, reads as server down.
+PROBE_MISCONFIGURED_STATUSES: frozenset[int] = frozenset({401, 403, 404, 405})
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """One GET of the server probe route.
+
+    Attributes:
+        status: The HTTP status the server answered with, or ``None`` when
+            no answer came back (connection error, timeout, no base URL).
+        error: Why the probe was not a 2xx, or ``None`` when it was.
+    """
+
+    status: int | None
+    error: str | None
+
+    @property
+    def isReachable(self) -> bool:
+        """True on a 2xx -- the only answer :meth:`isServerReachable` accepts."""
+        return self.status is not None and 200 <= self.status < 300
+
+    @property
+    def isMisconfigured(self) -> bool:
+        """True when the server answered but rejected the route or the key."""
+        return self.status in PROBE_MISCONFIGURED_STATUSES
 
 
 # =============================================================================
@@ -247,8 +289,20 @@ class HomeNetworkDetector:
         self._apiKey: str | None = apiKey
 
         self._previousState: HomeNetworkState | None = None
+        self._lastProbe: ProbeResult | None = None
 
     # ---- public API --------------------------------------------------------
+
+    @property
+    def lastProbe(self) -> ProbeResult | None:
+        """The probe behind the most recent :meth:`getHomeNetworkState`.
+
+        ``None`` when that state was decided without probing the server
+        (AWAY, UNKNOWN), or before any state has been computed.  Lets the
+        shutdown sync say WHY the server read as down without probing again
+        (US-776-d).
+        """
+        return self._lastProbe
 
     def isAtHomeWifi(self) -> bool:
         """Return True only if SSID matches **and** a local IP is in the home subnet.
@@ -267,31 +321,27 @@ class HomeNetworkDetector:
     def isServerReachable(self) -> bool:
         """Return True if a GET against the configured ping endpoint is 2xx.
 
-        Never raises.  Any HTTP error, URL error, timeout, or underlying
-        OS error is swallowed and mapped to False -- the orchestrator
-        treats unreachable-for-any-reason the same way.
+        Never raises.  The 2xx of :meth:`probeServer` (US-776-d, Atlas
+        ruling 4): any HTTP error, URL error, timeout, or underlying OS error
+        maps to False -- the orchestrator treats unreachable-for-any-reason
+        the same way.  Callers that need the reason use :meth:`probeServer`.
         """
-        if not self._baseUrl:
-            return False
-        url = f"{self._baseUrl}{self._pingPath}"
-        headers = {"X-API-Key": self._apiKey or ""}
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        try:
-            with self._httpOpener(req, timeout=self._pingTimeout) as response:
-                code = (
-                    getattr(response, "status", None)
-                    or getattr(response, "code", None)
-                    or 0
-                )
-                return 200 <= int(code) < 300
-        except (
-            urllib.error.HTTPError,
-            urllib.error.URLError,
-            TimeoutError,
-            OSError,
-        ) as exc:
-            logger.debug("ping to %s failed: %s", url, exc)
-            return False
+        return self.probeServer().isReachable
+
+    def probeServer(self) -> ProbeResult:
+        """GET the configured ping endpoint once and say what came back.
+
+        Never raises.  The call is bounded by ``pingTimeoutSeconds``.  The
+        result is also kept as :attr:`lastProbe`.
+
+        Returns:
+            A :class:`ProbeResult`: the HTTP status the server answered with
+            (2xx included), or ``status=None`` with the error when no answer
+            came back.
+        """
+        result = self._probe()
+        self._lastProbe = result
+        return result
 
     def getHomeNetworkState(self) -> HomeNetworkState:
         """Compose SSID + subnet + ping into one :class:`HomeNetworkState`.
@@ -307,12 +357,42 @@ class HomeNetworkDetector:
 
     # ---- internals ---------------------------------------------------------
 
+    def _probe(self) -> ProbeResult:
+        if not self._baseUrl:
+            return ProbeResult(
+                status=None, error="pi.companionService.baseUrl is not configured"
+            )
+        url = f"{self._baseUrl}{self._pingPath}"
+        headers = {"X-API-Key": self._apiKey or ""}
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with self._httpOpener(req, timeout=self._pingTimeout) as response:
+                code = int(
+                    getattr(response, "status", None)
+                    or getattr(response, "code", None)
+                    or 0
+                )
+        except urllib.error.HTTPError as exc:
+            # Before URLError/OSError: HTTPError subclasses both, and it is
+            # the one failure that carries the server's answer.
+            logger.debug("ping to %s answered HTTP %s", url, exc.code)
+            return ProbeResult(status=int(exc.code), error=f"HTTP {exc.code}: {exc.reason}")
+        except Exception as exc:  # noqa: BLE001 -- never raise; no answer is server-down
+            logger.debug("ping to %s failed: %s", url, exc)
+            return ProbeResult(status=None, error=str(exc) or type(exc).__name__)
+        if 200 <= code < 300:
+            return ProbeResult(status=code, error=None)
+        return ProbeResult(status=code, error=f"HTTP {code}")
+
     def _computeState(self) -> HomeNetworkState:
         # US-776-c: only a POSITIVE answer is AWAY -- a foreign SSID, or a
         # successful IP read with no home-subnet address.  A dead SSID or IP
         # reader is UNKNOWN, never AWAY: a dead instrument gating the shutdown
         # drain is how the drain stayed off for weeks (Atlas gap 2,
         # design-patterns section 6).
+        # US-776-d: a state decided without probing must not carry an older
+        # probe's answer.
+        self._lastProbe = None
         ssid = self._ssidReader()
         if ssid is not None and not self._isHomeSsid(ssid):
             # Includes the empty-string "not connected" case.

@@ -148,6 +148,11 @@
 #                           pi.homeNetwork.shutdownSyncCeilingSec: a transient
 #                           failure is retried with backoff until the ceiling.
 #                           PW_TEST_ONESHOT walks it on a virtual clock.
+# 2026-10-01    | US-776-d  | Sprint 95. makeOutcomeSink: every sync run writes
+#                           one durable record (sync_outcome + backlog_start/end
+#                           from the shared US-621 reader); the task reads the
+#                           detector's lastProbe to tell a misconfigured probe
+#                           from a down server.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -226,6 +231,7 @@ from src.pi.power.power_watch.sync_custody import (  # noqa: E402
     makeSyncCustodyHook,
 )
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
+    SyncOutcomeRecord,
     SyncWithServerTask,
 )
 from src.pi.power.soc_calibration import (  # noqa: E402
@@ -235,7 +241,7 @@ from src.pi.power.soc_calibration import (  # noqa: E402
 from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
     makeShutdownPhaseEmitter,
 )
-from src.pi.sync.backlog import countOutstandingRows  # noqa: E402
+from src.pi.sync.backlog import SyncBacklog, countOutstandingRows  # noqa: E402
 from src.pi.sync.client import SyncClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -441,8 +447,8 @@ def _buildRunSync(
     raise-on-transient contract the task expects:
       * disabled        -> benign no-op (return; nothing to sync)
       * tablesFailed > 0 -> transport failure, retries exhausted -> RuntimeError
-                            (TRANSIENT: the task retries once, then records
-                            SYNC_FAILED_AFTER_RETRY and continues)
+                            (TRANSIENT: the task retries with backoff to the
+                            ceiling, then records why it failed -- US-776-d)
       * otherwise        -> success (return)
     A non-transport fault (e.g. ConfigurationError, sqlite corruption) raises
     out of forcePush as a non-RuntimeError and propagates -- the task then
@@ -554,6 +560,41 @@ def composePrePowerOffHooks(*hooks):
     return _runAll
 
 
+def backlogCount(backlog: SyncBacklog) -> int | None:
+    """The count the sync outcome record carries (US-776-d), or None.
+
+    A database that could not be opened, or a table that could not be read,
+    makes ``total`` a lower bound; the record then says nothing (it lands
+    NULL) rather than a number that looks exact.
+    """
+    if backlog.error is not None or not backlog.isComplete:
+        return None
+    return backlog.total
+
+
+def makeOutcomeSink(outcomePath: str):
+    """The sync task's ``writeRecord``: one durable shutdown record per run.
+
+    US-776-d: the record carries the outcome NAME as ``sync_outcome`` and both
+    backlog counts -- the keys the next boot lands into startup_log's
+    ``prior_boot_*`` columns (US-776-f). An unknown count is omitted, so it
+    lands NULL. ``writeOutcomeRecord`` never raises.
+    """
+
+    def _write(record: SyncOutcomeRecord) -> None:
+        writeOutcomeRecord(
+            outcomePath,
+            record.kind,
+            detail=record.detail,
+            task="sync_with_server",
+            syncOutcome=record.kind.name,
+            backlogStart=record.backlogStart,
+            backlogEnd=record.backlogEnd,
+        )
+
+    return _write
+
+
 def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
     """The ordered V1 ShutdownTask list (the plugin-seam registry, SS-T6).
 
@@ -662,16 +703,12 @@ def _runOneShotForTest(
     the real `python -m src.pi.power.power_watch` under the unit's PYTHONPATH.
 
     Deterministic scenario: at home (server reachable), sync raises (transient) on
-    every attempt up to the ceiling -> SYNC_FAILED_AFTER_RETRY -> a real outcome record
+    every attempt up to the ceiling -> AT_HOME_SERVER_DOWN -> a real outcome record
     is produced; the bounded controller then reaches the (stubbed) poweroff.
     """
 
     def _failingSync() -> None:
         raise RuntimeError("PW_TEST_ONESHOT injected transient sync failure")
-
-    def _writeRecord(kindDetail: object) -> None:
-        kind, detail = kindDetail  # type: ignore[misc]
-        writeOutcomeRecord(outcomePath, kind, detail=str(detail), task="sync_with_server")
 
     def _stubPoweroff() -> None:
         marker = os.environ["PW_TEST_POWEROFF_MARKER"]
@@ -687,7 +724,7 @@ def _runOneShotForTest(
     syncTask = SyncWithServerTask(
         homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
         runSync=_failingSync,
-        writeRecord=_writeRecord,
+        writeRecord=makeOutcomeSink(outcomePath),
         ceilingSec=shutdownSyncCeilingSec,
         sleepFn=_virtualSleep,
         monotonic=lambda: virtualNow[0],
@@ -910,10 +947,6 @@ def main(argv: list[str] | None = None) -> int:
     detector = HomeNetworkDetector(config, apiKey=apiKey)
     syncClient = SyncClient(config)
 
-    def writeRecord(kindDetail: object) -> None:
-        kind, detail = kindDetail  # type: ignore[misc]
-        writeOutcomeRecord(outcomePath, kind, detail=str(detail), task="sync_with_server")
-
     # US-621: ONE backlog reader, shared by the drain (to decide whether
     # another pass is worth making) and by the custody record (to state what
     # remains). Two readers could disagree, and a shutdown that pushed until
@@ -987,10 +1020,18 @@ def main(argv: list[str] | None = None) -> int:
             backlogReader=readDrainBacklog,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
-        writeRecord=writeRecord,
+        # US-776-d: one durable record per run -- why the sync ended.
+        writeRecord=makeOutcomeSink(outcomePath),
         # US-776-g: a transient failure is retried with backoff; no attempt
         # starts after this ceiling (CIO: 60 s).
         ceilingSec=shutdownSyncCeilingSec,
+        # US-776-d: backlog_start / backlog_end from the shared US-621 reader,
+        # with the drain's own exclusions, so 0 means what the drain's exit
+        # check means by it.
+        backlogReader=lambda: backlogCount(readDrainBacklog()),
+        # US-776-d: the probe behind the home state, read -- never re-probed --
+        # to tell a misconfigured probe from a down server.
+        lastProbe=lambda: detector.lastProbe,
     )
 
     # F-103 [A-2]: wire the shutdown-splash phase-emit hook. The sequencer emits

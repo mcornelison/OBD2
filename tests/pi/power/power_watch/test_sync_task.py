@@ -1,8 +1,8 @@
 ################################################################################
 # File Name: test_sync_task.py
 # Purpose/Description: Tests: SyncWithServerTask CIO state machine --
-#                      reachable?/sync/retry-once/classify; benign skip writes
-#                      no record; real fault recorded; run() never raises.
+#                      home?/sync/retry/classify; every run writes one
+#                      outcome record; run() never raises.
 # Author: (implementation plan 2026-05-17)
 # Creation Date: 2026-05-17
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -14,6 +14,7 @@
 # 2026-05-17    | Plan    | Initial -- P2-T5 sync_with_server tests.
 # 2026-10-01    | Rex     | US-776-c: gated on the home state (AWAY skips).
 # 2026-10-01    | Rex     | US-776-g: retries run to a ceiling on a fake clock.
+# 2026-10-01    | Rex     | US-776-d: one record per run, the AWAY skip included.
 # ================================================================================
 ################################################################################
 from src.pi.network.home_detector import HomeNetworkState
@@ -51,16 +52,16 @@ def _task(reachable, syncSeq, rec, *, ceilingSec=60.0):
 def test_away_is_benign_skip():
     recs = []
     result = _task(False, [], recs.append).run()
-    assert result == OutcomeKind.SERVER_UNAVAILABLE
-    assert recs == []  # benign -> no real-error record
+    assert result == OutcomeKind.AWAY
+    assert [r[0] for r in recs] == [OutcomeKind.AWAY]  # US-776-d: the skip is recorded too
 
 
 def test_sync_ok_first_try():
-    assert _task(True, [None], [].append).run() == OutcomeKind.OK
+    assert _task(True, [None], [].append).run() == OutcomeKind.DELIVERED
 
 
 def test_sync_fails_then_retry_ok():
-    assert _task(True, [RuntimeError("net"), None], [].append).run() == OutcomeKind.OK
+    assert _task(True, [RuntimeError("net"), None], [].append).run() == OutcomeKind.DELIVERED
 
 
 def test_sync_fails_until_ceiling():
@@ -69,7 +70,7 @@ def test_sync_fails_until_ceiling():
     result = _task(
         True, [RuntimeError("net"), RuntimeError("net")], recs.append, ceilingSec=3.0
     ).run()
-    assert result == OutcomeKind.SYNC_FAILED_AFTER_RETRY
+    assert result == OutcomeKind.AT_HOME_SERVER_DOWN
     assert len(recs) == 1  # logged + recorded, then continue
 
 

@@ -39,6 +39,8 @@
 #                              This subprocess is the only place that
 #                              exercises the real main() wiring, so it is the
 #                              only place that can witness the fix end-to-end.
+# 2026-10-01    | Rex (US-776-d) | The one-shot's record is AT_HOME_SERVER_DOWN
+#                              and carries sync_outcome.
 # ================================================================================
 ################################################################################
 """SS-T7: systemd-parity orchestration-proof (the DOA tripwire)."""
@@ -66,8 +68,8 @@ def test_entrypoint_runs_exactly_as_systemd_invokes_it(tmp_path):
     systemd would: the unit's exact dual-path PYTHONPATH (read FROM the unit
     file -- Pi prefix remapped to the local repo), inherited PYTHONPATH
     overridden so conftest cannot mask a missing module. Deterministic
-    PW_TEST_ONESHOT scenario: sync fails transiently twice ->
-    SYNC_FAILED_AFTER_RETRY -> a real outcome record is produced and the
+    PW_TEST_ONESHOT scenario: sync fails transiently up to the ceiling ->
+    AT_HOME_SERVER_DOWN -> a real outcome record is produced and the
     (stubbed) poweroff fires once.
 
     Positive execution evidence (Atlas criterion #4): both a poweroff
@@ -118,11 +120,13 @@ def test_entrypoint_runs_exactly_as_systemd_invokes_it(tmp_path):
     assert "Traceback (most recent call last)" not in blob, blob
     assert proc.returncode == 0, blob
 
-    # The real outcome-record producer ran (sync_failed_after_retry path).
+    # The real outcome-record producer ran. US-776-d: a drain at home that
+    # never delivers, with no probe answer to blame, is AT_HOME_SERVER_DOWN.
     outcome = tmp_path / "powerwatch_outcome.json"
     assert outcome.exists(), blob
     rec = json.loads(outcome.read_text(encoding="utf-8"))
-    assert rec["kind"] == "sync_failed_after_retry"
+    assert rec["kind"] == "at_home_server_down"
+    assert rec["sync_outcome"] == "AT_HOME_SERVER_DOWN"
     assert rec["task"] == "sync_with_server"
 
     # The bounded controller reached the (stubbed) poweroff exactly once.

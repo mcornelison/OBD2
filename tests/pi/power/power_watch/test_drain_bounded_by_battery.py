@@ -20,6 +20,8 @@
 # ================================================================================
 # 2026-09-17    | Rex (US-776-a) | Initial -- the drain is bounded by the battery.
 # 2026-10-01    | Rex (US-776-g) | A failing pass is retried to the 60 s ceiling.
+# 2026-10-01    | Rex (US-776-d) | The sync writes one outcome record per run,
+#                                before the poweroff (AWAY and DELIVERED too).
 # ================================================================================
 ################################################################################
 """US-776-a: the drain ends on an empty backlog or the VCELL floor, not a timer."""
@@ -176,7 +178,7 @@ class TestTheDrainOutlivesAllThreeTimers:
                 backlogReader=_readerOver(backlog),
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
-            writeRecord=lambda _r: events.append("fault-record"),
+            writeRecord=lambda _r: events.append("outcome-record"),
             ceilingSec=60.0,
         )
 
@@ -194,7 +196,7 @@ class TestTheDrainOutlivesAllThreeTimers:
         assert clock() == 90.0
         assert clock() > _TOTAL_WINDOW_CAP_SEC
         assert backlog[0] == 0
-        assert events == ["pipeline-done", "poweroff"]
+        assert events == ["outcome-record", "pipeline-done", "poweroff"]
 
     def test_everyPass_excludesTheShutdownDrainExcludedTables(self) -> None:
         """
@@ -255,7 +257,7 @@ class TestTheDrainOutlivesAllThreeTimers:
         results = _productionPipeline(syncTask, perTaskTimeoutSec=0.2)()
 
         # Assert
-        assert results == {syncTask.name: OutcomeKind.OK}
+        assert results == {syncTask.name: OutcomeKind.DELIVERED}
         assert len(client.excludeTablesPerPass) == 6
         assert backlog[0] == 0
 
@@ -512,7 +514,7 @@ class TestNegativeCases:
                 backlogReader=_readerOver(backlog),
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
-            writeRecord=lambda _r: events.append("fault-record"),
+            writeRecord=lambda _r: events.append("outcome-record"),
             ceilingSec=60.0,
         )
         slowPoll = 5.0
@@ -536,7 +538,7 @@ class TestNegativeCases:
 
         # Assert
         assert client.excludeTablesPerPass == []
-        assert events == ["poweroff"]
+        assert events == ["outcome-record", "poweroff"]
         assert elapsed < slowPoll
 
     def _runWithCustody(self, tmp_path: Path, *, client, reader) -> dict:

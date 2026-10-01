@@ -14,6 +14,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-01    | Rex          | Initial -- US-776-g retry-with-backoff ceiling.
+# 2026-10-01    | Rex          | US-776-d: outcomes are DELIVERED / AWAY /
+#               |              | AT_HOME_SERVER_DOWN; success writes a record too.
 # ================================================================================
 ################################################################################
 """US-776-g: at home the drain retries with backoff until delivered or the ceiling."""
@@ -103,7 +105,8 @@ class TestRetryUntilDelivered:
         """
         Given: a runSync that fails twice (transient), then succeeds
         When: run() drains
-        Then: three attempts, each gap longer than the last, outcome OK, no record
+        Then: three attempts, each gap longer than the last, outcome DELIVERED,
+            one record (US-776-d)
         """
         clock = _FakeClock()
         sync = _ScriptedSync(clock, [RuntimeError("net"), RuntimeError("net")])
@@ -111,12 +114,12 @@ class TestRetryUntilDelivered:
 
         result = _task(sync, clock, records).run()
 
-        assert result == OutcomeKind.OK
+        assert result == OutcomeKind.DELIVERED
         assert len(sync.starts) == 3
         gaps = [b - a for a, b in zip(sync.starts, sync.starts[1:], strict=False)]
         assert gaps[0] > 0
         assert gaps[1] > gaps[0]
-        assert records == []
+        assert [r[0] for r in records] == [OutcomeKind.DELIVERED]
 
     def test_firstAttemptSucceeds_noWaitAtAll(self) -> None:
         clock = _FakeClock()
@@ -125,7 +128,7 @@ class TestRetryUntilDelivered:
 
         result = _task(sync, clock, records).run()
 
-        assert result == OutcomeKind.OK
+        assert result == OutcomeKind.DELIVERED
         assert sync.starts == [0.0]
         assert clock.sleeps == []
 
@@ -154,11 +157,11 @@ class TestCeiling:
 
         result = _task(sync, clock, records).run()
 
-        assert result == OutcomeKind.SYNC_FAILED_AFTER_RETRY
+        assert result == OutcomeKind.AT_HOME_SERVER_DOWN
         assert len(sync.starts) >= 3
         assert max(sync.starts) < _CIO_CEILING_SEC
         assert len(records) == 1
-        assert records[0][0] == OutcomeKind.SYNC_FAILED_AFTER_RETRY
+        assert records[0][0] == OutcomeKind.AT_HOME_SERVER_DOWN
 
     def test_alwaysFailing_waitsStrictlyIncrease(self) -> None:
         clock = _FakeClock()
@@ -189,7 +192,7 @@ class TestCeiling:
 
         result = _task(sync, clock, records).run()
 
-        assert result == OutcomeKind.SYNC_FAILED_AFTER_RETRY
+        assert result == OutcomeKind.AT_HOME_SERVER_DOWN
         assert max(sync.starts) < _CIO_CEILING_SEC
         assert len(records) == 1
 
@@ -211,7 +214,7 @@ class TestCeiling:
 
         result = task.run()
 
-        assert result == OutcomeKind.OK
+        assert result == OutcomeKind.DELIVERED
         assert len(sync.starts) == 2
 
 
@@ -228,7 +231,7 @@ class TestNeverRaises:
 
         result = _task(sync, clock, records).run()
 
-        assert result in (OutcomeKind.SYNC_FAILED_AFTER_RETRY, OutcomeKind.REAL_ERROR)
+        assert result in (OutcomeKind.AT_HOME_SERVER_DOWN, OutcomeKind.REAL_ERROR)
         assert len(records) == 1
 
     @pytest.mark.parametrize(
@@ -273,7 +276,7 @@ class TestNeverRaises:
             monotonic=clock.monotonic,
         )
 
-        assert task.run() == OutcomeKind.SYNC_FAILED_AFTER_RETRY
+        assert task.run() == OutcomeKind.AT_HOME_SERVER_DOWN
 
     def test_sleepRaising_runStillReturns(self) -> None:
         clock = _FakeClock()
@@ -291,7 +294,7 @@ class TestNeverRaises:
             monotonic=clock.monotonic,
         )
 
-        assert task.run() in (OutcomeKind.SYNC_FAILED_AFTER_RETRY, OutcomeKind.REAL_ERROR)
+        assert task.run() in (OutcomeKind.AT_HOME_SERVER_DOWN, OutcomeKind.REAL_ERROR)
 
 
 class TestAwayUnchanged:
@@ -308,7 +311,7 @@ class TestAwayUnchanged:
             monotonic=clock.monotonic,
         )
 
-        assert task.run() == OutcomeKind.SERVER_UNAVAILABLE
+        assert task.run() == OutcomeKind.AWAY
         assert sync.starts == []
         assert clock.sleeps == []
 

@@ -1024,6 +1024,34 @@ of the code scope.
 paths (safe globally: `power_log` + `startup_log` are the only Pi tables
 carrying `data_quality`).
 
+##### `startup_log` columns (US-263 → US-776-f)
+
+One row per Pi boot, written by `boot-progress-arm.service`
+(`src/pi/diagnostics/boot_progress.py::arm`). Pi schema:
+`src/pi/obdii/database_schema.py::SCHEMA_STARTUP_LOG`; server mirror:
+`src/server/db/models.py` (plus `source_device`, no `data_quality`).
+
+| Column | Type | Meaning |
+|--------|------|---------|
+| `boot_id` | TEXT PK | `/proc/sys/kernel/random/boot_id`, lowercase, no dashes |
+| `prior_boot_clean` | INTEGER | 1 = the prior boot's journal shows a graceful shutdown; 0 = none (hard cut); NULL = no prior boot |
+| `prior_last_entry_ts` | TEXT | Last journal timestamp of the prior boot |
+| `current_boot_first_entry_ts` | TEXT | First journal timestamp of this boot |
+| `prior_boot_last_stage` | TEXT | Highest boot_progress milestone the prior boot reached |
+| `prior_boot_reason` | TEXT | That milestone's decoded reason |
+| `recorded_at` | TEXT | When the row was written (ISO-8601 UTC); the snapshot-sync cursor |
+| `data_quality` | TEXT | US-419 clock-quality flag; Pi-local, wire-stripped |
+| `prior_boot_home_state` | TEXT | US-776-f / US-741: the prior shutdown's `HomeNetworkState` name |
+| `prior_boot_sync_outcome` | TEXT | US-776-f / US-776-d: why the prior shutdown's sync ended (`DELIVERED`, `AWAY`, `UNKNOWN_NETWORK`, `AT_HOME_JOINING_TIMEOUT`, `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED`, or `REAL_ERROR`) |
+| `prior_boot_backlog_start` | INTEGER | US-776-d: unsynced rows before the prior shutdown's first sync attempt |
+| `prior_boot_backlog_end` | INTEGER | US-776-d: unsynced rows after its last attempt |
+
+The four `prior_boot_*` sync columns are landed from powerwatch's durable
+shutdown record (`powerwatch_outcome.json`, §10.6.3) only when that record's
+`boot_id` belongs to the prior boot; otherwise — an older build, a hard cut
+before the record was written, or a count that could not be read — they are
+NULL, never a guessed value.
+
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
 │    vehicle_info     │     │      profiles       │
@@ -1840,10 +1868,10 @@ with `ConfigValidationError` at config-load time.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `ssid` | `DeathStarWiFi` | Home WiFi SSID expected from `iwgetid -r` |
+| `ssid` | `DeathStarWiFi` | Home WiFi SSID, read from the active row of `nmcli -t -f ACTIVE,SSID device wifi list --rescan no` (US-776-b) |
 | `subnet` | `10.27.27.0/24` | Home LAN CIDR; defense-in-depth co-check with SSID |
 | `pingTimeoutSeconds` | `3` | Bounded timeout on `GET {baseUrl}{serverPingPath}` |
-| `serverPingPath` | `/api/v1/ping` | Must be absolute (start with `/`) |
+| `serverPingPath` | `/api/v1/health` | Must be absolute (start with `/`) and a real server GET route (US-776-a) |
 
 Defense in depth: `isAtHomeWifi()` is True ONLY when BOTH the SSID check
 AND the subnet check pass.  A spoofed home-SSID on a foreign router
@@ -2680,8 +2708,8 @@ Three bounds used to end it first, and each is removed where it lived:
 1. **`_buildRunSync` budget** (`__main__.py`). A further pass only started if one as long as the
    last still fitted `perTaskTimeoutSec` (20 s). Removed: the loop ends on an empty backlog, a failing
    pass (`RuntimeError` -> the task retries with doubling waits of 2, 4, 8, 16 s ... and starts
-   no attempt after `pi.homeNetwork.shutdownSyncCeilingSec`, 60 s (US-776-g) ->
-   `SYNC_FAILED_AFTER_RETRY`), a pass that moves
+   no attempt after `pi.homeNetwork.shutdownSyncCeilingSec`, 60 s (US-776-g) -> recorded as
+   `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED` or `UNKNOWN_NETWORK`, US-776-d), a pass that moves
    nothing, or an unreadable backlog. Custody re-reads the SAME reader, so those last cases record
    `OUTSTANDING` or `UNKNOWN`, never `DELIVERED`. Every pass still excludes
    `SHUTDOWN_DRAIN_EXCLUDED_TABLES`.
@@ -2744,7 +2772,7 @@ deeper fault was the design: any dead instrument in the gate disabled the drain,
 
 | Detector state | Means | The task |
 |---|---|---|
-| `AWAY` | a **positive** not-home answer: a foreign SSID (whatever the IP read says), or a *successful* `hostname -I` with no home-subnet address | skips at once: no `forcePush`, no sleep, no record; poweroff follows |
+| `AWAY` | a **positive** not-home answer: a foreign SSID (whatever the IP read says), or a *successful* `hostname -I` with no home-subnet address | skips at once: no `forcePush`, no sleep; records `AWAY` (US-776-d); poweroff follows |
 | `AT_HOME_SERVER_REACHABLE` / `AT_HOME_SERVER_DOWN` | home SSID **and** a home-subnet IP | drains |
 | `UNKNOWN` | no positive AWAY, but home is unconfirmed: the SSID reader is dead (`nmcli` missing / timed out) with a home-subnet IP or a failed IP read, or the home SSID with a failed IP read | **drains anyway**, logging `UNKNOWN_NETWORK` at WARNING |
 
@@ -2757,10 +2785,47 @@ deeper fault was the design: any dead instrument in the gate disabled the drain,
   once the home SSID and a home-subnet IP are both seen.
 - **At home with the server down it still drains.** The drain decides *whether* to try; the probe
   verdict no longer vetoes it. Retrying until delivered or a ceiling is US-776-g; the outcome record
-  per shutdown is US-776-d. Until US-776-d, the AWAY skip returns the existing benign
-  `OutcomeKind.SERVER_UNAVAILABLE`.
+  per shutdown is US-776-d (below).
 - **Read once, not polled.** A network that changes mid-drain is not re-detected; the drain then
   ends on a failing pass, or on the floor while a pass is blocked.
+
+**Every shutdown sync records why it ended (US-776-d, Sprint 95; Atlas review 2026-09-30, ruling 4
+and gap 3).** Until Sprint 95 a skipped sync wrote nothing, so a probe that was always false read as
+an absent server for weeks: 16 of 16 shutdowns logged "unreachable -- benign skip" at INFO and left
+no record. Now **every** `SyncWithServerTask.run()` -- the skip and the success included -- hands
+exactly one `SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd)` to its sink, and logs one
+`outcome=<NAME> backlog_start=<n> backlog_end=<n>` line.
+
+| Outcome (`OutcomeKind`) | When | Log level |
+|---|---|---|
+| `DELIVERED` | a drain attempt succeeded (whatever the detector state was) | INFO |
+| `AWAY` | a positive AWAY: the sync was skipped | INFO |
+| `UNKNOWN_NETWORK` | home was never confirmed (`UNKNOWN`) and the drain ran to the ceiling without delivering | WARNING |
+| `AT_HOME_JOINING_TIMEOUT` | reserved for US-776-e: the WiFi rejoin outlasted the ceiling | ERROR |
+| `AT_HOME_SERVER_DOWN` | at home, the drain ran to the ceiling; the probe got no answer (connection error, timeout), a 5xx, or a 2xx | ERROR |
+| `PROBE_MISCONFIGURED` | at home, the drain ran to the ceiling and the probe was answered 404, 405, 401 or 403: the server is up, the configured route or key is wrong | ERROR |
+| `REAL_ERROR` | a non-transient sync fault (the pre-existing kind; no retry) | ERROR |
+
+- **A misconfigured probe is told from a down server by a sibling, not by changing the bool.**
+  `HomeNetworkDetector.probeServer()` returns `ProbeResult(status, error)`; `isServerReachable()` is
+  its 2xx, so every existing caller is untouched. The detector keeps the probe behind its last state
+  as `lastProbe` (cleared whenever a state is decided without probing), and the task reads that --
+  it never probes again, so recording adds no network call to the shutdown.
+- **`backlog_start` and `backlog_end`.** Read from the shared US-621 reader with the drain's own
+  exclusions (`readDrainBacklog`), before the first attempt and after the last; on `AWAY` the one
+  read is both. A count the reader could not complete (an unreadable table, an unopenable database)
+  is `None`, never a lower bound presented as exact. `DELIVERED` with `backlog_start = 0` (nothing
+  was owed) is therefore distinguishable from `DELIVERED` with `backlog_start > 0` -- the 2026-09-27
+  shutdown read DELIVERED with the drain never having run.
+- **Where it lands.** `__main__.makeOutcomeSink` writes the record into `powerwatch_outcome.json`
+  (`outcome.writeOutcomeRecord`: atomic, never raises) with `sync_outcome` = the outcome NAME and the
+  two counts (an unknown count is omitted). The next boot's `boot_progress.arm` lands them into
+  `startup_log.prior_boot_sync_outcome` / `prior_boot_backlog_start` / `prior_boot_backlog_end`
+  (US-776-f), which reach the server through the existing snapshot sync.
+- **What it cannot record.** The record is written when `run()` returns. A shutdown whose VCELL is
+  already at the backstop skips the pipeline (no sync, no record), and a floor poll that powers off
+  while a pass is in flight ends the process before `run()` returns; both still write the custody
+  record above, and the sync columns land NULL.
 
 ### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
 

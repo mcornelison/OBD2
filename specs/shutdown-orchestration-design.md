@@ -122,7 +122,39 @@ Whether Tier 2 runs at all is decided by `HomeNetworkDetector.getHomeNetworkStat
   probe kept the drain off on every shutdown until Sprint 95.
 
 This decides *whether* Tier 2 runs. How long it retries (a ceiling) is US-776-g; the per-shutdown
-outcome record is US-776-d. `specs/architecture.md` §10.6.3 is the system-of-record description.
+outcome record is US-776-d (next section). `specs/architecture.md` §10.6.3 is the system-of-record
+description.
+
+### Tier 2 records why it ended (US-776-d, built Sprint 95)
+
+A skip that writes nothing is indistinguishable from a sync that never ran: for weeks an always-false
+probe read as "server absent" and nobody could tell. So **every** `SyncWithServerTask.run()` writes
+exactly one record into the durable shutdown record (`powerwatch_outcome.json`), the skip and the
+success included, before the task returns:
+
+| `sync_outcome` | The sync ended because |
+|---|---|
+| `DELIVERED` | a drain attempt succeeded |
+| `AWAY` | a positive AWAY: the drain was skipped |
+| `UNKNOWN_NETWORK` | home was never confirmed and the drain ran to the ceiling undelivered |
+| `AT_HOME_JOINING_TIMEOUT` | (US-776-e) the WiFi rejoin outlasted the ceiling |
+| `AT_HOME_SERVER_DOWN` | at home, the drain ran to the ceiling; the server probe got no answer, a 5xx or a 2xx |
+| `PROBE_MISCONFIGURED` | at home, the drain ran to the ceiling and the probe was answered 404/405/401/403 |
+| `REAL_ERROR` | a non-transient sync fault |
+
+The record also carries `backlog_start` (unsynced rows before the first attempt) and `backlog_end`
+(after the last), from the shared US-621 backlog reader. That is what tells "delivered 412 rows"
+from "delivered, nothing was owed": the outcome alone reads `DELIVERED` for both. An unreadable count
+is left out and lands NULL. The next boot lands all three into `startup_log.prior_boot_*` (US-776-f).
+
+`PROBE_MISCONFIGURED` comes from `HomeNetworkDetector.probeServer()` (a sibling of the bool
+`isServerReachable()`, Atlas ruling 4), read back through `lastProbe` -- recording never probes
+again, so it adds no network call and no wait to the shutdown. One summary line per shutdown is
+logged: INFO for `DELIVERED`/`AWAY`, WARNING for `UNKNOWN_NETWORK`, ERROR otherwise.
+
+What it cannot record: the backstop fast path skips the pipeline, and a floor poll can power off
+with a pass in flight. Neither reaches the end of `run()`; both still write the custody record, and
+the `prior_boot_*` sync columns land NULL.
 
 ### The animation is the terminal signal
 

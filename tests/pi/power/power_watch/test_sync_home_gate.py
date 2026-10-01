@@ -15,6 +15,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-01    | Rex          | Initial -- US-776-c home-gated drain.
+# 2026-10-01    | Rex          | US-776-d: AWAY / DELIVERED kinds; the AWAY skip
+#               |              | writes one record.
 # ================================================================================
 ################################################################################
 """US-776-c: away the shutdown powers off at once; at home it drains."""
@@ -148,7 +150,7 @@ class TestAwaySkipsAtOnce:
         assert calls == []
         assert fakeClock.sleeps == []
         assert fakeClock.monotonic() - start < 1.0
-        assert result == OutcomeKind.SERVER_UNAVAILABLE
+        assert result == OutcomeKind.AWAY
 
     def test_away_makesNoHttpCall(self) -> None:
         """A foreign SSID never reaches the server probe (nothing to block on)."""
@@ -167,7 +169,9 @@ class TestAwaySkipsAtOnce:
         assert httpCalls == []
         assert calls == []
 
-    def test_away_writesNoRecord(self) -> None:
+    def test_away_writesOneAwayRecord(self) -> None:
+        """US-776-d: the skip is recorded -- a silent skip is how an
+        always-false check read as an absent server for weeks."""
         records: list[object] = []
         task = SyncWithServerTask(
             homeState=lambda: HomeNetworkState.AWAY,
@@ -178,7 +182,7 @@ class TestAwaySkipsAtOnce:
 
         task.run()
 
-        assert records == []
+        assert [r[0] for r in records] == [OutcomeKind.AWAY]
 
 
 # =============================================================================
@@ -270,7 +274,7 @@ class TestUnknownDrains:
 
         # Assert
         assert calls == ["sync"]
-        assert result == OutcomeKind.OK
+        assert result == OutcomeKind.DELIVERED
         warnings = [r for r in caplog.records if "UNKNOWN_NETWORK" in r.getMessage()]
         assert [r.levelno for r in warnings] == [logging.WARNING]
 
