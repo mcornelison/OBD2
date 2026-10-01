@@ -153,6 +153,12 @@
 #                           from the shared US-621 reader); the task reads the
 #                           detector's lastProbe to tell a misconfigured probe
 #                           from a down server.
+# 2026-10-01    | US-741    | Sprint 95. HomeStateAtLoss: every power loss asks
+#                           the detector once (its own thread, started by the
+#                           loss hook) and persists the state name into the
+#                           durable shutdown record; the sync task reuses that
+#                           answer, and the floor fast path records UNKNOWN
+#                           rather than wait for it.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -166,6 +172,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 # Resolve project paths relative to this file (NOT cwd) and put BOTH the repo
@@ -211,6 +218,7 @@ from src.pi.power.power_source_pubsub import (  # noqa: E402
     POWER_SOURCE_FILENAME,
     publishPowerSource,
 )
+from src.pi.power.power_watch.contract import OutcomeKind  # noqa: E402
 from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
 from src.pi.power.power_watch.load_shed import (  # noqa: E402
     DEFAULT_SHED_UNITS,
@@ -572,13 +580,21 @@ def backlogCount(backlog: SyncBacklog) -> int | None:
     return backlog.total
 
 
-def makeOutcomeSink(outcomePath: str):
+def makeOutcomeSink(
+    outcomePath: str, *, homeState: Callable[[], str] | None = None
+) -> Callable[[SyncOutcomeRecord], None]:
     """The sync task's ``writeRecord``: one durable shutdown record per run.
 
     US-776-d: the record carries the outcome NAME as ``sync_outcome`` and both
     backlog counts -- the keys the next boot lands into startup_log's
     ``prior_boot_*`` columns (US-776-f). An unknown count is omitted, so it
     lands NULL. ``writeOutcomeRecord`` never raises.
+
+    Args:
+        outcomePath: The durable shutdown record (powerwatch_outcome.json).
+        homeState: US-741 -- optional zero-arg read of the home state NAME at
+            the power loss (``HomeStateAtLoss.stateName``). The sync record
+            overwrites the file, so it must carry the name forward.
     """
 
     def _write(record: SyncOutcomeRecord) -> None:
@@ -587,12 +603,162 @@ def makeOutcomeSink(outcomePath: str):
             record.kind,
             detail=record.detail,
             task="sync_with_server",
+            homeState=homeState() if homeState is not None else None,
             syncOutcome=record.kind.name,
             backlogStart=record.backlogStart,
             backlogEnd=record.backlogEnd,
         )
 
     return _write
+
+
+def _startDaemonThread(target: Callable[[], None]) -> None:
+    threading.Thread(target=target, name="pw-home-state", daemon=True).start()
+
+
+class HomeStateAtLoss:
+    """US-741: ask the home detector ONCE per power loss and persist the answer.
+
+    ``observe`` is a ``powerLossObservedFn`` hook: it starts the detector read
+    on its own thread and returns at once, so the load shed and the smoothing
+    window are never held up by nmcli or the HTTP probe. The answer's NAME goes
+    into the durable shutdown record, which the next boot lands as
+    ``startup_log.prior_boot_home_state`` (US-776-f).
+
+    The record is written on every path a loss can take, exactly once per
+    loss with this loss's state:
+
+    * the answer arrives -- written then (a blip that cancels is covered);
+    * the sync task records its outcome -- its record carries the name, since
+      it overwrites the same file (``makeOutcomeSink(homeState=stateName)``);
+    * the poweroff comes first (the VCELL floor fast path skips the
+      pipeline) -- ``ensureRecorded`` writes ``UNKNOWN``. The poweroff never
+      waits for the detector; a late answer does not overwrite that record.
+
+    The sync task's first home-state read IS this loss's answer
+    (``stateForSync``), so the detector is called once per loss, not twice.
+    Its later reads (the US-776-e JOINING polls) go to the detector live.
+    """
+
+    def __init__(
+        self,
+        readState: Callable[[], HomeNetworkState],
+        *,
+        outcomePath: str,
+        startFn: Callable[[Callable[[], None]], None] | None = None,
+    ) -> None:
+        """Args:
+        readState: Zero-arg detector read (``HomeNetworkDetector.
+            getHomeNetworkState``); every call behind it is timeout-bounded.
+        outcomePath: The durable shutdown record (powerwatch_outcome.json).
+        startFn: Runs the observation off the caller's thread; a daemon
+            thread when None. Tests pass a synchronous one.
+        """
+        self._readState = readState
+        self._outcomePath = outcomePath
+        self._startFn = startFn if startFn is not None else _startDaemonThread
+        # Re-entrant: the sync sink runs under it and reads stateName.
+        self._lock = threading.RLock()
+        self._loss: threading.Event | None = None
+        self._answer: HomeNetworkState | None = None
+        self._handedToSync = False
+        self._written = False
+
+    def observe(self) -> None:
+        """Start this loss's detector read. Returns at once; never raises."""
+        loss = threading.Event()
+        with self._lock:
+            self._loss = loss
+            self._answer = None
+            self._handedToSync = False
+            self._written = False
+        try:
+            self._startFn(lambda: self._observeLoss(loss))
+        except Exception as exc:  # noqa: BLE001 -- never block the loss path
+            # No thread: the sync task's first read asks the detector itself.
+            logger.error("powerwatch: home-state read could not start (%s)", exc)
+            loss.set()
+
+    def _observeLoss(self, loss: threading.Event) -> None:
+        try:
+            state = self._readOnce()
+            with self._lock:
+                if self._loss is not loss:
+                    return  # a newer loss owns the record now
+                self._answer = state
+                if not self._written:
+                    self._writeHomeStateRecord(state.name, "home state at the power loss")
+        finally:
+            loss.set()
+
+    def _readOnce(self) -> HomeNetworkState:
+        """One detector call; UNKNOWN when it raises."""
+        try:
+            return self._readState()
+        except Exception as exc:  # noqa: BLE001 -- a dead detector is UNKNOWN
+            logger.warning("powerwatch: home detector failed (%s) -- recording UNKNOWN", exc)
+            return HomeNetworkState.UNKNOWN
+
+    def stateForSync(self) -> HomeNetworkState:
+        """The sync task's ``homeState``: this loss's answer, then live reads."""
+        with self._lock:
+            loss = self._loss
+            first = loss is not None and not self._handedToSync
+            self._handedToSync = True
+        if not first:
+            return self._readState()
+        loss.wait()
+        with self._lock:
+            answer = self._answer if self._loss is loss else None
+        if answer is None:
+            # The observation never ran (its thread could not start): this is
+            # the loss's one call. Outside the lock, so a poweroff never waits.
+            answer = self._readOnce()
+            with self._lock:
+                if self._loss is loss and self._answer is None:
+                    self._answer = answer
+        return answer
+
+    def stateName(self) -> str:
+        """This loss's state name, ``UNKNOWN`` until it is known; never empty."""
+        answer = self._answer
+        return answer.name if answer is not None else HomeNetworkState.UNKNOWN.name
+
+    def wrapSink(
+        self, sink: Callable[[SyncOutcomeRecord], None]
+    ) -> Callable[[SyncOutcomeRecord], None]:
+        """Serialise the sync task's record with this one's (one file)."""
+
+        def _write(record: SyncOutcomeRecord) -> None:
+            with self._lock:
+                sink(record)
+                self._written = True
+
+        return _write
+
+    def ensureRecorded(self) -> None:
+        """Pre-poweroff hook: no loss powers off without a home state written."""
+        with self._lock:
+            if self._loss is None or self._written:
+                return
+            logger.warning(
+                "powerwatch: the home detector has not answered by the poweroff "
+                "-- recording home state UNKNOWN"
+            )
+            self._writeHomeStateRecord(
+                HomeNetworkState.UNKNOWN.name, "home detector had not answered by the poweroff"
+            )
+
+    def _writeHomeStateRecord(self, name: str, detail: str) -> None:
+        writeOutcomeRecord(
+            self._outcomePath,
+            OutcomeKind.OK,
+            detail=detail,
+            task="home_state_at_loss",
+            homeState=name,
+        )
+        self._written = True
+        logger.info("powerwatch: home state at the power loss = %s", name)
 
 
 def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
@@ -1008,11 +1174,16 @@ def main(argv: list[str] | None = None) -> int:
     def readDrainBacklog():
         return readSyncBacklog(excludeRows=ownTrajectoryRows.exclusions())
 
+    # US-741: the detector is asked ONCE per power loss, off the loss path's
+    # thread, and its answer persisted (startup_log.prior_boot_home_state at
+    # the next boot). The sync task's first read is that same answer.
+    homeStateAtLoss = HomeStateAtLoss(detector.getHomeNetworkState, outcomePath=outcomePath)
+
     syncTask = SyncWithServerTask(
         # US-776-c: the drain decision. A positive AWAY skips at once (no wait,
         # no HTTP call); at home, or UNKNOWN with no positive AWAY, it drains.
         # Every nmcli / hostname -I / HTTP call behind it is timeout-bounded.
-        homeState=detector.getHomeNetworkState,
+        homeState=homeStateAtLoss.stateForSync,
         # US-776-a: no budget -- the drain ends on an empty backlog or the
         # sequencer's VCELL floor poll. Every pass excludes the EDR set.
         runSync=_buildRunSync(
@@ -1020,8 +1191,11 @@ def main(argv: list[str] | None = None) -> int:
             backlogReader=readDrainBacklog,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
-        # US-776-d: one durable record per run -- why the sync ended.
-        writeRecord=makeOutcomeSink(outcomePath),
+        # US-776-d: one durable record per run -- why the sync ended. US-741:
+        # it carries the loss's home state, serialised with that record.
+        writeRecord=homeStateAtLoss.wrapSink(
+            makeOutcomeSink(outcomePath, homeState=homeStateAtLoss.stateName)
+        ),
         # US-776-g: a transient failure is retried with backoff; no attempt
         # starts after this ceiling (CIO: 60 s).
         ceilingSec=shutdownSyncCeilingSec,
@@ -1082,7 +1256,11 @@ def main(argv: list[str] | None = None) -> int:
         ownDrainCloseSlot=ownDrainCloseSlot,
         ownTrajectoryRows=ownTrajectoryRows,
     )
-    prePowerOffFn = composePrePowerOffHooks(drainCloseFn, custodyFn)
+    # US-741: last, and isolated like the others -- a loss whose detector has
+    # not answered (the floor fast path) still powers off with UNKNOWN written.
+    prePowerOffFn = composePrePowerOffHooks(
+        drainCloseFn, custodyFn, homeStateAtLoss.ensureRecorded
+    )
 
     # US-748: the previous loss's heartbeat rows, reported once per start --
     # the number the 09-14 cuts could only bound ("under 30 s").
@@ -1141,9 +1319,10 @@ def main(argv: list[str] | None = None) -> int:
         # ⚠️ The loss-observed slot takes ONE callable and already held US-748's
         # heartbeat. Composed with the same per-hook isolation the pre-poweroff
         # slot uses, so a failing shed can never suppress the time-to-death
-        # instrument -- or vice versa.
+        # instrument -- or vice versa. US-741: the home-state read is last and
+        # only starts a thread, so the shed is never behind nmcli or HTTP.
         powerLossObservedFn=composePrePowerOffHooks(
-            lossHeartbeat.start, loadShedder.shed
+            lossHeartbeat.start, loadShedder.shed, homeStateAtLoss.observe
         ),
         powerRestoredFn=loadShedder.restore,
     )
