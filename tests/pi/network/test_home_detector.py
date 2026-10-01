@@ -65,7 +65,7 @@ def _baseConfig(**overrides: Any) -> dict[str, Any]:
                 "ssid": "DeathStarWiFi",
                 "subnet": "10.27.27.0/24",
                 "pingTimeoutSeconds": 3,
-                "serverPingPath": "/api/v1/ping",
+                "serverPingPath": "/api/v1/health",
             },
             "companionService": {
                 "baseUrl": "http://10.27.27.10:8000",
@@ -380,6 +380,15 @@ class TestIsServerReachable:
 
         assert detector.isServerReachable() is False
 
+    def test_osError_returnsFalseNotRaise(self) -> None:
+        detector = HomeNetworkDetector(
+            _baseConfig(),
+            httpOpener=_openerRaising(ConnectionResetError("reset by peer")),
+            apiKey="test-key",
+        )
+
+        assert detector.isServerReachable() is False
+
     def test_httpError4xx_returnsFalse(self) -> None:
         """Server reachable but rejected -- treat as 'not usable'.
 
@@ -387,7 +396,7 @@ class TestIsServerReachable:
         perspective that's the same as unreachable.
         """
         httpError = urllib.error.HTTPError(
-            url="http://test/api/v1/ping",
+            url="http://test/api/v1/health",
             code=401,
             msg="Unauthorized",
             hdrs=None,  # type: ignore[arg-type]

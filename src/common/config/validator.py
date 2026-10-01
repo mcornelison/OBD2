@@ -86,6 +86,8 @@
 #                                DEFAULTS and the pi module fallbacks import it.
 # 2026-09-25    | Rex (US-790) | pi.power.cellEpoch: default 'unknown', closed
 #                                vocabulary CELL_EPOCH_VALUES.
+# 2026-09-30    | Rex (US-776-a)| pi.homeNetwork.serverPingPath default is
+#                                /api/v1/health; the old ping path was a 404.
 # ================================================================================
 ################################################################################
 
@@ -336,7 +338,7 @@ DEFAULTS: dict[str, Any] = {
     'pi.homeNetwork.ssid': 'DeathStarWiFi',
     'pi.homeNetwork.subnet': '10.27.27.0/24',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.homeNetwork.pingTimeoutSeconds': 3,
-    'pi.homeNetwork.serverPingPath': '/api/v1/ping',
+    'pi.homeNetwork.serverPingPath': '/api/v1/health',
     # Pi-tier sync trigger semantics (US-226).  Orchestrator-level trigger
     # policy; the transport config lives in pi.companionService above.
     # intervalSeconds MUST fire independently of drive_end so a bugged

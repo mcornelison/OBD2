@@ -14,6 +14,7 @@
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-188
 # 2026-09-13    | Rex          | US-743: SSID compared case-insensitively (casefold)
+# 2026-09-30    | Rex          | US-776-a: serverPingPath fallback /api/v1/health
 # ================================================================================
 ################################################################################
 
@@ -197,7 +198,7 @@ class HomeNetworkDetector:
         self._ssid: str = str(homeNet.get("ssid", "DeathStarWiFi"))
         self._subnet: str = str(homeNet.get("subnet", "10.27.27.0/24"))  # b044-exempt: defensive fallback mirroring validator default
         self._pingTimeout: float = float(homeNet.get("pingTimeoutSeconds", 3))
-        self._pingPath: str = str(homeNet.get("serverPingPath", "/api/v1/ping"))
+        self._pingPath: str = str(homeNet.get("serverPingPath", "/api/v1/health"))
         self._baseUrl: str = str(companion.get("baseUrl", "")).rstrip("/")
 
         self._ssidReader: Callable[[], str | None] = ssidReader or _readSsidViaIwgetid
