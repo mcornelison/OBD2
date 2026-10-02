@@ -116,6 +116,14 @@ Whether Tier 2 runs at all is decided by `HomeNetworkDetector.getHomeNetworkStat
   *positive* answer: a foreign SSID, or a successful `hostname -I` with no home-subnet address.
   The AWAY path's only calls are `nmcli` and `hostname -I`, each bounded at 2.0 s.
 - **`AT_HOME_*` drains**, whether or not the server probe answered.
+- **`AT_HOME_JOINING` waits, then drains, inside ONE shared ceiling** (US-776-e). The home SSID is in
+  NetworkManager's cached scan but not associated (the rejoin measured ~49 s after arrival, drive 96).
+  The state is re-read every `JOIN_POLL_SEC` (2 s) — the one exception to "read once". **The wait and
+  the drain share a single `pi.homeNetwork.shutdownSyncCeilingSec`, measured from the START of the
+  wait**, so a 49 s rejoin leaves ~11 s of a 60 s ceiling to drain. Still joining at the ceiling, or
+  joined with no time left, is `AT_HOME_JOINING_TIMEOUT` with no attempt; a rejoin that resolves
+  `AWAY` skips as `AWAY`. The drain never starts a fresh ceiling after the wait: that would let one
+  shutdown's Tier 2 run to twice its configured bound.
 - **`UNKNOWN` drains too**, logged `UNKNOWN_NETWORK` at WARNING. `UNKNOWN` means a reader is dead
   (SSID reader unavailable, or the IP read itself failed) and nothing rules home out. A dead
   instrument must never disable the drain (`specs/design-patterns.md` §6) — a single always-false
