@@ -38,7 +38,7 @@ drains (`production`, ≥ 60 s, ending ≤ 3.50 V) were produced only by the pow
 | start/end VCELL, runtime, one row per key-off | `battery_health_log` | EXISTS |
 | **sync start / end (UTC)** | shutdown outcome record → `startup_log.prior_boot_sync_started_at/_ended_at` | NEW (rides the US-776-f path) |
 | **`cut_step_mv`** = last VCELL on wall − VCELL 1 s after the cut | `battery_health_log` | NEW |
-| **`trigger`** ∈ `keyoff` · `monthly_test` · `calibration` | `battery_health_log` | NEW; supersedes `load_class` as the qualifying key |
+| **`drain_trigger`** ∈ `keyoff` · `monthly_test` · `calibration` (§15.1) | `battery_health_log` | NEW; supersedes `load_class` as the qualifying key |
 | **`drain_rate_mv_s`**, `window_start_s`, `window_end_s`, `verdict` | `battery_health_log` (monthly-test rows) | NEW |
 Not captured, deliberately: per-second watts (CPU cost; the monthly test runs the same shed load); the gauge's SOC % (unreliable on this chip).
 
@@ -52,7 +52,7 @@ Not captured, deliberately: per-second watts (CPU cost; the monthly test runs th
 - Every ending writes its reason and the sync start/end times. All end in the graceful poweroff.
 - Known edge (§2.7): the JOINING read uses NetworkManager's CACHED scan list (`nmcli … --rescan no`). Entries age out after roughly 3 min
   (RECALLED). A key-off within ~3 min of leaving home can wait ≤ 120 s; the 2 s re-read ends the wait when the entry expires.
-- Until calibrated (§7), the floor = the current configured VCELL floor.
+- The reserve floor IS the existing `pi.powerWatch.drainFloorVolts` (3.6 V today) with the dwell (§15.3). Calibration (§7) re-sets its value.
 
 ## 6. Monthly test (11 min)
 - **Due when:** an at-home key-off (state resolves `AT_HOME_*`), and no completed `monthly_test` row for the CURRENT `cell_epoch` in the
@@ -61,8 +61,8 @@ Not captured, deliberately: per-second watts (CPU cost; the monthly test runs th
   shuts down gracefully.
 - **Window:** 60–660 s after the cut, so it includes the sync's own load (conservative; month-to-month noise from varied syncs accepted).
   `drain_rate_mv_s` = least-squares slope of `vcell_v` over the window.
-- **Interrupted** (wall power returns early) → row `trigger=monthly_test`, `close_reason=interrupted`, not counted; retried next at-home
-  key-off. **Reserve floor hit during the test** → verdict `replace` immediately.
+- **Interrupted** (wall power returns early) → a `drain_trigger=monthly_test` row with `runtime_seconds` < 660: not counted (§15.2);
+  retried next at-home key-off. **Reserve floor hit during the test** → verdict `replace` immediately.
 - Measured basis (2026-09-27, epoch 3, 2.55 W): a 600 s window is within ±50 % of the 30-min rate 86 % of the time, never "no drain";
   60/120 s windows are within ±50 % only 16/12 % of the time and show NO drain 36/37 % of the time.
 - **Seed:** the 2026-09-27 drain is landed once as epoch 3's first `monthly_test` row, ON THE PI (its own id space), `data_source='real'`,
@@ -100,13 +100,12 @@ Basis: 119 mV at ~2.55 W on 2026-09-27.
 - Pi: `power_watch/tasks/sync_with_server.py` (stops, outcomes, times) · the powerwatch controller (monthly hold, floor dwell) ·
   `power_watch/outcome.py` + `boot_progress.py` (sync times) · `battery_health_verdict.py` (replaced) · the battery-health emitter ·
   `power_db.py` (new columns, `cut_step_mv`) · `database_schema.py` (replay-safe ADD COLUMNs) · validator + config keys below.
-- Server: a migration for the new `battery_health_log` and `startup_log` columns; models; and **widening v0032's `close_reason`
-  CHECK to admit `interrupted`** (§6), on both tiers. **SERVER BEFORE PI** (snapshot sync drops
+- Server: ONE migration (v0035) for the new `battery_health_log` and `startup_log` columns; models. No `close_reason` change (§15.2). **SERVER BEFORE PI** (snapshot sync drops
   unknown columns silently: the v0034 lesson).
 - UI: the reason-text table (§8) and the tile detail (T, J).
-- Config (`pi.batteryHealth.*`): `monthlyIntervalDays 30`, `testHoldSec 660`, `windowSkipSec 60`, `windowSec 600`, `staleDays 45`,
-  `jobAvgCount 10`, `minJobs 3`, `greenMargin 1.2`, `reserveMinutes 10`, `provisionalCutoffV 3.44`; `pi.homeNetwork.joinWaitSec 120`,
-  `stallSec 60`, `floorDwellReads 5`.
+- Config (powerwatch behaviour only, §15.9): `pi.batteryHealth.monthlyIntervalDays 30`, `pi.batteryHealth.testHoldSec 660`,
+  `pi.homeNetwork.joinWaitSec 120`, `pi.homeNetwork.stallSec 60`, `pi.powerWatch.drainFloorDwellReads 5`. Verdict constants live in
+  `battery_health_verdict.py`.
 - Specs: `architecture.md` §Battery Health card (~:5978) and §Battery Health Log (~:1432) become POINTERS to this file;
   `shutdown-orchestration-design.md` §Tier 2 (the ceiling text, incl. my 4bce3aa9 JOINING line) is updated to the completion rule.
 
@@ -130,3 +129,23 @@ Server-side verdict (option B, backlog) · watts logging · SOC-based health · 
 (1) capture: columns, `cut_step_mv`, sync times, migration · (2) sync-to-completion stops in `SyncWithServerTask` · (3) monthly hold in
 powerwatch · (4) the verdict + emitter + reason table · (5) the 09-27 seed row · (6) a calibration-analysis tool (trace → `T_cal`, cutoff,
 floor). (5) and (6) are Atlas-buildable at CIO direction.
+
+## 15. Amendments (2026-10-02, from reading the code at Sprint 95 `4bce3aa9`; CIO-ratified the same day)
+These supersede any text above that differs.
+1. The column is **`drain_trigger`**, not `trigger` (`TRIGGER` is an SQL keyword). Default `keyoff`.
+2. **No `close_reason` widening.** A `monthly_test` row with `runtime_seconds` < 660 is "interrupted" and not counted. (Widening the
+   Pi CHECK would need a table rebuild; SQLite cannot alter a CHECK.)
+3. The reserve floor is the EXISTING `pi.powerWatch.drainFloorVolts` plus `pi.powerWatch.drainFloorDwellReads` (5). Not a second floor.
+4. The 60–660 s window is timed from the drain row's `start_timestamp` (the cut). The trajectory begins at the confirmation read,
+   ~`smoothingSec` after the cut.
+5. Stall = the backlog did not FALL for 60 s, re-read after every attempt. `runSync` can return having pushed nothing.
+6. `battery_health_log` also gains `cell_epoch`, `window_start_s`, `window_end_s`, `drain_rate_mv_s`, `verdict`.
+7. `cut_step_mv` = powerwatch's last on-wall VCELL (cached each 1 Hz PLD poll: a NEW I2C read, its cost measured before merge) minus
+   the drain row's `start_vcell_v`.
+8. Calibration and the 2026-09-27 seed are computed from the **1 Hz witness log** by `tools/power/drain_calibration.py`; powerwatch,
+   which writes the trajectory, is stopped during a calibration drain.
+9. Verdict constants live in code; config only for powerwatch behaviour (§10).
+10. The current pack = the `cell_epoch` of the newest `battery_health_log` row. Calibration results are stored in `t_floor_s`,
+    `floor_vcell_v`, `cutoff_vcell_v`.
+
+Implementation plan: `Z:/O/OBD2v3/offices/architect/reports/2026-10-02-PLAN-ARCH-065-battery-health.md`.
