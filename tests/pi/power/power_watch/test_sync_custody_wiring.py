@@ -18,6 +18,8 @@
 # 2026-09-17    | Rex (US-776-a) | The drain must NOT carry budgetSec any more.
 # 2026-09-25    | Rex (US-790) | The drain reads through readDrainBacklog, the
 #                                shared reader plus the own VCELL series set.
+# 2026-10-01    | Rex (US-741) | The pre-poweroff composition gains the
+#                                home-state hook; matched by name, not count.
 # ================================================================================
 ################################################################################
 """US-621 wiring guards: the service really does record sync custody."""
@@ -72,9 +74,12 @@ class TestCustodyIsWiredIntoTheService:
 
         # Assert
         assert calls, "main() must compose the pre-poweroff hooks"
-        assert len(calls[0].args) == 2, (
-            "composePrePowerOffHooks must receive BOTH the drain close and "
-            f"the custody hook; got {len(calls[0].args)} argument(s)"
+        argSets = [[ast.unparse(arg) for arg in call.args] for call in calls]
+        # US-741 appends its home-state hook; the drain close and custody
+        # must still both go in, drain close first.
+        assert ["drainCloseFn", "custodyFn", "homeStateAtLoss.ensureRecorded"] in argSets, (
+            "composePrePowerOffHooks must receive the drain close, the custody "
+            f"hook and the US-741 home-state hook; got {argSets}"
         )
 
     def test_main_passesTheComposedHookToTheSequencer(self) -> None:

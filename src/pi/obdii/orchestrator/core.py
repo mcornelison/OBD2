@@ -63,6 +63,9 @@
 #               |              | 28/29).  Atlas C-alpha off-tick close.
 # 2026-09-14    | Rex (US-751) | Own _obdWakeEvent, the event both reconnect
 #               |              | heartbeats observe (requestObdLinkWake).
+# 2026-09-30    | Rex (US-674) | stop() marks _stopBegun on entry, so a capture
+#               |              | error raised mid-stop is expected and no longer
+#               |              | escalates to force-exit before the drive closes.
 # ================================================================================
 ################################################################################
 
@@ -141,7 +144,8 @@ class ApplicationOrchestrator(  # type: ignore[misc]
 
     Manages the lifecycle of all system components, handling initialization,
     startup, shutdown, and status reporting. Components are initialized in
-    dependency order and shut down in reverse order.
+    dependency order and shut down in reverse order, except that the capture
+    loop and then the drive detector come down first (US-674).
 
     Initialization Order:
     1. database
@@ -320,6 +324,8 @@ class ApplicationOrchestrator(  # type: ignore[misc]
 
         # Shutdown state management
         self._shutdownState = ShutdownState.RUNNING
+        # US-674: set when stop() begins; read by _isStopInProgress.
+        self._stopBegun = False
         self._shutdownTimeout = config.get('pi', {}).get('shutdown', {}).get(
             'componentTimeout', DEFAULT_SHUTDOWN_TIMEOUT
         )
@@ -724,6 +730,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
 
         logger.info("Stopping ApplicationOrchestrator...")
         startTime = time.time()
+        # US-674: from here on a capture-boundary error is the ECU going
+        # silent at key-off, not a fault; it must not force-exit the stop.
+        self._stopBegun = True
 
         # Check for force exit state (double Ctrl+C)
         if self._shutdownState == ShutdownState.FORCE_EXIT:

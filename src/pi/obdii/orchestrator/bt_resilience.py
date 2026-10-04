@@ -24,6 +24,9 @@
 #               |              | land on, or -- when it did release -- made its
 #               |              | OWN wait unsatisfiable, since the loop's probe
 #               |              | requires /dev/rfcommN to exist.
+# 2026-09-30    | Rex (US-674) | A FATAL-class error once the stop has begun
+#               |              | logs a WARNING (expected at key-off) instead
+#               |              | of 'surfacing to systemd'; still re-raised.
 # ================================================================================
 ################################################################################
 
@@ -118,10 +121,20 @@ class BtResilienceMixin:
         elif classification is CaptureErrorClass.ECU_SILENT:
             self._reactToEcuSilent(exc)
         else:  # FATAL
-            logger.error(
-                "FATAL capture-boundary exception -- surfacing to systemd",
-                exc_info=exc,
-            )
+            # US-674: once the stop has begun the ECU going silent at key-off
+            # is expected.  Still re-raise so the capture loop stops itself;
+            # the orchestrator's fatal hook declines to escalate.
+            isStopInProgress = getattr(self, '_isStopInProgress', None)
+            if callable(isStopInProgress) and isStopInProgress():
+                logger.warning(
+                    "Capture-boundary exception during stop -- expected, "
+                    "stopping capture without escalating | exc=%r", exc,
+                )
+            else:
+                logger.error(
+                    "FATAL capture-boundary exception -- surfacing to systemd",
+                    exc_info=exc,
+                )
             raise exc
 
         return classification

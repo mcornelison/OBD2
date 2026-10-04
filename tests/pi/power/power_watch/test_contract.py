@@ -13,6 +13,7 @@
 # 2026-05-17    | Plan    | Initial -- P2-T1 contract tests.
 # 2026-05-19    | Plan SS-T6 | Rename PipelineTask -> ShutdownTask (the
 #                              Protocol-name rename in SS-T6).
+# 2026-10-01    | Rex (US-776-d) | Pin the six sync-outcome kinds.
 # ================================================================================
 ################################################################################
 """Contract: outcome kinds + shutdown-task protocol are the single source of truth."""
@@ -25,10 +26,15 @@ from src.pi.power.power_watch.contract import (
 
 def test_outcomeKinds_exact():
     assert {k.value for k in OutcomeKind} == {
-        "server_unavailable", "sync_failed_after_retry", "real_error", "ok"
+        "server_unavailable", "sync_failed_after_retry", "real_error", "ok",
+        # US-776-d: why the shutdown sync ended.
+        "delivered", "away", "unknown_network", "at_home_joining_timeout",
+        "at_home_server_down", "probe_misconfigured",
     }
     assert {k.name for k in OutcomeKind} == {
-        "OK", "SERVER_UNAVAILABLE", "SYNC_FAILED_AFTER_RETRY", "REAL_ERROR"
+        "OK", "SERVER_UNAVAILABLE", "SYNC_FAILED_AFTER_RETRY", "REAL_ERROR",
+        "DELIVERED", "AWAY", "UNKNOWN_NETWORK", "AT_HOME_JOINING_TIMEOUT",
+        "AT_HOME_SERVER_DOWN", "PROBE_MISCONFIGURED",
     }
 
 

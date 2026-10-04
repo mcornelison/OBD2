@@ -271,14 +271,24 @@
 # 2026-09-18    | Rex (US-767-c)| EDR log gate reads ObdConnection.getStatus()
 #               |              | lazily, honours pi.sensors.logGate.enabled and
 #               |              | publishes states/edr-log-gate.
+# 2026-09-30    | Rex (US-780) | A component stop-timeout no longer sets
+#               |              | EXIT_CODE_FORCED: it logs a WARNING naming the
+#               |              | component and its elapsed stop time and the
+#               |              | orderly stop exits 0.
+# 2026-09-30    | Rex (US-674) | Mechanism A: once stop() has begun or the stop
+#               |              | signal arrived, a FATAL capture-boundary error
+#               |              | is expected and no longer force-exits.  The
+#               |              | stop sequence stops the capture loop FIRST,
+#               |              | then driveDetector (writes drive_end), then
+#               |              | the rest.
 # ================================================================================
 ################################################################################
 
 """
 Component lifecycle mixin for ApplicationOrchestrator.
 
-Owns the 12-step initialization sequence and the 12-step reverse shutdown
-sequence, plus the component-stop-with-timeout helper. Init order must match
+Owns the 12-step initialization sequence and the shutdown sequence (capture
+loop and drive close first, US-674; otherwise reverse of init), plus the component-stop-with-timeout helper. Init order must match
 TD-003 dependency chain.
 
 This module is deliberately kept as a single file even though it exceeds the
@@ -296,7 +306,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..reconnect_loop import runReconnectHeartbeat
-from .types import EXIT_CODE_FORCED, ComponentInitializationError, ShutdownState
+from .types import ComponentInitializationError, ShutdownState
 
 # Unified logger name matches the original monolith module so existing tests
 # that filter caplog by logger name continue to work unchanged.
@@ -1837,6 +1847,19 @@ class LifecycleMixin:
         the shutdown state lets the main loop observe it on the next
         iteration and run the normal stop sequence.
         """
+        # US-674 (mechanism A): at key-off the ECU goes silent while the
+        # capture loop is still running, so the error is EXPECTED once the
+        # stop is under way.  Escalating here flipped the orderly stop to
+        # force-exit, which skipped driveDetector (no drive_end) and exited 1.
+        # The capture loop has already stopped itself; leave the shutdown
+        # state and exit code to the orderly stop.
+        if self._isStopInProgress():
+            logger.warning(
+                "Capture-boundary error during stop -- expected (ECU silent at "
+                "key-off), not escalating | exc=%r", exc,
+            )
+            return
+
         # Local import to keep this file's top-level imports narrow.
         from .types import EXIT_CODE_FORCED as _FORCED
         logger.error(
@@ -1846,6 +1869,19 @@ class LifecycleMixin:
         self._exitCode = _FORCED
         self._shutdownState = ShutdownState.FORCE_EXIT
         self._running = False
+
+    def _isStopInProgress(self) -> bool:
+        """Return True once the orchestrator is on its way down (US-674).
+
+        Two facts mean the stop has begun: stop() has been entered, or the
+        stop signal has arrived.  The second is how a confirmed power loss
+        reaches this process -- powerwatch confirms the loss and powers the
+        Pi off, and systemd delivers SIGTERM, which sets SHUTDOWN_REQUESTED
+        before runLoop returns and stop() is called.
+        """
+        if getattr(self, '_stopBegun', False):
+            return True
+        return getattr(self, '_shutdownState', None) == ShutdownState.SHUTDOWN_REQUESTED
 
     def _initializeProfileSwitcher(self) -> None:
         """
@@ -2622,17 +2658,21 @@ class LifecycleMixin:
                 stopComplete.set()
 
         stopThread = threading.Thread(target=doStop, daemon=True)
+        stopStart = time.monotonic()
         stopThread.start()
 
         # Wait for stop with timeout
         cleanStop = stopComplete.wait(timeout=self._shutdownTimeout)
 
         if not cleanStop:
+            # US-780: a bounded force-stop of one component is not a failed
+            # stop, so it leaves the exit code alone.  Exiting 1 here made
+            # systemd mark every such orderly stop 'failed' (mechanism B).
+            elapsed = time.monotonic() - stopStart
             logger.warning(
                 f"{componentName} did not stop within {self._shutdownTimeout}s, "
-                f"force-stopping"
+                f"force-stopping | elapsed={elapsed:.2f}s"
             )
-            self._exitCode = EXIT_CODE_FORCED
             return False
         elif stopError is not None:
             logger.warning(f"Error stopping {componentName}: {stopError}")
@@ -2643,31 +2683,36 @@ class LifecycleMixin:
 
     def _shutdownAllComponents(self) -> None:
         """
-        Shutdown all components in reverse dependency order.
+        Shutdown all components, closing the drive before anything else.
 
-        Order (reverse of initialization):
-        1. backupManager (first, was initialized last)
-        2. profileSwitcher (before driveDetector uses it)
-        3. dataLogger
-        4. alertManager
-        5. driveDetector (before statisticsEngine - may still be triggering analysis)
+        Order:
+        1. dataLogger (the capture loop -- FIRST, so a capture error from the
+           ECU going silent at key-off cannot race the drive close)
+        2. driveDetector (writes drive_end for the active drive)
+        3. backupManager, powerSourceUiBridge, powerMonitor, syncClient
+        4. profileSwitcher
+        5. alertManager
         6. statisticsEngine
         7. hardwareManager (before displayManager - may be using display)
         8. displayManager
         9. vinDecoder
         10. connection
         11. profileManager
-        12. database
+        12. database (last, so drive_end has somewhere to land)
         """
+        # US-674: capture loop first, then the drive close, then the rest.
+        # driveDetector used to come seventh, behind a capture loop that was
+        # still polling a silent ECU; its error force-exited the stop and
+        # every component after it -- driveDetector included -- was skipped.
+        self._shutdownDataLogger()
+        self._shutdownDriveDetector()
         self._shutdownBackupManager()  # type: ignore[attr-defined]
         # SS-T4: stop the source-side producer before tearing down the sink.
         self._shutdownPowerSourceUiBridge()
         self._shutdownPowerMonitor()
         self._shutdownSyncClient()
         self._shutdownProfileSwitcher()
-        self._shutdownDataLogger()
         self._shutdownAlertManager()
-        self._shutdownDriveDetector()
         self._shutdownStatisticsEngine()
         self._shutdownHardwareManager()
         self._shutdownDisplayManager()
