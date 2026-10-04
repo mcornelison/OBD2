@@ -281,6 +281,7 @@
 #               |              | stop sequence stops the capture loop FIRST,
 #               |              | then driveDetector (writes drive_end), then
 #               |              | the rest.
+# 2026-10-03    | Atlas (ARCH-065a) | DrainEventWriter built with cellEpoch from pi.power.cellEpoch.
 # ================================================================================
 ################################################################################
 
@@ -2227,6 +2228,11 @@ class LifecycleMixin:
                 upsResolver=_resolveUpsMonitor,
                 coldStartWindowSeconds=resolveColdStartWindowSeconds(
                     self._config
+                ),
+                cellEpoch=str(
+                    ((self._config.get("pi") or {}).get("power") or {}).get(
+                        "cellEpoch"
+                    ) or "unknown"
                 ),
             )
             # Backstop BEFORE the open path is live (see docstring).

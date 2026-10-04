@@ -53,6 +53,9 @@
 # 2026-09-24    | Rex (US-683) | BatteryHealthLog.close_reason (typed close
 #               |              | discriminator) + its named CHECK.  Live table
 #               |              | gains it via migration v0032.
+# 2026-10-03    | Atlas (ARCH-065a) | BatteryHealthLog gains the ten ARCH-065 capacity
+#               |              | columns; StartupLog gains three prior_boot_* columns.
+#               |              | Live tables gain them via migration v0035.
 # 2026-09-25    | Rex (US-790) | DrainVcellTrajectory: the shutdown drain's VCELL
 #               |              | series (one row per poll) + its termination
 #               |              | CHECK.  Created by migration v0033.
@@ -948,6 +951,20 @@ class BatteryHealthLog(Base):
     # could never learn a reap from it).  NULL exactly while the row is open.
     # Added to the live table, and backfilled, by migration v0032.
     close_reason: Mapped[str | None] = mapped_column(String(32))
+    # ARCH-065 (migration v0035): battery capacity. drain_trigger replaces
+    # load_class as the qualifying key.
+    drain_trigger: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="keyoff",
+    )
+    cell_epoch: Mapped[str | None] = mapped_column(String(32))
+    cut_step_mv: Mapped[float | None] = mapped_column(Float)
+    window_start_s: Mapped[int | None] = mapped_column(Integer)
+    window_end_s: Mapped[int | None] = mapped_column(Integer)
+    drain_rate_mv_s: Mapped[float | None] = mapped_column(Float)
+    verdict: Mapped[str | None] = mapped_column(String(16))
+    t_floor_s: Mapped[int | None] = mapped_column(Integer)
+    floor_vcell_v: Mapped[float | None] = mapped_column(Float)
+    cutoff_vcell_v: Mapped[float | None] = mapped_column(Float)
 
 
 class PowerLog(Base):
@@ -1100,6 +1117,10 @@ class StartupLog(Base):
     prior_boot_sync_outcome: Mapped[str | None] = mapped_column(String(64))
     prior_boot_backlog_start: Mapped[int | None] = mapped_column(Integer)
     prior_boot_backlog_end: Mapped[int | None] = mapped_column(Integer)
+    # ARCH-065 (migration v0035)
+    prior_boot_sync_started_at: Mapped[str | None] = mapped_column(String(40))
+    prior_boot_sync_ended_at: Mapped[str | None] = mapped_column(String(40))
+    prior_boot_vcell_before_cut_v: Mapped[float | None] = mapped_column(Float)
 
 
 class PiState(Base):

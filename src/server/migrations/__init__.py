@@ -97,6 +97,9 @@
 #               |              | table).  Forward-only.
 # 2026-09-30    | Rex (US-776-f) | Sprint 95 -- registered v0034 (startup_log
 #               |              | prior-boot shutdown-sync columns).  Forward-only.
+# 2026-10-03    | Atlas (ARCH-065a) | Registered v0035 (ARCH-065 battery capacity
+#               |              | columns on battery_health_log + startup_log).
+#               |              | Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -228,6 +231,9 @@ from src.server.migrations.versions.v0033_us790_drain_vcell_trajectory import (
 from src.server.migrations.versions.v0034_us776f_startup_log_prior_boot_sync import (
     MIGRATION as _V0034,
 )
+from src.server.migrations.versions.v0035_arch065_battery_capacity_columns import (
+    MIGRATION as _V0035,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -268,6 +274,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0032,
     _V0033,
     _V0034,
+    _V0035,
 )
 
 

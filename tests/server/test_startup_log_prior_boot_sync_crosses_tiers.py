@@ -14,6 +14,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-30    | Ralph (Rex)  | Initial -- US-776-f.
+# 2026-10-03    | Atlas (ARCH-065a) | Pi registry now has seven columns (ARCH-065 added
+#               |              | three); the four-column pins slice the first four.
 # ================================================================================
 ################################################################################
 """The prior-boot shutdown-sync columns cross the tier boundary (US-776-f)."""
@@ -124,8 +126,9 @@ class TestServerModel:
             assert StartupLog.__table__.columns[name].nullable, name
 
     def test_namesAndKindsMatchThePi(self) -> None:
-        assert tuple(n for n, _ in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS) == _NEW_COLUMNS
-        for name, piType in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS:
+        # ARCH-065 appended three more; the US-776-f four stay the first four.
+        assert tuple(n for n, _ in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS[:4]) == _NEW_COLUMNS
+        for name, piType in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS[:4]:
             serverType = StartupLog.__table__.columns[name].type
             expected = Integer if piType == "INTEGER" else String
             assert isinstance(serverType, expected), name

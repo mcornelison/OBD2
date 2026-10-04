@@ -159,6 +159,7 @@
 #                           durable shutdown record; the sync task reuses that
 #                           answer, and the floor fast path records UNKNOWN
 #                           rather than wait for it.
+# 2026-10-03    | Atlas (ARCH-065a) | Drain writer built with cellEpoch from pi.power.cellEpoch.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -832,6 +833,7 @@ def buildDrainCloseHook(
         busyTimeoutSec=busyTimeoutSec,
         uptimeReader=uptimeReader or readSystemUptimeSeconds,
         coldStartWindowSeconds=resolveColdStartWindowSeconds(config),
+        cellEpoch=str(((config.get("pi") or {}).get("power") or {}).get("cellEpoch") or "unknown"),
     )
 
     def _closeDrain() -> None:
