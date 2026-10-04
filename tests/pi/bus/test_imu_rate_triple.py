@@ -6,11 +6,39 @@
 #     double-counted on either consumer path, and that a consumer rate above
 #     its source is WARNED (both values named, effective rate stated) rather
 #     than silently clamped.
+#
+#     2026-09-28 (ARCH-064, Controller ruling, companion bench ARCH-064b):
+#     ONE pin below -- test_configJson_imuTriple_isExactlyFourTwoOne -- is
+#     updated to the shipped triple ARCH-064 ships: sampleHz 4 -> 50 (the
+#     IMU's internal acquisition/fusion read rate; persistHz/stateHz stay 2/1,
+#     unchanged, under the 4 Hz storage ceiling --
+#     specs/data-acquisition-architecture.md §4.2.a on that branch). The rest
+#     of this file's tests construct their own explicit sampleHz=4 objects and
+#     are independent of what config.json ships; they are unaffected and
+#     unchanged. ⚠️ THIS BENCH (ARCH-064b, branched from dev) has NOT merged
+#     ARCH-064: its own config.json still ships sampleHz 4, so
+#     test_configJson_imuTriple_isExactlyFourTwoOne is EXPECTED TO FAIL HERE
+#     until ARCH-064 merges into dev. It is pinned to the POST-MERGE value
+#     deliberately, not weakened to pass on dev -- see the commit message.
 # Author: Rex (US-796-b)
 # Creation Date: 2026-09-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-09-21    | Rex (US-796-b) | Initial -- ruled 4 / 2 / 1.
+# 2026-09-28    | Atlas          | ARCH-064 companion fix: re-pinned the
+#               | (ARCH-064b)    | config.json triple assertion to 50 / 2 / 1
+#               |                | (ARCH-064's shipped values) -- fails on
+#               |                | this bench until ARCH-064 merges, by design.
+# ================================================================================
 ################################################################################
-"""US-796-b: the IMU triple 4 / 2 / 1, every factor exact, no silent clamp."""
+"""US-796-b: the IMU triple, every decimation factor exact, no silent clamp.
+test_configJson_imuTriple_isExactlyFourTwoOne pins ARCH-064's post-merge
+50 / 2 / 1 and is EXPECTED TO FAIL on this bench (still dev's 4 / 2 / 1) until
+that branch merges."""
 
 from __future__ import annotations
 
@@ -68,10 +96,20 @@ def test_configJson_imuTriple_isExactlyFourTwoOne():
     """
     Given: the shipped config.json
     When: the three pi.sensors.imu rates are read
-    Then: they are exactly 4 / 2 / 1 -- not a range, not 'at most'
+    Then: they are exactly 50 / 2 / 1 -- not a range, not 'at most'. sampleHz
+          is ARCH-064's IMU internal acquisition/fusion read rate (raised from
+          the original 4 Hz ruling this test is named for); persistHz/stateHz
+          are UNCHANGED, still the CIO's 2026-09-21 ruling, still under the
+          4 Hz storage ceiling (specs/data-acquisition-architecture.md §4.2.a
+          on the ARCH-064 branch).
+
+          ⚠️ EXPECTED TO FAIL on this bench (ARCH-064b, branched from dev)
+          until ARCH-064 merges -- this bench's own config.json still ships
+          sampleHz 4. Pinned to the post-merge value deliberately; see the
+          file header.
     """
     imu = _shippedImu()
-    assert (imu["sampleHz"], imu["persistHz"], imu["stateHz"]) == (4, 2, 1)
+    assert (imu["sampleHz"], imu["persistHz"], imu["stateHz"]) == (50, 2, 1)
 
 
 def test_validator_acceptsTheShippedTriple_withoutARateWarning(caplog):
