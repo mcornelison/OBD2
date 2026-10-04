@@ -337,3 +337,24 @@ def test_joiningPolls_readLive_persistAtLossAnswer(tmp_path: Path) -> None:
     assert len(calls) == 2
     assert record["home_state"] == "AT_HOME_JOINING"
     assert record["sync_outcome"] == "DELIVERED"
+
+
+def test_secondsSinceLoss_measuresFromObserve_andIsZeroBefore() -> None:
+    """One loss time, stamped in observe() on the injected monotonic clock."""
+    clock = [100.0]
+    h = m.HomeStateAtLoss(
+        lambda: HomeNetworkState.AWAY, outcomePath="unused.json",
+        startFn=lambda _t: None, monotonicFn=lambda: clock[0],
+    )
+    assert h.secondsSinceLoss() == 0.0
+    h.observe()
+    clock[0] = 142.5
+    assert h.secondsSinceLoss() == 42.5
+
+
+def test_main_wiresTheMonthlyHoldTask_boundedBySequencer() -> None:
+    source = ast.unparse(ast.parse(inspect.getsource(m.main)))
+    assert "secondsSinceCut=homeStateAtLoss.secondsSinceLoss" in source
+    assert "buildV1Tasks(syncTask, holdTask)" in source
+    assert "sequencerBoundedTasks=(syncTask.name, holdTask.name)" in source
+    assert "660" not in source and "testHoldSec" not in source

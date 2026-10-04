@@ -51,3 +51,22 @@ def test_v1_hasExactlyOneShutdownTask_andSeamIsPluggable():
         f"V1 has exactly one task (Option A); got {len(result)}"
     )
     assert result[0] is t
+
+
+def test_buildV1Tasks_appendsTheHoldTaskAfterSync_whenGiven():
+    from src.pi.power.power_watch import __main__ as m
+    from src.pi.power.power_watch.tasks.monthly_test_hold import MonthlyTestHoldTask
+
+    t = SyncWithServerTask(
+        homeState=lambda: HomeNetworkState.AWAY,
+        runSync=lambda: None,
+        writeRecord=lambda _x: None,
+        joinWaitSec=120.0,
+        stallSec=60.0,
+    )
+    hold = MonthlyTestHoldTask(
+        lastSyncOutcome=lambda: None, isDue=lambda: False, markOpenDrain=lambda: None,
+        secondsSinceCut=lambda: 0.0,
+    )
+    assert isinstance(hold, ShutdownTask)
+    assert m.buildV1Tasks(t, hold) == [t, hold]

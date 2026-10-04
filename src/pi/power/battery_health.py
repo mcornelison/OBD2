@@ -81,6 +81,8 @@
 #                               window/verdict fields), DRAIN_TRIGGER_* enum and
 #                               the PRAGMA-probed ensureBatteryHealthLogCapacity
 #                               Columns.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T5: resolveCellEpoch -- the ONE
+#                               reader of pi.power.cellEpoch (controller ruling 9).
 # ================================================================================
 ################################################################################
 
@@ -162,10 +164,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+from src.common.config.validator import CELL_EPOCH_UNKNOWN
 from src.common.time.helper import CANONICAL_ISO_FORMAT, utcIsoNow
 
 __all__ = [
@@ -179,6 +183,7 @@ __all__ = [
     'DRAIN_TRIGGER_KEYOFF',
     'DRAIN_TRIGGER_MONTHLY_TEST',
     'DRAIN_TRIGGER_VALUES',
+    'resolveCellEpoch',
     'DatabaseLike',
     'BatteryHealthRecorder',
     'DrainEventCloseResult',
@@ -238,6 +243,15 @@ DRAIN_TRIGGER_VALUES: tuple[str, ...] = (
     DRAIN_TRIGGER_KEYOFF, DRAIN_TRIGGER_MONTHLY_TEST, DRAIN_TRIGGER_CALIBRATION,
 )
 _DRAIN_TRIGGER_CHECK = ",".join(f"'{v}'" for v in DRAIN_TRIGGER_VALUES)
+
+
+def resolveCellEpoch(config: Mapping[str, Any]) -> str:
+    """The ONE reader of ``pi.power.cellEpoch``: the value, else 'unknown'.
+
+    Absent, None or empty all resolve to the validator's CELL_EPOCH_UNKNOWN.
+    """
+    power = (config.get('pi') or {}).get('power') or {}
+    return str(power.get('cellEpoch') or CELL_EPOCH_UNKNOWN)
 
 #: ARCH-065 capacity columns, in order. All nullable except drain_trigger.
 BATTERY_HEALTH_CAPACITY_COLUMNS: tuple[tuple[str, str], ...] = (

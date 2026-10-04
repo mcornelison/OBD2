@@ -303,7 +303,8 @@ class TestMainWiresTheSyncTaskAsSequencerBounded:
         """
         Given: the production entrypoint
         When: the pipeline is built
-        Then: the sync task -- and only it -- is joined without perTaskTimeoutSec
+        Then: the sync task and the monthly hold (ARCH-065 T5) -- and only they --
+            are joined without perTaskTimeoutSec
         """
         # Arrange
         import inspect
@@ -312,7 +313,7 @@ class TestMainWiresTheSyncTaskAsSequencerBounded:
         source = inspect.getsource(m.main)
 
         # Assert
-        assert "sequencerBoundedTasks=(syncTask.name,)" in source
+        assert "sequencerBoundedTasks=(syncTask.name, holdTask.name)" in source
 
 
 class TestTheFloorEndsADrainThatNeverReachesAPassBoundary:

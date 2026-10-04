@@ -324,6 +324,9 @@ DEFAULTS: dict[str, Any] = {
     # the safety trigger, which is the T5 GPIO6+smoothing loop). Low-rate by
     # design (status surface, YAGNI). Config, never a literal.
     'pi.powerWatch.uiPollSec': 2,
+    # ARCH-065: days between monthly capacity tests (the hold time is
+    # battery_capacity.TEST_HOLD_S, not config).
+    'pi.batteryHealth.monthlyIntervalDays': 30,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
@@ -767,6 +770,7 @@ class ConfigValidator:
         self._validatePiSync(config)
         self._validateBootProgress(config)
         self._validatePowerWatch(config)
+        self._validateBatteryHealth(config)
         self._validateCellEpoch(config)
         self._validateDisplayAutoDim(config)
         self._validateImuStateBridge(config)
@@ -1076,6 +1080,24 @@ class ConfigValidator:
                 f"number (got {pto!r})",
                 missingFields=['pi.shutdown.poweroffTimeoutSeconds'],
             )
+
+    def _validateBatteryHealth(self, config: dict[str, Any]) -> None:
+        """Validate pi.batteryHealth.* (ARCH-065): positive numbers only.
+
+        Raises:
+            ConfigValidationError: If monthlyIntervalDays is not a positive number.
+        """
+        for key in ('pi.batteryHealth.monthlyIntervalDays',):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a positive number (got {val!r})",
+                    missingFields=[key],
+                )
 
     def _validatePowerWatch(self, config: dict[str, Any]) -> None:
         """Validate pi.powerWatch.* numeric bounds (Phase-2 spec sec 9).

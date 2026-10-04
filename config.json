@@ -666,6 +666,9 @@
         "enabled": true
       },
       "cellEpoch": "18650-pack"
+    },
+    "batteryHealth": {
+      "monthlyIntervalDays": 30
     }
   },
   "server": {

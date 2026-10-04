@@ -171,6 +171,10 @@
 #                           through HomeStateAtLoss.recordFloorEnd (pre-poweroff
 #                           hook, before ensureRecorded) and later sync records
 #                           for that loss are dropped.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T5: MonthlyTestHoldTask joins buildV1Tasks after
+#                           the sync task (sequencer-bounded); HomeStateAtLoss stamps the
+#                           loss on the monotonic clock (secondsSinceLoss); cellEpoch via
+#                           resolveCellEpoch.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -205,21 +209,20 @@ from src.common.config.secrets_loader import (  # noqa: E402
     getSecret,
     loadConfigWithSecrets,
 )
-from src.common.config.validator import (  # noqa: E402
-    CELL_EPOCH_UNKNOWN,
-    ConfigValidator,
-)
+from src.common.config.validator import ConfigValidator  # noqa: E402
 from src.common.edr.sync_contract import (  # noqa: E402
     EDR_SYNC_TABLES,
     SHUTDOWN_DRAIN_EXCLUDED_TABLES,
 )
 from src.common.logging.setup import setupLogging  # noqa: E402
+from src.common.time.helper import utcIsoNow  # noqa: E402
 from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
 from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import (  # noqa: E402
     HomeNetworkDetector,
     HomeNetworkState,
 )
+from src.pi.power.battery_health import resolveCellEpoch  # noqa: E402
 from src.pi.power.drain_event_writer import (  # noqa: E402
     CLOSE_REASON_SHUTDOWN,
     makeDrainEventWriterForPath,
@@ -249,6 +252,11 @@ from src.pi.power.power_watch.sync_custody import (  # noqa: E402
     OwnDrainCloseSlot,
     OwnTrajectoryRows,
     makeSyncCustodyHook,
+)
+from src.pi.power.power_watch.tasks.monthly_test_hold import (  # noqa: E402
+    MonthlyTestHoldTask,
+    isMonthlyTestDue,
+    markOpenDrainMonthlyTest,
 )
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
     SyncOutcomeRecord,
@@ -742,6 +750,7 @@ class HomeStateAtLoss:
         outcomePath: str,
         startFn: Callable[[Callable[[], None]], None] | None = None,
         vcellBeforeCut: Callable[[], float | None] | None = None,
+        monotonicFn: Callable[[], float] = time.monotonic,
     ) -> None:
         """Args:
         readState: Zero-arg detector read (``HomeNetworkDetector.
@@ -752,7 +761,11 @@ class HomeStateAtLoss:
         vcellBeforeCut: ARCH-065 -- ``WallVcellCache.last``. Read ONCE per loss
             (``observe``) so its age check applies at the loss, not minutes
             later; every record carries that snapshot as ``vcell_before_cut_v``.
+        monotonicFn: ARCH-065 T5 -- the clock behind ``secondsSinceLoss``; the
+            loss is stamped once, in ``observe``, so there is one loss time.
         """
+        self._monotonic = monotonicFn
+        self._lossAt: float | None = None
         self._readState = readState
         self._outcomePath = outcomePath
         self._startFn = startFn if startFn is not None else _startDaemonThread
@@ -769,11 +782,18 @@ class HomeStateAtLoss:
         #: any later (abandoned sync thread) record for the same loss.
         self._floorEnded = False
 
+    def secondsSinceLoss(self) -> float:
+        """Seconds since this loss was observed (0.0 before any loss)."""
+        with self._lock:
+            at = self._lossAt
+        return 0.0 if at is None else max(0.0, self._monotonic() - at)
+
     def observe(self) -> None:
         """Start this loss's detector read. Returns at once; never raises."""
         loss = threading.Event()
         snapshot = self._snapshotVcell()
         with self._lock:
+            self._lossAt = self._monotonic()
             self._vcellSnapshot = snapshot
             self._loss = loss
             self._answer = None
@@ -924,11 +944,14 @@ class HomeStateAtLoss:
         self._written = True
 
 
-def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
+def buildV1Tasks(
+    syncTask: SyncWithServerTask, holdTask: MonthlyTestHoldTask | None = None
+) -> list:
     """The ordered V1 ShutdownTask list (the plugin-seam registry, SS-T6).
 
-    V1 ships **exactly one** task -- ``SyncWithServerTask`` -- per the locked
-    Option A scope (spec sec 9). This function is the **SINGLE EDIT POINT**
+    V1 ships ``SyncWithServerTask`` -- per the locked Option A scope (spec
+    sec 9) -- and, since ARCH-065, the ``MonthlyTestHoldTask`` after it (when
+    given; the one-arg form is the sync-only list). This function is the **SINGLE EDIT POINT**
     for future plugin tasks (e.g. update-check, staged apply-decision): a new
     task appends here and that is the ONLY production change. ``ShutdownSequencer``
     and ``runPipeline`` are untouched when new tasks land.
@@ -937,7 +960,10 @@ def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
     each within its own per-task timeout. Sync first is V1's chosen ordering
     (CIO directive: best-effort sync of the local drive log before poweroff).
     """
-    return [syncTask]
+    tasks: list = [syncTask]
+    if holdTask is not None:
+        tasks.append(holdTask)
+    return tasks
 
 
 def buildDrainCloseHook(
@@ -995,7 +1021,7 @@ def buildDrainCloseHook(
         busyTimeoutSec=busyTimeoutSec,
         uptimeReader=uptimeReader or readSystemUptimeSeconds,
         coldStartWindowSeconds=resolveColdStartWindowSeconds(config),
-        cellEpoch=str(((config.get("pi") or {}).get("power") or {}).get("cellEpoch") or "unknown"),
+        cellEpoch=resolveCellEpoch(config),
     )
 
     def _closeDrain() -> None:
@@ -1326,9 +1352,7 @@ def main(argv: list[str] | None = None) -> int:
     # backlog == 0. Only this shutdown's own rows are excluded, by id, and
     # custody reports them beside the verdict: one membership, both readers.
     ownTrajectoryRows = OwnTrajectoryRows()
-    cellEpoch = str(
-        ((config.get("pi") or {}).get("power") or {}).get("cellEpoch") or CELL_EPOCH_UNKNOWN
-    )
+    cellEpoch = resolveCellEpoch(config)
     drainTrajectory = DrainVcellTrajectoryWriter(
         dbPath=dbPath,
         cellEpoch=cellEpoch,
@@ -1392,6 +1416,23 @@ def main(argv: list[str] | None = None) -> int:
         # US-776-d: the probe behind the home state, read -- never re-probed --
         # to tell a misconfigured probe from a down server.
         lastProbe=lambda: detector.lastProbe,
+    )
+
+    # ARCH-065 T5: once a month, at home, hold the Pi on battery TEST_HOLD_S
+    # after the cut (holdSec defaults to the SSOT). Sequencer-bounded, so the
+    # drain floor and a power return still govern it.
+    monthlyIntervalDays = int(config["pi"]["batteryHealth"]["monthlyIntervalDays"])
+    cellEpochForTest = resolveCellEpoch(config)
+    holdTask = MonthlyTestHoldTask(
+        lastSyncOutcome=lambda: syncTask.lastOutcome,
+        isDue=lambda: isMonthlyTestDue(
+            dbPath,
+            cellEpoch=cellEpochForTest,
+            nowIso=utcIsoNow(),
+            intervalDays=monthlyIntervalDays,
+        ),
+        markOpenDrain=lambda: markOpenDrainMonthlyTest(dbPath),
+        secondsSinceCut=homeStateAtLoss.secondsSinceLoss,
     )
 
     # F-103 [A-2]: wire the shutdown-splash phase-emit hook. The sequencer emits
@@ -1492,9 +1533,9 @@ def main(argv: list[str] | None = None) -> int:
         # runs. Its bound is the sequencer's floor poll. Every other task keeps
         # the per-task bound.
         runPipelineFn=lambda: runPipeline(
-            buildV1Tasks(syncTask),
+            buildV1Tasks(syncTask, holdTask),
             perTaskTimeoutSec=perTaskTimeoutSec,
-            sequencerBoundedTasks=(syncTask.name,),
+            sequencerBoundedTasks=(syncTask.name, holdTask.name),
         ),
         powerOffFn=lambda: subprocess.run(
             ["systemctl", "poweroff"], timeout=poweroffTimeoutSec, check=False

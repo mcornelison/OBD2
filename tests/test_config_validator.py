@@ -961,6 +961,17 @@ def test_powerWatch_drainFloorDwellReads_defaultsToFive_andRejectsNonPositive():
         ConfigValidator().validate(bad)
 
 
+def test_batteryHealth_monthlyIntervalDays_defaultsTo30_andRejectsNonPositive():
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["batteryHealth"]["monthlyIntervalDays"] == 30
+    assert "testHoldSec" not in cfg["pi"]["batteryHealth"]
+    for bad_value in (0, -1, True, "30"):
+        bad = _baseCfg()
+        bad["pi"] = {"batteryHealth": {"monthlyIntervalDays": bad_value}}
+        with pytest.raises(ConfigValidationError):
+            ConfigValidator().validate(bad)
+
+
 def test_powerWatch_rejectsVcellFloorOutOfRange():
     cfg = _baseCfg()
     cfg["pi"] = {"powerWatch": {"vcellFloorVolts": 2.5}}
