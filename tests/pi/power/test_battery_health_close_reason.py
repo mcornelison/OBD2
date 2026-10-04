@@ -6,8 +6,8 @@
 #                      Covers the column CHECK, the replay-safe boot step (run
 #                      twice against a POPULATED database, asserted on the
 #                      statements executed), the conservative backfill, the
-#                      pairing invariant on every close path, the verdict's
-#                      typed exclusion, and the re-sync of backfilled rows.
+#                      pairing invariant on every close path, that the verdict
+#                      reads no prose, and the re-sync of backfilled rows.
 # Author: Rex (US-683)
 # Creation Date: 2026-09-24
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -17,6 +17,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-24    | Rex (US-683) | Initial.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T7: the verdict close_reason
+#               |              | tests pinned the retired qualifying rule;
+#               |              | replaced by a no-prose check on the new SQL.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: _PACK_SQL retired (pack = config).
 # ================================================================================
 ################################################################################
 
@@ -44,11 +48,6 @@ from src.pi.power.battery_health import (
     SCHEMA_BATTERY_HEALTH_LOG,
     BatteryHealthRecorder,
     ensureBatteryHealthLogCloseReasonColumn,
-)
-from src.pi.power.battery_health_verdict import (
-    QUALIFYING_LOAD_CLASS,
-    computeBatteryHealthVerdict,
-    readBatteryHealthVerdict,
 )
 from src.pi.power.drain_event_writer import (
     DRAIN_OPEN_NOTE,
@@ -508,56 +507,19 @@ class TestEveryClosePathWritesItsReason:
 
 
 # ================================================================================
-# Acceptance 3: the verdict keys on the typed column, never on English
+# Acceptance 3: the verdict reads no English.  ARCH-065 (T7) retired the
+# qualifying-drain rule this section used to pin (close_reason gate, depth,
+# runtime): the verdict now keys on drain_trigger + drain_rate_mv_s, so the
+# close_reason exclusion tests went with it.  What still holds is the US-683
+# principle -- no verdict query reads `notes` prose.
 # ================================================================================
 
 
-def _qualifyingRow(**overrides: Any) -> dict[str, Any]:
-    row: dict[str, Any] = {
-        'start_timestamp': '2026-09-01T12:00:00Z',
-        'end_timestamp': '2026-09-01T12:12:00Z',
-        'runtime_seconds': 720,
-        'load_class': QUALIFYING_LOAD_CLASS,
-        'end_vcell_v': 3.45,
-    }
-    row.update(overrides)
-    return row
-
-
-class TestTheVerdictKeysOnCloseReason:
-    def test_qualifyingQuery_readsNoProse(self) -> None:
-        sql = verdictModule._QUALIFYING_ROW_SQL  # noqa: SLF001 -- the query itself
-        assert 'close_reason' in sql
+class TestTheVerdictReadsNoProse:
+    @pytest.mark.parametrize(
+        'name', ['_TEST_SQL', '_CAL_SQL', '_JOBS_SQL', '_FLOOR_SQL'],
+    )
+    def test_verdictQueries_readNoProse(self, name: str) -> None:
+        sql = getattr(verdictModule, name)
         assert 'notes' not in sql
         assert 'LIKE' not in sql.upper()
-
-    def test_anUncheckpointedReap_isExcludedByType(self) -> None:
-        """Even a row whose values would pass the depth gate cannot vote."""
-        rows = [_qualifyingRow(close_reason=CLOSE_REASON_REAPED_UNCHECKPOINTED)]
-        result = computeBatteryHealthVerdict(rows=rows, nowIso='2026-09-24T00:00:00Z')
-        assert result.qualifyingCount == 0
-
-    @pytest.mark.parametrize(
-        'closeReason', [CLOSE_REASON_CLEAN, CLOSE_REASON_REAPED_CHECKPOINTED, None],
-    )
-    def test_otherRowsStillVoteAsBefore(self, closeReason: str | None) -> None:
-        """Excluding checkpointed reaps is Atlas's call, not this story's."""
-        rows = [_qualifyingRow(close_reason=closeReason)]
-        result = computeBatteryHealthVerdict(rows=rows, nowIso='2026-09-24T00:00:00Z')
-        assert result.qualifyingCount == 1
-
-    def test_sqlGate_excludesAnUncheckpointedReapWithValues(
-        self, freshDb: ObdDatabase,
-    ) -> None:
-        with freshDb.connect() as conn:
-            for closeReason in CLOSE_REASON_VALUES:
-                conn.execute(
-                    "INSERT INTO battery_health_log (start_timestamp, end_timestamp, "
-                    "end_vcell_v, runtime_seconds, load_class, close_reason) "
-                    "VALUES ('2026-09-01T12:00:00Z', '2026-09-01T12:12:00Z', 3.45, "
-                    "720, 'production', ?)", (closeReason,),
-                )
-
-        result = readBatteryHealthVerdict(database=freshDb, nowIso='2026-09-24T00:00:00Z')
-
-        assert result.qualifyingCount == 2

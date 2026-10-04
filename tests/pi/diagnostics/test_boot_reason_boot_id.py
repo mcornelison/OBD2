@@ -40,6 +40,8 @@
 # 2026-09-30    | Rex (US-776-f) | +4 prior_boot_* sync columns in
 #               |              | EXPECTED_COLUMNS, count guard 8 -> 12 (_isEight ->
 #               |              | _isTwelve). Still a STRICT exact-set assertion.
+# 2026-10-03    | Atlas (ARCH-065a) | +3 ARCH-065 columns in EXPECTED_COLUMNS, count guard
+#               |              | 12 -> 15. Still a STRICT exact-set assertion.
 # ================================================================================
 ################################################################################
 
@@ -214,6 +216,13 @@ class TestStartupLogSchema:
         ('prior_boot_sync_outcome', 'TEXT', 0, 0),
         ('prior_boot_backlog_start', 'INTEGER', 0, 0),
         ('prior_boot_backlog_end', 'INTEGER', 0, 0),
+        # ARCH-065 addition: the prior boot's sync window + last VCELL before the
+        # cut. Nullable; synced (server v0035).
+        ('prior_boot_sync_started_at', 'TEXT', 0, 0),
+        ('prior_boot_sync_ended_at', 'TEXT', 0, 0),
+        ('prior_boot_vcell_before_cut_v', 'REAL', 0, 0),
+        # ARCH-065 T6 fix: the prior loss's wall time (keys the boot finaliser).
+        ('prior_boot_loss_at', 'TEXT', 0, 0),
     )
 
     @staticmethod
@@ -260,7 +269,7 @@ class TestStartupLogSchema:
             "INSERT OR IGNORE idempotency contract."
         )
 
-    def test_startupLogSchema_columnCount_isTwelve(self) -> None:
+    def test_startupLogSchema_columnCount_isFifteen(self) -> None:
         # Quick canary on extra columns: any addition (even if otherwise
         # well-formed) widens the contract surface; force a deliberate
         # spec update instead of silently accepting drift.  Count history:
@@ -269,12 +278,13 @@ class TestStartupLogSchema:
         # 2026-05-15-honest-boot-progress-instrument-design.md §4.4) = 7 ->
         # +1 (US-419/F-080 data_quality clock-drift flag,
         # specs/architecture.md "US-419 (F-080)") = 8 -> +4 (US-776-f
-        # prior_boot_home_state/_sync_outcome/_backlog_start/_backlog_end) = 12.
+        # prior_boot_home_state/_sync_outcome/_backlog_start/_backlog_end) = 12 -> +3 (ARCH-065
+        # prior_boot_sync_started_at/_sync_ended_at/_vcell_before_cut_v) = 15 -> +1 (ARCH-065 T6 fix prior_boot_loss_at) = 16.
         actual = self._introspectStartupLog()
-        assert len(actual) == 12, (
+        assert len(actual) == 16, (
             f"startup_log has {len(actual)} columns; canonical schema is "
-            f"exactly 12 (US-263 5-col + 2026-05-15 honest-instrument "
+            f"exactly 16 (US-263 5-col + 2026-05-15 honest-instrument "
             f"prior_boot_last_stage/prior_boot_reason + US-419 data_quality + "
-            f"US-776-f four prior-boot sync columns). "
+            f"US-776-f four prior-boot sync columns + ARCH-065 four). "
             f"Got: {[name for (name, *_) in actual]}"
         )

@@ -26,6 +26,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-29    | Rex (US-605) | Initial -- 30 s open-drain checkpoint catalog.
+# 2026-10-03    | Atlas (ARCH-065a) | T7: verdict assertions re-pinned on the
+#               |              | ARCH-065 reader; qualifyingCount/median gone.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the reader takes cellEpoch + drainFloorVolts.
 # ================================================================================
 ################################################################################
 
@@ -44,8 +47,9 @@ from src.common.time.helper import CANONICAL_ISO_FORMAT, utcIsoNow
 from src.pi.obdii.database import ObdDatabase
 from src.pi.power.battery_health import BATTERY_HEALTH_LOG_TABLE
 from src.pi.power.battery_health_verdict import (
+    REASON_NO_MONTHLY_TEST,
     VERDICT_UNKNOWN,
-    computeBatteryHealthVerdict,
+    readBatteryHealthVerdict,
 )
 from src.pi.power.drain_event_writer import (
     DRAIN_CHECKPOINT_INTERVAL_SECONDS,
@@ -229,22 +233,11 @@ def _row(database: ObdDatabase, drainEventId: int | None = None) -> dict[str, An
 
 
 def _verdictOver(database: ObdDatabase) -> Any:
-    """Run the REAL verdict over the REAL table, at the real now.
-
-    ``computeBatteryHealthVerdict`` is pure (rows + nowIso), so this is what
-    connects the writer's rows to the gate that decides whether a drain votes.
-    """
-    with database.connect() as conn:
-        fetched = conn.execute(
-            "SELECT start_timestamp, end_timestamp, runtime_seconds, "
-            f"load_class, end_vcell_v FROM {BATTERY_HEALTH_LOG_TABLE}"
-        ).fetchall()
-    keys = (
-        'start_timestamp', 'end_timestamp', 'runtime_seconds', 'load_class',
-        'end_vcell_v',
+    """Run the REAL ARCH-065 verdict reader over the REAL database, at the real now."""
+    return readBatteryHealthVerdict(
+        database=database, nowIso=utcIsoNow(), smoothingSec=5.0,
+        cellEpoch="18650-pack", drainFloorVolts=3.60,
     )
-    rows = [dict(zip(keys, row, strict=True)) for row in fetched]
-    return computeBatteryHealthVerdict(rows=rows, nowIso=utcIsoNow())
 
 
 def _backdateStart(database: ObdDatabase, drainEventId: int, seconds: int) -> str:
@@ -836,47 +829,19 @@ class TestReaperClosesOntoTheCheckpoint:
         assert row['end_vcell_v'] == pytest.approx(3.42)
         assert row['runtime_seconds'] >= 1800
 
-    def test_aSingleReapedCheckpointedRowNowQUALIFIESWhereItCouldNotBefore(
+    def test_reapedCheckpointedKeyoffDrains_neverProduceAVerdict(
         self, freshDb: ObdDatabase, clock: FakeClock,
     ) -> None:
         """
-        Given: one interrupted-but-checkpointed drain, at a depth under Spool's
-               3.50 V gate and past the 60 s runtime floor.
-        When:  the qualifying gate is applied.
-        Then:  the row VOTES -- qualifyingCount goes 0 -> 1.
+        Given: THREE drains killed mid-drain, each checkpointed at depth.
+        When:  the battery-health verdict is read.
+        Then:  it is unknown / no_monthly_test.
 
-        This is AC-2 at the row level.  US-526's reaper left runtime_seconds
-        AND end_vcell_v NULL precisely so a reaped row could NOT vote, because
-        nothing had measured them.  Now something has, so the honest answer
-        changed.  One row is not yet a VERDICT (see the next test) -- the two
-        facts are separate and worth separating.
-        """
-        gauge = FakeUps(vcell=3.44)
-        writer = _makeWriter(freshDb, gauge, clock=clock)
-        drainEventId = writer.openDrainEvent()
-        _backdateStart(freshDb, drainEventId, 3600)
-
-        clock.advance(30.0)
-        writer.checkpointOpenDrainEvent()
-        writer.reapOpenDrainEvents()
-
-        assert _verdictOver(freshDb).qualifyingCount == 1
-
-    def test_interruptedDrainsAloneCanNowProduceARealVerdict(
-        self, freshDb: ObdDatabase, clock: FakeClock,
-    ) -> None:
-        """
-        Given: THREE drains, every one of them killed mid-drain so no shutdown
-               write ever landed -- the exact history that produced `unknown`
-               through ten boots.
-        When:  the battery-health verdict is computed.
-        Then:  it is no longer `unknown` and carries a real median runtime.
-
-        This is the end-to-end payoff, and it needs three rows because the
-        verdict deliberately refuses to colour itself on fewer than
-        MEDIAN_SAMPLE_COUNT samples.  Before US-605 this history yielded
-        NOTHING: three correct measurements, all discarded for want of a
-        shutdown write.
+        ARCH-065 (T7) retired the US-605 payoff this test used to pin (three
+        reaped drains -> a median-runtime verdict): only a COUNTED monthly test
+        of the current pack votes, and a key-off drain -- reaped or not, at any
+        depth -- never does.  The checkpointed depth/runtime survive on the row
+        (pinned above); they no longer feed the verdict.
         """
         writer = _makeWriter(freshDb, FakeUps(vcell=3.46), clock=clock)
 
@@ -888,9 +853,8 @@ class TestReaperClosesOntoTheCheckpoint:
             assert writer.reapOpenDrainEvents() == [drainEventId]
 
         verdict = _verdictOver(freshDb)
-        assert verdict.qualifyingCount == 3
-        assert verdict.verdict != VERDICT_UNKNOWN
-        assert verdict.medianRuntimeS is not None and verdict.medianRuntimeS >= 3600
+        assert verdict.verdict == VERDICT_UNKNOWN
+        assert verdict.reason == REASON_NO_MONTHLY_TEST
 
     def test_theReapedEndTimestampIsTheLastCheckpointInstant_notTheReapInstant(
         self, freshDb: ObdDatabase, clock: FakeClock,
@@ -975,7 +939,6 @@ class TestReaperClosesOntoTheCheckpoint:
         assert row['notes'] == DRAIN_OPEN_NOTE
 
         verdict = _verdictOver(freshDb)
-        assert verdict.qualifyingCount == 0
         assert verdict.verdict == VERDICT_UNKNOWN
 
     def test_theReaperStillNeverReadsTheGauge(

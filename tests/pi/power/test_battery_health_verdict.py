@@ -1,585 +1,517 @@
 ################################################################################
 # File Name: test_battery_health_verdict.py
-# Purpose/Description: US-504 tests for the battery HEALTH verdict + last-
-#   health-check producer (Spool [EXACT] spec, inbox note 2026-08-01). The card
-#   previously carried a HARDCODED health="unknown" / lastHealthCheckTs=None
-#   because no producer existed. These tests pin the qualifying-row gate (a
-#   partial or aborted drain measured NOTHING about capacity and must not
-#   qualify -- nor bump the last-health-check date), median-of-3 (single-drain
-#   scatter is +/-15%, so last-1 would false-alarm), the 80/60% baseline bands,
-#   the trailing-180-day sample window, the 90-day staleness override (stale
-#   health data is not health data), and the honest-unknown default on every
-#   NULL / missing / unreadable input -- a verdict manufactured out of NULLs is
-#   strictly worse than the placeholder it replaces.
-# Author: Ralph Agent (Rex)
-# Creation Date: 2026-08-01
+# Purpose/Description: ARCH-065 -- the battery-health verdict answers ONE
+#   question (CIO 2026-10-02): after key-off at home, can the pack carry a full
+#   sync AND a graceful shutdown?  T (time to the reserve floor) vs J (the
+#   at-home job): good if T >= 1.2 J, degraded if J <= T < 1.2 J, replace if
+#   T < J.  These tests pin the pure function at every boundary and the reader
+#   against a real-DDL database.
+# Author: Atlas (ARCH-065a)
+# Creation Date: 2026-10-03 (replaces the US-504 file of 2026-08-01)
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
 #
 # Modification History:
 # ================================================================================
-# Date          | Author       | Description
+# Date          | Author             | Description
 # ================================================================================
-# 2026-08-01    | Ralph (Rex)  | Initial -- US-504 verdict + last-health-check.
-# 2026-08-03    | Ralph (Rex)  | US-527/TD-074 -- qualifying gate remapped from
-#                               the retired runtime_seconds>=600 duration gate
-#                               to Spool's DEPTH gate (end_vcell_v <= 3.50 V +
-#                               60 s floor).  Bands UNCHANGED; degraded/replace
-#                               now reachable through the real pipeline.
+# 2026-08-01    | Ralph (Rex)        | Initial -- US-504 runtime-median verdict.
+# 2026-10-03    | Atlas (ARCH-065a)  | ARCH-065 T7: REPLACED.  The US-504 file
+#                                     pinned the retired qualifying rule
+#                                     (production drains to <=3.50 V, median
+#                                     runtime vs a 727 s baseline); no row has
+#                                     reached it since 2026-05-18.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the current pack is the config's
+#                                     (resolveCellEpoch, passed in), never the newest
+#                                     row's; the provisional T projects to config
+#                                     drainFloorVolts (no 3.44 V, no extra reserve).
 # ================================================================================
 ################################################################################
 
-"""US-504 / US-527: the battery-health verdict producer (Spool [EXACT] spec)."""
+"""ARCH-065: the battery-health verdict = T vs J."""
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 import pytest
 
-from pi.power.battery_health import (
-    SCHEMA_BATTERY_HEALTH_LOG,
-)
-from pi.power.battery_health_verdict import (
-    DEGRADED_BASELINE_FRACTION,
-    DEGRADED_MIN_RUNTIME_S,
-    GOOD_BASELINE_FRACTION,
-    GOOD_MIN_RUNTIME_S,
-    MEDIAN_SAMPLE_COUNT,
-    QUALIFYING_LOAD_CLASS,
-    QUALIFYING_MAX_END_VCELL_V,
-    QUALIFYING_MIN_RUNTIME_S,
-    RUNTIME_BASELINE_S,
-    STALE_HEALTH_CHECK_DAYS,
-    TRAILING_WINDOW_DAYS,
+from src.common.config.validator import DEFAULTS
+from src.pi.power import battery_health_verdict as verdictModule
+from src.pi.power.battery_health_verdict import (
+    GREEN_MARGIN,
+    JOB_AVG_COUNT,
+    MIN_JOBS,
+    REASON_CLOCK_UNREADABLE,
+    REASON_LOG_UNREADABLE,
+    REASON_MONTHLY_TEST_STALE,
+    REASON_NO_DATABASE,
+    REASON_NO_MONTHLY_TEST,
+    REASON_TOO_FEW_SYNCS,
+    SHUTDOWN_ALLOWANCE_S,
+    STALE_TEST_DAYS,
+    UNKNOWN_REASONS,
     VERDICT_DEGRADED,
     VERDICT_GOOD,
     VERDICT_REPLACE,
     VERDICT_UNKNOWN,
     computeBatteryHealthVerdict,
     readBatteryHealthVerdict,
-    verdictForMedianRuntime,
 )
+from src.pi.power.power_watch.contract import OutcomeKind
+from tests.pi.battery_verdict_fixture import PACK, VerdictDatabase, goodPack
 
-_NOW = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
-_NOW_ISO = "2026-08-01T12:00:00Z"
+_NOW = "2026-10-28T12:00:00Z"
+_NOW_DT = datetime(2026, 10, 28, 12, 0, 0)
+_TEST = {"start_timestamp": "2026-10-27T17:00:00Z", "drain_rate_mv_s": -0.04, "end_vcell_v": 4.07,
+         "window_end_s": 660}
+_CAL = {"t_floor_s": 18000, "drain_rate_mv_s": -0.04}
+_SMOOTHING_S = 5.0
+_FLOOR_V = 3.60  # config pi.powerWatch.drainFloorVolts -- the ONE reserve floor
 
 
-def _iso(daysAgo: float) -> str:
-    """Canonical ISO-8601 UTC instant `daysAgo` days before the fixed now."""
-    return (_NOW - timedelta(days=daysAgo)).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _v(test=_TEST, cal=_CAL, jobs=(100.0,) * 10, floor=_FLOOR_V):
+    return computeBatteryHealthVerdict(test=test, calibration=cal, jobsS=list(jobs), nowIso=_NOW,
+                                       drainFloorVolts=floor)
 
 
-def _row(
-    *,
-    daysAgo: float,
-    runtimeSeconds: int | None = 700,
-    loadClass: str = "production",
-    closed: bool = True,
-    startTimestamp: str | None = None,
-    endVcellV: float | None = 3.45,
-) -> dict:
-    """One battery_health_log row shaped as the reader hands it to the pure fn.
+# ---------------------------------------------------------------------------
+# The pure function -- every boundary.
+# ---------------------------------------------------------------------------
 
-    ``endVcellV`` defaults to 3.45 V -- the top of the MEASURED 3.42-3.45 V
-    cutoff range (Spool Session-27, 28 drains), i.e. a genuine run-to-shutdown
-    that PASSES the depth gate.  A test that wants a non-qualifying row states
-    its own shallower voltage rather than relying on the default.
+
+@pytest.mark.parametrize("job,expected", [
+    (18000 / 1.2, VERDICT_GOOD),          # T == 1.2 J  -> good (boundary inclusive)
+    (18000 / 1.2 + 1, VERDICT_DEGRADED),  # just under 1.2 J
+    (18000, VERDICT_DEGRADED),            # T == J -> degraded (inclusive)
+    (18001, VERDICT_REPLACE),             # T < J
+])
+def test_thresholds_atTheirBoundaries(job, expected) -> None:
+    assert _v(jobs=(job,) * 10).verdict == expected
+
+
+def test_T_scalesTheCalibrationTimeByTheRateRatio() -> None:
+    v = _v(test={**_TEST, "drain_rate_mv_s": -0.08})  # draining twice as fast
+    assert v.timeToFloorS == 9000 and not v.provisional
+
+
+def test_noCalibration_isProvisional_straightLineToTheDrainFloor() -> None:
+    v = _v(cal=None)
+    # Ruling 19: T = window_end + (end - drainFloorVolts) / -rate, NO further reserve:
+    # 660 s + 1000 * (4.07 - 3.60) V / 0.04 mV/s = 660 + 11750 = 12410 s
+    assert v.timeToFloorS == 12410 and v.provisional
+
+
+def test_theProvisionalT_followsTheConfiguredFloor() -> None:
+    # 660 + 1000 * (4.07 - 3.50) / 0.04 = 660 + 14250 = 14910 s
+    assert _v(cal=None, floor=3.50).timeToFloorS == 14910
+
+
+def test_theRetiredProvisionalCutoff_isGone() -> None:
+    assert not hasattr(verdictModule, "PROVISIONAL_CUTOFF_V")
+    assert not hasattr(verdictModule, "_PACK_SQL")
+
+
+def test_noTestForThisPack_isUnknown() -> None:
+    v = _v(test=None)
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_NO_MONTHLY_TEST)
+
+
+def test_aTestOlderThan45Days_isStale() -> None:
+    v = _v(test={**_TEST, "start_timestamp": "2026-09-12T00:00:00Z"})
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_MONTHLY_TEST_STALE)
+
+
+def test_fewerThanThreeJobs_isUnknown() -> None:
+    assert _v(jobs=(100.0, 100.0)).reason == REASON_TOO_FEW_SYNCS
+
+
+def test_J_isTheMeanOfTheNewestTen_andTheMaxIsPublished() -> None:
+    v = _v(jobs=[100.0] * 10 + [9999.0])  # an 11th, older job is ignored
+    assert v.jobAvgS == 100 and v.jobMaxS == 100
+
+
+def test_theReasonVocabulary_isExactlySix() -> None:
+    assert set(UNKNOWN_REASONS) == {"no_database", "log_unreadable", "clock_unreadable",
+                                    "no_monthly_test", "monthly_test_stale", "too_few_syncs"}
+
+
+def test_theConstants_areTheCiosNumbers() -> None:
+    assert GREEN_MARGIN == 1.2
+    assert STALE_TEST_DAYS == 45
+    assert JOB_AVG_COUNT == 10
+    assert MIN_JOBS == 3
+
+
+def test_aTestAtExactly45Days_isNotYetStale() -> None:
+    assert _v(test={**_TEST, "start_timestamp": "2026-09-13T12:00:00Z"}).verdict == VERDICT_GOOD
+
+
+def test_exactlyThreeJobs_isEnough() -> None:
+    assert _v(jobs=(100.0,) * 3).verdict == VERDICT_GOOD
+
+
+def test_aResolvedVerdict_carriesNoReason_andTheTestDate() -> None:
+    v = _v()
+    assert v.reason is None
+    assert v.lastHealthCheckTs == _TEST["start_timestamp"]
+
+
+def test_staleAndTooFewSyncs_keepTheMeasurementDate() -> None:
+    """F-9: the date of the last real check survives an unknown verdict."""
+    stale = _v(test={**_TEST, "start_timestamp": "2026-09-12T00:00:00Z"})
+    thin = _v(jobs=(100.0,))
+    assert stale.lastHealthCheckTs == "2026-09-12T00:00:00Z"
+    assert thin.lastHealthCheckTs == _TEST["start_timestamp"]
+    for v in (stale, thin):
+        assert v.timeToFloorS is None and v.jobAvgS is None
+
+
+def test_aTestWithNoRate_isNotACountedTest() -> None:
+    assert _v(test={**_TEST, "drain_rate_mv_s": None}).reason == REASON_NO_MONTHLY_TEST
+
+
+def test_unparseableClock_isClockUnreadable_neverAConfidentVerdict() -> None:
+    v = computeBatteryHealthVerdict(test=_TEST, calibration=_CAL, jobsS=[100.0] * 10,
+                                    nowIso="not-a-time", drainFloorVolts=_FLOOR_V)
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_CLOCK_UNREADABLE)
+
+
+# ---------------------------------------------------------------------------
+# The reader -- a real-DDL database.
+# ---------------------------------------------------------------------------
+
+
+def _read(db, cellEpoch=PACK):
+    return readBatteryHealthVerdict(database=db, nowIso=_NOW, smoothingSec=_SMOOTHING_S,
+                                    cellEpoch=cellEpoch, drainFloorVolts=_FLOOR_V)
+
+
+def test_reader_resolvesAGoodPack() -> None:
+    v = _read(goodPack(_NOW_DT))
+    assert v.verdict == VERDICT_GOOD
+    assert v.timeToFloorS == 18000 and not v.provisional
+
+
+def test_reader_J_isSmoothingPlusSyncPlusShutdownAllowance() -> None:
+    """Ruling 10: the confirm-wait term is config smoothingSec, passed in."""
+    db = goodPack(_NOW_DT)
+    v = readBatteryHealthVerdict(database=db, nowIso=_NOW, smoothingSec=7.0,
+                                 cellEpoch=PACK, drainFloorVolts=_FLOOR_V)
+    assert v.jobAvgS == round(7.0 + 100.0 + SHUTDOWN_ALLOWANCE_S)
+    assert _read(db).jobAvgS == round(_SMOOTHING_S + 100.0 + SHUTDOWN_ALLOWANCE_S)
+
+
+@pytest.mark.parametrize("missing", ["smoothingSec", "cellEpoch", "drainFloorVolts"])
+def test_reader_everyConfigInput_isRequired(missing) -> None:
+    """No default that would hide a missing config value."""
+    kw = {"smoothingSec": _SMOOTHING_S, "cellEpoch": PACK, "drainFloorVolts": _FLOOR_V}
+    del kw[missing]
+    with pytest.raises(TypeError):
+        readBatteryHealthVerdict(database=goodPack(_NOW_DT), nowIso=_NOW, **kw)
+
+
+def test_theValidatorDefault_isWhatTheEmitterFallsBackTo() -> None:
+    assert DEFAULTS["pi.powerWatch.smoothingSec"] == 5
+
+
+def test_reader_onlyDeliveredSyncsAreJobs() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addTest(1)
+    db.addJobs(2)
+    db.addJobs(5, outcome=OutcomeKind.AWAY.name)
+    db.addJobs(5, outcome=OutcomeKind.STALLED.name)
+    assert _read(db).reason == REASON_TOO_FEW_SYNCS
+
+
+def test_reader_theJobOutcomeAndTriggers_areBound_notSqlLiterals() -> None:
+    assert "DELIVERED" not in verdictModule._JOBS_SQL  # noqa: SLF001
+    assert "monthly_test" not in verdictModule._TEST_SQL  # noqa: SLF001
+    assert "calibration" not in verdictModule._CAL_SQL  # noqa: SLF001
+
+
+def test_reader_noCalibration_isProvisional() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addTest(1)
+    db.addJobs(10)
+    v = _read(db)
+    assert v.provisional and v.timeToFloorS == 12410
+
+
+def test_reader_anUncountedTest_doesNotVote() -> None:
+    """ONE definition of a counted test: drain_rate_mv_s IS NOT NULL."""
+    db = VerdictDatabase(_NOW_DT)
+    db.addTest(1, drainRateMvS=None)
+    db.addJobs(10)
+    assert _read(db).reason == REASON_NO_MONTHLY_TEST
+
+
+def test_reader_usesTheNewestCountedTest() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    db.addTest(20, drainRateMvS=-0.08)
+    db.addTest(2)
+    db.addTest(1, drainRateMvS=None)  # newer but uncounted
+    db.addJobs(10)
+    v = _read(db)
+    assert v.timeToFloorS == 18000
+    assert v.lastHealthCheckTs == db.iso(2)
+
+
+def test_reader_aNewPack_neverInheritsTheOldPacksVerdict() -> None:
+    """Review Focus #4: the CONFIGURED pack has no rows; every row is another pack's."""
+    db = goodPack(_NOW_DT)
+    v = _read(db, cellEpoch="new-pack")
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_NO_MONTHLY_TEST)
+
+
+def test_reader_theCurrentPack_isTheConfigs_notTheNewestRows() -> None:
+    """Ruling 19 (M1): one resolver (resolveCellEpoch) names the pack everywhere.
+
+    A newer row stamped with another pack (a bench row, a NULL-stamp repair)
+    no longer flips the card to no_monthly_test.
     """
-    start = _iso(daysAgo) if startTimestamp is None else startTimestamp
-    return {
-        "start_timestamp": start,
-        "end_timestamp": _iso(daysAgo - 0.01) if closed else None,
-        "runtime_seconds": runtimeSeconds,
-        "load_class": loadClass,
-        "end_vcell_v": endVcellV,
-    }
+    db = goodPack(_NOW_DT)
+    db.addKeyoff(0.1, cellEpoch="other-pack")
+    assert _read(db).verdict == VERDICT_GOOD
 
 
-def _verdict(rows, nowIso: str = _NOW_ISO):
-    return computeBatteryHealthVerdict(rows=rows, nowIso=nowIso)
+def test_reader_anUnknownPack_isNoMonthlyTest_evenWithRowsTaggedUnknown() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30, cellEpoch="unknown")
+    db.addTest(1, cellEpoch="unknown")
+    db.addJobs(10)
+    v = _read(db, cellEpoch="unknown")
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_NO_MONTHLY_TEST)
 
 
-# ---------------------------------------------------------------------------
-# The Spool [EXACT] constants (load-bearing -- flag Spool before any drift).
-# ---------------------------------------------------------------------------
+def test_reader_theCalibration_isPerPack() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30, cellEpoch="old-pack", tFloorS=99999)
+    db.addTest(1)
+    db.addJobs(10)
+    assert _read(db).provisional
 
 
-def test_constants_matchSpoolExactSpec():
-    """[EXACT] 3.50 / 60 / 727 / 80 / 60 / 180 / 90.
+def test_reader_noPackYet_isNoMonthlyTest() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addKeyoff(1, cellEpoch=None)
+    db.addJobs(10)
+    assert _read(db).reason == REASON_NO_MONTHLY_TEST
 
-    The depth gate (3.50 V + 60 s floor) is Spool's ruling of 2026-08-02
-    (`offices/ralph/inbox/2026-08-02-from-spool-us504-gate-ruling-and-us521-
-    ratification.md`, commit c72677e); everything else is the 2026-08-01 note
-    and is UNCHANGED by the remap.
-    """
-    assert QUALIFYING_MAX_END_VCELL_V == 3.50
-    assert QUALIFYING_MIN_RUNTIME_S == 60
-    assert RUNTIME_BASELINE_S == 727
-    assert GOOD_BASELINE_FRACTION == 0.80
-    assert DEGRADED_BASELINE_FRACTION == 0.60
-    assert TRAILING_WINDOW_DAYS == 180
-    assert STALE_HEALTH_CHECK_DAYS == 90
-    assert QUALIFYING_LOAD_CLASS == "production"
-    assert MEDIAN_SAMPLE_COUNT == 3
 
+def test_reader_emptyDatabase_isNoMonthlyTest() -> None:
+    assert _read(VerdictDatabase(_NOW_DT)).reason == REASON_NO_MONTHLY_TEST
 
-def test_derivedBands_matchSpoolStatedSeconds():
-    """Spool states the bands BOTH as percentages and as seconds (>=582s /
-    436-582s / <436s). Deriving from the percentage must reproduce his
-    seconds exactly, or the two halves of the [EXACT] spec have drifted."""
-    assert GOOD_MIN_RUNTIME_S == 582
-    assert DEGRADED_MIN_RUNTIME_S == 436
 
-
-# ---------------------------------------------------------------------------
-# Qualifying-row gate: a partial/aborted drain measured NOTHING about capacity.
-# ---------------------------------------------------------------------------
-
-
-def test_openDrain_doesNotQualify():
-    """end_timestamp NULL = the drain never closed -- no runtime-to-cutoff."""
-    rows = [_row(daysAgo=d, closed=False) for d in (1, 2, 3)]
-    result = _verdict(rows)
-    assert result.verdict == VERDICT_UNKNOWN
-    assert result.qualifyingCount == 0
-
-
-def test_nonProductionLoadClass_doesNotQualify():
-    """'test' / 'sim' drains are not the production load the baseline measures."""
-    rows = [_row(daysAgo=1, loadClass="test"), _row(daysAgo=2, loadClass="sim")]
-    rows.append(_row(daysAgo=3))
-    result = _verdict(rows)
-    assert result.qualifyingCount == 1
-    assert result.verdict == VERDICT_UNKNOWN
-
-
-def test_shallowDrain_doesNotQualify_evenWithALongRuntime():
-    """DEPTH, not duration: a long drain that ended at 3.80 V never reached the
-    shutdown region, so it measured nothing about capacity.
-
-    This is the whole point of Spool's remap -- under the retired duration gate
-    these three 700 s rows would have qualified and voted `good`.
-    """
-    rows = [_row(daysAgo=d, runtimeSeconds=700, endVcellV=3.80) for d in (1, 2, 3)]
-    result = _verdict(rows)
-    assert result.qualifyingCount == 0
-    assert result.verdict == VERDICT_UNKNOWN
-
-
-def test_endVcellAtExactDepthCut_qualifies():
-    """The 3.50 V cut is inclusive, per Spool's `end_vcell_v <= [EXACT:3.50]`."""
-    rows = [_row(daysAgo=d, endVcellV=3.50) for d in (1, 2, 3)]
-    assert _verdict(rows).qualifyingCount == 3
-
-
-def test_endVcellOneCentivoltAboveTheCut_doesNotQualify():
-    """3.51 V is above the cut -- and below the 3.55 V MAX17048 'low' warning,
-    so this is exactly the 'got low but did not run to shutdown' case the gate
-    exists to reject."""
-    rows = [_row(daysAgo=d, endVcellV=3.51) for d in (1, 2, 3)]
-    assert _verdict(rows).qualifyingCount == 0
-
-
-def test_measuredCutoffVoltages_qualify():
-    """The measured cutoff on this pack is 3.42-3.45 V (Spool Session-27, 28
-    drains).  3.50 V was chosen to sit ABOVE that range with margin, so a real
-    run-to-shutdown must qualify -- if it did not, the gate would reject the
-    only event it exists to accept."""
-    for volts in (3.42, 3.45):
-        rows = [_row(daysAgo=d, endVcellV=volts) for d in (1, 2, 3)]
-        assert _verdict(rows).qualifyingCount == 3, volts
-
-
-def test_nullEndVcell_doesNotQualify():
-    """A reaped orphan / unreadable gauge leaves end_vcell_v NULL.  The depth of
-    an interrupted drain is UNKNOWN and must never be treated as reached
-    (US-526 honest-NA; the reaper deliberately leaves this NULL)."""
-    rows = [_row(daysAgo=d, endVcellV=None) for d in (1, 2, 3)]
-    result = _verdict(rows)
-    assert result.qualifyingCount == 0
-    assert result.verdict == VERDICT_UNKNOWN
-
-
-def test_runtimeAtSanityFloor_qualifies():
-    """The floor is inclusive (>= [EXACT:60]), per Spool's `runtime_seconds >= 60`."""
-    rows = [_row(daysAgo=d, runtimeSeconds=60) for d in (1, 2, 3)]
-    assert _verdict(rows).qualifyingCount == 3
-
-
-def test_runtimeUnderSanityFloor_doesNotQualify():
-    """< 60 s is an absurd row -- a pack cannot genuinely reach the shutdown
-    region that fast, so depth alone must not admit it."""
-    rows = [_row(daysAgo=d, runtimeSeconds=59) for d in (1, 2, 3)]
-    assert _verdict(rows).qualifyingCount == 0
-
-
-def test_nullRuntime_doesNotQualify():
-    """A NULL required input can never be treated as a measurement."""
-    rows = [_row(daysAgo=d, runtimeSeconds=None) for d in (1, 2, 3)]
-    result = _verdict(rows)
-    assert result.qualifyingCount == 0
-    assert result.verdict == VERDICT_UNKNOWN
-
-
-def test_unparseableStartTimestamp_doesNotQualify():
-    """A corrupt timestamp is a NULL required input -- never silently dated."""
-    rows = [_row(daysAgo=d, startTimestamp="not-a-timestamp") for d in (1, 2, 3)]
-    assert _verdict(rows).qualifyingCount == 0
-
-
-# ---------------------------------------------------------------------------
-# Honest unknown: fewer than 3 qualifying drains in the trailing window.
-# ---------------------------------------------------------------------------
-
-
-def test_noRows_isUnknownNotGood():
-    result = _verdict([])
-    assert result.verdict == VERDICT_UNKNOWN
-    assert result.lastHealthCheckTs is None
-    assert result.medianRuntimeS is None
-
-
-def test_twoQualifyingDrains_isUnknown():
-    """< 3 qualifying = the default unknown; two drains cannot outvote scatter."""
-    rows = [_row(daysAgo=1), _row(daysAgo=2)]
-    assert _verdict(rows).verdict == VERDICT_UNKNOWN
-
-
-def test_thirdDrainOutsideTrailingWindow_isUnknown():
-    """The 3-drain count is over the trailing [EXACT:180] days only."""
-    rows = [_row(daysAgo=1), _row(daysAgo=2), _row(daysAgo=181)]
-    result = _verdict(rows)
-    assert result.qualifyingCount == 3
-    assert result.verdict == VERDICT_UNKNOWN
-
-
-def test_thirdDrainAtWindowEdge_counts():
-    """180 days exactly is INSIDE the trailing window (the cut is >= now-180d)."""
-    rows = [_row(daysAgo=1), _row(daysAgo=2), _row(daysAgo=180)]
-    assert _verdict(rows).verdict == VERDICT_GOOD
-
-
-# ---------------------------------------------------------------------------
-# median-of-3, not last-1 (observed single-drain scatter is +/-15%).
-# ---------------------------------------------------------------------------
-
-
-def test_medianOfThree_notLastOne():
-    """One low reading must NOT decide the verdict: the newest drain is a 617s
-    low outlier, the median of the newest three is 727s."""
-    rows = [
-        _row(daysAgo=1, runtimeSeconds=617),
-        _row(daysAgo=2, runtimeSeconds=727),
-        _row(daysAgo=3, runtimeSeconds=831),
-    ]
-    result = _verdict(rows)
-    assert result.medianRuntimeS == 727
-    assert result.verdict == VERDICT_GOOD
-
-
-def test_medianUsesTheNewestThree_notTheWholeHistory():
-    """Only the last 3 qualifying drains vote; older ones are history."""
-    rows = [
-        _row(daysAgo=1, runtimeSeconds=620),
-        _row(daysAgo=2, runtimeSeconds=620),
-        _row(daysAgo=3, runtimeSeconds=620),
-        _row(daysAgo=40, runtimeSeconds=830),
-        _row(daysAgo=41, runtimeSeconds=830),
-    ]
-    assert _verdict(rows).medianRuntimeS == 620
-
-
-def test_rowOrderIndependent_newestWinsByTimestampNotListOrder():
-    """The reader's row order must not decide which drains vote."""
-    rows = [
-        _row(daysAgo=41, runtimeSeconds=830),
-        _row(daysAgo=1, runtimeSeconds=620),
-        _row(daysAgo=3, runtimeSeconds=620),
-        _row(daysAgo=2, runtimeSeconds=620),
-    ]
-    assert _verdict(rows).medianRuntimeS == 620
-
-
-# ---------------------------------------------------------------------------
-# Verdict bands vs the [EXACT:727]s baseline.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "median,expected",
-    [
-        (831, VERDICT_GOOD),      # top of the measured baseline range
-        (582, VERDICT_GOOD),      # exactly 80% of 727 -- inclusive
-        (581, VERDICT_DEGRADED),  # one second under the good band
-        (436, VERDICT_DEGRADED),  # exactly 60% -- Spool's degraded floor
-        (435, VERDICT_REPLACE),   # one second under -> replace
-        (0, VERDICT_REPLACE),
-    ],
-)
-def test_verdictBands(median, expected):
-    assert verdictForMedianRuntime(median) == expected
-
-
-def test_qualifyingRuntimeFloorSitsBELOWBothBands():
-    """US-527/TD-074 -- the REGRESSION GUARD for the retired 600 s gate.
-
-    The Sprint-69 defect was a gate ABOVE the bands: `runtime_seconds >= 600`
-    with `good` starting at 582 s meant every surviving row was necessarily
-    `good`, so the verdict could not degrade -- it failed toward reassurance,
-    the one direction a health verdict must never fail.
-
-    Spool's remap fixes it by moving the GATE, not by re-tuning the bands: the
-    60 s floor now sits below BOTH band boundaries, so the whole band range is
-    reachable.  Asserting the ordering (rather than just the literal 60) is what
-    makes this a guard: re-introducing any floor at or above 436 s silently
-    re-breaks reachability, and this fails.
-    """
-    assert QUALIFYING_MIN_RUNTIME_S < DEGRADED_MIN_RUNTIME_S < GOOD_MIN_RUNTIME_S
-    assert QUALIFYING_MIN_RUNTIME_S != 600  # the retired duration gate
-
-
-def test_replaceBandRowStillQualifies_theEventTheOldGateDiscarded():
-    """Spool's worked example: 'a pack dying at 500 s would have been discarded
-    as partial-drain noise, which is precisely the event the verdict exists to
-    catch.'  Under the depth gate that row qualifies AND reports degraded."""
-    rows = [_row(daysAgo=d, runtimeSeconds=500) for d in (1, 2, 3)]
-    result = _verdict(rows)
-    assert result.qualifyingCount == 3
-    assert result.verdict == VERDICT_DEGRADED
-
-
-# ---------------------------------------------------------------------------
-# last-health-check: qualifying rows only.
-# ---------------------------------------------------------------------------
-
-
-def test_lastHealthCheck_isMaxStartTimestampOfQualifyingRows():
-    rows = [_row(daysAgo=1), _row(daysAgo=9), _row(daysAgo=5)]
-    assert _verdict(rows).lastHealthCheckTs == _iso(1)
-
-
-def test_partialDrainDoesNotBumpLastHealthCheck():
-    """A partial/aborted drain is NOT a health check -- otherwise the card
-    claims a recent check that measured nothing."""
-    rows = [
-        # Spool's key-cycle example: ended at 4.00 V, so it measured nothing.
-        _row(daysAgo=0.5, runtimeSeconds=120, endVcellV=4.00),
-        _row(daysAgo=0.55, runtimeSeconds=30),   # under the 60s sanity floor
-        _row(daysAgo=0.6, closed=False),         # never closed
-        _row(daysAgo=0.7, loadClass="sim"),      # not a production load
-        _row(daysAgo=0.8, endVcellV=None),       # reaped orphan -- depth unknown
-        _row(daysAgo=4),
-        _row(daysAgo=5),
-        _row(daysAgo=6),
-    ]
-    result = _verdict(rows)
-    assert result.lastHealthCheckTs == _iso(4)
-    assert result.verdict == VERDICT_GOOD
-
-
-def test_lastHealthCheckSurvivesTheUnknownVerdict():
-    """Even when the verdict is unknown the card still shows WHEN the last
-    real check was -- that date is the honest signal."""
-    rows = [_row(daysAgo=200), _row(daysAgo=201)]
-    result = _verdict(rows)
-    assert result.verdict == VERDICT_UNKNOWN
-    assert result.lastHealthCheckTs == _iso(200)
-
-
-# ---------------------------------------------------------------------------
-# The 90-day staleness override -- stale health data is not health data.
-# ---------------------------------------------------------------------------
-
-
-def test_staleHealthCheck_forcesUnknownDespiteGoodNumbers():
-    """3 qualifying drains, all comfortably good, but the newest is 91 days
-    old -> the verdict is forced to unknown regardless of the numbers."""
-    rows = [_row(daysAgo=d, runtimeSeconds=800) for d in (91, 92, 93)]
-    result = _verdict(rows)
-    assert result.verdict == VERDICT_UNKNOWN
-    assert result.lastHealthCheckTs == _iso(91)
-
-
-def test_healthCheckAtNinetyDays_isNotYetStale():
-    """The override fires when the check is OLDER than [EXACT:90] days."""
-    rows = [_row(daysAgo=d, runtimeSeconds=800) for d in (90, 91, 92)]
-    assert _verdict(rows).verdict == VERDICT_GOOD
-
-
-def test_staleOverrideBeatsAFullTrailingWindow():
-    """Five healthy qualifying drains inside the 180-day window still resolve
-    to unknown when the newest is over 90 days old -- the sample-count gate
-    and the staleness gate are AND-ed, not alternatives."""
-    rows = [_row(daysAgo=d, runtimeSeconds=800) for d in (95, 96, 97, 98, 99)]
-    result = _verdict(rows)
-    assert result.qualifyingCount == 5
-    assert result.verdict == VERDICT_UNKNOWN
-
-
-def test_unparseableNow_isUnknownNeverAConfidentVerdict():
-    """A clock we cannot read cannot age-check the data -> unknown."""
-    rows = [_row(daysAgo=d) for d in (1, 2, 3)]
-    assert _verdict(rows, nowIso="garbage").verdict == VERDICT_UNKNOWN
-
-
-# ---------------------------------------------------------------------------
-# The database reader.
-# ---------------------------------------------------------------------------
-
-
-class _FakeDatabase:
-    """An in-memory battery_health_log shaped exactly like the Pi's."""
-
-    def __init__(self, rows=()):
-        self._conn = sqlite3.connect(":memory:")
-        self._conn.execute(SCHEMA_BATTERY_HEALTH_LOG)
-        for r in rows:
-            self._conn.execute(
-                "INSERT INTO battery_health_log "
-                "(start_timestamp, end_timestamp, runtime_seconds, load_class, "
-                " end_vcell_v) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    r["start_timestamp"], r["end_timestamp"],
-                    r["runtime_seconds"], r["load_class"], r["end_vcell_v"],
-                ),
-            )
-        self._conn.commit()
-
-    @contextmanager
-    def connect(self):
-        yield self._conn
+def test_reader_noDatabase_isNoDatabase() -> None:
+    assert _read(None).reason == REASON_NO_DATABASE
 
 
 class _BrokenDatabase:
     @contextmanager
     def connect(self):
-        raise sqlite3.OperationalError("no such table: battery_health_log")
-        yield  # pragma: no cover -- unreachable, keeps this a generator
+        raise sqlite3.OperationalError("database is locked")
+        yield  # pragma: no cover
 
 
-def test_readBatteryHealthVerdict_readsRealRows():
-    db = _FakeDatabase([_row(daysAgo=d, runtimeSeconds=700) for d in (1, 2, 3)])
-    result = readBatteryHealthVerdict(database=db, nowIso=_NOW_ISO)
-    assert result.verdict == VERDICT_GOOD
-    assert result.lastHealthCheckTs == _iso(1)
+def test_reader_unreadableLog_isLogUnreadable_notACrash() -> None:
+    assert _read(_BrokenDatabase()).reason == REASON_LOG_UNREADABLE
 
 
-def test_readBatteryHealthVerdict_appliesTheGateInSql():
-    """The non-qualifying rows must not reach the pure function at all."""
-    db = _FakeDatabase(
-        [
-            _row(daysAgo=0.5, runtimeSeconds=30),
-            _row(daysAgo=0.6, closed=False),
-            _row(daysAgo=1, runtimeSeconds=700),
-            _row(daysAgo=2, runtimeSeconds=700),
-            _row(daysAgo=3, runtimeSeconds=700),
-        ]
-    )
-    result = readBatteryHealthVerdict(database=db, nowIso=_NOW_ISO)
-    assert result.qualifyingCount == 3
-    assert result.lastHealthCheckTs == _iso(1)
-
-
-def test_readBatteryHealthVerdict_appliesTheDEPTHGateInSql(monkeypatch):
-    """The SQL gate must exclude non-qualifying rows ITSELF.
-
-    MUTATION-PROVED necessary.  The gate is applied TWICE -- once in SQL, once
-    in the pure function -- so asserting only on the returned verdict cannot
-    tell the two halves apart: neutralising the SQL depth predicate leaves the
-    verdict, `qualifyingCount` and `lastHealthCheckTs` all correct, because the
-    pure function silently covers for it.  I verified that: with
-    `end_vcell_v <= ?` disabled in SQL, all 44 tests in this module still
-    passed.
-
-    So this test asserts at the READ BOUNDARY -- it captures exactly which rows
-    SQL handed over.  That is the assertion the sibling
-    `..._appliesTheGateInSql` above only claims in its docstring.
-    """
-    import pi.power.battery_health_verdict as verdictModule
-
-    captured: list[dict] = []
-    realCompute = verdictModule.computeBatteryHealthVerdict
-
-    def _spy(*, rows, nowIso):
-        materialised = list(rows)
-        captured.extend(materialised)
-        return realCompute(rows=materialised, nowIso=nowIso)
-
-    monkeypatch.setattr(verdictModule, 'computeBatteryHealthVerdict', _spy)
-
-    db = _FakeDatabase(
-        [
-            _row(daysAgo=0.4, runtimeSeconds=900, endVcellV=3.80),  # long+shallow
-            _row(daysAgo=0.5, endVcellV=None),                # reaped orphan
-            _row(daysAgo=0.6, runtimeSeconds=30),             # under the 60s floor
-            _row(daysAgo=0.7, closed=False),                  # never closed
-            _row(daysAgo=0.8, loadClass="sim"),               # not production
-            _row(daysAgo=1, runtimeSeconds=700),
-            _row(daysAgo=2, runtimeSeconds=700),
-            _row(daysAgo=3, runtimeSeconds=700),
-        ]
-    )
-    result = readBatteryHealthVerdict(database=db, nowIso=_NOW_ISO)
-
-    # Only the three genuine run-to-cutoff drains crossed the read boundary.
-    assert len(captured) == 3
-    assert [r["start_timestamp"] for r in captured] == [_iso(1), _iso(2), _iso(3)]
-    for row in captured:
-        assert row["end_vcell_v"] is not None
-        assert row["end_vcell_v"] <= QUALIFYING_MAX_END_VCELL_V
-        assert row["runtime_seconds"] >= QUALIFYING_MIN_RUNTIME_S
-        assert row["load_class"] == QUALIFYING_LOAD_CLASS
-        assert row["end_timestamp"] is not None
-
-    assert result.qualifyingCount == 3
-    assert result.lastHealthCheckTs == _iso(1)
+def test_reader_preMigrationLog_isLogUnreadable() -> None:
+    """A battery_health_log without the ARCH-065 columns cannot be read."""
+    db = VerdictDatabase(_NOW_DT)
+    db.conn.execute("DROP TABLE battery_health_log")
+    db.conn.execute("CREATE TABLE battery_health_log (drain_event_id INTEGER PRIMARY KEY)")
+    assert _read(db).reason == REASON_LOG_UNREADABLE
 
 
 # ---------------------------------------------------------------------------
-# US-527 AC4 -- degraded + replace reachable THROUGH THE REAL PIPELINE.
-# Seeded depth-gated rows, read through readBatteryHealthVerdict (real SQL gate
-# + real pure function), not through verdictForMedianRuntime() in isolation.
-# The old gate made both of these verdicts impossible to reach this way.
+# The verdict is written onto the monthly-test row (server history), only
+# when it changes -- the reader runs on every card emit.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "runtimeSeconds,expected",
-    [
-        (700, VERDICT_GOOD),      # healthy run-to-cutoff
-        (500, VERDICT_DEGRADED),  # 436-582 band -- UNREACHABLE before US-527
-        (300, VERDICT_REPLACE),   # < 436 band  -- UNREACHABLE before US-527
-    ],
-)
-def test_everyBandIsReachableThroughTheRealPipeline(runtimeSeconds, expected):
-    """Seed 3 depth-gated drains and read the verdict end-to-end."""
-    db = _FakeDatabase(
-        [
-            _row(daysAgo=d, runtimeSeconds=runtimeSeconds, endVcellV=3.44)
-            for d in (1, 2, 3)
-        ]
+def test_theResolvedVerdict_isWrittenOntoTheTestRow() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    testId = db.addTest(1)
+    db.addJobs(10)
+    _read(db)
+    assert db.storedVerdict(testId) == VERDICT_GOOD
+
+
+def test_theVerdictWrite_happensOnlyWhenTheValueChanges() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    testId = db.addTest(1)
+    db.addJobs(10)
+    _read(db)
+    before = db.conn.total_changes
+    _read(db)
+    _read(db)
+    assert db.conn.total_changes == before
+    # A change of verdict IS written: ten newer 15000 s syncs -> J ~= 15009 s.
+    db.addJobs(10, syncSeconds=15000)
+    assert _read(db).verdict == VERDICT_DEGRADED
+    assert db.storedVerdict(testId) == VERDICT_DEGRADED
+
+
+def test_anUnknownVerdict_isNeverWrittenOntoTheRow() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    testId = db.addTest(1)
+    db.addJobs(1)
+    assert _read(db).reason == REASON_TOO_FEW_SYNCS
+    assert db.storedVerdict(testId) is None
+
+
+def test_aFailedHistoryWrite_neverCostsTheVerdict() -> None:
+    db = goodPack(_NOW_DT)
+    db.conn.execute(
+        "CREATE TRIGGER noWrites BEFORE UPDATE ON battery_health_log "
+        "BEGIN SELECT RAISE(ABORT, 'read-only'); END"
     )
-    result = readBatteryHealthVerdict(database=db, nowIso=_NOW_ISO)
-    assert result.qualifyingCount == 3
-    assert result.medianRuntimeS == runtimeSeconds
-    assert result.verdict == expected
+    assert _read(db).verdict == VERDICT_GOOD
 
 
-def test_readBatteryHealthVerdict_emptyTableIsUnknown():
-    result = readBatteryHealthVerdict(database=_FakeDatabase(), nowIso=_NOW_ISO)
-    assert result.verdict == VERDICT_UNKNOWN
-    assert result.lastHealthCheckTs is None
+# ---------------------------------------------------------------------------
+# Fix round 1.  Ruling 16: a counted test whose provisional inputs are NULL is
+# an unreadable LOG, never an exception out of the reader.
+# ---------------------------------------------------------------------------
 
 
-def test_readBatteryHealthVerdict_databaseErrorIsUnknownNotACrash():
-    """An unreadable log degrades to unknown -- it never raises into the emit
-    loop and never invents a verdict."""
-    result = readBatteryHealthVerdict(database=_BrokenDatabase(), nowIso=_NOW_ISO)
-    assert result.verdict == VERDICT_UNKNOWN
-    assert result.lastHealthCheckTs is None
+@pytest.mark.parametrize("override", [
+    {"endVcellV": None},
+    {"windowEndS": None},
+])
+def test_reader_aCountedTestWithANullProvisionalInput_isLogUnreadable_neverRaises(override) -> None:
+    """Reproducer: a test reaped without a checkpoint keeps end_vcell_v NULL
+    but the finaliser still rates it from the trajectory."""
+    db = VerdictDatabase(_NOW_DT)
+    db.addTest(1, **override)
+    db.addJobs(10)
+    v = _read(db)
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_LOG_UNREADABLE)
+    assert v.lastHealthCheckTs == db.iso(1)
 
 
-def test_readBatteryHealthVerdict_noDatabaseIsUnknown():
-    result = readBatteryHealthVerdict(database=None, nowIso=_NOW_ISO)
-    assert result.verdict == VERDICT_UNKNOWN
+def test_compute_aNonNumericProvisionalInput_isLogUnreadable() -> None:
+    v = _v(cal=None, test={**_TEST, "end_vcell_v": "n/a"})
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_LOG_UNREADABLE)
+    assert v.lastHealthCheckTs == _TEST["start_timestamp"]
+
+
+def test_reader_aNullEndVcell_isHarmless_whenTheCalibrationShapesT() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    db.addTest(1, endVcellV=None, windowEndS=None)
+    db.addJobs(10)
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+def test_reader_anythingTheComputeRaises_isLogUnreadable(monkeypatch) -> None:
+    def boom(**_kw):
+        raise ValueError("unexpected")
+    monkeypatch.setattr(verdictModule, "computeBatteryHealthVerdict", boom)
+    assert _read(goodPack(_NOW_DT)).reason == REASON_LOG_UNREADABLE
+
+
+# ---------------------------------------------------------------------------
+# Ruling 13: a pack the reserve floor stopped at home failed its job -> replace.
+# ---------------------------------------------------------------------------
+
+
+def test_reader_aFloorEndedDrainNewerThanTheTest_isReplace() -> None:
+    db = goodPack(_NOW_DT, testDaysAgo=5)
+    db.addFloorEnded(1)
+    v = _read(db)
+    assert (v.verdict, v.reason) == (VERDICT_REPLACE, None)
+    assert v.lastHealthCheckTs == db.iso(1)
+
+
+def test_reader_aFloorEndedDrainOlderThanALaterCountedTest_theTestGoverns() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    db.addFloorEnded(10)
+    db.addTest(2)
+    db.addJobs(10)
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+def test_reader_aFloorEndedDrain_outranksStaleAndTooFewAndNoTest() -> None:
+    for build in (
+        lambda db: db.addTest(STALE_TEST_DAYS + 10),
+        lambda db: (db.addTest(5), db.addJobs(1)),
+        lambda db: None,
+    ):
+        db = VerdictDatabase(_NOW_DT)
+        build(db)
+        db.addFloorEnded(1)
+        assert _read(db).verdict == VERDICT_REPLACE
+
+
+def test_reader_anOldPacksFloorEndedDrain_isIgnored() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addFloorEnded(3, cellEpoch="old-pack")
+    db.addCalibration(30)
+    db.addTest(2)
+    db.addJobs(10)
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+def test_reader_aCountedTestsOwnReplaceHistory_isNotAFloorEndedDrain() -> None:
+    """verdict=replace on a row WITH a rate is history, not a floor event."""
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    testId = db.addTest(1)
+    db.conn.execute("UPDATE battery_health_log SET verdict = ? WHERE drain_event_id = ?",
+                    (VERDICT_REPLACE, testId))
+    db.addJobs(10)
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+# ---------------------------------------------------------------------------
+# Ruling 17: negative T is clamped; the history write cannot stall the reader.
+# ---------------------------------------------------------------------------
+
+
+def test_aNegativeT_isPublishedAsZero_andIsReplace() -> None:
+    v = _v(cal=None, test={**_TEST, "end_vcell_v": 3.40, "window_end_s": 0})
+    assert v.timeToFloorS == 0
+    assert v.verdict == VERDICT_REPLACE
+
+
+def test_aLockedDatabase_doesNotStallTheReader_andWarnsOnce(tmp_path, monkeypatch, caplog) -> None:
+    import logging
+    import time
+
+    from src.pi.obdii.database import ObdDatabase
+
+    monkeypatch.setattr(verdictModule, "_historyWriteWarned", False)
+    obd = ObdDatabase(str(tmp_path / "obd.db"), walMode=False)
+    obd.initialize()
+    src = goodPack(_NOW_DT)
+    with obd.connect() as conn:
+        for table in ("battery_health_log", "startup_log"):
+            cols = [r[1] for r in src.conn.execute(f"PRAGMA table_info({table})")]
+            for row in src.conn.execute(f"SELECT {', '.join(cols)} FROM {table}"):
+                conn.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES "
+                             f"({', '.join('?' * len(cols))})", tuple(row))
+    holder = sqlite3.connect(str(tmp_path / "obd.db"), timeout=0)
+    holder.execute("BEGIN IMMEDIATE")  # another writer holds the lock
+    try:
+        with caplog.at_level(logging.DEBUG, logger=verdictModule.__name__):
+            started = time.monotonic()
+            first = _read(obd)
+            firstS = time.monotonic() - started
+            second = _read(obd)
+            secondS = time.monotonic() - started - firstS
+    finally:
+        holder.rollback()
+        holder.close()
+    assert first.verdict == second.verdict == VERDICT_GOOD
+    # Each read's history write is bounded by the short busy timeout (~0.5 s).
+    assert firstS < 1.2 and secondS < 1.2, (firstS, secondS)
+    warnings = [r for r in caplog.records
+                if r.levelno == logging.WARNING and "history write" in r.getMessage()]
+    assert len(warnings) == 1

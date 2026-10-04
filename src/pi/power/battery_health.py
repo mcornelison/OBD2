@@ -76,6 +76,17 @@
 #                               endDrainEvent writes 'clean'.  REAP_CHECKPOINTED_
 #                               NOTE_SUFFIX moved here from drain_event_writer so
 #                               the backfill can read it without an import cycle.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 capacity columns on
+#                               battery_health_log (drain_trigger, cell_epoch,
+#                               window/verdict fields), DRAIN_TRIGGER_* enum and
+#                               the PRAGMA-probed ensureBatteryHealthLogCapacity
+#                               Columns.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T5: resolveCellEpoch -- the ONE
+#                               reader of pi.power.cellEpoch (controller ruling 9).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: lossRowBand + LOSS_ROW_*_S -- the ONE
+#                               owner of "this loss's drain row" (finaliser + mark);
+#                               the fresh DDL's drain_trigger CHECK derives from
+#                               DRAIN_TRIGGER_VALUES.
 # ================================================================================
 ################################################################################
 
@@ -157,10 +168,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from src.common.config.validator import CELL_EPOCH_UNKNOWN
 from src.common.time.helper import CANONICAL_ISO_FORMAT, utcIsoNow
 
 __all__ = [
@@ -169,6 +182,15 @@ __all__ = [
     'CLOSE_REASON_REAPED_CHECKPOINTED',
     'CLOSE_REASON_REAPED_UNCHECKPOINTED',
     'CLOSE_REASON_VALUES',
+    'BATTERY_HEALTH_CAPACITY_COLUMNS',
+    'DRAIN_TRIGGER_CALIBRATION',
+    'DRAIN_TRIGGER_KEYOFF',
+    'DRAIN_TRIGGER_MONTHLY_TEST',
+    'DRAIN_TRIGGER_VALUES',
+    'LOSS_ROW_AFTER_S',
+    'LOSS_ROW_BEFORE_S',
+    'lossRowBand',
+    'resolveCellEpoch',
     'DatabaseLike',
     'BatteryHealthRecorder',
     'DrainEventCloseResult',
@@ -177,6 +199,7 @@ __all__ = [
     'REAP_CHECKPOINTED_NOTE_SUFFIX',
     'SCHEMA_BATTERY_HEALTH_LOG',
     'INDEX_BATTERY_HEALTH_LOG_START',
+    'ensureBatteryHealthLogCapacityColumns',
     'ensureBatteryHealthLogCloseReasonColumn',
     'ensureBatteryHealthLogTable',
     'ensureBatteryHealthLogVcellColumns',
@@ -219,6 +242,59 @@ CLOSE_REASON_VALUES: tuple[str, ...] = (
     CLOSE_REASON_REAPED_CHECKPOINTED,
 )
 
+#: ARCH-065: why a drain ran. A column, never a reuse of load_class.
+DRAIN_TRIGGER_KEYOFF: str = 'keyoff'
+DRAIN_TRIGGER_MONTHLY_TEST: str = 'monthly_test'
+DRAIN_TRIGGER_CALIBRATION: str = 'calibration'
+DRAIN_TRIGGER_VALUES: tuple[str, ...] = (
+    DRAIN_TRIGGER_KEYOFF, DRAIN_TRIGGER_MONTHLY_TEST, DRAIN_TRIGGER_CALIBRATION,
+)
+_DRAIN_TRIGGER_CHECK = ",".join(f"'{v}'" for v in DRAIN_TRIGGER_VALUES)
+
+#: ARCH-065 (Ruling 19): a loss's drain row opens within this band around the
+#: loss's wall time (``HomeStateAtLoss.lossIso``) -- the collector's clock may
+#: lead powerwatch's by a few seconds, and its confirmation poll may lag.  The
+#: ONE owner of "this loss's row": the boot finaliser and the monthly-test mark
+#: both select through :func:`lossRowBand`.
+LOSS_ROW_BEFORE_S: int = 5
+LOSS_ROW_AFTER_S: int = 30
+
+
+def lossRowBand(lossIso: str) -> tuple[str, str]:
+    """The inclusive ``start_timestamp`` band of the drain row opened by the loss at ``lossIso``.
+
+    Returns ``(lo, hi)`` as canonical UTC ISO seconds: ``[loss - LOSS_ROW_BEFORE_S,
+    loss + LOSS_ROW_AFTER_S]``.  Raises ``ValueError`` on a non-canonical ``lossIso``.
+    """
+    loss = datetime.strptime(lossIso, CANONICAL_ISO_FORMAT).replace(tzinfo=UTC)
+    return (
+        (loss - timedelta(seconds=LOSS_ROW_BEFORE_S)).strftime(CANONICAL_ISO_FORMAT),
+        (loss + timedelta(seconds=LOSS_ROW_AFTER_S)).strftime(CANONICAL_ISO_FORMAT),
+    )
+
+
+def resolveCellEpoch(config: Mapping[str, Any]) -> str:
+    """The ONE reader of ``pi.power.cellEpoch``: the value, else 'unknown'.
+
+    Absent, None or empty all resolve to the validator's CELL_EPOCH_UNKNOWN.
+    """
+    power = (config.get('pi') or {}).get('power') or {}
+    return str(power.get('cellEpoch') or CELL_EPOCH_UNKNOWN)
+
+#: ARCH-065 capacity columns, in order. All nullable except drain_trigger.
+BATTERY_HEALTH_CAPACITY_COLUMNS: tuple[tuple[str, str], ...] = (
+    ('drain_trigger', f"TEXT NOT NULL DEFAULT 'keyoff' CHECK (drain_trigger IN ({_DRAIN_TRIGGER_CHECK}))"),
+    ('cell_epoch', 'TEXT'),
+    ('cut_step_mv', 'REAL'),
+    ('window_start_s', 'INTEGER'),
+    ('window_end_s', 'INTEGER'),
+    ('drain_rate_mv_s', 'REAL'),
+    ('verdict', 'TEXT'),
+    ('t_floor_s', 'INTEGER'),
+    ('floor_vcell_v', 'REAL'),
+    ('cutoff_vcell_v', 'REAL'),
+)
+
 #: Appended to ``notes`` when the boot reaper closes a row onto its last
 #: checkpoint (US-605).  Human context only since US-683: ``close_reason =
 #: 'reaped_checkpointed'`` is the discriminator a consumer reads.  The one place
@@ -236,7 +312,7 @@ REAP_CHECKPOINTED_NOTE_SUFFIX: str = (
 # DDL
 # ================================================================================
 
-SCHEMA_BATTERY_HEALTH_LOG: str = """
+SCHEMA_BATTERY_HEALTH_LOG: str = f"""
 CREATE TABLE IF NOT EXISTS battery_health_log (
     -- Monotonic event id.  Pi-side PK + sync delta cursor.
     drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -303,7 +379,21 @@ CREATE TABLE IF NOT EXISTS battery_health_log (
     -- CLOSE_REASON_VALUES).  Column-level CHECK only -- the pairing with
     -- end_timestamp is held by the writers, not the schema.
     close_reason TEXT
-        CHECK (close_reason IN ('clean','reaped_uncheckpointed','reaped_checkpointed'))
+        CHECK (close_reason IN ('clean','reaped_uncheckpointed','reaped_checkpointed')),
+
+    -- ARCH-065 capacity columns (see BATTERY_HEALTH_CAPACITY_COLUMNS; same
+    -- type text so a fresh table matches a migrated one).  drain_trigger is
+    -- the qualifying key; every other column is nullable.
+    drain_trigger TEXT NOT NULL DEFAULT 'keyoff' CHECK (drain_trigger IN ({_DRAIN_TRIGGER_CHECK})),
+    cell_epoch TEXT,
+    cut_step_mv REAL,
+    window_start_s INTEGER,
+    window_end_s INTEGER,
+    drain_rate_mv_s REAL,
+    verdict TEXT,
+    t_floor_s INTEGER,
+    floor_vcell_v REAL,
+    cutoff_vcell_v REAL
 );
 """
 
@@ -525,6 +615,24 @@ def ensureBatteryHealthLogSocPctColumns(conn: sqlite3.Connection) -> bool:
     # Recreate the start_timestamp index dropped with the old table.
     conn.execute(INDEX_BATTERY_HEALTH_LOG_START)
     return True
+
+
+def ensureBatteryHealthLogCapacityColumns(conn: sqlite3.Connection) -> list[str]:
+    """Add the ARCH-065 capacity columns (specs/design-patterns.md section 10).
+
+    PRAGMA-probed; ADD COLUMN only, so no row moves; a no-op on replay. The
+    caller owns the commit.
+
+    Returns:
+        The columns added, in order; empty when all were present.
+    """
+    existing = {r[1] for r in conn.execute(f"PRAGMA table_info({BATTERY_HEALTH_LOG_TABLE})")}
+    added: list[str] = []
+    for name, sqlType in BATTERY_HEALTH_CAPACITY_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {BATTERY_HEALTH_LOG_TABLE} ADD COLUMN {name} {sqlType}")
+            added.append(name)
+    return added
 
 
 def ensureBatteryHealthLogCloseReasonColumn(conn: sqlite3.Connection) -> bool:

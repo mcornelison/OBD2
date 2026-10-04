@@ -16,6 +16,8 @@
 # 2026-05-19    | Plan (SS-T6) | Initial -- the Protocol rename guard + single
 #                                explicit registry-seam guard. The seam is the
 #                                ONLY edit point for future plugin tasks.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: hold built with homeStateName.
 # ================================================================================
 ################################################################################
 """SS-T6: ShutdownTask Protocol + V1 task-registry seam."""
@@ -33,7 +35,8 @@ def test_v1_hasExactlyOneShutdownTask_andSeamIsPluggable():
         homeState=lambda: HomeNetworkState.AWAY,
         runSync=lambda: None,
         writeRecord=lambda _x: None,
-        ceilingSec=60.0,
+        joinWaitSec=120.0,
+        stallSec=60.0,
     )
     assert isinstance(t, ShutdownTask)  # satisfies the runtime-checkable protocol
 
@@ -49,3 +52,22 @@ def test_v1_hasExactlyOneShutdownTask_andSeamIsPluggable():
         f"V1 has exactly one task (Option A); got {len(result)}"
     )
     assert result[0] is t
+
+
+def test_buildV1Tasks_appendsTheHoldTaskAfterSync_whenGiven():
+    from src.pi.power.power_watch import __main__ as m
+    from src.pi.power.power_watch.tasks.monthly_test_hold import MonthlyTestHoldTask
+
+    t = SyncWithServerTask(
+        homeState=lambda: HomeNetworkState.AWAY,
+        runSync=lambda: None,
+        writeRecord=lambda _x: None,
+        joinWaitSec=120.0,
+        stallSec=60.0,
+    )
+    hold = MonthlyTestHoldTask(
+        homeStateName=lambda: "AWAY", isDue=lambda: False, markOpenDrain=lambda _iso: 0,
+        secondsSinceCut=lambda: 0.0,
+    )
+    assert isinstance(hold, ShutdownTask)
+    assert m.buildV1Tasks(t, hold) == [t, hold]

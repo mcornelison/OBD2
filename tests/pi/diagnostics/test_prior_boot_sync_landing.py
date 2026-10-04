@@ -17,6 +17,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-30    | Ralph (Rex)  | Initial -- US-776-f.
+# 2026-10-03    | Atlas (ARCH-065a) | Registry grew to eight columns (T6 fix: + loss_at); the schema-step
+#               |              | tests pin _REGISTRY_COLUMNS (landing tests keep the four).
 # ================================================================================
 ################################################################################
 """The prior boot's shutdown-sync record lands in startup_log (US-776-f)."""
@@ -53,6 +55,15 @@ _NEW_COLUMNS = (
     "prior_boot_sync_outcome",
     "prior_boot_backlog_start",
     "prior_boot_backlog_end",
+)
+
+# ARCH-065 appended three more to the registry (the landing step does not write
+# them); the schema-step tests below pin the whole registry.
+_REGISTRY_COLUMNS = _NEW_COLUMNS + (
+    "prior_boot_sync_started_at",
+    "prior_boot_sync_ended_at",
+    "prior_boot_vcell_before_cut_v",
+    "prior_boot_loss_at",
 )
 
 _LEGACY_STARTUP_LOG = """
@@ -315,6 +326,10 @@ class TestFieldValidation:
             "prior_boot_sync_outcome": None,
             "prior_boot_backlog_start": None,
             "prior_boot_backlog_end": None,
+            "prior_boot_sync_started_at": None,
+            "prior_boot_sync_ended_at": None,
+            "prior_boot_vcell_before_cut_v": None,
+            "prior_boot_loss_at": None,
         }
 
     def test_nonObjectJson_landsAllNull(self, tmp_path):
@@ -360,8 +375,8 @@ def _populatedLegacyDb(tmp_path: Path) -> Path:
 
 
 class TestSchemaStep:
-    def test_columnSpecIsTheFourColumns(self):
-        assert tuple(name for name, _ in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS) == _NEW_COLUMNS
+    def test_columnSpecIsTheFourPlusThreeColumns(self):
+        assert tuple(name for name, _ in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS) == _REGISTRY_COLUMNS
         types = dict(STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS)
         assert types["prior_boot_backlog_start"] == "INTEGER"
         assert types["prior_boot_backlog_end"] == "INTEGER"
@@ -390,7 +405,7 @@ class TestSchemaStep:
         conn.commit()
         conn.set_trace_callback(None)
 
-        assert first == list(_NEW_COLUMNS)
+        assert first == list(_REGISTRY_COLUMNS)
         assert second == []
         assert not [s for s in executed if "ALTER" in s.upper()]
         after = conn.execute(
@@ -399,7 +414,7 @@ class TestSchemaStep:
         ).fetchall()
         assert after == before
         newValues = conn.execute(
-            "SELECT " + ", ".join(_NEW_COLUMNS) + " FROM startup_log"
+            "SELECT " + ", ".join(_REGISTRY_COLUMNS) + " FROM startup_log"
         ).fetchall()
         assert all(v is None for row in newValues for v in row)
         conn.close()
@@ -416,7 +431,7 @@ class TestSchemaStep:
         writes = [s for s in executed
                   if s.lstrip().upper().startswith(("ALTER", "CREATE", "INSERT",
                                                     "UPDATE", "DELETE", "DROP"))]
-        assert len(writes) == len(_NEW_COLUMNS)
+        assert len(writes) == len(_REGISTRY_COLUMNS)
         assert all("ADD COLUMN" in s for s in writes)
         conn.close()
 

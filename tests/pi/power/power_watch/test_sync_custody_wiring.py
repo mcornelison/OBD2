@@ -20,6 +20,10 @@
 #                                shared reader plus the own VCELL series set.
 # 2026-10-01    | Rex (US-741) | The pre-poweroff composition gains the
 #                                home-state hook; matched by name, not count.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: pin that main() hands SyncWithServerTask a
+#                                backlogReader, joinWaitSec and stallSec.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T4: the composition gains the floor-end
+#                                hook ahead of ensureRecorded.
 # ================================================================================
 ################################################################################
 """US-621 wiring guards: the service really does record sync custody."""
@@ -77,9 +81,16 @@ class TestCustodyIsWiredIntoTheService:
         argSets = [[ast.unparse(arg) for arg in call.args] for call in calls]
         # US-741 appends its home-state hook; the drain close and custody
         # must still both go in, drain close first.
-        assert ["drainCloseFn", "custodyFn", "homeStateAtLoss.ensureRecorded"] in argSets, (
+        # ARCH-065 T4 puts the floor-end hook between custody and ensureRecorded.
+        assert [
+            "drainCloseFn",
+            "custodyFn",
+            "buildFloorEndHook(lambda: shutdownSequencer.lastDrainEndReason, homeStateAtLoss)",
+            "homeStateAtLoss.ensureRecorded",
+        ] in argSets, (
             "composePrePowerOffHooks must receive the drain close, the custody "
-            f"hook and the US-741 home-state hook; got {argSets}"
+            "hook, the ARCH-065 floor-end hook and the US-741 home-state hook, "
+            f"in that order; got {argSets}"
         )
 
     def test_main_passesTheComposedHookToTheSequencer(self) -> None:
@@ -188,3 +199,26 @@ class TestTheCustodyRecordHasItsOwnFile:
         source = inspect.getsource(m.main)
         assert "CUSTODY_RECORD_FILENAME" in source
         assert "os.path.dirname(dbPath)" in source
+
+
+class TestSyncTaskIsWiredWithItsEvidence:
+    """Without a backlogReader the task trusts a quiet runSync as DELIVERED."""
+
+    def test_main_buildsSyncTaskWithReaderAndWaits(self) -> None:
+        """
+        Given: the production entrypoint
+        When: its source is parsed
+        Then: SyncWithServerTask(...) passes backlogReader=, joinWaitSec= and
+            stallSec=
+
+        Dropping backlogReader= keeps every other test green yet records a
+        runSync that pushed nothing as DELIVERED (ARCH-065).
+        """
+        calls = _mainCalls("SyncWithServerTask")
+        assert calls, "main() never builds the SyncWithServerTask"
+        for call in calls:
+            keywords = {kw.arg for kw in call.keywords}
+            for required in ("backlogReader", "joinWaitSec", "stallSec"):
+                assert required in keywords, (
+                    f"main() builds SyncWithServerTask without {required}="
+                )

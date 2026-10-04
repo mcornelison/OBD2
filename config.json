@@ -453,6 +453,7 @@
     },
     "powerWatch": {
       "drainFloorVolts": 3.6,
+      "drainFloorDwellReads": 5,
       "smoothingSec": 7,
       "smoothingPollSec": 1
     },
@@ -623,7 +624,8 @@
       "subnet": "10.27.27.0/24",
       "pingTimeoutSeconds": 3,
       "serverPingPath": "/api/v1/health",
-      "shutdownSyncCeilingSec": 60
+      "joinWaitSec": 120,
+      "stallSec": 60
     },
     "location": {
       "home": {
@@ -674,6 +676,9 @@
         "enabled": true
       },
       "cellEpoch": "18650-pack"
+    },
+    "batteryHealth": {
+      "monthlyIntervalDays": 30
     }
   },
   "server": {

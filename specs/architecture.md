@@ -1459,6 +1459,12 @@ Invariants (Spool Session 6 amendment):
 
 ### Battery Health Log (US-217, Spool Session 6 Story 3)
 
+> **SUPERSEDED IN PART — BUILT ON ARCH-065a (CIO 2026-10-02): [`battery-health-design.md`](battery-health-design.md) is the source**
+> for the capacity columns (`drain_trigger`, `cell_epoch`, `cut_step_mv`, `window_start_s`/`_end_s`, `drain_rate_mv_s`, `verdict`,
+> `t_floor_s`, `floor_vcell_v`, `cutoff_vcell_v`), the monthly test and the verdict. The `load_class`-based qualifying rule this section
+> leads to is RETIRED (no reachable input since the ladder deletion `9adb0fbf`, 2026-05-18). Where this section and that file disagree,
+> that file governs; the table's original columns below are unchanged.
+
 Per CIO directive 3 (Spool Session 6 — monthly drain tests May–Sept driving season; quarterly in storage), the Pi maintains a `battery_health_log` capture table with one row per UPS drain event. US-217 lands the schema + writer surface; US-216 (Power-Down Orchestrator) will consume it when it wires the staged 30/25/20 SOC shutdown ladder.
 
 **Table shape** — Pi SQLite `battery_health_log`: `drain_event_id INTEGER PK AUTOINCREMENT`, `start_timestamp TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')`, `end_timestamp TEXT NULL`, `start_vcell_v REAL NULL`, `end_vcell_v REAL NULL`, `start_soc_pct REAL NULL`, `end_soc_pct REAL NULL`, `runtime_seconds INTEGER NULL`, `ambient_temp_c REAL NULL`, `load_class TEXT NOT NULL DEFAULT 'production' CHECK IN ('production','test','sim')`, `notes TEXT NULL`, `data_source TEXT NOT NULL DEFAULT 'real'` with CHECK enum. Index `IX_battery_health_log_start` on `start_timestamp` for time-range queries. **US-426 (Sprint 52 / V0.29.6)** dropped the legacy misnamed `start_soc`/`end_soc` columns (which stored VCELL **volts**, not percent) and added the dedicated `start_soc_pct`/`end_soc_pct` (REAL nullable) as the durable home for MAX17048 State-of-Charge % — one forward-only both-tier migration (Pi SQLite CREATE-AS-SELECT-DROP-RENAME + server MariaDB `v0016`; both tiers now byte-identical incl. `*_vcell_v`, closing the A-4 divergence).
@@ -2708,7 +2714,8 @@ Three bounds used to end it first, and each is removed where it lived:
 1. **`_buildRunSync` budget** (`__main__.py`). A further pass only started if one as long as the
    last still fitted `perTaskTimeoutSec` (20 s). Removed: the loop ends on an empty backlog, a failing
    pass (`RuntimeError` -> the task retries with doubling waits of 2, 4, 8, 16 s ... and starts
-   no attempt after `pi.homeNetwork.shutdownSyncCeilingSec`, 60 s (US-776-g) -> recorded as
+   no attempt once the backlog has not fallen for `pi.homeNetwork.stallSec`, 60 s (ARCH-065a; the US-776-g
+   `shutdownSyncCeilingSec` ceiling is retired, see `battery-health-design.md` §5) -> recorded as
    `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED` or `UNKNOWN_NETWORK`, US-776-d), a pass that moves
    nothing, or an unreadable backlog. Custody re-reads the SAME reader, so those last cases record
    `OUTSTANDING` or `UNKNOWN`, never `DELIVERED`. Every pass still excludes
@@ -6155,6 +6162,11 @@ document-level `pointerdown` seam US-506 established — no per-overlay pause ca
 site to forget.
 
 #### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
+
+> **VERDICT SUPERSEDED — BUILT ON ARCH-065a (CIO 2026-10-02): [`battery-health-design.md`](battery-health-design.md) is the source.**
+> Same card, same `health` vocabulary (`good`/`degraded`/`replace`/`unknown`) and F-9 line; the verdict is T (battery time to the
+> reserve floor) vs J (the at-home job). The six `reasons.health` codes, `timeToFloorS`/`jobAvgS`/`jobMaxS`/`provisional`, and
+> `runtimeToCutoffS` (now = T) are defined there. Where this section and that file disagree, that file governs.
 
 The **Battery Health** card (Card 2) renders the `battery-health` state file at 4
 Hz: the Spool health verdict + VCELL + charge + temp, and a failsafe drain ladder

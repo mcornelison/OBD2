@@ -15,6 +15,7 @@
 # 2026-10-01    | Rex     | US-776-c: gated on the home state (AWAY skips).
 # 2026-10-01    | Rex     | US-776-g: retries run to a ceiling on a fake clock.
 # 2026-10-01    | Rex     | US-776-d: one record per run, the AWAY skip included.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> stallSec; the ceiling test is now the stall test.
 # ================================================================================
 ################################################################################
 from src.pi.network.home_detector import HomeNetworkState
@@ -22,7 +23,7 @@ from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.tasks.sync_with_server import SyncWithServerTask
 
 
-def _task(reachable, syncSeq, rec, *, ceilingSec=60.0):
+def _task(reachable, syncSeq, rec, *, stallSec=60.0):
     """Build a SyncWithServerTask whose runSync pops syncSeq each call and
     raises any item that is an Exception (else returns success). Waits run
     on a fake clock that only the task's own sleeps advance."""
@@ -43,7 +44,8 @@ def _task(reachable, syncSeq, rec, *, ceilingSec=60.0):
         ),
         runSync=runSync,
         writeRecord=rec,
-        ceilingSec=ceilingSec,
+        joinWaitSec=120.0,
+        stallSec=stallSec,
         sleepFn=sleep,
         monotonic=lambda: now[0],
     )
@@ -64,11 +66,11 @@ def test_sync_fails_then_retry_ok():
     assert _task(True, [RuntimeError("net"), None], [].append).run() == OutcomeKind.DELIVERED
 
 
-def test_sync_fails_until_ceiling():
-    # A 3 s ceiling leaves room for exactly two attempts (0 s and 2 s).
+def test_sync_fails_until_stall():
+    # A 3 s stall window: attempts at 0, 2 and 3 s, then no progress for 3 s.
     recs = []
     result = _task(
-        True, [RuntimeError("net"), RuntimeError("net")], recs.append, ceilingSec=3.0
+        True, [RuntimeError("net")] * 3, recs.append, stallSec=3.0
     ).run()
     assert result == OutcomeKind.AT_HOME_SERVER_DOWN
     assert len(recs) == 1  # logged + recorded, then continue

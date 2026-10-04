@@ -281,6 +281,8 @@
 #               |              | stop sequence stops the capture loop FIRST,
 #               |              | then driveDetector (writes drive_end), then
 #               |              | the rest.
+# 2026-10-03    | Atlas (ARCH-065a) | DrainEventWriter built with cellEpoch from pi.power.cellEpoch.
+#                               ARCH-065 T5: via resolveCellEpoch (one resolver).
 # ================================================================================
 ################################################################################
 
@@ -2219,6 +2221,7 @@ class LifecycleMixin:
             return getattr(hardwareManager, 'upsMonitor', None)
 
         try:
+            from pi.power.battery_health import resolveCellEpoch
             from pi.power.drain_event_writer import DrainEventWriter
             from pi.power.soc_calibration import resolveColdStartWindowSeconds
 
@@ -2228,6 +2231,7 @@ class LifecycleMixin:
                 coldStartWindowSeconds=resolveColdStartWindowSeconds(
                     self._config
                 ),
+                cellEpoch=resolveCellEpoch(self._config),
             )
             # Backstop BEFORE the open path is live (see docstring).
             reaped = writer.reapOpenDrainEvents()

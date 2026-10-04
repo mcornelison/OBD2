@@ -16,6 +16,7 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-09-17    | Rex (US-776-b) | Initial -- drain floor, backstop, power return.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
 # ================================================================================
 ################################################################################
 """US-776-b: the drain gets its own floor, above the emergency backstop."""
@@ -100,7 +101,8 @@ def _pipelineFor(client: _PassClient, backlog: list[int]):
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=lambda _r: None,
-        ceilingSec=60.0,
+        joinWaitSec=120.0,
+        stallSec=60.0,
     )
     return lambda: runPipeline(
         m.buildV1Tasks(syncTask),

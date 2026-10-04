@@ -14,6 +14,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-01    | Rex          | Initial -- US-741 home state at every power loss
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
 # ================================================================================
 ################################################################################
 """The home detector is asked once per power loss and its answer is persisted."""
@@ -32,8 +33,9 @@ import pytest
 
 import src.pi.power.power_watch.__main__ as m
 from src.pi.network.home_detector import HomeNetworkState
+from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.controller import ShutdownSequencer
-from src.pi.power.power_watch.tasks.sync_with_server import SyncWithServerTask
+from src.pi.power.power_watch.tasks.sync_with_server import SyncOutcomeRecord, SyncWithServerTask
 
 _VCELL_FLOOR = 3.30
 _VCELL_OK = 3.90
@@ -73,7 +75,8 @@ def _sequencer(
         writeRecord=holder.wrapSink(
             m.makeOutcomeSink(str(outcomePath), homeState=holder.stateName)
         ),
-        ceilingSec=60.0,
+        joinWaitSec=120.0,
+        stallSec=60.0,
         sleepFn=lambda _s: None,
         monotonic=lambda: 0.0,
     )
@@ -284,7 +287,18 @@ def test_main_wiresHomeStateAtLossIntoTheLossPath() -> None:
     assert "HomeStateAtLoss(detector.getHomeNetworkState" in source
     assert "homeState=homeStateAtLoss.stateForSync" in source
     assert "homeStateAtLoss.wrapSink(" in source
-    assert "makeOutcomeSink(outcomePath, homeState=homeStateAtLoss.stateName)" in source
+    sinkCalls = [
+        {kw.arg: ast.unparse(kw.value) for kw in node.keywords}
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "makeOutcomeSink"
+    ]
+    assert any(
+        c.get("homeState") == "homeStateAtLoss.stateName"
+        and c.get("wallVcell") == "homeStateAtLoss.vcellBeforeCut"
+        for c in sinkCalls
+    )
     composed = [
         [ast.unparse(arg) for arg in node.args]
         for node in ast.walk(tree)
@@ -324,3 +338,45 @@ def test_joiningPolls_readLive_persistAtLossAnswer(tmp_path: Path) -> None:
     assert len(calls) == 2
     assert record["home_state"] == "AT_HOME_JOINING"
     assert record["sync_outcome"] == "DELIVERED"
+
+
+def test_secondsSinceLoss_measuresFromObserve_andIsZeroBefore() -> None:
+    """One loss time, stamped in observe() on the injected monotonic clock."""
+    clock = [100.0]
+    h = m.HomeStateAtLoss(
+        lambda: HomeNetworkState.AWAY, outcomePath="unused.json",
+        startFn=lambda _t: None, monotonicFn=lambda: clock[0],
+        wallIsoFn=lambda: "2026-10-02T17:00:00Z",
+    )
+    assert h.secondsSinceLoss() == 0.0 and h.lossIso() is None
+    h.observe()
+    clock[0] = 142.5
+    assert h.secondsSinceLoss() == 42.5 and h.lossIso() == "2026-10-02T17:00:00Z"
+
+
+def test_main_wiresTheMonthlyHoldTask_boundedBySequencer() -> None:
+    source = ast.unparse(ast.parse(inspect.getsource(m.main)))
+    assert "secondsSinceCut=homeStateAtLoss.secondsSinceLoss" in source
+    assert "buildV1Tasks(syncTask, holdTask)" in source
+    assert "sequencerBoundedTasks=(syncTask.name, holdTask.name)" in source
+    assert "660" not in source and "testHoldSec" not in source
+
+
+def test_everyRecordPath_carriesTheLossTime_asLossAt(tmp_path: Path) -> None:
+    """ARCH-065 T6 fix: the one loss time (lossIso) rides on the home-state, floor-end
+    and sync-sink records, so the next boot can find the loss's drain row."""
+    outcomePath = tmp_path / "powerwatch_outcome.json"
+    h = m.HomeStateAtLoss(
+        lambda: HomeNetworkState.AWAY, outcomePath=str(outcomePath), startFn=_inline,
+        wallIsoFn=lambda: "2026-10-02T17:00:00Z",
+    )
+    h.observe()
+    assert _record(outcomePath)["loss_at"] == "2026-10-02T17:00:00Z"
+    outcomePath.unlink()
+    h.recordFloorEnd()
+    assert _record(outcomePath)["loss_at"] == "2026-10-02T17:00:00Z"
+    outcomePath.unlink()
+    sink = m.makeOutcomeSink(str(outcomePath), lossAt=h.lossIso)
+    sink(SyncOutcomeRecord(OutcomeKind.DELIVERED, "ok", 1, 0, None, None))
+    assert _record(outcomePath)["loss_at"] == "2026-10-02T17:00:00Z"
+    assert "lossAt=homeStateAtLoss.lossIso" in ast.unparse(ast.parse(inspect.getsource(m.main)))

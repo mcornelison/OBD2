@@ -33,6 +33,7 @@
 #                               battery_health_log.close_reason, backfilled once.
 # 2026-09-25    | Rex (US-790) | Wired ensureDrainVcellTrajectoryTable.
 # 2026-09-30    | Rex (US-776-f) | Wired ensureStartupLogPriorBootSyncColumns.
+# 2026-10-03    | Atlas (ARCH-065a) | Wired ensureBatteryHealthLogCapacityColumns.
 # ================================================================================
 ################################################################################
 
@@ -76,6 +77,7 @@ from typing import Any
 
 from common.edr.sensor_schema import ensureEdrImuDerivedGyroRateBiasColumns
 from src.pi.power.battery_health import (
+    ensureBatteryHealthLogCapacityColumns,
     ensureBatteryHealthLogCloseReasonColumn,
     ensureBatteryHealthLogSocPctColumns,
     ensureBatteryHealthLogTable,
@@ -374,6 +376,16 @@ class ObdDatabase:
                     logger.info(
                         "Added close_reason to battery_health_log and "
                         "backfilled closed rows (US-683)"
+                    )
+
+                # ARCH-065 idempotent migration: capacity columns on
+                # battery_health_log.  PRAGMA-probed ADD COLUMN only.  Its
+                # sync partner is server v0035.
+                addedCapacity = ensureBatteryHealthLogCapacityColumns(conn)
+                if addedCapacity:
+                    logger.info(
+                        "Added battery capacity columns (ARCH-065): %s",
+                        ", ".join(addedCapacity),
                     )
 
                 # US-225 idempotent migration: pi_state singleton for

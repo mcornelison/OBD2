@@ -159,6 +159,28 @@
 #                           durable shutdown record; the sync task reuses that
 #                           answer, and the floor fast path records UNKNOWN
 #                           rather than wait for it.
+# 2026-10-03    | Atlas (ARCH-065a) | Drain writer built with cellEpoch from pi.power.cellEpoch.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: the sync task takes joinWaitSec + stallSec
+#                           (pi.homeNetwork) in place of shutdownSyncCeilingSec.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: WallVcellCache (15 s max age) fed from the
+#                           UpsMonitor poll while the PLD reads present (PLD loop
+#                           stays GPIO-only); the outcome sink writes the drain's
+#                           start/end and the pre-cut VCELL.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T4: pi.powerWatch.drainFloorDwellReads feeds the
+#                           sequencer; a floor-ended drain writes RESERVE_FLOOR
+#                           through HomeStateAtLoss.recordFloorEnd (pre-poweroff
+#                           hook, before ensureRecorded) and later sync records
+#                           for that loss are dropped.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T5: MonthlyTestHoldTask joins buildV1Tasks after
+#                           the sync task (sequencer-bounded); HomeStateAtLoss stamps the
+#                           loss on the monotonic clock (secondsSinceLoss); cellEpoch via
+#                           resolveCellEpoch. Fix round 1: lossIso() (wall stamp) scopes
+#                           the monthly-test row mark.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: HomeStateAtLoss.lossGeneration (moves in
+#                           observe); wrapSink drops a record of an older loss; the
+#                           sync and hold tasks capture it at run start; the hold is
+#                           gated on the loss's home state and marks with the lossIso
+#                           it snapshotted; recordFloorEnd logs what it overwrites.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -193,21 +215,20 @@ from src.common.config.secrets_loader import (  # noqa: E402
     getSecret,
     loadConfigWithSecrets,
 )
-from src.common.config.validator import (  # noqa: E402
-    CELL_EPOCH_UNKNOWN,
-    ConfigValidator,
-)
+from src.common.config.validator import ConfigValidator  # noqa: E402
 from src.common.edr.sync_contract import (  # noqa: E402
     EDR_SYNC_TABLES,
     SHUTDOWN_DRAIN_EXCLUDED_TABLES,
 )
 from src.common.logging.setup import setupLogging  # noqa: E402
+from src.common.time.helper import utcIsoNow  # noqa: E402
 from src.pi.hardware.pld_sensor import PldSensor  # noqa: E402
 from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import (  # noqa: E402
     HomeNetworkDetector,
     HomeNetworkState,
 )
+from src.pi.power.battery_health import resolveCellEpoch  # noqa: E402
 from src.pi.power.drain_event_writer import (  # noqa: E402
     CLOSE_REASON_SHUTDOWN,
     makeDrainEventWriterForPath,
@@ -238,6 +259,11 @@ from src.pi.power.power_watch.sync_custody import (  # noqa: E402
     OwnTrajectoryRows,
     makeSyncCustodyHook,
 )
+from src.pi.power.power_watch.tasks.monthly_test_hold import (  # noqa: E402
+    MonthlyTestHoldTask,
+    isMonthlyTestDue,
+    markOpenDrainMonthlyTest,
+)
 from src.pi.power.power_watch.tasks.sync_with_server import (  # noqa: E402
     SyncOutcomeRecord,
     SyncWithServerTask,
@@ -246,6 +272,7 @@ from src.pi.power.soc_calibration import (  # noqa: E402
     readSystemUptimeSeconds,
     resolveColdStartWindowSeconds,
 )
+from src.pi.power.types import DRAIN_TERMINATION_DRAIN_FLOOR  # noqa: E402
 from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
     makeShutdownPhaseEmitter,
 )
@@ -568,6 +595,22 @@ def composePrePowerOffHooks(*hooks):
     return _runAll
 
 
+def buildFloorEndHook(
+    lastDrainEndReason: Callable[[], str | None], homeStateAtLoss: HomeStateAtLoss
+) -> Callable[[], None]:
+    """ARCH-065: pre-poweroff hook -- a drain the reserve floor ended is recorded.
+
+    Runs BEFORE ``ensureRecorded`` so the record says RESERVE_FLOOR, not UNKNOWN
+    or a sync outcome. Any other drain end is a no-op.
+    """
+
+    def _hook() -> None:
+        if lastDrainEndReason() == DRAIN_TERMINATION_DRAIN_FLOOR:
+            homeStateAtLoss.recordFloorEnd()
+
+    return _hook
+
+
 def backlogCount(backlog: SyncBacklog) -> int | None:
     """The count the sync outcome record carries (US-776-d), or None.
 
@@ -580,8 +623,69 @@ def backlogCount(backlog: SyncBacklog) -> int | None:
     return backlog.total
 
 
+#: ARCH-065: a cached on-wall VCELL older than this reads as absent. 3x the
+#: UpsMonitor's 5 s poll, so one missed poll is tolerated and a stale value is not.
+WALL_VCELL_MAX_AGE_S = 15.0
+
+
+class WallVcellCache:
+    """ARCH-065: the last VCELL sampled while on wall power (for cut_step_mv).
+
+    Fed from the UpsMonitor's existing poll (``makeWallVcellFeed``), never from
+    a new I2C read; read once at the loss. ``last()`` is None when the value is
+    older than ``WALL_VCELL_MAX_AGE_S``. Never raises.
+    """
+
+    def __init__(self, monotonicFn: Callable[[], float] = time.monotonic) -> None:
+        self._lock = threading.Lock()
+        self._monotonic = monotonicFn
+        self._v: float | None = None
+        self._at: float = 0.0
+
+    def update(self, v: float | None) -> None:
+        if v is None:
+            return
+        with self._lock:
+            self._v = float(v)
+            self._at = self._monotonic()
+
+    def last(self) -> float | None:
+        with self._lock:
+            if self._v is None or self._monotonic() - self._at > WALL_VCELL_MAX_AGE_S:
+                return None
+            return self._v
+
+
+def makeWallVcellFeed(
+    cache: WallVcellCache,
+    isPowerLostFn: Callable[[], bool],
+    record: Callable[..., object],
+) -> Callable[..., None]:
+    """Wrap the UpsMonitor's per-poll ``recordHistorySample`` to feed ``cache``.
+
+    ARCH-065: no new I2C read. The monitor's own poll has just read ``vcell``;
+    it is cached only when the GPIO PLD still reads power PRESENT *after* that
+    read, so a post-cut value is never cached as on-wall. The original record
+    call runs first and unchanged; the feed never raises into the poll.
+    """
+
+    def _record(sampleTime: float, vcell: float, soc: object) -> None:
+        record(sampleTime, vcell, soc)
+        try:
+            if not isPowerLostFn():
+                cache.update(vcell)
+        except Exception as exc:  # noqa: BLE001 -- never break the UpsMonitor poll
+            logger.debug("powerwatch: wall VCELL feed failed (%s)", exc)
+
+    return _record
+
+
 def makeOutcomeSink(
-    outcomePath: str, *, homeState: Callable[[], str] | None = None
+    outcomePath: str,
+    *,
+    homeState: Callable[[], str] | None = None,
+    wallVcell: Callable[[], float | None] | None = None,
+    lossAt: Callable[[], str | None] | None = None,
 ) -> Callable[[SyncOutcomeRecord], None]:
     """The sync task's ``writeRecord``: one durable shutdown record per run.
 
@@ -595,6 +699,11 @@ def makeOutcomeSink(
         homeState: US-741 -- optional zero-arg read of the home state NAME at
             the power loss (``HomeStateAtLoss.stateName``). The sync record
             overwrites the file, so it must carry the name forward.
+        wallVcell: ARCH-065 -- optional zero-arg read of powerwatch's last
+            on-wall VCELL (``WallVcellCache.last``); written as
+            ``vcell_before_cut_v``.
+        lossAt: ARCH-065 -- optional zero-arg read of this loss's wall time
+            (``HomeStateAtLoss.lossIso``); written as ``loss_at``.
     """
 
     def _write(record: SyncOutcomeRecord) -> None:
@@ -607,6 +716,10 @@ def makeOutcomeSink(
             syncOutcome=record.kind.name,
             backlogStart=record.backlogStart,
             backlogEnd=record.backlogEnd,
+            syncStartedAt=record.startedAt,
+            syncEndedAt=record.endedAt,
+            vcellBeforeCutV=wallVcell() if wallVcell is not None else None,
+            lossAt=lossAt() if lossAt is not None else None,
         )
 
     return _write
@@ -646,6 +759,9 @@ class HomeStateAtLoss:
         *,
         outcomePath: str,
         startFn: Callable[[Callable[[], None]], None] | None = None,
+        vcellBeforeCut: Callable[[], float | None] | None = None,
+        monotonicFn: Callable[[], float] = time.monotonic,
+        wallIsoFn: Callable[[], str] = utcIsoNow,
     ) -> None:
         """Args:
         readState: Zero-arg detector read (``HomeNetworkDetector.
@@ -653,25 +769,69 @@ class HomeStateAtLoss:
         outcomePath: The durable shutdown record (powerwatch_outcome.json).
         startFn: Runs the observation off the caller's thread; a daemon
             thread when None. Tests pass a synchronous one.
+        vcellBeforeCut: ARCH-065 -- ``WallVcellCache.last``. Read ONCE per loss
+            (``observe``) so its age check applies at the loss, not minutes
+            later; every record carries that snapshot as ``vcell_before_cut_v``.
+        monotonicFn: ARCH-065 T5 -- the clock behind ``secondsSinceLoss``; the
+            loss is stamped once, in ``observe``, so there is one loss time.
         """
+        self._monotonic = monotonicFn
+        self._lossAt: float | None = None
+        self._wallIso = wallIsoFn
+        self._lossIso: str | None = None
         self._readState = readState
         self._outcomePath = outcomePath
         self._startFn = startFn if startFn is not None else _startDaemonThread
+        self._vcellSource = vcellBeforeCut
+        #: Snapshot of the on-wall VCELL taken ONCE per loss, in observe().
+        self._vcellSnapshot: float | None = None
         # Re-entrant: the sync sink runs under it and reads stateName.
         self._lock = threading.RLock()
         self._loss: threading.Event | None = None
         self._answer: HomeNetworkState | None = None
         self._handedToSync = False
         self._written = False
+        #: True once RESERVE_FLOOR is written for this loss; the sink then drops
+        #: any later (abandoned sync thread) record for the same loss.
+        self._floorEnded = False
+        #: Ruling 19: moves on every loss (observe). A pipeline thread left
+        #: running by a CANCELLED loss carries the old value, so its record is
+        #: dropped (wrapSink) and its hold labels nothing.
+        self._generation = 0
+        #: What this loss's last record was, for the floor-end overwrite log (M4).
+        self._writtenKind: str | None = None
+
+    def lossGeneration(self) -> int:
+        """The current loss's generation (0 before any loss); +1 per ``observe``."""
+        with self._lock:
+            return self._generation
+
+    def lossIso(self) -> str | None:
+        """This loss's wall time, canonical UTC ISO (None before any loss)."""
+        with self._lock:
+            return self._lossIso
+
+    def secondsSinceLoss(self) -> float:
+        """Seconds since this loss was observed (0.0 before any loss)."""
+        with self._lock:
+            at = self._lossAt
+        return 0.0 if at is None else max(0.0, self._monotonic() - at)
 
     def observe(self) -> None:
         """Start this loss's detector read. Returns at once; never raises."""
         loss = threading.Event()
+        snapshot = self._snapshotVcell()
         with self._lock:
+            self._lossAt = self._monotonic()
+            self._lossIso = self._wallIso()
+            self._vcellSnapshot = snapshot
             self._loss = loss
             self._answer = None
             self._handedToSync = False
             self._written = False
+            self._writtenKind = None
+            self._floorEnded = False
+            self._generation += 1
         try:
             self._startFn(lambda: self._observeLoss(loss))
         except Exception as exc:  # noqa: BLE001 -- never block the loss path
@@ -690,6 +850,21 @@ class HomeStateAtLoss:
                     self._writeHomeStateRecord(state.name, "home state at the power loss")
         finally:
             loss.set()
+
+    def _snapshotVcell(self) -> float | None:
+        """The on-wall VCELL as of this loss; None when absent or stale. Never raises."""
+        if self._vcellSource is None:
+            return None
+        try:
+            return self._vcellSource()
+        except Exception as exc:  # noqa: BLE001 -- never block the loss path
+            logger.debug("powerwatch: pre-cut VCELL snapshot failed (%s)", exc)
+            return None
+
+    def vcellBeforeCut(self) -> float | None:
+        """This loss's pre-cut VCELL snapshot (None before any loss)."""
+        with self._lock:
+            return self._vcellSnapshot
 
     def _readOnce(self) -> HomeNetworkState:
         """One detector call; UNKNOWN when it raises."""
@@ -731,8 +906,26 @@ class HomeStateAtLoss:
 
         def _write(record: SyncOutcomeRecord) -> None:
             with self._lock:
+                generation = getattr(record, "lossGeneration", None)
+                if generation is not None and generation != self._generation:
+                    logger.info(
+                        "powerwatch: stale record from a cancelled loss dropped "
+                        "(sync %s of loss generation %s; current %s)",
+                        record.kind.name,
+                        generation,
+                        self._generation,
+                    )
+                    return
+                if self._floorEnded:
+                    logger.info(
+                        "powerwatch: sync record %s dropped -- the reserve floor "
+                        "already ended this loss",
+                        record.kind.name,
+                    )
+                    return
                 sink(record)
                 self._written = True
+                self._writtenKind = f"sync_with_server {record.kind.name}"
 
         return _write
 
@@ -749,23 +942,67 @@ class HomeStateAtLoss:
                 HomeNetworkState.UNKNOWN.name, "home detector had not answered by the poweroff"
             )
 
+    def recordFloorEnd(self) -> None:
+        """The reserve floor ended this loss's drain: record RESERVE_FLOOR.
+
+        Same file, same fields as the home-state record (home state from this
+        class, pre-cut VCELL from this loss's snapshot). Later records for the
+        same loss are dropped (``wrapSink``) and ``ensureRecorded`` returns
+        early. Never raises (``writeOutcomeRecord`` does not).
+        """
+        with self._lock:
+            if self._written:
+                logger.info(
+                    "powerwatch: RESERVE_FLOOR overwrites the %s record already "
+                    "written for this loss",
+                    self._writtenKind,
+                )
+            self._writeRecord(
+                OutcomeKind.RESERVE_FLOOR,
+                "the reserve floor ended the drain",
+                "sync_with_server",
+                self.stateName(),
+                syncOutcome=OutcomeKind.RESERVE_FLOOR.name,
+            )
+            self._floorEnded = True
+        logger.warning("powerwatch: the reserve floor ended the drain -- RESERVE_FLOOR recorded")
+
     def _writeHomeStateRecord(self, name: str, detail: str) -> None:
-        writeOutcomeRecord(
-            self._outcomePath,
-            OutcomeKind.OK,
-            detail=detail,
-            task="home_state_at_loss",
-            homeState=name,
-        )
-        self._written = True
+        self._writeRecord(OutcomeKind.OK, detail, "home_state_at_loss", name)
         logger.info("powerwatch: home state at the power loss = %s", name)
 
+    def _writeRecord(
+        self,
+        kind: OutcomeKind,
+        detail: str,
+        task: str,
+        homeState: str,
+        *,
+        syncOutcome: str | None = None,
+    ) -> None:
+        """The one write path for this class's records (SSOT for its fields)."""
+        writeOutcomeRecord(
+            self._outcomePath,
+            kind,
+            detail=detail,
+            task=task,
+            homeState=homeState,
+            syncOutcome=syncOutcome,
+            vcellBeforeCutV=self.vcellBeforeCut(),
+            lossAt=self.lossIso(),
+        )
+        self._written = True
+        self._writtenKind = f"{task} {kind.name}"
 
-def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
+
+def buildV1Tasks(
+    syncTask: SyncWithServerTask, holdTask: MonthlyTestHoldTask | None = None
+) -> list:
     """The ordered V1 ShutdownTask list (the plugin-seam registry, SS-T6).
 
-    V1 ships **exactly one** task -- ``SyncWithServerTask`` -- per the locked
-    Option A scope (spec sec 9). This function is the **SINGLE EDIT POINT**
+    V1 ships ``SyncWithServerTask`` -- per the locked Option A scope (spec
+    sec 9) -- and, since ARCH-065, the ``MonthlyTestHoldTask`` after it (when
+    given; the one-arg form is the sync-only list). This function is the **SINGLE EDIT POINT**
     for future plugin tasks (e.g. update-check, staged apply-decision): a new
     task appends here and that is the ONLY production change. ``ShutdownSequencer``
     and ``runPipeline`` are untouched when new tasks land.
@@ -774,7 +1011,10 @@ def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
     each within its own per-task timeout. Sync first is V1's chosen ordering
     (CIO directive: best-effort sync of the local drive log before poweroff).
     """
-    return [syncTask]
+    tasks: list = [syncTask]
+    if holdTask is not None:
+        tasks.append(holdTask)
+    return tasks
 
 
 def buildDrainCloseHook(
@@ -832,6 +1072,7 @@ def buildDrainCloseHook(
         busyTimeoutSec=busyTimeoutSec,
         uptimeReader=uptimeReader or readSystemUptimeSeconds,
         coldStartWindowSeconds=resolveColdStartWindowSeconds(config),
+        cellEpoch=resolveCellEpoch(config),
     )
 
     def _closeDrain() -> None:
@@ -857,7 +1098,8 @@ def _runOneShotForTest(
     perTaskTimeoutSec: float,
     totalWindowCapSec: float,
     vcellFloorVolts: float,
-    shutdownSyncCeilingSec: float,
+    joinWaitSec: float,
+    stallSec: float,
 ) -> int:
     """PW_TEST_ONESHOT hook: exercise the REAL import + controller/pipeline/
     task/outcome chain EXACTLY as systemd invokes the entrypoint, but WITHOUT
@@ -891,7 +1133,8 @@ def _runOneShotForTest(
         homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
         runSync=_failingSync,
         writeRecord=makeOutcomeSink(outcomePath),
-        ceilingSec=shutdownSyncCeilingSec,
+        joinWaitSec=joinWaitSec,
+        stallSec=stallSec,
         sleepFn=_virtualSleep,
         monotonic=lambda: virtualNow[0],
     )
@@ -1075,6 +1318,7 @@ def main(argv: list[str] | None = None) -> int:
     totalWindowCapSec = float(pw_cfg["totalWindowCapSec"])
     vcellFloorVolts = float(pw_cfg["vcellFloorVolts"])
     drainFloorVolts = float(pw_cfg["drainFloorVolts"])
+    drainFloorDwellReads = int(pw_cfg["drainFloorDwellReads"])
     poweroffTimeoutSec = float(pw_cfg["poweroffTimeoutSec"])
     bootGraceSec = float(pw_cfg["bootGraceSec"])
     smoothingSec = float(pw_cfg["smoothingSec"])
@@ -1082,7 +1326,8 @@ def main(argv: list[str] | None = None) -> int:
     pldGpioPin = int(pw_cfg["pldGpioPin"])
     pldPowerPresentHigh = bool(pw_cfg["pldPowerPresentHigh"])
     pldPollSec = float(pw_cfg["pldPollSec"])
-    shutdownSyncCeilingSec = float(config["pi"]["homeNetwork"]["shutdownSyncCeilingSec"])
+    joinWaitSec = float(config["pi"]["homeNetwork"]["joinWaitSec"])
+    stallSec = float(config["pi"]["homeNetwork"]["stallSec"])
 
     # Outcome record sits next to the SQLite db (the existing data/ dir) --
     # reuse pi.database.path rather than hardcode or add an un-specced key.
@@ -1097,7 +1342,8 @@ def main(argv: list[str] | None = None) -> int:
             perTaskTimeoutSec=perTaskTimeoutSec,
             totalWindowCapSec=totalWindowCapSec,
             vcellFloorVolts=vcellFloorVolts,
-            shutdownSyncCeilingSec=shutdownSyncCeilingSec,
+            joinWaitSec=joinWaitSec,
+            stallSec=stallSec,
         )
 
     companion = config.get("pi", {}).get("companionService", {}) or {}
@@ -1157,9 +1403,7 @@ def main(argv: list[str] | None = None) -> int:
     # backlog == 0. Only this shutdown's own rows are excluded, by id, and
     # custody reports them beside the verdict: one membership, both readers.
     ownTrajectoryRows = OwnTrajectoryRows()
-    cellEpoch = str(
-        ((config.get("pi") or {}).get("power") or {}).get("cellEpoch") or CELL_EPOCH_UNKNOWN
-    )
+    cellEpoch = resolveCellEpoch(config)
     drainTrajectory = DrainVcellTrajectoryWriter(
         dbPath=dbPath,
         cellEpoch=cellEpoch,
@@ -1177,7 +1421,18 @@ def main(argv: list[str] | None = None) -> int:
     # US-741: the detector is asked ONCE per power loss, off the loss path's
     # thread, and its answer persisted (startup_log.prior_boot_home_state at
     # the next boot). The sync task's first read is that same answer.
-    homeStateAtLoss = HomeStateAtLoss(detector.getHomeNetworkState, outcomePath=outcomePath)
+    # ARCH-065: the last on-wall VCELL (cut_step_mv), fed from the UpsMonitor's
+    # existing ~5 s poll -- NO extra I2C read, and the PLD thread stays GPIO-only.
+    wallCache = WallVcellCache()
+    monitor.recordHistorySample = makeWallVcellFeed(
+        wallCache, provider.isPowerLost, monitor.recordHistorySample
+    )
+
+    homeStateAtLoss = HomeStateAtLoss(
+        detector.getHomeNetworkState,
+        outcomePath=outcomePath,
+        vcellBeforeCut=wallCache.last,
+    )
 
     syncTask = SyncWithServerTask(
         # US-776-c: the drain decision. A positive AWAY skips at once (no wait,
@@ -1194,11 +1449,18 @@ def main(argv: list[str] | None = None) -> int:
         # US-776-d: one durable record per run -- why the sync ended. US-741:
         # it carries the loss's home state, serialised with that record.
         writeRecord=homeStateAtLoss.wrapSink(
-            makeOutcomeSink(outcomePath, homeState=homeStateAtLoss.stateName)
+            makeOutcomeSink(
+                outcomePath,
+                homeState=homeStateAtLoss.stateName,
+                wallVcell=homeStateAtLoss.vcellBeforeCut,
+                lossAt=homeStateAtLoss.lossIso,
+            )
         ),
-        # US-776-g: a transient failure is retried with backoff; no attempt
-        # starts after this ceiling (CIO: 60 s).
-        ceilingSec=shutdownSyncCeilingSec,
+        # ARCH-065: the drain runs to completion -- it ends delivered, or when
+        # the backlog has not fallen for stallSec; the WiFi-join wait is
+        # bounded separately by joinWaitSec.
+        joinWaitSec=joinWaitSec,
+        stallSec=stallSec,
         # US-776-d: backlog_start / backlog_end from the shared US-621 reader,
         # with the drain's own exclusions, so 0 means what the drain's exit
         # check means by it.
@@ -1206,6 +1468,31 @@ def main(argv: list[str] | None = None) -> int:
         # US-776-d: the probe behind the home state, read -- never re-probed --
         # to tell a misconfigured probe from a down server.
         lastProbe=lambda: detector.lastProbe,
+        # Ruling 19: the loss this run belongs to rides on its record.
+        lossGeneration=homeStateAtLoss.lossGeneration,
+    )
+
+    # ARCH-065 T5: once a month, at home, hold the Pi on battery TEST_HOLD_S
+    # after the cut (holdSec defaults to the SSOT). Sequencer-bounded, so the
+    # drain floor and a power return still govern it.
+    monthlyIntervalDays = int(config["pi"]["batteryHealth"]["monthlyIntervalDays"])
+    cellEpochForTest = resolveCellEpoch(config)
+    holdTask = MonthlyTestHoldTask(
+        # Ruling 19: gated on the home state AT THE LOSS (one owner of "at
+        # home": home_detector.AT_HOME_STATE_NAMES), never a sync-outcome proxy.
+        homeStateName=homeStateAtLoss.stateName,
+        isDue=lambda: isMonthlyTestDue(
+            dbPath,
+            cellEpoch=cellEpochForTest,
+            nowIso=utcIsoNow(),
+            intervalDays=monthlyIntervalDays,
+        ),
+        # The hold snapshots lossIso + the loss generation ONCE at run start and
+        # passes that lossIso to every mark (a stale hold never re-reads it).
+        markOpenDrain=lambda lossIso: markOpenDrainMonthlyTest(dbPath, lossIso=lossIso),
+        lossIso=homeStateAtLoss.lossIso,
+        lossGeneration=homeStateAtLoss.lossGeneration,
+        secondsSinceCut=homeStateAtLoss.secondsSinceLoss,
     )
 
     # F-103 [A-2]: wire the shutdown-splash phase-emit hook. The sequencer emits
@@ -1258,8 +1545,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     # US-741: last, and isolated like the others -- a loss whose detector has
     # not answered (the floor fast path) still powers off with UNKNOWN written.
+    # ARCH-065: a floor-ended drain is recorded RESERVE_FLOOR first, so
+    # ensureRecorded (which returns once written) never lands UNKNOWN over it.
+    # shutdownSequencer is bound below; the lambda reads it at poweroff time.
     prePowerOffFn = composePrePowerOffHooks(
-        drainCloseFn, custodyFn, homeStateAtLoss.ensureRecorded
+        drainCloseFn,
+        custodyFn,
+        buildFloorEndHook(
+            lambda: shutdownSequencer.lastDrainEndReason, homeStateAtLoss
+        ),
+        homeStateAtLoss.ensureRecorded,
     )
 
     # US-748: the previous loss's heartbeat rows, reported once per start --
@@ -1298,9 +1593,9 @@ def main(argv: list[str] | None = None) -> int:
         # runs. Its bound is the sequencer's floor poll. Every other task keeps
         # the per-task bound.
         runPipelineFn=lambda: runPipeline(
-            buildV1Tasks(syncTask),
+            buildV1Tasks(syncTask, holdTask),
             perTaskTimeoutSec=perTaskTimeoutSec,
-            sequencerBoundedTasks=(syncTask.name,),
+            sequencerBoundedTasks=(syncTask.name, holdTask.name),
         ),
         powerOffFn=lambda: subprocess.run(
             ["systemctl", "poweroff"], timeout=poweroffTimeoutSec, check=False
@@ -1309,6 +1604,7 @@ def main(argv: list[str] | None = None) -> int:
         # US-776-b: the running drain stops here; vcellFloor stays the
         # pre-pipeline backstop.
         drainFloor=drainFloorVolts,
+        drainFloorDwellReads=drainFloorDwellReads,
         # US-790: the start read and every drain poll become rows.
         drainSampleFn=drainTrajectory.record,
         totalCapSec=totalWindowCapSec,

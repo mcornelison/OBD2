@@ -32,6 +32,16 @@
 #                          (home state, sync outcome, backlog start/end) into four
 #                          prior_boot_* columns, only when the record's boot_id is
 #                          the prior boot's; otherwise NULL.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: also lands sync start/end and the pre-cut
+#                          VCELL (three more prior_boot_* columns).
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6: arm finalises the prior drain (cut step, window rate),
+#                          best-effort.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: also lands the loss wall time
+#                          (prior_boot_loss_at) and keys the finaliser on it.
+# 2026-10-03    | Atlas (ARCH-065a) | T7 fix 1: passes the prior sync outcome + home
+#                          state to the finaliser (floor-ended at home -> replace).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: _asIso parses with CANONICAL_ISO_FORMAT
+#                          (one owner of the format) instead of a literal.
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -46,8 +56,9 @@ import os
 import shutil
 import sqlite3
 from collections.abc import Callable
+from datetime import datetime
 
-from src.common.time.helper import utcIsoNow
+from src.common.time.helper import CANONICAL_ISO_FORMAT, utcIsoNow
 from src.pi.diagnostics.clock_sync import assessClockQuality
 
 logger = logging.getLogger(__name__)
@@ -340,6 +351,24 @@ def _asCount(value: object) -> int | None:
     return value
 
 
+def _asIso(value: object) -> str | None:
+    """A canonical UTC ISO second ('YYYY-MM-DDTHH:MM:SSZ'), else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        datetime.strptime(value, CANONICAL_ISO_FORMAT)
+    except ValueError:
+        return None
+    return value
+
+
+def _asVolts(value: object) -> float | None:
+    """A plausible single-cell VCELL (2.5-4.5 V), else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 2.5 <= value <= 4.5 else None
+
+
 #: Record key -> (startup_log column, validator). A value the validator
 #: rejects lands NULL: the column is never filled with a coerced guess.
 _PRIOR_BOOT_SYNC_FIELDS: tuple[tuple[str, str, Callable[[object], object]], ...] = (
@@ -347,6 +376,10 @@ _PRIOR_BOOT_SYNC_FIELDS: tuple[tuple[str, str, Callable[[object], object]], ...]
     ("sync_outcome", "prior_boot_sync_outcome", _asLabel),
     ("backlog_start", "prior_boot_backlog_start", _asCount),
     ("backlog_end", "prior_boot_backlog_end", _asCount),
+    ("sync_started_at", "prior_boot_sync_started_at", _asIso),
+    ("sync_ended_at", "prior_boot_sync_ended_at", _asIso),
+    ("vcell_before_cut_v", "prior_boot_vcell_before_cut_v", _asVolts),
+    ("loss_at", "prior_boot_loss_at", _asIso),
 )
 
 
@@ -443,18 +476,55 @@ def _writeStartupLogRow(
             " current_boot_first_entry_ts, recorded_at, "
             " prior_boot_last_stage, prior_boot_reason, data_quality, "
             " prior_boot_home_state, prior_boot_sync_outcome, "
-            " prior_boot_backlog_start, prior_boot_backlog_end) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " prior_boot_backlog_start, prior_boot_backlog_end, "
+            " prior_boot_sync_started_at, prior_boot_sync_ended_at, "
+            " prior_boot_vcell_before_cut_v, prior_boot_loss_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (bootId, clean, None, None, recordedAt, lastStage, reason,
              dataQuality,
              sync.get("prior_boot_home_state"),
              sync.get("prior_boot_sync_outcome"),
              sync.get("prior_boot_backlog_start"),
-             sync.get("prior_boot_backlog_end")),
+             sync.get("prior_boot_backlog_end"),
+             sync.get("prior_boot_sync_started_at"),
+             sync.get("prior_boot_sync_ended_at"),
+             sync.get("prior_boot_vcell_before_cut_v"),
+             sync.get("prior_boot_loss_at")),
         )
         conn.commit()
     finally:
         conn.close()
+
+
+def _finalizePriorDrain(dbPath: str, priorBootSync: dict[str, object]) -> None:
+    """ARCH-065 T6: finish the prior drain's cut step / window rate. Never raises.
+
+    Lazy-imported like :func:`_writeStartupLogRow`; arm runs in a oneshot that
+    must not fail on a capacity-field problem.
+    """
+    try:
+        from src.pi.power.battery_health import ensureBatteryHealthLogCapacityColumns
+        from src.pi.power.battery_health_finalize import finalizeLatestDrain
+
+        vcell = priorBootSync.get("prior_boot_vcell_before_cut_v")
+        lossAt = priorBootSync.get("prior_boot_loss_at")
+        syncOutcome = priorBootSync.get("prior_boot_sync_outcome")
+        homeState = priorBootSync.get("prior_boot_home_state")
+        conn = sqlite3.connect(dbPath, timeout=5.0)
+        try:
+            ensureBatteryHealthLogCapacityColumns(conn)
+            finalizeLatestDrain(
+                conn,
+                priorBootVcellBeforeCutV=float(vcell) if isinstance(vcell, (int, float)) else None,
+                priorBootLossAt=lossAt if isinstance(lossAt, str) else None,
+                priorBootSyncOutcome=syncOutcome if isinstance(syncOutcome, str) else None,
+                priorBootHomeState=homeState if isinstance(homeState, str) else None,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 -- never block boot
+        logger.warning("boot_progress: prior-drain finalise skipped: %s", exc)
 
 
 def arm(
@@ -517,6 +587,8 @@ def arm(
         )
     except Exception as exc:  # noqa: BLE001 -- never block boot
         logger.error("boot_progress: startup_log write failed: %s", exc)
+
+    _finalizePriorDrain(dbPath, priorBootSync)
 
     if nasArchiveEnabled and trail:
         try:

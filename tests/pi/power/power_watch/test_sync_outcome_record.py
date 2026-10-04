@@ -16,6 +16,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-01    | Rex          | Initial -- US-776-d one record per shutdown
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec; backlog re-read after every attempt; unreadable backlog is STALLED.
 # ================================================================================
 ################################################################################
 """Every shutdown sync records why it ended, with the backlog at both ends."""
@@ -81,14 +82,15 @@ def _task(
     *,
     backlog: list[int] | None = None,
     probe: ProbeResult | None = None,
-    ceilingSec: float = 10.0,
+    stallSec: float = 10.0,
 ) -> SyncWithServerTask:
     clock = _Clock()
     return SyncWithServerTask(
         homeState=lambda: state,
         runSync=sync,
         writeRecord=records.append,
-        ceilingSec=ceilingSec,
+        joinWaitSec=120.0,
+        stallSec=stallSec,
         sleepFn=clock.sleep,
         monotonic=clock.monotonic,
         backlogReader=(lambda: backlog[0]) if backlog is not None else None,
@@ -264,11 +266,14 @@ class TestBacklogReads:
             homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=sync,
             writeRecord=records.append,
-            ceilingSec=10.0,
+            joinWaitSec=10.0,
+            stallSec=10.0,
             backlogReader=reader,
         ).run()
 
-        assert events == ["read:10", "sync", "read:0"]
+        # ARCH-065: the backlog is re-read after EVERY attempt, then once more
+        # for the record's backlogEnd.
+        assert events == ["read:10", "read:10", "sync", "read:0", "read:0"]
         assert (records[0].backlogStart, records[0].backlogEnd) == (10, 0)
 
     def test_noReader_backlogIsNone(self) -> None:
@@ -282,16 +287,22 @@ class TestBacklogReads:
         def reader() -> int:
             raise OSError("database is locked")
 
+        clock = _Clock()
         records: list[SyncOutcomeRecord] = []
         result = SyncWithServerTask(
             homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=lambda: None,
             writeRecord=records.append,
-            ceilingSec=10.0,
+            joinWaitSec=10.0,
+            stallSec=10.0,
+            sleepFn=clock.sleep,
+            monotonic=clock.monotonic,
             backlogReader=reader,
         ).run()
 
-        assert result is OutcomeKind.DELIVERED
+        # ARCH-065: an unreadable backlog is no evidence of delivery -- the
+        # drain ends as a stall, and the record still carries None/None.
+        assert result is OutcomeKind.STALLED
         assert (records[0].backlogStart, records[0].backlogEnd) == (None, None)
 
     def test_lastProbeRaises_failedDrain_atHomeServerDown(self) -> None:
@@ -304,7 +315,8 @@ class TestBacklogReads:
             homeState=lambda: HomeNetworkState.AT_HOME_SERVER_DOWN,
             runSync=_Sync([], [1]),
             writeRecord=records.append,
-            ceilingSec=5.0,
+            joinWaitSec=5.0,
+            stallSec=5.0,
             sleepFn=clock.sleep,
             monotonic=clock.monotonic,
             lastProbe=probe,
@@ -377,7 +389,8 @@ class TestThroughRealDetector:
             homeState=detector.getHomeNetworkState,
             runSync=_Sync([], [1]),
             writeRecord=records.append,
-            ceilingSec=5.0,
+            joinWaitSec=5.0,
+            stallSec=5.0,
             sleepFn=clock.sleep,
             monotonic=clock.monotonic,
             lastProbe=lambda: detector.lastProbe,
@@ -398,7 +411,8 @@ class TestThroughRealDetector:
             homeState=detector.getHomeNetworkState,
             runSync=_Sync([], [1]),
             writeRecord=records.append,
-            ceilingSec=5.0,
+            joinWaitSec=5.0,
+            stallSec=5.0,
             sleepFn=clock.sleep,
             monotonic=clock.monotonic,
             lastProbe=lambda: detector.lastProbe,
@@ -440,7 +454,8 @@ class TestDurableRecord:
             homeState=lambda: state,
             runSync=_Sync(items, backlog),
             writeRecord=m.makeOutcomeSink(str(path)),
-            ceilingSec=5.0,
+            joinWaitSec=5.0,
+            stallSec=5.0,
             sleepFn=clock.sleep,
             monotonic=clock.monotonic,
             backlogReader=lambda: backlog[0],
@@ -461,7 +476,8 @@ class TestDurableRecord:
             homeState=lambda: HomeNetworkState.AWAY,
             runSync=lambda: None,
             writeRecord=m.makeOutcomeSink(str(path)),
-            ceilingSec=5.0,
+            joinWaitSec=5.0,
+            stallSec=5.0,
         ).run()
 
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -492,7 +508,8 @@ class TestSummaryLine:
     ) -> None:
         caplog.set_level(logging.DEBUG, logger=_LOGGER)
 
-        _task(state, _Sync(items, [4]), [], backlog=[4]).run()
+        shared = [4]
+        _task(state, _Sync(items, shared), [], backlog=shared).run()
 
         lines = [r for r in caplog.records if "outcome=" in r.getMessage()]
         assert len(lines) == 1

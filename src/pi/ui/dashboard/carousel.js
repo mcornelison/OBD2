@@ -1375,9 +1375,9 @@
   //        as a percent.
   //   F-9  a GOOD verdict ALWAYS carries "last health check · <date> (<age>)"
   //        (computed from ts - lastHealthCheckTs, both in the state file) so a
-  //        month-old reading is never mistaken for live. US-504 added a second
-  //        layer upstream: the producer itself forces `unknown` once the last
-  //        qualifying check is over 90 days old.
+  //        month-old reading is never mistaken for live. The producer adds a
+  //        second layer upstream: it forces `unknown` once the pack's counted
+  //        monthly test is over 45 days old (ARCH-065; US-504 used 90 days).
   // The drain ladder DOM is present ONLY when `draining === true` (F-2 / A-6).
   // -------------------------------------------------------------------------
 
@@ -1414,16 +1414,29 @@
   // US-736: WHY the verdict is unknown. US-632 publishes one of six machine
   // reasons in `reasons.health` (battery_health_verdict.UNKNOWN_REASONS); before
   // this table the card threw all six away and every one read as the same
-  // em-dash. Keys are the producer's names VERBATIM -- `no_qualifying_drains`
-  // is plural -- and a guard test holds them equal to UNKNOWN_REASONS.
+  // em-dash. Keys are the producer's names VERBATIM, and a guard test holds
+  // them equal to UNKNOWN_REASONS. ARCH-065 (2026-10-03) replaced the three
+  // drain reasons with the monthly-test / sync ones.
   var BATTERY_HEALTH_REASON_TEXT = {
     no_database: "no battery log database",
     log_unreadable: "battery log unreadable",
-    no_qualifying_drains: "no full drain measured yet",
-    too_few_drains: "too few drains to judge",
-    health_data_stale: "last drain test too old",
     clock_unreadable: "clock unreadable",
+    no_monthly_test: "no monthly battery test yet",
+    monthly_test_stale: "monthly battery test overdue",
+    too_few_syncs: "too few home syncs to judge",
   };
+
+  // ARCH-065: a RESOLVED verdict says why it is what it is -- T (minutes to the
+  // reserve floor) against J (the at-home job, seconds) -- or null when the
+  // producer published no numbers. Never for an unknown verdict: a margin
+  // beside "we cannot say" would be a second, contradictory account.
+  function healthMarginText(data) {
+    if (data.health !== "good" && data.health !== "degraded" && data.health !== "replace") return null;
+    if (typeof data.timeToFloorS !== "number" || !isFinite(data.timeToFloorS)) return null;
+    if (typeof data.jobAvgS !== "number" || !isFinite(data.jobAvgS)) return null;
+    return Math.round(data.timeToFloorS / 60) + " min vs " + data.jobAvgS + " s job" +
+      (data.provisional === true ? " (provisional)" : "");
+  }
 
   // Words for an unknown verdict's reason, or null for a resolved verdict (a
   // reason explains an ABSENCE). The two fallbacks are typed and can never
@@ -1576,7 +1589,9 @@
       };
     }
     // US-736: the reason goes IN FRONT of the F-9 line, never in place of it.
+    // ARCH-065: so does a resolved verdict's T-vs-J margin.
     var reason = healthReasonText(data);
+    var margin = reason === null ? healthMarginText(data) : null;
     var checkLabel = healthCheckLine(data).label;
     return {
       label: BATTERY_LABEL,
@@ -1584,7 +1599,8 @@
       health: {
         label: "HEALTH",
         value: healthValue(data.health),
-        detail: reason === null ? checkLabel : reason + " · " + checkLabel,
+        detail: reason !== null ? reason + " · " + checkLabel
+              : margin !== null ? margin + " · " + checkLabel : checkLabel,
         level: healthLevel(data.health),
         reason: reason,
       },

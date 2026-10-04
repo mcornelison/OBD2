@@ -2,10 +2,11 @@
 # File Name: test_sync_joining_wait.py
 # Purpose/Description: US-776-e -- at home with the WiFi rejoin still pending
 #                      (AT_HOME_JOINING), the shutdown sync polls for the
-#                      association inside pi.homeNetwork.shutdownSyncCeilingSec,
-#                      then drains. JOINING wait + drain share that one
-#                      ceiling; a rejoin that outlasts it records
-#                      AT_HOME_JOINING_TIMEOUT. Away, nothing waits.
+#                      association inside pi.homeNetwork.joinWaitSec, then
+#                      drains. The join wait is bounded on its own (ARCH-065:
+#                      the drain's stall clock starts at association); a
+#                      rejoin that outlasts it records AT_HOME_JOINING_TIMEOUT.
+#                      Away, nothing waits.
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-10-01
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -15,6 +16,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-01    | Rex          | Initial -- US-776-e JOINING wait.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec + stallSec;
+#               |              | the shared-ceiling tests became stall-clock-from-association.
 # ================================================================================
 ################################################################################
 """US-776-e: at home, the shutdown waits for the WiFi rejoin within the ceiling."""
@@ -34,7 +37,8 @@ from src.pi.power.power_watch.tasks.sync_with_server import (
     SyncWithServerTask,
 )
 
-_CIO_CEILING_SEC = 60.0
+_JOIN_WAIT_SEC = 60.0
+_STALL_SEC = 60.0
 _HOME_SSID = "DeathStarWiFi"
 _JOINED_AT_SEC = 20.0
 
@@ -60,6 +64,7 @@ class _Sync:
     def __init__(self, clock: _FakeClock, *, fail: bool = False) -> None:
         self._clock = clock
         self._fail = fail
+        self.delivers = not fail  # a clean runSync empties the backlog
         self.starts: list[float] = []
 
     def __call__(self) -> None:
@@ -80,10 +85,11 @@ def _task(
         homeState=homeState,
         runSync=sync,
         writeRecord=records.append,
-        ceilingSec=_CIO_CEILING_SEC,
+        joinWaitSec=_JOIN_WAIT_SEC,
+        stallSec=_STALL_SEC,
         sleepFn=clock.sleep,
         monotonic=clock.monotonic,
-        backlogReader=lambda: backlog,
+        backlogReader=lambda: 0 if (sync.delivers and sync.starts) else backlog,
     )
 
 
@@ -136,12 +142,12 @@ def _realDetector(
 
 class TestAssociatedMidWait:
 
-    def test_associatedAt20s_drainStartsAbout20s_delivered_underCeiling(self) -> None:
+    def test_associatedAt20s_drainStartsAbout20s_delivered_underJoinWait(self) -> None:
         """
         Given: the home SSID is visible but unassociated until t=20 s
         When: run() is called at key-off
         Then: it waits, the drain starts at about 20 s (within one poll),
-            delivers, and the whole run stays under the ceiling
+            delivers, and the whole run stays under the join wait
         """
         clock = _FakeClock()
         sync = _Sync(clock)
@@ -155,7 +161,7 @@ class TestAssociatedMidWait:
         assert result == OutcomeKind.DELIVERED
         assert len(sync.starts) == 1
         assert _JOINED_AT_SEC <= sync.starts[0] < _JOINED_AT_SEC + JOIN_POLL_SEC
-        assert clock.now < _CIO_CEILING_SEC
+        assert clock.now < _JOIN_WAIT_SEC
         assert [r.kind for r in records] == [OutcomeKind.DELIVERED]
 
     def test_realDetector_ssidAssociatesAt20s_drains(self) -> None:
@@ -184,12 +190,13 @@ class TestAssociatedMidWait:
         assert clock.sleeps
         assert set(clock.sleeps) == {JOIN_POLL_SEC}
 
-    def test_joinedButServerDown_drainUsesWhatIsLeftOfTheSameCeiling(self) -> None:
+    def test_joinedButServerDown_stallClockStartsAtAssociation(self) -> None:
         """
         Given: the rejoin lands at 50 s and every sync attempt then fails
         When: run() is called
-        Then: no attempt starts at or after 60 s from run() start, and no wait
-            runs past it -- the JOINING wait and the drain share ONE ceiling
+        Then: the drain starts at the association and ends 60 s later
+            (ARCH-065): the 50 s of joining did NOT count against the stall
+            window, and no attempt starts before the association
         """
         clock = _FakeClock()
         sync = _Sync(clock, fail=True)
@@ -200,8 +207,8 @@ class TestAssociatedMidWait:
 
         assert result == OutcomeKind.AT_HOME_SERVER_DOWN
         assert sync.starts
-        assert all(50.0 <= s < _CIO_CEILING_SEC for s in sync.starts)
-        assert clock.now <= _CIO_CEILING_SEC
+        assert all(s >= 50.0 for s in sync.starts)
+        assert 50.0 + _STALL_SEC <= clock.now <= 50.0 + JOIN_POLL_SEC + _STALL_SEC
 
     def test_joinedButHomeUnconfirmed_drainsAsUnknownNetwork(self) -> None:
         clock = _FakeClock()
@@ -216,7 +223,7 @@ class TestAssociatedMidWait:
 
 
 # =============================================================================
-# Still joining at the ceiling -> AT_HOME_JOINING_TIMEOUT
+# Still joining at the join-wait bound -> AT_HOME_JOINING_TIMEOUT
 # =============================================================================
 
 
@@ -239,9 +246,9 @@ class TestJoiningTimeout:
 
         assert result == OutcomeKind.AT_HOME_JOINING_TIMEOUT
         assert sync.starts == []
-        assert clock.now <= _CIO_CEILING_SEC
+        assert clock.now <= _JOIN_WAIT_SEC
         # Polled right up to the ceiling: no room left for one more poll.
-        assert clock.now + JOIN_POLL_SEC >= _CIO_CEILING_SEC
+        assert clock.now + JOIN_POLL_SEC >= _JOIN_WAIT_SEC
         assert len(clock.sleeps) > 1
         assert len(records) == 1
         assert records[0].kind == OutcomeKind.AT_HOME_JOINING_TIMEOUT
@@ -259,11 +266,12 @@ class TestJoiningTimeout:
         assert result == OutcomeKind.AT_HOME_JOINING_TIMEOUT
         assert sync.starts == []
         assert len(clock.sleeps) > 1
-        assert clock.now <= _CIO_CEILING_SEC
+        assert clock.now <= _JOIN_WAIT_SEC
         assert [r.kind for r in records] == [OutcomeKind.AT_HOME_JOINING_TIMEOUT]
 
-    def test_associatedOnlyAfterTheCeilingIsSpent_timeoutNoAttempt(self) -> None:
-        """A state read that itself runs past the ceiling leaves no time to drain."""
+    def test_associationLandingLate_stillDrains_stallClockFromThen(self) -> None:
+        """A state read that itself runs past the join wait still ended in an
+        association: the drain runs (ARCH-065 retired the shared ceiling)."""
         clock = _FakeClock()
         sync = _Sync(clock)
         records: list[SyncOutcomeRecord] = []
@@ -274,14 +282,14 @@ class TestJoiningTimeout:
             if reads["n"] == 1:
                 return HomeNetworkState.AT_HOME_JOINING
             # The association landed, but this read (nmcli + probe) took the
-            # clock past the ceiling.
-            clock.now = _CIO_CEILING_SEC + 1.0
+            # clock past the join wait.
+            clock.now = _JOIN_WAIT_SEC + 1.0
             return HomeNetworkState.AT_HOME_SERVER_REACHABLE
 
         result = _task(homeState, sync, clock, records).run()
 
-        assert result == OutcomeKind.AT_HOME_JOINING_TIMEOUT
-        assert sync.starts == []
+        assert result == OutcomeKind.DELIVERED
+        assert len(sync.starts) == 1
 
     def test_brokenWait_endsTheWait_neverRaises(self) -> None:
         clock = _FakeClock()
@@ -295,7 +303,8 @@ class TestJoiningTimeout:
             homeState=lambda: HomeNetworkState.AT_HOME_JOINING,
             runSync=sync,
             writeRecord=records.append,
-            ceilingSec=_CIO_CEILING_SEC,
+            joinWaitSec=_JOIN_WAIT_SEC,
+            stallSec=_STALL_SEC,
             sleepFn=brokenSleep,
             monotonic=clock.monotonic,
         )
