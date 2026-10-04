@@ -1024,6 +1024,34 @@ of the code scope.
 paths (safe globally: `power_log` + `startup_log` are the only Pi tables
 carrying `data_quality`).
 
+##### `startup_log` columns (US-263 → US-776-f)
+
+One row per Pi boot, written by `boot-progress-arm.service`
+(`src/pi/diagnostics/boot_progress.py::arm`). Pi schema:
+`src/pi/obdii/database_schema.py::SCHEMA_STARTUP_LOG`; server mirror:
+`src/server/db/models.py` (plus `source_device`, no `data_quality`).
+
+| Column | Type | Meaning |
+|--------|------|---------|
+| `boot_id` | TEXT PK | `/proc/sys/kernel/random/boot_id`, lowercase, no dashes |
+| `prior_boot_clean` | INTEGER | 1 = the prior boot's journal shows a graceful shutdown; 0 = none (hard cut); NULL = no prior boot |
+| `prior_last_entry_ts` | TEXT | Last journal timestamp of the prior boot |
+| `current_boot_first_entry_ts` | TEXT | First journal timestamp of this boot |
+| `prior_boot_last_stage` | TEXT | Highest boot_progress milestone the prior boot reached |
+| `prior_boot_reason` | TEXT | That milestone's decoded reason |
+| `recorded_at` | TEXT | When the row was written (ISO-8601 UTC); the snapshot-sync cursor |
+| `data_quality` | TEXT | US-419 clock-quality flag; Pi-local, wire-stripped |
+| `prior_boot_home_state` | TEXT | US-776-f / US-741: the prior shutdown's `HomeNetworkState` name |
+| `prior_boot_sync_outcome` | TEXT | US-776-f / US-776-d: why the prior shutdown's sync ended (`DELIVERED`, `AWAY`, `UNKNOWN_NETWORK`, `AT_HOME_JOINING_TIMEOUT`, `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED`, or `REAL_ERROR`) |
+| `prior_boot_backlog_start` | INTEGER | US-776-d: unsynced rows before the prior shutdown's first sync attempt |
+| `prior_boot_backlog_end` | INTEGER | US-776-d: unsynced rows after its last attempt |
+
+The four `prior_boot_*` sync columns are landed from powerwatch's durable
+shutdown record (`powerwatch_outcome.json`, §10.6.3) only when that record's
+`boot_id` belongs to the prior boot; otherwise — an older build, a hard cut
+before the record was written, or a count that could not be read — they are
+NULL, never a guessed value.
+
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
 │    vehicle_info     │     │      profiles       │
@@ -1840,18 +1868,20 @@ with `ConfigValidationError` at config-load time.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `ssid` | `DeathStarWiFi` | Home WiFi SSID expected from `iwgetid -r` |
+| `ssid` | `DeathStarWiFi` | Home WiFi SSID, read from the active row of `nmcli -t -f ACTIVE,SSID device wifi list --rescan no` (US-776-b) |
 | `subnet` | `10.27.27.0/24` | Home LAN CIDR; defense-in-depth co-check with SSID |
 | `pingTimeoutSeconds` | `3` | Bounded timeout on `GET {baseUrl}{serverPingPath}` |
-| `serverPingPath` | `/api/v1/ping` | Must be absolute (start with `/`) |
+| `serverPingPath` | `/api/v1/health` | Must be absolute (start with `/`) and a real server GET route (US-776-a) |
 
 Defense in depth: `isAtHomeWifi()` is True ONLY when BOTH the SSID check
 AND the subnet check pass.  A spoofed home-SSID on a foreign router
 fails subnet; a tethered hotspot that happens to use the home CIDR
-fails SSID.  The composed `getHomeNetworkState()` returns `UNKNOWN`
-(distinct from `AWAY`) when the `iwgetid` binary is missing or the
-subprocess times out — the orchestrator can branch on that separately
-(e.g., "retry later" vs "definitely not home").
+fails SSID.  The composed `getHomeNetworkState()` returns `AWAY` only on a
+positive answer (a foreign SSID, or a successful `hostname -I` with no
+home-subnet address), and `UNKNOWN` (distinct from `AWAY`) when a reader is
+dead and nothing rules home out: `nmcli` missing or timing out, or the
+`hostname -I` read itself failing (US-776-c).  The shutdown sync drains on
+`UNKNOWN` (§10.6.3).
 
 #### `pi.companionService` — Pi → server reach (US-151)
 
@@ -2550,34 +2580,19 @@ belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
 
-**Consumer-side suppression of the grace splash (US-796-a, Sprint 90 / V0.29.59).**
-`splash-grace.path` is always armed and cold-starts a **second chromium**
-(`splash-grace.service`) the instant `shutdown-state` appears. A second browser
-starting during a shutdown is wrong on its own terms, so the power-loss
-`LoadShedder` (`load_shed.py`, ARCH-031) now stops `splash-grace.path` **and**
-`splash-grace.service` alongside `eclipse-dashboard`. This is a correctness fix; it
-makes no survival claim. Visible consequence, ruled by the CIO 2026-09-20: no
-shutdown animation at key-off, and a cancelled blip shows nothing. The `grace` row
-in the table above still describes the splash's response when it is running; with
-the default shed set it no longer is.
+**The grace splash is NOT shed (US-796, Sprint 95; reverses US-796-a).**
+US-796-a (Sprint 90 / V0.29.59) put `splash-grace.path` and `splash-grace.service`
+on the power-loss `LoadShedder` set, to stop a second chromium cold-starting during a
+shutdown. The stop failed on every cut ("could not stop splash-grace.service" in the
+journal), and had it succeeded it would have removed the shutdown animation the CIO
+ruled to keep. Both units are off `DEFAULT_SHED_UNITS`; `TRIGGERED_UNITS` is empty
+(the restore mechanism stays). `eclipse-dashboard` is still shed (ARCH-031), so the
+splash runs exactly as the `grace` row in the table above describes: `splash-grace.path`
+fires on the first `shutdown-state` write and the kiosk renders the countdown.
 
-- **Ordering is the fix.** `handleOnBattery` calls `powerLossObservedFn` (heartbeat +
-  shed) **before** it emits `grace`, the first `shutdown-state` write. A `.path` unit
-  that has already fired cannot be un-fired, so a shed after the write would be a
-  no-op that looks like a fix. `systemctlRunner` issues a `.path` stop **without**
-  `--no-block`, so the path is disarmed in systemd — not merely queued — when the
-  write happens. The path is stopped before its service, so nothing re-launches it.
 - **The sequencer stays decoupled.** It never names a splash unit (F-103: it writes
-  state, consumers react). Suppression belongs to the shedder, which owns what is
-  allowed to run. Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`.
-- **Restore.** A cancel restarts the dashboard and re-arms `splash-grace.path`.
-  `splash-grace.service` is stopped but never restored (`TRIGGERED_UNITS`): a stop
-  succeeds on an inactive unit, and its only legitimate starter is the path. The
-  re-armed path sees `shutdown-state` already reading `cancelled`, fires once, and
-  the kiosk aborts on its first poll without painting — the same cancelled-abort the
-  splash always took on a blip, now after power is back rather than on battery.
-- **Unit names.** `install.sh` installs the `.wayland` / `.x11` variant under the one
-  runtime name `splash-grace.service`, so the shed set names no variant.
+  state, consumers react). Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`,
+  which fails if either splash unit is added back to either list.
 
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
@@ -2692,7 +2707,9 @@ Three bounds used to end it first, and each is removed where it lived:
 
 1. **`_buildRunSync` budget** (`__main__.py`). A further pass only started if one as long as the
    last still fitted `perTaskTimeoutSec` (20 s). Removed: the loop ends on an empty backlog, a failing
-   pass (`RuntimeError` -> the task's single retry -> `SYNC_FAILED_AFTER_RETRY`), a pass that moves
+   pass (`RuntimeError` -> the task retries with doubling waits of 2, 4, 8, 16 s ... and starts
+   no attempt after `pi.homeNetwork.shutdownSyncCeilingSec`, 60 s (US-776-g) -> recorded as
+   `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED` or `UNKNOWN_NETWORK`, US-776-d), a pass that moves
    nothing, or an unreadable backlog. Custody re-reads the SAME reader, so those last cases record
    `OUTSTANDING` or `UNKNOWN`, never `DELIVERED`. Every pass still excludes
    `SHUTDOWN_DRAIN_EXCLUDED_TABLES`.
@@ -2744,14 +2761,71 @@ not fund a long drain. A short drain is not evidence that "the bound did not wor
 needs an architectural ruling, because a row written to a synced table during the shutdown turns the
 custody verdict OUTSTANDING, the US-789 defect). Until US-790 ships, 3.60 V stands.
 
-**Why `isServerReachable` is the gate and not an SSID (Atlas ruling 1, 2026-09-17).** An SSID gate is a
-derived proxy. It says "home" when the server is down, and a drain gated on it would spend the
-battery pushing at something that cannot acknowledge a row. `SyncWithServerTask` gates on
-`HomeNetworkDetector.isServerReachable`, which asks the producer that has to confirm. Away from home it
-reads False, `forcePush` is never called, and poweroff follows exactly as before. **Caveat:
-`serverReachable()` is checked once, not polled.** It is read once, at the top of
-`SyncWithServerTask.run` (`sync_with_server.py`). A server that goes away mid-drain is not re-detected
-by this gate. The drain then ends on a failing pass, or on the floor while a pass is blocked.
+**The drain is gated on the home detector, not on one server probe (US-776-c, Sprint 95; Atlas
+review 2026-09-30, gaps 2 and 5).** The 2026-09-17 gate (Atlas ruling 1) was a single
+`isServerReachable()` read. It probed `/api/v1/ping`, a route that does not exist, so it read False
+on every shutdown and the drain never ran (US-776-a moved the probe to `/api/v1/health`). Its
+deeper fault was the design: any dead instrument in the gate disabled the drain, silently.
+
+`SyncWithServerTask.run` (`sync_with_server.py`) now reads `HomeNetworkDetector.getHomeNetworkState()`
+**once** and decides from it:
+
+| Detector state | Means | The task |
+|---|---|---|
+| `AWAY` | a **positive** not-home answer: a foreign SSID (whatever the IP read says), or a *successful* `hostname -I` with no home-subnet address | skips at once: no `forcePush`, no sleep; records `AWAY` (US-776-d); poweroff follows |
+| `AT_HOME_SERVER_REACHABLE` / `AT_HOME_SERVER_DOWN` | home SSID **and** a home-subnet IP | drains |
+| `UNKNOWN` | no positive AWAY, but home is unconfirmed: the SSID reader is dead (`nmcli` missing / timed out) with a home-subnet IP or a failed IP read, or the home SSID with a failed IP read | **drains anyway**, logging `UNKNOWN_NETWORK` at WARNING |
+
+- **Only a positive AWAY skips.** A dead instrument must never disable the drain
+  (`specs/design-patterns.md` section 6). Both readers are three-way: a value on a successful read,
+  `""` / `[]` for a genuine "not associated" / "no addresses", and `None` when the read itself failed.
+  A detector that raises is treated as `UNKNOWN`.
+- **The AWAY path cannot block on the network.** It runs `nmcli` (2.0 s timeout) and `hostname -I`
+  (2.0 s, never longer than the SSID reader's) and makes no HTTP call: the server probe runs only
+  once the home SSID and a home-subnet IP are both seen.
+- **At home with the server down it still drains.** The drain decides *whether* to try; the probe
+  verdict no longer vetoes it. Retrying until delivered or a ceiling is US-776-g; the outcome record
+  per shutdown is US-776-d (below).
+- **Read once, not polled.** A network that changes mid-drain is not re-detected; the drain then
+  ends on a failing pass, or on the floor while a pass is blocked.
+
+**Every shutdown sync records why it ended (US-776-d, Sprint 95; Atlas review 2026-09-30, ruling 4
+and gap 3).** Until Sprint 95 a skipped sync wrote nothing, so a probe that was always false read as
+an absent server for weeks: 16 of 16 shutdowns logged "unreachable -- benign skip" at INFO and left
+no record. Now **every** `SyncWithServerTask.run()` -- the skip and the success included -- hands
+exactly one `SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd)` to its sink, and logs one
+`outcome=<NAME> backlog_start=<n> backlog_end=<n>` line.
+
+| Outcome (`OutcomeKind`) | When | Log level |
+|---|---|---|
+| `DELIVERED` | a drain attempt succeeded (whatever the detector state was) | INFO |
+| `AWAY` | a positive AWAY: the sync was skipped | INFO |
+| `UNKNOWN_NETWORK` | home was never confirmed (`UNKNOWN`) and the drain ran to the ceiling without delivering | WARNING |
+| `AT_HOME_JOINING_TIMEOUT` | reserved for US-776-e: the WiFi rejoin outlasted the ceiling | ERROR |
+| `AT_HOME_SERVER_DOWN` | at home, the drain ran to the ceiling; the probe got no answer (connection error, timeout), a 5xx, or a 2xx | ERROR |
+| `PROBE_MISCONFIGURED` | at home, the drain ran to the ceiling and the probe was answered 404, 405, 401 or 403: the server is up, the configured route or key is wrong | ERROR |
+| `REAL_ERROR` | a non-transient sync fault (the pre-existing kind; no retry) | ERROR |
+
+- **A misconfigured probe is told from a down server by a sibling, not by changing the bool.**
+  `HomeNetworkDetector.probeServer()` returns `ProbeResult(status, error)`; `isServerReachable()` is
+  its 2xx, so every existing caller is untouched. The detector keeps the probe behind its last state
+  as `lastProbe` (cleared whenever a state is decided without probing), and the task reads that --
+  it never probes again, so recording adds no network call to the shutdown.
+- **`backlog_start` and `backlog_end`.** Read from the shared US-621 reader with the drain's own
+  exclusions (`readDrainBacklog`), before the first attempt and after the last; on `AWAY` the one
+  read is both. A count the reader could not complete (an unreadable table, an unopenable database)
+  is `None`, never a lower bound presented as exact. `DELIVERED` with `backlog_start = 0` (nothing
+  was owed) is therefore distinguishable from `DELIVERED` with `backlog_start > 0` -- the 2026-09-27
+  shutdown read DELIVERED with the drain never having run.
+- **Where it lands.** `__main__.makeOutcomeSink` writes the record into `powerwatch_outcome.json`
+  (`outcome.writeOutcomeRecord`: atomic, never raises) with `sync_outcome` = the outcome NAME and the
+  two counts (an unknown count is omitted). The next boot's `boot_progress.arm` lands them into
+  `startup_log.prior_boot_sync_outcome` / `prior_boot_backlog_start` / `prior_boot_backlog_end`
+  (US-776-f), which reach the server through the existing snapshot sync.
+- **What it cannot record.** The record is written when `run()` returns. A shutdown whose VCELL is
+  already at the backstop skips the pipeline (no sync, no record), and a floor poll that powers off
+  while a pass is in flight ends the process before `run()` returns; both still write the custody
+  record above, and the sync columns land NULL.
 
 ### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
 
@@ -2855,16 +2929,16 @@ the sync backlog. "Nothing to send" makes the **drain** shorter. It does not rem
 | # | Step | Owner | Mandatory at an empty backlog |
 |---|---|---|---|
 | 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
-| 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops |
+| 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops (at home or `UNKNOWN`; a positive `AWAY` skips it, US-776-c) |
 | 3 | **Drain close** — the US-526 primary close (§10.6.2) | `buildDrainCloseHook` via `prePowerOffFn` | yes; a no-op close when no row is open |
 | 4 | **Custody** — the record states its verdict (§10.6.3) | `makeSyncCustodyHook` via `prePowerOffFn` | yes; `DELIVERED` |
 | 5 | **Poweroff** — `systemctl poweroff` | `ShutdownSequencer` | yes |
 | 6 | **`CLEAN_COMPLETE`** — the finalizer's `ExecStop` | `boot-progress-finalize.service` | yes |
 | 7 | **`prior_boot_clean = 1`** on the next boot | `boot-progress-arm.service` | yes |
 
-**The animation is not a step.** The grace splash is shed (§10.6.1, CIO ruling 2026-09-20), so
-nothing is displayed at key-off and the ceremony asserts no display. A shutdown animation is
-**conditional on budget**: it comes back only when a measured budget gate earns it.
+**The animation is not a step.** The grace splash is no longer shed (§10.6.1, US-796): the CIO
+kept the animation, and it plays at key-off. The ceremony still asserts no display, because the
+animation is the splash's response to `shutdown-state`, not a step the sequencer runs.
 
 **The guard.** `tests/pi/power/power_watch/test_shutdown_ceremony_guard.py` drives one sustained
 loss with an empty backlog through the real sequencer, pipeline, drain, hooks and `boot_progress`

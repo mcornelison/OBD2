@@ -1,21 +1,33 @@
 ################################################################################
 # File Name: test_load_shed_splash.py
-# Purpose/Description: US-796-a -- the power-loss shed stops the grace splash
-#     (splash-grace.path AND splash-grace.service), and it runs BEFORE the
-#     sequencer writes shutdown-state. splash-grace.path is always armed on that
-#     file and cold-starts a second chromium the instant it appears; a .path
-#     unit that has already fired cannot be un-fired, so the reverse order is a
-#     no-op that looks like a fix in the diff. Correctness, not a survival claim.
+# Purpose/Description: US-796 -- the power-loss shed leaves the grace splash
+#     alone. US-796-a put splash-grace.path and splash-grace.service on the shed
+#     list; the stop failed on every cut ("could not stop splash-grace.service")
+#     and, had it succeeded, would have removed the shutdown animation the CIO
+#     ruled to keep. The dashboard is still shed (ARCH-031), and still before
+#     the sequencer writes shutdown-state.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-09-21
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-09-21    | Rex          | US-796-a: shed stops both splash units.
+# 2026-09-30    | Rex          | US-796: inverted -- no splash unit is shed or
+#                                treated as triggered; the dashboard still is.
+# ================================================================================
 ################################################################################
-"""US-796-a: consumer-side suppression of the grace splash at power loss."""
+"""US-796: the grace splash is not part of the power-loss shed."""
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
+
+import pytest
 
 from src.pi.power.power_watch import load_shed
 from src.pi.power.power_watch.__main__ import composePrePowerOffHooks
@@ -34,11 +46,11 @@ from src.pi.splash.shutdown_state_emitter import (
     makeShutdownPhaseEmitter,
 )
 
-SPLASH_PATH = "splash-grace.path"
-SPLASH_SERVICE = "splash-grace.service"
-CONTROLLER_SOURCE = (
-    Path(__file__).resolve().parents[4] / "src" / "pi" / "power" / "power_watch" / "controller.py"
-)
+DASHBOARD = "eclipse-dashboard"
+SPLASH_PATTERN = re.compile(r"splash-grace")
+_POWER_WATCH = Path(__file__).resolve().parents[4] / "src" / "pi" / "power" / "power_watch"
+CONTROLLER_SOURCE = _POWER_WATCH / "controller.py"
+LOAD_SHED_SOURCE = _POWER_WATCH / "load_shed.py"
 
 
 class _Recorder:
@@ -67,6 +79,10 @@ def _shedPrecedesWrite(events: list[tuple[str, str]]) -> bool:
     return bool(writes) and bool(stops) and max(stops) < min(writes)
 
 
+def _splashUnits(units) -> list[str]:
+    return [unit for unit in units if SPLASH_PATTERN.search(unit)]
+
+
 def _sequencer(recorder: _Recorder, shedder: LoadShedder, calls: list[str], **kw):
     """Wired the way __main__.main() wires it: heartbeat + shed composed."""
     base = dict(
@@ -89,33 +105,77 @@ def _sequencer(recorder: _Recorder, shedder: LoadShedder, calls: list[str], **kw
     return ShutdownSequencer(**base)
 
 
-def test_defaultShedSet_containsBothSplashUnits():
+def test_shedLists_holdNoSplashUnit_andStillHoldTheDashboard():
     """
-    Given: the default shed set
+    Given: the default shed set and the triggered set
     When: inspected
-    Then: both the path and the service are in it -- stopping only the service
-          leaves the path armed to re-launch it
+    Then: neither names a splash-grace unit, and the dashboard is still shed
+          (ARCH-031)
     """
-    assert SPLASH_PATH in DEFAULT_SHED_UNITS
-    assert SPLASH_SERVICE in DEFAULT_SHED_UNITS
-    assert "eclipse-dashboard" in DEFAULT_SHED_UNITS
+    assert _splashUnits(DEFAULT_SHED_UNITS) == []
+    assert _splashUnits(TRIGGERED_UNITS) == []
+    assert DASHBOARD in DEFAULT_SHED_UNITS
 
 
-def test_defaultShedSet_disarmsThePathBeforeStoppingItsService():
+@pytest.mark.parametrize("splashUnit", ["splash-grace.path", "splash-grace.service"])
+def test_splashCheck_catchesASplashUnitAddedBack(splashUnit):
     """
-    Given: the default shed set
-    When: its order is read
-    Then: the path is stopped first, so nothing can re-launch the service
+    Given: a shed set with a splash-grace unit added back
+    When: the same check the list test uses reads it
+    Then: it reports the unit, so the list test cannot pass vacuously
     """
-    assert DEFAULT_SHED_UNITS.index(SPLASH_PATH) < DEFAULT_SHED_UNITS.index(SPLASH_SERVICE)
+    assert _splashUnits((*DEFAULT_SHED_UNITS, splashUnit)) == [splashUnit]
+    assert _splashUnits(frozenset({splashUnit})) == [splashUnit]
 
 
-def test_powerLoss_everyShedCallPrecedesTheStateWrite(tmp_path):
+def test_loadShedSource_namesSplashOnlyInProse():
+    """
+    Given: load_shed.py
+    When: its code (docstrings and comments stripped) is searched
+    Then: no string literal names a splash-grace unit -- any mention left is
+          the prose explaining why it is excluded
+    """
+    tree = ast.parse(LOAD_SHED_SOURCE.read_text(encoding="utf-8"))
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+    literals = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+
+    assert _splashUnits(literals) == []
+
+
+def test_loadShedDocstring_noLongerClaimsTheShedSuppressesTheSplash():
+    """
+    Given: the load_shed module docstring
+    When: read
+    Then: it does not claim the shed stops / suppresses the grace splash
+    """
+    # Collapse the docstring's line wrapping, or a phrase split across two
+    # lines slips past every check below.
+    doc = " ".join((load_shed.__doc__ or "").split())
+
+    assert "the shed stops both" not in doc
+    assert "Suppression lives here" not in doc
+    assert not re.search(r"suppress\w*\s+(the\s+)?(grace\s+)?splash", doc, re.IGNORECASE)
+
+
+def test_powerLoss_shedsOnlyTheDashboard_beforeTheStateWrite(tmp_path):
     """
     Given: a sustained power loss through the real phase emitter
     When: the sequencer handles it
-    Then: every shed stop precedes the first shutdown-state write, and the
-          shutdown still reaches poweroff
+    Then: the dashboard is stopped before the first shutdown-state write, no
+          splash unit is touched, and the shutdown still reaches poweroff
     """
     recorder = _Recorder(tmp_path)
     calls: list[str] = []
@@ -125,6 +185,7 @@ def test_powerLoss_everyShedCallPrecedesTheStateWrite(tmp_path):
 
     stops = [unit for kind, unit in recorder.events if kind == "stop"]
     assert stops == list(DEFAULT_SHED_UNITS)
+    assert _splashUnits(unit for _, unit in recorder.events) == []
     assert recorder.events[len(stops)] == ("write", PHASE_GRACE)
     assert _shedPrecedesWrite(recorder.events)
     assert calls == ["heartbeat", "poweroff"]
@@ -141,12 +202,12 @@ def test_orderingCheck_rejectsAShedThatFollowsTheWrite():
     assert not _shedPrecedesWrite(reversedEvents)
 
 
-def test_blipDuringSmoothing_restoresTheShedUnitsAndNeverPowersOff(tmp_path):
+def test_blipDuringSmoothing_restoresTheDashboardAndNeverPowersOff(tmp_path):
     """
     Given: power lost, then back before smoothing resolves
     When: the sequencer handles it
-    Then: it cancels, restores the dashboard and re-arms the splash path, and
-          commands no poweroff
+    Then: it cancels, restores the dashboard (and nothing else), and commands
+          no poweroff
     """
     recorder = _Recorder(tmp_path)
     calls: list[str] = []
@@ -164,48 +225,48 @@ def test_blipDuringSmoothing_restoresTheShedUnitsAndNeverPowersOff(tmp_path):
 
     starts = [unit for kind, unit in recorder.events if kind == "start"]
     phases = [unit for kind, unit in recorder.events if kind == "write"]
-    assert starts == ["eclipse-dashboard", SPLASH_PATH]
+    assert starts == [DASHBOARD]
     assert phases == [PHASE_GRACE, PHASE_CANCELLED]
     assert "poweroff" not in calls
 
 
-def test_restore_neverStartsTheTriggeredSplashService():
+def test_restore_neverStartsATriggeredUnit():
     """
-    Given: a shed that stopped the splash service (a stop succeeds on an
-           inactive unit, so "stopped" does not mean "was running")
-    When: power returns
-    Then: the service is not started -- its path unit owns its start
+    Given: a shedder told one of its units is started by a trigger
+    When: it sheds, then power returns
+    Then: that unit is stopped but not started -- its trigger owns its start
     """
     events: list[tuple[str, str]] = []
-    shedder = LoadShedder(runner=lambda action, unit: events.append((action, unit)))
+    shedder = LoadShedder(
+        units=(DASHBOARD, "triggered.service"),
+        runner=lambda action, unit: events.append((action, unit)),
+        triggeredUnits={"triggered.service"},
+    )
 
     shedder.shed()
     events.clear()
     shedder.restore()
 
-    assert SPLASH_SERVICE in TRIGGERED_UNITS
-    assert ("start", SPLASH_SERVICE) not in events
-    assert ("start", SPLASH_PATH) in events
+    assert events == [("start", DASHBOARD)]
 
 
 def test_systemctlRunner_waitsForAPathStopButNotForAService(monkeypatch):
     """
     Given: the production runner
-    When: it stops the splash path and the splash service
-    Then: the path stop blocks (a queued stop could lose the race to the state
-          write); the service stop keeps --no-block
+    When: it stops a path unit and a service
+    Then: the path stop blocks; the service stop keeps --no-block
     """
     argvs: list[list[str]] = []
     monkeypatch.setattr(
         load_shed.subprocess, "run", lambda argv, **_kw: argvs.append(list(argv))
     )
 
-    load_shed.systemctlRunner("stop", SPLASH_PATH)
-    load_shed.systemctlRunner("stop", SPLASH_SERVICE)
+    load_shed.systemctlRunner("stop", "some.path")
+    load_shed.systemctlRunner("stop", DASHBOARD)
 
     assert argvs == [
-        ["systemctl", "stop", SPLASH_PATH],
-        ["systemctl", "--no-block", "stop", SPLASH_SERVICE],
+        ["systemctl", "stop", "some.path"],
+        ["systemctl", "--no-block", "stop", DASHBOARD],
     ]
 
 
@@ -213,7 +274,7 @@ def test_sequencerNamesNoSplashUnit():
     """
     Given: the sequencer source
     When: searched for splash unit names
-    Then: none -- suppression belongs to the shedder (F-103 decoupling)
+    Then: none -- the sequencer never learns a splash unit (F-103 decoupling)
     """
     source = CONTROLLER_SOURCE.read_text(encoding="utf-8")
 

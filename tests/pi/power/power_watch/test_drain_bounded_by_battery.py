@@ -19,6 +19,9 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-09-17    | Rex (US-776-a) | Initial -- the drain is bounded by the battery.
+# 2026-10-01    | Rex (US-776-g) | A failing pass is retried to the 60 s ceiling.
+# 2026-10-01    | Rex (US-776-d) | The sync writes one outcome record per run,
+#                                before the poweroff (AWAY and DELIVERED too).
 # ================================================================================
 ################################################################################
 """US-776-a: the drain ends on an empty backlog or the VCELL floor, not a timer."""
@@ -31,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.common.edr.sync_contract import SHUTDOWN_DRAIN_EXCLUDED_TABLES
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.power_watch import __main__ as m
 from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.controller import ShutdownSequencer
@@ -168,13 +172,14 @@ class TestTheDrainOutlivesAllThreeTimers:
         backlog = [6 * 500]
         client = _DrainingClient(clock=clock, passSec=15.0, backlog=backlog)
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: True,
+            homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
                 client,
                 backlogReader=_readerOver(backlog),
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
-            writeRecord=lambda _r: events.append("fault-record"),
+            writeRecord=lambda _r: events.append("outcome-record"),
+            ceilingSec=60.0,
         )
 
         def _pipeline() -> None:
@@ -191,7 +196,7 @@ class TestTheDrainOutlivesAllThreeTimers:
         assert clock() == 90.0
         assert clock() > _TOTAL_WINDOW_CAP_SEC
         assert backlog[0] == 0
-        assert events == ["pipeline-done", "poweroff"]
+        assert events == ["outcome-record", "pipeline-done", "poweroff"]
 
     def test_everyPass_excludesTheShutdownDrainExcludedTables(self) -> None:
         """
@@ -238,20 +243,21 @@ class TestTheDrainOutlivesAllThreeTimers:
             clock=clock, passSec=15.0, backlog=backlog, wallSecPerPass=0.1
         )
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: True,
+            homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
                 client,
                 backlogReader=_readerOver(backlog),
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
+            ceilingSec=60.0,
         )
 
         # Act
         results = _productionPipeline(syncTask, perTaskTimeoutSec=0.2)()
 
         # Assert
-        assert results == {syncTask.name: OutcomeKind.OK}
+        assert results == {syncTask.name: OutcomeKind.DELIVERED}
         assert len(client.excludeTablesPerPass) == 6
         assert backlog[0] == 0
 
@@ -338,13 +344,14 @@ class TestTheFloorEndsADrainThatNeverReachesAPassBoundary:
             return SyncBacklog(perTable={"realtime_data": 1})
 
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: True,
+            homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
                 _BlockedClient(),
                 backlogReader=_reader,
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
+            ceilingSec=60.0,
         )
         # Healthy at the pre-pipeline read and while the push is in flight,
         # then at the floor. The clock also races past the old 45 s cap first,
@@ -488,9 +495,9 @@ class TestTheFloorEndsADrainThatNeverReachesAPassBoundary:
 class TestNegativeCases:
     """Away from home nothing changes; a bad reading never becomes DELIVERED."""
 
-    def test_serverUnreachable_forcePushNeverCalled_poweroffWithoutWaiting(self) -> None:
+    def test_away_forcePushNeverCalled_poweroffWithoutWaiting(self) -> None:
         """
-        Given: serverReachable False
+        Given: the home detector reads AWAY
         When: the shutdown runs
         Then: forcePush is never called and poweroff proceeds without waiting
             out a poll interval (regressionCheck: same time-to-poweroff)
@@ -501,13 +508,14 @@ class TestNegativeCases:
         backlog = [9000]
         client = _DrainingClient(clock=clock, passSec=15.0, backlog=backlog)
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: False,
+            homeState=lambda: HomeNetworkState.AWAY,
             runSync=m._buildRunSync(
                 client,
                 backlogReader=_readerOver(backlog),
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
-            writeRecord=lambda _r: events.append("fault-record"),
+            writeRecord=lambda _r: events.append("outcome-record"),
+            ceilingSec=60.0,
         )
         slowPoll = 5.0
         seq = ShutdownSequencer(
@@ -530,21 +538,31 @@ class TestNegativeCases:
 
         # Assert
         assert client.excludeTablesPerPass == []
-        assert events == ["poweroff"]
+        assert events == ["outcome-record", "poweroff"]
         assert elapsed < slowPoll
 
     def _runWithCustody(self, tmp_path: Path, *, client, reader) -> dict:
         clock = _FakeClock()
         events: list[str] = []
         recordPath = tmp_path / "custody.json"
+        # US-776-g: the task's retry waits run on their own virtual clock, so
+        # a failing pass walks the whole ceiling without sleeping for real.
+        taskNow = [0.0]
+
+        def _taskSleep(seconds: float) -> None:
+            taskNow[0] += seconds
+
         syncTask = SyncWithServerTask(
-            serverReachable=lambda: True,
+            homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
             runSync=m._buildRunSync(
                 client,
                 backlogReader=reader,
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
+            ceilingSec=60.0,
+            sleepFn=_taskSleep,
+            monotonic=lambda: taskNow[0],
         )
         seq = _sequencer(
             events=events,
@@ -583,8 +601,8 @@ class TestNegativeCases:
         """
         Given: a pass that fails (tables failed after retries)
         When: the drain runs
-        Then: the drain ends (after the task's one retry) and custody records
-            OUTSTANDING, never DELIVERED
+        Then: the drain ends (once the task's retries reach the 60 s ceiling)
+            and custody records OUTSTANDING, never DELIVERED
         """
         # Arrange
         backlog = [2000]
@@ -601,7 +619,8 @@ class TestNegativeCases:
             tmp_path, client=_FailingClient(), reader=_readerOver(backlog)
         )
 
-        # Assert -- first attempt + SyncWithServerTask's single retry
-        assert _FailingClient.calls == 2
+        # Assert -- US-776-g: attempts at 0, 2, 6, 14 and 30 s; the next
+        # would start at 62 s, past the 60 s ceiling
+        assert _FailingClient.calls == 5
         assert record["verdict"] == BACKLOG_OUTSTANDING
         assert record["verdict"] != BACKLOG_DELIVERED

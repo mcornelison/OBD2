@@ -612,7 +612,8 @@
       "ssid": "DeathStarWiFi",
       "subnet": "10.27.27.0/24",
       "pingTimeoutSeconds": 3,
-      "serverPingPath": "/api/v1/ping"
+      "serverPingPath": "/api/v1/health",
+      "shutdownSyncCeilingSec": 60
     },
     "location": {
       "home": {

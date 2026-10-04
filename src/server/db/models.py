@@ -56,6 +56,8 @@
 # 2026-09-25    | Rex (US-790) | DrainVcellTrajectory: the shutdown drain's VCELL
 #               |              | series (one row per poll) + its termination
 #               |              | CHECK.  Created by migration v0033.
+# 2026-09-30    | Rex (US-776-f) | StartupLog gains the four prior_boot_* shutdown-
+#               |              | sync columns.  Added by migration v0034.
 # ================================================================================
 ################################################################################
 
@@ -1091,6 +1093,13 @@ class StartupLog(Base):
     prior_boot_last_stage: Mapped[str | None] = mapped_column(String(64))
     prior_boot_reason: Mapped[str | None] = mapped_column(String(64))
     recorded_at: Mapped[str | None] = mapped_column(String(40))
+
+    # US-776-f (migration v0034): the prior boot's shutdown-sync record, landed
+    # by the Pi at boot.  NULL = not recorded (absent, older build, hard cut).
+    prior_boot_home_state: Mapped[str | None] = mapped_column(String(64))
+    prior_boot_sync_outcome: Mapped[str | None] = mapped_column(String(64))
+    prior_boot_backlog_start: Mapped[int | None] = mapped_column(Integer)
+    prior_boot_backlog_end: Mapped[int | None] = mapped_column(Integer)
 
 
 class PiState(Base):

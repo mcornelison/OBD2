@@ -107,6 +107,63 @@ converges falsely. It converges falsely because **the backlog reader excludes th
 tables** (US-766), so the largest producer is invisible to the count that decides
 "synchronised". Stopping capture first makes the set finite and the count honest.
 
+### Tier 2 asks the home detector first (US-776-c, built Sprint 95)
+
+Whether Tier 2 runs at all is decided by `HomeNetworkDetector.getHomeNetworkState()`, read
+**once** at the top of `SyncWithServerTask.run`:
+
+- **`AWAY` skips Tier 2 at once** — no `forcePush`, no wait, no HTTP call. `AWAY` is only ever a
+  *positive* answer: a foreign SSID, or a successful `hostname -I` with no home-subnet address.
+  The AWAY path's only calls are `nmcli` and `hostname -I`, each bounded at 2.0 s.
+- **`AT_HOME_*` drains**, whether or not the server probe answered.
+- **`AT_HOME_JOINING` waits, then drains, inside ONE shared ceiling** (US-776-e). The home SSID is in
+  NetworkManager's cached scan but not associated (the rejoin measured ~49 s after arrival, drive 96).
+  The state is re-read every `JOIN_POLL_SEC` (2 s) — the one exception to "read once". **The wait and
+  the drain share a single `pi.homeNetwork.shutdownSyncCeilingSec`, measured from the START of the
+  wait**, so a 49 s rejoin leaves ~11 s of a 60 s ceiling to drain. Still joining at the ceiling, or
+  joined with no time left, is `AT_HOME_JOINING_TIMEOUT` with no attempt; a rejoin that resolves
+  `AWAY` skips as `AWAY`. The drain never starts a fresh ceiling after the wait: that would let one
+  shutdown's Tier 2 run to twice its configured bound.
+- **`UNKNOWN` drains too**, logged `UNKNOWN_NETWORK` at WARNING. `UNKNOWN` means a reader is dead
+  (SSID reader unavailable, or the IP read itself failed) and nothing rules home out. A dead
+  instrument must never disable the drain (`specs/design-patterns.md` §6) — a single always-false
+  probe kept the drain off on every shutdown until Sprint 95.
+
+This decides *whether* Tier 2 runs. How long it retries (a ceiling) is US-776-g; the per-shutdown
+outcome record is US-776-d (next section). `specs/architecture.md` §10.6.3 is the system-of-record
+description.
+
+### Tier 2 records why it ended (US-776-d, built Sprint 95)
+
+A skip that writes nothing is indistinguishable from a sync that never ran: for weeks an always-false
+probe read as "server absent" and nobody could tell. So **every** `SyncWithServerTask.run()` writes
+exactly one record into the durable shutdown record (`powerwatch_outcome.json`), the skip and the
+success included, before the task returns:
+
+| `sync_outcome` | The sync ended because |
+|---|---|
+| `DELIVERED` | a drain attempt succeeded |
+| `AWAY` | a positive AWAY: the drain was skipped |
+| `UNKNOWN_NETWORK` | home was never confirmed and the drain ran to the ceiling undelivered |
+| `AT_HOME_JOINING_TIMEOUT` | (US-776-e) the WiFi rejoin outlasted the ceiling |
+| `AT_HOME_SERVER_DOWN` | at home, the drain ran to the ceiling; the server probe got no answer, a 5xx or a 2xx |
+| `PROBE_MISCONFIGURED` | at home, the drain ran to the ceiling and the probe was answered 404/405/401/403 |
+| `REAL_ERROR` | a non-transient sync fault |
+
+The record also carries `backlog_start` (unsynced rows before the first attempt) and `backlog_end`
+(after the last), from the shared US-621 backlog reader. That is what tells "delivered 412 rows"
+from "delivered, nothing was owed": the outcome alone reads `DELIVERED` for both. An unreadable count
+is left out and lands NULL. The next boot lands all three into `startup_log.prior_boot_*` (US-776-f).
+
+`PROBE_MISCONFIGURED` comes from `HomeNetworkDetector.probeServer()` (a sibling of the bool
+`isServerReachable()`, Atlas ruling 4), read back through `lastProbe` -- recording never probes
+again, so it adds no network call and no wait to the shutdown. One summary line per shutdown is
+logged: INFO for `DELIVERED`/`AWAY`, WARNING for `UNKNOWN_NETWORK`, ERROR otherwise.
+
+What it cannot record: the backstop fast path skips the pipeline, and a floor poll can power off
+with a pass in flight. Neither reaches the end of `run()`; both still write the custody record, and
+the `prior_boot_*` sync columns land NULL.
+
 ### The animation is the terminal signal
 
 It is not a competitor for time. It is the **proof the sequence completed**, in the one place
@@ -119,10 +176,11 @@ nobody logs into.
   `splash=cancelled reason=reserve_reached`. A shutdown with no animation is then *diagnostic
   information*, not an anomaly.
 
-⚠️ This also retires a live defect: today `splash-grace.path` cold-starts a second browser
-the instant the shutdown-state SSOT is written, at T=0, *while* the shed is trying to reduce
-load. Under this design the splash cannot start until Tiers 1–3 are done, so it can never
-compete with the work.
+⚠️ Today `splash-grace.path` still starts the splash the instant the shutdown-state SSOT is
+written, at T=0, alongside the work. The load shed does **not** stop it: US-796-a's attempt to
+shed both splash units failed on every cut and would have removed the animation the CIO kept,
+so US-796 (Sprint 95) took them off the shed lists. Under this design the splash cannot start
+until Tiers 1–3 are done, so it can never compete with the work.
 
 ## 5. The reserve, and the override
 
