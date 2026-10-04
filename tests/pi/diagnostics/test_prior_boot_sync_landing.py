@@ -325,6 +325,9 @@ class TestFieldValidation:
             "prior_boot_sync_outcome": None,
             "prior_boot_backlog_start": None,
             "prior_boot_backlog_end": None,
+            "prior_boot_sync_started_at": None,
+            "prior_boot_sync_ended_at": None,
+            "prior_boot_vcell_before_cut_v": None,
         }
 
     def test_nonObjectJson_landsAllNull(self, tmp_path):

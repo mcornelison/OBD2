@@ -32,6 +32,8 @@
 #                          (home state, sync outcome, backlog start/end) into four
 #                          prior_boot_* columns, only when the record's boot_id is
 #                          the prior boot's; otherwise NULL.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: also lands sync start/end and the pre-cut
+#                          VCELL (three more prior_boot_* columns).
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -46,6 +48,7 @@ import os
 import shutil
 import sqlite3
 from collections.abc import Callable
+from datetime import datetime
 
 from src.common.time.helper import utcIsoNow
 from src.pi.diagnostics.clock_sync import assessClockQuality
@@ -340,6 +343,24 @@ def _asCount(value: object) -> int | None:
     return value
 
 
+def _asIso(value: object) -> str | None:
+    """A canonical UTC ISO second ('YYYY-MM-DDTHH:MM:SSZ'), else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return value
+
+
+def _asVolts(value: object) -> float | None:
+    """A plausible single-cell VCELL (2.5-4.5 V), else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 2.5 <= value <= 4.5 else None
+
+
 #: Record key -> (startup_log column, validator). A value the validator
 #: rejects lands NULL: the column is never filled with a coerced guess.
 _PRIOR_BOOT_SYNC_FIELDS: tuple[tuple[str, str, Callable[[object], object]], ...] = (
@@ -347,6 +368,9 @@ _PRIOR_BOOT_SYNC_FIELDS: tuple[tuple[str, str, Callable[[object], object]], ...]
     ("sync_outcome", "prior_boot_sync_outcome", _asLabel),
     ("backlog_start", "prior_boot_backlog_start", _asCount),
     ("backlog_end", "prior_boot_backlog_end", _asCount),
+    ("sync_started_at", "prior_boot_sync_started_at", _asIso),
+    ("sync_ended_at", "prior_boot_sync_ended_at", _asIso),
+    ("vcell_before_cut_v", "prior_boot_vcell_before_cut_v", _asVolts),
 )
 
 
@@ -443,14 +467,19 @@ def _writeStartupLogRow(
             " current_boot_first_entry_ts, recorded_at, "
             " prior_boot_last_stage, prior_boot_reason, data_quality, "
             " prior_boot_home_state, prior_boot_sync_outcome, "
-            " prior_boot_backlog_start, prior_boot_backlog_end) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " prior_boot_backlog_start, prior_boot_backlog_end, "
+            " prior_boot_sync_started_at, prior_boot_sync_ended_at, "
+            " prior_boot_vcell_before_cut_v) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (bootId, clean, None, None, recordedAt, lastStage, reason,
              dataQuality,
              sync.get("prior_boot_home_state"),
              sync.get("prior_boot_sync_outcome"),
              sync.get("prior_boot_backlog_start"),
-             sync.get("prior_boot_backlog_end")),
+             sync.get("prior_boot_backlog_end"),
+             sync.get("prior_boot_sync_started_at"),
+             sync.get("prior_boot_sync_ended_at"),
+             sync.get("prior_boot_vcell_before_cut_v")),
         )
         conn.commit()
     finally:

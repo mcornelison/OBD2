@@ -39,6 +39,7 @@
 #               |         | stallSec ends a drain whose backlog did not fall
 #               |         | (60 s, re-read after every attempt, clock from
 #               |         | association). New outcome STALLED; lastOutcome.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: the record carries the drain's start/end (nowIsoFn).
 # ================================================================================
 ################################################################################
 """The CIO pre-shutdown server-sync pipeline task (Phase-2 power-watch)."""
@@ -49,6 +50,7 @@ import time
 from collections.abc import Callable
 from typing import NamedTuple
 
+from src.common.time.helper import utcIsoNow
 from src.pi.network.home_detector import HomeNetworkState, ProbeResult
 from src.pi.power.power_watch.contract import OutcomeKind
 
@@ -97,12 +99,17 @@ class SyncOutcomeRecord(NamedTuple):
             when the count could not be read.
         backlogEnd: Unsynced rows after the last attempt (the same read as
             ``backlogStart`` when no attempt ran), or ``None``.
+        startedAt: ARCH-065 -- UTC ISO second the drain began (after any
+            JOINING wait), or ``None`` when no drain ran.
+        endedAt: UTC ISO second the drain returned, or ``None``.
     """
 
     kind: OutcomeKind
     detail: str
     backlogStart: int | None
     backlogEnd: int | None
+    startedAt: str | None = None
+    endedAt: str | None = None
 
 
 class SyncWithServerTask:
@@ -167,6 +174,7 @@ class SyncWithServerTask:
         monotonic: Callable[[], float] | None = None,
         backlogReader: Callable[[], int | None] | None = None,
         lastProbe: Callable[[], ProbeResult | None] | None = None,
+        nowIsoFn: Callable[[], str] | None = None,
     ):
         """Args:
         homeState: Zero-arg home-network read, called once per ``run()``,
@@ -194,6 +202,8 @@ class SyncWithServerTask:
             state (``HomeNetworkDetector.lastProbe``); never probes again.
             Classifies a failed drain at home. When None, a failed drain at
             home is ``AT_HOME_SERVER_DOWN``.
+        nowIsoFn: ARCH-065 -- UTC ISO-second clock stamping the drain's start
+            and end; ``utcIsoNow`` when None.
         """
         self._homeState = homeState
         self._runSync = runSync
@@ -208,6 +218,7 @@ class SyncWithServerTask:
         self._monotonic = monotonic if monotonic is not None else time.monotonic
         self._backlogReader = backlogReader
         self._lastProbe = lastProbe
+        self._nowIso = nowIsoFn if nowIsoFn is not None else utcIsoNow
 
     def run(self) -> OutcomeKind:
         """Run the CIO sync state machine and record its outcome. Never raises."""
@@ -239,8 +250,13 @@ class SyncWithServerTask:
                 "confirmed (SSID or IP reader unavailable) and nothing says "
                 "AWAY -- draining anyway"
             )
+        # ARCH-065: the drain's own span -- the JOINING wait above is not sync time.
+        startedAt = self._stamp()
         kind, detail = self._drain(state)
-        return self._record(kind, detail, backlogStart, self._readBacklog())
+        endedAt = self._stamp()
+        return self._record(
+            kind, detail, backlogStart, self._readBacklog(), startedAt, endedAt
+        )
 
     def _awaitAssociation(self, startMono: float) -> HomeNetworkState:
         """Poll the home state while it reads AT_HOME_JOINING (US-776-e).
@@ -419,12 +435,22 @@ class SyncWithServerTask:
             logger.warning("powerwatch sync_with_server: probe read failed (%s)", exc)
             return None
 
+    def _stamp(self) -> str | None:
+        """The injected ISO clock, never raising (a stamp must not break the drain)."""
+        try:
+            return self._nowIso()
+        except Exception as exc:  # noqa: BLE001 -- never raise
+            logger.warning("powerwatch sync_with_server: clock read failed (%s)", exc)
+            return None
+
     def _record(
         self,
         kind: OutcomeKind,
         detail: str,
         backlogStart: int | None,
         backlogEnd: int | None,
+        startedAt: str | None = None,
+        endedAt: str | None = None,
     ) -> OutcomeKind:
         """Log the outcome and hand its one record to the sink. Never raises."""
         self.lastOutcome = kind
@@ -437,7 +463,8 @@ class SyncWithServerTask:
             detail,
         )
         try:
-            self._writeRecord(SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd))
+            self._writeRecord(SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd, startedAt, endedAt)
+            )
         except Exception as exc:  # noqa: BLE001 -- never raise; the poweroff must proceed
             logger.error(
                 "powerwatch sync_with_server: could not write the %s record (%s)",

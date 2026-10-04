@@ -286,7 +286,8 @@ def test_main_wiresHomeStateAtLossIntoTheLossPath() -> None:
     assert "HomeStateAtLoss(detector.getHomeNetworkState" in source
     assert "homeState=homeStateAtLoss.stateForSync" in source
     assert "homeStateAtLoss.wrapSink(" in source
-    assert "makeOutcomeSink(outcomePath, homeState=homeStateAtLoss.stateName)" in source
+    assert "homeState=homeStateAtLoss.stateName" in source
+    assert "makeOutcomeSink(outcomePath" in source
     composed = [
         [ast.unparse(arg) for arg in node.args]
         for node in ast.walk(tree)

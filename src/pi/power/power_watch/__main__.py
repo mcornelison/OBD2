@@ -162,6 +162,9 @@
 # 2026-10-03    | Atlas (ARCH-065a) | Drain writer built with cellEpoch from pi.power.cellEpoch.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: the sync task takes joinWaitSec + stallSec
 #                           (pi.homeNetwork) in place of shutdownSyncCeilingSec.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: WallVcellCache; the PLD loop feeds it while
+#                           power is present; the outcome sink writes the drain's
+#                           start/end and the pre-cut VCELL.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -583,8 +586,33 @@ def backlogCount(backlog: SyncBacklog) -> int | None:
     return backlog.total
 
 
+class WallVcellCache:
+    """ARCH-065: the last VCELL read while on wall power (for cut_step_mv).
+
+    Fed once per PLD poll while power is present; read once at the loss.
+    A failed read leaves the previous value; never raises.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._v: float | None = None
+
+    def update(self, v: float | None) -> None:
+        if v is None:
+            return
+        with self._lock:
+            self._v = float(v)
+
+    def last(self) -> float | None:
+        with self._lock:
+            return self._v
+
+
 def makeOutcomeSink(
-    outcomePath: str, *, homeState: Callable[[], str] | None = None
+    outcomePath: str,
+    *,
+    homeState: Callable[[], str] | None = None,
+    wallVcell: Callable[[], float | None] | None = None,
 ) -> Callable[[SyncOutcomeRecord], None]:
     """The sync task's ``writeRecord``: one durable shutdown record per run.
 
@@ -598,6 +626,9 @@ def makeOutcomeSink(
         homeState: US-741 -- optional zero-arg read of the home state NAME at
             the power loss (``HomeStateAtLoss.stateName``). The sync record
             overwrites the file, so it must carry the name forward.
+        wallVcell: ARCH-065 -- optional zero-arg read of powerwatch's last
+            on-wall VCELL (``WallVcellCache.last``); written as
+            ``vcell_before_cut_v``.
     """
 
     def _write(record: SyncOutcomeRecord) -> None:
@@ -610,6 +641,9 @@ def makeOutcomeSink(
             syncOutcome=record.kind.name,
             backlogStart=record.backlogStart,
             backlogEnd=record.backlogEnd,
+            syncStartedAt=record.startedAt,
+            syncEndedAt=record.endedAt,
+            vcellBeforeCutV=wallVcell() if wallVcell is not None else None,
         )
 
     return _write
@@ -982,6 +1016,7 @@ def _runPldWatchLoop(
     handleLock,
     shutdownSequencer,
     monotonicFn=time.monotonic,
+    wallVcell: Callable[[], None] | None = None,
 ) -> None:
     """The X1209 GPIO6 PLD watch loop body, separated from main() for unit tests.
 
@@ -1028,6 +1063,12 @@ def _runPldWatchLoop(
         # 10.6. A level-stuck LOW line never reaches here, so the guard holds.
         if not lost:
             firedAlready = False
+            if wallVcell is not None:
+                # ARCH-065: cache the on-wall VCELL; must never break the loop.
+                try:
+                    wallVcell()
+                except Exception as exc:  # noqa: BLE001 -- never break the PLD loop
+                    logger.debug("powerwatch: wall VCELL read failed (%s)", exc)
         graceElapsed = monotonicFn() - serviceStartMono
         if graceElapsed < bootGraceSec:
             if lost and not prevLost and handleLock.acquire(blocking=False):
@@ -1187,6 +1228,17 @@ def main(argv: list[str] | None = None) -> int:
     # the next boot). The sync task's first read is that same answer.
     homeStateAtLoss = HomeStateAtLoss(detector.getHomeNetworkState, outcomePath=outcomePath)
 
+    # ARCH-065: the last on-wall VCELL, cached each PLD poll, read at the loss
+    # (cut_step_mv). The same reader the sequencer gets as vcell=.
+    wallCache = WallVcellCache()
+
+    def _readVcellOrNone() -> float | None:
+        try:
+            return monitor.getVcell()
+        except Exception as exc:  # noqa: BLE001 -- never break the PLD loop
+            logger.debug("powerwatch: wall VCELL read failed (%s)", exc)
+            return None
+
     syncTask = SyncWithServerTask(
         # US-776-c: the drain decision. A positive AWAY skips at once (no wait,
         # no HTTP call); at home, or UNKNOWN with no positive AWAY, it drains.
@@ -1202,7 +1254,11 @@ def main(argv: list[str] | None = None) -> int:
         # US-776-d: one durable record per run -- why the sync ended. US-741:
         # it carries the loss's home state, serialised with that record.
         writeRecord=homeStateAtLoss.wrapSink(
-            makeOutcomeSink(outcomePath, homeState=homeStateAtLoss.stateName)
+            makeOutcomeSink(
+                outcomePath,
+                homeState=homeStateAtLoss.stateName,
+                wallVcell=wallCache.last,
+            )
         ),
         # ARCH-065: the drain runs to completion -- it ends delivered, or when
         # the backlog has not fallen for stallSec; the WiFi-join wait is
@@ -1400,6 +1456,7 @@ def main(argv: list[str] | None = None) -> int:
             pldGpioPin=pldGpioPin,
             handleLock=handleLock,
             shutdownSequencer=shutdownSequencer,
+            wallVcell=lambda: wallCache.update(_readVcellOrNone()),
         )
 
     th = threading.Thread(target=_pldWatchLoop, name="pw-pld", daemon=True)
