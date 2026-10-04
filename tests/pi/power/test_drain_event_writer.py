@@ -22,6 +22,7 @@
 # 2026-08-03    | Rex (US-526) | Initial -- production drain writer catalog.
 # 2026-10-03    | Atlas (ARCH-065a) | T7: reaped-orphan verdict test re-pinned
 #               |              | on the ARCH-065 reader (key-off rows never vote).
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the reader takes cellEpoch + drainFloorVolts.
 # ================================================================================
 ################################################################################
 
@@ -563,6 +564,7 @@ class TestBootReaper:
 
         verdict = readBatteryHealthVerdict(
             database=freshDb, nowIso='2026-08-03T12:00:00Z', smoothingSec=5.0,
+            cellEpoch='18650-pack', drainFloorVolts=3.60,
         )
         assert verdict.verdict == VERDICT_UNKNOWN
         assert verdict.reason == REASON_NO_MONTHLY_TEST

@@ -7,7 +7,8 @@
 #   question: after key-off at home, can the pack carry a full sync AND a
 #   graceful shutdown?
 #     T = time from key-off to the reserve floor (from this pack's newest
-#         counted monthly test, shaped by its calibration drain when one exists)
+#         counted monthly test, shaped by its calibration drain when one exists;
+#         without one, a straight line to config drainFloorVolts -- provisional)
 #     J = the at-home job: the mean of the newest JOB_AVG_COUNT DELIVERED
 #         shutdown syncs, each = confirm wait (config smoothingSec) + sync +
 #         graceful poweroff allowance
@@ -47,6 +48,13 @@
 #                               floor-ended at-home drain newer than the counted
 #                               test is replace (Ruling 13); T clamped at 0; the
 #                               history write is bounded and warns once (17).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: the current pack is the CONFIG's
+#                               (resolveCellEpoch, passed in as cellEpoch; 'unknown'
+#                               -> no_monthly_test), never the newest row's
+#                               (_PACK_SQL dropped); the provisional T projects to
+#                               config drainFloorVolts -- the ONE reserve floor --
+#                               with no extra RESERVE_S (PROVISIONAL_CUTOFF_V
+#                               removed); CANONICAL_ISO_FORMAT replaces _ISO.
 # ================================================================================
 ################################################################################
 
@@ -69,6 +77,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from src.common.config.validator import CELL_EPOCH_UNKNOWN
+from src.common.time.helper import CANONICAL_ISO_FORMAT
 from src.pi.power.battery_health import (
     BATTERY_HEALTH_LOG_TABLE,
     DRAIN_TRIGGER_CALIBRATION,
@@ -83,7 +93,6 @@ __all__ = [
     'GREEN_MARGIN',
     'JOB_AVG_COUNT',
     'MIN_JOBS',
-    'PROVISIONAL_CUTOFF_V',
     'REASON_CLOCK_UNREADABLE',
     'REASON_LOG_UNREADABLE',
     'REASON_MONTHLY_TEST_STALE',
@@ -142,7 +151,8 @@ REASON_LOG_UNREADABLE: str = 'log_unreadable'
 #: ``nowIso`` was unparseable, so nothing can be age-checked.
 REASON_CLOCK_UNREADABLE: str = 'clock_unreadable'
 
-#: No counted monthly test exists for the CURRENT pack (or no pack is known).
+#: No counted monthly test exists for the CURRENT pack (config pi.power.cellEpoch,
+#: via resolveCellEpoch), or no pack is configured ('unknown').
 #: A new pack never inherits the old pack's verdict.
 REASON_NO_MONTHLY_TEST: str = 'no_monthly_test'
 
@@ -186,15 +196,10 @@ MIN_JOBS: int = 3
 SHUTDOWN_ALLOWANCE_S: float = 4.0
 
 #: The reserve left at the floor: 10 minutes (CIO 2026-10-02).  Coincides in
-#: value with battery_capacity.WINDOW_S but is a DIFFERENT quantity.
+#: value with battery_capacity.WINDOW_S but is a DIFFERENT quantity.  Used by the
+#: calibration tool to place floor_vcell_v; the provisional T does NOT subtract
+#: it -- there the floor is config drainFloorVolts itself (sec 15.3).
 RESERVE_S: int = 600
-
-#: The 450 mAh pouch's measured dropout; the current pack's is unmeasured until
-#: its calibration drain, which is why a T projected to it is ``provisional``.
-PROVISIONAL_CUTOFF_V: float = 3.44
-
-# The canonical ISO-8601 UTC instant format every Pi writer stamps (TD-027).
-_ISO: str = '%Y-%m-%dT%H:%M:%SZ'
 
 #: The verdict-history write waits at most this long for another writer's lock
 #: (Ruling 17): the reader runs on the card tick and must never stall on it.
@@ -209,11 +214,9 @@ _historyWriteWarned: bool = False
 # SQL.  Every value is BOUND from its owner -- no trigger or outcome literal.
 # ================================================================================
 
-#: The current pack = the cell_epoch of the newest row that carries one.
-_PACK_SQL: str = (
-    f"SELECT cell_epoch FROM {BATTERY_HEALTH_LOG_TABLE} "
-    "WHERE cell_epoch IS NOT NULL ORDER BY drain_event_id DESC LIMIT 1"
-)
+# The current pack is NOT read from the log: it is config pi.power.cellEpoch
+# (resolveCellEpoch), passed in -- the same resolver the writers and
+# isMonthlyTestDue use (Ruling 19).
 
 #: The pack's newest COUNTED monthly test.  "Counted" has one definition
 #: everywhere (isMonthlyTestDue, the boot finaliser): drain_rate_mv_s IS NOT NULL.
@@ -280,8 +283,8 @@ class BatteryHealthVerdict:
         timeToFloorS: T, seconds from key-off to the reserve floor.
         jobAvgS: J, the mean at-home job in seconds.
         jobMaxS: The longest of the jobs J was averaged over.
-        provisional: True when T was projected to PROVISIONAL_CUTOFF_V because
-            the pack has no calibration drain yet.
+        provisional: True when T was projected in a straight line to config
+            drainFloorVolts because the pack has no calibration drain yet.
     """
 
     verdict: str
@@ -308,6 +311,7 @@ def computeBatteryHealthVerdict(
     calibration: Mapping[str, Any] | None,
     jobsS: list[float],
     nowIso: str,
+    drainFloorVolts: float,
     floorEndedTs: str | None = None,
 ) -> BatteryHealthVerdict:
     """T vs J.  Pure: no clock, no database.
@@ -320,6 +324,9 @@ def computeBatteryHealthVerdict(
             or None -- T is then a provisional straight-line projection.
         jobsS: At-home job durations in seconds, NEWEST FIRST.
         nowIso: Canonical ISO-8601 UTC instant for the staleness check.
+        drainFloorVolts: Config ``pi.powerWatch.drainFloorVolts`` -- the reserve
+            floor the shutdown sequencer stops at (sec 15.3).  The provisional T
+            projects to it.
         floorEndedTs: ``start_timestamp`` of the pack's newest drain that the
             reserve floor ended at home, or None.  Newer than the counted test
             -> ``replace``: the pack failed the very job the verdict judges, so
@@ -329,7 +336,7 @@ def computeBatteryHealthVerdict(
     if floorEndedTs and floorEndedTs > testTs:
         return BatteryHealthVerdict(verdict=VERDICT_REPLACE, lastHealthCheckTs=floorEndedTs)
     try:
-        now = datetime.strptime(nowIso, _ISO)
+        now = datetime.strptime(nowIso, CANONICAL_ISO_FORMAT)
     except (TypeError, ValueError):
         return _unknown(REASON_CLOCK_UNREADABLE)
     rate = test.get('drain_rate_mv_s') if test else None
@@ -338,7 +345,7 @@ def computeBatteryHealthVerdict(
     rate = float(rate)
     lastTs = str(test['start_timestamp'])  # type: ignore[index]
     try:
-        testAt = datetime.strptime(lastTs, _ISO)
+        testAt = datetime.strptime(lastTs, CANONICAL_ISO_FORMAT)
     except ValueError:
         # The stored test date does not parse: the LOG is at fault, not the clock.
         return _unknown(REASON_LOG_UNREADABLE)
@@ -354,15 +361,17 @@ def computeBatteryHealthVerdict(
         t = float(calibration['t_floor_s']) * (float(calRate) / rate)
         provisional = False
     else:
-        # Straight line from the window's end VCELL to the provisional cutoff,
-        # minus the reserve.  Over-projects near empty -- hence the label.
+        # Straight line from the window's end VCELL to the reserve floor (config
+        # drainFloorVolts, where the sequencer stops -- the reserve lies below
+        # it, so nothing more is subtracted).  Over-projects near empty -- hence
+        # the label.
         # A NULL or non-numeric input here is an unreadable LOG row (Ruling 16):
         # a test reaped without a checkpoint keeps end_vcell_v NULL yet can be
         # rated from its trajectory.
         try:
             t = (float(test['window_end_s'])  # type: ignore[index]
-                 + 1000.0 * (float(test['end_vcell_v']) - PROVISIONAL_CUTOFF_V) / -rate  # type: ignore[index]
-                 - RESERVE_S)
+                 + 1000.0 * (float(test['end_vcell_v']) - float(drainFloorVolts))  # type: ignore[index]
+                 / -rate)
         except (TypeError, ValueError):
             return _unknown(REASON_LOG_UNREADABLE, lastTs)
         provisional = True
@@ -393,6 +402,8 @@ def readBatteryHealthVerdict(
     database: Any | None,
     nowIso: str,
     smoothingSec: float,
+    cellEpoch: str,
+    drainFloorVolts: float,
 ) -> BatteryHealthVerdict:
     """Read the current pack's facts and compute the verdict.
 
@@ -406,15 +417,18 @@ def readBatteryHealthVerdict(
         smoothingSec: Config ``pi.powerWatch.smoothingSec`` -- the confirm wait
             before the shutdown window opens, the first term of every job.
             Required: there is no default that could hide a missing value.
+        cellEpoch: The CURRENT pack -- ``resolveCellEpoch(config)``, the one
+            resolver the drain writers and ``isMonthlyTestDue`` also use.
+            ``'unknown'`` (no pack configured) -> ``no_monthly_test``.  Required.
+        drainFloorVolts: Config ``pi.powerWatch.drainFloorVolts`` -- the one
+            reserve floor; the provisional T projects to it.  Required.
     """
     if database is None:
         return _unknown(REASON_NO_DATABASE)
+    if not cellEpoch or cellEpoch == CELL_EPOCH_UNKNOWN:
+        return _unknown(REASON_NO_MONTHLY_TEST)
     try:
         with database.connect() as conn:
-            pack = conn.execute(_PACK_SQL).fetchone()
-            if pack is None:
-                return _unknown(REASON_NO_MONTHLY_TEST)
-            cellEpoch = pack[0]
             testRow = conn.execute(
                 _TEST_SQL, (DRAIN_TRIGGER_MONTHLY_TEST, cellEpoch)
             ).fetchone()
@@ -428,7 +442,8 @@ def readBatteryHealthVerdict(
                 _FLOOR_SQL, (cellEpoch, VERDICT_REPLACE)
             ).fetchone()
         result = _computeFromRows(testRow, calRow, jobRows, floorRow,
-                                  nowIso=nowIso, smoothingSec=smoothingSec)
+                                  nowIso=nowIso, smoothingSec=smoothingSec,
+                                  drainFloorVolts=drainFloorVolts)
     except Exception as exc:  # noqa: BLE001 -- unreadable log -> honest unknown
         logger.debug("battery-health verdict read failed (%s) -- unknown", exc)
         return _unknown(REASON_LOG_UNREADABLE)
@@ -443,7 +458,7 @@ def readBatteryHealthVerdict(
 
 def _computeFromRows(
     testRow: Any, calRow: Any, jobRows: Any, floorRow: Any,
-    *, nowIso: str, smoothingSec: float,
+    *, nowIso: str, smoothingSec: float, drainFloorVolts: float,
 ) -> BatteryHealthVerdict:
     """Map the fetched rows and compute.  Runs inside the reader's guard."""
     test = None
@@ -464,7 +479,7 @@ def _computeFromRows(
     ]
     return computeBatteryHealthVerdict(
         test=test, calibration=calibration, jobsS=jobsS, nowIso=nowIso,
-        floorEndedTs=floorRow[0] if floorRow is not None else None,
+        drainFloorVolts=drainFloorVolts, floorEndedTs=floorRow[0] if floorRow is not None else None,
     )
 
 
@@ -475,8 +490,8 @@ def _syncSeconds(startedAt: Any, endedAt: Any) -> float | None:
     negative duration is a wall-clock step mid-sync, not a measurement.
     """
     try:
-        seconds = (datetime.strptime(str(endedAt), _ISO)
-                   - datetime.strptime(str(startedAt), _ISO)).total_seconds()
+        seconds = (datetime.strptime(str(endedAt), CANONICAL_ISO_FORMAT)
+                   - datetime.strptime(str(startedAt), CANONICAL_ISO_FORMAT)).total_seconds()
     except ValueError:
         return None
     return seconds if seconds >= 0 else None

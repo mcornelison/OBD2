@@ -20,6 +20,10 @@
 #                                     (production drains to <=3.50 V, median
 #                                     runtime vs a 727 s baseline); no row has
 #                                     reached it since 2026-05-18.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the current pack is the config's
+#                                     (resolveCellEpoch, passed in), never the newest
+#                                     row's; the provisional T projects to config
+#                                     drainFloorVolts (no 3.44 V, no extra reserve).
 # ================================================================================
 ################################################################################
 
@@ -54,7 +58,7 @@ from src.pi.power.battery_health_verdict import (
     readBatteryHealthVerdict,
 )
 from src.pi.power.power_watch.contract import OutcomeKind
-from tests.pi.battery_verdict_fixture import VerdictDatabase, goodPack
+from tests.pi.battery_verdict_fixture import PACK, VerdictDatabase, goodPack
 
 _NOW = "2026-10-28T12:00:00Z"
 _NOW_DT = datetime(2026, 10, 28, 12, 0, 0)
@@ -62,10 +66,12 @@ _TEST = {"start_timestamp": "2026-10-27T17:00:00Z", "drain_rate_mv_s": -0.04, "e
          "window_end_s": 660}
 _CAL = {"t_floor_s": 18000, "drain_rate_mv_s": -0.04}
 _SMOOTHING_S = 5.0
+_FLOOR_V = 3.60  # config pi.powerWatch.drainFloorVolts -- the ONE reserve floor
 
 
-def _v(test=_TEST, cal=_CAL, jobs=(100.0,) * 10):
-    return computeBatteryHealthVerdict(test=test, calibration=cal, jobsS=list(jobs), nowIso=_NOW)
+def _v(test=_TEST, cal=_CAL, jobs=(100.0,) * 10, floor=_FLOOR_V):
+    return computeBatteryHealthVerdict(test=test, calibration=cal, jobsS=list(jobs), nowIso=_NOW,
+                                       drainFloorVolts=floor)
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +94,21 @@ def test_T_scalesTheCalibrationTimeByTheRateRatio() -> None:
     assert v.timeToFloorS == 9000 and not v.provisional
 
 
-def test_noCalibration_isProvisional_straightLineTo3_44_minusTheReserve() -> None:
+def test_noCalibration_isProvisional_straightLineToTheDrainFloor() -> None:
     v = _v(cal=None)
-    # 660 s + (4.07 - 3.44) V / 0.04 mV/s - 600 s reserve = 660 + 15750 - 600
-    assert v.timeToFloorS == 15810 and v.provisional
+    # Ruling 19: T = window_end + (end - drainFloorVolts) / -rate, NO further reserve:
+    # 660 s + 1000 * (4.07 - 3.60) V / 0.04 mV/s = 660 + 11750 = 12410 s
+    assert v.timeToFloorS == 12410 and v.provisional
+
+
+def test_theProvisionalT_followsTheConfiguredFloor() -> None:
+    # 660 + 1000 * (4.07 - 3.50) / 0.04 = 660 + 14250 = 14910 s
+    assert _v(cal=None, floor=3.50).timeToFloorS == 14910
+
+
+def test_theRetiredProvisionalCutoff_isGone() -> None:
+    assert not hasattr(verdictModule, "PROVISIONAL_CUTOFF_V")
+    assert not hasattr(verdictModule, "_PACK_SQL")
 
 
 def test_noTestForThisPack_isUnknown() -> None:
@@ -155,7 +172,7 @@ def test_aTestWithNoRate_isNotACountedTest() -> None:
 
 def test_unparseableClock_isClockUnreadable_neverAConfidentVerdict() -> None:
     v = computeBatteryHealthVerdict(test=_TEST, calibration=_CAL, jobsS=[100.0] * 10,
-                                    nowIso="not-a-time")
+                                    nowIso="not-a-time", drainFloorVolts=_FLOOR_V)
     assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_CLOCK_UNREADABLE)
 
 
@@ -164,8 +181,9 @@ def test_unparseableClock_isClockUnreadable_neverAConfidentVerdict() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _read(db):
-    return readBatteryHealthVerdict(database=db, nowIso=_NOW, smoothingSec=_SMOOTHING_S)
+def _read(db, cellEpoch=PACK):
+    return readBatteryHealthVerdict(database=db, nowIso=_NOW, smoothingSec=_SMOOTHING_S,
+                                    cellEpoch=cellEpoch, drainFloorVolts=_FLOOR_V)
 
 
 def test_reader_resolvesAGoodPack() -> None:
@@ -177,15 +195,19 @@ def test_reader_resolvesAGoodPack() -> None:
 def test_reader_J_isSmoothingPlusSyncPlusShutdownAllowance() -> None:
     """Ruling 10: the confirm-wait term is config smoothingSec, passed in."""
     db = goodPack(_NOW_DT)
-    v = readBatteryHealthVerdict(database=db, nowIso=_NOW, smoothingSec=7.0)
+    v = readBatteryHealthVerdict(database=db, nowIso=_NOW, smoothingSec=7.0,
+                                 cellEpoch=PACK, drainFloorVolts=_FLOOR_V)
     assert v.jobAvgS == round(7.0 + 100.0 + SHUTDOWN_ALLOWANCE_S)
     assert _read(db).jobAvgS == round(_SMOOTHING_S + 100.0 + SHUTDOWN_ALLOWANCE_S)
 
 
-def test_reader_smoothingSec_isRequired() -> None:
+@pytest.mark.parametrize("missing", ["smoothingSec", "cellEpoch", "drainFloorVolts"])
+def test_reader_everyConfigInput_isRequired(missing) -> None:
     """No default that would hide a missing config value."""
+    kw = {"smoothingSec": _SMOOTHING_S, "cellEpoch": PACK, "drainFloorVolts": _FLOOR_V}
+    del kw[missing]
     with pytest.raises(TypeError):
-        readBatteryHealthVerdict(database=goodPack(_NOW_DT), nowIso=_NOW)  # type: ignore[call-arg]
+        readBatteryHealthVerdict(database=goodPack(_NOW_DT), nowIso=_NOW, **kw)
 
 
 def test_theValidatorDefault_isWhatTheEmitterFallsBackTo() -> None:
@@ -212,7 +234,7 @@ def test_reader_noCalibration_isProvisional() -> None:
     db.addTest(1)
     db.addJobs(10)
     v = _read(db)
-    assert v.provisional and v.timeToFloorS == 15810
+    assert v.provisional and v.timeToFloorS == 12410
 
 
 def test_reader_anUncountedTest_doesNotVote() -> None:
@@ -236,10 +258,29 @@ def test_reader_usesTheNewestCountedTest() -> None:
 
 
 def test_reader_aNewPack_neverInheritsTheOldPacksVerdict() -> None:
-    """Review Focus #4: the newest row is a new pack with no counted test."""
+    """Review Focus #4: the CONFIGURED pack has no rows; every row is another pack's."""
     db = goodPack(_NOW_DT)
-    db.addKeyoff(0.1, cellEpoch="new-pack")
-    v = _read(db)
+    v = _read(db, cellEpoch="new-pack")
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_NO_MONTHLY_TEST)
+
+
+def test_reader_theCurrentPack_isTheConfigs_notTheNewestRows() -> None:
+    """Ruling 19 (M1): one resolver (resolveCellEpoch) names the pack everywhere.
+
+    A newer row stamped with another pack (a bench row, a NULL-stamp repair)
+    no longer flips the card to no_monthly_test.
+    """
+    db = goodPack(_NOW_DT)
+    db.addKeyoff(0.1, cellEpoch="other-pack")
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+def test_reader_anUnknownPack_isNoMonthlyTest_evenWithRowsTaggedUnknown() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30, cellEpoch="unknown")
+    db.addTest(1, cellEpoch="unknown")
+    db.addJobs(10)
+    v = _read(db, cellEpoch="unknown")
     assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_NO_MONTHLY_TEST)
 
 

@@ -33,6 +33,7 @@
 # 2026-10-03    | Atlas (ARCH-065a) | T7: VC4 fed by the ARCH-065 verdict (a
 #               |              | counted monthly test, stale after 45 days)
 #               |              | instead of the retired qualifying-drain rows.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: compute takes drainFloorVolts.
 # ================================================================================
 ################################################################################
 
@@ -46,6 +47,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from common.config.validator import DEFAULTS
 from pi.power.battery_health_verdict import (
     STALE_TEST_DAYS,
     VERDICT_GOOD,
@@ -326,6 +328,7 @@ def _producedBattery(*, checkDaysAgo: float, soc: int = 76, vcellV: float = 4.02
         calibration=None,
         jobsS=[109.0] * 10,
         nowIso=_NOW_ISO,
+        drainFloorVolts=DEFAULTS["pi.powerWatch.drainFloorVolts"],
     )
     return verdict, _battery(
         soc=soc,

@@ -54,6 +54,10 @@
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T7: the battery-health verdict is
 #               |              | T vs J; the card gains timeToFloorS / jobAvgS /
 #               |              | jobMaxS / provisional; smoothingSec from config.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: the verdict's pack is
+#               |              | resolveCellEpoch(config) and its provisional floor
+#               |              | is config pi.powerWatch.drainFloorVolts, both passed
+#               |              | in (one owner each; no row-derived pack).
 # ================================================================================
 ################################################################################
 
@@ -1094,8 +1098,11 @@ class CardStateEmitterMixin:
         "we ran, just now, and cannot say" -- the reason carries which cause.
 
         J's confirm-wait term is config ``pi.powerWatch.smoothingSec`` (Ruling
-        10); when the key is absent the validator's DEFAULT is used, imported
-        rather than restated.
+        10) and the provisional T's floor is ``pi.powerWatch.drainFloorVolts``
+        (Ruling 19); when a key is absent the validator's DEFAULT is used,
+        imported rather than restated.  The current pack is
+        ``resolveCellEpoch(config)`` -- the one resolver the drain writers and
+        the monthly-test due check use (Ruling 19).
 
         Returns:
             The :class:`~pi.power.battery_health_verdict.BatteryHealthVerdict`.
@@ -1104,6 +1111,7 @@ class CardStateEmitterMixin:
         """
         try:
             from common.config.validator import DEFAULTS
+            from pi.power.battery_health import resolveCellEpoch
             from pi.power.battery_health_verdict import (
                 REASON_LOG_UNREADABLE,
                 VERDICT_UNKNOWN,
@@ -1111,15 +1119,21 @@ class CardStateEmitterMixin:
                 readBatteryHealthVerdict,
             )
 
+            powerWatchCfg = self._config.get("pi", {}).get("powerWatch", {})
             smoothingSec = float(
-                self._config.get("pi", {}).get("powerWatch", {}).get(
-                    "smoothingSec", DEFAULTS["pi.powerWatch.smoothingSec"]
+                powerWatchCfg.get("smoothingSec", DEFAULTS["pi.powerWatch.smoothingSec"])
+            )
+            drainFloorVolts = float(
+                powerWatchCfg.get(
+                    "drainFloorVolts", DEFAULTS["pi.powerWatch.drainFloorVolts"]
                 )
             )
             result = readBatteryHealthVerdict(
                 database=getattr(self, "_database", None),
                 nowIso=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 smoothingSec=smoothingSec,
+                cellEpoch=resolveCellEpoch(self._config),
+                drainFloorVolts=drainFloorVolts,
             )
         except Exception as e:  # noqa: BLE001 -- never block the emit loop
             logger.debug("battery-health verdict unavailable: %s", e)

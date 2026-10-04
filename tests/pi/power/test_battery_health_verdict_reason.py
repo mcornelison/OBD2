@@ -24,6 +24,7 @@
 #                                     too_few_syncs replace no_qualifying_drains
 #                                     / too_few_drains / health_data_stale).
 #                                     The US-632 claims are unchanged.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the reader takes cellEpoch + drainFloorVolts.
 # ================================================================================
 ################################################################################
 
@@ -46,14 +47,15 @@ from pi.power.battery_health_verdict import (
     VERDICT_UNKNOWN,
     readBatteryHealthVerdict,
 )
-from tests.pi.battery_verdict_fixture import VerdictDatabase, goodPack
+from tests.pi.battery_verdict_fixture import PACK, VerdictDatabase, goodPack
 
 _NOW = datetime(2026, 10, 28, 12, 0, 0)
 _NOW_ISO = "2026-10-28T12:00:00Z"
 
 
 def _read(db, nowIso: str = _NOW_ISO):
-    return readBatteryHealthVerdict(database=db, nowIso=nowIso, smoothingSec=5.0)
+    return readBatteryHealthVerdict(database=db, nowIso=nowIso, smoothingSec=5.0,
+                                    cellEpoch=PACK, drainFloorVolts=3.60)
 
 
 class _BrokenDatabase:

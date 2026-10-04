@@ -20,6 +20,7 @@
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T7: the verdict close_reason
 #               |              | tests pinned the retired qualifying rule;
 #               |              | replaced by a no-prose check on the new SQL.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: _PACK_SQL retired (pack = config).
 # ================================================================================
 ################################################################################
 
@@ -516,7 +517,7 @@ class TestEveryClosePathWritesItsReason:
 
 class TestTheVerdictReadsNoProse:
     @pytest.mark.parametrize(
-        'name', ['_PACK_SQL', '_TEST_SQL', '_CAL_SQL', '_JOBS_SQL', '_FLOOR_SQL'],
+        'name', ['_TEST_SQL', '_CAL_SQL', '_JOBS_SQL', '_FLOOR_SQL'],
     )
     def test_verdictQueries_readNoProse(self, name: str) -> None:
         sql = getattr(verdictModule, name)

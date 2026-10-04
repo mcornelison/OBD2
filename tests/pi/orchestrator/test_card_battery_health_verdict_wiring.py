@@ -26,6 +26,10 @@
 #                               carries timeToFloorS / jobAvgS / jobMaxS /
 #                               provisional; J's confirm wait is config
 #                               pi.powerWatch.smoothingSec (Ruling 10).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: the card's pack is config
+#                               pi.power.cellEpoch (resolveCellEpoch) and the
+#                               provisional floor is config drainFloorVolts;
+#                               _PACK_SQL is gone from the guarded statements.
 # ================================================================================
 ################################################################################
 
@@ -46,6 +50,7 @@ from src.pi.power.battery_health_verdict import SHUTDOWN_ALLOWANCE_S, STALE_TEST
 from tests.pi.battery_verdict_fixture import (
     BATTERY_LOG_COLUMNS,
     CAL_T_FLOOR_S,
+    PACK,
     STARTUP_LOG_COLUMNS,
     VerdictDatabase,
     goodPack,
@@ -54,7 +59,7 @@ from tests.pi.battery_verdict_fixture import (
 # Sampled ONCE at import: the mixin owns its own wall clock.
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 
-_VERDICT_SQL = ("_PACK_SQL", "_TEST_SQL", "_CAL_SQL", "_JOBS_SQL", "_FLOOR_SQL")
+_VERDICT_SQL = ("_TEST_SQL", "_CAL_SQL", "_JOBS_SQL", "_FLOOR_SQL")
 
 #: Columns the verdict reads that the fixture may legitimately leave to the
 #: database: the autoincrement key, and the verdict the reader itself writes.
@@ -84,10 +89,11 @@ class _FakeOrch(CardStateEmitterMixin):
         self._lastSyncRows = 0
 
 
-def _config(tmp_path, **powerWatch):
+def _config(tmp_path, cellEpoch=PACK, **powerWatch):
     pi = {
         "splash": {"statesDir": str(tmp_path / "states")},
         "dashboard": {"stateEmitIntervalSeconds": 0.0},
+        "power": {"cellEpoch": cellEpoch},
     }
     if powerWatch:
         pi["powerWatch"] = powerWatch
@@ -156,6 +162,51 @@ def test_emit_smoothingSec_comesFromConfig(tmp_path):
 def test_emit_absentSmoothingSec_fallsBackToTheValidatorDefault(tmp_path):
     orch = _FakeOrch(_config(tmp_path), hardwareManager=_liveUps(), database=goodPack(_NOW))
     assert _emitAndRead(tmp_path, orch)["jobAvgS"] == _defaultJobS()
+
+
+def test_emit_thePack_isResolveCellEpochOfTheConfig(tmp_path):
+    """Ruling 19 (M1): the verdict's pack is the config's, not the newest row's."""
+    db = goodPack(_NOW)
+    db.addKeyoff(0.1, cellEpoch="bench-pack")  # a newer row of ANOTHER pack
+    orch = _FakeOrch(_config(tmp_path), hardwareManager=_liveUps(), database=db)
+    assert _emitAndRead(tmp_path, orch)["health"] == "good"
+
+
+def test_emit_aConfiguredPackWithNoTest_isNoMonthlyTest(tmp_path):
+    orch = _FakeOrch(_config(tmp_path, cellEpoch="new-pack"), hardwareManager=_liveUps(),
+                     database=goodPack(_NOW))
+    bh = _emitAndRead(tmp_path, orch)
+    assert (bh["health"], bh["reasons"]["health"]) == ("unknown", "no_monthly_test")
+
+
+def test_emit_noConfiguredPack_isNoMonthlyTest(tmp_path):
+    config = _config(tmp_path)
+    del config["pi"]["power"]
+    orch = _FakeOrch(config, hardwareManager=_liveUps(), database=goodPack(_NOW))
+    bh = _emitAndRead(tmp_path, orch)
+    assert (bh["health"], bh["reasons"]["health"]) == ("unknown", "no_monthly_test")
+
+
+def _provisionalPack():
+    db = VerdictDatabase(_NOW)
+    db.addTest(1)
+    db.addJobs(10)
+    return db
+
+
+def test_emit_theProvisionalFloor_isConfigDrainFloorVolts(tmp_path):
+    """Ruling 19 (M2): one reserve floor -- the sequencer's drainFloorVolts."""
+    orch = _FakeOrch(_config(tmp_path, drainFloorVolts=3.5), hardwareManager=_liveUps(),
+                     database=_provisionalPack())
+    bh = _emitAndRead(tmp_path, orch)
+    # 660 + 1000 * (4.07 - 3.50) / 0.04 = 14910 s
+    assert bh["provisional"] is True and bh["timeToFloorS"] == 14910
+
+
+def test_emit_absentDrainFloorVolts_fallsBackToTheValidatorDefault(tmp_path):
+    orch = _FakeOrch(_config(tmp_path), hardwareManager=_liveUps(), database=_provisionalPack())
+    floor = DEFAULTS["pi.powerWatch.drainFloorVolts"]
+    assert _emitAndRead(tmp_path, orch)["timeToFloorS"] == round(660 + 1000 * (4.07 - floor) / 0.04)
 
 
 def test_emit_honestUnknownWhenTooFewSyncs(tmp_path):

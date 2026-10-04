@@ -28,6 +28,7 @@
 # 2026-08-29    | Rex (US-605) | Initial -- 30 s open-drain checkpoint catalog.
 # 2026-10-03    | Atlas (ARCH-065a) | T7: verdict assertions re-pinned on the
 #               |              | ARCH-065 reader; qualifyingCount/median gone.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the reader takes cellEpoch + drainFloorVolts.
 # ================================================================================
 ################################################################################
 
@@ -235,6 +236,7 @@ def _verdictOver(database: ObdDatabase) -> Any:
     """Run the REAL ARCH-065 verdict reader over the REAL database, at the real now."""
     return readBatteryHealthVerdict(
         database=database, nowIso=utcIsoNow(), smoothingSec=5.0,
+        cellEpoch="18650-pack", drainFloorVolts=3.60,
     )
 
 
