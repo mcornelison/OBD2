@@ -114,3 +114,59 @@ def test_homeStateAtLossRecord_carriesVcellBeforeCut(tmp_path) -> None:
     h.observe()
     h.ensureRecorded()
     assert json.loads(path.read_text(encoding="utf-8"))["vcell_before_cut_v"] == 4.19
+
+
+def _lossRig(tmp_path, now):
+    import json
+
+    from src.pi.power.power_watch.__main__ import HomeStateAtLoss, WallVcellCache, makeOutcomeSink
+
+    cache = WallVcellCache(monotonicFn=lambda: now[0])
+    path = tmp_path / "o.json"
+    h = HomeStateAtLoss(
+        lambda: None, outcomePath=str(path), startFn=lambda fn: None,
+        vcellBeforeCut=cache.last,
+    )
+    sink = makeOutcomeSink(str(path), wallVcell=h.vcellBeforeCut)
+    return cache, h, sink, lambda: json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_preCutVcell_survivesMinutesBetweenLossAndRecords(tmp_path) -> None:
+    from src.pi.power.power_watch.contract import OutcomeKind
+
+    now = [0.0]
+    cache, h, sink, read = _lossRig(tmp_path, now)
+    cache.update(4.2)  # on wall at t=0
+    now[0] = 3.0
+    h.observe()  # the loss
+    now[0] = 300.0  # records are written minutes later; cache has expired
+    assert cache.last() is None
+    h.ensureRecorded()
+    assert read()["vcell_before_cut_v"] == 4.2
+    sink(SyncOutcomeRecord(OutcomeKind.DELIVERED, "ok", 3, 0, "2026-10-02T16:53:40Z", "2026-10-02T16:58:12Z"))
+    assert read()["vcell_before_cut_v"] == 4.2
+
+
+def test_staleAtTheLoss_snapshotIsNone(tmp_path) -> None:
+    now = [0.0]
+    cache, h, _sink, read = _lossRig(tmp_path, now)
+    assert h.vcellBeforeCut() is None  # before any loss
+    cache.update(4.2)
+    now[0] = 20.0  # older than 15 s when the loss is observed
+    h.observe()
+    assert h.vcellBeforeCut() is None
+    h.ensureRecorded()
+    assert "vcell_before_cut_v" not in read()
+
+
+def test_secondLoss_reSnapshots(tmp_path) -> None:
+    now = [0.0]
+    cache, h, _sink, _read = _lossRig(tmp_path, now)
+    cache.update(4.2)
+    h.observe()
+    assert h.vcellBeforeCut() == 4.2
+    now[0] = 1000.0
+    cache.update(4.0)  # restored, on wall again
+    now[0] = 1002.0
+    h.observe()  # second loss
+    assert h.vcellBeforeCut() == 4.0

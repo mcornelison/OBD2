@@ -727,13 +727,16 @@ class HomeStateAtLoss:
         outcomePath: The durable shutdown record (powerwatch_outcome.json).
         startFn: Runs the observation off the caller's thread; a daemon
             thread when None. Tests pass a synchronous one.
-        vcellBeforeCut: ARCH-065 -- ``WallVcellCache.last``; every record this
-            class writes carries it as ``vcell_before_cut_v``.
+        vcellBeforeCut: ARCH-065 -- ``WallVcellCache.last``. Read ONCE per loss
+            (``observe``) so its age check applies at the loss, not minutes
+            later; every record carries that snapshot as ``vcell_before_cut_v``.
         """
         self._readState = readState
         self._outcomePath = outcomePath
         self._startFn = startFn if startFn is not None else _startDaemonThread
-        self._vcellBeforeCut = vcellBeforeCut
+        self._vcellSource = vcellBeforeCut
+        #: Snapshot of the on-wall VCELL taken ONCE per loss, in observe().
+        self._vcellSnapshot: float | None = None
         # Re-entrant: the sync sink runs under it and reads stateName.
         self._lock = threading.RLock()
         self._loss: threading.Event | None = None
@@ -744,7 +747,9 @@ class HomeStateAtLoss:
     def observe(self) -> None:
         """Start this loss's detector read. Returns at once; never raises."""
         loss = threading.Event()
+        snapshot = self._snapshotVcell()
         with self._lock:
+            self._vcellSnapshot = snapshot
             self._loss = loss
             self._answer = None
             self._handedToSync = False
@@ -767,6 +772,21 @@ class HomeStateAtLoss:
                     self._writeHomeStateRecord(state.name, "home state at the power loss")
         finally:
             loss.set()
+
+    def _snapshotVcell(self) -> float | None:
+        """The on-wall VCELL as of this loss; None when absent or stale. Never raises."""
+        if self._vcellSource is None:
+            return None
+        try:
+            return self._vcellSource()
+        except Exception as exc:  # noqa: BLE001 -- never block the loss path
+            logger.debug("powerwatch: pre-cut VCELL snapshot failed (%s)", exc)
+            return None
+
+    def vcellBeforeCut(self) -> float | None:
+        """This loss's pre-cut VCELL snapshot (None before any loss)."""
+        with self._lock:
+            return self._vcellSnapshot
 
     def _readOnce(self) -> HomeNetworkState:
         """One detector call; UNKNOWN when it raises."""
@@ -833,7 +853,7 @@ class HomeStateAtLoss:
             detail=detail,
             task="home_state_at_loss",
             homeState=name,
-            vcellBeforeCutV=self._vcellBeforeCut() if self._vcellBeforeCut is not None else None,
+            vcellBeforeCutV=self.vcellBeforeCut(),
         )
         self._written = True
         logger.info("powerwatch: home state at the power loss = %s", name)
@@ -1291,7 +1311,7 @@ def main(argv: list[str] | None = None) -> int:
             makeOutcomeSink(
                 outcomePath,
                 homeState=homeStateAtLoss.stateName,
-                wallVcell=wallCache.last,
+                wallVcell=homeStateAtLoss.vcellBeforeCut,
             )
         ),
         # ARCH-065: the drain runs to completion -- it ends delivered, or when

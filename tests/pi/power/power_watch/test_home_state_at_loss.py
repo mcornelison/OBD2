@@ -295,7 +295,7 @@ def test_main_wiresHomeStateAtLossIntoTheLossPath() -> None:
     ]
     assert any(
         c.get("homeState") == "homeStateAtLoss.stateName"
-        and c.get("wallVcell") == "wallCache.last"
+        and c.get("wallVcell") == "homeStateAtLoss.vcellBeforeCut"
         for c in sinkCalls
     )
     composed = [
