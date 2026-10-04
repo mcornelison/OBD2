@@ -34,6 +34,8 @@
 #                          the prior boot's; otherwise NULL.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: also lands sync start/end and the pre-cut
 #                          VCELL (three more prior_boot_* columns).
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6: arm finalises the prior drain (cut step, window rate),
+#                          best-effort.
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -486,6 +488,31 @@ def _writeStartupLogRow(
         conn.close()
 
 
+def _finalizePriorDrain(dbPath: str, priorBootSync: dict[str, object]) -> None:
+    """ARCH-065 T6: finish the prior drain's cut step / window rate. Never raises.
+
+    Lazy-imported like :func:`_writeStartupLogRow`; arm runs in a oneshot that
+    must not fail on a capacity-field problem.
+    """
+    try:
+        from src.pi.power.battery_health import ensureBatteryHealthLogCapacityColumns
+        from src.pi.power.battery_health_finalize import finalizeLatestDrain
+
+        vcell = priorBootSync.get("prior_boot_vcell_before_cut_v")
+        conn = sqlite3.connect(dbPath, timeout=5.0)
+        try:
+            ensureBatteryHealthLogCapacityColumns(conn)
+            finalizeLatestDrain(
+                conn,
+                priorBootVcellBeforeCutV=float(vcell) if isinstance(vcell, (int, float)) else None,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 -- never block boot
+        logger.warning("boot_progress: prior-drain finalise skipped: %s", exc)
+
+
 def arm(
     *,
     filePath: str = DEFAULT_FILE_PATH,
@@ -546,6 +573,8 @@ def arm(
         )
     except Exception as exc:  # noqa: BLE001 -- never block boot
         logger.error("boot_progress: startup_log write failed: %s", exc)
+
+    _finalizePriorDrain(dbPath, priorBootSync)
 
     if nasArchiveEnabled and trail:
         try:
