@@ -89,6 +89,17 @@
 #               |              | 'unassessed'; drive_summary.is_real DEFAULTs
 #               |              | NULL; ambient_temp_at_start_c renamed to
 #               |              | intake_air_temp_at_start_c).  Forward-only.
+# 2026-09-24    | Rex (US-810) | Sprint 94 -- registered v0031 (edr_imu_derived
+#               |              | gyro RATE bias columns).  Forward-only.
+# 2026-09-24    | Rex (US-683) | Sprint 94 -- registered v0032 (battery_health_log
+#               |              | close_reason + backfill).  Forward-only.
+# 2026-09-25    | Rex (US-790) | Sprint 94 -- registered v0033 (drain_vcell_trajectory
+#               |              | table).  Forward-only.
+# 2026-09-30    | Rex (US-776-f) | Sprint 95 -- registered v0034 (startup_log
+#               |              | prior-boot shutdown-sync columns).  Forward-only.
+# 2026-10-03    | Atlas (ARCH-065a) | Registered v0035 (ARCH-065 battery capacity
+#               |              | columns on battery_health_log + startup_log).
+#               |              | Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -208,6 +219,21 @@ from src.server.migrations.versions.v0029_us809b1_realtime_written_at import (
 from src.server.migrations.versions.v0030_us809b2_written_at_default import (
     MIGRATION as _V0030,
 )
+from src.server.migrations.versions.v0031_us810_edr_gyro_rate_bias import (
+    MIGRATION as _V0031,
+)
+from src.server.migrations.versions.v0032_us683_battery_health_close_reason import (
+    MIGRATION as _V0032,
+)
+from src.server.migrations.versions.v0033_us790_drain_vcell_trajectory import (
+    MIGRATION as _V0033,
+)
+from src.server.migrations.versions.v0034_us776f_startup_log_prior_boot_sync import (
+    MIGRATION as _V0034,
+)
+from src.server.migrations.versions.v0035_arch065_battery_capacity_columns import (
+    MIGRATION as _V0035,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -244,6 +270,11 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0028,
     _V0029,
     _V0030,
+    _V0031,
+    _V0032,
+    _V0033,
+    _V0034,
+    _V0035,
 )
 
 

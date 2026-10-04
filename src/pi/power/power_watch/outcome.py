@@ -3,8 +3,8 @@
 # Purpose/Description: Producer-only typed durable outcome record for the
 #                      Phase-2 power-watch pre-shutdown pipeline: atomic
 #                      write-temp+rename+fdatasync, never raises (a draining-Pi
-#                      failure must not block shutdown). The consumer (next
-#                      boot, separate process) is out of scope.
+#                      failure must not block shutdown). The consumer is the
+#                      next boot's boot_progress.arm (US-776-f).
 # Author: (implementation plan 2026-05-17)
 # Creation Date: 2026-05-17
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -24,6 +24,14 @@
 #                               the shared writer takes a `what` label precisely
 #                               so a shared failure message can never name the
 #                               wrong record type.
+# 2026-09-30    | Rex (US-776-f) | writeOutcomeRecord stamps boot_id and takes
+#                               the optional home_state / sync_outcome /
+#                               backlog_start / backlog_end fields the next
+#                               boot lands into startup_log. Existing keys
+#                               unchanged.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: optional sync_started_at / sync_ended_at /
+#                               vcell_before_cut_v keys.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: optional loss_at key (HomeStateAtLoss.lossIso).
 # ================================================================================
 ################################################################################
 """Producer-only typed durable outcome record (atomic, never raises)."""
@@ -34,7 +42,10 @@ import logging
 import os
 
 from src.common.time.helper import utcIsoNow
-from src.pi.diagnostics.boot_progress import _fdatasyncBestEffort  # proven helper
+from src.pi.diagnostics.boot_progress import (  # proven helpers
+    _fdatasyncBestEffort,
+    readBootId,
+)
 from src.pi.power.power_watch.contract import RECORD_SCHEMA_VERSION, OutcomeKind
 
 logger = logging.getLogger(__name__)
@@ -80,25 +91,67 @@ def writeAtomicJson(path: str, payload: dict, *, what: str = "record") -> bool:
         return False
 
 
-def writeOutcomeRecord(path: str, kind: OutcomeKind, *, detail: str, task: str) -> None:
+def writeOutcomeRecord(
+    path: str,
+    kind: OutcomeKind,
+    *,
+    detail: str,
+    task: str,
+    homeState: str | None = None,
+    syncOutcome: str | None = None,
+    backlogStart: int | None = None,
+    backlogEnd: int | None = None,
+    syncStartedAt: str | None = None,
+    syncEndedAt: str | None = None,
+    vcellBeforeCutV: float | None = None,
+    lossAt: str | None = None,
+) -> None:
     """Producer ONLY. Atomic write-temp+rename+fdatasync; never raises
-    (a draining-Pi failure must not block shutdown). The consumer (next
-    boot, separate process) is out of scope.
+    (a draining-Pi failure must not block shutdown).
+
+    The record is stamped with the writer's ``boot_id``. The next boot's
+    ``boot_progress.arm`` lands the four optional fields into startup_log's
+    ``prior_boot_*`` columns (US-776-f) only when that ``boot_id`` matches the
+    prior boot's breadcrumb trail, so a record left over from an older boot
+    (the prior boot was hard-cut before writing one) lands as NULL.
 
     Args:
         path: Destination JSON path.
         kind: The typed OutcomeKind for this record.
         detail: Free-text fault detail.
         task: Name of the pipeline task that produced this record.
+        homeState: HomeNetworkState name at the power loss (US-741).
+        syncOutcome: The shutdown sync's outcome name (US-776-d).
+        backlogStart: Unsynced backlog before the first attempt (US-776-d).
+        backlogEnd: Unsynced backlog after the last attempt (US-776-d).
+            Each optional field is written only when supplied; an absent key
+            is what lands as NULL.
+        syncStartedAt: ARCH-065 -- UTC ISO second the drain began.
+        syncEndedAt: ARCH-065 -- UTC ISO second the drain returned.
+        vcellBeforeCutV: ARCH-065 -- powerwatch's last on-wall VCELL.
+        lossAt: ARCH-065 -- this loss's wall time (HomeStateAtLoss.lossIso, the one
+            owner); lands as startup_log.prior_boot_loss_at and keys the boot finaliser.
     """
     try:
-        rec = {
+        rec: dict[str, object] = {
             "schema": RECORD_SCHEMA_VERSION,
             "kind": kind.value,
             "detail": detail,
             "task": task,
             "ts": utcIsoNow(),
+            "boot_id": readBootId(),
         }
+        optional = {
+            "home_state": homeState,
+            "sync_outcome": syncOutcome,
+            "backlog_start": backlogStart,
+            "backlog_end": backlogEnd,
+            "sync_started_at": syncStartedAt,
+            "sync_ended_at": syncEndedAt,
+            "vcell_before_cut_v": vcellBeforeCutV,
+            "loss_at": lossAt,
+        }
+        rec.update({key: value for key, value in optional.items() if value is not None})
     except Exception as exc:  # noqa: BLE001 -- producer must never block shutdown
         logger.warning("powerwatch outcome record build failed: %s", exc)
         return

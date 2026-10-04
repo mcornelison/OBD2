@@ -21,6 +21,8 @@
 #                                 death date arrived; rename completed).
 # 2026-09-22    | Rex (US-801)  | IMU rate pins assert against the single
 #                                 definition, not a second literal.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: joinWaitSec/stallSec defaults + validation replace shutdownSyncCeilingSec.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19 (M8): drainFloorDwellReads must be an integer >= 1.
 # ================================================================================
 ################################################################################
 
@@ -813,7 +815,7 @@ class TestHomeNetworkConfig:
         assert hn['ssid'] == 'DeathStarWiFi'
         assert hn['subnet'] == '10.27.27.0/24'
         assert hn['pingTimeoutSeconds'] == 3
-        assert hn['serverPingPath'] == '/api/v1/ping'
+        assert hn['serverPingPath'] == '/api/v1/health'
 
     def test_homeNetwork_fullyPopulated_roundTripPreserved(self):
         validator = ConfigValidator(requiredKeys=[])
@@ -883,6 +885,29 @@ class TestHomeNetworkConfig:
 
         assert 'pi.homeNetwork.serverPingPath' in excInfo.value.missingFields
 
+    def test_homeNetwork_syncWaits_defaults(self):
+        """ARCH-065: join wait 120 s, stall 60 s; the retired ceiling is gone."""
+        validator = ConfigValidator(requiredKeys=[])
+
+        result = validator.validate(self._minimalTierConfig())
+
+        assert result['pi']['homeNetwork']['joinWaitSec'] == 120
+        assert result['pi']['homeNetwork']['stallSec'] == 60
+        assert 'shutdownSyncCeilingSec' not in result['pi']['homeNetwork']
+
+    @pytest.mark.parametrize('key', ['joinWaitSec', 'stallSec'])
+    @pytest.mark.parametrize('badValue', [0, -5, -0.5, True, '60', [60]])
+    def test_homeNetwork_badSyncWait_raises(self, key, badValue):
+        """ARCH-065: a non-positive or non-numeric join/stall wait is rejected."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {key: badValue}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert f'pi.homeNetwork.{key}' in excInfo.value.missingFields
+
 
 def _baseCfg():
     return {"protocolVersion": "1", "schemaVersion": "1", "deviceId": "d",
@@ -926,6 +951,41 @@ def test_powerWatch_rejectsNonPositiveTimeout():
     cfg["pi"] = {"powerWatch": {"perTaskTimeoutSec": 0}}
     with pytest.raises(ConfigValidationError):
         ConfigValidator().validate(cfg)
+
+
+def test_powerWatch_drainFloorDwellReads_defaultsToFive_andRejectsNonPositive():
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["powerWatch"]["drainFloorDwellReads"] == 5
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"drainFloorDwellReads": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(bad)
+
+
+@pytest.mark.parametrize("badValue", [True, False, 2.5, 5.0, "5", 0, -1])
+def test_powerWatch_drainFloorDwellReads_mustBeAnIntegerAtLeastOne(badValue):
+    """Ruling 19 (M8): a COUNT of consecutive reads -- no bool, float or string."""
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"drainFloorDwellReads": badValue}}
+    with pytest.raises(ConfigValidationError, match="drainFloorDwellReads"):
+        ConfigValidator().validate(bad)
+
+
+def test_powerWatch_drainFloorDwellReads_acceptsOne():
+    cfg = _baseCfg()
+    cfg["pi"] = {"powerWatch": {"drainFloorDwellReads": 1}}
+    assert ConfigValidator().validate(cfg)["pi"]["powerWatch"]["drainFloorDwellReads"] == 1
+
+
+def test_batteryHealth_monthlyIntervalDays_defaultsTo30_andRejectsNonInteger():
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["batteryHealth"]["monthlyIntervalDays"] == 30
+    assert "testHoldSec" not in cfg["pi"]["batteryHealth"]
+    for bad_value in (0, -1, True, 30.5, 30.0, "30"):
+        bad = _baseCfg()
+        bad["pi"] = {"batteryHealth": {"monthlyIntervalDays": bad_value}}
+        with pytest.raises(ConfigValidationError):
+            ConfigValidator().validate(bad)
 
 
 def test_powerWatch_rejectsVcellFloorOutOfRange():

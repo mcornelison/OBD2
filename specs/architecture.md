@@ -1024,6 +1024,34 @@ of the code scope.
 paths (safe globally: `power_log` + `startup_log` are the only Pi tables
 carrying `data_quality`).
 
+##### `startup_log` columns (US-263 → US-776-f)
+
+One row per Pi boot, written by `boot-progress-arm.service`
+(`src/pi/diagnostics/boot_progress.py::arm`). Pi schema:
+`src/pi/obdii/database_schema.py::SCHEMA_STARTUP_LOG`; server mirror:
+`src/server/db/models.py` (plus `source_device`, no `data_quality`).
+
+| Column | Type | Meaning |
+|--------|------|---------|
+| `boot_id` | TEXT PK | `/proc/sys/kernel/random/boot_id`, lowercase, no dashes |
+| `prior_boot_clean` | INTEGER | 1 = the prior boot's journal shows a graceful shutdown; 0 = none (hard cut); NULL = no prior boot |
+| `prior_last_entry_ts` | TEXT | Last journal timestamp of the prior boot |
+| `current_boot_first_entry_ts` | TEXT | First journal timestamp of this boot |
+| `prior_boot_last_stage` | TEXT | Highest boot_progress milestone the prior boot reached |
+| `prior_boot_reason` | TEXT | That milestone's decoded reason |
+| `recorded_at` | TEXT | When the row was written (ISO-8601 UTC); the snapshot-sync cursor |
+| `data_quality` | TEXT | US-419 clock-quality flag; Pi-local, wire-stripped |
+| `prior_boot_home_state` | TEXT | US-776-f / US-741: the prior shutdown's `HomeNetworkState` name |
+| `prior_boot_sync_outcome` | TEXT | US-776-f / US-776-d: why the prior shutdown's sync ended (`DELIVERED`, `AWAY`, `UNKNOWN_NETWORK`, `AT_HOME_JOINING_TIMEOUT`, `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED`, or `REAL_ERROR`) |
+| `prior_boot_backlog_start` | INTEGER | US-776-d: unsynced rows before the prior shutdown's first sync attempt |
+| `prior_boot_backlog_end` | INTEGER | US-776-d: unsynced rows after its last attempt |
+
+The four `prior_boot_*` sync columns are landed from powerwatch's durable
+shutdown record (`powerwatch_outcome.json`, §10.6.3) only when that record's
+`boot_id` belongs to the prior boot; otherwise — an older build, a hard cut
+before the record was written, or a count that could not be read — they are
+NULL, never a guessed value.
+
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
 │    vehicle_info     │     │      profiles       │
@@ -1430,6 +1458,12 @@ Invariants (Spool Session 6 amendment):
 5. ECU_SILENT stays connected; do NOT tear down on engine-off.
 
 ### Battery Health Log (US-217, Spool Session 6 Story 3)
+
+> **SUPERSEDED IN PART — BUILT ON ARCH-065a (CIO 2026-10-02): [`battery-health-design.md`](battery-health-design.md) is the source**
+> for the capacity columns (`drain_trigger`, `cell_epoch`, `cut_step_mv`, `window_start_s`/`_end_s`, `drain_rate_mv_s`, `verdict`,
+> `t_floor_s`, `floor_vcell_v`, `cutoff_vcell_v`), the monthly test and the verdict. The `load_class`-based qualifying rule this section
+> leads to is RETIRED (no reachable input since the ladder deletion `9adb0fbf`, 2026-05-18). Where this section and that file disagree,
+> that file governs; the table's original columns below are unchanged.
 
 Per CIO directive 3 (Spool Session 6 — monthly drain tests May–Sept driving season; quarterly in storage), the Pi maintains a `battery_health_log` capture table with one row per UPS drain event. US-217 lands the schema + writer surface; US-216 (Power-Down Orchestrator) will consume it when it wires the staged 30/25/20 SOC shutdown ladder.
 
@@ -1840,18 +1874,20 @@ with `ConfigValidationError` at config-load time.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `ssid` | `DeathStarWiFi` | Home WiFi SSID expected from `iwgetid -r` |
+| `ssid` | `DeathStarWiFi` | Home WiFi SSID, read from the active row of `nmcli -t -f ACTIVE,SSID device wifi list --rescan no` (US-776-b) |
 | `subnet` | `10.27.27.0/24` | Home LAN CIDR; defense-in-depth co-check with SSID |
 | `pingTimeoutSeconds` | `3` | Bounded timeout on `GET {baseUrl}{serverPingPath}` |
-| `serverPingPath` | `/api/v1/ping` | Must be absolute (start with `/`) |
+| `serverPingPath` | `/api/v1/health` | Must be absolute (start with `/`) and a real server GET route (US-776-a) |
 
 Defense in depth: `isAtHomeWifi()` is True ONLY when BOTH the SSID check
 AND the subnet check pass.  A spoofed home-SSID on a foreign router
 fails subnet; a tethered hotspot that happens to use the home CIDR
-fails SSID.  The composed `getHomeNetworkState()` returns `UNKNOWN`
-(distinct from `AWAY`) when the `iwgetid` binary is missing or the
-subprocess times out — the orchestrator can branch on that separately
-(e.g., "retry later" vs "definitely not home").
+fails SSID.  The composed `getHomeNetworkState()` returns `AWAY` only on a
+positive answer (a foreign SSID, or a successful `hostname -I` with no
+home-subnet address), and `UNKNOWN` (distinct from `AWAY`) when a reader is
+dead and nothing rules home out: `nmcli` missing or timing out, or the
+`hostname -I` read itself failing (US-776-c).  The shutdown sync drains on
+`UNKNOWN` (§10.6.3).
 
 #### `pi.companionService` — Pi → server reach (US-151)
 
@@ -2550,34 +2586,19 @@ belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
 `/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
 file; the kiosk polls it at 250 ms).
 
-**Consumer-side suppression of the grace splash (US-796-a, Sprint 90 / V0.29.59).**
-`splash-grace.path` is always armed and cold-starts a **second chromium**
-(`splash-grace.service`) the instant `shutdown-state` appears. A second browser
-starting during a shutdown is wrong on its own terms, so the power-loss
-`LoadShedder` (`load_shed.py`, ARCH-031) now stops `splash-grace.path` **and**
-`splash-grace.service` alongside `eclipse-dashboard`. This is a correctness fix; it
-makes no survival claim. Visible consequence, ruled by the CIO 2026-09-20: no
-shutdown animation at key-off, and a cancelled blip shows nothing. The `grace` row
-in the table above still describes the splash's response when it is running; with
-the default shed set it no longer is.
+**The grace splash is NOT shed (US-796, Sprint 95; reverses US-796-a).**
+US-796-a (Sprint 90 / V0.29.59) put `splash-grace.path` and `splash-grace.service`
+on the power-loss `LoadShedder` set, to stop a second chromium cold-starting during a
+shutdown. The stop failed on every cut ("could not stop splash-grace.service" in the
+journal), and had it succeeded it would have removed the shutdown animation the CIO
+ruled to keep. Both units are off `DEFAULT_SHED_UNITS`; `TRIGGERED_UNITS` is empty
+(the restore mechanism stays). `eclipse-dashboard` is still shed (ARCH-031), so the
+splash runs exactly as the `grace` row in the table above describes: `splash-grace.path`
+fires on the first `shutdown-state` write and the kiosk renders the countdown.
 
-- **Ordering is the fix.** `handleOnBattery` calls `powerLossObservedFn` (heartbeat +
-  shed) **before** it emits `grace`, the first `shutdown-state` write. A `.path` unit
-  that has already fired cannot be un-fired, so a shed after the write would be a
-  no-op that looks like a fix. `systemctlRunner` issues a `.path` stop **without**
-  `--no-block`, so the path is disarmed in systemd — not merely queued — when the
-  write happens. The path is stopped before its service, so nothing re-launches it.
 - **The sequencer stays decoupled.** It never names a splash unit (F-103: it writes
-  state, consumers react). Suppression belongs to the shedder, which owns what is
-  allowed to run. Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`.
-- **Restore.** A cancel restarts the dashboard and re-arms `splash-grace.path`.
-  `splash-grace.service` is stopped but never restored (`TRIGGERED_UNITS`): a stop
-  succeeds on an inactive unit, and its only legitimate starter is the path. The
-  re-armed path sees `shutdown-state` already reading `cancelled`, fires once, and
-  the kiosk aborts on its first poll without painting — the same cancelled-abort the
-  splash always took on a blip, now after power is back rather than on battery.
-- **Unit names.** `install.sh` installs the `.wayland` / `.x11` variant under the one
-  runtime name `splash-grace.service`, so the shed set names no variant.
+  state, consumers react). Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`,
+  which fails if either splash unit is added back to either list.
 
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
@@ -2692,7 +2713,10 @@ Three bounds used to end it first, and each is removed where it lived:
 
 1. **`_buildRunSync` budget** (`__main__.py`). A further pass only started if one as long as the
    last still fitted `perTaskTimeoutSec` (20 s). Removed: the loop ends on an empty backlog, a failing
-   pass (`RuntimeError` -> the task's single retry -> `SYNC_FAILED_AFTER_RETRY`), a pass that moves
+   pass (`RuntimeError` -> the task retries with doubling waits of 2, 4, 8, 16 s ... and starts
+   no attempt once the backlog has not fallen for `pi.homeNetwork.stallSec`, 60 s (ARCH-065a; the US-776-g
+   `shutdownSyncCeilingSec` ceiling is retired, see `battery-health-design.md` §5) -> recorded as
+   `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED` or `UNKNOWN_NETWORK`, US-776-d), a pass that moves
    nothing, or an unreadable backlog. Custody re-reads the SAME reader, so those last cases record
    `OUTSTANDING` or `UNKNOWN`, never `DELIVERED`. Every pass still excludes
    `SHUTDOWN_DRAIN_EXCLUDED_TABLES`.
@@ -2744,14 +2768,71 @@ not fund a long drain. A short drain is not evidence that "the bound did not wor
 needs an architectural ruling, because a row written to a synced table during the shutdown turns the
 custody verdict OUTSTANDING, the US-789 defect). Until US-790 ships, 3.60 V stands.
 
-**Why `isServerReachable` is the gate and not an SSID (Atlas ruling 1, 2026-09-17).** An SSID gate is a
-derived proxy. It says "home" when the server is down, and a drain gated on it would spend the
-battery pushing at something that cannot acknowledge a row. `SyncWithServerTask` gates on
-`HomeNetworkDetector.isServerReachable`, which asks the producer that has to confirm. Away from home it
-reads False, `forcePush` is never called, and poweroff follows exactly as before. **Caveat:
-`serverReachable()` is checked once, not polled.** It is read once, at the top of
-`SyncWithServerTask.run` (`sync_with_server.py`). A server that goes away mid-drain is not re-detected
-by this gate. The drain then ends on a failing pass, or on the floor while a pass is blocked.
+**The drain is gated on the home detector, not on one server probe (US-776-c, Sprint 95; Atlas
+review 2026-09-30, gaps 2 and 5).** The 2026-09-17 gate (Atlas ruling 1) was a single
+`isServerReachable()` read. It probed `/api/v1/ping`, a route that does not exist, so it read False
+on every shutdown and the drain never ran (US-776-a moved the probe to `/api/v1/health`). Its
+deeper fault was the design: any dead instrument in the gate disabled the drain, silently.
+
+`SyncWithServerTask.run` (`sync_with_server.py`) now reads `HomeNetworkDetector.getHomeNetworkState()`
+**once** and decides from it:
+
+| Detector state | Means | The task |
+|---|---|---|
+| `AWAY` | a **positive** not-home answer: a foreign SSID (whatever the IP read says), or a *successful* `hostname -I` with no home-subnet address | skips at once: no `forcePush`, no sleep; records `AWAY` (US-776-d); poweroff follows |
+| `AT_HOME_SERVER_REACHABLE` / `AT_HOME_SERVER_DOWN` | home SSID **and** a home-subnet IP | drains |
+| `UNKNOWN` | no positive AWAY, but home is unconfirmed: the SSID reader is dead (`nmcli` missing / timed out) with a home-subnet IP or a failed IP read, or the home SSID with a failed IP read | **drains anyway**, logging `UNKNOWN_NETWORK` at WARNING |
+
+- **Only a positive AWAY skips.** A dead instrument must never disable the drain
+  (`specs/design-patterns.md` section 6). Both readers are three-way: a value on a successful read,
+  `""` / `[]` for a genuine "not associated" / "no addresses", and `None` when the read itself failed.
+  A detector that raises is treated as `UNKNOWN`.
+- **The AWAY path cannot block on the network.** It runs `nmcli` (2.0 s timeout) and `hostname -I`
+  (2.0 s, never longer than the SSID reader's) and makes no HTTP call: the server probe runs only
+  once the home SSID and a home-subnet IP are both seen.
+- **At home with the server down it still drains.** The drain decides *whether* to try; the probe
+  verdict no longer vetoes it. Retrying until delivered or a ceiling is US-776-g; the outcome record
+  per shutdown is US-776-d (below).
+- **Read once, not polled.** A network that changes mid-drain is not re-detected; the drain then
+  ends on a failing pass, or on the floor while a pass is blocked.
+
+**Every shutdown sync records why it ended (US-776-d, Sprint 95; Atlas review 2026-09-30, ruling 4
+and gap 3).** Until Sprint 95 a skipped sync wrote nothing, so a probe that was always false read as
+an absent server for weeks: 16 of 16 shutdowns logged "unreachable -- benign skip" at INFO and left
+no record. Now **every** `SyncWithServerTask.run()` -- the skip and the success included -- hands
+exactly one `SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd)` to its sink, and logs one
+`outcome=<NAME> backlog_start=<n> backlog_end=<n>` line.
+
+| Outcome (`OutcomeKind`) | When | Log level |
+|---|---|---|
+| `DELIVERED` | a drain attempt succeeded (whatever the detector state was) | INFO |
+| `AWAY` | a positive AWAY: the sync was skipped | INFO |
+| `UNKNOWN_NETWORK` | home was never confirmed (`UNKNOWN`) and the drain ran to the ceiling without delivering | WARNING |
+| `AT_HOME_JOINING_TIMEOUT` | reserved for US-776-e: the WiFi rejoin outlasted the ceiling | ERROR |
+| `AT_HOME_SERVER_DOWN` | at home, the drain ran to the ceiling; the probe got no answer (connection error, timeout), a 5xx, or a 2xx | ERROR |
+| `PROBE_MISCONFIGURED` | at home, the drain ran to the ceiling and the probe was answered 404, 405, 401 or 403: the server is up, the configured route or key is wrong | ERROR |
+| `REAL_ERROR` | a non-transient sync fault (the pre-existing kind; no retry) | ERROR |
+
+- **A misconfigured probe is told from a down server by a sibling, not by changing the bool.**
+  `HomeNetworkDetector.probeServer()` returns `ProbeResult(status, error)`; `isServerReachable()` is
+  its 2xx, so every existing caller is untouched. The detector keeps the probe behind its last state
+  as `lastProbe` (cleared whenever a state is decided without probing), and the task reads that --
+  it never probes again, so recording adds no network call to the shutdown.
+- **`backlog_start` and `backlog_end`.** Read from the shared US-621 reader with the drain's own
+  exclusions (`readDrainBacklog`), before the first attempt and after the last; on `AWAY` the one
+  read is both. A count the reader could not complete (an unreadable table, an unopenable database)
+  is `None`, never a lower bound presented as exact. `DELIVERED` with `backlog_start = 0` (nothing
+  was owed) is therefore distinguishable from `DELIVERED` with `backlog_start > 0` -- the 2026-09-27
+  shutdown read DELIVERED with the drain never having run.
+- **Where it lands.** `__main__.makeOutcomeSink` writes the record into `powerwatch_outcome.json`
+  (`outcome.writeOutcomeRecord`: atomic, never raises) with `sync_outcome` = the outcome NAME and the
+  two counts (an unknown count is omitted). The next boot's `boot_progress.arm` lands them into
+  `startup_log.prior_boot_sync_outcome` / `prior_boot_backlog_start` / `prior_boot_backlog_end`
+  (US-776-f), which reach the server through the existing snapshot sync.
+- **What it cannot record.** The record is written when `run()` returns. A shutdown whose VCELL is
+  already at the backstop skips the pipeline (no sync, no record), and a floor poll that powers off
+  while a pass is in flight ends the process before `run()` returns; both still write the custody
+  record above, and the sync columns land NULL.
 
 ### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
 
@@ -2855,16 +2936,16 @@ the sync backlog. "Nothing to send" makes the **drain** shorter. It does not rem
 | # | Step | Owner | Mandatory at an empty backlog |
 |---|---|---|---|
 | 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
-| 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops |
+| 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops (at home or `UNKNOWN`; a positive `AWAY` skips it, US-776-c) |
 | 3 | **Drain close** — the US-526 primary close (§10.6.2) | `buildDrainCloseHook` via `prePowerOffFn` | yes; a no-op close when no row is open |
 | 4 | **Custody** — the record states its verdict (§10.6.3) | `makeSyncCustodyHook` via `prePowerOffFn` | yes; `DELIVERED` |
 | 5 | **Poweroff** — `systemctl poweroff` | `ShutdownSequencer` | yes |
 | 6 | **`CLEAN_COMPLETE`** — the finalizer's `ExecStop` | `boot-progress-finalize.service` | yes |
 | 7 | **`prior_boot_clean = 1`** on the next boot | `boot-progress-arm.service` | yes |
 
-**The animation is not a step.** The grace splash is shed (§10.6.1, CIO ruling 2026-09-20), so
-nothing is displayed at key-off and the ceremony asserts no display. A shutdown animation is
-**conditional on budget**: it comes back only when a measured budget gate earns it.
+**The animation is not a step.** The grace splash is no longer shed (§10.6.1, US-796): the CIO
+kept the animation, and it plays at key-off. The ceremony still asserts no display, because the
+animation is the splash's response to `shutdown-state`, not a step the sequencer runs.
 
 **The guard.** `tests/pi/power/power_watch/test_shutdown_ceremony_guard.py` drives one sustained
 loss with an empty backlog through the real sequencer, pipeline, drain, hooks and `boot_progress`
@@ -2931,6 +3012,182 @@ from the power-watch shutdown path, and the residual deliberately belongs to ses
 reports it, every new row stores `NULL` — **which reads as `unknown`, the honest answer, not as a
 false zero.** The open question is *when* the Pi should measure: per-batch is a full delta walk in
 a hot path, so the natural point is once per sync run rather than once per POST.
+
+### 10.6.10 How a drain row was CLOSED is a typed column — `battery_health_log.close_reason` (US-683, Sprint 94) [Atlas Rule 10]
+
+*(§10.6.9 is reserved for US-795-b, which §10.6.8 already cites.)*
+
+**The distance this closes.** Since §10.6.4 a drain row can be closed three different ways, and they
+do not carry the same evidence. Until US-683 the only home of that distinction was the module
+docstring of `src/pi/power/drain_event_writer.py`, and the only per-row statement of it was a
+**prose suffix appended to `notes`**. Neither reaches a server-side reader honestly: `sync.py`'s
+`_PRESERVE_ON_UPDATE` holds `notes` for every table, so a row the server first received **open**
+never sees the reap suffix added at close. **A cross-tier semantic that a server-side consumer must
+honour is not documented only in a Pi module's docstring** — and it is not carried only in a column
+the sync deliberately freezes.
+
+#### The three close cases
+
+| `close_reason` | Written by | What the row carries | Votes in the battery-health verdict? |
+|---|---|---|---|
+| `clean` | `BatteryHealthRecorder.endDrainEvent` — power restored, shutdown close (§10.6.2), or a drill | Measured end depth, end SoC and runtime at the actual close | **Yes**, subject to the depth gate |
+| `reaped_uncheckpointed` | Boot reaper, on an owned row **no checkpoint ever measured** | `end_timestamp` only; `runtime_seconds` **and** `end_vcell_v` stay NULL | **No.** Nothing measured the drain. Excluded by type, and again by its NULL runtime and depth |
+| `reaped_checkpointed` | Boot reaper, closing **onto the last 30 s checkpoint** (§10.6.4) | Real checkpointed depth and runtime; `end_timestamp` = `start_timestamp + runtime_seconds`, never the reap instant | **Yes** — see the ruling below |
+
+**NULL means OPEN, and only that.** There is deliberately no `open` value: `end_timestamp IS NULL`
+stays the open marker, and a row has `close_reason` exactly when it has `end_timestamp`. That pairing
+is held **in code** — every statement that sets `end_timestamp` sets `close_reason` in the same
+UPDATE — not by a schema CHECK, because SQLite tests an `ADD COLUMN`'s CHECKs against every existing
+row and a paired CHECK would fail every closed row before the backfill could run (only a rebuild
+could add it). The column carries a single-column CHECK on the three values, on both tiers.
+
+⚠️ **Three states, not a boolean.** The two reap cases have **opposite** verdict eligibility; a
+`reaped` flag cannot carry that. The `notes` suffix stays as human context only — **a consumer reads
+the column, never the prose.** The clean close's trigger (`power_restored` / `shutdown`) is log
+context and is **not** stored: the column records *how* a row was closed, not *which event* closed
+it cleanly.
+
+#### The ruling: a checkpointed reap VOTES (Atlas, 2026-09-24)
+
+A `reaped_checkpointed` row is eligible and votes. Its depth and runtime **understate** the real
+drain by at most one checkpoint interval — **≤ 30 s on runtimes of 600–800 s, i.e. ≤ ~5 %** — and
+excluding it would discard real measurements from a table of ~61 rows. The verdict's qualifying
+query already implements this: it excludes `reaped_uncheckpointed` by type (`IS NOT`, so a closed row
+with no recorded reason is still judged on its measured values) and admits the other two.
+
+🔴 **THE DANGER IS THE TREND, NOT THE ROW. Eligibility is unchanged; attribution is added.** One
+understated row inside a verdict is bounded and harmless. A **trend** computed over a mixture is
+not: if the share of checkpointed reaps changes — a run of real power losses, a change to the
+shutdown path — the average moves with the mix and **manufactures drift in a battery that did not
+change**. Therefore:
+
+- `close_reason` is **carried into any trend computation** over `battery_health_log`.
+- A trend is computed **either within one `close_reason` class, or with the flag carried through**
+  to its output — **never over an unmarked mixture**.
+
+This is the same shape as pooling across the UPS cell swap (A-41): a population whose composition
+can change underneath a statistic must be stratified by the thing that changed, or the statistic
+reports the composition instead of the battery.
+
+⚠️ **Consumers today.** The Pi's `battery_health_verdict` is the only reader that computes a
+statistic, and it computes a verdict, not a trend. On the server nothing in `src/server` reads
+`battery_health_log`; the only server-side readers are one-shot repair scripts
+(`scripts/backfill_server_battery_health_log_stranded.py`) that compute no statistic. **The first
+server-side analytic to read the table inherits the rule above** — it is written here so that reader
+finds it without finding this sprint.
+
+#### Cross-tier
+
+Pi: `ensureBatteryHealthLogCloseReasonColumn`, wired into `ObdDatabase.initialize()` after the
+US-426 rebuild, adds the column by `PRAGMA`-guarded `ADD COLUMN` and backfills **once**: the reap
+suffix in `notes` ⇒ `reaped_checkpointed`; `runtime_seconds` **and** `end_vcell_v` both NULL ⇒
+`reaped_uncheckpointed`; any other closed row ⇒ `clean`. Open rows are never touched.
+
+Server: migration **v0032** adds the column and the named CHECK `ck_battery_health_log_close_reason`,
+and backfills **from the server's own rows** with the Pi's derivation verbatim. That is a floor, not
+the last word — the server may lack a reap suffix the preserve set withheld. The Pi's backfill fires
+the US-315 `modified_at` trigger and `close_reason` is **not** in the preserve set, so each backfilled
+Pi row re-syncs and **the Pi's value overwrites the server's**. The server vocabulary
+(`BATTERY_HEALTH_CLOSE_REASON_VALUES`) is pinned equal to the Pi's `CLOSE_REASON_VALUES` by
+`tests/server/test_battery_health_close_reason_crosses_tiers.py`.
+
+🔴 **Server before Pi.** `sync.py` RAISES on any Pi column the server model lacks (US-689), so a Pi
+carrying `close_reason` against a server without v0032 **stops `battery_health_log` sync on the
+first batch**.
+
+### 10.6.11 The shutdown-drain inclusion rule — a dataset the drain GENERATES rides the drain (US-790, Sprint 94) [Atlas Rule 10]
+
+**The distance this closes.** The only statement in the tree about which tables the power-loss drain
+carries is `SHUTDOWN_DRAIN_EXCLUDED_TABLES` (`src/common/edr/sync_contract.py`), and it reads as a
+blanket rule: *every EDR table is excluded, the drain budget is for drive data.* That is correct for
+EDR (§10.8.3) and **wrong as a precedent.** An author adding a table of shutdown-time telemetry who
+copies it gets a table that exists, whose schema matches on both tiers, whose tests are green — and
+that **holds no rows on the server after any real power loss**, which is the only thing it was
+built to describe. US-790's `drain_vcell_trajectory` is the first table on the other side of the
+line. **A rule whose only home is a closed ticket is not a rule; it is a thing someone once knew** —
+so it is written here as a property, with that table as its first instance.
+
+#### The property
+
+**A table's drain membership follows from WHEN its rows come into existence, not from what kind of
+sensor produced them.**
+
+| The table's rows are… | Drain membership | Why |
+|---|---|---|
+| **Archival backlog that predates the shutdown** and is unbounded against the drain budget (EDR: millions of rows, §10.8.3) | **EXCLUDED** — listed in `SHUTDOWN_DRAIN_EXCLUDED_TABLES` | The drain budget is seconds and exists to protect drive data. This backlog loses nothing by waiting; it catches up on the next ordinary sync tick. |
+| **GENERATED BY the shutdown drain itself** (US-790: the drain's per-poll VCELL series) | **INCLUDED** — NOT listed | The rows exist only because the power is going away. Excluded, they are stranded on the Pi at exactly the moment they were written for, and the server — where the analysis happens — has none for any shutdown that ended in a real loss. |
+
+🔴 **`SHUTDOWN_DRAIN_EXCLUDED_TABLES` is the MECHANISM, and membership is a decision, not a
+default.** It is one frozenset, read by the drain's push, the drain's exit check and custody alike
+(`power_watch/__main__.py` never re-lists it at a call site). Adding a table to it removes that
+table from all three at once. **Copying the EDR precedent for shutdown-time telemetry is wrong:** it
+passes every gate and is empty exactly when it mattered.
+
+#### An included drain-generated table carries two obligations
+
+Including the table is necessary and not sufficient. A drain that carries a table it is **writing
+to while it drains** has two traps, and US-790 closes both; a future table must do the same.
+
+1. **Exclude THIS drain's own rows — by primary key, never the table — from the exit check and
+   from custody.** The drain ends when the backlog reader returns 0 (§10.6.3, US-776-a). A row lands
+   every poll, so every pass would find the one written since the last push and go again — the rows
+   chasing `backlog == 0` until the floor ends the drain. And custody, counting them, would read
+   `OUTSTANDING` on every graceful shutdown: **the US-789 defect, recreated.** US-790's mechanism is
+   `OwnTrajectoryRows` (`power_watch/sync_custody.py`): an **append-only** set of ids, added to only
+   after a write is known to have landed, and read by **both** the exit check and custody so the two
+   cannot disagree about which rows are the shutdown's own. It is the set form of US-789's single
+   `OwnDrainCloseSlot` — same `RowExclusion` type, same "subtract only if actually outstanding".
+2. **Scope the own-rows set to the CURRENT drain.** The power-watch service outlives a drain that
+   power returning cancelled. That drain's undelivered rows are **genuine backlog for the next one**,
+   not this drain's own; a set scoped to the process would hide them. The writer calls
+   `beginDrain()` as each drain's first row (`seq` 0) starts.
+
+⚠️ **Excluded rows are reported, never hidden.** Custody records them beside the verdict as
+`ownTrajectoryExcluded` — table, reason, requested count, id range, and how many were actually
+outstanding (at ~1,500 rows a drain, a list of ids is useless; a count and a range stay falsifiable).
+Same shape as `ownDrainCloseExcluded` (§10.6.3) and `edrOutstandingRows` (§10.8.3).
+
+⚠️ **INSERT-only, and out of `SYNC_UPDATE_TABLES_PK`.** The table rides the `id` cursor
+(`PK_COLUMN` in `src/pi/data/sync_log.py`) and is never UPDATEd, so a row pushed mid-drain is never
+re-stamped outstanding by a `modified_at` trigger. A drain-generated table that is UPDATEd after
+insert re-opens the chase above through a door the id set does not guard.
+
+#### The instance: `drain_vcell_trajectory`
+
+| Column | Meaning |
+|---|---|
+| `ts_utc` / `ts_capture` | **Event time** of this poll's VCELL read (ISO-8601 UTC) and the monotonic seconds at the same read. Never a write time. |
+| `seq` | 0-based poll number within one drain; `0` opens the next drain. `seq` advances even when the row fails to land, so **a gap in `seq` is a lost row, not a missing poll.** |
+| `vcell_v` | MAX17048 VCELL volts. **NULL = no reading on that poll**, never a sentinel and never a zero. |
+| `termination_reason` | Set on the drain's **LAST** row only — `shutdown`, `power_restored`, `drain_floor`, `vcell_floor`, `vcell_unreadable` — NULL on every other row. |
+| `cell_epoch` | `pi.power.cellEpoch`, stamped at write time: **which cell was fitted.** `unknown` when the key is absent — never a guessed epoch. |
+
+🔴 **What a reader must not conclude.** A drain with no terminal row did not end cleanly with an
+unrecorded reason — **it was cut** (or its last write failed; the `seq` gap says which). A series
+averaged across `cell_epoch` values is an average across **different batteries** (A-41), not a
+floor. And a short series is not a failed drain: §10.6.3 already establishes that a depleted pack
+ending the drain within seconds is correct behaviour.
+
+#### What US-790 does NOT change
+
+**No floor.** `drainFloorVolts` stays **3.60 V, PROVISIONAL** (§10.6.3). US-790 records the series
+that decision was waiting for; it does not measure it, and nothing here re-derives the constant.
+The drain's bounds, the custody verdict's meaning and the EDR exclusion are unchanged.
+
+#### Cross-tier
+
+Pi: `ensureDrainVcellTrajectoryTable` (`src/pi/obdii/database_schema.py`), wired into
+`ObdDatabase.initialize()`, creates the table only when a `sqlite_master` probe finds it absent and
+never touches an existing one (the replay-safe step, `specs/design-patterns.md` §10). Writer:
+`DrainVcellTrajectoryWriter` (`src/pi/power/power_db.py`), durable per row, never raises — it runs on
+the drain's own poll thread. Server: migration **v0033**, probe-guarded, with the named CHECK
+`ck_drain_vcell_trajectory_termination_reason`; the vocabulary is pinned equal across tiers by
+`tests/server/test_drain_vcell_trajectory_crosses_tiers.py`. Because the table is created by an
+ensure step rather than `ALL_SCHEMAS`, it is also registered by hand in
+`scripts/schema_diff.loadPiSchema` (TD-079).
+
+🔴 **Server before Pi.** The Pi pushes this table **during the drain itself**; a server without
+v0033 rejects every batch that carries the series.
 
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
@@ -3667,8 +3924,16 @@ it) and **fails the factory self-test** (0.062/0.087/0.126 against a 0.5 floor),
 while the **same silicon self-tests at 1.007–1.016 once recovered** — so the part
 is healthy and the state is recoverable. `src/pi/sensors/gyro_recovery.py` detects
 it at startup and clears it with a **`PWR_MGMT_2` gyro off/on** (cleared it 3 of 3,
-plus live on 2026-09-15), wired via `sensor_reader._recoverGyro` **before** the
-magnetometer bypass (both touch bank 0). *Startup is the only sound place for the
+plus live on 2026-09-15), wired via `sensor_reader._recoverGyro`, which
+`sensor_reader._buildImuDevice` runs **after** the magnetometer bypass is
+established. 🔴 **ARCH-032, 2026-09-20 — ordering corrected.** This sentence
+originally said recovery ran *before* the bypass, because both touch bank 0 and
+the chip should be recovered in its freshly-initialised state. That argument was
+plausible, never measured, and **wrong**: on the Pi (n=20 per arm, interleaved)
+merely *reading* the gyro before the hand-over dropped the bypass probe from ~70 %
+to ~10 % — the V0.29.55 defect. The live order is attach-then-recover, pinned by
+`tests/pi/sensors/test_imu_startup_order.py`; do not restore the old order on the
+strength of the old argument. *Startup is the only sound place for the
 check: a latched gyro and a real turn are the same signature, and at key-on we
 know the car has not moved.* The driver exposes no `PWR_MGMT_2` symbol and no step
 that could recover the gyro, so the register is written through its own
@@ -4015,6 +4280,106 @@ The validator's axis check went with it. A stale `mount` block left in
 (flipped on in Sprint 66 — connect-when-wired, the genuine Adafruit ICM-20948
 #4554 confirmed @0x69 via `WHO_AM_I = 0xEA`).
 
+##### ARCH-064 — reliable IMU: acquisition C + the x-io Fusion AHRS (2026-09-28)
+
+**Why a third acquisition path.** Evidence:
+`offices/architect/findings/2026-09-28-PLAN-ARCH-064-reliable-imu.md`,
+`2026-09-28-PREDICTION-ARCH-064-sparkfun-master-liveness.md`. **MEASURED** on the real hardware,
+all other project software stopped: with the ICM-20948's internal I2C master enabled — what
+`magMode: "master"` (B, ARCH-057) is, under **both** the adafruit and the SparkFun libraries — the
+AK09916 freezes after exactly one reading. Bypassing **after** the master has already run (a
+runtime fallback from B to A) can additionally **hang the whole I2C bus**, a worse failure than the
+freeze it would be working around. `src/pi/sensors/icm20948_direct.py` (`magMode: "direct"`, C) is
+the fix: the chip is configured from a **clean software reset**, the I2C master is **never
+enabled**, and the AK09916 is read directly in bypass per its own datasheet — live at up to 100 Hz,
+no freeze observed. `magMode` is now `"direct"` by default (`src/common/config/validator.py`
+DEFAULTS); **A (`"bypass"`) and B (`"master"`) are kept as revert paths** — a config edit + service
+restart, never a live flip, per the hang risk above.
+
+**Axis map — corrected (ARCH-064, supersedes ARCH-033).** Per **TDK DS-000189 p.83 Fig. 13** (the
+manufacturer's own AK09916 orientation drawing): mag +X = accel +X, mag +Y is **opposite** accel
++Y, mag +Z points **down** while accel +Z points **up** — `x <- ak_x, y <- -ak_y, z <- -ak_z`
+(`ak09916_bypass.AK09916_TO_ICM_AXES`). The retired ARCH-033 map differed by exactly a 90° rotation
+about z, which a heading-vs-GPS-course concentration sweep cannot discriminate (constant offsets
+are invariant to that statistic by construction); only an absolute reference could — a garage
+measurement, nose due east, read ~97° (east, correct) under this map and ~187° (south) under the
+retired one.
+
+**The AHRS engine (`src/pi/sensors/ahrs_fusion.py`, `AhrsFusion`) — x-io Fusion (`imufusion`
+1.3.3), selected via `pi.sensors.imu.fusionEngine` (default `"imufusion"`; `"legacy"` reverts to the
+byte-identical US-521 `PitchFusion` above, config-only, no redeploy).** Settings, ruled exactly, not
+tuned blindly:
+
+| Setting | Value | Why |
+|---|---|---|
+| `gain` | 0.5 | ARCH-064 ruling |
+| `acceleration_rejection` | **7°** | Not the ruled 10° — tightened with a stated, measured reason: speed aiding cannot see an acceleration ONSET until the next OBD SPEED sample (up to ~2.3 s later), so the rejection angle alone must hold attitude through that blind window. At 10° a 0.15 g pull (atan = 8.5°) is never rejected and leaks ~5° of phantom pitch before the first `dv/dt` arrives (measured: 2.76° still present 4 s in). 7° rejects any pull ≥ 0.123 g at onset with margin |
+| `magnetic_rejection` | 10° | ARCH-064 ruling |
+| `rejection_timeout` | 5 s | ARCH-064 ruling (`imufusion` 1.3.3 takes this in seconds) |
+| `Bias` stationary threshold | 3 dps over 3 s | Gyro bias re-learned only when genuinely at rest — **and only when OBD speed does not say the car is rolling** (below) |
+
+**Speed-aided compensation** (`AhrsFusion._compensate`) removes the vehicle's own specific force
+before the AHRS sees it, so sustained acceleration is not read as tilt (the same phantom §"Why the
+low-pass above was not enough for pitch" describes for the legacy engine): longitudinal `a_long =
+Δv/Δt` from OBD `SPEED` (held between samples, clamped to ±0.6 g — a road car does not exceed that
+longitudinally); lateral `v · ω_z` (centripetal, from the gyro's yaw rate). **Both switch OFF when
+the last OBD `SPEED` sample is more than 3 s stale (`SPEED_STALE_S`)** — never compensate on old
+data or a fabricated rate. The centripetal term uses the **bias-corrected** yaw rate (gyro − the
+learned offset): with the raw rate, a 0.747 dps bias at 30 m/s was a fake lateral force worth 5.77°
+of heading and 2.28° of roll on a straight road (final review I1, Ruling 35).
+
+**Gyro-bias learning is gated on speed (Ruling 35, I3).** Fusion's `Bias` calls anything under
+3 dps for 3 s "stationary", so a 1.5 dps highway curve held 60 s was learned as a −1.5 dps offset
+(2.97° heading error). The learner is not fed while the latest OBD `SPEED` — fresh **or stale** —
+exceeds `BIAS_LEARN_MAX_SPEED_KMH` (1 km/h); a dropout mid-curve is not evidence of a stop. With no
+speed ever seen, or a last reading of 0, Fusion's own detector is used. ⚠️ Cost: a bias not yet
+converged when the car pulls away stays unconverged until the next stop (15 s parked, 1 dps bias:
+1.84° heading / 0.58° roll at 30 m/s, against 7.7° / 3.06° before the fix).
+
+**The A-34 latch under the AHRS (Ruling 35, I2).** `AhrsFusion.gyroImplausible` latches when fresh
+OBD speed has read 0 for ≥ 3 s and the largest per-axis mean of (gyro − learned offset) over that
+window reaches `gyro_recovery.GYRO_FAULT_MIN_RAD_S` (0.10 rad/s, the bimodal cut). While latched,
+`pitchRad`/`rollRad`/`headingDeg` read `None` and the bridge publishes `pitchDeg`, `gradePct` **and
+`headingDeg`** as null with `gyro_implausible` (heading too, because this heading integrates the
+gyro; the legacy mag-only heading is not withheld). It clears on `reset()` or on a parked window
+that reads quiet (a successful power cycle), and the attitude is then restarted so the integrated
+fault is never published. **It cannot latch without fresh speed** — a turning car and a latched
+gyro are the same signal. Before this, the flag was hard-wired `False` and a latched gyro
+published pitch −44…−90° parked, with no reason code.
+
+**Heading is TRUE north, not magnetic**, once `magDeclinationDeg` is set
+(`headingDeg = (-yaw + declinationDeg) mod 360`, east-positive convention) — the legacy engine's
+`headingDeg` remains magnetic, uncorrected; `headingCalibrated` distinguishes the two in published
+state. `magCalibration` (`hardIronUt`, `softIron`) corrects the raw field before the AHRS update;
+zero/identity is a no-op, so an unset car ships unchanged accuracy rather than a silently wrong
+correction (fit with `tools/imu/fit_mag_calibration.py`, ARCH-064 Task 6).
+
+**Bounded gyro coasting, never unbounded drift.** Heading may coast on the gyro alone for at most
+`MAG_MAX_COAST_S = 5.0 s` after the last valid magnetometer reading, then reads `None` rather than
+an unaided integration that drifts without bound (review probe: 0.05 rad/s over 10 s moved a
+heading 90.0° → 73.7° with no correcting mag). A fresh mag reading restores it.
+
+**A FROZEN mag is withheld from the engine (Ruling 13).** While the ARCH-056 rotation verdict is
+`FROZEN`, `imu_state_bridge` passes `mag_ut=None` to the AHRS rather than the frozen vector: Fusion
+would reject it through a turn, then its recovery would **snap** heading onto it, wrong for up to
+~5 s after the verdict clears. The rotation gate itself still reads the bridge's own `_freshMag`,
+so withholding the AHRS's copy cannot stop the verdict clearing. The rotation score is accumulated
+in steps of ≥ `MAG_ROT_STEP_S` = 0.25 s of capture time (Ruling 35, I4): its 0.15 floor and the
+~0.06 frozen score were measured at 4 Hz, and summing |Δbearing| per sample at 50 Hz counts a
+dithering channel's noise 12.5× as often, so `FROZEN` never fired.
+
+⚠️ **Under `fusionEngine: "imufusion"` the legacy pitch knobs above have NO EFFECT** —
+`pitchTauSec`, `accelTrustBand`, `zuptMinStopSec`, `zuptSpeedMaxAgeSec`, `zuptMinStops`,
+`zuptWindowStops` are `PitchFusion`-only. `AhrsFusion.stopCount` / `.biasRad` are always `0`
+(surface parity only): there is no ZUPT stop detector and no mount-tilt bias under this engine.
+They apply again, unchanged, when `fusionEngine: "legacy"`.
+
+**`sampleHz` is now 50 Hz — the IMU's internal acquisition/fusion read rate, not a stored rate.**
+The 4 Hz ceiling this document's data-acquisition companion sets still governs what is STORED
+(`persistHz` 2 / `stateHz` 1, unchanged). See
+`specs/data-acquisition-architecture.md` §4.2.a for the full rate ruling and the exact decimation
+factor (50 → 2 = 25) — not restated here.
+
 **Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
 / V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
 Chromium kiosk can't reach the panel backlight) from the `states/light` feed via
@@ -4098,6 +4463,10 @@ battery/UPS gauge at **0.2 Hz**. The rule and its reasoning live in
 **`specs/data-acquisition-architecture.md` (ARCH-036)**; this note records only
 the change.
 
+- 🔴 *(Superseded 2026-09-30 by ARCH-064d — `specs/data-acquisition-architecture.md` §4.2.b:
+  storage is a UTC time grid, `_decimationFactor` is deleted, and the "not an exact divisor"
+  warning is replaced by a warning for any `persistHz` outside 1/2/4 Hz. The two bullets below
+  are the 2026-09-21 record.)*
 - **Every factor is exact.** `_decimationFactor(4, 2) == 2` (the EDR subscriber
   persists 1 of every 2 bursts) and `4 / 1` gives 4 (the state bridge's 1 s
   write interval takes 1 of every 4 bursts). No rounding and no clamp are
@@ -4545,8 +4914,9 @@ comparison then needs interpolation. **Interpolating a fusion output against its
 manufactures agreement.**
 
 🟢 **Alignment is structural, not lucky.** Both subscriptions are `QoS.LOSSY` with independent queues,
-so they can drop different samples — but **decimation is `seq % N`, a function of the SAMPLE and not
-of arrival order**, so a dropped burst costs both rows or neither. **LOSSY divergence costs COVERAGE
+so they can drop different samples — but **decimation is a function of the SAMPLE and not of arrival
+order** (since ARCH-064d the burst's UTC grid slot, decided once per `seq`; before it, `seq % N`), and
+the derived row rides the raw row's transaction, so a dropped burst costs both rows or neither. **LOSSY divergence costs COVERAGE
 of the comparison, never its correctness.**
 
 ⚠️ **The stamp is the FUSION's own `ts_utc`/`ts_capture`/`seq`, not the burst being flushed.** The
@@ -4578,6 +4948,73 @@ no fusion behaviour.** Measured on the car at V0.29.62, parked: `states/imu` rep
 `pitchDeg −3.62°, stopCount 0, biasRad 0.0` — the phantom grade, within ~3 % of the 3.74° predicted
 from the healthy residual gyro bias (0.01304 rad/s × the 5 s tau). **That defect is unaddressed and
 has no row.**
+
+### 10.8.5 The gyro RATE bias is published — `edr_imu_derived.gyro_bias_*` (US-810, Sprint 94) [Atlas Rule 10]
+
+**The distance this closes.** `PitchFusion` learns a gyro **rate** bias at ZUPT stops (US-779) and
+subtracts it from every sample **before** integrating pitch. That correction shaped every stored
+`pitch_deg` since it shipped and was **never stored itself**. §10.8.4 made the fusion's belief
+falsifiable; a belief whose correction term is invisible is only half falsifiable — a wrong
+`pitch_deg` could not be traced to a wrong bias, and a latched gyro that the learner *refused* left
+no trace at all.
+
+⚠️ **Two biases share one word (A-48).** `bias_rad` (§10.8.4) is the mount-tilt **ANGLE** — a
+property of how the board is bolted in, averaged over stops and kept across a re-plug. These five
+columns are the gyro **RATE** bias in rad/s — a property of the **powered die**, learned per run and
+**cleared on a re-plug**, because a re-powered chip can come up with a different bias, or latched.
+Neither column is a refinement of the other; a reader who joins them is comparing an angle with a
+rate.
+
+#### The five columns
+
+| Column | Meaning |
+|---|---|
+| `gyro_bias_roll_rad_s` / `gyro_bias_pitch_rad_s` / `gyro_bias_yaw_rad_s` | The learned rate bias, **vehicle frame**, rad/s: the mean standing rate over the accepted stops in the rolling window. **Only the pitch axis feeds the attitude**; roll and yaw are recorded so the bias they carry is visible rather than inferred. |
+| `gyro_bias_stops` | Accepted stops currently held in the rate-bias window (bounded by the window length, so it is not a lifetime count). One stop suffices to learn: a stopped chassis is not rotating, so the stop's mean rate *is* the bias. |
+| `gyro_bias_rejected_stops` | Stops **refused** because their standing rate reached `GYRO_BIAS_MAX_RAD_S` (0.10 rad/s) — the A-34 latch signature, >6× the measured healthy ceiling. Absorbing such a stop would subtract the latch and hide it from the US-749 plausibility guard, so it is counted and logged at WARNING instead. |
+
+🔴 **NULL rates are the UNLEARNED state, never a measured zero.** Until a stop is accepted in this
+run, `gyroBiasRadS` is `None`, the gyro is used exactly as read, and the snapshot carries **three
+NULLs** — never `0.0`. A zero bias is a measurement; an unlearned one is the absence of one. A writer
+or consumer that coerces the NULL to 0.0 makes the two indistinguishable.
+
+🔴 **`gyro_bias_rejected_stops` is what separates "never learned" from "every stop rejected".** Both
+leave the three rates NULL. The difference is the whole A-34 story:
+
+| rates | `gyro_bias_stops` | `gyro_bias_rejected_stops` | Reading |
+|---|---|---|---|
+| NULL | 0 | 0 | **Never learned** — no confirmed stop has closed yet this run. Benign. |
+| NULL | 0 | > 0 | **Every stop rejected** — the gyro stood at a latched-magnitude rate at each stop. A faulted gyro, not a quiet one. |
+| values | ≥ 1 | any | **Learned** from that many stops; a non-zero rejected count says some stops were refused alongside. |
+| NULL | NULL | NULL | **Never recorded** — a row written before US-810. No claim either way. |
+
+⚠️ **The rejected count is per PROCESS, the rates are per POWER-ON.** A re-plug reset clears the
+accepted stops (so the rates return to NULL) but not the rejected counter, so rejections after a
+re-plug may predate it. Read a non-zero rejected count as *"the learner refused a latch at least
+once in this collector run"*, not *"since the last re-plug"*.
+
+#### What US-810 does NOT change
+
+**No fusion output.** US-810 **publishes** a value the fusion already computed and already applied;
+for the same input the fusion produces the same `pitch_deg`. `FUSION_VERSION` is therefore
+**unchanged** (§10.8.4: bump only when the output would differ). The same snapshot, the same
+`persistHz` cadence, the same log gate and the same parent-slaved retention as §10.8.4 apply — the
+five columns ride the existing row, they are not a new stream.
+
+#### Cross-tier
+
+`EDR_COLUMNS` (`src/common/edr/sensor_schema.py`) remains the single source and gains the five
+columns, **appended last** so a fresh Pi table and one upgraded in place have the same column order.
+Pi: `ensureEdrImuDerivedGyroRateBiasColumns`, wired into `ObdDatabase.initialize()`, adds each
+column by `PRAGMA table_info`-guarded `ADD COLUMN` on every boot and rewrites no row. Server:
+migration **v0031** adds them with `AFTER`, probe-guarded per column — v0027 generates the table from
+the *current* `EDR_COLUMNS`, so a fresh server already has them and v0031 must no-op there. No
+backfill on either tier: **historical rows read NULL because their bias was never recorded, and that
+is the truth about them.**
+
+🔴 **Server before Pi.** `sync.py` RAISES on any Pi column the server model lacks (US-689), so a Pi
+carrying these columns against a server without v0031 **stops `edr_imu_derived` sync on the first
+batch**.
 
 ### 10.9.1 Why it exists
 
@@ -5725,6 +6162,11 @@ document-level `pointerdown` seam US-506 established — no per-overlay pause ca
 site to forget.
 
 #### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
+
+> **VERDICT SUPERSEDED — BUILT ON ARCH-065a (CIO 2026-10-02): [`battery-health-design.md`](battery-health-design.md) is the source.**
+> Same card, same `health` vocabulary (`good`/`degraded`/`replace`/`unknown`) and F-9 line; the verdict is T (battery time to the
+> reserve floor) vs J (the at-home job). The six `reasons.health` codes, `timeToFloorS`/`jobAvgS`/`jobMaxS`/`provisional`, and
+> `runtimeToCutoffS` (now = T) are defined there. Where this section and that file disagree, that file governs.
 
 The **Battery Health** card (Card 2) renders the `battery-health` state file at 4
 Hz: the Spool health verdict + VCELL + charge + temp, and a failsafe drain ladder

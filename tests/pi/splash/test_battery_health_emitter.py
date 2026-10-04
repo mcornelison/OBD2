@@ -18,6 +18,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-401 battery-health card)
+# 2026-10-03    | Atlas (ARCH-065a) | T7: A-3 exact shape gains the four T/J keys.
 # ================================================================================
 ################################################################################
 
@@ -92,6 +93,11 @@ def test_buildBatteryHealthState_a3Schema_hasExactShape():
         "reasons": {},
         "source": {"ups": {"available": True, "reason": None}},
         "ts": _NOW,
+        # ARCH-065: the T/J fields, honest nulls when the caller supplies none.
+        "timeToFloorS": None,
+        "jobAvgS": None,
+        "jobMaxS": None,
+        "provisional": False,
     }
 
 

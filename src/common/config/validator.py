@@ -84,6 +84,38 @@
 # 2026-09-22    | Rex (US-801) | DEFAULT_IMU_{SAMPLE,PERSIST,STATE}_HZ = 4/2/1:
 #                                the ONE definition of the IMU rate triple;
 #                                DEFAULTS and the pi module fallbacks import it.
+# 2026-09-25    | Rex (US-790) | pi.power.cellEpoch: default 'unknown', closed
+#                                vocabulary CELL_EPOCH_VALUES.
+# 2026-09-28    | Atlas        | ARCH-064 Task 5, CIO ruling 2026-09-28:
+#               |              | DEFAULT_IMU_SAMPLE_HZ 4 -> 50. sampleHz is now
+#               |              | the IMU's INTERNAL acquisition/fusion read rate
+#               |              | (every proven AHRS assumes a fast gyro read;
+#               |              | see specs/data-acquisition-architecture.md
+#               |              | §4.2 amendment). persistHz/stateHz (the STORED,
+#               |              | 4 Hz-ceilinged rows paired to the drive window)
+#               |              | are UNCHANGED at 2/1 -- this ruling does not
+#               |              | touch the ceiling. Added magMode 'direct'
+#               |              | default + allowed-set, and fusionEngine /
+#               |              | magDeclinationDeg / magCalibration DEFAULTS.
+# 2026-09-28    | Atlas        | ARCH-064 Task 6b: accelCalibration default
+#               | (ARCH-064)   | (zero/identity) + validation (finite 3-vector,
+#               |              | finite 3x3, determinant > 0).
+# 2026-09-28    | Atlas        | Ruling 32: the same shape validation for
+#               | (ARCH-064)   | magCalibration (shared _validateCalibrationBlock).
+# 2026-09-30    | Atlas        | ARCH-064d (CIO-directed): persist is a UTC time
+#               | (ARCH-064d)  | grid, so the "not an exact divisor" warning is
+#               |              | retired; RECOMMENDED_IMU_PERSIST_HZ (1, 2, 4) and
+#               |              | a warning for any other recording rate added.
+# 2026-09-30    | Rex (US-776-a)| pi.homeNetwork.serverPingPath default is
+#                                /api/v1/health; the old ping path was a 404.
+# 2026-10-01    | Rex (US-776-g)| pi.homeNetwork.shutdownSyncCeilingSec: 60 (CIO
+#                                ruling 2026-09-30), positive number only.
+# 2026-10-03    | Atlas (ARCH-065a)| ARCH-065 T3: shutdownSyncCeilingSec retired (the
+#                                at-home sync has no time cap, CIO 2026-10-02);
+#                                pi.homeNetwork.joinWaitSec 120 + stallSec 60,
+#                                integers >= 1 only.
+# 2026-10-03    | Atlas (ARCH-065a)| Ruling 19 (M8): drainFloorDwellReads is an integer
+#                                >= 1 (bool / float / str rejected).
 # ================================================================================
 ################################################################################
 
@@ -105,6 +137,7 @@ Usage:
 
 import ipaddress
 import logging
+import math
 import zoneinfo
 from typing import Any
 
@@ -134,15 +167,58 @@ REQUIRED_SECTIONS: tuple[str, ...] = ('pi', 'server')
 # US-801: THE single definition of the IMU rate triple. Every other site --
 # the DEFAULTS entries below and the fallbacks in pi.sensors.sensor_reader,
 # pi.sensors.imu_state_bridge and pi.bus.edr_persistence_subscriber --
-# imports these names; none re-declares a literal. The values equal the
-# shipped config.json triple, 4 / 2 / 1 (US-796-b; the CIO's 4 Hz HARD CAP on
-# every acquisition rate, tightened from 5 Hz on 2026-09-21 --
-# specs/data-acquisition-architecture.md §4.2, ARCH-036). Consumers still read config first; these apply only when a key
-# is absent. Pinned against config.json by
-# tests/pi/sensors/test_imu_rate_single_source.py.
-DEFAULT_IMU_SAMPLE_HZ = 4
+# imports these names; none re-declares a literal. Consumers still read
+# config first; these apply only when a key is absent. Pinned against
+# config.json by tests/pi/sensors/test_imu_rate_single_source.py.
+#
+# ARCH-064 (CIO ruling 2026-09-28) split what "sampleHz" means. It is now the
+# IMU's INTERNAL acquisition/fusion read rate -- every proven AHRS (the x-io
+# Fusion engine, pi.sensors.ahrs_fusion) assumes a fast gyro read, and
+# acquisition C (src/pi/sensors/icm20948_direct.py) is measured live at up to
+# 100 Hz -- raised from the 4 Hz US-796-b/ARCH-036 value accordingly. The 4 Hz
+# HARD CAP (tightened from 5 Hz on 2026-09-21) still governs what is STORED:
+# persistHz/stateHz are UNCHANGED at 2/1 and stay under it, paired to the
+# drive window. See specs/data-acquisition-architecture.md §4.2's 2026-09-28
+# amendment for the full reasoning. ARCH-064d (§4.2.b): stored rows are a UTC
+# time grid of 1/persistHz s, not a keep-1-of-N factor -- the "50 -> 2 = 25,
+# exact" factor stored 1.62 Hz on drive 96 because the loop ran at 40.5 Hz.
+DEFAULT_IMU_SAMPLE_HZ = 50
 DEFAULT_IMU_PERSIST_HZ = 2
 DEFAULT_IMU_STATE_HZ = 1
+
+# US-803-a: the gyro's full scale, the ceiling on pi.sensors.imu.gyroFaultMinRadS.
+# MEASURED, not chosen: the Pi runs the ICM-20948 gyro at +/-500 dps --
+# GYRO_CONFIG_1 = 0x03 read off the deployed Pi 2026-09-14 decodes to FS_SEL=1
+# (tools/imu/imu_probe.py), and specs/grounded-knowledge.md states the same from
+# the installed adafruit_icm20x 2.1.10 driver's initialize(). A fault threshold
+# above full scale can never be reached, so fault detection would be silently
+# OFF. (Not the datasheet's +/-250 dps: that is the RESET value, not this Pi.)
+GYRO_FULL_SCALE_RAD_S = math.radians(500)
+
+# US-790: pi.power.cellEpoch -- WHICH cell was fitted, stamped on every
+# drain_vcell_trajectory row so a floor measured from them is never an average
+# across batteries. CIO ruling 2026-09-25. Vocabulary from
+# specs/grounded-knowledge.md: the 450 mAh pouch until the 2026-09-21 18:50Z
+# swap and the 2000 mAh pouch after it (:1045), then the 18650 pack from its
+# INSTALLATION on 2026-09-26 (battery epoch 3; Atlas ruled 2026-09-27 that the
+# epoch names the physical battery from installation, not from first
+# discharge -- charge state is vcellV's job). 'unknown' is the default so an
+# absent key is recorded honestly -- never a guessed epoch.
+CELL_EPOCH_UNKNOWN = 'unknown'
+CELL_EPOCH_VALUES: tuple[str, ...] = (
+    '450mah-pouch',
+    '2000mah-pouch',
+    '18650-pack',
+    CELL_EPOCH_UNKNOWN,
+)
+
+# ARCH-064d, CIO 2026-09-30: "you can always sample at whatever is easiest, but
+# from a data recording standpoint 4 Hz, 2 Hz or 1 Hz is desirable." Stored IMU
+# rows sit on a UTC grid of 1/persistHz s; at these rates every grid boundary is
+# a whole second or an exact quarter/half of one, so each row shares its ts_utc
+# second with the whole-second ECU rows in realtime_data. Any other persistHz is
+# still stored exactly, and WARNED (never rejected) by _warnImuRatesAboveSource.
+RECOMMENDED_IMU_PERSIST_HZ = (1, 2, 4)
 
 # Define default values for optional settings. Paths use the tier-aware
 # nested shape (pi.*, server.*) introduced in sweep 4. Legacy leaf paths
@@ -203,6 +279,9 @@ DEFAULTS: dict[str, Any] = {
     # the next deploy populates power_log; the gate is kept for tests +
     # any future legacy fallback.
     'pi.power.power_monitor.enabled': True,
+    # US-790: which cell is fitted (CELL_EPOCH_VALUES). 'unknown' so an absent
+    # key stamps an honest value on drain rows, never a guessed epoch.
+    'pi.power.cellEpoch': CELL_EPOCH_UNKNOWN,
     # US-421 / BL-014: static config-key SSOT for the power-MODE fact (in-car
     # vs bench/wall deployment) -- distinct from the AC-vs-battery power SOURCE.
     # Default 'unknown' so an absent key renders an honest badge, never a
@@ -252,6 +331,9 @@ DEFAULTS: dict[str, Any] = {
     # CLEAN_COMPLETE), rounded up. Derivation: specs/architecture.md 10.6.3.
     # Do not change without the drain's VCELL trajectory data.
     'pi.powerWatch.drainFloorVolts': 3.60,
+    # ARCH-065: the reserve floor must hold for this many consecutive reads
+    # before it ends the drain (threshold + dwell, design-patterns.md 1).
+    'pi.powerWatch.drainFloorDwellReads': 5,
     'pi.powerWatch.poweroffTimeoutSec': 30,
     # 2026-05-18 bricking-loop HOTFIX. UpsMonitor.getPowerSource() is a
     # VCELL-trend heuristic; its slope rule reports BATTERY on the boot
@@ -281,6 +363,9 @@ DEFAULTS: dict[str, Any] = {
     # the safety trigger, which is the T5 GPIO6+smoothing loop). Low-rate by
     # design (status surface, YAGNI). Config, never a literal.
     'pi.powerWatch.uiPollSec': 2,
+    # ARCH-065: days between monthly capacity tests (the hold time is
+    # battery_capacity.TEST_HOLD_S, not config).
+    'pi.batteryHealth.monthlyIntervalDays': 30,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
@@ -304,7 +389,11 @@ DEFAULTS: dict[str, Any] = {
     'pi.homeNetwork.ssid': 'DeathStarWiFi',
     'pi.homeNetwork.subnet': '10.27.27.0/24',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.homeNetwork.pingTimeoutSeconds': 3,
-    'pi.homeNetwork.serverPingPath': '/api/v1/ping',
+    'pi.homeNetwork.serverPingPath': '/api/v1/health',
+    # ARCH-065: the at-home shutdown sync runs to completion. joinWaitSec bounds
+    # the WiFi-join wait; stallSec ends a drain whose backlog stopped falling.
+    'pi.homeNetwork.joinWaitSec': 120,
+    'pi.homeNetwork.stallSec': 60,
     # Pi-tier sync trigger semantics (US-226).  Orchestrator-level trigger
     # policy; the transport config lives in pi.companionService above.
     # intervalSeconds MUST fire independently of drive_end so a bugged
@@ -377,6 +466,17 @@ DEFAULTS: dict[str, Any] = {
     'pi.sensors.imu.zuptSpeedMaxAgeSec': 2.0,
     'pi.sensors.imu.zuptMinStops': 5,
     'pi.sensors.imu.zuptWindowStops': 20,
+    # US-803-a: the A-34 gyro startup recovery (pi.sensors.gyro_recovery).
+    # gyroFaultMinRadS sits in the measured empty gap between quiet (0.013-0.015
+    # rad/s) and latched (0.487-0.553) starts; the count is how many at-rest
+    # reads each side of the power cycle; the settle is each wait in the cycle.
+    # Values equal the module constants, which apply only when a key is absent.
+    'pi.sensors.imu.gyroFaultMinRadS': 0.10,
+    'pi.sensors.imu.gyroRecoverySampleCount': 20,
+    'pi.sensors.imu.gyroRecoverySettleSec': 1.0,
+    # US-803-b: the mag/gyro pairing window in SECONDS (was 5 polls, whose
+    # duration moved with sampleHz). 1.25 = 5 polls at the shipped 4 Hz.
+    'pi.sensors.imu.magMaxAgeSec': 1.25,
     # US-564 (F-135) plausibility gate: how long a channel must stay BIT-
     # IDENTICAL before it is reported sensor_stale.  A DWELL, not a physical
     # threshold -- bit-identity is a proof (real sensors dither +/-1 LSB, so a
@@ -385,30 +485,88 @@ DEFAULTS: dict[str, Any] = {
     # hiccup re-serving one buffered frame.  Seconds, not samples, so a 50 Hz
     # and a 1 Hz channel wait the same wall-clock time.
     'pi.sensors.imu.invariantDwellSeconds': 2.0,
-    # ARCH-057: which magnetometer ACQUISITION path runs. 'master' | 'bypass'.
+    # Which magnetometer ACQUISITION path runs. One of three, in the order
+    # they were shipped: 'bypass' (A) -> 'master' (B) -> 'direct' (C, current
+    # default). Allowed set enforced in _validateImuStateBridge.
     #
-    # 🔴 'master' IS THE DEFAULT BECAUSE IT IS THE CONFIGURATION THE FIX WAS
+    # 🔴 ARCH-064 (2026-09-28) MADE 'direct' (C) THE DEFAULT, SUPERSEDING THE
+    # ARCH-057 'master' RULING BELOW. MEASURED on the real hardware: with the
+    # ICM-20948's internal I2C master enabled -- what 'master' is -- the
+    # AK09916 freezes after exactly one reading, under BOTH the adafruit AND
+    # the SparkFun libraries, with every other project process stopped (see
+    # src/pi/sensors/icm20948_direct.py header). 'direct' configures the chip
+    # from a clean software reset with the I2C master NEVER enabled and reads
+    # the AK09916 in bypass per its own datasheet -- live at 100 Hz, no
+    # freeze. ⚠️ Switching to bypass AFTER the master has already run (i.e.
+    # falling back from 'master' to 'bypass' at runtime rather than from a
+    # clean boot) can hang the whole I2C bus -- a second, worse failure mode;
+    # a magMode change is a config edit + service RESTART, never a live flip.
+    #
+    # ⚠️ 'master' and 'bypass' are BOTH RETAINED DELIBERATELY as revert paths,
+    # not dead config -- switch to either with a service restart if 'direct'
+    # misbehaves in the car. Their original ARCH-057/pre-ARCH-057 rationale is
+    # preserved below verbatim; it is superseded as the DEFAULT, not deleted.
+    #
+    # --- ARCH-057 (2026-09-18), superseded as the default by ARCH-064 above ---
+    # 🔴 'master' WAS THE DEFAULT BECAUSE IT WAS THE CONFIGURATION THE FIX WAS
     # MEASURED IN. The runtime keep-alive (0/20 -> 20/20 on this hardware,
     # 2026-09-18) repairs the channel by re-running adafruit's
     # _magnetometer_init(), which sets BYPASS_EN=False and re-enables the ICM's
     # internal I2C master. It is a MASTER-MODE repair, incompatible with the
     # bypass by construction: calling it on a bypassed chip would convert the
     # acquisition path mid-drive and the direct 0x0C reads would start failing.
-    # Shipping the measured repair therefore MEANS shipping master mode -- that is
-    # a consequence of the evidence, not a preference.
+    # Shipping the measured repair therefore MEANT shipping master mode -- that
+    # was a consequence of the evidence, not a preference. ARCH-064 measured
+    # that master mode itself freezes the magnetometer on this board (above),
+    # which is why it is now a revert path rather than the default.
     #
-    # ⚠️ 'bypass' IS RETAINED DELIBERATELY and is not dead config. It is the
-    # pre-ARCH-057 path (ak09916_bypass: direct 0x0C, ST1..ST2, with a real DRDY
-    # and HOFL check that master mode does NOT get, because adafruit's burst
-    # starts at 0x11 and never decodes ST2). It is the escape hatch: if master
-    # mode misbehaves in the car, revert with this key and a service restart
-    # rather than waiting for a deploy. It gets no keep-alive, per the above.
+    # 'bypass' (A) is the pre-ARCH-057 path (ak09916_bypass: direct 0x0C,
+    # ST1..ST2, with a real DRDY and HOFL check that master mode does NOT get,
+    # because adafruit's burst starts at 0x11 and never decodes ST2). It gets
+    # no runtime keep-alive, per the above.
     #
     # ⚠️ The 20/20 was measured with eclipse-obd STOPPED, i.e. sole owner of the
     # bus. ARCH-032 measured contention taking the magnetometer hand-over from
     # ~80% to ~12%, so that figure is UNCONTENDED and is not yet demonstrated in
     # production. Do not quote it as a production number.
-    'pi.sensors.imu.magMode': 'master',
+    'pi.sensors.imu.magMode': 'direct',
+    # ARCH-064: which AHRS fusion engine imu_state_bridge builds. 'imufusion'
+    # (the x-io Fusion AHRS, pi.sensors.ahrs_fusion) is the default; 'legacy'
+    # is the US-521 PitchFusion, kept selectable and byte-identical to before
+    # so a bad drive can be rolled back by config instead of a redeploy.
+    # Allowed set enforced in _validateImuStateBridge. 🔴 Under 'imufusion' the
+    # legacy pitch knobs above (pitchTauSec, accelTrustBand, zupt*) have NO
+    # EFFECT -- Fusion has no ZUPT stop detector and no mount-tilt bias
+    # (AhrsFusion.stopCount / .biasRad are always 0 for surface parity only).
+    # They still apply, unchanged, when fusionEngine is 'legacy'.
+    'pi.sensors.imu.fusionEngine': 'imufusion',
+    # ARCH-064: magnetic declination, degrees, EAST positive (true heading =
+    # magnetic heading + declination). Consumed only by AhrsFusion -- the
+    # legacy engine's headingDeg is magnetic, uncorrected. 0.0 here is an
+    # inert module default; the real value (car's location) belongs in config.json
+    # and is DOCUMENTED there with its NOAA/WMM source and date.
+    'pi.sensors.imu.magDeclinationDeg': 0.0,
+    # ARCH-064: hard/soft-iron magnetometer calibration, consumed only by
+    # AhrsFusion (m_c = softIron . (m_uncalibrated - hardIronUt)). Zero/
+    # identity is a NO-OP -- uncalibrated readings pass through unchanged --
+    # so an unset car ships with the same (uncorrected) heading accuracy as
+    # before rather than a silently wrong correction. Fit with
+    # tools/imu/fit_mag_calibration.py (ARCH-064 Task 6) once drive data
+    # exists.
+    'pi.sensors.imu.magCalibration': {
+        'hardIronUt': [0.0, 0.0, 0.0],
+        'softIron': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    },
+    # ARCH-064 Task 6b: accelerometer calibration, consumed only by AhrsFusion
+    # (a_c = matrix . (a - offsetMs2), BODY frame, m/s^2, applied before
+    # speed-aided compensation). Zero/identity is a NO-OP. Fit from a hand
+    # tumble with tools/imu/accel_cal_cli.py --ellipsoid, which emits this
+    # block already conjugated into the body frame. A partial block is
+    # completed leaf-by-leaf in _validateImuAccelCalibration.
+    'pi.sensors.imu.accelCalibration': {
+        'offsetMs2': [0.0, 0.0, 0.0],
+        'matrix': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    },
     'pi.sensors.light.enabled': False,
     'pi.sensors.light.sampleHz': 1,
     'pi.sensors.retentionDays': 7,
@@ -709,6 +867,8 @@ class ConfigValidator:
         self._validatePiSync(config)
         self._validateBootProgress(config)
         self._validatePowerWatch(config)
+        self._validateBatteryHealth(config)
+        self._validateCellEpoch(config)
         self._validateDisplayAutoDim(config)
         self._validateImuStateBridge(config)
         self._validateLocalZone(config)
@@ -908,6 +1068,19 @@ class ConfigValidator:
                 missingFields=['pi.homeNetwork.serverPingPath'],
             )
 
+        for key in ('joinWaitSec', 'stallSec'):
+            value = section.get(key)
+            # bool first -- isinstance(True, int) is True in Python.
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value <= 0
+            ):
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.{key} must be a positive number (got {value!r})",
+                    missingFields=[f'pi.homeNetwork.{key}'],
+                )
+
     def _validatePiSync(self, config: dict[str, Any]) -> None:
         """Validate pi.sync shape + trigger membership (US-226).
 
@@ -1005,6 +1178,22 @@ class ConfigValidator:
                 missingFields=['pi.shutdown.poweroffTimeoutSeconds'],
             )
 
+    def _validateBatteryHealth(self, config: dict[str, Any]) -> None:
+        """Validate pi.batteryHealth.* (ARCH-065): positive numbers only.
+
+        Raises:
+            ConfigValidationError: If monthlyIntervalDays is not an integer >= 1.
+        """
+        for key in ('pi.batteryHealth.monthlyIntervalDays',):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool) or not isinstance(val, int) or val < 1
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be an integer >= 1 (got {val!r})",
+                    missingFields=[key],
+                )
+
     def _validatePowerWatch(self, config: dict[str, Any]) -> None:
         """Validate pi.powerWatch.* numeric bounds (Phase-2 spec sec 9).
 
@@ -1045,6 +1234,17 @@ class ConfigValidator:
                     missingFields=[key],
                 )
 
+        # A COUNT of consecutive reads (Ruling 19, M8): an integer >= 1 only.
+        for key in ('pi.powerWatch.drainFloorDwellReads',):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool) or not isinstance(val, int) or val < 1
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be an integer >= 1 (got {val!r})",
+                    missingFields=[key],
+                )
+
         for floorKey in (
             'pi.powerWatch.vcellFloorVolts',
             'pi.powerWatch.drainFloorVolts',
@@ -1066,6 +1266,28 @@ class ConfigValidator:
                 f"pi.powerWatch.pldPowerPresentHigh must be a bool "
                 f"(got {php!r})",
                 missingFields=['pi.powerWatch.pldPowerPresentHigh'],
+            )
+
+    def _validateCellEpoch(self, config: dict[str, Any]) -> None:
+        """Validate pi.power.cellEpoch against CELL_EPOCH_VALUES (US-790).
+
+        A closed vocabulary, compared exactly: a near-miss spelling would file
+        drain rows under an epoch no query groups with the rest.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the value is not one of CELL_EPOCH_VALUES.
+        """
+        key = 'pi.power.cellEpoch'
+        value = self._getNestedValue(config, key)
+        if value is not None and (
+            not isinstance(value, str) or value not in CELL_EPOCH_VALUES
+        ):
+            raise ConfigValidationError(
+                f"{key} must be one of {list(CELL_EPOCH_VALUES)} (got {value!r})",
+                missingFields=[key],
             )
 
     def _validateDisplayAutoDim(self, config: dict[str, Any]) -> None:
@@ -1207,11 +1429,27 @@ class ConfigValidator:
         # its floor, gating a channel on two identical samples -- fast enough to
         # fire on a real scheduler hiccup. Fail fast rather than silently.
         'pi.sensors.imu.invariantDwellSeconds',
+        # US-803-a: a zero sample count reads nothing, and gyroLooksFaulted
+        # treats no samples as healthy -- fault detection silently off.
+        'pi.sensors.imu.gyroFaultMinRadS',
+        'pi.sensors.imu.gyroRecoverySampleCount',
+        'pi.sensors.imu.gyroRecoverySettleSec',
+        # US-803-b: a zero window never pairs a mag, so heading goes NA forever.
+        'pi.sensors.imu.magMaxAgeSec',
         # US-767-b: a zero pre-roll keeps nothing from before the link, and a
         # zero hold closes the gate on the first dropped read.
         'pi.sensors.logGate.preRollSec',
         'pi.sensors.logGate.holdSec',
     )
+
+    # ARCH-064: the three magnetometer acquisition paths a build can name, and
+    # the two fusion engines a build can select. See the DEFAULTS comments
+    # above for what each value means and why an unknown one is rejected
+    # rather than silently coerced to the default -- a typo'd magMode must not
+    # quietly ship whichever acquisition path happens to be this release's
+    # default.
+    _IMU_MAG_MODES = frozenset({'direct', 'bypass', 'master'})
+    _IMU_FUSION_ENGINES = frozenset({'imufusion', 'legacy'})
 
     def _validateImuStateBridge(self, config: dict[str, Any]) -> None:
         """Validate pi.sensors.imu.{rates,pitch,zupt} (US-478, US-521, US-708).
@@ -1243,18 +1481,213 @@ class ConfigValidator:
                     f"{key} must be a positive number (got {val!r})",
                     missingFields=[key],
                 )
+        self._validateImuEnums(config)
+        self._validateImuDeclination(config)
+        self._validateImuAccelCalibration(config)
+        self._validateImuMagCalibration(config)
+        self._validateGyroRecovery(config)
         self._warnImuRatesAboveSource(config)
+
+    def _validateImuEnums(self, config: dict[str, Any]) -> None:
+        """Reject a ``magMode`` or ``fusionEngine`` outside its allowed set (ARCH-064).
+
+        Called after defaults are applied, so an absent key never reaches
+        here -- only an explicit, wrong value does.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If ``pi.sensors.imu.magMode`` is not one of
+                'direct' / 'bypass' / 'master', or ``pi.sensors.imu.fusionEngine``
+                is not one of 'imufusion' / 'legacy'.
+        """
+        magMode = self._getNestedValue(config, 'pi.sensors.imu.magMode')
+        if magMode is not None and magMode not in self._IMU_MAG_MODES:
+            raise ConfigValidationError(
+                f"pi.sensors.imu.magMode has unknown value {magMode!r}; "
+                f"allowed: {sorted(self._IMU_MAG_MODES)}",
+                missingFields=['pi.sensors.imu.magMode'],
+            )
+
+        fusionEngine = self._getNestedValue(config, 'pi.sensors.imu.fusionEngine')
+        if fusionEngine is not None and fusionEngine not in self._IMU_FUSION_ENGINES:
+            raise ConfigValidationError(
+                f"pi.sensors.imu.fusionEngine has unknown value {fusionEngine!r}; "
+                f"allowed: {sorted(self._IMU_FUSION_ENGINES)}",
+                missingFields=['pi.sensors.imu.fusionEngine'],
+            )
+
+    def _validateImuDeclination(self, config: dict[str, Any]) -> None:
+        """Require ``pi.sensors.imu.magDeclinationDeg`` to be a finite angle in [-180, 180].
+
+        ARCH-064 Ruling 35 (M1). It used to be only DEFAULTED: a NaN reached
+        AhrsFusion and made every published heading NaN, and a string failed
+        inside the engine build and silently fell back to the legacy engine.
+        Called after defaults, so an absent key is already 0.0 here.
+
+        Raises:
+            ConfigValidationError: a non-number (bools included), a NaN/inf,
+                or a magnitude above 180 degrees.
+        """
+        key = 'pi.sensors.imu.magDeclinationDeg'
+        val = self._getNestedValue(config, key)
+        # Absent = nothing to validate, the same rule _validateImuEnums applies. It
+        # only happens when a caller builds the validator with its OWN defaults map
+        # (so the registry's 0.0 never lands); the engine build then falls back to
+        # its default. Merge with dev, 2026-10-01: raising here broke two dev tests
+        # (TestEdgeCases) that validate a custom-defaults config with no imu section.
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or abs(val) > 180.0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number of degrees within [-180, 180] "
+                f"(EAST positive), got {val!r}",
+                missingFields=[key],
+            )
+
+    def _validateImuAccelCalibration(self, config: dict[str, Any]) -> None:
+        """Validate (and complete) ``pi.sensors.imu.accelCalibration`` (ARCH-064 Task 6b).
+
+        ``offsetMs2`` a finite 3-vector, ``matrix`` a finite 3x3 with det > 0.
+        See :meth:`_validateCalibrationBlock`.
+        """
+        self._validateCalibrationBlock(config, 'pi.sensors.imu.accelCalibration', 'offsetMs2', 'matrix')
+
+    def _validateImuMagCalibration(self, config: dict[str, Any]) -> None:
+        """Validate (and complete) ``pi.sensors.imu.magCalibration`` (Ruling 32).
+
+        ``hardIronUt`` a finite 3-vector, ``softIron`` a finite 3x3 with det > 0.
+        Before this, a malformed block reached AhrsFusion, which refused it at
+        runtime and silently fell back to the legacy engine.
+        """
+        self._validateCalibrationBlock(config, 'pi.sensors.imu.magCalibration', 'hardIronUt', 'softIron')
+
+    def _validateCalibrationBlock(
+        self, config: dict[str, Any], key: str, vectorKey: str, matrixKey: str
+    ) -> None:
+        """Validate (and complete) one ``{vector, matrix}`` calibration block.
+
+        The vector must be 3 finite numbers and the matrix a finite 3x3 with a
+        POSITIVE determinant: a calibration is a correction near the identity,
+        and det <= 0 is a mirror or a collapse -- an axis would read reversed.
+        A missing leaf is filled with its no-op value (zero / identity), so a
+        partial block means what it says.
+
+        Rejected here rather than left to AhrsFusion, which would refuse it at
+        runtime and silently fall back to the legacy engine.
+
+        Args:
+            config: Validated configuration (post-default-application).
+            key: Dot path of the block.
+            vectorKey: Name of the offset leaf.
+            matrixKey: Name of the matrix leaf.
+
+        Raises:
+            ConfigValidationError: If the block, the vector or the matrix is
+                malformed, non-finite, or the matrix determinant is <= 0.
+        """
+        block = self._getNestedValue(config, key)
+        if block is None:
+            return
+        if not isinstance(block, dict):
+            raise ConfigValidationError(
+                f"{key} must be an object {{{vectorKey}, {matrixKey}}} (got {block!r})",
+                missingFields=[key],
+            )
+
+        def finite(value: Any) -> bool:
+            return (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+
+        vector = block.setdefault(vectorKey, [0.0, 0.0, 0.0])
+        if not (
+            isinstance(vector, (list, tuple)) and len(vector) == 3 and all(finite(v) for v in vector)
+        ):
+            raise ConfigValidationError(
+                f"{key}.{vectorKey} must be 3 finite numbers (got {vector!r})",
+                missingFields=[f"{key}.{vectorKey}"],
+            )
+
+        matrix = block.setdefault(matrixKey, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        if not (
+            isinstance(matrix, (list, tuple))
+            and len(matrix) == 3
+            and all(
+                isinstance(row, (list, tuple)) and len(row) == 3 and all(finite(v) for v in row)
+                for row in matrix
+            )
+        ):
+            raise ConfigValidationError(
+                f"{key}.{matrixKey} must be a 3x3 of finite numbers (got {matrix!r})",
+                missingFields=[f"{key}.{matrixKey}"],
+            )
+        (a, b, c), (d, e, f), (g, h, i) = matrix
+        determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+        if not determinant > 0.0:
+            raise ConfigValidationError(
+                f"{key}.{matrixKey} determinant must be > 0 (got {determinant:g}): a mirror "
+                "or singular matrix is not a calibration",
+                missingFields=[f"{key}.{matrixKey}"],
+            )
+
+    def _validateGyroRecovery(self, config: dict[str, Any]) -> None:
+        """Bound the A-34 gyro-recovery keys beyond positivity (US-803-a).
+
+        Runs after the positive check, so each value here is already a
+        positive int or float.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the sample count is not an integer, or
+                the fault threshold exceeds the gyro's full scale.
+        """
+        countKey = 'pi.sensors.imu.gyroRecoverySampleCount'
+        count = self._getNestedValue(config, countKey)
+        # An INTEGER, not merely positive: a float reaches range(count) in
+        # gyro_recovery._sampleGyro and raises TypeError, which the recovery
+        # does not catch and _recoverGyro swallows -- so 2.5 (or 20.0) would
+        # silently disable the recovery on every boot while the IMU looks healthy.
+        if count is not None and not isinstance(count, int):
+            raise ConfigValidationError(
+                f"{countKey} must be an integer (got {count!r})",
+                missingFields=[countKey],
+            )
+
+        thresholdKey = 'pi.sensors.imu.gyroFaultMinRadS'
+        threshold = self._getNestedValue(config, thresholdKey)
+        if threshold is not None and threshold > GYRO_FULL_SCALE_RAD_S:
+            raise ConfigValidationError(
+                f"{thresholdKey} {threshold!r} exceeds the gyro's full scale "
+                f"({GYRO_FULL_SCALE_RAD_S:.3f} rad/s = 500 dps) -- the sensor can "
+                f"never report that rate, so fault detection would be silently off",
+                missingFields=[thresholdKey],
+            )
 
     def _warnImuRatesAboveSource(self, config: dict[str, Any]) -> None:
         """WARN when an IMU consumer rate cannot be what its config field says (US-796-b).
 
         persistHz and stateHz are consumers of sampleHz. A consumer rate above
-        its source carries no new data, and the persist path decimates by an
-        INTEGER factor (``max(1, round(sampleHz / persistHz))`` in
-        ``edr_persistence_subscriber._decimationFactor``), so a ratio that is not
-        exact silently lands on a different rate. Both degrade safely rather than
-        fail -- but a silent clamp is a config field that lies, so each one is
-        named here with both values and the rate actually delivered.
+        its source carries no new data: it degrades safely rather than fails, but
+        a silent clamp is a config field that lies, so it is named here with both
+        values and the rate actually delivered.
+
+        ARCH-064d: the persist path is a UTC time grid of ``1 / persistHz`` s
+        (``edr_persistence_subscriber._UtcGridSelector``), so ANY persistHz at or
+        below sampleHz is stored exactly -- the old "not an exact divisor"
+        warning described the retired keep-1-of-N rule and is gone. What is
+        warned instead is a rate outside ``RECOMMENDED_IMU_PERSIST_HZ`` (the CIO's
+        1/2/4 Hz), whose grid does not tile the ECU's whole-second rows evenly.
 
         Args:
             config: Validated configuration (post-default-application).
@@ -1265,17 +1698,18 @@ class ConfigValidator:
 
         persistHz = self._getNestedValue(config, 'pi.sensors.imu.persistHz')
         if _isPositiveNumber(persistHz):
-            factor = max(1, round(sampleHz / persistHz))
-            effectiveHz = sampleHz / factor
-            if effectiveHz != persistHz:
-                reason = (
-                    "exceeds its source" if persistHz > sampleHz
-                    else "is not an exact divisor of its source"
-                )
+            if persistHz > sampleHz:
                 logger.warning(
-                    "pi.sensors.imu.persistHz %g %s pi.sensors.imu.sampleHz %g -- "
-                    "every %d burst(s) persisted, effective rate %g Hz",
-                    persistHz, reason, sampleHz, factor, effectiveHz,
+                    "pi.sensors.imu.persistHz %g exceeds its source pi.sensors.imu.sampleHz %g -- "
+                    "every burst persisted, effective rate %g Hz",
+                    persistHz, sampleHz, sampleHz,
+                )
+            elif persistHz not in RECOMMENDED_IMU_PERSIST_HZ:
+                logger.warning(
+                    "pi.sensors.imu.persistHz %g is not an ECU-matchable recording rate "
+                    "(%s Hz, CIO 2026-09-30) -- rows are stored at %g Hz on a %g s UTC grid",
+                    persistHz, ", ".join(f"{r:g}" for r in RECOMMENDED_IMU_PERSIST_HZ),
+                    persistHz, 1.0 / persistHz,
                 )
 
         stateHz = self._getNestedValue(config, 'pi.sensors.imu.stateHz')

@@ -20,7 +20,7 @@
 #   Driven through the node subprocess probe (carousel_probe.js); skipped when
 #   node is not on PATH. The staleness cases are fed by the REAL verdict producer
 #   (pi.power.battery_health_verdict) rather than a hand-written `health` string,
-#   so VC4 measures the shipped 90-day rule instead of restating it.
+#   so VC4 measures the shipped staleness rule instead of restating it.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-09-10
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -30,6 +30,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-10    | Ralph (Rex)  | Initial -- US-699 SOC headline + vcell detail.
+# 2026-10-03    | Atlas (ARCH-065a) | T7: VC4 fed by the ARCH-065 verdict (a
+#               |              | counted monthly test, stale after 45 days)
+#               |              | instead of the retired qualifying-drain rows.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: compute takes drainFloorVolts.
 # ================================================================================
 ################################################################################
 
@@ -43,8 +47,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from common.config.validator import DEFAULTS
 from pi.power.battery_health_verdict import (
-    STALE_HEALTH_CHECK_DAYS,
+    STALE_TEST_DAYS,
     VERDICT_GOOD,
     VERDICT_UNKNOWN,
     computeBatteryHealthVerdict,
@@ -88,19 +93,18 @@ def _iso(daysAgo: float) -> str:
     return (_NOW - timedelta(days=daysAgo)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _healthRow(*, daysAgo: float) -> dict:
-    """A QUALIFYING battery_health_log row (production load, run to depth).
+def _monthlyTest(*, daysAgo: float) -> dict:
+    """A COUNTED monthly test (it has a drain rate) of the current pack.
 
-    Values chosen to clear the shipped gate (`end_vcell_v <= 3.50`, runtime
-    >= 60 s) and to land the median above the GOOD band, so the verdict this
-    row set produces is a real `good` rather than an asserted one.
+    Values chosen so T (straight-line, provisional) clears 1.2 J by a wide
+    margin, so the verdict this produces is a real `good` rather than an
+    asserted one.
     """
     return {
         "start_timestamp": _iso(daysAgo),
-        "end_timestamp": _iso(daysAgo - 0.01),
-        "runtime_seconds": 700,
-        "load_class": "production",
-        "end_vcell_v": 3.45,
+        "drain_rate_mv_s": -0.04,
+        "end_vcell_v": 4.07,
+        "window_end_s": 660,
     }
 
 
@@ -308,7 +312,7 @@ def test_idleBatteryFact_us685Pair_isNotSmoothedAveragedOrSuppressed():
 
 
 # ---------------------------------------------------------------------------
-# VC4 -- staleness. Fed by the REAL verdict producer so the 90-day rule is
+# VC4 -- staleness. Fed by the REAL verdict producer so the staleness rule is
 # MEASURED here, not restated. A hand-written `health: "unknown"` would make
 # this test pass against a producer that had stopped applying the rule at all.
 # ---------------------------------------------------------------------------
@@ -320,8 +324,11 @@ def _producedBattery(*, checkDaysAgo: float, soc: int = 76, vcellV: float = 4.02
     Returns ``(verdict, statePayload)`` -- the verdict is returned so each test
     can assert WHAT the producer said before asserting how it renders."""
     verdict = computeBatteryHealthVerdict(
-        rows=[_healthRow(daysAgo=checkDaysAgo + n) for n in (0, 1, 2)],
+        test=_monthlyTest(daysAgo=checkDaysAgo),
+        calibration=None,
+        jobsS=[109.0] * 10,
         nowIso=_NOW_ISO,
+        drainFloorVolts=DEFAULTS["pi.powerWatch.drainFloorVolts"],
     )
     return verdict, _battery(
         soc=soc,
@@ -345,12 +352,12 @@ def test_idleBatteryFact_freshQualifyingDrains_isGreenAndCarriesItsAge():
 
 
 def test_idleBatteryFact_healthDataPastTheStalenessThreshold_isNotGreen():
-    """A check older than STALE_HEALTH_CHECK_DAYS -> the tile is not green.
+    """A check older than STALE_TEST_DAYS -> the tile is not green.
 
     The producer forces `unknown` past the threshold and the display refuses
     `ok` for it; the story's requirement is that the SOC headline does not buy
     the tile a confidence its verdict no longer supports."""
-    verdict, data = _producedBattery(checkDaysAgo=STALE_HEALTH_CHECK_DAYS + 1)
+    verdict, data = _producedBattery(checkDaysAgo=STALE_TEST_DAYS + 1)
     assert verdict.verdict == VERDICT_UNKNOWN
     fact = _view("idleBatteryFact", data)
     assert fact["level"] != "ok"
@@ -361,7 +368,7 @@ def test_idleBatteryFact_staleVerdict_stillNamesTheCheckDate():
 
     The producer keeps `lastHealthCheckTs` through every unknown branch on
     purpose, and the tile is where that decision either pays off or is wasted."""
-    verdict, data = _producedBattery(checkDaysAgo=STALE_HEALTH_CHECK_DAYS + 1)
+    verdict, data = _producedBattery(checkDaysAgo=STALE_TEST_DAYS + 1)
     fact = _view("idleBatteryFact", data)
     assert verdict.lastHealthCheckTs[:10] in fact["detail"]
     assert "days ago" in fact["detail"]
@@ -373,7 +380,7 @@ def test_idleBatteryFact_staleVerdict_stillShowsTheLiveRegisters():
     Two different facts: the health check is a drain test from months ago, the
     percent is this second's register. Suppressing the percent because the
     verdict went stale would lose a real reading to protect a cosmetic one."""
-    _, data = _producedBattery(checkDaysAgo=STALE_HEALTH_CHECK_DAYS + 1, soc=64, vcellV=3.88)
+    _, data = _producedBattery(checkDaysAgo=STALE_TEST_DAYS + 1, soc=64, vcellV=3.88)
     fact = _view("idleBatteryFact", data)
     assert fact["value"] == "64%"
     assert "3.88 V" in fact["detail"]

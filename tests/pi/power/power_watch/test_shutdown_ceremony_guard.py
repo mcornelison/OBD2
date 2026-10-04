@@ -27,6 +27,7 @@ import pytest
 from src.common.edr.sync_contract import SHUTDOWN_DRAIN_EXCLUDED_TABLES
 from src.pi.data import sync_log
 from src.pi.diagnostics import boot_progress
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.obdii.database import ObdDatabase
 from src.pi.power.power_watch import __main__ as m
 from src.pi.power.power_watch.controller import ShutdownSequencer
@@ -203,7 +204,11 @@ def runShutdown(
         drain()
 
     syncTask = SyncWithServerTask(
-        serverReachable=lambda: True, runSync=runSync, writeRecord=lambda _kd: None,
+        homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
+        runSync=runSync,
+        writeRecord=lambda _kd: None,
+        joinWaitSec=120.0,
+        stallSec=60.0,
     )
 
     slot = OwnDrainCloseSlot()

@@ -97,7 +97,11 @@ def _snapshot(
     stopCount: int = 5,
     biasRad: float = 0.0131,
     fusionVersion: int = 1,
+    gyroBiasRadS: tuple[float, float, float] | None = None,
+    gyroBiasStops: int = 0,
+    gyroBiasRejectedStops: int = 0,
 ) -> dict[str, Any]:
+    roll, pitch, yaw = gyroBiasRadS if gyroBiasRadS is not None else (None, None, None)
     return {
         "tsUtc": tsUtc,
         "tsCapture": tsCapture,
@@ -106,6 +110,11 @@ def _snapshot(
         "stopCount": stopCount,
         "biasRad": biasRad,
         "fusionVersion": fusionVersion,
+        "gyroBiasRollRadS": roll,
+        "gyroBiasPitchRadS": pitch,
+        "gyroBiasYawRadS": yaw,
+        "gyroBiasStops": gyroBiasStops,
+        "gyroBiasRejectedStops": gyroBiasRejectedStops,
     }
 
 
@@ -205,16 +214,19 @@ class TestDerivedRowWriter:
     def test_decimationIsSHARED_derivedFollowsTheRawKeepSet(self, db: _Db) -> None:
         """Both rows come from the SAME decimation decision, so they cannot diverge.
 
-        Decimation is `seq % N`, a function of the SAMPLE -- not of arrival
-        order -- so a dropped burst costs BOTH rows or neither. That is what
-        makes the raw<->derived join structural rather than probabilistic.
+        ARCH-064d: the decision is the burst's UTC grid slot, taken once per seq
+        from the sample's own capture time -- still a function of the SAMPLE,
+        not of arrival order -- so a dropped burst costs BOTH rows or neither.
+        That is what makes the raw<->derived join structural rather than
+        probabilistic. (Stamped at the 4 Hz it claims; was 1 s apart.)
         """
         sub = EdrPersistenceSubscriber(
-            None, db, imuSampleHz=4, imuPersistHz=2,   # keep 1 of 2
+            None, db, imuSampleHz=4, imuPersistHz=2,   # one row per 0.5 s slot
             derivedSnapshotFn=lambda: _snapshot(),
+            wallClockOffsetFn=lambda: 0.0,
         )
         for seq in range(4):
-            self._feed(sub, seq=seq, tsCapture=100.0 + seq)
+            self._feed(sub, seq=seq, tsCapture=100.0 + seq * 0.25 + 0.01)
         rawSeqs = [r["seq"] for r in _rows(db, "edr_imu_sample")]
         assert rawSeqs == [0, 2]
         assert len(_rows(db, "edr_imu_derived")) == len(rawSeqs)

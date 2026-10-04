@@ -68,6 +68,25 @@
 #                               startSocPct/endSocPct kwargs now land in
 #                               *_soc_pct (NULL when omitted).  US-427 wires the
 #                               real register read; this story is schema-only.
+# 2026-09-24    | Rex (US-683) | Typed close_reason column (clean /
+#                               reaped_uncheckpointed / reaped_checkpointed) with
+#                               a column-level CHECK.  ensureBatteryHealthLog
+#                               CloseReasonColumn: PRAGMA-guarded ADD COLUMN plus
+#                               a one-shot conservative backfill -- no rebuild.
+#                               endDrainEvent writes 'clean'.  REAP_CHECKPOINTED_
+#                               NOTE_SUFFIX moved here from drain_event_writer so
+#                               the backfill can read it without an import cycle.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 capacity columns on
+#                               battery_health_log (drain_trigger, cell_epoch,
+#                               window/verdict fields), DRAIN_TRIGGER_* enum and
+#                               the PRAGMA-probed ensureBatteryHealthLogCapacity
+#                               Columns.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T5: resolveCellEpoch -- the ONE
+#                               reader of pi.power.cellEpoch (controller ruling 9).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: lossRowBand + LOSS_ROW_*_S -- the ONE
+#                               owner of "this loss's drain row" (finaliser + mark);
+#                               the fresh DDL's drain_trigger CHECK derives from
+#                               DRAIN_TRIGGER_VALUES.
 # ================================================================================
 ################################################################################
 
@@ -104,6 +123,10 @@ Schema shape (US-289 vcell rename; US-426 legacy-soc drop + soc_pct add):
 * ``notes``               TEXT NULL
 * ``data_source``         TEXT NOT NULL DEFAULT 'real'
                           CHECK IN ('real','replay','physics_sim','fixture','foreign')
+* ``close_reason``        TEXT NULL (US-683)
+                          CHECK IN ('clean','reaped_uncheckpointed',
+                          'reaped_checkpointed').  NULL exactly while the row is
+                          open; ``end_timestamp IS NULL`` stays the open marker.
 
 US-426 (BL-015): the legacy ``start_soc`` / ``end_soc`` columns held VCELL
 volts despite the name (redundant with ``*_vcell_v``) and are DROPPED.  The
@@ -117,12 +140,18 @@ Invariants:
 * ``start_vcell_v`` + ``start_timestamp`` are authoritative once written; the
   UPDATE path in :meth:`BatteryHealthRecorder.endDrainEvent` only touches
   the end-of-event columns (end_timestamp, end_vcell_v, end_soc_pct,
-  runtime_seconds, ambient_temp_c).
+  runtime_seconds, ambient_temp_c, close_reason).
 * ``drain_event_id`` is auto-incremented + monotonic (per-event, not a
   singleton like ``drive_counter``).
 * Close-once semantic: calling ``endDrainEvent`` a second time on an
   already-closed row is a no-op -- the original end_timestamp / end_vcell_v
   are preserved (first-close-wins).
+* Pairing (US-683): a row has ``end_timestamp`` exactly when it has
+  ``close_reason``.  Held in CODE -- every statement that sets
+  ``end_timestamp`` sets ``close_reason`` in the same UPDATE -- not by a schema
+  CHECK: SQLite tests an ADD COLUMN's CHECKs against existing rows, so a paired
+  CHECK would fail every closed row before the backfill could run, and only a
+  table rebuild could add it.
 * Timestamps route through :func:`src.common.time.helper.utcIsoNow` so the
   canonical ISO-8601 UTC format (TD-027 / US-202) is enforced.
 
@@ -139,21 +168,39 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from src.common.config.validator import CELL_EPOCH_UNKNOWN
 from src.common.time.helper import CANONICAL_ISO_FORMAT, utcIsoNow
 
 __all__ = [
     'BATTERY_HEALTH_LOG_TABLE',
+    'CLOSE_REASON_CLEAN',
+    'CLOSE_REASON_REAPED_CHECKPOINTED',
+    'CLOSE_REASON_REAPED_UNCHECKPOINTED',
+    'CLOSE_REASON_VALUES',
+    'BATTERY_HEALTH_CAPACITY_COLUMNS',
+    'DRAIN_TRIGGER_CALIBRATION',
+    'DRAIN_TRIGGER_KEYOFF',
+    'DRAIN_TRIGGER_MONTHLY_TEST',
+    'DRAIN_TRIGGER_VALUES',
+    'LOSS_ROW_AFTER_S',
+    'LOSS_ROW_BEFORE_S',
+    'lossRowBand',
+    'resolveCellEpoch',
     'DatabaseLike',
     'BatteryHealthRecorder',
     'DrainEventCloseResult',
     'LOAD_CLASS_DEFAULT',
     'LOAD_CLASS_VALUES',
+    'REAP_CHECKPOINTED_NOTE_SUFFIX',
     'SCHEMA_BATTERY_HEALTH_LOG',
     'INDEX_BATTERY_HEALTH_LOG_START',
+    'ensureBatteryHealthLogCapacityColumns',
+    'ensureBatteryHealthLogCloseReasonColumn',
     'ensureBatteryHealthLogTable',
     'ensureBatteryHealthLogVcellColumns',
     'ensureBatteryHealthLogSocPctColumns',
@@ -175,12 +222,97 @@ BATTERY_HEALTH_LOG_TABLE: str = 'battery_health_log'
 LOAD_CLASS_VALUES: tuple[str, ...] = ('production', 'test', 'sim')
 LOAD_CLASS_DEFAULT: str = 'production'
 
+# close_reason enum (US-683).  How a CLOSED row was closed -- three states
+# because the two reap cases have OPPOSITE verdict eligibility, which a boolean
+# cannot carry.  There is deliberately no 'open' value: end_timestamp IS NULL is
+# the open marker and close_reason is NULL exactly then.
+#   clean                 -- closed by endDrainEvent (restore, shutdown, drill).
+#   reaped_uncheckpointed -- boot reaper, nothing measured the drain:
+#                            runtime_seconds AND end_vcell_v stay NULL, cannot vote.
+#   reaped_checkpointed   -- boot reaper closed onto the last 30 s checkpoint:
+#                            carries real values and VOTES, but depth and runtime
+#                            UNDERSTATE the drain by up to one interval.
+# Same three-state typed shape as power_log.observer_state.
+CLOSE_REASON_CLEAN: str = 'clean'
+CLOSE_REASON_REAPED_UNCHECKPOINTED: str = 'reaped_uncheckpointed'
+CLOSE_REASON_REAPED_CHECKPOINTED: str = 'reaped_checkpointed'
+CLOSE_REASON_VALUES: tuple[str, ...] = (
+    CLOSE_REASON_CLEAN,
+    CLOSE_REASON_REAPED_UNCHECKPOINTED,
+    CLOSE_REASON_REAPED_CHECKPOINTED,
+)
+
+#: ARCH-065: why a drain ran. A column, never a reuse of load_class.
+DRAIN_TRIGGER_KEYOFF: str = 'keyoff'
+DRAIN_TRIGGER_MONTHLY_TEST: str = 'monthly_test'
+DRAIN_TRIGGER_CALIBRATION: str = 'calibration'
+DRAIN_TRIGGER_VALUES: tuple[str, ...] = (
+    DRAIN_TRIGGER_KEYOFF, DRAIN_TRIGGER_MONTHLY_TEST, DRAIN_TRIGGER_CALIBRATION,
+)
+_DRAIN_TRIGGER_CHECK = ",".join(f"'{v}'" for v in DRAIN_TRIGGER_VALUES)
+
+#: ARCH-065 (Ruling 19): a loss's drain row opens within this band around the
+#: loss's wall time (``HomeStateAtLoss.lossIso``) -- the collector's clock may
+#: lead powerwatch's by a few seconds, and its confirmation poll may lag.  The
+#: ONE owner of "this loss's row": the boot finaliser and the monthly-test mark
+#: both select through :func:`lossRowBand`.
+LOSS_ROW_BEFORE_S: int = 5
+LOSS_ROW_AFTER_S: int = 30
+
+
+def lossRowBand(lossIso: str) -> tuple[str, str]:
+    """The inclusive ``start_timestamp`` band of the drain row opened by the loss at ``lossIso``.
+
+    Returns ``(lo, hi)`` as canonical UTC ISO seconds: ``[loss - LOSS_ROW_BEFORE_S,
+    loss + LOSS_ROW_AFTER_S]``.  Raises ``ValueError`` on a non-canonical ``lossIso``.
+    """
+    loss = datetime.strptime(lossIso, CANONICAL_ISO_FORMAT).replace(tzinfo=UTC)
+    return (
+        (loss - timedelta(seconds=LOSS_ROW_BEFORE_S)).strftime(CANONICAL_ISO_FORMAT),
+        (loss + timedelta(seconds=LOSS_ROW_AFTER_S)).strftime(CANONICAL_ISO_FORMAT),
+    )
+
+
+def resolveCellEpoch(config: Mapping[str, Any]) -> str:
+    """The ONE reader of ``pi.power.cellEpoch``: the value, else 'unknown'.
+
+    Absent, None or empty all resolve to the validator's CELL_EPOCH_UNKNOWN.
+    """
+    power = (config.get('pi') or {}).get('power') or {}
+    return str(power.get('cellEpoch') or CELL_EPOCH_UNKNOWN)
+
+#: ARCH-065 capacity columns, in order. All nullable except drain_trigger.
+BATTERY_HEALTH_CAPACITY_COLUMNS: tuple[tuple[str, str], ...] = (
+    ('drain_trigger', f"TEXT NOT NULL DEFAULT 'keyoff' CHECK (drain_trigger IN ({_DRAIN_TRIGGER_CHECK}))"),
+    ('cell_epoch', 'TEXT'),
+    ('cut_step_mv', 'REAL'),
+    ('window_start_s', 'INTEGER'),
+    ('window_end_s', 'INTEGER'),
+    ('drain_rate_mv_s', 'REAL'),
+    ('verdict', 'TEXT'),
+    ('t_floor_s', 'INTEGER'),
+    ('floor_vcell_v', 'REAL'),
+    ('cutoff_vcell_v', 'REAL'),
+)
+
+#: Appended to ``notes`` when the boot reaper closes a row onto its last
+#: checkpoint (US-605).  Human context only since US-683: ``close_reason =
+#: 'reaped_checkpointed'`` is the discriminator a consumer reads.  The one place
+#: this string is still matched is the one-shot US-683 backfill, which has no
+#: other record of which historical rows were checkpointed reaps.  A stored
+#: value -- changing it would stop the backfill recognising historical rows.
+REAP_CHECKPOINTED_NOTE_SUFFIX: str = (
+    ' | INTERRUPTED (US-605): closed by the boot reaper at the last 30 s '
+    'checkpoint -- depth and runtime are CHECKPOINTED values and both '
+    'UNDERSTATE the real drain by up to one checkpoint interval'
+)
+
 
 # ================================================================================
 # DDL
 # ================================================================================
 
-SCHEMA_BATTERY_HEALTH_LOG: str = """
+SCHEMA_BATTERY_HEALTH_LOG: str = f"""
 CREATE TABLE IF NOT EXISTS battery_health_log (
     -- Monotonic event id.  Pi-side PK + sync delta cursor.
     drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,9 +373,53 @@ CREATE TABLE IF NOT EXISTS battery_health_log (
     -- US-195 origin tag.  Drain events written by real hardware =
     -- 'real'; test-fixture rows in unit tests may pass 'fixture'.
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign'))
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
+
+    -- US-683: how the row was closed.  NULL exactly while open (see
+    -- CLOSE_REASON_VALUES).  Column-level CHECK only -- the pairing with
+    -- end_timestamp is held by the writers, not the schema.
+    close_reason TEXT
+        CHECK (close_reason IN ('clean','reaped_uncheckpointed','reaped_checkpointed')),
+
+    -- ARCH-065 capacity columns (see BATTERY_HEALTH_CAPACITY_COLUMNS; same
+    -- type text so a fresh table matches a migrated one).  drain_trigger is
+    -- the qualifying key; every other column is nullable.
+    drain_trigger TEXT NOT NULL DEFAULT 'keyoff' CHECK (drain_trigger IN ({_DRAIN_TRIGGER_CHECK})),
+    cell_epoch TEXT,
+    cut_step_mv REAL,
+    window_start_s INTEGER,
+    window_end_s INTEGER,
+    drain_rate_mv_s REAL,
+    verdict TEXT,
+    t_floor_s INTEGER,
+    floor_vcell_v REAL,
+    cutoff_vcell_v REAL
 );
 """
+
+# The ADD COLUMN for an existing table.  Same type and CHECK as the fresh DDL
+# above, so an upgraded table enforces what a fresh one does.  A column-level
+# CHECK passes on the NULL every existing row receives, so this needs no rebuild.
+_ADD_CLOSE_REASON_COLUMN_SQL: str = (
+    f"ALTER TABLE {BATTERY_HEALTH_LOG_TABLE} ADD COLUMN close_reason TEXT "
+    "CHECK (close_reason IN ("
+    + ",".join(f"'{value}'" for value in CLOSE_REASON_VALUES)
+    + "))"
+)
+
+# One-shot backfill, derived conservatively from the signature each close path
+# has always left: the reap suffix means a checkpointed reap; a close with BOTH
+# runtime_seconds and end_vcell_v NULL is an un-checkpointed reap; any other
+# closed row is clean.  Open rows (end_timestamp IS NULL -- including the four
+# US-442 orphans 1/9/18/21) are never touched.
+_BACKFILL_CLOSE_REASON_SQL: str = (
+    f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET close_reason = CASE "
+    f"WHEN INSTR(COALESCE(notes, ''), ?) > 0 THEN '{CLOSE_REASON_REAPED_CHECKPOINTED}' "
+    "WHEN runtime_seconds IS NULL AND end_vcell_v IS NULL "
+    f"THEN '{CLOSE_REASON_REAPED_UNCHECKPOINTED}' "
+    f"ELSE '{CLOSE_REASON_CLEAN}' END "
+    "WHERE end_timestamp IS NOT NULL AND close_reason IS NULL"
+)
 
 # Index on start_timestamp for time-range queries (e.g. "give me all
 # drain events in April 2026").
@@ -438,6 +614,66 @@ def ensureBatteryHealthLogSocPctColumns(conn: sqlite3.Connection) -> bool:
     )
     # Recreate the start_timestamp index dropped with the old table.
     conn.execute(INDEX_BATTERY_HEALTH_LOG_START)
+    return True
+
+
+def ensureBatteryHealthLogCapacityColumns(conn: sqlite3.Connection) -> list[str]:
+    """Add the ARCH-065 capacity columns (specs/design-patterns.md section 10).
+
+    PRAGMA-probed; ADD COLUMN only, so no row moves; a no-op on replay. The
+    caller owns the commit.
+
+    Returns:
+        The columns added, in order; empty when all were present.
+    """
+    existing = {r[1] for r in conn.execute(f"PRAGMA table_info({BATTERY_HEALTH_LOG_TABLE})")}
+    added: list[str] = []
+    for name, sqlType in BATTERY_HEALTH_CAPACITY_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {BATTERY_HEALTH_LOG_TABLE} ADD COLUMN {name} {sqlType}")
+            added.append(name)
+    return added
+
+
+def ensureBatteryHealthLogCloseReasonColumn(conn: sqlite3.Connection) -> bool:
+    """Add the typed ``close_reason`` column and backfill it, once (US-683).
+
+    Replay-safe per specs/design-patterns.md section 10: the Pi has no migration
+    ledger, so this runs on EVERY boot.  The ADD COLUMN is guarded by
+    PRAGMA table_info and the backfill runs only in the call that added the
+    column, so a second boot issues no ALTER and no UPDATE at all.  No rebuild:
+    the column-level CHECK passes on the NULL every existing row receives.
+
+    The backfill (:data:`_BACKFILL_CLOSE_REASON_SQL`) touches closed rows only
+    and changes no column but ``close_reason``.  On a synced Pi it fires the
+    US-315 modified_at trigger, which is how the typed value reaches the server:
+    the server can never learn it from ``notes``, which its upsert preserves.
+
+    Must run AFTER :func:`ensureBatteryHealthLogSocPctColumns`, whose rebuild
+    target does not carry this column.  Caller owns the commit.
+
+    A missing table is NOT "nothing to do": the probe then reports the column
+    absent and the ALTER raises ``no such table``.  The caller creates the table
+    first, so reaching that is a defect that must be loud.
+
+    Args:
+        conn: Open sqlite3 connection.
+
+    Returns:
+        True if this call added the column (and ran the backfill), False if the
+        column was already present.
+    """
+    columns = {
+        row[1]
+        for row in conn.execute(
+            f"PRAGMA table_info({BATTERY_HEALTH_LOG_TABLE})"
+        ).fetchall()
+    }
+    if 'close_reason' in columns:
+        return False
+
+    conn.execute(_ADD_CLOSE_REASON_COLUMN_SQL)
+    conn.execute(_BACKFILL_CLOSE_REASON_SQL, (REAP_CHECKPOINTED_NOTE_SUFFIX,))
     return True
 
 
@@ -674,16 +910,18 @@ class BatteryHealthRecorder:
             endSocPctColumn: float | None = (
                 float(endSocPct) if endSocPct is not None else None
             )
+            # US-683 pairing: end_timestamp and close_reason land together.
             conn.execute(
                 f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET "
                 "end_timestamp = ?, "
                 "end_vcell_v = ?, "
                 "end_soc_pct = ?, "
                 "runtime_seconds = ?, "
-                "ambient_temp_c = ? "
+                "ambient_temp_c = ?, "
+                "close_reason = ? "
                 "WHERE drain_event_id = ?",
                 (endTs, endVcell, endSocPctColumn, runtimeSeconds, ambientTempC,
-                 int(drainEventId)),
+                 CLOSE_REASON_CLEAN, int(drainEventId)),
             )
 
         logger.info(

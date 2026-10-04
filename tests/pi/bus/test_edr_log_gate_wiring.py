@@ -48,10 +48,24 @@ def _db(tmp_path: Path, name: str) -> ObdDatabase:
     return db
 
 
+# ARCH-064d: persistence is a UTC grid keyed on tsCapture, so the fixture is
+# stamped at the 50 Hz it claims (it was float(seq): 1 Hz). +5 ms keeps each
+# burst clear of a slot boundary; the offset is pinned so the phase is fixed.
+_PERIOD_S = 1.0 / 50
+_PHASE_S = 0.005
+
+
+@pytest.fixture(autouse=True)
+def _pinWallClockOffset(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setattr(sys.modules[EdrPersistenceSubscriber.__module__], "_wallClockOffsetS", lambda: 0.0)
+
+
 def _sample(topic: str, value: Any, seq: int) -> Sample:
     return Sample(
         topic=topic, source=topic.split(".")[1], value=value, unit="x",
-        tsUtc=f"2026-09-18T12:00:{seq % 60:02d}Z", tsCapture=float(seq),
+        tsUtc=f"2026-09-18T12:00:{seq % 60:02d}Z", tsCapture=seq * _PERIOD_S + _PHASE_S,
         driveId=None, dataSource="real", seq=seq,
     )
 

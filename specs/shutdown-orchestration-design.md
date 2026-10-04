@@ -107,6 +107,72 @@ converges falsely. It converges falsely because **the backlog reader excludes th
 tables** (US-766), so the largest producer is invisible to the count that decides
 "synchronised". Stopping capture first makes the set finite and the count honest.
 
+### Tier 2 asks the home detector first (US-776-c, built Sprint 95)
+
+Whether Tier 2 runs at all is decided by `HomeNetworkDetector.getHomeNetworkState()`, read
+**once** at the top of `SyncWithServerTask.run`:
+
+- **`AWAY` skips Tier 2 at once** — no `forcePush`, no wait, no HTTP call. `AWAY` is only ever a
+  *positive* answer: a foreign SSID, or a successful `hostname -I` with no home-subnet address.
+  The AWAY path's only calls are `nmcli` and `hostname -I`, each bounded at 2.0 s.
+- **`AT_HOME_*` drains**, whether or not the server probe answered.
+- **`AT_HOME_JOINING` waits up to `pi.homeNetwork.joinWaitSec` (120 s), then drains** (US-776-e;
+  ARCH-065a). The home SSID is in NetworkManager's CACHED scan but not associated (the rejoin measured
+  ~49 s after arrival, drive 96, n = 1). The state is re-read every `JOIN_POLL_SEC` (2 s) — the one
+  exception to "read once". Still joining at 120 s is `AT_HOME_JOINING_TIMEOUT` with no attempt; a
+  rejoin that resolves `AWAY` skips as `AWAY`. The wait is NOT drain time: the drain's stall clock starts
+  at association. Known edge (CIO-accepted): a key-off within ~3 min of leaving home can wait up to 120 s
+  while the cached entry ages out.
+- **`UNKNOWN` drains too**, logged `UNKNOWN_NETWORK` at WARNING. `UNKNOWN` means a reader is dead
+  (SSID reader unavailable, or the IP read itself failed) and nothing rules home out. A dead
+  instrument must never disable the drain (`specs/design-patterns.md` §6) — a single always-false
+  probe kept the drain off on every shutdown until Sprint 95.
+
+This decides *whether* Tier 2 runs. **How long it runs is the completion rule (CIO 2026-10-02,
+ARCH-065a; [`battery-health-design.md`](battery-health-design.md) §5): until the backlog is empty,
+or it has not FALLEN for `pi.homeNetwork.stallSec` (60 s, re-read after every attempt), or the battery
+reserve floor ends the drain (`pi.powerWatch.drainFloorVolts` held for `drainFloorDwellReads` = 5
+consecutive reads). There is no time cap**; the US-776-g ceiling (`shutdownSyncCeilingSec`) is retired.
+The per-shutdown outcome record is US-776-d (next section). `specs/architecture.md` §10.6.3 is the system-of-record
+description.
+
+### Tier 2 records why it ended (US-776-d, built Sprint 95)
+
+A skip that writes nothing is indistinguishable from a sync that never ran: for weeks an always-false
+probe read as "server absent" and nobody could tell. So **every** `SyncWithServerTask.run()` writes
+exactly one record into the durable shutdown record (`powerwatch_outcome.json`), the skip and the
+success included, before the task returns:
+
+| `sync_outcome` | The sync ended because |
+|---|---|
+| `DELIVERED` | a drain attempt succeeded |
+| `AWAY` | a positive AWAY: the drain was skipped |
+| `UNKNOWN_NETWORK` | home was never confirmed and the drain stalled undelivered |
+| `AT_HOME_JOINING_TIMEOUT` | (US-776-e) the WiFi rejoin outlasted `joinWaitSec` |
+| `AT_HOME_SERVER_DOWN` | at home, the drain stalled; the server probe got no answer, a 5xx or a 2xx |
+| `PROBE_MISCONFIGURED` | at home, the drain stalled and the probe was answered 404/405/401/403 |
+| `STALLED` | (ARCH-065a) at home, the backlog did not fall for `stallSec` and the last attempt raised nothing |
+| `RESERVE_FLOOR` | (ARCH-065a) the battery reserve floor ended the drain; written by the floor-end pre-poweroff hook, and a late sync record for the same loss is then dropped |
+| `REAL_ERROR` | a non-transient sync fault |
+
+The record also carries `backlog_start` (unsynced rows before the first attempt) and `backlog_end`
+(after the last), from the shared US-621 backlog reader. That is what tells "delivered 412 rows"
+from "delivered, nothing was owed": the outcome alone reads `DELIVERED` for both. An unreadable count
+is left out and lands NULL. The record also carries `sync_started_at` / `sync_ended_at` (the drain
+only, not the JOINING wait), `vcell_before_cut_v` (the on-wall VCELL snapshotted ONCE at the loss) and
+`loss_at` (the loss's wall time; one owner, `HomeStateAtLoss`). The next boot lands all of them into
+`startup_log.prior_boot_*` (US-776-f; ARCH-065a).
+
+`PROBE_MISCONFIGURED` comes from `HomeNetworkDetector.probeServer()` (a sibling of the bool
+`isServerReachable()`, Atlas ruling 4), read back through `lastProbe` -- recording never probes
+again, so it adds no network call and no wait to the shutdown. One summary line per shutdown is
+logged: INFO for `DELIVERED`/`AWAY`, WARNING for `UNKNOWN_NETWORK`, ERROR otherwise.
+
+What it cannot record: the pre-pipeline backstop fast path (`vcellFloorVolts`) skips the pipeline and
+never reaches the end of `run()`; it still writes the custody record, and the `prior_boot_*` sync columns
+land NULL. A drain-floor poll (the reserve floor) that powers off with a pass in flight records
+`RESERVE_FLOOR` (ARCH-065a).
+
 ### The animation is the terminal signal
 
 It is not a competitor for time. It is the **proof the sequence completed**, in the one place
@@ -119,10 +185,11 @@ nobody logs into.
   `splash=cancelled reason=reserve_reached`. A shutdown with no animation is then *diagnostic
   information*, not an anomaly.
 
-⚠️ This also retires a live defect: today `splash-grace.path` cold-starts a second browser
-the instant the shutdown-state SSOT is written, at T=0, *while* the shed is trying to reduce
-load. Under this design the splash cannot start until Tiers 1–3 are done, so it can never
-compete with the work.
+⚠️ Today `splash-grace.path` still starts the splash the instant the shutdown-state SSOT is
+written, at T=0, alongside the work. The load shed does **not** stop it: US-796-a's attempt to
+shed both splash units failed on every cut and would have removed the animation the CIO kept,
+so US-796 (Sprint 95) took them off the shed lists. Under this design the splash cannot start
+until Tiers 1–3 are done, so it can never compete with the work.
 
 ## 5. The reserve, and the override
 

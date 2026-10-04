@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -178,13 +179,20 @@ class TestImuBurstAssembly:
 # ---------------------------------------------------------------------------
 
 class TestDecimation:
-    def test_keepsEveryNthBurst(self, freshDb: ObdDatabase) -> None:
-        # 50 Hz bus -> 25 Hz persist == keep every 2nd burst.
-        sub = EdrPersistenceSubscriber(None, freshDb, imuSampleHz=50, imuPersistHz=25)
+    def test_keepsTheFirstBurstInEachUtcSlot(self, freshDb: ObdDatabase) -> None:
+        # ARCH-064d: 50 Hz bus -> 25 Hz persist == one row per 40 ms UTC slot
+        # (was keep-every-2nd-seq, which stored 1.62 Hz for a configured 2 when
+        # the read loop ran slow). Bursts 20 ms apart, +5 ms clear of a boundary.
+        sub = EdrPersistenceSubscriber(
+            None, freshDb, imuSampleHz=50, imuPersistHz=25, wallClockOffsetFn=lambda: 0.0
+        )
         for seq in (1, 2, 3, 4):
-            _feedImuBurst(sub, seq=seq)
+            for field, value in (("accel", (1.0, 2.0, 3.0)), ("gyro", (4.0, 5.0, 6.0)),
+                                 ("mag", (7.0, 8.0, 9.0)), ("temp", 25.0)):
+                sub.handleSample(replace(_imu(field, value, seq), tsCapture=seq * 0.02 + 0.005))
         rows = _imuRows(freshDb)
-        assert [r[2] for r in rows] == [2, 4]
+        # slots: seq1 [0.00,0.04) · seq2,3 [0.04,0.08) · seq4 [0.08,0.12)
+        assert [r[2] for r in rows] == [1, 2, 4]
 
     def test_persistHzAtOrAboveSampleHzKeepsAll(self, freshDb: ObdDatabase) -> None:
         sub = EdrPersistenceSubscriber(None, freshDb, imuSampleHz=50, imuPersistHz=100)

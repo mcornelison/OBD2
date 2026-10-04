@@ -16,6 +16,7 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-09-17    | Rex (US-776-b) | Initial -- drain floor, backstop, power return.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
 # ================================================================================
 ################################################################################
 """US-776-b: the drain gets its own floor, above the emergency backstop."""
@@ -26,6 +27,7 @@ import threading
 from pathlib import Path
 
 from src.common.edr.sync_contract import SHUTDOWN_DRAIN_EXCLUDED_TABLES
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.power_watch import __main__ as m
 from src.pi.power.power_watch.controller import ShutdownSequencer
 from src.pi.power.power_watch.pipeline import runPipeline
@@ -92,13 +94,15 @@ def _readerOver(backlog: list[int]):
 
 def _pipelineFor(client: _PassClient, backlog: list[int]):
     syncTask = SyncWithServerTask(
-        serverReachable=lambda: True,
+        homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
         runSync=m._buildRunSync(
             client,
             backlogReader=_readerOver(backlog),
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=lambda _r: None,
+        joinWaitSec=120.0,
+        stallSec=60.0,
     )
     return lambda: runPipeline(
         m.buildV1Tasks(syncTask),

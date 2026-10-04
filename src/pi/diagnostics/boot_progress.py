@@ -28,6 +28,20 @@
 #                          of refusing to write (Argus's drill found refuse-to-write
 #                          blocking first post-deploy reboot when trail accumulated
 #                          from F-8-broken regime; every rung must land on disk).
+# 2026-09-30    | Rex     | US-776-f -- arm lands powerwatch's shutdown-sync record
+#                          (home state, sync outcome, backlog start/end) into four
+#                          prior_boot_* columns, only when the record's boot_id is
+#                          the prior boot's; otherwise NULL.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: also lands sync start/end and the pre-cut
+#                          VCELL (three more prior_boot_* columns).
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6: arm finalises the prior drain (cut step, window rate),
+#                          best-effort.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: also lands the loss wall time
+#                          (prior_boot_loss_at) and keys the finaliser on it.
+# 2026-10-03    | Atlas (ARCH-065a) | T7 fix 1: passes the prior sync outcome + home
+#                          state to the finaliser (floor-ended at home -> replace).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: _asIso parses with CANONICAL_ISO_FORMAT
+#                          (one owner of the format) instead of a literal.
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -42,8 +56,9 @@ import os
 import shutil
 import sqlite3
 from collections.abc import Callable
+from datetime import datetime
 
-from src.common.time.helper import utcIsoNow
+from src.common.time.helper import CANONICAL_ISO_FORMAT, utcIsoNow
 from src.pi.diagnostics.clock_sync import assessClockQuality
 
 logger = logging.getLogger(__name__)
@@ -58,9 +73,11 @@ __all__ = [
     "arm",
     "finalize",
     "readBootId",
+    "readPriorShutdownRecord",
     "main",
     "DEFAULT_FILE_PATH",
     "DEFAULT_MAX_TRAIL_BYTES",
+    "OUTCOME_RECORD_FILENAME",
 ]
 
 
@@ -101,6 +118,10 @@ CLEAN_COMPLETE_RUNG: Stage = Stage.CLEAN_COMPLETE
 #: module usable standalone.
 DEFAULT_FILE_PATH = "data/boot_progress"
 DEFAULT_MAX_TRAIL_BYTES = 65536
+
+#: powerwatch's durable shutdown record, written beside the DB
+#: (power_watch/__main__.py derives the same path from its dbPath).
+OUTCOME_RECORD_FILENAME = "powerwatch_outcome.json"
 
 
 def _fdatasyncBestEffort(fileno: int) -> None:
@@ -316,6 +337,93 @@ def deriveVerdict(trail: list[dict]) -> tuple[int | None, str | None, str]:
     return (clean, highest.value, reason)
 
 
+def _asLabel(value: object) -> str | None:
+    """A non-blank string, stripped; anything else is NULL."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
+
+
+def _asCount(value: object) -> int | None:
+    """A non-negative int (bool excluded); anything else is NULL."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _asIso(value: object) -> str | None:
+    """A canonical UTC ISO second ('YYYY-MM-DDTHH:MM:SSZ'), else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        datetime.strptime(value, CANONICAL_ISO_FORMAT)
+    except ValueError:
+        return None
+    return value
+
+
+def _asVolts(value: object) -> float | None:
+    """A plausible single-cell VCELL (2.5-4.5 V), else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 2.5 <= value <= 4.5 else None
+
+
+#: Record key -> (startup_log column, validator). A value the validator
+#: rejects lands NULL: the column is never filled with a coerced guess.
+_PRIOR_BOOT_SYNC_FIELDS: tuple[tuple[str, str, Callable[[object], object]], ...] = (
+    ("home_state", "prior_boot_home_state", _asLabel),
+    ("sync_outcome", "prior_boot_sync_outcome", _asLabel),
+    ("backlog_start", "prior_boot_backlog_start", _asCount),
+    ("backlog_end", "prior_boot_backlog_end", _asCount),
+    ("sync_started_at", "prior_boot_sync_started_at", _asIso),
+    ("sync_ended_at", "prior_boot_sync_ended_at", _asIso),
+    ("vcell_before_cut_v", "prior_boot_vcell_before_cut_v", _asVolts),
+    ("loss_at", "prior_boot_loss_at", _asIso),
+)
+
+
+def readPriorShutdownRecord(
+    recordPath: str, priorBootIds: set[str],
+) -> dict[str, object]:
+    """Read the prior boot's shutdown-sync fields from powerwatch's record.
+
+    US-776-f. The record is overwritten in place, so the file on disk after a
+    hard cut is an OLDER boot's. Its fields are landed only when its
+    ``boot_id`` is one of ``priorBootIds`` (the boot ids in the prior boot's
+    breadcrumb trail); ``unknown`` -- :func:`readBootId`'s failure value --
+    never matches. Otherwise every column is NULL. Never raises.
+
+    Args:
+        recordPath: Path of ``powerwatch_outcome.json``.
+        priorBootIds: Boot ids found in the prior boot's breadcrumb trail.
+
+    Returns:
+        A dict with every ``prior_boot_*`` sync column, each value or None.
+    """
+    landed: dict[str, object] = {column: None for _, column, _ in _PRIOR_BOOT_SYNC_FIELDS}
+    try:
+        with open(recordPath, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except FileNotFoundError:
+        return landed
+    except (OSError, ValueError) as exc:
+        logger.warning("boot_progress: shutdown record unreadable (%s): %s",
+                       recordPath, exc)
+        return landed
+    if not isinstance(record, dict):
+        return landed
+    recordBootId = _asLabel(record.get("boot_id"))
+    owners = priorBootIds - {"unknown"}
+    if recordBootId is None or recordBootId not in owners:
+        logger.info("boot_progress: shutdown record boot_id %s is not the prior "
+                    "boot's -- prior-boot sync fields land NULL", recordBootId)
+        return landed
+    for key, column, validate in _PRIOR_BOOT_SYNC_FIELDS:
+        landed[column] = validate(record.get(key))
+    return landed
+
+
 def _writeStartupLogRow(
     dbPath: str,
     bootId: str,
@@ -323,6 +431,7 @@ def _writeStartupLogRow(
     lastStage: str | None,
     reason: str,
     clockQualityProvider: Callable[[str], str] = assessClockQuality,
+    priorBootSync: dict[str, object] | None = None,
 ) -> None:
     """Idempotent INSERT OR IGNORE startup_log row (one row per boot_id).
 
@@ -330,6 +439,9 @@ def _writeStartupLogRow(
     ``startup_log`` is the canonical one-per-boot "first post-boot row", so it
     pays the full :func:`assessClockQuality` (NTP probe + sanity floor) at most
     once per boot.  ``clockQualityProvider`` is the injection seam for tests.
+
+    US-776-f: ``priorBootSync`` carries the four ``prior_boot_*`` sync columns
+    from :func:`readPriorShutdownRecord`; None lands them all NULL.
     """
     # Lazy import: keep the crash-time finalize / --finalize CLI path free
     # of the heavy src.pi.obdii package graph (its __init__ eagerly does
@@ -340,9 +452,11 @@ def _writeStartupLogRow(
     from src.pi.obdii.database_schema import (
         ensureStartupLogDataQuality,
         ensureStartupLogForensicColumns,
+        ensureStartupLogPriorBootSyncColumns,
         ensureStartupLogRecordedAt,
     )
 
+    sync = priorBootSync or {}
     conn = sqlite3.connect(dbPath, timeout=5.0)
     try:
         ensureStartupLogForensicColumns(conn)
@@ -352,20 +466,65 @@ def _writeStartupLogRow(
         ensureStartupLogRecordedAt(conn)
         # US-419: guarantee the data_quality clock-drift flag column exists.
         ensureStartupLogDataQuality(conn)
+        # US-776-f: arm may run before eclipse-obd's initialize on this boot.
+        ensureStartupLogPriorBootSyncColumns(conn)
         recordedAt = utcIsoNow()
         dataQuality = clockQualityProvider(recordedAt)
         conn.execute(
             "INSERT OR IGNORE INTO startup_log "
             "(boot_id, prior_boot_clean, prior_last_entry_ts, "
             " current_boot_first_entry_ts, recorded_at, "
-            " prior_boot_last_stage, prior_boot_reason, data_quality) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " prior_boot_last_stage, prior_boot_reason, data_quality, "
+            " prior_boot_home_state, prior_boot_sync_outcome, "
+            " prior_boot_backlog_start, prior_boot_backlog_end, "
+            " prior_boot_sync_started_at, prior_boot_sync_ended_at, "
+            " prior_boot_vcell_before_cut_v, prior_boot_loss_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (bootId, clean, None, None, recordedAt, lastStage, reason,
-             dataQuality),
+             dataQuality,
+             sync.get("prior_boot_home_state"),
+             sync.get("prior_boot_sync_outcome"),
+             sync.get("prior_boot_backlog_start"),
+             sync.get("prior_boot_backlog_end"),
+             sync.get("prior_boot_sync_started_at"),
+             sync.get("prior_boot_sync_ended_at"),
+             sync.get("prior_boot_vcell_before_cut_v"),
+             sync.get("prior_boot_loss_at")),
         )
         conn.commit()
     finally:
         conn.close()
+
+
+def _finalizePriorDrain(dbPath: str, priorBootSync: dict[str, object]) -> None:
+    """ARCH-065 T6: finish the prior drain's cut step / window rate. Never raises.
+
+    Lazy-imported like :func:`_writeStartupLogRow`; arm runs in a oneshot that
+    must not fail on a capacity-field problem.
+    """
+    try:
+        from src.pi.power.battery_health import ensureBatteryHealthLogCapacityColumns
+        from src.pi.power.battery_health_finalize import finalizeLatestDrain
+
+        vcell = priorBootSync.get("prior_boot_vcell_before_cut_v")
+        lossAt = priorBootSync.get("prior_boot_loss_at")
+        syncOutcome = priorBootSync.get("prior_boot_sync_outcome")
+        homeState = priorBootSync.get("prior_boot_home_state")
+        conn = sqlite3.connect(dbPath, timeout=5.0)
+        try:
+            ensureBatteryHealthLogCapacityColumns(conn)
+            finalizeLatestDrain(
+                conn,
+                priorBootVcellBeforeCutV=float(vcell) if isinstance(vcell, (int, float)) else None,
+                priorBootLossAt=lossAt if isinstance(lossAt, str) else None,
+                priorBootSyncOutcome=syncOutcome if isinstance(syncOutcome, str) else None,
+                priorBootHomeState=homeState if isinstance(homeState, str) else None,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 -- never block boot
+        logger.warning("boot_progress: prior-drain finalise skipped: %s", exc)
 
 
 def arm(
@@ -376,6 +535,7 @@ def arm(
     nasArchiveDir: str,
     nasArchiveEnabled: bool,
     clockQualityProvider: Callable[[str], str] = assessClockQuality,
+    outcomeRecordPath: str | None = None,
 ) -> None:
     """Boot-time reader: classify the prior boot, then re-arm for this one.
 
@@ -405,19 +565,30 @@ def arm(
         clockQualityProvider: US-419 injection seam mapping the row's
             ``recorded_at`` to a ``data_quality`` clock verdict.  Defaults to
             :func:`src.pi.diagnostics.clock_sync.assessClockQuality`.
+        outcomeRecordPath: powerwatch's shutdown record (US-776-f), whose
+            sync fields land as the ``prior_boot_*`` sync columns. Defaults
+            to :data:`OUTCOME_RECORD_FILENAME` beside ``dbPath`` -- where
+            powerwatch writes it.
 
     Returns:
         None.
     """
     trail = readPriorTrail(filePath)
     clean, lastStage, reason = deriveVerdict(trail)
+    if outcomeRecordPath is None:
+        outcomeRecordPath = os.path.join(os.path.dirname(dbPath), OUTCOME_RECORD_FILENAME)
+    priorBootIds = {str(rec["boot_id"]) for rec in trail if rec.get("boot_id")}
+    priorBootSync = readPriorShutdownRecord(outcomeRecordPath, priorBootIds)
 
     try:
         _writeStartupLogRow(
             dbPath, bootId, clean, lastStage, reason, clockQualityProvider,
+            priorBootSync,
         )
     except Exception as exc:  # noqa: BLE001 -- never block boot
         logger.error("boot_progress: startup_log write failed: %s", exc)
+
+    _finalizePriorDrain(dbPath, priorBootSync)
 
     if nasArchiveEnabled and trail:
         try:
@@ -482,13 +653,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--boot-id", default=None)
     p.add_argument("--nas-dir", default="")
     p.add_argument("--nas-enabled", action="store_true")
+    p.add_argument("--outcome-record", default=None)
     a = p.parse_args(argv)
     bootId = a.boot_id or readBootId()
     if a.finalize:
         finalize(filePath=a.file, bootId=bootId)
     else:
+        outcomeRecordPath = a.outcome_record or os.path.join(
+            os.path.dirname(a.db), OUTCOME_RECORD_FILENAME)
         arm(filePath=a.file, dbPath=a.db, bootId=bootId,
-            nasArchiveDir=a.nas_dir, nasArchiveEnabled=a.nas_enabled)
+            nasArchiveDir=a.nas_dir, nasArchiveEnabled=a.nas_enabled,
+            outcomeRecordPath=outcomeRecordPath)
     return 0
 
 

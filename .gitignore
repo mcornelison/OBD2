@@ -91,6 +91,8 @@ logs/
 # (server-side sim) or scripts/export_regression_fixture.sh (pi-side live).
 !data/regression/inputs/*.db
 !data/regression/pi-inputs/*.db
+# ARCH-065a T8: the 1 Hz witness-log fixture for tools/power (*.log is ignored above).
+!tests/tools/fixtures/*.log
 
 # --------------------------------------------------------------------------------
 # Secrets and Environment
@@ -142,6 +144,9 @@ offices/
 # Downloaded tools (SQLite CLI, etc.). NOTE: `tools/*` not `tools/` so git can
 # descend and the negation below works -- tools/pm/ is first-party source (the
 # PM tool cluster, moved out of offices/pm/scripts/ in the offices decouple).
+# A NEW first-party tools/ directory needs its own `!tools/<dir>/` negation below,
+# or `git add` skips it silently (US-808). tests/lint/test_tools_not_gitignored.py
+# fails on any tracked tools/ path these rules match -- stage, then run it.
 tools/*
 !tools/pm/
 # tools/fleet/ is first-party too: New-Bench.ps1 and Invoke-FleetMerge.ps1.
@@ -162,6 +167,15 @@ tools/*
 # directory is the fix rather than `git add -f`, which would leave the next file
 # added here to be skipped exactly the same way.
 !tools/imu/
+
+# tools/connlog/ is first-party too (US-808-d): the connection_log window export
+# and gap analysis. Their Sprint 93 originals sat directly under tools/, were
+# matched by `tools/*`, and were lost -- a package directory plus this one
+# negation is the fix, never a per-file negation.
+!tools/connlog/
+
+# tools/power/ is first-party too (ARCH-065a T8): the drain calibration / seed tool.
+!tools/power/
 
 
 # Claude settings (local only)

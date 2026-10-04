@@ -245,3 +245,32 @@ class TestThresholdProvenance:
         both -- and well below the fault so a bias learner can never absorb it.
         """
         assert 0.02 < GYRO_FAULT_MIN_RAD_S < 0.4
+
+
+class TestLogIsTrueUnderBothEngines:
+    """ARCH-064 Ruling 35 (I2): the failure lines used to promise that pitch and
+    grade "stay withheld by the plausibility guard". Under the imufusion engine
+    that guard was hard-wired off, so the promise was false; now it holds only
+    once the running engine's guard trips. The log must say WHEN, per engine."""
+
+    def _assertTruthful(self, text: str) -> None:
+        low = text.lower()
+        assert "stay withheld" not in low and "remain withheld" not in low
+        assert "legacy" in low and "imufusion" in low
+        assert "obd speed 0" in low
+
+    def test_failedRecoveryLog_isTrueUnderBothEngines(self, caplog) -> None:
+        import logging
+
+        icm = FakeIcm([FAULTED, FAULTED])
+        with caplog.at_level(logging.ERROR, logger="pi.sensors.gyro_recovery"):
+            recoverGyroIfFaulted(icm, sampleCount=10, settleS=0.0)
+        errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert errors
+        self._assertTruthful(errors[-1])
+
+    def test_busErrorDescribe_isTrueUnderBothEngines(self) -> None:
+        outcome = GyroRecoveryOutcome(
+            attempted=True, before="faulted", after="unknown", recovered=False, error="EIO"
+        )
+        self._assertTruthful(outcome.describe())

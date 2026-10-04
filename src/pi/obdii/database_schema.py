@@ -106,6 +106,15 @@
 #                               power transition, and its honest three-state
 #                               read.  Idempotent ALTER in
 #                               ensurePowerLogObserverColumns (power_db.py).
+# 2026-09-25    | Rex (US-790) | Added drain_vcell_trajectory (one row per drain
+#                               poll) + ensureDrainVcellTrajectoryTable, a
+#                               probe-guarded explicit CREATE.
+# 2026-09-30    | Rex (US-776-f) | startup_log gains prior_boot_home_state /
+#                               _sync_outcome / _backlog_start / _backlog_end +
+#                               replay-safe ensureStartupLogPriorBootSyncColumns.
+# 2026-10-03    | Atlas (ARCH-065a) | startup_log gains prior_boot_sync_started_at /
+#                               _sync_ended_at / _vcell_before_cut_v.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: startup_log gains prior_boot_loss_at.
 # ================================================================================
 ################################################################################
 
@@ -141,6 +150,7 @@ import sqlite3
 # diverge (A-4 anti-divergence, US-408). The Pi imports the DDL and appends it to
 # ALL_SCHEMAS / ALL_INDEXES below -- it never re-declares the columns here.
 from common.edr.sensor_schema import EDR_INDEXES, EDR_SCHEMAS
+from src.pi.power.types import DRAIN_TERMINATION_VALUES, DRAIN_VCELL_TRAJECTORY_TABLE
 
 # ================================================================================
 # Schema Definitions
@@ -624,6 +634,69 @@ CREATE INDEX IF NOT EXISTS IX_power_log_event_type
     ON power_log(event_type);
 """
 
+# US-790 (F-138): the VCELL series of a shutdown drain -- one row per drain
+# poll, the reason on the last row only.  NOT power_log: that is an EVENT log
+# and tests/pi/power/test_power_log_contract.py enforces it.  Append-only with
+# an ``id`` PK (no drive_id, no data_source), so it delta-syncs on the id
+# cursor and stays out of SYNC_UPDATE_TABLES_PK -- a row pushed during the
+# drain is never re-stamped outstanding (the US-789 defect).  It is NOT an EDR
+# table, so the shutdown drain CARRIES it: the rows only exist because the
+# power is going away.  Writer: src/pi/power/power_db.py; the table name lives
+# in src/pi/power/types.py so that writer never imports pi.obdii.
+# No IF NOT EXISTS: ensureDrainVcellTrajectoryTable probes sqlite_master and
+# issues this only for an absent table (specs/design-patterns.md section 10).
+SCHEMA_DRAIN_VCELL_TRAJECTORY = f"""
+CREATE TABLE {DRAIN_VCELL_TRAJECTORY_TABLE} (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- EVENT time: the instant of this poll's VCELL read (canonical ISO-8601
+    -- UTC).  The record -- never a write time in its place.
+    ts_utc TEXT NOT NULL,
+
+    -- Monotonic seconds at the same read; wall clock can step at boot.
+    ts_capture REAL NOT NULL,
+
+    -- 0-based poll number within one drain; 0 opens the next drain.
+    seq INTEGER NOT NULL,
+
+    -- MAX17048 VCELL volts.  NULL = no reading this poll, never a sentinel.
+    vcell_v REAL,
+
+    -- Why the drain ended; set on its LAST row only (DRAIN_TERMINATION_VALUES).
+    termination_reason TEXT
+        CHECK (termination_reason IN ({
+            ', '.join(f"'{value}'" for value in DRAIN_TERMINATION_VALUES)
+        })),
+
+    -- Which cell was fitted: pi.power.cellEpoch, stamped at write time.
+    -- 'unknown' when the key is absent -- never a guess.
+    cell_epoch TEXT NOT NULL
+);
+"""
+
+
+def ensureDrainVcellTrajectoryTable(conn: sqlite3.Connection) -> bool:
+    """Create ``drain_vcell_trajectory`` when it is absent (US-790).
+
+    Replay-safe by construction: the decision is a ``sqlite_master`` lookup by
+    ``name``, which SQLite stores unquoted whatever form the stored DDL takes,
+    and an existing table is never touched -- no CREATE, DROP, RENAME or ALTER.
+
+    Args:
+        conn: Open sqlite3 connection; the caller owns commit semantics.
+
+    Returns:
+        True iff the table was created on this call.
+    """
+    present = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (DRAIN_VCELL_TRAJECTORY_TABLE,),
+    ).fetchone()
+    if present is not None:
+        return False
+    conn.execute(SCHEMA_DRAIN_VCELL_TRAJECTORY)
+    return True
+
 # ================================================================================
 # US-200 / Spool Data v2 Story 2: drive_id indexes
 # ================================================================================
@@ -704,9 +777,40 @@ CREATE TABLE IF NOT EXISTS startup_log (
     -- written pre-NTP-sync (dead-RTC reset) -- see src/pi/diagnostics/clock_sync.py.
     -- Pi-LOCAL forensic flag: stripped from the sync wire (server computes its
     -- own data_quality).  NULL on legacy rows written before US-419.
-    data_quality TEXT
+    data_quality TEXT,
+
+    -- US-776-f: the prior boot's shutdown-sync record (powerwatch_outcome.json),
+    -- landed by boot_progress.arm.  NULL whenever the record is absent, lacks
+    -- the field, or cannot be proven to belong to the prior boot.
+    prior_boot_home_state TEXT,
+    prior_boot_sync_outcome TEXT,
+    prior_boot_backlog_start INTEGER,
+    prior_boot_backlog_end INTEGER,
+
+    -- ARCH-065: the prior boot's shutdown-sync window and the last VCELL
+    -- read before the cut.
+    prior_boot_sync_started_at TEXT,
+    prior_boot_sync_ended_at TEXT,
+    prior_boot_vcell_before_cut_v REAL,
+
+    -- ARCH-065: the prior loss's wall time (powerwatch HomeStateAtLoss.lossIso);
+    -- keys which battery_health_log row the boot finaliser stamps.
+    prior_boot_loss_at TEXT
 );
 """
+
+#: US-776-f (+ ARCH-065): the eight columns :func:`ensureStartupLogPriorBootSyncColumns`
+#: brings to an existing startup_log, in SCHEMA_STARTUP_LOG order.
+STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("prior_boot_home_state", "TEXT"),
+    ("prior_boot_sync_outcome", "TEXT"),
+    ("prior_boot_backlog_start", "INTEGER"),
+    ("prior_boot_backlog_end", "INTEGER"),
+    ("prior_boot_sync_started_at", "TEXT"),
+    ("prior_boot_sync_ended_at", "TEXT"),
+    ("prior_boot_vcell_before_cut_v", "REAL"),
+    ("prior_boot_loss_at", "TEXT"),
+)
 
 
 def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
@@ -809,6 +913,36 @@ def ensureStartupLogDataQuality(conn: sqlite3.Connection) -> bool:
     conn.execute("ALTER TABLE startup_log ADD COLUMN data_quality TEXT")
     conn.commit()
     return True
+
+
+def ensureStartupLogPriorBootSyncColumns(conn: sqlite3.Connection) -> list[str]:
+    """Add the US-776-f prior-boot shutdown-sync columns to startup_log.
+
+    Replay-safe per specs/design-patterns.md #10: runs on every boot (from
+    :meth:`ObdDatabase.initialize` and the boot_progress arm writer), adds only
+    the columns a PRAGMA probe reports missing, and is a no-op on the second
+    run.  Plain nullable ``ADD COLUMN`` -- no rebuild, no row moved; existing
+    rows read NULL (never recorded).  The caller owns the commit.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+
+    Returns:
+        Names of the columns added, in order; empty when all were present or
+        the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return []
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    added: list[str] = []
+    for column, sqlType in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS:
+        if column not in existing:
+            conn.execute(f"ALTER TABLE startup_log ADD COLUMN {column} {sqlType}")
+            added.append(column)
+    return added
 
 
 # Pi-side ``drive_statistics`` table -- RETIRED V0.27.17 (US-351 / B-104 Step 1b).

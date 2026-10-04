@@ -25,6 +25,15 @@
 # 2026-08-29    | Rex (US-626) | Wired ensurePowerLogObserverColumns idempotent
 #                               migration into initialize() so existing Pi
 #                               databases gain observed_by + observer_state.
+# 2026-09-24    | Rex (US-810) | Wired ensureEdrImuDerivedGyroRateBiasColumns so
+#                               existing Pi databases gain the five gyro RATE
+#                               bias columns on edr_imu_derived.
+# 2026-09-24    | Rex (US-683) | Wired ensureBatteryHealthLogCloseReasonColumn so
+#                               existing Pi databases gain the typed
+#                               battery_health_log.close_reason, backfilled once.
+# 2026-09-25    | Rex (US-790) | Wired ensureDrainVcellTrajectoryTable.
+# 2026-09-30    | Rex (US-776-f) | Wired ensureStartupLogPriorBootSyncColumns.
+# 2026-10-03    | Atlas (ARCH-065a) | Wired ensureBatteryHealthLogCapacityColumns.
 # ================================================================================
 ################################################################################
 
@@ -66,7 +75,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from common.edr.sensor_schema import ensureEdrImuDerivedGyroRateBiasColumns
 from src.pi.power.battery_health import (
+    ensureBatteryHealthLogCapacityColumns,
+    ensureBatteryHealthLogCloseReasonColumn,
     ensureBatteryHealthLogSocPctColumns,
     ensureBatteryHealthLogTable,
     ensureBatteryHealthLogVcellColumns,
@@ -82,7 +94,9 @@ from .database_schema import (
     ALL_INDEXES,
     ALL_SCHEMAS,
     ensureBatteryLogRetired,
+    ensureDrainVcellTrajectoryTable,
     ensureDriveStatisticsRetired,
+    ensureStartupLogPriorBootSyncColumns,
 )
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
 from .drive_summary import ensureDriveSummaryTable
@@ -353,6 +367,27 @@ class ObdDatabase:
                         "(US-426)"
                     )
 
+                # US-683 idempotent migration: typed close_reason on
+                # battery_health_log.  PRAGMA-guarded ADD COLUMN plus a
+                # one-shot backfill of closed rows -- no rebuild.  Runs after
+                # the US-426 rebuild, whose target lacks this column.  Its
+                # sync partner is server v0032.
+                if ensureBatteryHealthLogCloseReasonColumn(conn):
+                    logger.info(
+                        "Added close_reason to battery_health_log and "
+                        "backfilled closed rows (US-683)"
+                    )
+
+                # ARCH-065 idempotent migration: capacity columns on
+                # battery_health_log.  PRAGMA-probed ADD COLUMN only.  Its
+                # sync partner is server v0035.
+                addedCapacity = ensureBatteryHealthLogCapacityColumns(conn)
+                if addedCapacity:
+                    logger.info(
+                        "Added battery capacity columns (ARCH-065): %s",
+                        ", ".join(addedCapacity),
+                    )
+
                 # US-225 idempotent migration: pi_state singleton for
                 # TD-034 stage-behavior flags (today: no_new_drives
                 # for the US-216 WARNING stage gate on new drive_id
@@ -385,6 +420,38 @@ class ObdDatabase:
                     logger.info(
                         "Added observed_by/observer_state columns to "
                         "power_log (US-626)"
+                    )
+
+                # US-810 idempotent migration: add the five gyro RATE bias
+                # columns to edr_imu_derived (created above from EDR_SCHEMAS).
+                # PRAGMA-guarded ADD COLUMN only -- no rebuild, no row moved;
+                # existing rows read NULL (bias never recorded).  Must run
+                # here, not in the EDR writer: its sync partner is server v0031.
+                addedGyroBias = ensureEdrImuDerivedGyroRateBiasColumns(conn)
+                if addedGyroBias:
+                    logger.info(
+                        "Added gyro rate bias columns to edr_imu_derived "
+                        "(US-810): %s",
+                        ', '.join(addedGyroBias),
+                    )
+
+                # US-790 replay-safe schema step: drain_vcell_trajectory, the
+                # per-poll VCELL series of a shutdown drain.  A sqlite_master
+                # probe decides; an existing table is never touched.  Its sync
+                # partner is server v0033.
+                if ensureDrainVcellTrajectoryTable(conn):
+                    logger.info("Created drain_vcell_trajectory table (US-790)")
+
+                # US-776-f replay-safe schema step: the four prior_boot_*
+                # shutdown-sync columns on startup_log.  PRAGMA-guarded ADD
+                # COLUMN only; boot_progress.arm also runs it before landing.
+                # Its sync partner is server v0034.
+                addedPriorBootSync = ensureStartupLogPriorBootSyncColumns(conn)
+                if addedPriorBootSync:
+                    logger.info(
+                        "Added prior-boot sync columns to startup_log "
+                        "(US-776-f): %s",
+                        ', '.join(addedPriorBootSync),
                     )
 
                 # US-351 retirement migration: drop the legacy Pi-side

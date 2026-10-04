@@ -36,6 +36,10 @@
 #               |              | publishes WHY it could not be formed, so "we
 #               |              | checked and cannot say" is distinguishable from
 #               |              | "nothing has checked since May".
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T7: publishes timeToFloorS (T),
+#               |              | jobAvgS (J), jobMaxS, provisional; the three
+#               |              | numbers are blanked with the UPS like
+#               |              | runtimeToCutoffS.
 # ================================================================================
 ################################################################################
 
@@ -113,6 +117,10 @@ def buildBatteryHealthState(
     upsAvailable: bool = True,
     upsUnavailableReason: str | None = None,
     healthReason: str | None = None,
+    timeToFloorS: int | None = None,
+    jobAvgS: int | None = None,
+    jobMaxS: int | None = None,
+    provisional: bool = False,
 ) -> dict:
     """Assemble the battery-health payload (pure; spec §7 pinned A-3 schema).
 
@@ -137,8 +145,9 @@ def buildBatteryHealthState(
             history. ``VERDICT_UNKNOWN`` is the honest default, never a
             fallback that hides a failed computation.
         fullChargeReached: Whether the pack reached 4.20-4.22 V last cycle.
-        runtimeToCutoffS: Health-stat typical full-drain runtime (NOT the live
-            failsafe estimate), or None.
+        runtimeToCutoffS: ARCH-065: T, the verdict's time from key-off to the
+            reserve floor (NOT the live failsafe estimate), or None.  Kept
+            under its A-3 name; ``timeToFloorS`` carries the same value.
         ambientTempC: Ambient temperature, or None when never logged. US-504
             REMOVED the TEMP tile that rendered this -- the MAX17048 has no
             temperature register, so the tile had no source it could ever read.
@@ -160,8 +169,8 @@ def buildBatteryHealthState(
         healthReason: US-632. The typed reason an ``unknown`` verdict could not
             be formed -- one of
             :data:`pi.power.battery_health_verdict.UNKNOWN_REASONS`
-            (``no_database`` / ``log_unreadable`` / ``no_qualifying_drains`` /
-            ``too_few_drains`` / ``health_data_stale`` / ``clock_unreadable``).
+            (``no_database`` / ``log_unreadable`` / ``clock_unreadable`` /
+            ``no_monthly_test`` / ``monthly_test_stale`` / ``too_few_syncs``).
             The vocabulary lives with the PRODUCER; this module transports it
             verbatim and never translates it. Published in ``reasons.health``
             following the US-628 ``power.reasons`` precedent. IGNORED beside a
@@ -169,6 +178,12 @@ def buildBatteryHealthState(
             next to a real verdict would be a second, contradictory account of
             the same fact. None -- no reason offered -- publishes an empty map
             rather than a filled-in guess.
+        timeToFloorS: ARCH-065 T -- seconds from key-off to the reserve floor.
+        jobAvgS: ARCH-065 J -- the mean at-home job (confirm wait + sync +
+            graceful poweroff), seconds.
+        jobMaxS: The longest job J was averaged over, seconds.
+        provisional: True when T was projected to the provisional cutoff (no
+            calibration drain for this pack yet).
 
     Returns:
         The battery-health dict with exactly the spec §7 A-3 keys plus the US-429
@@ -188,6 +203,9 @@ def buildBatteryHealthState(
         crate = None
         restedVcellV = None
         runtimeToCutoffS = None
+        timeToFloorS = None
+        jobAvgS = None
+        jobMaxS = None
         draining = False
         charging = False
         safeLadder = None
@@ -219,6 +237,10 @@ def buildBatteryHealthState(
         "runtimeToCutoffS": runtimeToCutoffS,
         "ambientTempC": ambientTempC,
         "lastHealthCheckTs": lastHealthCheckTs,
+        "timeToFloorS": timeToFloorS,
+        "jobAvgS": jobAvgS,
+        "jobMaxS": jobMaxS,
+        "provisional": provisional,
         "ladder": safeLadder,
         "reasons": reasons,
         "source": {
@@ -273,6 +295,10 @@ def makeBatteryHealthEmitter(
         upsAvailable: bool = True,
         upsUnavailableReason: str | None = None,
         healthReason: str | None = None,
+        timeToFloorS: int | None = None,
+        jobAvgS: int | None = None,
+        jobMaxS: int | None = None,
+        provisional: bool = False,
     ) -> None:
         try:
             payload = buildBatteryHealthState(
@@ -295,6 +321,10 @@ def makeBatteryHealthEmitter(
                 upsAvailable=upsAvailable,
                 upsUnavailableReason=upsUnavailableReason,
                 healthReason=healthReason,
+                timeToFloorS=timeToFloorS,
+                jobAvgS=jobAvgS,
+                jobMaxS=jobMaxS,
+                provisional=provisional,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

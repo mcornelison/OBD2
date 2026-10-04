@@ -51,6 +51,13 @@
 #               |              | so PARK cannot be published on a dead dongle.
 #               |              | RECONNECTING is NOT healthy -- it reports
 #               |              | available:true by US-672's own (correct) rule.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T7: the battery-health verdict is
+#               |              | T vs J; the card gains timeToFloorS / jobAvgS /
+#               |              | jobMaxS / provisional; smoothingSec from config.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: the verdict's pack is
+#               |              | resolveCellEpoch(config) and its provisional floor
+#               |              | is config pi.powerWatch.drainFloorVolts, both passed
+#               |              | in (one owner each; no row-derived pack).
 # ================================================================================
 ################################################################################
 
@@ -164,6 +171,23 @@ POWER_SOURCE_UNKNOWN_REASONS: tuple[str, ...] = (
     REASON_POWER_SOURCE_UNREADABLE,
     REASON_POWER_SOURCE_READ_FAILED,
 )
+
+
+class _UnreadableBatteryVerdict:
+    """The verdict when the producer could not even be imported or called.
+
+    Duck-types ``BatteryHealthVerdict`` so the assembly below has ONE shape to
+    read; deliberately NOT built from the producer module, whose import may be
+    the very thing that failed.
+    """
+
+    verdict = "unknown"
+    lastHealthCheckTs = None
+    reason = "log_unreadable"
+    timeToFloorS = None
+    jobAvgS = None
+    jobMaxS = None
+    provisional = False
 
 
 class CardStateEmitterMixin:
@@ -1062,53 +1086,65 @@ class CardStateEmitterMixin:
             )
         )
 
-    def _gatherBatteryHealthVerdict(
-        self,
-    ) -> tuple[str, str | None, int | None, str | None]:
-        """Read the US-504 verdict + last-health-check from battery_health_log.
+    def _gatherBatteryHealthVerdict(self) -> Any:
+        """Read the ARCH-065 verdict (T vs J) from the drain log + startup_log.
 
         The database is resolved through ``getattr`` AT USE TIME, never captured
-        when the emitters are constructed: ``_database`` is built earlier in the
-        boot order today, but a captured reference is the exact trap US-501 and
-        US-502 both hit this sprint, and the log also has to be RE-read each
-        tick so a drain recorded while the orchestrator runs reaches the card
-        without a restart.
+        when the emitters are constructed (the US-501/US-502 boot-order trap),
+        and the log is RE-read each tick so a new monthly test or sync reaches
+        the card without a restart.
 
-        US-632 adds the fourth element, ``reason``. The verdict is recomputed on
-        EVERY emit tick -- there is no separate health-producer unit or timer --
-        so an `unknown` here means "we ran, just now, and cannot say", which is
-        a different fact from "nothing has run since May". The reason is what
-        carries that distinction.
+        The verdict is recomputed on EVERY emit tick, so an `unknown` here means
+        "we ran, just now, and cannot say" -- the reason carries which cause.
+
+        J's confirm-wait term is config ``pi.powerWatch.smoothingSec`` (Ruling
+        10) and the provisional T's floor is ``pi.powerWatch.drainFloorVolts``
+        (Ruling 19); when a key is absent the validator's DEFAULT is used,
+        imported rather than restated.  The current pack is
+        ``resolveCellEpoch(config)`` -- the one resolver the drain writers and
+        the monthly-test due check use (Ruling 19).
 
         Returns:
-            ``(verdict, lastHealthCheckTs, medianRuntimeS, reason)`` -- honest
-            ``("unknown", None, None, <reason>)`` whenever the log is absent,
-            unreadable, too thin (< 3 qualifying drains) or stale (> 90 days).
-            ``reason`` is None only when the verdict actually resolved.
+            The :class:`~pi.power.battery_health_verdict.BatteryHealthVerdict`.
+            An unknown verdict always carries a reason: the import failing, or
+            the reader raising out, is reported as ``log_unreadable``.
         """
         try:
+            from common.config.validator import DEFAULTS
+            from pi.power.battery_health import resolveCellEpoch
             from pi.power.battery_health_verdict import (
                 REASON_LOG_UNREADABLE,
                 VERDICT_UNKNOWN,
+                BatteryHealthVerdict,
                 readBatteryHealthVerdict,
             )
 
+            powerWatchCfg = self._config.get("pi", {}).get("powerWatch", {})
+            smoothingSec = float(
+                powerWatchCfg.get("smoothingSec", DEFAULTS["pi.powerWatch.smoothingSec"])
+            )
+            drainFloorVolts = float(
+                powerWatchCfg.get(
+                    "drainFloorVolts", DEFAULTS["pi.powerWatch.drainFloorVolts"]
+                )
+            )
             result = readBatteryHealthVerdict(
                 database=getattr(self, "_database", None),
                 nowIso=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                smoothingSec=smoothingSec,
+                cellEpoch=resolveCellEpoch(self._config),
+                drainFloorVolts=drainFloorVolts,
             )
         except Exception as e:  # noqa: BLE001 -- never block the emit loop
             logger.debug("battery-health verdict unavailable: %s", e)
-            # The import itself failed, or the reader raised out. Either way the
-            # producer could not read the log -- report that, not silence.
-            return ("unknown", None, None, "log_unreadable")
-        return (
-            result.verdict or VERDICT_UNKNOWN,
-            result.lastHealthCheckTs,
-            result.medianRuntimeS,
-            result.reason if result.verdict != VERDICT_UNKNOWN
-            else (result.reason or REASON_LOG_UNREADABLE),
-        )
+            return _UnreadableBatteryVerdict()
+        if result.verdict == VERDICT_UNKNOWN and not result.reason:
+            return BatteryHealthVerdict(
+                verdict=VERDICT_UNKNOWN,
+                lastHealthCheckTs=result.lastHealthCheckTs,
+                reason=REASON_LOG_UNREADABLE,
+            )
+        return result
 
     def _recordBatteryHealthReason(self, reason: str | None) -> None:
         """Log WHY the battery-health verdict is unknown, on CHANGE only.
@@ -1156,18 +1192,18 @@ class CardStateEmitterMixin:
     ) -> dict[str, Any]:
         """Assemble the battery-health emit kwargs with HONEST unknown defaults.
 
-        ``health`` / ``lastHealthCheckTs`` / ``runtimeToCutoffS`` come from the
-        US-504 ``battery_health_log`` producer (Spool [EXACT] spec) and are
-        ``unknown`` / null whenever it has nothing real to say. Every remaining
+        ``health`` / ``lastHealthCheckTs`` / ``timeToFloorS`` (also published as
+        ``runtimeToCutoffS``) / ``jobAvgS`` / ``jobMaxS`` / ``provisional`` come
+        from the ARCH-065 verdict producer and are ``unknown`` / null whenever
+        it has nothing real to say. Every remaining
         field still has no in-process producer and stays a conservative honest
         value: no claimed calibration, no claimed full-charge, no rested
         history, no ladder. ``ambientTempC`` stays null by design -- the
         MAX17048 has NO temperature register, so US-504 removed the TEMP tile
         rather than invent a source; the column survives for a future BMP390.
         """
-        health, lastHealthCheckTs, medianRuntimeS, reason = (
-            self._gatherBatteryHealthVerdict()
-        )
+        result = self._gatherBatteryHealthVerdict()
+        reason = result.reason
         # US-632: the reason travels BOTH ways. `reasons.health` in the payload
         # is the SSOT the card polls (BL-us632, since granted); the journal line
         # stays because it is a TRANSITION record -- it says WHEN the cause
@@ -1184,11 +1220,15 @@ class CardStateEmitterMixin:
             "restedVcellV": None,
             "weakEvents30d": 0,
             "restedHistory": [],
-            "health": health,
+            "health": result.verdict,
             "fullChargeReached": False,
-            "runtimeToCutoffS": medianRuntimeS,
+            "runtimeToCutoffS": result.timeToFloorS,
             "ambientTempC": None,
-            "lastHealthCheckTs": lastHealthCheckTs,
+            "lastHealthCheckTs": result.lastHealthCheckTs,
             "ladder": None,
             "upsAvailable": upsAvailable,
+            "timeToFloorS": result.timeToFloorS,
+            "jobAvgS": result.jobAvgS,
+            "jobMaxS": result.jobMaxS,
+            "provisional": result.provisional,
         }

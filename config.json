@@ -389,12 +389,12 @@
     },
     "tieredThresholds": {
       "coolantTemp": {
-        "unit": "fahrenheit",
-        "normalMin": 180,
-        "cautionMin": 210,
-        "dangerMin": 220,
-        "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
-        "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
+        "unit": "celsius",
+        "normalMin": 85,
+        "cautionMin": 103.5,
+        "dangerMin": 109.5,
+        "cautionMessage": "Coolant temperature elevated ({value} C). Check fan, coolant level and water pump; reduce load.",
+        "dangerMessage": "DANGER: Coolant temperature critical ({value} C). Pull over. Risk of head gasket failure."
       },
       "stft": {
         "unit": "percent",
@@ -453,6 +453,7 @@
     },
     "powerWatch": {
       "drainFloorVolts": 3.6,
+      "drainFloorDwellReads": 5,
       "smoothingSec": 7,
       "smoothingPollSec": 1
     },
@@ -548,11 +549,31 @@
     "sensors": {
       "imu": {
         "enabled": true,
-        "sampleHz": 4,
-        "magMode": "master",
+        "sampleHz": 50,
+        "magMode": "direct",
+        "fusionEngine": "imufusion",
+        "magDeclinationDeg": -4.0,
+        "magCalibration": {
+          "hardIronUt": [-4.4974, 1.7186, 6.1315],
+          "softIron": [[1.003814, 0.017776, -0.011429], [0.019606, 1.006167, -0.009419], [-0.012002, -0.008964, 0.990653]]
+        },
+        "accelCalibration": {
+          "offsetMs2": [-0.034698, -0.184143, 0.136256],
+          "matrix": [[0.999277, 0.000351, 0.000869], [0.000351, 0.998685, -0.000318], [0.000869, -0.000318, 0.994586]]
+        },
         "persistHz": 2,
         "stateHz": 1,
         "gravityTauSec": 5.0,
+        "pitchTauSec": 5.0,
+        "accelTrustBand": 0.02,
+        "zuptMinStopSec": 3.0,
+        "zuptSpeedMaxAgeSec": 2.0,
+        "zuptMinStops": 5,
+        "zuptWindowStops": 20,
+        "gyroFaultMinRadS": 0.10,
+        "gyroRecoverySampleCount": 20,
+        "gyroRecoverySettleSec": 1.0,
+        "magMaxAgeSec": 1.25,
         "mount": {
           "forward": "+x",
           "left": "+y",
@@ -602,7 +623,9 @@
       "ssid": "DeathStarWiFi",
       "subnet": "10.27.27.0/24",
       "pingTimeoutSeconds": 3,
-      "serverPingPath": "/api/v1/ping"
+      "serverPingPath": "/api/v1/health",
+      "joinWaitSec": 120,
+      "stallSec": 60
     },
     "location": {
       "home": {
@@ -651,7 +674,11 @@
     "power": {
       "power_monitor": {
         "enabled": true
-      }
+      },
+      "cellEpoch": "18650-pack"
+    },
+    "batteryHealth": {
+      "monthlyIntervalDays": 30
     }
   },
   "server": {

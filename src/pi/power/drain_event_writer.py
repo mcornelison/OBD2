@@ -32,6 +32,11 @@
 # 2026-08-03    | Rex (US-526) | Initial -- production writer + boot reaper.
 # 2026-08-29    | Rex (US-605) | 30 s open-row checkpoint (Spool EXACT: 30) +
 #              |               | the reaper close-onto-checkpoint it enables.
+# 2026-09-24    | Rex (US-683) | Both reap UPDATEs write the typed close_reason
+#              |               | beside end_timestamp.  REAP_CHECKPOINTED_NOTE_
+#              |               | SUFFIX now defined in battery_health (re-exported).
+# 2026-10-03    | Atlas (ARCH-065a) | cellEpoch ctor arg; openDrainEvent stamps
+#              |               | battery_health_log.cell_epoch on the new row.
 # ================================================================================
 ################################################################################
 
@@ -115,6 +120,13 @@ destroys the honest-NA signature above, the reaper appends
 both depth and duration therefore UNDERSTATE the real drain by up to one
 interval" is a POSITIVE statement rather than an absence a reader must infer.
 An un-checkpointed row reaps exactly as it did before.
+
+Since US-683 every close also writes a TYPED ``close_reason`` in the same
+UPDATE as ``end_timestamp`` -- ``clean`` (via ``endDrainEvent``),
+``reaped_uncheckpointed`` or ``reaped_checkpointed`` -- so a consumer reads the
+understatement from a column instead of string-matching the ``notes`` prose,
+which stays as human context.  :data:`DRAIN_OPEN_NOTE` is unaffected: it is the
+ownership marker, matched by exact equality, and is not a close marker at all.
 """
 
 from __future__ import annotations
@@ -132,7 +144,10 @@ from typing import Any
 from src.common.time.helper import CANONICAL_ISO_FORMAT, utcIsoNow
 from src.pi.power.battery_health import (
     BATTERY_HEALTH_LOG_TABLE,
+    CLOSE_REASON_REAPED_CHECKPOINTED,
+    CLOSE_REASON_REAPED_UNCHECKPOINTED,
     LOAD_CLASS_DEFAULT,
+    REAP_CHECKPOINTED_NOTE_SUFFIX,
     BatteryHealthRecorder,
     DrainEventCloseResult,
     _computeRuntimeSeconds,
@@ -181,7 +196,9 @@ DRAIN_OPEN_NOTE: str = (
 POWER_SOURCE_AC_VALUE: str = 'ac_power'
 POWER_SOURCE_BATTERY_VALUE: str = 'battery'
 
-#: Close reasons (log context only -- the schema has no reason column).
+#: Why a CLEAN close fired -- log context only.  Both store
+#: ``close_reason = 'clean'`` (US-683); the column records HOW a row was closed
+#: (clean vs reaped), not which trigger fired the clean close.
 CLOSE_REASON_POWER_RESTORED: str = 'power_restored'
 CLOSE_REASON_SHUTDOWN: str = 'shutdown'
 
@@ -196,19 +213,6 @@ CLOSE_REASON_SHUTDOWN: str = 'shutdown'
 #: which is how the cadence is exercised without sleeping through it.
 DRAIN_CHECKPOINT_INTERVAL_SECONDS: float = 30.0
 
-#: Appended to ``notes`` when the boot reaper closes a row onto its last
-#: checkpoint.  US-526 made an interrupted drain identifiable by its SIGNATURE
-#: (end_timestamp present, runtime_seconds and end_vcell_v NULL); a checkpointed
-#: row destroys that signature by carrying real values, so the fact has to be
-#: stated POSITIVELY instead of inferred from an absence.  It is load-bearing
-#: for the reader: a checkpointed close understates both depth and duration by
-#: up to one interval, so these are FLOORS, not final values.
-REAP_CHECKPOINTED_NOTE_SUFFIX: str = (
-    ' | INTERRUPTED (US-605): closed by the boot reaper at the last 30 s '
-    'checkpoint -- depth and runtime are CHECKPOINTED values and both '
-    'UNDERSTATE the real drain by up to one checkpoint interval'
-)
-
 _SELECT_OWN_OPEN_ROW_SQL: str = (
     "SELECT drain_event_id, start_timestamp, runtime_seconds "
     f"FROM {BATTERY_HEALTH_LOG_TABLE} "
@@ -216,11 +220,13 @@ _SELECT_OWN_OPEN_ROW_SQL: str = (
     "ORDER BY drain_event_id DESC"
 )
 
-#: Reaper UPDATE for a row NOTHING measured.  Stamps end_timestamp ONLY --
-#: runtime_seconds, end_vcell_v and end_soc_pct are deliberately absent from the
-#: SET list so they stay NULL, and ``notes`` is left exactly as opened.
+#: Reaper UPDATE for a row NOTHING measured.  Stamps end_timestamp and its
+#: US-683 close_reason ONLY -- runtime_seconds, end_vcell_v and end_soc_pct are
+#: deliberately absent from the SET list so they stay NULL, and ``notes`` is
+#: left exactly as opened.
 _REAP_UPDATE_SQL: str = (
-    f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET end_timestamp = ? "
+    f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET end_timestamp = ?, "
+    f"close_reason = '{CLOSE_REASON_REAPED_UNCHECKPOINTED}' "
     "WHERE drain_event_id = ? AND end_timestamp IS NULL"
 )
 
@@ -228,9 +234,11 @@ _REAP_UPDATE_SQL: str = (
 #: the last checkpoint instant, never the reap instant -- stamping the reap
 #: instant beside a checkpointed runtime would put two contradictory durations
 #: on one row.  The gauge is still not read: today's resting voltage is not the
-#: interrupted drain's depth.
+#: interrupted drain's depth.  close_reason is the typed statement of the
+#: understatement (US-683); the ``notes`` suffix stays as human context.
 _REAP_FROM_CHECKPOINT_UPDATE_SQL: str = (
     f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET end_timestamp = ?, "
+    f"close_reason = '{CLOSE_REASON_REAPED_CHECKPOINTED}', "
     "notes = COALESCE(notes, '') || ? "
     "WHERE drain_event_id = ? AND end_timestamp IS NULL"
 )
@@ -302,6 +310,7 @@ class DrainEventWriter:
         loadClass: str = LOAD_CLASS_DEFAULT,
         monotonicFn: Callable[[], float] | None = None,
         checkpointIntervalSeconds: float = DRAIN_CHECKPOINT_INTERVAL_SECONDS,
+        cellEpoch: str | None = None,
     ) -> None:
         """Args:
             database: ``DatabaseLike`` -- anything exposing ``connect()`` as a
@@ -337,6 +346,9 @@ class DrainEventWriter:
                 to :data:`DRAIN_CHECKPOINT_INTERVAL_SECONDS` (Spool's EXACT 30);
                 overridden by TESTS only, so the cadence can be exercised
                 without sleeping through it.
+            cellEpoch: ARCH-065 -- the pack generation to stamp into
+                ``battery_health_log.cell_epoch`` on every row this writer
+                opens.  None leaves the column NULL.
         """
         self._recorder = BatteryHealthRecorder(database=database)
         self._database = database
@@ -344,6 +356,7 @@ class DrainEventWriter:
         self._readUptime = uptimeReader or readSystemUptimeSeconds
         self._coldStartWindowSeconds = float(coldStartWindowSeconds)
         self._loadClass = loadClass
+        self._cellEpoch = cellEpoch
         self._monotonic = monotonicFn or time.monotonic
         self._checkpointIntervalSeconds = float(checkpointIntervalSeconds)
         self._lastCheckpointMonotonic: float | None = None
@@ -425,6 +438,22 @@ class DrainEventWriter:
                 "(%s) -- this drain will not reach battery_health_log", exc,
             )
             return None
+        # ARCH-065: stamp the pack generation on the row.  Best effort -- the
+        # row is already open, so a failed stamp must not undo or hide it.
+        if drainEventId is not None and self._cellEpoch:
+            try:
+                with self._database.connect() as conn:
+                    conn.execute(
+                        f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET cell_epoch = ? "
+                        "WHERE drain_event_id = ?",
+                        (self._cellEpoch, drainEventId),
+                    )
+            except Exception as exc:  # noqa: BLE001 -- power path must not break
+                logger.error(
+                    "drain writer: could not stamp cell_epoch on drain event "
+                    "%s (%s) -- the row stays open with cell_epoch NULL",
+                    drainEventId, exc,
+                )
         # US-605: anchor the checkpoint cadence on the OPEN, so the first
         # checkpoint lands one full interval INTO the drain rather than at a
         # position inherited from whenever the run loop last happened to look.
@@ -854,6 +883,7 @@ def makeDrainEventWriterForPath(
     uptimeReader: Callable[[], float | None] | None = None,
     coldStartWindowSeconds: float = COLD_START_CALIBRATION_WINDOW_SECONDS,
     loadClass: str = LOAD_CLASS_DEFAULT,
+    cellEpoch: str | None = None,
 ) -> DrainEventWriter:
     """Build a writer from a sqlite path -- for the powerwatch process.
 
@@ -866,6 +896,7 @@ def makeDrainEventWriterForPath(
         uptimeReader: See :class:`DrainEventWriter`.
         coldStartWindowSeconds: See :class:`DrainEventWriter`.
         loadClass: See :class:`DrainEventWriter`.
+        cellEpoch: See :class:`DrainEventWriter`.
 
     Returns:
         A :class:`DrainEventWriter` writing through a plain sqlite connection.
@@ -878,4 +909,5 @@ def makeDrainEventWriterForPath(
         uptimeReader=uptimeReader,
         coldStartWindowSeconds=coldStartWindowSeconds,
         loadClass=loadClass,
+        cellEpoch=cellEpoch,
     )

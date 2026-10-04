@@ -57,28 +57,17 @@ unit cannot leave the dashboard -- the one that actually matters -- running.
 whose stop failed is still running; starting it would claim a state change that
 never happened.
 
-THE GRACE SPLASH (US-796-a). ``splash-grace.path`` is always armed on
-``PathExists=/run/eclipse-obd/states/shutdown-state`` and cold-starts a SECOND
-chromium (``splash-grace.service``) the instant the sequencer writes that file.
-A second browser starting during a shutdown is wrong on its own terms, so the
-shed stops both. Two constraints make that a fix rather than a diff that looks
-like one:
+THE GRACE SPLASH IS NOT SHED (US-796). ``splash-grace.path`` fires
+``splash-grace.service`` -- the shutdown animation -- when the sequencer writes
+``shutdown-state``. The CIO ruled to KEEP that animation. US-796-a had put both
+units on this list; the stop failed on every cut ("could not stop
+splash-grace.service"), and had it succeeded it would have removed the very
+animation the ruling keeps. Neither unit belongs here, and nothing in this
+module starts, stops or re-arms them.
 
-* ORDER. The sequencer runs this shed from ``powerLossObservedFn``, which it
-  calls BEFORE it emits ``grace`` (the shutdown-state write). A ``.path`` unit
-  that has already fired cannot be un-fired, so shedding after the write would
-  be a no-op. For the same reason a ``.path`` stop is issued WITHOUT
-  ``--no-block`` (:func:`systemctlRunner`): the Python call order only holds in
-  systemd if the stop has finished when the write happens.
-* DECOUPLING. The sequencer never names a splash unit (F-103). Suppression
-  lives here, in the component that owns what is allowed to run.
-
-``splash-grace.service`` is stopped but never restored (:data:`TRIGGERED_UNITS`):
-its only legitimate starter is the path unit, and ``systemctl stop`` succeeds on
-an inactive unit, so "it stopped" does not mean "it was running". Restoring
-``splash-grace.path`` re-arms it; with the state file already reading
-``cancelled`` it fires once and the kiosk aborts on its first poll without
-painting -- the same cancelled-abort the splash always took on a blip.
+The shed still runs from ``powerLossObservedFn``, which the sequencer calls
+BEFORE it emits ``grace``, so the dashboard is stopped before the shutdown-state
+write. The sequencer never names a splash unit (F-103).
 """
 
 from __future__ import annotations
@@ -91,23 +80,19 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["DEFAULT_SHED_UNITS", "LoadShedder", "TRIGGERED_UNITS", "systemctlRunner"]
 
-#: The dashboard, plus the grace splash's trigger and the unit it starts. The
-#: dashboard is the measured dominant load AND the burstiest thing on the box;
-#: the splash would cold-start a second chromium mid-shutdown (US-796-a). The
-#: rest of the stack is ~0.1 W combined and includes the very services that
-#: must keep running to preserve data. Shedding is opt-in per unit, never
-#: "stop everything". Order matters: the path is disarmed before its service
-#: is stopped, so nothing can re-launch the service behind the stop.
+#: The dashboard: the measured dominant load AND the burstiest thing on the box
+#: (ARCH-031). The rest of the stack is ~0.1 W combined and includes the very
+#: services that must keep running to preserve data. Shedding is opt-in per
+#: unit, never "stop everything". The grace splash is deliberately absent: it is
+#: the shutdown animation the CIO kept (US-796).
 #: ``install.sh`` installs the .wayland/.x11 variant under this one runtime name.
-DEFAULT_SHED_UNITS: tuple[str, ...] = (
-    "eclipse-dashboard",
-    "splash-grace.path",
-    "splash-grace.service",
-)
+DEFAULT_SHED_UNITS: tuple[str, ...] = ("eclipse-dashboard",)
 
 #: Units started by a trigger, never by the shedder. Stopped on shed, never
-#: started on restore -- restoring the trigger is what restores them.
-TRIGGERED_UNITS: frozenset[str] = frozenset({"splash-grace.service"})
+#: started on restore -- restoring the trigger is what restores them. Empty by
+#: default: the only unit that ever sat here was the grace splash, which is no
+#: longer shed (US-796).
+TRIGGERED_UNITS: frozenset[str] = frozenset()
 
 _ACTION_TIMEOUT_S = 5.0
 

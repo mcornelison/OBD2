@@ -16,6 +16,9 @@
 #                               Spool Sprint 26 Story 6 column rename --
 #                               the new columns ship alongside the legacy
 #                               start_soc / end_soc during deprecation.
+# 2026-10-04    | Atlas (ARCH-065a) | Ruling 19: test_columnShape includes the ten
+#                               ARCH-065 capacity columns, derived from their
+#                               owner BATTERY_HEALTH_CAPACITY_COLUMNS (SSOT).
 # ================================================================================
 ################################################################################
 
@@ -30,6 +33,7 @@ import pytest
 
 from src.pi.obdii.database import DatabaseConnectionError, ObdDatabase
 from src.pi.power.battery_health import (
+    BATTERY_HEALTH_CAPACITY_COLUMNS,
     BATTERY_HEALTH_LOG_TABLE,
     SCHEMA_BATTERY_HEALTH_LOG,
     ensureBatteryHealthLogTable,
@@ -68,7 +72,11 @@ class TestFreshSchema:
             'load_class',
             'notes',
             'data_source',
+            'close_reason',    # US-683: typed close discriminator
         }
+        # ARCH-065: the capacity columns, from their one owner (not restated).
+        expected |= {name for name, _ in BATTERY_HEALTH_CAPACITY_COLUMNS}
+        assert len(BATTERY_HEALTH_CAPACITY_COLUMNS) == 10
         # US-426 dropped the misnamed legacy start_soc / end_soc (VCELL volts).
         assert set(cols.keys()) == expected
         assert 'start_soc' not in cols
