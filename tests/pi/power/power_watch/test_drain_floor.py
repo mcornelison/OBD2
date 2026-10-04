@@ -26,6 +26,7 @@ import threading
 from pathlib import Path
 
 from src.common.edr.sync_contract import SHUTDOWN_DRAIN_EXCLUDED_TABLES
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.power_watch import __main__ as m
 from src.pi.power.power_watch.controller import ShutdownSequencer
 from src.pi.power.power_watch.pipeline import runPipeline
@@ -92,13 +93,14 @@ def _readerOver(backlog: list[int]):
 
 def _pipelineFor(client: _PassClient, backlog: list[int]):
     syncTask = SyncWithServerTask(
-        serverReachable=lambda: True,
+        homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
         runSync=m._buildRunSync(
             client,
             backlogReader=_readerOver(backlog),
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
         writeRecord=lambda _r: None,
+        ceilingSec=60.0,
     )
     return lambda: runPipeline(
         m.buildV1Tasks(syncTask),

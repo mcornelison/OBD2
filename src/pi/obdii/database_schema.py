@@ -109,6 +109,9 @@
 # 2026-09-25    | Rex (US-790) | Added drain_vcell_trajectory (one row per drain
 #                               poll) + ensureDrainVcellTrajectoryTable, a
 #                               probe-guarded explicit CREATE.
+# 2026-09-30    | Rex (US-776-f) | startup_log gains prior_boot_home_state /
+#                               _sync_outcome / _backlog_start / _backlog_end +
+#                               replay-safe ensureStartupLogPriorBootSyncColumns.
 # ================================================================================
 ################################################################################
 
@@ -771,9 +774,26 @@ CREATE TABLE IF NOT EXISTS startup_log (
     -- written pre-NTP-sync (dead-RTC reset) -- see src/pi/diagnostics/clock_sync.py.
     -- Pi-LOCAL forensic flag: stripped from the sync wire (server computes its
     -- own data_quality).  NULL on legacy rows written before US-419.
-    data_quality TEXT
+    data_quality TEXT,
+
+    -- US-776-f: the prior boot's shutdown-sync record (powerwatch_outcome.json),
+    -- landed by boot_progress.arm.  NULL whenever the record is absent, lacks
+    -- the field, or cannot be proven to belong to the prior boot.
+    prior_boot_home_state TEXT,
+    prior_boot_sync_outcome TEXT,
+    prior_boot_backlog_start INTEGER,
+    prior_boot_backlog_end INTEGER
 );
 """
+
+#: US-776-f: the four columns :func:`ensureStartupLogPriorBootSyncColumns`
+#: brings to an existing startup_log, in SCHEMA_STARTUP_LOG order.
+STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("prior_boot_home_state", "TEXT"),
+    ("prior_boot_sync_outcome", "TEXT"),
+    ("prior_boot_backlog_start", "INTEGER"),
+    ("prior_boot_backlog_end", "INTEGER"),
+)
 
 
 def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
@@ -876,6 +896,36 @@ def ensureStartupLogDataQuality(conn: sqlite3.Connection) -> bool:
     conn.execute("ALTER TABLE startup_log ADD COLUMN data_quality TEXT")
     conn.commit()
     return True
+
+
+def ensureStartupLogPriorBootSyncColumns(conn: sqlite3.Connection) -> list[str]:
+    """Add the US-776-f prior-boot shutdown-sync columns to startup_log.
+
+    Replay-safe per specs/design-patterns.md #10: runs on every boot (from
+    :meth:`ObdDatabase.initialize` and the boot_progress arm writer), adds only
+    the columns a PRAGMA probe reports missing, and is a no-op on the second
+    run.  Plain nullable ``ADD COLUMN`` -- no rebuild, no row moved; existing
+    rows read NULL (never recorded).  The caller owns the commit.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+
+    Returns:
+        Names of the columns added, in order; empty when all were present or
+        the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return []
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    added: list[str] = []
+    for column, sqlType in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS:
+        if column not in existing:
+            conn.execute(f"ALTER TABLE startup_log ADD COLUMN {column} {sqlType}")
+            added.append(column)
+    return added
 
 
 # Pi-side ``drive_statistics`` table -- RETIRED V0.27.17 (US-351 / B-104 Step 1b).

@@ -28,6 +28,10 @@
 #               |              | pattern.  Closes the 8-second-of-live-OBD-
 #               |              | with-zero-rows window in the 2026-05-08
 #               |              | engine-on test journal.
+# 2026-09-30    | Rex (US-674) | On the stop path _handleDriveEnd skips the
+#               |              | drive-end Mode 07 read (logs 'drive-end DTC
+#               |              | skipped: ecu_unpowered_at_stop') and the
+#               |              | drive-end sync push.  Ignition-on unchanged.
 # ================================================================================
 ################################################################################
 
@@ -283,16 +287,27 @@ class EventRouterMixin:
             except Exception as e:
                 logger.debug(f"Display update failed: {e}")
 
+        # US-674: the drive closed by stop() is the key-off close.  The ECU is
+        # unpowered and the Pi is about to power off, so neither the network
+        # push nor the ECU query below belongs on it.
+        isStopInProgress = getattr(self, '_isStopInProgress', None)
+        onStopPath = callable(isStopInProgress) and bool(isStopInProgress())
+
         # US-226: fire the drive-end sync trigger when configured.
         # Independent of the interval trigger -- either or both may be
         # enabled.  Exception-safe: a transport hiccup must not block
         # downstream drive-end handlers or the external callback.
-        try:
-            triggerFn = getattr(self, 'triggerDriveEndSync', None)
-            if callable(triggerFn):
-                triggerFn()
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"drive-end sync trigger error: {e}")
+        # US-674: not on the stop path.  The drive close used to run after
+        # syncClient was released, so this push never fired at stop; the
+        # reorder must not add a network wait before poweroff.  powerwatch's
+        # shutdown sync owns the drain.
+        if not onStopPath:
+            try:
+                triggerFn = getattr(self, 'triggerDriveEndSync', None)
+                if callable(triggerFn):
+                    triggerFn()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"drive-end sync trigger error: {e}")
 
         # US-292: Mode 07 (pending DTCs) at drive_end.  Pending codes are
         # the leading indicator -- they fire BEFORE the MIL ladder, so
@@ -301,7 +316,14 @@ class EventRouterMixin:
         # callback (and BEFORE DriveDetector._closeDriveId clears the
         # process-wide drive_id) so DtcLogger can fall back to
         # getCurrentDriveId() when stamping the dtc_log row.
-        self._dispatchDriveEndDtcs()
+        # US-674 (Atlas 5th ruling): the stop-path close does not query the
+        # ECU -- 4/4 key-off reads failed -- and says so in one typed line, so
+        # "skipped" can never read as "read, none found".  The ignition-on
+        # path is unchanged.
+        if onStopPath:
+            logger.info("drive-end DTC skipped: ecu_unpowered_at_stop")
+        else:
+            self._dispatchDriveEndDtcs()
 
         # Call external callback
         if self._onDriveEnd is not None:

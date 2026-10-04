@@ -32,6 +32,7 @@
 #                               existing Pi databases gain the typed
 #                               battery_health_log.close_reason, backfilled once.
 # 2026-09-25    | Rex (US-790) | Wired ensureDrainVcellTrajectoryTable.
+# 2026-09-30    | Rex (US-776-f) | Wired ensureStartupLogPriorBootSyncColumns.
 # ================================================================================
 ################################################################################
 
@@ -93,6 +94,7 @@ from .database_schema import (
     ensureBatteryLogRetired,
     ensureDrainVcellTrajectoryTable,
     ensureDriveStatisticsRetired,
+    ensureStartupLogPriorBootSyncColumns,
 )
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
 from .drive_summary import ensureDriveSummaryTable
@@ -427,6 +429,18 @@ class ObdDatabase:
                 # partner is server v0033.
                 if ensureDrainVcellTrajectoryTable(conn):
                     logger.info("Created drain_vcell_trajectory table (US-790)")
+
+                # US-776-f replay-safe schema step: the four prior_boot_*
+                # shutdown-sync columns on startup_log.  PRAGMA-guarded ADD
+                # COLUMN only; boot_progress.arm also runs it before landing.
+                # Its sync partner is server v0034.
+                addedPriorBootSync = ensureStartupLogPriorBootSyncColumns(conn)
+                if addedPriorBootSync:
+                    logger.info(
+                        "Added prior-boot sync columns to startup_log "
+                        "(US-776-f): %s",
+                        ', '.join(addedPriorBootSync),
+                    )
 
                 # US-351 retirement migration: drop the legacy Pi-side
                 # ``drive_statistics`` table on first boot post-V0.27.17.

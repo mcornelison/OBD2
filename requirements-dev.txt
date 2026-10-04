@@ -84,3 +84,16 @@ numpy>=1.24.0
 #
 # The marker keeps it off Linux, where the system database already wins.
 tzdata>=2024.1; sys_platform == "win32"
+
+# -----------------------------------------------------------------------------
+# AHRS fusion library for the IMU tests on dev benches + CI (ARCH-064 / ARCH-064a)
+# -----------------------------------------------------------------------------
+# ARCH-064 replaces the home-grown pitch filter with x-io Technologies' Fusion
+# (`imufusion`), declared for the Pi in requirements-pi.txt. Its tests
+# (tests/pi/sensors/test_ahrs_fusion.py, and the bridge tests once ARCH-064 Task 4
+# wires it) exercise the REAL library, not a fake -- so a bench or CI runner that
+# installs only requirements.txt + requirements-dev.txt could not COLLECT them.
+# An uncollected test is an inert test (the numpy note above is the same lesson).
+# Wheels exist for win_amd64 and manylinux aarch64 at cp313; numpy is already
+# declared above.
+imufusion>=1.3.3

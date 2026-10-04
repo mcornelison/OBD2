@@ -95,6 +95,8 @@
 #               |              | close_reason + backfill).  Forward-only.
 # 2026-09-25    | Rex (US-790) | Sprint 94 -- registered v0033 (drain_vcell_trajectory
 #               |              | table).  Forward-only.
+# 2026-09-30    | Rex (US-776-f) | Sprint 95 -- registered v0034 (startup_log
+#               |              | prior-boot shutdown-sync columns).  Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -223,6 +225,9 @@ from src.server.migrations.versions.v0032_us683_battery_health_close_reason impo
 from src.server.migrations.versions.v0033_us790_drain_vcell_trajectory import (
     MIGRATION as _V0033,
 )
+from src.server.migrations.versions.v0034_us776f_startup_log_prior_boot_sync import (
+    MIGRATION as _V0034,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -262,6 +267,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0031,
     _V0032,
     _V0033,
+    _V0034,
 )
 
 

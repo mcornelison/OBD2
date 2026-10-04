@@ -106,6 +106,10 @@
 #               | (ARCH-064d)  | grid, so the "not an exact divisor" warning is
 #               |              | retired; RECOMMENDED_IMU_PERSIST_HZ (1, 2, 4) and
 #               |              | a warning for any other recording rate added.
+# 2026-09-30    | Rex (US-776-a)| pi.homeNetwork.serverPingPath default is
+#                                /api/v1/health; the old ping path was a 404.
+# 2026-10-01    | Rex (US-776-g)| pi.homeNetwork.shutdownSyncCeilingSec: 60 (CIO
+#                                ruling 2026-09-30), positive number only.
 # ================================================================================
 ################################################################################
 
@@ -373,7 +377,10 @@ DEFAULTS: dict[str, Any] = {
     'pi.homeNetwork.ssid': 'DeathStarWiFi',
     'pi.homeNetwork.subnet': '10.27.27.0/24',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.homeNetwork.pingTimeoutSeconds': 3,
-    'pi.homeNetwork.serverPingPath': '/api/v1/ping',
+    'pi.homeNetwork.serverPingPath': '/api/v1/health',
+    # US-776-g: how long an at-home shutdown keeps retrying the sync before it
+    # powers off anyway (CIO ruling 2026-09-30).
+    'pi.homeNetwork.shutdownSyncCeilingSec': 60,
     # Pi-tier sync trigger semantics (US-226).  Orchestrator-level trigger
     # policy; the transport config lives in pi.companionService above.
     # intervalSeconds MUST fire independently of drive_end so a bugged
@@ -1045,6 +1052,19 @@ class ConfigValidator:
                 f"pi.homeNetwork.serverPingPath must be an absolute URL path "
                 f"starting with '/' (got {pingPath!r})",
                 missingFields=['pi.homeNetwork.serverPingPath'],
+            )
+
+        ceiling = section.get('shutdownSyncCeilingSec')
+        # bool first -- isinstance(True, int) is True in Python.
+        if ceiling is not None and (
+            isinstance(ceiling, bool)
+            or not isinstance(ceiling, (int, float))
+            or ceiling <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.homeNetwork.shutdownSyncCeilingSec must be a positive "
+                f"number (got {ceiling!r})",
+                missingFields=['pi.homeNetwork.shutdownSyncCeilingSec'],
             )
 
     def _validatePiSync(self, config: dict[str, Any]) -> None:
