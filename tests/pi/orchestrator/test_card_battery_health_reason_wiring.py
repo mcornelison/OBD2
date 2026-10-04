@@ -35,6 +35,7 @@
 # 2026-10-03    | Atlas (ARCH-065a) | T7: re-pinned on the ARCH-065 reasons
 #               |              | (too_few_syncs / monthly_test_stale /
 #               |              | no_monthly_test) and the shared fixture.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: config carries pi.power.cellEpoch.
 # ================================================================================
 ################################################################################
 
@@ -52,7 +53,7 @@ from pi.power.battery_health_verdict import (
     REASON_NO_MONTHLY_TEST,
     REASON_TOO_FEW_SYNCS,
 )
-from tests.pi.battery_verdict_fixture import VerdictDatabase, goodPack
+from tests.pi.battery_verdict_fixture import PACK, VerdictDatabase, goodPack
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 _LOGGER_NAME = "pi.obdii.orchestrator"
@@ -102,6 +103,8 @@ def _config(tmp_path):
         "pi": {
             "splash": {"statesDir": str(tmp_path / "states")},
             "dashboard": {"stateEmitIntervalSeconds": 0.0},
+            # Ruling 19: the verdict's pack is config pi.power.cellEpoch.
+            "power": {"cellEpoch": PACK},
         }
     }
 

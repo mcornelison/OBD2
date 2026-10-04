@@ -39,6 +39,7 @@
 # 2026-10-03    | Atlas (ARCH-065a) | T7: ARCH-065 reasons + shared real-DDL
 #               |              | fixture; the A-3 schema gains timeToFloorS /
 #               |              | jobAvgS / jobMaxS / provisional.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: config carries pi.power.cellEpoch.
 # ================================================================================
 ################################################################################
 
@@ -63,7 +64,7 @@ from pi.splash.battery_health_emitter import (
     buildBatteryHealthState,
     makeBatteryHealthEmitter,
 )
-from tests.pi.battery_verdict_fixture import VerdictDatabase, goodPack
+from tests.pi.battery_verdict_fixture import PACK, VerdictDatabase, goodPack
 
 _NOW_ISO = "2026-09-01T12:00:00Z"
 _LAST_CHECK = "2026-05-16T01:54:27Z"
@@ -159,6 +160,8 @@ def _config(tmp_path):
         "pi": {
             "splash": {"statesDir": str(tmp_path / "states")},
             "dashboard": {"stateEmitIntervalSeconds": 0.0},
+            # Ruling 19: the verdict's pack is config pi.power.cellEpoch.
+            "power": {"cellEpoch": PACK},
         }
     }
 
