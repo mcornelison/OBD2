@@ -93,7 +93,7 @@
 # 2026-10-03    | Atlas (ARCH-065a)| ARCH-065 T3: shutdownSyncCeilingSec retired (the
 #                                at-home sync has no time cap, CIO 2026-10-02);
 #                                pi.homeNetwork.joinWaitSec 120 + stallSec 60,
-#                                positive numbers only.
+#                                integers >= 1 only.
 # ================================================================================
 ################################################################################
 
@@ -1085,17 +1085,15 @@ class ConfigValidator:
         """Validate pi.batteryHealth.* (ARCH-065): positive numbers only.
 
         Raises:
-            ConfigValidationError: If monthlyIntervalDays is not a positive number.
+            ConfigValidationError: If monthlyIntervalDays is not an integer >= 1.
         """
         for key in ('pi.batteryHealth.monthlyIntervalDays',):
             val = self._getNestedValue(config, key)
             if val is not None and (
-                isinstance(val, bool)
-                or not isinstance(val, (int, float))
-                or val <= 0
+                isinstance(val, bool) or not isinstance(val, int) or val < 1
             ):
                 raise ConfigValidationError(
-                    f"{key} must be a positive number (got {val!r})",
+                    f"{key} must be an integer >= 1 (got {val!r})",
                     missingFields=[key],
                 )
 

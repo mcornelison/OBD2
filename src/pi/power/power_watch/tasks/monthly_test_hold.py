@@ -13,6 +13,8 @@
 # ================================================================================
 # 2026-10-03    | Atlas (ARCH-065a)  | ARCH-065 T5: created. Timings from
 #               |                    | battery_capacity (controller ruling 8).
+# 2026-10-03    | Atlas (ARCH-065a)  | T5 fix 1: the mark is scoped to this loss, runs before AND
+#               |                    | after the hold, and can never skip the hold.
 ################################################################################
 """ARCH-065: hold the Pi on battery TEST_HOLD_S after an at-home cut, once a month.
 
@@ -51,12 +53,14 @@ class MonthlyTestHoldTask:
 
     def __init__(
         self, *, lastSyncOutcome: Callable[[], OutcomeKind | None], isDue: Callable[[], bool],
-        markOpenDrain: Callable[[], None], secondsSinceCut: Callable[[], float],
+        markOpenDrain: Callable[[], int], secondsSinceCut: Callable[[], float],
         holdSec: float = TEST_HOLD_S, sleepFn: Callable[[float], None] | None = None,
+        lossIso: Callable[[], str | None] = lambda: None,
     ) -> None:
         self._lastSyncOutcome = lastSyncOutcome
         self._isDue = isDue
         self._markOpenDrain = markOpenDrain
+        self._lossIso = lossIso
         self._secondsSinceCut = secondsSinceCut
         self._holdSec = float(holdSec)
         self._sleep = sleepFn or time.sleep
@@ -64,17 +68,43 @@ class MonthlyTestHoldTask:
     def run(self) -> OutcomeKind:
         """Never raises. OK whether or not it held."""
         try:
-            if self._lastSyncOutcome() not in AT_HOME_OUTCOMES or not self._isDue():
+            outcome = self._lastSyncOutcome()
+            if outcome not in AT_HOME_OUTCOMES:
+                logger.info("powerwatch monthly test: skipped (not at home: %s)", outcome)
                 return OutcomeKind.OK
-            self._markOpenDrain()
+            if not self._isDue():
+                logger.info("powerwatch monthly test: skipped (not due)")
+                return OutcomeKind.OK
+            marked = self._mark()
             remaining = self._holdSec - self._secondsSinceCut()
             logger.info("powerwatch monthly test: holding %.0fs more (to %.0fs after the cut)",
                         max(0.0, remaining), self._holdSec)
             if remaining > 0:
                 self._sleep(remaining)
+            # The collector opens the row on its own thread; it may only have
+            # landed during the hold. Idempotent.
+            marked += self._mark()
+            if marked == 0:
+                logger.warning(
+                    "powerwatch monthly test: no open drain row labelled for the loss at %s",
+                    self._lossIso(),
+                )
         except Exception as exc:  # noqa: BLE001 -- a broken test must never block the shutdown
             logger.error("powerwatch monthly test: hold failed (%s) -- continuing the shutdown", exc)
         return OutcomeKind.OK
+
+
+    def _mark(self) -> int:
+        """One mark attempt; a failure is logged and never skips the hold."""
+        try:
+            return int(self._markOpenDrain() or 0)
+        except Exception as exc:  # noqa: BLE001 -- the hold matters more than the label
+            logger.error("powerwatch monthly test: labelling the drain row failed (%s)", exc)
+            return 0
+
+
+#: The collector opens the row on its own poll; allow its clock to lead ours.
+_ROW_OPEN_SLACK_S = 5
 
 
 def isMonthlyTestDue(dbPath: str, *, cellEpoch: str, nowIso: str, intervalDays: int) -> bool:
@@ -93,15 +123,23 @@ def isMonthlyTestDue(dbPath: str, *, cellEpoch: str, nowIso: str, intervalDays: 
     return row is None
 
 
-def markOpenDrainMonthlyTest(dbPath: str) -> None:
-    """Label the newest OPEN drain row as a monthly test."""
+def markOpenDrainMonthlyTest(dbPath: str, *, lossIso: str) -> int:
+    """Label the newest OPEN drain row of THIS loss as a monthly test.
+
+    Only a row opened at or after ``lossIso`` minus a small slack qualifies, so
+    an older still-open row is never mislabelled. Returns the rows updated.
+    """
+    floorIso = (datetime.strptime(lossIso, _ISO).replace(tzinfo=UTC)
+                - timedelta(seconds=_ROW_OPEN_SLACK_S)).strftime(_ISO)
     conn = sqlite3.connect(dbPath, timeout=1.0)
     try:
-        conn.execute(
+        cur = conn.execute(
             f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET drain_trigger = ? WHERE drain_event_id = "
-            f"(SELECT MAX(drain_event_id) FROM {BATTERY_HEALTH_LOG_TABLE} WHERE end_timestamp IS NULL)",
-            (DRAIN_TRIGGER_MONTHLY_TEST,),
+            f"(SELECT MAX(drain_event_id) FROM {BATTERY_HEALTH_LOG_TABLE} "
+            "WHERE end_timestamp IS NULL AND start_timestamp >= ?)",
+            (DRAIN_TRIGGER_MONTHLY_TEST, floorIso),
         )
         conn.commit()
+        return cur.rowcount
     finally:
         conn.close()

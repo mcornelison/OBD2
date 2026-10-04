@@ -12,6 +12,7 @@
 # ================================================================================
 # 2026-10-03    | Atlas (ARCH-065a)  | ARCH-065 T5: created.
 ################################################################################
+import logging
 import sqlite3
 
 from src.pi.power.battery_capacity import TEST_HOLD_S, WINDOW_S, WINDOW_SKIP_S
@@ -35,7 +36,7 @@ def _hold(outcome, due, since=7.0, **kw):
     slept: list[float] = []
     marked: list[bool] = []
     task = MonthlyTestHoldTask(
-        lastSyncOutcome=lambda: outcome, isDue=lambda: due, markOpenDrain=lambda: marked.append(True),
+        lastSyncOutcome=lambda: outcome, isDue=lambda: due, markOpenDrain=lambda: marked.append(True) or 1,
         secondsSinceCut=lambda: since, sleepFn=slept.append, **kw,
     )
     return task, slept, marked
@@ -48,7 +49,7 @@ def test_timings_haveOneOwner() -> None:
 def test_atHomeAndDue_holdsUntilTestHoldAfterTheCut_andMarksTheRow() -> None:
     task, slept, marked = _hold(OutcomeKind.DELIVERED, True, since=300.0)
     assert task.run() is OutcomeKind.OK
-    assert sum(slept) == TEST_HOLD_S - 300.0 and marked == [True]
+    assert sum(slept) == TEST_HOLD_S - 300.0 and marked == [True, True]
 
 
 def test_holdSecDefaultsToTheSsot() -> None:
@@ -60,7 +61,7 @@ def test_holdSecDefaultsToTheSsot() -> None:
 def test_alreadyPastTheHold_marksButDoesNotSleep() -> None:
     task, slept, marked = _hold(OutcomeKind.DELIVERED, True, since=TEST_HOLD_S + 1.0)
     task.run()
-    assert slept == [] and marked == [True]
+    assert slept == [] and marked == [True, True]
 
 
 def test_away_neverHolds() -> None:
@@ -124,7 +125,7 @@ def test_markOpenDrain_setsTheTriggerOnTheOpenRowOnly(tmp_path) -> None:
     conn.execute("INSERT INTO battery_health_log (start_timestamp) VALUES ('2026-10-02T17:00:00Z')")
     conn.commit()
     conn.close()
-    markOpenDrainMonthlyTest(p)
+    assert markOpenDrainMonthlyTest(p, lossIso="2026-10-02T17:00:03Z") == 1
     conn = sqlite3.connect(p)
     assert conn.execute("SELECT drain_trigger FROM battery_health_log ORDER BY drain_event_id").fetchall() == [
         ("keyoff",), ("monthly_test",)]
@@ -137,3 +138,83 @@ def test_resolveCellEpoch_presentMissingEmpty() -> None:
     assert resolveCellEpoch({"pi": {"power": {}}}) == "unknown"
     assert resolveCellEpoch({"pi": {"power": {"cellEpoch": ""}}}) == "unknown"
     assert resolveCellEpoch({"pi": {"power": {"cellEpoch": None}}}) == "unknown"
+
+
+def _openRow(p, start):
+    conn = sqlite3.connect(p)
+    conn.execute("INSERT INTO battery_health_log (start_timestamp) VALUES (?)", (start,))
+    conn.commit()
+    conn.close()
+
+
+def _triggers(p):
+    conn = sqlite3.connect(p)
+    try:
+        return [r[0] for r in conn.execute("SELECT drain_trigger FROM battery_health_log ORDER BY drain_event_id")]
+    finally:
+        conn.close()
+
+
+def test_staleOpenRow_beforeTheLoss_isNotLabelled(tmp_path) -> None:
+    p = _db(tmp_path, [])
+    _openRow(p, "2026-10-02T16:00:00Z")
+    assert markOpenDrainMonthlyTest(p, lossIso="2026-10-02T17:00:00Z") == 0
+    assert _triggers(p) == ["keyoff"]
+
+
+def test_rowOpenedSlightlyBeforeTheLossStamp_withinSlack_isLabelled(tmp_path) -> None:
+    p = _db(tmp_path, [])
+    _openRow(p, "2026-10-02T16:59:57Z")
+    assert markOpenDrainMonthlyTest(p, lossIso="2026-10-02T17:00:00Z") == 1
+
+
+def test_collectorOpensTheRowLate_theAfterSleepMarkLabelsIt(tmp_path) -> None:
+    p = _db(tmp_path, [])
+    _openRow(p, "2026-10-02T16:00:00Z")  # stale, must stay keyoff
+    loss = "2026-10-02T17:00:00Z"
+    task = MonthlyTestHoldTask(
+        lastSyncOutcome=lambda: OutcomeKind.DELIVERED, isDue=lambda: True,
+        markOpenDrain=lambda: markOpenDrainMonthlyTest(p, lossIso=loss),
+        secondsSinceCut=lambda: 0.0, lossIso=lambda: loss,
+        sleepFn=lambda _s: _openRow(p, "2026-10-02T17:00:02Z"),  # opened DURING the hold
+    )
+    task.run()
+    assert _triggers(p) == ["keyoff", "monthly_test"]
+
+
+def test_firstMarkRaises_holdStillSleepsTheFullRemainder() -> None:
+    calls = []
+    slept: list[float] = []
+
+    def mark() -> int:
+        calls.append(1)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return 1
+
+    task = MonthlyTestHoldTask(
+        lastSyncOutcome=lambda: OutcomeKind.DELIVERED, isDue=lambda: True, markOpenDrain=mark,
+        secondsSinceCut=lambda: 100.0, sleepFn=slept.append,
+    )
+    assert task.run() is OutcomeKind.OK
+    assert slept == [TEST_HOLD_S - 100.0] and len(calls) == 2
+
+
+def test_neitherMarkMatches_warnsNamingTheLoss(caplog) -> None:
+    task = MonthlyTestHoldTask(
+        lastSyncOutcome=lambda: OutcomeKind.DELIVERED, isDue=lambda: True, markOpenDrain=lambda: 0,
+        secondsSinceCut=lambda: 0.0, sleepFn=lambda _s: None, lossIso=lambda: "2026-10-02T17:00:00Z",
+    )
+    with caplog.at_level(logging.INFO):
+        task.run()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "2026-10-02T17:00:00Z" in warnings[0].getMessage()
+
+
+def test_skip_logsWhy(caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        _hold(OutcomeKind.AWAY, True)[0].run()
+        _hold(OutcomeKind.DELIVERED, False)[0].run()
+    msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("not at home" in m and "AWAY" in m for m in msgs)
+    assert any("not due" in m for m in msgs)

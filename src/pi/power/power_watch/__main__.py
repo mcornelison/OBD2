@@ -174,7 +174,8 @@
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T5: MonthlyTestHoldTask joins buildV1Tasks after
 #                           the sync task (sequencer-bounded); HomeStateAtLoss stamps the
 #                           loss on the monotonic clock (secondsSinceLoss); cellEpoch via
-#                           resolveCellEpoch.
+#                           resolveCellEpoch. Fix round 1: lossIso() (wall stamp) scopes
+#                           the monthly-test row mark.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -751,6 +752,7 @@ class HomeStateAtLoss:
         startFn: Callable[[Callable[[], None]], None] | None = None,
         vcellBeforeCut: Callable[[], float | None] | None = None,
         monotonicFn: Callable[[], float] = time.monotonic,
+        wallIsoFn: Callable[[], str] = utcIsoNow,
     ) -> None:
         """Args:
         readState: Zero-arg detector read (``HomeNetworkDetector.
@@ -766,6 +768,8 @@ class HomeStateAtLoss:
         """
         self._monotonic = monotonicFn
         self._lossAt: float | None = None
+        self._wallIso = wallIsoFn
+        self._lossIso: str | None = None
         self._readState = readState
         self._outcomePath = outcomePath
         self._startFn = startFn if startFn is not None else _startDaemonThread
@@ -782,6 +786,11 @@ class HomeStateAtLoss:
         #: any later (abandoned sync thread) record for the same loss.
         self._floorEnded = False
 
+    def lossIso(self) -> str | None:
+        """This loss's wall time, canonical UTC ISO (None before any loss)."""
+        with self._lock:
+            return self._lossIso
+
     def secondsSinceLoss(self) -> float:
         """Seconds since this loss was observed (0.0 before any loss)."""
         with self._lock:
@@ -794,6 +803,7 @@ class HomeStateAtLoss:
         snapshot = self._snapshotVcell()
         with self._lock:
             self._lossAt = self._monotonic()
+            self._lossIso = self._wallIso()
             self._vcellSnapshot = snapshot
             self._loss = loss
             self._answer = None
@@ -1431,7 +1441,12 @@ def main(argv: list[str] | None = None) -> int:
             nowIso=utcIsoNow(),
             intervalDays=monthlyIntervalDays,
         ),
-        markOpenDrain=lambda: markOpenDrainMonthlyTest(dbPath),
+        markOpenDrain=lambda: (
+            0
+            if homeStateAtLoss.lossIso() is None
+            else markOpenDrainMonthlyTest(dbPath, lossIso=homeStateAtLoss.lossIso())
+        ),
+        lossIso=homeStateAtLoss.lossIso,
         secondsSinceCut=homeStateAtLoss.secondsSinceLoss,
     )
 

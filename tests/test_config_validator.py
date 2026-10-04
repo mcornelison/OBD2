@@ -961,11 +961,11 @@ def test_powerWatch_drainFloorDwellReads_defaultsToFive_andRejectsNonPositive():
         ConfigValidator().validate(bad)
 
 
-def test_batteryHealth_monthlyIntervalDays_defaultsTo30_andRejectsNonPositive():
+def test_batteryHealth_monthlyIntervalDays_defaultsTo30_andRejectsNonInteger():
     cfg = ConfigValidator().validate(_baseCfg())
     assert cfg["pi"]["batteryHealth"]["monthlyIntervalDays"] == 30
     assert "testHoldSec" not in cfg["pi"]["batteryHealth"]
-    for bad_value in (0, -1, True, "30"):
+    for bad_value in (0, -1, True, 30.5, 30.0, "30"):
         bad = _baseCfg()
         bad["pi"] = {"batteryHealth": {"monthlyIntervalDays": bad_value}}
         with pytest.raises(ConfigValidationError):

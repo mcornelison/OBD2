@@ -345,11 +345,12 @@ def test_secondsSinceLoss_measuresFromObserve_andIsZeroBefore() -> None:
     h = m.HomeStateAtLoss(
         lambda: HomeNetworkState.AWAY, outcomePath="unused.json",
         startFn=lambda _t: None, monotonicFn=lambda: clock[0],
+        wallIsoFn=lambda: "2026-10-02T17:00:00Z",
     )
-    assert h.secondsSinceLoss() == 0.0
+    assert h.secondsSinceLoss() == 0.0 and h.lossIso() is None
     h.observe()
     clock[0] = 142.5
-    assert h.secondsSinceLoss() == 42.5
+    assert h.secondsSinceLoss() == 42.5 and h.lossIso() == "2026-10-02T17:00:00Z"
 
 
 def test_main_wiresTheMonthlyHoldTask_boundedBySequencer() -> None:
