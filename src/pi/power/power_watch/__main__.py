@@ -166,6 +166,11 @@
 #                           UpsMonitor poll while the PLD reads present (PLD loop
 #                           stays GPIO-only); the outcome sink writes the drain's
 #                           start/end and the pre-cut VCELL.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T4: pi.powerWatch.drainFloorDwellReads feeds the
+#                           sequencer; a floor-ended drain writes RESERVE_FLOOR
+#                           through HomeStateAtLoss.recordFloorEnd (pre-poweroff
+#                           hook, before ensureRecorded) and later sync records
+#                           for that loss are dropped.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -253,6 +258,7 @@ from src.pi.power.soc_calibration import (  # noqa: E402
     readSystemUptimeSeconds,
     resolveColdStartWindowSeconds,
 )
+from src.pi.power.types import DRAIN_TERMINATION_DRAIN_FLOOR  # noqa: E402
 from src.pi.splash.shutdown_state_emitter import (  # noqa: E402
     makeShutdownPhaseEmitter,
 )
@@ -575,6 +581,22 @@ def composePrePowerOffHooks(*hooks):
     return _runAll
 
 
+def buildFloorEndHook(
+    lastDrainEndReason: Callable[[], str | None], homeStateAtLoss: HomeStateAtLoss
+) -> Callable[[], None]:
+    """ARCH-065: pre-poweroff hook -- a drain the reserve floor ended is recorded.
+
+    Runs BEFORE ``ensureRecorded`` so the record says RESERVE_FLOOR, not UNKNOWN
+    or a sync outcome. Any other drain end is a no-op.
+    """
+
+    def _hook() -> None:
+        if lastDrainEndReason() == DRAIN_TERMINATION_DRAIN_FLOOR:
+            homeStateAtLoss.recordFloorEnd()
+
+    return _hook
+
+
 def backlogCount(backlog: SyncBacklog) -> int | None:
     """The count the sync outcome record carries (US-776-d), or None.
 
@@ -743,6 +765,9 @@ class HomeStateAtLoss:
         self._answer: HomeNetworkState | None = None
         self._handedToSync = False
         self._written = False
+        #: True once RESERVE_FLOOR is written for this loss; the sink then drops
+        #: any later (abandoned sync thread) record for the same loss.
+        self._floorEnded = False
 
     def observe(self) -> None:
         """Start this loss's detector read. Returns at once; never raises."""
@@ -754,6 +779,7 @@ class HomeStateAtLoss:
             self._answer = None
             self._handedToSync = False
             self._written = False
+            self._floorEnded = False
         try:
             self._startFn(lambda: self._observeLoss(loss))
         except Exception as exc:  # noqa: BLE001 -- never block the loss path
@@ -828,6 +854,13 @@ class HomeStateAtLoss:
 
         def _write(record: SyncOutcomeRecord) -> None:
             with self._lock:
+                if self._floorEnded:
+                    logger.info(
+                        "powerwatch: sync record %s dropped -- the reserve floor "
+                        "already ended this loss",
+                        record.kind.name,
+                    )
+                    return
                 sink(record)
                 self._written = True
 
@@ -846,17 +879,49 @@ class HomeStateAtLoss:
                 HomeNetworkState.UNKNOWN.name, "home detector had not answered by the poweroff"
             )
 
+    def recordFloorEnd(self) -> None:
+        """The reserve floor ended this loss's drain: record RESERVE_FLOOR.
+
+        Same file, same fields as the home-state record (home state from this
+        class, pre-cut VCELL from this loss's snapshot). Later records for the
+        same loss are dropped (``wrapSink``) and ``ensureRecorded`` returns
+        early. Never raises (``writeOutcomeRecord`` does not).
+        """
+        with self._lock:
+            self._writeRecord(
+                OutcomeKind.RESERVE_FLOOR,
+                "the reserve floor ended the drain",
+                "sync_with_server",
+                self.stateName(),
+                syncOutcome=OutcomeKind.RESERVE_FLOOR.name,
+            )
+            self._floorEnded = True
+        logger.warning("powerwatch: the reserve floor ended the drain -- RESERVE_FLOOR recorded")
+
     def _writeHomeStateRecord(self, name: str, detail: str) -> None:
+        self._writeRecord(OutcomeKind.OK, detail, "home_state_at_loss", name)
+        logger.info("powerwatch: home state at the power loss = %s", name)
+
+    def _writeRecord(
+        self,
+        kind: OutcomeKind,
+        detail: str,
+        task: str,
+        homeState: str,
+        *,
+        syncOutcome: str | None = None,
+    ) -> None:
+        """The one write path for this class's records (SSOT for its fields)."""
         writeOutcomeRecord(
             self._outcomePath,
-            OutcomeKind.OK,
+            kind,
             detail=detail,
-            task="home_state_at_loss",
-            homeState=name,
+            task=task,
+            homeState=homeState,
+            syncOutcome=syncOutcome,
             vcellBeforeCutV=self.vcellBeforeCut(),
         )
         self._written = True
-        logger.info("powerwatch: home state at the power loss = %s", name)
 
 
 def buildV1Tasks(syncTask: SyncWithServerTask) -> list:
@@ -1176,6 +1241,7 @@ def main(argv: list[str] | None = None) -> int:
     totalWindowCapSec = float(pw_cfg["totalWindowCapSec"])
     vcellFloorVolts = float(pw_cfg["vcellFloorVolts"])
     drainFloorVolts = float(pw_cfg["drainFloorVolts"])
+    drainFloorDwellReads = int(pw_cfg["drainFloorDwellReads"])
     poweroffTimeoutSec = float(pw_cfg["poweroffTimeoutSec"])
     bootGraceSec = float(pw_cfg["bootGraceSec"])
     smoothingSec = float(pw_cfg["smoothingSec"])
@@ -1378,8 +1444,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     # US-741: last, and isolated like the others -- a loss whose detector has
     # not answered (the floor fast path) still powers off with UNKNOWN written.
+    # ARCH-065: a floor-ended drain is recorded RESERVE_FLOOR first, so
+    # ensureRecorded (which returns once written) never lands UNKNOWN over it.
+    # shutdownSequencer is bound below; the lambda reads it at poweroff time.
     prePowerOffFn = composePrePowerOffHooks(
-        drainCloseFn, custodyFn, homeStateAtLoss.ensureRecorded
+        drainCloseFn,
+        custodyFn,
+        buildFloorEndHook(
+            lambda: shutdownSequencer.lastDrainEndReason, homeStateAtLoss
+        ),
+        homeStateAtLoss.ensureRecorded,
     )
 
     # US-748: the previous loss's heartbeat rows, reported once per start --
@@ -1429,6 +1503,7 @@ def main(argv: list[str] | None = None) -> int:
         # US-776-b: the running drain stops here; vcellFloor stays the
         # pre-pipeline backstop.
         drainFloor=drainFloorVolts,
+        drainFloorDwellReads=drainFloorDwellReads,
         # US-790: the start read and every drain poll become rows.
         drainSampleFn=drainTrajectory.record,
         totalCapSec=totalWindowCapSec,

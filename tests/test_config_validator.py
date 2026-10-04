@@ -952,6 +952,15 @@ def test_powerWatch_rejectsNonPositiveTimeout():
         ConfigValidator().validate(cfg)
 
 
+def test_powerWatch_drainFloorDwellReads_defaultsToFive_andRejectsNonPositive():
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["powerWatch"]["drainFloorDwellReads"] == 5
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"drainFloorDwellReads": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(bad)
+
+
 def test_powerWatch_rejectsVcellFloorOutOfRange():
     cfg = _baseCfg()
     cfg["pi"] = {"powerWatch": {"vcellFloorVolts": 2.5}}

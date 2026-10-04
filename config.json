@@ -453,6 +453,7 @@
     },
     "powerWatch": {
       "drainFloorVolts": 3.6,
+      "drainFloorDwellReads": 5,
       "smoothingSec": 7,
       "smoothingPollSec": 1
     },

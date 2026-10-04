@@ -292,6 +292,9 @@ DEFAULTS: dict[str, Any] = {
     # CLEAN_COMPLETE), rounded up. Derivation: specs/architecture.md 10.6.3.
     # Do not change without the drain's VCELL trajectory data.
     'pi.powerWatch.drainFloorVolts': 3.60,
+    # ARCH-065: the reserve floor must hold for this many consecutive reads
+    # before it ends the drain (threshold + dwell, design-patterns.md 1).
+    'pi.powerWatch.drainFloorDwellReads': 5,
     'pi.powerWatch.poweroffTimeoutSec': 30,
     # 2026-05-18 bricking-loop HOTFIX. UpsMonitor.getPowerSource() is a
     # VCELL-trend heuristic; its slope rule reports BATTERY on the boot
@@ -1099,6 +1102,7 @@ class ConfigValidator:
             'pi.powerWatch.bootGraceSec',
             'pi.powerWatch.smoothingSec',
             'pi.powerWatch.smoothingPollSec',
+            'pi.powerWatch.drainFloorDwellReads',
             'pi.powerWatch.pldGpioPin',
             'pi.powerWatch.pldPollSec',
             'pi.powerWatch.uiPollSec',

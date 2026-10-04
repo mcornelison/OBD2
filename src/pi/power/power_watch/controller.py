@@ -77,6 +77,11 @@
 #                              drain poll become rows of the VCELL series, and
 #                              each drain ends with exactly one row carrying
 #                              its typed termination reason. None = legacy.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T4: drainFloorDwellReads -- the reserve
+#                              floor must hold for N consecutive successful reads
+#                              before it ends the drain (a failed read neither
+#                              counts nor resets); lastDrainEndReason exposes why
+#                              the last drain ended to the pre-poweroff hook.
 # ================================================================================
 ################################################################################
 #
@@ -182,6 +187,7 @@ class ShutdownSequencer:
         powerRestoredFn: Callable[[], None] | None = None,
         drainFloor: float | None = None,
         drainSampleFn: Callable[..., None] | None = None,
+        drainFloorDwellReads: int = 1,
     ):
         """Args:
         isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
@@ -272,6 +278,9 @@ class ShutdownSequencer:
         self._powerOff = powerOffFn
         self._vcellFloor = vcellFloor
         self._drainFloor = drainFloor if drainFloor is not None else vcellFloor
+        self._drainFloorDwellReads = max(1, int(drainFloorDwellReads))
+        #: Why the last drain ended (a DRAIN_TERMINATION_* value), None until one has.
+        self.lastDrainEndReason: str | None = None
         self._totalCapSec = totalCapSec
         self._smoothingSec = smoothingSec
         self._smoothingPollSec = smoothingPollSec
@@ -343,6 +352,7 @@ class ShutdownSequencer:
         # 2026-09-14 the Pi died inside 30 s of this point with a near-full pack,
         # and the journal could not see those seconds. Before smoothing so a
         # death during smoothing is still measured.
+        self.lastDrainEndReason = None  # a fresh loss owns the reason
         self._notifyPowerLossObserved()
 
         # F-103 [A-2]: emit `grace` at T=0 (BEFORE smoothing resolves) so the
@@ -455,7 +465,7 @@ class ShutdownSequencer:
 
     # ----- US-776-a pipeline poll (the drain's bound is the battery) ----------
 
-    def _pollPipeline(self, done: threading.Event, *, floorReadable: bool) -> None:
+    def _pollPipeline(self, done: threading.Event, *, floorReadable: bool) -> _DrainEnd:
         """Wait for the pipeline, re-reading its bounds every poll interval.
 
         Returns when the first of these holds:
@@ -463,9 +473,11 @@ class ShutdownSequencer:
         * the pipeline finished;
         * ``isOnBattery()`` reads False -- power returned, and the caller's
           single power-return check cancels (one restore call site, ARCH-031);
-        * a SUCCESSFUL VCELL read <= the drain floor (US-776-b: ``drainFloor``,
-          above the ``vcellFloor`` backstop) -- the battery, not a timer, ends
-          the drain;
+        * ``drainFloorDwellReads`` CONSECUTIVE SUCCESSFUL VCELL reads <= the drain
+          floor (US-776-b: ``drainFloor``, above the ``vcellFloor`` backstop;
+          ARCH-065 dwell) -- the battery, not a timer, ends the drain. A read
+          above the floor resets the count; a FAILED read neither counts nor
+          resets it;
         * the floor has been BLIND for ``totalCapSec``: no successful read for
           that long, or ``floorReadable`` is False (a bootGrace loss, US-788,
           where the boot sag can read below the floor). Without this a hung
@@ -485,6 +497,7 @@ class ShutdownSequencer:
             How the drain ended. ``reason`` is None when the pipeline finished.
         """
         floorSeenMono = self._monotonic()
+        belowCount = 0
         while not done.wait(timeout=self._smoothingPollSec):
             if not self._isOnBattery():
                 return _DrainEnd(reason=DRAIN_TERMINATION_POWER_RESTORED)
@@ -503,7 +516,8 @@ class ShutdownSequencer:
                     )
                 else:
                     floorSeenMono = now
-                    if v <= self._drainFloor:
+                    belowCount = belowCount + 1 if v <= self._drainFloor else 0
+                    if belowCount >= self._drainFloorDwellReads:
                         logger.warning(
                             "shutdown-sequencer: VCELL %.3f <= drain floor %.3f during "
                             "drain -- ending the drain, poweroff now",
@@ -534,6 +548,7 @@ class ShutdownSequencer:
         here -- unless the floor is suppressed (bootGrace), where nothing is
         read and the row carries NULL.
         """
+        self.lastDrainEndReason = reason
         if self._drainSampleFn is None:
             return
         v = end.vcell
