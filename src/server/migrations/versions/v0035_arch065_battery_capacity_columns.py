@@ -4,9 +4,10 @@
 #                      ``battery_health_log`` (drain_trigger, cell_epoch,
 #                      cut_step_mv, window_start_s, window_end_s,
 #                      drain_rate_mv_s, verdict, t_floor_s, floor_vcell_v,
-#                      cutoff_vcell_v) and the three prior-boot columns to
+#                      cutoff_vcell_v) and the four prior-boot columns to
 #                      ``startup_log`` (prior_boot_sync_started_at,
-#                      prior_boot_sync_ended_at, prior_boot_vcell_before_cut_v).
+#                      prior_boot_sync_ended_at, prior_boot_vcell_before_cut_v,
+#                      prior_boot_loss_at).
 # Author: Atlas (ARCH-065a)
 # Creation Date: 2026-10-03
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -61,7 +62,7 @@ DESCRIPTION: str = (
     'cut_step_mv / window_start_s / window_end_s / drain_rate_mv_s / verdict / '
     't_floor_s / floor_vcell_v / cutoff_vcell_v, and startup_log '
     'prior_boot_sync_started_at / prior_boot_sync_ended_at / '
-    'prior_boot_vcell_before_cut_v.'
+    'prior_boot_vcell_before_cut_v / prior_boot_loss_at.'
 )
 
 #: Table -> column -> MariaDB type (without the NULL / NOT NULL tail), in model
@@ -83,6 +84,7 @@ COLUMNS: dict[str, dict[str, str]] = {
         'prior_boot_sync_started_at': 'VARCHAR(40)',
         'prior_boot_sync_ended_at': 'VARCHAR(40)',
         'prior_boot_vcell_before_cut_v': 'FLOAT',
+        'prior_boot_loss_at': 'VARCHAR(40)',
     },
 }
 

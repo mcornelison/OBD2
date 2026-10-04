@@ -221,6 +221,8 @@ class TestStartupLogSchema:
         ('prior_boot_sync_started_at', 'TEXT', 0, 0),
         ('prior_boot_sync_ended_at', 'TEXT', 0, 0),
         ('prior_boot_vcell_before_cut_v', 'REAL', 0, 0),
+        # ARCH-065 T6 fix: the prior loss's wall time (keys the boot finaliser).
+        ('prior_boot_loss_at', 'TEXT', 0, 0),
     )
 
     @staticmethod
@@ -277,12 +279,12 @@ class TestStartupLogSchema:
         # +1 (US-419/F-080 data_quality clock-drift flag,
         # specs/architecture.md "US-419 (F-080)") = 8 -> +4 (US-776-f
         # prior_boot_home_state/_sync_outcome/_backlog_start/_backlog_end) = 12 -> +3 (ARCH-065
-        # prior_boot_sync_started_at/_sync_ended_at/_vcell_before_cut_v) = 15.
+        # prior_boot_sync_started_at/_sync_ended_at/_vcell_before_cut_v) = 15 -> +1 (ARCH-065 T6 fix prior_boot_loss_at) = 16.
         actual = self._introspectStartupLog()
-        assert len(actual) == 15, (
+        assert len(actual) == 16, (
             f"startup_log has {len(actual)} columns; canonical schema is "
-            f"exactly 15 (US-263 5-col + 2026-05-15 honest-instrument "
+            f"exactly 16 (US-263 5-col + 2026-05-15 honest-instrument "
             f"prior_boot_last_stage/prior_boot_reason + US-419 data_quality + "
-            f"US-776-f four prior-boot sync columns + ARCH-065 three). "
+            f"US-776-f four prior-boot sync columns + ARCH-065 four). "
             f"Got: {[name for (name, *_) in actual]}"
         )

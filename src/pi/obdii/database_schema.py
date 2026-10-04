@@ -114,6 +114,7 @@
 #                               replay-safe ensureStartupLogPriorBootSyncColumns.
 # 2026-10-03    | Atlas (ARCH-065a) | startup_log gains prior_boot_sync_started_at /
 #                               _sync_ended_at / _vcell_before_cut_v.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: startup_log gains prior_boot_loss_at.
 # ================================================================================
 ################################################################################
 
@@ -790,11 +791,15 @@ CREATE TABLE IF NOT EXISTS startup_log (
     -- read before the cut.
     prior_boot_sync_started_at TEXT,
     prior_boot_sync_ended_at TEXT,
-    prior_boot_vcell_before_cut_v REAL
+    prior_boot_vcell_before_cut_v REAL,
+
+    -- ARCH-065: the prior loss's wall time (powerwatch HomeStateAtLoss.lossIso);
+    -- keys which battery_health_log row the boot finaliser stamps.
+    prior_boot_loss_at TEXT
 );
 """
 
-#: US-776-f (+ ARCH-065): the seven columns :func:`ensureStartupLogPriorBootSyncColumns`
+#: US-776-f (+ ARCH-065): the eight columns :func:`ensureStartupLogPriorBootSyncColumns`
 #: brings to an existing startup_log, in SCHEMA_STARTUP_LOG order.
 STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS: tuple[tuple[str, str], ...] = (
     ("prior_boot_home_state", "TEXT"),
@@ -804,6 +809,7 @@ STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS: tuple[tuple[str, str], ...] = (
     ("prior_boot_sync_started_at", "TEXT"),
     ("prior_boot_sync_ended_at", "TEXT"),
     ("prior_boot_vcell_before_cut_v", "REAL"),
+    ("prior_boot_loss_at", "TEXT"),
 )
 
 

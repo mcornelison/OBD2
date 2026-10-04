@@ -93,30 +93,36 @@ def _db(tmp_path, rows):
     conn = sqlite3.connect(p)
     ensureBatteryHealthLogTable(conn)
     ensureBatteryHealthLogCapacityColumns(conn)
-    for start, trig, epoch, runtime in rows:
+    for start, trig, epoch, runtime, *rate in rows:
         conn.execute(
-            "INSERT INTO battery_health_log (start_timestamp, end_timestamp, runtime_seconds, drain_trigger, cell_epoch) "
-            "VALUES (?, ?, ?, ?, ?)", (start, start, runtime, trig, epoch))
+            "INSERT INTO battery_health_log (start_timestamp, end_timestamp, runtime_seconds, drain_trigger, "
+            "cell_epoch, drain_rate_mv_s) VALUES (?, ?, ?, ?, ?, ?)",
+            (start, start, runtime, trig, epoch, rate[0] if rate else None))
     conn.commit()
     conn.close()
     return p
 
 
 def test_due_whenNoCountedTestForThisPack_in30Days(tmp_path) -> None:
-    p = _db(tmp_path, [("2026-09-27T14:06:59Z", "monthly_test", "18650-pack", 8169)])
+    p = _db(tmp_path, [("2026-09-27T14:06:59Z", "monthly_test", "18650-pack", 8169, -0.04)])
     assert not isMonthlyTestDue(p, cellEpoch="18650-pack", nowIso="2026-10-20T00:00:00Z", intervalDays=30)
     assert isMonthlyTestDue(p, cellEpoch="18650-pack", nowIso="2026-10-28T00:00:00Z", intervalDays=30)
     assert isMonthlyTestDue(p, cellEpoch="new-pack", nowIso="2026-10-01T00:00:00Z", intervalDays=30)
 
 
-def test_anInterruptedTest_doesNotCount(tmp_path) -> None:
+def test_anInterruptedTest_noRate_doesNotCount(tmp_path) -> None:
     p = _db(tmp_path, [("2026-10-01T00:00:00Z", "monthly_test", "18650-pack", TEST_HOLD_S - 1)])
     assert isMonthlyTestDue(p, cellEpoch="18650-pack", nowIso="2026-10-02T00:00:00Z", intervalDays=30)
 
 
-def test_aTestOfExactlyTestHold_counts(tmp_path) -> None:
-    p = _db(tmp_path, [("2026-10-01T00:00:00Z", "monthly_test", "18650-pack", TEST_HOLD_S)])
+def test_aRatedTest_counts_byTheRateNotTheRuntime(tmp_path) -> None:
+    p = _db(tmp_path, [("2026-10-01T00:00:00Z", "monthly_test", "18650-pack", 10, -0.04)])
     assert not isMonthlyTestDue(p, cellEpoch="18650-pack", nowIso="2026-10-02T00:00:00Z", intervalDays=30)
+
+
+def test_aLongUnratedMonthlyTest_doesNotCount(tmp_path) -> None:
+    p = _db(tmp_path, [("2026-10-01T00:00:00Z", "monthly_test", "18650-pack", TEST_HOLD_S + 500)])
+    assert isMonthlyTestDue(p, cellEpoch="18650-pack", nowIso="2026-10-02T00:00:00Z", intervalDays=30)
 
 
 def test_markOpenDrain_setsTheTriggerOnTheOpenRowOnly(tmp_path) -> None:

@@ -680,6 +680,7 @@ def makeOutcomeSink(
     *,
     homeState: Callable[[], str] | None = None,
     wallVcell: Callable[[], float | None] | None = None,
+    lossAt: Callable[[], str | None] | None = None,
 ) -> Callable[[SyncOutcomeRecord], None]:
     """The sync task's ``writeRecord``: one durable shutdown record per run.
 
@@ -696,6 +697,8 @@ def makeOutcomeSink(
         wallVcell: ARCH-065 -- optional zero-arg read of powerwatch's last
             on-wall VCELL (``WallVcellCache.last``); written as
             ``vcell_before_cut_v``.
+        lossAt: ARCH-065 -- optional zero-arg read of this loss's wall time
+            (``HomeStateAtLoss.lossIso``); written as ``loss_at``.
     """
 
     def _write(record: SyncOutcomeRecord) -> None:
@@ -711,6 +714,7 @@ def makeOutcomeSink(
             syncStartedAt=record.startedAt,
             syncEndedAt=record.endedAt,
             vcellBeforeCutV=wallVcell() if wallVcell is not None else None,
+            lossAt=lossAt() if lossAt is not None else None,
         )
 
     return _write
@@ -950,6 +954,7 @@ class HomeStateAtLoss:
             homeState=homeState,
             syncOutcome=syncOutcome,
             vcellBeforeCutV=self.vcellBeforeCut(),
+            lossAt=self.lossIso(),
         )
         self._written = True
 
@@ -1412,6 +1417,7 @@ def main(argv: list[str] | None = None) -> int:
                 outcomePath,
                 homeState=homeStateAtLoss.stateName,
                 wallVcell=homeStateAtLoss.vcellBeforeCut,
+                lossAt=homeStateAtLoss.lossIso,
             )
         ),
         # ARCH-065: the drain runs to completion -- it ends delivered, or when

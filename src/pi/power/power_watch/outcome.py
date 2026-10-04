@@ -31,6 +31,7 @@
 #                               unchanged.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: optional sync_started_at / sync_ended_at /
 #                               vcell_before_cut_v keys.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: optional loss_at key (HomeStateAtLoss.lossIso).
 # ================================================================================
 ################################################################################
 """Producer-only typed durable outcome record (atomic, never raises)."""
@@ -103,6 +104,7 @@ def writeOutcomeRecord(
     syncStartedAt: str | None = None,
     syncEndedAt: str | None = None,
     vcellBeforeCutV: float | None = None,
+    lossAt: str | None = None,
 ) -> None:
     """Producer ONLY. Atomic write-temp+rename+fdatasync; never raises
     (a draining-Pi failure must not block shutdown).
@@ -127,6 +129,8 @@ def writeOutcomeRecord(
         syncStartedAt: ARCH-065 -- UTC ISO second the drain began.
         syncEndedAt: ARCH-065 -- UTC ISO second the drain returned.
         vcellBeforeCutV: ARCH-065 -- powerwatch's last on-wall VCELL.
+        lossAt: ARCH-065 -- this loss's wall time (HomeStateAtLoss.lossIso, the one
+            owner); lands as startup_log.prior_boot_loss_at and keys the boot finaliser.
     """
     try:
         rec: dict[str, object] = {
@@ -145,6 +149,7 @@ def writeOutcomeRecord(
             "sync_started_at": syncStartedAt,
             "sync_ended_at": syncEndedAt,
             "vcell_before_cut_v": vcellBeforeCutV,
+            "loss_at": lossAt,
         }
         rec.update({key: value for key, value in optional.items() if value is not None})
     except Exception as exc:  # noqa: BLE001 -- producer must never block shutdown

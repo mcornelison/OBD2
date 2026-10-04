@@ -36,6 +36,8 @@
 #                          VCELL (three more prior_boot_* columns).
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6: arm finalises the prior drain (cut step, window rate),
 #                          best-effort.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: also lands the loss wall time
+#                          (prior_boot_loss_at) and keys the finaliser on it.
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -373,6 +375,7 @@ _PRIOR_BOOT_SYNC_FIELDS: tuple[tuple[str, str, Callable[[object], object]], ...]
     ("sync_started_at", "prior_boot_sync_started_at", _asIso),
     ("sync_ended_at", "prior_boot_sync_ended_at", _asIso),
     ("vcell_before_cut_v", "prior_boot_vcell_before_cut_v", _asVolts),
+    ("loss_at", "prior_boot_loss_at", _asIso),
 )
 
 
@@ -471,8 +474,8 @@ def _writeStartupLogRow(
             " prior_boot_home_state, prior_boot_sync_outcome, "
             " prior_boot_backlog_start, prior_boot_backlog_end, "
             " prior_boot_sync_started_at, prior_boot_sync_ended_at, "
-            " prior_boot_vcell_before_cut_v) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " prior_boot_vcell_before_cut_v, prior_boot_loss_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (bootId, clean, None, None, recordedAt, lastStage, reason,
              dataQuality,
              sync.get("prior_boot_home_state"),
@@ -481,7 +484,8 @@ def _writeStartupLogRow(
              sync.get("prior_boot_backlog_end"),
              sync.get("prior_boot_sync_started_at"),
              sync.get("prior_boot_sync_ended_at"),
-             sync.get("prior_boot_vcell_before_cut_v")),
+             sync.get("prior_boot_vcell_before_cut_v"),
+             sync.get("prior_boot_loss_at")),
         )
         conn.commit()
     finally:
@@ -499,12 +503,14 @@ def _finalizePriorDrain(dbPath: str, priorBootSync: dict[str, object]) -> None:
         from src.pi.power.battery_health_finalize import finalizeLatestDrain
 
         vcell = priorBootSync.get("prior_boot_vcell_before_cut_v")
+        lossAt = priorBootSync.get("prior_boot_loss_at")
         conn = sqlite3.connect(dbPath, timeout=5.0)
         try:
             ensureBatteryHealthLogCapacityColumns(conn)
             finalizeLatestDrain(
                 conn,
                 priorBootVcellBeforeCutV=float(vcell) if isinstance(vcell, (int, float)) else None,
+                priorBootLossAt=lossAt if isinstance(lossAt, str) else None,
             )
             conn.commit()
         finally:

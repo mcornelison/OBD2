@@ -1121,6 +1121,7 @@ class StartupLog(Base):
     prior_boot_sync_started_at: Mapped[str | None] = mapped_column(String(40))
     prior_boot_sync_ended_at: Mapped[str | None] = mapped_column(String(40))
     prior_boot_vcell_before_cut_v: Mapped[float | None] = mapped_column(Float)
+    prior_boot_loss_at: Mapped[str | None] = mapped_column(String(40))
 
 
 class PiState(Base):

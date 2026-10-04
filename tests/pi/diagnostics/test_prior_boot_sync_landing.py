@@ -17,7 +17,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-30    | Ralph (Rex)  | Initial -- US-776-f.
-# 2026-10-03    | Atlas (ARCH-065a) | Registry grew to seven columns; the schema-step
+# 2026-10-03    | Atlas (ARCH-065a) | Registry grew to eight columns (T6 fix: + loss_at); the schema-step
 #               |              | tests pin _REGISTRY_COLUMNS (landing tests keep the four).
 # ================================================================================
 ################################################################################
@@ -63,6 +63,7 @@ _REGISTRY_COLUMNS = _NEW_COLUMNS + (
     "prior_boot_sync_started_at",
     "prior_boot_sync_ended_at",
     "prior_boot_vcell_before_cut_v",
+    "prior_boot_loss_at",
 )
 
 _LEGACY_STARTUP_LOG = """
@@ -328,6 +329,7 @@ class TestFieldValidation:
             "prior_boot_sync_started_at": None,
             "prior_boot_sync_ended_at": None,
             "prior_boot_vcell_before_cut_v": None,
+            "prior_boot_loss_at": None,
         }
 
     def test_nonObjectJson_landsAllNull(self, tmp_path):

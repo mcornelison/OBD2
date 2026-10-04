@@ -1,7 +1,7 @@
 ################################################################################
 # File Name: test_battery_capacity_columns_cross_tiers.py
 # Purpose/Description: ARCH-065 -- every Pi battery-capacity column (and the
-#                      three startup_log prior-boot additions) exists on the
+#                      four startup_log prior-boot additions) exists on the
 #                      server model with a matching kind, and migration v0035
 #                      adds them replay-safely (a re-run issues no ALTER; a
 #                      partial prior run is finished).
@@ -14,6 +14,7 @@
 # Date          | Author            | Description
 # ================================================================================
 # 2026-10-03    | Atlas (ARCH-065a) | Initial.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: four startup_log additions (+ loss_at).
 # ================================================================================
 ################################################################################
 """The ARCH-065 capacity columns cross the tier boundary."""
@@ -62,7 +63,7 @@ def test_v0035_isRegisteredLast_andCoversBothTables() -> None:
 
 def test_migrationColumns_matchThePiNames_inOrder() -> None:
     assert _BH_NEW == tuple(n for n, _ in BATTERY_HEALTH_CAPACITY_COLUMNS)
-    assert _SL_NEW == tuple(n for n, _ in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS[-3:])
+    assert _SL_NEW == tuple(n for n, _ in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS[-4:])
 
 
 def test_modelKinds_matchThePiKinds() -> None:

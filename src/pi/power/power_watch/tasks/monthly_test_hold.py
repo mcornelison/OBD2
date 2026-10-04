@@ -20,9 +20,13 @@
 
 The drain-rate window (WINDOW_SKIP_S..TEST_HOLD_S after the cut) is computed at
 the next boot (battery_health_finalize). This task only keeps power up and
-labels the row. Power returning early is the sequencer's cancel path; the short
-row then fails the runtime >= TEST_HOLD_S test at finalize and is not counted
-(no extra state).
+labels the row. Power returning early is the sequencer's cancel path; the
+interrupted row's window is short, so finalize writes no rate and it is not
+counted.
+
+A "counted monthly test" is DEFINED as ``drain_rate_mv_s IS NOT NULL`` -- the
+rate is written only by battery_health_finalize when the window is full, so the
+row itself is the single owner of the fact (no second runtime threshold).
 """
 from __future__ import annotations
 
@@ -108,15 +112,15 @@ _ROW_OPEN_SLACK_S = 5
 
 
 def isMonthlyTestDue(dbPath: str, *, cellEpoch: str, nowIso: str, intervalDays: int) -> bool:
-    """True unless a COUNTED monthly test (runtime >= TEST_HOLD_S) of this pack ran in intervalDays."""
+    """True unless a COUNTED monthly test (drain_rate_mv_s IS NOT NULL) of this pack ran in intervalDays."""
     since = (datetime.strptime(nowIso, _ISO).replace(tzinfo=UTC)
              - timedelta(days=intervalDays)).strftime(_ISO)
     conn = sqlite3.connect(dbPath, timeout=1.0)
     try:
         row = conn.execute(
             f"SELECT 1 FROM {BATTERY_HEALTH_LOG_TABLE} WHERE drain_trigger = ? AND cell_epoch = ? "
-            "AND runtime_seconds >= ? AND start_timestamp >= ? LIMIT 1",
-            (DRAIN_TRIGGER_MONTHLY_TEST, cellEpoch, TEST_HOLD_S, since),
+            "AND drain_rate_mv_s IS NOT NULL AND start_timestamp >= ? LIMIT 1",
+            (DRAIN_TRIGGER_MONTHLY_TEST, cellEpoch, since),
         ).fetchone()
     finally:
         conn.close()
