@@ -38,6 +38,19 @@
 #               |              | STATE; failed-poll WARNING rate-limited.
 # 2026-09-22    | Rex (US-801) | DEFAULT_IMU_SAMPLE_HZ imported from the single
 #               |              | definition in common.config.validator (now 4).
+# 2026-09-28    | Atlas        | ARCH-064 Task 2: magMode "direct" (acquisition C,
+#               | (ARCH-064)   | clean-reset bypass, I2C master never enabled) via
+#               |              | _makeIcm20948Direct/_buildImuDeviceDirect. Review
+#               |              | Focus 1: a mag-only read fault in _readAndPublish
+#               |              | now drops only the mag channel -- previously it
+#               |              | aborted the whole burst, discarding an already-
+#               |              | read accel/gyro too.
+# 2026-09-30    | Atlas        | FIXED-RATE poll loop (nextPollDeadline). The loop
+#               | (ARCH-064d,  | waited a full interval AFTER each poll's work, so
+#               | CIO-directed)| the real period was 1/sampleHz + work: MEASURED on
+#               |              | drive 96 at 24.72 ms vs 20 ms configured (40.5 Hz,
+#               |              | not 50). Deadlines are now anchored to the schedule;
+#               |              | an overrun skips missed ticks, never bursts.
 # ================================================================================
 ################################################################################
 
@@ -159,6 +172,11 @@ UNIT_RANGE = "gain/ms"
 #: why 'bypass' is retained rather than deleted.
 MAG_MODE_MASTER = "master"
 MAG_MODE_BYPASS = "bypass"
+#: ARCH-064 acquisition C: a clean-reset build that NEVER enables the ICM's
+#: internal I2C master (built via SparkFun primitives, not adafruit -- see
+#: icm20948_direct.py's module header for what MEASURED 2026-09-28 ruled out
+#: about 'master' and 'bypass' on this board). Not yet the default (Task 5).
+MAG_MODE_DIRECT = "direct"
 
 
 # I2C addresses (ADR: ICM-20948 @0x69, TSL2591 @0x29).
@@ -173,6 +191,35 @@ DEFAULT_LIGHT_SAMPLE_HZ = 1
 # Fallback poll interval when a non-positive sampleHz slips through (defensive;
 # the validated config always carries a positive rate).
 _FALLBACK_INTERVAL_S = 1.0
+
+
+def nextPollDeadline(prevDue: float, *, now: float, intervalS: float) -> float:
+    """Return the next poll deadline on a FIXED-RATE schedule (ARCH-064d).
+
+    The schedule is anchored to ``prevDue``, never to ``now``: a poll's own work
+    time is absorbed by the interval instead of being added to it. Waiting a
+    full interval after the work (the old loop) made the real period
+    ``1/sampleHz + work`` -- MEASURED on drive 96 as 24.72 ms against a
+    configured 20 ms, so a "50 Hz" reader ran at 40.5 Hz.
+
+    An overrun (work longer than the time left in the slot) SKIPS the missed
+    ticks and returns the first tick strictly in the future, on the original
+    phase. It never returns a deadline in the past, so the loop cannot fire a
+    catch-up burst of back-to-back polls after a stall.
+
+    Args:
+        prevDue: The deadline the poll that just finished was scheduled for.
+        now: The current monotonic time.
+        intervalS: The poll interval (1 / sampleHz), seconds.
+
+    Returns:
+        The next deadline, in the same monotonic time base.
+    """
+    due = prevDue + intervalS
+    if due <= now:
+        missed = math.floor((now - due) / intervalS) + 1
+        due += missed * intervalS
+    return due
 
 # TSL2591 raises on a saturated/overflow lux read; treat these as "unreadable"
 # (publish None) rather than a fabricated value.
@@ -285,20 +332,25 @@ class _BaseSensorReader:
         deviceFactory: Callable[[], Any] | None = None,
         dataSource: str = "real",
         invariantDwellSeconds: float = DEFAULT_INVARIANT_DWELL_S,
+        clockFn: Callable[[], float] = time.monotonic,
     ) -> None:
         """Bind a reader to the bus.
 
         Args:
             bus: The SampleBus this reader publishes onto (producer role).
-            sampleHz: Bus publish rate in Hz (poll interval = 1 / sampleHz).
+            sampleHz: Bus publish rate in Hz. The poll loop keeps a FIXED-RATE
+                schedule of 1 / sampleHz (ARCH-064d), so this is the rate the
+                reader actually runs at while a poll takes less than one interval.
             deviceFactory: callable() -> device handle; DI'd for tests/non-Pi.
                 Defaults to the subclass's real-hardware factory, which raises
                 on a non-Pi host or an absent sensor (the graceful-absent path).
             dataSource: Origin tag stamped on every sample (US-195 contract).
             invariantDwellSeconds: US-564 check-2 dwell -- how long a channel
                 must stay BIT-IDENTICAL before it is reported ``sensor_stale``.
+            clockFn: Monotonic clock for the poll schedule (injection seam).
         """
         self._bus = bus
+        self._clock = clockFn
         self._sampleHz = sampleHz
         self._intervalS = 1.0 / sampleHz if sampleHz and sampleHz > 0 else _FALLBACK_INTERVAL_S
         self._deviceFactory = deviceFactory if deviceFactory is not None else self._defaultDeviceFactory
@@ -426,10 +478,12 @@ class _BaseSensorReader:
             self._faultLog.clear("read", "%s read recovered (seq=%d)", self.source, self._seq)
 
     def _loop(self) -> None:
-        """Poll at the configured rate until stopped."""
+        """Poll on a fixed-rate schedule of 1 / sampleHz until stopped (ARCH-064d)."""
+        due = self._clock()
         while not self._stop.is_set():
             self.pollOnce()
-            self._stop.wait(self._intervalS)
+            due = nextPollDeadline(due, now=self._clock(), intervalS=self._intervalS)
+            self._stop.wait(max(0.0, due - self._clock()))
 
     # -- publishing ------------------------------------------------------------
     def _publishBurst(
@@ -663,7 +717,31 @@ class ImuReader(_BaseSensorReader):
         # ak09916_bypass.AK09916_TO_ICM_AXES for the evidence and for why this
         # is NOT computeHeadingDeg (correct) and NOT IMU_BODY_FRAME (a separate
         # defect, ARCH-034, which owns the remaining constant offset).
-        mag = toIcmFrame(_vec3(dev.magnetic))
+        #
+        # ARCH-064 Task 2, Review Focus 1: a mag-only read fault must NOT cost
+        # accel/gyro/temp. Pre-fix this raised straight out of the property
+        # access, past this whole function, into pollOnce's outer except --
+        # which then discarded the ENTIRE burst as 'no sample this poll' even
+        # though accel and gyro, above, had already been read successfully.
+        # Same degrade principle as the temp handling below and as
+        # _attachDirectMagnetometer's construction-time fallback: one broken
+        # channel must not punish the healthy ones.
+        try:
+            mag = toIcmFrame(_vec3(dev.magnetic))
+        except Exception as exc:  # noqa: BLE001 -- a mag-only fault must not cost accel/gyro
+            self._faultLog.note(
+                "read:mag",
+                "%s magnetometer read failed (seq=%d, %s) -- mag channel silenced "
+                "this poll; accel/gyro/temp still publish",
+                self.source,
+                seq,
+                exc,
+            )
+            mag = None
+        else:
+            self._faultLog.clear(
+                "read:mag", "%s magnetometer read recovered (seq=%d)", self.source, seq
+            )
         # ARCH-057: the RUNTIME keep-alive. MEASURED 2026-09-18 on this hardware:
         # doing nothing 0/20, re-init once 17/20, re-init + verify + retry x3
         # 20/20. The freeze arrives AFTER good readings, so this cannot be a
@@ -877,7 +955,15 @@ def _makeIcm20948(
     a mag-only fault degrades to the ICM's own magnetometer property, which the
     US-564 invariance gate then refuses as ``sensor_stale``. Losing the whole IMU
     over one channel would throw away valid data to punish a broken one.
+
+    ARCH-064 acquisition C (``magMode == MAG_MODE_DIRECT``) dispatches to its
+    own builder entirely -- it is a SparkFun-primitives build, never adafruit,
+    so it cannot share this function's ``adafruit_icm20x`` import or
+    ``_buildImuDevice``'s attach/recover seam.
     """
+    if magMode == MAG_MODE_DIRECT:
+        return _makeIcm20948Direct(gyroRecovery=gyroRecovery)
+
     import adafruit_icm20x  # local import: optional on dev hosts
 
     i2cBus = _makeI2c()
@@ -885,6 +971,86 @@ def _makeIcm20948(
     return _buildImuDevice(
         icm, i2cBus, magMode=magMode, gyroRecovery=gyroRecovery
     )
+
+
+def _makeIcm20948Direct(  # pragma: no cover -- real-hardware glue (Pi only)
+    gyroRecovery: GyroRecoverySettings | None = None,
+) -> Any:
+    """ARCH-064 acquisition C real-hardware glue: build the SparkFun ICM-20948
+    and the direct AK09916 reader, then run A-34 gyro recovery over them.
+
+    ``qwiic_icm20948`` is imported HERE, lazily, and nowhere else in
+    production -- ``icm20948_direct.makeIcm20948Direct`` and
+    ``GyroRecoveryHandle`` are driven entirely through injected factories /
+    plain objects so they (and their unit tests) never require the SparkFun
+    package to be importable.
+    """
+    import qwiic_icm20948  # local import: optional on dev hosts, needs I2C
+    from adafruit_bus_device import i2c_device  # local import: optional off-Pi
+
+    from pi.sensors.ak09916_bypass import AK09916_I2C_ADDRESS, Ak09916Direct
+
+    return _buildImuDeviceDirect(
+        lambda: qwiic_icm20948.QwiicIcm20948(address=ADDR_IMU),
+        lambda: Ak09916Direct(i2c_device.I2CDevice(_makeI2c(), AK09916_I2C_ADDRESS)),
+        gyroRecovery=gyroRecovery,
+    )
+
+
+def _buildImuDeviceDirect(
+    icmFactory: Callable[[], Any],
+    akFactory: Callable[[], Any],
+    *,
+    buildFn: Callable[[Callable[[], Any], Callable[[], Any]], Any] | None = None,
+    recoverFn: Callable[[Any], Any] | None = None,
+    gyroRecovery: GyroRecoverySettings | None = None,
+) -> Any:
+    """Build the clean-reset bypass device, THEN run the A-34 gyro check.
+
+    ARCH-064's own version of ARCH-032's finding: order is load-bearing.
+    ``icm20948_direct.makeIcm20948Direct`` already enables bypass and
+    configures the AK09916 before it returns, so by construction this
+    function's ``recover`` call always runs after that -- but it is split out
+    here, exactly as :func:`_buildImuDevice` is for the master/bypass path, so
+    the ordering claim is REACHABLE BY TEST rather than living only inside
+    ``_makeIcm20948Direct``'s ``pragma: no cover`` real-hardware glue.
+
+    Args:
+        icmFactory: Returns the SparkFun handle (called once; the SAME
+            instance is then wrapped for gyro recovery, never a second one).
+        akFactory: Returns the ``Ak09916Direct`` handle.
+        buildFn: Injection seam for tests; defaults to
+            ``icm20948_direct.makeIcm20948Direct``.
+        recoverFn: Injection seam for tests; defaults to :func:`_recoverGyro`.
+        gyroRecovery: Config-resolved recovery tunables (US-803-a) for the real
+            recovery; ``None`` means the gyro_recovery module defaults. The
+            merge with Sprint 94 (2026-10-01) threaded this through: the
+            direct path used to drop it, so the car's mode ran the defaults.
+
+    Returns:
+        The built device (an ``Icm20948Direct`` in production).
+    """
+    from pi.sensors.icm20948_direct import GyroRecoveryHandle, makeIcm20948Direct
+
+    icm = icmFactory()
+    build = buildFn or makeIcm20948Direct
+    device = build(lambda: icm, akFactory)
+    recover = recoverFn or (lambda chip: _recoverGyro(chip, settings=gyroRecovery))
+    try:
+        # The adapter over the RAW icm, never `device`: recovery writes
+        # power-management registers on the chip itself, the same rule
+        # _buildImuDevice follows for the master/bypass path.
+        recover(GyroRecoveryHandle(icm))
+    except Exception as exc:  # noqa: BLE001 -- a gyro fault must not cost the mag
+        # The clean-reset bypass has ALREADY succeeded here, so discarding it
+        # now would throw away a working magnetometer to punish a broken
+        # gyro -- the same degrade principle _buildImuDevice uses.
+        logger.error(
+            "IMU gyro startup check raised after the direct-mode bypass (%s); "
+            "keeping the magnetometer and continuing without recovery",
+            exc,
+        )
+    return device
 
 
 def _buildImuDevice(
@@ -998,8 +1164,9 @@ def _recoverGyro(
 
     A failure NEVER costs the IMU. Same principle as the magnetometer degrade
     path: losing accel, gyro and mag to fix one channel throws away valid data
-    to punish a broken one. US-749's guard still withholds pitch and grade when
-    the recovery does not take.
+    to punish a broken one. When the recovery does not take, the RUNNING
+    engine's gyro guard withholds pitch and grade once it trips
+    (``gyro_recovery.WITHHOLD_CONDITION``; ARCH-064 Ruling 35).
 
     Args:
         icm: The constructed ICM-20948.

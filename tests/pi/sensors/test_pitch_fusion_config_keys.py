@@ -75,7 +75,15 @@ _KEYS: dict[str, tuple[Any, Any, Callable[[PitchFusion], Any]]] = {
 
 
 def _shippedConfig() -> dict[str, Any]:
-    return json.loads((_REPO_ROOT / "config.json").read_text(encoding="utf-8"))
+    """The shipped config, on the LEGACY engine: these keys feed PitchFusion only.
+
+    ARCH-064 made imufusion the default engine (CIO 2026-09-28); PitchFusion is the
+    named fallback, and pitchTauSec / accelTrustBand / zupt* are its keys alone, so the
+    path under test is selected explicitly. (Merge with Sprint 94, 2026-10-01.)
+    """
+    raw = json.loads((_REPO_ROOT / "config.json").read_text(encoding="utf-8"))
+    raw["pi"]["sensors"]["imu"]["fusionEngine"] = "legacy"
+    return raw
 
 
 def _buildFusion(raw: dict[str, Any], statesDir: Path) -> PitchFusion:

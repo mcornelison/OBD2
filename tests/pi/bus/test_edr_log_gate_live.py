@@ -55,6 +55,20 @@ _BURSTS = 500
 _EXPECTED_IMU_ROWS = 250
 _EXPECTED_LIGHT_ROWS = 10
 
+# ARCH-064d: persistence is a UTC grid keyed on tsCapture, so the fixture must
+# be stamped at the 50 Hz it claims (it was float(seq): 1 Hz, which keep-1-of-N
+# never looked at). The +5 ms phase keeps every burst clear of a slot boundary,
+# and the mono->UTC offset is pinned to 0 so the slot phase is deterministic.
+_PERIOD_S = 1.0 / 50
+_PHASE_S = 0.005
+
+
+@pytest.fixture(autouse=True)
+def _pinWallClockOffset(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setattr(sys.modules[EdrPersistenceSubscriber.__module__], "_wallClockOffsetS", lambda: 0.0)
+
 # The fail-OPEN return in EdrLogGate._readLink, and its deliberate inversion.
 _FAIL_OPEN_LINE = 'return True, "signal_unreadable"'
 _FAIL_CLOSED_LINE = 'return False, "signal_unreadable"'
@@ -119,7 +133,7 @@ def _db(tmp_path: Path, name: str) -> ObdDatabase:
 def _sample(topic: str, value: Any, seq: int) -> Sample:
     return Sample(
         topic=topic, source=topic.split(".")[1], value=value, unit="x",
-        tsUtc=f"2026-09-18T12:00:{seq % 60:02d}Z", tsCapture=float(seq),
+        tsUtc=f"2026-09-18T12:00:{seq % 60:02d}Z", tsCapture=seq * _PERIOD_S + _PHASE_S,
         driveId=None, dataSource="real", seq=seq,
     )
 
