@@ -20,6 +20,8 @@
 #                                shared reader plus the own VCELL series set.
 # 2026-10-01    | Rex (US-741) | The pre-poweroff composition gains the
 #                                home-state hook; matched by name, not count.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: pin that main() hands SyncWithServerTask a
+#                                backlogReader, joinWaitSec and stallSec.
 # ================================================================================
 ################################################################################
 """US-621 wiring guards: the service really does record sync custody."""
@@ -188,3 +190,26 @@ class TestTheCustodyRecordHasItsOwnFile:
         source = inspect.getsource(m.main)
         assert "CUSTODY_RECORD_FILENAME" in source
         assert "os.path.dirname(dbPath)" in source
+
+
+class TestSyncTaskIsWiredWithItsEvidence:
+    """Without a backlogReader the task trusts a quiet runSync as DELIVERED."""
+
+    def test_main_buildsSyncTaskWithReaderAndWaits(self) -> None:
+        """
+        Given: the production entrypoint
+        When: its source is parsed
+        Then: SyncWithServerTask(...) passes backlogReader=, joinWaitSec= and
+            stallSec=
+
+        Dropping backlogReader= keeps every other test green yet records a
+        runSync that pushed nothing as DELIVERED (ARCH-065).
+        """
+        calls = _mainCalls("SyncWithServerTask")
+        assert calls, "main() never builds the SyncWithServerTask"
+        for call in calls:
+            keywords = {kw.arg for kw in call.keywords}
+            for required in ("backlogReader", "joinWaitSec", "stallSec"):
+                assert required in keywords, (
+                    f"main() builds SyncWithServerTask without {required}="
+                )

@@ -58,7 +58,7 @@ class OutcomeKind(enum.Enum):
     DELIVERED = "delivered"                            # a drain attempt succeeded
     AWAY = "away"                                      # positive AWAY: skipped
     UNKNOWN_NETWORK = "unknown_network"                # home unconfirmed; drain failed
-    AT_HOME_JOINING_TIMEOUT = "at_home_joining_timeout"  # US-776-e: rejoin outlasted ceiling
+    AT_HOME_JOINING_TIMEOUT = "at_home_joining_timeout"  # US-776-e: rejoin outlasted joinWaitSec
     AT_HOME_SERVER_DOWN = "at_home_server_down"        # connection error, timeout, 5xx
     PROBE_MISCONFIGURED = "probe_misconfigured"        # probe 404/405/401/403
 
