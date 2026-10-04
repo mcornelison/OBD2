@@ -331,3 +331,146 @@ def test_aFailedHistoryWrite_neverCostsTheVerdict() -> None:
         "BEGIN SELECT RAISE(ABORT, 'read-only'); END"
     )
     assert _read(db).verdict == VERDICT_GOOD
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1.  Ruling 16: a counted test whose provisional inputs are NULL is
+# an unreadable LOG, never an exception out of the reader.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("override", [
+    {"endVcellV": None},
+    {"windowEndS": None},
+])
+def test_reader_aCountedTestWithANullProvisionalInput_isLogUnreadable_neverRaises(override) -> None:
+    """Reproducer: a test reaped without a checkpoint keeps end_vcell_v NULL
+    but the finaliser still rates it from the trajectory."""
+    db = VerdictDatabase(_NOW_DT)
+    db.addTest(1, **override)
+    db.addJobs(10)
+    v = _read(db)
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_LOG_UNREADABLE)
+    assert v.lastHealthCheckTs == db.iso(1)
+
+
+def test_compute_aNonNumericProvisionalInput_isLogUnreadable() -> None:
+    v = _v(cal=None, test={**_TEST, "end_vcell_v": "n/a"})
+    assert (v.verdict, v.reason) == (VERDICT_UNKNOWN, REASON_LOG_UNREADABLE)
+    assert v.lastHealthCheckTs == _TEST["start_timestamp"]
+
+
+def test_reader_aNullEndVcell_isHarmless_whenTheCalibrationShapesT() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    db.addTest(1, endVcellV=None, windowEndS=None)
+    db.addJobs(10)
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+def test_reader_anythingTheComputeRaises_isLogUnreadable(monkeypatch) -> None:
+    def boom(**_kw):
+        raise ValueError("unexpected")
+    monkeypatch.setattr(verdictModule, "computeBatteryHealthVerdict", boom)
+    assert _read(goodPack(_NOW_DT)).reason == REASON_LOG_UNREADABLE
+
+
+# ---------------------------------------------------------------------------
+# Ruling 13: a pack the reserve floor stopped at home failed its job -> replace.
+# ---------------------------------------------------------------------------
+
+
+def test_reader_aFloorEndedDrainNewerThanTheTest_isReplace() -> None:
+    db = goodPack(_NOW_DT, testDaysAgo=5)
+    db.addFloorEnded(1)
+    v = _read(db)
+    assert (v.verdict, v.reason) == (VERDICT_REPLACE, None)
+    assert v.lastHealthCheckTs == db.iso(1)
+
+
+def test_reader_aFloorEndedDrainOlderThanALaterCountedTest_theTestGoverns() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    db.addFloorEnded(10)
+    db.addTest(2)
+    db.addJobs(10)
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+def test_reader_aFloorEndedDrain_outranksStaleAndTooFewAndNoTest() -> None:
+    for build in (
+        lambda db: db.addTest(STALE_TEST_DAYS + 10),
+        lambda db: (db.addTest(5), db.addJobs(1)),
+        lambda db: None,
+    ):
+        db = VerdictDatabase(_NOW_DT)
+        build(db)
+        db.addFloorEnded(1)
+        assert _read(db).verdict == VERDICT_REPLACE
+
+
+def test_reader_anOldPacksFloorEndedDrain_isIgnored() -> None:
+    db = VerdictDatabase(_NOW_DT)
+    db.addFloorEnded(3, cellEpoch="old-pack")
+    db.addCalibration(30)
+    db.addTest(2)
+    db.addJobs(10)
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+def test_reader_aCountedTestsOwnReplaceHistory_isNotAFloorEndedDrain() -> None:
+    """verdict=replace on a row WITH a rate is history, not a floor event."""
+    db = VerdictDatabase(_NOW_DT)
+    db.addCalibration(30)
+    testId = db.addTest(1)
+    db.conn.execute("UPDATE battery_health_log SET verdict = ? WHERE drain_event_id = ?",
+                    (VERDICT_REPLACE, testId))
+    db.addJobs(10)
+    assert _read(db).verdict == VERDICT_GOOD
+
+
+# ---------------------------------------------------------------------------
+# Ruling 17: negative T is clamped; the history write cannot stall the reader.
+# ---------------------------------------------------------------------------
+
+
+def test_aNegativeT_isPublishedAsZero_andIsReplace() -> None:
+    v = _v(cal=None, test={**_TEST, "end_vcell_v": 3.40, "window_end_s": 0})
+    assert v.timeToFloorS == 0
+    assert v.verdict == VERDICT_REPLACE
+
+
+def test_aLockedDatabase_doesNotStallTheReader_andWarnsOnce(tmp_path, monkeypatch, caplog) -> None:
+    import logging
+    import time
+
+    from src.pi.obdii.database import ObdDatabase
+
+    monkeypatch.setattr(verdictModule, "_historyWriteWarned", False)
+    obd = ObdDatabase(str(tmp_path / "obd.db"), walMode=False)
+    obd.initialize()
+    src = goodPack(_NOW_DT)
+    with obd.connect() as conn:
+        for table in ("battery_health_log", "startup_log"):
+            cols = [r[1] for r in src.conn.execute(f"PRAGMA table_info({table})")]
+            for row in src.conn.execute(f"SELECT {', '.join(cols)} FROM {table}"):
+                conn.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES "
+                             f"({', '.join('?' * len(cols))})", tuple(row))
+    holder = sqlite3.connect(str(tmp_path / "obd.db"), timeout=0)
+    holder.execute("BEGIN IMMEDIATE")  # another writer holds the lock
+    try:
+        with caplog.at_level(logging.DEBUG, logger=verdictModule.__name__):
+            started = time.monotonic()
+            first = _read(obd)
+            firstS = time.monotonic() - started
+            second = _read(obd)
+            secondS = time.monotonic() - started - firstS
+    finally:
+        holder.rollback()
+        holder.close()
+    assert first.verdict == second.verdict == VERDICT_GOOD
+    # Each read's history write is bounded by the short busy timeout (~0.5 s).
+    assert firstS < 1.2 and secondS < 1.2, (firstS, secondS)
+    warnings = [r for r in caplog.records
+                if r.levelno == logging.WARNING and "history write" in r.getMessage()]
+    assert len(warnings) == 1

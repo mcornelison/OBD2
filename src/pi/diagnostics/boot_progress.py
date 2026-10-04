@@ -38,6 +38,8 @@
 #                          best-effort.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: also lands the loss wall time
 #                          (prior_boot_loss_at) and keys the finaliser on it.
+# 2026-10-03    | Atlas (ARCH-065a) | T7 fix 1: passes the prior sync outcome + home
+#                          state to the finaliser (floor-ended at home -> replace).
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -504,6 +506,8 @@ def _finalizePriorDrain(dbPath: str, priorBootSync: dict[str, object]) -> None:
 
         vcell = priorBootSync.get("prior_boot_vcell_before_cut_v")
         lossAt = priorBootSync.get("prior_boot_loss_at")
+        syncOutcome = priorBootSync.get("prior_boot_sync_outcome")
+        homeState = priorBootSync.get("prior_boot_home_state")
         conn = sqlite3.connect(dbPath, timeout=5.0)
         try:
             ensureBatteryHealthLogCapacityColumns(conn)
@@ -511,6 +515,8 @@ def _finalizePriorDrain(dbPath: str, priorBootSync: dict[str, object]) -> None:
                 conn,
                 priorBootVcellBeforeCutV=float(vcell) if isinstance(vcell, (int, float)) else None,
                 priorBootLossAt=lossAt if isinstance(lossAt, str) else None,
+                priorBootSyncOutcome=syncOutcome if isinstance(syncOutcome, str) else None,
+                priorBootHomeState=homeState if isinstance(homeState, str) else None,
             )
             conn.commit()
         finally:

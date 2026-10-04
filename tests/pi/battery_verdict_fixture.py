@@ -16,6 +16,8 @@
 # Date          | Author             | Description
 # ================================================================================
 # 2026-10-03    | Atlas (ARCH-065a)  | ARCH-065 T7: created.
+# 2026-10-03    | Atlas (ARCH-065a)  | T7 fix 1: addFloorEnded (Ruling 13); test
+#                                      end/window values may be NULL (Ruling 16).
 # ================================================================================
 ################################################################################
 
@@ -34,6 +36,7 @@ from src.pi.power.battery_health import (
     DRAIN_TRIGGER_MONTHLY_TEST,
     SCHEMA_BATTERY_HEALTH_LOG,
 )
+from src.pi.power.battery_health_verdict import VERDICT_REPLACE
 from src.pi.power.power_watch.contract import OutcomeKind
 
 ISO = "%Y-%m-%dT%H:%M:%SZ"
@@ -54,7 +57,7 @@ CAL_T_FLOOR_S = 18000
 #: verdict's own SQL.
 BATTERY_LOG_COLUMNS: tuple[str, ...] = (
     "start_timestamp", "drain_trigger", "cell_epoch", "drain_rate_mv_s",
-    "end_vcell_v", "window_end_s", "t_floor_s",
+    "end_vcell_v", "window_end_s", "t_floor_s", "verdict",
 )
 
 #: startup_log columns this fixture WRITES.
@@ -95,7 +98,8 @@ class VerdictDatabase:
     def addTest(
         self, daysAgo: float, *, cellEpoch: str = PACK,
         drainRateMvS: float | None = TEST_RATE_MV_S,
-        endVcellV: float = TEST_END_VCELL_V, windowEndS: int = TEST_WINDOW_END_S,
+        endVcellV: float | None = TEST_END_VCELL_V,
+        windowEndS: int | None = TEST_WINDOW_END_S,
     ) -> int:
         """A monthly-test row; ``drainRateMvS=None`` is an UNCOUNTED test."""
         return self._insertDrain({
@@ -117,6 +121,18 @@ class VerdictDatabase:
             "cell_epoch": cellEpoch,
             "drain_rate_mv_s": drainRateMvS,
             "t_floor_s": tFloorS,
+        })
+
+    def addFloorEnded(
+        self, daysAgo: float, *, cellEpoch: str = PACK,
+        trigger: str = DRAIN_TRIGGER_KEYOFF,
+    ) -> int:
+        """A drain the reserve floor ended at home: the finaliser stamped replace."""
+        return self._insertDrain({
+            "start_timestamp": self.iso(daysAgo),
+            "drain_trigger": trigger,
+            "cell_epoch": cellEpoch,
+            "verdict": VERDICT_REPLACE,
         })
 
     def addKeyoff(self, daysAgo: float, *, cellEpoch: str | None = PACK) -> int:

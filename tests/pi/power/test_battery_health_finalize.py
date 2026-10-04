@@ -11,6 +11,7 @@
 # Date          | Author             | Description
 # ================================================================================
 # 2026-10-03    | Atlas (ARCH-065a)  | ARCH-065 T6: created.
+# 2026-10-03    | Atlas (ARCH-065a)  | T7 fix 1: floor-ended at-home drain -> replace.
 ################################################################################
 """Tests for src.pi.power.battery_health_finalize (specs/battery-health-design.md sec 6)."""
 
@@ -23,6 +24,7 @@ from pathlib import Path
 
 from src.common.time.helper import CANONICAL_ISO_FORMAT
 from src.pi.diagnostics.boot_progress import arm
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.obdii.database_schema import SCHEMA_STARTUP_LOG, ensureDrainVcellTrajectoryTable
 from src.pi.power.battery_capacity import TEST_HOLD_S, WINDOW_S, WINDOW_SKIP_S
 from src.pi.power.battery_health import (
@@ -36,7 +38,9 @@ from src.pi.power.battery_health_finalize import (
     finalizeLatestDrain,
     windowDrainRate,
 )
+from src.pi.power.battery_health_verdict import VERDICT_REPLACE
 from src.pi.power.power_db import DrainVcellTrajectoryWriter
+from src.pi.power.power_watch.contract import OutcomeKind
 
 _CUT = datetime(2026, 10, 27, 17, 0, 0, tzinfo=UTC)
 _SLOPE_V_S = -0.00004  # -0.04 mV/s
@@ -350,3 +354,89 @@ def test_theCutStep_isCommittedEvenWhenTheWindowParseFails(tmp_path: Path) -> No
     other = sqlite3.connect(path)
     assert other.execute("SELECT cut_step_mv FROM battery_health_log").fetchone()[0] is not None
     other.close()
+
+
+# ================================================================================
+# T7 fix 1 / Ruling 13: a drain the reserve floor ended AT HOME means the pack
+# could not carry the full sync and a graceful shutdown -> verdict replace,
+# stamped write-once on the loss-band row, for any drain_trigger.
+# ================================================================================
+
+_FLOOR = OutcomeKind.RESERVE_FLOOR.name
+_HOME = HomeNetworkState.AT_HOME_SERVER_REACHABLE.name
+
+
+def _verdictOf(conn: sqlite3.Connection) -> tuple:
+    return conn.execute("SELECT verdict, drain_rate_mv_s FROM battery_health_log").fetchone()
+
+
+def _finalizeFloor(conn: sqlite3.Connection, *, outcome: str = _FLOOR, home: str | None = _HOME) -> None:
+    finalizeLatestDrain(conn, priorBootVcellBeforeCutV=4.2, priorBootLossAt=_iso(_CUT),
+                        priorBootSyncOutcome=outcome, priorBootHomeState=home)
+
+
+def test_floorEndedAtHome_keyoff_isStampedReplace() -> None:
+    conn = _db(runtime=300, trigger=DRAIN_TRIGGER_KEYOFF)
+    _finalizeFloor(conn)
+    assert _verdictOf(conn)[0] == VERDICT_REPLACE
+
+
+def test_floorEndedAtHome_monthlyTest_isReplace_andIsNotRated() -> None:
+    """A floor-ended test is a failed job, not a counted capacity test."""
+    conn = _db(runtime=700)
+    _finalizeFloor(conn)
+    assert _verdictOf(conn) == (VERDICT_REPLACE, None)
+
+
+def test_everyAtHomeState_counts() -> None:
+    for state in (HomeNetworkState.AT_HOME_SERVER_REACHABLE, HomeNetworkState.AT_HOME_SERVER_DOWN,
+                  HomeNetworkState.AT_HOME_JOINING):
+        conn = _db(runtime=300, trigger=DRAIN_TRIGGER_KEYOFF)
+        _finalizeFloor(conn, home=state.name)
+        assert _verdictOf(conn)[0] == VERDICT_REPLACE, state
+
+
+def test_floorEndedAway_isNotStamped() -> None:
+    for home in (HomeNetworkState.AWAY.name, HomeNetworkState.UNKNOWN.name, None):
+        conn = _db(runtime=300, trigger=DRAIN_TRIGGER_KEYOFF)
+        _finalizeFloor(conn, home=home)
+        assert _verdictOf(conn)[0] is None, home
+
+
+def test_aNonFloorOutcomeAtHome_isNotStamped() -> None:
+    conn = _db(runtime=300, trigger=DRAIN_TRIGGER_KEYOFF)
+    _finalizeFloor(conn, outcome=OutcomeKind.DELIVERED.name)
+    assert _verdictOf(conn)[0] is None
+
+
+def test_theFloorStamp_isWriteOnce() -> None:
+    conn = _db(runtime=300, trigger=DRAIN_TRIGGER_KEYOFF)
+    conn.execute("UPDATE battery_health_log SET verdict = 'degraded'")
+    _finalizeFloor(conn)
+    assert _verdictOf(conn)[0] == "degraded"
+
+
+def test_arm_passesTheFloorOutcomeToTheFinaliser(tmp_path: Path) -> None:
+    dbPath = tmp_path / "obd.db"
+    conn = sqlite3.connect(dbPath)
+    conn.executescript(SCHEMA_STARTUP_LOG)
+    ensureBatteryHealthLogTable(conn)
+    conn.execute(
+        "INSERT INTO battery_health_log (start_timestamp, end_timestamp, runtime_seconds, "
+        "start_vcell_v, drain_trigger) VALUES (?, ?, 6, 4.05, ?)",
+        (_iso(_CUT), _iso(_CUT + timedelta(seconds=6)), DRAIN_TRIGGER_KEYOFF))
+    conn.commit()
+    conn.close()
+    trail = tmp_path / "boot_progress"
+    trail.write_text(json.dumps({"stage": "RUNNING", "boot_id": "prior1", "vcell": None}) + "\n",
+                     encoding="utf-8")
+    outcome = tmp_path / "outcome.json"
+    outcome.write_text(json.dumps({"boot_id": "prior1", "loss_at": _iso(_CUT),
+                                   "sync_outcome": _FLOOR, "home_state": _HOME}),
+                       encoding="utf-8")
+    arm(filePath=str(trail), dbPath=str(dbPath), bootId="new1", nasArchiveDir=str(tmp_path / "n"),
+        nasArchiveEnabled=False, outcomeRecordPath=str(outcome))
+    conn = sqlite3.connect(dbPath)
+    verdict = conn.execute("SELECT verdict FROM battery_health_log").fetchone()[0]
+    conn.close()
+    assert verdict == VERDICT_REPLACE

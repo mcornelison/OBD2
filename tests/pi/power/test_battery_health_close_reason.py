@@ -516,7 +516,7 @@ class TestEveryClosePathWritesItsReason:
 
 class TestTheVerdictReadsNoProse:
     @pytest.mark.parametrize(
-        'name', ['_PACK_SQL', '_TEST_SQL', '_CAL_SQL', '_JOBS_SQL'],
+        'name', ['_PACK_SQL', '_TEST_SQL', '_CAL_SQL', '_JOBS_SQL', '_FLOOR_SQL'],
     )
     def test_verdictQueries_readNoProse(self, name: str) -> None:
         sql = getattr(verdictModule, name)

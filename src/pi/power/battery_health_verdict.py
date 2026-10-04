@@ -41,6 +41,12 @@
 #                               rule, its constants and its three reasons are
 #                               retired.  The resolved verdict is written onto
 #                               the monthly-test row when it changes.
+# 2026-10-03    | Atlas (ARCH-065a) | T7 fix 1: a NULL/non-numeric provisional
+#                               input is log_unreadable (Ruling 16) and the
+#                               compute runs inside the reader's guard; a
+#                               floor-ended at-home drain newer than the counted
+#                               test is replace (Ruling 13); T clamped at 0; the
+#                               history write is bounded and warns once (17).
 # ================================================================================
 ################################################################################
 
@@ -190,6 +196,14 @@ PROVISIONAL_CUTOFF_V: float = 3.44
 # The canonical ISO-8601 UTC instant format every Pi writer stamps (TD-027).
 _ISO: str = '%Y-%m-%dT%H:%M:%SZ'
 
+#: The verdict-history write waits at most this long for another writer's lock
+#: (Ruling 17): the reader runs on the card tick and must never stall on it.
+_HISTORY_WRITE_BUSY_TIMEOUT_MS: int = 500
+
+#: The first failed history write is a WARNING; later ones are DEBUG, so a
+#: persistent lock cannot flood the journal from the card tick.
+_historyWriteWarned: bool = False
+
 
 # ================================================================================
 # SQL.  Every value is BOUND from its owner -- no trigger or outcome literal.
@@ -216,6 +230,17 @@ _CAL_SQL: str = (
     "SELECT t_floor_s, drain_rate_mv_s "
     f"FROM {BATTERY_HEALTH_LOG_TABLE} "
     "WHERE drain_trigger = ? AND cell_epoch = ? AND t_floor_s IS NOT NULL "
+    "ORDER BY start_timestamp DESC, drain_event_id DESC LIMIT 1"
+)
+
+#: The pack's newest drain the reserve floor ended AT HOME (Ruling 13): the
+#: boot finaliser stamps verdict=replace on it.  ``drain_rate_mv_s IS NULL``
+#: separates that event from a counted test's own verdict history.  Ordered by
+#: start_timestamp, like _TEST_SQL, so the two are compared on one clock.
+_FLOOR_SQL: str = (
+    "SELECT start_timestamp "
+    f"FROM {BATTERY_HEALTH_LOG_TABLE} "
+    "WHERE cell_epoch = ? AND verdict = ? AND drain_rate_mv_s IS NULL "
     "ORDER BY start_timestamp DESC, drain_event_id DESC LIMIT 1"
 )
 
@@ -283,6 +308,7 @@ def computeBatteryHealthVerdict(
     calibration: Mapping[str, Any] | None,
     jobsS: list[float],
     nowIso: str,
+    floorEndedTs: str | None = None,
 ) -> BatteryHealthVerdict:
     """T vs J.  Pure: no clock, no database.
 
@@ -294,7 +320,14 @@ def computeBatteryHealthVerdict(
             or None -- T is then a provisional straight-line projection.
         jobsS: At-home job durations in seconds, NEWEST FIRST.
         nowIso: Canonical ISO-8601 UTC instant for the staleness check.
+        floorEndedTs: ``start_timestamp`` of the pack's newest drain that the
+            reserve floor ended at home, or None.  Newer than the counted test
+            -> ``replace``: the pack failed the very job the verdict judges, so
+            it outranks stale / too-few-syncs / no-test (Ruling 13).
     """
+    testTs = str(test.get('start_timestamp') or '') if test else ''
+    if floorEndedTs and floorEndedTs > testTs:
+        return BatteryHealthVerdict(verdict=VERDICT_REPLACE, lastHealthCheckTs=floorEndedTs)
     try:
         now = datetime.strptime(nowIso, _ISO)
     except (TypeError, ValueError):
@@ -323,9 +356,15 @@ def computeBatteryHealthVerdict(
     else:
         # Straight line from the window's end VCELL to the provisional cutoff,
         # minus the reserve.  Over-projects near empty -- hence the label.
-        t = (float(test['window_end_s'])  # type: ignore[index]
-             + 1000.0 * (float(test['end_vcell_v']) - PROVISIONAL_CUTOFF_V) / -rate  # type: ignore[index]
-             - RESERVE_S)
+        # A NULL or non-numeric input here is an unreadable LOG row (Ruling 16):
+        # a test reaped without a checkpoint keeps end_vcell_v NULL yet can be
+        # rated from its trajectory.
+        try:
+            t = (float(test['window_end_s'])  # type: ignore[index]
+                 + 1000.0 * (float(test['end_vcell_v']) - PROVISIONAL_CUTOFF_V) / -rate  # type: ignore[index]
+                 - RESERVE_S)
+        except (TypeError, ValueError):
+            return _unknown(REASON_LOG_UNREADABLE, lastTs)
         provisional = True
 
     job = sum(jobs) / len(jobs)
@@ -337,7 +376,9 @@ def computeBatteryHealthVerdict(
         verdict = VERDICT_REPLACE
     return BatteryHealthVerdict(
         verdict=verdict, lastHealthCheckTs=lastTs, reason=None,
-        timeToFloorS=round(t), jobAvgS=round(job), jobMaxS=round(max(jobs)),
+        # T < 0 (the pack is already past the floor) publishes as 0; the
+        # verdict above is unaffected (Ruling 17).
+        timeToFloorS=round(max(t, 0.0)), jobAvgS=round(job), jobMaxS=round(max(jobs)),
         provisional=provisional,
     )
 
@@ -383,10 +424,28 @@ def readBatteryHealthVerdict(
             jobRows = conn.execute(
                 _JOBS_SQL, (OutcomeKind.DELIVERED.name, JOB_AVG_COUNT)
             ).fetchall()
+            floorRow = conn.execute(
+                _FLOOR_SQL, (cellEpoch, VERDICT_REPLACE)
+            ).fetchone()
+        result = _computeFromRows(testRow, calRow, jobRows, floorRow,
+                                  nowIso=nowIso, smoothingSec=smoothingSec)
     except Exception as exc:  # noqa: BLE001 -- unreadable log -> honest unknown
         logger.debug("battery-health verdict read failed (%s) -- unknown", exc)
         return _unknown(REASON_LOG_UNREADABLE)
 
+    # The history copy belongs to the TEST row: only a verdict the test
+    # produced (not a floor-ended drain's replace) is written onto it.
+    if (testRow is not None and result.verdict in _RESOLVED_VERDICTS
+            and result.lastHealthCheckTs == testRow[1] and result.verdict != testRow[5]):
+        _recordVerdict(database, drainEventId=testRow[0], verdict=result.verdict)
+    return result
+
+
+def _computeFromRows(
+    testRow: Any, calRow: Any, jobRows: Any, floorRow: Any,
+    *, nowIso: str, smoothingSec: float,
+) -> BatteryHealthVerdict:
+    """Map the fetched rows and compute.  Runs inside the reader's guard."""
     test = None
     if testRow is not None:
         test = {
@@ -403,12 +462,10 @@ def readBatteryHealthVerdict(
         for syncS in (_syncSeconds(row[0], row[1]) for row in jobRows)
         if syncS is not None
     ]
-    result = computeBatteryHealthVerdict(
+    return computeBatteryHealthVerdict(
         test=test, calibration=calibration, jobsS=jobsS, nowIso=nowIso,
+        floorEndedTs=floorRow[0] if floorRow is not None else None,
     )
-    if testRow is not None and result.verdict in _RESOLVED_VERDICTS and result.verdict != testRow[5]:
-        _recordVerdict(database, drainEventId=testRow[0], verdict=result.verdict)
-    return result
 
 
 def _syncSeconds(startedAt: Any, endedAt: Any) -> float | None:
@@ -431,11 +488,20 @@ def _recordVerdict(database: Any, *, drainEventId: int, verdict: str) -> None:
     Called ONLY when the computed verdict differs from the stored one: the
     reader runs on every card emit, and an unconditional UPDATE would make the
     card loop a continuous writer to the Pi's database (and re-mark the row
-    for sync every tick).  A failure is logged and never costs the verdict --
-    the card's answer does not depend on the history copy.
+    for sync every tick).  A failure never costs the verdict -- the card's
+    answer does not depend on the history copy.  The write waits at most
+    _HISTORY_WRITE_BUSY_TIMEOUT_MS for a lock; the first failure is a WARNING,
+    later ones DEBUG (Ruling 17).
     """
+    global _historyWriteWarned
     try:
         with database.connect() as conn:
+            conn.execute(f"PRAGMA busy_timeout = {_HISTORY_WRITE_BUSY_TIMEOUT_MS}")
             conn.execute(_WRITE_VERDICT_SQL, (verdict, drainEventId))
     except Exception as exc:  # noqa: BLE001 -- history copy only
-        logger.debug("battery-health verdict history write failed (%s)", exc)
+        if not _historyWriteWarned:
+            _historyWriteWarned = True
+            logger.warning("battery-health verdict history write failed (%s) -- "
+                           "the card verdict is unaffected; later failures log at DEBUG", exc)
+        else:
+            logger.debug("battery-health verdict history write failed (%s)", exc)

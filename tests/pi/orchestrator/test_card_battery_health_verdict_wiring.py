@@ -54,7 +54,7 @@ from tests.pi.battery_verdict_fixture import (
 # Sampled ONCE at import: the mixin owns its own wall clock.
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 
-_VERDICT_SQL = ("_PACK_SQL", "_TEST_SQL", "_CAL_SQL", "_JOBS_SQL")
+_VERDICT_SQL = ("_PACK_SQL", "_TEST_SQL", "_CAL_SQL", "_JOBS_SQL", "_FLOOR_SQL")
 
 #: Columns the verdict reads that the fixture may legitimately leave to the
 #: database: the autoincrement key, and the verdict the reader itself writes.

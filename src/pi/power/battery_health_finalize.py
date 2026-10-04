@@ -23,6 +23,9 @@
 #                                      battery_health.
 # 2026-10-03    | Atlas (ARCH-065a)  | ARCH-065 T6 fix: row keyed by the loss time (not
 #                                      newest closed row); open rows rated; span check.
+# 2026-10-03    | Atlas (ARCH-065a)  | T7 fix 1 (Ruling 13): a drain the reserve floor
+#                                      ended at home is stamped verdict=replace
+#                                      (write-once, any trigger) and is not rated.
 ################################################################################
 """Finalise the prior drain at boot -- cut step and window drain rate."""
 
@@ -33,8 +36,11 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 from src.common.time.helper import CANONICAL_ISO_FORMAT
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.battery_capacity import TEST_HOLD_S, WINDOW_S, WINDOW_SKIP_S
 from src.pi.power.battery_health import DRAIN_TRIGGER_MONTHLY_TEST
+from src.pi.power.battery_health_verdict import VERDICT_REPLACE
+from src.pi.power.power_watch.contract import OutcomeKind
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,17 @@ LOSS_ROW_AFTER_S: int = 30
 
 #: Fraction of WINDOW_S the window must hold in samples (1 Hz) for the rate to count.
 MIN_WINDOW_FILL: float = 0.8
+
+#: The at-home states, as the outcome record stores them (the enum NAME).  A
+#: reserve floor that ended the drain in one of these means the pack could not
+#: carry the full sync and a graceful shutdown (Ruling 13).
+_AT_HOME_STATE_NAMES: frozenset[str] = frozenset(
+    state.name for state in (
+        HomeNetworkState.AT_HOME_SERVER_REACHABLE,
+        HomeNetworkState.AT_HOME_SERVER_DOWN,
+        HomeNetworkState.AT_HOME_JOINING,
+    )
+)
 
 
 def windowDrainRate(points: list[tuple[float, float]]) -> float | None:
@@ -67,6 +84,8 @@ def finalizeLatestDrain(
     *,
     priorBootVcellBeforeCutV: float | None,
     priorBootLossAt: str | None,
+    priorBootSyncOutcome: str | None = None,
+    priorBootHomeState: str | None = None,
 ) -> None:
     """Complete the cut step and (monthly test) window rate of THE prior loss's row.
 
@@ -85,6 +104,11 @@ def finalizeLatestDrain(
         conn: Open connection with the Task 1 columns present.
         priorBootVcellBeforeCutV: powerwatch's last on-wall VCELL (volts), or None.
         priorBootLossAt: the prior loss's canonical UTC ISO second, or None.
+        priorBootSyncOutcome: the prior shutdown sync's OutcomeKind NAME, or None.
+        priorBootHomeState: the prior loss's HomeNetworkState NAME, or None.
+            RESERVE_FLOOR at an at-home state stamps ``verdict = replace`` on the
+            row (write-once, any drain_trigger) and the row is not rated: a
+            floor-ended drain is a failed job, not a counted capacity test.
     """
     if priorBootLossAt is None:
         logger.info("battery_health_finalize: no prior loss time recorded -- nothing to finalise")
@@ -94,7 +118,7 @@ def finalizeLatestDrain(
     hi = (loss + timedelta(seconds=LOSS_ROW_AFTER_S)).strftime(CANONICAL_ISO_FORMAT)
     row = conn.execute(
         "SELECT drain_event_id, start_timestamp, start_vcell_v, drain_trigger, "
-        "cut_step_mv, drain_rate_mv_s FROM battery_health_log "
+        "cut_step_mv, drain_rate_mv_s, verdict FROM battery_health_log "
         "WHERE start_timestamp >= ? AND start_timestamp <= ? "
         "ORDER BY drain_event_id DESC LIMIT 1",
         (lo, hi),
@@ -103,13 +127,25 @@ def finalizeLatestDrain(
         logger.info("battery_health_log has no row for the loss at %s -- nothing to finalise",
                     priorBootLossAt)
         return
-    drainId, startTs, startV, trigger, cutStep, rate = row
+    drainId, startTs, startV, trigger, cutStep, rate, verdict = row
     if cutStep is None and priorBootVcellBeforeCutV is not None and startV is not None:
         conn.execute(
             "UPDATE battery_health_log SET cut_step_mv = ? WHERE drain_event_id = ?",
             (round(1000.0 * (priorBootVcellBeforeCutV - startV), 2), drainId),
         )
         conn.commit()
+    if (priorBootSyncOutcome == OutcomeKind.RESERVE_FLOOR.name
+            and priorBootHomeState in _AT_HOME_STATE_NAMES):
+        if verdict is None:
+            conn.execute(
+                "UPDATE battery_health_log SET verdict = ? "
+                "WHERE drain_event_id = ? AND verdict IS NULL",
+                (VERDICT_REPLACE, drainId),
+            )
+            conn.commit()
+            logger.warning("battery_health_finalize: the reserve floor ended the at-home "
+                           "drain of %s -- verdict %s", priorBootLossAt, VERDICT_REPLACE)
+        return  # a floor-ended drain is never rated as a capacity test
     if trigger != DRAIN_TRIGGER_MONTHLY_TEST or rate is not None:
         return
     cut = datetime.strptime(startTs, CANONICAL_ISO_FORMAT).replace(tzinfo=UTC)
