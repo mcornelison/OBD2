@@ -5,6 +5,7 @@
 #   reasons in `reasons.health`; the renderer had no table for them, so all six
 #   reached the glass as the same em-dash. The live Pi published
 #   `health_data_stale` on 2026-09-11 and the tile said nothing about it.
+#   (ARCH-065 retired that reason; the vocabulary is now the six below.)
 #   The six names are IMPORTED from battery_health_verdict.py rather than
 #   re-typed here, so the renderer table is checked against the producer's own
 #   vocabulary -- plural intact, no seventh constant.
@@ -17,6 +18,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-14    | Ralph (Rex)  | Initial -- US-736 battery-health reason text.
+# 2026-10-03    | Atlas (ARCH-065a) | T7: the ARCH-065 six (no_monthly_test /
+#               |              | monthly_test_stale / too_few_syncs replace the
+#               |              | three retired drain reasons); a resolved verdict
+#               |              | puts its T-vs-J margin in front of the F-9 line.
 # ================================================================================
 ################################################################################
 
@@ -134,12 +139,13 @@ def test_everyReasonCode_isPresentInTheRenderer():
     js = _js()
     for reason in UNKNOWN_REASONS:
         assert reason in js, reason
-    assert "no_qualifying_drain:" not in js  # the singular trap
+    for retired in ("no_qualifying_drains", "too_few_drains", "health_data_stale"):
+        assert retired + ":" not in js, retired  # ARCH-065 retired these
 
 
 def test_thereIsOnlyOneBatteryReasonTable():
     """Extend, never duplicate: one table carries the six names."""
-    assert len(re.findall(r"\bno_qualifying_drains\s*:", _js())) == 1
+    assert len(re.findall(r"\bno_monthly_test\s*:", _js())) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +198,7 @@ def test_unrecognisedReasonThatLooksLikeAKeyInheritedFromObject_isNotAKnownText(
 @needsNode
 @pytest.mark.parametrize("verdict", ["good", "degraded", "replace"])
 def test_resolvedVerdict_ignoresAStrayReason(verdict):
-    tile = _healthTile(health=verdict, reasons={"health": "health_data_stale"})
+    tile = _healthTile(health=verdict, reasons={"health": "too_few_syncs"})
     assert tile["reason"] is None, tile
     assert tile["detail"] == "last health check · 2026-05-16 (118 days ago)", tile
 
@@ -220,12 +226,44 @@ def test_producerStillDeclaresExactlySixReasonConstants():
     names = [n for n in dir(battery_health_verdict) if re.fullmatch(r"REASON_[A-Z_]+", n)]
     assert sorted(names) == [
         "REASON_CLOCK_UNREADABLE",
-        "REASON_HEALTH_DATA_STALE",
         "REASON_LOG_UNREADABLE",
+        "REASON_MONTHLY_TEST_STALE",
         "REASON_NO_DATABASE",
-        "REASON_NO_QUALIFYING_DRAINS",
-        "REASON_TOO_FEW_DRAINS",
+        "REASON_NO_MONTHLY_TEST",
+        "REASON_TOO_FEW_SYNCS",
     ]
+    assert len(names) == 6
+
+
+# ---------------------------------------------------------------------------
+# ARCH-065: a resolved verdict says WHY it is what it is -- T against J -- in
+# front of the F-9 line, never in place of it.
+# ---------------------------------------------------------------------------
+
+
+@needsNode
+def test_resolvedVerdict_putsTheMarginInFrontOfTheF9Line():
+    tile = _healthTile(health="good", timeToFloorS=18000, jobAvgS=300, provisional=True)
+    assert tile["detail"].startswith("300 min vs 300 s job (provisional) " + _MIDDOT + " "), tile
+    assert tile["detail"].endswith("last health check · 2026-05-16 (118 days ago)"), tile
+
+
+@needsNode
+def test_resolvedVerdict_calibratedMargin_carriesNoProvisionalTag():
+    tile = _healthTile(health="degraded", timeToFloorS=600, jobAvgS=550, provisional=False)
+    assert tile["detail"].startswith("10 min vs 550 s job " + _MIDDOT + " "), tile
+
+
+@needsNode
+def test_resolvedVerdict_withoutNumbers_isTheF9LineAlone():
+    tile = _healthTile(health="good")
+    assert tile["detail"] == "last health check · 2026-05-16 (118 days ago)", tile
+
+
+@needsNode
+def test_anUnknownVerdict_neverShowsAMargin_evenIfNumbersLinger():
+    tile = _healthTile(reasons={"health": "too_few_syncs"}, timeToFloorS=18000, jobAvgS=300)
+    assert "min vs" not in tile["detail"], tile
 
 
 # ---------------------------------------------------------------------------

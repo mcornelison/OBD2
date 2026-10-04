@@ -4,8 +4,9 @@
 #   reaches the `battery-health` STATE FILE, not just the journal.
 #
 #   The first half of US-632 gave the verdict producer a typed reason vocabulary
-#   (no_database / log_unreadable / no_qualifying_drains / too_few_drains /
-#   health_data_stale / clock_unreadable) and recorded it to the journal, because
+#   (since ARCH-065: no_database / log_unreadable / clock_unreadable /
+#   no_monthly_test / monthly_test_stale / too_few_syncs) and recorded it to the
+#   journal, because
 #   `buildBatteryHealthState` lives in src/pi/splash/ and was outside the bench
 #   surface at the time (BL-us632, since granted).  A journal line is not the
 #   SSOT.  This file pins the fact arriving where the story says it must: the
@@ -35,6 +36,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-01    | Ralph (Rex)  | Initial -- US-632 reason reaches the state file.
+# 2026-10-03    | Atlas (ARCH-065a) | T7: ARCH-065 reasons + shared real-DDL
+#               |              | fixture; the A-3 schema gains timeToFloorS /
+#               |              | jobAvgS / jobMaxS / provisional.
 # ================================================================================
 ################################################################################
 
@@ -42,18 +46,15 @@
 
 import json
 import re
-import sqlite3
-from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
-from pi.power.battery_health import SCHEMA_BATTERY_HEALTH_LOG
 from pi.power.battery_health_verdict import (
-    REASON_HEALTH_DATA_STALE,
+    REASON_MONTHLY_TEST_STALE,
     REASON_NO_DATABASE,
-    REASON_NO_QUALIFYING_DRAINS,
-    REASON_TOO_FEW_DRAINS,
+    REASON_NO_MONTHLY_TEST,
+    REASON_TOO_FEW_SYNCS,
     UNKNOWN_REASONS,
     VERDICT_GOOD,
     VERDICT_UNKNOWN,
@@ -62,6 +63,7 @@ from pi.splash.battery_health_emitter import (
     buildBatteryHealthState,
     makeBatteryHealthEmitter,
 )
+from tests.pi.battery_verdict_fixture import VerdictDatabase, goodPack
 
 _NOW_ISO = "2026-09-01T12:00:00Z"
 _LAST_CHECK = "2026-05-16T01:54:27Z"
@@ -113,37 +115,20 @@ def _resolvedKw():
 # ---------------------------------------------------------------------------
 
 
-def _iso(daysAgo: float) -> str:
-    return (_NOW - timedelta(days=daysAgo)).strftime("%Y-%m-%dT%H:%M:%SZ")
+#: "Checked, aged out": a counted monthly test 62 days back (stale > 45).
+_STALE_DAYS = 62
 
 
-class _FakeDatabase:
-    """An in-memory battery_health_log that writes the DEPTH-gate column.
+def _stalePack():
+    return goodPack(_NOW, testDaysAgo=_STALE_DAYS)
 
-    ``end_vcell_v`` 3.45 V is the top of the MEASURED 3.42-3.45 V cutoff range
-    (Spool Session-27), i.e. a genuine run-to-shutdown that QUALIFIES.  The
-    older tests/pi/orchestrator/test_card_battery_health_verdict_wiring.py omits
-    this column, which is why its 7 tests are red at baseline (TD-us632).
-    """
 
-    def __init__(self, drains=()):
-        self._conn = sqlite3.connect(":memory:", check_same_thread=False)
-        self._conn.execute(SCHEMA_BATTERY_HEALTH_LOG)
-        for daysAgo, runtimeSeconds in drains:
-            self._conn.execute(
-                "INSERT INTO battery_health_log "
-                "(start_timestamp, end_timestamp, runtime_seconds, load_class, "
-                " end_vcell_v) VALUES (?, ?, ?, ?, ?)",
-                (
-                    _iso(daysAgo), _iso(daysAgo - 0.01),
-                    runtimeSeconds, "production", 3.45,
-                ),
-            )
-        self._conn.commit()
-
-    @contextmanager
-    def connect(self):
-        yield self._conn
+def _thinPack():
+    db = VerdictDatabase(_NOW)
+    db.addCalibration(10)
+    db.addTest(1)
+    db.addJobs(2)
+    return db
 
 
 class _FakeOrch(CardStateEmitterMixin):
@@ -188,10 +173,6 @@ def _liveUps():
     )
 
 
-def _qualifying(*daysAgo, runtimeSeconds=727):
-    return [(d, runtimeSeconds) for d in daysAgo]
-
-
 def _readState(tmp_path):
     return json.loads(
         (tmp_path / "states" / "battery-health").read_text(encoding="utf-8")
@@ -221,9 +202,9 @@ def test_unknownVerdict_publishesItsReasonKeyedByField():
     battery fact can be added later without inventing a second container.
     """
     state = buildBatteryHealthState(
-        nowIso=_NOW_ISO, healthReason=REASON_HEALTH_DATA_STALE, **_UNRESOLVED_KW
+        nowIso=_NOW_ISO, healthReason=REASON_MONTHLY_TEST_STALE, **_UNRESOLVED_KW
     )
-    assert state["reasons"] == {"health": REASON_HEALTH_DATA_STALE}
+    assert state["reasons"] == {"health": REASON_MONTHLY_TEST_STALE}
 
 
 def test_theReasonDoesNotReplaceTheVerdict_bothFactsSurvive():
@@ -234,10 +215,10 @@ def test_theReasonDoesNotReplaceTheVerdict_bothFactsSurvive():
     every existing renderer while looking more informative.
     """
     state = buildBatteryHealthState(
-        nowIso=_NOW_ISO, healthReason=REASON_TOO_FEW_DRAINS, **_UNRESOLVED_KW
+        nowIso=_NOW_ISO, healthReason=REASON_TOO_FEW_SYNCS, **_UNRESOLVED_KW
     )
     assert state["health"] == VERDICT_UNKNOWN
-    assert state["reasons"]["health"] == REASON_TOO_FEW_DRAINS
+    assert state["reasons"]["health"] == REASON_TOO_FEW_SYNCS
 
 
 def test_resolvedVerdict_publishesAnEmptyMap_neverAContradiction():
@@ -248,7 +229,7 @@ def test_resolvedVerdict_publishesAnEmptyMap_neverAContradiction():
     `good` alongside "we could not tell": the emitter drops it.
     """
     state = buildBatteryHealthState(
-        nowIso=_NOW_ISO, healthReason=REASON_HEALTH_DATA_STALE, **_resolvedKw()
+        nowIso=_NOW_ISO, healthReason=REASON_MONTHLY_TEST_STALE, **_resolvedKw()
     )
     assert state["health"] == VERDICT_GOOD
     assert state["reasons"] == {}
@@ -314,7 +295,7 @@ def test_theReasonsAreMachineWords_notTheSpacedHumanTextOfTheSourceBlock():
     """
     state = buildBatteryHealthState(
         nowIso=_NOW_ISO,
-        healthReason=REASON_NO_QUALIFYING_DRAINS,
+        healthReason=REASON_NO_MONTHLY_TEST,
         upsAvailable=False,
         upsUnavailableReason="gauge unreadable",
         **_UNRESOLVED_KW,
@@ -337,21 +318,21 @@ def test_aDeadGaugeDoesNotEraseTheHealthReason():
     """
     state = buildBatteryHealthState(
         nowIso=_NOW_ISO,
-        healthReason=REASON_HEALTH_DATA_STALE,
+        healthReason=REASON_MONTHLY_TEST_STALE,
         upsAvailable=False,
         **_UNRESOLVED_KW,
     )
     assert state["vcellV"] is None  # the gauge really is blanked...
     assert state["soc"] is None
     assert state["health"] == VERDICT_UNKNOWN
-    assert state["reasons"] == {"health": REASON_HEALTH_DATA_STALE}
+    assert state["reasons"] == {"health": REASON_MONTHLY_TEST_STALE}
     assert state["lastHealthCheckTs"] == _LAST_CHECK  # ...and the history stands
 
 
-def test_theA3SchemaGainsExactlyOneKey_nothingRenamedOrDropped():
-    """The A-3 schema (spec §7) is a published contract.  This change ADDS one
-    key; it must move nothing else.  Asserted as a key-set diff rather than a
-    fresh exact-dict so a future field cannot be silently swapped for another.
+def test_theA3Schema_nothingRenamedOrDropped():
+    """The A-3 schema (spec §7) is a published contract.  US-632 added
+    `reasons`; ARCH-065 added the four T/J keys; nothing else moved.  Asserted
+    as an exact key set so a future field cannot be silently swapped for another.
     """
     state = buildBatteryHealthState(nowIso=_NOW_ISO, **_resolvedKw())
     assert set(state) == {
@@ -359,7 +340,34 @@ def test_theA3SchemaGainsExactlyOneKey_nothingRenamedOrDropped():
         "restedVcellV", "weakEvents30d", "restedHistory", "health",
         "fullChargeReached", "runtimeToCutoffS", "ambientTempC",
         "lastHealthCheckTs", "ladder", "source", "reasons", "ts",
+        "timeToFloorS", "jobAvgS", "jobMaxS", "provisional",
     }
+
+
+def test_theTJNumbers_arePublishedVerbatim():
+    """ARCH-065: T, J, the longest job and the provisional flag reach the file."""
+    state = buildBatteryHealthState(
+        nowIso=_NOW_ISO, timeToFloorS=18000, jobAvgS=109, jobMaxS=130,
+        provisional=True, **_resolvedKw(),
+    )
+    assert (state["timeToFloorS"], state["jobAvgS"], state["jobMaxS"]) == (18000, 109, 130)
+    assert state["provisional"] is True
+
+
+def test_theTJNumbers_defaultToHonestNulls():
+    state = buildBatteryHealthState(nowIso=_NOW_ISO, **_UNRESOLVED_KW)
+    assert (state["timeToFloorS"], state["jobAvgS"], state["jobMaxS"]) == (None, None, None)
+    assert state["provisional"] is False
+
+
+def test_aDeadGauge_blanksTheTJNumbers_likeRuntimeToCutoff():
+    state = buildBatteryHealthState(
+        nowIso=_NOW_ISO, timeToFloorS=18000, jobAvgS=109, jobMaxS=130,
+        upsAvailable=False, **_resolvedKw(),
+    )
+    assert state["runtimeToCutoffS"] is None
+    assert (state["timeToFloorS"], state["jobAvgS"], state["jobMaxS"]) == (None, None, None)
+    assert state["health"] == VERDICT_GOOD  # the verdict itself survives
 
 
 # ---------------------------------------------------------------------------
@@ -373,8 +381,8 @@ def test_theEmitCallableCarriesTheReasonIntoTheFile(tmp_path):
     Pinned through the REAL atomic writer onto a REAL file."""
     statesDir = str(tmp_path / "states")
     emit = makeBatteryHealthEmitter(statesDir, nowIsoFn=lambda: _NOW_ISO)
-    emit(healthReason=REASON_TOO_FEW_DRAINS, **_UNRESOLVED_KW)
-    assert _readState(tmp_path)["reasons"] == {"health": REASON_TOO_FEW_DRAINS}
+    emit(healthReason=REASON_TOO_FEW_SYNCS, **_UNRESOLVED_KW)
+    assert _readState(tmp_path)["reasons"] == {"health": REASON_TOO_FEW_SYNCS}
 
 
 def test_theEmitCallableDefaultsToSilence(tmp_path):
@@ -394,10 +402,9 @@ def test_theEmitCallableDefaultsToSilence(tmp_path):
 def test_theLivePiShape_readsStaleInTheStateFile_notMerelyUnknown(tmp_path):
     """validationCriteria 1 + 2, closed on the SSOT the story names.
 
-    Given: the live Pi's own shape -- real qualifying drains, all aged past the
-        90-day horizon (measured 2026-05-16, read 2026-08-31).
+    Given: a counted monthly test aged past the 45-day horizon.
     When: a card-emit tick runs.
-    Then: the file says `health_data_stale`, keeps the MEASUREMENT date, and
+    Then: the file says `monthly_test_stale`, keeps the MEASUREMENT date, and
         carries a CURRENT `ts`.
 
     All three at once, because the story's claim is a composition: "we measured
@@ -405,14 +412,12 @@ def test_theLivePiShape_readsStaleInTheStateFile_notMerelyUnknown(tmp_path):
     alone is satisfied by a payload that means something else.
     """
     state = _emitOnce(
-        tmp_path, hardwareManager=_liveUps(), database=_FakeDatabase(
-            _qualifying(107, 109, 111)
-        )
+        tmp_path, hardwareManager=_liveUps(), database=_stalePack()
     )
     assert state["health"] == VERDICT_UNKNOWN
-    assert state["reasons"] == {"health": REASON_HEALTH_DATA_STALE}
+    assert state["reasons"] == {"health": REASON_MONTHLY_TEST_STALE}
     # The MEASUREMENT date is preserved -- never advanced to fake a fresh check.
-    assert state["lastHealthCheckTs"] == _iso(107)
+    assert state["lastHealthCheckTs"] == _stalePack().iso(_STALE_DAYS)
     # ...while `ts` proves the verdict was computed NOW.  This is the pair that
     # makes "we checked and cannot say" legible without falsifying anything.
     assert state["ts"] != state["lastHealthCheckTs"]
@@ -425,20 +430,20 @@ def test_weCheckedAndCannotSay_isDistinguishableFromNothingHasChecked(tmp_path):
 
     Two Pis, both reporting `health: unknown` with a null-ish history.  Before
     this change their state files were IDENTICAL in every field a reader could
-    use.  Now the empty log says `no_qualifying_drains` ("we looked, there is
-    nothing to measure") and the aged log says `health_data_stale` ("we measured
+    use.  Now the empty log says `no_monthly_test` ("we looked, there is
+    nothing to measure") and the aged log says `monthly_test_stale` ("we measured
     it, in May").  Different facts, different words.
     """
     emptyLog = _emitOnce(
-        tmp_path / "a", hardwareManager=_liveUps(), database=_FakeDatabase()
+        tmp_path / "a", hardwareManager=_liveUps(), database=VerdictDatabase(_NOW)
     )
     agedLog = _emitOnce(
         tmp_path / "b", hardwareManager=_liveUps(),
-        database=_FakeDatabase(_qualifying(107, 109, 111)),
+        database=_stalePack(),
     )
     assert emptyLog["health"] == agedLog["health"] == VERDICT_UNKNOWN
-    assert emptyLog["reasons"] == {"health": REASON_NO_QUALIFYING_DRAINS}
-    assert agedLog["reasons"] == {"health": REASON_HEALTH_DATA_STALE}
+    assert emptyLog["reasons"] == {"health": REASON_NO_MONTHLY_TEST}
+    assert agedLog["reasons"] == {"health": REASON_MONTHLY_TEST_STALE}
     assert emptyLog["reasons"] != agedLog["reasons"]
 
 
@@ -450,15 +455,13 @@ def test_anAbsentDatabase_readsNoDatabase_notAnEmptyMeasurement(tmp_path):
     assert state["reasons"] == {"health": REASON_NO_DATABASE}
 
 
-def test_tooFewDrains_readsTooFewDrains_notStale(tmp_path):
-    """Two recent qualifying drains: fresh data, just not enough of it to form
-    a median.  The two thin-history causes must not collapse into one word."""
+def test_tooFewSyncs_readsTooFewSyncs_notStale(tmp_path):
+    """A fresh counted test but two syncs: fresh data, too few jobs to size J.
+    The thin-history and aged-out causes must not collapse into one word."""
     state = _emitOnce(
-        tmp_path, hardwareManager=_liveUps(), database=_FakeDatabase(
-            _qualifying(1, 2)
-        )
+        tmp_path, hardwareManager=_liveUps(), database=_thinPack()
     )
-    assert state["reasons"] == {"health": REASON_TOO_FEW_DRAINS}
+    assert state["reasons"] == {"health": REASON_TOO_FEW_SYNCS}
 
 
 def test_aDeadGaugeAndAStaleLog_bothSpeakForThemselves(tmp_path):
@@ -468,12 +471,12 @@ def test_aDeadGaugeAndAStaleLog_bothSpeakForThemselves(tmp_path):
     `reasons.health`.  Two sources, two truths, neither wearing the other's."""
     state = _emitOnce(
         tmp_path, hardwareManager=SimpleNamespace(upsMonitor=None),
-        database=_FakeDatabase(_qualifying(107, 109, 111)),
+        database=_stalePack(),
     )
     assert state["source"]["ups"]["available"] is False
     assert state["vcellV"] is None
-    assert state["reasons"] == {"health": REASON_HEALTH_DATA_STALE}
-    assert state["lastHealthCheckTs"] == _iso(107)
+    assert state["reasons"] == {"health": REASON_MONTHLY_TEST_STALE}
+    assert state["lastHealthCheckTs"] == _stalePack().iso(_STALE_DAYS)
 
 
 def test_theStateFileIsTheSurface_theJournalIsNotEnough(tmp_path):
@@ -482,8 +485,6 @@ def test_theStateFileIsTheSurface_theJournalIsNotEnough(tmp_path):
     if that arrangement is ever restored: the journal is a trace, the state file
     is the SSOT, and the card polls the SSOT."""
     state = _emitOnce(
-        tmp_path, hardwareManager=_liveUps(), database=_FakeDatabase(
-            _qualifying(107, 109, 111)
-        )
+        tmp_path, hardwareManager=_liveUps(), database=_stalePack()
     )
     assert state["reasons"]["health"] in UNKNOWN_REASONS

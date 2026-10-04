@@ -20,6 +20,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-03    | Rex (US-526) | Initial -- production drain writer catalog.
+# 2026-10-03    | Atlas (ARCH-065a) | T7: reaped-orphan verdict test re-pinned
+#               |              | on the ARCH-065 reader (key-off rows never vote).
 # ================================================================================
 ################################################################################
 
@@ -37,8 +39,9 @@ import pytest
 from src.pi.obdii.database import ObdDatabase
 from src.pi.power.battery_health import BATTERY_HEALTH_LOG_TABLE
 from src.pi.power.battery_health_verdict import (
+    REASON_NO_MONTHLY_TEST,
     VERDICT_UNKNOWN,
-    computeBatteryHealthVerdict,
+    readBatteryHealthVerdict,
 )
 from src.pi.power.drain_event_writer import (
     DRAIN_OPEN_NOTE,
@@ -536,18 +539,16 @@ class TestBootReaper:
         assert row['drain_event_id'] == foreignId
         assert row['end_timestamp'] is None
 
-    def test_reapedOrphanIsExcludedByTheDepthGateVerdict(
+    def test_reapedOrphansNeverProduceAVerdict(
         self, freshDb: ObdDatabase, ups: FakeUps,
     ) -> None:
         """
-        Given: three reaped orphans (enough to satisfy the 3-sample minimum
-               if they counted).
-        When:  the verdict is computed over the table.
-        Then:  the verdict is unknown -- a reaped orphan does not vote.
+        Given: three reaped orphans.
+        When:  the verdict is read over the real database.
+        Then:  the verdict is unknown -- a reaped key-off orphan does not vote.
 
-        Double-safe by construction: runtime_seconds NULL fails today's
-        runtime gate AND end_vcell_v NULL fails Spool's depth gate, so this
-        holds before and after the US-527 band remap.
+        ARCH-065: only a COUNTED monthly test (drain_rate_mv_s set) of the
+        current pack votes; key-off rows never do, reaped or not.
         """
         writer = _makeWriter(freshDb, ups)
         for _ in range(3):
@@ -560,11 +561,11 @@ class TestBootReaper:
             assert row['runtime_seconds'] is None
             assert row['end_vcell_v'] is None
 
-        verdict = computeBatteryHealthVerdict(
-            rows=rows, nowIso='2026-08-03T12:00:00Z',
+        verdict = readBatteryHealthVerdict(
+            database=freshDb, nowIso='2026-08-03T12:00:00Z', smoothingSec=5.0,
         )
         assert verdict.verdict == VERDICT_UNKNOWN
-        assert verdict.qualifyingCount == 0
+        assert verdict.reason == REASON_NO_MONTHLY_TEST
 
     def test_reapThenOpen_closeCannotResurrectThePreviousBootRow(
         self, freshDb: ObdDatabase, ups: FakeUps,

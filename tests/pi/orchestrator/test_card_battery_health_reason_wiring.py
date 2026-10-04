@@ -19,11 +19,8 @@
 #        journal writer -- the exact cost US-646 is open about and the exact
 #        condition that makes US-644's journal probe time out.
 #
-#   NOTE ON THE FIXTURE: `_FakeDatabase` here inserts `end_vcell_v`, which the
-#   older tests/pi/orchestrator/test_card_battery_health_verdict_wiring.py does
-#   NOT.  That omission makes every row in the older file fail Spool's US-527
-#   depth gate, which is why those 7 tests are red at baseline.  Recorded in
-#   offices/pm/tech_debt/ rather than fixed here -- see TD note in that file.
+#   FIXTURE: the shared real-DDL VerdictDatabase (tests/pi/battery_verdict_
+#   fixture.py) since ARCH-065 T7.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-31
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -35,6 +32,9 @@
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-632 reason wiring + log-on-change.
 # 2026-09-01    | Ralph (Rex)  | US-632: header corrected -- the state-file half
 #               |              | landed; this file keeps the TRANSITION half.
+# 2026-10-03    | Atlas (ARCH-065a) | T7: re-pinned on the ARCH-065 reasons
+#               |              | (too_few_syncs / monthly_test_stale /
+#               |              | no_monthly_test) and the shared fixture.
 # ================================================================================
 ################################################################################
 
@@ -42,53 +42,36 @@
 
 import json
 import logging
-import sqlite3
-from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
-from pi.power.battery_health import SCHEMA_BATTERY_HEALTH_LOG
 from pi.power.battery_health_verdict import (
-    REASON_HEALTH_DATA_STALE,
+    REASON_MONTHLY_TEST_STALE,
     REASON_NO_DATABASE,
-    REASON_NO_QUALIFYING_DRAINS,
-    REASON_TOO_FEW_DRAINS,
+    REASON_NO_MONTHLY_TEST,
+    REASON_TOO_FEW_SYNCS,
 )
+from tests.pi.battery_verdict_fixture import VerdictDatabase, goodPack
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 _LOGGER_NAME = "pi.obdii.orchestrator"
 
+#: "Checked, aged out": a counted monthly test 62 days back (stale > 45).
+_STALE_DAYS = 62
 
-def _iso(daysAgo: float) -> str:
-    return (_NOW - timedelta(days=daysAgo)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _thinPack():
+    """A fresh counted test but only two DELIVERED syncs -> too_few_syncs."""
+    db = VerdictDatabase(_NOW)
+    db.addCalibration(10)
+    db.addTest(1)
+    db.addJobs(2)
+    return db
 
 
-class _FakeDatabase:
-    """An in-memory battery_health_log that writes the DEPTH-gate column.
-
-    ``end_vcell_v`` 3.45 V is the top of the MEASURED 3.42-3.45 V cutoff range
-    (Spool Session-27), i.e. a genuine run-to-shutdown that QUALIFIES.
-    """
-
-    def __init__(self, drains=()):
-        self._conn = sqlite3.connect(":memory:", check_same_thread=False)
-        self._conn.execute(SCHEMA_BATTERY_HEALTH_LOG)
-        for daysAgo, runtimeSeconds in drains:
-            self._conn.execute(
-                "INSERT INTO battery_health_log "
-                "(start_timestamp, end_timestamp, runtime_seconds, load_class, "
-                " end_vcell_v) VALUES (?, ?, ?, ?, ?)",
-                (
-                    _iso(daysAgo), _iso(daysAgo - 0.01),
-                    runtimeSeconds, "production", 3.45,
-                ),
-            )
-        self._conn.commit()
-
-    @contextmanager
-    def connect(self):
-        yield self._conn
+def _stalePack():
+    return goodPack(_NOW, testDaysAgo=_STALE_DAYS)
 
 
 class _FakeOrch(CardStateEmitterMixin):
@@ -133,10 +116,6 @@ def _liveUps():
     )
 
 
-def _qualifying(*daysAgo, runtimeSeconds=727):
-    return [(d, runtimeSeconds) for d in daysAgo]
-
-
 def _readState(tmp_path):
     return json.loads(
         (tmp_path / "states" / "battery-health").read_text(encoding="utf-8")
@@ -158,14 +137,14 @@ def _reasonWarnings(caplog):
 
 
 def test_unknownVerdict_recordsItsReason(tmp_path, caplog):
-    """Given: a drain log with too few qualifying drains to median.
+    """Given: a counted test but too few DELIVERED syncs to size J.
     When: the card state is emitted.
-    Then: a WARNING names `too_few_drains` -- not merely "unknown".
+    Then: a WARNING names `too_few_syncs` -- not merely "unknown".
     """
     orch = _FakeOrch(
         _config(tmp_path),
         hardwareManager=_liveUps(),
-        database=_FakeDatabase(_qualifying(1, 2)),
+        database=_thinPack(),
     )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         orch._initializeCardStateEmitters()
@@ -173,14 +152,13 @@ def test_unknownVerdict_recordsItsReason(tmp_path, caplog):
 
     messages = _reasonWarnings(caplog)
     assert len(messages) == 1
-    assert REASON_TOO_FEW_DRAINS in messages[0]
+    assert REASON_TOO_FEW_SYNCS in messages[0]
 
 
 def test_theLivePiCase_recordsStale_notNothingEverChecked(tmp_path, caplog):
-    """Given: the live Pi's shape -- real qualifying drains, all aged out past
-        the 90-day staleness horizon (measured 2026-05-16, read 2026-08-31).
+    """Given: a counted monthly test aged past the 45-day staleness horizon.
     When: the card state is emitted.
-    Then: the recorded reason is `health_data_stale`.
+    Then: the recorded reason is `monthly_test_stale`.
 
     This is the punch-list 4.2 distinction made observable: the pack WAS
     measured and the measurement aged out, which is a different fact from
@@ -190,7 +168,7 @@ def test_theLivePiCase_recordsStale_notNothingEverChecked(tmp_path, caplog):
     orch = _FakeOrch(
         _config(tmp_path),
         hardwareManager=_liveUps(),
-        database=_FakeDatabase(_qualifying(107, 109, 111)),
+        database=_stalePack(),
     )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         orch._initializeCardStateEmitters()
@@ -198,10 +176,10 @@ def test_theLivePiCase_recordsStale_notNothingEverChecked(tmp_path, caplog):
 
     messages = _reasonWarnings(caplog)
     assert len(messages) == 1
-    assert REASON_HEALTH_DATA_STALE in messages[0]
-    assert REASON_NO_QUALIFYING_DRAINS not in messages[0]
+    assert REASON_MONTHLY_TEST_STALE in messages[0]
+    assert REASON_NO_MONTHLY_TEST not in messages[0]
     # And the card still reports WHEN -- the date is the signal, not noise.
-    assert _readState(tmp_path)["lastHealthCheckTs"] == _iso(107)
+    assert _readState(tmp_path)["lastHealthCheckTs"] == _stalePack().iso(_STALE_DAYS)
 
 
 def test_noDatabase_recordsNoDatabase_notAnEmptyLog(tmp_path, caplog):
@@ -216,15 +194,15 @@ def test_noDatabase_recordsNoDatabase_notAnEmptyLog(tmp_path, caplog):
     assert REASON_NO_DATABASE in messages[0]
 
 
-def test_emptyLog_recordsNoQualifyingDrains(tmp_path, caplog):
+def test_emptyLog_recordsNoMonthlyTest(tmp_path, caplog):
     orch = _FakeOrch(
-        _config(tmp_path), hardwareManager=_liveUps(), database=_FakeDatabase()
+        _config(tmp_path), hardwareManager=_liveUps(), database=VerdictDatabase(_NOW)
     )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         orch._initializeCardStateEmitters()
         orch._maybeEmitCardStates()
 
-    assert REASON_NO_QUALIFYING_DRAINS in _reasonWarnings(caplog)[0]
+    assert REASON_NO_MONTHLY_TEST in _reasonWarnings(caplog)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +241,7 @@ def test_steadyUnknown_isRecordedOnceNotOncePerTick(tmp_path, caplog):
     orch = _FakeOrch(
         _config(tmp_path),
         hardwareManager=_liveUps(),
-        database=_FakeDatabase(_qualifying(1, 2)),
+        database=_thinPack(),
     )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         orch._initializeCardStateEmitters()
@@ -285,30 +263,30 @@ def test_aCHANGEOfCause_isRecordedAgain(tmp_path, caplog):
     orch = _FakeOrch(
         _config(tmp_path),
         hardwareManager=_liveUps(),
-        database=_FakeDatabase(_qualifying(1, 2)),
+        database=_thinPack(),
     )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         orch._initializeCardStateEmitters()
         orch._maybeEmitCardStates()
         # The log ages out from under the producer.
-        orch._database = _FakeDatabase(_qualifying(107, 109, 111))
+        orch._database = _stalePack()
         orch._maybeEmitCardStates()
 
     messages = _reasonWarnings(caplog)
     assert len(messages) == 2
-    assert REASON_TOO_FEW_DRAINS in messages[0]
-    assert REASON_HEALTH_DATA_STALE in messages[1]
+    assert REASON_TOO_FEW_SYNCS in messages[0]
+    assert REASON_MONTHLY_TEST_STALE in messages[1]
 
 
 def test_resolvedVerdict_recordsNoUnknownWarning(tmp_path, caplog):
-    """Given: three recent qualifying drains at the baseline runtime.
+    """Given: a fresh counted test, a calibration and ten DELIVERED syncs.
     When: the card state is emitted.
     Then: the verdict resolves and NO unknown-reason warning is recorded.
     """
     orch = _FakeOrch(
         _config(tmp_path),
         hardwareManager=_liveUps(),
-        database=_FakeDatabase(_qualifying(1, 2, 3)),
+        database=goodPack(_NOW),
     )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         orch._initializeCardStateEmitters()
@@ -324,12 +302,12 @@ def test_recoveryFromUnknownToResolved_isRecorded(tmp_path, caplog):
     orch = _FakeOrch(
         _config(tmp_path),
         hardwareManager=_liveUps(),
-        database=_FakeDatabase(_qualifying(1, 2)),
+        database=_thinPack(),
     )
     with caplog.at_level(logging.INFO, logger=_LOGGER_NAME):
         orch._initializeCardStateEmitters()
         orch._maybeEmitCardStates()
-        orch._database = _FakeDatabase(_qualifying(1, 2, 3))
+        orch._database = goodPack(_NOW)
         orch._maybeEmitCardStates()
 
     resolved = [
@@ -346,19 +324,19 @@ def test_recoveryFromUnknownToResolved_isRecorded(tmp_path, caplog):
 
 def test_staleState_neverAdvancesLastHealthCheckTsToNow(tmp_path):
     """US-632 asks for "lastHealthCheckTs is current". It must NOT be met by
-    stamping today's date over a measurement that is 107 days old -- that
+    stamping today's date over a measurement that has aged out -- that
     fabricates a health check and defeats the F-9 stale-green guard. The
     payload's `ts` is what carries "this was computed just now"."""
     orch = _FakeOrch(
         _config(tmp_path),
         hardwareManager=_liveUps(),
-        database=_FakeDatabase(_qualifying(107, 109, 111)),
+        database=_stalePack(),
     )
     orch._initializeCardStateEmitters()
     orch._maybeEmitCardStates()
     state = _readState(tmp_path)
 
-    assert state["lastHealthCheckTs"] == _iso(107)
+    assert state["lastHealthCheckTs"] == _stalePack().iso(_STALE_DAYS)
     assert state["lastHealthCheckTs"] != state["ts"]
     # `ts` IS current -- the producer ran on this tick. That is the evidence
     # that "the producer stopped running" was a misreading of a stale

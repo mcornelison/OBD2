@@ -1,26 +1,22 @@
 ################################################################################
 # File Name: battery_health_verdict.py
-# Purpose/Description: US-504 -- the battery HEALTH verdict + last-health-check
-#   producer for the consolidated Health card's Battery section (F-123).  The
-#   card carried a HARDCODED health="unknown" / lastHealthCheckTs=None because
-#   no producer existed; this module is that producer, built to Spool's [EXACT]
-#   spec (offices/pm/inbox/2026-08-01-from-spool-us504-battery-health-verdict-
-#   source.md).
+# Purpose/Description: The battery HEALTH verdict + last-health-check producer
+#   for the Battery Health card.
 #
-#   Source = ``battery_health_log`` runtime-to-cutoff, NOT a live MAX17048 spot
-#   read: health is capacity FADE over time and a spot voltage cannot see it.
-#   Runtime under a known production load IS the capacity measurement.
+#   ARCH-065 (CIO 2026-10-02) REPLACED the US-504 rule.  The verdict answers one
+#   question: after key-off at home, can the pack carry a full sync AND a
+#   graceful shutdown?
+#     T = time from key-off to the reserve floor (from this pack's newest
+#         counted monthly test, shaped by its calibration drain when one exists)
+#     J = the at-home job: the mean of the newest JOB_AVG_COUNT DELIVERED
+#         shutdown syncs, each = confirm wait (config smoothingSec) + sync +
+#         graceful poweroff allowance
+#     good if T >= 1.2 J; degraded if J <= T < 1.2 J; replace if T < J.
+#   Design: specs/battery-health-design.md sec 3, 8, 15.
 #
-#   US-527: which rows COUNT is gated on DEPTH (``end_vcell_v <= 3.50`` V), not
-#   duration -- the end voltage is what says the pack actually discharged to its
-#   shutdown region.  The runtime still supplies the MEASUREMENT (and its bands);
-#   it just no longer decides admission.
-#
-#   Honest-instrument, load-bearing: `unknown` is the DEFAULT, not a failure
-#   mode.  Fewer than 3 qualifying drains, any NULL required input, an
-#   unreadable log, an unparseable clock, or health data older than 90 days all
-#   resolve to `unknown`.  A verdict manufactured out of NULLs is strictly worse
-#   than the placeholder it replaces (Spool, 2026-08-01).
+#   Honest-instrument, load-bearing: `unknown` is the DEFAULT, and every
+#   unknown names its cause (US-632).  A verdict manufactured out of NULLs is
+#   strictly worse than the placeholder it replaces (Spool, 2026-08-01).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-01
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -38,56 +34,59 @@
 # 2026-09-24    | Rex (US-683) | Qualifying query + _parseRow key on the typed
 #                               close_reason: an un-checkpointed reap is
 #                               excluded by type.  No other eligibility change.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T7: REWRITTEN.  Verdict = T vs J
+#                               (good/degraded/replace) from the current pack's
+#                               counted monthly test (+ calibration) and the
+#                               at-home DELIVERED syncs.  The qualifying-drain
+#                               rule, its constants and its three reasons are
+#                               retired.  The resolved verdict is written onto
+#                               the monthly-test row when it changes.
 # ================================================================================
 ################################################################################
 
-"""Battery-health verdict producer (US-504 / Spool [EXACT] spec).
+"""Battery-health verdict producer (ARCH-065: T vs J).
 
 The verdict vocabulary defined here is the SINGLE vocabulary for the battery
 health field end-to-end: this module -> ``battery_health_emitter`` -> the
-``battery-health`` state file -> ``carousel.js``.  It replaces the earlier
-green/attn/low display tiers, which were a second enum for the same fact (the
-cross-module enum-identity class of bug that cost the 9-drain saga).
+``battery-health`` state file -> ``carousel.js``.
 
 Severity framing (Spool, load-bearing): this signal is INFORMATIONAL at every
-state INCLUDING ``replace``.  The UPS's job is carrying the Pi through power
-loss to a clean shutdown -- that needs well under a minute and we measure ~12,
-a 10x margin.  ``replace`` means the data-integrity margin has thinned, NOT that
-anything on the car is at risk, so it must never render in alarm red and never
+state INCLUDING ``replace``.  It must never render in alarm red and never
 compete with coolant or a DTC STOP-tier alert on a driving surface.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from src.pi.power.battery_health import CLOSE_REASON_REAPED_UNCHECKPOINTED
+from src.pi.power.battery_health import (
+    BATTERY_HEALTH_LOG_TABLE,
+    DRAIN_TRIGGER_CALIBRATION,
+    DRAIN_TRIGGER_MONTHLY_TEST,
+)
+from src.pi.power.power_watch.contract import OutcomeKind
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     'BatteryHealthVerdict',
-    'DEGRADED_BASELINE_FRACTION',
-    'DEGRADED_MIN_RUNTIME_S',
-    'GOOD_BASELINE_FRACTION',
-    'GOOD_MIN_RUNTIME_S',
-    'MEDIAN_SAMPLE_COUNT',
-    'QUALIFYING_LOAD_CLASS',
-    'QUALIFYING_MAX_END_VCELL_V',
-    'QUALIFYING_MIN_RUNTIME_S',
+    'GREEN_MARGIN',
+    'JOB_AVG_COUNT',
+    'MIN_JOBS',
+    'PROVISIONAL_CUTOFF_V',
     'REASON_CLOCK_UNREADABLE',
-    'REASON_HEALTH_DATA_STALE',
     'REASON_LOG_UNREADABLE',
+    'REASON_MONTHLY_TEST_STALE',
     'REASON_NO_DATABASE',
-    'REASON_NO_QUALIFYING_DRAINS',
-    'REASON_TOO_FEW_DRAINS',
-    'RUNTIME_BASELINE_S',
-    'STALE_HEALTH_CHECK_DAYS',
-    'TRAILING_WINDOW_DAYS',
+    'REASON_NO_MONTHLY_TEST',
+    'REASON_TOO_FEW_SYNCS',
+    'RESERVE_S',
+    'SHUTDOWN_ALLOWANCE_S',
+    'STALE_TEST_DAYS',
     'UNKNOWN_REASONS',
     'VERDICT_DEGRADED',
     'VERDICT_GOOD',
@@ -96,7 +95,6 @@ __all__ = [
     'VERDICT_VALUES',
     'computeBatteryHealthVerdict',
     'readBatteryHealthVerdict',
-    'verdictForMedianRuntime',
 ]
 
 
@@ -114,158 +112,128 @@ VERDICT_VALUES: tuple[str, ...] = (
     VERDICT_GOOD, VERDICT_DEGRADED, VERDICT_REPLACE, VERDICT_UNKNOWN,
 )
 
+#: The verdicts that are a MEASUREMENT (written onto the monthly-test row).
+_RESOLVED_VERDICTS: frozenset[str] = frozenset(
+    (VERDICT_GOOD, VERDICT_DEGRADED, VERDICT_REPLACE)
+)
+
 
 # ================================================================================
-# Unknown-reason vocabulary (US-632)
+# Unknown-reason vocabulary (US-632; ARCH-065 sec 8)
 # ================================================================================
-# `unknown` is one WORD covering six genuinely different operational facts, and
-# a card that renders only the word cannot tell them apart.  Punch-list 4.2 is
-# exactly that failure: the Pi showed `health="unknown"` with a May
-# `lastHealthCheckTs`, and the reasonable reading -- "the producer stopped
-# running" -- was WRONG.  The producer runs on every card-emit tick; what it
-# could not say was WHY it had no verdict.
-#
-# US-632, NEGATIVE CASE: "'we checked and cannot say' is distinguishable from
-# 'nothing has checked since May'.  Those are different facts and today they
-# look identical."
-#
-# Idiom: snake_case machine reasons, following `reasons.altitude: no_source`
-# and `gear_derivation`'s no_data/stale/ambiguous.  NOT a second vocabulary --
-# the story says to follow the one that exists.
+# `unknown` is one WORD covering six different operational facts; the reason
+# says which.  snake_case machine words -- carousel.js maps them to text in
+# BATTERY_HEALTH_REASON_TEXT, and a guard test holds that table equal to
+# UNKNOWN_REASONS.
 
-#: No database handle at all (bench, or wiring not yet built).  Distinct from
-#: an empty log: there is nothing here that COULD have been read.
+#: No database handle at all (bench, or wiring not yet built).
 REASON_NO_DATABASE: str = 'no_database'
 
 #: The log exists but could not be read -- locked, pre-migration, corrupt.  An
-#: INSTRUMENT failure, and it must never masquerade as "never measured".
+#: INSTRUMENT failure, never to masquerade as "never measured".
 REASON_LOG_UNREADABLE: str = 'log_unreadable'
 
-#: The log read fine and holds no drain that measured capacity.  "Nothing has
-#: ever checked this pack."
-REASON_NO_QUALIFYING_DRAINS: str = 'no_qualifying_drains'
-
-#: Between 1 and MEDIAN_SAMPLE_COUNT-1 qualifying drains inside the trailing
-#: window.  "We have measurements, just not enough of them to median."
-REASON_TOO_FEW_DRAINS: str = 'too_few_drains'
-
-#: The newest qualifying drain is older than STALE_HEALTH_CHECK_DAYS.  "We
-#: checked, and that check has aged out."  This is the LIVE PI's state as
-#: measured 2026-08-31 (newest drain 2026-05-16, 107 days back).
-REASON_HEALTH_DATA_STALE: str = 'health_data_stale'
-
-#: ``nowIso`` was unparseable, so nothing can be age-checked.  A clock failure,
-#: not a data failure.
+#: ``nowIso`` was unparseable, so nothing can be age-checked.
 REASON_CLOCK_UNREADABLE: str = 'clock_unreadable'
 
+#: No counted monthly test exists for the CURRENT pack (or no pack is known).
+#: A new pack never inherits the old pack's verdict.
+REASON_NO_MONTHLY_TEST: str = 'no_monthly_test'
+
+#: The current pack's newest counted test is older than STALE_TEST_DAYS.
+REASON_MONTHLY_TEST_STALE: str = 'monthly_test_stale'
+
+#: Fewer than MIN_JOBS at-home DELIVERED shutdown syncs to size J from.
+REASON_TOO_FEW_SYNCS: str = 'too_few_syncs'
+
 #: Every reason an ``unknown`` verdict may carry.  A resolved verdict carries
-#: None -- the reason explains an ABSENCE and has no business beside a real
-#: measurement.
+#: None -- the reason explains an ABSENCE.
 UNKNOWN_REASONS: tuple[str, ...] = (
     REASON_NO_DATABASE,
     REASON_LOG_UNREADABLE,
-    REASON_NO_QUALIFYING_DRAINS,
-    REASON_TOO_FEW_DRAINS,
-    REASON_HEALTH_DATA_STALE,
     REASON_CLOCK_UNREADABLE,
+    REASON_NO_MONTHLY_TEST,
+    REASON_MONTHLY_TEST_STALE,
+    REASON_TOO_FEW_SYNCS,
 )
 
 
 # ================================================================================
-# Spool [EXACT] constants -- flag Spool before ANY drift
+# ARCH-065 constants (design sec 8; CIO 2026-10-02).  The monthly-test window
+# timings live in battery_capacity.py; the confirm wait is config
+# pi.powerWatch.smoothingSec, passed in.  These are the verdict's own numbers.
 # ================================================================================
-# groundingRef: offices/pm/inbox/2026-08-01-from-spool-us504-battery-health-
-# verdict-source.md (Spool, Tuning SME) for the bands + windows, and
-# offices/ralph/inbox/2026-08-02-from-spool-us504-gate-ruling-and-us521-
-# ratification.md (commit c72677e) for the DEPTH gate that replaced the retired
-# duration gate.  Every number below is marked [EXACT] in one of those rulings
-# and is load-bearing.
 
-#: Only the real production drain measures the pack under its real load.
-QUALIFYING_LOAD_CLASS: str = 'production'
+#: good if T >= GREEN_MARGIN * J (CIO 2026-10-02).
+GREEN_MARGIN: float = 1.2
 
-#: [EXACT:3.50] The DEPTH gate (US-527).  Duration was only ever a PROXY for
-#: "ran to cutoff"; end voltage answers that question directly where duration
-#: cannot.  A pack reaching cutoff in 400 s is a genuine and alarming capacity
-#: measurement that must vote; a key-cycle ending at 400 s with the pack at
-#: 4.0 V measured nothing.  Only depth separates those two.
-#:
-#: 3.50 V is not a round number picked for tidiness -- it is the gap between two
-#: measured values: the observed cutoff on this pack is 3.42-3.45 V (Spool
-#: Session-27, 28 drains) and the MAX17048 "low" alert threshold in use is
-#: 3.55 V.  So 3.50 sits ABOVE the observed cutoff with margin (a genuine
-#: run-to-shutdown at 3.45 qualifies) and BELOW the low warning (a drain that
-#: merely got low does not).
-QUALIFYING_MAX_END_VCELL_V: float = 3.50
+#: A counted monthly test older than this is not health data.
+STALE_TEST_DAYS: int = 45
 
-#: [EXACT:60] Sanity floor only -- it excludes absurd rows, it does NOT decide
-#: whether the drain measured capacity (that is the depth gate above).
-#:
-#: This RETIRES the [EXACT:600] duration gate, which was Spool's own spec bug
-#: (TD-074): 600 s sat ABOVE the 582 s good/degraded boundary, so every row that
-#: survived the gate necessarily landed in the `good` band and `degraded` /
-#: `replace` were unreachable -- the verdict failed toward REASSURANCE, the one
-#: direction a health verdict must never fail.  The floor now sits below both
-#: band boundaries, so the whole band range is reachable.
-QUALIFYING_MIN_RUNTIME_S: int = 60
+#: J = the mean of this many newest DELIVERED at-home syncs.
+JOB_AVG_COUNT: int = 10
 
-#: [EXACT:727] Measured mean of the 11 qualifying drains 2026-05-09 -> 05-16
-#: (range 617-831 s).  The reference point the bands are a fraction of.
-RUNTIME_BASELINE_S: int = 727
+#: Fewer DELIVERED syncs than this and J is not sized.
+MIN_JOBS: int = 3
 
-#: [EXACT:80] 80%-of-rated-capacity is the standard end-of-useful-life
-#: convention for lithium cells.
-GOOD_BASELINE_FRACTION: float = 0.80
+#: The graceful poweroff after the sync (measured ~4 s).
+SHUTDOWN_ALLOWANCE_S: float = 4.0
 
-#: [EXACT:60] Below this Spool stops trusting the UPS margin at all.
-DEGRADED_BASELINE_FRACTION: float = 0.60
+#: The reserve left at the floor: 10 minutes (CIO 2026-10-02).  Coincides in
+#: value with battery_capacity.WINDOW_S but is a DIFFERENT quantity.
+RESERVE_S: int = 600
 
-#: [EXACT:180] Qualifying drains older than this do not count toward the
-#: 3-sample minimum.
-TRAILING_WINDOW_DAYS: int = 180
-
-#: [EXACT:90] Health data older than this is not health data -- the verdict is
-#: forced to unknown regardless of which way the numbers point.
-STALE_HEALTH_CHECK_DAYS: int = 90
-
-#: Median of the last 3, not the last 1: observed single-drain scatter is
-#: 617-831 s (+/-15% around the mean), so one low reading would false-alarm.
-MEDIAN_SAMPLE_COUNT: int = 3
-
-#: Spool states the bands both as percentages and as seconds (>=582 / 436-582 /
-#: <436).  Deriving the seconds from the percentages keeps ONE definition; the
-#: test suite pins that the derivation reproduces his stated seconds exactly.
-#:
-#: UNCHANGED by the US-527 depth-gate remap -- Spool's ruling moves the GATE and
-#: explicitly leaves the bands alone ("Bands UNCHANGED ... they're now fully
-#: reachable across their whole range because duration no longer filters").
-#: These stay RUNTIME bands; there is no such thing as a depth band here.
-GOOD_MIN_RUNTIME_S: int = round(RUNTIME_BASELINE_S * GOOD_BASELINE_FRACTION)
-DEGRADED_MIN_RUNTIME_S: int = round(
-    RUNTIME_BASELINE_S * DEGRADED_BASELINE_FRACTION
-)
+#: The 450 mAh pouch's measured dropout; the current pack's is unmeasured until
+#: its calibration drain, which is why a T projected to it is ``provisional``.
+PROVISIONAL_CUTOFF_V: float = 3.44
 
 # The canonical ISO-8601 UTC instant format every Pi writer stamps (TD-027).
-_CANONICAL_ISO_FORMAT: str = '%Y-%m-%dT%H:%M:%SZ'
+_ISO: str = '%Y-%m-%dT%H:%M:%SZ'
 
-#: US-683: eligibility keys on the TYPED ``close_reason``, never on ``notes``
-#: prose.  An un-checkpointed reap is excluded by type as well as by its NULL
-#: runtime/depth.  ``IS NOT`` keeps a closed row with no recorded reason (a
-#: close written outside the three writers) on its measured values, exactly as
-#: before.  A checkpointed reap still votes: whether it should be excluded or
-#: flagged is an open architect ruling, not a change this query makes.
-_QUALIFYING_ROW_SQL: str = (
-    "SELECT start_timestamp, end_timestamp, runtime_seconds, load_class, "
-    "       end_vcell_v, close_reason "
-    "FROM battery_health_log "
-    "WHERE end_timestamp IS NOT NULL "
-    f"  AND close_reason IS NOT '{CLOSE_REASON_REAPED_UNCHECKPOINTED}' "
-    "  AND load_class = ? "
-    "  AND runtime_seconds IS NOT NULL "
-    "  AND runtime_seconds >= ? "
-    "  AND end_vcell_v IS NOT NULL "
-    "  AND end_vcell_v <= ? "
-    "ORDER BY start_timestamp DESC"
+
+# ================================================================================
+# SQL.  Every value is BOUND from its owner -- no trigger or outcome literal.
+# ================================================================================
+
+#: The current pack = the cell_epoch of the newest row that carries one.
+_PACK_SQL: str = (
+    f"SELECT cell_epoch FROM {BATTERY_HEALTH_LOG_TABLE} "
+    "WHERE cell_epoch IS NOT NULL ORDER BY drain_event_id DESC LIMIT 1"
+)
+
+#: The pack's newest COUNTED monthly test.  "Counted" has one definition
+#: everywhere (isMonthlyTestDue, the boot finaliser): drain_rate_mv_s IS NOT NULL.
+_TEST_SQL: str = (
+    "SELECT drain_event_id, start_timestamp, drain_rate_mv_s, end_vcell_v, "
+    "       window_end_s, verdict "
+    f"FROM {BATTERY_HEALTH_LOG_TABLE} "
+    "WHERE drain_trigger = ? AND cell_epoch = ? AND drain_rate_mv_s IS NOT NULL "
+    "ORDER BY start_timestamp DESC, drain_event_id DESC LIMIT 1"
+)
+
+#: The pack's newest calibration drain.
+_CAL_SQL: str = (
+    "SELECT t_floor_s, drain_rate_mv_s "
+    f"FROM {BATTERY_HEALTH_LOG_TABLE} "
+    "WHERE drain_trigger = ? AND cell_epoch = ? AND t_floor_s IS NOT NULL "
+    "ORDER BY start_timestamp DESC, drain_event_id DESC LIMIT 1"
+)
+
+#: The newest DELIVERED at-home shutdown syncs.  Ordered by rowid (insertion),
+#: not recorded_at: a dead-RTC boot stamps a pre-NTP wall clock and would
+#: mis-order (the prior_shutdown_summary precedent).
+_JOBS_SQL: str = (
+    "SELECT prior_boot_sync_started_at, prior_boot_sync_ended_at "
+    "FROM startup_log "
+    "WHERE prior_boot_sync_outcome = ? "
+    "  AND prior_boot_sync_started_at IS NOT NULL "
+    "  AND prior_boot_sync_ended_at IS NOT NULL "
+    "ORDER BY rowid DESC LIMIT ?"
+)
+
+#: The history write -- only when the stored value differs (see the reader).
+_WRITE_VERDICT_SQL: str = (
+    f"UPDATE {BATTERY_HEALTH_LOG_TABLE} SET verdict = ? WHERE drain_event_id = ?"
 )
 
 
@@ -279,46 +247,29 @@ class BatteryHealthVerdict:
     """The computed battery-health facts the card consumes.
 
     Attributes:
-        verdict: One of :data:`VERDICT_VALUES`.  ``unknown`` is the honest
-            default -- never a fallback that hides a computation failure.
-        lastHealthCheckTs: ``MAX(start_timestamp)`` over QUALIFYING rows, or
-            None when no real health check has ever completed.  Reported even
-            when the verdict is unknown: that date is itself the signal.
-        qualifyingCount: How many rows passed the gate (all time).  Diagnostic
-            only -- the card does not render it.
-        medianRuntimeS: The median of the last :data:`MEDIAN_SAMPLE_COUNT`
-            qualifying drains inside the trailing window, or None when the
-            verdict is unknown.
-        reason: US-632.  One of :data:`UNKNOWN_REASONS` when the verdict is
-            ``unknown``, naming WHICH of the six causes produced it; None when
-            the verdict resolved.  Without this the card can render "unknown"
-            but cannot say whether anything ever checked -- the punch-list 4.2
-            defect.
+        verdict: One of :data:`VERDICT_VALUES`.
+        lastHealthCheckTs: The counted monthly test's ``start_timestamp``, or
+            None when the pack has none.  Kept on the stale / too-few-syncs
+            unknowns: that date is itself the signal (F-9).
+        reason: One of :data:`UNKNOWN_REASONS` when ``unknown``; else None.
+        timeToFloorS: T, seconds from key-off to the reserve floor.
+        jobAvgS: J, the mean at-home job in seconds.
+        jobMaxS: The longest of the jobs J was averaged over.
+        provisional: True when T was projected to PROVISIONAL_CUTOFF_V because
+            the pack has no calibration drain yet.
     """
 
     verdict: str
     lastHealthCheckTs: str | None
-    qualifyingCount: int
-    medianRuntimeS: int | None
     reason: str | None = None
+    timeToFloorS: int | None = None
+    jobAvgS: int | None = None
+    jobMaxS: int | None = None
+    provisional: bool = False
 
 
-def _unknown(reason: str) -> BatteryHealthVerdict:
-    """An unknown verdict with nothing measured, naming its cause.
-
-    US-632 split what was a single shared ``_UNKNOWN_NO_DATA`` sentinel.  That
-    sentinel was correct about the VERDICT and silent about the CAUSE, so
-    "there is no database", "the log would not open" and "the log is fine and
-    empty" left byte-identical payloads -- an instrument failure indistinguish-
-    able from a pack that has genuinely never been drained.
-    """
-    return BatteryHealthVerdict(
-        verdict=VERDICT_UNKNOWN,
-        lastHealthCheckTs=None,
-        qualifyingCount=0,
-        medianRuntimeS=None,
-        reason=reason,
-    )
+def _unknown(reason: str, lastTs: str | None = None) -> BatteryHealthVerdict:
+    return BatteryHealthVerdict(verdict=VERDICT_UNKNOWN, lastHealthCheckTs=lastTs, reason=reason)
 
 
 # ================================================================================
@@ -328,81 +279,66 @@ def _unknown(reason: str) -> BatteryHealthVerdict:
 
 def computeBatteryHealthVerdict(
     *,
-    rows: Iterable[Mapping[str, Any]],
+    test: Mapping[str, Any] | None,
+    calibration: Mapping[str, Any] | None,
+    jobsS: list[float],
     nowIso: str,
 ) -> BatteryHealthVerdict:
-    """Compute the verdict + last-health-check from battery_health_log rows.
-
-    Pure: no clock, no database.  ``rows`` may contain non-qualifying rows --
-    the gate is applied here as well as in SQL so a caller that hands over an
-    unfiltered table cannot smuggle a partial drain into the verdict.
+    """T vs J.  Pure: no clock, no database.
 
     Args:
-        rows: Mappings with ``start_timestamp`` / ``end_timestamp`` /
-            ``runtime_seconds`` / ``load_class`` / ``end_vcell_v`` keys, in any
-            order.
-        nowIso: Canonical ISO-8601 UTC instant used for the trailing-window
-            and staleness comparisons.  An unparseable value yields
-            ``unknown`` -- a clock we cannot read cannot age-check the data.
-
-    Returns:
-        The :class:`BatteryHealthVerdict`.
+        test: The current pack's newest counted monthly test
+            (``start_timestamp``, ``drain_rate_mv_s`` (negative), ``end_vcell_v``,
+            ``window_end_s``), or None.
+        calibration: The pack's calibration (``t_floor_s``, ``drain_rate_mv_s``),
+            or None -- T is then a provisional straight-line projection.
+        jobsS: At-home job durations in seconds, NEWEST FIRST.
+        nowIso: Canonical ISO-8601 UTC instant for the staleness check.
     """
-    qualifying = [
-        parsed
-        for parsed in (_parseRow(row) for row in rows)
-        if parsed is not None
-    ]
-    if not qualifying:
-        return _unknown(REASON_NO_QUALIFYING_DRAINS)
+    try:
+        now = datetime.strptime(nowIso, _ISO)
+    except (TypeError, ValueError):
+        return _unknown(REASON_CLOCK_UNREADABLE)
+    rate = test.get('drain_rate_mv_s') if test else None
+    if rate is None or not float(rate) < 0:
+        return _unknown(REASON_NO_MONTHLY_TEST)
+    rate = float(rate)
+    lastTs = str(test['start_timestamp'])  # type: ignore[index]
+    try:
+        testAt = datetime.strptime(lastTs, _ISO)
+    except ValueError:
+        # The stored test date does not parse: the LOG is at fault, not the clock.
+        return _unknown(REASON_LOG_UNREADABLE)
+    if now - testAt > timedelta(days=STALE_TEST_DAYS):
+        return _unknown(REASON_MONTHLY_TEST_STALE, lastTs)
+    jobs = list(jobsS[:JOB_AVG_COUNT])
+    if len(jobs) < MIN_JOBS:
+        return _unknown(REASON_TOO_FEW_SYNCS, lastTs)
 
-    # Newest first.  Sorting here (not trusting the caller's order) is what
-    # makes "the last 3 drains" mean the last 3 by CLOCK, not by row order.
-    qualifying.sort(key=lambda item: item[0], reverse=True)
-    lastCheckAt, _, lastCheckTs = qualifying[0]
+    calRate = calibration.get('drain_rate_mv_s') if calibration else None
+    if calibration and calibration.get('t_floor_s') and calRate is not None and float(calRate) < 0:
+        # Shape from the calibration, scale from this month's rate.
+        t = float(calibration['t_floor_s']) * (float(calRate) / rate)
+        provisional = False
+    else:
+        # Straight line from the window's end VCELL to the provisional cutoff,
+        # minus the reserve.  Over-projects near empty -- hence the label.
+        t = (float(test['window_end_s'])  # type: ignore[index]
+             + 1000.0 * (float(test['end_vcell_v']) - PROVISIONAL_CUTOFF_V) / -rate  # type: ignore[index]
+             - RESERVE_S)
+        provisional = True
 
-    def unknownFor(reason: str) -> BatteryHealthVerdict:
-        """Unknown, but with the measurement date KEPT.
-
-        ``lastHealthCheckTs`` survives every unknown branch below on purpose:
-        the date of the last real check is itself the signal, and the card's
-        F-9 stale-green guard renders it so an aged reading cannot pass for a
-        live one.  It is never advanced to "now" to make the card look fresh --
-        that would fabricate a health check that did not happen.
-        """
-        return BatteryHealthVerdict(
-            verdict=VERDICT_UNKNOWN,
-            lastHealthCheckTs=lastCheckTs,
-            qualifyingCount=len(qualifying),
-            medianRuntimeS=None,
-            reason=reason,
-        )
-
-    now = _parseIso(nowIso)
-    if now is None:
-        return unknownFor(REASON_CLOCK_UNREADABLE)
-
-    # Staleness override -- checked BEFORE the numbers so a stale reading can
-    # never paint a confident verdict of any colour.  Its reason therefore also
-    # WINS over too_few_drains when both apply, which is the honest ordering:
-    # "the data on file has aged out" is a stronger statement than "collect
-    # three more drains", and the latter would understate the problem.
-    if (now - lastCheckAt) > timedelta(days=STALE_HEALTH_CHECK_DAYS):
-        return unknownFor(REASON_HEALTH_DATA_STALE)
-
-    windowStart = now - timedelta(days=TRAILING_WINDOW_DAYS)
-    inWindow = [item for item in qualifying if item[0] >= windowStart]
-    if len(inWindow) < MEDIAN_SAMPLE_COUNT:
-        return unknownFor(REASON_TOO_FEW_DRAINS)
-
-    sample = sorted(item[1] for item in inWindow[:MEDIAN_SAMPLE_COUNT])
-    median = sample[MEDIAN_SAMPLE_COUNT // 2]
+    job = sum(jobs) / len(jobs)
+    if t >= GREEN_MARGIN * job:
+        verdict = VERDICT_GOOD
+    elif t >= job:
+        verdict = VERDICT_DEGRADED
+    else:
+        verdict = VERDICT_REPLACE
     return BatteryHealthVerdict(
-        verdict=verdictForMedianRuntime(median),
-        lastHealthCheckTs=lastCheckTs,
-        qualifyingCount=len(qualifying),
-        medianRuntimeS=median,
-        reason=None,
+        verdict=verdict, lastHealthCheckTs=lastTs, reason=None,
+        timeToFloorS=round(t), jobAvgS=round(job), jobMaxS=round(max(jobs)),
+        provisional=provisional,
     )
 
 
@@ -415,148 +351,91 @@ def readBatteryHealthVerdict(
     *,
     database: Any | None,
     nowIso: str,
+    smoothingSec: float,
 ) -> BatteryHealthVerdict:
-    """Read the qualifying drain history and compute the verdict.
+    """Read the current pack's facts and compute the verdict.
 
-    Best-effort by contract: an absent or unreadable ``battery_health_log``
-    (fresh Pi, pre-migration DB, locked file) returns the honest unknown rather
-    than raising into the card-emit loop.
+    Best-effort by contract: an absent or unreadable log returns the honest
+    unknown rather than raising into the card-emit loop.
 
     Args:
         database: An object exposing ``connect()`` as a context manager
             yielding a DB-API connection, or None (bench / not yet built).
-        nowIso: Canonical ISO-8601 UTC instant for the age comparisons.
-
-    Returns:
-        The :class:`BatteryHealthVerdict`; ``unknown`` on any read failure.
+        nowIso: Canonical ISO-8601 UTC instant for the staleness check.
+        smoothingSec: Config ``pi.powerWatch.smoothingSec`` -- the confirm wait
+            before the shutdown window opens, the first term of every job.
+            Required: there is no default that could hide a missing value.
     """
     if database is None:
         return _unknown(REASON_NO_DATABASE)
     try:
         with database.connect() as conn:
-            fetched = conn.execute(
-                _QUALIFYING_ROW_SQL,
-                (
-                    QUALIFYING_LOAD_CLASS,
-                    QUALIFYING_MIN_RUNTIME_S,
-                    QUALIFYING_MAX_END_VCELL_V,
-                ),
+            pack = conn.execute(_PACK_SQL).fetchone()
+            if pack is None:
+                return _unknown(REASON_NO_MONTHLY_TEST)
+            cellEpoch = pack[0]
+            testRow = conn.execute(
+                _TEST_SQL, (DRAIN_TRIGGER_MONTHLY_TEST, cellEpoch)
+            ).fetchone()
+            calRow = conn.execute(
+                _CAL_SQL, (DRAIN_TRIGGER_CALIBRATION, cellEpoch)
+            ).fetchone()
+            jobRows = conn.execute(
+                _JOBS_SQL, (OutcomeKind.DELIVERED.name, JOB_AVG_COUNT)
             ).fetchall()
     except Exception as exc:  # noqa: BLE001 -- unreadable log -> honest unknown
         logger.debug("battery-health verdict read failed (%s) -- unknown", exc)
         return _unknown(REASON_LOG_UNREADABLE)
 
-    rows = [
-        {
-            'start_timestamp': row[0],
-            'end_timestamp': row[1],
-            'runtime_seconds': row[2],
-            'load_class': row[3],
-            'end_vcell_v': row[4],
-            'close_reason': row[5],
+    test = None
+    if testRow is not None:
+        test = {
+            'start_timestamp': testRow[1],
+            'drain_rate_mv_s': testRow[2],
+            'end_vcell_v': testRow[3],
+            'window_end_s': testRow[4],
         }
-        for row in fetched
+    calibration = None
+    if calRow is not None:
+        calibration = {'t_floor_s': calRow[0], 'drain_rate_mv_s': calRow[1]}
+    jobsS = [
+        float(smoothingSec) + syncS + SHUTDOWN_ALLOWANCE_S
+        for syncS in (_syncSeconds(row[0], row[1]) for row in jobRows)
+        if syncS is not None
     ]
-    return computeBatteryHealthVerdict(rows=rows, nowIso=nowIso)
+    result = computeBatteryHealthVerdict(
+        test=test, calibration=calibration, jobsS=jobsS, nowIso=nowIso,
+    )
+    if testRow is not None and result.verdict in _RESOLVED_VERDICTS and result.verdict != testRow[5]:
+        _recordVerdict(database, drainEventId=testRow[0], verdict=result.verdict)
+    return result
 
 
-# ================================================================================
-# Internal helpers
-# ================================================================================
+def _syncSeconds(startedAt: Any, endedAt: Any) -> float | None:
+    """One sync's duration, or None for an unparseable or negative window.
 
-
-def verdictForMedianRuntime(medianRuntimeS: int) -> str:
-    """Map a median drain runtime to its Spool band.
-
-    RESOLVED (US-527 / TD-074).  This function previously carried an OPEN SPEC
-    ISSUE: the qualifying gate was ``runtime_seconds >= 600`` while the degraded
-    band topped out at 582 s and replace at 435 s -- both entirely BELOW the
-    gate -- so every surviving row landed in ``good`` and a pack genuinely dying
-    at 500 s was discarded as "partial drain" noise rather than reported as
-    degraded.  Spool ruled it his own spec bug and gated on DEPTH instead
-    (``offices/ralph/inbox/2026-08-02-from-spool-us504-gate-ruling-and-us521-
-    ratification.md``, commit c72677e).
-
-    The prediction made when the issue was filed held exactly: **only the gate
-    constant moved.**  The bands here are byte-for-byte the ones Spool specified
-    on 2026-08-01 and the whole range is now reachable, which is why they were
-    kept in this separate public function rather than inlined into the gate.
+    A row that does not parse does not vote -- it is never defaulted.  A
+    negative duration is a wall-clock step mid-sync, not a measurement.
     """
-    if medianRuntimeS >= GOOD_MIN_RUNTIME_S:
-        return VERDICT_GOOD
-    if medianRuntimeS >= DEGRADED_MIN_RUNTIME_S:
-        return VERDICT_DEGRADED
-    return VERDICT_REPLACE
-
-
-def _parseRow(
-    row: Mapping[str, Any],
-) -> tuple[datetime, int, str] | None:
-    """Return ``(startAt, runtimeSeconds, startTs)`` for a QUALIFYING row.
-
-    None when the row fails the gate for any reason -- unclosed drain, wrong
-    load class, missing/sub-floor runtime, a shallow or unknown end voltage, or
-    an unparseable start timestamp.  A NULL required input is never silently
-    defaulted; the row simply does not vote.
-
-    The depth check makes an INTERRUPTED drain fail honestly.  US-526's boot
-    reaper deliberately leaves ``runtime_seconds`` AND ``end_vcell_v`` NULL on a
-    reaped orphan (nothing knew the voltage at power-off), so such a row is
-    excluded twice over -- belt and braces on a value that feeds a health
-    verdict.  US-683 makes it three times: its typed ``close_reason`` excludes
-    it here as well as in the SQL.
-    """
-    if row.get('end_timestamp') is None:
-        return None
-    if row.get('close_reason') == CLOSE_REASON_REAPED_UNCHECKPOINTED:
-        return None
-    if row.get('load_class') != QUALIFYING_LOAD_CLASS:
-        return None
-
-    runtime = row.get('runtime_seconds')
-    if runtime is None:
-        return None
     try:
-        runtimeSeconds = int(runtime)
-    except (TypeError, ValueError):
-        return None
-    if runtimeSeconds < QUALIFYING_MIN_RUNTIME_S:
-        return None
-
-    endVcell = row.get('end_vcell_v')
-    if endVcell is None:
-        return None
-    try:
-        endVcellV = float(endVcell)
-    except (TypeError, ValueError):
-        return None
-    if endVcellV > QUALIFYING_MAX_END_VCELL_V:
-        return None
-
-    startTs = row.get('start_timestamp')
-    startAt = _parseIso(startTs)
-    if startAt is None:
-        return None
-    return (startAt, runtimeSeconds, str(startTs))
-
-
-def _parseIso(value: Any) -> datetime | None:
-    """Parse a canonical ISO-8601 UTC instant to a naive-UTC datetime.
-
-    Returns None for anything unparseable -- the callers treat that as a NULL
-    required input rather than guessing a date.
-    """
-    if not isinstance(value, str):
-        return None
-    try:
-        return datetime.strptime(value, _CANONICAL_ISO_FORMAT)
-    except ValueError:
-        pass
-    try:
-        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        seconds = (datetime.strptime(str(endedAt), _ISO)
+                   - datetime.strptime(str(startedAt), _ISO)).total_seconds()
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        return parsed
-    # Normalise to naive UTC so every comparison in this module is like-for-like.
-    return (parsed - parsed.utcoffset()).replace(tzinfo=None)  # type: ignore[operator]
+    return seconds if seconds >= 0 else None
+
+
+def _recordVerdict(database: Any, *, drainEventId: int, verdict: str) -> None:
+    """Write the verdict onto the monthly-test row (server history).
+
+    Called ONLY when the computed verdict differs from the stored one: the
+    reader runs on every card emit, and an unconditional UPDATE would make the
+    card loop a continuous writer to the Pi's database (and re-mark the row
+    for sync every tick).  A failure is logged and never costs the verdict --
+    the card's answer does not depend on the history copy.
+    """
+    try:
+        with database.connect() as conn:
+            conn.execute(_WRITE_VERDICT_SQL, (verdict, drainEventId))
+    except Exception as exc:  # noqa: BLE001 -- history copy only
+        logger.debug("battery-health verdict history write failed (%s)", exc)
