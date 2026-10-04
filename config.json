@@ -548,8 +548,18 @@
     "sensors": {
       "imu": {
         "enabled": true,
-        "sampleHz": 4,
-        "magMode": "master",
+        "sampleHz": 50,
+        "magMode": "direct",
+        "fusionEngine": "imufusion",
+        "magDeclinationDeg": -4.0,
+        "magCalibration": {
+          "hardIronUt": [-4.4974, 1.7186, 6.1315],
+          "softIron": [[1.003814, 0.017776, -0.011429], [0.019606, 1.006167, -0.009419], [-0.012002, -0.008964, 0.990653]]
+        },
+        "accelCalibration": {
+          "offsetMs2": [-0.034698, -0.184143, 0.136256],
+          "matrix": [[0.999277, 0.000351, 0.000869], [0.000351, 0.998685, -0.000318], [0.000869, -0.000318, 0.994586]]
+        },
         "persistHz": 2,
         "stateHz": 1,
         "gravityTauSec": 5.0,

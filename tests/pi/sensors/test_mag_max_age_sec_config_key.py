@@ -43,9 +43,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _KEY = "magMaxAgeSec"
 
 # The window the car ran before this story: MAG_MAX_AGE_POLLS (5) / sampleHz (4).
+# ARCH-064 (CIO 2026-09-28) then raised the SHIPPED sampleHz to 50 -- the AHRS read
+# rate -- which is exactly why the window had to stop being a poll count. The 1.25 s
+# value is still the 4 Hz one; the shipped rate is not. (Merge 2026-10-01.)
 _LEGACY_POLLS = 5
-_SHIPPED_SAMPLE_HZ = 4
-_LEGACY_WINDOW_S = _LEGACY_POLLS / _SHIPPED_SAMPLE_HZ
+_LEGACY_SAMPLE_HZ = 4
+_SHIPPED_SAMPLE_HZ = 50
+_LEGACY_WINDOW_S = _LEGACY_POLLS / _LEGACY_SAMPLE_HZ
 
 # A non-default window, and a mag age that only it admits: 2.0 s is past the
 # shipped 1.25 s edge and inside 2.5 s.
@@ -101,8 +105,8 @@ def test_shippedConfig_magMaxAgeSecIsTheWindowTheCarRanToday():
     """
     Given: the shipped config.json
     When: pi.sensors.imu.magMaxAgeSec is read
-    Then: it is 1.25 s -- 5 polls at the shipped sampleHz 4, reproduced from the
-          config's own rate rather than restated
+    Then: it is 1.25 s -- 5 polls at the pre-ARCH-064 sampleHz 4 -- while the shipped
+          sampleHz is ARCH-064's 50: the window no longer follows the rate
     """
     imu = _shippedImu()
 
@@ -256,15 +260,15 @@ def test_bridgeConstruction_logsTheRateActuallyUsed_notTheOneDeclared(
     """
     Given: a constructor handed an unusable sampleHz (0), which falls back
     When: the bridge is constructed with the shipped 1.25 s window
-    Then: the log names the FALLBACK rate and its poll count (4 Hz, 5 polls),
-          not the 0 the caller passed
+    Then: the log names the FALLBACK rate and its poll count (50 Hz since ARCH-064,
+          62.50 polls), not the 0 the caller passed
     """
     with caplog.at_level(logging.INFO, logger="pi.sensors.imu_state_bridge"):
         ImuStateBridge(None, "unused", sampleHz=0, magMaxAgeSec=1.25)
 
     lines = _windowLog(caplog)
     assert len(lines) == 1
-    assert "sampleHz=4" in lines[0] and "5.00 polls" in lines[0]
+    assert "sampleHz=50" in lines[0] and "62.50 polls" in lines[0]
 
 
 # ---------------------------------------------------------------------------

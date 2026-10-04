@@ -92,7 +92,16 @@ class _FakeIcm:
 
 
 def _shippedConfig() -> dict[str, Any]:
-    return json.loads((_REPO_ROOT / "config.json").read_text(encoding="utf-8"))
+    """The shipped config, on the adafruit startup path these tests patch.
+
+    ARCH-064 ships magMode "direct" (a SparkFun build, real-hardware glue), so the
+    master/bypass path is selected explicitly here. The direct path's tunables are
+    pinned by test_imu_startup_order.test_direct_mode_passesTheConfiguredRecoveryTunables.
+    (Merge with Sprint 94, 2026-10-01.)
+    """
+    raw = json.loads((_REPO_ROOT / "config.json").read_text(encoding="utf-8"))
+    raw["pi"]["sensors"]["imu"]["magMode"] = "master"
+    return raw
 
 
 def _runStartupRecovery(

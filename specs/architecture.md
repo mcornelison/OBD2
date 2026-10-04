@@ -4273,6 +4273,106 @@ The validator's axis check went with it. A stale `mount` block left in
 (flipped on in Sprint 66 — connect-when-wired, the genuine Adafruit ICM-20948
 #4554 confirmed @0x69 via `WHO_AM_I = 0xEA`).
 
+##### ARCH-064 — reliable IMU: acquisition C + the x-io Fusion AHRS (2026-09-28)
+
+**Why a third acquisition path.** Evidence:
+`offices/architect/findings/2026-09-28-PLAN-ARCH-064-reliable-imu.md`,
+`2026-09-28-PREDICTION-ARCH-064-sparkfun-master-liveness.md`. **MEASURED** on the real hardware,
+all other project software stopped: with the ICM-20948's internal I2C master enabled — what
+`magMode: "master"` (B, ARCH-057) is, under **both** the adafruit and the SparkFun libraries — the
+AK09916 freezes after exactly one reading. Bypassing **after** the master has already run (a
+runtime fallback from B to A) can additionally **hang the whole I2C bus**, a worse failure than the
+freeze it would be working around. `src/pi/sensors/icm20948_direct.py` (`magMode: "direct"`, C) is
+the fix: the chip is configured from a **clean software reset**, the I2C master is **never
+enabled**, and the AK09916 is read directly in bypass per its own datasheet — live at up to 100 Hz,
+no freeze observed. `magMode` is now `"direct"` by default (`src/common/config/validator.py`
+DEFAULTS); **A (`"bypass"`) and B (`"master"`) are kept as revert paths** — a config edit + service
+restart, never a live flip, per the hang risk above.
+
+**Axis map — corrected (ARCH-064, supersedes ARCH-033).** Per **TDK DS-000189 p.83 Fig. 13** (the
+manufacturer's own AK09916 orientation drawing): mag +X = accel +X, mag +Y is **opposite** accel
++Y, mag +Z points **down** while accel +Z points **up** — `x <- ak_x, y <- -ak_y, z <- -ak_z`
+(`ak09916_bypass.AK09916_TO_ICM_AXES`). The retired ARCH-033 map differed by exactly a 90° rotation
+about z, which a heading-vs-GPS-course concentration sweep cannot discriminate (constant offsets
+are invariant to that statistic by construction); only an absolute reference could — a garage
+measurement, nose due east, read ~97° (east, correct) under this map and ~187° (south) under the
+retired one.
+
+**The AHRS engine (`src/pi/sensors/ahrs_fusion.py`, `AhrsFusion`) — x-io Fusion (`imufusion`
+1.3.3), selected via `pi.sensors.imu.fusionEngine` (default `"imufusion"`; `"legacy"` reverts to the
+byte-identical US-521 `PitchFusion` above, config-only, no redeploy).** Settings, ruled exactly, not
+tuned blindly:
+
+| Setting | Value | Why |
+|---|---|---|
+| `gain` | 0.5 | ARCH-064 ruling |
+| `acceleration_rejection` | **7°** | Not the ruled 10° — tightened with a stated, measured reason: speed aiding cannot see an acceleration ONSET until the next OBD SPEED sample (up to ~2.3 s later), so the rejection angle alone must hold attitude through that blind window. At 10° a 0.15 g pull (atan = 8.5°) is never rejected and leaks ~5° of phantom pitch before the first `dv/dt` arrives (measured: 2.76° still present 4 s in). 7° rejects any pull ≥ 0.123 g at onset with margin |
+| `magnetic_rejection` | 10° | ARCH-064 ruling |
+| `rejection_timeout` | 5 s | ARCH-064 ruling (`imufusion` 1.3.3 takes this in seconds) |
+| `Bias` stationary threshold | 3 dps over 3 s | Gyro bias re-learned only when genuinely at rest — **and only when OBD speed does not say the car is rolling** (below) |
+
+**Speed-aided compensation** (`AhrsFusion._compensate`) removes the vehicle's own specific force
+before the AHRS sees it, so sustained acceleration is not read as tilt (the same phantom §"Why the
+low-pass above was not enough for pitch" describes for the legacy engine): longitudinal `a_long =
+Δv/Δt` from OBD `SPEED` (held between samples, clamped to ±0.6 g — a road car does not exceed that
+longitudinally); lateral `v · ω_z` (centripetal, from the gyro's yaw rate). **Both switch OFF when
+the last OBD `SPEED` sample is more than 3 s stale (`SPEED_STALE_S`)** — never compensate on old
+data or a fabricated rate. The centripetal term uses the **bias-corrected** yaw rate (gyro − the
+learned offset): with the raw rate, a 0.747 dps bias at 30 m/s was a fake lateral force worth 5.77°
+of heading and 2.28° of roll on a straight road (final review I1, Ruling 35).
+
+**Gyro-bias learning is gated on speed (Ruling 35, I3).** Fusion's `Bias` calls anything under
+3 dps for 3 s "stationary", so a 1.5 dps highway curve held 60 s was learned as a −1.5 dps offset
+(2.97° heading error). The learner is not fed while the latest OBD `SPEED` — fresh **or stale** —
+exceeds `BIAS_LEARN_MAX_SPEED_KMH` (1 km/h); a dropout mid-curve is not evidence of a stop. With no
+speed ever seen, or a last reading of 0, Fusion's own detector is used. ⚠️ Cost: a bias not yet
+converged when the car pulls away stays unconverged until the next stop (15 s parked, 1 dps bias:
+1.84° heading / 0.58° roll at 30 m/s, against 7.7° / 3.06° before the fix).
+
+**The A-34 latch under the AHRS (Ruling 35, I2).** `AhrsFusion.gyroImplausible` latches when fresh
+OBD speed has read 0 for ≥ 3 s and the largest per-axis mean of (gyro − learned offset) over that
+window reaches `gyro_recovery.GYRO_FAULT_MIN_RAD_S` (0.10 rad/s, the bimodal cut). While latched,
+`pitchRad`/`rollRad`/`headingDeg` read `None` and the bridge publishes `pitchDeg`, `gradePct` **and
+`headingDeg`** as null with `gyro_implausible` (heading too, because this heading integrates the
+gyro; the legacy mag-only heading is not withheld). It clears on `reset()` or on a parked window
+that reads quiet (a successful power cycle), and the attitude is then restarted so the integrated
+fault is never published. **It cannot latch without fresh speed** — a turning car and a latched
+gyro are the same signal. Before this, the flag was hard-wired `False` and a latched gyro
+published pitch −44…−90° parked, with no reason code.
+
+**Heading is TRUE north, not magnetic**, once `magDeclinationDeg` is set
+(`headingDeg = (-yaw + declinationDeg) mod 360`, east-positive convention) — the legacy engine's
+`headingDeg` remains magnetic, uncorrected; `headingCalibrated` distinguishes the two in published
+state. `magCalibration` (`hardIronUt`, `softIron`) corrects the raw field before the AHRS update;
+zero/identity is a no-op, so an unset car ships unchanged accuracy rather than a silently wrong
+correction (fit with `tools/imu/fit_mag_calibration.py`, ARCH-064 Task 6).
+
+**Bounded gyro coasting, never unbounded drift.** Heading may coast on the gyro alone for at most
+`MAG_MAX_COAST_S = 5.0 s` after the last valid magnetometer reading, then reads `None` rather than
+an unaided integration that drifts without bound (review probe: 0.05 rad/s over 10 s moved a
+heading 90.0° → 73.7° with no correcting mag). A fresh mag reading restores it.
+
+**A FROZEN mag is withheld from the engine (Ruling 13).** While the ARCH-056 rotation verdict is
+`FROZEN`, `imu_state_bridge` passes `mag_ut=None` to the AHRS rather than the frozen vector: Fusion
+would reject it through a turn, then its recovery would **snap** heading onto it, wrong for up to
+~5 s after the verdict clears. The rotation gate itself still reads the bridge's own `_freshMag`,
+so withholding the AHRS's copy cannot stop the verdict clearing. The rotation score is accumulated
+in steps of ≥ `MAG_ROT_STEP_S` = 0.25 s of capture time (Ruling 35, I4): its 0.15 floor and the
+~0.06 frozen score were measured at 4 Hz, and summing |Δbearing| per sample at 50 Hz counts a
+dithering channel's noise 12.5× as often, so `FROZEN` never fired.
+
+⚠️ **Under `fusionEngine: "imufusion"` the legacy pitch knobs above have NO EFFECT** —
+`pitchTauSec`, `accelTrustBand`, `zuptMinStopSec`, `zuptSpeedMaxAgeSec`, `zuptMinStops`,
+`zuptWindowStops` are `PitchFusion`-only. `AhrsFusion.stopCount` / `.biasRad` are always `0`
+(surface parity only): there is no ZUPT stop detector and no mount-tilt bias under this engine.
+They apply again, unchanged, when `fusionEngine: "legacy"`.
+
+**`sampleHz` is now 50 Hz — the IMU's internal acquisition/fusion read rate, not a stored rate.**
+The 4 Hz ceiling this document's data-acquisition companion sets still governs what is STORED
+(`persistHz` 2 / `stateHz` 1, unchanged). See
+`specs/data-acquisition-architecture.md` §4.2.a for the full rate ruling and the exact decimation
+factor (50 → 2 = 25) — not restated here.
+
 **Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
 / V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
 Chromium kiosk can't reach the panel backlight) from the `states/light` feed via

@@ -37,6 +37,25 @@
 #
 # Author: Atlas (ARCH-033, CIO-directed)
 # Creation Date: 2026-09-18
+#
+# CORRECTED 2026-09-28 (ARCH-064, Atlas). The map this file pinned, (+y,+x,-z),
+# was WRONG. It is a proper rotation and it DID make the compass track GPS
+# course -- which is exactly why the R sweep above could not catch it: R is the
+# concentration of a HEADING-DIFFERENCE, invariant to any constant rotation
+# ([[0,1],[1,0]]) applied on top of the truth, so a map that is one more fixed
+# 90-deg rotation away from correct scores just as well. Only an INDEPENDENT
+# absolute reference -- a known heading, not a heading difference -- can tell
+# them apart. TDK's own orientation drawing, DS-000189 p.83 Fig. 13, gives
+# mag +X == accel +X, mag +Y opposite accel +Y, mag +Z down (accel +Z up), i.e.
+# ``x <- ak_x, y <- -ak_y, z <- -ak_z`` -- and a garage measurement against a
+# KNOWN heading (car nose pointing east) confirmed it: this file's map read
+# that measurement as SOUTH, 90 deg off. See
+# ``src/pi/sensors/ak09916_bypass.py`` (``AK09916_TO_ICM_AXES``) and
+# ``tests/pi/sensors/test_ak09916_axis_map.py`` for the corrected map and its
+# evidence. The tests below are updated to the datasheet-correct values rather
+# than deleted, because they still pin real properties (a proper rotation,
+# self-inverse, magnitude-preserving) that continue to hold under the corrected
+# map.
 ################################################################################
 """The AK09916's axes must be mapped into the ICM's frame, once, at the seam."""
 
@@ -62,8 +81,10 @@ def _det(triples) -> float:
 
 
 def test_transformIsTheDocumentedOrientation():
-    """x<-ak_y, y<-ak_x, z<-(-ak_z)."""
-    assert AK09916_TO_ICM_AXES == ((1, 1), (0, 1), (2, -1))
+    """DS-000189 p.83 Fig. 13: x<-ak_x, y<-(-ak_y), z<-(-ak_z). ARCH-064 correction;
+    the (1,1),(0,1),(2,-1) this test pinned under ARCH-033 read a known-east
+    heading as south -- see the file header and test_ak09916_axis_map.py."""
+    assert AK09916_TO_ICM_AXES == ((0, 1), (1, -1), (2, -1))
 
 
 def test_transformIsAProperRotation():
@@ -81,9 +102,10 @@ def test_transformIsAProperRotation():
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ((1.0, 2.0, 3.0), (2.0, 1.0, -3.0)),
+        # DS-000189 p.83 Fig. 13: x<-ak_x, y<-(-ak_y), z<-(-ak_z). ARCH-064.
+        ((1.0, 2.0, 3.0), (1.0, -2.0, -3.0)),
         ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-        ((-5.5, 0.25, -7.0), (0.25, -5.5, 7.0)),
+        ((-5.5, 0.25, -7.0), (-5.5, -0.25, 7.0)),
     ],
 )
 def test_toIcmFrame_mapsComponents(raw, expected):
@@ -99,9 +121,10 @@ def test_toIcmFrame_preservesMagnitude():
 def test_toIcmFrame_isInvolutionFree_butSelfInverse():
     """Applying it twice returns the original.
 
-    Not a requirement, but true of this particular map (swap + one negation),
-    and asserting it pins the map: any future edit that changes the transform
-    without changing this test would have to break it.
+    Not a requirement, but true of this particular map (x unchanged, y and z
+    each negated -- DS-000189 p.83 Fig. 13, ARCH-064), and asserting it pins
+    the map: any future edit that changes the transform without changing this
+    test would have to break it.
     """
     raw = (3.0, -4.0, 5.0)
     assert toIcmFrame(toIcmFrame(raw)) == pytest.approx(raw)
@@ -118,24 +141,36 @@ def test_headingFromRealDriveSamples_tracksGpsAfterTransform():
     🔴 THE ASSERTION IS ABOUT CONSISTENCY, NOT ABSOLUTE ERROR, AND THAT IS THE
     POINT OF THE TICKET. This transform fixes whether the compass TRACKS. It
     does not, and cannot, fix the absolute offset -- that is IMU_BODY_FRAME,
-    which is still set to _B for a mount that no longer exists (ARCH-034). On
-    these four samples the residual after transforming is a CONSTANT ~+115 deg;
-    a draft of this test asserted mean absolute error would fall, and it
-    correctly failed.
+    which is still set to _B for a mount that no longer exists (ARCH-034). A
+    draft of this test asserted mean absolute error would fall, and it
+    correctly failed -- the assertion is on R (concentration), not on error.
 
-    Untransformed the errors scatter (-69.6, +66.9, +21.7, -60.2); transformed
-    they cluster (+134.4, +111.9, +72.7, +138.8). Scatter is a compass that does
-    not know which way it is pointing. A constant offset is a compass that does,
-    wearing the wrong frame.
+    ⚠️ ARCH-064 CORRECTED ``toIcmFrame`` on 2026-09-28 (DS-000189 p.83 Fig. 13);
+    this test's numbers were RECOMPUTED under the corrected map, not carried
+    over. Untransformed the errors scatter (-69.6, +66.9, +21.7, -60.2) --
+    unaffected by the axis map, since "untransformed" skips ``toIcmFrame``
+    entirely (R ~= 0.557). Transformed by the CORRECTED map they are
+    (+43.4, -6.1, -20.3, +62.8), R ~= 0.828 -- looser than the retired map's
+    R ~= 0.98-equivalent cluster on these same four points (that map was wrong
+    by a fixed 90-deg rotation, and its heading-DIFFERENCE tracking was
+    correspondingly just as tight; see the file header). Four points are a
+    thin sanity margin at this map's actual noise level, not a claim that the
+    corrected map tracks BETTER on these specific samples -- it tracks
+    CORRECTLY, which R alone cannot distinguish from "tracks consistently
+    wrong". Scatter is a compass that does not know which way it is pointing;
+    concentration (loose or tight) is a compass that does, wearing some fixed
+    frame.
 
     ⚠️ An earlier draft also INVENTED the GPS course for its samples. These four
     are extracted from the paired data -- real magnetometer and accelerometer
     readings with the GPS course measured within 0.5 s, all above 4.7 m/s, and
     spread across the compass so no single heading can carry the result.
 
-    ⚠️ Four points are a SANITY check, not the statistical result. That is
-    R 0.170 -> 0.861 over two independent laps, recorded in
-    offices/architect/evidence/2026-09-18-heading-algorithm-comparison/.
+    ⚠️ Four points are a SANITY check, not the statistical result. The ARCH-033
+    sweep's R 0.170 -> 0.861 over two independent laps (recorded in
+    offices/architect/evidence/2026-09-18-heading-algorithm-comparison/) scored
+    the RETIRED map, which the R statistic alone could not discriminate from
+    the datasheet-correct one -- see the file header for why.
     """
     from pi.sensors.imu_state_bridge import computeHeadingDeg
 
