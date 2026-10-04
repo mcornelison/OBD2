@@ -35,6 +35,12 @@
 #               |              | single definition in common.config.validator.
 # 2026-09-24    | Rex (US-810) | Derived row writes the five gyro RATE bias
 #               |              | columns from the bridge snapshot.
+# 2026-09-30    | Atlas        | ARCH-064d (CIO-directed): IMU persist is a
+#               |              | WALL-CLOCK UTC GRID of 1/persistHz s, not every
+#               |              | Nth burst. Keep-1-of-N stored 1.62 Hz for a
+#               |              | configured 2 on drive 96 (loop ran 40.5 Hz, not
+#               |              | 50); the grid stores persistHz whatever the loop
+#               |              | rate, aligned to UTC so rows line up with ECU data.
 # ================================================================================
 ################################################################################
 
@@ -43,6 +49,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import threading
@@ -125,20 +132,68 @@ _LOW_DISK_WARN_BYTES = _LOW_DISK_WARN_GB * _BYTES_PER_GB
 _DEFAULT_RETENTION_DAYS = 7
 
 
-def _decimationFactor(sampleHz: Any, persistHz: Any) -> int:
-    """Keep-1-of-N factor to decimate the bus rate down to the persist rate.
+def _wallClockOffsetS() -> float:
+    """Seconds to add to a ``time.monotonic()`` reading to get UTC epoch seconds.
 
-    50 Hz bus -> 25 Hz persist == keep every 2nd burst. A persistHz at or above
-    sampleHz (or a bad value) means keep every burst (factor 1).
+    ``Sample.tsUtc`` is whole-second (``utcIsoNow``), too coarse to place a 2 or
+    4 Hz grid; ``tsCapture`` is sub-second but monotonic. This offset maps one
+    onto the other. It is re-read per decision, so an NTP slew or step moves the
+    grid with the wall clock rather than leaving it anchored to boot.
     """
-    try:
-        s = int(sampleHz)
-        p = int(persistHz)
-    except (TypeError, ValueError):
-        return 1
-    if s <= 0 or p <= 0:
-        return 1
-    return max(1, round(s / p))
+    return time.time() - time.monotonic()
+
+
+class _UtcGridSelector:
+    """Decide, once per IMU burst, whether it is persisted (ARCH-064d).
+
+    A burst is kept when it is the first one whose capture instant falls in a new
+    UTC slot of ``1 / persistHz`` seconds. Slots are anchored to the UTC epoch,
+    so at 1, 2 or 4 Hz every slot boundary is a whole second or an exact fraction
+    of one, and each stored row shares its ``ts_utc`` second with the ECU rows in
+    ``realtime_data`` (CIO 2026-09-30: "easily matchable or linked up to the ECM
+    data").
+
+    Why not keep-1-of-N: that stores ``sampleHz / N`` rows only if the read loop
+    really runs at ``sampleHz``. It did not (40.5 Hz, not 50, MEASURED on drive
+    96), and the stored cadence silently became 1.62 Hz against a configured 2.
+    A grid keyed on time stores ``persistHz`` whatever the loop rate, as long as
+    the loop reads at least once per slot.
+
+    ``persistHz >= sampleHz`` (or an unusable value) keeps every burst, exactly
+    as before.
+    """
+
+    def __init__(
+        self, sampleHz: Any, persistHz: Any, wallClockOffsetFn: Callable[[], float]
+    ) -> None:
+        self._offsetFn = wallClockOffsetFn
+        try:
+            s, p = float(sampleHz), float(persistHz)
+        except (TypeError, ValueError):
+            s = p = 0.0
+        self._keepAll = not (s > 0.0 and p > 0.0) or p >= s
+        self._persistHz = p
+        self._decidedSeq: int | None = None
+        self._decision = True
+        self._lastSlot: int | None = None
+
+    def keep(self, seq: int, tsCapture: float) -> bool:
+        """True if the burst ``seq`` (captured at monotonic ``tsCapture``) is stored.
+
+        The decision is made on the burst's first topic and reused for its
+        siblings, so a burst is always kept or dropped whole.
+        """
+        if self._keepAll:
+            return True
+        if seq != self._decidedSeq:
+            slot = math.floor((tsCapture + self._offsetFn()) * self._persistHz)
+            # "!=" rather than ">": a wall-clock step BACKWARDS must not silence
+            # persistence until the clock catches up with the last slot seen.
+            self._decision = slot != self._lastSlot
+            if self._decision:
+                self._lastSlot = slot
+            self._decidedSeq = seq
+        return self._decision
 
 
 def _xyz(value: Any) -> tuple[float | None, float | None, float | None]:
@@ -195,6 +250,7 @@ class EdrPersistenceSubscriber:
         gateStateEmitFn: Callable[[EdrLogGate], None] | None = None,
         freeDiskBytesFn: Callable[[], int] | None = None,
         derivedSnapshotFn: Callable[[], dict[str, Any] | None] | None = None,
+        wallClockOffsetFn: Callable[[], float] | None = None,
     ) -> None:
         """Bind the subscriber to its source subscription + write target.
 
@@ -202,8 +258,11 @@ class EdrPersistenceSubscriber:
             subscription: The bus Subscription (LOSSY on raw.imu.*/raw.light.*)
                 this consumer drains. May be None for direct-handleSample tests.
             database: ObdDatabase whose ``connect()`` yields the EDR write conn.
-            imuSampleHz: The IMU bus publish rate (for the decimation ratio).
-            imuPersistHz: The decimated IMU persist cadence (ADR 2.3).
+            imuSampleHz: The IMU bus publish rate. At or below ``imuPersistHz``
+                every burst is stored.
+            imuPersistHz: Stored IMU rows per second (ADR 2.3), placed on a UTC
+                grid of ``1 / imuPersistHz`` s (ARCH-064d) -- the first burst
+                captured in each slot is kept.
             retentionDays: Rolling-window bound; rows older are purged (ADR 2.6).
             driveIdFn: Resolves the current drive_id (default getCurrentDriveId).
             isDrivingFn: Reports whether a drive is RUNNING; default -> always
@@ -228,10 +287,17 @@ class EdrPersistenceSubscriber:
                 transaction as its raw sibling, so the pair lands together
                 or not at all. None (the default) writes no derived rows and
                 leaves this subscriber's behaviour exactly as it was.
+            wallClockOffsetFn: monotonic -> UTC epoch offset for the persist
+                grid (injection seam). None resolves this module's
+                ``_wallClockOffsetS`` at construction time.
         """
         self._sub = subscription
         self._database = database
-        self._imuDecimateN = _decimationFactor(imuSampleHz, imuPersistHz)
+        self._imuGrid = _UtcGridSelector(
+            imuSampleHz,
+            imuPersistHz,
+            wallClockOffsetFn if wallClockOffsetFn is not None else _wallClockOffsetS,
+        )
         self._retentionDays = int(retentionDays)
         self._driveIdFn = driveIdFn
         self._isDrivingFn = isDrivingFn if isDrivingFn is not None else (lambda: False)
@@ -368,9 +434,10 @@ class EdrPersistenceSubscriber:
             field = topic[len(_IMU_PREFIX):]
             if field not in _IMU_FIELDS:
                 return False
-            # Decimate whole bursts by seq (all 4 IMU topics share one seq, so
-            # this keeps/drops the entire burst consistently).
-            if sample.seq % self._imuDecimateN != 0:
+            # ARCH-064d: keep the first burst in each UTC slot of 1/persistHz s.
+            # All 4 IMU topics share one seq, and the selector decides once per
+            # seq, so the entire burst is kept or dropped together.
+            if not self._imuGrid.keep(sample.seq, sample.tsCapture):
                 return False
             return self._accumulate("imu", field, sample, len(_IMU_FIELDS))
         if topic.startswith(_LIGHT_PREFIX):

@@ -88,7 +88,8 @@ clamp is logged** — a silent clamp is a lie in the config.
 **Instances.**
 1. 🔴 **The IMU triple**, ruled `sampleHz 4 / persistHz 2 / stateHz 1` (CIO, 2026-09-21).
    `_decimationFactor = max(1, round(sampleHz/persistHz))`
-   (`src/pi/bus/edr_persistence_subscriber.py:122-136`) is **integer** rounding, so `4 → 2 → 1`
+   (formerly `src/pi/bus/edr_persistence_subscriber.py`; deleted in ARCH-064d, see instance 4)
+   is **integer** rounding, so `4 → 2 → 1`
    is exact while `5 → 2` silently becomes 2.5 Hz. 🔴 **At 5 Hz the triple cannot be expressed
    without a config field that lies. At 4 Hz it can.**
 2. **The prior defect this fixes:** `persistHz 25` above a `sampleHz` of 5 makes the factor
@@ -96,6 +97,13 @@ clamp is logged** — a silent clamp is a lie in the config.
    nothing reports it.**
 3. **`states/` publication** — the sequencer writes state and consumers react; the sequencer
    never names a consumer (F-103 decoupling).
+4. 🔴 **A consumer decimating by COUNT inherits every lie its source tells about RATE** (ARCH-064d,
+   2026-09-30). Keep-1-of-25 was an exact factor for `50 → 2`, and still stored **1.62 Hz**:
+   the source's `sampleHz 50` was itself untrue (a loop that waited *after* its work ran 40.5 Hz).
+   Fixed at both layers — a fixed-rate read loop, and a consumer that decimates by **TIME** (a
+   UTC grid of `1/persistHz` s), so the stored rate is the consumer's own claim, not a quotient
+   of the source's. (Instance 1's integer-factor argument is historical since this change;
+   `data-acquisition-architecture.md` §4.2.b.)
 
 **Anti-pattern prevented.** Two components independently sampling one source and disagreeing;
 and a configured rate that is silently unachievable.

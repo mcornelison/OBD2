@@ -4456,6 +4456,10 @@ battery/UPS gauge at **0.2 Hz**. The rule and its reasoning live in
 **`specs/data-acquisition-architecture.md` (ARCH-036)**; this note records only
 the change.
 
+- 🔴 *(Superseded 2026-09-30 by ARCH-064d — `specs/data-acquisition-architecture.md` §4.2.b:
+  storage is a UTC time grid, `_decimationFactor` is deleted, and the "not an exact divisor"
+  warning is replaced by a warning for any `persistHz` outside 1/2/4 Hz. The two bullets below
+  are the 2026-09-21 record.)*
 - **Every factor is exact.** `_decimationFactor(4, 2) == 2` (the EDR subscriber
   persists 1 of every 2 bursts) and `4 / 1` gives 4 (the state bridge's 1 s
   write interval takes 1 of every 4 bursts). No rounding and no clamp are
@@ -4903,8 +4907,9 @@ comparison then needs interpolation. **Interpolating a fusion output against its
 manufactures agreement.**
 
 🟢 **Alignment is structural, not lucky.** Both subscriptions are `QoS.LOSSY` with independent queues,
-so they can drop different samples — but **decimation is `seq % N`, a function of the SAMPLE and not
-of arrival order**, so a dropped burst costs both rows or neither. **LOSSY divergence costs COVERAGE
+so they can drop different samples — but **decimation is a function of the SAMPLE and not of arrival
+order** (since ARCH-064d the burst's UTC grid slot, decided once per `seq`; before it, `seq % N`), and
+the derived row rides the raw row's transaction, so a dropped burst costs both rows or neither. **LOSSY divergence costs COVERAGE
 of the comparison, never its correctness.**
 
 ⚠️ **The stamp is the FUSION's own `ts_utc`/`ts_capture`/`seq`, not the burst being flushed.** The

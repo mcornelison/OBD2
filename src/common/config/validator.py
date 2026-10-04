@@ -102,6 +102,10 @@
 #               |              | finite 3x3, determinant > 0).
 # 2026-09-28    | Atlas        | Ruling 32: the same shape validation for
 #               | (ARCH-064)   | magCalibration (shared _validateCalibrationBlock).
+# 2026-09-30    | Atlas        | ARCH-064d (CIO-directed): persist is a UTC time
+#               | (ARCH-064d)  | grid, so the "not an exact divisor" warning is
+#               |              | retired; RECOMMENDED_IMU_PERSIST_HZ (1, 2, 4) and
+#               |              | a warning for any other recording rate added.
 # 2026-09-30    | Rex (US-776-a)| pi.homeNetwork.serverPingPath default is
 #                                /api/v1/health; the old ping path was a 404.
 # 2026-10-01    | Rex (US-776-g)| pi.homeNetwork.shutdownSyncCeilingSec: 60 (CIO
@@ -169,8 +173,9 @@ REQUIRED_SECTIONS: tuple[str, ...] = ('pi', 'server')
 # HARD CAP (tightened from 5 Hz on 2026-09-21) still governs what is STORED:
 # persistHz/stateHz are UNCHANGED at 2/1 and stay under it, paired to the
 # drive window. See specs/data-acquisition-architecture.md §4.2's 2026-09-28
-# amendment for the full reasoning and the decimation factor this produces
-# (50 -> 2 = 25, exact).
+# amendment for the full reasoning. ARCH-064d (§4.2.b): stored rows are a UTC
+# time grid of 1/persistHz s, not a keep-1-of-N factor -- the "50 -> 2 = 25,
+# exact" factor stored 1.62 Hz on drive 96 because the loop ran at 40.5 Hz.
 DEFAULT_IMU_SAMPLE_HZ = 50
 DEFAULT_IMU_PERSIST_HZ = 2
 DEFAULT_IMU_STATE_HZ = 1
@@ -200,6 +205,14 @@ CELL_EPOCH_VALUES: tuple[str, ...] = (
     '18650-pack',
     CELL_EPOCH_UNKNOWN,
 )
+
+# ARCH-064d, CIO 2026-09-30: "you can always sample at whatever is easiest, but
+# from a data recording standpoint 4 Hz, 2 Hz or 1 Hz is desirable." Stored IMU
+# rows sit on a UTC grid of 1/persistHz s; at these rates every grid boundary is
+# a whole second or an exact quarter/half of one, so each row shares its ts_utc
+# second with the whole-second ECU rows in realtime_data. Any other persistHz is
+# still stored exactly, and WARNED (never rejected) by _warnImuRatesAboveSource.
+RECOMMENDED_IMU_PERSIST_HZ = (1, 2, 4)
 
 # Define default values for optional settings. Paths use the tier-aware
 # nested shape (pi.*, server.*) introduced in sweep 4. Legacy leaf paths
@@ -1624,12 +1637,16 @@ class ConfigValidator:
         """WARN when an IMU consumer rate cannot be what its config field says (US-796-b).
 
         persistHz and stateHz are consumers of sampleHz. A consumer rate above
-        its source carries no new data, and the persist path decimates by an
-        INTEGER factor (``max(1, round(sampleHz / persistHz))`` in
-        ``edr_persistence_subscriber._decimationFactor``), so a ratio that is not
-        exact silently lands on a different rate. Both degrade safely rather than
-        fail -- but a silent clamp is a config field that lies, so each one is
-        named here with both values and the rate actually delivered.
+        its source carries no new data: it degrades safely rather than fails, but
+        a silent clamp is a config field that lies, so it is named here with both
+        values and the rate actually delivered.
+
+        ARCH-064d: the persist path is a UTC time grid of ``1 / persistHz`` s
+        (``edr_persistence_subscriber._UtcGridSelector``), so ANY persistHz at or
+        below sampleHz is stored exactly -- the old "not an exact divisor"
+        warning described the retired keep-1-of-N rule and is gone. What is
+        warned instead is a rate outside ``RECOMMENDED_IMU_PERSIST_HZ`` (the CIO's
+        1/2/4 Hz), whose grid does not tile the ECU's whole-second rows evenly.
 
         Args:
             config: Validated configuration (post-default-application).
@@ -1640,17 +1657,18 @@ class ConfigValidator:
 
         persistHz = self._getNestedValue(config, 'pi.sensors.imu.persistHz')
         if _isPositiveNumber(persistHz):
-            factor = max(1, round(sampleHz / persistHz))
-            effectiveHz = sampleHz / factor
-            if effectiveHz != persistHz:
-                reason = (
-                    "exceeds its source" if persistHz > sampleHz
-                    else "is not an exact divisor of its source"
-                )
+            if persistHz > sampleHz:
                 logger.warning(
-                    "pi.sensors.imu.persistHz %g %s pi.sensors.imu.sampleHz %g -- "
-                    "every %d burst(s) persisted, effective rate %g Hz",
-                    persistHz, reason, sampleHz, factor, effectiveHz,
+                    "pi.sensors.imu.persistHz %g exceeds its source pi.sensors.imu.sampleHz %g -- "
+                    "every burst persisted, effective rate %g Hz",
+                    persistHz, sampleHz, sampleHz,
+                )
+            elif persistHz not in RECOMMENDED_IMU_PERSIST_HZ:
+                logger.warning(
+                    "pi.sensors.imu.persistHz %g is not an ECU-matchable recording rate "
+                    "(%s Hz, CIO 2026-09-30) -- rows are stored at %g Hz on a %g s UTC grid",
+                    persistHz, ", ".join(f"{r:g}" for r in RECOMMENDED_IMU_PERSIST_HZ),
+                    persistHz, 1.0 / persistHz,
                 )
 
         stateHz = self._getNestedValue(config, 'pi.sensors.imu.stateHz')
