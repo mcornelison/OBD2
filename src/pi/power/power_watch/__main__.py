@@ -162,8 +162,9 @@
 # 2026-10-03    | Atlas (ARCH-065a) | Drain writer built with cellEpoch from pi.power.cellEpoch.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: the sync task takes joinWaitSec + stallSec
 #                           (pi.homeNetwork) in place of shutdownSyncCeilingSec.
-# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: WallVcellCache; the PLD loop feeds it while
-#                           power is present; the outcome sink writes the drain's
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: WallVcellCache (15 s max age) fed from the
+#                           UpsMonitor poll while the PLD reads present (PLD loop
+#                           stays GPIO-only); the outcome sink writes the drain's
 #                           start/end and the pre-cut VCELL.
 # ================================================================================
 ################################################################################
@@ -586,26 +587,61 @@ def backlogCount(backlog: SyncBacklog) -> int | None:
     return backlog.total
 
 
-class WallVcellCache:
-    """ARCH-065: the last VCELL read while on wall power (for cut_step_mv).
+#: ARCH-065: a cached on-wall VCELL older than this reads as absent. 3x the
+#: UpsMonitor's 5 s poll, so one missed poll is tolerated and a stale value is not.
+WALL_VCELL_MAX_AGE_S = 15.0
 
-    Fed once per PLD poll while power is present; read once at the loss.
-    A failed read leaves the previous value; never raises.
+
+class WallVcellCache:
+    """ARCH-065: the last VCELL sampled while on wall power (for cut_step_mv).
+
+    Fed from the UpsMonitor's existing poll (``makeWallVcellFeed``), never from
+    a new I2C read; read once at the loss. ``last()`` is None when the value is
+    older than ``WALL_VCELL_MAX_AGE_S``. Never raises.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, monotonicFn: Callable[[], float] = time.monotonic) -> None:
         self._lock = threading.Lock()
+        self._monotonic = monotonicFn
         self._v: float | None = None
+        self._at: float = 0.0
 
     def update(self, v: float | None) -> None:
         if v is None:
             return
         with self._lock:
             self._v = float(v)
+            self._at = self._monotonic()
 
     def last(self) -> float | None:
         with self._lock:
+            if self._v is None or self._monotonic() - self._at > WALL_VCELL_MAX_AGE_S:
+                return None
             return self._v
+
+
+def makeWallVcellFeed(
+    cache: WallVcellCache,
+    isPowerLostFn: Callable[[], bool],
+    record: Callable[..., object],
+) -> Callable[..., None]:
+    """Wrap the UpsMonitor's per-poll ``recordHistorySample`` to feed ``cache``.
+
+    ARCH-065: no new I2C read. The monitor's own poll has just read ``vcell``;
+    it is cached only when the GPIO PLD still reads power PRESENT *after* that
+    read, so a post-cut value is never cached as on-wall. The original record
+    call runs first and unchanged; the feed never raises into the poll.
+    """
+
+    def _record(sampleTime: float, vcell: float, soc: object) -> None:
+        record(sampleTime, vcell, soc)
+        try:
+            if not isPowerLostFn():
+                cache.update(vcell)
+        except Exception as exc:  # noqa: BLE001 -- never break the UpsMonitor poll
+            logger.debug("powerwatch: wall VCELL feed failed (%s)", exc)
+
+    return _record
 
 
 def makeOutcomeSink(
@@ -683,6 +719,7 @@ class HomeStateAtLoss:
         *,
         outcomePath: str,
         startFn: Callable[[Callable[[], None]], None] | None = None,
+        vcellBeforeCut: Callable[[], float | None] | None = None,
     ) -> None:
         """Args:
         readState: Zero-arg detector read (``HomeNetworkDetector.
@@ -690,10 +727,13 @@ class HomeStateAtLoss:
         outcomePath: The durable shutdown record (powerwatch_outcome.json).
         startFn: Runs the observation off the caller's thread; a daemon
             thread when None. Tests pass a synchronous one.
+        vcellBeforeCut: ARCH-065 -- ``WallVcellCache.last``; every record this
+            class writes carries it as ``vcell_before_cut_v``.
         """
         self._readState = readState
         self._outcomePath = outcomePath
         self._startFn = startFn if startFn is not None else _startDaemonThread
+        self._vcellBeforeCut = vcellBeforeCut
         # Re-entrant: the sync sink runs under it and reads stateName.
         self._lock = threading.RLock()
         self._loss: threading.Event | None = None
@@ -793,6 +833,7 @@ class HomeStateAtLoss:
             detail=detail,
             task="home_state_at_loss",
             homeState=name,
+            vcellBeforeCutV=self._vcellBeforeCut() if self._vcellBeforeCut is not None else None,
         )
         self._written = True
         logger.info("powerwatch: home state at the power loss = %s", name)
@@ -1016,7 +1057,6 @@ def _runPldWatchLoop(
     handleLock,
     shutdownSequencer,
     monotonicFn=time.monotonic,
-    wallVcell: Callable[[], None] | None = None,
 ) -> None:
     """The X1209 GPIO6 PLD watch loop body, separated from main() for unit tests.
 
@@ -1063,12 +1103,6 @@ def _runPldWatchLoop(
         # 10.6. A level-stuck LOW line never reaches here, so the guard holds.
         if not lost:
             firedAlready = False
-            if wallVcell is not None:
-                # ARCH-065: cache the on-wall VCELL; must never break the loop.
-                try:
-                    wallVcell()
-                except Exception as exc:  # noqa: BLE001 -- never break the PLD loop
-                    logger.debug("powerwatch: wall VCELL read failed (%s)", exc)
         graceElapsed = monotonicFn() - serviceStartMono
         if graceElapsed < bootGraceSec:
             if lost and not prevLost and handleLock.acquire(blocking=False):
@@ -1226,18 +1260,18 @@ def main(argv: list[str] | None = None) -> int:
     # US-741: the detector is asked ONCE per power loss, off the loss path's
     # thread, and its answer persisted (startup_log.prior_boot_home_state at
     # the next boot). The sync task's first read is that same answer.
-    homeStateAtLoss = HomeStateAtLoss(detector.getHomeNetworkState, outcomePath=outcomePath)
-
-    # ARCH-065: the last on-wall VCELL, cached each PLD poll, read at the loss
-    # (cut_step_mv). The same reader the sequencer gets as vcell=.
+    # ARCH-065: the last on-wall VCELL (cut_step_mv), fed from the UpsMonitor's
+    # existing ~5 s poll -- NO extra I2C read, and the PLD thread stays GPIO-only.
     wallCache = WallVcellCache()
+    monitor.recordHistorySample = makeWallVcellFeed(
+        wallCache, provider.isPowerLost, monitor.recordHistorySample
+    )
 
-    def _readVcellOrNone() -> float | None:
-        try:
-            return monitor.getVcell()
-        except Exception as exc:  # noqa: BLE001 -- never break the PLD loop
-            logger.debug("powerwatch: wall VCELL read failed (%s)", exc)
-            return None
+    homeStateAtLoss = HomeStateAtLoss(
+        detector.getHomeNetworkState,
+        outcomePath=outcomePath,
+        vcellBeforeCut=wallCache.last,
+    )
 
     syncTask = SyncWithServerTask(
         # US-776-c: the drain decision. A positive AWAY skips at once (no wait,
@@ -1456,7 +1490,6 @@ def main(argv: list[str] | None = None) -> int:
             pldGpioPin=pldGpioPin,
             handleLock=handleLock,
             shutdownSequencer=shutdownSequencer,
-            wallVcell=lambda: wallCache.update(_readVcellOrNone()),
         )
 
     th = threading.Thread(target=_pldWatchLoop, name="pw-pld", daemon=True)

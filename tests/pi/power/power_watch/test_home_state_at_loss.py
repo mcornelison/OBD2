@@ -286,8 +286,18 @@ def test_main_wiresHomeStateAtLossIntoTheLossPath() -> None:
     assert "HomeStateAtLoss(detector.getHomeNetworkState" in source
     assert "homeState=homeStateAtLoss.stateForSync" in source
     assert "homeStateAtLoss.wrapSink(" in source
-    assert "homeState=homeStateAtLoss.stateName" in source
-    assert "makeOutcomeSink(outcomePath" in source
+    sinkCalls = [
+        {kw.arg: ast.unparse(kw.value) for kw in node.keywords}
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "makeOutcomeSink"
+    ]
+    assert any(
+        c.get("homeState") == "homeStateAtLoss.stateName"
+        and c.get("wallVcell") == "wallCache.last"
+        for c in sinkCalls
+    )
     composed = [
         [ast.unparse(arg) for arg in node.args]
         for node in ast.walk(tree)
