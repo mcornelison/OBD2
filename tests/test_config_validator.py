@@ -21,6 +21,7 @@
 #                                 death date arrived; rename completed).
 # 2026-09-22    | Rex (US-801)  | IMU rate pins assert against the single
 #                                 definition, not a second literal.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: joinWaitSec/stallSec defaults + validation replace shutdownSyncCeilingSec.
 # ================================================================================
 ################################################################################
 
@@ -883,25 +884,28 @@ class TestHomeNetworkConfig:
 
         assert 'pi.homeNetwork.serverPingPath' in excInfo.value.missingFields
 
-    def test_homeNetwork_shutdownSyncCeiling_defaultIs60(self):
-        """US-776-g: the CIO's 60 s shutdown-sync ceiling is the default."""
+    def test_homeNetwork_syncWaits_defaults(self):
+        """ARCH-065: join wait 120 s, stall 60 s; the retired ceiling is gone."""
         validator = ConfigValidator(requiredKeys=[])
 
         result = validator.validate(self._minimalTierConfig())
 
-        assert result['pi']['homeNetwork']['shutdownSyncCeilingSec'] == 60
+        assert result['pi']['homeNetwork']['joinWaitSec'] == 120
+        assert result['pi']['homeNetwork']['stallSec'] == 60
+        assert 'shutdownSyncCeilingSec' not in result['pi']['homeNetwork']
 
+    @pytest.mark.parametrize('key', ['joinWaitSec', 'stallSec'])
     @pytest.mark.parametrize('badValue', [0, -5, -0.5, True, '60', [60]])
-    def test_homeNetwork_badShutdownSyncCeiling_raises(self, badValue):
-        """US-776-g: a non-positive or non-numeric ceiling is rejected."""
+    def test_homeNetwork_badSyncWait_raises(self, key, badValue):
+        """ARCH-065: a non-positive or non-numeric join/stall wait is rejected."""
         validator = ConfigValidator(requiredKeys=[])
         config = self._minimalTierConfig()
-        config['pi']['homeNetwork'] = {'shutdownSyncCeilingSec': badValue}
+        config['pi']['homeNetwork'] = {key: badValue}
 
         with pytest.raises(ConfigValidationError) as excInfo:
             validator.validate(config)
 
-        assert 'pi.homeNetwork.shutdownSyncCeilingSec' in excInfo.value.missingFields
+        assert f'pi.homeNetwork.{key}' in excInfo.value.missingFields
 
 
 def _baseCfg():

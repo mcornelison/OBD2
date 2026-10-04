@@ -17,6 +17,7 @@
 # 2026-10-01    | Rex          | Initial -- US-776-c home-gated drain.
 # 2026-10-01    | Rex          | US-776-d: AWAY / DELIVERED kinds; the AWAY skip
 #               |              | writes one record.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
 # ================================================================================
 ################################################################################
 """US-776-c: away the shutdown powers off at once; at home it drains."""
@@ -109,7 +110,8 @@ def _task(
         homeState=homeState,
         runSync=lambda: syncCalls.append("sync"),
         writeRecord=lambda _kd: None,
-        ceilingSec=60.0,
+        joinWaitSec=120.0,
+        stallSec=60.0,
     )
 
 
@@ -177,7 +179,8 @@ class TestAwaySkipsAtOnce:
             homeState=lambda: HomeNetworkState.AWAY,
             runSync=lambda: None,
             writeRecord=records.append,
-            ceilingSec=60.0,
+            joinWaitSec=120.0,
+            stallSec=60.0,
         )
 
         task.run()

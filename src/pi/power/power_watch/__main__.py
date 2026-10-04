@@ -160,6 +160,8 @@
 #                           answer, and the floor fast path records UNKNOWN
 #                           rather than wait for it.
 # 2026-10-03    | Atlas (ARCH-065a) | Drain writer built with cellEpoch from pi.power.cellEpoch.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: the sync task takes joinWaitSec + stallSec
+#                           (pi.homeNetwork) in place of shutdownSyncCeilingSec.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -859,7 +861,8 @@ def _runOneShotForTest(
     perTaskTimeoutSec: float,
     totalWindowCapSec: float,
     vcellFloorVolts: float,
-    shutdownSyncCeilingSec: float,
+    joinWaitSec: float,
+    stallSec: float,
 ) -> int:
     """PW_TEST_ONESHOT hook: exercise the REAL import + controller/pipeline/
     task/outcome chain EXACTLY as systemd invokes the entrypoint, but WITHOUT
@@ -893,7 +896,8 @@ def _runOneShotForTest(
         homeState=lambda: HomeNetworkState.AT_HOME_SERVER_REACHABLE,
         runSync=_failingSync,
         writeRecord=makeOutcomeSink(outcomePath),
-        ceilingSec=shutdownSyncCeilingSec,
+        joinWaitSec=joinWaitSec,
+        stallSec=stallSec,
         sleepFn=_virtualSleep,
         monotonic=lambda: virtualNow[0],
     )
@@ -1084,7 +1088,8 @@ def main(argv: list[str] | None = None) -> int:
     pldGpioPin = int(pw_cfg["pldGpioPin"])
     pldPowerPresentHigh = bool(pw_cfg["pldPowerPresentHigh"])
     pldPollSec = float(pw_cfg["pldPollSec"])
-    shutdownSyncCeilingSec = float(config["pi"]["homeNetwork"]["shutdownSyncCeilingSec"])
+    joinWaitSec = float(config["pi"]["homeNetwork"]["joinWaitSec"])
+    stallSec = float(config["pi"]["homeNetwork"]["stallSec"])
 
     # Outcome record sits next to the SQLite db (the existing data/ dir) --
     # reuse pi.database.path rather than hardcode or add an un-specced key.
@@ -1099,7 +1104,8 @@ def main(argv: list[str] | None = None) -> int:
             perTaskTimeoutSec=perTaskTimeoutSec,
             totalWindowCapSec=totalWindowCapSec,
             vcellFloorVolts=vcellFloorVolts,
-            shutdownSyncCeilingSec=shutdownSyncCeilingSec,
+            joinWaitSec=joinWaitSec,
+            stallSec=stallSec,
         )
 
     companion = config.get("pi", {}).get("companionService", {}) or {}
@@ -1198,9 +1204,11 @@ def main(argv: list[str] | None = None) -> int:
         writeRecord=homeStateAtLoss.wrapSink(
             makeOutcomeSink(outcomePath, homeState=homeStateAtLoss.stateName)
         ),
-        # US-776-g: a transient failure is retried with backoff; no attempt
-        # starts after this ceiling (CIO: 60 s).
-        ceilingSec=shutdownSyncCeilingSec,
+        # ARCH-065: the drain runs to completion -- it ends delivered, or when
+        # the backlog has not fallen for stallSec; the WiFi-join wait is
+        # bounded separately by joinWaitSec.
+        joinWaitSec=joinWaitSec,
+        stallSec=stallSec,
         # US-776-d: backlog_start / backlog_end from the shared US-621 reader,
         # with the drain's own exclusions, so 0 means what the drain's exit
         # check means by it.

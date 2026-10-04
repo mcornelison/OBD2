@@ -14,6 +14,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-01    | Rex          | Initial -- US-741 home state at every power loss
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
 # ================================================================================
 ################################################################################
 """The home detector is asked once per power loss and its answer is persisted."""
@@ -73,7 +74,8 @@ def _sequencer(
         writeRecord=holder.wrapSink(
             m.makeOutcomeSink(str(outcomePath), homeState=holder.stateName)
         ),
-        ceilingSec=60.0,
+        joinWaitSec=120.0,
+        stallSec=60.0,
         sleepFn=lambda _s: None,
         monotonic=lambda: 0.0,
     )

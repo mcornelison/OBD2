@@ -22,6 +22,8 @@
 # 2026-10-01    | Rex (US-776-d) | +DELIVERED, AWAY, UNKNOWN_NETWORK,
 #                              AT_HOME_JOINING_TIMEOUT, AT_HOME_SERVER_DOWN,
 #                              PROBE_MISCONFIGURED: why the shutdown sync ended.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: +STALLED, +RESERVE_FLOOR (the at-home
+#                              sync runs to completion; CIO 2026-10-02).
 # ================================================================================
 ################################################################################
 """Single source of truth: outcome kinds + shutdown-task protocol."""
@@ -59,6 +61,10 @@ class OutcomeKind(enum.Enum):
     AT_HOME_JOINING_TIMEOUT = "at_home_joining_timeout"  # US-776-e: rejoin outlasted ceiling
     AT_HOME_SERVER_DOWN = "at_home_server_down"        # connection error, timeout, 5xx
     PROBE_MISCONFIGURED = "probe_misconfigured"        # probe 404/405/401/403
+
+    # ARCH-065: the at-home sync runs to completion (CIO 2026-10-02).
+    STALLED = "stalled"                                # backlog did not fall for stallSec
+    RESERVE_FLOOR = "reserve_floor"                    # the battery's reserve floor ended the drain
 
 
 @runtime_checkable

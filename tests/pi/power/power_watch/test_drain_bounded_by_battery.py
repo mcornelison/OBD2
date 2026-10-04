@@ -22,6 +22,7 @@
 # 2026-10-01    | Rex (US-776-g) | A failing pass is retried to the 60 s ceiling.
 # 2026-10-01    | Rex (US-776-d) | The sync writes one outcome record per run,
 #                                before the poweroff (AWAY and DELIVERED too).
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec; failing-pass drain ends on the stall rule (6 attempts).
 # ================================================================================
 ################################################################################
 """US-776-a: the drain ends on an empty backlog or the VCELL floor, not a timer."""
@@ -179,7 +180,8 @@ class TestTheDrainOutlivesAllThreeTimers:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: events.append("outcome-record"),
-            ceilingSec=60.0,
+            joinWaitSec=120.0,
+            stallSec=60.0,
         )
 
         def _pipeline() -> None:
@@ -250,7 +252,8 @@ class TestTheDrainOutlivesAllThreeTimers:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
-            ceilingSec=60.0,
+            joinWaitSec=120.0,
+            stallSec=60.0,
         )
 
         # Act
@@ -351,7 +354,8 @@ class TestTheFloorEndsADrainThatNeverReachesAPassBoundary:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
-            ceilingSec=60.0,
+            joinWaitSec=120.0,
+            stallSec=60.0,
         )
         # Healthy at the pre-pipeline read and while the push is in flight,
         # then at the floor. The clock also races past the old 45 s cap first,
@@ -515,7 +519,8 @@ class TestNegativeCases:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: events.append("outcome-record"),
-            ceilingSec=60.0,
+            joinWaitSec=120.0,
+            stallSec=60.0,
         )
         slowPoll = 5.0
         seq = ShutdownSequencer(
@@ -560,7 +565,8 @@ class TestNegativeCases:
                 excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
             ),
             writeRecord=lambda _r: None,
-            ceilingSec=60.0,
+            joinWaitSec=120.0,
+            stallSec=60.0,
             sleepFn=_taskSleep,
             monotonic=lambda: taskNow[0],
         )
@@ -601,7 +607,7 @@ class TestNegativeCases:
         """
         Given: a pass that fails (tables failed after retries)
         When: the drain runs
-        Then: the drain ends (once the task's retries reach the 60 s ceiling)
+        Then: the drain ends (once the backlog has not fallen for the 60 s stall window)
             and custody records OUTSTANDING, never DELIVERED
         """
         # Arrange
@@ -619,8 +625,8 @@ class TestNegativeCases:
             tmp_path, client=_FailingClient(), reader=_readerOver(backlog)
         )
 
-        # Assert -- US-776-g: attempts at 0, 2, 6, 14 and 30 s; the next
-        # would start at 62 s, past the 60 s ceiling
-        assert _FailingClient.calls == 5
+        # Assert -- ARCH-065: attempts at 0, 2, 6, 14, 30 and 60 s; the backlog
+        # never fell, so the stall window (60 s) ends the drain after the 60 s try
+        assert _FailingClient.calls == 6
         assert record["verdict"] == BACKLOG_OUTSTANDING
         assert record["verdict"] != BACKLOG_DELIVERED

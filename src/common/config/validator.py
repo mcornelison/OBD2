@@ -90,6 +90,10 @@
 #                                /api/v1/health; the old ping path was a 404.
 # 2026-10-01    | Rex (US-776-g)| pi.homeNetwork.shutdownSyncCeilingSec: 60 (CIO
 #                                ruling 2026-09-30), positive number only.
+# 2026-10-03    | Atlas (ARCH-065a)| ARCH-065 T3: shutdownSyncCeilingSec retired (the
+#                                at-home sync has no time cap, CIO 2026-10-02);
+#                                pi.homeNetwork.joinWaitSec 120 + stallSec 60,
+#                                positive numbers only.
 # ================================================================================
 ################################################################################
 
@@ -341,9 +345,10 @@ DEFAULTS: dict[str, Any] = {
     'pi.homeNetwork.subnet': '10.27.27.0/24',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.homeNetwork.pingTimeoutSeconds': 3,
     'pi.homeNetwork.serverPingPath': '/api/v1/health',
-    # US-776-g: how long an at-home shutdown keeps retrying the sync before it
-    # powers off anyway (CIO ruling 2026-09-30).
-    'pi.homeNetwork.shutdownSyncCeilingSec': 60,
+    # ARCH-065: the at-home shutdown sync runs to completion. joinWaitSec bounds
+    # the WiFi-join wait; stallSec ends a drain whose backlog stopped falling.
+    'pi.homeNetwork.joinWaitSec': 120,
+    'pi.homeNetwork.stallSec': 60,
     # Pi-tier sync trigger semantics (US-226).  Orchestrator-level trigger
     # policy; the transport config lives in pi.companionService above.
     # intervalSeconds MUST fire independently of drive_end so a bugged
@@ -959,18 +964,18 @@ class ConfigValidator:
                 missingFields=['pi.homeNetwork.serverPingPath'],
             )
 
-        ceiling = section.get('shutdownSyncCeilingSec')
-        # bool first -- isinstance(True, int) is True in Python.
-        if ceiling is not None and (
-            isinstance(ceiling, bool)
-            or not isinstance(ceiling, (int, float))
-            or ceiling <= 0
-        ):
-            raise ConfigValidationError(
-                f"pi.homeNetwork.shutdownSyncCeilingSec must be a positive "
-                f"number (got {ceiling!r})",
-                missingFields=['pi.homeNetwork.shutdownSyncCeilingSec'],
-            )
+        for key in ('joinWaitSec', 'stallSec'):
+            value = section.get(key)
+            # bool first -- isinstance(True, int) is True in Python.
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value <= 0
+            ):
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.{key} must be a positive number (got {value!r})",
+                    missingFields=[f'pi.homeNetwork.{key}'],
+                )
 
     def _validatePiSync(self, config: dict[str, Any]) -> None:
         """Validate pi.sync shape + trigger membership (US-226).

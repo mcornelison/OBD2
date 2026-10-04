@@ -2,9 +2,9 @@
 # File Name: test_sync_retry_ceiling.py
 # Purpose/Description: US-776-g -- once the shutdown decides to drain, it
 #                      retries a transient sync failure with increasing waits
-#                      until delivered or pi.homeNetwork.shutdownSyncCeilingSec
-#                      expires. No attempt starts after the ceiling; run()
-#                      never raises.
+#                      until delivered or the backlog has not fallen for
+#                      pi.homeNetwork.stallSec (ARCH-065: the absolute ceiling
+#                      is retired). run() never raises.
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-10-01
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -16,9 +16,11 @@
 # 2026-10-01    | Rex          | Initial -- US-776-g retry-with-backoff ceiling.
 # 2026-10-01    | Rex          | US-776-d: outcomes are DELIVERED / AWAY /
 #               |              | AT_HOME_SERVER_DOWN; success writes a record too.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec retired -> joinWaitSec +
+#               |              | stallSec; the ceiling tests are now stall tests.
 # ================================================================================
 ################################################################################
-"""US-776-g: at home the drain retries with backoff until delivered or the ceiling."""
+"""US-776-g / ARCH-065: at home the drain retries with backoff until delivered or stalled."""
 
 from __future__ import annotations
 
@@ -34,7 +36,8 @@ from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.tasks.sync_with_server import SyncWithServerTask
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_CIO_CEILING_SEC = 60.0
+_STALL_SEC = 60.0
+_JOIN_WAIT_SEC = 120.0
 
 
 class _FakeClock:
@@ -87,13 +90,14 @@ def _task(
     clock: _FakeClock,
     records: list[object],
     *,
-    ceilingSec: float = _CIO_CEILING_SEC,
+    stallSec: float = _STALL_SEC,
 ) -> SyncWithServerTask:
     return SyncWithServerTask(
         homeState=lambda: HomeNetworkState.AT_HOME_SERVER_DOWN,
         runSync=runSync,
         writeRecord=records.append,
-        ceilingSec=ceilingSec,
+        joinWaitSec=_JOIN_WAIT_SEC,
+        stallSec=stallSec,
         sleepFn=clock.sleep,
         monotonic=clock.monotonic,
     )
@@ -142,14 +146,14 @@ class TestRetryUntilDelivered:
         assert len(sync.starts) == 2
 
 
-class TestCeiling:
+class TestStall:
 
-    def test_alwaysFailing_noAttemptStartsAfterCeiling(self) -> None:
+    def test_alwaysFailing_endsOnceStallSecHasPassed(self) -> None:
         """
-        Given: an always-failing runSync, a 60 s ceiling and a fake clock
+        Given: an always-failing runSync, a 60 s stall rule and a fake clock
         When: run() drains
-        Then: every attempt starts before 60 s; run() returns after recording
-            the failure exactly once
+        Then: it keeps retrying until 60 s without progress, then returns after
+            recording the failure exactly once
         """
         clock = _FakeClock()
         sync = _ScriptedSync(clock, alwaysFail=lambda: RuntimeError("server down"))
@@ -159,7 +163,7 @@ class TestCeiling:
 
         assert result == OutcomeKind.AT_HOME_SERVER_DOWN
         assert len(sync.starts) >= 3
-        assert max(sync.starts) < _CIO_CEILING_SEC
+        assert _STALL_SEC <= clock.now < _STALL_SEC + 1.0
         assert len(records) == 1
         assert records[0][0] == OutcomeKind.AT_HOME_SERVER_DOWN
 
@@ -172,18 +176,18 @@ class TestCeiling:
         assert clock.sleeps
         assert all(b > a for a, b in zip(clock.sleeps, clock.sleeps[1:], strict=False))
 
-    def test_alwaysFailing_neverSleepsPastCeiling(self) -> None:
-        """No wait is started that would carry the clock to or past the ceiling."""
+    def test_alwaysFailing_neverSleepsPastTheStallWindow(self) -> None:
+        """No wait carries the clock beyond the stall window."""
         clock = _FakeClock()
         sync = _ScriptedSync(clock, alwaysFail=lambda: RuntimeError("server down"))
 
         _task(sync, clock, []).run()
 
-        assert clock.now < _CIO_CEILING_SEC
+        assert clock.now <= _STALL_SEC
 
-    def test_slowAttempts_noAttemptStartsAfterCeiling(self) -> None:
-        """Each forcePush spends 25 s: the ceiling counts from run() start,
-        not from the last wait."""
+    def test_slowAttempts_stallClockIncludesAttemptTime(self) -> None:
+        """Each forcePush spends 25 s: the stall window counts real time, so the
+        drain ends after the attempt that carries it past 60 s."""
         clock = _FakeClock()
         sync = _ScriptedSync(
             clock, alwaysFail=lambda: RuntimeError("timeout"), attemptSec=25.0
@@ -193,20 +197,20 @@ class TestCeiling:
         result = _task(sync, clock, records).run()
 
         assert result == OutcomeKind.AT_HOME_SERVER_DOWN
-        assert max(sync.starts) < _CIO_CEILING_SEC
+        assert len(sync.starts) == 3
         assert len(records) == 1
 
-    @pytest.mark.parametrize("ceilingSec", [1.0, 5.0, 17.0, 60.0, 120.0])
-    def test_anyCeiling_lastAttemptStartsBeforeIt(self, ceilingSec: float) -> None:
+    @pytest.mark.parametrize("stallSec", [1.0, 5.0, 17.0, 60.0, 120.0])
+    def test_anyStallSec_drainEndsAtIt(self, stallSec: float) -> None:
         clock = _FakeClock()
         sync = _ScriptedSync(clock, alwaysFail=lambda: RuntimeError("down"))
 
-        _task(sync, clock, [], ceilingSec=ceilingSec).run()
+        _task(sync, clock, [], stallSec=stallSec).run()
 
         assert sync.starts[0] == 0.0
-        assert max(sync.starts) < ceilingSec
+        assert clock.now == stallSec
 
-    def test_ceilingCountsFromRunStart_notFromConstruction(self) -> None:
+    def test_stallClockStartsAtRun_notAtConstruction(self) -> None:
         clock = _FakeClock()
         sync = _ScriptedSync(clock, [RuntimeError("net")])
         task = _task(sync, clock, [])
@@ -271,7 +275,8 @@ class TestNeverRaises:
             homeState=lambda: HomeNetworkState.AT_HOME_SERVER_DOWN,
             runSync=sync,
             writeRecord=brokenSink,
-            ceilingSec=_CIO_CEILING_SEC,
+            joinWaitSec=_JOIN_WAIT_SEC,
+            stallSec=_STALL_SEC,
             sleepFn=clock.sleep,
             monotonic=clock.monotonic,
         )
@@ -289,7 +294,8 @@ class TestNeverRaises:
             homeState=lambda: HomeNetworkState.AT_HOME_SERVER_DOWN,
             runSync=sync,
             writeRecord=lambda _kd: None,
-            ceilingSec=_CIO_CEILING_SEC,
+            joinWaitSec=_JOIN_WAIT_SEC,
+            stallSec=_STALL_SEC,
             sleepFn=brokenSleep,
             monotonic=clock.monotonic,
         )
@@ -306,7 +312,8 @@ class TestAwayUnchanged:
             homeState=lambda: HomeNetworkState.AWAY,
             runSync=sync,
             writeRecord=lambda _kd: None,
-            ceilingSec=_CIO_CEILING_SEC,
+            joinWaitSec=_JOIN_WAIT_SEC,
+            stallSec=_STALL_SEC,
             sleepFn=clock.sleep,
             monotonic=clock.monotonic,
         )
@@ -316,17 +323,20 @@ class TestAwayUnchanged:
         assert clock.sleeps == []
 
 
-class TestCeilingConfig:
+class TestStallConfig:
 
-    def test_shippedConfig_ceilingIs60(self) -> None:
-        """CIO ruling 2026-09-30: pi.homeNetwork.shutdownSyncCeilingSec = 60."""
+    def test_shippedConfig_joinWait120_stall60(self) -> None:
+        """CIO ruling 2026-10-02: join wait 120 s, stall 60 s, no ceiling."""
         config = json.loads((_REPO_ROOT / "config.json").read_text(encoding="utf-8"))
 
-        assert config["pi"]["homeNetwork"]["shutdownSyncCeilingSec"] == 60
+        assert config["pi"]["homeNetwork"]["joinWaitSec"] == 120
+        assert config["pi"]["homeNetwork"]["stallSec"] == 60
+        assert "shutdownSyncCeilingSec" not in config["pi"]["homeNetwork"]
 
-    def test_shippedConfig_validatesWithCeiling(self) -> None:
+    def test_shippedConfig_validatesWithStallKeys(self) -> None:
         config = json.loads((_REPO_ROOT / "config.json").read_text(encoding="utf-8"))
 
         result = ConfigValidator(requiredKeys=[]).validate(config)
 
-        assert result["pi"]["homeNetwork"]["shutdownSyncCeilingSec"] == 60
+        assert result["pi"]["homeNetwork"]["joinWaitSec"] == 120
+        assert result["pi"]["homeNetwork"]["stallSec"] == 60
