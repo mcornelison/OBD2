@@ -91,6 +91,8 @@ logs/
 # (server-side sim) or scripts/export_regression_fixture.sh (pi-side live).
 !data/regression/inputs/*.db
 !data/regression/pi-inputs/*.db
+# ARCH-065a T8: the 1 Hz witness-log fixture for tools/power (*.log is ignored above).
+!tests/tools/fixtures/*.log
 
 # --------------------------------------------------------------------------------
 # Secrets and Environment
@@ -171,6 +173,9 @@ tools/*
 # matched by `tools/*`, and were lost -- a package directory plus this one
 # negation is the fix, never a per-file negation.
 !tools/connlog/
+
+# tools/power/ is first-party too (ARCH-065a T8): the drain calibration / seed tool.
+!tools/power/
 
 
 # Claude settings (local only)
