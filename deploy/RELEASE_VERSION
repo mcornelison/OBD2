@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.71",
-  "theme": "Sprint 94: tunables, gitignore guard, cell epoch",
-  "description": "Sprint 94, 11 of 12 stories (US-802-b carried, blocked). US-802/803: IMU mag-age and A-34 gyro-recovery tunables to config; US-790 drain_vcell_trajectory with per-row cellEpoch, now 18650-pack from its 2026-09-26 install; US-808-c/d, US-810, US-683, US-815-a/b. Merged with V0.29.70: magMode attach runs first, gyro recovery second, both keyword-only."
+  "version": "V0.29.72",
+  "theme": "S95 shutdown + ARCH-064 IMU + ARCH-065a battery",
+  "description": "Combined deploy. Sprint 95: pre-shutdown sync runs, home WiFi rejoin, v0034. ARCH-064/a/b/d: 50 Hz IMU read, fusion, drive-97 compass calibration, UTC-grid persist. ARCH-065a: battery-health card answers can the battery carry an at-home sync and graceful shutdown; at-home sync runs to completion (no 60 s cap); v0035. TUNER-008/009: coolant thresholds in Celsius. ARCH-058 tools."
 }
