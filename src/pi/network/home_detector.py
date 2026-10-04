@@ -23,6 +23,9 @@
 #               |              | isServerReachable() is its 2xx; lastProbe
 # 2026-10-01    | Rex          | US-776-e: AT_HOME_JOINING -- home SSID in the
 #               |              | cached scan list, not associated (scanReader)
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: AT_HOME_STATES / AT_HOME_STATE_NAMES --
+#               |              | the ONE owner of "the car was at home" (monthly
+#               |              | test hold gate + boot finaliser floor stamp)
 # ================================================================================
 ################################################################################
 
@@ -88,6 +91,8 @@ from enum import StrEnum
 from typing import Any
 
 __all__ = [
+    "AT_HOME_STATES",
+    "AT_HOME_STATE_NAMES",
     "PROBE_MISCONFIGURED_STATUSES",
     "HomeNetworkDetector",
     "HomeNetworkState",
@@ -119,6 +124,21 @@ class HomeNetworkState(StrEnum):
     AT_HOME_JOINING = "at_home_joining"  # US-776-e: home SSID cached, not associated
     AWAY = "away"
     UNKNOWN = "unknown"
+
+
+#: ARCH-065 (Ruling 19): the states that mean the car was AT HOME -- the ONE
+#: owner.  The monthly-test hold is gated on the loss's state being one of
+#: these, and the boot finaliser stamps a floor-ended drain ``replace`` only in
+#: one of these.  UNKNOWN is not home (nothing confirmed it); AWAY is not.
+AT_HOME_STATES: frozenset[HomeNetworkState] = frozenset({
+    HomeNetworkState.AT_HOME_SERVER_REACHABLE,
+    HomeNetworkState.AT_HOME_SERVER_DOWN,
+    HomeNetworkState.AT_HOME_JOINING,
+})
+
+#: The same set as the durable record stores it (the enum NAME, e.g. as
+#: ``HomeStateAtLoss.stateName`` and ``startup_log.prior_boot_home_state``).
+AT_HOME_STATE_NAMES: frozenset[str] = frozenset(state.name for state in AT_HOME_STATES)
 
 
 # =============================================================================

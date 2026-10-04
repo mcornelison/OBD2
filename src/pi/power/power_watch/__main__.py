@@ -176,6 +176,11 @@
 #                           loss on the monotonic clock (secondsSinceLoss); cellEpoch via
 #                           resolveCellEpoch. Fix round 1: lossIso() (wall stamp) scopes
 #                           the monthly-test row mark.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: HomeStateAtLoss.lossGeneration (moves in
+#                           observe); wrapSink drops a record of an older loss; the
+#                           sync and hold tasks capture it at run start; the hold is
+#                           gated on the loss's home state and marks with the lossIso
+#                           it snapshotted; recordFloorEnd logs what it overwrites.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -789,6 +794,17 @@ class HomeStateAtLoss:
         #: True once RESERVE_FLOOR is written for this loss; the sink then drops
         #: any later (abandoned sync thread) record for the same loss.
         self._floorEnded = False
+        #: Ruling 19: moves on every loss (observe). A pipeline thread left
+        #: running by a CANCELLED loss carries the old value, so its record is
+        #: dropped (wrapSink) and its hold labels nothing.
+        self._generation = 0
+        #: What this loss's last record was, for the floor-end overwrite log (M4).
+        self._writtenKind: str | None = None
+
+    def lossGeneration(self) -> int:
+        """The current loss's generation (0 before any loss); +1 per ``observe``."""
+        with self._lock:
+            return self._generation
 
     def lossIso(self) -> str | None:
         """This loss's wall time, canonical UTC ISO (None before any loss)."""
@@ -813,7 +829,9 @@ class HomeStateAtLoss:
             self._answer = None
             self._handedToSync = False
             self._written = False
+            self._writtenKind = None
             self._floorEnded = False
+            self._generation += 1
         try:
             self._startFn(lambda: self._observeLoss(loss))
         except Exception as exc:  # noqa: BLE001 -- never block the loss path
@@ -888,6 +906,16 @@ class HomeStateAtLoss:
 
         def _write(record: SyncOutcomeRecord) -> None:
             with self._lock:
+                generation = getattr(record, "lossGeneration", None)
+                if generation is not None and generation != self._generation:
+                    logger.info(
+                        "powerwatch: stale record from a cancelled loss dropped "
+                        "(sync %s of loss generation %s; current %s)",
+                        record.kind.name,
+                        generation,
+                        self._generation,
+                    )
+                    return
                 if self._floorEnded:
                     logger.info(
                         "powerwatch: sync record %s dropped -- the reserve floor "
@@ -897,6 +925,7 @@ class HomeStateAtLoss:
                     return
                 sink(record)
                 self._written = True
+                self._writtenKind = f"sync_with_server {record.kind.name}"
 
         return _write
 
@@ -922,6 +951,12 @@ class HomeStateAtLoss:
         early. Never raises (``writeOutcomeRecord`` does not).
         """
         with self._lock:
+            if self._written:
+                logger.info(
+                    "powerwatch: RESERVE_FLOOR overwrites the %s record already "
+                    "written for this loss",
+                    self._writtenKind,
+                )
             self._writeRecord(
                 OutcomeKind.RESERVE_FLOOR,
                 "the reserve floor ended the drain",
@@ -957,6 +992,7 @@ class HomeStateAtLoss:
             lossAt=self.lossIso(),
         )
         self._written = True
+        self._writtenKind = f"{task} {kind.name}"
 
 
 def buildV1Tasks(
@@ -1432,6 +1468,8 @@ def main(argv: list[str] | None = None) -> int:
         # US-776-d: the probe behind the home state, read -- never re-probed --
         # to tell a misconfigured probe from a down server.
         lastProbe=lambda: detector.lastProbe,
+        # Ruling 19: the loss this run belongs to rides on its record.
+        lossGeneration=homeStateAtLoss.lossGeneration,
     )
 
     # ARCH-065 T5: once a month, at home, hold the Pi on battery TEST_HOLD_S
@@ -1440,19 +1478,20 @@ def main(argv: list[str] | None = None) -> int:
     monthlyIntervalDays = int(config["pi"]["batteryHealth"]["monthlyIntervalDays"])
     cellEpochForTest = resolveCellEpoch(config)
     holdTask = MonthlyTestHoldTask(
-        lastSyncOutcome=lambda: syncTask.lastOutcome,
+        # Ruling 19: gated on the home state AT THE LOSS (one owner of "at
+        # home": home_detector.AT_HOME_STATE_NAMES), never a sync-outcome proxy.
+        homeStateName=homeStateAtLoss.stateName,
         isDue=lambda: isMonthlyTestDue(
             dbPath,
             cellEpoch=cellEpochForTest,
             nowIso=utcIsoNow(),
             intervalDays=monthlyIntervalDays,
         ),
-        markOpenDrain=lambda: (
-            0
-            if homeStateAtLoss.lossIso() is None
-            else markOpenDrainMonthlyTest(dbPath, lossIso=homeStateAtLoss.lossIso())
-        ),
+        # The hold snapshots lossIso + the loss generation ONCE at run start and
+        # passes that lossIso to every mark (a stale hold never re-reads it).
+        markOpenDrain=lambda lossIso: markOpenDrainMonthlyTest(dbPath, lossIso=lossIso),
         lossIso=homeStateAtLoss.lossIso,
+        lossGeneration=homeStateAtLoss.lossGeneration,
         secondsSinceCut=homeStateAtLoss.secondsSinceLoss,
     )
 

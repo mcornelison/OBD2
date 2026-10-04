@@ -11,12 +11,20 @@
 # Date          | Author             | Description
 # ================================================================================
 # 2026-10-03    | Atlas (ARCH-065a)  | ARCH-065 T5: created.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the hold is gated on the loss's HOME
+#               |                    | STATE (AT_HOME_STATE_NAMES); markOpenDrain takes the
+#               |                    | snapshotted lossIso; the mark's band is lossRowBand.
 ################################################################################
 import logging
 import sqlite3
 
+import pytest
+
+from src.pi.network.home_detector import AT_HOME_STATE_NAMES, HomeNetworkState
 from src.pi.power.battery_capacity import TEST_HOLD_S, WINDOW_S, WINDOW_SKIP_S
 from src.pi.power.battery_health import (
+    LOSS_ROW_AFTER_S,
+    LOSS_ROW_BEFORE_S,
     ensureBatteryHealthLogCapacityColumns,
     ensureBatteryHealthLogTable,
     resolveCellEpoch,
@@ -28,15 +36,18 @@ from src.pi.power.power_watch.tasks.monthly_test_hold import (
     markOpenDrainMonthlyTest,
 )
 
-_AT_HOME = (OutcomeKind.DELIVERED, OutcomeKind.STALLED, OutcomeKind.AT_HOME_SERVER_DOWN,
-            OutcomeKind.PROBE_MISCONFIGURED)
+_HOME = HomeNetworkState.AT_HOME_SERVER_REACHABLE.name
+_AWAY = HomeNetworkState.AWAY.name
+_LOSS = "2026-10-02T17:00:00Z"
 
 
-def _hold(outcome, due, since=7.0, **kw):
+def _hold(state, due, since=7.0, **kw):
     slept: list[float] = []
     marked: list[bool] = []
+    kw.setdefault("lossIso", lambda: _LOSS)
     task = MonthlyTestHoldTask(
-        lastSyncOutcome=lambda: outcome, isDue=lambda: due, markOpenDrain=lambda: marked.append(True) or 1,
+        homeStateName=lambda: state, isDue=lambda: due,
+        markOpenDrain=lambda _iso: marked.append(True) or 1,
         secondsSinceCut=lambda: since, sleepFn=slept.append, **kw,
     )
     return task, slept, marked
@@ -47,32 +58,51 @@ def test_timings_haveOneOwner() -> None:
 
 
 def test_atHomeAndDue_holdsUntilTestHoldAfterTheCut_andMarksTheRow() -> None:
-    task, slept, marked = _hold(OutcomeKind.DELIVERED, True, since=300.0)
+    task, slept, marked = _hold(_HOME, True, since=300.0)
     assert task.run() is OutcomeKind.OK
     assert sum(slept) == TEST_HOLD_S - 300.0 and marked == [True, True]
 
 
 def test_holdSecDefaultsToTheSsot() -> None:
-    task, slept, _ = _hold(OutcomeKind.DELIVERED, True, since=0.0)
+    task, slept, _ = _hold(_HOME, True, since=0.0)
     task.run()
     assert slept == [float(TEST_HOLD_S)]
 
 
 def test_alreadyPastTheHold_marksButDoesNotSleep() -> None:
-    task, slept, marked = _hold(OutcomeKind.DELIVERED, True, since=TEST_HOLD_S + 1.0)
+    task, slept, marked = _hold(_HOME, True, since=TEST_HOLD_S + 1.0)
     task.run()
     assert slept == [] and marked == [True, True]
 
 
-def test_away_neverHolds() -> None:
-    task, slept, marked = _hold(OutcomeKind.AWAY, True)
+@pytest.mark.parametrize("state", [HomeNetworkState.AWAY.name, HomeNetworkState.UNKNOWN.name])
+def test_notAtHome_neverHolds(state) -> None:
+    task, slept, marked = _hold(state, True)
     task.run()
     assert slept == [] and marked == []
 
 
+@pytest.mark.parametrize("state", sorted(AT_HOME_STATE_NAMES))
+def test_everyAtHomeState_holdsWhenDue(state) -> None:
+    task, slept, marked = _hold(state, True, since=0.0)
+    task.run()
+    assert slept == [float(TEST_HOLD_S)] and marked == [True, True]
+
+
+def test_atHomeSet_isTheHomeDetectorsOwner() -> None:
+    """Ruling 19 SSOT: the hold and the boot finaliser read ONE at-home set."""
+    import src.pi.power.battery_health_finalize as fin
+    import src.pi.power.power_watch.tasks.monthly_test_hold as hold
+    from src.pi.network import home_detector
+
+    assert hold.AT_HOME_STATE_NAMES is home_detector.AT_HOME_STATE_NAMES
+    assert fin.AT_HOME_STATE_NAMES is home_detector.AT_HOME_STATE_NAMES
+    assert not hasattr(hold, "AT_HOME_OUTCOMES")
+
+
 def test_notDue_neverHolds() -> None:
-    for outcome in _AT_HOME:
-        task, slept, _ = _hold(outcome, False)
+    for state in AT_HOME_STATE_NAMES:
+        task, slept, _ = _hold(state, False)
         task.run()
         assert slept == []
 
@@ -82,7 +112,7 @@ def test_aBrokenDependency_neverRaises() -> None:
         raise RuntimeError("db locked")
 
     task = MonthlyTestHoldTask(
-        lastSyncOutcome=lambda: OutcomeKind.DELIVERED, isDue=boom, markOpenDrain=lambda: None,
+        homeStateName=lambda: _HOME, isDue=boom, markOpenDrain=lambda _iso: None,
         secondsSinceCut=lambda: 0.0, sleepFn=lambda _s: None,
     )
     assert task.run() is OutcomeKind.OK
@@ -179,8 +209,8 @@ def test_collectorOpensTheRowLate_theAfterSleepMarkLabelsIt(tmp_path) -> None:
     _openRow(p, "2026-10-02T16:00:00Z")  # stale, must stay keyoff
     loss = "2026-10-02T17:00:00Z"
     task = MonthlyTestHoldTask(
-        lastSyncOutcome=lambda: OutcomeKind.DELIVERED, isDue=lambda: True,
-        markOpenDrain=lambda: markOpenDrainMonthlyTest(p, lossIso=loss),
+        homeStateName=lambda: _HOME, isDue=lambda: True,
+        markOpenDrain=lambda iso: markOpenDrainMonthlyTest(p, lossIso=iso),
         secondsSinceCut=lambda: 0.0, lossIso=lambda: loss,
         sleepFn=lambda _s: _openRow(p, "2026-10-02T17:00:02Z"),  # opened DURING the hold
     )
@@ -192,15 +222,15 @@ def test_firstMarkRaises_holdStillSleepsTheFullRemainder() -> None:
     calls = []
     slept: list[float] = []
 
-    def mark() -> int:
+    def mark(_iso: str) -> int:
         calls.append(1)
         if len(calls) == 1:
             raise sqlite3.OperationalError("database is locked")
         return 1
 
     task = MonthlyTestHoldTask(
-        lastSyncOutcome=lambda: OutcomeKind.DELIVERED, isDue=lambda: True, markOpenDrain=mark,
-        secondsSinceCut=lambda: 100.0, sleepFn=slept.append,
+        homeStateName=lambda: _HOME, isDue=lambda: True, markOpenDrain=mark,
+        secondsSinceCut=lambda: 100.0, sleepFn=slept.append, lossIso=lambda: _LOSS,
     )
     assert task.run() is OutcomeKind.OK
     assert slept == [TEST_HOLD_S - 100.0] and len(calls) == 2
@@ -208,7 +238,7 @@ def test_firstMarkRaises_holdStillSleepsTheFullRemainder() -> None:
 
 def test_neitherMarkMatches_warnsNamingTheLoss(caplog) -> None:
     task = MonthlyTestHoldTask(
-        lastSyncOutcome=lambda: OutcomeKind.DELIVERED, isDue=lambda: True, markOpenDrain=lambda: 0,
+        homeStateName=lambda: _HOME, isDue=lambda: True, markOpenDrain=lambda _iso: 0,
         secondsSinceCut=lambda: 0.0, sleepFn=lambda _s: None, lossIso=lambda: "2026-10-02T17:00:00Z",
     )
     with caplog.at_level(logging.INFO):
@@ -219,8 +249,41 @@ def test_neitherMarkMatches_warnsNamingTheLoss(caplog) -> None:
 
 def test_skip_logsWhy(caplog) -> None:
     with caplog.at_level(logging.INFO):
-        _hold(OutcomeKind.AWAY, True)[0].run()
-        _hold(OutcomeKind.DELIVERED, False)[0].run()
+        _hold(_AWAY, True)[0].run()
+        _hold(_HOME, False)[0].run()
     msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
     assert any("not at home" in m and "AWAY" in m for m in msgs)
     assert any("not due" in m for m in msgs)
+
+
+# ---------------------------------------------------------------------------
+# Ruling 19: the mark selects through the ONE band helper (battery_health)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("start", "labelled"),
+    [
+        ("2026-10-02T16:59:55Z", True),   # loss - LOSS_ROW_BEFORE_S: in
+        ("2026-10-02T16:59:54Z", False),  # one second earlier: out
+        ("2026-10-02T17:00:30Z", True),   # loss + LOSS_ROW_AFTER_S: in
+        ("2026-10-02T17:00:31Z", False),  # one second later: out (no upper bound before)
+    ],
+)
+def test_mark_bandEdges(tmp_path, start, labelled) -> None:
+    assert (LOSS_ROW_BEFORE_S, LOSS_ROW_AFTER_S) == (5, 30)
+    p = _db(tmp_path, [])
+    _openRow(p, start)
+    assert markOpenDrainMonthlyTest(p, lossIso=_LOSS) == (1 if labelled else 0)
+
+
+def test_mark_neverLabelsAClosedRowInTheBand(tmp_path) -> None:
+    p = _db(tmp_path, [("2026-10-02T17:00:02Z", "keyoff", "18650-pack", 6)])  # closed
+    assert markOpenDrainMonthlyTest(p, lossIso=_LOSS) == 0
+    assert _triggers(p) == ["keyoff"]
+
+
+def test_noLossIso_marksNothing() -> None:
+    task, slept, marked = _hold(_HOME, True, since=0.0, lossIso=lambda: None)
+    task.run()
+    assert marked == [] and slept == [float(TEST_HOLD_S)]

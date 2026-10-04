@@ -12,6 +12,9 @@
 # Date          | Author             | Description
 # ================================================================================
 # 2026-10-03    | Atlas (ARCH-065a)  | Initial.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the fresh DDL's capacity column text is
+#               |                    | pinned to the ADD COLUMN text; the trigger CHECK is
+#               |                    | derived from DRAIN_TRIGGER_VALUES, never restated.
 # ================================================================================
 ################################################################################
 
@@ -27,6 +30,7 @@ import pytest
 from src.pi.power.battery_health import (
     BATTERY_HEALTH_CAPACITY_COLUMNS,
     DRAIN_TRIGGER_VALUES,
+    SCHEMA_BATTERY_HEALTH_LOG,
     ensureBatteryHealthLogCapacityColumns,
     ensureBatteryHealthLogTable,
 )
@@ -81,6 +85,22 @@ def test_freshTable_rejectsBadTrigger_likeAMigratedOne() -> None:
     ensureBatteryHealthLogTable(conn)
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("INSERT INTO battery_health_log (start_timestamp, drain_trigger) VALUES ('x', 'weekly')")
+
+
+def test_freshDdl_carriesEveryCapacityColumn_byteIdenticalToTheAddColumnText() -> None:
+    for name, colType in BATTERY_HEALTH_CAPACITY_COLUMNS:
+        line = f"    {name} {colType}"
+        assert f"{line},\n" in SCHEMA_BATTERY_HEALTH_LOG or f"{line}\n" in SCHEMA_BATTERY_HEALTH_LOG, name
+
+
+def test_triggerCheck_isDerivedFromTheEnum_notRestated() -> None:
+    import inspect
+
+    import src.pi.power.battery_health as bh
+
+    restated = ",".join(f"'{v}'" for v in DRAIN_TRIGGER_VALUES)
+    assert restated in SCHEMA_BATTERY_HEALTH_LOG  # the rendered DDL has it ...
+    assert restated not in inspect.getsource(bh)  # ... the source never spells it
 
 
 class _FileDb:

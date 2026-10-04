@@ -12,6 +12,8 @@
 # ================================================================================
 # 2026-10-03    | Atlas (ARCH-065a)  | ARCH-065 T6: created.
 # 2026-10-03    | Atlas (ARCH-065a)  | T7 fix 1: floor-ended at-home drain -> replace.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the loss band has ONE owner
+#               |                    | (battery_health.lossRowBand), shared with the mark.
 ################################################################################
 """Tests for src.pi.power.battery_health_finalize (specs/battery-health-design.md sec 6)."""
 
@@ -311,6 +313,28 @@ def test_theLossBand_isFiveSecondsBeforeToThirtyAfter() -> None:
     edge = _addRow(conn, _CUT + timedelta(seconds=30), DRAIN_TRIGGER_KEYOFF, 4.0, closed=False)
     finalizeLatestDrain(conn, priorBootVcellBeforeCutV=4.17, priorBootLossAt=_iso(_CUT))
     assert _steps(conn)[edge] is not None
+
+
+def test_theLossBand_lowerEdge_isInclusive() -> None:
+    conn = _bare()
+    edge = _addRow(conn, _CUT - timedelta(seconds=5), DRAIN_TRIGGER_KEYOFF, 4.0, closed=False)
+    finalizeLatestDrain(conn, priorBootVcellBeforeCutV=4.17, priorBootLossAt=_iso(_CUT))
+    assert _steps(conn)[edge] is not None
+
+
+def test_theLossBand_hasOneOwner_sharedByTheFinaliserAndTheMark() -> None:
+    """Ruling 19: "this loss's drain row" is defined once (battery_health)."""
+    import src.pi.power.battery_health as bh
+    import src.pi.power.battery_health_finalize as fin
+    import src.pi.power.power_watch.tasks.monthly_test_hold as hold
+
+    assert fin.lossRowBand is bh.lossRowBand
+    assert hold.lossRowBand is bh.lossRowBand
+    assert not hasattr(fin, "LOSS_ROW_BEFORE_S") and not hasattr(hold, "_ROW_OPEN_SLACK_S")
+    assert bh.lossRowBand(_iso(_CUT)) == (
+        _iso(_CUT - timedelta(seconds=bh.LOSS_ROW_BEFORE_S)),
+        _iso(_CUT + timedelta(seconds=bh.LOSS_ROW_AFTER_S)),
+    )
 
 
 def test_anOpenMonthlyTest_withAFullWindow_isRated() -> None:

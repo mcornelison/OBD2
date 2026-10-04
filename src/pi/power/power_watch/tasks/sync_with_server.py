@@ -40,6 +40,11 @@
 #               |         | (60 s, re-read after every attempt, clock from
 #               |         | association). New outcome STALLED; lastOutcome.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T2: the record carries the drain's start/end (nowIsoFn).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: lastOutcome reset at run start (M3); the
+#               |         | loss generation is read ONCE at run start and rides on
+#               |         | the record (lossGeneration), so a run left over from a
+#               |         | cancelled loss is dropped by HomeStateAtLoss.wrapSink and
+#               |         | never overwrites lastOutcome (I1).
 # ================================================================================
 ################################################################################
 """The CIO pre-shutdown server-sync pipeline task (Phase-2 power-watch)."""
@@ -102,6 +107,9 @@ class SyncOutcomeRecord(NamedTuple):
         startedAt: ARCH-065 -- UTC ISO second the drain began (after any
             JOINING wait), or ``None`` when no drain ran.
         endedAt: UTC ISO second the drain returned, or ``None``.
+        lossGeneration: Ruling 19 -- the ``HomeStateAtLoss`` loss generation
+            the run started under, or ``None`` when the task was not given
+            one. ``HomeStateAtLoss.wrapSink`` drops a record of an older loss.
     """
 
     kind: OutcomeKind
@@ -110,6 +118,7 @@ class SyncOutcomeRecord(NamedTuple):
     backlogEnd: int | None
     startedAt: str | None = None
     endedAt: str | None = None
+    lossGeneration: int | None = None
 
 
 class SyncWithServerTask:
@@ -175,6 +184,7 @@ class SyncWithServerTask:
         backlogReader: Callable[[], int | None] | None = None,
         lastProbe: Callable[[], ProbeResult | None] | None = None,
         nowIsoFn: Callable[[], str] | None = None,
+        lossGeneration: Callable[[], int] | None = None,
     ):
         """Args:
         homeState: Zero-arg home-network read, called once per ``run()``,
@@ -204,6 +214,10 @@ class SyncWithServerTask:
             home is ``AT_HOME_SERVER_DOWN``.
         nowIsoFn: ARCH-065 -- UTC ISO-second clock stamping the drain's start
             and end; ``utcIsoNow`` when None.
+        lossGeneration: Ruling 19 -- ``HomeStateAtLoss.lossGeneration``. Read
+            ONCE at the start of ``run()``; the record carries it, and
+            ``lastOutcome`` is set only while it is still the current loss.
+            When None, every run is treated as current (no generation).
         """
         self._homeState = homeState
         self._runSync = runSync
@@ -219,9 +233,15 @@ class SyncWithServerTask:
         self._backlogReader = backlogReader
         self._lastProbe = lastProbe
         self._nowIso = nowIsoFn if nowIsoFn is not None else utcIsoNow
+        self._lossGeneration = lossGeneration
 
     def run(self) -> OutcomeKind:
         """Run the CIO sync state machine and record its outcome. Never raises."""
+        # M3: a reader mid-run never sees the PREVIOUS run's outcome.
+        self.lastOutcome = None
+        # I1: the loss this run belongs to, read once and kept LOCAL -- a later
+        # run on another thread must not be able to rewrite it.
+        generation = self._readLossGeneration()
         state = self._readHomeState()
         backlogStart = self._readBacklog()
         if state is HomeNetworkState.AT_HOME_JOINING:
@@ -234,6 +254,7 @@ class SyncWithServerTask:
                     f"still joining the home WiFi after {self._joinWaitSec:.0f}s",
                     backlogStart,
                     backlogStart,
+                    generation=generation,
                 )
         if state is HomeNetworkState.AWAY:
             logger.info(
@@ -242,7 +263,8 @@ class SyncWithServerTask:
             )
             # No attempt ran, so the start read is also the end.
             return self._record(
-                OutcomeKind.AWAY, "away from home -- sync skipped", backlogStart, backlogStart
+                OutcomeKind.AWAY, "away from home -- sync skipped", backlogStart, backlogStart,
+                generation=generation,
             )
         if state is HomeNetworkState.UNKNOWN:
             logger.warning(
@@ -255,7 +277,8 @@ class SyncWithServerTask:
         kind, detail = self._drain(state)
         endedAt = self._stamp()
         return self._record(
-            kind, detail, backlogStart, self._readBacklog(), startedAt, endedAt
+            kind, detail, backlogStart, self._readBacklog(), startedAt, endedAt,
+            generation=generation,
         )
 
     def _awaitAssociation(self, startMono: float) -> HomeNetworkState:
@@ -435,6 +458,16 @@ class SyncWithServerTask:
             logger.warning("powerwatch sync_with_server: probe read failed (%s)", exc)
             return None
 
+    def _readLossGeneration(self) -> int | None:
+        """The current loss generation, or None (no source, or it raised). Never raises."""
+        if self._lossGeneration is None:
+            return None
+        try:
+            return int(self._lossGeneration())
+        except Exception as exc:  # noqa: BLE001 -- never raise
+            logger.warning("powerwatch sync_with_server: loss generation read failed (%s)", exc)
+            return None
+
     def _stamp(self) -> str | None:
         """The injected ISO clock, never raising (a stamp must not break the drain)."""
         try:
@@ -451,9 +484,17 @@ class SyncWithServerTask:
         backlogEnd: int | None,
         startedAt: str | None = None,
         endedAt: str | None = None,
+        *,
+        generation: int | None = None,
     ) -> OutcomeKind:
-        """Log the outcome and hand its one record to the sink. Never raises."""
-        self.lastOutcome = kind
+        """Log the outcome and hand its one record to the sink. Never raises.
+
+        ``lastOutcome`` is set only while ``generation`` is still the current
+        loss: a run left over from a cancelled loss must not overwrite the
+        current loss's outcome (its record is dropped by the sink too).
+        """
+        if generation is None or self._readLossGeneration() == generation:
+            self.lastOutcome = kind
         logger.log(
             _OUTCOME_LOG_LEVEL.get(kind, logging.ERROR),
             "powerwatch sync_with_server: outcome=%s backlog_start=%s backlog_end=%s (%s)",
@@ -463,8 +504,9 @@ class SyncWithServerTask:
             detail,
         )
         try:
-            self._writeRecord(SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd, startedAt, endedAt)
-            )
+            self._writeRecord(SyncOutcomeRecord(
+                kind, detail, backlogStart, backlogEnd, startedAt, endedAt, generation
+            ))
         except Exception as exc:  # noqa: BLE001 -- never raise; the poweroff must proceed
             logger.error(
                 "powerwatch sync_with_server: could not write the %s record (%s)",

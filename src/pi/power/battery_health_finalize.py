@@ -26,6 +26,10 @@
 # 2026-10-03    | Atlas (ARCH-065a)  | T7 fix 1 (Ruling 13): a drain the reserve floor
 #                                      ended at home is stamped verdict=replace
 #                                      (write-once, any trigger) and is not rated.
+# 2026-10-03    | Atlas (ARCH-065a)  | Ruling 19: the loss-row band comes from
+#                                      battery_health.lossRowBand (shared with the
+#                                      monthly-test mark); the at-home state set
+#                                      from home_detector.AT_HOME_STATE_NAMES.
 ################################################################################
 """Finalise the prior drain at boot -- cut step and window drain rate."""
 
@@ -36,34 +40,24 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 from src.common.time.helper import CANONICAL_ISO_FORMAT
-from src.pi.network.home_detector import HomeNetworkState
+from src.pi.network.home_detector import AT_HOME_STATE_NAMES
 from src.pi.power.battery_capacity import TEST_HOLD_S, WINDOW_S, WINDOW_SKIP_S
-from src.pi.power.battery_health import DRAIN_TRIGGER_MONTHLY_TEST
+from src.pi.power.battery_health import (
+    DRAIN_TRIGGER_MONTHLY_TEST,
+    lossRowBand,
+)
 from src.pi.power.battery_health_verdict import VERDICT_REPLACE
 from src.pi.power.power_watch.contract import OutcomeKind
 
 logger = logging.getLogger(__name__)
 
-__all__ = ['LOSS_ROW_AFTER_S', 'LOSS_ROW_BEFORE_S', 'MIN_WINDOW_FILL', 'finalizeLatestDrain', 'windowDrainRate']
-
-#: The prior loss's drain row opens within this band around the loss's wall time
-#: (the collector's clock may lead powerwatch's; its confirmation poll may lag).
-LOSS_ROW_BEFORE_S: int = 5
-LOSS_ROW_AFTER_S: int = 30
+__all__ = ['MIN_WINDOW_FILL', 'finalizeLatestDrain', 'windowDrainRate']
 
 #: Fraction of WINDOW_S the window must hold in samples (1 Hz) for the rate to count.
 MIN_WINDOW_FILL: float = 0.8
 
-#: The at-home states, as the outcome record stores them (the enum NAME).  A
-#: reserve floor that ended the drain in one of these means the pack could not
-#: carry the full sync and a graceful shutdown (Ruling 13).
-_AT_HOME_STATE_NAMES: frozenset[str] = frozenset(
-    state.name for state in (
-        HomeNetworkState.AT_HOME_SERVER_REACHABLE,
-        HomeNetworkState.AT_HOME_SERVER_DOWN,
-        HomeNetworkState.AT_HOME_JOINING,
-    )
-)
+# A reserve floor that ended the drain in one of home_detector.AT_HOME_STATE_NAMES
+# means the pack could not carry the full sync and a graceful shutdown (Ruling 13).
 
 
 def windowDrainRate(points: list[tuple[float, float]]) -> float | None:
@@ -91,7 +85,7 @@ def finalizeLatestDrain(
 
     The row is found by the loss's wall time (``HomeStateAtLoss.lossIso``, landed
     as ``startup_log.prior_boot_loss_at``): the newest row whose start_timestamp
-    lies in [loss - LOSS_ROW_BEFORE_S, loss + LOSS_ROW_AFTER_S], open or closed.
+    lies in ``battery_health.lossRowBand(loss)``, open or closed.
     At arm the prior loss's row may still be open (a hard cut, or the boot reaper
     has not run), so "newest closed row" could be an older drain -- and both
     fields are write-once, so a mis-stamp would be permanent.  No loss time, or
@@ -113,9 +107,7 @@ def finalizeLatestDrain(
     if priorBootLossAt is None:
         logger.info("battery_health_finalize: no prior loss time recorded -- nothing to finalise")
         return
-    loss = datetime.strptime(priorBootLossAt, CANONICAL_ISO_FORMAT).replace(tzinfo=UTC)
-    lo = (loss - timedelta(seconds=LOSS_ROW_BEFORE_S)).strftime(CANONICAL_ISO_FORMAT)
-    hi = (loss + timedelta(seconds=LOSS_ROW_AFTER_S)).strftime(CANONICAL_ISO_FORMAT)
+    lo, hi = lossRowBand(priorBootLossAt)
     row = conn.execute(
         "SELECT drain_event_id, start_timestamp, start_vcell_v, drain_trigger, "
         "cut_step_mv, drain_rate_mv_s, verdict FROM battery_health_log "
@@ -135,7 +127,7 @@ def finalizeLatestDrain(
         )
         conn.commit()
     if (priorBootSyncOutcome == OutcomeKind.RESERVE_FLOOR.name
-            and priorBootHomeState in _AT_HOME_STATE_NAMES):
+            and priorBootHomeState in AT_HOME_STATE_NAMES):
         if verdict is None:
             conn.execute(
                 "UPDATE battery_health_log SET verdict = ? "

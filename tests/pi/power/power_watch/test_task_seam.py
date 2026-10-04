@@ -17,6 +17,7 @@
 #                                explicit registry-seam guard. The seam is the
 #                                ONLY edit point for future plugin tasks.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: hold built with homeStateName.
 # ================================================================================
 ################################################################################
 """SS-T6: ShutdownTask Protocol + V1 task-registry seam."""
@@ -65,7 +66,7 @@ def test_buildV1Tasks_appendsTheHoldTaskAfterSync_whenGiven():
         stallSec=60.0,
     )
     hold = MonthlyTestHoldTask(
-        lastSyncOutcome=lambda: None, isDue=lambda: False, markOpenDrain=lambda: None,
+        homeStateName=lambda: "AWAY", isDue=lambda: False, markOpenDrain=lambda _iso: 0,
         secondsSinceCut=lambda: 0.0,
     )
     assert isinstance(hold, ShutdownTask)

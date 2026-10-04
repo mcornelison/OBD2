@@ -83,6 +83,10 @@
 #                               Columns.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T5: resolveCellEpoch -- the ONE
 #                               reader of pi.power.cellEpoch (controller ruling 9).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: lossRowBand + LOSS_ROW_*_S -- the ONE
+#                               owner of "this loss's drain row" (finaliser + mark);
+#                               the fresh DDL's drain_trigger CHECK derives from
+#                               DRAIN_TRIGGER_VALUES.
 # ================================================================================
 ################################################################################
 
@@ -166,7 +170,7 @@ import logging
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from src.common.config.validator import CELL_EPOCH_UNKNOWN
@@ -183,6 +187,9 @@ __all__ = [
     'DRAIN_TRIGGER_KEYOFF',
     'DRAIN_TRIGGER_MONTHLY_TEST',
     'DRAIN_TRIGGER_VALUES',
+    'LOSS_ROW_AFTER_S',
+    'LOSS_ROW_BEFORE_S',
+    'lossRowBand',
     'resolveCellEpoch',
     'DatabaseLike',
     'BatteryHealthRecorder',
@@ -244,6 +251,27 @@ DRAIN_TRIGGER_VALUES: tuple[str, ...] = (
 )
 _DRAIN_TRIGGER_CHECK = ",".join(f"'{v}'" for v in DRAIN_TRIGGER_VALUES)
 
+#: ARCH-065 (Ruling 19): a loss's drain row opens within this band around the
+#: loss's wall time (``HomeStateAtLoss.lossIso``) -- the collector's clock may
+#: lead powerwatch's by a few seconds, and its confirmation poll may lag.  The
+#: ONE owner of "this loss's row": the boot finaliser and the monthly-test mark
+#: both select through :func:`lossRowBand`.
+LOSS_ROW_BEFORE_S: int = 5
+LOSS_ROW_AFTER_S: int = 30
+
+
+def lossRowBand(lossIso: str) -> tuple[str, str]:
+    """The inclusive ``start_timestamp`` band of the drain row opened by the loss at ``lossIso``.
+
+    Returns ``(lo, hi)`` as canonical UTC ISO seconds: ``[loss - LOSS_ROW_BEFORE_S,
+    loss + LOSS_ROW_AFTER_S]``.  Raises ``ValueError`` on a non-canonical ``lossIso``.
+    """
+    loss = datetime.strptime(lossIso, CANONICAL_ISO_FORMAT).replace(tzinfo=UTC)
+    return (
+        (loss - timedelta(seconds=LOSS_ROW_BEFORE_S)).strftime(CANONICAL_ISO_FORMAT),
+        (loss + timedelta(seconds=LOSS_ROW_AFTER_S)).strftime(CANONICAL_ISO_FORMAT),
+    )
+
 
 def resolveCellEpoch(config: Mapping[str, Any]) -> str:
     """The ONE reader of ``pi.power.cellEpoch``: the value, else 'unknown'.
@@ -284,7 +312,7 @@ REAP_CHECKPOINTED_NOTE_SUFFIX: str = (
 # DDL
 # ================================================================================
 
-SCHEMA_BATTERY_HEALTH_LOG: str = """
+SCHEMA_BATTERY_HEALTH_LOG: str = f"""
 CREATE TABLE IF NOT EXISTS battery_health_log (
     -- Monotonic event id.  Pi-side PK + sync delta cursor.
     drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -356,7 +384,7 @@ CREATE TABLE IF NOT EXISTS battery_health_log (
     -- ARCH-065 capacity columns (see BATTERY_HEALTH_CAPACITY_COLUMNS; same
     -- type text so a fresh table matches a migrated one).  drain_trigger is
     -- the qualifying key; every other column is nullable.
-    drain_trigger TEXT NOT NULL DEFAULT 'keyoff' CHECK (drain_trigger IN ('keyoff','monthly_test','calibration')),
+    drain_trigger TEXT NOT NULL DEFAULT 'keyoff' CHECK (drain_trigger IN ({_DRAIN_TRIGGER_CHECK})),
     cell_epoch TEXT,
     cut_step_mv REAL,
     window_start_s INTEGER,
