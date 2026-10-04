@@ -173,3 +173,56 @@ def test_corruptBackup_abortsBeforeAnyWrite(tmp_path: Path, monkeypatch: pytest.
     conn = sqlite3.connect(db)
     assert conn.execute("SELECT COUNT(*) FROM battery_health_log").fetchone()[0] == 0
     conn.close()
+
+
+def _drain(n: int, flapAt: int | None = None, restoreAt: int | None = None) -> list[tuple[float, str, float]]:
+    """Cut at t=1; optional PLD=1 flap row at flapAt; restore (PLD=1 tail) from restoreAt."""
+    rows = []
+    for t in range(n):
+        pld = "0" if t else "1"
+        if t == flapAt or (restoreAt is not None and t >= restoreAt):
+            pld = "1"
+        rows.append((float(t), pld, 4.2 - 0.00005 * t))
+    return rows
+
+
+def test_calibration_refusesALogThatEndsOnWall() -> None:
+    with pytest.raises(ValueError, match="must end on battery"):
+        summarise(_drain(20001, restoreAt=19990), "calibration")
+    assert summarise(_drain(20001), "calibration")["t_floor_s"] == 19399
+
+
+@pytest.mark.parametrize("mode", ["monthly_test", "calibration"])
+def test_flapInsideTheWindow_isRefused_inBothModes(mode: str) -> None:
+    with pytest.raises(ValueError, match="inside the 660 s test window"):
+        summarise(_drain(20001, flapAt=300), mode)
+
+
+def test_restoreAfterTheWindow_stillSeedsAMonthlyTest() -> None:
+    s = summarise(_drain(9000, restoreAt=8990), "monthly_test")
+    assert s["runtime_seconds"] == 8988  # last PLD=0 row (t=8989) - cut (t=1)
+
+
+def test_slope_neverReadsPldOneRows() -> None:
+    clean = summarise(_drain(1000), "monthly_test")["drain_rate_mv_s"]
+    # a PLD=1 row after the window must not change anything; one with absurd volts
+    # placed inside the window is refused outright (flap), so test the tail case.
+    rows = _drain(1000) + [(1000.0, "1", 9.0), (1001.0, "1", 9.0)]
+    assert summarise(rows, "monthly_test")["drain_rate_mv_s"] == clean
+
+
+def test_nonexistentDb_isRefused_andNoFileCreated(tmp_path: Path) -> None:
+    missing = tmp_path / "nope.db"
+    assert main(_args(str(missing))) == 2
+    assert not missing.exists()
+    assert not list(tmp_path.glob("*"))
+
+
+def test_duplicate_isRefused_rowCountUnchanged(tmp_path: Path) -> None:
+    db = _db(tmp_path / "obd.db")
+    assert main(_args(db)) == 0
+    assert main(_args(db)) == 2
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM battery_health_log").fetchone()[0] == 1
+    conn.close()
+    assert len(list(tmp_path.glob("obd.db.bak-*"))) == 2  # distinct names, none overwritten

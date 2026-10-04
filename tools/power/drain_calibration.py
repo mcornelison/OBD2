@@ -129,25 +129,39 @@ def summarise(rows: Sequence[tuple[float, str, float]], mode: str) -> dict[str, 
     afterOne = next((r for r in rows[cutIdx:] if r[0] - cutT >= 1.0), None)
     if afterOne is None:
         raise ValueError("log ends before the cut + 1 s row")
-    onBattery = [r for r in rows[cutIdx:] if r[1] == "0"]
+    post = rows[cutIdx:]
+    for r in post:
+        if r[1] != "0" and r[0] - cutT <= TEST_HOLD_S:
+            raise ValueError(
+                f"power restored (PLD={r[1]}) {r[0] - cutT:.1f} s after the cut, inside the "
+                f"{TEST_HOLD_S} s test window (cut + {TEST_HOLD_S} s); a flap is not a clean test"
+            )
+    if mode == DRAIN_TRIGGER_CALIBRATION:
+        restored = next((r for r in post if r[1] != "0"), None)
+        if restored is not None:
+            raise ValueError(
+                f"calibration log must end on battery: a PLD={restored[1]} row follows the cut "
+                f"at +{restored[0] - cutT:.1f} s"
+            )
+    onBattery = [r for r in post if r[1] == "0"]
     last = onBattery[-1]
     runtime = int(round(last[0] - cutT))
 
-    points = [(r[0] - cutT, r[2]) for r in rows[cutIdx:]
+    points = [(r[0] - cutT, r[2]) for r in onBattery
               if WINDOW_SKIP_S <= r[0] - cutT <= TEST_HOLD_S]
     need = MIN_WINDOW_FILL * WINDOW_S
     if len(points) < need or (points and points[-1][0] - points[0][0] < need):
         raise ValueError(
-            f"window under-filled: {len(points)} points over "
+            f"window fill: {len(points)} PLD=0 points over "
             f"{(points[-1][0] - points[0][0]) if points else 0:.0f} s, the finaliser needs "
             f">= {need:.0f} points spanning >= {need:.0f} s -- would be refused, not writing a rate"
         )
     slope = windowDrainRate(points)
     if slope is None:
         raise ValueError("window slope undefined (no distinct times)")
-    windowEnd = next((r for r in rows[cutIdx:] if r[0] - cutT >= TEST_HOLD_S), None)
+    windowEnd = next((r for r in onBattery if r[0] - cutT >= TEST_HOLD_S), None)
     if windowEnd is None:
-        raise ValueError(f"window under-filled: log ends before cut + {TEST_HOLD_S} s")
+        raise ValueError(f"no PLD=0 row at or after cut + {TEST_HOLD_S} s (window end)")
     # end_vcell_v for a monthly_test row is VCELL at the WINDOW END (first row at or
     # after cut + TEST_HOLD_S, as start_vcell_v is the first row at or after cut + 1 s),
     # not the last line of a multi-hour drain: the provisional projection reads
@@ -169,8 +183,8 @@ def summarise(rows: Sequence[tuple[float, str, float]], mode: str) -> dict[str, 
         tFloor = runtime - RESERVE_S
         if tFloor < TEST_HOLD_S:
             raise ValueError(
-                f"calibration needs a drain that reaches dropout: runtime {runtime} s leaves "
-                f"floor at {tFloor} s, inside the test window (< {TEST_HOLD_S} s)"
+                f"calibration drain too short: runtime {runtime} s puts the reserve floor at "
+                f"{tFloor} s, inside the test window (< {TEST_HOLD_S} s)"
             )
         floorT = last[0] - RESERVE_S
         floorRow = next(r for r in reversed(onBattery) if r[0] <= floorT)
@@ -200,7 +214,7 @@ def _quickCheck(path: str) -> bool:
 
 def _backup(db: str) -> str:
     """Copy ``db`` to ``<db>.bak-<UTC>`` and prove the COPY valid; abort if not."""
-    dest = f"{db}.bak-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    dest = f"{db}.bak-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
     src = sqlite3.connect(db)
     dst = sqlite3.connect(dest)
     try:
@@ -220,6 +234,18 @@ def _insert(db: str, row: dict[str, Any]) -> int:
     conn = sqlite3.connect(db)
     try:
         with conn:  # one transaction: commit on success, rollback on error
+            conn.execute("BEGIN IMMEDIATE")
+            dup = conn.execute(
+                "SELECT COUNT(*) FROM battery_health_log WHERE start_timestamp = ? "
+                "AND drain_trigger = ? AND cell_epoch = ?",
+                (row['start_timestamp'], row['drain_trigger'], row['cell_epoch']),
+            ).fetchone()[0]
+            if dup:
+                raise ValueError(
+                    f"duplicate: a battery_health_log row with start_timestamp "
+                    f"{row['start_timestamp']}, drain_trigger {row['drain_trigger']}, "
+                    f"cell_epoch {row['cell_epoch']} already exists; nothing inserted"
+                )
             cur = conn.execute(sql, [row[c] for c in cols])
             return int(cur.lastrowid or 0)
     finally:
@@ -254,8 +280,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if a.dry_run:
         print(json.dumps(row, indent=2, sort_keys=True))
         return 0
+    if not Path(a.db).is_file():
+        print(f"REFUSED: --db {a.db} does not exist", file=sys.stderr)
+        return 2
     backup = _backup(a.db)
-    newId = _insert(a.db, row)
+    try:
+        newId = _insert(a.db, row)
+    except ValueError as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
     print(f"wrote battery_health_log drain_event_id={newId} ({a.mode}); backup {backup}")
     return 0
 
