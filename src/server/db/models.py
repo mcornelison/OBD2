@@ -54,7 +54,7 @@
 #               |              | discriminator) + its named CHECK.  Live table
 #               |              | gains it via migration v0032.
 # 2026-10-03    | Atlas (ARCH-065a) | BatteryHealthLog gains the ten ARCH-065 capacity
-#               |              | columns; StartupLog gains three prior_boot_* columns.
+#               |              | columns; StartupLog gains four prior_boot_* columns.
 #               |              | Live tables gain them via migration v0035.
 # 2026-09-25    | Rex (US-790) | DrainVcellTrajectory: the shutdown drain's VCELL
 #               |              | series (one row per poll) + its termination

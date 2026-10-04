@@ -18,6 +18,8 @@
 #               |              | one owner (SSOT): timings from battery_capacity,
 #               |              | slope + fill rule from battery_health_finalize,
 #               |              | reserve from battery_health_verdict.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: timestamps use CANONICAL_ISO_FORMAT
+#               |              | (src.common.time.helper), not a local literal.
 # ================================================================================
 ################################################################################
 """Drain calibration / seed tool.
@@ -48,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from src.common.config.validator import CELL_EPOCH_UNKNOWN, CELL_EPOCH_VALUES
+from src.common.time.helper import CANONICAL_ISO_FORMAT
 from src.pi.power.battery_capacity import TEST_HOLD_S, WINDOW_S, WINDOW_SKIP_S
 from src.pi.power.battery_health import (
     DRAIN_TRIGGER_CALIBRATION,
@@ -65,7 +68,6 @@ _EPOCHS: tuple[str, ...] = tuple(e for e in CELL_EPOCH_VALUES if e != CELL_EPOCH
 _LINE = re.compile(
     r"^(\d\d):(\d\d):(\d\d)(\.\d+)?Z seq=\d+ up=([\d.]+) .*?PLD=(\S+) VCELL=([\d.]+)"
 )
-_TS_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
 
 
 class WitnessRows(list):  # type: ignore[type-arg]
@@ -98,7 +100,7 @@ def parseWitnessLog(path: str, date: str) -> list[tuple[float, str, float]]:
                 firstUp = up
                 frac = float(m.group(4)) if m.group(4) else 0.0
                 rows.firstWallUtc = datetime.strptime(
-                    f"{date}T{m.group(1)}:{m.group(2)}:{m.group(3)}", '%Y-%m-%dT%H:%M:%S',
+                    f"{date}T{m.group(1)}:{m.group(2)}:{m.group(3)}Z", CANONICAL_ISO_FORMAT,
                 ).replace(tzinfo=UTC) + timedelta(seconds=frac)
             rows.append((round(up - firstUp, 3), m.group(6), float(m.group(7))))
     return rows
@@ -108,7 +110,7 @@ def _ts(rows: Sequence[tuple[float, str, float]], t: float) -> str | None:
     first = getattr(rows, 'firstWallUtc', None)
     if first is None:
         return None
-    return (first + timedelta(seconds=t - rows[0][0])).strftime(_TS_FORMAT)
+    return (first + timedelta(seconds=t - rows[0][0])).strftime(CANONICAL_ISO_FORMAT)
 
 
 def summarise(rows: Sequence[tuple[float, str, float]], mode: str) -> dict[str, Any]:

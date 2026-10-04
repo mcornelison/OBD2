@@ -40,6 +40,8 @@
 #                          (prior_boot_loss_at) and keys the finaliser on it.
 # 2026-10-03    | Atlas (ARCH-065a) | T7 fix 1: passes the prior sync outcome + home
 #                          state to the finaliser (floor-ended at home -> replace).
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: _asIso parses with CANONICAL_ISO_FORMAT
+#                          (one owner of the format) instead of a literal.
 # ================================================================================
 ################################################################################
 """Crash-surviving boot-progress breadcrumb instrument (replaces I-037 canary)."""
@@ -56,7 +58,7 @@ import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 
-from src.common.time.helper import utcIsoNow
+from src.common.time.helper import CANONICAL_ISO_FORMAT, utcIsoNow
 from src.pi.diagnostics.clock_sync import assessClockQuality
 
 logger = logging.getLogger(__name__)
@@ -354,7 +356,7 @@ def _asIso(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     try:
-        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+        datetime.strptime(value, CANONICAL_ISO_FORMAT)
     except ValueError:
         return None
     return value

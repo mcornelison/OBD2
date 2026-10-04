@@ -94,6 +94,8 @@
 #                                at-home sync has no time cap, CIO 2026-10-02);
 #                                pi.homeNetwork.joinWaitSec 120 + stallSec 60,
 #                                integers >= 1 only.
+# 2026-10-03    | Atlas (ARCH-065a)| Ruling 19 (M8): drainFloorDwellReads is an integer
+#                                >= 1 (bool / float / str rejected).
 # ================================================================================
 ################################################################################
 
@@ -1122,7 +1124,6 @@ class ConfigValidator:
             'pi.powerWatch.bootGraceSec',
             'pi.powerWatch.smoothingSec',
             'pi.powerWatch.smoothingPollSec',
-            'pi.powerWatch.drainFloorDwellReads',
             'pi.powerWatch.pldGpioPin',
             'pi.powerWatch.pldPollSec',
             'pi.powerWatch.uiPollSec',
@@ -1135,6 +1136,17 @@ class ConfigValidator:
             ):
                 raise ConfigValidationError(
                     f"{key} must be a positive number (got {val!r})",
+                    missingFields=[key],
+                )
+
+        # A COUNT of consecutive reads (Ruling 19, M8): an integer >= 1 only.
+        for key in ('pi.powerWatch.drainFloorDwellReads',):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool) or not isinstance(val, int) or val < 1
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be an integer >= 1 (got {val!r})",
                     missingFields=[key],
                 )
 
