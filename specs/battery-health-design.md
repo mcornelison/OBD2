@@ -56,7 +56,7 @@ Not captured, deliberately: per-second watts (CPU cost; the monthly test runs th
 - The reserve floor IS the existing `pi.powerWatch.drainFloorVolts` (3.6 V today) with the dwell (§15.3). Calibration (§7) re-sets its value.
 
 ## 6. Monthly test (11 min)
-- **Due when:** an at-home key-off (state resolves `AT_HOME_*`), and no completed `monthly_test` row for the CURRENT `cell_epoch` in the
+- **Due when:** an at-home key-off (the home state AT THE LOSS is in `AT_HOME_STATES`, `home_detector.py` — §16.14), and no completed `monthly_test` row for the CURRENT `cell_epoch` in the
   last **30 days**. A new pack's first at-home key-off runs one.
 - **Behaviour:** a normal at-home shutdown, sync to completion included, but powerwatch holds power until **660 s after the cut**, then
   shuts down gracefully.
@@ -83,8 +83,8 @@ Not captured, deliberately: per-second watts (CPU cost; the monthly test runs th
 ## 8. The verdict (computed on the Pi at boot; published to `states/battery-health`)
 - **T = T_cal × (rate_cal / rate_month)**: shape from the calibration, scale from the latest monthly test of the same `cell_epoch`.
   Assumes ageing compresses the curve in time (stated assumption; revisit if a later calibration contradicts it).
-- **Uncalibrated:** T = straight line from the window's end VCELL to **3.44 V** (provisional) minus the 10-min reserve,
-  `reasons.health = provisional_uncalibrated`. A straight line OVER-projects near empty, which is why it is labelled.
+- **Uncalibrated:** T = `window_end_s` + straight line from the window's end VCELL to the reserve floor (`pi.powerWatch.drainFloorVolts`,
+  the ONE floor — §16.12), published with `provisional = true`. A straight line OVER-projects near empty, which is why it is labelled.
 - **Typed unknowns (never a guessed green):** `no_monthly_test` (none for this `cell_epoch`), `monthly_test_stale` (> 45 days),
   `too_few_syncs` (< 3 at-home `DELIVERED` jobs), plus the existing `no_database` / `log_unreadable` / `clock_unreadable`. Obsolete:
   `no_qualifying_drains`, `too_few_drains`, `health_data_stale`. The renderer table `carousel.js#BATTERY_HEALTH_REASON_TEXT` and its guard
@@ -95,14 +95,18 @@ Not captured, deliberately: per-second watts (CPU cost; the monthly test runs th
 ## 9. Sudden failure: `cut_step_mv`
 Recorded at EVERY key-off (home or away) and published as a 30-day trend. **No colour yet.** Its threshold is set from about a month of
 epoch-3 key-offs (factor over the observed spread, with n and filters stated: `facts/README.md` rule 2a), not invented now.
-Basis: 119 mV at ~2.55 W on 2026-09-27.
+Basis: 119 mV at ~2.55 W on 2026-09-27. ⚠️ **Two instruments:** the 2026-09-27 seed's step is (last wall reading − the reading at
+cut + 1 s) from the witness log; live rows use (powerwatch's wall value, ≤ 15 s old at the loss − the collector's `start_vcell_v`).
+Compare like with like when the threshold is set.
 
 ## 10. What changes where (blast radius)
 - Pi: `power_watch/tasks/sync_with_server.py` (stops, outcomes, times) · the powerwatch controller (monthly hold, floor dwell) ·
   `power_watch/outcome.py` + `boot_progress.py` (sync times) · `battery_health_verdict.py` (replaced) · the battery-health emitter ·
   `power_db.py` (new columns, `cut_step_mv`) · `database_schema.py` (replay-safe ADD COLUMNs) · validator + config keys below.
-- Server: ONE migration (v0035) for the new `battery_health_log` and `startup_log` columns; models. No `close_reason` change (§15.2). **SERVER BEFORE PI** (snapshot sync drops
-  unknown columns silently: the v0034 lesson).
+- Server: ONE migration (v0035) for the new `battery_health_log` and `startup_log` columns; models. No `close_reason` change (§15.2). 🔴 **SERVER BEFORE PI, and PROBE before
+  the Pi:** a Pi ahead of the server makes every `battery_health_log` DELTA push FAIL (the delta path refuses unknown columns ⇒
+  `tablesFailed > 0` ⇒ every at-home sync ends `AT_HOME_SERVER_DOWN`), and the `startup_log` SNAPSHOT path drops the new columns
+  silently and forever. Gate: v0035 applied AND its columns probed on the server, then the Pi.
 - UI: the reason-text table (§8) and the tile detail (T, J).
 - Config (powerwatch behaviour only, §15.9): `pi.batteryHealth.monthlyIntervalDays 30`, `pi.homeNetwork.joinWaitSec 120`,
   `pi.homeNetwork.stallSec 60`, `pi.powerWatch.drainFloorDwellReads 5`. The test timings (60 / 600 / 660 s) live ONLY in
@@ -112,7 +116,10 @@ Basis: 119 mV at ~2.55 W on 2026-09-27.
 
 ## 11. Validation (human actions ⇒ `bigDefinitionOfDone`, never story ACs)
 1. The calibration drain on epoch 3 → `T_cal`, cutoff, floor recorded; verdict loses `provisional`.
-2. An at-home key-off after a long drive → sync ends `DELIVERED` past 60 s, times recorded, graceful poweroff.
+2. An at-home key-off after a long drive → sync ends `DELIVERED` past 60 s, times recorded, graceful poweroff. (`DELIVERED` needs the
+   backlog to read exactly 0; if shutdown-time writes keep it above 0 the sync ends `STALLED` — this item is the instrument for that.)
+**Expected card sequence after deploy (not failures):** `no monthly battery test yet` → after the 09-27 seed: `too few home syncs to
+judge · last health check 2026-09-27` → after 3 DELIVERED at-home syncs with times: `GOOD … (provisional)`.
 3. The first scheduled monthly test (~2026-10-27) → a counted row with a rate, and a verdict.
 4. An away key-off → AWAY, poweroff within ~12 s, `cut_step_mv` recorded.
 Unit tests use the 2026-09-27 trace as the fixture (skip, slope, projection); every threshold boundary; and each new guard
@@ -146,8 +153,8 @@ These supersede any text above that differs.
 8. Calibration and the 2026-09-27 seed are computed from the **1 Hz witness log** by `tools/power/drain_calibration.py`; powerwatch,
    which writes the trajectory, is stopped during a calibration drain.
 9. Verdict constants live in code; config only for powerwatch behaviour (§10).
-10. The current pack = the `cell_epoch` of the newest `battery_health_log` row. Calibration results are stored in `t_floor_s`,
-    `floor_vcell_v`, `cutoff_vcell_v`.
+10. ~~The current pack = the `cell_epoch` of the newest `battery_health_log` row.~~ *(Superseded by §16.12: the pack is
+    `resolveCellEpoch(config)`.)* Calibration results are stored in `t_floor_s`, `floor_vcell_v`, `cutoff_vcell_v`.
 
 Implementation plan: `Z:/O/OBD2v3/offices/architect/reports/2026-10-02-PLAN-ARCH-065-battery-health.md`.
 
@@ -180,4 +187,16 @@ every value has one owner and every consumer imports or reads it.
 11. **Calibration must END ON BATTERY** (a restored log is refused); a PLD flap inside cut..cut+660 s is refused in both modes; a restore
     after the window is fine for a monthly-test seed. The 2026-09-27 log seeds epoch 3's first monthly test (rate −0.065 mV/s, runtime
     8169 s, cut step 118.8 mV) and cannot serve as the calibration (power was restored).
-
+12. **One current pack, one reserve floor (final review, SSOT):** the verdict's pack is `resolveCellEpoch(config)` — the same resolver the
+    writers and the due check use (a new pack reads `no_monthly_test` until its own first test). The provisional T projects to
+    `pi.powerWatch.drainFloorVolts` — the floor the sequencer actually stops at; the 3.44 V figure and its extra reserve are gone
+    (reference: end 4.07 V, rate −0.04 mV/s, floor 3.6 V, window end 660 s ⇒ T = 12 410 s).
+13. **One owner of "this loss's drain row":** `lossRowBand(lossAt)` (`battery_health.py`), [loss − 5 s, loss + 30 s], used by the finaliser
+    and the monthly-test mark (the mark adds "still open").
+14. **One owner of "at home":** `AT_HOME_STATES` / `AT_HOME_STATE_NAMES` (`home_detector.py`); the hold is gated on the home state at the
+    loss (not on a sync outcome), and the finaliser's floor rule uses the same set.
+15. **Cancelled losses:** `HomeStateAtLoss` carries a loss GENERATION; the sync and the hold capture it at their start, and a record from an
+    older generation is dropped. Known residuals (follow-up): a stale pipeline whose hold STARTS during the next loss can label that loss's
+    row if it too is cancelled (never rated); a stale sync in the JOINING poll can take the next loss's at-loss state handoff.
+16. **CIO ruling 2026-10-03 (I4):** a reserve-floor `replace` stands until the regular monthly test — no early re-test (*"at replacement time
+    I should have new batteries"*; a new pack is a new `cell_epoch` with its own first test).
