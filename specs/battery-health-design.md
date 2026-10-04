@@ -1,7 +1,8 @@
 # Battery health: "can this pack carry a full at-home sync and a graceful shutdown?" — DESIGN
 
-**Status:** APPROVED by the CIO 2026-10-02 (ARCH-065). **DESIGN, NOT YET BUILT** -- until it is, the as-built verdict is the one
-described in `architecture.md` (Battery Health card / Battery Health Log), which point here. Owner: Atlas (keeper of `specs/`).
+**Status:** APPROVED by the CIO 2026-10-02 (ARCH-065). **BUILT on `architect/ARCH-065a-battery-health-build`** (CIO-directed build by
+Atlas; merges after Sprint 95 and the ARCH-064 set). `architecture.md` (Battery Health card / Battery Health Log) points here; this file
+governs where they differ. §16 records the build-time rulings and supersedes §1–§15 where they differ. Owner: Atlas (keeper of `specs/`).
 Evidence (fleet share, `Z:/O/OBD2v3/offices/architect/`):
 `findings/2026-10-02-RESULTS-battery-health-window-length-60s-and-120s-are-not-honest-600s-is.md`,
 `findings/2026-10-02-RESULTS-power_log-VCELL-was-the-deleted-ladder-and-the-health-verdict-has-no-reachable-input.md`;
@@ -103,9 +104,9 @@ Basis: 119 mV at ~2.55 W on 2026-09-27.
 - Server: ONE migration (v0035) for the new `battery_health_log` and `startup_log` columns; models. No `close_reason` change (§15.2). **SERVER BEFORE PI** (snapshot sync drops
   unknown columns silently: the v0034 lesson).
 - UI: the reason-text table (§8) and the tile detail (T, J).
-- Config (powerwatch behaviour only, §15.9): `pi.batteryHealth.monthlyIntervalDays 30`, `pi.batteryHealth.testHoldSec 660`,
-  `pi.homeNetwork.joinWaitSec 120`, `pi.homeNetwork.stallSec 60`, `pi.powerWatch.drainFloorDwellReads 5`. Verdict constants live in
-  `battery_health_verdict.py`.
+- Config (powerwatch behaviour only, §15.9): `pi.batteryHealth.monthlyIntervalDays 30`, `pi.homeNetwork.joinWaitSec 120`,
+  `pi.homeNetwork.stallSec 60`, `pi.powerWatch.drainFloorDwellReads 5`. The test timings (60 / 600 / 660 s) live ONLY in
+  `src/pi/power/battery_capacity.py` (§16.1); verdict constants in `battery_health_verdict.py`.
 - Specs: `architecture.md` §Battery Health card (~:5978) and §Battery Health Log (~:1432) become POINTERS to this file;
   `shutdown-orchestration-design.md` §Tier 2 (the ceiling text, incl. my 4bce3aa9 JOINING line) is updated to the completion rule.
 
@@ -140,8 +141,8 @@ These supersede any text above that differs.
    ~`smoothingSec` after the cut.
 5. Stall = the backlog did not FALL for 60 s, re-read after every attempt. `runSync` can return having pushed nothing.
 6. `battery_health_log` also gains `cell_epoch`, `window_start_s`, `window_end_s`, `drain_rate_mv_s`, `verdict`.
-7. `cut_step_mv` = powerwatch's last on-wall VCELL (cached each 1 Hz PLD poll: a NEW I2C read, its cost measured before merge) minus
-   the drain row's `start_vcell_v`.
+7. `cut_step_mv` = powerwatch's last on-wall VCELL minus the drain row's `start_vcell_v`. *(Superseded in mechanism by §16.3: no new
+   I2C read; the value comes from the existing 5 s UPS poll and is snapshotted once at the loss.)*
 8. Calibration and the 2026-09-27 seed are computed from the **1 Hz witness log** by `tools/power/drain_calibration.py`; powerwatch,
    which writes the trajectory, is stopped during a calibration drain.
 9. Verdict constants live in code; config only for powerwatch behaviour (§10).
@@ -149,3 +150,34 @@ These supersede any text above that differs.
     `floor_vcell_v`, `cutoff_vcell_v`.
 
 Implementation plan: `Z:/O/OBD2v3/offices/architect/reports/2026-10-02-PLAN-ARCH-065-battery-health.md`.
+
+## 16. As built (ARCH-065a, 2026-10-03) — rulings made during the build
+Each was reviewed; the full ledger is in the build's SDD workspace. CIO directive during the build: **"always use a SSOT approach"** —
+every value has one owner and every consumer imports or reads it.
+1. **One owner for the test timings:** `src/pi/power/battery_capacity.py` — `WINDOW_SKIP_S = 60`, `WINDOW_S = 600`,
+   `TEST_HOLD_S = 660`. No `testHoldSec` config key. Imported by the hold task, the boot finaliser, the verdict and the calibration tool.
+2. **One pack-ID resolver:** `resolveCellEpoch(config)` (`battery_health.py`); `pi.power.cellEpoch`, else `unknown`.
+3. **No new I2C read for the cut step.** The wall VCELL cache is fed by powerwatch's EXISTING ~5 s UPS poll (`recordHistorySample`),
+   only when the PLD reads power present AFTER the read; a value older than 15 s at the loss is dropped. **It is snapshotted ONCE at the
+   loss** (`HomeStateAtLoss.observe()`), and every record reads that snapshot. The PLD trigger thread does GPIO only (an I2C read there
+   could delay loss detection 7–11 s through `I2cClient` retries).
+4. **One owner for the loss time:** `HomeStateAtLoss` stamps it (monotonic + wall) once per loss; the outcome record carries `loss_at`,
+   landed as `startup_log.prior_boot_loss_at`.
+5. **The boot finaliser targets the loss's own row:** the newest `battery_health_log` row with `start_timestamp` in
+   [`loss_at` − 5 s, `loss_at` + 30 s], OPEN OR CLOSED (after a hard cut the row is still open at boot; the reaper runs after `arm`).
+   No `loss_at` ⇒ no-op.
+6. **"A counted monthly test" ≡ `drain_rate_mv_s IS NOT NULL`** — one definition for the due check, the verdict and the history write.
+   The rate is stamped when the trajectory covers cut+60..cut+660 s with ≥ 480 points spanning ≥ 480 s (independent of closure).
+7. **The monthly-test mark is scoped to this loss** (open rows with `start_timestamp ≥ loss_at − 5 s`), attempted before AND after the hold
+   (the collector opens its row up to ~2 s late); a mark failure never skips the hold.
+8. **Reserve floor ⇒ `replace` (spec §6, broadened):** an AT-HOME drain (monthly test or ordinary key-off) that the reserve floor ended is
+   stamped `verdict = 'replace'` by the finaliser; it outranks an older counted test. AWAY / UNKNOWN home states are not stamped.
+9. **Sync to completion:** the backlog is re-read after every attempt; with no backlog reader at all, a clean `runSync` counts as delivered
+   (production always passes one — pinned by an AST test). A late sync record after `RESERVE_FLOOR` is dropped for that loss.
+10. **Verdict output:** `provisional` is a boolean field (reasons only explain `unknown`); a negative T is published as 0; unusable test
+    data ⇒ `unknown` / `log_unreadable` with the test's date; the history write uses a ≤ 500 ms busy timeout and runs only when the value
+    changes; jobs are ordered by `startup_log` rowid (a dead RTC can mis-order timestamps).
+11. **Calibration must END ON BATTERY** (a restored log is refused); a PLD flap inside cut..cut+660 s is refused in both modes; a restore
+    after the window is fine for a monthly-test seed. The 2026-09-27 log seeds epoch 3's first monthly test (rate −0.065 mV/s, runtime
+    8169 s, cut step 118.8 mV) and cannot serve as the calibration (power was restored).
+
