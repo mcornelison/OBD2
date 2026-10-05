@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.72",
-  "theme": "S95 shutdown + ARCH-064 IMU + ARCH-065a battery",
-  "description": "Combined deploy. Sprint 95: pre-shutdown sync runs, home WiFi rejoin, v0034. ARCH-064/a/b/d: 50 Hz IMU read, fusion, drive-97 compass calibration, UTC-grid persist. ARCH-065a: battery-health card answers can the battery carry an at-home sync and graceful shutdown; at-home sync runs to completion (no 60 s cap); v0035. TUNER-008/009: coolant thresholds in Celsius. ARCH-058 tools."
+  "version": "V0.29.73",
+  "theme": "ARCH-066: gyro offset from stops + chip temp",
+  "description": "ARCH-066 (CIO-directed, US-819): the gyro offset is learned at the car's own stops (fresh OBD speed 0, mean raw rate, bracketed samples, A-34 windows refused, capped), persisted to /var/lib/eclipse-obd and seeded at the next boot; phantom pitch after an idling stop -1.41 to under 0.3 deg in test. Chip temperature exposed, so temp_c stops being NULL. Pi only; no schema change."
 }
