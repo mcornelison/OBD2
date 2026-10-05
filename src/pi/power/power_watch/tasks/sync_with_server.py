@@ -45,6 +45,11 @@
 #               |         | the record (lossGeneration), so a run left over from a
 #               |         | cancelled loss is dropped by HomeStateAtLoss.wrapSink and
 #               |         | never overwrites lastOutcome (I1).
+# 2026-10-05    | Atlas (US-833) | writeProvisional: a PROVISIONAL INTERRUPTED record at
+#               |         | run start (backlog_start) and at drain start (+ the
+#               |         | start stamp), before the sync can be cut off, so a hard
+#               |         | cut / floor / cap never leaves the record silent. The
+#               |         | final outcome still goes to writeRecord exactly once.
 # ================================================================================
 ################################################################################
 """The CIO pre-shutdown server-sync pipeline task (Phase-2 power-watch)."""
@@ -185,6 +190,7 @@ class SyncWithServerTask:
         lastProbe: Callable[[], ProbeResult | None] | None = None,
         nowIsoFn: Callable[[], str] | None = None,
         lossGeneration: Callable[[], int] | None = None,
+        writeProvisional: Callable[[SyncOutcomeRecord], None] | None = None,
     ):
         """Args:
         homeState: Zero-arg home-network read, called once per ``run()``,
@@ -218,6 +224,13 @@ class SyncWithServerTask:
             ONCE at the start of ``run()``; the record carries it, and
             ``lastOutcome`` is set only while it is still the current loss.
             When None, every run is treated as current (no generation).
+        writeProvisional: US-833 -- optional sink for the PROVISIONAL
+            ``INTERRUPTED`` record, written at run start (``backlogStart``) and
+            again at drain start (``startedAt``) so a poweroff that ends the run
+            early leaves an honest record, not silence. Production passes the
+            same file as ``writeRecord`` (the final outcome overwrites it). It
+            never sets ``lastOutcome`` and a failing write never stops the run.
+            When None, no provisional record is written.
         """
         self._homeState = homeState
         self._runSync = runSync
@@ -234,6 +247,7 @@ class SyncWithServerTask:
         self._lastProbe = lastProbe
         self._nowIso = nowIsoFn if nowIsoFn is not None else utcIsoNow
         self._lossGeneration = lossGeneration
+        self._writeProvisional = writeProvisional
 
     def run(self) -> OutcomeKind:
         """Run the CIO sync state machine and record its outcome. Never raises."""
@@ -244,6 +258,8 @@ class SyncWithServerTask:
         generation = self._readLossGeneration()
         state = self._readHomeState()
         backlogStart = self._readBacklog()
+        # US-833: from here on a cut leaves INTERRUPTED + the backlog, not silence.
+        self._recordProvisional(backlogStart, None, generation)
         if state is HomeNetworkState.AT_HOME_JOINING:
             # US-776-e: the join wait is bounded on its own (joinWaitSec); the
             # drain's stall clock starts when the drain starts, at association.
@@ -274,6 +290,7 @@ class SyncWithServerTask:
             )
         # ARCH-065: the drain's own span -- the JOINING wait above is not sync time.
         startedAt = self._stamp()
+        self._recordProvisional(backlogStart, startedAt, generation)
         kind, detail = self._drain(state)
         endedAt = self._stamp()
         return self._record(
@@ -475,6 +492,28 @@ class SyncWithServerTask:
         except Exception as exc:  # noqa: BLE001 -- never raise
             logger.warning("powerwatch sync_with_server: clock read failed (%s)", exc)
             return None
+
+    def _recordProvisional(
+        self, backlogStart: int | None, startedAt: str | None, generation: int | None
+    ) -> None:
+        """US-833: hand the PROVISIONAL INTERRUPTED record to its sink. Never raises.
+
+        Deliberately NOT ``_record``: a provisional record is not an outcome, so
+        it neither sets ``lastOutcome`` nor logs an outcome line.
+        """
+        if self._writeProvisional is None:
+            return
+        try:
+            self._writeProvisional(SyncOutcomeRecord(
+                OutcomeKind.INTERRUPTED,
+                "provisional: the shutdown sync has not reached its end",
+                backlogStart, None, startedAt, None, generation,
+            ))
+        except Exception as exc:  # noqa: BLE001 -- never raise; the drain must proceed
+            logger.error(
+                "powerwatch sync_with_server: could not write the provisional record (%s)",
+                exc,
+            )
 
     def _record(
         self,

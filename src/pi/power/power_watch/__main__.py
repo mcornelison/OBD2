@@ -181,6 +181,13 @@
 #                           sync and hold tasks capture it at run start; the hold is
 #                           gated on the loss's home state and marks with the lossIso
 #                           it snapshotted; recordFloorEnd logs what it overwrites.
+# 2026-10-05    | Atlas (US-833) | No poweroff leaves the shutdown-sync record silent:
+#                           one serialised sink (syncRecordSink) takes the sync task's
+#                           final AND provisional INTERRUPTED records; ensureRecorded
+#                           writes INTERRUPTED + the backlog when no sync record exists
+#                           (the backstop fast path); recordFloorEnd carries the
+#                           provisional's backlog_start / sync_started_at forward.
+#                           HomeStateAtLoss takes the task's backlogReader. CIO-directed.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -745,8 +752,14 @@ class HomeStateAtLoss:
     * the sync task records its outcome -- its record carries the name, since
       it overwrites the same file (``makeOutcomeSink(homeState=stateName)``);
     * the poweroff comes first (the VCELL floor fast path skips the
-      pipeline) -- ``ensureRecorded`` writes ``UNKNOWN``. The poweroff never
-      waits for the detector; a late answer does not overwrite that record.
+      pipeline) -- ``ensureRecorded`` writes ``INTERRUPTED`` (US-833) with the
+      backlog left behind and the state as known (``UNKNOWN`` until the
+      detector answers). The poweroff never waits for the detector; a late
+      answer does not overwrite that record.
+
+    US-833: the sync task's PROVISIONAL ``INTERRUPTED`` records pass through
+    ``wrapSink`` too, so a hard cut mid-sync leaves them on disk, and a
+    floor end carries their ``backlog_start`` / ``sync_started_at`` forward.
 
     The sync task's first home-state read IS this loss's answer
     (``stateForSync``), so the detector is called once per loss, not twice.
@@ -762,6 +775,7 @@ class HomeStateAtLoss:
         vcellBeforeCut: Callable[[], float | None] | None = None,
         monotonicFn: Callable[[], float] = time.monotonic,
         wallIsoFn: Callable[[], str] = utcIsoNow,
+        backlogReader: Callable[[], int | None] | None = None,
     ) -> None:
         """Args:
         readState: Zero-arg detector read (``HomeNetworkDetector.
@@ -774,8 +788,18 @@ class HomeStateAtLoss:
             later; every record carries that snapshot as ``vcell_before_cut_v``.
         monotonicFn: ARCH-065 T5 -- the clock behind ``secondsSinceLoss``; the
             loss is stamped once, in ``observe``, so there is one loss time.
+        backlogReader: US-833 -- the sync task's own unsynced-row count, read
+            ONLY when a record must be written for a loss whose sync never
+            wrote one (the fast path, or a floor end before the first
+            provisional record). ``None`` or a failed read lands NULL.
         """
         self._monotonic = monotonicFn
+        self._backlogReader = backlogReader
+        #: US-833: this loss's sync has written a record (provisional or final),
+        #: and the backlog_start / sync_started_at it carried.
+        self._syncRecorded = False
+        self._syncBacklogStart: int | None = None
+        self._syncStartedAt: str | None = None
         self._lossAt: float | None = None
         self._wallIso = wallIsoFn
         self._lossIso: str | None = None
@@ -831,6 +855,9 @@ class HomeStateAtLoss:
             self._written = False
             self._writtenKind = None
             self._floorEnded = False
+            self._syncRecorded = False
+            self._syncBacklogStart = None
+            self._syncStartedAt = None
             self._generation += 1
         try:
             self._startFn(lambda: self._observeLoss(loss))
@@ -926,20 +953,44 @@ class HomeStateAtLoss:
                 sink(record)
                 self._written = True
                 self._writtenKind = f"sync_with_server {record.kind.name}"
+                self._syncRecorded = True
+                self._syncBacklogStart = record.backlogStart
+                self._syncStartedAt = record.startedAt
 
         return _write
 
     def ensureRecorded(self) -> None:
-        """Pre-poweroff hook: no loss powers off without a home state written."""
+        """Pre-poweroff hook: no loss powers off without a shutdown-sync record.
+
+        US-833: a loss whose sync never wrote a record (the backstop fast path
+        skips the pipeline) is recorded ``INTERRUPTED`` with the backlog it left
+        and the home state as known -- ``UNKNOWN`` if the detector has not
+        answered. A loss the sync or the floor already recorded is left alone.
+        The backlog is read outside the lock, so the sync thread's sink is
+        never held up by it.
+        """
         with self._lock:
-            if self._loss is None or self._written:
+            if self._loss is None or self._syncRecorded or self._floorEnded:
                 return
+        backlog = self._readBacklog()
+        with self._lock:
+            if self._syncRecorded or self._floorEnded:
+                return
+            state = self.stateName()
             logger.warning(
-                "powerwatch: the home detector has not answered by the poweroff "
-                "-- recording home state UNKNOWN"
+                "powerwatch: no shutdown-sync record for this loss by the poweroff "
+                "(the pipeline never ran) -- recording INTERRUPTED, home state %s, "
+                "backlog %s",
+                state,
+                backlog,
             )
-            self._writeHomeStateRecord(
-                HomeNetworkState.UNKNOWN.name, "home detector had not answered by the poweroff"
+            self._writeRecord(
+                OutcomeKind.INTERRUPTED,
+                "the shutdown sync never ran: the poweroff came before the pipeline",
+                "sync_with_server",
+                state,
+                syncOutcome=OutcomeKind.INTERRUPTED.name,
+                backlogStart=backlog,
             )
 
     def recordFloorEnd(self) -> None:
@@ -949,7 +1000,16 @@ class HomeStateAtLoss:
         class, pre-cut VCELL from this loss's snapshot). Later records for the
         same loss are dropped (``wrapSink``) and ``ensureRecorded`` returns
         early. Never raises (``writeOutcomeRecord`` does not).
+
+        US-833: the record keeps the ``backlog_start`` / ``sync_started_at`` of
+        the sync's own (provisional) record for this loss; with none yet, the
+        backlog is read here.
         """
+        with self._lock:
+            synced = self._syncRecorded
+            backlog, startedAt = self._syncBacklogStart, self._syncStartedAt
+        if not synced:
+            backlog = self._readBacklog()
         with self._lock:
             if self._written:
                 logger.info(
@@ -963,6 +1023,8 @@ class HomeStateAtLoss:
                 "sync_with_server",
                 self.stateName(),
                 syncOutcome=OutcomeKind.RESERVE_FLOOR.name,
+                backlogStart=backlog,
+                syncStartedAt=startedAt,
             )
             self._floorEnded = True
         logger.warning("powerwatch: the reserve floor ended the drain -- RESERVE_FLOOR recorded")
@@ -979,6 +1041,8 @@ class HomeStateAtLoss:
         homeState: str,
         *,
         syncOutcome: str | None = None,
+        backlogStart: int | None = None,
+        syncStartedAt: str | None = None,
     ) -> None:
         """The one write path for this class's records (SSOT for its fields)."""
         writeOutcomeRecord(
@@ -988,11 +1052,23 @@ class HomeStateAtLoss:
             task=task,
             homeState=homeState,
             syncOutcome=syncOutcome,
+            backlogStart=backlogStart,
+            syncStartedAt=syncStartedAt,
             vcellBeforeCutV=self.vcellBeforeCut(),
             lossAt=self.lossIso(),
         )
         self._written = True
         self._writtenKind = f"{task} {kind.name}"
+
+    def _readBacklog(self) -> int | None:
+        """US-833: the unsynced-row count, or None (no reader, or it failed). Never raises."""
+        if self._backlogReader is None:
+            return None
+        try:
+            return self._backlogReader()
+        except Exception as exc:  # noqa: BLE001 -- an unread count lands NULL
+            logger.warning("powerwatch: backlog read for the shutdown record failed (%s)", exc)
+            return None
 
 
 def buildV1Tasks(
@@ -1432,6 +1508,21 @@ def main(argv: list[str] | None = None) -> int:
         detector.getHomeNetworkState,
         outcomePath=outcomePath,
         vcellBeforeCut=wallCache.last,
+        # US-833: the same count the sync task records, for a loss whose sync
+        # never wrote one (the fast path; a floor end before the first record).
+        backlogReader=lambda: backlogCount(readDrainBacklog()),
+    )
+    # US-776-d: one durable record per run -- why the sync ended. US-741: it
+    # carries the loss's home state, serialised with that record. US-833: the
+    # sync task's PROVISIONAL records go through this SAME sink (one file, one
+    # serialiser), and the final outcome overwrites them.
+    syncRecordSink = homeStateAtLoss.wrapSink(
+        makeOutcomeSink(
+            outcomePath,
+            homeState=homeStateAtLoss.stateName,
+            wallVcell=homeStateAtLoss.vcellBeforeCut,
+            lossAt=homeStateAtLoss.lossIso,
+        )
     )
 
     syncTask = SyncWithServerTask(
@@ -1446,16 +1537,10 @@ def main(argv: list[str] | None = None) -> int:
             backlogReader=readDrainBacklog,
             excludeTables=SHUTDOWN_DRAIN_EXCLUDED_TABLES,
         ),
-        # US-776-d: one durable record per run -- why the sync ended. US-741:
-        # it carries the loss's home state, serialised with that record.
-        writeRecord=homeStateAtLoss.wrapSink(
-            makeOutcomeSink(
-                outcomePath,
-                homeState=homeStateAtLoss.stateName,
-                wallVcell=homeStateAtLoss.vcellBeforeCut,
-                lossAt=homeStateAtLoss.lossIso,
-            )
-        ),
+        # US-776-d / US-741 / US-833: the final outcome and the provisional
+        # records share the one serialised sink built above.
+        writeRecord=syncRecordSink,
+        writeProvisional=syncRecordSink,
         # ARCH-065: the drain runs to completion -- it ends delivered, or when
         # the backlog has not fallen for stallSec; the WiFi-join wait is
         # bounded separately by joinWaitSec.

@@ -24,6 +24,8 @@
 #                              PROBE_MISCONFIGURED: why the shutdown sync ended.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: +STALLED, +RESERVE_FLOOR (the at-home
 #                              sync runs to completion; CIO 2026-10-02).
+# 2026-10-05    | Atlas (US-833) | +INTERRUPTED: the provisional record written before
+#                              the sync can be cut off (CIO-directed build).
 # ================================================================================
 ################################################################################
 """Single source of truth: outcome kinds + shutdown-task protocol."""
@@ -65,6 +67,12 @@ class OutcomeKind(enum.Enum):
     # ARCH-065: the at-home sync runs to completion (CIO 2026-10-02).
     STALLED = "stalled"                                # backlog did not fall for stallSec
     RESERVE_FLOOR = "reserve_floor"                    # the battery's reserve floor ended the drain
+
+    # US-833: PROVISIONAL. Written before the sync can be cut off; the final
+    # outcome overwrites it. Still on disk at the next boot = the shutdown
+    # sync never reached its end (hard cut, blind-floor cap, or the backstop
+    # fast path that skips the pipeline). Never set as ``lastOutcome``.
+    INTERRUPTED = "interrupted"
 
 
 @runtime_checkable

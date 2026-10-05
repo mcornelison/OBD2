@@ -1042,7 +1042,7 @@ One row per Pi boot, written by `boot-progress-arm.service`
 | `recorded_at` | TEXT | When the row was written (ISO-8601 UTC); the snapshot-sync cursor |
 | `data_quality` | TEXT | US-419 clock-quality flag; Pi-local, wire-stripped |
 | `prior_boot_home_state` | TEXT | US-776-f / US-741: the prior shutdown's `HomeNetworkState` name |
-| `prior_boot_sync_outcome` | TEXT | US-776-f / US-776-d: why the prior shutdown's sync ended (`DELIVERED`, `AWAY`, `UNKNOWN_NETWORK`, `AT_HOME_JOINING_TIMEOUT`, `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED`, or `REAL_ERROR`) |
+| `prior_boot_sync_outcome` | TEXT | US-776-f / US-776-d: why the prior shutdown's sync ended -- an `OutcomeKind` NAME; the values are tabled in `specs/shutdown-orchestration-design.md` (`INTERRUPTED` = the sync never reached its end, US-833) |
 | `prior_boot_backlog_start` | INTEGER | US-776-d: unsynced rows before the prior shutdown's first sync attempt |
 | `prior_boot_backlog_end` | INTEGER | US-776-d: unsynced rows after its last attempt |
 
@@ -2803,15 +2803,11 @@ no record. Now **every** `SyncWithServerTask.run()` -- the skip and the success 
 exactly one `SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd)` to its sink, and logs one
 `outcome=<NAME> backlog_start=<n> backlog_end=<n>` line.
 
-| Outcome (`OutcomeKind`) | When | Log level |
-|---|---|---|
-| `DELIVERED` | a drain attempt succeeded (whatever the detector state was) | INFO |
-| `AWAY` | a positive AWAY: the sync was skipped | INFO |
-| `UNKNOWN_NETWORK` | home was never confirmed (`UNKNOWN`) and the drain ran to the ceiling without delivering | WARNING |
-| `AT_HOME_JOINING_TIMEOUT` | reserved for US-776-e: the WiFi rejoin outlasted the ceiling | ERROR |
-| `AT_HOME_SERVER_DOWN` | at home, the drain ran to the ceiling; the probe got no answer (connection error, timeout), a 5xx, or a 2xx | ERROR |
-| `PROBE_MISCONFIGURED` | at home, the drain ran to the ceiling and the probe was answered 404, 405, 401 or 403: the server is up, the configured route or key is wrong | ERROR |
-| `REAL_ERROR` | a non-transient sync fault (the pre-existing kind; no retry) | ERROR |
+**The outcome table lives in ONE place: `specs/shutdown-orchestration-design.md` (the `sync_outcome`
+table, and the "Silence is never the signature of a poweroff" table for which path lands which
+outcome).** The code SSOT is `OutcomeKind` in `src/pi/power/power_watch/contract.py`. *(This file
+carried a second copy until 2026-10-05; it had drifted -- it still described the retired ceiling and
+lacked `STALLED`, `RESERVE_FLOOR` and `INTERRUPTED` -- so it was replaced by this pointer, US-833.)*
 
 - **A misconfigured probe is told from a down server by a sibling, not by changing the bool.**
   `HomeNetworkDetector.probeServer()` returns `ProbeResult(status, error)`; `isServerReachable()` is
@@ -2829,10 +2825,10 @@ exactly one `SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd)` to its s
   two counts (an unknown count is omitted). The next boot's `boot_progress.arm` lands them into
   `startup_log.prior_boot_sync_outcome` / `prior_boot_backlog_start` / `prior_boot_backlog_end`
   (US-776-f), which reach the server through the existing snapshot sync.
-- **What it cannot record.** The record is written when `run()` returns. A shutdown whose VCELL is
-  already at the backstop skips the pipeline (no sync, no record), and a floor poll that powers off
-  while a pass is in flight ends the process before `run()` returns; both still write the custody
-  record above, and the sync columns land NULL.
+- **No poweroff leaves the record silent (US-833, 2026-10-05).** A provisional `INTERRUPTED` record
+  is written before the sync can be cut off, and the floor and fast paths record too. Which path
+  lands which outcome: `specs/shutdown-orchestration-design.md`. *(Until US-833 the backstop fast path
+  and a floor-ended pass landed the sync columns NULL; this bullet said so.)*
 
 ### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
 
