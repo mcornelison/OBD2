@@ -4316,7 +4316,7 @@ tuned blindly:
 | `acceleration_rejection` | **7°** | Not the ruled 10° — tightened with a stated, measured reason: speed aiding cannot see an acceleration ONSET until the next OBD SPEED sample (up to ~2.3 s later), so the rejection angle alone must hold attitude through that blind window. At 10° a 0.15 g pull (atan = 8.5°) is never rejected and leaks ~5° of phantom pitch before the first `dv/dt` arrives (measured: 2.76° still present 4 s in). 7° rejects any pull ≥ 0.123 g at onset with margin |
 | `magnetic_rejection` | 10° | ARCH-064 ruling |
 | `rejection_timeout` | 5 s | ARCH-064 ruling (`imufusion` 1.3.3 takes this in seconds) |
-| `Bias` stationary threshold | 3 dps over 3 s | Gyro bias re-learned only when genuinely at rest — **and only when OBD speed does not say the car is rolling** (below) |
+| `Bias` stationary threshold | 3 dps over 3 s | imufusion's **fine-tune** on top of the ZARU offset (below) — fed only when OBD speed does not say the car is rolling |
 
 **Speed-aided compensation** (`AhrsFusion._compensate`) removes the vehicle's own specific force
 before the AHRS sees it, so sustained acceleration is not read as tilt (the same phantom §"Why the
@@ -4335,6 +4335,24 @@ exceeds `BIAS_LEARN_MAX_SPEED_KMH` (1 km/h); a dropout mid-curve is not evidence
 speed ever seen, or a last reading of 0, Fusion's own detector is used. ⚠️ Cost: a bias not yet
 converged when the car pulls away stays unconverged until the next stop (15 s parked, 1 dps bias:
 1.84° heading / 0.58° roll at 30 m/s, against 7.7° / 3.06° before the fix).
+
+**The gyro offset comes from the car's own stops — ZARU (ARCH-066, US-819; RCA 2026-10-04).**
+`imufusion.Bias` is, in its author's words, for "fine-tune existing offset calibration that may
+already be in place"; run from zero as our only learner, its per-sample 3 dps stationary gate is
+**starved by idle-engine vibration** (MEASURED at stops, drives 96–100: pitch-axis sd 0.4–2.5 dps,
+peaks 6.6 dps; on that noise it learned **2 % of the bias in 90 s**). Unlearned, the measured
+resting bias (x −0.2 / y +0.7 / z +0.15 dps) reads **−1.6° pitch (~2.8 % phantom grade) and +2.2°
+heading** at speed, plus phantom roll through `v · ω_z`. So the offset is set from the vehicle's
+own stationary truth: while **fresh** OBD `SPEED` reads 0 (the A-34 latch's window), the raw rate is
+averaged over the whole stop and, at every completed 3 s window that is **not faulted**, the stop's
+**mean** becomes the offset (a zero-angular-rate update — the offset is the mean at rest, as in
+Adafruit SensorLab's and jremington's ICM-20948 practice). A faulted window is never adopted: it
+would zero the evidence the latch rests on. Each boot is **seeded** with the last ZARU offset,
+persisted by `imu_state_bridge.GyroOffsetSeedStore` at `/var/lib/eclipse-obd/imu-gyro-offset-seed.json`
+(at most once a minute; a seed at or above the A-34 cut is refused), and `AhrsFusion.reset()`
+returns to that seed, not to zero. **In-motion learning is not needed:** with the magnetometer live
+a yaw bias costs ≈ 1.9° per dps steady state (MEASURED in the production engine, = bias / gain), and
+the bias moves ≤ 0.05 dps between clean stops.
 
 **The A-34 latch under the AHRS (Ruling 35, I2).** `AhrsFusion.gyroImplausible` latches when fresh
 OBD speed has read 0 for ≥ 3 s and the largest per-axis mean of (gyro − learned offset) over that
@@ -4515,7 +4533,12 @@ production factories, and neither window got shorter than what it guards.
 closed 2026-09-24), **leaving one bounded residual — two days, 09-17/09-18 — explicitly undetermined.
 Recorded here so none of them is re-derived at full cost.**
 
-**1. 🟢 `temp_c` — SETTLED. The register works; the gap is in our DRIVER.**
+**1. 🟢 `temp_c` — SETTLED, and FIXED by ARCH-066 (2026-10-04).** `Icm20948Direct.temperature`
+converts the `TEMP_OUT` that SparkFun's `getAgmt()` already reads (`tmpRaw`, which SparkFun does
+**not** sign-convert — the 16-bit two's complement is applied in our property). Re-measured on the
+car 2026-10-04: `WHO_AM_I 0xEA`, `TEMP_DIS` clear, raw 1264..1424 ⇒ 24.8..25.3 °C. Only the
+`direct` mag path carries it; `bypass`/`master` (adafruit) still write NULL honestly. It is **die**
+temperature, above cabin air. *(History, kept:)* The register works; the gap was in our DRIVER.
 `temp_c` is NULL in **6,940,143 of 6,940,143 rows across both tiers** — every row that exists
 anywhere. This bounced for two days between *"the vendor guide says the part has one"* and *"the
 column is empty"*, because **one side argued from the DRIVER and the other from the COLUMN and

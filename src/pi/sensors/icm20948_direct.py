@@ -39,6 +39,9 @@
 #               | (ARCH-064)   | makeIcm20948Direct, GyroRecoveryHandle.
 # 2026-09-28    | Atlas        | Final review I5: injectable settle after
 #               | (ARCH-064)   | swReset (50 ms) and before A-34 sampling.
+# 2026-10-04    | Atlas        | ``temperature`` from TEMP_OUT (DS-000189 p.45).
+#               | (ARCH-066)   | getAgmt() always read it; nothing exposed it,
+#               |              | so edr_imu_sample.temp_c was NULL in every row.
 # ================================================================================
 ################################################################################
 
@@ -67,6 +70,8 @@ __all__ = [
     "MAG_SOURCE_DIRECT",
     "SAMPLE_MODE_CONTINUOUS",
     "SENSORS_ACCEL_GYRO",
+    "TEMP_ROOM_OFFSET_LSB",
+    "TEMP_SENSITIVITY_LSB_PER_C",
     "GyroRecoveryHandle",
     "Icm20948Direct",
     "makeIcm20948Direct",
@@ -79,6 +84,14 @@ G = 9.80665
 # apart independently.
 ACCEL_LSB_PER_G = 8192.0  # +-4 g (DS-000189 SS3.2)
 GYRO_LSB_PER_DPS = 65.5  # +-500 dps (DS-000189 SS3.1)
+# ARCH-066. DOCUMENTED, DS-000189 v1.3: p.14 Temp_Sensitivity 333.87 LSB/degC and
+# RoomTemp_Offset 0 LSB at 21 degC; p.45 TEMP_degC = ((TEMP_OUT - RoomTemp_Offset)
+# / Temp_Sensitivity) + 21. MEASURED on the car 2026-10-04 (eclipse-obd stopped,
+# raw SMBus): WHO_AM_I 0xEA, TEMP_DIS clear, TEMP_OUT 1264..1424 -> 24.8..25.3 degC.
+# This is the DIE temperature, which runs above cabin air.
+TEMP_SENSITIVITY_LSB_PER_C = 333.87
+TEMP_ROOM_OFFSET_LSB = 0.0
+TEMP_ROOM_C = 21.0
 MAG_SOURCE_DIRECT = "direct"
 
 # ---------------------------------------------------------------------------
@@ -172,6 +185,24 @@ class Icm20948Direct:
         """
         i = self._icm
         return tuple(math.radians(r / GYRO_LSB_PER_DPS) for r in (i.gxRaw, i.gyRaw, i.gzRaw))
+
+    @property
+    def temperature(self) -> float:
+        """Die temperature, degC, from the SAME getAgmt burst as ``.acceleration``.
+
+        ARCH-066. The chip HAS a temperature sensor (DS-000189 §4.19, register
+        TEMP_OUT at bank 0 0x39/0x3A) and ``getAgmt()`` reads it into ``tmpRaw``
+        every poll. Only the adafruit CircuitPython driver lacks a
+        ``temperature`` property (the US-500 note in ``sensor_reader``); this
+        path never needed that driver. 🔴 Unlike ax..gz, SparkFun does NOT run
+        ``ToSignedInt`` on ``tmpRaw`` (qwiic_icm20948.py L671 vs L681-687), so the
+        16-bit two's complement is applied HERE -- unsigned, an 11 degC cabin
+        would read ~207 degC.
+        """
+        raw = int(self._icm.tmpRaw) & 0xFFFF
+        if raw & 0x8000:
+            raw -= 0x10000
+        return (raw - TEMP_ROOM_OFFSET_LSB) / TEMP_SENSITIVITY_LSB_PER_C + TEMP_ROOM_C
 
     @property
     def magnetic(self) -> tuple[float, float, float]:
