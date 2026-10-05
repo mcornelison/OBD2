@@ -70,6 +70,29 @@
 #   never published. Without fresh speed it cannot latch: a turning car and a
 #   latched gyro are the same signal, and only speed tells them apart.
 #
+#   GYRO OFFSET FROM THE CAR'S OWN STOPS -- ZARU (ARCH-066, US-819; RCA
+#   2026-10-04). imufusion.Bias is the x-io "fine-tune EXISTING offset
+#   calibration" algorithm (its README); run from zero it is the only learner,
+#   and its per-sample 3 dps stationary gate is starved by idle-engine vibration
+#   (MEASURED at stops: pitch-axis sd 0.4-2.5 dps, peaks 6.6 dps; SIM on that
+#   noise: 2 % learned after 90 s). Unlearned, the measured resting bias reads
+#   -1.6 deg of pitch (~2.8 % phantom grade) and +2.2 deg of heading at speed.
+#   So the offset is now set from the vehicle's OWN stationary truth: while
+#   FRESH OBD SPEED reads 0 -- the window the A-34 latch already uses -- the raw
+#   rate is averaged over the whole STOP, and at every completed
+#   GYRO_FAULT_WINDOW_S window that is not faulted the stop's MEAN becomes the
+#   offset (a zero-angular-rate update; Adafruit SensorLab / jremington practice:
+#   the offset is the MEAN at rest). A faulted window is never adopted -- that
+#   would hide the latch. Bias keeps fine-tuning on top, as its author intends.
+#   🔴 ONLY SAMPLES BRACKETED BY TWO ZERO READINGS COUNT. OBD SPEED arrives every
+#   ~2.3 s, so the first ~2.3 s of a pull-away still read as "fresh speed 0"; a
+#   turn there put +2.6 dps into the yaw offset (independent review, reproduced).
+#   Samples since the last zero are TENTATIVE: the next zero confirms them, a
+#   non-zero reading discards them. An adopted offset at or above the A-34 cut is
+#   refused, exactly as a seed is.
+#   ``seedGyroOffsetDps`` starts a boot from the last drive's ZARU offset (the
+#   bridge persists it), and ``reset()`` falls back to that seed, not to zero.
+#
 #   ACCEL CALIBRATION (ARCH-064 Task 6b): ``a_c = M . (a - o)`` in the BODY
 #   frame, applied to every accel sample FIRST -- before the speed-aided
 #   compensation above (which subtracts a TRUE vehicle acceleration, so it must
@@ -103,6 +126,9 @@
 # 2026-09-28    | Atlas        | Final review (Ruling 35): bias learning gated
 #               | (ARCH-064)   | on speed; centripetal term uses the corrected
 #               |              | rate; A-34 parked-gyro latch (gyroImplausible).
+# 2026-10-04    | Atlas        | US-819: ZARU -- the gyro offset is the MEAN raw
+#               | (ARCH-066)   | rate of each fresh-speed-0 stop; boot seed via
+#               |              | seedGyroOffsetDps; reset() keeps the seed.
 # ================================================================================
 ################################################################################
 
@@ -133,6 +159,7 @@ __all__ = [
     "MAX_LONGITUDINAL_ACCEL_G",
     "MAX_SAMPLE_PERIOD_S",
     "SPEED_STALE_S",
+    "ZARU_MIN_CONFIRMED_S",
     "REJECTION_TIMEOUT_S",
 ]
 
@@ -168,6 +195,10 @@ BIAS_LEARN_MAX_SPEED_KMH = 1.0
 # window is judged against GYRO_FAULT_MIN_RAD_S -- the same 3 s of evidence the
 # Bias learner itself requires before it calls the board stationary.
 GYRO_FAULT_WINDOW_S = 3.0
+# ARCH-066: the least CONFIRMED stationary time a ZARU mean is taken over. At
+# idle-vibration sd 1.3 dps, 1 s at 50 Hz gives a ~0.2 dps standard error,
+# and the stop's mean keeps tightening as the stop lasts.
+ZARU_MIN_CONFIRMED_S = 1.0
 
 # A capture gap longer than this is not a sample period -- integrating the
 # current rate across it would invent rotation nobody measured. Such an update
@@ -268,6 +299,9 @@ class AhrsFusion:
         )
         self._ahrs = imufusion.Ahrs()
         self._bias = imufusion.Bias()
+        # ARCH-066: the offset a reset() returns to -- zero until a seed is given.
+        self._seedDps = np.zeros(3)
+        self.zaruUpdateCount = 0
         self.reset()
 
     # -- PitchFusion surface ---------------------------------------------------
@@ -301,7 +335,11 @@ class AhrsFusion:
 
     @property
     def gyroBiasRadS(self) -> tuple[float, float, float] | None:
-        """The learned gyro RATE bias, vehicle frame, rad/s -- or None (US-810 surface).
+        """The gyro RATE bias in use, vehicle frame, rad/s -- or None (US-810 surface).
+
+        ARCH-066: "in use" includes a boot SEED (last drive's ZARU offset): the
+        derived row records what the engine is subtracting, which is what it
+        believes. ``zaruOffsetDps`` distinguishes a measurement of THIS boot.
 
         Fusion's ``Bias`` offset, converted from deg/s. It is learned on the SAME
         vehicle-frame gyro vector the bridge hands both engines, so its order and
@@ -359,8 +397,17 @@ class AhrsFusion:
             return
         speedMs = kmh / _KMH_PER_MS
         if kmh > 0.0:
-            # Rolling: a parked-gyro window must be contiguous, so it ends here.
+            # Rolling: a parked-gyro window must be contiguous, so it ends here,
+            # and so does the stop the ZARU mean is taken over -- including the
+            # tentative samples, which may already be the pull-away.
             self._faultWindowReset()
+            self._zaruReset()
+        else:
+            # A second zero: everything since the previous one was stationary.
+            self._zaruSumDps = self._zaruSumDps + self._zaruTentSumDps
+            self._zaruCount += self._zaruTentCount
+            self._zaruTentSumDps = np.zeros(3)
+            self._zaruTentCount = 0
         prev = self._lastSpeed
         if prev is not None:
             prevCapture, prevSpeedMs = prev
@@ -415,7 +462,7 @@ class AhrsFusion:
                 # the HELD offset and leave the learner untouched.
                 gyroDps = rawDps - np.asarray(self._bias.get_offset(), dtype=float)
             correctedRad = np.radians(gyroDps)
-            self._trackGyroFault(correctedRad, capture)
+            self._trackGyroFault(correctedRad, capture, rawDps)
         # I1: the centripetal term takes the BIAS-CORRECTED rate, never the raw
         # one -- a raw bias is a fake lateral force of v * bias.
         accelG = self._compensate(accelG, correctedRad, capture)
@@ -465,7 +512,9 @@ class AhrsFusion:
                 stationary_period=BIAS_STATIONARY_PERIOD_S,
             )
         )
-        self._bias.set_offset(np.zeros(3))
+        self._bias.set_offset(self._seedDps.copy())
+        self._zaruOffsetDps: np.ndarray | None = None
+        self._zaruReset()
         self._lastCapture: float | None = None
         self._updated = False
         self._lastMagCapture: float | None = None
@@ -525,6 +574,36 @@ class AhrsFusion:
         """The gyro rate bias the Bias learner currently holds, deg/s, body frame."""
         off = self._bias.get_offset()
         return (float(off[0]), float(off[1]), float(off[2]))
+
+    @property
+    def zaruOffsetDps(self) -> tuple[float, float, float] | None:
+        """The offset the last completed stop measured THIS boot, deg/s, or None.
+
+        A seed is not reported here -- it is last drive's measurement, not this
+        one's -- so a consumer persisting this value persists only measurements.
+        """
+        if self._zaruOffsetDps is None:
+            return None
+        o = self._zaruOffsetDps
+        return (float(o[0]), float(o[1]), float(o[2]))
+
+    def seedGyroOffsetDps(self, offsetDps) -> bool:
+        """Start from a known offset (deg/s, body frame) instead of zero.
+
+        Refused (False, nothing changed) unless it is three finite numbers each
+        below the A-34 fault cut: a latched rate is not a bias, and a seed that
+        large would make a healthy gyro read faulted. Applied at once and kept
+        as the value ``reset()`` returns to.
+        """
+        vec = _finiteVec3(offsetDps) if not isinstance(offsetDps, str) else None
+        if vec is None:
+            return False
+        limit = math.degrees(GYRO_FAULT_MIN_RAD_S)
+        if any(abs(c) >= limit for c in vec):
+            return False
+        self._seedDps = np.asarray(vec, dtype=float)
+        self._bias.set_offset(self._seedDps.copy())
+        return True
 
     @property
     def lastAccelMs2(self) -> tuple[float, float, float] | None:
@@ -588,14 +667,21 @@ class AhrsFusion:
             return True
         return self._lastSpeed[1] * _KMH_PER_MS <= BIAS_LEARN_MAX_SPEED_KMH
 
+    def _zaruReset(self) -> None:
+        """Drop the current stop's raw-rate sums (the adopted offset is kept)."""
+        self._zaruSumDps = np.zeros(3)
+        self._zaruCount = 0
+        self._zaruTentSumDps = np.zeros(3)
+        self._zaruTentCount = 0
+
     def _faultWindowReset(self) -> None:
         """Drop the parked-gyro evidence window (the VERDICT is kept)."""
         self._faultStart: float | None = None
         self._faultSum = np.zeros(3)
         self._faultCount = 0
 
-    def _trackGyroFault(self, correctedRad: np.ndarray, capture: float) -> None:
-        """Accumulate parked-gyro evidence and latch/clear the A-34 verdict.
+    def _trackGyroFault(self, correctedRad: np.ndarray, capture: float, rawDps: np.ndarray) -> None:
+        """Accumulate parked-gyro evidence, latch/clear A-34, and run the ZARU.
 
         Only while FRESH OBD speed reads 0. The statistic is the one
         ``gyro_recovery.gyroLooksFaulted`` uses at startup -- the largest
@@ -606,15 +692,31 @@ class AhrsFusion:
         parked = last is not None and capture - last[0] <= SPEED_STALE_S and last[1] <= 0.0
         if not parked:
             self._faultWindowReset()
+            self._zaruReset()
             return
         if self._faultStart is None:
             self._faultStart = capture
         self._faultSum = self._faultSum + correctedRad
         self._faultCount += 1
+        # TENTATIVE until the next zero reading confirms the car never moved.
+        self._zaruTentSumDps = self._zaruTentSumDps + rawDps
+        self._zaruTentCount += 1
         if capture - self._faultStart < GYRO_FAULT_WINDOW_S:
             return
         meanRad = self._faultSum / self._faultCount
         faulted = float(np.max(np.abs(meanRad))) >= GYRO_FAULT_MIN_RAD_S
+        if faulted:
+            # Never adopt a latched rate as the offset: that would zero the very
+            # evidence the verdict rests on. Start the stop's mean afresh.
+            self._zaruReset()
+        elif self._zaruCount >= self._sampleHz * ZARU_MIN_CONFIRMED_S:
+            # ARCH-066 ZARU: the stop's MEAN raw rate (confirmed samples only)
+            # IS the offset -- unless it is itself a latched-sized rate.
+            zaru = self._zaruSumDps / self._zaruCount
+            if float(np.max(np.abs(zaru))) < math.degrees(GYRO_FAULT_MIN_RAD_S):
+                self._bias.set_offset(zaru.copy())
+                self._zaruOffsetDps = zaru
+                self.zaruUpdateCount += 1
         if self._gyroLatched and not faulted:
             # Recovered. The attitude on hand was integrated from the fault, so
             # restart it -- Fusion's ~3 s startup reads None, honestly -- rather

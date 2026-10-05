@@ -126,6 +126,9 @@
 #               |              | pass.py pins); and it still protects against
 #               |              | >100 ms poll jitter dropping the gyro
 #               |              | (Ruling 14's purpose).
+# 2026-10-04    | Atlas        | US-819: GyroOffsetSeedStore -- persist the AHRS's
+#               | (ARCH-066)   | ZARU gyro offset (at most once a minute) and
+#               |              | seed the next boot's engine with it.
 # ================================================================================
 ################################################################################
 
@@ -133,6 +136,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -228,6 +232,9 @@ __all__ = [
     "TOPIC_IMU_MAG",
     "TOPIC_OBD_SPEED",
     "ZUPT_MIN_STOP_S",
+    "GYRO_OFFSET_SEED_PATH",
+    "SEED_PERSIST_MIN_INTERVAL_S",
+    "GyroOffsetSeedStore",
     "ImuStateBridge",
     "buildImuState",
     "computeHeadingDeg",
@@ -303,6 +310,96 @@ _NO_HEADING_OVERRIDE: Any = object()
 
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
+
+# ============================ ARCH-066: THE GYRO OFFSET SEED ==================
+# US-819 (RCA 2026-10-04). The AHRS learns its gyro offset at fresh-speed-0 stops
+# (ZARU, ahrs_fusion.py); without a seed every boot -- and the Pi boots at every
+# key-on -- starts from ZERO, so a drive that leaves before its first stop runs
+# the full resting bias (MEASURED x -0.2 / y +0.7 / z +0.15 dps: -1.6 deg pitch,
+# +2.2 deg heading in the production engine). The last stop's offset is the best
+# prior there is: the same die, within the ZRO tempco of now (DS-000189
+# +/-0.05 dps/degC), and the first stop of this boot replaces it.
+#
+# PERSISTENT, not tmpfs: /run is wiped every boot. Same directory the PLD
+# witness uses (pld_witness.DEFAULT_WITNESS_PATH, US-667 provisions it).
+GYRO_OFFSET_SEED_PATH = "/var/lib/eclipse-obd/imu-gyro-offset-seed.json"
+# A stop yields a new offset every ~3 s; the SD card does not need each one. A
+# pull-away also persists at once (the stop's best mean is then final), so this
+# bounds only how stale the file can be if power is lost mid-stop.
+SEED_PERSIST_MIN_INTERVAL_S = 15.0
+_SEED_SCHEMA_VERSION = 1
+
+
+def _isMoving(speed: Any) -> bool:
+    """True for a finite OBD speed above zero (km/h)."""
+    try:
+        kmh = float(speed)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(kmh) and kmh > 0.0
+
+
+class GyroOffsetSeedStore:
+    """Load/save the gyro offset seed (deg/s, body frame) as a small JSON file.
+
+    Never raises: the seed is an accelerator, and a missing or corrupt file must
+    leave the engine starting from zero exactly as before, LOUDLY (one log line),
+    never silently -- a deployed Pi with the directory absent and a dev box look
+    identical from here (the ARCH-019 lesson), so the log names the path.
+    """
+
+    def __init__(self, path: str | os.PathLike[str]) -> None:
+        self._path = os.fspath(path)
+
+    @property
+    def path(self) -> str:
+        """The seed file this store reads and writes."""
+        return self._path
+
+    def load(self) -> tuple[float, float, float] | None:
+        """The stored offset, or None (absent, unreadable or malformed)."""
+        try:
+            with open(self._path, encoding="utf-8") as f:
+                body = json.load(f)
+        except FileNotFoundError:
+            logger.info("imu gyro offset seed: none at %s -- starting from zero", self._path)
+            return None
+        except (OSError, ValueError) as e:
+            logger.warning("imu gyro offset seed unreadable at %s (%s) -- ignored", self._path, e)
+            return None
+        try:
+            if body["schemaVersion"] != _SEED_SCHEMA_VERSION:
+                raise ValueError(f"schemaVersion {body['schemaVersion']!r}")
+            x, y, z = (float(c) for c in body["offsetDps"])
+        except (KeyError, TypeError, ValueError) as e:
+            logger.warning("imu gyro offset seed malformed at %s (%s) -- ignored", self._path, e)
+            return None
+        return (x, y, z)
+
+    def save(self, offsetDps: tuple[float, float, float], savedUtc: str) -> bool:
+        """Write atomically (temp file + fsync + os.replace); False on failure."""
+        tmp = self._path + ".tmp"
+        body = {
+            "schemaVersion": _SEED_SCHEMA_VERSION,
+            "offsetDps": [float(c) for c in offsetDps],
+            "savedUtc": savedUtc,
+            "source": "zaru",
+        }
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(body, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._path)
+        except OSError as e:
+            logger.warning("imu gyro offset seed NOT persisted to %s (%s)", self._path, e)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return False
+        return True
+
 
 # Bus name for the bridge's subscription (appears in SubStats / gap markers).
 _SUB_NAME = "imu-state"
@@ -1015,6 +1112,8 @@ class ImuStateBridge:
         magMaxAgeSec: float = DEFAULT_MAG_MAX_AGE_S,
         pitchFusion: PitchFusion | AhrsFusion | None = None,
         nowIsoFn: Callable[[], str] | None = None,
+        gyroSeedStore: GyroOffsetSeedStore | None = None,
+        gyroSeedAsync: bool = False,
     ) -> None:
         """Bind the bridge to its source subscription + states dir.
 
@@ -1040,7 +1139,16 @@ class ImuStateBridge:
                 The attribute keeps its historical name so the legacy wiring and
                 its tests are untouched.
             nowIsoFn: Fallback clock for ``ts`` when a sample carries no tsUtc.
+            gyroSeedStore: ARCH-066 -- where the engine's ZARU gyro offset is
+                persisted for the next boot. None (tests, legacy) persists nothing.
+            gyroSeedAsync: Write the seed on a short-lived thread (production)
+                so an SD-card fsync never stalls this drain; False writes inline.
         """
+        self._gyroSeedStore = gyroSeedStore
+        self._gyroSeedAsync = gyroSeedAsync
+        self._seedSaveThread: threading.Thread | None = None
+        self._seedSavedCount = 0
+        self._seedSavedCapture: float | None = None
         self._sub = subscription
         self._statesDir = statesDir
         self._target = os.path.join(statesDir, IMU_STATE_FILENAME)
@@ -1164,9 +1272,12 @@ class ImuStateBridge:
             # v*omega compensation), so there the unit matters. Both engines get
             # the sample's OWN tsCapture -- the same time.monotonic() clock the
             # IMU reader stamps, so dv/dt and staleness compare like with like.
-            self._pitchFusion.observeSpeed(
-                getattr(sample, "value", None), float(getattr(sample, "tsCapture", 0.0))
-            )
+            speedCapture = float(getattr(sample, "tsCapture", 0.0))
+            self._pitchFusion.observeSpeed(getattr(sample, "value", None), speedCapture)
+            # ARCH-066: rolling ends the stop, so its best ZARU mean is final --
+            # persist it now rather than up to an interval later.
+            if _isMoving(getattr(sample, "value", None)):
+                self._maybePersistGyroSeed(speedCapture, force=True)
             return True
         if topic != TOPIC_IMU_ACCEL:
             return False
@@ -1198,8 +1309,8 @@ class ImuStateBridge:
         # engine: legacy PitchFusion deliberately KEEPS its ZUPT mount bias
         # (see PitchFusion.reset) -- how the board is bolted in did not change,
         # and re-converging it costs another five stoplights. The ARCH-064 AHRS
-        # (AhrsFusion.reset) CLEARS its learned gyro bias: a re-powered die has
-        # a new rate bias, and imufusion.Bias relearns it within seconds of rest.
+        # (AhrsFusion.reset) returns its gyro offset to the boot SEED (ARCH-066)
+        # -- zero if none -- and the next fresh-speed-0 stop re-measures it.
         self._pitchFusion.reset()
         # US-809-c: carry the absence; buildImuState types it. Substituting
         # the clock here publishes a fabricated freshness marker.
@@ -1341,6 +1452,34 @@ class ImuStateBridge:
                 )
             self._magRotation = verdict
             self._resetMagRotationWindow(bearing)
+
+    def _maybePersistGyroSeed(self, capture: float, *, force: bool = False) -> None:
+        """Persist the engine's newest ZARU offset: at most once per interval,
+        or at once when ``force`` (the car has just started rolling)."""
+        store = self._gyroSeedStore
+        if store is None:
+            return
+        count = getattr(self._pitchFusion, "zaruUpdateCount", 0)
+        if count == self._seedSavedCount:
+            return
+        last = self._seedSavedCapture
+        if not force and last is not None and capture - last < SEED_PERSIST_MIN_INTERVAL_S:
+            return
+        offset = getattr(self._pitchFusion, "zaruOffsetDps", None)
+        if offset is None:
+            return
+        if self._gyroSeedAsync and self._seedSaveThread is not None and self._seedSaveThread.is_alive():
+            return  # one write in flight is enough; the next trigger catches up
+        self._seedSavedCount = count
+        self._seedSavedCapture = capture
+        savedUtc = self._nowIsoFn()
+        if not self._gyroSeedAsync:
+            store.save(offset, savedUtc)
+            return
+        self._seedSaveThread = threading.Thread(
+            target=store.save, args=(offset, savedUtc), name="imu-gyro-seed-save", daemon=True
+        )
+        self._seedSaveThread.start()
 
     def _resetMagRotationWindow(self, bearing: float | None) -> None:
         """Drop the accumulators; the VERDICT persists until the next window."""
@@ -1496,6 +1635,7 @@ class ImuStateBridge:
             )
         else:
             self._pitchFusion.update(accel, self._freshGyro(capture), capture)
+        self._maybePersistGyroSeed(capture)
         self._recordDerived(sample, capture)
         self._logStopCountChange()
         self._logGyroPlausibilityChange()
@@ -1613,6 +1753,7 @@ def createImuStateBridgeFromConfig(
     bus: Any,
     *,
     nowIsoFn: Callable[[], str] | None = None,
+    gyroSeedPath: str | None = None,
 ) -> ImuStateBridge | None:
     """Build the IMU-state bridge from validated config, or None when dark.
 
@@ -1624,6 +1765,7 @@ def createImuStateBridgeFromConfig(
         bus: The SampleBus to subscribe to (LOSSY -- a live instrument only needs
             the freshest burst; drop-oldest on overflow is the honest policy).
         nowIsoFn: Optional fallback clock for ``ts`` (see ImuStateBridge).
+        gyroSeedPath: ARCH-066 seed file; defaults to GYRO_OFFSET_SEED_PATH.
 
     Returns:
         A ready-to-start ImuStateBridge, or None when disabled.
@@ -1657,6 +1799,19 @@ def createImuStateBridgeFromConfig(
         _SUB_NAME,
     )
     sampleHz = imu.get("sampleHz", DEFAULT_IMU_SAMPLE_HZ)
+    engine = _buildFusionEngine(imu, sampleHz)
+    seedStore: GyroOffsetSeedStore | None = None
+    if hasattr(engine, "seedGyroOffsetDps"):
+        seedStore = GyroOffsetSeedStore(gyroSeedPath or GYRO_OFFSET_SEED_PATH)
+        seed = seedStore.load()
+        if seed is not None:
+            if engine.seedGyroOffsetDps(seed):
+                logger.info("imu gyro offset seeded from %s: %s dps", seedStore.path, seed)
+            else:
+                logger.warning(
+                    "imu gyro offset seed at %s REFUSED as implausible (%s dps) -- "
+                    "starting from zero", seedStore.path, seed,
+                )
     return ImuStateBridge(
         subscription,
         statesDir,
@@ -1664,8 +1819,10 @@ def createImuStateBridgeFromConfig(
         gravityTauSec=imu.get("gravityTauSec", DEFAULT_GRAVITY_TAU_S),
         sampleHz=sampleHz,
         magMaxAgeSec=imu.get("magMaxAgeSec", DEFAULT_MAG_MAX_AGE_S),
-        pitchFusion=_buildFusionEngine(imu, sampleHz),
+        pitchFusion=engine,
         nowIsoFn=nowIsoFn,
+        gyroSeedStore=seedStore,
+        gyroSeedAsync=True,
     )
 
 

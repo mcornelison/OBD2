@@ -374,3 +374,35 @@ def test_i5_defaultSleep_isRealTimeSleep(monkeypatch) -> None:
     monkeypatch.setattr(direct.time, "sleep", slept.append)
     makeIcm20948Direct(lambda: FakeIcm(), lambda: FakeAk())
     assert slept == [direct.RESET_SETTLE_S, direct.GYRO_SETTLE_S]
+
+
+# --- ARCH-066: chip temperature (temp_c was NULL in every row) -----------------
+# DOCUMENTED, DS-000189 v1.3: TEMP_OUT_H/L at bank 0 0x39/0x3A (p.32), and
+# TEMP_degC = ((TEMP_OUT - RoomTemp_Offset) / Temp_Sensitivity) + 21 (p.45), with
+# RoomTemp_Offset 0 LSB and Temp_Sensitivity 333.87 LSB/degC (p.14).
+# MEASURED on the car 2026-10-04: raw 1264..1424 -> 24.8..25.3 degC.
+# 🔴 SparkFun's getAgmt() sign-converts accel and gyro but NOT tmpRaw
+# (qwiic_icm20948.py L671 vs L681-687), so the fake stores tmpRaw UNSIGNED.
+def test_temperature_convertsTempOutPerDS000189() -> None:
+    icm = FakeIcm()
+    icm.tmpRaw = 1408  # MEASURED on the car: 25.22 degC
+    dev = makeIcm20948Direct(lambda: icm, lambda: FakeAk())
+    assert abs(dev.temperature - (1408 / 333.87 + 21.0)) < 1e-9
+    assert abs(dev.temperature - 25.217) < 0.01
+
+
+def test_temperature_belowRoomTemp_isSignedNotWrapped() -> None:
+    """A cold cabin gives a NEGATIVE TEMP_OUT. Unsigned, -3339 (about 11 degC)
+    would read 0xF2F5 = 62197 -> 207 degC: a plausible-looking wrong number."""
+    icm = FakeIcm()
+    icm.tmpRaw = (-3339) & 0xFFFF
+    dev = makeIcm20948Direct(lambda: icm, lambda: FakeAk())
+    assert abs(dev.temperature - (-3339 / 333.87 + 21.0)) < 1e-9
+    assert dev.temperature < 12.0
+
+
+def test_temperature_constantsMatchDS000189() -> None:
+    from pi.sensors.icm20948_direct import TEMP_ROOM_OFFSET_LSB, TEMP_SENSITIVITY_LSB_PER_C
+
+    assert TEMP_SENSITIVITY_LSB_PER_C == 333.87
+    assert TEMP_ROOM_OFFSET_LSB == 0.0
