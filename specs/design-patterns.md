@@ -1,6 +1,6 @@
 # Design Patterns — Eclipse OBD-II
 
-**Last Updated: 2026-09-24** · Owner: Atlas (architect) · Authored to the CIO's charter
+**Last Updated: 2026-10-05 (§11, US-838)** · Owner: Atlas (architect) · Authored to the CIO's charter
 amendment of 2026-09-20: *identify patterns, catalogue them, and route Ralph to them by name
 in every design-gate review.*
 
@@ -378,6 +378,38 @@ is NOT idempotent on the second boot."* It had **never succeeded**; `written_at`
 `DEFAULT`. A remedy aimed at the already-applied detection would have been aimed at a step that
 never applied. **Wrong description → wrong remedy → wrong exit test** — the exit test being the
 one that writes *"done"*. Re-derive the predicate, never just the defect.
+
+## 11. Retention deletes only what was DELIVERED — age is evidence about time, never about custody
+
+**Pattern.** Any delete of locally-held data that is meant to reach the server is bounded by the
+**delivery mark** — `AND id <= <sync_log high-water for that table>` (`sync_log.getHighWaterMark`,
+the one owner of that fact) — in addition to whatever age or size rule triggers it. **A mark that
+cannot be read deletes NOTHING**, and so does a mark that is **implausible**: one above every id the
+table ever issued (`sqlite_sequence`), the shape a table rebuild leaves behind (US-809), where
+`id <= mark` would pass rows the server never received. **Every run records what it held back**
+(`heldUndelivered`), including a run that deleted nothing — §5 and ARCH-060: silence is not a record.
+
+**When it applies.** Every purge, retention window, orphan sweep or free-space reclaim on the Pi
+over a table the server is meant to hold. Age, size and "orphaned" are reasons a row MAY go; only
+delivery says it CAN.
+
+**Instances.**
+1. **The EDR retention purge** (`EdrPersistenceSubscriber.purgeExpired`, run by `maybePurge`):
+   `DELETE … WHERE ts_utc < ? AND id <= <mark>`, and *"sync high-water mark unreadable -- deleting
+   nothing"*. It exists because the black box once deleted itself on a rolling AGE window while the
+   server had no table to receive it: **recorded is not delivered** (Atlas MEMORY 2026-09-16).
+2. **Orphan cleanup, US-838** (`scripts/cleanup_orphan_realtime_data.py`, both passes). Before it,
+   `drive_id IS NULL AND timestamp < now − 4 h` alone authorised the delete. On 2026-10-03 03:00 it
+   removed **263 crank lead-in rows**, which the server held **only because the sync had happened to run
+   first**. A car parked > 4 h away from home Wi-Fi loses them silently and permanently.
+
+**Anti-pattern prevented.** A retention policy whose predicate cannot see delivery, where every
+component works and the seam deletes the only copy.
+
+🔴 **THE EXIT TEST:** the delivery test must be shown to **FAIL against the age-only predicate**
+(rows above the mark are deleted) before the fix makes it pass. And state the time-dependence: a
+`main()` that reads the real clock is tested with fixtures aged relative to the REAL now, not a fixed
+anchor (US-837's lesson).
 
 ## Cross-references
 

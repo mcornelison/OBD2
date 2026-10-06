@@ -16,6 +16,9 @@
 # ================================================================================
 # 2026-05-11    | Rex (US-322) | Initial -- TDD coverage for the orphan cleanup
 #                               script (B-072).
+# 2026-10-05    | Atlas (US-838) | Fixtures mark every row delivered (sync_log
+#                               high-water = MAX(id)): the cleanup now deletes
+#                               only what the server has.
 # ================================================================================
 ################################################################################
 
@@ -37,6 +40,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from src.pi.data import sync_log
 
 # ================================================================================
 # Module loader (scripts/ is not a package)
@@ -121,8 +126,22 @@ def freshDb() -> sqlite3.Connection:
     _seed(count=50, driveId=None, ageHours=6)     # preserve (NULL but recent)
     _seed(count=30, driveId=7, ageHours=72)       # preserve (tagged + old)
     _seed(count=20, driveId=7, ageHours=1)        # preserve (tagged + recent)
+    _markAllDelivered(conn)
     conn.commit()
     return conn
+
+
+def _markAllDelivered(conn: sqlite3.Connection) -> None:
+    """US-838: the server already has every row (mark = MAX(id)).
+
+    The cleanup deletes only what the server holds. These tests were written
+    when age alone authorised a delete, so they assumed delivery implicitly;
+    this states it. Undelivered rows are covered by
+    test_cleanup_orphan_delivery_bound.py.
+    """
+    sync_log.initDb(conn)
+    maxId = conn.execute('SELECT MAX(id) FROM realtime_data').fetchone()[0] or 0
+    sync_log.updateHighWaterMark(conn, 'realtime_data', int(maxId), 'test-all-delivered')
 
 
 def _countTotal(conn: sqlite3.Connection) -> int:
@@ -336,6 +355,7 @@ def _writeStandaloneSeededDb(path: Path) -> None:
     seed(50, None, 6)
     seed(30, 7, 72)
     seed(20, 7, 1)
+    _markAllDelivered(conn)
     conn.commit()
     conn.close()
 
