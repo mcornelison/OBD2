@@ -30,6 +30,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-13    | Rex (US-464) | Initial -- Sprint 57 US-464 (TD-055 funded).
+# 2026-10-06    | Atlas (US-795-b) | The whole-chain tests seed sync_history /
+#               |              | battery_health_log / startup_log pre-migration and
+#               |              | require EVERY pending migration to apply, then read
+#               |              | v0028-v0035's columns back (+ anti-theatre guards).
 # ================================================================================
 ################################################################################
 
@@ -58,12 +62,28 @@ from src.server.migrations.versions import (  # noqa: E402
 from src.server.migrations.versions import (  # noqa: E402
     v0024_us563_unassessed_defaults_and_intake_rename as v0024,
 )
+from src.server.migrations.versions import (  # noqa: E402
+    v0028_us795a_sync_history_residual as v0028,
+)
+from src.server.migrations.versions import (  # noqa: E402
+    v0029_us809b1_realtime_written_at as v0029,
+)
+from src.server.migrations.versions import (  # noqa: E402
+    v0032_us683_battery_health_close_reason as v0032,
+)
+from src.server.migrations.versions import (  # noqa: E402
+    v0034_us776f_startup_log_prior_boot_sync as v0034,
+)
+from src.server.migrations.versions import (  # noqa: E402
+    v0035_arch065_battery_capacity_columns as v0035,
+)
 from tests.server._mariadb_chain_harness import (  # noqa: E402
     DATA_SOURCE_CHECK_TABLES,
     LEDGER_PROMISED_COLUMNS,
     MARIADB_MAJOR,
     MARIADB_TEST_DSN_ENV,
     MARIADB_TEST_IMAGE,
+    POST_V0027_SEEDED_TABLES,
     PROD_DRIVE_SUMMARY_DATA_QUALITY_SQL,
     MariaDbCommandRunner,
     MariaDbUnavailable,
@@ -75,7 +95,17 @@ from tests.server._mariadb_chain_harness import (  # noqa: E402
     inlineDataSourceCheckTableDdl,
     makeContext,
     markMigrationsAppliedStatements,
+    preMigrationTableStatements,
     resetSchemaStatements,
+)
+
+#: US-795-b: every (table, column) v0028-v0035 adds to a create_all table, taken
+#: from the migrations' OWN constants so the list cannot drift from what they do.
+POST_V0027_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    *((v0028.TABLE_NAME, c) for c in v0028.RESIDUAL_COLUMNS),
+    (v0032.TABLE_NAME, v0032.COLUMN_NAME),
+    *((v0034.TABLE_NAME, c) for c in v0034.COLUMN_TYPES),
+    *((table, c) for table, cols in v0035.COLUMNS.items() for c in cols),
 )
 
 # =============================================================================
@@ -331,6 +361,30 @@ class TestSeedsImplementTheLedgerTheyClaim:
         )
 
 
+class TestPostV0027SeedsGiveTheMigrationsRealWork:
+    """US-795-b anti-theatre: the three create_all tables are seeded in their
+    PRE-migration shape, so v0028/v0032/v0034/v0035 have real work to do in CI."""
+
+    def test_everySeededTableIsCreated(self):
+        stmts = "\n".join(preMigrationTableStatements())
+        for table in POST_V0027_SEEDED_TABLES:
+            assert f"CREATE TABLE {table} (" in stmts, f"{table} is not seeded"
+
+    def test_noSeedAlreadyCarriesAColumnAMigrationAdds(self):
+        """If a seed carried the column, the migration would no-op and CI would be
+        green without having run it -- the defect this seed exists to prevent."""
+        stmts = {s.split("(", 1)[0].split()[-1]: s for s in preMigrationTableStatements()}
+        for table, column in POST_V0027_ADDED_COLUMNS:
+            assert f" {column} " not in stmts[table], (
+                f"{table} seed already declares {column}; the migration that adds it "
+                "would do nothing in CI"
+            )
+
+    def test_closeReasonCheckIsNotPreSeeded(self):
+        battery = next(s for s in preMigrationTableStatements() if "battery_health_log" in s)
+        assert v0032.CHECK_CONSTRAINT_NAME not in battery
+
+
 class TestTd055LineageDocumented:
     """Pin the TD-055 lineage + version pin so the gap stays visible (AC)."""
 
@@ -459,6 +513,36 @@ def _assertV0024Landed(connection: Any, dbName: str) -> None:
         cursor.close()
 
 
+def _assertPostV0027Landed(connection: Any, dbName: str) -> None:
+    """US-795-b: v0028-v0035 really changed the real schema (read back, not assumed)."""
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
+            f"WHERE TABLE_SCHEMA='{dbName}'",
+        )
+        present = {(t, c) for t, c in cursor.fetchall()}
+        missing = [
+            pair for pair in (*POST_V0027_ADDED_COLUMNS, ("realtime_data", v0029.WRITTEN_AT_COLUMN))
+            if pair not in present
+        ]
+        assert not missing, f"the chain reported success but these columns are absent: {missing}"
+        cursor.execute(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            f"WHERE TABLE_SCHEMA='{dbName}' AND TABLE_NAME IN "
+            "('drain_vcell_trajectory','edr_imu_derived','edr_imu_sample','edr_light_sample')",
+        )
+        assert cursor.fetchone()[0] == 4, "a chain-created table is missing"
+        cursor.execute(
+            "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS "
+            f"WHERE CONSTRAINT_SCHEMA='{dbName}' "
+            f"AND CONSTRAINT_NAME='{v0032.CHECK_CONSTRAINT_NAME}'",
+        )
+        assert cursor.fetchone()[0] == 1, "v0032's close_reason CHECK did not land"
+    finally:
+        cursor.close()
+
+
 @pytest.mark.integration
 @pytest.mark.slow
 class TestMigrationChainRealMariaDb:
@@ -518,6 +602,8 @@ class TestMigrationChainRealMariaDb:
             connection,
             [inlineDataSourceCheckTableDdl(t) for t in DATA_SOURCE_CHECK_TABLES],
         )
+        # US-795-b: the create_all tables v0028-v0035 alter, pre-migration shape.
+        execStatements(connection, preMigrationTableStatements())
         # Mirror the V0.29.10 resume: 0001-0021 already applied, 0022/0023 pending.
         priorVersions = [m.version for m in ALL_MIGRATIONS if m.version < "0022"]
         execStatements(connection, markMigrationsAppliedStatements(priorVersions))
@@ -525,10 +611,14 @@ class TestMigrationChainRealMariaDb:
 
         report = MigrationRunner(ALL_MIGRATIONS).runAll(ctx)
 
-        assert {"0022", "0023", "0024"}.issubset(set(report.applied)), (
-            f"expected 0022+0023+0024 to apply on the pending chain; "
-            f"got {report.applied}"
+        # US-795-b: EVERY pending migration applied, not only the three this
+        # test was written for -- v0028-v0035 had never run in CI before.
+        pending = {m.version for m in ALL_MIGRATIONS if m.version >= "0022"}
+        assert pending.issubset(set(report.applied)), (
+            f"expected every pending migration to apply; missing "
+            f"{sorted(pending - set(report.applied))}, got {report.applied}"
         )
+        _assertPostV0027Landed(connection, dbName)
         # Both drift classes reconciled by the real chain.
         assert _countSurvivingDataSourceChecks(connection, dbName) == 0
         assert v0022._fkNameReferencing(ctx, "drive_statistics", "drives") is not None
@@ -549,6 +639,7 @@ class TestMigrationChainRealMariaDb:
                 for t in DATA_SOURCE_CHECK_TABLES
             ],
         )
+        execStatements(connection, preMigrationTableStatements())  # US-795-b
         priorVersions = [m.version for m in ALL_MIGRATIONS if m.version < "0022"]
         execStatements(connection, markMigrationsAppliedStatements(priorVersions))
         ctx = makeContext(connection, dbName)
@@ -556,7 +647,11 @@ class TestMigrationChainRealMariaDb:
         # Must NOT raise (idempotent no-op reconciliation on an already-clean DB).
         report = MigrationRunner(ALL_MIGRATIONS).runAll(ctx)
 
-        assert {"0022", "0023", "0024"}.issubset(set(report.applied))
+        pending = {m.version for m in ALL_MIGRATIONS if m.version >= "0022"}
+        assert pending.issubset(set(report.applied)), (
+            f"missing {sorted(pending - set(report.applied))}"
+        )
+        _assertPostV0027Landed(connection, dbName)
         assert _countSurvivingDataSourceChecks(connection, dbName) == 0
         assert v0022._fkNameReferencing(ctx, "drive_statistics", "drives") is not None
         # US-568: and v0024's three schema truths really landed.
