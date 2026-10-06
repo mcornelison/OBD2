@@ -6630,23 +6630,34 @@ System Status / Battery Health / DTC cards: a Python emitter is the single
 authoritative provider that **classifies** the drift; the JS card only maps the
 verdict → colour, it never classifies.
 
-**`ltft-trend` emitter (`src/pi/splash/ltft_trend_emitter.py`).**
-`readLtftTrend()` aggregates per-drive avg/min/max of
-`parameter_name='LONG_FUEL_TRIM_1'` (the single 4G63 bank — bank 2 is unlogged)
-over `realtime_data`, `GROUP BY drive_id` oldest→newest, `WHERE
-data_source='real' AND drive_id IS NOT NULL` (so replay/sim/fixture — and the
-US-424 `'foreign'` rows — can never enter the tune trend, and NULL-drive noise
-is excluded), `LEFT JOIN drive_summary` for the axis timestamp (NULL when a
-drive has trims but no summary). `classifyLtftDrift()`: `|LTFT|≤5` ok, `≤10`
-amber, `>10` down — thresholds grounded in
-`offices/tuner/cards/safe-range-fuel-trims.md` (normal ±5, danger >±10).
-`buildLtftTrendState()` is pure: per-drive levels + a headline verdict + a
-migration direction (improving-toward-0 vs worsening, `TREND_EPSILON_PCT=0.5`
-dead-band). **Honest-instrument**: below `MIN_DRIVES_FOR_TREND=2` the headline
-level is forced to `'insufficient'` — a single in-band reading can never render
-green. `makeLtftTrendEmitter()` is the same best-effort atomic
-`ensureStatesDir`/`writeStateAtomic` (C-5) seam as the sibling emitters (write
-failures logged, never raised).
+**`ltft-trend` emitter (`src/pi/splash/ltft_trend_emitter.py`) — as built (US-661; US-420 epoch paging 2026-10-05).**
+🔴 **The SEMANTICS live in ONE place: `specs/grounded-knowledge.md` › "LTFT trend contract (US-661)"** — the
+warm closed-loop gate, the 5-drive median, the epoch baseline, the bit-identity reset rule. This section
+describes only the mechanism. *(Until 2026-10-05 it described the pre-US-661 `readLtftTrend()` /
+`classifyLtftDrift()` / `MIN_DRIVES_FOR_TREND` design, none of which exists any more.)*
+
+- **Reader — `readLtftDriveRows()`.** `realtime_data` rows of LTFT, STFT, coolant and fuel-system status,
+  `data_source='real'` and non-NULL `drive_id` only (replay/sim/fixture and the US-424 `'foreign'` rows
+  never enter), `LEFT JOIN drive_summary` for the axis timestamp. It reads the newest
+  `DEFAULT_TREND_DRIVES` (20) drives; **if none of them is an adaptive-memory reset it PAGES BACK** 20
+  drive ids at a time, reading LTFT only and classifying each drive with `isAdaptiveResetDrive` (the ONE
+  definition — no second one in SQL), until it meets a reset (whose drive it includes: the boundary) or
+  the oldest drive. It returns `LtftDriveRows` — the per-drive dict plus `historyExhausted`. **The epoch
+  is bounded by the reset, never by a count; raising the count is rejected** (F-096, ruled 2026-09-22).
+- **Builder — `buildLtftTrendState()`** (pure): gate → per-drive points → the current epoch
+  (`_currentEpoch`; `epochClipped` only when a reader could not reach the boundary) → the baseline =
+  the **epoch grand mean**, rolling 5-drive medians, trend and `sustained` over the **whole epoch**.
+  `points` (one card bar each) is the newest `DEFAULT_TREND_DRIVES` epoch points; `driveCount` and
+  `epochDriveCount` count the whole epoch. Every absence is typed (`reason`).
+- **Emitter — `makeLtftTrendEmitter()`**, wired by `card_state_emitter` every
+  `pi.dashboard.ltftTrendIntervalSeconds` (default **300 s**: the value cannot change until a drive ends).
+  It trusts `LtftDriveRows.historyExhausted`; a plain-dict reader keeps the count rule (exactly
+  `driveLimit` drives with no reset reads as clipped — the safe failure). Best-effort atomic
+  `ensureStatesDir`/`writeStateAtomic` (C-5), write failures logged, never raised.
+- **Cost, MEASURED on the car 2026-10-05** (read-only, 3 runs each): today's 20-drive read+build **0.79 s**
+  (and clipped); the paging read+build over the live 64-drive epoch **2.33 s** (read 0.80, build 1.53) —
+  **+1.5 s once per 300 s, growing ~linearly with epoch length.** Evidence:
+  `offices/architect/evidence/2026-10-05-us420-live-probe/`.
 
 **Render (`carousel.js`).** `ltftTrendView()` (pure) + `renderLtftTrendBody()`
 paint a multi-drive bar row, each bar coloured by its **own** drift level so a
@@ -6658,9 +6669,10 @@ by the normal `data-state` dispatch through `sourceCardSpec()` /
 retitle is a LABEL change only -- the emitter, the thresholds, the classifier
 and the insufficient guard are all untouched, so Spool's LTFT semantics are
 preserved exactly. Defense-in-depth: the view re-forces `'insufficient'`
-when `sufficient !== true`, so a mislabeled state can't paint green. As with the
-other emitters, the runtime `emit()` wiring is owner/deploy-side (no `src` call
-site yet), matching the shipped cards.
+when `sufficient !== true`, so a mislabeled state can't paint green. The
+runtime `emit()` is wired by `card_state_emitter._initializeLtftTrendProducer`
+(see the emitter bullets above). *(This sentence said "no `src` call site yet"
+until 2026-10-05; that stopped being true when US-661 wired it.)*
 
 #### Visual token SSOT + the two-file mirror (US-510, Sprint 68 / V0.29.23) [Atlas Rule-10 2026-07-31]
 
