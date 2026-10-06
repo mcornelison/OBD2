@@ -15,6 +15,7 @@
 #                              Protocol-name rename in SS-T6).
 # 2026-10-01    | Rex (US-776-d) | Pin the six sync-outcome kinds.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: pin STALLED + RESERVE_FLOOR.
+# 2026-10-05    | Atlas (US-833) | Pin INTERRUPTED.
 # ================================================================================
 ################################################################################
 """Contract: outcome kinds + shutdown-task protocol are the single source of truth."""
@@ -33,11 +34,14 @@ def test_outcomeKinds_exact():
         "at_home_server_down", "probe_misconfigured",
         # ARCH-065: the at-home sync runs to completion.
         "stalled", "reserve_floor",
+        # US-833: the provisional record (overwritten by the final outcome).
+        "interrupted",
     }
     assert {k.name for k in OutcomeKind} == {
         "OK", "SERVER_UNAVAILABLE", "SYNC_FAILED_AFTER_RETRY", "REAL_ERROR",
         "DELIVERED", "AWAY", "UNKNOWN_NETWORK", "AT_HOME_JOINING_TIMEOUT",
         "AT_HOME_SERVER_DOWN", "PROBE_MISCONFIGURED", "STALLED", "RESERVE_FLOOR",
+        "INTERRUPTED",
     }
 
 

@@ -154,6 +154,7 @@ success included, before the task returns:
 | `STALLED` | (ARCH-065a) at home, the backlog did not fall for `stallSec` and the last attempt raised nothing |
 | `RESERVE_FLOOR` | (ARCH-065a) the battery reserve floor ended the drain; written by the floor-end pre-poweroff hook, and a late sync record for the same loss is then dropped |
 | `REAL_ERROR` | a non-transient sync fault |
+| `INTERRUPTED` | (US-833) **provisional**: the shutdown sync did not reach its end. Written before it can be cut off and overwritten by the final outcome, so it survives only when the run never finished: a hard cut mid-sync or mid-JOINING-wait, a blind-floor `totalCapSec` end, or the backstop fast path that skips the pipeline |
 
 The record also carries `backlog_start` (unsynced rows before the first attempt) and `backlog_end`
 (after the last), from the shared US-621 backlog reader. That is what tells "delivered 412 rows"
@@ -168,10 +169,25 @@ only, not the JOINING wait), `vcell_before_cut_v` (the on-wall VCELL snapshotted
 again, so it adds no network call and no wait to the shutdown. One summary line per shutdown is
 logged: INFO for `DELIVERED`/`AWAY`, WARNING for `UNKNOWN_NETWORK`, ERROR otherwise.
 
-What it cannot record: the pre-pipeline backstop fast path (`vcellFloorVolts`) skips the pipeline and
-never reaches the end of `run()`; it still writes the custody record, and the `prior_boot_*` sync columns
-land NULL. A drain-floor poll (the reserve floor) that powers off with a pass in flight records
-`RESERVE_FLOOR` (ARCH-065a).
+**Silence is never the signature of a poweroff (US-833).** A record written only at the end of `run()`
+cannot testify about a run that did not end, so the record exists BEFORE the sync can be cut off:
+
+| Poweroff path | What the next boot lands as `prior_boot_sync_outcome` |
+|---|---|
+| the sync finishes | its final outcome (table above) |
+| hard cut, or a blind-floor `totalCapSec` end, mid-sync or mid-JOINING wait | `INTERRUPTED` + `backlog_start` (+ `sync_started_at` once the drain began) -- the task's PROVISIONAL record, written at run start and again at drain start through its `writeProvisional` seam |
+| the reserve floor (`drainFloorVolts`) ends the drain | `RESERVE_FLOOR`, carrying the provisional's `backlog_start` / `sync_started_at` forward (`recordFloorEnd`) |
+| the backstop fast path (`vcellFloorVolts` at confirmation) skips the pipeline | `INTERRUPTED` + `backlog_start`, no `sync_started_at` (`HomeStateAtLoss.ensureRecorded`, the last pre-poweroff hook) |
+
+- The provisional record goes through the SAME serialised sink as the final one (`syncRecordSink` in
+  `main()`): one file, one writer, ruling 19's stale-loss drop and the floor-end drop apply to both.
+- It is never an OUTCOME: it does not set `lastOutcome` and logs no outcome line. The sink contract stays
+  *exactly one final record per `run()`*.
+- The fast path is `INTERRUPTED`, **not** `RESERVE_FLOOR`, on purpose: `battery_health_finalize` stamps an
+  at-home `RESERVE_FLOOR` `verdict = replace`, and no drain was measured on that path.
+- **Residual window:** between the loss and the sync task's first home-state read (the detector call,
+  timeout-bounded) a HARD cut still leaves only the home-state record, so the sync columns land NULL.
+  A commanded poweroff in that window is covered by `ensureRecorded`.
 
 ### The animation is the terminal signal
 

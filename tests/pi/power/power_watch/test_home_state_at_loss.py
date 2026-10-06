@@ -15,6 +15,8 @@
 # ================================================================================
 # 2026-10-01    | Rex          | Initial -- US-741 home state at every power loss
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
+# 2026-10-05    | Atlas (US-833) | The fast-path test asserted the defect (no
+#                               sync_outcome); it now requires INTERRUPTED.
 # ================================================================================
 ################################################################################
 """The home detector is asked once per power loss and its answer is persisted."""
@@ -159,8 +161,13 @@ def test_floorFastPath_skipsPipeline_stillPersistsHomeState(tmp_path: Path) -> N
     """
     Given: VCELL already at the floor, so the sequencer skips the pipeline
     When: the power loss powers off at once
-    Then: the record still carries the detector's answer (no sync ran, so no
-          sync_outcome), and the detector was called once
+    Then: the record still carries the detector's answer, sync_outcome reads
+          INTERRUPTED, and the detector was called once
+
+    US-833 (2026-10-05): this test used to assert ``"sync_outcome" not in
+    record`` -- it PINNED the defect (a fast-path poweroff left the
+    shutdown-sync record silent, so prior_boot_sync_* landed NULL). Do not
+    restore that assertion: silence must not be the floor's signature.
     """
     # Arrange
     outcomePath = tmp_path / "powerwatch_outcome.json"
@@ -174,7 +181,7 @@ def test_floorFastPath_skipsPipeline_stillPersistsHomeState(tmp_path: Path) -> N
     # Assert
     record = _record(outcomePath)
     assert record["home_state"] == "AT_HOME_SERVER_REACHABLE"
-    assert "sync_outcome" not in record
+    assert record["sync_outcome"] == OutcomeKind.INTERRUPTED.name
     assert detector.calls == 1
     assert powerOffs == ["poweroff"]
 
