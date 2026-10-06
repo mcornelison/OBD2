@@ -34,6 +34,13 @@
 #               |              | (the first migration to touch one) fatalled on
 #               |              | real MariaDB with 1054. Shapes measured from the
 #               |              | deployed obd2db, pinned as literals on purpose.
+# 2026-10-06    | Atlas (US-795-b) | The chain stopped at v0028 ('sync_history'
+#               |              | missing) because three tables production creates
+#               |              | via create_all were never seeded. Seeded now in
+#               |              | their PRE-migration shape (production SHOW CREATE
+#               |              | TABLE, 2026-10-06, minus exactly what v0028/v0032/
+#               |              | v0034/v0035 add), so v0028-v0035 really RUN in CI.
+#               |              | Reset also drops the tables the chain itself creates.
 # ================================================================================
 ################################################################################
 
@@ -482,6 +489,85 @@ LEDGER_PROMISED_COLUMNS: tuple[tuple[str, str], ...] = (
     ('drives', 'data_quality'),
 )
 
+# US-795-b: tables production creates through ``create_all`` (never through a
+# migration) and that the post-0027 migrations ALTER. Seeded in their shape
+# BEFORE those migrations: production's ``SHOW CREATE TABLE`` on chi-srv-01,
+# 2026-10-06, minus exactly what each migration adds --
+#   sync_history        - v0028 residual_rows, residual_complete
+#   battery_health_log  - v0032 close_reason + ck_battery_health_log_close_reason;
+#                         v0035 drain_trigger .. cutoff_vcell_v (ten columns)
+#   startup_log         - v0034 prior_boot_home_state, _sync_outcome,
+#                         _backlog_start, _backlog_end; v0035 prior_boot_sync_
+#                         started_at, _sync_ended_at, _vcell_before_cut_v, _loss_at
+# Pinned as LITERALS (US-568): a seed derived from the ORM would already carry the
+# columns and the migrations would have nothing to do -- green without testing them.
+POST_V0027_SEEDED_TABLES: tuple[str, ...] = (
+    'sync_history',
+    'battery_health_log',
+    'startup_log',
+)
+
+# Tables the chain itself CREATES (v0026 edr raw, v0027 edr_imu_derived, v0033
+# drain_vcell_trajectory). Not seeded; dropped by the reset so each test starts clean.
+CHAIN_CREATED_TABLES: tuple[str, ...] = (
+    'edr_imu_sample',
+    'edr_light_sample',
+    'edr_imu_derived',
+    'drain_vcell_trajectory',
+)
+
+
+def preMigrationTableStatements() -> list[str]:
+    """US-795-b: seed the three create_all tables in their pre-v0028 production shape."""
+    return [
+        'CREATE TABLE sync_history ('
+        '  id INT(11) NOT NULL AUTO_INCREMENT,'
+        '  device_id VARCHAR(64) NOT NULL,'
+        '  started_at DATETIME NOT NULL DEFAULT current_timestamp(),'
+        '  completed_at DATETIME DEFAULT NULL,'
+        '  rows_synced INT(11) DEFAULT NULL,'
+        '  status VARCHAR(32) NOT NULL,'
+        '  tables_synced TEXT DEFAULT NULL,'
+        '  error_message TEXT DEFAULT NULL,'
+        '  PRIMARY KEY (id)'
+        ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;',
+        'CREATE TABLE battery_health_log ('
+        '  id INT(11) NOT NULL AUTO_INCREMENT,'
+        '  source_id INT(11) NOT NULL,'
+        '  source_device VARCHAR(64) NOT NULL,'
+        '  synced_at DATETIME DEFAULT current_timestamp(),'
+        '  sync_batch_id INT(11) DEFAULT NULL,'
+        '  start_timestamp DATETIME NOT NULL DEFAULT current_timestamp(),'
+        '  end_timestamp DATETIME DEFAULT NULL,'
+        '  runtime_seconds INT(11) DEFAULT NULL,'
+        '  ambient_temp_c FLOAT DEFAULT NULL,'
+        "  load_class VARCHAR(16) NOT NULL DEFAULT 'production',"
+        '  notes TEXT DEFAULT NULL,'
+        "  data_source VARCHAR(16) DEFAULT 'real',"
+        '  start_vcell_v FLOAT DEFAULT NULL,'
+        '  end_vcell_v FLOAT DEFAULT NULL,'
+        '  start_soc_pct FLOAT DEFAULT NULL,'
+        '  end_soc_pct FLOAT DEFAULT NULL,'
+        '  PRIMARY KEY (id),'
+        '  UNIQUE KEY uq_battery_health_log_source (source_device, source_id)'
+        ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;',
+        'CREATE TABLE startup_log ('
+        '  id INT(11) NOT NULL AUTO_INCREMENT,'
+        '  source_device VARCHAR(64) NOT NULL,'
+        '  synced_at DATETIME DEFAULT current_timestamp(),'
+        '  sync_batch_id INT(11) DEFAULT NULL,'
+        '  boot_id VARCHAR(64) NOT NULL,'
+        '  prior_boot_clean INT(11) DEFAULT NULL,'
+        '  prior_last_entry_ts VARCHAR(40) DEFAULT NULL,'
+        '  current_boot_first_entry_ts VARCHAR(40) DEFAULT NULL,'
+        '  prior_boot_last_stage VARCHAR(64) DEFAULT NULL,'
+        '  prior_boot_reason VARCHAR(64) DEFAULT NULL,'
+        '  recorded_at VARCHAR(40) DEFAULT NULL,'
+        '  PRIMARY KEY (id),'
+        '  UNIQUE KEY uq_startup_log_boot (source_device, boot_id)'
+        ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;',
+    ]
+
 
 def driftedDriveIdentityStatements() -> list[str]:
     """Seed the BL-020 drifted drive-identity shape (v0022's pre-migration state).
@@ -601,7 +687,8 @@ def markMigrationsAppliedStatements(versions: Iterable[str]) -> list[str]:
 
 
 def resetSchemaStatements() -> list[str]:
-    """DROP every table this harness seeds, so each test starts on a clean DB."""
+    """DROP every table this harness seeds -- and every table the chain creates
+    (US-795-b) -- so each test starts on a clean DB."""
     tables = [
         'drive_derived_signals',
         'drive_statistics',
@@ -609,6 +696,8 @@ def resetSchemaStatements() -> list[str]:
         'drives',
         SCHEMA_MIGRATIONS_TABLE,
         *DATA_SOURCE_CHECK_TABLES,
+        *POST_V0027_SEEDED_TABLES,
+        *CHAIN_CREATED_TABLES,
     ]
     statements = ['SET FOREIGN_KEY_CHECKS=0;']
     statements.extend(f'DROP TABLE IF EXISTS {table};' for table in tables)
