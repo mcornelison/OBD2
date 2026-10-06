@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.74",
-  "theme": "US-833 sync record, US-838 cleanup, US-420 LTFT",
-  "description": "CIO-directed builds by Atlas. US-833: every poweroff leaves a shutdown-sync record (INTERRUPTED + backlog_start on a hard cut or the floor fast path). US-838: orphan cleanup deletes only realtime_data rows at or below the sync high-water mark; an unusable mark deletes nothing. US-420: the LTFT trend reads back to the adaptive reset (epoch 37). Pi only; no schema change."
+  "version": "V0.29.75",
+  "theme": "US-731 light auto-range; US-795b/US-807 CI gates",
+  "description": "US-731: the TSL2591 auto-ranges LOW<->MEDIUM and reads daylight (it never had); lux from raw counts with datasheet gains, so medium-gain lux reads ~2 % above earlier rows. US-795(b): the migration CI seeds the real pre-migration tables and is green; v0029-v0035 ran in CI for the first time. US-807: the applied-schema parity gate runs in CI against production's schema. Pi code: US-731 only."
 }
