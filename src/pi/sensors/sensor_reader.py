@@ -51,6 +51,14 @@
 #               |              | drive 96 at 24.72 ms vs 20 ms configured (40.5 Hz,
 #               |              | not 50). Deadlines are now anchored to the schedule;
 #               |              | an overrun skips missed ticks, never bursts.
+# 2026-10-06    | Atlas (US-731,| The TSL2591 reads DAYLIGHT. It had run at the
+#               | CIO-directed)| library default (medium gain, 100 ms) on every
+#               |              | sample ever taken, so it saturated at ~3,400 lux and
+#               |              | published NULL in sun. Now: AUTO-RANGE LOW<->MEDIUM
+#               |              | (never above medium: night stays as today, CIO), and
+#               |              | lux computed from the raw counts with the DATASHEET
+#               |              | gains (24.5x, not the library's 25x; CIO). Still
+#               |              | four sensor reads per sample (CIO).
 # ================================================================================
 ################################################################################
 
@@ -224,6 +232,40 @@ def nextPollDeadline(prevDue: float, *, now: float, intervalS: float) -> float:
 # TSL2591 raises on a saturated/overflow lux read; treat these as "unreadable"
 # (publish None) rather than a fabricated value.
 _SATURATION_ERRORS = (RuntimeError, OverflowError, ValueError, ZeroDivisionError)
+
+# ---- US-731: TSL2591 range + lux -------------------------------------------------
+# Source: ams TSL2591 datasheet v3-00 (2023-02-08), hardware/datasheets/tsl2591/.
+# AGAIN register codes (CONTROL 0x01, bits 5:4): 00 low, 01 medium, 10 high, 11 max.
+TSL_GAIN_LOW = 0x00
+TSL_GAIN_MED = 0x10
+TSL_GAIN_HIGH = 0x20
+TSL_GAIN_MAX = 0x30
+#: "Gain scaling, relative to 1x gain setting", TYPICAL (p.6: medium 22/24.5/27,
+#: high 360/400/440). MAX is absent ON PURPOSE: the datasheet gives it per
+#: channel (CH0 9,200 / CH1 9,900) and the lux equation takes one multiplier, so a
+#: MAX-gain lux would be a guess. The library uses 25 / 428 / 9876 (not these).
+_TSL_GAIN_X: dict[int, float] = {TSL_GAIN_LOW: 1.0, TSL_GAIN_MED: 24.5, TSL_GAIN_HIGH: 400.0}
+#: Max ADC count by ATIME index (p.7 and the CONTROL register table): 100 ms -> 36,863,
+#: 200-600 ms -> 65,535. A channel AT the max is saturated: not a reading.
+_TSL_MAX_COUNT: dict[int, int] = {0: 36863, 1: 65535, 2: 65535, 3: 65535, 4: 65535, 5: 65535}
+#: The lux equation is NOT in the ams datasheet. It is Adafruit's (adafruit_tsl2591
+#: 1.4.8, ported from their Arduino library) and the library notes it is "not
+#: calibrated". Kept as-is; only its GAIN input changes (US-731, CIO).
+_TSL_LUX_DF = 408.0
+_TSL_LUX_COEF_B = 1.64
+_TSL_LUX_COEF_C = 0.59
+_TSL_LUX_COEF_D = 0.86
+
+# Auto-ranging, LOW <-> MEDIUM only (CIO 2026-10-06: never above medium, so night
+# readings stay exactly as today). Integration stays 100 ms.
+#: Step DOWN at medium when either channel reaches 90 % of the max count -- before
+#: it overflows, so the reading that triggers the step is usually still valid.
+TSL_STEP_DOWN_FRACTION = 0.90
+#: Step UP at low only when the reading, scaled by the datasheet's WORST-CASE
+#: medium gain (27x, p.6), would sit under 50 % of the max count -- far below the
+#: 90 % step-down, so a light level near the boundary cannot flap between ranges.
+TSL_STEP_UP_FRACTION = 0.50
+_TSL_MED_GAIN_WORST_X = 27.0
 
 # US-564 / Atlas AC-7: how often an ONGOING poll fault re-states itself. The
 # TRANSITION always logs immediately; only the repetition is rate-limited. The
@@ -813,25 +855,86 @@ class LightReader(_BaseSensorReader):
 
     def _readAndPublish(self, seq: int) -> None:
         dev = self._device
-        lux = _readLux(dev)
+        # ARCH-009: the range context the sample is taken under, read BEFORE any
+        # US-731 range change, so the row names the gain that produced it.
+        gainCode = getattr(dev, "gain", None)
+        integrationIndex = getattr(dev, "integration_time", None)
+        # US-731: read 1 of 4 (unchanged count, CIO) -- the raw counts the lux
+        # AND the ranging decision both come from.
+        counts = _readCounts(dev)
+        lux = (
+            None if counts is None
+            else _luxFromCounts(counts[0], counts[1], gainCode, integrationIndex)
+        )
         visible = int(dev.visible)
         infrared = int(dev.infrared)
         full = int(dev.full_spectrum)
         # Honest instrument: lux may be None (saturation), raw counts always go.
-        # ARCH-009: read the range context from the device that just produced the
-        # sample. Published on THIS burst, not separately, so either all three
-        # fields arrive or none do -- a diagnostic must never be able to delay
-        # or block the reading it describes.
-        gainCode = getattr(dev, "gain", None)
-        integrationMs = _integrationMs(getattr(dev, "integration_time", None))
+        # Published on THIS burst, not separately, so either all three fields
+        # arrive or none do -- a diagnostic must never be able to delay or block
+        # the reading it describes.
         self._publishBurst(
             (
                 (TOPIC_LIGHT_LUX, lux, UNIT_LUX),
                 (TOPIC_LIGHT_RAW, (visible, infrared, full), UNIT_COUNT),
-                (TOPIC_LIGHT_RANGE, (gainCode, integrationMs), UNIT_RANGE),
+                (TOPIC_LIGHT_RANGE, (gainCode, _integrationMs(integrationIndex)), UNIT_RANGE),
             ),
             seq,
         )
+        # US-731: choose the gain for the NEXT sample (1 Hz; one 100 ms integration
+        # settles long before it). After the publish, so ranging can never delay
+        # or lose the reading it is based on.
+        if counts is not None:
+            self._autoRange(dev, gainCode, integrationIndex, counts)
+
+    def _autoRange(
+        self, dev: Any, gainCode: Any, integrationIndex: Any, counts: tuple[int, int]
+    ) -> None:
+        """Write the next gain when the rule asks for one. Never raises (US-731)."""
+        nextGain = nextTslGain(gainCode, integrationIndex, counts[0], counts[1])
+        if nextGain is None or nextGain == gainCode:
+            return
+        try:
+            dev.gain = nextGain
+        except Exception as exc:  # noqa: BLE001 -- a failed write retries next sample
+            logger.warning(
+                "light: TSL2591 gain write 0x%02x failed (%s) -- staying at 0x%02x, "
+                "retried next sample", nextGain, exc,
+                gainCode if isinstance(gainCode, int) else -1,
+            )
+            return
+        logger.info(
+            "light: TSL2591 gain 0x%02x -> 0x%02x (CH0=%d CH1=%d)",
+            gainCode if isinstance(gainCode, int) else -1, nextGain, counts[0], counts[1],
+        )
+
+
+def nextTslGain(
+    gainCode: Any, integrationIndex: Any, ch0: int, ch1: int
+) -> int | None:
+    """US-731: the gain the NEXT sample should use, LOW <-> MEDIUM only.
+
+    At MEDIUM: step down to LOW when either channel reaches
+    ``TSL_STEP_DOWN_FRACTION`` of the max count. At LOW: step up to MEDIUM when CH0,
+    scaled by the datasheet's worst-case medium gain, would stay under
+    ``TSL_STEP_UP_FRACTION`` of the max count. Never ranges above MEDIUM (CIO).
+
+    Returns:
+        The gain code to write, the current one when no change is due, or None when
+        the current gain or integration is not one this rule manages.
+    """
+    maxCount = _TSL_MAX_COUNT.get(integrationIndex) if isinstance(integrationIndex, int) else None
+    if maxCount is None:
+        return None
+    if gainCode == TSL_GAIN_MED:
+        if max(ch0, ch1) >= TSL_STEP_DOWN_FRACTION * maxCount:
+            return TSL_GAIN_LOW
+        return TSL_GAIN_MED
+    if gainCode == TSL_GAIN_LOW:
+        if ch0 * _TSL_MED_GAIN_WORST_X < TSL_STEP_UP_FRACTION * maxCount:
+            return TSL_GAIN_MED
+        return TSL_GAIN_LOW
+    return None
 
 
 def _integrationMs(index: Any) -> int | None:
@@ -855,20 +958,51 @@ def _vec3(v: Any) -> tuple[float, float, float]:
     return (float(x), float(y), float(z))
 
 
-def _readLux(dev: Any) -> float | None:
-    """Read TSL2591 lux, returning None on saturation or a non-finite value.
+def _readCounts(dev: Any) -> tuple[int, int] | None:
+    """US-731: one raw read -> (CH0 full spectrum, CH1 infrared), or None if unreadable."""
+    try:
+        ch0, ch1 = dev.raw_luminosity
+        return (int(ch0), int(ch1))
+    except (*_SATURATION_ERRORS, TypeError):
+        return None
 
-    The TSL2591 driver raises on an overflow (saturated) read; we translate that
-    to None (persist NULL) rather than publish a fabricated or ``inf`` value.
+
+def _luxFromCounts(ch0: int, ch1: int, gainCode: Any, integrationIndex: Any) -> float | None:
+    """US-731: lux from raw counts with the DATASHEET's gain, or None.
+
+    The equation is Adafruit's (``adafruit_tsl2591`` 1.4.8; not in the ams
+    datasheet, "not calibrated"); its GAIN input is the datasheet's typical value
+    (24.5x medium, not the library's 25x -- CIO 2026-10-06). None when a channel is
+    saturated (at or above the documented max count), the gain or integration is
+    not one we can compute honestly (MAX gain, an unknown code), or the result is
+    non-finite or negative (ARCH-010, below).
     """
-    try:
-        lux = dev.lux
-    except _SATURATION_ERRORS:
+    gainX = _TSL_GAIN_X.get(gainCode) if isinstance(gainCode, int) else None
+    maxCount = _TSL_MAX_COUNT.get(integrationIndex) if isinstance(integrationIndex, int) else None
+    if gainX is None or maxCount is None:
         return None
-    if lux is None:
+    if ch0 >= maxCount or ch1 >= maxCount:
+        return None  # saturated: the honest answer is "no reading", never a clipped one
+    atimeMs = 100.0 * (integrationIndex + 1)
+    cpl = (atimeMs * gainX) / _TSL_LUX_DF
+    luxF = max(
+        (ch0 - _TSL_LUX_COEF_B * ch1) / cpl,
+        (_TSL_LUX_COEF_C * ch0 - _TSL_LUX_COEF_D * ch1) / cpl,
+    )
+    return _honestLux(luxF)
+
+
+def _honestLux(value: Any) -> float | None:
+    """A computed lux as a reading, or None when it is not one (ARCH-010 / US-409).
+
+    None for a missing or non-numeric value, a non-finite one (never inf/nan) and a
+    NEGATIVE one; ZERO is a reading. US-731 split this rule out of the device read so
+    it states one thing and is tested as one thing.
+    """
+    if value is None:
         return None
     try:
-        luxF = float(lux)
+        luxF = float(value)
     except (TypeError, ValueError):
         return None
     if not math.isfinite(luxF):  # never inf/nan

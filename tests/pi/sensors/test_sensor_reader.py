@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-import math
-
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS
 from pi.sensors.icm20948_direct import Icm20948Direct
@@ -33,6 +31,7 @@ from pi.sensors.sensor_reader import (
     TOPIC_LIGHT_RAW,
     ImuReader,
     LightReader,
+    _luxFromCounts,
     createSensorReadersFromConfig,
     makeMagKeepAlive,
 )
@@ -50,20 +49,29 @@ class FakeImu:
 
 
 class FakeTsl:
-    """Mimics adafruit_tsl2591.TSL2591: lux property + raw channel counts."""
+    """Mimics adafruit_tsl2591.TSL2591 1.4.8: raw_luminosity + gain + integration.
 
-    def __init__(self, *, luxValue: float | None = 123.4, raise_lux: bool = False) -> None:
-        self._luxValue = luxValue
-        self._raise_lux = raise_lux
+    US-731: the reader computes lux from ``raw_luminosity`` (CH0 full spectrum, CH1
+    infrared) with the datasheet gain, so the fake exposes the counts, not a lux.
+    The default counts agree with the fixed channel attributes (1250 - 250 = 1000).
+    """
+
+    def __init__(
+        self, *, counts: tuple[int, int] = (1250, 250), raise_raw: bool = False
+    ) -> None:
+        self._counts = counts
+        self._raise_raw = raise_raw
+        self.gain = 0x10  # medium: the library default, as on the car
+        self.integration_time = 0  # 100 ms
         self.visible = 1000
         self.infrared = 250
         self.full_spectrum = 1250
 
     @property
-    def lux(self) -> float:
-        if self._raise_lux:
-            raise RuntimeError("Overflow reading light channels. Try to reduce the gain.")
-        return self._luxValue
+    def raw_luminosity(self) -> tuple[int, int]:
+        if self._raise_raw:
+            raise RuntimeError("I2C read failed")
+        return self._counts
 
 
 def _raising_factory():
@@ -306,7 +314,7 @@ def test_light_present_publishesStatePresent():
 def test_light_present_publishesLuxAndRawWithSharedSeq():
     bus = SampleBus()
     sub = bus.subscribe(["raw.light.*"], QoS.LOSSY, "t")
-    reader = LightReader(bus, sampleHz=1, deviceFactory=lambda: FakeTsl(luxValue=123.4))
+    reader = LightReader(bus, sampleHz=1, deviceFactory=lambda: FakeTsl())
     reader.probe()
 
     reader.pollOnce()
@@ -319,7 +327,9 @@ def test_light_present_publishesLuxAndRawWithSharedSeq():
     # it describes.
     assert set(byTopic) == {TOPIC_LIGHT_LUX, TOPIC_LIGHT_RAW, TOPIC_LIGHT_RANGE}
     assert len({s.seq for s in samples}) == 1  # shared seq for the light poll
-    assert byTopic[TOPIC_LIGHT_LUX].value == 123.4
+    # US-731: lux is computed from the raw counts (1250 / 250, medium, 100 ms).
+    assert byTopic[TOPIC_LIGHT_LUX].value == _luxFromCounts(1250, 250, 0x10, 0)
+    assert byTopic[TOPIC_LIGHT_LUX].value > 0
     assert byTopic[TOPIC_LIGHT_LUX].unit == "lux"
     assert byTopic[TOPIC_LIGHT_RAW].value == (1000, 250, 1250)
     assert byTopic[TOPIC_LIGHT_RAW].unit == "count"
@@ -329,13 +339,13 @@ def test_light_present_publishesLuxAndRawWithSharedSeq():
 # --- Light saturation honesty ------------------------------------------------
 def test_light_saturated_publishesLuxNoneButKeepsRawCounts():
     """
-    Given: a saturating TSL2591 read (.lux raises)
+    Given: a saturating TSL2591 read (CH0 at the documented 100 ms max count, 36,863)
     When: the reader polls
     Then: raw.light.lux publishes None (never inf), raw counts still published
     """
     bus = SampleBus()
     sub = bus.subscribe(["raw.light.*"], QoS.LOSSY, "t")
-    reader = LightReader(bus, deviceFactory=lambda: FakeTsl(raise_lux=True))
+    reader = LightReader(bus, deviceFactory=lambda: FakeTsl(counts=(36863, 250)))
     reader.probe()
 
     reader.pollOnce()
@@ -347,10 +357,16 @@ def test_light_saturated_publishesLuxNoneButKeepsRawCounts():
 
 
 def test_light_infiniteLux_publishedAsNoneNotInf():
-    """A non-finite lux (inf/nan) is published as None, never inf."""
+    """An UNREADABLE lux is published as None, never inf.
+
+    US-731: lux is now computed from counts and cannot be non-finite from them, so
+    the inf/nan rule itself is pinned on ``_honestLux``
+    (test_negative_lux_not_a_reading.py). This test pins the other unreadable path
+    at the reader: a raw read that raises.
+    """
     bus = SampleBus()
     sub = bus.subscribe(["raw.light.lux"], QoS.LOSSY, "t")
-    reader = LightReader(bus, deviceFactory=lambda: FakeTsl(luxValue=math.inf))
+    reader = LightReader(bus, deviceFactory=lambda: FakeTsl(raise_raw=True))
     reader.probe()
 
     reader.pollOnce()

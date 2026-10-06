@@ -12,6 +12,8 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-08-29    | Atlas   | ARCH-009: land the reading's range context
+# 2026-10-06    | Atlas   | US-731: the fake exposes raw_luminosity (lux is
+#               |         | computed from counts); range assertions unchanged.
 # ================================================================================
 ################################################################################
 
@@ -144,7 +146,7 @@ class TestTheReaderPublishesIt:
 
         class _Dev:
             visible, infrared, full_spectrum = 5884, 29230, 35114
-            lux = 209.0
+            raw_luminosity = (35114, 29230)  # US-731: lux comes from the counts
             gain = 0x10
             integration_time = 1          # index, not milliseconds
 
