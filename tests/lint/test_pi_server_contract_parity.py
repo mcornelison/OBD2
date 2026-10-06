@@ -30,6 +30,11 @@
 #               |              | must AGREE.  See that class docstring.
 # 2026-09-10    | Rex (US-722) | TestSubjectControl -- the gate's table/column
 #               |              | REACH proven RED, not just its checks.
+# 2026-10-06    | Atlas        | US-807 (CIO-directed): the live layer builds
+#               | (US-807)     | PRODUCTION's schema (pinned snapshot + ledger),
+#               |              | migrates it forward, then runs A2 AND A3 --
+#               |              | no longer create_all compared to itself.
+#               |              | integration-marked so the CI selects it.
 # ================================================================================
 ################################################################################
 
@@ -44,10 +49,11 @@ Layers, weakest last (each is labelled so a skip can never read as a pass):
   rather than left as a manual drill.
 * **Standing gate** (always runs).  The live repo's APPLIED Pi schema vs the
   server schema must be clean.
-* **Applied-server layer** (skips honestly off-CI).  Provisions a real MariaDB
-  11.x (US-464/470 harness), applies the real provisioning path, and reads the
-  columns back out of ``information_schema``.  Only this layer can see the
-  BL-019 class (Python widened, deployed DB never ALTERed).
+* **Applied-server layer** (skips honestly off-CI; runs in the migration-drift
+  CI job).  Builds production's schema on a real MariaDB 11.x from the pinned
+  snapshot (US-807), runs every newer migration forward, and reads the columns
+  back out of ``information_schema``.  Only this layer can see the BL-019 class
+  (Python widened, deployed DB never ALTERed).
 
 Run locally::
 
@@ -126,28 +132,6 @@ def _codeIdentifiers(source: str) -> set[str]:
             if node.asname:
                 identifiers.add(node.asname)
     return identifiers
-
-
-def _provisionServerSchema(connection: Any, dbName: str) -> None:  # pragma: no cover
-    """Build the server schema on a live MariaDB, as deploy-server.sh --init does.
-
-    CI-only path (no Docker on the Windows bench).  Kept out of the test body
-    so the deploy-parity intent is explicit: this reproduces the real
-    provisioning step, and the assertion is then made against what MariaDB
-    actually stored -- never against the metadata that built it.
-    """
-    from sqlalchemy import create_engine
-
-    from src.server.db.models import Base
-
-    def _text(value: Any) -> str:
-        return value.decode() if isinstance(value, bytes) else str(value)
-
-    url = (
-        f'mysql+pymysql://{_text(connection.user)}@'
-        f'{_text(connection.host)}:{connection.port}/{dbName}'
-    )
-    Base.metadata.create_all(create_engine(url))
 
 
 def _spec(name: str, kind: str, *, notNull: bool = False,
@@ -464,36 +448,36 @@ class TestA2AppliedSchemaVerdict:
         assert not any(v.assertionId == 'A2' for v in violations)
 
 
-class TestA2AppliedSchemaLive:
-    """The real applied-server layer: MariaDB 11.x, read from information_schema.
+@pytest.fixture(scope='module')
+def appliedProductionSchema() -> Any:  # pragma: no cover -- CI-only (real MariaDB)
+    """Build PRODUCTION's schema on a real MariaDB, migrate it forward, read it back.
 
-    SKIPPED when no real MariaDB is reachable.  The skip is honest -- it never
-    reports green over a database it did not read.  SQLite / a Python-metadata
-    stand-in is explicitly NOT used here; that substitution is the BL-019 ->
-    BL-021 trap this whole guard exists to close.
+    US-807 (CIO ruling 2026-10-06).  This used to provision with
+    ``create_all`` and then compare against the same models -- MariaDB
+    rendering the models back to themselves, which can never see BL-019 (a
+    model column added with no migration).  Now: the tables production
+    actually has (``tests/server/_production_schema_snapshot.py``), stamped
+    with production's own ledger, then EVERY migration newer than production
+    runs forward -- what the next deploy would run.  A model change with no
+    migration behind it stays absent here, and A2 goes red on that PR.
+
+    Yields ``(appliedSchema, migrationReport)``; skips honestly with no MariaDB.
     """
+    harness = pytest.importorskip(
+        'tests.server._mariadb_chain_harness',
+        reason='real-MariaDB harness unavailable',
+    )
+    from src.server.migrations import ALL_MIGRATIONS, MigrationRunner
 
-    def test_appliedServerSchemaMatchesTheModels(self) -> None:
-        harness = pytest.importorskip(
-            'tests.server._mariadb_chain_harness',
-            reason='real-MariaDB harness unavailable',
-        )
-        ctx = harness.acquireMariaDb()
-        try:
-            connection, dbName = ctx.__enter__()
-        except harness.MariaDbUnavailable as err:  # pragma: no cover -- bench path
-            pytest.skip(f'no real MariaDB 11.x reachable: {err}')
-
-        try:  # pragma: no cover -- CI-only path (no Docker/MariaDB on the bench)
-            # Provision the server schema the way deploy-server.sh --init does,
-            # letting REAL MariaDB execute the DDL, then read the result back
-            # out of information_schema.  Note what is and is not happening
-            # here: the metadata is the PROVISIONER, and the assertion is made
-            # against the columns MariaDB actually ended up with.  The US-459
-            # trap was making the metadata the ORACLE (comparing Python to
-            # Python, or reading back from SQLite) -- that would pass over a
-            # deployed DB whose migration never ran.
-            _provisionServerSchema(connection, dbName)
+    try:
+        with harness.acquireMariaDb() as (connection, dbName):
+            harness.execStatements(
+                connection, harness.dropEveryTableStatements(connection, dbName),
+            )
+            harness.execStatements(connection, harness.productionSnapshotStatements())
+            report = MigrationRunner(ALL_MIGRATIONS).runAll(
+                harness.makeContext(connection, dbName),
+            )
 
             def runSql(sql: str) -> str:
                 cursor = connection.cursor()
@@ -503,14 +487,55 @@ class TestA2AppliedSchemaLive:
                 finally:
                     cursor.close()
 
-            applied = parity.loadServerAppliedSchema(runSql, dbName)
-            assert applied, 'information_schema returned no columns'
-            violations = checkAppliedMatchesModel(
-                applied, loadServerModelSchema(), list(syncedTables()),
-            )
-            assert not violations, '\n'.join(v.render() for v in violations)
-        finally:
-            ctx.__exit__(None, None, None)
+            yield parity.loadServerAppliedSchema(runSql, dbName), report
+    except harness.MariaDbUnavailable as err:
+        pytest.skip(f'no real MariaDB 11.x reachable: {err}')
+
+
+@pytest.mark.integration
+class TestA2AppliedSchemaLive:
+    """The real applied-server layer: MariaDB 11.x, read from information_schema.
+
+    SKIPPED when no real MariaDB is reachable.  The skip is honest -- it never
+    reports green over a database it did not read.  SQLite / a Python-metadata
+    stand-in is explicitly NOT used here; that substitution is the BL-019 ->
+    BL-021 trap this whole guard exists to close.  ``integration``-marked so
+    the migration-drift CI job selects it (``-m integration``) and its guard
+    fails the job if it skipped.
+    """
+
+    def test_theForwardRunAppliedEveryMigrationNewerThanProduction(
+        self, appliedProductionSchema: Any,
+    ) -> None:  # pragma: no cover -- CI-only
+        from src.server.migrations import ALL_MIGRATIONS
+        from tests.server import _production_schema_snapshot as snapshot
+
+        _applied, report = appliedProductionSchema
+        newer = {m.version for m in ALL_MIGRATIONS} - set(snapshot.PRODUCTION_LEDGER)
+        assert newer <= set(report.applied), (
+            f'migrations newer than production that did not apply: '
+            f'{sorted(newer - set(report.applied))}'
+        )
+
+    def test_appliedServerSchemaMatchesTheModels(
+        self, appliedProductionSchema: Any,
+    ) -> None:  # pragma: no cover -- CI-only
+        applied, _report = appliedProductionSchema
+        assert applied, 'information_schema returned no columns'
+        violations = checkAppliedMatchesModel(
+            applied, loadServerModelSchema(), list(syncedTables()),
+        )
+        assert not violations, '\n'.join(v.render() for v in violations)
+
+    def test_everyPiWireColumnLandsOnTheAppliedServer(
+        self, appliedProductionSchema: Any, piSchema: dict[str, dict[str, ColumnSpec]],
+    ) -> None:  # pragma: no cover -- CI-only
+        """A3 against the database the Pi actually pushes into, not the models."""
+        applied, _report = appliedProductionSchema
+        violations = checkSyncedColumnParity(
+            piSchema, applied, syncedTables(), piPrimaryKeys(),
+        )
+        assert not violations, '\n'.join(v.render() for v in violations)
 
 
 # ================================================================================
