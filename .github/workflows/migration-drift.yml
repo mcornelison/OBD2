@@ -1,6 +1,13 @@
 # =============================================================================
 # Migration-drift CI -- real MariaDB 11.x (US-470 / F-104 / TD-055)
 # =============================================================================
+# US-807 (2026-10-06): it ALSO runs the live layer of the A-4 applied-schema
+# parity gate (tests/lint/test_pi_server_contract_parity.py), which had never
+# executed anywhere: it builds PRODUCTION's schema from a pinned snapshot, runs
+# every newer migration forward, then checks models (A2) and the Pi's wire
+# columns (A3) against what MariaDB actually holds. Model and Pi-schema paths
+# are in the trigger because a change there can turn that gate red.
+#
 # Runs the LIVE layer of tests/server/test_migration_chain_real_mariadb.py
 # against a REAL MariaDB 11.x, so the BL-019 -> BL-020 -> US-459 -> BL-021
 # migration-vs-live-DB drift class is gated AUTOMATICALLY (pre-merge) instead of
@@ -52,6 +59,17 @@ on:
       - "scripts/apply_server_migrations.py"
       - "tests/server/_mariadb_chain_harness.py"
       - "tests/server/test_migration_chain_real_mariadb.py"
+      # US-807: the A-4 applied-schema parity gate and everything that can
+      # break it -- the server models, and the Pi schema behind A3.
+      - "tests/lint/test_pi_server_contract_parity.py"
+      - "scripts/audit_sync_contract_parity.py"
+      - "tests/server/_production_schema_snapshot.py"
+      - "src/server/db/**"
+      - "src/common/**"
+      - "src/pi/obdii/**"
+      - "src/pi/data/**"
+      - "src/pi/power/**"
+      - "src/pi/calibration/**"
       - "requirements.txt"
       - "requirements-server.txt"
       - "requirements-dev.txt"
@@ -107,6 +125,15 @@ jobs:
           pytest tests/server/test_migration_chain_real_mariadb.py \
             -m integration -rs --junitxml=migration-drift-report.xml
 
+      - name: Run the A-4 applied-schema parity gate (LIVE layer, US-807)
+        # Its own step and report, so a red here is never read as a migration
+        # failure (and vice versa). Builds production's schema from the pinned
+        # snapshot, so it runs even when the step above failed.
+        if: ${{ always() }}
+        run: |
+          pytest tests/lint/test_pi_server_contract_parity.py \
+            -m integration -rs --junitxml=parity-report.xml
+
       - name: Guard -- fail if the live layer was SKIPPED or not collected
         # US-470 VC1 + conditionalOutcome ("do NOT silently skip"): a green job
         # over a SKIPPED integration test is exactly the honest-skip-in-CI trap.
@@ -116,25 +143,33 @@ jobs:
           python - <<'PY'
           # Input is pytest's own junit report from the prior step (self-generated,
           # trusted) -- stdlib ElementTree is safe here (no external/untrusted XML).
-          import sys, xml.etree.ElementTree as ET
-          tree = ET.parse("migration-drift-report.xml")
-          root = tree.getroot()
-          suites = root.findall(".//testsuite") or [root]
-          tests = skipped = failures = errors = 0
-          for s in suites:
-              tests += int(s.get("tests", 0))
-              skipped += int(s.get("skipped", 0))
-              failures += int(s.get("failures", 0))
-              errors += int(s.get("errors", 0))
-          print(f"tests={tests} skipped={skipped} failures={failures} errors={errors}")
-          if tests == 0:
-              sys.exit("FAIL: the real-MariaDB integration layer collected 0 tests "
-                       "-- it did not run (VC1 requires it to EXECUTE, not skip).")
-          if skipped:
-              sys.exit(f"FAIL: {skipped} test(s) SKIPPED -- the live MariaDB layer "
-                       "must EXECUTE in CI, not honest-skip (US-470 VC1 / "
-                       "conditionalOutcome: do NOT silently skip).")
-          print("OK: real-MariaDB migration-chain live layer EXECUTED and gated.")
+          # US-807: BOTH live layers -- the migration chain and the A-4 parity gate.
+          import os, sys, xml.etree.ElementTree as ET
+          problems = []
+          for report in ("migration-drift-report.xml", "parity-report.xml"):
+              if not os.path.exists(report):
+                  problems.append(f"{report}: missing -- the step never ran")
+                  continue
+              root = ET.parse(report).getroot()
+              suites = root.findall(".//testsuite") or [root]
+              tests = skipped = failures = errors = 0
+              for s in suites:
+                  tests += int(s.get("tests", 0))
+                  skipped += int(s.get("skipped", 0))
+                  failures += int(s.get("failures", 0))
+                  errors += int(s.get("errors", 0))
+              print(f"{report}: tests={tests} skipped={skipped} "
+                    f"failures={failures} errors={errors}")
+              if tests == 0:
+                  problems.append(f"{report}: collected 0 tests -- it did not run "
+                                  "(VC1 requires it to EXECUTE, not skip).")
+              if skipped:
+                  problems.append(f"{report}: {skipped} test(s) SKIPPED -- the live "
+                                  "MariaDB layer must EXECUTE in CI, not honest-skip "
+                                  "(US-470 VC1 / conditionalOutcome).")
+          if problems:
+              sys.exit("FAIL:\n" + "\n".join(problems))
+          print("OK: both real-MariaDB live layers EXECUTED and gated.")
           PY
 
       - name: Upload test report
