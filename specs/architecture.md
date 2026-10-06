@@ -3887,6 +3887,29 @@ vault and the event-triggered high-rate (100–200 Hz) capture remain F-115. The
 calibration are deferred transforms (F-115), pending the recorded mounting
 axis-orientation.
 
+**TSL2591 range and lux (US-731, CIO-directed, 2026-10-06).** Until US-731 the
+reader never set a gain, so every sample ever stored ran at the `adafruit_tsl2591`
+library default (medium 25×, 100 ms), saturated at ~3,400 lux and published NULL
+lux in daylight (10,000–100,000 lux). Now:
+- **Auto-range LOW ↔ MEDIUM, never above medium** (CIO: night readings stay as
+  before). `nextTslGain`: at medium, step DOWN when either channel reaches 90 % of
+  the max count; at low, step UP only when CH0 × the datasheet's worst-case medium
+  gain (27×) stays under 50 % of it (no flapping). The new gain applies to the next
+  sample (1 Hz; one 100 ms integration settles first). A failed gain write retries
+  next sample and never raises. Integration stays 100 ms.
+- **Lux is computed from the raw counts** (`_luxFromCounts`) with the **datasheet's
+  typical gains** (low 1×, medium **24.5×**, high 400×; CIO), not the library's
+  25 / 428 / 9876 ⇒ **medium-gain lux reads ~2 % higher than every sample stored
+  before US-731** (25 / 24.5). MAX gain is not computed (the datasheet gives it per
+  channel). The equation itself is Adafruit's (not in the ams datasheet, "not
+  calibrated"); a channel at or above the documented max count (36,863 at 100 ms,
+  65,535 above) is saturated ⇒ None. ARCH-010 (negative ⇒ None, zero is a
+  reading) is `_honestLux`.
+- Four sensor reads per sample, as before (CIO): `raw_luminosity`, then `visible`,
+  `infrared`, `full_spectrum`. The `gain`/`integration_ms` columns (ARCH-009) record
+  the range each row was taken under, so ranging is visible in the data.
+- Source: ams TSL2591 datasheet v3-00 (2023-02-08), `hardware/datasheets/tsl2591/`.
+
 **Bus → `states/light` bridge (US-483-a / F-121, Sprint 61 / V0.29.15).** The
 carousel display auto-dim consumer (US-483-b) is a **pure consumer of a
 reader-owned state file** (Atlas DELTA-2) — it never touches the TSL2591. A

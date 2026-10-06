@@ -470,7 +470,9 @@ class TestLightReaderIsDeliberatelyUnenrolled:
         """
 
         class _DarkTsl:
-            lux = 0.0
+            raw_luminosity = (0, 0)  # US-731: lux is computed from counts
+            gain = 0x10
+            integration_time = 0
             visible = 0
             infrared = 0
             full_spectrum = 0

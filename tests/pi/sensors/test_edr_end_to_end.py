@@ -46,6 +46,7 @@ from pi.sensors.sensor_reader import (
     STATE_LIGHT,
     ImuReader,
     LightReader,
+    _luxFromCounts,
 )
 
 # US-809-a: the realtime_data writers convert the capture instant against
@@ -74,27 +75,33 @@ class _MockImu:
 
 
 class _MockLight:
-    """Synthetic TSL2591: a clean daylight reading + raw channel counts."""
+    """Synthetic TSL2591: raw counts (CH0 140, CH1 40) at medium gain, 100 ms.
+
+    US-731: the reader computes lux from ``raw_luminosity``; it no longer reads .lux.
+    """
 
     def __init__(self) -> None:
-        self.lux = 123.4
+        self.raw_luminosity = (140, 40)
+        self.gain = 0x10
+        self.integration_time = 0
         self.visible = 100
         self.infrared = 40
         self.full_spectrum = 140
 
 
 class _SaturatingLight:
-    """Synthetic TSL2591 pinned in full sun: .lux raises overflow, counts max."""
+    """Synthetic TSL2591 pinned in full sun: both channels at the max count.
+
+    US-731: a channel at or above the documented max count is saturated; the
+    reader publishes lux=None (persist NULL, never inf) and keeps the counts.
+    """
 
     visible = 65535
     infrared = 65535
     full_spectrum = 65535
-
-    @property
-    def lux(self) -> float:
-        # The real adafruit_tsl2591 driver raises on a saturated read; the
-        # LightReader translates this to lux=None (persist NULL, never inf).
-        raise OverflowError("TSL2591 saturated (overflow)")
+    raw_luminosity = (65535, 65535)
+    gain = 0x10
+    integration_time = 0
 
 
 def _absentFactory() -> Any:
@@ -226,7 +233,8 @@ class TestMockSensorHarness:
         _pump(readers, sub, subscriber, polls=1)
 
         (row,) = _lightRows(freshDb)
-        assert row[1] == 123.4              # lux
+        # US-731: lux from the counts (140 / 40) with the datasheet's medium gain.
+        assert row[1] == pytest.approx(_luxFromCounts(140, 40, 0x10, 0))  # lux
         assert row[2:5] == (100, 40, 140)   # visible, infrared, full_spectrum
         assert row[5] == _FIXTURE
 
