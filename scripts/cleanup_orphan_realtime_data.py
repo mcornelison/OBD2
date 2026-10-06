@@ -39,6 +39,15 @@
 #                                   sweep automatically (defaults are ON), so
 #                                   deploy/orphan-cleanup.service (US-334's lane)
 #                                   stays untouched.
+# 2026-10-05    | Atlas (US-838)  | Retention gates on DELIVERY, never on age
+#                                   alone (CIO-directed build). Both passes add
+#                                   `AND id <= <realtime_data sync high-water>`
+#                                   (the EDR retention purge's rule); an
+#                                   unreadable or implausible mark deletes
+#                                   NOTHING; every run reports deliveryMark and
+#                                   heldUndelivered. 2026-10-03 03:00 deleted
+#                                   263 crank lead-in rows that survived only
+#                                   because the sync had happened to run first.
 # ================================================================================
 ################################################################################
 
@@ -64,7 +73,13 @@ WHERE clause
 
 The DELETE filter is::
 
-    drive_id IS NULL AND timestamp < <cutoff>
+    drive_id IS NULL AND timestamp < <cutoff> AND id <= <delivery mark>
+
+US-838: ``<delivery mark>`` is ``realtime_data``'s sync high-water mark
+(``sync_log.getHighWaterMark``) -- the last id the server has. Age says a row
+is OLD; only the mark says the server HAS it. A mark that cannot be read, or
+that sits above every id the table ever issued (``sqlite_sequence``: the
+US-809 rebuild shape), deletes NOTHING. Same rule as the EDR retention purge.
 
 where ``cutoff`` is ``utcnow() - age_hours`` formatted as canonical
 ``YYYY-MM-DDTHH:MM:SSZ``.  This is exactly the format
@@ -105,12 +120,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.pi.data import sync_log
+
 __all__ = [
     'DEFAULT_AGE_HOURS',
     'DEFAULT_DB_PATH',
     'DEFAULT_RECENT_ORPHAN_AGE_HOURS',
     'CleanupSummary',
     'computeCutoff',
+    'readDeliveryBound',
     'runCleanup',
     'runRecentOrphanSweep',
     'backupDatabase',
@@ -152,6 +170,12 @@ class CleanupSummary:
         executed: True if a DELETE actually ran; False for dry-run.
         cutoffTimestamp: The ISO-8601 UTC string used in the WHERE clause.
         nowTimestamp: The ``now`` value the cutoff was derived from.
+        heldUndelivered: US-838 -- rows old enough to delete but NOT yet on
+            the server (above the mark, or every age-eligible row when the
+            mark is unusable). Kept; they go once delivered.
+        deliveryMark: US-838 -- the realtime_data sync high-water mark the
+            delete was bounded by, or ``None`` when unusable (nothing deleted).
+        markNote: US-838 -- why the mark was unusable (``''`` when usable).
     """
 
     eligibleRowCount: int
@@ -159,6 +183,9 @@ class CleanupSummary:
     executed: bool
     cutoffTimestamp: str
     nowTimestamp: str
+    heldUndelivered: int = 0
+    deliveryMark: int | None = None
+    markNote: str = ''
 
 
 # ================================================================================
@@ -225,38 +252,7 @@ def runCleanup(
     """
     nowDt = nowFn() if nowFn is not None else _dt.datetime.now(_dt.UTC)
     cutoff = computeCutoff(ageHours=ageHours, nowFn=lambda: nowDt)
-    nowStr = nowDt.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    eligibleRowCount = int(
-        conn.execute(
-            'SELECT COUNT(*) FROM realtime_data '
-            'WHERE drive_id IS NULL AND timestamp < ?',
-            (cutoff,),
-        ).fetchone()[0],
-    )
-
-    if not execute:
-        return CleanupSummary(
-            eligibleRowCount=eligibleRowCount,
-            rowsDeleted=0,
-            executed=False,
-            cutoffTimestamp=cutoff,
-            nowTimestamp=nowStr,
-        )
-
-    cursor = conn.execute(
-        'DELETE FROM realtime_data '
-        'WHERE drive_id IS NULL AND timestamp < ?',
-        (cutoff,),
-    )
-    conn.commit()
-    return CleanupSummary(
-        eligibleRowCount=eligibleRowCount,
-        rowsDeleted=cursor.rowcount,
-        executed=True,
-        cutoffTimestamp=cutoff,
-        nowTimestamp=nowStr,
-    )
+    return _purge(conn, cutoff, nowDt.strftime('%Y-%m-%dT%H:%M:%SZ'), execute)
 
 
 def runRecentOrphanSweep(
@@ -296,37 +292,75 @@ def runRecentOrphanSweep(
     """
     nowDt = nowFn() if nowFn is not None else _dt.datetime.now(_dt.UTC)
     cutoff = computeCutoff(ageHours=recentOrphanAgeHours, nowFn=lambda: nowDt)
-    nowStr = nowDt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    return _purge(conn, cutoff, nowDt.strftime('%Y-%m-%dT%H:%M:%SZ'), execute)
 
-    eligibleRowCount = int(
-        conn.execute(
-            'SELECT COUNT(*) FROM realtime_data '
-            'WHERE drive_id IS NULL AND timestamp < ?',
-            (cutoff,),
-        ).fetchone()[0],
+
+def readDeliveryBound(conn: sqlite3.Connection) -> tuple[int | None, str]:
+    """US-838: the last realtime_data id the server has, or why it cannot be used.
+
+    The mark is ``sync_log.getHighWaterMark`` (the one owner of that fact; the
+    EDR retention purge reads the same function). ``0`` (never synced) is a
+    usable mark that delivers nothing. Unusable -- and therefore delete
+    NOTHING -- when it cannot be read, or when it exceeds every id the table
+    ever issued (``sqlite_sequence``, else ``MAX(id)``): that is the US-809
+    rebuild shape, where ``id <= mark`` would pass UNDELIVERED rows.
+
+    Returns:
+        ``(mark, '')`` when usable; ``(None, reason)`` when not. Never raises.
+    """
+    try:
+        mark = int(sync_log.getHighWaterMark(conn, 'realtime_data')[0])
+        seqRow = conn.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'realtime_data'"
+        ).fetchone()
+        maxRow = conn.execute('SELECT MAX(id) FROM realtime_data').fetchone()
+    except Exception as exc:  # noqa: BLE001 -- any unreadable mark deletes nothing
+        return None, f'unreadable ({exc})'
+    issued = max(
+        int(seqRow[0]) if seqRow and seqRow[0] is not None else 0,
+        int(maxRow[0]) if maxRow and maxRow[0] is not None else 0,
     )
+    if mark > issued:
+        return None, f'implausible (mark {mark} > highest issued id {issued})'
+    return mark, ''
 
-    if not execute:
+
+def _purge(
+    conn: sqlite3.Connection, cutoff: str, nowStr: str, execute: bool,
+) -> CleanupSummary:
+    """The one predicate both passes use: old, NULL-drive, AND delivered (US-838).
+
+    Rows that are old enough but above the mark are counted as
+    ``heldUndelivered`` and kept. An unusable mark deletes nothing and holds
+    every age-eligible row.
+    """
+    mark, note = readDeliveryBound(conn)
+    ageEligible = (
+        'FROM realtime_data WHERE drive_id IS NULL AND timestamp < ?'
+    )
+    if mark is None:
+        held = int(conn.execute(f'SELECT COUNT(*) {ageEligible}', (cutoff,)).fetchone()[0])
         return CleanupSummary(
-            eligibleRowCount=eligibleRowCount,
-            rowsDeleted=0,
-            executed=False,
-            cutoffTimestamp=cutoff,
-            nowTimestamp=nowStr,
+            eligibleRowCount=0, rowsDeleted=0, executed=execute,
+            cutoffTimestamp=cutoff, nowTimestamp=nowStr,
+            heldUndelivered=held, deliveryMark=None, markNote=note,
         )
-
-    cursor = conn.execute(
-        'DELETE FROM realtime_data '
-        'WHERE drive_id IS NULL AND timestamp < ?',
-        (cutoff,),
-    )
-    conn.commit()
+    eligible = int(conn.execute(
+        f'SELECT COUNT(*) {ageEligible} AND id <= ?', (cutoff, mark),
+    ).fetchone()[0])
+    held = int(conn.execute(
+        f'SELECT COUNT(*) {ageEligible} AND id > ?', (cutoff, mark),
+    ).fetchone()[0])
+    deleted = 0
+    if execute:
+        deleted = conn.execute(
+            f'DELETE {ageEligible} AND id <= ?', (cutoff, mark),
+        ).rowcount
+        conn.commit()
     return CleanupSummary(
-        eligibleRowCount=eligibleRowCount,
-        rowsDeleted=cursor.rowcount,
-        executed=True,
-        cutoffTimestamp=cutoff,
-        nowTimestamp=nowStr,
+        eligibleRowCount=eligible, rowsDeleted=deleted, executed=execute,
+        cutoffTimestamp=cutoff, nowTimestamp=nowStr,
+        heldUndelivered=held, deliveryMark=mark,
     )
 
 
@@ -448,6 +482,12 @@ def _buildParser() -> argparse.ArgumentParser:
     return p
 
 
+def _boundFields(s: CleanupSummary) -> str:
+    """US-838: the delivery-bound fields every log line carries."""
+    mark = 'UNREADABLE' if s.deliveryMark is None else str(s.deliveryMark)
+    return f'deliveryMark={mark} heldUndelivered={s.heldUndelivered}'
+
+
 def _configureLogging() -> None:
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
@@ -501,10 +541,22 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     mode = 'EXECUTE' if summary.executed else 'DRY-RUN'
+    # US-838: every line names the delivery bound and what it held back -- a
+    # run that deleted nothing must still say why (ARCH-060: silence is not a record).
+    for s in (summary, sweepSummary):
+        if s is not None and s.deliveryMark is None:
+            warn = (
+                f'[{mode}] deliveryMark=UNREADABLE ({s.markNote}) -- deleting nothing; '
+                f'heldUndelivered={s.heldUndelivered}'
+            )
+            logger.warning(warn)
+            print(warn)
+            break
     line = (
         f'[{mode}] cutoff={summary.cutoffTimestamp} ageHours={args.age_hours} '
         f'nullBefore={before} eligible={summary.eligibleRowCount} '
-        f'rowsDeleted={summary.rowsDeleted} nullAfter={after}'
+        f'rowsDeleted={summary.rowsDeleted} nullAfter={after} '
+        f'{_boundFields(summary)}'
     )
     logger.info(line)
     print(line)
@@ -515,7 +567,8 @@ def main(argv: list[str] | None = None) -> int:
             f'ageHours={args.recent_orphan_age_hours} '
             f'eligible={sweepSummary.eligibleRowCount} '
             f'rowsDeleted={sweepSummary.rowsDeleted} '
-            f'nullAfter={after}'
+            f'nullAfter={after} '
+            f'{_boundFields(sweepSummary)}'
         )
         logger.info(sweepLine)
         print(sweepLine)

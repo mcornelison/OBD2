@@ -23,6 +23,9 @@
 # ================================================================================
 # 2026-05-13    | Agent2 (US-336) | Initial -- regression coverage for the
 #                                   199-orphan-leak pattern (Spool Story F).
+# 2026-10-05    | Atlas (US-838) | Fixtures mark every row delivered (sync_log
+#                               high-water = MAX(id)): the cleanup now deletes
+#                               only what the server has.
 # ================================================================================
 ################################################################################
 
@@ -54,6 +57,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from src.pi.data import sync_log
 
 # ================================================================================
 # Module loader (scripts/ is not a package)
@@ -132,6 +137,19 @@ def _seedRows(
     )
 
 
+def _markAllDelivered(conn: sqlite3.Connection) -> None:
+    """US-838: the server already has every row (mark = MAX(id)).
+
+    The cleanup deletes only what the server holds. These tests were written
+    when age alone authorised a delete, so they assumed delivery implicitly;
+    this states it. Undelivered rows are covered by
+    test_cleanup_orphan_delivery_bound.py.
+    """
+    sync_log.initDb(conn)
+    maxId = conn.execute('SELECT MAX(id) FROM realtime_data').fetchone()[0] or 0
+    sync_log.updateHighWaterMark(conn, 'realtime_data', int(maxId), 'test-all-delivered')
+
+
 @pytest.fixture
 def leakFixtureDb() -> sqlite3.Connection:
     """In-memory DB seeded to mirror the steady-state orphan accumulation.
@@ -153,6 +171,7 @@ def leakFixtureDb() -> sqlite3.Connection:
     _seedRows(conn, count=10, driveId=None, ageHours=0.5)
     _seedRows(conn, count=20, driveId=42, ageHours=6.0)
     _seedRows(conn, count=15, driveId=42, ageHours=0.5)
+    _markAllDelivered(conn)
     conn.commit()
     return conn
 
@@ -194,6 +213,7 @@ def _writeStandaloneSeededDb(path: Path, *, nowDt: _dt.datetime | None = None) -
     _seedRows(conn, count=10, driveId=None, ageHours=0.5, nowDt=nowDt)
     _seedRows(conn, count=20, driveId=42, ageHours=6.0, nowDt=nowDt)
     _seedRows(conn, count=15, driveId=42, ageHours=0.5, nowDt=nowDt)
+    _markAllDelivered(conn)
     conn.commit()
     conn.close()
 
