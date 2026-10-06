@@ -66,6 +66,15 @@
 #               |              | contract: per-sample as-of gate, 5-drive
 #               |              | median, epoch boundaries, epoch-relative
 #               |              | verdict, typed WARMING absence, total trim.
+# 2026-10-05    | Atlas        | US-420 / F-096 reopened (CIO-directed build): the
+#               |              | reader PAGES BACK past the 20-drive window (LTFT
+#               |              | only, classified by isAdaptiveResetDrive -- the one
+#               |              | definition) until a reset or the start of history,
+#               |              | and says which (LtftDriveRows.historyExhausted). The
+#               |              | baseline is the EPOCH mean; `points` (one card bar
+#               |              | each) stays the newest DEFAULT_TREND_DRIVES. Live
+#               |              | V0.29.72: the epoch (drive 37 on) outran 20, so the
+#               |              | card published "epoch clipped" and stayed blank.
 # ================================================================================
 ################################################################################
 
@@ -148,9 +157,11 @@ LTFT_FAULT_ABS = 10.0
 # An adaptive-memory reset reads BIT-IDENTICAL zero for a whole drive.
 RESET_EXACT_VALUE = 0.0
 
-# How many recent drives the reader spans. Wide enough to hold a whole epoch
-# (Spool's post-reset epoch is 17 qualifying drives across 22) so the baseline
-# is computed from the epoch rather than from a window that clips it.
+# The reader's first fetch, its page size when it must look further back, and
+# the number of per-drive bars the payload carries (the card draws one labelled
+# bar per point). US-420: it is NOT the epoch bound -- the epoch is bounded by
+# the reset, found by paging back -- and raising it is no fix (ruled 2026-09-22:
+# a bigger count recreates the defect on the next longer epoch).
 DEFAULT_TREND_DRIVES = 20
 
 # Migration is only "improving"/"worsening" past this dead-band (percent), so
@@ -200,6 +211,7 @@ __all__ = [
     "LTFT_NOISE_FLOOR_PP",
     "LTFT_PID",
     "LTFT_TREND_FILENAME",
+    "LtftDriveRows",
     "REASON_INSUFFICIENT_HISTORY",
     "REASON_EPOCH_CLIPPED",
     "REASON_NO_DRIVES",
@@ -499,6 +511,7 @@ def buildLtftTrendState(
     pid: str = LTFT_PID,
     medianWindow: int = TREND_MEDIAN_WINDOW,
     historyExhausted: bool = True,
+    displayPoints: int = DEFAULT_TREND_DRIVES,
 ) -> dict:
     """Assemble the `ltft-trend` payload (pure; the card's pinned schema).
 
@@ -516,6 +529,11 @@ def buildLtftTrendState(
             default is True because a caller handing in a complete list has, by
             definition, exhausted it -- only a LIMIT-applying reader can say
             otherwise, and there is exactly one of those.
+        displayPoints: US-420 -- how many of the newest epoch points the payload
+            carries as ``points`` (the card draws one labelled bar per point).
+            The baseline, medians, trend and ``driveCount`` use the WHOLE epoch
+            (the contract's baseline is the epoch grand mean); only the bars are
+            windowed.
 
     Returns:
         The `ltft-trend` dict. When the gate or the history is unmet, a TYPED
@@ -550,7 +568,8 @@ def buildLtftTrendState(
         "totalTrim": None,
         "trend": None,
         "current": None,
-        "points": points,
+        # US-420: the bars are the newest window; every number below is the epoch's.
+        "points": points[-max(1, int(displayPoints)):],
         "driveCount": len(points),
         "minDrives": medianWindow,
         "epochBreak": epochBreak,
@@ -654,12 +673,98 @@ def buildLtftTrendState(
 # ---------------------------------------------------------------------------
 
 
+class LtftDriveRows(dict):
+    """US-420: the per-drive rows, plus whether they reach the start of history.
+
+    A ``dict`` (``{driveId: (driveStartTimestamp | None, rows)}``), so every
+    consumer of the plain reader shape is unchanged, carrying one more fact the
+    emitter used to GUESS from ``len(rows) < driveLimit``: ``historyExhausted``
+    is True only when the reader walked to the oldest real drive without
+    finding a reset. When it stopped AT a reset the flag is False and the reset
+    drive is in the rows, which is what bounds the epoch.
+    """
+
+    def __init__(self, data: object = (), *, historyExhausted: bool) -> None:
+        super().__init__(data)  # type: ignore[arg-type]
+        self.historyExhausted = historyExhausted
+
+
+def _realLtftDriveIds(
+    conn: sqlite3.Connection, *, olderThan: int | None, limit: int
+) -> list[int]:
+    """The newest ``limit`` real drive ids carrying LTFT, below ``olderThan``; newest first."""
+    bound = "" if olderThan is None else "AND drive_id < ?"
+    params: tuple = (LTFT_PID,) if olderThan is None else (LTFT_PID, olderThan)
+    rows = conn.execute(
+        f"""
+        SELECT drive_id
+          FROM realtime_data
+         WHERE parameter_name = ?
+           AND data_source = 'real'
+           AND drive_id IS NOT NULL
+           {bound}
+         GROUP BY drive_id
+         ORDER BY drive_id DESC
+         LIMIT ?
+        """,
+        (*params, limit),
+    ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def _readGateRows(
+    conn: sqlite3.Connection, driveIds: list[int]
+) -> dict[int, tuple[str | None, list[tuple[str, str, float]]]]:
+    """The gate + trim rows of ``driveIds``, ``(driveTs, rows)`` per drive, time-ordered."""
+    perDrive: dict[int, tuple[str | None, list[tuple[str, str, float]]]] = {}
+    if not driveIds:
+        return perDrive
+    marks = ",".join("?" * len(driveIds))
+    rows = conn.execute(
+        f"""
+        SELECT rd.drive_id, ds.drive_start_timestamp, rd.timestamp,
+               rd.parameter_name, rd.value
+          FROM realtime_data rd
+          LEFT JOIN drive_summary ds ON ds.drive_id = rd.drive_id
+         WHERE rd.parameter_name IN (?, ?, ?, ?)
+           AND rd.data_source = 'real'
+           AND rd.drive_id IN ({marks})
+         ORDER BY rd.drive_id ASC, rd.timestamp ASC, rd.id ASC
+        """,
+        (LTFT_PID, STFT_PID, COOLANT_PID, FUEL_SYSTEM_PID, *driveIds),
+    ).fetchall()
+    for driveId, driveTs, ts, name, value in rows:
+        entry = perDrive.setdefault(int(driveId), (driveTs, []))
+        entry[1].append((ts, name, float(value)))
+    return perDrive
+
+
+def _readLtftValues(conn: sqlite3.Connection, driveIds: list[int]) -> dict[int, list[float]]:
+    """EVERY LTFT sample of ``driveIds`` (the input isAdaptiveResetDrive needs) -- LTFT only."""
+    values: dict[int, list[float]] = {}
+    if not driveIds:
+        return values
+    marks = ",".join("?" * len(driveIds))
+    for driveId, value in conn.execute(
+        f"""
+        SELECT drive_id, value
+          FROM realtime_data
+         WHERE parameter_name = ?
+           AND data_source = 'real'
+           AND drive_id IN ({marks})
+        """,
+        (LTFT_PID, *driveIds),
+    ):
+        values.setdefault(int(driveId), []).append(float(value))
+    return values
+
+
 def readLtftDriveRows(
     conn: sqlite3.Connection,
     *,
     driveLimit: int = DEFAULT_TREND_DRIVES,
-) -> dict[int, tuple[str | None, list[tuple[str, str, float]]]]:
-    """Read the gate + trim rows for the last N real drives.
+) -> LtftDriveRows:
+    """Read the gate + trim rows for the current EPOCH (at least the last N real drives).
 
     Only ``data_source='real'`` rows with a non-NULL ``drive_id`` count --
     fixture/replay/physics_sim (and the US-424 foreign marker) are excluded so a
@@ -667,44 +772,51 @@ def readLtftDriveRows(
     LEFT-joined for the drive-start axis label, carried as None when absent
     rather than fabricated.
 
+    US-420 / F-096: the newest ``driveLimit`` drives are read first, exactly as
+    before. If none of them is an adaptive-memory reset and older drives exist,
+    the reader PAGES BACK ``driveLimit`` drive ids at a time, reading LTFT ONLY
+    and classifying each drive with :func:`isAdaptiveResetDrive` -- the one
+    definition of a reset; there is deliberately no second one in SQL -- until
+    it finds a reset (whose drive it includes: the boundary) or reaches the
+    oldest drive. Only then are the full gate rows of those extra drives read.
+    The epoch is bounded by the RESET, never by a count.
+
     Args:
         conn: An open SQLite connection to the Pi database.
-        driveLimit: How many most-recent drives to include (>=1).
+        driveLimit: The first fetch and the page size (>=1).
 
     Returns:
-        ``{driveId: (driveStartTimestamp | None, rows)}`` where rows are
-        ``(timestamp, parameter_name, value)`` in time order.
+        :class:`LtftDriveRows` -- ``{driveId: (driveStartTimestamp | None,
+        rows)}`` with rows ``(timestamp, parameter_name, value)`` in time order,
+        and ``historyExhausted``.
     """
     limit = max(1, int(driveLimit))
-    rows = conn.execute(
-        """
-        SELECT rd.drive_id, ds.drive_start_timestamp, rd.timestamp,
-               rd.parameter_name, rd.value
-          FROM realtime_data rd
-          LEFT JOIN drive_summary ds ON ds.drive_id = rd.drive_id
-         WHERE rd.parameter_name IN (?, ?, ?, ?)
-           AND rd.data_source = 'real'
-           AND rd.drive_id IS NOT NULL
-           AND rd.drive_id IN (
-                 SELECT drive_id
-                   FROM realtime_data
-                  WHERE parameter_name = ?
-                    AND data_source = 'real'
-                    AND drive_id IS NOT NULL
-                  GROUP BY drive_id
-                  ORDER BY drive_id DESC
-                  LIMIT ?
-               )
-         ORDER BY rd.drive_id ASC, rd.timestamp ASC, rd.id ASC
-        """,
-        (LTFT_PID, STFT_PID, COOLANT_PID, FUEL_SYSTEM_PID, LTFT_PID, limit),
-    ).fetchall()
+    window = _realLtftDriveIds(conn, olderThan=None, limit=limit)
+    perDrive = _readGateRows(conn, window)
+    exhausted = len(window) < limit
+    found = any(
+        isAdaptiveResetDrive([v for _t, name, v in rows if name == LTFT_PID])
+        for _ts, rows in perDrive.values()
+    )
 
-    perDrive: dict[int, tuple[str | None, list[tuple[str, str, float]]]] = {}
-    for driveId, driveTs, ts, name, value in rows:
-        entry = perDrive.setdefault(int(driveId), (driveTs, []))
-        entry[1].append((ts, name, float(value)))
-    return perDrive
+    older: list[int] = []
+    oldest = min(window) if window else None
+    while not found and not exhausted and oldest is not None:
+        block = _realLtftDriveIds(conn, olderThan=oldest, limit=limit)
+        exhausted = len(block) < limit
+        if not block:
+            break
+        ltft = _readLtftValues(conn, block)
+        for driveId in block:  # newest first: the NEWEST reset bounds the epoch
+            older.append(driveId)
+            if isAdaptiveResetDrive(ltft.get(driveId, [])):
+                found = True
+                break
+        oldest = block[-1]
+
+    if older:
+        perDrive.update(_readGateRows(conn, older))
+    return LtftDriveRows(perDrive, historyExhausted=exhausted and not found)
 
 
 def readLtftDriveRowsFrom(
@@ -789,15 +901,22 @@ def makeLtftTrendEmitter(
     def emit() -> None:
         try:
             rows = driveRowsReader()
-            # F-096: fewer rows back than the window asked for means we reached
-            # the end of history; exactly the limit means older drives MAY exist
-            # and the epoch boundary may lie beyond what we fetched.
+            # US-420: the production reader (LtftDriveRows) SAYS whether it
+            # reached the start of history; it pages back to the reset, so it
+            # never hands over a clipped epoch. A plain-dict reader cannot say,
+            # and keeps the F-096 rule: fewer rows than the window asked for
+            # means the end of history; exactly the limit means older drives
+            # MAY exist and the boundary may lie beyond what was fetched.
+            exhausted = getattr(rows, "historyExhausted", None)
+            if exhausted is None:
+                exhausted = len(rows) < driveLimit
             payload = buildLtftTrendState(
                 driveRecords=buildDriveRecords(rows),
                 nowIso=nowFn(),
                 pid=pid,
                 medianWindow=medianWindow,
-                historyExhausted=len(rows) < driveLimit,
+                historyExhausted=bool(exhausted),
+                displayPoints=driveLimit,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
