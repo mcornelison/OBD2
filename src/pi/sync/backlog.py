@@ -37,6 +37,7 @@ import logging
 import sqlite3
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 from src.pi.data import sync_log
 
@@ -49,6 +50,7 @@ __all__ = [
     "RowExclusion",
     "SyncBacklog",
     "countOutstandingRows",
+    "residualAfterBatch",
 ]
 
 # The three verdicts. They are distinct STRINGS rather than a bool + a count
@@ -365,3 +367,47 @@ def countOutstandingRows(
                 conn.close()
             except Exception:  # noqa: BLE001, S110 -- closing must not raise here
                 pass
+
+
+def residualAfterBatch(
+    backlog: SyncBacklog,
+    *,
+    batchTable: str | None,
+    batchNewRows: int,
+    sensorTables: Collection[str],
+) -> dict[str, Any] | None:
+    """The residual a push reports: what remains once this batch lands (US-795(a)).
+
+    ``backlog`` is read just before the POST; the batch's NEW rows (primary key
+    above the cursor) are taken out of their own group, because those are the
+    rows this push delivers. A row re-sent because it was modified was never in
+    the count, so the caller passes only new rows. The split is the CIO's
+    (2026-10-06): ``sensor`` = the EDR archive, ``drive`` = everything else.
+
+    Args:
+        backlog: The backlog as measured before the push.
+        batchTable: The table this push carries, or None (snapshot / drive
+            counter pushes deliver no delta rows).
+        batchNewRows: How many of the batch's rows are above the cursor.
+        sensorTables: The tables that make up the ``sensor`` group.
+
+    Returns:
+        ``{outstandingRows, complete, groups: {drive, sensor}}``, or None when
+        the database could not be read at all -- an unmeasured residual is
+        omitted, never sent as 0.
+    """
+    if backlog.error is not None:
+        return None
+    sensor = sum(n for t, n in backlog.perTable.items() if t in sensorTables)
+    drive = backlog.total - sensor
+    if batchTable is not None and batchNewRows > 0:
+        delivered = min(batchNewRows, backlog.perTable.get(batchTable, 0))
+        if batchTable in sensorTables:
+            sensor -= delivered
+        else:
+            drive -= delivered
+    return {
+        "outstandingRows": drive + sensor,
+        "complete": backlog.isComplete,
+        "groups": {"drive": drive, "sensor": sensor},
+    }

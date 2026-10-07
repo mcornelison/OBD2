@@ -57,7 +57,11 @@ def test_startupLogTimesAndCutVcell_existOnTheServerModel() -> None:
 
 
 def test_v0035_isRegisteredLast_andCoversBothTables() -> None:
-    assert ALL_MIGRATIONS[-1].version == "0035"
+    # PLACEMENT, not the absolute tail (TD-062): "0035 is last" went red the
+    # day v0036 landed (US-795(a), Atlas 2026-10-06). The name is kept so the
+    # history reads; what is asserted is registered + directly after v0034.
+    versions = [mig.version for mig in ALL_MIGRATIONS]
+    assert versions.index("0035") == versions.index("0034") + 1
     assert set(m.COLUMNS) == {_BH, _SL}
 
 

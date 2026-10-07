@@ -63,7 +63,12 @@ def _contact(
 
 
 class TestThreeStatesEachCarryingItsOwnTimestamp:
-    """Acceptance 1 -- exactly three states, each stamped."""
+    """Acceptance 1 -- exactly three states, each stamped.
+
+    US-795(a), Atlas 2026-10-06: the RENDERED wording changed by CIO ruling --
+    "last contact <ts> (<age> ago): N queued (exact | at least | unknown);
+    nothing known since". The states, their timestamps and the stall logic are
+    unchanged; only the sentence each renders to was rewritten."""
 
     def test_caughtUpAtLastContact_isCurrentAsOfThatContact(self) -> None:
         """
@@ -75,7 +80,10 @@ class TestThreeStatesEachCarryingItsOwnTimestamp:
 
         assert answer.state is CurrencyState.CURRENT
         assert answer.asOf == _NOW
-        assert renderCurrency(answer) == "CURRENT AS OF 2026-09-23T19:35:30Z"
+        assert renderCurrency(answer, now=_NOW) == (
+            "last contact 2026-09-23T19:35:30Z (under 1 min ago): 0 queued (exact); "
+            "nothing known since"
+        )
 
     def test_holdingRowsAtLastContact_isHoldingAtLeastN(self) -> None:
         """
@@ -92,7 +100,10 @@ class TestThreeStatesEachCarryingItsOwnTimestamp:
         assert answer.state is CurrencyState.HOLDING
         assert answer.outstandingRows == 400
         assert answer.asOf == _NOW
-        assert renderCurrency(answer) == "HOLDING >= 400 AS OF 2026-09-23T19:35:30Z"
+        assert renderCurrency(answer, now=_NOW) == (
+            "last contact 2026-09-23T19:35:30Z (under 1 min ago): 400 queued (exact); "
+            "nothing known since"
+        )
 
     def test_neverHeardFrom_isUnknown_withNoTimestampToGive(self) -> None:
         """
@@ -104,7 +115,7 @@ class TestThreeStatesEachCarryingItsOwnTimestamp:
 
         assert answer.state is CurrencyState.UNKNOWN
         assert answer.asOf is None
-        assert renderCurrency(answer) == "UNKNOWN SINCE never"
+        assert renderCurrency(answer, now=_NOW) == "no contact recorded; nothing known"
 
     def test_contactThatCouldNotMeasure_isUnknownSinceThatContact(self) -> None:
         """
@@ -120,7 +131,10 @@ class TestThreeStatesEachCarryingItsOwnTimestamp:
 
         assert answer.state is CurrencyState.UNKNOWN
         assert answer.asOf == _FRIDAY
-        assert renderCurrency(answer) == "UNKNOWN SINCE 2026-09-21T19:35:30Z"
+        assert renderCurrency(answer, now=_NOW) == (
+            "last contact 2026-09-21T19:35:30Z (2 d 0 h ago): queued unknown; "
+            "nothing known since"
+        )
 
     def test_theStatesAreExactlyThree(self) -> None:
         """
@@ -165,7 +179,7 @@ class TestTheWordSyncedAppearsNowhere:
 
         surfaces: list[str] = [s.name for s in CurrencyState]
         surfaces += [str(s.value) for s in CurrencyState]
-        surfaces += [renderCurrency(a) for a in answers]
+        surfaces += [renderCurrency(a, now=_NOW) for a in answers]
         surfaces += [a.fault for a in answers if a.fault]
 
         for text in surfaces:
@@ -331,3 +345,66 @@ class TestTheOneLegitimateAlarm:
 
         assert answer.state is CurrencyState.CURRENT
         assert answer.fault is None
+
+
+class TestTheRuledSentence:
+    """US-795(a), CIO 2026-10-06 -- total + drive/sensor split, the age, the
+    qualifier, and the one alarm; no online/offline verdict."""
+
+    def test_theSplitIsStatedWhenMeasured(self) -> None:
+        contact = ContactRecord(
+            contactedAt=_NOW, residualRows=1200, residualComplete=True,
+            residualDriveRows=200, residualSensorRows=1000,
+        )
+        answer = assessVehicleCurrency([contact])
+
+        assert (answer.driveRows, answer.sensorRows) == (200, 1000)
+        assert renderCurrency(answer, now=_NOW + timedelta(minutes=4)) == (
+            "last contact 2026-09-23T19:35:30Z (4 min ago): 1200 queued (exact) "
+            "- drive 200, sensor 1000; nothing known since"
+        )
+
+    def test_anUnreadableTable_saysAtLeast(self) -> None:
+        answer = assessVehicleCurrency([_contact(_NOW, 12, complete=False)])
+
+        assert renderCurrency(answer, now=_NOW) == (
+            "last contact 2026-09-23T19:35:30Z (under 1 min ago): 12 queued (at least); "
+            "nothing known since"
+        )
+
+    def test_theStallAlarmIsStated(self) -> None:
+        contacts = [
+            _contact(_NOW - timedelta(minutes=2), 400),
+            _contact(_NOW - timedelta(minutes=1), 400),
+            _contact(_NOW, 400),
+        ]
+        rendered = renderCurrency(assessVehicleCurrency(contacts), now=_NOW)
+
+        assert rendered.startswith("last contact 2026-09-23T19:35:30Z")
+        assert " | ALARM: backlog has not decreased across 3 consecutive contacts" in rendered
+
+    def test_theAgeIsReadable_atEveryScale(self) -> None:
+        answer = assessVehicleCurrency([_contact(_NOW, 0)])
+        ages = {
+            timedelta(seconds=59): "under 1 min",
+            timedelta(minutes=59): "59 min",
+            timedelta(hours=5, minutes=3): "5 h 3 min",
+            timedelta(days=3, hours=4): "3 d 4 h",
+        }
+        for elapsed, text in ages.items():
+            assert f"({text} ago)" in renderCurrency(answer, now=_NOW + elapsed), text
+
+    def test_aClockBehindTheContact_neverRendersANegativeAge(self) -> None:
+        answer = assessVehicleCurrency([_contact(_NOW, 0)])
+        assert "(under 1 min ago)" in renderCurrency(answer, now=_NOW - timedelta(minutes=5))
+
+    def test_noSentenceClaimsTheCarIsOnlineOrOffline(self) -> None:
+        answers = [
+            assessVehicleCurrency([_contact(_NOW, 0)]),
+            assessVehicleCurrency([_contact(_NOW, 5)]),
+            assessVehicleCurrency([]),
+            assessVehicleCurrency([_contact(_NOW, None, None)]),
+        ]
+        for answer in answers:
+            text = renderCurrency(answer, now=_NOW).lower()
+            assert "online" not in text and "offline" not in text, text

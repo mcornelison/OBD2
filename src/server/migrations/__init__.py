@@ -234,6 +234,9 @@ from src.server.migrations.versions.v0034_us776f_startup_log_prior_boot_sync imp
 from src.server.migrations.versions.v0035_arch065_battery_capacity_columns import (
     MIGRATION as _V0035,
 )
+from src.server.migrations.versions.v0036_us795a_sync_history_residual_groups import (
+    MIGRATION as _V0036,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -275,6 +278,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0033,
     _V0034,
     _V0035,
+    _V0036,
 )
 
 

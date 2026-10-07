@@ -1212,6 +1212,11 @@ class SyncHistory(Base):
     # at the moment it is written down, and nothing downstream could recover
     # the difference.
     residual_complete: Mapped[bool | None] = mapped_column(Boolean)
+    # US-795(a) / v0036: the residual's split, CIO-ruled -- drive = the car's
+    # own records, sensor = the EDR archive. Nullable, no default, for the same
+    # reason as residual_rows: a split nobody measured must read as unknown.
+    residual_drive_rows: Mapped[int | None] = mapped_column(Integer)
+    residual_sensor_rows: Mapped[int | None] = mapped_column(Integer)
 
 
 class AnalysisHistory(Base):

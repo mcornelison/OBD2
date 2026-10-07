@@ -147,10 +147,12 @@ from enum import StrEnum
 from typing import Any
 
 from src.common.config.secrets_loader import getSecret
+from src.common.edr.sync_contract import EDR_SYNC_TABLES
 from src.common.errors.handler import ConfigurationError
 from src.common.sync.snapshot_registry import getSnapshotSpec, snapshotSyncTables
 from src.pi.data import sync_log
 from src.pi.obdii.drive_id import DRIVE_COUNTER_TABLE
+from src.pi.sync.backlog import countOutstandingRows, residualAfterBatch
 
 __all__ = ["PushResult", "PushStatus", "PushSummary", "SyncClient"]
 
@@ -695,9 +697,18 @@ class SyncClient:
             # error on the SQLAlchemy insert.
             payloadRows = _renamePkToId(rows, pkColumn) if pkColumn != "id" else rows
 
+            # US-795(a): what remains once this batch lands -- only its rows
+            # ABOVE the cursor leave the backlog (a re-sent modified row was
+            # never counted).
+            residual = self._measureResidual(
+                batchTable=tableName,
+                batchNewRows=sum(1 for row in rows if int(row[pkColumn]) > lastId),
+            )
             batchId = _makeBatchId(self._deviceId)
             try:
-                self._postBatchWithRetry(tableName, batchId, payloadRows, lastId)
+                self._postBatchWithRetry(
+                    tableName, batchId, payloadRows, lastId, residual=residual,
+                )
             except _PushFailure as failure:
                 # On failure, record status='failed' + last_batch_id +
                 # last_synced_at WITHOUT advancing last_synced_id (US-149
@@ -894,7 +905,9 @@ class SyncClient:
             try:
                 # lastSyncedId is informational for snapshot tables (they carry
                 # no integer delta cursor); the server routes by table name.
-                self._postBatchWithRetry(tableName, batchId, rows, 0)
+                self._postBatchWithRetry(
+                    tableName, batchId, rows, 0, residual=self._measureResidual(),
+                )
             except _PushFailure as failure:
                 # Do NOT advance the cursor on failure -- rows stay re-sendable.
                 return PushResult(
@@ -1142,7 +1155,9 @@ class SyncClient:
 
         batchId = _makeBatchId(self._deviceId)
         try:
-            self._postDriveCounterWithRetry(batchId, lastDriveId)
+            self._postDriveCounterWithRetry(
+                batchId, lastDriveId, residual=self._measureResidual(),
+            )
         except _PushFailure as failure:
             # Do NOT advance the idle-gate high-water mark on failure -- the
             # value must stay re-sendable on the next tick (US-418).
@@ -1168,21 +1183,47 @@ class SyncClient:
 
     # ---- internals ---------------------------------------------------------
 
+    def _measureResidual(
+        self, *, batchTable: str | None = None, batchNewRows: int = 0,
+    ) -> dict[str, Any] | None:
+        """US-795(a): the residual this POST carries, or None to omit it.
+
+        Read with the same ``countOutstandingRows`` the power-watch custody
+        verdict uses (one measurement, one implementation). MEASURED on the car
+        2026-10-06: ~6 ms per 100k backlog rows. Any failure -- an unreadable
+        database or an unexpected error -- omits the field: the push is never
+        blocked by its own report, and an unmeasured residual is never sent as 0.
+        """
+        try:
+            return residualAfterBatch(
+                countOutstandingRows(self._dbPath),
+                batchTable=batchTable,
+                batchNewRows=batchNewRows,
+                sensorTables=EDR_SYNC_TABLES,
+            )
+        except Exception as exc:  # noqa: BLE001 -- the report must never block the push
+            logger.warning("sync residual not measured (omitted): %s", exc)
+            return None
+
     def _postBatchWithRetry(
         self,
         tableName: str,
         batchId: str,
         rows: list[dict[str, Any]],
         lastSyncedId: int,
+        *,
+        residual: dict[str, Any] | None = None,
     ) -> None:
         """POST the batch; retry on transient failures; raise on final fail."""
-        payload = {
+        payload: dict[str, Any] = {
             "deviceId": self._deviceId,
             "batchId": batchId,
             "tables": {
                 tableName: {"lastSyncedId": lastSyncedId, "rows": rows},
             },
         }
+        if residual is not None:
+            payload["residual"] = residual
         body = json.dumps(payload, default=str).encode("utf-8")
         url = f"{self.baseUrl}/api/v1/sync"
         headers = {
@@ -1241,6 +1282,8 @@ class SyncClient:
         self,
         batchId: str,
         lastDriveId: int,
+        *,
+        residual: dict[str, Any] | None = None,
     ) -> None:
         """POST the drive_counter snapshot; retry policy mirrors _postBatch.
 
@@ -1255,6 +1298,8 @@ class SyncClient:
             "tables": {},
             "driveCounter": {"lastDriveId": lastDriveId},
         }
+        if residual is not None:
+            payload["residual"] = residual
         body = json.dumps(payload, default=str).encode("utf-8")
         url = f"{self.baseUrl}/api/v1/sync"
         headers = {

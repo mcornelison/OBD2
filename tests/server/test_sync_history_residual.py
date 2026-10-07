@@ -196,6 +196,12 @@ class TestTheMigrationDoesNotRewriteHistory:
                 "ALTER TABLE sync_history ADD COLUMN residual_rows INTEGER"))
             conn.execute(text(
                 "ALTER TABLE sync_history ADD COLUMN residual_complete BOOLEAN"))
+            # US-795(a) / v0036 (Atlas 2026-10-06): the real upgrade path also
+            # adds the residual split, and the ORM read below selects it.
+            conn.execute(text(
+                "ALTER TABLE sync_history ADD COLUMN residual_drive_rows INTEGER"))
+            conn.execute(text(
+                "ALTER TABLE sync_history ADD COLUMN residual_sensor_rows INTEGER"))
 
         with Session(eng) as session:
             row = _row(session)

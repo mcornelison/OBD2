@@ -14,6 +14,9 @@
 # ================================================================================
 # 2026-09-23    | Ralph (US-795-b) | Initial -- three states, age is never a
 #               |                  | fault, a flat residual is the only one.
+# 2026-10-06    | Atlas (US-795a)  | CIO-ruled sentence: last contact + age +
+#               |                  | N queued (exact|at least) + drive/sensor
+#               |                  | split + alarm. States/stall unchanged.
 # ================================================================================
 ################################################################################
 """Vehicle currency, answered honestly.
@@ -34,8 +37,8 @@ case-insensitive scan: a guard that has to carve out its own documentation is a
 guard someone eventually widens by accident.)
 
 ⚠️ **STALENESS IS NOT A FAULT.**  A parked car last heard from on Friday reads
-``UNKNOWN SINCE`` Friday.  That is correct and it is the ordinary weekend
-state.  Alarming on it would train everyone to ignore the one alarm that means
+``last contact <Friday> (2 d ... ago) ... nothing known since``.  That is
+correct and it is the ordinary weekend state.  Alarming on it would train everyone to ignore the one alarm that means
 something.
 
 🔴 **The one legitimate alarm is a car that IS talking and still not
@@ -46,8 +49,8 @@ stalled drain requires contacts to have happened.
 ⚠️ **Worked case, and the limit of what this can tell you.**  At 19:35:30Z
 session 216962 completed: 216 rows, zero errors, and the Pi genuinely was
 caught up.  The CIO then drove, and the Pi never contacted the server again.
-``CURRENT AS OF 19:35:30Z`` is the correct answer and it says nothing at all
-about the drive that followed.  The timestamp is not decoration; it is the
+``last contact 19:35:30Z (...): 0 queued (exact); nothing known since`` is the
+correct answer and it says nothing at all about the drive that followed.  The timestamp is not decoration; it is the
 entire qualification.
 """
 
@@ -64,6 +67,7 @@ __all__ = [
     'CurrencyAnswer',
     'CurrencyState',
     'assessVehicleCurrency',
+    'formatAge',
     'renderCurrency',
 ]
 
@@ -82,10 +86,6 @@ DEFAULT_STALLED_RUN_LENGTH: int = 3
 
 _ISO_FORMAT: str = '%Y-%m-%dT%H:%M:%SZ'
 
-#: Rendered when there has never been a contact.  A word, deliberately, rather
-#: than a substituted timestamp: there is no instant to name, and inventing one
-#: would be the same defect as a fabricated capture time.
-NEVER: str = 'never'
 
 
 class CurrencyState(Enum):
@@ -117,6 +117,9 @@ class ContactRecord:
     contactedAt: datetime
     residualRows: int | None
     residualComplete: bool | None
+    #: US-795(a): the split of residualRows, None when the Pi did not send it.
+    residualDriveRows: int | None = None
+    residualSensorRows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,9 @@ class CurrencyAnswer:
     outstandingRows: int | None = None
     exact: bool | None = None
     fault: str | None = None
+    #: US-795(a): the split of outstandingRows, when the contact carried one.
+    driveRows: int | None = None
+    sensorRows: int | None = None
 
 
 def assessVehicleCurrency(
@@ -180,6 +186,7 @@ def assessVehicleCurrency(
         return CurrencyAnswer(
             state=CurrencyState.CURRENT, asOf=latest.contactedAt,
             outstandingRows=0, exact=True, fault=fault,
+            driveRows=latest.residualDriveRows, sensorRows=latest.residualSensorRows,
         )
 
     return CurrencyAnswer(
@@ -188,6 +195,8 @@ def assessVehicleCurrency(
         outstandingRows=latest.residualRows,
         exact=latest.residualComplete,
         fault=fault,
+        driveRows=latest.residualDriveRows,
+        sensorRows=latest.residualSensorRows,
     )
 
 
@@ -230,26 +239,55 @@ def _stalledDrainFault(
     )
 
 
-def renderCurrency(answer: CurrencyAnswer) -> str:
-    """Render the answer as its one-line statement.
+def formatAge(seconds: float) -> str:
+    """Render an elapsed time for a reader, at the coarsest useful scale.
 
-    Each form names the instant it describes, because the instant is the
-    qualification rather than a detail attached to it.
+    A negative value (the reader's clock behind the contact) renders as the
+    smallest bucket rather than as a negative age.
+    """
+    total = max(0, int(seconds))
+    if total < 60:
+        return 'under 1 min'
+    minutes, _ = divmod(total, 60)
+    if minutes < 60:
+        return f'{minutes} min'
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f'{hours} h {minutes} min'
+    days, hours = divmod(hours, 24)
+    return f'{days} d {hours} h'
+
+
+def renderCurrency(answer: CurrencyAnswer, *, now: datetime) -> str:
+    """Render the answer as the CIO-ruled sentence (US-795(a), 2026-10-06).
+
+    ``last contact <ts> (<age> ago): N queued (exact | at least) - drive D,
+    sensor S; nothing known since``, plus `` | ALARM: <fault>`` when the
+    backlog is not draining. No online/offline verdict, ever: the server only
+    knows what was true at the contact, and "nothing known since" says so.
 
     Args:
         answer: The assessed currency.
+        now: The reader's clock, used ONLY to state the contact's age.
 
     Returns:
-        ``CURRENT AS OF <t>``, ``HOLDING >= N AS OF <t>``, or
-        ``UNKNOWN SINCE <t>``.
+        The one-line statement.
     """
-    stamp = NEVER if answer.asOf is None else answer.asOf.strftime(_ISO_FORMAT)
+    if answer.asOf is None:
+        return 'no contact recorded; nothing known'
 
-    if answer.state is CurrencyState.CURRENT:
-        return f'CURRENT AS OF {stamp}'
-    if answer.state is CurrencyState.HOLDING:
-        # '>=' always, never '='. The count is a lower bound when a table was
-        # unreadable, AND more rows may have been created since the contact --
-        # which the server cannot see by construction.
-        return f'HOLDING >= {answer.outstandingRows} AS OF {stamp}'
-    return f'UNKNOWN SINCE {stamp}'
+    head = (
+        f'last contact {answer.asOf.strftime(_ISO_FORMAT)} '
+        f'({formatAge((now - answer.asOf).total_seconds())} ago): '
+    )
+    if answer.state is CurrencyState.UNKNOWN:
+        body = 'queued unknown'
+    else:
+        qualifier = 'exact' if answer.exact else 'at least'
+        body = f'{answer.outstandingRows} queued ({qualifier})'
+        if answer.driveRows is not None and answer.sensorRows is not None:
+            body += f' - drive {answer.driveRows}, sensor {answer.sensorRows}'
+    sentence = f'{head}{body}; nothing known since'
+    if answer.fault:
+        sentence += f' | ALARM: {answer.fault}'
+    return sentence

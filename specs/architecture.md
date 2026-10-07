@@ -3001,17 +3001,40 @@ the Pi to be alive to be informative, and the case that matters is exactly the o
 `3c921c65`) through the sync request and written at session close. The server does not recount:
 a second implementation of the same measurement would be a second source of truth for one fact.
 
-⚠️ **Producer gap, recorded rather than hidden:** the server accepts and stores the residual, and
-US-795-b consumes it. The Pi does not yet *send* it — `countOutstandingRows` is today called only
-from the power-watch shutdown path, and the residual deliberately belongs to session close instead
-(a row written to a synced table during shutdown recreates the custody defect). Until the Pi
-reports it, every new row stores `NULL` — **which reads as `unknown`, the honest answer, not as a
-false zero.** The open question is *when* the Pi should measure: per-batch is a full delta walk in
-a hot path, so the natural point is once per sync run rather than once per POST.
+🟢 **The producer gap is CLOSED (US-795(a), Atlas, CIO-directed 2026-10-06).** Until then the Pi
+never sent the residual — **0 of 234,331** `sync_history` rows carried one. Now **every POST the Pi
+makes** carries it — the delta push, the snapshot push and the drive-counter push
+(`SyncClient._measureResidual`) — so the newest contact the server holds always measured the queue.
+- **Residual = the backlog read just before the POST, minus this batch's NEW rows** (primary key
+  above the cursor; a re-sent modified row was never counted) — `backlog.residualAfterBatch`, using
+  the same `countOutstandingRows` as the power-watch custody verdict: one measurement, one
+  implementation. A count that fails **omits the field** — never blocks a push, never sends 0.
+- **Per POST, not per run — MEASURED, not assumed:** the count costs ~6 ms per 100k backlog rows on
+  the car (2026-10-06, `edr_imu_sample` / `realtime_data`), and a pass sends at most one 500-row
+  batch per table, so a 1M-row backlog costs a few × ~30–60 ms a minute.
+- **The split (CIO ruling):** `groups: {drive, sensor}` — `sensor` = `EDR_SYNC_TABLES`, `drive` =
+  everything else. Optional on the wire (an older Pi still syncs) and stored by `v0036` in
+  `residual_drive_rows` / `residual_sensor_rows`, nullable, no default — same rule as the total.
+- 🔴 **Deploy order: SERVER BEFORE PI.** `ResidualReport` is `extra="forbid"`: an old server
+  rejects every push that carries `groups`.
+
+### 10.6.9 The server states what it knows, and nothing it cannot (US-795-b reader, US-795(a) surfaces) [Atlas Rule 10]
+
+`src/server/api/currency.py` is the **only** reader: three states (`current` / `holding` /
+`unknown`), each stamped with the contact it describes, plus one alarm — a backlog that has not
+decreased across 3 consecutive contacts (the car is talking and the queue is not draining). **Age
+alone is never a fault.** `src/server/services/sync_status.py` turns `sync_history` rows into its
+input; **the CLI (`python -m src.server.cli.sync_status`) and `GET /api/v1/sync/status` both call
+it**, so there is one judgement and one sentence. The sentence (CIO ruling 2026-10-06):
+
+    last contact <ts> (<age> ago): N queued (exact | at least) - drive D, sensor S; nothing known since [| ALARM: ...]
+
+**No online/offline verdict, ever**: the server cannot see rows created after the last contact, so
+it says what was true then and states its age. A device never heard from reads `no contact
+recorded; nothing known` — a word, not an invented timestamp.
 
 ### 10.6.10 How a drain row was CLOSED is a typed column — `battery_health_log.close_reason` (US-683, Sprint 94) [Atlas Rule 10]
 
-*(§10.6.9 is reserved for US-795-b, which §10.6.8 already cites.)*
 
 **The distance this closes.** Since §10.6.4 a drain row can be closed three different ways, and they
 do not carry the same evidence. Until US-683 the only home of that distinction was the module
