@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.76",
-  "theme": "US-795(a): the server states the car's sync state",
-  "description": "US-795(a): the Pi sends its residual (total + drive/sensor split) on every push; the server stores it (migration v0036) and states it via python -m src.server.cli.sync_status and GET /api/v1/sync/status: 'last contact, age, N queued (exact/at least/unknown)', never 'synced now'. Wires the existing currency.py and its stall alarm. Deploy order: SERVER BEFORE PI."
+  "version": "V0.29.77",
+  "theme": "US-684 drain row first; US-685 SOC as read",
+  "description": "US-684: a power loss writes its battery_health_log drain row FIRST and reads the fuel gauge after, off the trigger thread, so a slow I2C read can no longer lose the row before power-watch powers off. US-685: drain rows store SOC exactly as the chip reports it (fraction kept, no clamp at 100, 0xFFFF as NULL); the display keeps whole numbers. Pi only; no schema change."
 }
