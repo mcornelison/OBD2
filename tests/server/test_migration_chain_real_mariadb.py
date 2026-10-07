@@ -77,6 +77,9 @@ from src.server.migrations.versions import (  # noqa: E402
 from src.server.migrations.versions import (  # noqa: E402
     v0035_arch065_battery_capacity_columns as v0035,
 )
+from src.server.migrations.versions import (  # noqa: E402
+    v0036_us795a_sync_history_residual_groups as v0036,
+)
 from tests.server._mariadb_chain_harness import (  # noqa: E402
     DATA_SOURCE_CHECK_TABLES,
     LEDGER_PROMISED_COLUMNS,
@@ -106,6 +109,7 @@ POST_V0027_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
     (v0032.TABLE_NAME, v0032.COLUMN_NAME),
     *((v0034.TABLE_NAME, c) for c in v0034.COLUMN_TYPES),
     *((table, c) for table, cols in v0035.COLUMNS.items() for c in cols),
+    *((v0036.TABLE_NAME, c) for c in v0036.RESIDUAL_GROUP_COLUMNS),
 )
 
 # =============================================================================

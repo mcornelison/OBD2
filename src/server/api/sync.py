@@ -167,6 +167,7 @@ from src.server.db.models import (
     SyncHistory,
     VehicleInfo,
 )
+from src.server.services.sync_status import readSyncStatusAsync
 
 # US-350 / B-104 Step 1a (V0.27.17): enqueueAutoAnalysisForSync import retired.
 # Drive analytics is now computed server-side from raw realtime_data via
@@ -344,6 +345,21 @@ class DriveCounterData(BaseModel):
     )
 
 
+class ResidualGroups(BaseModel):
+    """The residual split the CIO ruled (US-795(a), 2026-10-06).
+
+    ``drive`` is the car's own records; ``sensor`` is the EDR archive
+    (``src/common/edr/sync_contract.EDR_SYNC_TABLES``). Measured by the Pi from
+    the same backlog read as the total, so the two always come from one
+    instant.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    drive: int = Field(..., ge=0, description="Outstanding rows outside the EDR archive.")
+    sensor: int = Field(..., ge=0, description="Outstanding rows in the EDR archive.")
+
+
 class ResidualReport(BaseModel):
     """What the Pi still held when this sync session closed (US-795-a).
 
@@ -363,6 +379,10 @@ class ResidualReport(BaseModel):
     complete: bool = Field(
         ...,
         description="False when any table was unreadable, making the count a lower bound.",  # b044-exempt: pydantic Field description
+    )
+    groups: ResidualGroups | None = Field(
+        default=None,
+        description="Optional drive/sensor split of outstandingRows (US-795(a)).",
     )
 
 
@@ -1141,6 +1161,25 @@ async def _createSyncHistoryRow(engine: Any, deviceId: str) -> int:
     return rowId
 
 
+def residualColumnValues(residual: ResidualReport | None) -> dict[str, Any]:
+    """The sync_history column values for a reported residual.
+
+    Only what the Pi MEASURED is returned: no residual leaves all four columns
+    unset, and a residual without ``groups`` leaves the split unset (US-795(a)).
+    An absent value stays unknown in the table; it is never written as 0.
+    """
+    if residual is None:
+        return {}
+    values: dict[str, Any] = {
+        "residual_rows": residual.outstandingRows,
+        "residual_complete": residual.complete,
+    }
+    if residual.groups is not None:
+        values["residual_drive_rows"] = residual.groups.drive
+        values["residual_sensor_rows"] = residual.groups.sensor
+    return values
+
+
 async def _completeSyncHistoryRow(
     engine: Any,
     historyId: int,
@@ -1171,9 +1210,7 @@ async def _completeSyncHistoryRow(
         "tables_synced": tablesSyncedBlob,
         "completed_at": syncedAt,
     }
-    if residual is not None:
-        values["residual_rows"] = residual.outstandingRows
-        values["residual_complete"] = residual.complete
+    values.update(residualColumnValues(residual))
     factory = getAsyncSession(engine)
     async with factory() as session:
         await session.execute(
@@ -1216,6 +1253,23 @@ def _readMaxPayloadBytes(request: Request) -> int:
     settings = getattr(request.app.state, "settings", None)
     maxMb = getattr(settings, "MAX_SYNC_PAYLOAD_MB", 10) if settings else 10
     return int(maxMb) * 1024 * 1024
+
+
+@router.get("/sync/status")
+async def getSyncStatus(request: Request, deviceId: str | None = None) -> list[dict[str, Any]]:
+    """US-795(a): each car's sync queue as of its last contact (read-only).
+
+    The same reader and sentence as ``src/server/cli/sync_status.py``. States
+    what was true at the contact and its age; never an online/offline verdict.
+    """
+    engine = getattr(request.app.state, "engine", None)
+    if engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database engine not configured",
+        )
+    statuses = await readSyncStatusAsync(engine, now=datetime.now(UTC), deviceId=deviceId)
+    return [s.toDict() for s in statuses]
 
 
 @router.post("/sync", response_model=SyncResponse)

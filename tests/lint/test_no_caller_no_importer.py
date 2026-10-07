@@ -211,14 +211,6 @@ KNOWN_DEAD: dict[str, str] = {
     "src/common/contracts/protocol.py": _SKELETON,
     "src/common/contracts/recommendations.py": _SKELETON,
     "src/common/contracts/vehicle.py": _SKELETON,
-    "src/server/api/currency.py": (
-        "US-795-b, UNWIRED ON PURPOSE for exactly one release. The story's own "
-        "fence says 'DO NOT surface this in any UI -- the answer is data this "
-        "sprint; the screen is V0.30', so the module has tests and no "
-        "production importer by design. DELETE THIS ENTRY when the V0.30 "
-        "consumer lands; test_everyLedgerEntryIsStillAFinding goes red if you "
-        "forget."
-    ),
     "src/pi/diagnostics/disk_space_guard.py": (
         "US-762. The guard is COMPLETE and tested; what is missing is a "
         "CALLER, and choosing one is a design decision rather than an "
