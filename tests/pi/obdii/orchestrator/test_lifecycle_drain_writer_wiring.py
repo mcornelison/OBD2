@@ -116,6 +116,9 @@ class TestDrainWriterIsWiredToPowerMonitor:
         monitor.checkPowerStatus(True)
         monitor.checkPowerStatus(False)
         monitor.checkPowerStatus(True)
+        # US-684: the start reading runs off-thread AFTER the row is written;
+        # wait for it, so this asserts the value and never wins a race.
+        assert orch._drainEventWriter.waitForStartReading(timeoutSec=5.0)
 
         rows = _rows(freshDb)
         assert len(rows) == 1
@@ -148,6 +151,9 @@ class TestDrainWriterIsWiredToPowerMonitor:
 
         monitor.checkPowerStatus(True)
         monitor.checkPowerStatus(False)
+        # US-684: the start reading runs off-thread AFTER the row is written;
+        # wait for it, so this asserts the value and never wins a race.
+        assert orch._drainEventWriter.waitForStartReading(timeoutSec=5.0)
 
         assert _rows(freshDb)[0][2] == pytest.approx(3.71)
 
@@ -167,6 +173,9 @@ class TestDrainWriterIsWiredToPowerMonitor:
         orch._initializeDrainEventWriter()
         monitor.checkPowerStatus(True)
         monitor.checkPowerStatus(False)
+        # US-684: the start reading runs off-thread AFTER the row is written;
+        # wait for it, so this asserts the value and never wins a race.
+        assert orch._drainEventWriter.waitForStartReading(timeoutSec=5.0)
 
         assert _rows(freshDb)[0][2] is None
 

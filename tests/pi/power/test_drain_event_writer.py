@@ -135,6 +135,9 @@ def _makeWriter(
         database=database,
         upsResolver=lambda: ups,
         uptimeReader=lambda: uptime,
+        # US-684: the start reading runs AFTER the insert, off-thread by
+        # default; these tests check WHICH values land, so run it inline.
+        startReadingRunner=_inline,
     )
 
 
@@ -224,6 +227,7 @@ class TestOpenAtWallPowerLoss:
             database=freshDb,
             upsResolver=lambda: holder['ups'],
             uptimeReader=lambda: _SETTLED_UPTIME_S,
+            startReadingRunner=_inline,
         )
 
         holder['ups'] = ups
@@ -243,6 +247,7 @@ class TestOpenAtWallPowerLoss:
             database=freshDb,
             upsResolver=lambda: None,
             uptimeReader=lambda: _SETTLED_UPTIME_S,
+            startReadingRunner=_inline,
         )
 
         writer.handlePowerTransition('ac_power', 'battery')
@@ -720,3 +725,157 @@ class TestMakeDrainEventWriterForPath:
         )
 
         assert writer.closeOpenDrainEvent(reason='powering_off') is None
+
+
+# ================================================================================
+# US-684 -- the row is written BEFORE the gauge is read (Atlas, CIO-directed)
+# ================================================================================
+
+
+def _inline(fn: Any) -> None:
+    fn()
+
+
+class _HeldRunner:
+    """A start-reading runner that holds the work until the test releases it --
+    a gauge read that has not come back yet."""
+
+    def __init__(self) -> None:
+        self.held: list[Any] = []
+
+    def __call__(self, fn: Any) -> None:
+        self.held.append(fn)
+
+    def release(self) -> None:
+        for fn in self.held:
+            fn()
+        self.held.clear()
+
+
+class TestTheRowIsWrittenBeforeTheGaugeIsRead:
+    """MEASURED 2026-09-27 18:03:08Z: the open read VCELL and SOC BEFORE it
+    inserted; the I2C bus was timing out (~24 s per read), power-watch powered
+    off first, and the loss left NO row. CIO ruled 2026-10-07: write first,
+    read after, off the trigger thread."""
+
+    def test_theRowExistsBeforeAnyGaugeRead(self, freshDb: ObdDatabase) -> None:
+        seen: list[int] = []
+
+        class _Witness(FakeUps):
+            def getVcell(self) -> float:
+                seen.append(len(_rows(freshDb)))
+                return super().getVcell()
+
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: _Witness(),
+            uptimeReader=lambda: _SETTLED_UPTIME_S, startReadingRunner=_inline,
+        )
+        writer.handlePowerTransition('ac_power', 'battery')
+
+        assert seen == [1], 'the gauge was read before the row existed'
+
+    def test_aGaugeThatNeverReturns_cannotCostTheRow(
+        self, freshDb: ObdDatabase, ups: FakeUps,
+    ) -> None:
+        runner = _HeldRunner()
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: ups,
+            uptimeReader=lambda: _SETTLED_UPTIME_S, startReadingRunner=runner,
+        )
+
+        drainEventId = writer.handlePowerTransition('ac_power', 'battery')
+
+        (row,) = _rows(freshDb)
+        assert row['drain_event_id'] == drainEventId
+        assert row['start_vcell_v'] is None and row['start_soc_pct'] is None
+        assert _ISO_UTC.match(row['start_timestamp']) is not None
+
+        runner.release()
+        (row,) = _rows(freshDb)
+        assert row['start_vcell_v'] == pytest.approx(3.92)
+        assert row['start_soc_pct'] == pytest.approx(84.0)
+
+    def test_theReadingNeverRestampsTheStart(self, freshDb: ObdDatabase, ups: FakeUps) -> None:
+        runner = _HeldRunner()
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: ups,
+            uptimeReader=lambda: _SETTLED_UPTIME_S, startReadingRunner=runner,
+        )
+        writer.handlePowerTransition('ac_power', 'battery')
+        before = _rows(freshDb)[0]['start_timestamp']
+
+        runner.release()
+
+        assert _rows(freshDb)[0]['start_timestamp'] == before
+
+    def test_aLateReading_landsOnItsOwnRow_evenAfterTheClose(
+        self, freshDb: ObdDatabase, ups: FakeUps,
+    ) -> None:
+        runner = _HeldRunner()
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: ups,
+            uptimeReader=lambda: _SETTLED_UPTIME_S, startReadingRunner=runner,
+        )
+        writer.handlePowerTransition('ac_power', 'battery')
+        writer.handlePowerTransition('battery', 'ac_power')
+        closed = _rows(freshDb)[0]
+
+        runner.release()
+
+        (row,) = _rows(freshDb)
+        assert row['start_vcell_v'] == pytest.approx(3.92)
+        assert row['end_timestamp'] == closed['end_timestamp']
+        assert row['runtime_seconds'] == closed['runtime_seconds']
+
+    def test_theDefaultRunner_readsOffTheCallersThread(
+        self, freshDb: ObdDatabase,
+    ) -> None:
+        import threading
+
+        readerThreads: list[int] = []
+
+        class _Where(FakeUps):
+            def getVcell(self) -> float:
+                readerThreads.append(threading.get_ident())
+                return super().getVcell()
+
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: _Where(),
+            uptimeReader=lambda: _SETTLED_UPTIME_S,
+        )
+        writer.handlePowerTransition('ac_power', 'battery')
+
+        assert writer.waitForStartReading(timeoutSec=5.0) is True
+        assert readerThreads and readerThreads[0] != threading.get_ident()
+        assert _rows(freshDb)[0]['start_vcell_v'] == pytest.approx(3.92)
+
+
+class TestTheDrainRowStoresSocAsRead:
+    """US-685 (CIO 2026-10-07): the drain row carries the SOC register as the
+    chip reports it -- fraction kept, no clamp at 100."""
+
+    def test_aReadingAbove100_landsAsRead(self, freshDb: ObdDatabase) -> None:
+        class _AsRead(FakeUps):
+            def getSocPercentAsRead(self) -> float:
+                return 100.69921875
+
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: _AsRead(),
+            uptimeReader=lambda: _SETTLED_UPTIME_S, startReadingRunner=_inline,
+        )
+        writer.handlePowerTransition('ac_power', 'battery')
+
+        assert _rows(freshDb)[0]['start_soc_pct'] == 100.69921875
+
+    def test_theUnbackedSentinel_landsAsNull(self, freshDb: ObdDatabase) -> None:
+        class _Sentinel(FakeUps):
+            def getSocPercentAsRead(self) -> None:
+                return None
+
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: _Sentinel(),
+            uptimeReader=lambda: _SETTLED_UPTIME_S, startReadingRunner=_inline,
+        )
+        writer.handlePowerTransition('ac_power', 'battery')
+
+        assert _rows(freshDb)[0]['start_soc_pct'] is None

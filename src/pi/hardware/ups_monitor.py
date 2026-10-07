@@ -245,6 +245,9 @@ class PowerSource(Enum):
 # returns little-endian, so every raw word read is byte-swapped before use.
 REGISTER_VCELL = 0x02    # Cell voltage (RO word, 78.125 uV/LSB)
 REGISTER_SOC = 0x04      # State of charge (RO word, high byte = integer %)
+#: US-685: what this silicon returns for a register it does not back (I2C
+#: silicon audit 2026-09-26). On SOC it is no reading, not 255.996 %.
+SOC_UNBACKED_SENTINEL = 0xFFFF
 REGISTER_MODE = 0x06     # Mode/Quickstart (WO on MAX17048; reads 0)
 REGISTER_VERSION = 0x08  # Chip version (RO word; expect 0x0002 family)
 REGISTER_CONFIG = 0x0C   # Config (RW word; boots to 0x971C family default)
@@ -623,12 +626,33 @@ class UpsMonitor:
         """
         return self._slowDrainDetector.state
 
+    def _readSocRaw(self) -> int:
+        """Read the SOC register (0x04) in chip order, mapping I2C faults.
+
+        The ONE acquisition of SOC: :meth:`getBatteryPercentage` (display,
+        whole-number 0-100) and :meth:`getSocPercentAsRead` (records, as the
+        chip reports it) are two renderings of this read, never two reads.
+
+        Raises:
+            UpsMonitorError: If read fails.
+            UpsNotAvailableError: If UPS is not available.
+        """
+        try:
+            return self._readSwappedWord(REGISTER_SOC)
+        except I2cDeviceNotFoundError as e:
+            raise UpsNotAvailableError(
+                f"UPS device not found at address 0x{self._address:02x}"
+            ) from e
+        except I2cError as e:
+            raise UpsMonitorError(f"Failed to read battery percentage: {e}") from e
+
     def getBatteryPercentage(self) -> int:
         """
         Read battery state-of-charge from the MAX17048 SOC register (0x04).
 
         High byte of the big-endian 16-bit register is the integer percent;
-        the low byte is fractional 1/256 % and is dropped here.
+        the low byte is fractional 1/256 % and is dropped here.  This is the
+        DISPLAY rendering -- records use :meth:`getSocPercentAsRead` (US-685).
 
         The ModelGauge algorithm needs a few minutes of observation after
         fresh power-up before SOC is meaningful; early reads may be
@@ -641,18 +665,29 @@ class UpsMonitor:
             UpsMonitorError: If read fails.
             UpsNotAvailableError: If UPS is not available.
         """
-        try:
-            raw = self._readSwappedWord(REGISTER_SOC)
-            integerPct = (raw >> 8) & 0xFF
-            pct = max(0, min(100, integerPct))
-            logger.debug(f"SOC raw=0x{raw:04x} -> {pct}%")
-            return pct
-        except I2cDeviceNotFoundError as e:
-            raise UpsNotAvailableError(
-                f"UPS device not found at address 0x{self._address:02x}"
-            ) from e
-        except I2cError as e:
-            raise UpsMonitorError(f"Failed to read battery percentage: {e}") from e
+        raw = self._readSocRaw()
+        integerPct = (raw >> 8) & 0xFF
+        pct = max(0, min(100, integerPct))
+        logger.debug(f"SOC raw=0x{raw:04x} -> {pct}%")
+        return pct
+
+    def getSocPercentAsRead(self) -> float | None:
+        """US-685: the SOC register as the chip reports it, for RECORDS.
+
+        DOCUMENTED (datasheet 19-6171, SOC Register): upper byte 1 %/LSb, lower
+        byte additional resolution, no stated 100 % cap -- so the fraction is
+        kept and nothing is clamped (MEASURED: 100.7 % occurs). The unbacked-
+        register sentinel ``0xFFFF`` is no reading and returns None.
+
+        Raises:
+            UpsMonitorError: If read fails.
+            UpsNotAvailableError: If UPS is not available.
+        """
+        raw = self._readSocRaw()
+        if raw == SOC_UNBACKED_SENTINEL:
+            logger.warning("SOC register read 0xFFFF (unbacked sentinel) -> no reading")
+            return None
+        return raw / 256.0
 
     def getChargeRatePercentPerHour(self) -> float | None:
         """

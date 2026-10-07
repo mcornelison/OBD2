@@ -1495,6 +1495,16 @@ Analytics filter `production` + `test` for runtime-trend baselines; `sim` is exc
 3. Close-once: first `endDrainEvent` wins; re-call is a no-op so a crashed orchestrator that retries on next boot cannot overwrite the original close data.
 4. Timestamps route through `src.common.time.helper.utcIsoNow` (US-202 canonical ISO-8601 UTC).
 
+**`start_soc_pct` / `end_soc_pct` hold the SOC register AS THE CHIP REPORTS IT (US-685, CIO 2026-10-07).**
+`UpsMonitor.getSocPercentAsRead()` keeps the fractional low byte and does not clamp at 100 (DOCUMENTED,
+datasheet 19-6171: no cap stated; MEASURED: 100.7 % occurs); the unbacked-register sentinel `0xFFFF`
+is NULL. The whole-number 0–100 `getBatteryPercentage()` is the DISPLAY rendering of the same single
+register read. ⚠️ **VCELL and SOC can disagree inside a row, and that is the instrument, not the
+writer:** both are read milliseconds apart, but SOC is ModelGauge's *model*. On the 450 mAh pouch
+(epoch 1) it read 93–100 % at any voltage from 3.49 to 4.23 V, and after the 2000 mAh swap it read
+8 % at 3.75 V. On the 18650 pack (epoch 3) the two agree. **Trust VCELL for the cell's state; read
+SOC only alongside the epoch it came from.**
+
 **Use case — the live consumer (bench drain CLI)**. The original US-216
 Power-Down Orchestrator drain-event consumer was **retired in the SS-T5 shutdown
 redesign** (its dead `batteryHealthRecorder` wiring was removed end-to-end in
@@ -1520,6 +1530,19 @@ is that caller, in the shape Atlas ruled on 2026-08-02
 | CLOSE at restore (BATTERY→AC) | collector | same callback |
 | CLOSE at cutoff — **the PRIMARY close** | `eclipse-powerwatch` | `ShutdownSequencer(prePowerOffFn=…)` |
 | REAP still-open rows — crash BACKSTOP | collector, at boot | `LifecycleMixin._initializeDrainEventWriter` |
+
+🔴 **The OPEN writes the row FIRST and reads the gauge AFTER (US-684, Atlas, CIO-ruled 2026-10-07).**
+The open used to read VCELL and SOC *before* its INSERT — two I²C reads that take ~24 s each on a
+failing bus — and on **2026-09-27 18:03:08Z** the bridge saw the loss, the reads stalled, power-watch
+powered off at the end of its window, and **the loss left no row** (journal, boot −21; the other
+17 epoch-3 losses all opened their row in the same second). Now `openDrainEvent` INSERTs at the loss with NULL
+start values (so `start_timestamp` **is** the loss), and `_fillStartReading` reads the gauge on a
+short-lived daemon thread and UPDATEs that row **by id** — correct even if the drain closed meanwhile;
+a failed read leaves the start values NULL (honest-instrument). Invariant 1 still holds: the start
+columns are written once and the close never touches them.
+⚠️ **Stated limit (CIO ruling):** a blip shorter than one bridge poll (`pi.powerWatch.uiPollSec`,
+default 2 s) is invisible to the writer and gets no row. Power-watch's 7 s smoothing ignores it too:
+a blip that recovers inside one poll is not a drain.
 
 Because the open and the cutoff close are in **different processes**, a
 `drain_event_id` held in memory is unavailable exactly where it matters most —
