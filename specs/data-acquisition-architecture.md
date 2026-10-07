@@ -350,16 +350,31 @@ L3 owns the join.
 > evidence. **Lead-in covers `bootGrace`** so engine crank is captured. Wall-power data is
 > development-only. *(CIO, 2026-09-19.)*
 
+🔴 **CARVE-OUT, CIO 2026-10-07 (US-797 closed as met): POWER-LOSS DATA IS PRODUCT DATA, wherever it
+falls.** Since ARCH-065a (2026-10-03) the battery-health verdict is built from at-home wall losses:
+the monthly test (660 s on battery, counted when `drain_rate_mv_s` is written), the 1 Hz
+`drain_vcell_trajectory`, `power_loss_heartbeat`, and the drain rows and home syncs. **None of
+those happen inside a drive.** So the 09-19 "wall-power data is development-only" holds for the
+**sensor** feeds (EDR, IMU, light) and is **retired for power-loss data**. **No retention, purge or
+gating change may reach `battery_health_log`, `drain_vcell_trajectory`, `power_loss_heartbeat`
+or the power-loss rows of `power_log` on the grounds that they fall outside a drive window.**
+MEASURED 2026-10-07 (7 days, drives 96–100): sensor rows outside drive windows = **0**; the only
+routine outside-drive power writer is `power_log`, ≤ 30 rows/day. The volume problem US-797 was
+written for no longer exists, and the remaining power data is the battery-health product.
+Record: `offices/architect/findings/2026-10-07-PREDICTION-US-797-what-is-still-written-outside-a-drive.md`.
+
 ### 6.2 Implementation, and the one defect in it
 
 **Implemented by `src/pi/bus/edr_log_gate.py` (US-767), shipped V0.29.58 — collapses EDR
-volume ~29×.** ⚠️ Its predicate currently reads `ConnectionStatus.connected` — the **Bluetooth
-link**, not ECU reachability. The dongle has constant power and is lit at key-out, so a link
-can exist in a parked car and reach no ECU. **US-793 moves the predicate to ECU reachability**;
-see that story for the fail-open trap ("unreachable" must be a readable `False`, distinct
-from "signal unreadable").
+volume ~29×.** Its predicate originally read `ConnectionStatus.connected` — the **Bluetooth
+link**, which is up in a parked car because the dongle has constant power. **Corrected by
+US-793-b (V0.29.60): `EdrLogGate._readLink` reads ECU `reachability` only, never `connected`,
+and fails OPEN** ("unreachable" is a readable `False`, distinct from "signal unreadable"). See
+`specs/architecture.md` (the EDR log gate section). *(This paragraph said the predicate was still
+wrong until 2026-10-07 — corrected by Atlas as keeper of `specs/`.)*
 
-🟢 **The gate itself is the right mechanism. Only its predicate is wrong.**
+🟢 **The gate is the right mechanism, and since V0.29.60 its predicate is too** — MEASURED
+2026-10-07: zero sensor rows written outside a drive window in 7 days.
 
 **Rate reduction and gating are independent and compose.** 4 Hz cuts rows ~12.5×; the log gate
 cuts ~29×. Neither substitutes for the other.
@@ -384,7 +399,8 @@ depends on.
 
 - **Inside the window**, a row is product data **even when the ECU is momentarily silent**.
   Engine crank, a dropped link mid-drive, and the entire key-off tail all stay.
-- **Outside the window**, there is no drive to pair to, and the row is development-only (§6.4).
+- **Outside the window**, there is no drive to pair to, and the row is development-only (§6.4) —
+  **except power-loss data, which is product data wherever it falls (§6.1 carve-out, 2026-10-07).**
 
 **The single test is therefore: is there a drive window around this row?** Not: is there an ECU
 row beside it.
@@ -394,7 +410,9 @@ every drive.
 
 ### 6.4 The bench / development case
 
-**Pi powered, no ECU, no drive window ⇒ development data.**
+**Pi powered, no ECU, no drive window ⇒ development data** — for the sensor feeds. ⚠️ A wall-power
+**loss** on the bench or at home is NOT development data: its power-loss rows feed the battery-health
+verdict (§6.1 carve-out, 2026-10-07).
 
 This is **not a defect and not a failure** — it is the normal state of a bench. But it is also
 **not product data**: it is never retained as such, and it must be **typed at CAPTURE**, not
