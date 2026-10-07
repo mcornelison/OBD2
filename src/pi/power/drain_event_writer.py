@@ -37,6 +37,9 @@
 #              |               | SUFFIX now defined in battery_health (re-exported).
 # 2026-10-03    | Atlas (ARCH-065a) | cellEpoch ctor arg; openDrainEvent stamps
 #              |               | battery_health_log.cell_epoch on the new row.
+# 2026-10-07    | Atlas (US-684) | The row is INSERTED FIRST, then the gauge is
+#              |               | read off the trigger thread and filled in --
+#              |               | a stalled I2C read cost a whole row 09-27.
 # ================================================================================
 ################################################################################
 
@@ -133,6 +136,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -311,6 +315,7 @@ class DrainEventWriter:
         monotonicFn: Callable[[], float] | None = None,
         checkpointIntervalSeconds: float = DRAIN_CHECKPOINT_INTERVAL_SECONDS,
         cellEpoch: str | None = None,
+        startReadingRunner: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         """Args:
             database: ``DatabaseLike`` -- anything exposing ``connect()`` as a
@@ -349,6 +354,10 @@ class DrainEventWriter:
             cellEpoch: ARCH-065 -- the pack generation to stamp into
                 ``battery_health_log.cell_epoch`` on every row this writer
                 opens.  None leaves the column NULL.
+            startReadingRunner: US-684 -- runs the start gauge reading AFTER
+                the row is written.  Defaults to a daemon thread, so a stalled
+                I2C read can delay neither the row nor the caller (the power
+                trigger).  Tests pass an inline or held runner.
         """
         self._recorder = BatteryHealthRecorder(database=database)
         self._database = database
@@ -360,6 +369,8 @@ class DrainEventWriter:
         self._monotonic = monotonicFn or time.monotonic
         self._checkpointIntervalSeconds = float(checkpointIntervalSeconds)
         self._lastCheckpointMonotonic: float | None = None
+        self._startReadingRunner = startReadingRunner or self._runOnDaemonThread
+        self._startReadingThread: threading.Thread | None = None
 
     @property
     def checkpointIntervalSeconds(self) -> float:
@@ -423,14 +434,19 @@ class DrainEventWriter:
             The new ``drain_event_id``, or None if the row could not be written
             (logged; a failed drain record must never break the power path).
         """
-        snapshot = self._readUps()
+        # US-684: WRITE FIRST. The gauge used to be read here, before the
+        # INSERT -- two I2C reads that take ~24 s each on a sick bus -- and on
+        # 2026-09-27 18:03:08Z the Pi powered off before the row was written.
+        # The row is the record that the loss HAPPENED; it must not wait on a
+        # measurement. start_timestamp is therefore the loss itself, and the
+        # start reading is filled in afterwards (_fillStartReading).
         try:
             drainEventId = self._recorder.startDrainEvent(
-                startSoc=snapshot.vcellVolts,
+                startSoc=None,
                 loadClass=self._loadClass,
                 notes=DRAIN_OPEN_NOTE,
                 dataSource='real',
-                startSocPct=snapshot.socPct,
+                startSocPct=None,
             )
         except Exception as exc:  # noqa: BLE001 -- power path must not break
             logger.error(
@@ -460,10 +476,62 @@ class DrainEventWriter:
         self._lastCheckpointMonotonic = self._monotonic()
         logger.warning(
             "drain writer: wall power LOST -- drain event %d opened "
-            "(start_vcell_v=%s, start_soc_pct=%s)",
-            drainEventId, snapshot.vcellVolts, snapshot.socPct,
+            "(start reading follows)", drainEventId,
         )
+        try:
+            self._startReadingRunner(lambda: self._fillStartReading(drainEventId))
+        except Exception as exc:  # noqa: BLE001 -- power path must not break
+            logger.error(
+                "drain writer: could not schedule the start reading for drain "
+                "event %s (%s) -- the row stays open with NULL start values",
+                drainEventId, exc,
+            )
         return drainEventId
+
+    def _fillStartReading(self, drainEventId: int) -> None:
+        """US-684: read the gauge and write it onto the row that already exists.
+
+        Targets the row by id, so it lands correctly even if the drain closed
+        while the read was in flight. Never raises: a failed read leaves the
+        start values NULL (honest-instrument), and the row stands regardless.
+        """
+        try:
+            snapshot = self._readUps()
+            with self._database.connect() as conn:
+                conn.execute(
+                    f"UPDATE {BATTERY_HEALTH_LOG_TABLE} "
+                    "SET start_vcell_v = ?, start_soc_pct = ? "
+                    "WHERE drain_event_id = ?",
+                    (snapshot.vcellVolts, snapshot.socPct, drainEventId),
+                )
+            logger.info(
+                "drain writer: drain event %d start reading "
+                "(start_vcell_v=%s, start_soc_pct=%s)",
+                drainEventId, snapshot.vcellVolts, snapshot.socPct,
+            )
+        except Exception as exc:  # noqa: BLE001 -- a reading must never raise
+            logger.error(
+                "drain writer: start reading for drain event %s not written "
+                "(%s) -- the row stays with NULL start values", drainEventId, exc,
+            )
+
+    def _runOnDaemonThread(self, work: Callable[[], None]) -> None:
+        """The default start-reading runner: one short-lived daemon thread."""
+        thread = threading.Thread(target=work, name='drain-start-reading', daemon=True)
+        self._startReadingThread = thread
+        thread.start()
+
+    def waitForStartReading(self, timeoutSec: float) -> bool:
+        """Wait for the most recent default-runner start reading to finish.
+
+        Returns:
+            True when no reading is in flight (or it finished in time).
+        """
+        thread = self._startReadingThread
+        if thread is None:
+            return True
+        thread.join(timeout=timeoutSec)
+        return not thread.is_alive()
 
     # ----- Checkpoint (US-605 / Spool US-504a "Consequence 2") -----------------
 

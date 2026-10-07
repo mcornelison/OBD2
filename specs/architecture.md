@@ -1521,6 +1521,19 @@ is that caller, in the shape Atlas ruled on 2026-08-02
 | CLOSE at cutoff — **the PRIMARY close** | `eclipse-powerwatch` | `ShutdownSequencer(prePowerOffFn=…)` |
 | REAP still-open rows — crash BACKSTOP | collector, at boot | `LifecycleMixin._initializeDrainEventWriter` |
 
+🔴 **The OPEN writes the row FIRST and reads the gauge AFTER (US-684, Atlas, CIO-ruled 2026-10-07).**
+The open used to read VCELL and SOC *before* its INSERT — two I²C reads that take ~24 s each on a
+failing bus — and on **2026-09-27 18:03:08Z** the bridge saw the loss, the reads stalled, power-watch
+powered off at the end of its window, and **the loss left no row** (journal, boot −21; the other
+17 epoch-3 losses all opened their row in the same second). Now `openDrainEvent` INSERTs at the loss with NULL
+start values (so `start_timestamp` **is** the loss), and `_fillStartReading` reads the gauge on a
+short-lived daemon thread and UPDATEs that row **by id** — correct even if the drain closed meanwhile;
+a failed read leaves the start values NULL (honest-instrument). Invariant 1 still holds: the start
+columns are written once and the close never touches them.
+⚠️ **Stated limit (CIO ruling):** a blip shorter than one bridge poll (`pi.powerWatch.uiPollSec`,
+default 2 s) is invisible to the writer and gets no row. Power-watch's 7 s smoothing ignores it too:
+a blip that recovers inside one poll is not a drain.
+
 Because the open and the cutoff close are in **different processes**, a
 `drain_event_id` held in memory is unavailable exactly where it matters most —
 so every close **re-finds its row by query**. This is why Atlas disqualified the
