@@ -265,7 +265,7 @@ class UpsSnapshot:
     """
 
     vcellVolts: float | None
-    socPct: int | None
+    socPct: float | None
 
 
 _NO_READING = UpsSnapshot(vcellVolts=None, socPct=None)

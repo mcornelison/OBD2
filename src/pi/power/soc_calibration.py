@@ -128,8 +128,13 @@ def readCalibratedRegisterSocPct(
     *,
     uptimeSeconds: float | None,
     calibrationWindowSeconds: float = COLD_START_CALIBRATION_WINDOW_SECONDS,
-) -> int | None:
+) -> float | None:
     """Read the MAX17048 register SoC%%, guarded against the cold-start window.
+
+    US-685 (CIO 2026-10-07): records take the register AS THE CHIP REPORTS IT
+    (``getSocPercentAsRead``: fraction kept, no clamp at 100). A monitor that
+    only offers the whole-number display reading (older doubles) falls back
+    to ``getBatteryPercentage``.
 
     Honest-instrument (US-234 / BL-015): if the gauge is still inside its
     ~3-min calibration window -- or the uptime that would prove it is past the
@@ -149,7 +154,7 @@ def readCalibratedRegisterSocPct(
             :data:`COLD_START_CALIBRATION_WINDOW_SECONDS`.
 
     Returns:
-        The register State-of-Charge percent (0-100), or ``None`` when the gauge
+        The register State-of-Charge percent as the chip reports it (US-685), or ``None`` when the gauge
         is (or may be) uncalibrated or the read fails.
     """
     if uptimeSeconds is None or uptimeSeconds < calibrationWindowSeconds:
@@ -161,6 +166,9 @@ def readCalibratedRegisterSocPct(
         )
         return None
     try:
+        asRead = getattr(monitor, 'getSocPercentAsRead', None)
+        if asRead is not None:
+            return asRead()
         return int(monitor.getBatteryPercentage())
     except Exception as exc:  # noqa: BLE001 -- see header: identity-independent
         logger.warning(

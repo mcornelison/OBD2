@@ -848,3 +848,34 @@ class TestTheRowIsWrittenBeforeTheGaugeIsRead:
         assert writer.waitForStartReading(timeoutSec=5.0) is True
         assert readerThreads and readerThreads[0] != threading.get_ident()
         assert _rows(freshDb)[0]['start_vcell_v'] == pytest.approx(3.92)
+
+
+class TestTheDrainRowStoresSocAsRead:
+    """US-685 (CIO 2026-10-07): the drain row carries the SOC register as the
+    chip reports it -- fraction kept, no clamp at 100."""
+
+    def test_aReadingAbove100_landsAsRead(self, freshDb: ObdDatabase) -> None:
+        class _AsRead(FakeUps):
+            def getSocPercentAsRead(self) -> float:
+                return 100.69921875
+
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: _AsRead(),
+            uptimeReader=lambda: _SETTLED_UPTIME_S, startReadingRunner=_inline,
+        )
+        writer.handlePowerTransition('ac_power', 'battery')
+
+        assert _rows(freshDb)[0]['start_soc_pct'] == 100.69921875
+
+    def test_theUnbackedSentinel_landsAsNull(self, freshDb: ObdDatabase) -> None:
+        class _Sentinel(FakeUps):
+            def getSocPercentAsRead(self) -> None:
+                return None
+
+        writer = DrainEventWriter(
+            database=freshDb, upsResolver=lambda: _Sentinel(),
+            uptimeReader=lambda: _SETTLED_UPTIME_S, startReadingRunner=_inline,
+        )
+        writer.handlePowerTransition('ac_power', 'battery')
+
+        assert _rows(freshDb)[0]['start_soc_pct'] is None

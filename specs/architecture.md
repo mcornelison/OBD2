@@ -1495,6 +1495,16 @@ Analytics filter `production` + `test` for runtime-trend baselines; `sim` is exc
 3. Close-once: first `endDrainEvent` wins; re-call is a no-op so a crashed orchestrator that retries on next boot cannot overwrite the original close data.
 4. Timestamps route through `src.common.time.helper.utcIsoNow` (US-202 canonical ISO-8601 UTC).
 
+**`start_soc_pct` / `end_soc_pct` hold the SOC register AS THE CHIP REPORTS IT (US-685, CIO 2026-10-07).**
+`UpsMonitor.getSocPercentAsRead()` keeps the fractional low byte and does not clamp at 100 (DOCUMENTED,
+datasheet 19-6171: no cap stated; MEASURED: 100.7 % occurs); the unbacked-register sentinel `0xFFFF`
+is NULL. The whole-number 0–100 `getBatteryPercentage()` is the DISPLAY rendering of the same single
+register read. ⚠️ **VCELL and SOC can disagree inside a row, and that is the instrument, not the
+writer:** both are read milliseconds apart, but SOC is ModelGauge's *model*. On the 450 mAh pouch
+(epoch 1) it read 93–100 % at any voltage from 3.49 to 4.23 V, and after the 2000 mAh swap it read
+8 % at 3.75 V. On the 18650 pack (epoch 3) the two agree. **Trust VCELL for the cell's state; read
+SOC only alongside the epoch it came from.**
+
 **Use case — the live consumer (bench drain CLI)**. The original US-216
 Power-Down Orchestrator drain-event consumer was **retired in the SS-T5 shutdown
 redesign** (its dead `batteryHealthRecorder` wiring was removed end-to-end in
