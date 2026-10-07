@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.75",
-  "theme": "US-731 light auto-range; US-795b/US-807 CI gates",
-  "description": "US-731: the TSL2591 auto-ranges LOW<->MEDIUM and reads daylight (it never had); lux from raw counts with datasheet gains, so medium-gain lux reads ~2 % above earlier rows. US-795(b): the migration CI seeds the real pre-migration tables and is green; v0029-v0035 ran in CI for the first time. US-807: the applied-schema parity gate runs in CI against production's schema. Pi code: US-731 only."
+  "version": "V0.29.76",
+  "theme": "US-795(a): the server states the car's sync state",
+  "description": "US-795(a): the Pi sends its residual (total + drive/sensor split) on every push; the server stores it (migration v0036) and states it via python -m src.server.cli.sync_status and GET /api/v1/sync/status: 'last contact, age, N queued (exact/at least/unknown)', never 'synced now'. Wires the existing currency.py and its stall alarm. Deploy order: SERVER BEFORE PI."
 }
