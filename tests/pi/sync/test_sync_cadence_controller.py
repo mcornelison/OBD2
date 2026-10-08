@@ -14,6 +14,13 @@
 #                               transition fixture + missed-drive-start
 #                               fallback + cadence-by-state shouldSyncNow
 #                               contract.
+# 2026-10-08    | Atlas (US-418)| ACTIVE now demotes to IDLE after 12
+#                               consecutive EMPTY pushes (CIO 2026-10-08).
+#                               MEASURED 10-07: the startup backlog drain
+#                               promoted a parked Pi 1 s after start and
+#                               nothing demoted it for 15.8 h -- 330/362
+#                               pushes at 5 s. "drive_end is the ONLY way
+#                               out of ACTIVE" was the defect, not a rule.
 # ================================================================================
 ################################################################################
 
@@ -35,6 +42,7 @@ import pytest
 
 from pi.sync.sync_cadence_controller import (
     DEFAULT_ACTIVE_CADENCE_SECONDS,
+    DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES,
     DEFAULT_IDLE_CADENCE_SECONDS,
     SyncCadenceController,
     SyncCadenceState,
@@ -225,8 +233,10 @@ class TestMissedDriveStartFallback:
     def test_active_heartbeat_withoutRows_staysActive(
         self, controller: SyncCadenceController
     ) -> None:
-        # While in ACTIVE, an empty sync does NOT demote back to IDLE.
-        # drive_end is the ONLY way out of ACTIVE.
+        # While in ACTIVE, ONE empty sync does NOT demote back to IDLE.
+        # (US-418: a RUN of empty pushes does -- see TestEmptyPushDemotion.
+        # This used to say "drive_end is the ONLY way out of ACTIVE", which
+        # is exactly what pinned a parked Pi at 5 s for its whole uptime.)
         controller.onDriveStart()
         controller.markSynced(hadRows=False)
         assert controller.state == SyncCadenceState.ACTIVE
@@ -239,6 +249,107 @@ class TestMissedDriveStartFallback:
         controller.onDriveStart()
         controller.onDriveEnd()
         controller.markSynced(hadRows=True)
+        assert controller.state == SyncCadenceState.IDLE
+
+
+class TestEmptyPushDemotion:
+    """
+    US-418 (CIO 2026-10-08): ACTIVE demotes to IDLE after
+    ``DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES`` (12) CONSECUTIVE empty pushes.
+
+    Threshold + consecutive dwell (specs/design-patterns.md section 1): one
+    empty push is noise; a run of them means nothing is being produced. In a
+    real drive every 5 s push carries realtime_data, so only a capture stall
+    of ~60 s demotes, and the next non-empty push re-promotes via the
+    missed-drive_start fallback.
+    """
+
+    def _emptyPushes(self, controller: SyncCadenceController, n: int) -> None:
+        for _ in range(n):
+            controller.markSynced(hadRows=False)
+
+    def test_demoteThreshold_default_is12(self) -> None:
+        assert DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES == 12
+
+    def test_fallbackActive_demotesAfter12ConsecutiveEmptyPushes(
+        self, controller: SyncCadenceController
+    ) -> None:
+        # The MEASURED 10-07 case: the startup backlog drain is the one
+        # non-empty push, then the parked Pi has nothing to send.
+        controller.markSynced(hadRows=True)
+        assert controller.state == SyncCadenceState.ACTIVE
+        self._emptyPushes(controller, 11)
+        assert controller.state == SyncCadenceState.ACTIVE
+        controller.markSynced(hadRows=False)
+        assert controller.state == SyncCadenceState.IDLE
+
+    def test_driveStartActive_alsoDemotesAfter12EmptyPushes(
+        self, controller: SyncCadenceController
+    ) -> None:
+        # One rule for every ACTIVE (CIO ruling as stated): a drive whose
+        # pushes are empty for ~60 s is a capture stall, not a live stream.
+        controller.onDriveStart()
+        self._emptyPushes(controller, 12)
+        assert controller.state == SyncCadenceState.IDLE
+
+    def test_nonEmptyPush_resetsTheRun(
+        self, controller: SyncCadenceController
+    ) -> None:
+        # CONSECUTIVE, not k-of-n: a single row restarts the count.
+        controller.onDriveStart()
+        self._emptyPushes(controller, 11)
+        controller.markSynced(hadRows=True)
+        self._emptyPushes(controller, 11)
+        assert controller.state == SyncCadenceState.ACTIVE
+
+    def test_reEnteringActive_startsAFreshRun(
+        self, controller: SyncCadenceController
+    ) -> None:
+        # Empties counted in a previous ACTIVE stint must not carry over.
+        controller.onDriveStart()
+        self._emptyPushes(controller, 12)
+        assert controller.state == SyncCadenceState.IDLE
+        controller.markSynced(hadRows=True)  # fallback re-promotes
+        self._emptyPushes(controller, 11)
+        assert controller.state == SyncCadenceState.ACTIVE
+
+    def test_afterDemotion_cadenceIsTheIdleHeartbeat(
+        self, controller: SyncCadenceController, clock: FakeClock
+    ) -> None:
+        controller.markSynced(hadRows=True)
+        self._emptyPushes(controller, 12)
+        clock.advance(DEFAULT_ACTIVE_CADENCE_SECONDS)
+        assert controller.shouldSyncNow() is False
+        clock.advance(DEFAULT_IDLE_CADENCE_SECONDS - DEFAULT_ACTIVE_CADENCE_SECONDS)
+        assert controller.shouldSyncNow() is True
+
+    def test_demotion_isLogged(
+        self, controller: SyncCadenceController, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The exit test reads this line in the journal: promotions and
+        # demotions must balance over a parked window.
+        controller.markSynced(hadRows=True)
+        with caplog.at_level("INFO", logger=SyncCadenceController.__module__):
+            self._emptyPushes(controller, 12)
+        assert any(
+            "ACTIVE -> IDLE" in r.getMessage() and "12 consecutive empty" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_constructor_acceptsDemoteOverride(self, clock: FakeClock) -> None:
+        controller = SyncCadenceController(now=clock, demoteAfterEmptyPushes=3)
+        controller.onDriveStart()
+        self._emptyPushes(controller, 3)
+        assert controller.state == SyncCadenceState.IDLE
+
+    def test_draining_isUnaffected(
+        self, controller: SyncCadenceController
+    ) -> None:
+        # DRAINING still resolves to IDLE on its one flush, empty or not.
+        controller.onDriveStart()
+        self._emptyPushes(controller, 5)
+        controller.onDriveEnd()
+        controller.markSynced(hadRows=False)
         assert controller.state == SyncCadenceState.IDLE
 
 

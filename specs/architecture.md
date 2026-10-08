@@ -932,6 +932,20 @@ interval tick.  A transport failure in one path (logged as WARNING) does
 not affect the other; the high-water mark stays put per US-149 so the
 next tick resends.
 
+**Engine-aware cadence (B-053 / US-298, US-418).** The interval gate is
+driven by `src/pi/sync/sync_cadence_controller.py`, not by `intervalSeconds`
+alone: **IDLE** pushes every 60 s, **ACTIVE** every 5 s, and **DRAINING** is
+the one final flush after `drive_end`. `drive_start` promotes IDLE → ACTIVE,
+and so does any push that carries a row while IDLE (the missed-`drive_start`
+fallback). 🔴 **ACTIVE demotes to IDLE after 12 CONSECUTIVE empty pushes**
+(`DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES`, CIO 2026-10-08), which is threshold +
+consecutive dwell (`specs/design-patterns.md` §1). Before US-418, `drive_end`
+was the only way out of ACTIVE. MEASURED 2026-10-07: the startup backlog
+promoted a parked Pi 1 s after start and nothing demoted it, so it pushed
+every 5 s for 15.8 h (~275k journal lines/day). A real drive's pushes carry
+`realtime_data`, so only a capture stall of about a minute demotes it. A failed
+push counts as empty, so a minute off WiFi also drops to the heartbeat.
+
 **Recovery playbook** — when the sync pipeline is observed stalled:
 
 1. Confirm last-sync state (Pi side):
@@ -3348,6 +3362,15 @@ independent of any Pi-side end-of-drive marker:
    next boot). The unit runs the on-demand CLI in `--all-stale` mode
    and refreshes every drive with NULL `drive_summary` analytics
    columns or missing `drive_statistics` rows.
+   **US-418 (CIO 2026-10-08): its FIRST step prunes `sync_history`** —
+   `python -m src.server.cli.prune_sync_history`, run as `ExecStart=-…` so a
+   prune failure cannot skip the recompute. The horizon is v0007's
+   `RETENTION_DAYS_DEFAULT` (90) or its `SYNC_HISTORY_RETENTION_DAYS`
+   override, against a UTC cutoff (`started_at` is UTC; MariaDB `NOW()` here
+   is CDT). 🔴 **Evidence is the step's own journal line**
+   (`sync_history retention: horizon=… deleted=… past_horizon_after=…`,
+   printed on every run, including `deleted=0`), never the unit's status:
+   the recompute exits 0 on failure (US-840).
 2. **On-demand CLI** — `python -m src.server.cli.recompute_drive_analytics`
    with `--drive-id N` / `--drive-id-range A-B` / `--all-stale` /
    `--dry-run`. The per-drive loop invokes
