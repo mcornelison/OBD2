@@ -242,8 +242,9 @@ class TestOrchestratorReceivesConfig:
         # Act
         runWorkflow(config, simulate=True)
 
-        # Assert
-        mockFactory.assert_called_once_with(config, simulate=True)
+        # Assert -- US-830: runWorkflow has passed configPath= since US-533;
+        # with none given it is forwarded as None.
+        mockFactory.assert_called_once_with(config, simulate=True, configPath=None)
 
     @patch('pi.obdii.orchestrator.createOrchestratorFromConfig')
     def test_runWorkflow_passesSimulateFalse(
@@ -261,8 +262,30 @@ class TestOrchestratorReceivesConfig:
         # Act
         runWorkflow(config, simulate=False)
 
+        # Assert -- US-830: see test_runWorkflow_passesSimulateTrue.
+        mockFactory.assert_called_once_with(config, simulate=False, configPath=None)
+
+    @patch('pi.obdii.orchestrator.createOrchestratorFromConfig')
+    def test_runWorkflow_forwardsConfigPath(
+        self, mockFactory: MagicMock
+    ):
+        """
+        Given: runWorkflow is called with a configPath
+        When: the orchestrator is built
+        Then: the same path reaches createOrchestratorFromConfig (US-533), so a
+              component can re-read a live operator setting
+        """
+        # Arrange
+        config = getTestConfig()
+        mockFactory.return_value = createMockOrchestrator()
+
+        # Act
+        runWorkflow(config, simulate=False, configPath='/etc/eclipse/config.json')
+
         # Assert
-        mockFactory.assert_called_once_with(config, simulate=False)
+        mockFactory.assert_called_once_with(
+            config, simulate=False, configPath='/etc/eclipse/config.json'
+        )
 
 
 # ================================================================================
