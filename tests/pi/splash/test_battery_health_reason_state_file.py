@@ -40,6 +40,10 @@
 #               |              | fixture; the A-3 schema gains timeToFloorS /
 #               |              | jobAvgS / jobMaxS / provisional.
 # 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: config carries pi.power.cellEpoch.
+# 2026-10-07    | Atlas (US-837) | `ts` is checked against clock reads taken
+#               |              | around the emit, not against `_NOW` (set at
+#               |              | import). A run where collection precedes this
+#               |              | test by > 120 s failed (reproduced: 129.3 s).
 # ================================================================================
 ################################################################################
 
@@ -414,9 +418,14 @@ def test_theLivePiShape_readsStaleInTheStateFile_notMerelyUnknown(tmp_path):
     this pack, in May, and refuse to call that current."  Any one of the three
     alone is satisfied by a payload that means something else.
     """
+    # US-837: bracket the emit with the clock itself. `_NOW` is read at import,
+    # so in a long run it is minutes stale and "within 120 s of _NOW" failed on
+    # a correct emit. `ts` is whole seconds, so the lower bound is floored.
+    before = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     state = _emitOnce(
         tmp_path, hardwareManager=_liveUps(), database=_stalePack()
     )
+    after = datetime.now(UTC).replace(tzinfo=None)
     assert state["health"] == VERDICT_UNKNOWN
     assert state["reasons"] == {"health": REASON_MONTHLY_TEST_STALE}
     # The MEASUREMENT date is preserved -- never advanced to fake a fresh check.
@@ -425,7 +434,9 @@ def test_theLivePiShape_readsStaleInTheStateFile_notMerelyUnknown(tmp_path):
     # makes "we checked and cannot say" legible without falsifying anything.
     assert state["ts"] != state["lastHealthCheckTs"]
     emittedAt = datetime.strptime(state["ts"], "%Y-%m-%dT%H:%M:%SZ")
-    assert abs((emittedAt - _NOW).total_seconds()) < 120
+    assert before <= emittedAt <= after, (
+        f"ts {state['ts']} is not the emit instant ({before} .. {after})"
+    )
 
 
 def test_weCheckedAndCannotSay_isDistinguishableFromNothingHasChecked(tmp_path):

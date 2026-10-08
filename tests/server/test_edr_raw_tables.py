@@ -58,9 +58,17 @@ from src.server.api.sync import (
 )
 from src.server.db.models import Base, EdrImuSample, EdrLightSample, PowerLog
 
+# US-831: DERIVED from the server's own registry, never hand-listed. The
+# parametrize ids come from EDR_SYNC_TABLES, so a hand-written map drifted the
+# moment edr_imu_derived joined the contract (5 x KeyError). Reading the model
+# the upsert actually uses also tests the real thing, not a copy of it. A table
+# missing from the registry is left out here so that
+# TestSyncRegistration.test_inServerTableRegistry names it, rather than a
+# KeyError at import.
 EDR_MODELS = {
-    "edr_imu_sample": EdrImuSample,
-    "edr_light_sample": EdrLightSample,
+    name: _TABLE_REGISTRY[name][0]
+    for name in EDR_SYNC_TABLES
+    if name in _TABLE_REGISTRY
 }
 
 
