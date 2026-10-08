@@ -47,6 +47,16 @@
 #                                kill -9 mid-write never leaves empty/partial,
 #                                a hung fsync cannot hold the power-loss path,
 #                                and an EMPTY file warns as a LOST WRITE.
+# 2026-10-07    | Atlas (US-832)| The kill-9 test read the witness the instant
+#                                the child died. On Windows that open is denied
+#                                for a few ms after a write is killed (MEASURED:
+#                                9/60 kills denied, each cleared in ~6 ms, 0
+#                                partial files once readable). A sharing state
+#                                of the TEST platform, not a writer defect: the
+#                                writer never opens the target, and the Pi's
+#                                rename(2) has no such state. The read now
+#                                retries on PermissionError for a bounded 2 s;
+#                                every content assertion is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -225,6 +235,30 @@ while True:
 """
 
 
+#: US-832: how long the kill-9 test waits for a just-killed write's file to
+#: become openable. MEASURED on Windows: denials clear in ~6 ms; 2 s is far
+#: outside that, and a file still denied after it is a real failure.
+_READ_AFTER_KILL_BOUND_S = 2.0
+
+
+def _readAfterKill(path):
+    """Read the witness once the OS lets it be opened (US-832).
+
+    Windows briefly denies opening a file whose replacement was cut short by
+    TerminateProcess. That denial says nothing about the file's CONTENT, which
+    is what the test pins, so it is retried within a bound and never swallowed
+    beyond it.
+    """
+    deadline = time.monotonic() + _READ_AFTER_KILL_BOUND_S
+    while True:
+        try:
+            return path.read_bytes()
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.005)
+
+
 def test_kill_9_mid_write_never_leaves_an_empty_or_partial_witness(tmp_path):
     """🔴 US-682 VC1: kill the writer mid-write, repeatedly.
 
@@ -254,7 +288,7 @@ def test_kill_9_mid_write_never_leaves_an_empty_or_partial_witness(tmp_path):
             if child.stdout is not None:
                 child.stdout.close()
 
-        raw = p.read_bytes()
+        raw = _readAfterKill(p)
         assert raw, f"attempt {attempt}: kill -9 left a 0-byte witness"
         assert json.loads(raw.decode("utf-8"))["lastTransitionUtc"] in (PREVIOUS, NEWER), (
             f"attempt {attempt}: witness is partial or foreign: {raw!r}"
