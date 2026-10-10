@@ -4,6 +4,7 @@
 #          lands) recompute from raw realtime_data.  B-104 Step 1a.
 # Author:  Rex (Ralph Agent)
 # Created: 2026-05-21 -- US-350 / Sprint 41 V0.27.17
+# Modified: 2026-10-08 -- Atlas (US-418): first ExecStart prunes sync_history.
 #
 # Why
 # ---
@@ -61,6 +62,12 @@ EnvironmentFile=/home/mcornelison/obd2-server/.env
 Environment=PYTHONPATH=/home/mcornelison/obd2-server
 Environment=PYTHONUNBUFFERED=1
 
+# US-418 (CIO 2026-10-08): sync_history retention runs FIRST, inside this
+# batch. The leading '-' means a prune failure cannot skip the recompute; the
+# prune prints one line on every run ("sync_history retention: horizon=...
+# deleted=... past_horizon_after=..."), and THAT line is the evidence -- the
+# unit status is not (the recompute exits 0 on failure, US-840).
+ExecStart=-/home/mcornelison/obd2-server-venv/bin/python -m src.server.cli.prune_sync_history
 ExecStart=/home/mcornelison/obd2-server-venv/bin/python -m src.server.cli.recompute_drive_analytics --all-stale
 
 # A failed batch MUST NOT page the operator; the next fire retries.  The
