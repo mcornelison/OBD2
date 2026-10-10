@@ -978,6 +978,13 @@ default.
 
 ## UPS slow-drain detection (F-051) — THIS NEEDS A STATE GATE, NOT A THRESHOLD
 
+🔴🔴 **RETIRED 2026-10-10 (US-444, CIO ruling 2026-10-08). The detector and `getSlowDrainState()` are
+DELETED; battery health is ARCH-065's monthly test (`specs/battery-health-design.md`).** Gated as
+ruled below, the verdict would be UNKNOWN almost always (a key-off lives ~10–15 s on battery against
+a ~270 s window), nothing read it, and two processes each polled the gauge for it. **The measurement
+below is kept as the reason, and as the warning for anyone tempted to revive a charger-side drain
+detector.** Do not cite it as a live instrument.
+
 🔴 **No value of `declineThresholdVolts`, `windowSeconds` or `debounceSeconds` makes this instrument
 work. Do not ship a replacement number.**
 
@@ -1276,8 +1283,10 @@ cell change. **Do not carry it forward.**
 - **`charging` / `draining`** derive from `CRATE`, which reads `0xFFFF` on this chip. 🔴 **They must
   be typed-NA with a reason, not `false`.** On 2026-09-21 at 22:30Z both read `false` while the cell
   was demonstrably on a charger — **`false` is an assertion, and the truthful answer is "this chip
-  cannot tell you."** ⇒ Derive charge direction from the **VCELL trend** under the F-051 state gate,
-  or publish NA. **Do not leave a field that is wrong in a knowable way.**
+  cannot tell you."** ⇒ **Publish NA with a reason.** (This line used to offer "derive charge
+  direction from the VCELL trend under the F-051 state gate" as an alternative; F-051 was RETIRED
+  2026-10-10, US-444, so that route no longer exists.) **Do not leave a field that is wrong in a
+  knowable way.**
 
 ⚠️ **The protocol needs a powered-off cold start, which is a CIO action, not a keyboard one.** It is
 written so it can be executed without me.

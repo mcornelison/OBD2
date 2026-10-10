@@ -1680,22 +1680,18 @@ battery-health instruments landed this sprint. **Neither writes `battery_health_
 drain baselines, so a health *snapshot* or *trend* written there would pollute the
 baseline and re-open the US-442 orphan-row class.
 
-- **Slow-drain detector (US-444).** `src/pi/hardware/slow_drain_detector.SlowDrainDetector`
-  is a pure decision layer over a stream of `(timestamp, VCELL)` samples emitting a
-  `DrainState` health verdict `{UNKNOWN, STABLE, SLOW_DRAIN}`. A rolling window
-  (default `300 s`) + net-decline threshold (default `0.005 V`) trip the raw verdict;
-  a debounce (default `30 s`) commits it only after the raw signal holds continuously
-  for the interval (flap suppression — the 2026-04-29 inverted-power drill logged 4
-  transitions in 45 s); a partial window returns `UNKNOWN` (honest instrument, never a
-  confident STABLE). All three thresholds are module `DEFAULT_*` constants + injectable
-  ctor params, grounded in F-051 drain-tests 1-4. `UpsMonitor` feeds each poll tick's
-  VCELL to the detector (extracted `_pollOnce`, one shared timestamp) and exposes
-  `getSlowDrainState()`; `getTelemetry()` shape is **unchanged** (the signal has its own
-  accessor, so the telemetry-shape gate + DB stay stable). **Scope boundary (SS-T4,
-  2026-05-19):** this is battery-HEALTH advisory telemetry, NOT a power-source decision
-  — `UpsMonitor.getPowerSource()` stays a loud `NotImplementedError` tripwire; the
-  detector never emits a source verdict and never feeds a shutdown decision (the retired
-  VCELL-trend source heuristic bricked the Pi 2026-05-18).
+- 🔴 **Slow-drain detector (US-444 / F-051) — RETIRED 2026-10-10 (CIO ruling 2026-10-08).**
+  It was a rolling-window VCELL decline verdict (`SlowDrainDetector`, `300 s` / `0.005 V` /
+  `30 s` debounce) built into `UpsMonitor` and exposed as `getSlowDrainState()`. **All of
+  that is deleted.** Why, measured: on the charger the X1209's 4.23 V cut-off / 4.1 V
+  recharge sawtooth produced false `slow_drain` episodes of up to **1,580 s** (Spool,
+  2026-09-21), longer than the Pi lives on battery, so no threshold or dwell could work.
+  The ratified fix (a state gate: UNKNOWN on external power) would have made the verdict
+  UNKNOWN almost always: a key-off lives ~10–15 s against a ~270 s window. Nothing read
+  the verdict, and two processes (power_watch and main) each ran a copy, each polling the
+  MAX17048. **Battery health is owned by ARCH-065's monthly test**
+  (`specs/battery-health-design.md`). `tests/pi/hardware/test_f051_slow_drain_retired.py`
+  keeps it gone. `UpsMonitor`'s VCELL/SOC history is unaffected.
 - **Boot-time battery test (US-445).** `src/pi/splash/boot_battery_test` reads the
   MAX17048 VCELL once at boot and writes a grounded health verdict to the
   `boot-battery-test` **state slot** via the F-103/F-097 honest-instrument emitter idiom
