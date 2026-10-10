@@ -30,6 +30,8 @@
 #                              | module UpsMonitor actually uses, so the file
 #                              | passes after tests/pi/power (8 failed there);
 #                              | caplog listens on the module's real logger name.
+# 2026-10-10    | Atlas        | US-444: F-051 RETIRED -- removed the two
+#                              | slow-drain detector tests and their import.
 # ================================================================================
 ################################################################################
 
@@ -61,7 +63,6 @@ from unittest.mock import MagicMock
 import pytest
 
 # tests/conftest.py puts src/ on sys.path.
-from pi.hardware.slow_drain_detector import DrainState, SlowDrainDetector
 from pi.hardware.ups_monitor import (
     CRATE_DISABLED_RAW,
     EXT5V_EXTERNAL_THRESHOLD_V,
@@ -483,7 +484,8 @@ def test_startPolling_recoveryAfterTransient_resetsErrorCounter(
 
 
 # ================================================================================
-# Slow-drain detector wiring (F-051 / US-444)
+# Poll tick -- VCELL history (the F-051 slow-drain detector it once also fed
+# was RETIRED by US-444, CIO 2026-10-08; see test_f051_slow_drain_retired.py)
 # ================================================================================
 
 
@@ -494,63 +496,13 @@ def _leVcell(volts: float) -> int:
     return _byteSwap16(rawBigEndian)
 
 
-def test_getSlowDrainState_delegatesToInjectedDetector() -> None:
-    """
-    Given: a UpsMonitor built with an injected SlowDrainDetector that has been
-           driven to SLOW_DRAIN
-    When:  getSlowDrainState() is called
-    Then:  it returns the detector's committed state -- the accessor is a pure
-           delegate, so the battery-health verdict is single-sourced.
-    """
-    detector = SlowDrainDetector(
-        windowSeconds=60.0, debounceSeconds=30.0, minWindowFraction=0.9
-    )
-    for i in range(13):  # 0..120 s, declining 0.002 V/step
-        detector.update(10.0 * i, 4.050 - 0.002 * i)
-    assert detector.state is DrainState.SLOW_DRAIN
-
-    monitor = UpsMonitor(i2cClient=MagicMock(), slowDrainDetector=detector)
-
-    assert monitor.getSlowDrainState() is DrainState.SLOW_DRAIN
-
-
-def test_pollOnce_feedsDetector_flagsSustainedDecline() -> None:
-    """
-    Given: a UpsMonitor with an injected controllable clock + a mock I2cClient
-           returning a steadily declining VCELL
-    When:  _pollOnce() is driven once per simulated tick across a full window
-    Then:  getSlowDrainState() commits SLOW_DRAIN -- proving the poll tick feeds
-           the detector VCELL on the monitor's clock (the loop wiring), not just
-           the standalone detector.
-    """
-    clockBox = {"t": 0.0}
-    detector = SlowDrainDetector(
-        windowSeconds=60.0, debounceSeconds=30.0, minWindowFraction=0.9
-    )
-    mockClient = MagicMock()
-    monitor = UpsMonitor(
-        i2cClient=mockClient,
-        slowDrainDetector=detector,
-        monotonicClock=lambda: clockBox["t"],
-    )
-
-    for i in range(13):  # 0..120 s
-        clockBox["t"] = 10.0 * i
-        vcell = 4.050 - 0.002 * i
-        # readWord is called for VCELL (0x02) then SOC (0x04) each tick.
-        mockClient.readWord.side_effect = [_leVcell(vcell), 0xA256]
-        monitor._pollOnce()
-
-    assert monitor.getSlowDrainState() is DrainState.SLOW_DRAIN
-
-
 def test_pollOnce_socReadFailure_stillFeedsVcell() -> None:
     """
     Given: SOC reads fail but VCELL reads succeed
     When:  _pollOnce() runs
-    Then:  the tick is not dropped -- history + detector still get the VCELL
-           sample (SOC failure is non-fatal), so a flaky SOC register does not
-           blind the slow-drain detector.
+    Then:  the tick is not dropped -- the VCELL history still gets the sample
+           (SOC failure is non-fatal), so a flaky SOC register does not blind
+           the VCELL consumers.
     """
     clockBox = {"t": 0.0}
     monitor = UpsMonitor(
