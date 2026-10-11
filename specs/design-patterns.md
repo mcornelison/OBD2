@@ -36,6 +36,12 @@ action is expensive or irreversible.
    poweroff — one that did bricked the Pi on 2026-05-18. The debounce *is* the dwell.
 3. **The SOC→VCELL trigger switch (US-234)** shipped `3.70 / 3.55 / 3.45 V` **with 0.05 V
    hysteresis**, for exactly this reason.
+4. **The server's stall alarm (US-795, 2026-10-11).** "3 consecutive contacts that did not
+   reduce the backlog" with no clock fired at a departure: on a fading link three per-table
+   POSTs read `57 → 71 → 113` **inside 8 s**, and the false alarm stood for the whole drive.
+   The run must now also **span 120 s** (two Pi IDLE heartbeats) — `src/server/api/currency.py`
+   `DEFAULT_STALL_DWELL_SECONDS`. ⚠️ **The window that feeds a dwell must be able to see it:**
+   the reader's 20-row window spanned ~8 s at ACTIVE density, so it was raised to 500.
 
 **Anti-pattern prevented.** A transient reading triggering an irreversible action — and its
 mirror, a threshold that flaps a state back and forth at the boundary.
