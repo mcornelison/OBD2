@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.77",
-  "theme": "US-684 drain row first; US-685 SOC as read",
-  "description": "US-684: a power loss writes its battery_health_log drain row FIRST and reads the fuel gauge after, off the trigger thread, so a slow I2C read can no longer lose the row before power-watch powers off. US-685: drain rows store SOC exactly as the chip reports it (fraction kept, no clamp at 100, 0xFFFF as NULL); the display keeps whole numbers. Pi only; no schema change."
+  "version": "V0.29.78",
+  "theme": "US-418 idle sync + prune; US-444 retire F-051",
+  "description": "US-418: a parked Pi drops the sync loop back to 60 s after 12 consecutive empty pushes (it stayed at 5 s for its whole uptime), and the nightly server batch first prunes sync_history rows past 90 days, logging one line every run. US-444: F-051 retired; the slow-drain detector is deleted. No schema change."
 }
