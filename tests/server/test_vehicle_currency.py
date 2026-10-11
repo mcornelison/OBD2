@@ -373,6 +373,15 @@ class TestTheRuledSentence:
         )
 
     def test_theStallAlarmIsStated(self) -> None:
+        """The alarm reaches the sentence.
+
+        US-795 (reopened 2026-10-11): the wording moved to the PAST tense and
+        states the run's span. It read "backlog has not decreased across 3
+        consecutive contacts ... the car is reachable and the queue is not
+        draining" -- a present-tense claim this module bans -- and it stood
+        for a whole drive after a false alarm. Intent unchanged: a flat run
+        (here spanning exactly the 120 s dwell) is stated as an ALARM.
+        """
         contacts = [
             _contact(_NOW - timedelta(minutes=2), 400),
             _contact(_NOW - timedelta(minutes=1), 400),
@@ -381,7 +390,7 @@ class TestTheRuledSentence:
         rendered = renderCurrency(assessVehicleCurrency(contacts), now=_NOW)
 
         assert rendered.startswith("last contact 2026-09-23T19:35:30Z")
-        assert " | ALARM: backlog has not decreased across 3 consecutive contacts" in rendered
+        assert " | ALARM: backlog did not decrease across 3 consecutive contacts over 2 min" in rendered
 
     def test_theAgeIsReadable_atEveryScale(self) -> None:
         answer = assessVehicleCurrency([_contact(_NOW, 0)])

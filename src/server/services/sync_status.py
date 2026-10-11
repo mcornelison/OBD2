@@ -5,6 +5,8 @@
 #                      one currency assessor. Read-only.
 # Author: Atlas (Architect) -- US-795(a), CIO-directed build
 # Creation Date: 2026-10-06
+# 2026-10-11 Atlas (US-795 reopened): CONTACT_HISTORY_LIMIT 20 -> 500 so the
+#            window spans the stall dwell at ACTIVE density.
 ################################################################################
 """What the server knows about each car's sync queue (US-795(a)).
 
@@ -46,9 +48,13 @@ __all__ = [
 ]
 
 #: Completed contacts read per device: the newest decides the answer and the
-#: stall alarm needs a short run before it. Generous, so contacts that carried
-#: no residual cannot crowd the measured ones out of the window.
-CONTACT_HISTORY_LIMIT: int = 20
+#: stall alarm needs the run before it. US-795 (2026-10-11): the run must SPAN
+#: ``DEFAULT_STALL_DWELL_SECONDS`` (120 s), and a contact is one per-table POST
+#: -- up to ~15 per 5 s ACTIVE cycle, ~3 a second -- so 120 s can be ~360 rows.
+#: The old 20 saw ~8 s at that density and could never have satisfied the
+#: dwell. 500 covers it with margin; the read is a full scan + filesort either
+#: way (sync_history has only its PRIMARY index), so the LIMIT costs nothing.
+CONTACT_HISTORY_LIMIT: int = 500
 
 _ISO_FORMAT: str = '%Y-%m-%dT%H:%M:%SZ'
 _COMPLETED: str = 'completed'

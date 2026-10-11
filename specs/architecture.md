@@ -3054,9 +3054,12 @@ makes** carries it — the delta push, the snapshot push and the drive-counter p
 ### 10.6.9 The server states what it knows, and nothing it cannot (US-795-b reader, US-795(a) surfaces) [Atlas Rule 10]
 
 `src/server/api/currency.py` is the **only** reader: three states (`current` / `holding` /
-`unknown`), each stamped with the contact it describes, plus one alarm — a backlog that has not
-decreased across 3 consecutive contacts (the car is talking and the queue is not draining). **Age
-alone is never a fault.** `src/server/services/sync_status.py` turns `sync_history` rows into its
+`unknown`), each stamped with the contact it describes, plus one alarm — a backlog that did not
+decrease across ≥ 3 consecutive contacts **spanning ≥ 120 s** (Threshold + Dwell,
+`specs/design-patterns.md` §1; US-795 reopened 2026-10-11 after a fading link at a departure
+raised it in 8 s). Leading zero-backlog contacts do not start the clock; the text is past tense.
+A contact is one per-table POST, so the reader reads 500 rows to see the dwell at ACTIVE density.
+**Age alone is never a fault.** `src/server/services/sync_status.py` turns `sync_history` rows into its
 input; **the CLI (`python -m src.server.cli.sync_status`) and `GET /api/v1/sync/status` both call
 it**, so there is one judgement and one sentence. The sentence (CIO ruling 2026-10-06):
 

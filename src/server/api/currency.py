@@ -17,6 +17,9 @@
 # 2026-10-06    | Atlas (US-795a)  | CIO-ruled sentence: last contact + age +
 #               |                  | N queued (exact|at least) + drive/sensor
 #               |                  | split + alarm. States/stall unchanged.
+# 2026-10-11    | Atlas (US-795)   | Stall = Threshold + Dwell: the run must
+#               |                  | also span DEFAULT_STALL_DWELL_SECONDS;
+#               |                  | leading zeros excluded; past tense.
 # ================================================================================
 ################################################################################
 """Vehicle currency, answered honestly.
@@ -42,7 +45,9 @@ correct and it is the ordinary weekend state.  Alarming on it would train everyo
 something.
 
 🔴 **The one legitimate alarm is a car that IS talking and still not
-draining** -- a residual flat or rising across a run of consecutive contacts.
+draining** -- a residual flat or rising across a run of consecutive contacts
+that also SPANS a minimum time (Threshold + Dwell, US-795 2026-10-11: a link
+fading as the car drives away raises the count in seconds; a stall persists).
 Age alone is never that, and the two are distinguishable precisely because a
 stalled drain requires contacts to have happened.
 
@@ -63,6 +68,7 @@ from enum import Enum
 __all__ = [
     'CURRENCY_MODULE_PATH',
     'DEFAULT_STALLED_RUN_LENGTH',
+    'DEFAULT_STALL_DWELL_SECONDS',
     'ContactRecord',
     'CurrencyAnswer',
     'CurrencyState',
@@ -83,6 +89,18 @@ CURRENCY_MODULE_PATH: str = __file__
 #: that distinguishes a stalled drain from a busy one.  A parameter rather
 #: than a literal at the call site, per the Developer Rules.
 DEFAULT_STALLED_RUN_LENGTH: int = 3
+
+#: US-795 (reopened 2026-10-11): how long that run must SPAN before it is a
+#: stall -- Threshold + Dwell (specs/design-patterns.md section 1).  A contact
+#: is one per-table POST, so a 5 s ACTIVE cycle writes several in a second and
+#: a link fading as the car leaves home produced 57 -> 71 -> 113 inside 8 s
+#: (2026-10-11 16:03:59Z), which the count alone called a stall.  A real stall
+#: persists while the car stays in contact.  TWO IDLE heartbeats: the Pi's
+#: ``pi.sync.cadenceIdleSeconds`` (unset in config.json, so
+#: ``DEFAULT_IDLE_CADENCE_SECONDS`` = 60 s in
+#: src/pi/sync/sync_cadence_controller.py) x 2 = 120 s.  The server cannot import
+#: Pi code at runtime; tests/server/test_us795_stall_dwell.py pins the two.
+DEFAULT_STALL_DWELL_SECONDS: float = 120.0
 
 _ISO_FORMAT: str = '%Y-%m-%dT%H:%M:%SZ'
 
@@ -149,6 +167,7 @@ class CurrencyAnswer:
 def assessVehicleCurrency(
     contacts: list[ContactRecord],
     stalledRunLength: int = DEFAULT_STALLED_RUN_LENGTH,
+    stallDwellSeconds: float = DEFAULT_STALL_DWELL_SECONDS,
 ) -> CurrencyAnswer:
     """Answer what was true at the car's last contact.
 
@@ -157,6 +176,7 @@ def assessVehicleCurrency(
             is the most recent.
         stalledRunLength: How many consecutive contacts must fail to reduce a
             NON-ZERO backlog before it is reported as a fault.
+        stallDwellSeconds: How long that run must span (US-795, 2026-10-11).
 
     Returns:
         The state, its timestamp, and a fault only when the backlog is
@@ -169,7 +189,7 @@ def assessVehicleCurrency(
         return CurrencyAnswer(state=CurrencyState.UNKNOWN, asOf=None)
 
     latest = contacts[-1]
-    fault = _stalledDrainFault(contacts, stalledRunLength)
+    fault = _stalledDrainFault(contacts, stalledRunLength, stallDwellSeconds)
 
     if latest.residualRows is None:
         # A contact happened, so 'since' is real -- but nothing was learned
@@ -200,8 +220,12 @@ def assessVehicleCurrency(
     )
 
 
+#: A run longer than this states its first count and its last two only.
+_CHAIN_SHOWN_IN_FULL: int = 5
+
+
 def _stalledDrainFault(
-    contacts: list[ContactRecord], runLength: int
+    contacts: list[ContactRecord], runLength: int, dwellSeconds: float,
 ) -> str | None:
     """Report a backlog that is not draining, and nothing else.
 
@@ -209,33 +233,48 @@ def _stalledDrainFault(
     distinguishable from staleness: an old car that has said nothing since
     cannot be shown to have stalled, only to have gone quiet.
 
-    A backlog pinned at ZERO is excluded. It "fails to decrease" arithmetically
-    and is the healthiest state there is; reading the rule literally without
-    that carve-out would alarm on a perfectly working car at every contact.
+    US-795 (reopened 2026-10-11) -- Threshold + Dwell. The run is the TRAILING
+    stretch of contacts, ending at the newest, in which the backlog never
+    decreased; it is a stall only when it is at least ``runLength`` contacts
+    long AND spans at least ``dwellSeconds``. A contact is one per-table POST,
+    so the count alone is met inside one second; the 2026-10-11 departure
+    (57 -> 71 -> 113 in 8 s on a fading link) and that day's at-home key-off
+    (3 -> 5 -> 7 in one second, the shutdown's own rows) both alarmed under it.
+
+    A backlog pinned at ZERO is excluded, and so are zeros LEADING the run: a
+    car that owed nothing is the healthiest state there is, so the clock starts
+    at the first contact that held rows -- otherwise yesterday's caught-up
+    contact would make this morning's first few rows look like a day-long stall.
 
     Args:
         contacts: Sessions in ascending time order.
         runLength: How many consecutive contacts must fail to reduce it.
+        dwellSeconds: How long, first to last, that run must span.
 
     Returns:
-        A description of the stall, or None.
+        A description of the stall, in the past tense, or None.
     """
-    measured = [c for c in contacts if c.residualRows is not None][-runLength:]
-    if len(measured) < runLength:
+    measured = [c for c in contacts if c.residualRows is not None]
+    start = len(measured) - 1
+    while start > 0 and measured[start - 1].residualRows <= measured[start].residualRows:
+        start -= 1
+    run = measured[start:]
+    while run and run[0].residualRows == 0:
+        run = run[1:]
+    if len(run) < runLength:
         return None
 
-    counts = [c.residualRows for c in measured]
-    if all(count == 0 for count in counts):
-        return None
-    # strict=False is deliberate: this is a PAIRWISE walk, so the second
-    # sequence is shorter by exactly one and that is the intended shape.
-    if any(later < earlier for earlier, later in zip(counts, counts[1:], strict=False)):
+    spanSeconds = (run[-1].contactedAt - run[0].contactedAt).total_seconds()
+    if spanSeconds < dwellSeconds:
         return None
 
+    counts = [str(c.residualRows) for c in run]
+    if len(counts) > _CHAIN_SHOWN_IN_FULL:
+        counts = [counts[0], '...', *counts[-2:]]
     return (
-        f'backlog has not decreased across {runLength} consecutive contacts '
-        f'({" -> ".join(str(c) for c in counts)}): the car is reachable and '
-        'the queue is not draining'
+        f'backlog did not decrease across {len(run)} consecutive contacts '
+        f'over {formatAge(spanSeconds)} ({" -> ".join(counts)}): the car was in '
+        'contact and its queue was not draining'
     )
 
 
