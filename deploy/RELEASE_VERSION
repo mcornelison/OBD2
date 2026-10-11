@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.78",
-  "theme": "US-418 idle sync + prune; US-444 retire F-051",
-  "description": "US-418: a parked Pi drops the sync loop back to 60 s after 12 consecutive empty pushes (it stayed at 5 s for its whole uptime), and the nightly server batch first prunes sync_history rows past 90 days, logging one line every run. US-444: F-051 retired; the slow-drain detector is deleted. No schema change."
+  "version": "V0.29.79",
+  "theme": "US-795 stall alarm: threshold + dwell",
+  "description": "US-795: the server's sync-status stall alarm now needs a non-decreasing backlog across contacts spanning at least 120 s (two idle heartbeats), not three per-table POSTs a few seconds apart, so a car driving out of WiFi range no longer raises a false alarm. The alarm text is past tense. Server tier only; no Pi, schema or config change."
 }
