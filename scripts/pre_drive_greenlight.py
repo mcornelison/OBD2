@@ -19,6 +19,7 @@
 # 2026-07-20    | Rex (US-479) | Initial -- pre-drive green-light CLI over
 #               |              | pi.obdii.pre_drive_gate.
 # 2026-10-11    | Rex (US-487-a) | Bench config built through ConfigValidator.
+# 2026-10-12    | Rex (US-487-a) | Bench identity keys read from config.json (B-044).
 # ================================================================================
 ################################################################################
 
@@ -131,17 +132,26 @@ def _benchConfig() -> dict:
     The hand-built dict lacked ``pi.time.localZone`` and every write refused;
     mirroring that one key would leave the next missing default to fail the
     same way.
+
+    The three required top-level keys are read from the repo's own config.json
+    and resolved there (deviceId honours ``${DEVICE_ID:...}``), so the bench
+    never restates the device identity as a literal (B-044).
     """
+    import json
+
+    from common.config.secrets_loader import resolveSecrets
     from common.config.validator import ConfigValidator
     from pi.obdii.pre_drive_gate import CORE_PIDS
 
+    with open(PROJECT_ROOT / "config.json", encoding="utf-8") as f:
+        repoConfig = json.load(f)
+    identity = resolveSecrets(
+        {key: repoConfig[key] for key in ("protocolVersion", "schemaVersion", "deviceId")}
+    )
+
     return ConfigValidator().validate(
         {
-            # The three required top-level keys, as config.json declares them
-            # (deviceId is its ${DEVICE_ID:...} fallback).
-            "protocolVersion": "1.0.0",
-            "schemaVersion": "1.0.0",
-            "deviceId": "chi-eclipse-01",
+            **identity,
             "pi": {
                 "bluetooth": {},
                 "realtimeData": {

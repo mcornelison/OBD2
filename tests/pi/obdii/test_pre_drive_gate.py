@@ -44,6 +44,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 from src.pi.obdii.obd_connection import ObdConnection
 from src.pi.obdii.pre_drive_gate import (
     CORE_PIDS,
@@ -374,6 +376,28 @@ def test_scriptBenchConfig_carriesValidatorDefaultLocalZone() -> None:
     config = _loadGreenlightScript()._benchConfig()
 
     assert config["pi"]["time"]["localZone"] == DEFAULTS["pi.time.localZone"]
+
+
+def test_scriptBenchConfig_deviceId_comesFromConfigJson(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given config.json declares deviceId as a ${DEVICE_ID:...} placeholder,
+    When the script builds its bench config, Then deviceId is config.json's
+    resolved value (env override, else its fallback) -- never a literal (B-044)."""
+    import json
+
+    from src.common.config.secrets_loader import resolveSecrets
+
+    rawDeviceId = json.loads(
+        (_GREENLIGHT_SCRIPT.parents[1] / "config.json").read_text(encoding="utf-8")
+    )["deviceId"]
+    script = _loadGreenlightScript()
+
+    monkeypatch.delenv("DEVICE_ID", raising=False)
+    assert script._benchConfig()["deviceId"] == resolveSecrets(rawDeviceId)
+
+    monkeypatch.setenv("DEVICE_ID", "bench-override-device")
+    assert script._benchConfig()["deviceId"] == "bench-override-device"
 
 
 def test_runConnectEdgeCapture_noLocalZone_gateFailsNamingRefusedWrites(
