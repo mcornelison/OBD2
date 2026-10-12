@@ -192,6 +192,12 @@
 #                           line ('ARMED (late: ...'); NOT-ARMED splits into
 #                           readable-absent (waits for car power) and unreadable
 #                           (today's wiring-fault text). Live-feed premise removed.
+# 2026-10-11    | US-748-c  | Sprint 97. runDisarmedHold polls a READABLE pin every
+#                           smoothingPollSec and, after an unbroken smoothingSec
+#                           of present reads (controller.heldFor), emits the late
+#                           line once and returns None; main() falls through to
+#                           the one armed block, so serviceStartMono is the arm
+#                           instant. An unreadable pin keeps the forever hold.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -251,7 +257,10 @@ from src.pi.power.power_source_pubsub import (  # noqa: E402
     publishPowerSource,
 )
 from src.pi.power.power_watch.contract import OutcomeKind  # noqa: E402
-from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
+from src.pi.power.power_watch.controller import (  # noqa: E402
+    ShutdownSequencer,
+    heldFor,
+)
 from src.pi.power.power_watch.load_shed import (  # noqa: E402
     DEFAULT_SHED_UNITS,
     LoadShedder,
@@ -487,9 +496,16 @@ def emitArmDecision(
 def runDisarmedHold(
     *,
     message: str,
-    waitFn,
+    waitFn: Callable[[float], bool],
     restateSec: float = DISARMED_RESTATE_SEC,
-) -> int:
+    pldAvailable: bool = False,
+    isPresentFn: Callable[[], bool] | None = None,
+    pldGpioPin: int | None = None,
+    dwellSec: float = 0.0,
+    pollSec: float = 0.0,
+    monotonicFn: Callable[[], float] = time.monotonic,
+    startedMono: float | None = None,
+) -> int | None:
     """Hold the process alive DISARMED, re-stating the cause on an interval.
 
     Replaces a bare ``threading.Event().wait()``, which announced the refusal
@@ -497,21 +513,69 @@ def runDisarmedHold(
     exactly like a healthy armed one. Declining to arm is not a claim that the
     shutdown path is well, so the instrument must keep saying so.
 
+    US-748-c: a READABLE pin that read power absent is a Pi woken on its pack
+    before car power, not a fault. That hold polls the pin every ``pollSec``
+    and, once it has read present for an unbroken ``dwellSec`` (the shared
+    heldFor dwell -- no loop of its own), emits the late ARM DECISION line once
+    and RETURNS None so main() falls through to its one armed block. The dwell
+    is the loss window's length because arming turns every later absence into
+    a poweroff (architecture 10.6). An UNREADABLE pin keeps the forever hold:
+    PldSensor reports an unreadable line as present, which must never arm.
+
     Args:
         message: The not-armed decision line, re-stated verbatim (never
             recomposed -- one formatting site).
         waitFn: One-arg callable ``(timeoutSec) -> bool``. Production passes
             ``threading.Event().wait``, which never returns True, so the hold
-            is permanent. Tests pass a bounded stub.
+            is permanent unless the pin arms. Tests pass a bounded stub.
         restateSec: Seconds between re-statements.
+        pldAvailable: The PLD line was readable at the arm decision. False
+            keeps the forever hold whatever isPresentFn says.
+        isPresentFn: Power-present predicate polled while disarmed. None keeps
+            the forever hold.
+        pldGpioPin: The PLD pin, for the late line.
+        dwellSec: Unbroken present time before a late arm
+            (pi.powerWatch.smoothingSec).
+        pollSec: Pin poll interval (pi.powerWatch.smoothingPollSec).
+        monotonicFn: DI monotonic clock.
+        startedMono: Service start on monotonicFn's clock, for the late line's
+            "after service start"; defaults to the hold's entry.
 
     Returns:
-        0 -- reached only if waitFn returns True, which no production caller
-        does.
+        None on a late arm (fall through to the armed block); 0 if waitFn
+        returns True, which no production caller does.
     """
-    while not waitFn(restateSec):
-        logger.error("%s [STILL NOT-ARMED]", message)
-    return 0
+    if not pldAvailable or isPresentFn is None or pldGpioPin is None:
+        while not waitFn(restateSec):
+            logger.error("%s [STILL NOT-ARMED]", message)
+        return 0
+
+    if startedMono is None:
+        startedMono = monotonicFn()
+    nextRestate = monotonicFn() + restateSec
+    stopped = False
+
+    def _pollWait(timeoutSec: float) -> None:
+        # The US-566 restate keeps its own cadence; the pin poll is faster.
+        nonlocal stopped, nextRestate
+        stopped = bool(waitFn(timeoutSec))
+        if not stopped and monotonicFn() >= nextRestate:
+            logger.error("%s [STILL NOT-ARMED]", message)
+            nextRestate = monotonicFn() + restateSec
+
+    if not heldFor(
+        isPresentFn, dwellSec, pollSec, _pollWait, monotonicFn, abortFn=lambda: stopped
+    ):
+        return 0
+    emitArmDecision(
+        armed=True,
+        pldGpioPin=pldGpioPin,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=dwellSec,
+        lateArmAfterStartSec=monotonicFn() - startedMono,
+    )
+    return None
 
 
 def _parseArgs(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1420,6 +1484,9 @@ def _runPldWatchLoop(
 
 def main(argv: list[str] | None = None) -> int:
     """Build the real ShutdownSequencer and block on the GPIO6 PLD watch loop."""
+    # US-748-c: the late arm line reports its offset from HERE. serviceStartMono
+    # (below) is a different instant -- the arm -- and anchors boot grace.
+    processStartMono = time.monotonic()
     args = _parseArgs(argv)
     config = loadConfigWithSecrets(args.config, args.env_file)
     config = ConfigValidator().validate(config)
@@ -1783,8 +1850,23 @@ def main(argv: list[str] | None = None) -> int:
         lastTransitionUtc=readWitness(),
     )
     if not armed:
-        # Stay alive, disarmed -- and keep saying so.
-        return runDisarmedHold(message=decisionLine, waitFn=threading.Event().wait)
+        # Stay alive, disarmed -- and keep saying so. US-748-c: a readable pin
+        # is polled, and an unbroken smoothingSec of present reads returns here
+        # (None) to fall through to the ONE armed block below, so
+        # serviceStartMono is the arm instant. The predicate re-checks
+        # readability because an unreadable PLD reports present.
+        heldExit = runDisarmedHold(
+            message=decisionLine,
+            waitFn=threading.Event().wait,
+            pldAvailable=provider.isAvailable,
+            isPresentFn=lambda: provider.isAvailable and provider.isExternalPowerPresent(),
+            pldGpioPin=pldGpioPin,
+            dwellSec=smoothingSec,
+            pollSec=smoothingPollSec,
+            startedMono=processStartMono,
+        )
+        if heldExit is not None:
+            return heldExit
 
     monitor.startPolling()  # vcell-backstop telemetry only; NOT the trigger
     logger.info(
