@@ -913,6 +913,27 @@ connection management):
   `(last_synced_id, last_synced_at, last_batch_id, status)` or the default
   `(0, None, None, 'pending')` if the row has not been created yet.
 
+##### US-776-i: "delivered" means stored, per the server's post-commit count
+
+For the Pi, **"delivered" means "stored, per the server's post-commit
+count"** — never "the server answered 2xx". Every `POST /api/v1/sync` reply
+carries `stored`: per table, `storedCount` and `maxStoredSourceId`, read back
+by the server AFTER the batch commits over the batch's own `source_id`s for
+the pushing device (US-776-h, `readStoredAck` in `src/server/api/sync.py`).
+
+`SyncClient.pushDelta` advances a table's `last_synced_id` only when that
+table's `storedCount == len(rows sent)` **and** `maxStoredSourceId ==
+max(source_id sent)`. A 2xx with no ack, a lower `storedCount` or a different
+`maxStoredSourceId` is `PushStatus.FAILED`: the mark stays where it was (the
+US-149 invariant), `status` reads `failed`, and one WARNING names the
+mismatch — `stored-count mismatch | table=… | sent=… stored=… | maxSent=…
+maxStored=…` (`missing` when the ack is absent). There is no fall-back to a
+bare 2xx, so the server must be on the US-776-h build before the Pi (deploy
+order). A mismatch is not a server rejection and does not count toward the
+US-391 quarantine. `tests/integration/test_pi_to_server_stored_ack_e2e.py`
+pushes every `DELTA_SYNC_TABLES` member through the real server app and
+asserts each mark lands on its stored maximum.
+
 ##### US-226: Sync trigger semantics + recovery playbook
 
 The transport configuration (`pi.companionService.*`) defines HOW sync

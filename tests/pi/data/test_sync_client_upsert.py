@@ -14,6 +14,8 @@
 # 2026-04-19    | Rex          | US-194 -- verify snapshot tables (profiles,
 #               |              | vehicle_info) are excluded cleanly from
 #               |              | pushDelta / pushAllDeltas rather than crashing
+# 2026-10-11    | Rex (US-776-i)| The recording opener now answers with the
+#               |              | stored ack: a bare 2xx no longer advances.
 # ================================================================================
 ################################################################################
 
@@ -53,6 +55,7 @@ import pytest
 
 from src.pi.data import sync_log
 from src.pi.sync import PushStatus, SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckReplyFor
 
 # --------------------------------------------------------------------------- #
 # Shared test scaffolding
@@ -81,8 +84,10 @@ def _baseConfig(dbPath: str) -> dict[str, Any]:
 class _RecordingOpener:
     """Fake ``urllib.request.urlopen`` that records every POST.
 
-    Returns an HTTP 200 empty body.  Tests use ``self.calls`` to assert
-    which tables actually hit the wire (vs were skipped before network).
+    Returns an HTTP 200 whose body is the stored ack for every row sent
+    (US-776-i: a bare 2xx no longer counts as delivered).  Tests use
+    ``self.calls`` to assert which tables actually hit the wire (vs were
+    skipped before network).
     """
 
     def __init__(self) -> None:
@@ -92,7 +97,7 @@ class _RecordingOpener:
         body = req.data.decode("utf-8") if req.data else ""
         payload = json.loads(body) if body else {}
         self.calls.append({"url": req.full_url, "payload": payload})
-        return _fakeResponse(status=200, body=b"{}")
+        return _fakeResponse(status=200, body=storedAckReplyFor(req.data))
 
 
 class _FakeHttpResponse:

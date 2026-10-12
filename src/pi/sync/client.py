@@ -76,6 +76,11 @@
 #                               success.  pushAllDeltas now also sweeps the
 #                               registered snapshot tables (empty until US-417
 #                               registers startup_log, so no behaviour change yet).
+# 2026-10-11    | Rex (US-776-i)| pushDelta advances a table's mark only on the
+#                               server's post-commit stored ack (US-776-h):
+#                               storedCount == rows sent AND maxStoredSourceId
+#                               == max sent.  A 2xx without a matching ack is
+#                               FAILED with the mark held; no bare-2xx fallback.
 # ================================================================================
 ################################################################################
 
@@ -264,6 +269,55 @@ def _makeBatchId(deviceId: str) -> str:
 def _isRetryableHttpStatus(code: int) -> bool:
     """Return True if a server-reported status code warrants another attempt."""
     return code == 429 or code >= 500
+
+
+def _parseReplyBody(rawBody: Any) -> dict[str, Any] | None:
+    """Return a 2xx reply body as a JSON object, or ``None`` if it is not one."""
+    try:
+        text = rawBody.decode("utf-8") if isinstance(rawBody, bytes) else rawBody
+        parsed = json.loads(text)
+    except (TypeError, ValueError):  # UnicodeDecodeError is a ValueError
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _storedAckMismatch(
+    replyBody: dict[str, Any] | None,
+    tableName: str,
+    *,
+    sentCount: int,
+    maxSent: int,
+) -> str | None:
+    """Check the server's stored ack for one pushed table (US-776-i).
+
+    Delivered means stored, per the server's post-commit count (US-776-h):
+    ``storedCount`` equals the rows sent AND ``maxStoredSourceId`` equals the
+    largest source id sent.  A missing ack is a mismatch -- there is no
+    fall-back to a bare 2xx.
+
+    Args:
+        replyBody: The parsed 2xx reply, or ``None`` if it was not a JSON object.
+        tableName: The table that was pushed.
+        sentCount: Rows sent for ``tableName``.
+        maxSent: Largest source id (Pi PK) sent for ``tableName``.
+
+    Returns:
+        ``None`` when the ack matches; otherwise the mismatch line to log
+        (table, sent, stored, maxSent, maxStored).
+    """
+    stored = replyBody.get("stored") if replyBody is not None else None
+    ack = stored.get(tableName) if isinstance(stored, dict) else None
+    storedCount: Any = "missing"
+    maxStored: Any = "missing"
+    if isinstance(ack, dict):
+        storedCount = ack.get("storedCount", "missing")
+        maxStored = ack.get("maxStoredSourceId", "missing")
+        if storedCount == sentCount and maxStored == maxSent:
+            return None
+    return (
+        f"stored-count mismatch | table={tableName} | sent={sentCount} "
+        f"stored={storedCount} | maxSent={maxSent} maxStored={maxStored}"
+    )
 
 
 def _renamePkToId(
@@ -706,7 +760,7 @@ class SyncClient:
             )
             batchId = _makeBatchId(self._deviceId)
             try:
-                self._postBatchWithRetry(
+                replyBody = self._postBatchWithRetry(
                     tableName, batchId, payloadRows, lastId, residual=residual,
                 )
             except _PushFailure as failure:
@@ -751,6 +805,27 @@ class SyncClient:
             # New high-water mark comes from the source rows (pre-rename),
             # which still carry the authoritative PK under its real name.
             newHighWater = max(int(row[pkColumn]) for row in rows)
+            # US-776-i: a 2xx says the server ANSWERED, not that it stored.
+            # Advance only on the server's post-commit ack (US-776-h) for this
+            # table; a short count, a different maximum or no ack at all holds
+            # the mark (US-149) so the same rows are re-sent.  Not a server
+            # rejection, so the US-391 quarantine counter is left alone.
+            mismatch = _storedAckMismatch(
+                replyBody, tableName, sentCount=len(rows), maxSent=newHighWater,
+            )
+            if mismatch is not None:
+                logger.warning(mismatch)
+                sync_log.updateHighWaterMark(
+                    conn, tableName, lastId, batchId, status="failed",
+                )
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId=batchId,
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.FAILED,
+                    reason=mismatch,
+                )
             # US-315: also advance the modified_at cursor for opt-in tables
             # so the next sync doesn't re-push the same row.  The advance
             # uses MAX(_sync_modified_at) of pushed rows; rows with NULL
@@ -1213,8 +1288,13 @@ class SyncClient:
         lastSyncedId: int,
         *,
         residual: dict[str, Any] | None = None,
-    ) -> None:
-        """POST the batch; retry on transient failures; raise on final fail."""
+    ) -> dict[str, Any] | None:
+        """POST the batch; retry on transient failures; raise on final fail.
+
+        Returns:
+            The 2xx reply parsed as a JSON object, or ``None`` when the body is
+            not one.  It carries the server's stored ack (US-776-i).
+        """
         payload: dict[str, Any] = {
             "deviceId": self._deviceId,
             "batchId": batchId,
@@ -1248,11 +1328,10 @@ class SyncClient:
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
             try:
                 with self._httpOpener(req, timeout=timeout) as response:
-                    # Reading the body drains the socket cleanly; we don't
-                    # care about the parsed content because 2xx is the
-                    # success signal by itself.
-                    _ = response.read()
-                return
+                    # US-776-i: the body is the server's stored ack; the
+                    # caller decides delivery from it, never from the 2xx.
+                    rawBody = response.read()
+                return _parseReplyBody(rawBody)
             except urllib.error.HTTPError as exc:
                 code = getattr(exc, "code", 0) or 0
                 lastReason = f"HTTP {code} {exc.reason}"
