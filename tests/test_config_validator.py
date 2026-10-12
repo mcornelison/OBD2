@@ -908,6 +908,70 @@ class TestHomeNetworkConfig:
 
         assert f'pi.homeNetwork.{key}' in excInfo.value.missingFields
 
+    def test_homeNetwork_sweepTimeout_defaultsBelowSmoothing(self):
+        """US-776-j1: a config with no powerWatch section validates with the
+        sweep bound 6 s and smoothingSec 7 -> accepted (6 < 7)."""
+        validator = ConfigValidator(requiredKeys=[])
+
+        result = validator.validate(self._minimalTierConfig())
+
+        assert result['pi']['homeNetwork']['sweepTimeoutSec'] == 6
+        assert result['pi']['powerWatch']['smoothingSec'] == 7
+
+    def test_homeNetwork_sweepTimeoutNotBelowSmoothing_raises(self):
+        """US-776-j1: the sweep must fit inside the loss window, so a sweep
+        bound equal to smoothingSec (7 vs 7) is refused."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'sweepTimeoutSec': 7}
+        config['pi']['powerWatch'] = {'smoothingSec': 7}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.sweepTimeoutSec' in excInfo.value.missingFields
+        assert 'smoothingSec' in str(excInfo.value)
+
+    def test_homeNetwork_sweepTimeoutAboveSmoothing_raises(self):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'sweepTimeoutSec': 5}
+        config['pi']['powerWatch'] = {'smoothingSec': 4}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.sweepTimeoutSec' in excInfo.value.missingFields
+
+    @pytest.mark.parametrize('badValue', [0, -1, -0.5, True, '6', [6]])
+    def test_homeNetwork_badSweepTimeout_raises(self, badValue):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'sweepTimeoutSec': badValue}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.sweepTimeoutSec' in excInfo.value.missingFields
+
+
+def test_configJson_sweepTimeout_equalsTheValidatorDefault_andValidates():
+    """US-776-j1: config.json carries the sweep bound as a key, equal to the
+    validator default, and the live file's pair is accepted (6 < 7)."""
+    import json
+
+    from common.config.validator import DEFAULTS
+
+    live = json.loads(_CONFIG_JSON.read_text(encoding='utf-8'))
+    assert (
+        live['pi']['homeNetwork']['sweepTimeoutSec']
+        == DEFAULTS['pi.homeNetwork.sweepTimeoutSec']
+    )
+    assert live['pi']['homeNetwork']['sweepTimeoutSec'] < live['pi']['powerWatch']['smoothingSec']
+
+
+_CONFIG_JSON = Path(__file__).parent.parent / 'config.json'
+
 
 def _baseCfg():
     return {"protocolVersion": "1", "schemaVersion": "1", "deviceId": "d",
@@ -996,7 +1060,7 @@ def test_powerWatch_rejectsVcellFloorOutOfRange():
 
 
 def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
-    """SS-T2/T5: canonical smoothingSec=5 / smoothingPollSec=1 are the live
+    """SS-T2/T5: canonical smoothingSec / smoothingPollSec=1 are the live
     config (smoothingSec is the in-V1 safety property, spec sec 3 -- a
     power-LOST reading must hold continuously this long before the shutdown
     window opens). The T2 confirm* deprecated alias DIED at SS-T5 (its
@@ -1004,9 +1068,18 @@ def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
     canonical names; the keys are GONE from DEFAULTS + validation.
     Non-positive smoothingSec is rejected like the other powerWatch time
     bounds."""
+    import json
+
+    from common.config.validator import DEFAULTS
+
     cfg = ConfigValidator().validate(_baseCfg())
     pw = cfg["pi"]["powerWatch"]
-    assert pw["smoothingSec"] == 5
+    # CIO ruling 2026-10-12 (US-776-j1, option A; Atlas ratifying): the default
+    # was 5 while config.json said 7. Pin the default to config.json's value,
+    # not to a literal, so the two copies cannot drift apart again.
+    live = json.loads(_CONFIG_JSON.read_text(encoding="utf-8"))
+    assert DEFAULTS["pi.powerWatch.smoothingSec"] == live["pi"]["powerWatch"]["smoothingSec"]
+    assert pw["smoothingSec"] == DEFAULTS["pi.powerWatch.smoothingSec"]
     assert pw["smoothingPollSec"] == 1
     # T2 alias is DEAD as of SS-T5 -- confirm* must NOT resolve anymore
     # (the rename completed; one name per fact, SSOT after the migration).

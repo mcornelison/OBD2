@@ -220,5 +220,7 @@ def test_suppressedFloorFastPath_doesNotReadVcell():
 
 def test_noPowerWatchConstantChanged():
     assert DEFAULTS["pi.powerWatch.bootGraceSec"] == 120
-    assert DEFAULTS["pi.powerWatch.smoothingSec"] == 5
+    # US-776-j1: 5 -> 7 by CIO ruling 2026-10-12 (option A, matches
+    # config.json); the one deliberate change since US-788's scope guard.
+    assert DEFAULTS["pi.powerWatch.smoothingSec"] == 7
     assert DEFAULTS["pi.powerWatch.vcellFloorVolts"] == 3.50

@@ -26,6 +26,9 @@
 # 2026-10-03    | Atlas (ARCH-065a) | Ruling 19: AT_HOME_STATES / AT_HOME_STATE_NAMES --
 #               |              | the ONE owner of "the car was at home" (monthly
 #               |              | test hold gate + boot finaliser floor stamp)
+# 2026-10-11    | Rex          | US-776-j1: sweep() -- ONE forced, bounded scan
+#               |              | (--rescan yes, pi.homeNetwork.sweepTimeoutSec)
+#               |              | -> ACTIVE_HOME / VISIBLE / NOT_VISIBLE / FAILED
 # ================================================================================
 ################################################################################
 
@@ -90,13 +93,17 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from src.common.config.validator import DEFAULT_HOME_SWEEP_TIMEOUT_SEC
+
 __all__ = [
     "AT_HOME_STATES",
     "AT_HOME_STATE_NAMES",
+    "NMCLI_SWEEP_COMMAND",
     "PROBE_MISCONFIGURED_STATUSES",
     "HomeNetworkDetector",
     "HomeNetworkState",
     "ProbeResult",
+    "SweepResult",
 ]
 
 logger = logging.getLogger(__name__)
@@ -109,6 +116,17 @@ _HOSTNAME_TIMEOUT_SECONDS = 2.0
 
 # nmcli terse mode backslash-escapes ':' and '\' inside field values.
 _NMCLI_TERSE_ESCAPE = re.compile(r"\\(.)")
+
+#: US-776-j1: the key-off sweep -- ONE call that forces a scan and lists the
+#: result.  Needs only polkit's org.freedesktop.NetworkManager.wifi.scan
+#: (US-776-j2); never connects or modifies anything.
+NMCLI_SWEEP_COMMAND: tuple[str, ...] = (
+    "nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi", "list", "--rescan", "yes",
+)
+
+# nmcli's polkit refusal text.  Matched in stdout AND stderr: a refused rescan
+# can still print the stale cached list, which must not read as an answer.
+_NOT_AUTHORIZED = "not authorized"
 
 
 # =============================================================================
@@ -139,6 +157,20 @@ AT_HOME_STATES: frozenset[HomeNetworkState] = frozenset({
 #: The same set as the durable record stores it (the enum NAME, e.g. as
 #: ``HomeStateAtLoss.stateName`` and ``startup_log.prior_boot_home_state``).
 AT_HOME_STATE_NAMES: frozenset[str] = frozenset(state.name for state in AT_HOME_STATES)
+
+
+class SweepResult(StrEnum):
+    """What one forced WiFi sweep saw of home (US-776-j1).
+
+    FAILED means the scan gave no answer (refused, non-zero exit, timed out,
+    nmcli missing) -- never folded into NOT_VISIBLE, which is a positive
+    "home is not in range" and reads as AWAY.
+    """
+
+    ACTIVE_HOME = "active_home"  # associated to the home SSID
+    VISIBLE = "visible"  # home SSID in range, not associated
+    NOT_VISIBLE = "not_visible"  # the scan worked and home is not in it
+    FAILED = "failed"  # the scan gave no answer
 
 
 # =============================================================================
@@ -314,6 +346,7 @@ class HomeNetworkDetector:
         httpOpener: Callable[..., Any] | None = None,
         apiKey: str | None = None,
         scanReader: Callable[[], list[str] | None] | None = None,
+        sweepRunner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     ) -> None:
         """Construct a detector bound to a validated Pi config.
 
@@ -341,6 +374,9 @@ class HomeNetworkDetector:
                 cached scan list, or ``None`` when it cannot be read.  Read
                 only when the SSID reader says "not associated" (US-776-e).
                 Defaults to :func:`_readVisibleSsidsViaNmcli`.
+            sweepRunner: :func:`subprocess.run`-compatible callable that runs
+                :data:`NMCLI_SWEEP_COMMAND` for :meth:`sweep` (US-776-j1).
+                Defaults to :func:`subprocess.run`.
         """
         piConfig: dict[str, Any] = config.get("pi", {}) or {}
         homeNet: dict[str, Any] = piConfig.get("homeNetwork", {}) or {}
@@ -351,6 +387,9 @@ class HomeNetworkDetector:
         self._pingTimeout: float = float(homeNet.get("pingTimeoutSeconds", 3))
         self._pingPath: str = str(homeNet.get("serverPingPath", "/api/v1/health"))
         self._baseUrl: str = str(companion.get("baseUrl", "")).rstrip("/")
+        self._sweepTimeoutSec: float = float(
+            homeNet.get("sweepTimeoutSec", DEFAULT_HOME_SWEEP_TIMEOUT_SEC)
+        )
 
         self._ssidReader: Callable[[], str | None] = ssidReader or _readSsidViaNmcli
         self._ipReader: Callable[[], list[str] | None] = ipReader or _readLocalIps
@@ -358,6 +397,9 @@ class HomeNetworkDetector:
             scanReader or _readVisibleSsidsViaNmcli
         )
         self._httpOpener: Callable[..., Any] = httpOpener or urllib.request.urlopen
+        self._sweepRunner: Callable[..., subprocess.CompletedProcess[str]] = (
+            sweepRunner or subprocess.run
+        )
         self._apiKey: str | None = apiKey
 
         self._previousState: HomeNetworkState | None = None
@@ -426,6 +468,65 @@ class HomeNetworkDetector:
         newState = self._computeState()
         self._maybeLogTransition(newState)
         return newState
+
+    def sweep(self) -> SweepResult:
+        """Force ONE WiFi scan and say what it saw of home (US-776-j1).
+
+        Runs :data:`NMCLI_SWEEP_COMMAND` once, bounded by
+        ``pi.homeNetwork.sweepTimeoutSec``, and answers from that call alone:
+        the cached readers are not consulted (the cache is what lacked home
+        after a drive).  Never raises.
+
+        Returns:
+            :attr:`SweepResult.ACTIVE_HOME` when associated to home,
+            :attr:`SweepResult.VISIBLE` when home is listed but not
+            associated, :attr:`SweepResult.NOT_VISIBLE` when the scan
+            succeeded without home, and :attr:`SweepResult.FAILED` when it
+            was refused ("not authorized"), exited non-zero, timed out, or
+            nmcli could not run.
+        """
+        try:
+            result = self._sweepRunner(
+                list(NMCLI_SWEEP_COMMAND),
+                # User-authored SSIDs: decode as UTF-8, never the locale codec
+                # (US-710 / TD-068, as _listWifiRows).
+                capture_output=True, text=True, encoding="utf-8",
+                timeout=self._sweepTimeoutSec,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "wifi sweep timed out after %.1fs -- result FAILED", self._sweepTimeoutSec,
+            )
+            return SweepResult.FAILED
+        except OSError as exc:  # FileNotFoundError included: nmcli missing
+            logger.warning("wifi sweep could not run nmcli (%s) -- result FAILED", exc)
+            return SweepResult.FAILED
+
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if _NOT_AUTHORIZED in stdout.lower() or _NOT_AUTHORIZED in stderr.lower():
+            logger.warning(
+                "wifi sweep refused (not authorized) -- result FAILED: %s",
+                stderr.strip() or stdout.strip(),
+            )
+            return SweepResult.FAILED
+        if result.returncode != 0:
+            logger.warning(
+                "wifi sweep nmcli exit %d -- result FAILED: %s",
+                result.returncode, stderr.strip(),
+            )
+            return SweepResult.FAILED
+
+        sawHome = False
+        for line in stdout.splitlines():
+            # ACTIVE is yes/no and never contains ':' (see _listWifiRows).
+            active, separator, rawSsid = line.partition(":")
+            if not separator or not self._isHomeSsid(_unescapeNmcliTerse(rawSsid)):
+                continue
+            if active == "yes":
+                return SweepResult.ACTIVE_HOME
+            sawHome = True
+        return SweepResult.VISIBLE if sawHome else SweepResult.NOT_VISIBLE
 
     # ---- internals ---------------------------------------------------------
 

@@ -625,7 +625,8 @@
       "pingTimeoutSeconds": 3,
       "serverPingPath": "/api/v1/health",
       "joinWaitSec": 120,
-      "stallSec": 60
+      "stallSec": 60,
+      "sweepTimeoutSec": 6
     },
     "location": {
       "home": {
