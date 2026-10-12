@@ -198,6 +198,12 @@
 #                           line once and returns None; main() falls through to
 #                           the one armed block, so serviceStartMono is the arm
 #                           instant. An unreadable pin keeps the forever hold.
+# 2026-10-11    | US-776-k1 | Sprint 97. HomeStateAtLoss runs the forced WiFi sweep
+#                           FIRST at every key-off: NOT_VISIBLE -> AWAY, FAILED ->
+#                           UNKNOWN, VISIBLE -> AT_HOME_JOINING from the sweep
+#                           alone; ACTIVE_HOME continues on the detector read.
+#                           stateForSync's wait is bounded by the whole
+#                           observation and reads UNKNOWN on timeout.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -244,6 +250,7 @@ from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import (  # noqa: E402
     HomeNetworkDetector,
     HomeNetworkState,
+    SweepResult,
 )
 from src.pi.power.battery_health import resolveCellEpoch  # noqa: E402
 from src.pi.power.drain_event_writer import (  # noqa: E402
@@ -847,6 +854,19 @@ def _startDaemonThread(target: Callable[[], None]) -> None:
     threading.Thread(target=target, name="pw-home-state", daemon=True).start()
 
 
+def _waitOnEvent(event: threading.Event, timeout: float | None) -> bool:
+    return event.wait(timeout)
+
+
+#: US-776-k1: the key-off states the sweep decides ALONE, with no detector read.
+#: ACTIVE_HOME is absent: associated to home, the detector read decides.
+_SWEEP_DECIDES: dict[SweepResult, HomeNetworkState] = {
+    SweepResult.NOT_VISIBLE: HomeNetworkState.AWAY,
+    SweepResult.FAILED: HomeNetworkState.UNKNOWN,
+    SweepResult.VISIBLE: HomeNetworkState.AT_HOME_JOINING,
+}
+
+
 class HomeStateAtLoss:
     """US-741: ask the home detector ONCE per power loss and persist the answer.
 
@@ -875,6 +895,19 @@ class HomeStateAtLoss:
     The sync task's first home-state read IS this loss's answer
     (``stateForSync``), so the detector is called once per loss, not twice.
     Its later reads (the US-776-e JOINING polls) go to the detector live.
+
+    US-776-k1: with ``sweep`` wired, the observation forces ONE WiFi scan
+    FIRST, because NetworkManager's cached list -- all the detector reads --
+    often lacks home after a drive (2026-10-11 13:14:47 read AWAY in the
+    driveway). AWAY comes only from a fresh scan that lacks home:
+
+    * ``NOT_VISIBLE`` -> ``AWAY`` and ``FAILED`` -> ``UNKNOWN``, from the
+      sweep alone (no detector read);
+    * ``VISIBLE`` -> ``AT_HOME_JOINING`` (home in range, not yet associated);
+    * ``ACTIVE_HOME`` -> the detector read decides (server reachable / down).
+
+    The observation starts before smoothing, and the validator keeps the
+    sweep timeout below ``smoothingSec``, so an away key-off adds no wait.
     """
 
     def __init__(
@@ -887,6 +920,9 @@ class HomeStateAtLoss:
         monotonicFn: Callable[[], float] = time.monotonic,
         wallIsoFn: Callable[[], str] = utcIsoNow,
         backlogReader: Callable[[], int | None] | None = None,
+        sweep: Callable[[], SweepResult] | None = None,
+        observationTimeoutSec: float | None = None,
+        waitFn: Callable[[threading.Event, float | None], bool] | None = None,
     ) -> None:
         """Args:
         readState: Zero-arg detector read (``HomeNetworkDetector.
@@ -903,7 +939,18 @@ class HomeStateAtLoss:
             ONLY when a record must be written for a loss whose sync never
             wrote one (the fast path, or a floor end before the first
             provisional record). ``None`` or a failed read lands NULL.
+        sweep: US-776-k1 -- ``HomeNetworkDetector.sweep``, run FIRST on every
+            loss; None keeps the detector-only observation.
+        observationTimeoutSec: US-776-k1 -- how long ``stateForSync`` waits
+            for this loss's observation (``HomeNetworkDetector.
+            observationBoundSec``: the sweep plus the detector's own bounded
+            calls); on expiry it answers UNKNOWN, never AWAY. None waits for it.
+        waitFn: ``(event, timeout) -> set?``; ``Event.wait`` when None. Tests
+            pass a fake so a bound can expire without a real sleep.
         """
+        self._sweep = sweep
+        self._observationTimeoutSec = observationTimeoutSec
+        self._wait = waitFn if waitFn is not None else _waitOnEvent
         self._monotonic = monotonicFn
         self._backlogReader = backlogReader
         #: US-833: this loss's sync has written a record (provisional or final),
@@ -979,10 +1026,14 @@ class HomeStateAtLoss:
 
     def _observeLoss(self, loss: threading.Event) -> None:
         try:
-            state = self._readOnce()
+            state = self._observeOnce()
             with self._lock:
                 if self._loss is not loss:
                     return  # a newer loss owns the record now
+                if self._answer is not None:
+                    # US-776-k1: stateForSync's bound expired and the sync has
+                    # already acted on UNKNOWN; a late answer does not relabel it.
+                    return
                 self._answer = state
                 if not self._written:
                     self._writeHomeStateRecord(state.name, "home state at the power loss")
@@ -1004,6 +1055,32 @@ class HomeStateAtLoss:
         with self._lock:
             return self._vcellSnapshot
 
+    def _observeOnce(self) -> HomeNetworkState:
+        """This loss's one observation: the sweep first (US-776-k1), then,
+        only when it shows wlan0 associated to home, one detector call."""
+        if self._sweep is None:
+            return self._readOnce()
+        try:
+            result = self._sweep()
+        except Exception as exc:  # noqa: BLE001 -- a scan with no answer is FAILED
+            logger.warning("powerwatch: key-off wifi sweep raised (%s) -- FAILED", exc)
+            result = SweepResult.FAILED
+        decided = _SWEEP_DECIDES.get(result)
+        if decided is not None:
+            logger.info(
+                "powerwatch: key-off wifi sweep = %s -> home state %s",
+                result.name,
+                decided.name,
+            )
+            return decided
+        state = self._readOnce()
+        logger.info(
+            "powerwatch: key-off wifi sweep = %s -> home state %s (detector)",
+            result.name,
+            state.name,
+        )
+        return state
+
     def _readOnce(self) -> HomeNetworkState:
         """One detector call; UNKNOWN when it raises."""
         try:
@@ -1020,13 +1097,26 @@ class HomeStateAtLoss:
             self._handedToSync = True
         if not first:
             return self._readState()
-        loss.wait()
+        if not self._wait(loss, self._observationTimeoutSec):
+            # US-776-k1: the observation outlived its whole bound (sweep plus
+            # the detector's own bounded calls). UNKNOWN drains; never AWAY.
+            with self._lock:
+                if self._loss is loss and self._answer is None:
+                    self._answer = HomeNetworkState.UNKNOWN
+                answer = self._answer if self._loss is loss else None
+            logger.warning(
+                "powerwatch: home-state observation gave no answer within %.1fs "
+                "-- sync reads UNKNOWN",
+                self._observationTimeoutSec,
+            )
+            return answer if answer is not None else HomeNetworkState.UNKNOWN
         with self._lock:
             answer = self._answer if self._loss is loss else None
         if answer is None:
             # The observation never ran (its thread could not start): this is
-            # the loss's one call. Outside the lock, so a poweroff never waits.
-            answer = self._readOnce()
+            # the loss's one observation. Outside the lock, so a poweroff never
+            # waits.
+            answer = self._observeOnce()
             with self._lock:
                 if self._loss is loss and self._answer is None:
                     self._answer = answer
@@ -1625,6 +1715,10 @@ def main(argv: list[str] | None = None) -> int:
         # US-833: the same count the sync task records, for a loss whose sync
         # never wrote one (the fast path; a floor end before the first record).
         backlogReader=lambda: backlogCount(readDrainBacklog()),
+        # US-776-k1: a forced scan FIRST at every key-off -- AWAY only from a
+        # fresh scan that lacks home; the sync waits at most the whole bound.
+        sweep=detector.sweep,
+        observationTimeoutSec=detector.observationBoundSec,
     )
     # US-776-d: one durable record per run -- why the sync ended. US-741: it
     # carries the loss's home state, serialised with that record. US-833: the

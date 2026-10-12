@@ -29,6 +29,8 @@
 # 2026-10-11    | Rex          | US-776-j1: sweep() -- ONE forced, bounded scan
 #               |              | (--rescan yes, pi.homeNetwork.sweepTimeoutSec)
 #               |              | -> ACTIVE_HOME / VISIBLE / NOT_VISIBLE / FAILED
+# 2026-10-11    | Rex          | US-776-k1: observationBoundSec -- the sweep plus
+#               |              | getHomeNetworkState's own bounded calls
 # ================================================================================
 ################################################################################
 
@@ -417,6 +419,22 @@ class HomeNetworkDetector:
         (US-776-d).
         """
         return self._lastProbe
+
+    @property
+    def observationBoundSec(self) -> float:
+        """Upper bound (s) of one key-off observation (US-776-k1).
+
+        :meth:`sweep` followed by the worst case of :meth:`getHomeNetworkState`
+        -- the SSID read, the cached scan read, the IP read and the server
+        probe, each behind its own timeout.  ``HomeStateAtLoss.stateForSync``
+        waits no longer than this for the loss's answer.
+        """
+        return (
+            self._sweepTimeoutSec
+            + 2 * _NMCLI_TIMEOUT_SECONDS
+            + _HOSTNAME_TIMEOUT_SECONDS
+            + self._pingTimeout
+        )
 
     def isAtHomeWifi(self) -> bool:
         """Return True only if SSID matches **and** a local IP is in the home subnet.

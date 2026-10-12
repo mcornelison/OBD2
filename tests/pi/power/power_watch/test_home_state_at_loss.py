@@ -17,6 +17,8 @@
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> joinWaitSec/stallSec.
 # 2026-10-05    | Atlas (US-833) | The fast-path test asserted the defect (no
 #                               sync_outcome); it now requires INTERRUPTED.
+# 2026-10-11    | Rex          | US-776-k1: the key-off sweep decides AWAY /
+#               |              | UNKNOWN / JOINING; stateForSync's wait bounded
 # ================================================================================
 ################################################################################
 """The home detector is asked once per power loss and its answer is persisted."""
@@ -26,6 +28,7 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import subprocess
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -33,8 +36,9 @@ from typing import Any
 
 import pytest
 
+import src.pi.network.home_detector as hd
 import src.pi.power.power_watch.__main__ as m
-from src.pi.network.home_detector import HomeNetworkState
+from src.pi.network.home_detector import HomeNetworkDetector, HomeNetworkState, SweepResult
 from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.controller import ShutdownSequencer
 from src.pi.power.power_watch.tasks.sync_with_server import SyncOutcomeRecord, SyncWithServerTask
@@ -367,6 +371,310 @@ def test_main_wiresTheMonthlyHoldTask_boundedBySequencer() -> None:
     assert "buildV1Tasks(syncTask, holdTask)" in source
     assert "sequencerBoundedTasks=(syncTask.name, holdTask.name)" in source
     assert "660" not in source and "testHoldSec" not in source
+
+
+# =============================================================================
+# US-776-k1: every key-off decides home from a fresh sweep, not the cache
+# =============================================================================
+
+
+class _Sweep:
+    """detector.sweep fake: counts calls, returns a fixed SweepResult."""
+
+    def __init__(self, result: SweepResult) -> None:
+        self._result = result
+        self.calls = 0
+
+    def __call__(self) -> SweepResult:
+        self.calls += 1
+        return self._result
+
+
+@pytest.mark.parametrize(
+    ("sweepResult", "expected"),
+    [
+        (SweepResult.NOT_VISIBLE, HomeNetworkState.AWAY),
+        (SweepResult.FAILED, HomeNetworkState.UNKNOWN),
+        (SweepResult.VISIBLE, HomeNetworkState.AT_HOME_JOINING),
+    ],
+)
+def test_US776k1_sweepAlone_decidesAwayUnknownJoining_noDetectorRead(
+    tmp_path: Path, sweepResult: SweepResult, expected: HomeNetworkState
+) -> None:
+    """
+    Given: a key-off whose sweep reads NOT_VISIBLE / FAILED / VISIBLE
+    When: the loss is observed and the sync task asks for the state
+    Then: AWAY / UNKNOWN / AT_HOME_JOINING, decided by the sweep ALONE -- the
+          cached detector read is never called -- and that name is persisted
+    """
+    # Arrange
+    outcomePath = tmp_path / "powerwatch_outcome.json"
+    detector = _Detector(HomeNetworkState.AT_HOME_SERVER_REACHABLE)
+    sweep = _Sweep(sweepResult)
+    holder = m.HomeStateAtLoss(
+        detector, outcomePath=str(outcomePath), startFn=_inline,
+        sweep=sweep, observationTimeoutSec=13.0,
+    )
+
+    # Act
+    holder.observe()
+    state = holder.stateForSync()
+
+    # Assert
+    assert state is expected
+    assert sweep.calls == 1
+    assert detector.calls == 0
+    assert _record(outcomePath)["home_state"] == expected.name
+
+
+def test_US776k1_sweepActiveHome_continuesOnTheDetectorPath(tmp_path: Path) -> None:
+    """
+    Given: a key-off whose sweep reads ACTIVE_HOME (wlan0 associated to home)
+    When: the loss is observed
+    Then: the sweep runs FIRST, then the existing detector read decides the
+          state (server reachable / down), called once
+    """
+    # Arrange
+    order: list[str] = []
+    outcomePath = tmp_path / "powerwatch_outcome.json"
+
+    def sweep() -> SweepResult:
+        order.append("sweep")
+        return SweepResult.ACTIVE_HOME
+
+    def detector() -> HomeNetworkState:
+        order.append("detector")
+        return HomeNetworkState.AT_HOME_SERVER_DOWN
+
+    holder = m.HomeStateAtLoss(
+        detector, outcomePath=str(outcomePath), startFn=_inline,
+        sweep=sweep, observationTimeoutSec=13.0,
+    )
+
+    # Act
+    holder.observe()
+    state = holder.stateForSync()
+
+    # Assert
+    assert state is HomeNetworkState.AT_HOME_SERVER_DOWN
+    assert order == ["sweep", "detector"]
+
+
+def test_US776k1_sweepRaises_readsUnknown_neverAway(tmp_path: Path) -> None:
+    """A sweep that raises (it should not) is a scan with no answer: UNKNOWN."""
+    # Arrange
+    detector = _Detector(HomeNetworkState.AWAY)
+
+    def sweep() -> SweepResult:
+        raise OSError("nmcli exploded")
+
+    holder = m.HomeStateAtLoss(
+        detector, outcomePath=str(tmp_path / "o.json"), startFn=_inline,
+        sweep=sweep, observationTimeoutSec=13.0,
+    )
+
+    # Act
+    holder.observe()
+
+    # Assert
+    assert holder.stateForSync() is HomeNetworkState.UNKNOWN
+    assert detector.calls == 0
+
+
+def test_US776k1_observationNeverReturns_stateForSyncBoundedReturnsUnknown(
+    tmp_path: Path,
+) -> None:
+    """
+    Given: an observation that never returns (its thread never runs) and a
+           fake wait that reports the bound expiring -- no real sleep
+    When: the sync task asks for this loss's state
+    Then: the wait is bounded by the WHOLE observation's bound, the answer is
+          UNKNOWN (never AWAY), the detector is not called in its place, and
+          the persisted state agrees with what the sync acted on
+    """
+    # Arrange
+    outcomePath = tmp_path / "powerwatch_outcome.json"
+    detector = _Detector(HomeNetworkState.AWAY)
+    sweep = _Sweep(SweepResult.NOT_VISIBLE)
+    waits: list[float] = []
+
+    def waitFn(_event: threading.Event, timeout: float) -> bool:
+        waits.append(timeout)
+        return False
+
+    holder = m.HomeStateAtLoss(
+        detector, outcomePath=str(outcomePath), startFn=lambda _t: None,
+        sweep=sweep, observationTimeoutSec=13.0, waitFn=waitFn,
+    )
+
+    # Act
+    holder.observe()
+    state = holder.stateForSync()
+
+    # Assert
+    assert state is HomeNetworkState.UNKNOWN
+    assert waits == [13.0]
+    assert detector.calls == 0 and sweep.calls == 0
+    assert holder.stateName() == "UNKNOWN"
+
+
+def test_US776k1_lateAnswerAfterTimeout_doesNotReplaceTheUnknownTheSyncUsed(
+    tmp_path: Path,
+) -> None:
+    """A timed-out observation's late answer does not relabel the loss."""
+    # Arrange
+    deferred: list[Callable[[], None]] = []
+    holder = m.HomeStateAtLoss(
+        _Detector(HomeNetworkState.AWAY), outcomePath=str(tmp_path / "o.json"),
+        startFn=deferred.append, sweep=_Sweep(SweepResult.NOT_VISIBLE),
+        observationTimeoutSec=13.0, waitFn=lambda _e, _t: False,
+    )
+    holder.observe()
+    assert holder.stateForSync() is HomeNetworkState.UNKNOWN
+
+    # Act -- the observation finally finishes
+    deferred[0]()
+
+    # Assert
+    assert holder.stateName() == "UNKNOWN"
+
+
+def test_US776k1_awayKeyOff_addsNoWaitBeyondTheSmoothingWindow(tmp_path: Path) -> None:
+    """
+    Given: a 7 s smoothing window on a virtual clock, and an away key-off
+           whose sweep (NOT_VISIBLE) runs in parallel with that window
+    When: the sequencer confirms the loss and runs the sync task
+    Then: the Pi powers off at t = 7 s exactly -- the sync's state read did
+          not wait (the observation had already answered) -- with outcome AWAY
+    """
+    # Arrange
+    outcomePath = tmp_path / "powerwatch_outcome.json"
+    clock = [0.0]
+    deferred: list[Callable[[], None]] = []
+    waits: list[float] = []
+    powerOffAt: list[float] = []
+
+    def sleepFn(seconds: float) -> None:
+        # The observation thread runs during the window: start it on the
+        # window's first poll, as a real daemon thread would.
+        while deferred:
+            deferred.pop()()
+        clock[0] += seconds
+
+    def waitFn(event: threading.Event, timeout: float) -> bool:
+        waits.append(timeout)
+        return event.is_set()
+
+    detector = _Detector(HomeNetworkState.AT_HOME_SERVER_REACHABLE)
+    holder = m.HomeStateAtLoss(
+        detector, outcomePath=str(outcomePath), startFn=deferred.append,
+        sweep=_Sweep(SweepResult.NOT_VISIBLE), observationTimeoutSec=13.0,
+        waitFn=waitFn, monotonicFn=lambda: clock[0],
+    )
+    syncTask = SyncWithServerTask(
+        homeState=holder.stateForSync,
+        runSync=lambda: None,
+        writeRecord=holder.wrapSink(
+            m.makeOutcomeSink(str(outcomePath), homeState=holder.stateName)
+        ),
+        joinWaitSec=120.0,
+        stallSec=60.0,
+        sleepFn=sleepFn,
+        monotonic=lambda: clock[0],
+    )
+    sequencer = ShutdownSequencer(
+        isOnBattery=lambda: True,
+        vcell=lambda: _VCELL_OK,
+        runPipelineFn=syncTask.run,
+        powerOffFn=lambda: powerOffAt.append(clock[0]),
+        vcellFloor=_VCELL_FLOOR,
+        totalCapSec=45.0,
+        smoothingSec=7.0,
+        smoothingPollSec=1.0,
+        sleepFn=sleepFn,
+        monotonicFn=lambda: clock[0],
+        prePowerOffFn=holder.ensureRecorded,
+        powerLossObservedFn=holder.observe,
+    )
+
+    # Act
+    sequencer.handleOnBattery()
+
+    # Assert
+    assert powerOffAt == [7.0]
+    assert waits == [13.0]  # one bounded wait, already answered
+    assert detector.calls == 0
+    record = _record(outcomePath)
+    assert record["home_state"] == "AWAY"
+    assert record["sync_outcome"] == OutcomeKind.AWAY.name
+
+
+def test_US776k1_replay_20261011_131447_cacheWithoutHome_sweepVisible_isJoining(
+    tmp_path: Path,
+) -> None:
+    """
+    Given: the 2026-10-11 13:14:47 key-off -- wlan0 not associated, the cached
+           scan list WITHOUT home (so the cached read says AWAY), and a fresh
+           sweep that lists home ('DeathstarWifi', config 'DeathStarWiFi')
+    When: the key-off is observed through a REAL HomeNetworkDetector
+    Then: the state is AT_HOME_JOINING, not AWAY
+    """
+    # Arrange
+    def sweepRunner(*_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="no:Neighbor5G\nno:DeathstarWifi\n", stderr="",
+        )
+
+    detector = HomeNetworkDetector(
+        {"pi": {"homeNetwork": {"ssid": "DeathStarWiFi", "sweepTimeoutSec": 6}}},
+        ssidReader=lambda: "",
+        scanReader=lambda: ["Neighbor5G"],
+        ipReader=lambda: [],
+        sweepRunner=sweepRunner,
+    )
+    assert detector.getHomeNetworkState() is HomeNetworkState.AWAY  # today's answer
+    holder = m.HomeStateAtLoss(
+        detector.getHomeNetworkState, outcomePath=str(tmp_path / "o.json"),
+        startFn=_inline, sweep=detector.sweep,
+        observationTimeoutSec=detector.observationBoundSec,
+    )
+
+    # Act
+    holder.observe()
+
+    # Assert
+    assert holder.stateForSync() is HomeNetworkState.AT_HOME_JOINING
+
+
+def test_US776k1_observationBound_isSweepPlusTheDetectorsOwnBoundedCalls() -> None:
+    """
+    The whole observation's bound: the sweep timeout plus the worst case of
+    getHomeNetworkState (SSID read, cache read, IP read, server probe).
+    """
+    # Arrange
+    detector = HomeNetworkDetector(
+        {"pi": {"homeNetwork": {"sweepTimeoutSec": 6, "pingTimeoutSeconds": 3}}}
+    )
+
+    # Assert
+    assert detector.observationBoundSec == pytest.approx(
+        6 + 2 * hd._NMCLI_TIMEOUT_SECONDS + hd._HOSTNAME_TIMEOUT_SECONDS + 3
+    )
+
+
+def test_US776k1_main_wiresTheSweepAndTheBoundIntoHomeStateAtLoss() -> None:
+    """main() hands HomeStateAtLoss the detector's sweep and observation bound."""
+    tree = ast.parse(inspect.getsource(m.main))
+    calls = [
+        {kw.arg: ast.unparse(kw.value) for kw in node.keywords}
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "HomeStateAtLoss"
+    ]
+    assert len(calls) == 1
+    assert calls[0].get("sweep") == "detector.sweep"
+    assert calls[0].get("observationTimeoutSec") == "detector.observationBoundSec"
 
 
 def test_everyRecordPath_carriesTheLossTime_asLossAt(tmp_path: Path) -> None:
