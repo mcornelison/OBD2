@@ -754,6 +754,37 @@ step_install_polkit_service_control() {
     "
 }
 
+step_install_polkit_wifi_scan() {
+    # US-776-j2: install the polkit rule granting mcornelison ONLY
+    # org.freedesktop.NetworkManager.wifi.scan (CIO-approved 2026-10-12).
+    # eclipse-powerwatch (User=mcornelison) forces one fresh WiFi scan at
+    # every key-off (US-776-j1 sweep); without this rule NetworkManager
+    # refuses it "not authorized" and the sweep reads FAILED. SIBLING to the
+    # 50-/51- rules (a new privilege gets a new numbered file, never a
+    # widened rule). Same idempotent sync-if-changed pattern; PolicyKit
+    # auto-reloads on file change, so no daemon-reload is required.
+    echo "--- Step: Installing polkit rule for NetworkManager WiFi scan (US-776-j2) ---"
+    local sourceFile="deploy/polkit-rules/52-eclipse-wifi-scan.rules"
+    local targetPath="/etc/polkit-1/rules.d/52-eclipse-wifi-scan.rules"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: polkit auto-reloads on file change (no daemon-reload)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        sudo mkdir -p /etc/polkit-1/rules.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'polkit wifi-scan rule already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'polkit wifi-scan rule installed: ${targetPath}'
+        fi
+    "
+}
+
 step_install_obdctl() {
     # US-492 / F-122: put the `obdctl` operator CLI on the Pi's PATH. The tool
     # itself is plain source in the synced tree (src/pi/ops/obdctl.py); what is
@@ -2414,6 +2445,12 @@ step_install_polkit_poweroff
 # Sibling to the 50- poweroff rule (different action: manage-units). Runs AFTER
 # sync_tree so deploy/polkit-rules/ exists on the Pi.
 step_install_polkit_service_control
+
+# US-776-j2: polkit rule granting mcornelison ONLY the NetworkManager WiFi
+# scan action, so powerwatch's key-off home sweep can force a fresh scan.
+# Sibling to the 50-/51- rules. Runs AFTER sync_tree so deploy/polkit-rules/
+# exists on the Pi.
+step_install_polkit_wifi_scan
 
 # US-325 / I-025: NetworkManager wifi.powersave=2 drop-in. Same rationale as
 # the journald drop-in -- idempotent, canonical-source-of-truth OS config that
