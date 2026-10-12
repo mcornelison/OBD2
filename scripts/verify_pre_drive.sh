@@ -20,7 +20,11 @@
 # Author:    Rex (Ralph agent)
 # Created:   2026-07-20 (US-479); hardened 2026-07-22 (US-487).
 # Story:     US-479 (F-117 pre-drive green-light); US-487 (production-path verify +
-#            non-authoritative exit codes + DoD honesty note).
+#            non-authoritative exit codes + DoD honesty note). 2026-10-12 (Atlas,
+#            US-487 reopened): the post-restart check polls up to a window the
+#            Pi derives from its own config (initial-connect timeout + one
+#            reconnect heartbeat) and passes at the first growth -- the fixed
+#            15 s + 10 s check could never see production's ~60 s recovery.
 #
 # Modes:
 #   live   (default) -- SSH to the Pi; authoritative in-vehicle gate.
@@ -84,8 +88,11 @@ EXIT_NONAUTH=3
 
 # US-487 FOLLOW-UP 1: post-restart PRODUCTION-capture check timing. Sourced from
 # deploy.conf above if the operator overrode PRE_DRIVE_PROD_*; defaults otherwise.
-#   settle -- seconds to let eclipse-obd reconnect BT + resume logging after restart
-#   growth -- seconds between the two realtime_data row samples that must increase
+#   settle -- extra seconds for the unit itself to come up before its connect starts
+#   growth -- seconds between realtime_data row polls
+# The main window is NOT set here: the Pi derives it from config
+# (pre_drive_greenlight.py --print-prod-window). The check passes at the first
+# poll that shows growth and fails only after settle + that window.
 PROD_SETTLE_SECS="${PRE_DRIVE_PROD_SETTLE_SECS:-15}"
 PROD_GROWTH_SECS="${PRE_DRIVE_PROD_GROWTH_SECS:-10}"
 
@@ -268,16 +275,37 @@ if [ "$KOEO_ONLY" != "1" ] && [ "$DRY_RUN" != "1" ]; then
         PROD_RC=1
         report "eclipse-obd active" no "unit NOT active after restart -- production path down"
     fi
-    echo "  (settling ${PROD_SETTLE_SECS}s for reconnect, then sampling ${PROD_GROWTH_SECS}s of capture...)"
-    sleep "$PROD_SETTLE_SECS"
+    # US-487 (reopened 2026-10-12): the restarted service waits its configured
+    # initial-connect timeout, then the reconnect heartbeat connects -- ~60 s live.
+    # Ask the Pi for that window from its own config; poll, pass at first growth.
+    prodWindow="$(ssh_pi "cd $PI_PATH && $PI_VENV/bin/python scripts/pre_drive_greenlight.py --live --print-prod-window" 2>/dev/null | tail -1)"
     prodBefore="$(prod_row_count || true)"
-    sleep "$PROD_GROWTH_SECS"
-    prodAfter="$(prod_row_count || true)"
-    if [[ "$prodBefore" =~ ^[0-9]+$ ]] && [[ "$prodAfter" =~ ^[0-9]+$ ]] && [ "$prodAfter" -gt "$prodBefore" ]; then
-        report "production capture" yes "realtime_data grew ${prodBefore} -> ${prodAfter} rows in data/obd.db"
-    else
+    if ! [[ "$prodWindow" =~ ^[0-9]+$ ]]; then
         PROD_RC=1
-        report "production capture" no "realtime_data did not grow (${prodBefore:-?} -> ${prodAfter:-?}) -- eclipse-obd not landing rows in data/obd.db"
+        report "production capture" no "could not read the post-restart window from the Pi's config (got '${prodWindow:-}') -- not judging capture"
+    elif ! [[ "$prodBefore" =~ ^[0-9]+$ ]]; then
+        PROD_RC=1
+        report "production capture" no "could not read realtime_data in data/obd.db (got '${prodBefore:-}')"
+    else
+        prodBudget=$((PROD_SETTLE_SECS + prodWindow))
+        echo "  (polling every ${PROD_GROWTH_SECS}s for up to ${prodBudget}s: ${PROD_SETTLE_SECS}s settle + ${prodWindow}s from config...)"
+        prodAfter="$prodBefore"
+        prodWaited=0
+        while [ "$prodWaited" -lt "$prodBudget" ]; do
+            sleep "$PROD_GROWTH_SECS"
+            prodWaited=$((prodWaited + PROD_GROWTH_SECS))
+            prodNow="$(prod_row_count || true)"
+            if [[ "$prodNow" =~ ^[0-9]+$ ]]; then
+                prodAfter="$prodNow"
+                [ "$prodAfter" -gt "$prodBefore" ] && break
+            fi
+        done
+        if [ "$prodAfter" -gt "$prodBefore" ]; then
+            report "production capture" yes "realtime_data grew ${prodBefore} -> ${prodAfter} rows in data/obd.db (${prodWaited}s after restart)"
+        else
+            PROD_RC=1
+            report "production capture" no "realtime_data did not grow (${prodBefore} -> ${prodAfter}) within ${prodBudget}s -- eclipse-obd not landing rows in data/obd.db"
+        fi
     fi
 fi
 
