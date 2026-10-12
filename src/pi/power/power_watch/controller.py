@@ -82,6 +82,10 @@
 #                              before it ends the drain (a failed read neither
 #                              counts nor resets); lastDrainEndReason exposes why
 #                              the last drain ended to the pre-poweroff hook.
+# 2026-10-11    | Rex (US-748-a) | The smoothing loop lifted into module-level
+#                              heldFor(), the one dwell helper for both power
+#                              directions; _smoothedPowerLost calls it with
+#                              restartOnBreak=False. Loss behaviour unchanged.
 # ================================================================================
 ################################################################################
 #
@@ -123,6 +127,7 @@ __all__ = [
     "PHASE_POWERING_OFF",
     "DEFAULT_SHUTDOWN_REASON",
     "ShutdownSequencer",
+    "heldFor",
 ]
 
 # --- Shutdown phase transitions (the sequencer is the SSOT of phase) ----------
@@ -146,6 +151,60 @@ DEFAULT_SHUTDOWN_REASON = "ignition_off"
 def _defaultNowIso() -> str:
     """Default ISO-8601 UTC stamp for the shutdown-state grace-start time."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def heldFor(
+    predicate: Callable[[], bool],
+    dwellSec: float,
+    pollSec: float,
+    sleepFn: Callable[[float], object],
+    monotonicFn: Callable[[], float],
+    *,
+    abortFn: Callable[[], bool] | None = None,
+    restartOnBreak: bool = True,
+) -> bool:
+    """Wait until ``predicate()`` has held continuously for ``dwellSec`` (US-748-a).
+
+    The ONE dwell loop for both power directions: the loss window
+    (``_smoothedPowerLost``) and the late arm (US-748-b/c). Do not copy it.
+
+    The predicate is read once at the start and once after every ``pollSec``
+    sleep. A run starts at the first True read and completes when the clock
+    reaches run start + ``dwellSec``. ``dwellSec`` <= 0 is a single immediate
+    check of the start read.
+
+    Args:
+        predicate: Zero-arg condition that must hold for the whole dwell.
+        dwellSec: How long (SECONDS) the predicate must hold unbroken.
+        pollSec: Re-read cadence (SECONDS).
+        sleepFn: DI sleep, called with ``pollSec`` between reads.
+        monotonicFn: DI monotonic clock.
+        abortFn: OPTIONAL zero-arg check made after every sleep; True ends the
+            wait with False, whatever the current run.
+        restartOnBreak: True (default): a False read restarts the run and the
+            wait goes on. False: a False read ends the wait with False -- the
+            loss direction, where any present read means a blip.
+
+    Returns:
+        True once the predicate held for ``dwellSec``; False when aborted (or,
+        with ``restartOnBreak`` False, at the first False read).
+    """
+    deadline: float | None = None
+    if predicate():
+        deadline = monotonicFn() + dwellSec
+    elif not restartOnBreak:
+        return False
+    while deadline is None or monotonicFn() < deadline:
+        sleepFn(pollSec)
+        if abortFn is not None and abortFn():
+            return False
+        if not predicate():
+            if not restartOnBreak:
+                return False
+            deadline = None
+        elif deadline is None:
+            deadline = monotonicFn() + dwellSec
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,14 +363,14 @@ class ShutdownSequencer:
 
         ``smoothingSec`` <= 0 collapses to a single immediate check.
         """
-        if not self._isOnBattery():
-            return False
-        deadline = self._monotonic() + self._smoothingSec
-        while self._monotonic() < deadline:
-            self._sleep(self._smoothingPollSec)
-            if not self._isOnBattery():
-                return False
-        return True
+        return heldFor(
+            self._isOnBattery,
+            self._smoothingSec,
+            self._smoothingPollSec,
+            self._sleep,
+            self._monotonic,
+            restartOnBreak=False,
+        )
 
     def handleOnBattery(self, *, suppressFloorFastPath: bool = False) -> None:
         """Called when a power-LOST signal fires. Apply smoothing FIRST: only
