@@ -164,7 +164,9 @@ fi
 # ------------------------------------------------------------------------------
 if ! command -v systemctl >/dev/null 2>&1; then
     report "systemctl present" info "skipping reboot-survive check (non-systemd host)"
-elif ! systemctl list-unit-files 2>/dev/null | grep -q '^rfcomm-bind.service'; then
+# grep >/dev/null, never grep -q: under pipefail, -q exits at the first match,
+# systemctl dies of SIGPIPE and the pipe reads FAILED (18/20 false-FAIL live, US-487).
+elif ! systemctl list-unit-files 2>/dev/null | grep '^rfcomm-bind.service' >/dev/null; then
     report "rfcomm-bind.service installed" no "run: deploy/install-rfcomm-bind.sh on Pi"
 else
     if systemctl is-enabled rfcomm-bind.service >/dev/null 2>&1; then
@@ -173,7 +175,7 @@ else
         report "rfcomm-bind.service enabled" no "sudo systemctl enable rfcomm-bind.service"
     fi
     if systemctl is-active rfcomm-bind.service >/dev/null 2>&1 \
-        || systemctl status rfcomm-bind.service 2>/dev/null | grep -q "status=0/SUCCESS"; then
+        || systemctl status rfcomm-bind.service 2>/dev/null | grep "status=0/SUCCESS" >/dev/null; then
         report "rfcomm-bind.service last-run" yes
     else
         report "rfcomm-bind.service last-run" info "oneshot units are normally inactive; check journalctl -u rfcomm-bind"
