@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.81",
-  "theme": "US-487 pre-drive gate harness fix",
-  "description": "US-487 (reopened): the pre-drive gate's probe DB is opened through production's profile manager, so realtime rows no longer fail the profiles foreign key; the post-restart wait is derived from the configured initial-connect timeout plus the reconnect heartbeat (70 s today) and passes at the first production growth. Scripts only; Pi tier; no src, config or server change."
+  "version": "V0.29.82",
+  "theme": "US-487b BT pair check pipefail fix",
+  "description": "US-487b: verify_bt_pair.sh false-FAILed 'rfcomm-bind.service installed' because grep -q under set -o pipefail lets systemctl die of SIGPIPE (18/20 false-FAIL live). Both checks now use grep >/dev/null; a new test pins it. Pi tier, scripts only."
 }
