@@ -2872,6 +2872,24 @@ deeper fault was the design: any dead instrument in the gate disabled the drain,
 - **Read once, not polled.** A network that changes mid-drain is not re-detected; the drain then
   ends on a failing pass, or on the floor while a pass is blocked.
 
+**AWAY comes only from a fresh sweep; once home is seen, only association or `joinWaitSec` ends the
+join wait (US-776-k1 / US-776-k2, Sprint 97).** The detector's ordinary read uses NetworkManager's
+CACHED scan list (`--rescan no`), which after a drive often lacks home: on 2026-10-11 13:14:47 a key-off
+in the driveway read AWAY and left 9,492 rows on the Pi.
+
+- **At the key-off** `HomeStateAtLoss.observe` runs ONE forced sweep (`HomeNetworkDetector.sweep`,
+  bounded by `pi.homeNetwork.sweepTimeoutSec`) before anything else. `NOT_VISIBLE` -> `AWAY` and
+  `FAILED` -> `UNKNOWN` (never AWAY) are decided from the sweep alone; `VISIBLE` -> `AT_HOME_JOINING`;
+  `ACTIVE_HOME` continues on the detector's read. **AWAY is never decided from the cache.**
+- **Inside the join wait** each poll still reads the cached list, so a poll can read AWAY with home in
+  range. Home has already been seen, so an AWAY poll does **not** end the wait: it ends only on the
+  association (an `AT_HOME_SERVER_*` read -> drain), on `UNKNOWN` (drains, per the rule above), or when
+  `pi.homeNetwork.joinWaitSec` (120 s) is spent -> `AT_HOME_JOINING_TIMEOUT`, no attempt, custody
+  OUTSTANDING. No new outcome: a wait that read AWAY and never associated is a join timeout. A car
+  cannot drive away during a key-off, so the only AWAY the wait could honour is a false one.
+- After association the drain is unchanged: a failing server ends it `stallSec` after the drain start
+  (plus at most one retry wait) as `AT_HOME_SERVER_DOWN`, custody OUTSTANDING.
+
 **Every shutdown sync records why it ended (US-776-d, Sprint 95; Atlas review 2026-09-30, ruling 4
 and gap 3).** Until Sprint 95 a skipped sync wrote nothing, so a probe that was always false read as
 an absent server for weeks: 16 of 16 shutdowns logged "unreachable -- benign skip" at INFO and left
