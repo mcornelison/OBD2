@@ -50,6 +50,9 @@
 #               |         | start stamp), before the sync can be cut off, so a hard
 #               |         | cut / floor / cap never leaves the record silent. The
 #               |         | final outcome still goes to writeRecord exactly once.
+# 2026-10-11    | Rex     | US-776-k2: once home is seen, an AWAY poll inside the
+#               |         | JOINING wait keeps waiting; only association (or
+#               |         | UNKNOWN, which drains) or joinWaitSec ends it.
 # ================================================================================
 ################################################################################
 """The CIO pre-shutdown server-sync pipeline task (Phase-2 power-watch)."""
@@ -138,7 +141,10 @@ class SyncWithServerTask:
          no network call of its own).
          ``AT_HOME_JOINING`` (home SSID in range, not associated; US-776-e)
          -> re-read the state every ``JOIN_POLL_SEC`` until it is something
-         else, then apply this step to that state. The wait is bounded by
+         else, then apply this step to that state. An AWAY poll does NOT end
+         the wait (US-776-k2): home was already seen, and AWAY comes only from
+         the key-off's fresh sweep, never from the cached list a poll reads.
+         The wait is bounded by
          ``joinWaitSec`` on its own (the drain's stall clock starts at the
          association); still joining when it is spent ->
          ``AT_HOME_JOINING_TIMEOUT`` (no attempt).
@@ -305,9 +311,18 @@ class SyncWithServerTask:
         a connection. No poll wait is begun that would end at or past
         ``joinWaitSec``. Never raises.
 
+        US-776-k2: home has been SEEN by the time this wait starts, so an AWAY
+        poll does not end it. Each poll re-reads NetworkManager's CACHED scan
+        list, which can miss a home that is in range (2026-10-11 13:14:47);
+        AWAY is decided only by the key-off's fresh sweep (US-776-k1). Only the
+        association (an AT_HOME_SERVER_* read), an UNKNOWN read (which drains,
+        as everywhere: a dead instrument never disables the drain) or
+        ``joinWaitSec`` ends it.
+
         Returns:
-            The first state that is not AT_HOME_JOINING, or AT_HOME_JOINING
-            when ``joinWaitSec`` (or a broken wait) ended the polling.
+            The first state that is neither AT_HOME_JOINING nor AWAY, or
+            AT_HOME_JOINING when ``joinWaitSec`` (or a broken wait) ended the
+            polling.
         """
         logger.info(
             "powerwatch sync_with_server: AT_HOME_JOINING -- home WiFi in range "
@@ -325,6 +340,16 @@ class SyncWithServerTask:
                 break
             polls += 1
             state = self._readHomeState()
+            if state is HomeNetworkState.AWAY:
+                logger.info(
+                    "powerwatch sync_with_server: poll %d read AWAY from the cached "
+                    "scan list -- home was already seen, still waiting for the rejoin "
+                    "(%.0fs of %.0fs)",
+                    polls,
+                    self._monotonic() - startMono,
+                    self._joinWaitSec,
+                )
+                continue
             if state is not HomeNetworkState.AT_HOME_JOINING:
                 logger.info(
                     "powerwatch sync_with_server: rejoin resolved as %s after %.0fs "

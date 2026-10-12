@@ -22,6 +22,10 @@
 #                           reports ARMED. It reports PIN READABLE, TRANSITION
 #                           UNVERIFIED, and the PROVEN line says its proof is
 #                           a PRIOR run's witness, not this start.
+# 2026-10-11    | US-748-b| Sprint 97: a late-arm line, and NOT-ARMED split
+#                           into readable-absent and unreadable texts.
+# 2026-10-11    | US-748-c| Sprint 97: the readable-pin disarmed hold polls the
+#                           pin and arms late after an unbroken smoothingSec.
 # ================================================================================
 ################################################################################
 """US-566: the powerwatch arm decision must never be silent."""
@@ -617,3 +621,406 @@ def test_US666_notArmedBranchIsUnchanged():
 
     assert f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} --" in message
     assert m.ARM_DECISION_UNVERIFIED not in message
+
+
+# ---------------------------------------------------------------------------
+# US-748-b -- a late arm has its own line, and NOT-ARMED stops blaming the
+# wiring when the pin simply read absent.
+#
+# A Pi woken by its power key boots on the pack: the pin READS, and correctly
+# says power is absent. Today's NOT-ARMED text calls that a wiring fault and
+# tells the operator to redeploy -- the false premise "the Pi only booted
+# because power is live". Boot 335 (2026-10-11) carried that line for 75 min.
+# ---------------------------------------------------------------------------
+def _lateLine(**overrides):
+    kwargs = dict(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+    kwargs.update(overrides)
+    return m.buildArmDecisionMessage(**kwargs)
+
+
+def test_US748b_lateArm_hasItsOwnArmedLateLine():
+    """
+    Given: the pin was seen absent at start and then present for the dwell
+    When: the late arm decision is composed
+    Then: it reads 'ARM DECISION = ARMED (late' and carries the dwell and the
+        time since service start
+    """
+    message = _lateLine()
+
+    assert "ARM DECISION = ARMED (late" in message
+    assert message.startswith(f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_ARMED} (late")
+    assert "present for 7 s" in message
+    assert "4215 s after service start" in message
+    assert m.ARM_DECISION_NOT_ARMED not in message
+    assert m.ARM_DECISION_UNVERIFIED not in message
+
+
+def test_US748b_lateArm_saysThePinChangedAbsentToPresentOnThisRun():
+    """
+    Given: a late arm
+    When: the line is composed
+    Then: it states the pin was observed to CHANGE from absent to present on
+        THIS run -- the evidence that earns ARMED, unlike a single read
+    """
+    message = _lateLine()
+
+    assert "GPIO6 changed absent -> present on this run" in message
+    assert "CHANGE" in message and "THIS run" in message
+
+
+@pytest.mark.parametrize("lastTransitionUtc", [None, WITNESS_UTC])
+def test_US748b_lateArm_winsOverThePriorRunRenderings(lastTransitionUtc):
+    """
+    Given: a late arm, with or without a prior-run witness on file
+    When: the line is composed
+    Then: it is the late line -- this run's observed change outranks both the
+        PROVEN (prior run) and UNVERIFIED (read only) renderings
+    """
+    message = _lateLine(lastTransitionUtc=lastTransitionUtc)
+
+    assert "ARMED (late" in message
+    assert "(PROVEN)" not in message
+    assert "observed on a PRIOR run" not in message
+
+
+def test_US748b_lateArm_isEmittedAtWarningAndReturnedVerbatim(caplog):
+    """
+    Given: a late arm
+    When: emitArmDecision is called with the late facts
+    Then: one WARNING record, byte-identical to the returned line
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    returned = m.emitArmDecision(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+
+    records = _decisionRecords(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].getMessage() == returned
+    assert "ARMED (late" in returned
+
+
+def test_US748b_lateArm_doesNotWriteThePldWitness(monkeypatch, tmp_path, caplog):
+    """
+    Given: the witness writers replaced by recorders, and a witness path that
+        does not exist
+    When: the late line is composed and emitted
+    Then: nothing writes pld_witness -- the witness records a power-LOSS
+        transition the pipeline handled, and an absent -> present arm is not one
+    """
+    from src.pi.power.power_watch import controller as ctrl
+    from src.pi.power.power_watch import pld_witness
+
+    writes = []
+    monkeypatch.setattr(
+        pld_witness, "recordTransitionWitnessed", lambda *a, **k: writes.append((a, k))
+    )
+    monkeypatch.setattr(
+        pld_witness, "_writeWitnessAtomically", lambda *a, **k: writes.append((a, k))
+    )
+    if hasattr(ctrl, "recordTransitionWitnessed"):
+        monkeypatch.setattr(
+            ctrl, "recordTransitionWitnessed", lambda *a, **k: writes.append((a, k))
+        )
+    witnessPath = tmp_path / "witness.json"
+    monkeypatch.setattr(pld_witness, "DEFAULT_WITNESS_PATH", witnessPath)
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    _lateLine()
+    m.emitArmDecision(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+
+    assert writes == []
+    assert not witnessPath.exists()
+
+
+def test_US748b_lateArm_needsBothItsFacts():
+    """
+    Given: a late arm with only one of its two facts
+    When: the line is composed
+    Then: ValueError -- a late line missing its dwell or its offset would state
+        a number nobody measured
+    """
+    with pytest.raises(ValueError):
+        _lateLine(lateArmAfterStartSec=None)
+    with pytest.raises(ValueError):
+        _lateLine(lateArmPresentSec=None)
+
+
+def test_US748b_notArmed_readableAbsent_saysPowerWasAbsentAndArmingWaits():
+    """
+    Given: the line is readable and reads power ABSENT at start
+    When: the not-armed line is composed
+    Then: it says power was absent at start and arming waits for car power,
+        and does NOT call it a wiring fault or ask for a redeploy
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=True, readsPowerPresent=False
+    )
+
+    assert (
+        f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} "
+        "(power absent at start; arming waits for car power)"
+    ) in message
+    assert "protection is OFF" in message
+    assert "gpio=6 pld.available=True reads-power-present=False" in message
+    assert "FAILED" not in message
+    assert "redeploy" not in message
+    assert "wrong pin/polarity" not in message
+    assert "booted on a live feed" not in message
+
+
+def test_US748b_notArmed_unreadable_keepsTodaysWiringFaultText():
+    """
+    Given: the line is unreadable
+    When: the not-armed line is composed
+    Then: it is today's wiring-fault text and remedy, unchanged
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert message == (
+        f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} -- safe-shutdown "
+        "protection is OFF. CAUSE: GPIO6 PLD SSOT arm self-check FAILED "
+        "(gpio=6 pld.available=False reads-power-present=False). The Pi booted "
+        "on a live feed so GPIO6 must read power-present at startup; it does not "
+        "(wrong pin/polarity, or the line is unreadable). REFUSING to arm -- "
+        "service stays up disarmed, OBD collector unaffected, NOTHING will be "
+        "powered off. Fix pi.powerWatch.pldGpioPin / pldPowerPresentHigh and "
+        "redeploy."
+    )
+    assert "arming waits for car power" not in message
+
+
+def test_US748b_theThreeNotArmedOrLateTextsAreDistinct():
+    """Each input renders its own text: one grep tells them apart."""
+    readableAbsent = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=True, readsPowerPresent=False
+    )
+    unreadable = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert len({readableAbsent, unreadable, _lateLine()}) == 3
+
+
+def test_US748b_theFalsePremiseIsGoneFromMainsComment():
+    """
+    Given: __main__'s shipped source
+    When: searched for the 'only starts because the Pi booted' premise
+    Then: it is absent -- a Pi woken by its power key boots on the pack
+    """
+    from pathlib import Path as _P
+
+    source = _P(inspect.getfile(m)).read_text(encoding="utf-8")
+
+    assert "only starts because the Pi booted" not in source
+    assert "only booted because" not in source
+
+
+# ---------------------------------------------------------------------------
+# US-748-c -- a Pi that boots on its pack arms once car power is steady.
+#
+# Boot 335 (2026-10-11): NOT-ARMED at 09:08:35, then [STILL NOT-ARMED] every
+# 5 min for 75 min, through drive 101 and its key-off. The hold never re-read
+# the pin, so car power appearing changed nothing.
+# ---------------------------------------------------------------------------
+class _FakeClock:
+    """Monotonic clock that only moves when the hold waits."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _scriptedPin(clock, reads, then):
+    """isPresentFn reading ``reads`` in order, then ``then`` forever.
+
+    Records (time, value) for every read so a test can tell WHEN the pin was
+    sampled, not only what it said.
+    """
+    seen = []
+    it = iter(reads)
+
+    def isPresent():
+        value = next(it, then)
+        seen.append((clock.now, value))
+        return value
+
+    return isPresent, seen
+
+
+def _pollingHold(clock, isPresentFn, *, stopAfterSec=100_000.0, waits=None, **overrides):
+    """Run the readable-pin hold on the fake clock with the production cadence."""
+
+    def waitFn(timeoutSec):
+        if waits is not None:
+            waits.append(timeoutSec)
+        clock.now += timeoutSec
+        return clock.now > stopAfterSec
+
+    kwargs = dict(
+        message="NOT-ARMED (power absent at start)",
+        waitFn=waitFn,
+        pldAvailable=True,
+        isPresentFn=isPresentFn,
+        pldGpioPin=6,
+        dwellSec=7.0,
+        pollSec=1.0,
+        monotonicFn=clock.monotonic,
+    )
+    kwargs.update(overrides)
+    return m.runDisarmedHold(**kwargs)
+
+
+def _lateRecords(caplog):
+    return [r for r in _decisionRecords(caplog) if "ARMED (late" in r.getMessage()]
+
+
+def test_US748c_absentThenSteadyPresent_armsAfterTheUnbrokenDwell(caplog):
+    """
+    Given: a readable pin reading absent x3, then present
+    When: the disarmed hold runs (dwell 7 s, poll 1 s)
+    Then: it returns None (fall through to the armed block) at 7 s after the
+        first present read, and emits the late line exactly once
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    clock = _FakeClock()
+    isPresent, seen = _scriptedPin(clock, [False, False, False], then=True)
+
+    result = _pollingHold(clock, isPresent)
+
+    firstPresentAt = next(t for t, v in seen if v)
+    assert result is None
+    assert firstPresentAt == 3.0
+    assert clock.now == firstPresentAt + 7.0
+    late = _lateRecords(caplog)
+    assert len(late) == 1
+    assert late[0].levelno == logging.WARNING
+    assert "present for 7 s" in late[0].getMessage()
+    assert "10 s after service start" in late[0].getMessage()
+
+
+def test_US748c_brokenRun_doesNotArmAtSixSeconds_armsAfterAnUnbrokenSeven(caplog):
+    """
+    Given: present x6, absent x1, then present
+    When: the disarmed hold runs
+    Then: the 6 s run does not arm; the arm comes 7 s after the run restarts,
+        and the late line is emitted exactly once
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    clock = _FakeClock()
+    isPresent, seen = _scriptedPin(clock, [True] * 6 + [False], then=True)
+
+    result = _pollingHold(clock, isPresent)
+
+    assert result is None
+    absentAt = next(t for t, v in seen if not v)
+    assert absentAt == 6.0
+    assert clock.now == absentAt + 1.0 + 7.0
+    assert len(_lateRecords(caplog)) == 1
+
+
+def test_US748c_readablePin_isPolledEverySmoothingPollSec():
+    """
+    Given: a readable pin that stays absent
+    When: the disarmed hold runs
+    Then: every wait is one poll interval, and the pin is read after each
+    """
+    clock = _FakeClock()
+    isPresent, seen = _scriptedPin(clock, [], then=False)
+    waits = []
+
+    result = _pollingHold(clock, isPresent, stopAfterSec=20.0, waits=waits, pollSec=1.0)
+
+    assert result == 0
+    assert set(waits) == {1.0}
+    assert [t for t, _v in seen][:5] == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+
+def test_US748c_restateStillFiresEvery300sWhileDisarmed(caplog):
+    """
+    Given: a readable pin that stays absent for just over 900 s
+    When: the polling hold runs
+    Then: the cause is re-stated verbatim at 300, 600 and 900 s -- polling the
+        pin must not silence the US-566 restate, nor multiply it per poll
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    clock = _FakeClock()
+    isPresent, _seen = _scriptedPin(clock, [], then=False)
+
+    _pollingHold(clock, isPresent, stopAfterSec=900.5)
+
+    restates = [r for r in _decisionRecords(caplog) if "STILL NOT-ARMED" in r.getMessage()]
+    assert len(restates) == 3
+    assert all(r.levelno == logging.ERROR for r in restates)
+    assert all("NOT-ARMED (power absent at start)" in r.getMessage() for r in restates)
+    assert _lateRecords(caplog) == []
+
+
+def test_US748c_unreadablePin_keepsTheForeverHold_neverArms(caplog):
+    """
+    Given: pld.available False, with a pin that reads 'present' every time
+        (PldSensor reports present when UNREADABLE -- the safe direction for
+        the sequencer, the dangerous one for an arm)
+    When: the hold runs for ten hours of fake time
+    Then: it never arms and never reads the pin; it keeps today's hold
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    clock = _FakeClock()
+    isPresent, seen = _scriptedPin(clock, [], then=True)
+    waits = []
+
+    result = _pollingHold(
+        clock, isPresent, pldAvailable=False, stopAfterSec=36_000.0, waits=waits
+    )
+
+    assert result == 0
+    assert seen == []
+    assert set(waits) == {m.DISARMED_RESTATE_SEC}
+    assert _lateRecords(caplog) == []
+
+
+def test_US748c_main_armsLateThroughTheReadablePredicate_andFallsThrough():
+    """
+    Given: main()'s source
+    When: the disarmed branch is inspected
+    Then: the hold is given the pin, the dwell and the poll from config, its
+        late-arm return falls through (no unconditional return), and the
+        armed block exists once and starts AFTER the hold -- so
+        serviceStartMono is the arm instant
+    """
+    source = inspect.getsource(m.main)
+
+    holdAt = source.find("runDisarmedHold(")
+    assert "return runDisarmedHold(" not in source
+    assert "dwellSec=smoothingSec" in source
+    assert "pollSec=smoothingPollSec" in source
+    assert "provider.isAvailable and provider.isExternalPowerPresent()" in source
+    assert source.count("_runPldWatchLoop(") == 1
+    assert source.count("monitor.startPolling()") == 1
+    assert holdAt < source.find("serviceStartMono = time.monotonic()")
+    assert holdAt < source.find("monitor.startPolling()")

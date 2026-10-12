@@ -41,6 +41,8 @@
 #                           boot. Its absence is what let a one-shot latch ship;
 #                           it asserts the call COUNT, because a single-call
 #                           assertion passes on the broken code.
+# 2026-10-11    | US-748-c| A late arm seeds serviceStartMono with the arm
+#                           instant, so a key-off just after it is in-grace.
 # ================================================================================
 ################################################################################
 """F-7 regression gate: in-grace transient + level-stuck-LOW post-grace must
@@ -53,7 +55,7 @@ from __future__ import annotations
 
 import threading
 
-from src.pi.power.power_watch.__main__ import _runPldWatchLoop
+from src.pi.power.power_watch.__main__ import _runPldWatchLoop, runDisarmedHold
 
 
 class _FakeSequencer:
@@ -243,3 +245,58 @@ def test_firedAlready_releases_whenLineReadsPresentAgain():
         f"1 fire the sequencer is blind for the rest of the boot and the next "
         f"key-off is a hard cut."
     )
+
+
+def test_US748c_lossWithinBootGraceOfALateArm_takesTheBootGraceEdgePath():
+    """US-748-c: a late arm falls through into the armed block, so the watch
+    loop's serviceStartMono is the ARM instant, not the process start. A key-off
+    seconds after the arm is therefore an in-grace loss and must take the
+    boot-grace edge path (suppressFloorFastPath=True), exactly as on a Pi that
+    booted on car power.
+
+    The hold runs on a fake clock to its late arm; its return instant then
+    seeds the loop the way main() does.
+    """
+    clock = {"now": 0.0}
+
+    def waitFn(timeoutSec: float) -> bool:
+        clock["now"] += timeoutSec
+        return False
+
+    reads = iter([False] * 40)
+    result = runDisarmedHold(
+        message="NOT-ARMED",
+        waitFn=waitFn,
+        pldAvailable=True,
+        isPresentFn=lambda: next(reads, True),
+        pldGpioPin=6,
+        dwellSec=7.0,
+        pollSec=1.0,
+        monotonicFn=lambda: clock["now"],
+    )
+    assert result is None
+    armInstant = clock["now"]
+    bootGraceSec = 30.0
+
+    sequencer = _FakeSequencer()
+    states = iter([False, False, True, True])
+    times = iter([armInstant + 2.0, armInstant + 5.0, armInstant + 6.0])
+    _runPldWatchLoop(
+        isPowerLostFn=lambda: next(states, True),
+        stop=_CountingStop(3),
+        serviceStartMono=armInstant,
+        bootGraceSec=bootGraceSec,
+        pldPollSec=0.001,
+        pldGpioPin=6,
+        handleLock=threading.Lock(),
+        shutdownSequencer=sequencer,
+        monotonicFn=lambda: next(times, armInstant + 999.0),
+    )
+
+    # Absent for 40 s, then 7 s present: the arm is 47 s into the process, so
+    # the loss (arm + 5 s) is PAST grace measured from process start and
+    # inside it measured from the arm. Only the arm instant gives the edge path.
+    assert armInstant == 47.0
+    assert armInstant + 5.0 > bootGraceSec
+    assert sequencer.inGraceFireCount == 1
+    assert sequencer.fireCount == 0

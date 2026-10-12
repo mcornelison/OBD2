@@ -913,6 +913,27 @@ connection management):
   `(last_synced_id, last_synced_at, last_batch_id, status)` or the default
   `(0, None, None, 'pending')` if the row has not been created yet.
 
+##### US-776-i: "delivered" means stored, per the server's post-commit count
+
+For the Pi, **"delivered" means "stored, per the server's post-commit
+count"** — never "the server answered 2xx". Every `POST /api/v1/sync` reply
+carries `stored`: per table, `storedCount` and `maxStoredSourceId`, read back
+by the server AFTER the batch commits over the batch's own `source_id`s for
+the pushing device (US-776-h, `readStoredAck` in `src/server/api/sync.py`).
+
+`SyncClient.pushDelta` advances a table's `last_synced_id` only when that
+table's `storedCount == len(rows sent)` **and** `maxStoredSourceId ==
+max(source_id sent)`. A 2xx with no ack, a lower `storedCount` or a different
+`maxStoredSourceId` is `PushStatus.FAILED`: the mark stays where it was (the
+US-149 invariant), `status` reads `failed`, and one WARNING names the
+mismatch — `stored-count mismatch | table=… | sent=… stored=… | maxSent=…
+maxStored=…` (`missing` when the ack is absent). There is no fall-back to a
+bare 2xx, so the server must be on the US-776-h build before the Pi (deploy
+order). A mismatch is not a server rejection and does not count toward the
+US-391 quarantine. `tests/integration/test_pi_to_server_stored_ack_e2e.py`
+pushes every `DELTA_SYNC_TABLES` member through the real server app and
+asserts each mark lands on its stored maximum.
+
 ##### US-226: Sync trigger semantics + recovery playbook
 
 The transport configuration (`pi.companionService.*`) defines HOW sync
@@ -2513,7 +2534,8 @@ Phase-2 T9). The sole shutdown decider is `ShutdownSequencer`
 (`pi.powerWatch.smoothingSec`, configurable; a single power-present read
 within the interval cancels — pure blip rejection; this is the safety
 property, shipped in V1) and **boot-grace** → arm-self-check (refuse to arm
-if GPIO6 does not read power-present at start) → a bounded pre-shutdown
+if GPIO6 does not read power-present at start; a readable-absent start arms
+late, see below) → a bounded pre-shutdown
 **window** of ordered `ShutdownTask`s (V1: exactly one, `SyncWithServerTask`;
 pluggable seam via `__main__.buildV1Tasks`) → window exits on
 **all-tasks-terminal OR `windowCapSec`** → graceful `systemctl poweroff`.
@@ -2567,6 +2589,27 @@ already exists and is `smoothingSec` inside `handleOnBattery`, so a flicker that
 re-arms can cause a shed and a restore, never a poweroff. The re-entry guard
 itself is untouched: `not lost` is false on every tick of a level-stuck LOW line,
 so a stuck line still fires exactly once.
+
+**The late arm IS debounced (US-748, Sprint 97 / V0.29.80).** A Pi woken by its
+power key boots on the pack, so GPIO6 can honestly read power ABSENT at start —
+the arm self-check does not mean "the Pi only booted because power is live".
+Readable-and-absent is reported as `ARM DECISION = NOT-ARMED (power absent at
+start; arming waits for car power)`; only an unreadable line keeps the
+wiring-fault text and its remedy. The service then arms LATE after an
+**unbroken `pi.powerWatch.smoothingSec` of present reads** (polled every
+`pi.powerWatch.smoothingPollSec`; a single absent read restarts the run) and
+says so once: `ARM DECISION = ARMED (late: GPIO6 changed absent -> present on
+this run; ...)`. The late line does not write `pld_witness`, which records
+power-LOSS transitions only.
+
+Why the late arm is debounced when the re-arm after a cancelled loss is not:
+**arming turns every later absence into a poweroff**, so it needs presence
+evidence as strong as the loss evidence — the same `smoothingSec` the loss
+direction waits. The re-arm only restores a state this boot already earned with
+that evidence, and its thrash is caught by `smoothingSec` inside
+`handleOnBattery`; a first arm on a single present read would let a contact
+bounce while the key turns commit the service to poweroff. Both directions use
+the one dwell helper (`heldFor`, `controller.py`).
 
 Why it became reachable now: a cancelled shutdown used to be a brief event. US-776-a
 made the drain run until the backlog is empty or the VCELL floor is reached rather
@@ -2828,6 +2871,24 @@ deeper fault was the design: any dead instrument in the gate disabled the drain,
   per shutdown is US-776-d (below).
 - **Read once, not polled.** A network that changes mid-drain is not re-detected; the drain then
   ends on a failing pass, or on the floor while a pass is blocked.
+
+**AWAY comes only from a fresh sweep; once home is seen, only association or `joinWaitSec` ends the
+join wait (US-776-k1 / US-776-k2, Sprint 97).** The detector's ordinary read uses NetworkManager's
+CACHED scan list (`--rescan no`), which after a drive often lacks home: on 2026-10-11 13:14:47 a key-off
+in the driveway read AWAY and left 9,492 rows on the Pi.
+
+- **At the key-off** `HomeStateAtLoss.observe` runs ONE forced sweep (`HomeNetworkDetector.sweep`,
+  bounded by `pi.homeNetwork.sweepTimeoutSec`) before anything else. `NOT_VISIBLE` -> `AWAY` and
+  `FAILED` -> `UNKNOWN` (never AWAY) are decided from the sweep alone; `VISIBLE` -> `AT_HOME_JOINING`;
+  `ACTIVE_HOME` continues on the detector's read. **AWAY is never decided from the cache.**
+- **Inside the join wait** each poll still reads the cached list, so a poll can read AWAY with home in
+  range. Home has already been seen, so an AWAY poll does **not** end the wait: it ends only on the
+  association (an `AT_HOME_SERVER_*` read -> drain), on `UNKNOWN` (drains, per the rule above), or when
+  `pi.homeNetwork.joinWaitSec` (120 s) is spent -> `AT_HOME_JOINING_TIMEOUT`, no attempt, custody
+  OUTSTANDING. No new outcome: a wait that read AWAY and never associated is a join timeout. A car
+  cannot drive away during a key-off, so the only AWAY the wait could honour is a false one.
+- After association the drain is unchanged: a failing server ends it `stallSec` after the drain start
+  (plus at most one retry wait) as `AT_HOME_SERVER_DOWN`, custody OUTSTANDING.
 
 **Every shutdown sync records why it ended (US-776-d, Sprint 95; Atlas review 2026-09-30, ruling 4
 and gap 3).** Until Sprint 95 a skipped sync wrote nothing, so a probe that was always false read as

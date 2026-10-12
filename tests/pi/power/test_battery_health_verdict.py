@@ -211,7 +211,8 @@ def test_reader_everyConfigInput_isRequired(missing) -> None:
 
 
 def test_theValidatorDefault_isWhatTheEmitterFallsBackTo() -> None:
-    assert DEFAULTS["pi.powerWatch.smoothingSec"] == 5
+    # US-776-j1: 5 -> 7 by CIO ruling 2026-10-12 (option A, matches config.json).
+    assert DEFAULTS["pi.powerWatch.smoothingSec"] == 7
 
 
 def test_reader_onlyDeliveredSyncsAreJobs() -> None:

@@ -52,6 +52,7 @@ import pytest
 from pi.obdii.orchestrator.core import ApplicationOrchestrator
 from src.common.config.validator import ConfigValidator
 from src.pi.data import sync_log
+from tests.pi.sync.stored_ack_reply import storedAckFor
 
 pytestmark = pytest.mark.integration
 
@@ -83,7 +84,9 @@ class _MockSyncHandler(BaseHTTPRequestHandler):
             return
         store.recordBatch(payload=payload)
         tables = payload.get("tables", {})
+        # US-776-i: the Pi advances only on the stored ack.
         self._sendJson(HTTPStatus.OK, {
+            **storedAckFor(payload),
             "status": "ok",
             "batchId": payload.get("batchId", ""),
             "tablesProcessed": {

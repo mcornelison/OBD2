@@ -42,6 +42,7 @@ import pytest
 
 from src.pi.data import sync_log
 from src.pi.sync import PushStatus, SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckReplyFor
 
 _TABLE = "dtc_freeze_frame"
 
@@ -144,6 +145,9 @@ class _Fake500:
 
 
 class _FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
     def __enter__(self) -> _FakeResponse:
         return self
 
@@ -151,16 +155,18 @@ class _FakeResponse:
         return None
 
     def read(self) -> bytes:
-        return b'{"status":"ok"}'
+        return self._body
 
 
 class _FakeSuccess:
+    """A server that stored every row (US-776-i: the reply carries the ack)."""
+
     def __init__(self) -> None:
         self.calls = 0
 
     def __call__(self, req: Any, timeout: float = 30) -> Any:  # noqa: ARG002
         self.calls += 1
-        return _FakeResponse()
+        return _FakeResponse(storedAckReplyFor(req.data))
 
 
 class _FakeTimeout:

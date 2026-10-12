@@ -188,6 +188,22 @@
 #                           (the backstop fast path); recordFloorEnd carries the
 #                           provisional's backlog_start / sync_started_at forward.
 #                           HomeStateAtLoss takes the task's backlogReader. CIO-directed.
+# 2026-10-11    | US-748-b  | Sprint 97. buildArmDecisionMessage gains the late-arm
+#                           line ('ARMED (late: ...'); NOT-ARMED splits into
+#                           readable-absent (waits for car power) and unreadable
+#                           (today's wiring-fault text). Live-feed premise removed.
+# 2026-10-11    | US-748-c  | Sprint 97. runDisarmedHold polls a READABLE pin every
+#                           smoothingPollSec and, after an unbroken smoothingSec
+#                           of present reads (controller.heldFor), emits the late
+#                           line once and returns None; main() falls through to
+#                           the one armed block, so serviceStartMono is the arm
+#                           instant. An unreadable pin keeps the forever hold.
+# 2026-10-11    | US-776-k1 | Sprint 97. HomeStateAtLoss runs the forced WiFi sweep
+#                           FIRST at every key-off: NOT_VISIBLE -> AWAY, FAILED ->
+#                           UNKNOWN, VISIBLE -> AT_HOME_JOINING from the sweep
+#                           alone; ACTIVE_HOME continues on the detector read.
+#                           stateForSync's wait is bounded by the whole
+#                           observation and reads UNKNOWN on timeout.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -234,6 +250,7 @@ from src.pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
 from src.pi.network.home_detector import (  # noqa: E402
     HomeNetworkDetector,
     HomeNetworkState,
+    SweepResult,
 )
 from src.pi.power.battery_health import resolveCellEpoch  # noqa: E402
 from src.pi.power.drain_event_writer import (  # noqa: E402
@@ -247,7 +264,10 @@ from src.pi.power.power_source_pubsub import (  # noqa: E402
     publishPowerSource,
 )
 from src.pi.power.power_watch.contract import OutcomeKind  # noqa: E402
-from src.pi.power.power_watch.controller import ShutdownSequencer  # noqa: E402
+from src.pi.power.power_watch.controller import (  # noqa: E402
+    ShutdownSequencer,
+    heldFor,
+)
 from src.pi.power.power_watch.load_shed import (  # noqa: E402
     DEFAULT_SHED_UNITS,
     LoadShedder,
@@ -332,6 +352,8 @@ def buildArmDecisionMessage(
     pldAvailable: bool,
     readsPowerPresent: bool,
     lastTransitionUtc: str | None = None,
+    lateArmPresentSec: float | None = None,
+    lateArmAfterStartSec: float | None = None,
 ) -> str:
     """Compose the one arm-decision line for either branch.
 
@@ -356,15 +378,38 @@ def buildArmDecisionMessage(
             US-666: without a witness the verdict is ARM_DECISION_UNVERIFIED,
             not ARMED. With one, the line says the proof came from a PRIOR run,
             because this start cannot exercise a power loss in software.
+        lateArmPresentSec: US-748-b. For a LATE arm only: how long the pin read
+            present, unbroken, before arming. With lateArmAfterStartSec it
+            selects the late line, which outranks both prior-run renderings:
+            the pin was seen to CHANGE absent -> present on THIS run. Composing
+            the line writes nothing -- pld_witness records power-LOSS
+            transitions, and an arm is not one.
+        lateArmAfterStartSec: US-748-b. For a LATE arm only: seconds from
+            service start to the arm. Both late facts or neither.
 
     Returns:
         The exact line to log -- prefixed with ARM_DECISION_PREFIX on both
         branches so one grep finds either.
+
+    Raises:
+        ValueError: Only one of the two late-arm facts was given.
     """
+    if (lateArmPresentSec is None) != (lateArmAfterStartSec is None):
+        raise ValueError("a late arm needs both lateArmPresentSec and lateArmAfterStartSec")
     evidence = (
         f"gpio={pldGpioPin} pld.available={pldAvailable} reads-power-present={readsPowerPresent}"
     )
     readability = f"GPIO{pldGpioPin} PLD readability check PASSED ({evidence})"
+    if armed and lateArmPresentSec is not None:
+        return (
+            f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} (late: GPIO{pldGpioPin} "
+            f"changed absent -> present on this run; present for "
+            f"{lateArmPresentSec:.0f} s, {lateArmAfterStartSec:.0f} s after service "
+            f"start) -- safe-shutdown protection is ON: the pin read power absent "
+            f"at start and was OBSERVED to CHANGE to present on THIS run, so it "
+            f"both reads and moves. {readability}. A sustained external-power "
+            f"loss will run the bounded pre-shutdown pipeline and then poweroff."
+        )
     if armed and lastTransitionUtc:
         return (
             f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} (PROVEN) -- safe-shutdown "
@@ -385,6 +430,17 @@ def buildArmDecisionMessage(
             f"never been seen to move is indistinguishable from a wire that is "
             f"not connected."
         )
+    if pldAvailable and not readsPowerPresent:
+        # US-748-b: a readable pin reporting ABSENT is a Pi woken on its pack
+        # before car power -- not a wiring fault. Unreadable keeps the fault text.
+        return (
+            f"{ARM_DECISION_PREFIX} {ARM_DECISION_NOT_ARMED} (power absent at "
+            f"start; arming waits for car power) -- safe-shutdown protection is "
+            f"OFF until car power is present. GPIO{pldGpioPin} reads, and reports "
+            f"power ABSENT ({evidence}): the Pi started on its battery pack. "
+            f"Service stays up disarmed, OBD collector unaffected, NOTHING will "
+            f"be powered off while disarmed."
+        )
     return (
         f"{ARM_DECISION_PREFIX} {ARM_DECISION_NOT_ARMED} -- safe-shutdown "
         f"protection is OFF. CAUSE: GPIO{pldGpioPin} PLD SSOT arm self-check "
@@ -403,6 +459,8 @@ def emitArmDecision(
     pldAvailable: bool,
     readsPowerPresent: bool,
     lastTransitionUtc: str | None = None,
+    lateArmPresentSec: float | None = None,
+    lateArmAfterStartSec: float | None = None,
 ) -> str:
     """Emit the arm decision UNCONDITIONALLY, on whichever branch was taken.
 
@@ -418,6 +476,9 @@ def emitArmDecision(
         pldGpioPin: The configured X1209 PLD pin.
         pldAvailable: Whether the PLD line is readable at all.
         readsPowerPresent: The instantaneous power-present reading.
+        lastTransitionUtc: See buildArmDecisionMessage.
+        lateArmPresentSec: See buildArmDecisionMessage (late arm only).
+        lateArmAfterStartSec: See buildArmDecisionMessage (late arm only).
 
     Returns:
         The exact line logged, so the caller can re-state it verbatim without
@@ -429,6 +490,8 @@ def emitArmDecision(
         pldAvailable=pldAvailable,
         readsPowerPresent=readsPowerPresent,
         lastTransitionUtc=lastTransitionUtc,
+        lateArmPresentSec=lateArmPresentSec,
+        lateArmAfterStartSec=lateArmAfterStartSec,
     )
     if armed:
         logger.warning(message)
@@ -440,9 +503,16 @@ def emitArmDecision(
 def runDisarmedHold(
     *,
     message: str,
-    waitFn,
+    waitFn: Callable[[float], bool],
     restateSec: float = DISARMED_RESTATE_SEC,
-) -> int:
+    pldAvailable: bool = False,
+    isPresentFn: Callable[[], bool] | None = None,
+    pldGpioPin: int | None = None,
+    dwellSec: float = 0.0,
+    pollSec: float = 0.0,
+    monotonicFn: Callable[[], float] = time.monotonic,
+    startedMono: float | None = None,
+) -> int | None:
     """Hold the process alive DISARMED, re-stating the cause on an interval.
 
     Replaces a bare ``threading.Event().wait()``, which announced the refusal
@@ -450,21 +520,69 @@ def runDisarmedHold(
     exactly like a healthy armed one. Declining to arm is not a claim that the
     shutdown path is well, so the instrument must keep saying so.
 
+    US-748-c: a READABLE pin that read power absent is a Pi woken on its pack
+    before car power, not a fault. That hold polls the pin every ``pollSec``
+    and, once it has read present for an unbroken ``dwellSec`` (the shared
+    heldFor dwell -- no loop of its own), emits the late ARM DECISION line once
+    and RETURNS None so main() falls through to its one armed block. The dwell
+    is the loss window's length because arming turns every later absence into
+    a poweroff (architecture 10.6). An UNREADABLE pin keeps the forever hold:
+    PldSensor reports an unreadable line as present, which must never arm.
+
     Args:
         message: The not-armed decision line, re-stated verbatim (never
             recomposed -- one formatting site).
         waitFn: One-arg callable ``(timeoutSec) -> bool``. Production passes
             ``threading.Event().wait``, which never returns True, so the hold
-            is permanent. Tests pass a bounded stub.
+            is permanent unless the pin arms. Tests pass a bounded stub.
         restateSec: Seconds between re-statements.
+        pldAvailable: The PLD line was readable at the arm decision. False
+            keeps the forever hold whatever isPresentFn says.
+        isPresentFn: Power-present predicate polled while disarmed. None keeps
+            the forever hold.
+        pldGpioPin: The PLD pin, for the late line.
+        dwellSec: Unbroken present time before a late arm
+            (pi.powerWatch.smoothingSec).
+        pollSec: Pin poll interval (pi.powerWatch.smoothingPollSec).
+        monotonicFn: DI monotonic clock.
+        startedMono: Service start on monotonicFn's clock, for the late line's
+            "after service start"; defaults to the hold's entry.
 
     Returns:
-        0 -- reached only if waitFn returns True, which no production caller
-        does.
+        None on a late arm (fall through to the armed block); 0 if waitFn
+        returns True, which no production caller does.
     """
-    while not waitFn(restateSec):
-        logger.error("%s [STILL NOT-ARMED]", message)
-    return 0
+    if not pldAvailable or isPresentFn is None or pldGpioPin is None:
+        while not waitFn(restateSec):
+            logger.error("%s [STILL NOT-ARMED]", message)
+        return 0
+
+    if startedMono is None:
+        startedMono = monotonicFn()
+    nextRestate = monotonicFn() + restateSec
+    stopped = False
+
+    def _pollWait(timeoutSec: float) -> None:
+        # The US-566 restate keeps its own cadence; the pin poll is faster.
+        nonlocal stopped, nextRestate
+        stopped = bool(waitFn(timeoutSec))
+        if not stopped and monotonicFn() >= nextRestate:
+            logger.error("%s [STILL NOT-ARMED]", message)
+            nextRestate = monotonicFn() + restateSec
+
+    if not heldFor(
+        isPresentFn, dwellSec, pollSec, _pollWait, monotonicFn, abortFn=lambda: stopped
+    ):
+        return 0
+    emitArmDecision(
+        armed=True,
+        pldGpioPin=pldGpioPin,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=dwellSec,
+        lateArmAfterStartSec=monotonicFn() - startedMono,
+    )
+    return None
 
 
 def _parseArgs(argv: list[str] | None = None) -> argparse.Namespace:
@@ -736,6 +854,19 @@ def _startDaemonThread(target: Callable[[], None]) -> None:
     threading.Thread(target=target, name="pw-home-state", daemon=True).start()
 
 
+def _waitOnEvent(event: threading.Event, timeout: float | None) -> bool:
+    return event.wait(timeout)
+
+
+#: US-776-k1: the key-off states the sweep decides ALONE, with no detector read.
+#: ACTIVE_HOME is absent: associated to home, the detector read decides.
+_SWEEP_DECIDES: dict[SweepResult, HomeNetworkState] = {
+    SweepResult.NOT_VISIBLE: HomeNetworkState.AWAY,
+    SweepResult.FAILED: HomeNetworkState.UNKNOWN,
+    SweepResult.VISIBLE: HomeNetworkState.AT_HOME_JOINING,
+}
+
+
 class HomeStateAtLoss:
     """US-741: ask the home detector ONCE per power loss and persist the answer.
 
@@ -764,6 +895,19 @@ class HomeStateAtLoss:
     The sync task's first home-state read IS this loss's answer
     (``stateForSync``), so the detector is called once per loss, not twice.
     Its later reads (the US-776-e JOINING polls) go to the detector live.
+
+    US-776-k1: with ``sweep`` wired, the observation forces ONE WiFi scan
+    FIRST, because NetworkManager's cached list -- all the detector reads --
+    often lacks home after a drive (2026-10-11 13:14:47 read AWAY in the
+    driveway). AWAY comes only from a fresh scan that lacks home:
+
+    * ``NOT_VISIBLE`` -> ``AWAY`` and ``FAILED`` -> ``UNKNOWN``, from the
+      sweep alone (no detector read);
+    * ``VISIBLE`` -> ``AT_HOME_JOINING`` (home in range, not yet associated);
+    * ``ACTIVE_HOME`` -> the detector read decides (server reachable / down).
+
+    The observation starts before smoothing, and the validator keeps the
+    sweep timeout below ``smoothingSec``, so an away key-off adds no wait.
     """
 
     def __init__(
@@ -776,6 +920,9 @@ class HomeStateAtLoss:
         monotonicFn: Callable[[], float] = time.monotonic,
         wallIsoFn: Callable[[], str] = utcIsoNow,
         backlogReader: Callable[[], int | None] | None = None,
+        sweep: Callable[[], SweepResult] | None = None,
+        observationTimeoutSec: float | None = None,
+        waitFn: Callable[[threading.Event, float | None], bool] | None = None,
     ) -> None:
         """Args:
         readState: Zero-arg detector read (``HomeNetworkDetector.
@@ -792,7 +939,18 @@ class HomeStateAtLoss:
             ONLY when a record must be written for a loss whose sync never
             wrote one (the fast path, or a floor end before the first
             provisional record). ``None`` or a failed read lands NULL.
+        sweep: US-776-k1 -- ``HomeNetworkDetector.sweep``, run FIRST on every
+            loss; None keeps the detector-only observation.
+        observationTimeoutSec: US-776-k1 -- how long ``stateForSync`` waits
+            for this loss's observation (``HomeNetworkDetector.
+            observationBoundSec``: the sweep plus the detector's own bounded
+            calls); on expiry it answers UNKNOWN, never AWAY. None waits for it.
+        waitFn: ``(event, timeout) -> set?``; ``Event.wait`` when None. Tests
+            pass a fake so a bound can expire without a real sleep.
         """
+        self._sweep = sweep
+        self._observationTimeoutSec = observationTimeoutSec
+        self._wait = waitFn if waitFn is not None else _waitOnEvent
         self._monotonic = monotonicFn
         self._backlogReader = backlogReader
         #: US-833: this loss's sync has written a record (provisional or final),
@@ -868,10 +1026,14 @@ class HomeStateAtLoss:
 
     def _observeLoss(self, loss: threading.Event) -> None:
         try:
-            state = self._readOnce()
+            state = self._observeOnce()
             with self._lock:
                 if self._loss is not loss:
                     return  # a newer loss owns the record now
+                if self._answer is not None:
+                    # US-776-k1: stateForSync's bound expired and the sync has
+                    # already acted on UNKNOWN; a late answer does not relabel it.
+                    return
                 self._answer = state
                 if not self._written:
                     self._writeHomeStateRecord(state.name, "home state at the power loss")
@@ -893,6 +1055,32 @@ class HomeStateAtLoss:
         with self._lock:
             return self._vcellSnapshot
 
+    def _observeOnce(self) -> HomeNetworkState:
+        """This loss's one observation: the sweep first (US-776-k1), then,
+        only when it shows wlan0 associated to home, one detector call."""
+        if self._sweep is None:
+            return self._readOnce()
+        try:
+            result = self._sweep()
+        except Exception as exc:  # noqa: BLE001 -- a scan with no answer is FAILED
+            logger.warning("powerwatch: key-off wifi sweep raised (%s) -- FAILED", exc)
+            result = SweepResult.FAILED
+        decided = _SWEEP_DECIDES.get(result)
+        if decided is not None:
+            logger.info(
+                "powerwatch: key-off wifi sweep = %s -> home state %s",
+                result.name,
+                decided.name,
+            )
+            return decided
+        state = self._readOnce()
+        logger.info(
+            "powerwatch: key-off wifi sweep = %s -> home state %s (detector)",
+            result.name,
+            state.name,
+        )
+        return state
+
     def _readOnce(self) -> HomeNetworkState:
         """One detector call; UNKNOWN when it raises."""
         try:
@@ -909,13 +1097,26 @@ class HomeStateAtLoss:
             self._handedToSync = True
         if not first:
             return self._readState()
-        loss.wait()
+        if not self._wait(loss, self._observationTimeoutSec):
+            # US-776-k1: the observation outlived its whole bound (sweep plus
+            # the detector's own bounded calls). UNKNOWN drains; never AWAY.
+            with self._lock:
+                if self._loss is loss and self._answer is None:
+                    self._answer = HomeNetworkState.UNKNOWN
+                answer = self._answer if self._loss is loss else None
+            logger.warning(
+                "powerwatch: home-state observation gave no answer within %.1fs "
+                "-- sync reads UNKNOWN",
+                self._observationTimeoutSec,
+            )
+            return answer if answer is not None else HomeNetworkState.UNKNOWN
         with self._lock:
             answer = self._answer if self._loss is loss else None
         if answer is None:
             # The observation never ran (its thread could not start): this is
-            # the loss's one call. Outside the lock, so a poweroff never waits.
-            answer = self._readOnce()
+            # the loss's one observation. Outside the lock, so a poweroff never
+            # waits.
+            answer = self._observeOnce()
             with self._lock:
                 if self._loss is loss and self._answer is None:
                     self._answer = answer
@@ -1373,6 +1574,9 @@ def _runPldWatchLoop(
 
 def main(argv: list[str] | None = None) -> int:
     """Build the real ShutdownSequencer and block on the GPIO6 PLD watch loop."""
+    # US-748-c: the late arm line reports its offset from HERE. serviceStartMono
+    # (below) is a different instant -- the arm -- and anchors boot grace.
+    processStartMono = time.monotonic()
     args = _parseArgs(argv)
     config = loadConfigWithSecrets(args.config, args.env_file)
     config = ConfigValidator().validate(config)
@@ -1511,6 +1715,10 @@ def main(argv: list[str] | None = None) -> int:
         # US-833: the same count the sync task records, for a loss whose sync
         # never wrote one (the fast path; a floor end before the first record).
         backlogReader=lambda: backlogCount(readDrainBacklog()),
+        # US-776-k1: a forced scan FIRST at every key-off -- AWAY only from a
+        # fresh scan that lacks home; the sync waits at most the whole bound.
+        sweep=detector.sweep,
+        observationTimeoutSec=detector.observationBoundSec,
     )
     # US-776-d: one durable record per run -- why the sync ended. US-741: it
     # carries the loss's home state, serialised with that record. US-833: the
@@ -1712,10 +1920,10 @@ def main(argv: list[str] | None = None) -> int:
     # SSOT (deterministic "external power present"), NOT the retired VCELL-
     # trend heuristic that bricked the Pi 2026-05-18.
     #
-    # Arm self-check: the service only starts because the Pi booted on a live
-    # feed, so the SSOT MUST read power-present right now. If it does not
-    # (wrong pin/polarity, or unreadable), REFUSE to arm -- stay up disarmed,
-    # never poweroff. Fails to "do not shut down", the deliberate inverse of
+    # Arm self-check: arm only if the SSOT reads power-present right now. A Pi
+    # woken by its power key boots on the pack, so a readable pin may honestly
+    # read ABSENT (US-748-b); an unreadable one is a wiring fault. Either way,
+    # REFUSE to arm -- stay up disarmed, never poweroff. Fails to "do not shut down", the deliberate inverse of
     # the old "uncertain -> poweroff" mistake.
     # US-566: the decision is now reported on BOTH branches, and it is the
     # first thing this service says. Evidence is read through the PROVIDER,
@@ -1736,8 +1944,23 @@ def main(argv: list[str] | None = None) -> int:
         lastTransitionUtc=readWitness(),
     )
     if not armed:
-        # Stay alive, disarmed -- and keep saying so.
-        return runDisarmedHold(message=decisionLine, waitFn=threading.Event().wait)
+        # Stay alive, disarmed -- and keep saying so. US-748-c: a readable pin
+        # is polled, and an unbroken smoothingSec of present reads returns here
+        # (None) to fall through to the ONE armed block below, so
+        # serviceStartMono is the arm instant. The predicate re-checks
+        # readability because an unreadable PLD reports present.
+        heldExit = runDisarmedHold(
+            message=decisionLine,
+            waitFn=threading.Event().wait,
+            pldAvailable=provider.isAvailable,
+            isPresentFn=lambda: provider.isAvailable and provider.isExternalPowerPresent(),
+            pldGpioPin=pldGpioPin,
+            dwellSec=smoothingSec,
+            pollSec=smoothingPollSec,
+            startedMono=processStartMono,
+        )
+        if heldExit is not None:
+            return heldExit
 
     monitor.startPolling()  # vcell-backstop telemetry only; NOT the trigger
     logger.info(

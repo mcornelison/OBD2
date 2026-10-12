@@ -85,6 +85,10 @@
 #               |              | resolver (left untouched).  Registry + model
 #               |              | registry ship empty; startup_log registers US-417.
 # 2026-09-25    | Rex (US-790) | Registered drain_vcell_trajectory (no rename).
+# 2026-10-11    | Rex (US-776-h)| Push reply gains 'stored': per table
+#               |              | storedCount + maxStoredSourceId, read back
+#               |              | AFTER the commit (readStoredAck).  Existing
+#               |              | response keys unchanged.
 # ================================================================================
 ################################################################################
 
@@ -433,6 +437,17 @@ class TableResult(BaseModel):
     errors: int = 0
 
 
+class StoredAck(BaseModel):
+    """Per-table post-commit stored ack (US-776-h).
+
+    Read back AFTER the commit over the batch's source_ids for the pushing
+    device, so it measures what the server holds, not what it was sent.
+    """
+
+    storedCount: int
+    maxStoredSourceId: int | None
+
+
 class SyncResponse(BaseModel):
     """Response envelope for POST /sync (server spec §2.2)."""
 
@@ -442,6 +457,9 @@ class SyncResponse(BaseModel):
     syncedAt: str
     driveDataReceived: bool
     autoAnalysisTriggered: bool
+    # US-776-h: additive, so a Pi on an older build that ignores it keeps
+    # working.  tablesProcessed is a PRE-write count; this is the post-commit one.
+    stored: dict[str, StoredAck] = Field(default_factory=dict)
 
 
 # ==============================================================================
@@ -504,6 +522,7 @@ def runSyncUpsert(
     batchId: str,
     tables: dict[str, Any],
     syncHistoryId: int,
+    batchSourceIds: dict[str, list[int]] | None = None,
 ) -> dict[str, dict[str, int]]:
     """
     Upsert every accepted table's delta rows inside a single DB transaction.
@@ -519,6 +538,11 @@ def runSyncUpsert(
             ``rows`` list of Pi-native rows (each including an ``id`` field).
         syncHistoryId: PK of the sync_history row that triggered this call;
             stamped into ``sync_batch_id`` on rows that carry that column.
+        batchSourceIds: Optional collector (US-776-h).  When given, it is
+            filled with table name → the server ``source_id`` of every row
+            this batch writes, for each source_id-keyed table (the delta
+            registry and dtc_freeze_frame; not the natural-key snapshot
+            tables).  :func:`readStoredAck` reads these back after the commit.
 
     Returns:
         Mapping of table name → ``{"inserted": N, "updated": M, "errors": 0}``.
@@ -526,6 +550,8 @@ def runSyncUpsert(
         present with empty rows report zero counts.
     """
     result: dict[str, dict[str, int]] = {}
+    if batchSourceIds is None:
+        batchSourceIds = {}
 
     for tableName, payload in tables.items():
         # US-369: dtc_freeze_frame needs cross-tier FK resolution; it is
@@ -542,6 +568,7 @@ def runSyncUpsert(
         rows = payload["rows"] if isinstance(payload, dict) else payload.rows
         if not rows:
             result[tableName] = {"inserted": 0, "updated": 0, "errors": 0}
+            batchSourceIds[tableName] = []
             continue
 
         # Shape Pi-native rows into server schema dicts.
@@ -629,6 +656,7 @@ def runSyncUpsert(
             "updated": updated,
             "errors": 0,
         }
+        batchSourceIds[tableName] = sourceIds
 
     # US-369 (F-109): dtc_freeze_frame last -- its FK resolution reads the
     # dtc_log / vehicle_info rows just upserted above.
@@ -638,6 +666,8 @@ def runSyncUpsert(
         result[DTC_FREEZE_FRAME_TABLE] = _syncDtcFreezeFrameRows(
             session, deviceId, ffRows, syncHistoryId,
         )
+        # _syncDtcFreezeFrameRows maps the Pi 'id' straight onto source_id.
+        batchSourceIds[DTC_FREEZE_FRAME_TABLE] = [r["id"] for r in ffRows]
 
     # US-416: natural-key snapshot-sync tables, routed by the shared registry.
     for tableName, payload in tables.items():
@@ -655,6 +685,56 @@ def runSyncUpsert(
         )
 
     return result
+
+
+def readStoredAck(
+    session: Session,
+    deviceId: str,
+    batchSourceIds: dict[str, list[int]],
+) -> dict[str, dict[str, int | None]]:
+    """Read back what the server holds for a batch, after its commit (US-776-h).
+
+    ``tablesProcessed`` is taken before the write, so it says what was
+    received.  This is the count the Pi may treat as "stored": a SELECT over
+    the batch's own source_ids, scoped to the pushing device, run on a session
+    that sees only committed data.  A row that did not land shows as a
+    ``storedCount`` below the rows sent.  DISTINCT keeps the count per source
+    row for tables whose conflict key is wider than (device, source_id).
+
+    Args:
+        session: A sync Session opened AFTER the batch transaction committed.
+        deviceId: The pushing device; another device's rows never count.
+        batchSourceIds: Table name → the batch's source_ids, as collected by
+            :func:`runSyncUpsert`.
+
+    Returns:
+        Table name → ``{"storedCount": N, "maxStoredSourceId": M}``.  A table
+        with no rows in the batch, or none stored, reads ``0`` / ``None``.
+    """
+    ack: dict[str, dict[str, int | None]] = {}
+    for tableName, sourceIds in batchSourceIds.items():
+        if not sourceIds:
+            ack[tableName] = {"storedCount": 0, "maxStoredSourceId": None}
+            continue
+        model = (
+            DtcFreezeFrame
+            if tableName == DTC_FREEZE_FRAME_TABLE
+            else _TABLE_REGISTRY[tableName][0]
+        )
+        storedCount, maxStored = session.execute(
+            select(
+                sa_func.count(sa_func.distinct(model.source_id)),  # type: ignore[attr-defined]
+                sa_func.max(model.source_id),  # type: ignore[attr-defined]
+            ).where(
+                model.source_device == deviceId,  # type: ignore[attr-defined]
+                model.source_id.in_(sourceIds),  # type: ignore[attr-defined]
+            ),
+        ).one()
+        ack[tableName] = {
+            "storedCount": int(storedCount),
+            "maxStoredSourceId": maxStored,
+        }
+    return ack
 
 
 # The conflict target every synced table used before US-765, and still uses
@@ -1331,8 +1411,9 @@ async def postSync(request: Request) -> SyncResponse:
         for name, td in syncRequest.tables.items()
     }
     driveCounter = syncRequest.driveCounter
+    batchSourceIds: dict[str, list[int]] = {}
+    factory = getAsyncSession(engine)
     try:
-        factory = getAsyncSession(engine)
         async with factory() as session:
             def _runAllUpserts(s: Session) -> dict[str, dict[str, int]]:
                 processed = runSyncUpsert(
@@ -1341,6 +1422,7 @@ async def postSync(request: Request) -> SyncResponse:
                     batchId=syncRequest.batchId,
                     tables=tablesForCore,
                     syncHistoryId=historyId,
+                    batchSourceIds=batchSourceIds,
                 )
                 # US-314: Pi drive_counter snapshot rides on the same
                 # transaction so a partial failure rolls back BOTH the
@@ -1365,6 +1447,24 @@ async def postSync(request: Request) -> SyncResponse:
         engine, historyId, tablesProcessed, syncedAt, syncRequest.residual,
     )
 
+    # 6b) US-776-h: read the batch back in a NEW session, so the count is of
+    #     committed rows only.  A readback that fails is a 500, never an ack
+    #     without counts: the Pi must not take silence for "stored".  The
+    #     batch itself stays committed and re-pushing it is an idempotent upsert.
+    try:
+        async with factory() as session:
+            storedAck = await session.run_sync(
+                lambda s: readStoredAck(s, syncRequest.deviceId, batchSourceIds),
+            )
+    except Exception as exc:  # noqa: BLE001 — any DB error → 500
+        logger.error(
+            "Stored-count readback failed for batch %s: %s", syncRequest.batchId, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Stored-count readback failed: {exc}",
+        ) from exc
+
     # 7) US-350 / B-104 Step 1a (V0.27.17): the V0.27.7-V0.27.16
     #    auto-analysis trigger is retired.  Server-side drive analytics now
     #    run via the out-of-band compute path (overnight systemd timer +
@@ -1385,6 +1485,7 @@ async def postSync(request: Request) -> SyncResponse:
         syncedAt=syncedAt.isoformat(),
         driveDataReceived=driveDataReceived,
         autoAnalysisTriggered=autoAnalysisTriggered,
+        stored={name: StoredAck(**ack) for name, ack in storedAck.items()},
     )
 
 

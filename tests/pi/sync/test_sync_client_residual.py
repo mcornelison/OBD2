@@ -34,6 +34,7 @@ from src.pi.sync import backlog as backlog_module
 from src.pi.sync import client as client_module
 from src.pi.sync.backlog import SyncBacklog, residualAfterBatch
 from src.pi.sync.client import SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckReplyFor
 
 _SENSOR = EDR_SYNC_TABLES[0]
 
@@ -88,6 +89,9 @@ class TestResidualAfterBatch:
 
 
 class _Response:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
     def __enter__(self) -> _Response:
         return self
 
@@ -95,7 +99,7 @@ class _Response:
         return None
 
     def read(self) -> bytes:
-        return b'{"status":"ok"}'
+        return self._body
 
 
 def _recordingOpener() -> Any:
@@ -103,7 +107,8 @@ def _recordingOpener() -> Any:
 
     def _opener(req: Any, timeout: float = 30) -> _Response:  # noqa: ARG001
         bodies.append(json.loads(req.data.decode('utf-8')))
-        return _Response()
+        # US-776-i: a stored push answers with the stored ack.
+        return _Response(storedAckReplyFor(req.data))
 
     _opener.bodies = bodies  # type: ignore[attr-defined]
     return _opener

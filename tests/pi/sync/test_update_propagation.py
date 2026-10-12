@@ -60,6 +60,7 @@ import pytest
 
 from src.pi.data import sync_log
 from src.pi.sync import PushStatus, SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckReplyFor
 
 # =============================================================================
 # HTTP capture stub
@@ -81,10 +82,14 @@ class _CapturingOpener:
     def __call__(self, req: Any, timeout: float | None = None) -> Any:
         body = req.data.decode("utf-8") if req.data else "{}"
         self.requests.append(json.loads(body))
-        return _FakeResponse()
+        # US-776-i: a stored push answers with the stored ack.
+        return _FakeResponse(storedAckReplyFor(req.data))
 
 
 class _FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
     def __enter__(self) -> _FakeResponse:
         return self
 
@@ -92,7 +97,7 @@ class _FakeResponse:
         return None
 
     def read(self) -> bytes:
-        return b""
+        return self._body
 
 
 # =============================================================================

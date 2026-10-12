@@ -116,6 +116,10 @@
 #                                integers >= 1 only.
 # 2026-10-03    | Atlas (ARCH-065a)| Ruling 19 (M8): drainFloorDwellReads is an integer
 #                                >= 1 (bool / float / str rejected).
+# 2026-10-11    | Rex (US-776-j1)| pi.homeNetwork.sweepTimeoutSec 6 (forced WiFi
+#                                sweep bound), refused unless < smoothingSec;
+#                                smoothingSec default 5 -> 7 (CIO 2026-10-12,
+#                                option A: matches config.json).
 # ================================================================================
 ################################################################################
 
@@ -185,6 +189,12 @@ REQUIRED_SECTIONS: tuple[str, ...] = ('pi', 'server')
 DEFAULT_IMU_SAMPLE_HZ = 50
 DEFAULT_IMU_PERSIST_HZ = 2
 DEFAULT_IMU_STATE_HZ = 1
+
+# US-776-j1: bound on the ONE forced WiFi scan (nmcli --rescan yes) a key-off
+# runs to decide home. MEASURED on the Pi (Atlas): a forced scan takes
+# 4.07-4.10 s. Must stay below pi.powerWatch.smoothingSec so an away key-off's
+# sweep fits inside the 7 s loss-confirmation window (validated cross-key).
+DEFAULT_HOME_SWEEP_TIMEOUT_SEC = 6
 
 # US-803-a: the gyro's full scale, the ceiling on pi.sensors.imu.gyroFaultMinRadS.
 # MEASURED, not chosen: the Pi runs the ICM-20948 gyro at +/-500 dps --
@@ -346,7 +356,9 @@ DEFAULTS: dict[str, Any] = {
     # before the shutdown window opens (blip rejection -- spec sec 3, the
     # safety property that prevents the 2026-05-18 boot-sag bricking loop).
     # smoothingPollSec: re-sample cadence during the smoothing interval.
-    'pi.powerWatch.smoothingSec': 5,
+    # 7, matching config.json (CIO 2026-10-12, US-776-j1): the old default 5
+    # disagreed with the live value and left no room for the 6 s sweep.
+    'pi.powerWatch.smoothingSec': 7,
     'pi.powerWatch.smoothingPollSec': 1,
     # GPIO6 PLD = the X1209's DETERMINISTIC external-power-present line
     # (HIGH=present, LOW=lost; Geekworm x120x reference pld.py). This is now
@@ -394,6 +406,9 @@ DEFAULTS: dict[str, Any] = {
     # the WiFi-join wait; stallSec ends a drain whose backlog stopped falling.
     'pi.homeNetwork.joinWaitSec': 120,
     'pi.homeNetwork.stallSec': 60,
+    # US-776-j1: the key-off's forced WiFi sweep is bounded by this; it must
+    # be < pi.powerWatch.smoothingSec (checked in _validateHomeNetwork).
+    'pi.homeNetwork.sweepTimeoutSec': DEFAULT_HOME_SWEEP_TIMEOUT_SEC,
     # Pi-tier sync trigger semantics (US-226).  Orchestrator-level trigger
     # policy; the transport config lives in pi.companionService above.
     # intervalSeconds MUST fire independently of drive_end so a bugged
@@ -1079,6 +1094,36 @@ class ConfigValidator:
                 raise ConfigValidationError(
                     f"pi.homeNetwork.{key} must be a positive number (got {value!r})",
                     missingFields=[f'pi.homeNetwork.{key}'],
+                )
+
+        sweepTimeout = section.get('sweepTimeoutSec')
+        if sweepTimeout is not None:
+            # bool first -- isinstance(True, int) is True in Python.
+            if (
+                isinstance(sweepTimeout, bool)
+                or not isinstance(sweepTimeout, (int, float))
+                or sweepTimeout <= 0
+            ):
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.sweepTimeoutSec must be a positive number "
+                    f"(got {sweepTimeout!r})",
+                    missingFields=['pi.homeNetwork.sweepTimeoutSec'],
+                )
+            # US-776-j1: the key-off sweep runs inside the loss-confirmation
+            # window, so an away key-off adds no wait only if the sweep's bound
+            # is strictly shorter. A malformed smoothingSec is
+            # _validatePowerWatch's to reject, so it is skipped here.
+            smoothing = self._getNestedValue(config, 'pi.powerWatch.smoothingSec')
+            if (
+                isinstance(smoothing, (int, float))
+                and not isinstance(smoothing, bool)
+                and sweepTimeout >= smoothing
+            ):
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.sweepTimeoutSec ({sweepTimeout!r}) must be "
+                    f"less than pi.powerWatch.smoothingSec ({smoothing!r}) so the "
+                    f"key-off WiFi sweep fits inside the power-loss window",
+                    missingFields=['pi.homeNetwork.sweepTimeoutSec'],
                 )
 
     def _validatePiSync(self, config: dict[str, Any]) -> None:
