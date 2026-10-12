@@ -18,6 +18,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-20    | Rex (US-479) | Initial -- pre-drive green-light gate + probe.
+# 2026-10-11    | Rex (US-487-a) | Refused writes FAIL the gate by name, with
+#               |              | the writer's error text.
 # ================================================================================
 ################################################################################
 
@@ -81,6 +83,12 @@ DEFAULT_MIN_ROWS_PER_SEC: float = 0.3
 #: Minimum distinct core PIDs the ECU must answer (matches verify_live_idle.sh).
 DEFAULT_MIN_DISTINCT_PARAMS: int = 8
 
+#: The prefix RealtimeDataLogger._logReadingSafe logs a refused write under. The
+#: logger's stats count refusals but keep no text, so the probe reads the text
+#: from this WARNING (the inner DataLogger repeats the prefix; all copies are
+#: stripped).
+_WRITER_REFUSAL_PREFIX: str = "Failed to log reading: "
+
 
 # ================================================================================
 # Value objects
@@ -105,6 +113,11 @@ class CaptureResult:
             at once (serialization regressed); None when the port is not
             instrumented (e.g. the simulator).
         captureError: A disconnected-while-reading class error string, or None.
+        writerErrors: The realtime logger's ``getStats().totalErrors`` for the
+            window -- rows it failed to land (refused writes and read errors).
+        writerErrorText: The first refused write's error text when one was
+            logged, else the logger's per-parameter error counts; None when
+            ``writerErrors`` is 0.
     """
 
     rowsWritten: int
@@ -116,6 +129,8 @@ class CaptureResult:
     connectEdgeExercised: bool
     interleaveObserved: bool | None
     captureError: str | None
+    writerErrors: int = 0
+    writerErrorText: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,6 +196,15 @@ def evaluateGate(
             False,
             "FAIL -- connect-edge NOT exercised: no DTC read co-occurred with the "
             "logger, so this is a happy-path-only run and cannot green-light",
+        )
+
+    # US-487-a: refused writes are the CAUSE of a row shortfall, so they are named
+    # before the row floor -- a bare 'rows 0 < required N' hid 577 zone refusals.
+    if result.writerErrors > 0:
+        return GateVerdict(
+            False,
+            f"FAIL -- writer refused {result.writerErrors} row(s): "
+            f"{result.writerErrorText or '(no error text captured)'}",
         )
 
     if requireRows and result.rowsWritten < minRows:
@@ -302,32 +326,45 @@ def runConnectEdgeCapture(
     rtLogger = RealtimeDataLogger(config, connection, database)
     client = DtcClient(commandFactory=_resolveDtcCommandFactory(dtcCommandFactory))
 
-    start = clock()
+    refusals = _RefusalCapture()
+    rtModuleLogger = logging.getLogger(RealtimeDataLogger.__module__)
+    rtModuleLogger.addHandler(refusals)
     try:
-        loggerStarted = rtLogger.start()
-    except Exception as exc:  # noqa: BLE001 -- e.g. no params / not connected
-        captureError = f"logger start failed: {exc}"
-
-    if loggerStarted:
-        # KOEO/idle DTC read loop, concurrent with the logger's background thread.
-        # A tiny gap between reads keeps the two loops genuinely overlapping rather
-        # than the DTC loop monopolizing the lock.
+        start = clock()
         try:
-            while (clock() - start) < durationSec:
-                client.readStoredDtcs(connection)
-                client.readPendingDtcs(connection)
-                dtcReadCount += 1
-                sleep(0.02)
-        except Exception as exc:  # noqa: BLE001 -- the disconnected-while-reading class
-            dtcReadOk = False
-            captureError = captureError or f"dtc read raised: {exc}"
+            loggerStarted = rtLogger.start()
+        except Exception as exc:  # noqa: BLE001 -- e.g. no params / not connected
+            captureError = f"logger start failed: {exc}"
 
-        rtLogger.stop()
+        if loggerStarted:
+            # KOEO/idle DTC read loop, concurrent with the logger's background
+            # thread. A tiny gap between reads keeps the two loops genuinely
+            # overlapping rather than the DTC loop monopolizing the lock.
+            try:
+                while (clock() - start) < durationSec:
+                    client.readStoredDtcs(connection)
+                    client.readPendingDtcs(connection)
+                    dtcReadCount += 1
+                    sleep(0.02)
+            except Exception as exc:  # noqa: BLE001 -- the disconnected-while-reading class
+                dtcReadOk = False
+                captureError = captureError or f"dtc read raised: {exc}"
+
+            rtLogger.stop()
+    finally:
+        rtModuleLogger.removeHandler(refusals)
 
     durationActual = clock() - start
     connectEdgeExercised = loggerStarted and dtcReadCount >= 1
 
     rowsWritten, distinctParams, coveredParams = _readCaptureCounts(database)
+    stats = rtLogger.getStats()
+    writerErrors = stats.totalErrors
+    writerErrorText: str | None = None
+    if writerErrors > 0:
+        writerErrorText = refusals.firstRefusal or (
+            f"no write refusal logged; errors by parameter: {stats.errorsByParameter}"
+        )
 
     return CaptureResult(
         rowsWritten=rowsWritten,
@@ -339,7 +376,27 @@ def runConnectEdgeCapture(
         connectEdgeExercised=connectEdgeExercised,
         interleaveObserved=_readInterleave(connection),
         captureError=captureError,
+        writerErrors=writerErrors,
+        writerErrorText=writerErrorText,
     )
+
+
+class _RefusalCapture(logging.Handler):
+    """Keeps the text of the first write the realtime logger refused."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.firstRefusal: str | None = None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self.firstRefusal is not None:
+            return
+        message = record.getMessage()
+        if not message.startswith(_WRITER_REFUSAL_PREFIX):
+            return
+        while message.startswith(_WRITER_REFUSAL_PREFIX):
+            message = message[len(_WRITER_REFUSAL_PREFIX):]
+        self.firstRefusal = message
 
 
 def _readInterleave(connection: Any) -> bool | None:

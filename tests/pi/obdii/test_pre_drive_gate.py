@@ -20,6 +20,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-20    | Rex (US-479) | Initial -- pre-drive green-light gate + probe.
+# 2026-10-11    | Rex (US-487-a) | Validator-built bench config; refused writes
+#               |              | fail the gate by name.
 # ================================================================================
 ################################################################################
 
@@ -35,14 +37,17 @@ These tests pin both.
 
 from __future__ import annotations
 
+import importlib.util
 import threading
 import time
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from src.pi.obdii.obd_connection import ObdConnection
 from src.pi.obdii.pre_drive_gate import (
     CORE_PIDS,
+    DEFAULT_MIN_DISTINCT_PARAMS,
     CaptureResult,
     evaluateGate,
     runConnectEdgeCapture,
@@ -146,6 +151,25 @@ def test_evaluateGate_captureError_fails() -> None:
     )
     assert verdict.passed is False
     assert "disconnected" in verdict.reason.lower() or "error" in verdict.reason.lower()
+
+
+def test_evaluateGate_writerRefusedRows_failsNamingTheRefusal() -> None:
+    """US-487-a: a writer that refused rows FAILS by name -- the reason carries
+    the refusal count and text, never only 'rows 0 < required N'."""
+    verdict = evaluateGate(
+        _cleanResult(
+            rowsWritten=0,
+            distinctParams=0,
+            writerErrors=577,
+            writerErrorText="pi.time.localZone is not declared (got None).",
+        ),
+        minRows=1,
+        minDistinctParams=8,
+    )
+    assert verdict.passed is False
+    assert "writer refused 577 row(s)" in verdict.reason
+    assert "pi.time.localZone is not declared" in verdict.reason
+    assert "rows 0 < required" not in verdict.reason
 
 
 # ================================================================================
@@ -325,3 +349,85 @@ def test_runConnectEdgeCapture_withRevertedLock_detectsInterleave_andGateFails(
     verdict = evaluateGate(result, minRows=0, minDistinctParams=1)
     assert verdict.passed is False
     assert "interleave" in verdict.reason.lower()
+
+
+# ================================================================================
+# US-487-a -- the script's bench config, and refused writes failing by name
+# ================================================================================
+
+_GREENLIGHT_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "pre_drive_greenlight.py"
+
+
+def _loadGreenlightScript() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("pre_drive_greenlight", _GREENLIGHT_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_scriptBenchConfig_carriesValidatorDefaultLocalZone() -> None:
+    """Given the script's bench config, Then it went through ConfigValidator: the
+    zone the writer needs is present and equals the validator's own default."""
+    from src.common.config.validator import DEFAULTS
+
+    config = _loadGreenlightScript()._benchConfig()
+
+    assert config["pi"]["time"]["localZone"] == DEFAULTS["pi.time.localZone"]
+
+
+def test_runConnectEdgeCapture_noLocalZone_gateFailsNamingRefusedWrites(
+    tmp_path: Path,
+) -> None:
+    """Given a config without pi.time.localZone, When the probe runs, Then every
+    write refuses, the result counts the refusals with the writer's text, and the
+    gate FAILS naming them rather than reporting a bare row shortfall."""
+    from src.pi.obdii.database import ObdDatabase
+
+    config = _benchConfig(list(CORE_PIDS)[:9])
+    del config["pi"]["time"]
+    conn, _port = _realConnectionWithFakePort()
+    db = ObdDatabase(str(tmp_path / "gate_nozone.db"))
+    db.initialize()
+
+    result = runConnectEdgeCapture(
+        connection=conn,
+        database=db,
+        config=config,
+        durationSec=0.6,
+    )
+    verdict = evaluateGate(result, minRows=1, minDistinctParams=8)
+
+    assert result.rowsWritten == 0
+    assert result.writerErrors > 0
+    assert result.writerErrorText is not None
+    assert "pi.time.localZone" in result.writerErrorText
+    assert verdict.passed is False
+    assert f"writer refused {result.writerErrors} row(s)" in verdict.reason
+    assert "pi.time.localZone" in verdict.reason
+
+
+def test_runConnectEdgeCapture_scriptBenchConfig_capturePasses(tmp_path: Path) -> None:
+    """Given the validator-built bench config from the script, When the probe
+    runs, Then nothing refuses and the gate reads CAPTURE PASS."""
+    from src.pi.obdii.database import ObdDatabase
+
+    config = _loadGreenlightScript()._benchConfig()
+    conn, _port = _realConnectionWithFakePort()
+    db = ObdDatabase(str(tmp_path / "gate_validated.db"))
+    db.initialize()
+
+    result = runConnectEdgeCapture(
+        connection=conn,
+        database=db,
+        config=config,
+        durationSec=1.0,
+    )
+    verdict = evaluateGate(
+        result, minRows=1, minDistinctParams=DEFAULT_MIN_DISTINCT_PARAMS
+    )
+
+    assert result.writerErrors == 0
+    assert result.writerErrorText is None
+    assert verdict.passed is True, verdict.reason
+    assert verdict.reason.startswith("PASS")

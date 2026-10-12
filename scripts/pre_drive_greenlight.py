@@ -18,6 +18,7 @@
 # ================================================================================
 # 2026-07-20    | Rex (US-479) | Initial -- pre-drive green-light CLI over
 #               |              | pi.obdii.pre_drive_gate.
+# 2026-10-11    | Rex (US-487-a) | Bench config built through ConfigValidator.
 # ================================================================================
 ################################################################################
 
@@ -124,18 +125,33 @@ def _parseArgs(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _benchConfig() -> dict:
-    """A minimal config that logs the core PIDs (bench mode builds its own conn)."""
+    """A validated config that logs the core PIDs (bench mode builds its own conn).
+
+    US-487-a: built THROUGH ConfigValidator so every validator default is present.
+    The hand-built dict lacked ``pi.time.localZone`` and every write refused;
+    mirroring that one key would leave the next missing default to fail the
+    same way.
+    """
+    from common.config.validator import ConfigValidator
     from pi.obdii.pre_drive_gate import CORE_PIDS
 
-    return {
-        "pi": {
-            "bluetooth": {},
-            "realtimeData": {
-                "pollingIntervalMs": 100,
-                "parameters": [{"name": p, "logData": True} for p in CORE_PIDS],
+    return ConfigValidator().validate(
+        {
+            # The three required top-level keys, as config.json declares them
+            # (deviceId is its ${DEVICE_ID:...} fallback).
+            "protocolVersion": "1.0.0",
+            "schemaVersion": "1.0.0",
+            "deviceId": "chi-eclipse-01",
+            "pi": {
+                "bluetooth": {},
+                "realtimeData": {
+                    "pollingIntervalMs": 100,
+                    "parameters": [{"name": p, "logData": True} for p in CORE_PIDS],
+                },
             },
+            "server": {},
         }
-    }
+    )
 
 
 def _buildConnection(args: argparse.Namespace, config: dict):
