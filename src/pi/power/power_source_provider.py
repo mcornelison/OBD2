@@ -62,9 +62,13 @@ class PowerSourceProvider:
         return bool(self._pld.isPowerLost())
 
     def startupArmCheck(self) -> bool:
-        """The Pi only booted because power is live, so at start the line
-        MUST read power-present. False => wrong pin/polarity/unreadable =>
-        caller refuses to arm the shutdown path."""
+        """True iff the line is readable AND reads power-present right now.
+
+        A Pi woken by its power key boots on the battery pack, so power may be
+        absent at start (US-748-b). False therefore means one of two facts:
+        power absent at start (arming waits for car power), or the line is
+        unreadable / wrong pin or polarity. Either way the caller refuses to
+        arm the shutdown path; isAvailable tells the two apart."""
         ok = bool(self._pld.startupPolarityOk())
         if not ok:
             logger.error(

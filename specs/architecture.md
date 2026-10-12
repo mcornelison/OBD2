@@ -2513,7 +2513,8 @@ Phase-2 T9). The sole shutdown decider is `ShutdownSequencer`
 (`pi.powerWatch.smoothingSec`, configurable; a single power-present read
 within the interval cancels — pure blip rejection; this is the safety
 property, shipped in V1) and **boot-grace** → arm-self-check (refuse to arm
-if GPIO6 does not read power-present at start) → a bounded pre-shutdown
+if GPIO6 does not read power-present at start; a readable-absent start arms
+late, see below) → a bounded pre-shutdown
 **window** of ordered `ShutdownTask`s (V1: exactly one, `SyncWithServerTask`;
 pluggable seam via `__main__.buildV1Tasks`) → window exits on
 **all-tasks-terminal OR `windowCapSec`** → graceful `systemctl poweroff`.
@@ -2567,6 +2568,27 @@ already exists and is `smoothingSec` inside `handleOnBattery`, so a flicker that
 re-arms can cause a shed and a restore, never a poweroff. The re-entry guard
 itself is untouched: `not lost` is false on every tick of a level-stuck LOW line,
 so a stuck line still fires exactly once.
+
+**The late arm IS debounced (US-748, Sprint 97 / V0.29.80).** A Pi woken by its
+power key boots on the pack, so GPIO6 can honestly read power ABSENT at start —
+the arm self-check does not mean "the Pi only booted because power is live".
+Readable-and-absent is reported as `ARM DECISION = NOT-ARMED (power absent at
+start; arming waits for car power)`; only an unreadable line keeps the
+wiring-fault text and its remedy. The service then arms LATE after an
+**unbroken `pi.powerWatch.smoothingSec` of present reads** (polled every
+`pi.powerWatch.smoothingPollSec`; a single absent read restarts the run) and
+says so once: `ARM DECISION = ARMED (late: GPIO6 changed absent -> present on
+this run; ...)`. The late line does not write `pld_witness`, which records
+power-LOSS transitions only.
+
+Why the late arm is debounced when the re-arm after a cancelled loss is not:
+**arming turns every later absence into a poweroff**, so it needs presence
+evidence as strong as the loss evidence — the same `smoothingSec` the loss
+direction waits. The re-arm only restores a state this boot already earned with
+that evidence, and its thrash is caught by `smoothingSec` inside
+`handleOnBattery`; a first arm on a single present read would let a contact
+bounce while the key turns commit the service to poweroff. Both directions use
+the one dwell helper (`heldFor`, `controller.py`).
 
 Why it became reachable now: a cancelled shutdown used to be a brief event. US-776-a
 made the drain run until the backlog is empty or the VCELL floor is reached rather

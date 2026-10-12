@@ -17,6 +17,8 @@
 # 2026-05-19    | Plan (SS-T3) | Initial -- provider is the single source for the
 #                                power-source fact; unavailable is the safe
 #                                direction; arm-check refuses to arm when unsure.
+# 2026-10-11    | US-748-b     | startupArmCheck's docstring no longer claims the
+#                                Pi only boots on live power.
 # ================================================================================
 ################################################################################
 """Tests for src/pi/power/power_source_provider.py (Shutdown Sequencer SS-T3)."""
@@ -95,3 +97,15 @@ def test_provider_pldNotReportingAvailability_readsUnreadable():
             return True
 
     assert PowerSourceProvider(pld=_SilentPld()).isAvailable is False
+
+
+def test_startupArmCheck_docstringDropsTheLivePowerBootPremise():
+    """US-748-b: a Pi woken by its power key boots on the pack, so "the Pi only
+    booted because power is live" is false. A False arm check is either power
+    absent at start or a line that cannot be read, and the docstring must say
+    so rather than calling every False a wiring fault."""
+    doc = PowerSourceProvider.startupArmCheck.__doc__ or ""
+
+    assert "only booted because" not in doc
+    assert "absent" in doc
+    assert "unreadable" in doc

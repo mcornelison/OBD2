@@ -22,6 +22,8 @@
 #                           reports ARMED. It reports PIN READABLE, TRANSITION
 #                           UNVERIFIED, and the PROVEN line says its proof is
 #                           a PRIOR run's witness, not this start.
+# 2026-10-11    | US-748-b| Sprint 97: a late-arm line, and NOT-ARMED split
+#                           into readable-absent and unreadable texts.
 # ================================================================================
 ################################################################################
 """US-566: the powerwatch arm decision must never be silent."""
@@ -617,3 +619,219 @@ def test_US666_notArmedBranchIsUnchanged():
 
     assert f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} --" in message
     assert m.ARM_DECISION_UNVERIFIED not in message
+
+
+# ---------------------------------------------------------------------------
+# US-748-b -- a late arm has its own line, and NOT-ARMED stops blaming the
+# wiring when the pin simply read absent.
+#
+# A Pi woken by its power key boots on the pack: the pin READS, and correctly
+# says power is absent. Today's NOT-ARMED text calls that a wiring fault and
+# tells the operator to redeploy -- the false premise "the Pi only booted
+# because power is live". Boot 335 (2026-10-11) carried that line for 75 min.
+# ---------------------------------------------------------------------------
+def _lateLine(**overrides):
+    kwargs = dict(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+    kwargs.update(overrides)
+    return m.buildArmDecisionMessage(**kwargs)
+
+
+def test_US748b_lateArm_hasItsOwnArmedLateLine():
+    """
+    Given: the pin was seen absent at start and then present for the dwell
+    When: the late arm decision is composed
+    Then: it reads 'ARM DECISION = ARMED (late' and carries the dwell and the
+        time since service start
+    """
+    message = _lateLine()
+
+    assert "ARM DECISION = ARMED (late" in message
+    assert message.startswith(f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_ARMED} (late")
+    assert "present for 7 s" in message
+    assert "4215 s after service start" in message
+    assert m.ARM_DECISION_NOT_ARMED not in message
+    assert m.ARM_DECISION_UNVERIFIED not in message
+
+
+def test_US748b_lateArm_saysThePinChangedAbsentToPresentOnThisRun():
+    """
+    Given: a late arm
+    When: the line is composed
+    Then: it states the pin was observed to CHANGE from absent to present on
+        THIS run -- the evidence that earns ARMED, unlike a single read
+    """
+    message = _lateLine()
+
+    assert "GPIO6 changed absent -> present on this run" in message
+    assert "CHANGE" in message and "THIS run" in message
+
+
+@pytest.mark.parametrize("lastTransitionUtc", [None, WITNESS_UTC])
+def test_US748b_lateArm_winsOverThePriorRunRenderings(lastTransitionUtc):
+    """
+    Given: a late arm, with or without a prior-run witness on file
+    When: the line is composed
+    Then: it is the late line -- this run's observed change outranks both the
+        PROVEN (prior run) and UNVERIFIED (read only) renderings
+    """
+    message = _lateLine(lastTransitionUtc=lastTransitionUtc)
+
+    assert "ARMED (late" in message
+    assert "(PROVEN)" not in message
+    assert "observed on a PRIOR run" not in message
+
+
+def test_US748b_lateArm_isEmittedAtWarningAndReturnedVerbatim(caplog):
+    """
+    Given: a late arm
+    When: emitArmDecision is called with the late facts
+    Then: one WARNING record, byte-identical to the returned line
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    returned = m.emitArmDecision(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+
+    records = _decisionRecords(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].getMessage() == returned
+    assert "ARMED (late" in returned
+
+
+def test_US748b_lateArm_doesNotWriteThePldWitness(monkeypatch, tmp_path, caplog):
+    """
+    Given: the witness writers replaced by recorders, and a witness path that
+        does not exist
+    When: the late line is composed and emitted
+    Then: nothing writes pld_witness -- the witness records a power-LOSS
+        transition the pipeline handled, and an absent -> present arm is not one
+    """
+    from src.pi.power.power_watch import controller as ctrl
+    from src.pi.power.power_watch import pld_witness
+
+    writes = []
+    monkeypatch.setattr(
+        pld_witness, "recordTransitionWitnessed", lambda *a, **k: writes.append((a, k))
+    )
+    monkeypatch.setattr(
+        pld_witness, "_writeWitnessAtomically", lambda *a, **k: writes.append((a, k))
+    )
+    if hasattr(ctrl, "recordTransitionWitnessed"):
+        monkeypatch.setattr(
+            ctrl, "recordTransitionWitnessed", lambda *a, **k: writes.append((a, k))
+        )
+    witnessPath = tmp_path / "witness.json"
+    monkeypatch.setattr(pld_witness, "DEFAULT_WITNESS_PATH", witnessPath)
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    _lateLine()
+    m.emitArmDecision(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+
+    assert writes == []
+    assert not witnessPath.exists()
+
+
+def test_US748b_lateArm_needsBothItsFacts():
+    """
+    Given: a late arm with only one of its two facts
+    When: the line is composed
+    Then: ValueError -- a late line missing its dwell or its offset would state
+        a number nobody measured
+    """
+    with pytest.raises(ValueError):
+        _lateLine(lateArmAfterStartSec=None)
+    with pytest.raises(ValueError):
+        _lateLine(lateArmPresentSec=None)
+
+
+def test_US748b_notArmed_readableAbsent_saysPowerWasAbsentAndArmingWaits():
+    """
+    Given: the line is readable and reads power ABSENT at start
+    When: the not-armed line is composed
+    Then: it says power was absent at start and arming waits for car power,
+        and does NOT call it a wiring fault or ask for a redeploy
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=True, readsPowerPresent=False
+    )
+
+    assert (
+        f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} "
+        "(power absent at start; arming waits for car power)"
+    ) in message
+    assert "protection is OFF" in message
+    assert "gpio=6 pld.available=True reads-power-present=False" in message
+    assert "FAILED" not in message
+    assert "redeploy" not in message
+    assert "wrong pin/polarity" not in message
+    assert "booted on a live feed" not in message
+
+
+def test_US748b_notArmed_unreadable_keepsTodaysWiringFaultText():
+    """
+    Given: the line is unreadable
+    When: the not-armed line is composed
+    Then: it is today's wiring-fault text and remedy, unchanged
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert message == (
+        f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} -- safe-shutdown "
+        "protection is OFF. CAUSE: GPIO6 PLD SSOT arm self-check FAILED "
+        "(gpio=6 pld.available=False reads-power-present=False). The Pi booted "
+        "on a live feed so GPIO6 must read power-present at startup; it does not "
+        "(wrong pin/polarity, or the line is unreadable). REFUSING to arm -- "
+        "service stays up disarmed, OBD collector unaffected, NOTHING will be "
+        "powered off. Fix pi.powerWatch.pldGpioPin / pldPowerPresentHigh and "
+        "redeploy."
+    )
+    assert "arming waits for car power" not in message
+
+
+def test_US748b_theThreeNotArmedOrLateTextsAreDistinct():
+    """Each input renders its own text: one grep tells them apart."""
+    readableAbsent = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=True, readsPowerPresent=False
+    )
+    unreadable = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert len({readableAbsent, unreadable, _lateLine()}) == 3
+
+
+def test_US748b_theFalsePremiseIsGoneFromMainsComment():
+    """
+    Given: __main__'s shipped source
+    When: searched for the 'only starts because the Pi booted' premise
+    Then: it is absent -- a Pi woken by its power key boots on the pack
+    """
+    from pathlib import Path as _P
+
+    source = _P(inspect.getfile(m)).read_text(encoding="utf-8")
+
+    assert "only starts because the Pi booted" not in source
+    assert "only booted because" not in source

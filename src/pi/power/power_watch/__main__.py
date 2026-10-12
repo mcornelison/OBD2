@@ -188,6 +188,10 @@
 #                           (the backstop fast path); recordFloorEnd carries the
 #                           provisional's backlog_start / sync_started_at forward.
 #                           HomeStateAtLoss takes the task's backlogReader. CIO-directed.
+# 2026-10-11    | US-748-b  | Sprint 97. buildArmDecisionMessage gains the late-arm
+#                           line ('ARMED (late: ...'); NOT-ARMED splits into
+#                           readable-absent (waits for car power) and unreadable
+#                           (today's wiring-fault text). Live-feed premise removed.
 # ================================================================================
 ################################################################################
 """Phase-2 power-watch service entrypoint."""
@@ -332,6 +336,8 @@ def buildArmDecisionMessage(
     pldAvailable: bool,
     readsPowerPresent: bool,
     lastTransitionUtc: str | None = None,
+    lateArmPresentSec: float | None = None,
+    lateArmAfterStartSec: float | None = None,
 ) -> str:
     """Compose the one arm-decision line for either branch.
 
@@ -356,15 +362,38 @@ def buildArmDecisionMessage(
             US-666: without a witness the verdict is ARM_DECISION_UNVERIFIED,
             not ARMED. With one, the line says the proof came from a PRIOR run,
             because this start cannot exercise a power loss in software.
+        lateArmPresentSec: US-748-b. For a LATE arm only: how long the pin read
+            present, unbroken, before arming. With lateArmAfterStartSec it
+            selects the late line, which outranks both prior-run renderings:
+            the pin was seen to CHANGE absent -> present on THIS run. Composing
+            the line writes nothing -- pld_witness records power-LOSS
+            transitions, and an arm is not one.
+        lateArmAfterStartSec: US-748-b. For a LATE arm only: seconds from
+            service start to the arm. Both late facts or neither.
 
     Returns:
         The exact line to log -- prefixed with ARM_DECISION_PREFIX on both
         branches so one grep finds either.
+
+    Raises:
+        ValueError: Only one of the two late-arm facts was given.
     """
+    if (lateArmPresentSec is None) != (lateArmAfterStartSec is None):
+        raise ValueError("a late arm needs both lateArmPresentSec and lateArmAfterStartSec")
     evidence = (
         f"gpio={pldGpioPin} pld.available={pldAvailable} reads-power-present={readsPowerPresent}"
     )
     readability = f"GPIO{pldGpioPin} PLD readability check PASSED ({evidence})"
+    if armed and lateArmPresentSec is not None:
+        return (
+            f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} (late: GPIO{pldGpioPin} "
+            f"changed absent -> present on this run; present for "
+            f"{lateArmPresentSec:.0f} s, {lateArmAfterStartSec:.0f} s after service "
+            f"start) -- safe-shutdown protection is ON: the pin read power absent "
+            f"at start and was OBSERVED to CHANGE to present on THIS run, so it "
+            f"both reads and moves. {readability}. A sustained external-power "
+            f"loss will run the bounded pre-shutdown pipeline and then poweroff."
+        )
     if armed and lastTransitionUtc:
         return (
             f"{ARM_DECISION_PREFIX} {ARM_DECISION_ARMED} (PROVEN) -- safe-shutdown "
@@ -385,6 +414,17 @@ def buildArmDecisionMessage(
             f"never been seen to move is indistinguishable from a wire that is "
             f"not connected."
         )
+    if pldAvailable and not readsPowerPresent:
+        # US-748-b: a readable pin reporting ABSENT is a Pi woken on its pack
+        # before car power -- not a wiring fault. Unreadable keeps the fault text.
+        return (
+            f"{ARM_DECISION_PREFIX} {ARM_DECISION_NOT_ARMED} (power absent at "
+            f"start; arming waits for car power) -- safe-shutdown protection is "
+            f"OFF until car power is present. GPIO{pldGpioPin} reads, and reports "
+            f"power ABSENT ({evidence}): the Pi started on its battery pack. "
+            f"Service stays up disarmed, OBD collector unaffected, NOTHING will "
+            f"be powered off while disarmed."
+        )
     return (
         f"{ARM_DECISION_PREFIX} {ARM_DECISION_NOT_ARMED} -- safe-shutdown "
         f"protection is OFF. CAUSE: GPIO{pldGpioPin} PLD SSOT arm self-check "
@@ -403,6 +443,8 @@ def emitArmDecision(
     pldAvailable: bool,
     readsPowerPresent: bool,
     lastTransitionUtc: str | None = None,
+    lateArmPresentSec: float | None = None,
+    lateArmAfterStartSec: float | None = None,
 ) -> str:
     """Emit the arm decision UNCONDITIONALLY, on whichever branch was taken.
 
@@ -418,6 +460,9 @@ def emitArmDecision(
         pldGpioPin: The configured X1209 PLD pin.
         pldAvailable: Whether the PLD line is readable at all.
         readsPowerPresent: The instantaneous power-present reading.
+        lastTransitionUtc: See buildArmDecisionMessage.
+        lateArmPresentSec: See buildArmDecisionMessage (late arm only).
+        lateArmAfterStartSec: See buildArmDecisionMessage (late arm only).
 
     Returns:
         The exact line logged, so the caller can re-state it verbatim without
@@ -429,6 +474,8 @@ def emitArmDecision(
         pldAvailable=pldAvailable,
         readsPowerPresent=readsPowerPresent,
         lastTransitionUtc=lastTransitionUtc,
+        lateArmPresentSec=lateArmPresentSec,
+        lateArmAfterStartSec=lateArmAfterStartSec,
     )
     if armed:
         logger.warning(message)
@@ -1712,10 +1759,10 @@ def main(argv: list[str] | None = None) -> int:
     # SSOT (deterministic "external power present"), NOT the retired VCELL-
     # trend heuristic that bricked the Pi 2026-05-18.
     #
-    # Arm self-check: the service only starts because the Pi booted on a live
-    # feed, so the SSOT MUST read power-present right now. If it does not
-    # (wrong pin/polarity, or unreadable), REFUSE to arm -- stay up disarmed,
-    # never poweroff. Fails to "do not shut down", the deliberate inverse of
+    # Arm self-check: arm only if the SSOT reads power-present right now. A Pi
+    # woken by its power key boots on the pack, so a readable pin may honestly
+    # read ABSENT (US-748-b); an unreadable one is a wiring fault. Either way,
+    # REFUSE to arm -- stay up disarmed, never poweroff. Fails to "do not shut down", the deliberate inverse of
     # the old "uncertain -> poweroff" mistake.
     # US-566: the decision is now reported on BOTH branches, and it is the
     # first thing this service says. Evidence is read through the PROVIDER,
