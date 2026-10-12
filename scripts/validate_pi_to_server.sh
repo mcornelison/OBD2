@@ -15,7 +15,7 @@
 #
 # Purpose:
 #   CIO-facing bash driver that executes the 7-step end-to-end validation
-#   from docs/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md
+#   from $FLEET_SHARE/knowledge/superpowers/specs/2026-04-15-pi-crawl-walk-run-sprint-design.md
 #   section 2.5 against the live Pi (chi-eclipse-01) and server (Chi-Srv-01).
 #   Prints PASS/FAIL after each step and an overall PASS/FAIL at the end.
 #

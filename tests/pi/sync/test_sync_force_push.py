@@ -37,6 +37,7 @@ import pytest
 
 from src.pi.data import sync_log
 from src.pi.sync.client import PushStatus, PushSummary, SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckReplyFor
 
 # ================================================================================
 # Shared fixtures (mirroring test_sync_client.py minimal surface)
@@ -152,7 +153,8 @@ def _successOpener() -> Callable[..., Any]:
 
     def _opener(req: Any, timeout: float = 30) -> _FakeResponse:
         calls.append((req, timeout))
-        return _FakeResponse(body=b'{"status":"ok"}', status=200)
+        # US-776-i: a stored push answers with the stored ack.
+        return _FakeResponse(body=storedAckReplyFor(req.data), status=200)
 
     _opener.calls = calls  # type: ignore[attr-defined]
     return _opener
@@ -206,10 +208,16 @@ class TestSummaryAggregation:
 
         summary = client.forcePush()
 
-        # US-314: forcePush now appends a drive_counter result alongside
-        # the per-table sweep, so the result list is len(IN_SCOPE_TABLES) + 1.
+        # US-314: forcePush appends a drive_counter result alongside the
+        # per-table sweep (+1).  US-417: the sweep also covers registered
+        # natural-key snapshot tables (startup_log), so the result list is
+        # len(IN_SCOPE_TABLES) + len(snapshotSyncTables()) + 1.
         tableCount = len(summary.results)
-        assert tableCount == len(sync_log.IN_SCOPE_TABLES) + 1
+        assert tableCount == (
+            len(sync_log.IN_SCOPE_TABLES)
+            + len(sync_log.snapshotSyncTables())
+            + 1
+        )
 
         manualOk = sum(
             1 for r in summary.results if r.status == PushStatus.OK

@@ -5,8 +5,8 @@
 #                      (PowerSourceProvider.isPowerLost over X1209 GPIO6 PLD) it
 #                      FIRST applies smoothing -- requires sustained-lost across
 #                      smoothingSec (spec sec 3 in-V1 safety property) -- only
-#                      then runs the bounded pipeline under a total cap and
-#                      powers off. A transient blip (electrical noise, boot
+#                      then runs the pipeline, polling it for power return and
+#                      the VCELL floor, and powers off. A transient blip (electrical noise, boot
 #                      settling) aborts with NO poweroff. A failed VCELL read
 #                      NEVER forces poweroff (uncertain != lost power); the
 #                      VCELL floor is a backstop only on a SUCCESSFUL low read
@@ -39,17 +39,189 @@
 #                              SSOT trigger context: isOnBattery is now fed by
 #                              PowerSourceProvider.isPowerLost (GPIO6 ground
 #                              truth), not the retired VCELL-trend heuristic.
+# 2026-06-29    | US-394 A-2  | Added the F-103 shutdown-splash phase-emit hook:
+#                              an OPTIONAL generic `phaseEmitFn` callback emitted
+#                              at each code-path transition (grace -> cancelled |
+#                              flushing -> powering_off). The sequencer is the
+#                              SSOT of shutdown phase + timing; it owns the phase
+#                              DECISIONS and NEVER imports the splash subsystem
+#                              (unidirectional dependency, spec §6/§481). The hook
+#                              is best-effort + guarded -- an emit that raises
+#                              NEVER blocks shutdown progress (A-2 constraint c).
+#                              When no emitter is wired the sequencer behaves
+#                              byte-identically to before. See the A-6 timing
+#                              invariant below + specs/architecture.md §10.6.
+# 2026-09-14    | Rex (US-748) | Added OPTIONAL `powerLossObservedFn`, called at
+#                              handleOnBattery ENTRY (after the ARCH-019 witness,
+#                              before smoothing). powerwatch wires it to the 1 Hz
+#                              loss heartbeat so time-to-death after a cut is a
+#                              number in SQLite on the next boot. Guarded: a hook
+#                              that raises never blocks shutdown. None = legacy.
+# 2026-09-17    | Rex (US-788) | handleOnBattery(suppressFloorFastPath=...): a loss
+#                              inside bootGrace skips ONLY the VCELL floor fast
+#                              path, through the existing failed-read branch.
+#                              Default False = byte-identical to before.
+# 2026-09-17    | Rex (US-776-a) | The single done.wait(totalCapSec) is now a poll
+#                              on smoothingPollSec: each interval re-checks
+#                              isOnBattery and re-reads VCELL, and a successful
+#                              read <= vcellFloor ends the drain and powers off
+#                              whatever the pipeline thread is doing. totalCapSec
+#                              bounds the drain only while the floor is BLIND (no
+#                              successful read for that long, or suppressed in
+#                              bootGrace), so a hung pipeline still never blocks
+#                              poweroff.
+# 2026-09-17    | Rex (US-776-b) | The drain poll stops on its own drainFloor
+#                              (pi.powerWatch.drainFloorVolts), not vcellFloor,
+#                              which stays the pre-pipeline emergency backstop.
+# 2026-09-25    | Rex (US-790) | OPTIONAL drainSampleFn: the start read and every
+#                              drain poll become rows of the VCELL series, and
+#                              each drain ends with exactly one row carrying
+#                              its typed termination reason. None = legacy.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T4: drainFloorDwellReads -- the reserve
+#                              floor must hold for N consecutive successful reads
+#                              before it ends the drain (a failed read neither
+#                              counts nor resets); lastDrainEndReason exposes why
+#                              the last drain ended to the pre-poweroff hook.
+# 2026-10-11    | Rex (US-748-a) | The smoothing loop lifted into module-level
+#                              heldFor(), the one dwell helper for both power
+#                              directions; _smoothedPowerLost calls it with
+#                              restartOnBreak=False. Loss behaviour unchanged.
 # ================================================================================
 ################################################################################
+#
+# Phase-emit timing contract with the splash subsystem (F-103) [Atlas A-6]:
+#   Splash plays a 7.5s animation budget triggered on phase=grace.
+#   If config `smoothingSec` < 4, splash animation may be killed
+#   mid-frame when poweroff fires before animation completes.
+#   Acceptable failure mode: degraded UX, no data loss.
+#   Default smoothingSec=7 provides ~10-12s total time-to-poweroff,
+#   comfortably exceeding splash's 7.5s budget.
+# Ownership of the time-coupling lives HERE (the sequencer's docstring); the
+# splash holds the invariant by trusting it. No new config key, no runtime
+# coordination -- a clean unidirectional dependency: the splash depends on this
+# timing contract; the sequencer does not know the splash exists.
+#
 from __future__ import annotations
 
 import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from src.pi.power.power_watch.pld_witness import recordTransitionWitnessed
+from src.pi.power.types import (
+    DRAIN_TERMINATION_DRAIN_FLOOR,
+    DRAIN_TERMINATION_POWER_RESTORED,
+    DRAIN_TERMINATION_SHUTDOWN,
+    DRAIN_TERMINATION_VCELL_FLOOR,
+    DRAIN_TERMINATION_VCELL_UNREADABLE,
+)
 
 logger = logging.getLogger(__name__)
-__all__ = ["ShutdownSequencer"]
+__all__ = [
+    "PHASE_CANCELLED",
+    "PHASE_FLUSHING",
+    "PHASE_GRACE",
+    "PHASE_POWERING_OFF",
+    "DEFAULT_SHUTDOWN_REASON",
+    "ShutdownSequencer",
+    "heldFor",
+]
+
+# --- Shutdown phase transitions (the sequencer is the SSOT of phase) ----------
+# The F-103 splash subsystem CONSUMES these strings via
+# pi.splash.shutdown_state_emitter (which imports them) -- a strictly
+# unidirectional dependency (spec §6/§481: the splash depends on the sequencer's
+# phase + timing contract; the sequencer never depends on the splash).
+#   grace        = smoothing-begun (T=0; sustained-loss NOT yet confirmed).
+#   cancelled    = smoothing failed (power returned) -> abort.
+#   flushing     = smoothing-confirmed; bounded pipeline tasks executing.
+#   powering_off = immediately before `systemctl poweroff`.
+PHASE_GRACE = "grace"
+PHASE_CANCELLED = "cancelled"
+PHASE_FLUSHING = "flushing"
+PHASE_POWERING_OFF = "powering_off"
+
+# v1 treats all shutdown reasons identically; the splash never branches on it.
+DEFAULT_SHUTDOWN_REASON = "ignition_off"
+
+
+def _defaultNowIso() -> str:
+    """Default ISO-8601 UTC stamp for the shutdown-state grace-start time."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def heldFor(
+    predicate: Callable[[], bool],
+    dwellSec: float,
+    pollSec: float,
+    sleepFn: Callable[[float], object],
+    monotonicFn: Callable[[], float],
+    *,
+    abortFn: Callable[[], bool] | None = None,
+    restartOnBreak: bool = True,
+) -> bool:
+    """Wait until ``predicate()`` has held continuously for ``dwellSec`` (US-748-a).
+
+    The ONE dwell loop for both power directions: the loss window
+    (``_smoothedPowerLost``) and the late arm (US-748-b/c). Do not copy it.
+
+    The predicate is read once at the start and once after every ``pollSec``
+    sleep. A run starts at the first True read and completes when the clock
+    reaches run start + ``dwellSec``. ``dwellSec`` <= 0 is a single immediate
+    check of the start read.
+
+    Args:
+        predicate: Zero-arg condition that must hold for the whole dwell.
+        dwellSec: How long (SECONDS) the predicate must hold unbroken.
+        pollSec: Re-read cadence (SECONDS).
+        sleepFn: DI sleep, called with ``pollSec`` between reads.
+        monotonicFn: DI monotonic clock.
+        abortFn: OPTIONAL zero-arg check made after every sleep; True ends the
+            wait with False, whatever the current run.
+        restartOnBreak: True (default): a False read restarts the run and the
+            wait goes on. False: a False read ends the wait with False -- the
+            loss direction, where any present read means a blip.
+
+    Returns:
+        True once the predicate held for ``dwellSec``; False when aborted (or,
+        with ``restartOnBreak`` False, at the first False read).
+    """
+    deadline: float | None = None
+    if predicate():
+        deadline = monotonicFn() + dwellSec
+    elif not restartOnBreak:
+        return False
+    while deadline is None or monotonicFn() < deadline:
+        sleepFn(pollSec)
+        if abortFn is not None and abortFn():
+            return False
+        if not predicate():
+            if not restartOnBreak:
+                return False
+            deadline = None
+        elif deadline is None:
+            deadline = monotonicFn() + dwellSec
+    return True
+
+
+@dataclass(frozen=True, slots=True)
+class _DrainEnd:
+    """How the drain poll ended (US-790).
+
+    Attributes:
+        reason: A ``DRAIN_TERMINATION_*`` value, or None when the pipeline
+            finished on its own.
+        vcell: The ending poll's successful read, if it had one.
+        pollRead: True when the ending poll attempted a read, so the terminal
+            row must not read again (a failed attempt stays NULL).
+    """
+
+    reason: str | None = None
+    vcell: float | None = None
+    pollRead: bool = False
 
 
 class ShutdownSequencer:
@@ -66,40 +238,123 @@ class ShutdownSequencer:
         smoothingPollSec: float,
         sleepFn: Callable[[float], None] | None = None,
         monotonicFn: Callable[[], float] | None = None,
+        phaseEmitFn: Callable[..., None] | None = None,
+        nowIsoFn: Callable[[], str] | None = None,
+        shutdownReason: str = DEFAULT_SHUTDOWN_REASON,
+        prePowerOffFn: Callable[[], None] | None = None,
+        powerLossObservedFn: Callable[[], None] | None = None,
+        powerRestoredFn: Callable[[], None] | None = None,
+        drainFloor: float | None = None,
+        drainSampleFn: Callable[..., None] | None = None,
+        drainFloorDwellReads: int = 1,
     ):
         """Args:
-            isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
-                ``PowerSourceProvider.isPowerLost`` in the service -- the SSOT
-                over the X1209 GPIO6 PLD line, ground truth, not a heuristic).
-                Smoothing below still applies: a transient electrical blip or
-                boot-settling jitter can briefly read lost-then-present even
-                on a healthy line, and shutdown must NEVER fire on such a blip.
-            vcell: Zero-arg, returns battery VCELL in VOLTS (not mV).
-            runPipelineFn: Already-bound zero-arg bounded pre-shutdown pipeline.
-            powerOffFn: Already-bound zero-arg graceful OS poweroff.
-            vcellFloor: Safety-floor in VOLTS. A SUCCESSFUL read <= this, AFTER
-                sustained power-lost is confirmed, short-circuits to poweroff.
-                A FAILED read never triggers poweroff.
-            totalCapSec: Hard total-window cap (SECONDS) on the pipeline.
-            smoothingSec: ``isOnBattery()`` must stay True continuously for at
-                least this long (SECONDS) before any poweroff -- the in-V1
-                safety property (spec sec 3) that rejects transient/boot blips.
-                0 = no smoothing (test only).
-            smoothingPollSec: Re-sample cadence (SECONDS) during the smoothing
-                interval.
-            sleepFn: DI sleep (default time.sleep); tests pass a no-op.
-            monotonicFn: DI monotonic clock (default time.monotonic).
+        isOnBattery: Zero-arg predicate, True while power is LOST (DI'd to
+            ``PowerSourceProvider.isPowerLost`` in the service -- the SSOT
+            over the X1209 GPIO6 PLD line, ground truth, not a heuristic).
+            Smoothing below still applies: a transient electrical blip or
+            boot-settling jitter can briefly read lost-then-present even
+            on a healthy line, and shutdown must NEVER fire on such a blip.
+        vcell: Zero-arg, returns battery VCELL in VOLTS (not mV).
+        runPipelineFn: Already-bound zero-arg bounded pre-shutdown pipeline.
+        powerOffFn: Already-bound zero-arg graceful OS poweroff.
+        vcellFloor: Safety-floor in VOLTS. A SUCCESSFUL read <= this, AFTER
+            sustained power-lost is confirmed, short-circuits to poweroff.
+            A FAILED read never triggers poweroff.
+        totalCapSec: US-776-a -- the pipeline's bound while the VCELL floor
+            is BLIND (SECONDS): no successful VCELL read for this long, or the
+            floor suppressed for a bootGrace loss. With the floor readable the
+            pipeline is bounded by the floor, not by this.
+        smoothingSec: ``isOnBattery()`` must stay True continuously for at
+            least this long (SECONDS) before any poweroff -- the in-V1
+            safety property (spec sec 3) that rejects transient/boot blips.
+            0 = no smoothing (test only).
+        smoothingPollSec: Re-sample cadence (SECONDS) during the smoothing
+            interval, and (US-776-a) the cadence at which the running pipeline
+            is polled for power return and the VCELL floor.
+        sleepFn: DI sleep (default time.sleep); tests pass a no-op.
+        monotonicFn: DI monotonic clock (default time.monotonic).
+        phaseEmitFn: OPTIONAL F-103 shutdown-splash phase-emit hook. Called
+            as ``phaseEmitFn(phase, *, tGraceStartedAtIso, tGraceTotalS,
+            tRemainingS, reason)`` at each transition (a ``PHASE_*`` string).
+            Best-effort: the call site guards it so an emit that raises NEVER
+            blocks shutdown (Atlas A-2 constraint c). ``None`` (the default)
+            disables the hook and the sequencer runs the exact legacy path
+            (no extra ``isOnBattery()`` reads), so existing behavior + tests
+            are unchanged.
+        nowIsoFn: DI clock returning the ISO-8601 grace-start stamp for the
+            shutdown-state payload (default UTC now). Only consulted when
+            ``phaseEmitFn`` is wired.
+        shutdownReason: The ``reason`` field for the shutdown-state payload
+            (v1 always ``ignition_off``; the splash never branches on it).
+        prePowerOffFn: OPTIONAL zero-arg hook run immediately BEFORE
+            ``powerOffFn`` on EVERY path that actually powers off -- both
+            the bounded-pipeline path and the VCELL-floor fast path.
+            US-526 wires it to the production drain-event close, which
+            Atlas ruled the PRIMARY close (Option C, 2026-08-02): under
+            Spool's depth gate the run-to-cutoff drain is the only
+            qualifying drain and it ends exactly here, so the close must be
+            guaranteed on this path. It is deliberately NOT a pipeline
+            ShutdownTask -- the floor fast-path SKIPS the pipeline, which
+            is precisely how a run-to-cutoff drain ends, so a task-based
+            close would miss every row the verdict needs.
+            Runs LAST before poweroff so a depth read is as deep as the
+            drain actually got. Best-effort and guarded exactly like
+            ``phaseEmitFn``: a hook that raises NEVER blocks poweroff
+            (bookkeeping is never worth leaving the Pi up on a dying
+            battery). NOT called on an abort (transient blip, or power
+            returning mid-window) -- an aborted shutdown is not a drain
+            end, and the collector's BATTERY->AC transition owns that
+            close. ``None`` (the default) runs the exact legacy path.
+        powerLossObservedFn: OPTIONAL zero-arg hook run at the ENTRY of
+            ``handleOnBattery`` -- the instant a power-lost signal arrives,
+            before smoothing, and on a blip too (US-748). powerwatch wires it to
+            ``PowerLossHeartbeat.start``, whose rows make time-to-death a number
+            on the next boot; starting BEFORE smoothing is load-bearing, since
+            the 09-14 cuts died inside the window this path runs. It must
+            return promptly (the heartbeat writes on its own thread) and is
+            guarded like ``phaseEmitFn``: a hook that raises NEVER blocks
+            shutdown. ``None`` (the default) runs the exact legacy path.
+        drainFloor: US-776-b -- the VOLTS the running drain stops on
+            (``pi.powerWatch.drainFloorVolts``). A different decision from
+            ``vcellFloor``, which answers "is the battery already too low to
+            start?" before the pipeline and stays the emergency backstop.
+            ``None`` falls back to ``vcellFloor`` (the US-776-a behaviour).
+        drainSampleFn: US-790 -- OPTIONAL recorder for the drain's VCELL series,
+            called as ``drainSampleFn(vcellV, terminationReason=None)``: once
+            for the start read, once per drain poll, and once more with a
+            ``DRAIN_TERMINATION_*`` reason when the drain ends -- exactly one
+            terminal call per drain, on every exit. ``vcellV`` is the read that
+            poll took, or None when it has none. A terminal row whose poll took
+            no read (pipeline finished, power returned) reads VCELL once for
+            it; every other row costs no extra read. Guarded like
+            ``phaseEmitFn``: a recorder that raises never delays the drain.
+            ``None`` (the default) runs the exact legacy path.
         """
         self._isOnBattery = isOnBattery
         self._vcell = vcell
         self._runPipeline = runPipelineFn
         self._powerOff = powerOffFn
         self._vcellFloor = vcellFloor
+        self._drainFloor = drainFloor if drainFloor is not None else vcellFloor
+        self._drainFloorDwellReads = max(1, int(drainFloorDwellReads))
+        #: Why the last drain ended (a DRAIN_TERMINATION_* value), None until one has.
+        self.lastDrainEndReason: str | None = None
         self._totalCapSec = totalCapSec
         self._smoothingSec = smoothingSec
         self._smoothingPollSec = smoothingPollSec
         self._sleep = sleepFn if sleepFn is not None else time.sleep
         self._monotonic = monotonicFn if monotonicFn is not None else time.monotonic
+        self._phaseEmitFn = phaseEmitFn
+        self._prePowerOffFn = prePowerOffFn
+        self._powerLossObservedFn = powerLossObservedFn
+        self._powerRestoredFn = powerRestoredFn
+        self._drainSampleFn = drainSampleFn
+        self._shutdownReason = shutdownReason
+        self._nowIso = nowIsoFn if nowIsoFn is not None else _defaultNowIso
+        # Grace-window bookkeeping (set when the grace phase is emitted).
+        self._graceStartedAtIso: str | None = None
+        self._graceStartMono: float | None = None
 
     def _smoothedPowerLost(self) -> bool:
         """Return True only if ``isOnBattery()`` stays True continuously for
@@ -108,16 +363,16 @@ class ShutdownSequencer:
 
         ``smoothingSec`` <= 0 collapses to a single immediate check.
         """
-        if not self._isOnBattery():
-            return False
-        deadline = self._monotonic() + self._smoothingSec
-        while self._monotonic() < deadline:
-            self._sleep(self._smoothingPollSec)
-            if not self._isOnBattery():
-                return False
-        return True
+        return heldFor(
+            self._isOnBattery,
+            self._smoothingSec,
+            self._smoothingPollSec,
+            self._sleep,
+            self._monotonic,
+            restartOnBreak=False,
+        )
 
-    def handleOnBattery(self) -> None:
+    def handleOnBattery(self, *, suppressFloorFastPath: bool = False) -> None:
         """Called when a power-LOST signal fires. Apply smoothing FIRST: only
         a sustained-lost state (held across ``smoothingSec``) is a real power
         loss; a transient blip aborts with NO poweroff. On confirmed sustained
@@ -127,7 +382,52 @@ class ShutdownSequencer:
         about voltage is not loss of power; we already confirmed sustained
         battery, so we proceed via the normal bounded pipeline (no floor
         fast-path this cycle).
+
+        Args:
+            suppressFloorFastPath: US-788. True for a loss inside bootGraceSec:
+                the floor fast path is not taken and the bounded pipeline runs,
+                via the same branch a failed VCELL read takes. Everything else
+                (witness, loss hook, smoothing, pipeline, poweroff) is unchanged.
+                False (the default) is the exact pre-US-788 path.
         """
+        # ARCH-019: the PLD pin JUST MOVED. Record it durably.
+        #
+        # The startup arm check can otherwise only prove the pin is READABLE,
+        # and a signal that reads but has never been seen to CHANGE is
+        # indistinguishable from a wire that is not connected. On 2026-08-31 the
+        # Pi died a hard cut with the arm line reporting ARMED and this pipeline
+        # never running.
+        #
+        # Recorded at ENTRY, BEFORE smoothing, deliberately: even a transient
+        # blip proves the pin transitions, which is the only question this
+        # witness answers. Whether the loss was REAL is a different question,
+        # and the smoothing below is what answers that one.
+        #
+        # Best-effort by contract -- this runs on a machine that may be losing
+        # power and must never abort the pipeline it is observing.
+        recordTransitionWitnessed(atIso=datetime.now(UTC).isoformat())
+
+        # US-748: start measuring how long this machine lives from HERE. On
+        # 2026-09-14 the Pi died inside 30 s of this point with a near-full pack,
+        # and the journal could not see those seconds. Before smoothing so a
+        # death during smoothing is still measured.
+        self.lastDrainEndReason = None  # a fresh loss owns the reason
+        self._notifyPowerLossObserved()
+
+        # F-103 [A-2]: emit `grace` at T=0 (BEFORE smoothing resolves) so the
+        # splash triggers immediately -- the animation IS the grace countdown.
+        # Guarded on the hook being wired so the legacy path adds NO extra
+        # isOnBattery() read (existing iterator-based mocks keep their pattern).
+        if self._phaseEmitFn is not None:
+            if not self._isOnBattery():
+                # ARCH-031: _notifyPowerLossObserved() has ALREADY run above, so a
+                # reversible mitigation (load shed) may be outstanding on this
+                # path even though no `cancelled` phase is emitted. Restoring
+                # here is what stops a blip leaving the dashboard dark until the
+                # next boot.
+                self._notifyPowerRestored()
+                return
+            self._beginGraceAndEmit()
         if not self._smoothedPowerLost():
             logger.info(
                 "shutdown-sequencer: power-lost NOT sustained through %.0fs "
@@ -135,29 +435,58 @@ class ShutdownSequencer:
                 "abort + resume",
                 self._smoothingSec,
             )
+            self._emitPhase(PHASE_CANCELLED)
+            self._notifyPowerRestored()  # ARCH-031: undo the reversible shed
             return
         logger.warning(
             "shutdown-sequencer: sustained power-lost confirmed (%.0fs "
             "smoothing) -- entering bounded pre-shutdown window",
             self._smoothingSec,
         )
-        try:
-            v = self._vcell()
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "shutdown-sequencer: VCELL read failed (%s) -- power-lost "
-                "already confirmed sustained; proceeding via bounded pipeline "
-                "(no floor fast-path this cycle, NOT an immediate poweroff)",
-                exc,
+        if suppressFloorFastPath:
+            # US-788: inside bootGrace the boot VCELL sag can still read at or
+            # below the floor, and skipping the pipeline is the irreversible act.
+            # Take the SAME branch a failed VCELL read takes -- no second
+            # poweroff path.
+            logger.warning(
+                "shutdown-sequencer: loss inside bootGrace -- VCELL floor fast "
+                "path suppressed; proceeding via bounded pipeline (no floor "
+                "fast-path this cycle, NOT an immediate poweroff)"
             )
             v = None
+        else:
+            try:
+                v = self._vcell()
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "shutdown-sequencer: VCELL read failed (%s) -- power-lost "
+                    "already confirmed sustained; proceeding via bounded pipeline "
+                    "(no floor fast-path this cycle, NOT an immediate poweroff)",
+                    exc,
+                )
+                v = None
         if v is not None and v <= self._vcellFloor:
             logger.warning(
                 "shutdown-sequencer: VCELL %.3f <= floor %.3f (power-lost "
-                "confirmed) -- skip pipeline, poweroff now", v, self._vcellFloor,
+                "confirmed) -- skip pipeline, poweroff now",
+                v,
+                self._vcellFloor,
             )
+            # US-790: a one-row drain -- its only read ended it.
+            self._recordDrainSample(v, DRAIN_TERMINATION_VCELL_FLOOR)
+            # Floor backstop skips the pipeline -> no `flushing` phase happened;
+            # emit `powering_off` directly (honest instrument).
+            self._emitPhase(PHASE_POWERING_OFF)
+            # US-526: THE run-to-cutoff drain ends right here. This is the path
+            # a depth-gate-qualifying drain takes, so the close must fire on it.
+            self._runPrePowerOff()
             self._powerOff()
             return
+        # US-790: the drain's first row is the read that let it start.
+        self._recordDrainSample(v)
+        # F-103 [A-2]: smoothing confirmed + above floor -> the bounded pipeline
+        # is about to run. `flushing` per the spec enum.
+        self._emitPhase(PHASE_FLUSHING)
         done = threading.Event()
 
         def _pipe() -> None:
@@ -170,14 +499,249 @@ class ShutdownSequencer:
 
         th = threading.Thread(target=_pipe, name="pw-pipeline", daemon=True)
         th.start()
-        done.wait(timeout=self._totalCapSec)  # total cap; a hung pipeline cannot block poweroff
+        # US-776-a: the pipeline runs on its own daemon thread and THIS thread
+        # polls it, so a pipeline blocked inside one forcePush (measured up to
+        # ~25 min per pass) can never block poweroff.
+        floorReadable = not suppressFloorFastPath
+        drainEnd = self._pollPipeline(done, floorReadable=floorReadable)
         if not self._isOnBattery():
+            self._recordDrainEnd(DRAIN_TERMINATION_POWER_RESTORED, drainEnd, floorReadable)
             logger.info(
-                "shutdown-sequencer: power returned during window -- abort, "
-                "resume normal op"
+                "shutdown-sequencer: power returned during window -- abort, resume normal op"
             )
+            # Power came back mid-window: tell the splash to abort too so it does
+            # not sit in BLACK_TAIL waiting for a poweroff that will not come.
+            self._emitPhase(PHASE_CANCELLED)
+            self._notifyPowerRestored()  # ARCH-031: undo the reversible shed
             return
-        logger.warning(
-            "shutdown-sequencer: pre-shutdown window resolved -- graceful poweroff"
+        self._recordDrainEnd(
+            drainEnd.reason or DRAIN_TERMINATION_SHUTDOWN, drainEnd, floorReadable,
         )
+        logger.warning("shutdown-sequencer: pre-shutdown window resolved -- graceful poweroff")
+        self._emitPhase(PHASE_POWERING_OFF)
+        self._runPrePowerOff()
         self._powerOff()
+
+    # ----- US-776-a pipeline poll (the drain's bound is the battery) ----------
+
+    def _pollPipeline(self, done: threading.Event, *, floorReadable: bool) -> _DrainEnd:
+        """Wait for the pipeline, re-reading its bounds every poll interval.
+
+        Returns when the first of these holds:
+
+        * the pipeline finished;
+        * ``isOnBattery()`` reads False -- power returned, and the caller's
+          single power-return check cancels (one restore call site, ARCH-031);
+        * ``drainFloorDwellReads`` CONSECUTIVE SUCCESSFUL VCELL reads <= the drain
+          floor (US-776-b: ``drainFloor``, above the ``vcellFloor`` backstop;
+          ARCH-065 dwell) -- the battery, not a timer, ends the drain. A read
+          above the floor resets the count; a FAILED read neither counts nor
+          resets it;
+        * the floor has been BLIND for ``totalCapSec``: no successful read for
+          that long, or ``floorReadable`` is False (a bootGrace loss, US-788,
+          where the boot sag can read below the floor). Without this a hung
+          pipeline plus an unreadable VCELL would hold the Pi up until the
+          hardware cut -- the unrecoverable failure, where stopping early only
+          leaves rows for the next sync.
+
+        US-790: every poll that does NOT end the drain is a row of the VCELL
+        series; the poll that ends it is returned instead, so the caller writes
+        the single terminal row once it knows whether power came back.
+
+        Args:
+            done: Set by the pipeline thread when it finishes.
+            floorReadable: False to leave the floor unread (bootGrace).
+
+        Returns:
+            How the drain ended. ``reason`` is None when the pipeline finished.
+        """
+        floorSeenMono = self._monotonic()
+        belowCount = 0
+        while not done.wait(timeout=self._smoothingPollSec):
+            if not self._isOnBattery():
+                return _DrainEnd(reason=DRAIN_TERMINATION_POWER_RESTORED)
+            now = self._monotonic()
+            v: float | None = None
+            if floorReadable:
+                try:
+                    v = self._vcell()
+                except Exception as exc:  # noqa: BLE001 -- a failed read is blind, not low
+                    logger.warning(
+                        "shutdown-sequencer: VCELL read failed during drain (%s) -- "
+                        "floor blind for %.0fs of %.0fs",
+                        exc,
+                        now - floorSeenMono,
+                        self._totalCapSec,
+                    )
+                else:
+                    floorSeenMono = now
+                    belowCount = belowCount + 1 if v <= self._drainFloor else 0
+                    if belowCount >= self._drainFloorDwellReads:
+                        logger.warning(
+                            "shutdown-sequencer: VCELL %.3f <= drain floor %.3f during "
+                            "drain -- ending the drain, poweroff now",
+                            v,
+                            self._drainFloor,
+                        )
+                        return _DrainEnd(
+                            reason=DRAIN_TERMINATION_DRAIN_FLOOR, vcell=v, pollRead=True,
+                        )
+            if now - floorSeenMono >= self._totalCapSec:
+                logger.warning(
+                    "shutdown-sequencer: VCELL floor unreadable for %.0fs (cap "
+                    "%.0fs) -- ending the drain, poweroff now",
+                    now - floorSeenMono,
+                    self._totalCapSec,
+                )
+                return _DrainEnd(reason=DRAIN_TERMINATION_VCELL_UNREADABLE, pollRead=True)
+            self._recordDrainSample(v)
+        return _DrainEnd()
+
+    # ----- US-790 drain VCELL series -------------------------------------------
+
+    def _recordDrainEnd(self, reason: str, end: _DrainEnd, floorReadable: bool) -> None:
+        """Write the drain's single terminal row.
+
+        The read comes from the poll that ended the drain when that poll took
+        one; otherwise (pipeline finished, power returned) VCELL is read once
+        here -- unless the floor is suppressed (bootGrace), where nothing is
+        read and the row carries NULL.
+        """
+        self.lastDrainEndReason = reason
+        if self._drainSampleFn is None:
+            return
+        v = end.vcell
+        if not end.pollRead and floorReadable:
+            try:
+                v = self._vcell()
+            except Exception as exc:  # noqa: BLE001 -- a failed read is recorded as NULL
+                logger.warning(
+                    "shutdown-sequencer: VCELL read failed at drain end (%s)", exc,
+                )
+                v = None
+        self._recordDrainSample(v, reason)
+
+    def _recordDrainSample(self, v: float | None, reason: str | None = None) -> None:
+        """Hand one row to the drain series recorder (best-effort, never raises)."""
+        if self._drainSampleFn is None:
+            return
+        try:
+            self._drainSampleFn(v, terminationReason=reason)
+        except Exception as exc:  # noqa: BLE001 -- a lost row, never a stalled drain
+            logger.error(
+                "shutdown-sequencer: drain VCELL row not recorded (%s) -- ignored, "
+                "the drain continues",
+                exc,
+            )
+
+    # ----- US-748 power-loss-observed hook (time-to-death heartbeat) ----------
+
+    def _notifyPowerLossObserved(self) -> None:
+        """Run the power-loss-observed hook (best-effort, never raises)."""
+        if self._powerLossObservedFn is None:
+            return
+        try:
+            self._powerLossObservedFn()
+        except Exception as exc:  # noqa: BLE001 -- best-effort, belt+braces
+            logger.error(
+                "shutdown-sequencer: power-loss-observed hook failed (%s) -- "
+                "ignored, shutdown proceeds; time-to-death is NOT being measured "
+                "for this loss",
+                exc,
+            )
+
+    def _notifyPowerRestored(self) -> None:
+        """Run the power-restored hook (best-effort, never raises).
+
+        ARCH-031: the counterpart to ``powerLossObservedFn``. Called on EVERY
+        path that abandons a shutdown, so a reversible mitigation taken on the
+        loss edge (load shedding) is undone when the loss turns out to be a blip.
+
+        🔴 Guarded exactly like the other hooks. A restore that fails costs us
+        the restore -- the dashboard stays down until the next boot -- and must
+        never cost us the cancel, which is what keeps a transient blip from
+        bricking the Pi (2026-05-18 hotfix).
+        """
+        if self._powerRestoredFn is None:
+            return
+        try:
+            self._powerRestoredFn()
+        except Exception as exc:  # noqa: BLE001 -- best-effort, belt+braces
+            logger.error(
+                "shutdown-sequencer: power-restored hook failed (%s) -- ignored, "
+                "abort proceeds. Any shed load stays down until the next boot.",
+                exc,
+            )
+
+    # ----- US-526 pre-poweroff hook (drain-event close, Atlas Option C) -------
+
+    def _runPrePowerOff(self) -> None:
+        """Run the pre-poweroff hook (best-effort, never raises).
+
+        A no-op when no ``prePowerOffFn`` is wired. Guarded so a failing drain
+        close can NEVER delay or prevent the poweroff it precedes -- same
+        contract as :meth:`_emitPhase`. The failure is logged loudly because a
+        missed close means the boot reaper will mark that drain interrupted
+        (runtime + depth NULL), i.e. one lost measurement rather than a silent
+        wrong one.
+        """
+        if self._prePowerOffFn is None:
+            return
+        try:
+            self._prePowerOffFn()
+        except Exception as exc:  # noqa: BLE001 -- best-effort, belt+braces
+            logger.error(
+                "shutdown-sequencer: pre-poweroff hook failed (%s) -- ignored, "
+                "poweroff proceeds. Any open drain row stays open and will be "
+                "marked interrupted by the boot reaper.",
+                exc,
+            )
+
+    # ----- F-103 shutdown-splash phase-emit hook (US-394 / Atlas A-2) ---------
+
+    def _beginGraceAndEmit(self) -> None:
+        """Capture the grace-window start (ISO + monotonic) and emit `grace`.
+
+        Called once, the instant a power-lost signal arrives, before smoothing
+        resolves -- so the splash triggers at T=0.
+        """
+        self._graceStartedAtIso = self._nowIso()
+        self._graceStartMono = self._monotonic()
+        self._emitPhase(PHASE_GRACE)
+
+    def _graceRemainingS(self) -> float:
+        """Seconds left in the grace (smoothing) window, clamped at 0.
+
+        Before grace begins (or if the monotonic clock is unset) the full
+        ``smoothingSec`` budget is reported.
+        """
+        if self._graceStartMono is None:
+            return self._smoothingSec
+        elapsed = self._monotonic() - self._graceStartMono
+        return max(0.0, self._smoothingSec - elapsed)
+
+    def _emitPhase(self, phase: str) -> None:
+        """Emit one shutdown-state phase event (best-effort, never raises).
+
+        A no-op when no ``phaseEmitFn`` is wired. The call is wrapped so a hook
+        that raises NEVER blocks the shutdown progression (Atlas A-2 constraint
+        c). The payload carries the grace-window timing the splash trusts; the
+        sequencer remains ignorant of the splash schema (it passes raw fields).
+        """
+        if self._phaseEmitFn is None:
+            return
+        try:
+            self._phaseEmitFn(
+                phase,
+                tGraceStartedAtIso=self._graceStartedAtIso,
+                tGraceTotalS=self._smoothingSec,
+                tRemainingS=self._graceRemainingS(),
+                reason=self._shutdownReason,
+            )
+        except Exception as exc:  # noqa: BLE001 -- emit is best-effort, belt+braces
+            logger.error(
+                "shutdown-sequencer: phase-emit '%s' failed (%s) -- ignored "
+                "(shutdown progress is never blocked by the splash hook)",
+                phase,
+                exc,
+            )

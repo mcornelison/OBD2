@@ -58,5 +58,5 @@ Finding B was observed under EEPROM **unset/defaults** (≈`=0` behavior). At **
 
 - V0.27 chain depends on this power model holding (see PM project-state docs)
 - MAX17048 UPS HAT fuel-gauge ref (HAT *product/PG-pin* still unidentified — gap)
-- Drive 11 was the first clean car-coupled drive (see `offices/tuner/knowledge.md`)
+- Drive 11 was the first clean car-coupled drive (see `$FLEET_SHARE/tuner/knowledge/knowledge.md`)
 - Drain tests run under wall-power mode (UPS battery sim)

@@ -20,6 +20,11 @@
 # 2026-06-05    | Spool        | Initial -- operationalizes Atlas's GPS-cal
 #               |              | procedure as an independent cross-check aligner.
 #               |              | Promoted from offices/tuner/scripts/ per CIO.
+# 2026-09-09    | Rex (Dev)    | US-603/TD-075 lint only: datetime.UTC alias
+#               |              | (UP017) and explicit zip() strictness (B905).
+#               |              | The two zips are NOT the same case -- see the
+#               |              | comments at each. No estimator maths changed;
+#               |              | A/B outputs are bit-identical.
 # ================================================================================
 ################################################################################
 """Spool cross-check SPEED-PID aligner (nearest-hold resampling, no numpy).
@@ -36,7 +41,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from statistics import median
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -87,7 +92,7 @@ def loadObdSpeedTsv(path: str) -> ObdSeries:
             if not line:
                 continue
             ts, val = line.split('\t')
-            dt = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)
             out.append((dt, float(val)))
     out.sort(key=lambda r: r[0])
     return out
@@ -96,7 +101,10 @@ def loadObdSpeedTsv(path: str) -> ObdSeries:
 def integrateDistanceMeters(series: ObdSeries) -> float:
     """Trapezoidal integral of a (time, speed_kmh) series -> metres."""
     total = 0.0
-    for (t0, v0), (t1, v1) in zip(series, series[1:]):
+    # strict=False is the CORRECT answer here and not a silenced warning: this is
+    # the pairwise walk idiom, whose two operands are unequal BY CONSTRUCTION
+    # (n and n-1). strict=True would raise on every non-empty series.
+    for (t0, v0), (t1, v1) in zip(series, series[1:], strict=False):
         deltaHours = (t1 - t0).total_seconds() / 3600.0
         total += ((v0 + v1) / 2.0) * deltaHours  # km
     return total * 1000.0
@@ -119,7 +127,12 @@ def _pearson(a: list[float], b: list[float]) -> float:
     if n < 3:
         return -2.0
     meanA, meanB = sum(a) / n, sum(b) / n
-    num = sum((x - meanA) * (y - meanB) for x, y in zip(a, b))
+    # strict=True: a and b are equal-length BY CONTRACT -- every call site slices
+    # the two span-length grids to the same width (see estimateCorrectionFactor's
+    # lag loop). The line above already divides BOTH means by len(a), so unequal
+    # inputs would not truncate visibly, they would silently return a wrong r.
+    # Loud is the direction this project wants.
+    num = sum((x - meanA) * (y - meanB) for x, y in zip(a, b, strict=True))
     denomA = sum((x - meanA) ** 2 for x in a) ** 0.5
     denomB = sum((y - meanB) ** 2 for y in b) ** 0.5
     return num / (denomA * denomB) if denomA and denomB else -2.0

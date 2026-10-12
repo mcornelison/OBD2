@@ -1,0 +1,99 @@
+# =============================================================================
+# Dev / CI-only dependencies (NOT a runtime/prod dependency set)
+# =============================================================================
+# Install (dev bench + CI runner only):  pip install -r requirements-dev.txt
+#
+# Scope: tooling that supports LOCAL + CI testing and must NEVER land on a
+#        production install. Pi production installs `requirements.txt` +
+#        `requirements-pi.txt`; the server installs `requirements.txt` +
+#        `requirements-server.txt`. Neither references THIS file, so nothing
+#        here is pulled onto the Pi or the server. (US-470 / F-104 / TD-055;
+#        VC2: `testcontainers` must NOT appear in the runtime/prod reqs.)
+#
+# This set layers ON TOP of `requirements.txt` (shared + dev tooling: pytest,
+# ruff, mypy) and `requirements-server.txt` (sqlalchemy, pymysql -- the
+# real-MariaDB harness drives DDL through pymysql). Install order for the
+# migration-drift CI job:
+#     pip install -r requirements.txt -r requirements-server.txt -r requirements-dev.txt
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Real-MariaDB migration-chain test (US-464 / TD-055)
+# -----------------------------------------------------------------------------
+# Spins up a throwaway MariaDB 11.x container so the LIVE layer of
+# tests/server/test_migration_chain_real_mariadb.py (the @integration|@slow
+# layer) applies the REAL v0022/v0023 + MigrationRunner.runAll chain against
+# real MariaDB DDL -- catching the BL-019/020/021 drift class that
+# SQLite/create_all structurally cannot reproduce.
+#
+# Requires a Docker daemon on the host. The harness (acquireMariaDb) prefers an
+# explicit $OBD2_MARIADB_TEST_DSN service and falls back to a testcontainers
+# MariaDB 11.x container; the CI job (.github/workflows/migration-drift.yml)
+# uses a `services:` MariaDB 11.8 container + $OBD2_MARIADB_TEST_DSN (no
+# Docker-in-Docker), so testcontainers here is primarily for LOCAL Docker runs.
+#
+# Atlas TIGHTEN-2: the BL-021 inline-CHECK quirk is MariaDB-version-sensitive,
+# so the container image is pinned to the prod major (11.x / 11.8.6) in
+# tests/server/_mariadb_chain_harness.py (MARIADB_TEST_IMAGE). testcontainers
+# 4.x provides `testcontainers.mysql.MySqlContainer`, which the harness imports.
+testcontainers>=4.0.0
+
+# -----------------------------------------------------------------------------
+# Offline IMU analysis tooling (ARCH-027)
+# -----------------------------------------------------------------------------
+# tools/imu/fusion_bench.py and tools/imu/gps_truth.py score pitch-fusion output
+# against GPS truth; tests/pi/sensors/test_fusion_bench_units.py and
+# test_gps_truth.py exercise them.  All four import numpy.
+#
+# It goes HERE and not in requirements.txt because requirements.txt IS a
+# production install -- the Pi runs `requirements.txt + requirements-pi.txt` and
+# the server runs `requirements.txt + requirements-server.txt`.  numpy is a large
+# binary wheel that no runtime code imports; landing it on the car to satisfy an
+# offline bench tool would be paying for it on the constrained tier.  Every bench
+# and the CI runner install this file (New-Bench.ps1 installs
+# requirements.txt + requirements-dev.txt + requirements-server.txt), so the two
+# tests collect wherever they are actually run.
+#
+# WHY IT WAS MISSING: numpy was deliberately REMOVED from requirements.txt as
+# dead scaffolding when nothing imported it (see the note at the foot of that
+# file).  ARCH-027 then added four importers without re-declaring it, so the two
+# tests were UNCOLLECTABLE on a fresh bench -- and an uncollected test is an
+# INERT test: it cannot fail, so it protects nothing.  The suite was green
+# because those tests never ran.
+numpy>=1.24.0
+
+# -----------------------------------------------------------------------------
+# IANA time-zone database on Windows benches (US-809-0)
+# -----------------------------------------------------------------------------
+# US-809-0 declares `pi.time.localZone` and resolves it through
+# `zoneinfo.ZoneInfo`, which is the project's FIRST use of zoneinfo. ZoneInfo
+# reads the host's IANA database (`/usr/share/zoneinfo`) and falls back to the
+# `tzdata` PyPI package only when that is absent.
+#
+# The Pi (Raspberry Pi OS) and the server (Debian 13) both ship the system
+# database, so neither runtime tier needs this package -- which is why it is
+# here and not in requirements.txt, per the same rule that put numpy here.
+#
+# WINDOWS BENCHES HAVE NO SYSTEM DATABASE AT ALL. Measured on this bench
+# 2026-09-23: `ZoneInfo('America/Chicago')` raised ZoneInfoNotFoundError before
+# this line existed -- NOT for the configured zone specifically, but for EVERY
+# zone, because there was no database to look in. Without this declaration the
+# US-809-0 tests fail on a fresh Windows bench for an environment reason that
+# reads exactly like a wrong zone name, and the config validator rejects a
+# perfectly valid config.
+#
+# The marker keeps it off Linux, where the system database already wins.
+tzdata>=2024.1; sys_platform == "win32"
+
+# -----------------------------------------------------------------------------
+# AHRS fusion library for the IMU tests on dev benches + CI (ARCH-064 / ARCH-064a)
+# -----------------------------------------------------------------------------
+# ARCH-064 replaces the home-grown pitch filter with x-io Technologies' Fusion
+# (`imufusion`), declared for the Pi in requirements-pi.txt. Its tests
+# (tests/pi/sensors/test_ahrs_fusion.py, and the bridge tests once ARCH-064 Task 4
+# wires it) exercise the REAL library, not a fake -- so a bench or CI runner that
+# installs only requirements.txt + requirements-dev.txt could not COLLECT them.
+# An uncollected test is an inert test (the numpy note above is the same lesson).
+# Wheels exist for win_amd64 and manylinux aarch64 at cp313; numpy is already
+# declared above.
+imufusion>=1.3.3

@@ -27,7 +27,9 @@
 # ----------------------------------------------------------------------------
 # Pi tier (chi-eclipse-01) -- mirrors config.json pi.network.*
 # ----------------------------------------------------------------------------
-PI_HOST="${PI_HOST:-10.27.27.28}"
+PI_HOST="${PI_HOST:-chi-eclipse-01}"   # CANONICAL BY HOSTNAME (CIO/Spool 2026-08-17: address the Pi by name, never a hardcoded IP; ~/.ssh/config resolves it to WiFi .124). B-102/US-473.
+PI_HOST_WIFI="${PI_HOST_WIFI:-10.27.27.124}"   # wlan0 static (primary/operational, MAC 88:a2:9e:84:46:1c)
+PI_HOST_ETH="${PI_HOST_ETH:-10.27.27.123}"   # eth0 static (usually unplugged; ssh alias chi-eclipse-01-eth)
 PI_USER="${PI_USER:-mcornelison}"
 PI_PATH="${PI_PATH:-/home/mcornelison/Projects/Eclipse-01}"
 PI_PORT="${PI_PORT:-22}"
@@ -37,11 +39,11 @@ PI_DEVICE_ID="${PI_DEVICE_ID:-chi-eclipse-01}"
 # ----------------------------------------------------------------------------
 # Server tier (chi-srv-01) -- mirrors config.json server.network.*
 # ----------------------------------------------------------------------------
-SERVER_HOST="${SERVER_HOST:-10.27.27.10}"
+SERVER_HOST="${SERVER_HOST:-10.27.27.120}"
 SERVER_USER="${SERVER_USER:-mcornelison}"
 SERVER_PORT="${SERVER_PORT:-8000}"
 SERVER_HOSTNAME="${SERVER_HOSTNAME:-chi-srv-01}"
-SERVER_PROJECT_PATH="${SERVER_PROJECT_PATH:-/mnt/projects/O/OBD2v2}"
+SERVER_PROJECT_PATH="${SERVER_PROJECT_PATH:-/home/mcornelison/obd2-server}"
 SERVER_BASE_URL="${SERVER_BASE_URL:-http://${SERVER_HOST}:${SERVER_PORT}}"
 
 # ----------------------------------------------------------------------------

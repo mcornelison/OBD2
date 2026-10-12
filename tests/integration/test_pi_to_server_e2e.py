@@ -61,6 +61,7 @@ import pytest
 from scripts import sync_now
 from src.pi.data import sync_log
 from src.pi.sync import PushStatus, SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckFor
 
 pytestmark = pytest.mark.integration
 
@@ -117,7 +118,10 @@ class _MockSyncHandler(BaseHTTPRequestHandler):
 
         store.recordBatch(apiKey=apiKey, payload=payload)
 
+        # US-776-i: the Pi advances only on the stored ack, so the mock
+        # answers that it stored every row it received.
         self._sendJson(HTTPStatus.OK, {
+            **storedAckFor(payload),
             "status": "ok",
             "batchId": payload.get("batchId", ""),
             "tablesProcessed": {

@@ -32,6 +32,13 @@ from src.pi.obdii.drive_id import (
     setCurrentDriveId,
 )
 
+# US-809-a: the realtime_data writers convert the capture instant against
+# the DECLARED zone, so every writer under test needs one. Declared here
+# rather than defaulted: a writer given no zone REFUSES rather than
+# guessing the host's, which is the property US-809-0 exists to provide.
+_ZONE_CFG = {"pi": {"time": {"localZone": "America/Chicago"}}}
+
+
 # ================================================================================
 # Fixture: isolated Pi DB + context reset
 # ================================================================================
@@ -95,7 +102,7 @@ class TestRealtimeDataWriter:
             timestamp=datetime(2026, 4, 19, 12, 0, 0),
             profileId='daily',
         )
-        logReading(db, reading)
+        logReading(db, reading, config=_ZONE_CFG)
 
         with db.connect() as conn:
             row = conn.execute(
@@ -113,7 +120,7 @@ class TestRealtimeDataWriter:
             timestamp=datetime(2026, 4, 19, 12, 0, 0),
             profileId='daily',
         )
-        logReading(db, reading)
+        logReading(db, reading, config=_ZONE_CFG)
 
         with db.connect() as conn:
             row = conn.execute(
@@ -132,7 +139,7 @@ class TestRealtimeDataWriter:
             timestamp=datetime(2026, 4, 19, 12, 0, 0),
             profileId='daily',
         )
-        logReading(db, reading)
+        logReading(db, reading, config=_ZONE_CFG)
 
         with db.connect() as conn:
             row = conn.execute(
@@ -155,7 +162,7 @@ class TestRealtimeDataWriter:
             parameterName='RPM', value=800.0, unit='rpm',
             timestamp=datetime(2026, 4, 19, 12, 0, 0),
             profileId='daily',
-        ))
+        ), config=_ZONE_CFG)
         # Drive ends
         setCurrentDriveId(None)
         # Drive 2
@@ -164,7 +171,7 @@ class TestRealtimeDataWriter:
             parameterName='RPM', value=850.0, unit='rpm',
             timestamp=datetime(2026, 4, 19, 13, 0, 0),
             profileId='daily',
-        ))
+        ), config=_ZONE_CFG)
 
         with db.connect() as conn:
             rows = conn.execute(
@@ -381,7 +388,7 @@ class TestStatisticsWriterPostDriveRace:
                 unit='rpm',
                 timestamp=startTime,
                 profileId='daily',
-            ))
+            ), config=_ZONE_CFG)
 
         detector._endDrive()
 
@@ -427,7 +434,7 @@ class TestStatisticsWriterPostDriveRace:
                 unit='mph',
                 timestamp=datetime(2026, 5, 8, 20, 30, 0),
                 profileId='daily',
-            ))
+            ), config=_ZONE_CFG)
 
         # Caller passes driveId explicitly -- singleton stays None.
         assert getCurrentDriveId() is None

@@ -16,6 +16,9 @@
 #                               Spool Sprint 26 Story 6 column rename --
 #                               the new columns ship alongside the legacy
 #                               start_soc / end_soc during deprecation.
+# 2026-10-04    | Atlas (ARCH-065a) | Ruling 19: test_columnShape includes the ten
+#                               ARCH-065 capacity columns, derived from their
+#                               owner BATTERY_HEALTH_CAPACITY_COLUMNS (SSOT).
 # ================================================================================
 ################################################################################
 
@@ -30,6 +33,7 @@ import pytest
 
 from src.pi.obdii.database import DatabaseConnectionError, ObdDatabase
 from src.pi.power.battery_health import (
+    BATTERY_HEALTH_CAPACITY_COLUMNS,
     BATTERY_HEALTH_LOG_TABLE,
     SCHEMA_BATTERY_HEALTH_LOG,
     ensureBatteryHealthLogTable,
@@ -59,17 +63,24 @@ class TestFreshSchema:
             'drain_event_id',
             'start_timestamp',
             'end_timestamp',
-            'start_soc',  # DEPRECATED by US-289 (kept during rename window)
-            'end_soc',    # DEPRECATED by US-289 (kept during rename window)
-            'start_vcell_v',  # US-289 rename
-            'end_vcell_v',    # US-289 rename
+            'start_vcell_v',   # US-289 rename (sole VCELL home post-US-426)
+            'end_vcell_v',     # US-289 rename
+            'start_soc_pct',   # US-426: durable MAX17048 SoC% home
+            'end_soc_pct',     # US-426
             'runtime_seconds',
             'ambient_temp_c',
             'load_class',
             'notes',
             'data_source',
+            'close_reason',    # US-683: typed close discriminator
         }
+        # ARCH-065: the capacity columns, from their one owner (not restated).
+        expected |= {name for name, _ in BATTERY_HEALTH_CAPACITY_COLUMNS}
+        assert len(BATTERY_HEALTH_CAPACITY_COLUMNS) == 10
+        # US-426 dropped the misnamed legacy start_soc / end_soc (VCELL volts).
         assert set(cols.keys()) == expected
+        assert 'start_soc' not in cols
+        assert 'end_soc' not in cols
 
     def test_drainEventIdIsPrimaryKey(self, freshDb: ObdDatabase) -> None:
         cols = {
@@ -78,14 +89,19 @@ class TestFreshSchema:
         }
         assert cols['drain_event_id']['pk'] == 1
 
-    def test_startSocIsNotNull(self, freshDb: ObdDatabase) -> None:
+    def test_socPctColumnsAreNullable(self, freshDb: ObdDatabase) -> None:
+        """US-426: start_soc_pct / end_soc_pct are REAL nullable (NULL until
+        US-427 wires the register read; NULL in the cold-start window)."""
         cols = {
             c['name']: c
             for c in freshDb.getTableInfo(BATTERY_HEALTH_LOG_TABLE)
         }
-        assert cols['start_soc']['notnull'] == 1
+        assert cols['start_soc_pct']['notnull'] == 0
+        assert cols['start_soc_pct']['type'].upper() == 'REAL'
+        assert cols['end_soc_pct']['notnull'] == 0
+        assert cols['end_soc_pct']['type'].upper() == 'REAL'
 
-    def test_endSocAndEndTimestampAreNullable(
+    def test_endColumnsAndTimestampAreNullable(
         self, freshDb: ObdDatabase,
     ) -> None:
         cols = {
@@ -93,7 +109,8 @@ class TestFreshSchema:
             for c in freshDb.getTableInfo(BATTERY_HEALTH_LOG_TABLE)
         }
         # Pre-close rows leave these NULL.
-        assert cols['end_soc']['notnull'] == 0
+        assert cols['end_vcell_v']['notnull'] == 0
+        assert cols['end_soc_pct']['notnull'] == 0
         assert cols['end_timestamp']['notnull'] == 0
         assert cols['runtime_seconds']['notnull'] == 0
         assert cols['ambient_temp_c']['notnull'] == 0
@@ -120,7 +137,7 @@ class TestFreshSchema:
         """DB DEFAULT populates a canonical ISO-8601 UTC stamp."""
         with freshDb.connect() as conn:
             conn.execute(
-                f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} (start_soc) "
+                f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} (start_vcell_v) "
                 "VALUES (?)",
                 (100.0,),
             )
@@ -143,7 +160,7 @@ class TestCheckConstraints:
             with freshDb.connect() as conn:
                 conn.execute(
                     f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} "
-                    "(start_soc, load_class) VALUES (?, ?)",
+                    "(start_vcell_v, load_class) VALUES (?, ?)",
                     (100.0, 'bogus_class'),
                 )
 
@@ -152,7 +169,7 @@ class TestCheckConstraints:
             with freshDb.connect() as conn:
                 conn.execute(
                     f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} "
-                    "(start_soc, data_source) VALUES (?, ?)",
+                    "(start_vcell_v, data_source) VALUES (?, ?)",
                     (100.0, 'bogus_source'),
                 )
 
@@ -161,7 +178,7 @@ class TestCheckConstraints:
             for loadClass in ('production', 'test', 'sim'):
                 conn.execute(
                     f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} "
-                    "(start_soc, load_class) VALUES (?, ?)",
+                    "(start_vcell_v, load_class) VALUES (?, ?)",
                     (100.0, loadClass),
                 )
         # Three successful inserts.
@@ -181,7 +198,7 @@ class TestAutoIncrement:
         with freshDb.connect() as conn:
             for soc in (100.0, 80.0, 60.0):
                 conn.execute(
-                    f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} (start_soc) "
+                    f"INSERT INTO {BATTERY_HEALTH_LOG_TABLE} (start_vcell_v) "
                     "VALUES (?)",
                     (soc,),
                 )

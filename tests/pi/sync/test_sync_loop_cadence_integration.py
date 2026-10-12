@@ -19,6 +19,9 @@
 # 2026-05-08    | Rex (US-299) | Initial implementation: 1-hour idle
 #                               workload assertion + ACTIVE cadence assertion
 #                               + drive_start/drive_end wiring discriminators.
+# 2026-10-08    | Atlas (US-418)| The ACTIVE-hour test now pushes rows (a real
+#                               drive); added the parked startup-backlog case
+#                               that must return to the 60 s heartbeat.
 # ================================================================================
 ################################################################################
 
@@ -311,16 +314,21 @@ class TestActiveCadencePostDriveStart:
         self, stubApiKey
     ) -> None:
         """
-        Given: controller transitioned to ACTIVE via _handleDriveStart.
+        Given: controller transitioned to ACTIVE via _handleDriveStart, and
+            every push carries rows (a real drive streams realtime_data).
         When: 1 hour of polls (3600s @ 1s steps).
         Then: approximately 720 attempts (3600/5) -- the live-stream cadence
         Spool needs for tuning analysis.
+
+        US-418: this used to push EMPTY results for the whole hour and still
+        expect 5 s, i.e. it pinned "drive_end is the only way out of ACTIVE".
+        Empty pushes now demote after 12; a drive's pushes are not empty.
         """
         # Arrange
         clock = FakeClock(start=0.0)
         orch = _makeOrch(_baseConfig(triggerOn=["interval"]))
         orch._syncClient = MagicMock()
-        orch._syncClient.pushAllDeltas.return_value = _emptyResult()
+        orch._syncClient.pushAllDeltas.return_value = _okResult(rowsPushed=35)
         controller = _installController(clock=clock, orch=orch)
 
         # Drive_start through the orchestrator's central router.
@@ -336,6 +344,40 @@ class TestActiveCadencePostDriveStart:
         assert 700 <= callCount <= 730, (
             f"ACTIVE cadence expected ~720/hour (3600/5), got {callCount}. "
             f"Final controller state: {controller.state}."
+        )
+
+
+class TestParkedPiReturnsToIdle:
+    """US-418, the MEASURED 2026-10-07 case, through the real orchestrator path."""
+
+    def test_startupBacklogThenEmpties_returnsToSixtySecondCadence(
+        self, stubApiKey
+    ) -> None:
+        """
+        Given: a parked Pi whose FIRST push drains a startup backlog (rows),
+            after which every push is empty.
+        When: 1 hour of polls.
+        Then: 12 empty pushes at 5 s after the backlog, then the 60 s
+            heartbeat: ~1 + 12 + 59 = ~72 attempts, not ~720. The 10-07
+            measurement was 330 of 362 intervals at 5 s for 15.8 h.
+        """
+        clock = FakeClock(start=0.0)
+        orch = _makeOrch(_baseConfig(triggerOn=["interval"]))
+        orch._syncClient = MagicMock()
+        orch._syncClient.pushAllDeltas.side_effect = (
+            [_okResult(rowsPushed=7)] + [_emptyResult()] * 10_000
+        )
+        controller = _installController(clock=clock, orch=orch)
+
+        for _ in range(3600):
+            orch._maybeTriggerIntervalSync()
+            clock.advance(1.0)
+
+        callCount = orch._syncClient.pushAllDeltas.call_count
+        assert controller.state == SyncCadenceState.IDLE
+        assert 65 <= callCount <= 80, (
+            f"a parked Pi should fall back to ~60 s after 12 empty pushes; "
+            f"got {callCount} attempts in an hour"
         )
 
 

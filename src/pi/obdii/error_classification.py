@@ -14,6 +14,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-211) | Initial -- Spool Session 6 amended Story 2.
+# 2026-07-03    | Atlas        | HOTFIX -- python-obd's ELM327.__read raises a
+#               |              | spurious ``AttributeError: 'NoneType' object has
+#               |              | no attribute 'close'`` on a mid-read Bluetooth
+#               |              | drop; classify it ADAPTER_UNREACHABLE (was FATAL
+#               |              | -> crash-loop + zero capture on every read blip).
 # ================================================================================
 ################################################################################
 
@@ -117,7 +122,9 @@ def classifyCaptureError(exc: BaseException) -> CaptureErrorClass:
     6. Plain :class:`Exception` whose message mentions rfcomm
        -> :attr:`CaptureErrorClass.ADAPTER_UNREACHABLE` (python-obd wraps
        OSError in Exception on some paths).
-    7. Everything else -> :attr:`CaptureErrorClass.FATAL`.
+    7. :class:`AttributeError` matching python-obd's spurious ``None.close``
+       disconnect artifact -> :attr:`CaptureErrorClass.ADAPTER_UNREACHABLE`.
+    8. Everything else -> :attr:`CaptureErrorClass.FATAL`.
 
     Args:
         exc: Exception instance raised from the capture path.
@@ -168,7 +175,38 @@ def classifyCaptureError(exc: BaseException) -> CaptureErrorClass:
     if hasAdapterSignature:
         return CaptureErrorClass.ADAPTER_UNREACHABLE
 
+    # python-obd's ELM327.__read (obd/elm327.py) surfaces a mid-read adapter
+    # drop as a spurious ``AttributeError: 'NoneType' object has no attribute
+    # 'close'`` -- it logs "Device disconnected while reading" then calls
+    # ``self.__port.close()`` after ``__port`` is already None. That is an
+    # adapter-loss signal, not an application bug: without this branch it falls
+    # through to FATAL and every transient Bluetooth read blip restarts the
+    # whole process (crash-loop, zero capture). Treat it as ADAPTER_UNREACHABLE
+    # so the orchestrator reconnects instead.
+    if _isPythonObdDisconnectArtifact(exc):
+        return CaptureErrorClass.ADAPTER_UNREACHABLE
+
     return CaptureErrorClass.FATAL
+
+
+def _isPythonObdDisconnectArtifact(exc: BaseException) -> bool:
+    """True for python-obd's spurious ``None.close`` AttributeError on a BT drop.
+
+    python-obd's ``ELM327.__read`` (obd/elm327.py) logs "Device disconnected
+    while reading" then calls ``self.__port.close()`` when ``__port`` has
+    already been reset to ``None``, raising ``AttributeError: 'NoneType'
+    object has no attribute 'close'``. This is an adapter-loss condition
+    surfacing through a library bug, not a fatal application error --
+    classifying it ADAPTER_UNREACHABLE lets a transient Bluetooth read drop
+    reconnect instead of crash-looping the process (hotfix 2026-07-03).
+
+    Matched narrowly (AttributeError + the exact ``NoneType ... close``
+    message) so genuine AttributeError bugs still surface as FATAL.
+    """
+    if not isinstance(exc, AttributeError):
+        return False
+    msg = str(exc).lower()
+    return "no attribute 'close'" in msg and 'nonetype' in msg
 
 
 # ================================================================================

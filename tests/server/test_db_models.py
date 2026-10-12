@@ -436,18 +436,46 @@ class TestTableCount:
         """
         Given: the models module
         When: counting all model classes with __tablename__
-        Then: there are exactly 23 tables (base 15 + baselines from US-162
+        Then: there are exactly 32 tables (base 15 + baselines from US-162
               + analysis_recommendations from US-CMP-005 + dtc_log from US-204
               + battery_health_log from US-217 + drive_counter from US-314
               + dtc_freeze_frame from US-368 + speed_pid_calibration from US-370
-              + ecu from US-376)
+              + ecu from US-376 + power_log from US-412
+              + startup_log from US-417 + drive_derived_signals from US-436
+              + drives from US-448 + pi_state from US-453
+              + maintenance_log and maintenance_schedule from ARCH-020
+              + edr_imu_sample and edr_light_sample from US-765)
         """
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 23, (
-            f"Expected 23 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 34, (
+            f"Expected 34 tables, got {len(tableNames)}: {tableNames}"
         )
+        # US-790 (F-138): 33 -> 34.  drain_vcell_trajectory is the shutdown
+        # drain's per-poll VCELL series (migration v0033).  Named so a bare
+        # +1 from any other table does not pass this.
+        assert 'drain_vcell_trajectory' in tableNames
+        # ARCH-020 (Atlas, 2026-09-01): 28 -> 30. maintenance_log and
+        # maintenance_schedule give the vehicle's service history a durable home;
+        # before them, 47 dated events lived only as Markdown on a share with no
+        # snapshots and no undo.  Named explicitly rather than left to the count,
+        # so a table that appears by accident still trips this guard.
+        assert 'maintenance_log' in tableNames
+        assert 'maintenance_schedule' in tableNames
+        # US-765 (F-142, ARCH-029): 30 -> 32.  edr_imu_sample and
+        # edr_light_sample are the server's destination for the Pi's EDR raw
+        # samples (migration v0026).  Until they existed the Pi recorded ~1.77M
+        # rows/day and an age-only purge deleted them, because there was nowhere
+        # for them to go.  Named for the same reason as the pair above: a bare
+        # 30 -> 32 would pass with ANY two tables added, which is not a check.
+        assert 'edr_imu_sample' in tableNames
+        assert 'edr_light_sample' in tableNames
+        # US-805 (F-125, ARCH-045): 32 -> 33.  edr_imu_derived holds the
+        # PitchFusion OUTPUTS, kept out of the raw table because a computed
+        # value changes when the ALGORITHM changes and a raw reading never
+        # does.  Named, not left to the count, for the same reason as above.
+        assert 'edr_imu_derived' in tableNames
 
 
 # ---- Connection Module Tests --------------------------------------------------

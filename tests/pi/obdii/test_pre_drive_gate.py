@@ -1,0 +1,593 @@
+################################################################################
+# File Name: test_pre_drive_gate.py
+# Purpose/Description: US-479 (F-117) pre-drive OBD connect + capture green-light.
+#                      Bench-validates (a) the pure PASS/FAIL gate logic -- most
+#                      importantly that a happy-path-only run (rows landed but the
+#                      connect-edge was never exercised) can NOT green-light -- and
+#                      (b) the connect-edge capture: a realtime-logger read loop
+#                      and a KOEO DTC read on ONE connection serialize and both
+#                      succeed. The serialization machinery under test
+#                      (ObdConnection.query / _ioLock, DtcClient) is REAL code;
+#                      only the non-thread-safe serial port is faked (hardware
+#                      absent off-Pi). A bench PASS is NOT a substitute for the
+#                      live in-car gate (same discipline as verify_live_idle.sh).
+# Author: Rex (Ralph agent)
+# Creation Date: 2026-07-20
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-07-20    | Rex (US-479) | Initial -- pre-drive green-light gate + probe.
+# 2026-10-11    | Rex (US-487-a) | Validator-built bench config; refused writes
+#               |              | fail the gate by name.
+# ================================================================================
+################################################################################
+
+"""Bench validation for the US-479 pre-drive green-light gate.
+
+The gate's whole reason to exist: a weekend of drives captured ZERO rows because
+a KOEO DTC read raced the realtime logger on the one connection (the A-17 race)
+and a happy-path smoke test never noticed.  So the gate must (1) EXERCISE the
+connect-edge -- a DTC read co-occurring with the logger on ONE connection -- and
+(2) REFUSE to green-light if that edge was never crossed, even when rows landed.
+These tests pin both.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import threading
+import time
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+from src.pi.obdii.obd_connection import ObdConnection
+from src.pi.obdii.pre_drive_gate import (
+    CORE_PIDS,
+    DEFAULT_MIN_DISTINCT_PARAMS,
+    CaptureResult,
+    evaluateGate,
+    runConnectEdgeCapture,
+)
+
+# ================================================================================
+# Pure gate-decision logic -- evaluateGate
+# ================================================================================
+
+
+def _cleanResult(**overrides: Any) -> CaptureResult:
+    """A fully-green capture result; override one field per test."""
+    base = dict(
+        rowsWritten=60,
+        distinctParams=10,
+        coveredParams=frozenset(list(CORE_PIDS)[:10]),
+        durationSec=30.0,
+        dtcReadCount=4,
+        dtcReadOk=True,
+        connectEdgeExercised=True,
+        interleaveObserved=False,
+        captureError=None,
+    )
+    base.update(overrides)
+    return CaptureResult(**base)
+
+
+def test_evaluateGate_allGreen_passes() -> None:
+    """Given rows landed, coverage met, and the connect-edge exercised cleanly,
+    the gate PASSES."""
+    verdict = evaluateGate(_cleanResult(), minRows=9, minDistinctParams=8)
+    assert verdict.passed is True
+    assert "PASS" in verdict.reason.upper() or verdict.passed
+
+
+def test_evaluateGate_connectEdgeNotExercised_failsEvenWhenRowsLanded() -> None:
+    """THE load-bearing case: rows landed and coverage is fine, but the KOEO/idle
+    DTC read never co-occurred with the logger -> a happy-path-only pass, which
+    the gate MUST refuse (this blind spot let a weekend of drives capture zero)."""
+    verdict = evaluateGate(
+        _cleanResult(connectEdgeExercised=False),
+        minRows=9,
+        minDistinctParams=8,
+    )
+    assert verdict.passed is False
+    assert "connect-edge" in verdict.reason.lower()
+
+
+def test_evaluateGate_interleaveObserved_fails() -> None:
+    """If the two reads interleaved on the one non-thread-safe port, the A-17 race
+    has regressed -- never green-light."""
+    verdict = evaluateGate(
+        _cleanResult(interleaveObserved=True),
+        minRows=9,
+        minDistinctParams=8,
+    )
+    assert verdict.passed is False
+    assert "interleave" in verdict.reason.lower()
+
+
+def test_evaluateGate_dtcReadFailed_fails() -> None:
+    """A DTC read that raised a disconnected-while-reading class error is exactly
+    the capture-killer; the gate fails."""
+    verdict = evaluateGate(
+        _cleanResult(dtcReadOk=False),
+        minRows=9,
+        minDistinctParams=8,
+    )
+    assert verdict.passed is False
+    assert "dtc" in verdict.reason.lower()
+
+
+def test_evaluateGate_tooFewRows_fails() -> None:
+    """Rows below the duration-scaled floor -> capture is not really landing."""
+    verdict = evaluateGate(
+        _cleanResult(rowsWritten=3),
+        minRows=9,
+        minDistinctParams=8,
+    )
+    assert verdict.passed is False
+    assert "row" in verdict.reason.lower()
+
+
+def test_evaluateGate_tooFewParams_fails() -> None:
+    """Coverage below the core-PID floor -> the ECU answered too few PIDs."""
+    verdict = evaluateGate(
+        _cleanResult(distinctParams=3),
+        minRows=9,
+        minDistinctParams=8,
+    )
+    assert verdict.passed is False
+    assert "coverage" in verdict.reason.lower() or "param" in verdict.reason.lower()
+
+
+def test_evaluateGate_captureError_fails() -> None:
+    """A raised capture-boundary error dominates every other signal."""
+    verdict = evaluateGate(
+        _cleanResult(captureError="device disconnected while reading"),
+        minRows=9,
+        minDistinctParams=8,
+    )
+    assert verdict.passed is False
+    assert "disconnected" in verdict.reason.lower() or "error" in verdict.reason.lower()
+
+
+def test_evaluateGate_writerRefusedRows_failsNamingTheRefusal() -> None:
+    """US-487-a: a writer that refused rows FAILS by name -- the reason carries
+    the refusal count and text, never only 'rows 0 < required N'."""
+    verdict = evaluateGate(
+        _cleanResult(
+            rowsWritten=0,
+            distinctParams=0,
+            writerErrors=577,
+            writerErrorText="pi.time.localZone is not declared (got None).",
+        ),
+        minRows=1,
+        minDistinctParams=8,
+    )
+    assert verdict.passed is False
+    assert "writer refused 577 row(s)" in verdict.reason
+    assert "pi.time.localZone is not declared" in verdict.reason
+    assert "rows 0 < required" not in verdict.reason
+
+
+# ================================================================================
+# Connect-edge capture -- runConnectEdgeCapture (real serialization, faked port)
+# ================================================================================
+
+
+class _PortResponse:
+    """Minimal python-obd OBDResponse stand-in (value + is_null())."""
+
+    def __init__(self, value: Any, null: bool = False) -> None:
+        self.value = value
+        self._null = null
+
+    def is_null(self) -> bool:
+        return self._null
+
+
+class _NonThreadSafePort:
+    """The ONE python-obd serial port, faked to make an interleave OBSERVABLE.
+
+    Returns a numeric value for Mode-01 PID reads (so the realtime logger writes
+    rows), an empty-but-present frame for Mode 03, and null for Mode 07 (the 2G
+    DSM's unsupported pending path).  If a second thread enters ``query()`` while
+    a first is still inside, it latches :attr:`interleaved` -- correct
+    serialization must come from ObdConnection._ioLock, not from this fake.
+    """
+
+    def __init__(self, sleep: float = 0.001) -> None:
+        self._sleep = sleep
+        self._counterLock = threading.Lock()
+        self._inFlight = 0
+        self.interleaved = False
+        self.reads = 0
+
+    def is_connected(self) -> bool:
+        return True
+
+    def query(self, command: Any, *args: Any, **kwargs: Any) -> _PortResponse:
+        with self._counterLock:
+            self._inFlight += 1
+            if self._inFlight > 1:
+                self.interleaved = True
+        try:
+            time.sleep(self._sleep)  # "serial I/O" OUTSIDE the counter lock
+            name = command if isinstance(command, str) else getattr(command, "name", str(command))
+            with self._counterLock:
+                self.reads += 1
+            if name == "GET_CURRENT_DTC":
+                return _PortResponse(value=[], null=True)
+            if name == "GET_DTC":
+                return _PortResponse(value=[])
+            # Any Mode-01 PID read -> a plausible numeric value so rows land.
+            return _PortResponse(value=1234.0)
+        finally:
+            with self._counterLock:
+                self._inFlight -= 1
+
+
+def _benchConfig(pids: list[str]) -> dict[str, Any]:
+    return {
+        "pi": {
+            "bluetooth": {},
+            # US-809-a: the writer converts the capture instant against the
+            # DECLARED zone. Without it the write REFUSES, and the symptom here
+            # is 'no realtime_data rows landed' rather than a timestamp error.
+            "time": {"localZone": "America/Chicago"},
+            "realtimeData": {
+                "pollingIntervalMs": 100,
+                "parameters": [{"name": p, "logData": True} for p in pids],
+            },
+        }
+    }
+
+
+def _realConnectionWithFakePort() -> tuple[ObdConnection, _NonThreadSafePort]:
+    conn = ObdConnection(config={"pi": {"bluetooth": {}}})
+    port = _NonThreadSafePort()
+    conn.obd = port
+    return conn, port
+
+
+def test_runConnectEdgeCapture_serializes_landsRows_and_exercisesEdge(
+    tmp_path: Path,
+) -> None:
+    """Given ONE real connection driven by a realtime-logger loop AND a KOEO DTC
+    read loop, When the capture runs, Then rows land, core-PID coverage is
+    recorded, the connect-edge is marked exercised, and the non-thread-safe port
+    NEVER saw two callers at once (the _ioLock serialized them)."""
+    from src.pi.obdii.database import ObdDatabase
+
+    pids = list(CORE_PIDS)[:9]
+    conn, port = _realConnectionWithFakePort()
+    db = ObdDatabase(str(tmp_path / "gate.db"))
+    db.initialize()
+
+    result = runConnectEdgeCapture(
+        connection=conn,
+        database=db,
+        config=_benchConfig(pids),
+        durationSec=0.6,
+    )
+
+    assert isinstance(result, CaptureResult)
+    assert result.rowsWritten > 0, "no realtime_data rows landed"
+    assert result.distinctParams >= 1
+    assert result.connectEdgeExercised is True, "the KOEO DTC read never co-occurred"
+    assert result.dtcReadCount >= 1
+    assert result.dtcReadOk is True
+    assert result.captureError is None
+    # The real _ioLock must have serialized the two loops on the one port.
+    assert result.interleaveObserved is False
+    assert port.interleaved is False
+
+
+def test_runConnectEdgeCapture_koeoOnly_oneReadNoLoggerWindow(tmp_path: Path) -> None:
+    """The KOEO (engine-off) sub-check: a single DTC read succeeds on the link
+    without requiring the full live-idle logger window -- the earliest driveway
+    signal."""
+    from src.pi.obdii.database import ObdDatabase
+
+    conn, _port = _realConnectionWithFakePort()
+    db = ObdDatabase(str(tmp_path / "gate_koeo.db"))
+    db.initialize()
+
+    result = runConnectEdgeCapture(
+        connection=conn,
+        database=db,
+        config=_benchConfig(list(CORE_PIDS)[:9]),
+        durationSec=0.5,
+        koeoOnly=True,
+    )
+
+    assert result.dtcReadCount >= 1
+    assert result.dtcReadOk is True
+    # KOEO is a link+one-read check, not the authoritative capture window.
+    assert result.connectEdgeExercised is True
+
+
+class _NoLock:
+    """A no-op context manager -- stands in for a REVERTED _ioLock so the probe's
+    regression-detection teeth can be proven off-Pi (validationCriterion 2)."""
+
+    def __enter__(self) -> _NoLock:
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        return False
+
+    def locked(self) -> bool:
+        return False
+
+
+def test_runConnectEdgeCapture_withRevertedLock_detectsInterleave_andGateFails(
+    tmp_path: Path,
+) -> None:
+    """Validation teeth: with the ObdConnection._ioLock reverted to a no-op, the
+    logger read and the DTC read DO interleave on the one non-thread-safe port,
+    the probe observes it, and evaluateGate FAILS -- proving the gate would catch
+    an A-17 regression rather than green-light it."""
+    from src.pi.obdii.database import ObdDatabase
+
+    conn, port = _realConnectionWithFakePort()
+    conn._ioLock = _NoLock()  # simulate the F-117 fix being reverted
+    db = ObdDatabase(str(tmp_path / "gate_revert.db"))
+    db.initialize()
+
+    result = runConnectEdgeCapture(
+        connection=conn,
+        database=db,
+        config=_benchConfig(list(CORE_PIDS)[:9]),
+        durationSec=1.0,
+    )
+
+    assert port.interleaved is True, "no-lock run should have interleaved the port"
+    assert result.interleaveObserved is True
+    verdict = evaluateGate(result, minRows=0, minDistinctParams=1)
+    assert verdict.passed is False
+    assert "interleave" in verdict.reason.lower()
+
+
+# ================================================================================
+# US-487-a -- the script's bench config, and refused writes failing by name
+# ================================================================================
+
+_GREENLIGHT_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "pre_drive_greenlight.py"
+
+
+def _loadGreenlightScript() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("pre_drive_greenlight", _GREENLIGHT_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_scriptBenchConfig_carriesValidatorDefaultLocalZone() -> None:
+    """Given the script's bench config, Then it went through ConfigValidator: the
+    zone the writer needs is present and equals the validator's own default."""
+    from src.common.config.validator import DEFAULTS
+
+    config = _loadGreenlightScript()._benchConfig()
+
+    assert config["pi"]["time"]["localZone"] == DEFAULTS["pi.time.localZone"]
+
+
+def test_scriptBenchConfig_deviceId_comesFromConfigJson(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given config.json declares deviceId as a ${DEVICE_ID:...} placeholder,
+    When the script builds its bench config, Then deviceId is config.json's
+    resolved value (env override, else its fallback) -- never a literal (B-044)."""
+    import json
+
+    from src.common.config.secrets_loader import resolveSecrets
+
+    rawDeviceId = json.loads(
+        (_GREENLIGHT_SCRIPT.parents[1] / "config.json").read_text(encoding="utf-8")
+    )["deviceId"]
+    script = _loadGreenlightScript()
+
+    monkeypatch.delenv("DEVICE_ID", raising=False)
+    assert script._benchConfig()["deviceId"] == resolveSecrets(rawDeviceId)
+
+    monkeypatch.setenv("DEVICE_ID", "bench-override-device")
+    assert script._benchConfig()["deviceId"] == "bench-override-device"
+
+
+def test_runConnectEdgeCapture_noLocalZone_gateFailsNamingRefusedWrites(
+    tmp_path: Path,
+) -> None:
+    """Given a config without pi.time.localZone, When the probe runs, Then every
+    write refuses, the result counts the refusals with the writer's text, and the
+    gate FAILS naming them rather than reporting a bare row shortfall."""
+    from src.pi.obdii.database import ObdDatabase
+
+    config = _benchConfig(list(CORE_PIDS)[:9])
+    del config["pi"]["time"]
+    conn, _port = _realConnectionWithFakePort()
+    db = ObdDatabase(str(tmp_path / "gate_nozone.db"))
+    db.initialize()
+
+    result = runConnectEdgeCapture(
+        connection=conn,
+        database=db,
+        config=config,
+        durationSec=0.6,
+    )
+    verdict = evaluateGate(result, minRows=1, minDistinctParams=8)
+
+    assert result.rowsWritten == 0
+    assert result.writerErrors > 0
+    assert result.writerErrorText is not None
+    assert "pi.time.localZone" in result.writerErrorText
+    assert verdict.passed is False
+    assert f"writer refused {result.writerErrors} row(s)" in verdict.reason
+    assert "pi.time.localZone" in verdict.reason
+
+
+def test_runConnectEdgeCapture_scriptBenchConfig_capturePasses(tmp_path: Path) -> None:
+    """Given the validator-built bench config from the script, When the probe
+    runs, Then nothing refuses and the gate reads CAPTURE PASS."""
+    from src.pi.obdii.database import ObdDatabase
+
+    config = _loadGreenlightScript()._benchConfig()
+    conn, _port = _realConnectionWithFakePort()
+    db = ObdDatabase(str(tmp_path / "gate_validated.db"))
+    db.initialize()
+
+    result = runConnectEdgeCapture(
+        connection=conn,
+        database=db,
+        config=config,
+        durationSec=1.0,
+    )
+    verdict = evaluateGate(
+        result, minRows=1, minDistinctParams=DEFAULT_MIN_DISTINCT_PARAMS
+    )
+
+    assert result.writerErrors == 0
+    assert result.writerErrorText is None
+    assert verdict.passed is True, verdict.reason
+    assert verdict.reason.startswith("PASS")
+
+
+# ================================================================================
+# US-487 (reopened 2026-10-12) -- the live probe db, and the post-restart window
+# ================================================================================
+
+
+def _liveShapedConfig() -> dict[str, Any]:
+    """The script's bench config plus config.json's OWN profiles section.
+
+    That section is what the live config carries and the bench config lacks:
+    ``activeProfile`` makes the logger stamp every row ``profile_id='daily'``.
+    """
+    import json
+
+    profiles = json.loads(
+        (_GREENLIGHT_SCRIPT.parents[1] / "config.json").read_text(encoding="utf-8")
+    )["pi"]["profiles"]
+    config = _loadGreenlightScript()._benchConfig()
+    config["pi"]["profiles"] = profiles
+    return config
+
+
+def test_runConnectEdgeCapture_activeProfileIntoUnseededDb_refusesEveryRow(
+    tmp_path: Path,
+) -> None:
+    """The 2026-10-12 live failure, reproduced: a bare initialize() leaves
+    profiles empty, so every row stamped with the active profile breaks the
+    realtime_data -> profiles foreign key and the gate fails naming it."""
+    from src.pi.obdii.database import ObdDatabase
+
+    db = ObdDatabase(str(tmp_path / "gate_unseeded.db"))
+    db.initialize()
+    conn, _port = _realConnectionWithFakePort()
+
+    result = runConnectEdgeCapture(
+        connection=conn, database=db, config=_liveShapedConfig(), durationSec=0.6
+    )
+
+    assert result.rowsWritten == 0
+    assert result.writerErrors > 0
+    assert "FOREIGN KEY" in (result.writerErrorText or "")
+
+
+def test_scriptOpenProbeDatabase_seedsProfilesFromConfig_capturePasses(
+    tmp_path: Path,
+) -> None:
+    """Given the live-shaped config, When the script opens its probe db, Then the
+    config's profiles are present (production's own seeding path) and the
+    capture lands rows with no refusal."""
+    config = _liveShapedConfig()
+    script = _loadGreenlightScript()
+    db = script._openProbeDatabase(str(tmp_path / "gate_seeded.db"), config)
+
+    with db.connect() as c:
+        ids = {row[0] for row in c.execute("SELECT id FROM profiles")}
+    assert {p["id"] for p in config["pi"]["profiles"]["availableProfiles"]} <= ids
+
+    conn, _port = _realConnectionWithFakePort()
+    result = runConnectEdgeCapture(
+        connection=conn, database=db, config=config, durationSec=1.0
+    )
+    verdict = evaluateGate(
+        result, minRows=1, minDistinctParams=DEFAULT_MIN_DISTINCT_PARAMS
+    )
+
+    assert result.writerErrors == 0, result.writerErrorText
+    assert verdict.passed is True, verdict.reason
+
+
+def test_scriptOpenProbeDatabase_secondRun_isAFreshWindow(tmp_path: Path) -> None:
+    """Re-opening the same probe db (a second gate run) keeps the profiles and
+    clears the prior run's realtime rows."""
+    config = _liveShapedConfig()
+    script = _loadGreenlightScript()
+    path = str(tmp_path / "gate_rerun.db")
+
+    db = script._openProbeDatabase(path, config)
+    conn, _port = _realConnectionWithFakePort()
+    first = runConnectEdgeCapture(
+        connection=conn, database=db, config=config, durationSec=0.6
+    )
+    assert first.rowsWritten > 0
+
+    db = script._openProbeDatabase(path, config)
+    with db.connect() as c:
+        assert c.execute("SELECT COUNT(*) FROM realtime_data").fetchone()[0] == 0
+        assert c.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] > 0
+
+
+def test_productionRecoveryWindow_isConfiguredConnectTimeoutPlusOneHeartbeat() -> None:
+    """The post-restart growth window = the configured initial-connect timeout
+    (production waits that long before its first retry) + one heartbeat tick +
+    one heartbeat attempt -- read from their owners, never restated."""
+    from src.common.config.validator import DEFAULTS
+    from src.pi.obdii.reconnect_loop import (
+        HEARTBEAT_ATTEMPT_TIMEOUT_SEC,
+        HEARTBEAT_TICK_INTERVAL_SEC,
+    )
+
+    script = _loadGreenlightScript()
+    config = script._benchConfig()
+    timeout = config["pi"]["obdii"]["orchestrator"]["initialConnectTimeoutSec"]
+    assert timeout == DEFAULTS["pi.obdii.orchestrator.initialConnectTimeoutSec"]
+
+    assert script.productionRecoveryWindowSec(config) == (
+        timeout + HEARTBEAT_TICK_INTERVAL_SEC + HEARTBEAT_ATTEMPT_TIMEOUT_SEC
+    )
+
+    config["pi"]["obdii"]["orchestrator"]["initialConnectTimeoutSec"] = 45
+    assert script.productionRecoveryWindowSec(config) == (
+        45 + HEARTBEAT_TICK_INTERVAL_SEC + HEARTBEAT_ATTEMPT_TIMEOUT_SEC
+    )
+
+
+def test_productionRecoveryWindow_coversThe2026_10_12LiveRecovery() -> None:
+    """Measured live 2026-10-12: production capture resumed ~60 s after the
+    probe restarted eclipse-obd (initial connect timed out at 30 s, the
+    heartbeat connected 37 s later). The old 15 s + 10 s window could not see
+    that; the derived window must."""
+    script = _loadGreenlightScript()
+    assert script.productionRecoveryWindowSec(script._benchConfig()) >= 60
+
+
+def test_scriptPrintProdWindow_printsWholeSecondsAndExitsZero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--print-prod-window`` is how verify_pre_drive.sh asks the Pi for the
+    window: one integer on stdout, exit 0, no connection opened."""
+    script = _loadGreenlightScript()
+    rc = script.main(["--bench", "--print-prod-window"])
+    out = capsys.readouterr().out.strip()
+
+    assert rc == 0
+    assert out.isdigit()
+    assert int(out) == int(round(script.productionRecoveryWindowSec(script._benchConfig())))

@@ -12,6 +12,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-211) | Initial -- Spool Session 6 amended Story 2.
+# 2026-09-21    | Rex (US-793-c)| Canonical set pinned exactly (ecu_reachability);
+#               |              | transition rows round-trip the sync path with
+#               |              | Pi/server count parity.
 # ================================================================================
 ################################################################################
 
@@ -35,6 +38,7 @@ from src.pi.data.connection_logger import (
     CANONICAL_EVENT_TYPES,
     EVENT_ADAPTER_WAIT,
     EVENT_BT_DISCONNECT,
+    EVENT_ECU_REACHABILITY,
     EVENT_ECU_SILENT_WAIT,
     EVENT_RECONNECT_ATTEMPT,
     EVENT_RECONNECT_SUCCESS,
@@ -92,6 +96,28 @@ def test_canonical_eventTypes_includesPreUs211Literals():
     }
     assert expectedPreUs211.issubset(CANONICAL_EVENT_TYPES)
     assert US211_EVENT_TYPES.issubset(CANONICAL_EVENT_TYPES)
+
+
+def test_canonical_eventTypes_exactSet():
+    """US-793-c: the canonical set is pinned EXACTLY, so a new type lands here
+    in the same change that adds it (lockstep), never silently."""
+    assert CANONICAL_EVENT_TYPES == frozenset({
+        'connect_attempt',
+        'connect_success',
+        'connect_failure',
+        'disconnect',
+        'reconnect',
+        'drive_start',
+        'drive_end',
+        'data_cleanup',
+        'ecu_reachability',
+        'bt_disconnect',
+        'adapter_wait',
+        'reconnect_attempt',
+        'reconnect_success',
+        'ecu_silent_wait',
+    })
+    assert EVENT_ECU_REACHABILITY == 'ecu_reachability'
 
 
 # ================================================================================
@@ -306,10 +332,23 @@ class TestUs340bConnectionLogDedup:
 
     def test_stateChangeEvents_alwaysLog_evenAfterRepeats(self, freshDb) -> None:
         """
-        Given: a sequence of attempts followed by a state-change
-        When: connect_attempt repeats AND THEN connect_failure fires
-        Then: 1 row for connect_attempt (deduped) + 1 row for connect_failure
-              (state change -- always logs)
+        Given: a sequence of attempts followed by a failure, then more attempts
+        When: the outage continues (attempt/failure) and only later recovers
+        Then: ONE attempt row and ONE failure row for the whole outage, then the
+              recovery -- and a NEW outage after it logs its own firsts again.
+
+        🔴 REWRITTEN BY F-077 / ARCH-047, 2026-09-22. This test previously
+        asserted that `connect_failure` CLEARS the outage tracker, so the
+        attempts after it logged a second time. That behaviour IS the F-077
+        defect: a failure is a repeat symptom of an ONGOING outage, not a
+        transition out of one, and a parked car emits alternating
+        attempt/failure forever -- ~500 rows/day with the engine off, which is
+        exactly what this feature forbids.
+
+        ⚠️ Worth recording plainly: THE DEFECT HAD A TEST PROTECTING IT. The
+        old expectation looked like a reasonable timeline, which is why the
+        defect survived a year of green runs. A test pins whatever it was
+        written against -- including a bug.
         """
         from src.pi.data.connection_logger import (
             EVENT_CONNECT_ATTEMPT,
@@ -339,12 +378,14 @@ class TestUs340bConnectionLogDedup:
                 (mac,),
             ).fetchall()
         observed = [r[0] for r in rows]
-        # The full outage timeline is still legible -- attempt, failure,
-        # attempt (new try), success.  Just without per-retry repeats.
+        # The outage timeline is still legible -- attempt, failure, success --
+        # and the FIRST of each type is always present, so the signal that
+        # suppression exists to compress is never erased. What is gone is the
+        # per-cycle repetition: the six attempts and the failure collapse to
+        # one row each, because one outage is one outage.
         assert observed == [
             'connect_attempt',
             'connect_failure',
-            'connect_attempt',
             'connect_success',
         ], (
             f"US-340b: full outage transition timeline must be preserved; "
@@ -408,3 +449,183 @@ class TestUs340bConnectionLogDedup:
             'reconnect_attempt',
             'reconnect_success',
         ], f"US-340b dedup must cover adapter_wait + reconnect_attempt too; got {observed}"
+
+    def test_repeatedEcuSilentWait_writesOnlyOneRow(self, freshDb) -> None:
+        """
+        US-418 (F-077/F-058): engine-off ecu_silent_wait must dedup too.
+
+        Given: many ecu_silent_wait events for the same mac (engine off,
+               adapter reachable -- the classifier fires ECU_SILENT on every
+               reduced-cadence poll)
+        When: each is passed to logConnectionEvent
+        Then: only ONE row lands (the sustained engine-off idle noise that
+              US-340b left un-deduped because ecu_silent_wait was not in the
+              repeat-suppressed set)
+        """
+        mac = '00:04:3E:85:0D:FB'
+        for _ in range(6):
+            logConnectionEvent(
+                database=freshDb,
+                eventType=EVENT_ECU_SILENT_WAIT,
+                macAddress=mac,
+            )
+        with freshDb.connect() as conn:
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM connection_log "
+                "WHERE event_type = 'ecu_silent_wait' AND mac_address = ?",
+                (mac,),
+            ).fetchone()[0]
+        assert cnt == 1, (
+            f"US-418: 6 ecu_silent_wait events for the same mac should collapse "
+            f"to 1 row (engine-off idle-noise dedup); got {cnt}."
+        )
+
+    def test_ecuSilentWait_reLogsAfterStateChange(self, freshDb) -> None:
+        """
+        The FIRST ecu_silent_wait of each engine-off window still logs.
+
+        Given: ecu_silent_wait repeats, then a state change (reconnect_success
+               when the engine finally cranks + the ECU answers), then a new
+               engine-off window
+        When: the sequence fires
+        Then: one ecu_silent_wait per window is preserved -- the transition
+              signal survives; only the per-poll repeats are suppressed
+        """
+        from src.pi.data.connection_logger import EVENT_RECONNECT_SUCCESS
+
+        mac = '00:04:3E:85:0D:FB'
+        for _ in range(3):
+            logConnectionEvent(database=freshDb,
+                               eventType=EVENT_ECU_SILENT_WAIT, macAddress=mac)
+        logConnectionEvent(database=freshDb,
+                           eventType=EVENT_RECONNECT_SUCCESS, macAddress=mac,
+                           success=True)
+        for _ in range(3):
+            logConnectionEvent(database=freshDb,
+                               eventType=EVENT_ECU_SILENT_WAIT, macAddress=mac)
+
+        with freshDb.connect() as conn:
+            rows = conn.execute(
+                "SELECT event_type FROM connection_log "
+                "WHERE mac_address = ? ORDER BY id",
+                (mac,),
+            ).fetchall()
+        observed = [r[0] for r in rows]
+        assert observed == [
+            'ecu_silent_wait',
+            'reconnect_success',
+            'ecu_silent_wait',
+        ], (
+            f"US-418: first ecu_silent_wait per engine-off window must survive "
+            f"the dedup; got {observed}"
+        )
+
+
+# ================================================================================
+# US-793-c -- reachability transition rows round-trip the existing sync path
+# ================================================================================
+
+
+class TestUs793cReachabilityRowsSync:
+    """The ecu_reachability row is additive: no schema change on either tier,
+    and the server's transition history is COMPLETE, not merely present."""
+
+    @pytest.fixture(autouse=True)
+    def _resetDedupState(self) -> Generator[None, None, None]:
+        from src.pi.data import connection_logger as cl
+        cl.resetDedupStateForTests()
+        yield
+        cl.resetDedupStateForTests()
+
+    @staticmethod
+    def _driveTransitions(freshDb: ObdDatabase) -> None:
+        """Walk a real ObdConnection through key-on, key-off and a disconnect."""
+        from src.pi.obdii.obd_connection import ObdConnection
+
+        class _Response:
+            def __init__(self, null: bool) -> None:
+                self._null = null
+
+            def is_null(self) -> bool:
+                return self._null
+
+        class _Obd:
+            def __init__(self) -> None:
+                self.null = False
+
+            def is_connected(self) -> bool:
+                return True
+
+            def query(self, command: object, force: bool = False) -> _Response:
+                return _Response(self.null)
+
+            def close(self) -> None:
+                pass
+
+        clock = [1000.0]
+        conn = ObdConnection(
+            {'pi': {'bluetooth': {'macAddress': '00:04:3E:85:0D:FB'}}},
+            freshDb,
+            monotonicFn=lambda: clock[0],
+        )
+        fake = _Obd()
+        conn.obd = fake
+        for _ in range(20):  # key on, steady driving
+            conn.query('RPM')
+        fake.null = True  # key off: the ECU stops answering
+        clock[0] += conn.reachabilityFreshnessSeconds + 1.0
+        for _ in range(20):
+            conn.query('RPM')
+        conn.disconnect()  # new generation: not yet attempted
+
+    def test_transitionRows_roundTripSync_serverCountEqualsPi(self, freshDb) -> None:
+        """
+        Given: reachability transitions written on the Pi, among other rows
+        When: the Pi's connection_log delta goes through the existing sync
+              path (getDeltaRows -> runSyncUpsert) unmodified
+        Then: the server's ecu_reachability count EQUALS the Pi's, and each
+              row arrives with the same state and success
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from src.pi.data import sync_log
+        from src.server.api.sync import runSyncUpsert
+        from src.server.db.models import Base, ConnectionLog
+
+        self._driveTransitions(freshDb)
+        with freshDb.connect() as conn:
+            piRows = conn.execute(
+                "SELECT id, error_message, success FROM connection_log "
+                "WHERE event_type = ? ORDER BY id",
+                (EVENT_ECU_REACHABILITY,),
+            ).fetchall()
+            delta = sync_log.getDeltaRows(conn, 'connection_log', 0, 1000)
+        assert [(r[1], r[2]) for r in piRows] == [
+            ('answered', 1),
+            ('did_not_answer', 0),
+            ('not_yet_attempted', 0),
+        ]
+
+        engine = create_engine('sqlite:///:memory:')
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            result = runSyncUpsert(
+                session,
+                deviceId='chi-eclipse-01',
+                batchId='batch-1',
+                tables={'connection_log': {'rows': delta}},
+                syncHistoryId=1,
+            )
+            session.commit()
+            serverRows = [
+                (row.source_id, row.error_message, row.success)
+                for row in session.query(ConnectionLog)
+                .filter(ConnectionLog.event_type == EVENT_ECU_REACHABILITY)
+                .order_by(ConnectionLog.source_id)
+                .all()
+            ]
+
+        assert result['connection_log']['errors'] == 0
+        assert len(serverRows) == len(piRows)
+        assert serverRows == [(r[0], r[1], r[2]) for r in piRows]

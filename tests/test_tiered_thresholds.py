@@ -562,9 +562,13 @@ class TestLoadCoolantTempThresholds:
 
         thresholds = loadCoolantTempThresholds(config)
 
-        assert thresholds.normalMin == 180
-        assert thresholds.cautionMin == 210
-        assert thresholds.dangerMin == 220
-        assert thresholds.unit == "fahrenheit"
+        # TUNER-009: COOLANT_TEMP arrives in CELSIUS (python-obd magnitude). The old 180/210/220
+        # "fahrenheit" values were compared against Celsius readings and could never fire. Values
+        # per specs/grounded-knowledge.md Coolant Temp row; strict > on whole-degree readings
+        # => amber at >= 104 C, red at >= 110 C. normalMin = the spec's LTFT warm gate (85 C).
+        assert thresholds.normalMin == 85
+        assert thresholds.cautionMin == 103.5
+        assert thresholds.dangerMin == 109.5
+        assert thresholds.unit == "celsius"
         assert "{value}" in thresholds.cautionMessage
         assert "{value}" in thresholds.dangerMessage

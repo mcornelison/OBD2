@@ -1,7 +1,7 @@
 """Tests for sprint_lint freeze-drift + per-story empty-list checks (spec 2026-05-28)."""
 import hashlib
 
-from offices.pm.scripts.sprint_lint import lintSprintValidation
+from tools.pm.sprint_lint import lintSprintValidation
 
 
 def _hash(lines):

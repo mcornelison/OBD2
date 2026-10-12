@@ -71,31 +71,32 @@ def recorder(freshDb: ObdDatabase) -> BatteryHealthRecorder:
 
 
 class TestStartDrainEventSocPctSeam:
-    """``startSocPct`` kwarg routes the SOC% value to ``start_soc``."""
+    """``startSocPct`` kwarg routes the SOC% value to ``start_soc_pct``."""
 
     def test_legacyBehaviorPreserved_whenStartSocPctOmitted(
         self,
         recorder: BatteryHealthRecorder,
         freshDb: ObdDatabase,
     ) -> None:
-        """Omitting startSocPct: start_soc + start_vcell_v BOTH carry VCELL.
+        """Omitting startSocPct: start_soc_pct is NULL, start_vcell_v gets VCELL.
 
         This is the production-caller path (PowerDownOrchestrator passes
-        VCELL voltage as ``startSoc``).  US-289 dual-write contract must
-        hold bit-for-bit so the lock-down tests in
-        test_battery_health_log_columns.py keep passing.
+        VCELL voltage as ``startSoc``).  Post-US-426 the recorder no longer
+        dual-writes the (dropped) legacy start_soc column -- VCELL lands only
+        in start_vcell_v and start_soc_pct stays NULL until a SocPct kwarg
+        (US-427's register read) is supplied.
         """
         drainId = recorder.startDrainEvent(startSoc=4.12)
 
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT start_soc, start_vcell_v "
+                f"SELECT start_soc_pct, start_vcell_v "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
 
-        assert row[0] == 4.12  # start_soc == VCELL (legacy dual-write)
+        assert row[0] is None  # start_soc_pct NULL (no SocPct kwarg)
         assert row[1] == 4.12  # start_vcell_v == VCELL
 
     def test_writesSocPct_whenStartSocPctProvided(
@@ -103,12 +104,11 @@ class TestStartDrainEventSocPctSeam:
         recorder: BatteryHealthRecorder,
         freshDb: ObdDatabase,
     ) -> None:
-        """startSocPct=78 lands in start_soc; start_vcell_v keeps VCELL.
+        """startSocPct=78 lands in start_soc_pct; start_vcell_v keeps VCELL.
 
-        The seam: start_soc finally holds an actual SOC% value (0-100)
-        while start_vcell_v continues to hold the LiPo cell voltage from
-        ``startSoc``.  Step 2 (B-060) will wire
-        ``UpsMonitor.getBatteryPercentage()`` here.
+        The seam: start_soc_pct holds an actual SOC% value (0-100) while
+        start_vcell_v continues to hold the LiPo cell voltage from
+        ``startSoc``.  US-427 wires ``UpsMonitor.getBatteryPercentage()`` here.
         """
         drainId = recorder.startDrainEvent(
             startSoc=4.12,
@@ -117,13 +117,13 @@ class TestStartDrainEventSocPctSeam:
 
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT start_soc, start_vcell_v "
+                f"SELECT start_soc_pct, start_vcell_v "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
 
-        assert row[0] == 78  # start_soc == SOC%
+        assert row[0] == 78  # start_soc_pct == SOC%
         assert row[1] == 4.12  # start_vcell_v == VCELL
 
 
@@ -133,31 +133,31 @@ class TestStartDrainEventSocPctSeam:
 
 
 class TestEndDrainEventSocPctSeam:
-    """``endSocPct`` kwarg routes the SOC% value to ``end_soc``."""
+    """``endSocPct`` kwarg routes the SOC% value to ``end_soc_pct``."""
 
     def test_legacyBehaviorPreserved_whenEndSocPctOmitted(
         self,
         recorder: BatteryHealthRecorder,
         freshDb: ObdDatabase,
     ) -> None:
-        """Omitting endSocPct: end_soc + end_vcell_v BOTH carry VCELL.
+        """Omitting endSocPct: end_soc_pct is NULL, end_vcell_v gets VCELL.
 
-        Same dual-write contract as the start path; preserved at all
-        existing production call sites (PowerDownOrchestrator's 3
-        ``_closeDrainEvent`` invokers).
+        Same post-US-426 shape as the start path: VCELL lands only in
+        end_vcell_v (the dropped legacy end_soc is no longer written) and
+        end_soc_pct stays NULL absent a SocPct kwarg.
         """
         drainId = recorder.startDrainEvent(startSoc=4.12)
         recorder.endDrainEvent(drainEventId=drainId, endSoc=3.42)
 
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_soc, end_vcell_v "
+                f"SELECT end_soc_pct, end_vcell_v "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
 
-        assert row[0] == 3.42  # end_soc == VCELL (legacy dual-write)
+        assert row[0] is None  # end_soc_pct NULL (no SocPct kwarg)
         assert row[1] == 3.42  # end_vcell_v == VCELL
 
     def test_writesSocPct_whenEndSocPctProvided(
@@ -165,9 +165,9 @@ class TestEndDrainEventSocPctSeam:
         recorder: BatteryHealthRecorder,
         freshDb: ObdDatabase,
     ) -> None:
-        """endSocPct=12 lands in end_soc; end_vcell_v keeps VCELL.
+        """endSocPct=12 lands in end_soc_pct; end_vcell_v keeps VCELL.
 
-        The seam: end_soc finally holds an actual SOC% value (0-100).
+        The seam: end_soc_pct holds an actual SOC% value (0-100).
         """
         drainId = recorder.startDrainEvent(startSoc=4.12)
         recorder.endDrainEvent(
@@ -178,11 +178,11 @@ class TestEndDrainEventSocPctSeam:
 
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_soc, end_vcell_v "
+                f"SELECT end_soc_pct, end_vcell_v "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
 
-        assert row[0] == 12  # end_soc == SOC%
+        assert row[0] == 12  # end_soc_pct == SOC%
         assert row[1] == 3.42  # end_vcell_v == VCELL

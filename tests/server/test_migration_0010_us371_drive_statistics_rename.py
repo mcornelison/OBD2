@@ -185,10 +185,14 @@ class TestDriveStatisticOrmRenamed:
     def test_summaryIdIsPrimaryKey(self) -> None:
         assert DriveStatistic.__table__.columns['summary_id'].primary_key
 
-    def test_summaryIdKeepsForeignKeyToDriveSummary(self) -> None:
+    def test_summaryIdForeignKeyRepointedToDrivesUs451(self) -> None:
+        # US-451 (F-104 / D-8 identity collapse): the summary_id FK was
+        # re-pointed from drive_summary.id to the canonical drives.drive_id
+        # (values unchanged via the v0018 subsume).  The column keeps its name.
         col = DriveStatistic.__table__.columns['summary_id']
         targets = {fk.target_fullname for fk in col.foreign_keys}
-        assert 'drive_summary.id' in targets
+        assert 'drives.drive_id' in targets
+        assert 'drive_summary.id' not in targets
 
 
 # ================================================================================

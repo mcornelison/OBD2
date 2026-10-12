@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ruff check *)",
+      "Bash(python -m tools.pm.sprint_lint)",
+      "Bash(python -m tools.pm.sprint_lint *)",
+      "Bash(python validate_config.py)",
+      "Bash(python validate_config.py *)",
+      "Bash(python -m tools.pm.verify_release_version)",
+      "Bash(python -m tools.pm.verify_release_version *)",
+      "Bash(python scripts/audit_*)",
+      "Bash(python -m tools.pm.index_lock --check)",
+      "Bash(journalctl *)",
+      "Bash(ping *)",
+      "Bash(systemctl is-active *)",
+      "Bash(systemctl status *)",
+      "Bash(systemctl show *)",
+      "Bash(systemctl list-units *)",
+      "Bash(iw dev *)",
+      "Bash(i2cget *)",
+      "Bash(dmesg)",
+      "Bash(dmesg -T *)",
+      "Bash(ip neigh *)",
+      "Bash(ip route *)",
+      "Bash(getent hosts *)",
+      "Bash(tailscale status *)",
+      "Bash(dig *)",
+      "Bash(nslookup *)",
+      "Bash(crontab -l)",
+      "Bash(nmcli device status *)",
+      "Bash(nmcli connection show *)",
+      "Bash(vcgencmd *)",
+      "Bash(ssh:*)"
+    ]
+  }
+}

@@ -48,11 +48,11 @@ test-fast: ## Run tests without slow tests
 # ================================================================================
 # Code Quality
 # ================================================================================
-lint: ## Run linter (ruff) -- src/ tests/ + scripts/ + validate_config.py + offices/{pm,ralph}/*.py (US-207 TD-018 widened scope)
-	ruff check src/ tests/ scripts/ validate_config.py offices/pm/scripts offices/ralph/agent.py specs/golden_code_sample.py
+lint: ## Run linter (ruff) -- src/ tests/ + scripts/ + validate_config.py + tools/pm (US-207 TD-018 widened scope; offices/ decoupled 2026-08-24)
+	ruff check src/ tests/ scripts/ validate_config.py tools/pm specs/golden_code_sample.py
 
 lint-fix: ## Run linter and auto-fix issues
-	ruff check src/ tests/ scripts/ validate_config.py offices/pm/scripts offices/ralph/agent.py specs/golden_code_sample.py --fix
+	ruff check src/ tests/ scripts/ validate_config.py tools/pm specs/golden_code_sample.py --fix
 
 format: ## Format code (black)
 	black src/ tests/
@@ -111,6 +111,15 @@ deploy-restart: ## Bounce the eclipse-obd service on the Pi
 
 deploy-status: ## Check eclipse-obd service status on Pi
 	@. deploy/deploy.conf && ssh -o ConnectTimeout=5 $${PI_USER}@$${PI_HOST} "sudo systemctl status eclipse-obd"
+
+pre-drive: ## Pre-drive OBD green-light (US-479): BT link + rfcomm + live capture w/ connect-edge -> CAPTURE PASS/FAIL
+	bash scripts/verify_pre_drive.sh
+
+pre-drive-koeo: ## Pre-drive KOEO driveway check (engine off): BT link + one read, no live window
+	bash scripts/verify_pre_drive.sh --koeo-only
+
+pre-drive-bench: ## Pre-drive green-light in bench mode (simulator) -- validates logic off-Pi, NOT a live PASS
+	bash scripts/verify_pre_drive.sh --bench
 
 # ================================================================================
 # Cleanup

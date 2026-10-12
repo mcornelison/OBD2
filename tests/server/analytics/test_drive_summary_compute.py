@@ -66,6 +66,7 @@ from src.server.analytics.drive_summary_compute import (  # noqa: E402
 )
 from src.server.db.models import (  # noqa: E402
     Base,
+    Drive,
     DriveSummary,
     RealtimeData,
 )
@@ -108,7 +109,7 @@ def _seedPiSyncedDriveSummary(
         source_id=driveId,
         drive_id=driveId,
         drive_start_timestamp=driveStartTimestamp,
-        ambient_temp_at_start_c=ambientTemp,
+        intake_air_temp_at_start_c=ambientTemp,
         starting_battery_v=startingBatteryV,
         data_source=dataSource if dataSource is not None else "real",
         # Analytics fields explicitly left NULL.
@@ -147,6 +148,7 @@ def _seedRealtimeRows(
     pollIntervalSeconds: float = 1.0,
     samplesPerParameter: int = 10,
     dataSource: str = "real",
+    profileId: str | None = None,
 ) -> int:
     """Seed ``realtime_data`` rows for a drive.  Returns total row count."""
     total = 0
@@ -163,6 +165,7 @@ def _seedRealtimeRows(
                     value=float(100 + i),
                     drive_id=driveId,
                     data_source=dataSource,
+                    profile_id=profileId,
                 )
             )
             sourceIdCursor += 1
@@ -238,7 +241,7 @@ class TestComputeDriveSummaryCore:
             session.commit()
 
             row = session.get(DriveSummary, summaryId)
-            assert row.ambient_temp_at_start_c == 22.5
+            assert row.intake_air_temp_at_start_c == 22.5
             assert row.starting_battery_v == 13.9
             assert row.data_source == "real"
             assert row.drive_start_timestamp == startTime
@@ -331,6 +334,89 @@ class TestIdempotent:
             ).one()
 
             assert first == second
+
+
+# =========================================================================
+# profile_id population (US-437 / N-8)
+# =========================================================================
+
+
+class TestProfileIdPopulation:
+    """compute_drive_summary stamps drive_summary.profile_id from realtime_data.
+
+    N-8 (Argus 2026-05-12): drive_summary.profile_id was NULL on every row even
+    though realtime_data carries the profile the drive ran under.  The compute
+    path now copies the earliest non-NULL profile_id, preserving NULL when the
+    raw stream has none (honest-instrument -- no coercion).
+    """
+
+    def test_compute_populatesProfileId_fromRealtimeData(self, engine):
+        """profile_id on realtime_data rows -> written onto drive_summary."""
+        driveId = 40
+        startTime = datetime(2026, 6, 1, 10, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session,
+                driveId=driveId,
+                startTime=startTime,
+                parameters=["RPM", "SPEED"],
+                samplesPerParameter=5,
+                profileId="daily",
+            )
+            compute_drive_summary(session, driveId)
+            session.commit()
+
+            row = session.get(DriveSummary, summaryId)
+            assert row.profile_id == "daily"
+
+    def test_compute_nullProfileId_staysNull_noCoercion(self, engine):
+        """No profile_id in the raw stream -> summary.profile_id stays NULL.
+
+        The honest-instrument contract: absence must not be coerced to a
+        confident-but-wrong default.
+        """
+        driveId = 41
+        startTime = datetime(2026, 6, 1, 11, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session,
+                driveId=driveId,
+                startTime=startTime,
+                parameters=["RPM"],
+                samplesPerParameter=5,
+                profileId=None,
+            )
+            compute_drive_summary(session, driveId)
+            session.commit()
+
+            row = session.get(DriveSummary, summaryId)
+            assert row.profile_id is None
+
+    def test_compute_profileId_idempotent(self, engine):
+        """Re-running the compute keeps the same profile_id (no drift)."""
+        driveId = 42
+        startTime = datetime(2026, 6, 1, 12, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session,
+                driveId=driveId,
+                startTime=startTime,
+                parameters=["RPM"],
+                samplesPerParameter=5,
+                profileId="sport",
+            )
+            compute_drive_summary(session, driveId)
+            session.commit()
+            first = session.get(DriveSummary, summaryId).profile_id
+
+            compute_drive_summary(session, driveId)
+            session.commit()
+            second = session.get(DriveSummary, summaryId).profile_id
+
+            assert first == second == "sport"
 
 
 # =========================================================================
@@ -597,3 +683,95 @@ class TestComputeDriveSummaryAttributionAnomaly:
             session.commit()
             second = session.get(DriveSummary, sid).data_quality
             assert first == second == "attribution_anomaly"
+
+
+# =========================================================================
+# US-460 -- canonical drives mint wired into the harness
+# =========================================================================
+
+
+class TestCanonicalDriveMint:
+    """compute_drive_summary mints the canonical ``drives`` identity (US-460).
+
+    ``drives`` is a harness-owned table (US-449); the harness that derives a
+    drive mints its canonical ``drive_id`` via the natural-key upsert
+    (:func:`src.server.analytics.drive_identity.upsert_drive`) so US-451's FK
+    re-point never orphans a new-drive write.  The mint is idempotent (a
+    recompute re-uses the existing ``drive_id``, never renumbers) and defers
+    NULL-source_device legacy drives to US-451 rather than raising.
+    """
+
+    def test_compute_mintsCanonicalDriveRow(self, engine):
+        """A fresh compute mints one drives row keyed on the advisory pair."""
+        driveId = 40
+        startTime = datetime(2026, 7, 5, 9, 0, 0)
+        with Session(engine) as session:
+            _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                parameters=["RPM", "SPEED"], samplesPerParameter=8,
+            )
+            compute_drive_summary(session, driveId)
+            session.commit()
+
+            drives = session.execute(select(Drive)).scalars().all()
+            assert len(drives) == 1
+            minted = drives[0]
+            assert minted.source_device == "chi-eclipse-01"
+            assert minted.source_drive_id == driveId
+            assert minted.drive_id is not None
+            # The mint carries the derived boundary + quality + origin.
+            assert minted.start_time == startTime
+            assert minted.end_time == startTime + timedelta(seconds=7.0)
+            assert minted.data_quality == "full"
+            assert minted.data_source == "real"
+
+    def test_compute_mintIsIdempotent_noDuplicateOnRecompute(self, engine):
+        """Re-running compute re-uses the drive_id -- 0 duplicate drives rows."""
+        driveId = 41
+        startTime = datetime(2026, 7, 5, 10, 0, 0)
+        with Session(engine) as session:
+            _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                parameters=["RPM"], samplesPerParameter=5,
+            )
+            compute_drive_summary(session, driveId)
+            session.commit()
+            first = session.execute(select(Drive)).scalars().all()
+            assert len(first) == 1
+            firstId = first[0].drive_id
+
+            compute_drive_summary(session, driveId)
+            session.commit()
+            second = session.execute(select(Drive)).scalars().all()
+            assert len(second) == 1
+            assert second[0].drive_id == firstId  # never renumbers
+
+    def test_compute_nullSourceDevice_defersMint_noError(self, engine):
+        """A legacy row with NULL source_device mints no drives row (US-451).
+
+        ``upsert_drive`` requires a non-empty ``source_device``; the harness
+        must NOT raise on such a drive -- it defers the canonical mint to
+        US-451's unmappable-legacy path and still computes the summary.
+        """
+        driveId = 42
+        startTime = datetime(2026, 7, 5, 11, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            # Null the natural-key device (legacy pre-connection_log drive).
+            from sqlalchemy import update
+            session.execute(
+                update(DriveSummary)
+                .where(DriveSummary.id == summaryId)
+                .values(source_device=None)
+            )
+            session.commit()
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                parameters=["RPM"], samplesPerParameter=5,
+            )
+            # Does not raise; summary still computed.
+            assert compute_drive_summary(session, driveId) == summaryId
+            session.commit()
+            assert session.execute(select(Drive)).scalars().all() == []

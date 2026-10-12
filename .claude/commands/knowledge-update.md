@@ -152,7 +152,7 @@ For each modified file, output the full updated contents with a clear header:
 ---
 
 **Progress entry:**
-> "The Bronze layer stores raw JSON payloads without transformation. Silver layer applies cleaning rules."
+> "The Pi writes realtime_data locally, then sync pushes deltas to obd2db on chi-srv-01; the nightly 03:30 batch computes drive_summary from the raw rows."
 
 **Classification:** This is architecture/data flow → goes in `specs/architecture.md`
 

@@ -463,7 +463,8 @@ class ServiceManager:
             result = subprocess.run(
                 ['systemctl', 'is-enabled', serviceName],
                 capture_output=True,
-                text=True
+                text=True,
+                encoding='utf-8'
             )
             status.enabled = result.returncode == 0
         except (subprocess.SubprocessError, FileNotFoundError):
@@ -474,7 +475,8 @@ class ServiceManager:
             result = subprocess.run(
                 ['systemctl', 'is-active', serviceName],
                 capture_output=True,
-                text=True
+                text=True,
+                encoding='utf-8'
             )
             status.active = result.returncode == 0
             status.running = result.stdout.strip() == 'active'
@@ -513,7 +515,8 @@ class ServiceManager:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True
+                text=True,
+                encoding='utf-8'
             )
 
             if result.returncode != 0:

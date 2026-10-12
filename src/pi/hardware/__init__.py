@@ -22,7 +22,6 @@ This package provides hardware abstraction for Raspberry Pi features:
 - UPS monitoring (UpsMonitor)
 - Graceful shutdown handling (ShutdownHandler)
 - GPIO button handling (GpioButton)
-- Status display management (StatusDisplay)
 - System telemetry logging (TelemetryLogger)
 - Hardware integration management (HardwareManager)
 
@@ -48,17 +47,13 @@ Usage:
         # Get status
         status = manager.getStatus()
 
-        # Update display
-        manager.updateObdStatus('connected')
-        manager.updateErrorCount(warnings=0, errors=0)
-
         # Stop all hardware modules
         manager.stop()
 
     # Individual module access (for advanced usage):
     from hardware import (
         I2cClient, UpsMonitor, PowerSource, ShutdownHandler,
-        GpioButton, StatusDisplay, TelemetryLogger
+        GpioButton, TelemetryLogger
     )
 """
 
@@ -83,13 +78,6 @@ from .platform_utils import getPlatformInfo, isRaspberryPi
 from .shutdown_handler import (
     ShutdownHandler,
     ShutdownHandlerError,
-)
-from .status_display import (
-    ConnectionStatus,
-    DisplayNotAvailableError,
-    PowerSourceDisplay,
-    StatusDisplay,
-    StatusDisplayError,
 )
 from .telemetry_logger import (
     TelemetryLogger,
@@ -125,12 +113,6 @@ __all__ = [
     'GpioButton',
     'GpioButtonError',
     'GpioNotAvailableError',
-    # Status display
-    'StatusDisplay',
-    'StatusDisplayError',
-    'DisplayNotAvailableError',
-    'ConnectionStatus',
-    'PowerSourceDisplay',
     # Telemetry logging
     'TelemetryLogger',
     'TelemetryLoggerError',

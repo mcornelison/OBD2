@@ -13,7 +13,7 @@ Shows the current progress of a Ralph autonomous execution run.
 
 ## The Job
 
-1. Read `ralph/stories.json` to get the user stories
+1. Read `ralph/sprint.json` to get the user stories
 2. Read `ralph/progress.txt` for execution logs
 3. Generate a summary report
 
@@ -61,7 +61,7 @@ Generate a status report like this:
 
 ## What to Check
 
-1. **ralph/stories.json** - Contains:
+1. **ralph/sprint.json** - Contains:
    - `project`, `branchName`, `description`
    - `userStories[]` with `id`, `title`, `passes`, `notes`
 
@@ -115,7 +115,7 @@ Generate a status report like this:
 
 ## Checklist
 
-- [ ] Read `ralph/stories.json` for story definitions
+- [ ] Read `ralph/sprint.json` for story definitions
 - [ ] Read `ralph/progress.txt` for execution logs
 - [ ] Calculate pass/fail/pending counts
 - [ ] Show clear status table with icons

@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS dtc_freeze_frame (
 
     -- US-195 origin tag.
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture'))
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign'))
 );
 """
 

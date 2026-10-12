@@ -18,7 +18,7 @@
 #                               consults PARAMETER_DECODERS for new
 #                               parameter_names (FUEL_SYSTEM_STATUS, MIL_ON,
 #                               DTC_COUNT, RUNTIME_SEC, BAROMETRIC_KPA,
-#                               BATTERY_V, O2_BANK1_SENSOR2_V). Supported-PID
+#                               BATTERY_V, O2_B1S2). Supported-PID
 #                               probe (via connection.supportedPids) gates
 #                               Mode 01 queries; adapter commands bypass the
 #                               probe. LoggedReading.unit stores the
@@ -29,6 +29,9 @@
 #                               realtime_data INSERTs instead of relying
 #                               on the schema DEFAULT.  Closes the
 #                               simulator-tags-as-real hygiene bug.
+# 2026-09-21    | Rex (US-777) | logReading(capturedDriveId=...): the bus path
+#                               writes the drive_id stamped at CAPTURE; the
+#                               inline path still resolves at write.
 # ================================================================================
 ################################################################################
 """
@@ -56,15 +59,24 @@ import threading
 from datetime import datetime
 from typing import Any
 
-from common.time.helper import utcIsoNow
+from common.time.helper import localNaiveToCanonicalIso
 from pi.obdii.decoders import PARAMETER_DECODERS, DecodedReading, ParameterDecoderEntry
 
 from ..data_source import DATA_SOURCE_DEFAULT, DATA_SOURCE_VALUES
 from ..drive_id import getCurrentDriveId
+from ..foreign_guard import isDriveForeign
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .types import LoggedReading
 
 logger = logging.getLogger(__name__)
+
+
+class _ResolveAtWrite:
+    """Sentinel type: no capture-time drive_id was handed to logReading."""
+
+
+# US-777: distinct from ``None``, which is a CAPTURED "no drive live".
+RESOLVE_AT_WRITE = _ResolveAtWrite()
 
 
 # OBD library import with fallback for environments where it's not available
@@ -135,6 +147,7 @@ class ObdDataLogger:
         database: Any,
         profileId: str | None = None,
         dataSource: str | None = None,
+        config: dict[str, Any] | None = None,
     ):
         """
         Initialize the data logger.
@@ -143,6 +156,14 @@ class ObdDataLogger:
             connection: ObdConnection instance for OBD-II communication.
             database: ObdDatabase instance for data storage.
             profileId: Optional profile ID for associating logged data.
+            config: Validated configuration, supplying ``pi.time.localZone``
+                (US-809-a). Capture rows store the reading's EVENT instant, and
+                a NAIVE ``reading.timestamp`` cannot be converted to UTC without
+                a declared zone -- so a writer given no config REFUSES a naive
+                timestamp rather than guessing the host's zone. Constructor
+                injection per the Developer Rules; the two production factories
+                (``createDataLoggerFromConfig``, ``RealtimeDataLogger``) both
+                already hold a config and pass it.
             dataSource: Tag stamped on every row written by this logger.
                 Must be one of :data:`DATA_SOURCE_VALUES`.  When omitted
                 (the default), the tag is derived from the connection
@@ -158,6 +179,7 @@ class ObdDataLogger:
         """
         self.connection = connection
         self.database = database
+        self.config = config
         self.profileId = profileId
         self.dataSource = _resolveDataSource(connection, dataSource)
 
@@ -215,8 +237,13 @@ class ObdDataLogger:
             # Get the OBD command for this parameter
             cmd = self._getObdCommand(parameterName)
 
-            # Query the parameter - cmd may be the command object or the name
-            response = self.connection.obd.query(cmd)
+            # Query the parameter - cmd may be the command object or the name.
+            # US-441 (F-117/A-17): route through the wrapper's serialized
+            # query() so this read is guarded by the single _ioLock and can no
+            # longer interleave with an orphaned connect/query daemon on the one
+            # non-thread-safe python-obd port (the capture-killing race).  Live
+            # reads pass no generation and are never fenced.
+            response = self.connection.query(cmd)
 
             # Check if response is valid
             if response.is_null():
@@ -286,7 +313,8 @@ class ObdDataLogger:
         """Run a Spool v2 decoder and wrap its output as a LoggedReading."""
         try:
             cmd = self._getObdCommand(entry.obdCommand)
-            response = self.connection.obd.query(cmd)
+            # US-441 (F-117/A-17): serialized wrapper read (see queryParameter).
+            response = self.connection.query(cmd)
 
             if response is None or (hasattr(response, "is_null") and response.is_null()):
                 self._readErrors += 1
@@ -323,12 +351,22 @@ class ObdDataLogger:
                 details={'parameter': parameterName, 'pid': entry.pidCode, 'error': str(e)},
             ) from e
 
-    def logReading(self, reading: LoggedReading) -> bool:
+    def logReading(
+        self,
+        reading: LoggedReading,
+        capturedDriveId: int | None | _ResolveAtWrite = RESOLVE_AT_WRITE,
+    ) -> bool:
         """
         Log a reading to the database.
 
         Args:
             reading: LoggedReading to store
+            capturedDriveId: US-777 -- the drive_id stamped when the reading was
+                CAPTURED (``Sample.driveId`` on the bus path). Written as-is,
+                including ``None``: a row captured with no live drive stays an
+                explicit NULL and is never upgraded to a drive that opened
+                later. Omitted (the inline no-bus path, where write time IS
+                capture time), the drive is resolved here as before.
 
         Returns:
             True if logged successfully
@@ -344,12 +382,39 @@ class ObdDataLogger:
                 cursor = conn.cursor()
                 # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
                 # reading.timestamp may be naive local-time (upstream creates
-                # it via naive datetime.now() in realtime.py:399 and in
+                # it via naive datetime.now() in realtime.py and in
                 # queryParameter above); capture rows must be UTC canonical.
+                # US-809-a: that canonical-UTC guarantee is UNCHANGED -- what
+                # changed is WHICH instant is made canonical. This used to
+                # discard reading.timestamp for utcIsoNow(), which satisfied
+                # TD-027 while destroying the information the column exists to
+                # hold: a batch drained after a queue backs up lands evenly
+                # spaced at WRITE cadence, so a discontinuous capture renders
+                # as a continuous one and the record positively asserts the
+                # system was healthy during the interval it was failing.
                 # US-200: stamp the active drive_id (or NULL if no drive).
                 # US-212: pass self.dataSource explicitly so simulator runs
                 # land as 'physics_sim' instead of inheriting the live-path
                 # DEFAULT 'real'.
+                # US-424 (F-116): once the foreign-vehicle guard latches the
+                # active drive, stamp its subsequent rows 'foreign' too (the
+                # guard retro-tags the rows written before the trip).  Only the
+                # live 'real' path is overridden -- sim/replay/fixture tags are
+                # deliberate and left intact.
+                # US-777: the capture-time id when one was handed over -- a
+                # write-time lookup after a drain lag attaches the NEXT drive's
+                # id, or NULL, to a row captured during the previous one.
+                driveId = (
+                    getCurrentDriveId()
+                    if isinstance(capturedDriveId, _ResolveAtWrite)
+                    else capturedDriveId
+                )
+                effectiveDataSource = self.dataSource
+                if (
+                    self.dataSource == DATA_SOURCE_DEFAULT
+                    and isDriveForeign(driveId)
+                ):
+                    effectiveDataSource = 'foreign'
                 cursor.execute(
                     """
                     INSERT INTO realtime_data
@@ -358,13 +423,13 @@ class ObdDataLogger:
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        utcIsoNow(),
+                        localNaiveToCanonicalIso(reading.timestamp, self.config),
                         reading.parameterName,
                         reading.value,
                         reading.unit,
                         profileId,
-                        getCurrentDriveId(),
-                        self.dataSource,
+                        driveId,
+                        effectiveDataSource,
                     )
                 )
 

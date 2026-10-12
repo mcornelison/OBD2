@@ -19,6 +19,10 @@
 # 2026-05-19    | Plan (SS-T5)  | T2 alias DEATH: assertion flipped to assert
 #                                 confirm* are GONE from cfg (the stated
 #                                 death date arrived; rename completed).
+# 2026-09-22    | Rex (US-801)  | IMU rate pins assert against the single
+#                                 definition, not a second literal.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: joinWaitSec/stallSec defaults + validation replace shutdownSyncCeilingSec.
+# 2026-10-03    | Atlas (ARCH-065a) | Ruling 19 (M8): drainFloorDwellReads must be an integer >= 1.
 # ================================================================================
 ################################################################################
 
@@ -38,7 +42,13 @@ import pytest
 srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
-from common.config.validator import ConfigValidationError, ConfigValidator, validateConfig
+from common.config.validator import (
+    DEFAULT_IMU_PERSIST_HZ,
+    DEFAULT_IMU_SAMPLE_HZ,
+    ConfigValidationError,
+    ConfigValidator,
+    validateConfig,
+)
 
 
 @pytest.fixture
@@ -496,12 +506,40 @@ class TestCompanionServiceConfig:
 
         cs = result['pi']['companionService']
         assert cs['enabled'] is True
-        assert cs['baseUrl'] == 'http://10.27.27.10:8000'
+        assert cs['baseUrl'] == 'http://10.27.27.120:8000'
         assert cs['apiKeyEnv'] == 'COMPANION_API_KEY'
         assert cs['syncTimeoutSeconds'] == 30
         assert cs['batchSize'] == 500
         assert cs['retryMaxAttempts'] == 3
         assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
+        # US-391: queue-level quarantine defaults.
+        assert cs['quarantineThreshold'] == 5
+        assert cs['quarantineThrottleSeconds'] == 3600
+
+    def test_companionService_quarantineThreshold_belowOne_raises(self):
+        """US-391: a quarantineThreshold < 1 is rejected at load time."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'quarantineThreshold': 0}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.companionService.quarantineThreshold' in excInfo.value.missingFields
+
+    def test_companionService_quarantineThrottle_nonPositive_raises(self):
+        """US-391: a non-positive quarantineThrottleSeconds is rejected."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['companionService'] = {'quarantineThrottleSeconds': 0}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert (
+            'pi.companionService.quarantineThrottleSeconds'
+            in excInfo.value.missingFields
+        )
 
     def test_companionService_fullyPopulated_roundTripPreserved(self):
         """
@@ -661,7 +699,7 @@ class TestCompanionServiceConfig:
             'pi': {
                 'companionService': {
                     'enabled': True,
-                    'baseUrl': 'http://10.27.27.10:8000',
+                    'baseUrl': 'http://10.27.27.120:8000',
                     'apiKeyEnv': 'COMPANION_API_KEY',
                     'syncTimeoutSeconds': 30,
                     'batchSize': 500,
@@ -675,8 +713,75 @@ class TestCompanionServiceConfig:
         result = validateConfig(config)
 
         cs = result['pi']['companionService']
-        assert cs['baseUrl'] == 'http://10.27.27.10:8000'
+        assert cs['baseUrl'] == 'http://10.27.27.120:8000'
         assert cs['retryBackoffSeconds'] == [1, 2, 4, 8, 16]
+
+    # ------------------------------------------------------------------
+    # US-392 (A-15 de-dup): base URLs derive from serverHost:serverPort.
+    # ------------------------------------------------------------------
+    def test_companionService_baseUrl_derivedFromServerHostPort_whenAbsent(self):
+        """
+        Given: a config with an explicit server.network.serverHost/serverPort
+               but NO pi.companionService.baseUrl
+        When: validate() is called
+        Then: pi.companionService.baseUrl is DERIVED as http://{host}:{port}
+              (single-source de-dup -- the host literal is not duplicated)
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['server']['network'] = {'serverHost': '10.0.0.5', 'serverPort': 9999}
+
+        result = validator.validate(config)
+
+        assert result['pi']['companionService']['baseUrl'] == 'http://10.0.0.5:9999'
+
+    def test_serverBaseUrl_derivedFromServerHostPort_whenAbsent(self):
+        """
+        Given: a config with server.network.serverHost/serverPort but no
+               server.network.serverBaseUrl
+        When: validate() is called
+        Then: server.network.serverBaseUrl is DERIVED as http://{host}:{port}
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['server']['network'] = {'serverHost': '10.0.0.5', 'serverPort': 9999}
+
+        result = validator.validate(config)
+
+        assert result['server']['network']['serverBaseUrl'] == 'http://10.0.0.5:9999'
+
+    def test_baseUrl_explicitValue_notOverriddenByDerivation(self):
+        """
+        Given: an explicit companionService.baseUrl AND a different serverHost
+        When: validate() is called
+        Then: the explicit baseUrl wins (derivation only fills an ABSENT URL --
+              addresses.sh ``:-`` fallback semantics; behavior-preserving)
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['server']['network'] = {'serverHost': '10.0.0.5', 'serverPort': 9999}
+        config['pi']['companionService'] = {'baseUrl': 'http://192.168.1.50:9000'}
+
+        result = validator.validate(config)
+
+        assert result['pi']['companionService']['baseUrl'] == 'http://192.168.1.50:9000'
+
+    def test_companionService_baseUrl_derivedFromDefaultServerHost(self):
+        """
+        Given: a config with no server.network section at all
+        When: validate() is called
+        Then: serverHost/serverPort DEFAULTS supply the single source and the
+              companion baseUrl derives to the production address (the literal
+              lives only in the validator DEFAULTS registry + config.json)
+        """
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()  # server has no network section
+
+        result = validator.validate(config)
+
+        assert result['pi']['companionService']['baseUrl'] == 'http://10.27.27.120:8000'
+        assert result['server']['network']['serverHost'] == '10.27.27.120'
+        assert result['server']['network']['serverPort'] == 8000
 
 
 class TestHomeNetworkConfig:
@@ -710,7 +815,7 @@ class TestHomeNetworkConfig:
         assert hn['ssid'] == 'DeathStarWiFi'
         assert hn['subnet'] == '10.27.27.0/24'
         assert hn['pingTimeoutSeconds'] == 3
-        assert hn['serverPingPath'] == '/api/v1/ping'
+        assert hn['serverPingPath'] == '/api/v1/health'
 
     def test_homeNetwork_fullyPopulated_roundTripPreserved(self):
         validator = ConfigValidator(requiredKeys=[])
@@ -780,6 +885,93 @@ class TestHomeNetworkConfig:
 
         assert 'pi.homeNetwork.serverPingPath' in excInfo.value.missingFields
 
+    def test_homeNetwork_syncWaits_defaults(self):
+        """ARCH-065: join wait 120 s, stall 60 s; the retired ceiling is gone."""
+        validator = ConfigValidator(requiredKeys=[])
+
+        result = validator.validate(self._minimalTierConfig())
+
+        assert result['pi']['homeNetwork']['joinWaitSec'] == 120
+        assert result['pi']['homeNetwork']['stallSec'] == 60
+        assert 'shutdownSyncCeilingSec' not in result['pi']['homeNetwork']
+
+    @pytest.mark.parametrize('key', ['joinWaitSec', 'stallSec'])
+    @pytest.mark.parametrize('badValue', [0, -5, -0.5, True, '60', [60]])
+    def test_homeNetwork_badSyncWait_raises(self, key, badValue):
+        """ARCH-065: a non-positive or non-numeric join/stall wait is rejected."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {key: badValue}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert f'pi.homeNetwork.{key}' in excInfo.value.missingFields
+
+    def test_homeNetwork_sweepTimeout_defaultsBelowSmoothing(self):
+        """US-776-j1: a config with no powerWatch section validates with the
+        sweep bound 6 s and smoothingSec 7 -> accepted (6 < 7)."""
+        validator = ConfigValidator(requiredKeys=[])
+
+        result = validator.validate(self._minimalTierConfig())
+
+        assert result['pi']['homeNetwork']['sweepTimeoutSec'] == 6
+        assert result['pi']['powerWatch']['smoothingSec'] == 7
+
+    def test_homeNetwork_sweepTimeoutNotBelowSmoothing_raises(self):
+        """US-776-j1: the sweep must fit inside the loss window, so a sweep
+        bound equal to smoothingSec (7 vs 7) is refused."""
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'sweepTimeoutSec': 7}
+        config['pi']['powerWatch'] = {'smoothingSec': 7}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.sweepTimeoutSec' in excInfo.value.missingFields
+        assert 'smoothingSec' in str(excInfo.value)
+
+    def test_homeNetwork_sweepTimeoutAboveSmoothing_raises(self):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'sweepTimeoutSec': 5}
+        config['pi']['powerWatch'] = {'smoothingSec': 4}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.sweepTimeoutSec' in excInfo.value.missingFields
+
+    @pytest.mark.parametrize('badValue', [0, -1, -0.5, True, '6', [6]])
+    def test_homeNetwork_badSweepTimeout_raises(self, badValue):
+        validator = ConfigValidator(requiredKeys=[])
+        config = self._minimalTierConfig()
+        config['pi']['homeNetwork'] = {'sweepTimeoutSec': badValue}
+
+        with pytest.raises(ConfigValidationError) as excInfo:
+            validator.validate(config)
+
+        assert 'pi.homeNetwork.sweepTimeoutSec' in excInfo.value.missingFields
+
+
+def test_configJson_sweepTimeout_equalsTheValidatorDefault_andValidates():
+    """US-776-j1: config.json carries the sweep bound as a key, equal to the
+    validator default, and the live file's pair is accepted (6 < 7)."""
+    import json
+
+    from common.config.validator import DEFAULTS
+
+    live = json.loads(_CONFIG_JSON.read_text(encoding='utf-8'))
+    assert (
+        live['pi']['homeNetwork']['sweepTimeoutSec']
+        == DEFAULTS['pi.homeNetwork.sweepTimeoutSec']
+    )
+    assert live['pi']['homeNetwork']['sweepTimeoutSec'] < live['pi']['powerWatch']['smoothingSec']
+
+
+_CONFIG_JSON = Path(__file__).parent.parent / 'config.json'
+
 
 def _baseCfg():
     return {"protocolVersion": "1", "schemaVersion": "1", "deviceId": "d",
@@ -790,7 +982,14 @@ def test_bootProgress_defaultsApplied():
     cfg = ConfigValidator().validate(_baseCfg())
     bp = cfg["pi"]["bootProgress"]
     assert bp["filePath"] == "data/boot_progress"
-    assert bp["nasArchiveEnabled"] is True
+    # The Pi is standalone (CIO 2026-08-26): it reaches only the OBD2 server, at
+    # sync. This assertion used to read `is True`, pinning an archive that
+    # defaulted ON and wrote to a NAS path -- so the unsafe default was not
+    # merely unguarded, it was LOCKED IN by this line.
+    assert bp["nasArchiveEnabled"] is False
+    # The path was never asserted here at all, which is how it stayed
+    # /mnt/projects/O/OBD2v2/boot-progress. Relative = resolves on the Pi.
+    assert bp["nasArchiveDir"] == "data/boot_progress_archive"
     assert bp["maxTrailBytes"] == 65536
     assert cfg["pi"]["shutdown"]["poweroffTimeoutSeconds"] == 30
 
@@ -818,6 +1017,41 @@ def test_powerWatch_rejectsNonPositiveTimeout():
         ConfigValidator().validate(cfg)
 
 
+def test_powerWatch_drainFloorDwellReads_defaultsToFive_andRejectsNonPositive():
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["powerWatch"]["drainFloorDwellReads"] == 5
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"drainFloorDwellReads": 0}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(bad)
+
+
+@pytest.mark.parametrize("badValue", [True, False, 2.5, 5.0, "5", 0, -1])
+def test_powerWatch_drainFloorDwellReads_mustBeAnIntegerAtLeastOne(badValue):
+    """Ruling 19 (M8): a COUNT of consecutive reads -- no bool, float or string."""
+    bad = _baseCfg()
+    bad["pi"] = {"powerWatch": {"drainFloorDwellReads": badValue}}
+    with pytest.raises(ConfigValidationError, match="drainFloorDwellReads"):
+        ConfigValidator().validate(bad)
+
+
+def test_powerWatch_drainFloorDwellReads_acceptsOne():
+    cfg = _baseCfg()
+    cfg["pi"] = {"powerWatch": {"drainFloorDwellReads": 1}}
+    assert ConfigValidator().validate(cfg)["pi"]["powerWatch"]["drainFloorDwellReads"] == 1
+
+
+def test_batteryHealth_monthlyIntervalDays_defaultsTo30_andRejectsNonInteger():
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["batteryHealth"]["monthlyIntervalDays"] == 30
+    assert "testHoldSec" not in cfg["pi"]["batteryHealth"]
+    for bad_value in (0, -1, True, 30.5, 30.0, "30"):
+        bad = _baseCfg()
+        bad["pi"] = {"batteryHealth": {"monthlyIntervalDays": bad_value}}
+        with pytest.raises(ConfigValidationError):
+            ConfigValidator().validate(bad)
+
+
 def test_powerWatch_rejectsVcellFloorOutOfRange():
     cfg = _baseCfg()
     cfg["pi"] = {"powerWatch": {"vcellFloorVolts": 2.5}}
@@ -826,7 +1060,7 @@ def test_powerWatch_rejectsVcellFloorOutOfRange():
 
 
 def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
-    """SS-T2/T5: canonical smoothingSec=5 / smoothingPollSec=1 are the live
+    """SS-T2/T5: canonical smoothingSec / smoothingPollSec=1 are the live
     config (smoothingSec is the in-V1 safety property, spec sec 3 -- a
     power-LOST reading must hold continuously this long before the shutdown
     window opens). The T2 confirm* deprecated alias DIED at SS-T5 (its
@@ -834,9 +1068,18 @@ def test_validate_powerWatch_appliesSmoothingDefaults_andRejectsNonPositive():
     canonical names; the keys are GONE from DEFAULTS + validation.
     Non-positive smoothingSec is rejected like the other powerWatch time
     bounds."""
+    import json
+
+    from common.config.validator import DEFAULTS
+
     cfg = ConfigValidator().validate(_baseCfg())
     pw = cfg["pi"]["powerWatch"]
-    assert pw["smoothingSec"] == 5
+    # CIO ruling 2026-10-12 (US-776-j1, option A; Atlas ratifying): the default
+    # was 5 while config.json said 7. Pin the default to config.json's value,
+    # not to a literal, so the two copies cannot drift apart again.
+    live = json.loads(_CONFIG_JSON.read_text(encoding="utf-8"))
+    assert DEFAULTS["pi.powerWatch.smoothingSec"] == live["pi"]["powerWatch"]["smoothingSec"]
+    assert pw["smoothingSec"] == DEFAULTS["pi.powerWatch.smoothingSec"]
     assert pw["smoothingPollSec"] == 1
     # T2 alias is DEAD as of SS-T5 -- confirm* must NOT resolve anymore
     # (the rename completed; one name per fact, SSOT after the migration).
@@ -861,4 +1104,53 @@ def test_validate_powerWatch_uiPollSec_defaultAndRejectsNonPositive():
     bad["pi"] = {"powerWatch": {"uiPollSec": 0}}
     with pytest.raises(ConfigValidationError):
         ConfigValidator().validate(bad)
+
+
+def test_validate_busDefault_disabled():
+    """US-384 (EDR bus slice 1): pi.bus.enabled defaults False so the bus ships
+    dark -- the in-process pub/sub seam is wired but dormant until a separate
+    PM/CIO deploy flips the flag on the Pi."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["bus"]["enabled"] is False
+
+
+def test_validate_busEnabled_explicitValuePreserved():
+    """An explicit pi.bus.enabled is preserved (default does not overwrite)."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"bus": {"enabled": True}}
+    result = ConfigValidator().validate(cfg)
+    assert result["pi"]["bus"]["enabled"] is True
+
+
+def test_validate_sensorFlags_defaultDarkWithDefaultRates():
+    """US-409 (EDR sensor readers): both per-sensor enable flags default False
+    (ships dark) with their bus publish rates -- imu at the single definition
+    (US-801; its equality with config.json is pinned in
+    tests/pi/sensors/test_imu_rate_single_source.py), light 1 Hz."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    sensors = cfg["pi"]["sensors"]
+    assert sensors["imu"]["enabled"] is False
+    assert sensors["imu"]["sampleHz"] == DEFAULT_IMU_SAMPLE_HZ
+    assert sensors["light"]["enabled"] is False
+    assert sensors["light"]["sampleHz"] == 1
+
+
+def test_validate_sensorEnabled_explicitValuePreserved():
+    """An explicit per-sensor flag is preserved (default does not overwrite)."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"sensors": {"imu": {"enabled": True}}}
+    result = ConfigValidator().validate(cfg)
+    assert result["pi"]["sensors"]["imu"]["enabled"] is True
+    # The unspecified sibling still fills from defaults.
+    assert result["pi"]["sensors"]["light"]["enabled"] is False
+
+
+def test_validate_sensorPersistenceKeys_defaults():
+    """US-410 (EDR persistence): imu.persistHz decimates the bus to a baseline
+    persist cadence (the single definition, US-801); retentionDays bounds the
+    Pi-local rolling window at 7 days."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    sensors = cfg["pi"]["sensors"]
+    assert sensors["imu"]["persistHz"] == DEFAULT_IMU_PERSIST_HZ
+    assert sensors["retentionDays"] == 7
 

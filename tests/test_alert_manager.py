@@ -170,7 +170,10 @@ class TestAlertManagerSetThresholdsFromConfig:
         )
         assert rpmThresholds[0].direction == AlertDirection.ABOVE
         assert len(coolantThresholds) == 1
-        assert coolantThresholds[0].threshold == 220.0
+        # TUNER-009: COOLANT_TEMP arrives in CELSIUS (python-obd magnitude, logger.py); the old 220 was a
+        # Fahrenheit number compared against Celsius readings and could never fire. 109.5 => red at >= 110 C
+        # on the ECU's whole-degree readings (spec: Safe Operating Ranges, Coolant Temp).
+        assert coolantThresholds[0].threshold == 109.5
         assert coolantThresholds[0].direction == AlertDirection.ABOVE
 
     def test_setThresholdsFromConfig_boostAndOilNotSet_documented(self):

@@ -80,7 +80,7 @@ Marker-file contract (B-047 US-C -> US-D handoff)::
 
     {
         "target_version": "V0.20.0",
-        "server_url": "http://10.27.27.10:8000",
+        "server_url": "http://10.27.27.120:8000",
         "rationale": "server reports newer version V0.20.0; local is V0.19.0",
         "checked_at": "2026-04-30T12:34:56Z"
     }

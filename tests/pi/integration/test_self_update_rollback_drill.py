@@ -189,6 +189,7 @@ class _BrokenReleaseRunner:
         *,
         capture_output: bool = False,  # noqa: ARG002 -- match subprocess.run
         text: bool = False,  # noqa: ARG002
+        encoding: str | None = None,  # noqa: ARG002
         check: bool = False,  # noqa: ARG002
         timeout: float | None = None,  # noqa: ARG002
     ) -> subprocess.CompletedProcess[str]:
@@ -625,6 +626,7 @@ class _RollbackRestartFailsRunner(_BrokenReleaseRunner):
         *,
         capture_output: bool = False,  # noqa: ARG002
         text: bool = False,  # noqa: ARG002
+        encoding: str | None = None,  # noqa: ARG002
         check: bool = False,  # noqa: ARG002
         timeout: float | None = None,  # noqa: ARG002
     ) -> subprocess.CompletedProcess[str]:
@@ -639,6 +641,7 @@ class _RollbackRestartFailsRunner(_BrokenReleaseRunner):
             cmd,
             capture_output=capture_output,
             text=text,
+            encoding=encoding,
             check=check,
             timeout=timeout,
         )

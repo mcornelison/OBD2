@@ -27,7 +27,7 @@ The simulator (`src/pi/obd/simulator/sensor_simulator.py`) is deterministic — 
 
 ```bash
 # On chi-srv-01 (or any box with the project venv)
-cd /mnt/projects/O/OBD2v2
+cd /home/mcornelison/obd2-server
 export PYTHONPATH=$PWD
 VENV=$HOME/obd2-server-venv/bin/python
 
@@ -46,7 +46,7 @@ The `day1.db` shape models a realistic morning: cold start → 20 min errand →
 Given a server with a reset MariaDB (`deploy/deploy-server.sh --init`):
 
 ```bash
-export PYTHONPATH=/mnt/projects/O/OBD2v2
+export PYTHONPATH=/home/mcornelison/obd2-server
 export DATABASE_URL='mysql+aiomysql://obd2:<password>@localhost/obd2db'
 VENV=$HOME/obd2-server-venv/bin/python
 

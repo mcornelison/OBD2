@@ -48,6 +48,26 @@ Type=simple
 # User to run the service as (matches the Pi's interactive SSH user)
 User=mcornelison
 
+# Runtime dir for the single-instance pidfile (F-107 Mechanism B / A-9 Root 1)
+# and the F-103 state-server's /run/eclipse-obd/states/. systemd creates
+# /run/eclipse-obd owned by User= on start (tmpfs, so it clears on reboot; it is
+# KEPT across this unit's stop by RuntimeDirectoryPreserve=yes below -- ARCH-025)
+# so the non-root service can write its lock. REQUIRED when
+# pi.runtime.singleInstanceGuard.enabled is true -- without it acquire() hits
+# EPERM on mkdir(/run/eclipse-obd) and the orchestrator crash-loops on boot.
+#
+# US-737: RuntimeDirectoryPreserve=yes is REQUIRED because the dir is SHARED.
+# systemd does NOT ref-count a RuntimeDirectory shared between units (measured,
+# systemd 257.13): without Preserve=yes, stopping THIS unit alone -- every
+# deploy, every Restart=, every poweroff -- deletes /run/eclipse-obd for every
+# other sharer, and eclipse-powerwatch's power-source.json publish then fails
+# with EPERM. Every sharer must carry it (tests/deploy/
+# test_shared_runtime_dir_preserve.py). /run is tmpfs, so the dir still clears
+# on reboot, and a surviving pidfile is reclaimed by single_instance.py when
+# its holder pid is dead.
+RuntimeDirectory=eclipse-obd
+RuntimeDirectoryPreserve=yes
+
 # Working directory — where src/pi/main.py lives after deploy-pi.sh sync
 WorkingDirectory=/home/mcornelison/Projects/Eclipse-01
 

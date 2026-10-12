@@ -8,11 +8,11 @@
 #                      for idempotency, and emits/applies server-side MariaDB
 #                      UPDATE statements.  Tests inject a FakeRunner so no SSH,
 #                      SQLite file, or live MariaDB is touched.  Covers the pure
-#                      planBackfill/renderUpdateSql seam (incl. the phantom-
-#                      column discriminator: server schema has NO *_vcell_v
-#                      columns, only end_timestamp/end_soc/runtime_seconds), the
-#                      SSH I/O wrappers, the sentinel + backup safety gates, and
-#                      the CLI entry points.
+#                      planBackfill/renderUpdateSql seam (US-426: the server
+#                      schema now carries *_vcell_v and dropped the legacy
+#                      end_soc, so the UPDATE targets end_timestamp/end_vcell_v/
+#                      runtime_seconds), the SSH I/O wrappers, the sentinel +
+#                      backup safety gates, and the CLI entry points.
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-05-11
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -28,14 +28,14 @@
 
 """TDD tests for the US-323 / B-073 server-side battery_health_log backfill.
 
-The server-side ``battery_health_log`` table (v0002 migration +
+The server-side ``battery_health_log`` table (v0002 + v0016 migrations +
 :class:`src.server.db.models.BatteryHealthLog`) carries
-``end_timestamp``, ``end_soc`` and ``runtime_seconds`` but *not* the
-``start_vcell_v`` / ``end_vcell_v`` columns that the US-289 rename added
-Pi-side.  The sprint.json scope text + B-073 backlog both name
-``end_vcell_v`` as an UPDATE target -- that is phantom-column drift (same
-family as US-322's ``timestamp_ms``).  These tests pin the actual server
-column set so the script stays honest against the live schema.
+``end_timestamp``, ``end_vcell_v`` and ``runtime_seconds``.  US-426 (BL-015)
+added ``*_vcell_v`` to the server (mirroring the Pi, A-4) and dropped the
+misnamed legacy ``end_soc``, so the historical phantom-column drift that these
+tests once guarded is now resolved -- ``end_vcell_v`` is the correct UPDATE
+target on both tiers.  These tests pin the server column set so the script
+stays honest against the live schema.
 """
 
 from __future__ import annotations
@@ -144,14 +144,14 @@ class TestConstants:
     def test_strandedDrainEventIds_are11Through15(self) -> None:
         assert bf.STRANDED_DRAIN_EVENT_IDS == (11, 12, 13, 14, 15)
 
-    def test_backfillColumns_matchServerSchema_noVcellColumn(self) -> None:
-        # Phantom-column discriminator: the server-side battery_health_log
-        # (v0002 migration) has NO *_vcell_v columns.  The UPDATE target
-        # set is exactly end_timestamp/end_soc/runtime_seconds.
+    def test_backfillColumns_matchServerSchema_writesEndVcell(self) -> None:
+        # US-426: the server battery_health_log now carries *_vcell_v (v0016
+        # migration mirrors the Pi) and the legacy end_soc was dropped, so the
+        # UPDATE target set is end_timestamp/end_vcell_v/runtime_seconds.
         assert bf.BACKFILL_COLUMNS == (
-            'end_timestamp', 'end_soc', 'runtime_seconds',
+            'end_timestamp', 'end_vcell_v', 'runtime_seconds',
         )
-        assert 'end_vcell_v' not in bf.BACKFILL_COLUMNS
+        assert 'end_soc' not in bf.BACKFILL_COLUMNS
         assert 'start_vcell_v' not in bf.BACKFILL_COLUMNS
 
     def test_drySentinelName_isUs323Specific(self) -> None:
@@ -296,14 +296,14 @@ class TestRenderUpdateSql:
         assert 'WHERE id = 11' in sql
         assert 'end_timestamp IS NULL' in sql
 
-    def test_updateSetClause_onlyServerColumns_noVcell(self) -> None:
-        # Phantom-column discriminator: would FAIL if the SET clause ever
-        # included end_vcell_v / start_vcell_v (absent from server schema).
+    def test_updateSetClause_serverColumns_writesEndVcell(self) -> None:
+        # US-426: the SET clause targets end_vcell_v (the post-drop VCELL home
+        # on both tiers); the legacy end_soc column is gone.
         sql = bf.renderUpdateSql([_upd(11, '2026-05-10T00:52:28Z', 3.42, 757)])
         assert 'end_timestamp =' in sql
-        assert 'end_soc =' in sql
+        assert 'end_vcell_v =' in sql
         assert 'runtime_seconds =' in sql
-        assert 'vcell_v' not in sql
+        assert 'end_soc =' not in sql
 
     def test_endTimestampQuotedAsSqlString(self) -> None:
         sql = bf.renderUpdateSql([_upd(11, '2026-05-10T00:52:28Z', 3.42, 757)])
@@ -313,9 +313,9 @@ class TestRenderUpdateSql:
         sql = bf.renderUpdateSql([_upd(11, '2026-05-10T00:52:28Z', 3.42, None)])
         assert 'runtime_seconds = NULL' in sql
 
-    def test_nullEndSoc_emittedAsSqlNull(self) -> None:
+    def test_nullEndVcell_emittedAsSqlNull(self) -> None:
         sql = bf.renderUpdateSql([_upd(11, '2026-05-10T00:52:28Z', None, 757)])
-        assert 'end_soc = NULL' in sql
+        assert 'end_vcell_v = NULL' in sql
 
 
 # ================================================================================

@@ -23,16 +23,14 @@
 #                      deploy-server.sh Step 4.6 reads it to decide whether to
 #                      run the full backfill (US-327 / I-027).
 #
-#                      Server-schema note (phantom-column drift): the sprint.json
-#                      US-323 scope text + offices/pm/backlog/B-073 both name
-#                      `end_vcell_v` as an UPDATE target, but the server-side
-#                      battery_health_log table (v0002 migration +
-#                      src/server/db/models.py BatteryHealthLog) has NO *_vcell_v
-#                      columns -- only end_timestamp / end_soc / runtime_seconds.
-#                      The US-289 *_vcell_v rename was Pi-side only.  This script
-#                      backfills exactly the columns that exist server-side; the
-#                      drift is documented here + in the US-323 completionNotes.
-#                      Same drift family as US-322 (`timestamp_ms`).
+#                      Server-schema note (US-426, BL-015): the server
+#                      battery_health_log now carries *_vcell_v (added in the
+#                      v0016 migration, mirroring the Pi) and the legacy
+#                      start_soc/end_soc columns were DROPPED.  This script
+#                      therefore backfills end_vcell_v (its former end_soc
+#                      target is gone).  Prior to US-426 the server had NO
+#                      *_vcell_v and this wrote end_soc -- the phantom-column
+#                      drift that note flagged is now resolved (tiers identical).
 #
 # Author: Rex (Ralph agent)
 # Creation Date: 2026-05-11
@@ -139,8 +137,9 @@ For each stranded ``drain_event_id`` (default 11-15):
 4. If the Pi row exists but ``end_timestamp`` is still NULL (never
    closed) -> skip; there is nothing to replay.
 5. Otherwise emit ``UPDATE battery_health_log SET end_timestamp = ...,
-   end_soc = ..., runtime_seconds = ... WHERE id = N AND end_timestamp
-   IS NULL;`` using the Pi-side values verbatim.
+   end_vcell_v = ..., runtime_seconds = ... WHERE id = N AND end_timestamp
+   IS NULL;`` using the Pi-side values verbatim (US-426: end_vcell_v is the
+   post-drop VCELL home; the legacy end_soc column is gone on both tiers).
 
 Safety
 ------
@@ -160,7 +159,7 @@ Scope
 -----
 
 * Touches only the ``battery_health_log`` table, only the
-  ``end_timestamp`` / ``end_soc`` / ``runtime_seconds`` columns, only
+  ``end_timestamp`` / ``end_vcell_v`` / ``runtime_seconds`` columns, only
   on rows whose ``end_timestamp`` is NULL.  No PKs, no ``source_id``,
   no ``synced_at`` (US-315 keeps ``synced_at`` at INSERT time).
 * The Pi-side authoritative data is read but never written.
@@ -250,11 +249,10 @@ _defaultRunner = _us209._defaultRunner
 # end_timestamp = NULL for these despite Pi-side carrying close-event data.
 STRANDED_DRAIN_EVENT_IDS: tuple[int, ...] = (11, 12, 13, 14, 15)
 
-# Server-side battery_health_log columns this script writes.  Deliberately
-# NOT including end_vcell_v / start_vcell_v -- those columns exist only on
-# the Pi-side schema (US-289 rename); the server table never grew them.
-# See the module docstring's phantom-column-drift note.
-BACKFILL_COLUMNS: tuple[str, ...] = ('end_timestamp', 'end_soc', 'runtime_seconds')
+# Server-side battery_health_log columns this script writes.  US-426 added
+# end_vcell_v to the server (mirroring the Pi) and dropped the legacy end_soc,
+# so end_vcell_v is now the correct VCELL target on both tiers.
+BACKFILL_COLUMNS: tuple[str, ...] = ('end_timestamp', 'end_vcell_v', 'runtime_seconds')
 
 # Distinct from US-240's '.us240-dry-run-ok' so a pre-mint-orphan dry-run
 # does NOT silently authorize this backfill's execute.
@@ -486,7 +484,7 @@ def renderUpdateSql(rows: Sequence[BackfillRow]) -> str:
         lines.append(
             'UPDATE battery_health_log SET '
             f"end_timestamp = '{row.endTimestamp}', "
-            f'end_soc = {_sqlNumber(row.endSoc)}, '
+            f'end_vcell_v = {_sqlNumber(row.endSoc)}, '
             f'runtime_seconds = {_sqlInt(row.runtimeSeconds)} '
             f'WHERE id = {int(row.rowId)} AND end_timestamp IS NULL;'
         )
@@ -553,7 +551,7 @@ def scanPiRows(
         return []
     idsCsv = ','.join(str(int(i)) for i in drainEventIds)
     sql = (
-        'SELECT drain_event_id, end_timestamp, end_soc, runtime_seconds '
+        'SELECT drain_event_id, end_timestamp, end_vcell_v, runtime_seconds '
         'FROM battery_health_log '
         f'WHERE drain_event_id IN ({idsCsv}) ORDER BY drain_event_id'
     )
@@ -724,7 +722,7 @@ def renderReport(
     for row in plan.toUpdate:
         lines.append(
             f'    id={row.rowId}: end_timestamp={row.endTimestamp} '
-            f'end_soc={row.endSoc} runtime_seconds={row.runtimeSeconds}',
+            f'end_vcell_v={row.endSoc} runtime_seconds={row.runtimeSeconds}',
         )
     if plan.skipped:
         lines.append(f'  skipped:           {len(plan.skipped)}')

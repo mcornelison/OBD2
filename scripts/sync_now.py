@@ -15,6 +15,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-154 (Sprint 11)
+# 2026-06-29    | Rex          | US-397: normalize to the Pi-tier pi.*-on-src
+#                                convention (put src/ on sys.path + import
+#                                pi.data/pi.sync) so the operator's bare
+#                                `python scripts/sync_now.py` no longer dies
+#                                with ModuleNotFoundError: No module named 'pi'.
+#                                (common.* stays src.common.* for exception
+#                                identity -- see the import note below.)
 # ================================================================================
 ################################################################################
 
@@ -71,13 +78,39 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Ensure project root is importable (matches scripts/report.py).
+# Pi-tier entry-point path bootstrap (mirrors src/pi/main.py).
+#
+# Put src/ on sys.path so the Pi imports below resolve as the canonical
+# `pi.*` form -- matching the live systemd services and, critically, the
+# bare `from pi.display import ...` inside pi.obdii.__init__ that the sync
+# chain pulls in.  Inserting only the repo ROOT (the old behavior) let
+# `src.pi.*` resolve but left top-level `pi` unimportable, so the operator's
+# plain `python scripts/sync_now.py` died with
+# `ModuleNotFoundError: No module named 'pi'` (US-397).
+#
+# The repo ROOT is ALSO kept on the path: the shared `common.*` modules
+# remain imported via the legacy `from src.common...` form (the rest of the
+# pi codebase raises src.common exceptions -- see the import note below), and
+# pi.sync.__init__ itself re-exports `from src.pi.sync.client`.  Both paths
+# present == every form resolves, mirroring src/pi/main.py exactly.
+# Convention: see [[feedback-path-convention-no-src-prefix]].
 # ---------------------------------------------------------------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
+_SRC_DIR = _PROJECT_ROOT / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# NOTE: the `common.*` shared modules stay on the legacy `src.common.*` form
+# on purpose -- pi.sync.client (and the rest of the pi codebase) raise
+# `src.common.errors.handler.ConfigurationError`, so `main()` must catch that
+# exact class object.  `common.errors.handler` resolves to a DIFFERENT class
+# (separate module object), which would silently dodge the `except`.  Unlike
+# the `pi.*` packages, the `common.*` packages have no unifying re-export.
+from pi.data import sync_log  # noqa: E402
+from pi.sync import PushResult, PushStatus, SyncClient  # noqa: E402
 from src.common.config.secrets_loader import (  # noqa: E402
     loadConfigWithSecrets,
     loadEnvFile,
@@ -87,8 +120,6 @@ from src.common.config.validator import (  # noqa: E402
     ConfigValidator,
 )
 from src.common.errors.handler import ConfigurationError  # noqa: E402
-from src.pi.data import sync_log  # noqa: E402
-from src.pi.sync import PushResult, PushStatus, SyncClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

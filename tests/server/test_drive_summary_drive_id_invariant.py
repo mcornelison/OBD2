@@ -377,7 +377,7 @@ class TestSyncWriterPath:
                 tables={"drive_summary": {"rows": [{
                     "id": 7,
                     "drive_start_timestamp": "2026-05-01T12:00:00Z",
-                    "ambient_temp_at_start_c": 18.5,
+                    "intake_air_temp_at_start_c": 18.5,
                     "starting_battery_v": 12.4,
                     "barometric_kpa_at_start": 101.2,
                     "data_source": "real",

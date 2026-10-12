@@ -12,6 +12,14 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-20    | Rex (US-204) | Initial -- Spool Data v2 Story 3 (DTC retrieval).
+# 2026-07-20    | Rex (US-474) | F-117/A-17 hardening. Remove the runtime
+#               |              | getattr(connection,'query') fallback to the RAW
+#               |              | unlocked .obd.query -- that fallback WAS the hole
+#               |              | that let a DTC read skip the _ioLock. query() is
+#               |              | now a typed member of ObdConnectionLike, so ALL
+#               |              | DTC reads provably share the one serialization
+#               |              | lock; a connection without query() is a type
+#               |              | error, not a silent bypass.
 # ================================================================================
 ################################################################################
 
@@ -50,6 +58,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 __all__ = [
+    'ClearReadback',
     'DiagnosticCode',
     'DtcClient',
     'DtcClientError',
@@ -95,6 +104,25 @@ class DiagnosticCode:
 
 
 @dataclass(frozen=True)
+class ClearReadback:
+    """Post-clear proof: the immediate Mode 03(+07) re-read after a Mode 04 wipe.
+
+    US-407 issues Mode 04 (all-or-nothing) and then re-reads at once so it can
+    prove the clear ("0 stored, 0 pending") and catch an instant re-set instead
+    of reporting a bare "command sent" (Spool advisory §4d).
+
+    Attributes:
+        stored: Stored DTCs from the post-clear Mode 03 re-read (empty = cleared).
+        pending: Pending DTCs from the post-clear Mode 07 re-read.
+        mode07Probe: The Mode 07 support verdict from the re-read.
+    """
+
+    stored: list[DiagnosticCode]
+    pending: list[DiagnosticCode]
+    mode07Probe: Mode07ProbeResult
+
+
+@dataclass(frozen=True)
 class Mode07ProbeResult:
     """Result of the per-connection Mode 07 support probe.
 
@@ -118,13 +146,21 @@ class ObdConnectionLike(Protocol):
     """Structural interface satisfied by
     :class:`src.pi.obdii.obd_connection.ObdConnection` and test fakes.
 
-    Only ``isConnected()`` + ``.obd.query(cmd)`` are touched.
+    ``isConnected()`` and the serialized ``query(command)`` are the touched
+    members.  US-474 (F-117/A-17): every DTC read MUST go through ``query()`` --
+    the wrapper that holds the single ``_ioLock`` -- so it never interleaves
+    with the realtime logger's read on the one non-thread-safe python-obd port.
+    ``obd`` stays exposed for the underlying python-obd facade but is no longer
+    the DTC read path (the raw unlocked ``.obd.query`` was the capture-killing
+    hole this contract closes).
     """
 
     def isConnected(self) -> bool: ...
 
+    def query(self, command: Any, /) -> Any: ...
+
     @property
-    def obd(self) -> Any: ...  # python-obd facade exposing query(cmd)
+    def obd(self) -> Any: ...  # python-obd facade (legacy; NOT the DTC read path)
 
 
 # ================================================================================
@@ -184,6 +220,7 @@ class DtcClient:
 
     _MODE_03_COMMAND_NAME = 'GET_DTC'
     _MODE_07_COMMAND_NAME = 'GET_CURRENT_DTC'
+    _MODE_04_COMMAND_NAME = 'CLEAR_DTC'
 
     def __init__(
         self,
@@ -220,7 +257,7 @@ class DtcClient:
         """
         self._requireConnected(connection)
         cmd = self._commandFactory(self._MODE_03_COMMAND_NAME)
-        response = connection.obd.query(cmd)
+        response = self._serializedQuery(connection, cmd)
         raw = self._extractTuples(response)
         return [
             self._asCode(entry, status='stored')
@@ -252,7 +289,7 @@ class DtcClient:
         """
         self._requireConnected(connection)
         cmd = self._commandFactory(self._MODE_07_COMMAND_NAME)
-        response = connection.obd.query(cmd)
+        response = self._serializedQuery(connection, cmd)
 
         if self._isNull(response):
             logger.info(
@@ -270,6 +307,40 @@ class DtcClient:
         return codes, Mode07ProbeResult(supported=True, reason='supported')
 
     # ------------------------------------------------------------------
+    # Mode 04 -- clear stored + pending DTCs (US-407, the only vehicle-write)
+    # ------------------------------------------------------------------
+
+    def clearDtcs(self, connection: ObdConnectionLike) -> ClearReadback:
+        """Issue Mode 04 (CLEAR_DTC) then immediately re-read Mode 03(+07).
+
+        Mode 04 is all-or-nothing: it wipes every stored + pending code, the
+        freeze-frame, and resets emissions-readiness monitors. This method is the
+        raw vehicle-write primitive -- it is issued ONLY after the authoritative
+        clear gate has passed (see :mod:`src.pi.splash.dtc_clear`). Per Spool
+        advisory §4d the clear is issued FIRST and then proven by an immediate
+        re-read (never a bare "command sent"), which also catches a code that
+        re-sets instantly.
+
+        Args:
+            connection: Live OBD connection.
+
+        Returns:
+            A :class:`ClearReadback` with the post-clear stored + pending re-read
+            (empty stored list = the wipe took effect).
+
+        Raises:
+            DtcClientError: If the connection is not open (a vehicle-write must
+                never be attempted on a closed connection).
+        """
+        self._requireConnected(connection)
+        clearCmd = self._commandFactory(self._MODE_04_COMMAND_NAME)
+        self._serializedQuery(connection, clearCmd)  # Mode 04 -- all-or-nothing wipe
+        # Advisory §4d: prove the clear (and catch an instant re-set) by re-reading.
+        stored = self.readStoredDtcs(connection)
+        pending, probe = self.readPendingDtcs(connection)
+        return ClearReadback(stored=stored, pending=pending, mode07Probe=probe)
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -279,6 +350,29 @@ class DtcClient:
             raise DtcClientError(
                 "DtcClient requires an open connection; obd is not connected"
             )
+
+    @staticmethod
+    def _serializedQuery(connection: ObdConnectionLike, cmd: Any) -> Any:
+        """Route every DTC read/write through the wrapper's serialized ``query()``.
+
+        A-17 capture-killing race: the realtime logger reads via
+        ``ObdConnection.query()`` under the single ``_ioLock`` (US-441/F-117),
+        but the DTC paths historically hit RAW ``connection.obd.query()`` which
+        BYPASSED that lock.  A key-on (US-404) / session-start / during-drive DTC
+        read fired on the connection edge then interleaved with the logger's read
+        on the one non-thread-safe python-obd port -> "device disconnected while
+        reading" -> 0 rows captured -> the drive never armed -> the KOEO read
+        re-fired every reconnect (permanent capture failure).
+
+        US-474: the runtime ``getattr(connection, 'query', ...)`` fallback to the
+        raw unlocked ``.obd.query`` is REMOVED -- it was the last hole through
+        which a DTC read could skip the lock.  ``query()`` is now a typed member
+        of :class:`ObdConnectionLike`, so ALL DTC reads provably share the one
+        ``_ioLock``.  (The duck-typed test fakes were updated to the typed
+        contract; a connection without ``query`` is now a type/test error, not a
+        silent bypass.)
+        """
+        return connection.query(cmd)
 
     @staticmethod
     def _isNull(response: Any) -> bool:

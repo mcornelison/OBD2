@@ -1,0 +1,24 @@
+US-808-b -- connection_log difference, accounted for per event type
+
+event_type                  pi    server   missing
+connect_attempt          33566     11675     21891
+connect_failure           8236      4598      3638
+disconnect                2822        33      2789
+connect_success             34        34         0
+drive_start                 25        25         0
+drive_end                   16        16         0
+reconnect                    5         5         0
+TOTAL                    44704     16386     28318
+
+missing ids form 10 contiguous run(s); largest 20277
+server rows with no Pi counterpart: 0
+watermark 84700 vs max Pi id 84700 -- fully advanced: True
+
+REFUTED:   sync was never configured to carry these event types
+SUPPORTED: sync drops rows it should carry
+UNDETERMINED: HOW the watermark came to sit ahead of unsent rows. A reset, a push that advanced the mark despite failing, and a bulk seed all look identical from here. That is a REOPEN of the original story, not a conclusion to draw now.
+
+Selecting code cited:
+  - src/pi/data/sync_log.py::getDeltaRows -- SELECT * FROM <table> WHERE <predicate> ORDER BY <pk> ASC LIMIT ?
+  - src/pi/data/sync_log.py::_deltaPredicate -- builds "<pk> > ?", optionally OR'd with a _sync_modified_at cursor. No event_type term.
+  - src/pi/data/sync_log.py::PK_COLUMN -- connection_log keys on "id", so the cursor is an ID cursor.

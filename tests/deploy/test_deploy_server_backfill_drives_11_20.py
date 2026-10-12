@@ -151,13 +151,30 @@ def test_backfillStep_checksMarkerBeforeRunning():
     the marker is present the step is a no-op (skip + echo 'idempotent').
     """
     text = _scriptText()
-    # Locate the backfill banner, then scan forward for the guard pattern.
-    bannerIdx = text.find("drives 11-20")
-    assert bannerIdx > -1
-    block = text[bannerIdx:bannerIdx + 3000]
-    assert "test -f" in block, (
+
+    # Anchor on the STEP BANNER, not on the first mention of "drives 11-20" --
+    # that first mention is in the script's own header step-list, ~360 lines
+    # above the code. The old form scanned a fixed 3000-char window forward from
+    # it and passed purely on character distance: inserting ANY step between the
+    # header and Step 4.9 pushed the guard out of the window and failed a test
+    # about backfill idempotency for reasons having nothing to do with backfill.
+    # (Step 0.9, the server sparse-checkout, was the first insertion to do it.)
+    bannerIdx = text.find("--- Step 4.9: Backfilling drives 11-20")
+    assert bannerIdx > -1, "Step 4.9 backfill banner not found in deploy-server.sh"
+
+    guardIdx = text.find("test -f", bannerIdx)
+    cliIdx = text.find("recompute_drive_analytics --drive-id-range 11-20", bannerIdx)
+    assert guardIdx > -1, (
         "backfill step must use `test -f` to check the marker file before "
         "running the CLI (idempotent guard per acceptance criterion 6)"
+    )
+    assert cliIdx > -1, "backfill CLI invocation not found after the Step 4.9 banner"
+
+    # Ordering is the actual contract: the marker must be checked BEFORE the CLI
+    # runs, or the step is not idempotent regardless of the guard existing.
+    assert guardIdx < cliIdx, (
+        "the `test -f` marker guard must appear BEFORE the recompute CLI "
+        "invocation, otherwise the backfill re-runs on every deploy"
     )
 
 

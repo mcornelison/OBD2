@@ -99,7 +99,7 @@ def _insertPiSyncRow(
         source_id=driveId,
         drive_id=driveId,
         drive_start_timestamp=driveStartTs,
-        ambient_temp_at_start_c=ambient,
+        intake_air_temp_at_start_c=ambient,
         starting_battery_v=battery,
         barometric_kpa_at_start=baro,
         data_source="real",
@@ -225,7 +225,7 @@ class TestEnsureDriveSummaryPiFirst:
         assert merged.is_real is True
         assert merged.data_source == "real"
         # Pi-sync metadata still intact (Spec 3 race-handling rule).
-        assert merged.ambient_temp_at_start_c == 18.5
+        assert merged.intake_air_temp_at_start_c == 18.5
         assert merged.starting_battery_v == 12.6
         assert merged.barometric_kpa_at_start == 98.2
         assert merged.drive_id == DRIVE_ID
@@ -399,7 +399,7 @@ class TestReconcileDualRowsMigration:
         assert merged.id == piRowId
         assert merged.device_id == DEVICE
         assert merged.start_time == START
-        assert merged.ambient_temp_at_start_c == 18.5
+        assert merged.intake_air_temp_at_start_c == 18.5
         # Analytics row is gone.
         assert session.get(DriveSummary, analyticsId) is None
 

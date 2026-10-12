@@ -12,6 +12,13 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-19    | Rex (US-195) | Initial -- data_source enum + migration helper
+# 2026-07-01    | Rex (US-424) | F-116 foreign-vehicle marker: add 'foreign' to
+#                               DATA_SOURCE_VALUES; derive DATA_SOURCE_CHECK_CLAUSE
+#                               + DATA_SOURCE_COLUMN_DDL from the SSOT tuple so a
+#                               new value propagates to every capture-table CHECK
+#                               (A-4, define-once); add ensureDataSourceCheckWidened
+#                               forward-only SQLite CHECK-widen (table-rebuild)
+#                               migration for existing DBs.
 # ================================================================================
 ################################################################################
 
@@ -38,15 +45,18 @@ existing row in place -- no backfill UPDATE needed.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 __all__ = [
     'DATA_SOURCE_VALUES',
     'DATA_SOURCE_DEFAULT',
     'CAPTURE_TABLES',
+    'DATA_SOURCE_CHECK_CLAUSE',
     'DATA_SOURCE_COLUMN_DDL',
     'ensureDataSourceColumn',
     'ensureAllCaptureTables',
+    'ensureDataSourceCheckWidened',
 ]
 
 
@@ -62,6 +72,13 @@ DATA_SOURCE_VALUES: tuple[str, ...] = (
     'replay',
     'physics_sim',
     'fixture',
+    # US-424 / F-116: foreign-vehicle contamination marker.  A drive captured
+    # from a vehicle that is NOT the Eclipse (e.g. the Ford Explorer on drive
+    # 33) is tagged 'foreign' so every ``WHERE data_source='real'`` analytics
+    # query auto-excludes it with zero consumer changes.  Deliberately NOT
+    # 'fixture' -- foreign rows are real captures of a real (wrong) vehicle and
+    # must be preserved as evidence, never mistaken for synthetic test data.
+    'foreign',
 )
 
 # Default value on the live-OBD path.  Matches Spool CR #4 directive:
@@ -74,6 +91,9 @@ DATA_SOURCE_DEFAULT: str = 'real'
 # excluded because they cannot receive sim/replay/fixture data (per sprint
 # contract doNotTouch list).  (battery_log was also excluded until US-223
 # deleted the table with its sole writer BatteryMonitor.)
+#: The capture table that carries a write-time column (US-809-b1).
+REALTIME_DATA_TABLE: str = 'realtime_data'
+
 CAPTURE_TABLES: tuple[str, ...] = (
     'realtime_data',
     'connection_log',
@@ -87,14 +107,24 @@ CAPTURE_TABLES: tuple[str, ...] = (
 # DDL fragment
 # ================================================================================
 
+# Reusable CHECK-clause fragment, DERIVED from :data:`DATA_SOURCE_VALUES` so a
+# new enum value (US-424 'foreign') propagates to every consumer without
+# hand-editing each schema literal (A-4 define-once).  The per-schema CHECK
+# literals in database_schema.py / drive_summary.py / dtc_*_schema.py /
+# battery_health.py are pinned equal to this by
+# ``tests/pi/data/test_data_source_foreign_marker.py`` so they cannot drift.
+DATA_SOURCE_CHECK_CLAUSE: str = (
+    "data_source IN (" + ",".join(f"'{v}'" for v in DATA_SOURCE_VALUES) + ")"
+)
+
 # Reusable column-definition fragment.  Both the fresh-schema DEFAULT in
 # database_schema.py and the migration ALTER TABLE in
 # :func:`ensureDataSourceColumn` produce the same physical column.  The CHECK
 # constraint enforces the enum at insert time so wrong values fail loudly
 # instead of contaminating analytics downstream.
 DATA_SOURCE_COLUMN_DDL: str = (
-    "data_source TEXT NOT NULL DEFAULT 'real' "
-    "CHECK (data_source IN ('real','replay','physics_sim','fixture'))"
+    f"data_source TEXT NOT NULL DEFAULT '{DATA_SOURCE_DEFAULT}' "
+    f"CHECK ({DATA_SOURCE_CHECK_CLAUSE})"
 )
 
 
@@ -157,6 +187,130 @@ def ensureDataSourceColumn(
     return True
 
 
+WRITTEN_AT_COLUMN: str = 'written_at'
+
+#: Plain nullable DATETIME. No DEFAULT here in b1 -- US-809-b2 moves the DDL
+#: default onto this column. And deliberately NO BACKFILL from ``timestamp``:
+#: copying the capture instant would assert that every historical row was
+#: written the moment it was captured, which is the false continuity spec
+#: A-double-prime exists to remove and is indistinguishable afterwards from a
+#: genuinely prompt write. NULL means "we do not know when this was written",
+#: which is the truth about every pre-migration row.
+WRITTEN_AT_COLUMN_DDL: str = f'{WRITTEN_AT_COLUMN} DATETIME'
+
+
+def ensureWrittenAtColumn(
+    conn: sqlite3.Connection, tableName: str,
+) -> bool:
+    """Add ``written_at`` to ``tableName`` if not already present (US-809-b1).
+
+    Idempotent, and a no-op when the table does not exist yet: the Pi has no
+    migration ledger, so every schema step runs on every boot and has to be
+    safe to re-run.  Mirrors :func:`ensureDataSourceColumn`.
+
+    Args:
+        conn: Open sqlite3 connection.  The caller owns commit semantics.
+        tableName: Capture-table name.
+
+    Returns:
+        True if an ALTER TABLE ran, False if the column was already present
+        or the table did not exist.
+    """
+    if not _tableExists(conn, tableName):
+        return False
+    if _hasColumn(conn, tableName, WRITTEN_AT_COLUMN):
+        return False
+    conn.execute(
+        f"ALTER TABLE {tableName} ADD COLUMN {WRITTEN_AT_COLUMN_DDL}"
+    )
+    return True
+
+
+#: The DEFAULT the write column carries from US-809-b2 onward. Matches the
+#: canonical ISO-8601 UTC format every capture table uses.
+WRITTEN_AT_DEFAULT_SQL: str = "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+
+
+def ensureWrittenAtDefault(
+    conn: sqlite3.Connection, tableName: str,
+) -> bool:
+    """Put the system-clock DEFAULT on ``written_at`` (US-809-b2).
+
+    SQLite cannot change a column's DEFAULT in place, and it REFUSES to
+    ``ADD COLUMN`` with a non-constant default at all ("Cannot add a column
+    with non-constant default" -- measured 2026-09-24).  So the default can
+    only reach an existing table through a REBUILD, using the same
+    create/copy/drop/rename shape as :func:`ensureDataSourceCheckWidened`;
+    ``realtime_data`` has no inbound foreign keys, which is what makes that
+    safe here.
+
+    🔴 **THE REBUILD IS ONLY SAFE BECAUSE THE COLUMN IS NULLABLE.**  The CIO
+    ruled on 2026-09-24 that ``written_at`` stays nullable, and that ruling is
+    what this function depends on: ``INSERT ... SELECT *`` carries the
+    existing NULLs straight through, so the 405,536 rows on the car whose
+    write time was never recorded keep an honest absence.  Were the column
+    NOT NULL, the same rebuild would have to INVENT a value for every one of
+    them -- and every available value is a fabrication.
+
+    Idempotent: a table whose stored DDL already carries the default is a
+    no-op, which matters because the Pi has no migration ledger and every
+    schema step runs on every boot.  Rebuilding a 191 MB table repeatedly is
+    not an option.
+
+    Args:
+        conn: Open sqlite3 connection.  The caller owns commit semantics.
+        tableName: Capture-table name.
+
+    Returns:
+        True if the table was rebuilt, False if it already carried the
+        default, lacks the column, or does not exist.
+    """
+    if not _tableExists(conn, tableName):
+        return False
+    if not _hasColumn(conn, tableName, WRITTEN_AT_COLUMN):
+        return False
+
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?",
+        (tableName,),
+    ).fetchone()
+    if not row or not row[0]:
+        return False
+    currentSql = row[0]
+
+    if WRITTEN_AT_DEFAULT_SQL in currentSql:
+        return False  # already carries it (fresh schema, or a prior run)
+
+    newTableSql = currentSql.replace(
+        f'{WRITTEN_AT_COLUMN} DATETIME',
+        f'{WRITTEN_AT_COLUMN} DATETIME DEFAULT ({WRITTEN_AT_DEFAULT_SQL})',
+        1,
+    )
+    if newTableSql == currentSql:
+        # The stored DDL did not match the expected shape -- refuse rather
+        # than silently produce an unchanged table.
+        return False
+
+    tmpName = f"{tableName}__written_at_default_new"
+    newTableSql = _renameCreateTarget(newTableSql, tableName, tmpName)
+
+    indexRows = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name = ? "
+        "AND sql IS NOT NULL",
+        (tableName,),
+    ).fetchall()
+
+    conn.execute(f"DROP TABLE IF EXISTS {tmpName}")
+    conn.execute(newTableSql)
+    # SELECT * preserves existing NULLs in written_at -- the whole point.
+    conn.execute(f"INSERT INTO {tmpName} SELECT * FROM {tableName}")
+    conn.execute(f"DROP TABLE {tableName}")
+    conn.execute(f"ALTER TABLE {tmpName} RENAME TO {tableName}")
+    for (indexSql,) in indexRows:
+        conn.execute(indexSql)
+    return True
+
+
 def ensureAllCaptureTables(conn: sqlite3.Connection) -> list[str]:
     """Run :func:`ensureDataSourceColumn` across every capture table.
 
@@ -171,4 +325,179 @@ def ensureAllCaptureTables(conn: sqlite3.Connection) -> list[str]:
     for tableName in CAPTURE_TABLES:
         if ensureDataSourceColumn(conn, tableName):
             migrated.append(tableName)
+    # US-809-b1: the write-time column, on the capture table that has one.
+    # Scoped to realtime_data deliberately -- the other capture tables are
+    # not part of this story and widening the sweep would land schema
+    # changes nobody asked for on the highest-risk device in the system.
+    if ensureWrittenAtColumn(conn, REALTIME_DATA_TABLE):
+        migrated.append(f'{REALTIME_DATA_TABLE}.{WRITTEN_AT_COLUMN}')
+    # US-809-b2: and the system-clock DEFAULT on it. Separate from the ADD
+    # above because SQLite REFUSES to add a column with a non-constant
+    # default -- the default can only arrive by rebuild.
+    if ensureWrittenAtDefault(conn, REALTIME_DATA_TABLE):
+        migrated.append(f'{REALTIME_DATA_TABLE}.{WRITTEN_AT_COLUMN}.default')
     return migrated
+
+
+# ================================================================================
+# US-424 / F-116: forward-only SQLite CHECK-widen (table rebuild)
+# ================================================================================
+#
+# SQLite has no ``ALTER TABLE ... MODIFY CHECK`` -- a CHECK constraint can only
+# be changed by rebuilding the table (CREATE new / copy rows / DROP old / RENAME
+# + recreate indexes).  Adding the ``'foreign'`` value is a pure *widen*: every
+# existing row already satisfies the wider constraint, so the rebuild is
+# non-destructive (row data is copied verbatim).  Fresh databases never need
+# this -- their tables are CREATEd from the already-widened schema DDL; this
+# migration only catches Pi databases deployed before US-424.
+
+
+#: Every way SQLite may spell a table name in a stored ``CREATE TABLE``.
+#: 🔴 THE DOUBLE-QUOTED FORM IS NOT HYPOTHETICAL -- SQLite WRITES IT ITSELF.
+#: After ``ALTER TABLE x RENAME TO y`` the stored DDL comes back as
+#: ``CREATE TABLE "y" (...)``, so ANY table that has ever been rebuilt carries
+#: quotes from then on. Brackets and backticks are accepted by SQLite too;
+#: covering all four costs nothing and removes the next variant of this
+#: outage rather than waiting to be surprised by it.
+_IDENTIFIER_FORMS: tuple[str, ...] = ('"{0}"', '[{0}]', '`{0}`', '{0}')
+
+
+def _renameCreateTarget(sql: str, oldName: str, newName: str) -> str:
+    """Rewrite the ``CREATE TABLE [IF NOT EXISTS] <oldName>`` target to newName.
+
+    Only the create target is renamed; FK clauses that reference *other* tables
+    (e.g. realtime_data -> profiles) are left untouched.  ``IF NOT EXISTS`` is
+    dropped in the process, which is correct -- the caller DROPs the temp table
+    first so the rebuilt table must be created unconditionally.
+
+    🔴 **HOTFIX 2026-09-24 -- THIS TOOK THE COLLECTOR DOWN.** The pattern
+    matched a BARE identifier only. The car's ``realtime_data`` carries the
+    name DOUBLE-QUOTED in its stored DDL (left by the US-424 CHECK-widen
+    rebuild's own ``RENAME TO``), so the rewrite was a **silent no-op**:
+    :func:`re.sub` returns the string unchanged when nothing matches, the
+    caller then executed a CREATE for the LIVE table, and SQLite refused it
+    with ``table "realtime_data" already exists``. ``eclipse-obd`` could not
+    start, deterministically, on a five-month-old database.
+
+    ⚠️ **A NO-MATCH IS NOW LOUD.** Returning the input unchanged is
+    indistinguishable from "no rename was needed", and that ambiguity is what
+    turned a pattern gap into an outage instead of an error. A caller that
+    asks for a rename it cannot get should hear about it.
+
+    Args:
+        sql: The stored ``CREATE TABLE`` statement.
+        oldName: The table being rebuilt, unquoted.
+        newName: The temp table to create instead.
+
+    Returns:
+        The statement with its create target rewritten.
+
+    Raises:
+        ValueError: If no create target matched -- the rebuild must not
+            proceed on an unchanged statement.
+    """
+    # ⚠️ THE WORD BOUNDARY BELONGS ONLY ON THE BARE FORM. A trailing `\b` after
+    # a QUOTED name never matches: the closing quote and the following space are
+    # both non-word characters, so there is no boundary between them. Putting it
+    # outside the alternation is how the first attempt at this fix still failed
+    # on the exact DDL it was written for.
+    escaped = re.escape(oldName)
+    alternatives = '|'.join((
+        f'"{escaped}"',
+        rf'\[{escaped}\]',
+        f'`{escaped}`',
+        rf'{escaped}\b',
+    ))
+    pattern = (
+        r"(CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?(?:" + alternatives + r")"
+    )
+    rewritten, count = re.subn(
+        pattern,
+        lambda match: match.group(1) + newName,
+        sql,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    if not count:
+        raise ValueError(
+            f"could not find a CREATE TABLE target for {oldName!r} in the stored "
+            "DDL, so the rebuild would have re-created the LIVE table. Refusing "
+            f"rather than proceeding on an unchanged statement. DDL starts: "
+            f"{sql[:120]!r}"
+        )
+    return rewritten
+
+
+def ensureDataSourceCheckWidened(
+    conn: sqlite3.Connection, tableName: str,
+) -> bool:
+    """Idempotently widen ``tableName``'s ``data_source`` CHECK to the SSOT enum.
+
+    Rebuilds the table so its ``data_source`` CHECK lists the current
+    :data:`DATA_SOURCE_VALUES` (i.e. gains ``'foreign'`` on a pre-US-424 DB).
+    The rebuild preserves every row (``INSERT ... SELECT *`` -- identical column
+    order, only the CHECK text changes) and recreates the table's named indexes.
+
+    Idempotent + safe:
+
+    * A table whose stored SQL already contains ``'foreign'`` (fresh schema, or a
+      prior run) is a **no-op**.
+    * A missing table, or a table with no ``data_source`` column, is a no-op.
+    * Only tables with **no inbound foreign keys** are safe to rebuild this way;
+      ``realtime_data`` (the only table the US-424 ingest guard tags ``'foreign'``)
+      qualifies -- nothing FK-references it.
+
+    Args:
+        conn: Open sqlite3 Connection.  The caller owns commit semantics.
+        tableName: Capture-table name to widen.
+
+    Returns:
+        ``True`` iff a rebuild actually ran (the CHECK was previously narrow),
+        ``False`` on the no-op paths.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?",
+        (tableName,),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return False
+    oldSql: str = row[0]
+    if "data_source" not in oldSql:
+        return False
+    if "'foreign'" in oldSql:
+        # Already widened (fresh schema DDL or a prior migration run).
+        return False
+
+    # Widen just the data_source CHECK value-list to the current SSOT; every
+    # other column / FK / default in the stored DDL is preserved verbatim.
+    newTableSql = re.sub(
+        r"data_source\s+IN\s*\([^)]*\)",
+        DATA_SOURCE_CHECK_CLAUSE,
+        oldSql,
+        count=1,
+    )
+    if "'foreign'" not in newTableSql:
+        # Defensive: the stored DDL did not match the expected CHECK shape --
+        # refuse to rebuild rather than silently produce an unchanged table.
+        return False
+
+    tmpName = f"{tableName}__ds_widen_new"
+    newTableSql = _renameCreateTarget(newTableSql, tableName, tmpName)
+
+    # Capture the table's named-index DDL so it can be recreated after the
+    # rename (dropping the table drops its indexes).  Auto-indexes carry a
+    # NULL ``sql`` and are recreated by SQLite from the rebuilt constraints.
+    indexRows = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name = ? "
+        "AND sql IS NOT NULL",
+        (tableName,),
+    ).fetchall()
+
+    conn.execute(f"DROP TABLE IF EXISTS {tmpName}")
+    conn.execute(newTableSql)
+    conn.execute(f"INSERT INTO {tmpName} SELECT * FROM {tableName}")
+    conn.execute(f"DROP TABLE {tableName}")
+    conn.execute(f"ALTER TABLE {tmpName} RENAME TO {tableName}")
+    for (indexSql,) in indexRows:
+        conn.execute(indexSql)
+    return True

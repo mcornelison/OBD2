@@ -28,6 +28,11 @@
 #               |              | attribution_anomaly) and a run-level anomaly
 #               |              | tally.  Anomaly rows are rendered, never
 #               |              | dropped (downstream graceful-degradation DoD).
+# 2026-07-02    | Rex (US-436) | F-106: also invoke compute_drive_derived_signals
+#               |              | per drive so a single CLI / nightly tick
+#               |              | refreshes the drive_derived_signals table
+#               |              | (acceleration + estimated distance) alongside
+#               |              | summary + statistics.
 # ================================================================================
 ################################################################################
 
@@ -61,6 +66,9 @@ from collections.abc import Sequence
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from src.server.analytics.derived_signals_compute import (
+    compute_drive_derived_signals,
+)
 from src.server.analytics.drive_statistics_compute import (
     compute_drive_statistics,
 )
@@ -240,6 +248,12 @@ def main(argv: list[str] | None = None) -> int:
                         skipped += 1
                         continue
                     statsWritten = compute_drive_statistics(session, driveId)
+                    # US-436 / F-106: derive per-drive motion signals
+                    # (acceleration + estimated distance) from the SPEED stream.
+                    # Same drive_id as the summary/statistics compute; a drive
+                    # with <2 SPEED samples returns None and simply writes no
+                    # derived-signals row (no crash, no effect on the OK line).
+                    compute_drive_derived_signals(session, driveId)
                     # US-363: surface the data_quality tripwire flag visibly.
                     # The row is written and fully readable -- the CLI never
                     # drops or refuses an anomaly row; it renders it with a

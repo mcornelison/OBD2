@@ -17,6 +17,180 @@ reframe; prototyped in the Shutdown Sequencer (V0.27.15); **carry project-wide**
   was inferring *"am I on external power?"* (source) from *"how much charge is
   left?"* (a VCELL charge *trend*). Different facts → different providers.
 
+## The rule, extended (CIO directive, 2026-08-20)
+
+Two further clauses, stated by the CIO after a day in which BOTH were found violated in production.
+**Normative, project-wide.**
+
+### A. Land what you read
+
+**If we read any data, we land it.** Every acquisition is persisted — not only sensor and vehicle data
+but **metadata and log data too**. An unlanded read is unreproducible: it cannot be audited, diagnosed,
+or re-derived, and it evaporates the moment the surface that displayed it repaints.
+
+**Worked example, 2026-08-20 — this rule is what made a diagnosis possible.** The ICM-20948
+magnetometer was found latched (one value re-served forever). It was provable ONLY because 29,148
+samples had been landed in `edr_imu_sample`: "1 distinct value across 29,148 rows" is a statement you
+can only make about data that was *kept*. Had the magnetometer merely been published to the UI, each
+reading would have overwritten the last and the defect would have been invisible — exactly as it was
+invisible on screen, where a frozen compass looks like a stationary one.
+
+> *Status of the example, 2026-08-28 (US-571).* **That acquisition defect was fixed by US-565** and the
+> channel now varies on the shipping code path. The example is retained because the rule it demonstrates
+> is what made the diagnosis possible — not as a statement about the magnetometer's present state.
+> Current status → `specs/grounded-knowledge.md` §Magnetic Heading (real, but uncalibrated).
+
+**Corollary — landing must not manufacture a reading.** "Land everything" means *never let acquired
+data evaporate*; it does NOT mean *write a row regardless*. If a read failed, or returned an implausible
+or invariant value, no value was acquired — land the **typed absence and its reason**, never a
+fabricated measurement. The three 2026-08-20 fabrications (`syncPending=0`, all-zero IMU frames, the
+latched magnetometer) are what this corollary forbids. See *Honest availability* below.
+
+### A′. The rule extended on three axes (CIO directive, 2026-08-29)
+
+> **"If we read, touch, or have access to any data we must land it, time and date stamp it and save
+> it to the server database."**
+
+This is **not** a restatement of A. It strengthens it on three distinct axes, and each has teeth:
+
+| | rule A (2026-08-20) | extension (2026-08-29) |
+|---|---|---|
+| **Trigger** | "if we **read** any data" | **"read, touch, or have access to"** |
+| **Stamp** | not stated | **date + time stamp MANDATORY** |
+| **Destination** | "persisted" — tier unspecified | **the SERVER database**, named |
+
+**1. Trigger — "have access to" is the sharp one.** It catches values a component *holds* without
+ever treating them as data. Worked example, ARCH-009: `edr_light_sample` carried `gain` and
+`integration_ms` columns **since it was designed** — schema comments and all — populated in **0 of
+235,795 rows**. The driver *must* set both to read the TSL2591 at all, so they were in hand at every
+read and discarded at every write. Under "read" that is arguable; under **"have access to"** it is
+not. ⚠️ **The reading without its conditions is a number whose meaning cannot be reconstructed** —
+and those two values were exactly what separated *"mis-ranged sensor"* from *"IR-subtraction limit"*
+when the negative-lux defect appeared (ARCH-010). The diagnosis was impossible because the answer
+had been thrown away.
+
+**2. Stamp — and a caveat that is now HISTORICAL.** Every landed row carries a date + time stamp.
+🔴 **CORRECTED 2026-09-23. This paragraph previously said the RTC "has no charged backup cell, so
+every boot starts at 1970". THAT HAS BEEN FALSE SINCE 2026-09-01**, when the CIO fitted a
+rechargeable cell to the Pi 5 `J5`/`BAT` connector. **MEASURED on `chi-eclipse-01` 2026-09-23:**
+`rpi-rtc: trickle charging enabled at 3000000uV` **and** `rpi-rtc: setting system clock to
+2026-09-21T23:20:35 UTC` — **the correct time, read off the chip at device probe, before any network
+stack exists.** The boot before it ended 64 s earlier, so the cell demonstrably bridged a real
+power-off. ⇒ **cross-boot timestamps are trustworthy from 2026-09-01 forward, including off-network
+in the car.**
+⚠️ **The correction was recorded in shared `MEMORY.md` on 2026-09-01 and this spec repeated the dead
+fact for three weeks anyway** — §A″ below was *written* on 2026-09-21, twenty days after the fix.
+**A fact corrected in one store is not corrected until every consumer copy is swept** (the keeper-of-
+`specs/` duty). ⚠️ **`trickle charging enabled` alone is NOT evidence a cell is present** — it is
+logged on every boot, including boots that then set 1970. **The discriminator is the `setting system
+clock to <a real date>` line**, which the kernel emits before userspace NTP.
+⚠️ **HISTORICAL DATA IS NOT RETROACTIVELY REPAIRED:** any in-car boot before 2026-09-01 may still
+carry wrong timestamps (the drives 45/46 exclusion stands).
+**The durable rule is unchanged and still governs: land a monotonic reading alongside the wall
+clock, and land whether the clock was disciplined when the row was written.** ARCH-003 does exactly this for I2C health records
+(`monotonic` + `clockSynced`). A stamp that might be wrong and does not say so is a fabricated
+timestamp, which rule A's corollary already forbids.
+
+**3. Destination — "the server database" makes Pi-local landing non-compliant.** Measured
+2026-08-29: `edr_light_sample` (235,794 rows) and `edr_imu_sample` (4,874,847 rows) are landed on
+the Pi and there are **ZERO EDR tables on the server** — **5.1 million rows single-copy on an SD
+card**, in a device that power-cycled ten times on 2026-08-28. Under rule A that was a defensible
+phase decision (raw Pi-local, server sync deferred to F-115). **Under A′ it is non-compliance.**
+
+⚠️ **Landing to the server is a NEW instance of the A-4 Pi↔server divergence risk** and must go
+under versioned `src/common/` contract discipline. It is also a different sync problem in kind:
+4.9M rows in seven days is not shaped like `realtime_data`, and **capture must outrank forensics** —
+a raw-sample sync that starves the capture path has traded a real loss for a diagnostic.
+
+**The §A corollary is UNCHANGED and still governs all three axes.** Landing must not MANUFACTURE a
+reading. "Land everything" is not "write a row regardless": a failed, implausible or uncomputable
+read lands a **typed absence and its reason**. Worked example under the new rule — ARCH-010: an
+IR-dominated lux computation is published as `null`, **not clamped to 0**, because 0 lux is a
+*reading* that says "dark" and would have dimmed the panel in bright sun. **The corollary is what
+stops A′ becoming a fabrication mandate**, and it is the half most likely to be dropped when
+somebody is trying to satisfy the letter of "land everything".
+
+### A″. WHICH time — event time is the record (CIO directive, 2026-09-21)
+
+> **"We record the time the data was created. We can additionally have the write time/date, but
+> the time of the event is the most important date/time for ALL data."**
+
+A′ made a stamp **mandatory**. It never said **which** time, and that gap is load-bearing:
+**a row stamped with its write time satisfies A′ while destroying the information A′ exists to
+preserve.** A″ closes it.
+
+| | A′ (2026-08-29) | A″ (2026-09-21) |
+|---|---|---|
+| **Stamp** | a date+time stamp is MANDATORY | **the EVENT time is the record** |
+| **Write time** | not distinguished | **optional metadata, never the substitute** |
+| **Scope** | every landed row | **ALL data, both tiers, no exceptions** |
+
+**Event time is when the thing HAPPENED — when the sensor was sampled, when the ECU answered, when
+the rail dropped. Write time is when a row reached storage.** Under normal load they differ by
+milliseconds and nothing shows. **The difference only appears when it matters.**
+
+🔴 **WHY IT MATTERS — write-time stamps SMOOTH OVER GAPS, and a smoothed gap is invisible.**
+When a queue backs up, a batch of readings lands together and the rows come out evenly spaced at
+*write* cadence. **A discontinuous capture is rendered as a continuous one.** Nothing is missing
+from the table, nothing errors, and the defect is not merely hidden — **the record now positively
+asserts that the system was healthy during the interval it was failing.** Worked example: the
+2026-09-15 leg whose row timestamps looked gapless, which cost an investigation (US-777, US-809).
+
+**Consequences, in force from this date:**
+
+1. **A row's timestamp column means EVENT time** unless the column is explicitly named otherwise.
+   A `timestamp` that silently holds write time is a **mislabelled measurement**, not a detail.
+2. **Keeping write time as well is encouraged, in its own column.** A″ adds a requirement; it
+   removes nothing. Two honest columns beat one ambiguous one.
+3. 🔴 **A pipeline may not RESTAMP.** Discarding a caller's measured time and substituting "now"
+   at the final write is the specific defect this rule names. Worked example, measured
+   2026-09-21: `src/pi/obdii/data/logger.py:380` passes `utcIsoNow()` into the INSERT and discards
+   `reading.timestamp` — **on the shared path both persistence routes run through.**
+4. **Where event time is genuinely unavailable, land a typed absence and say so** — never
+   substitute write time silently. **The §A corollary governs here exactly as elsewhere: a
+   substituted timestamp is a MANUFACTURED reading.**
+
+⚠️ **A″ compounds with A′ §2's clock caveat — but read that caveat's 2026-09-23 correction first.**
+🔴 **The RTC backup cell was fitted 2026-09-01 and is MEASURED working**; the "every boot starts at
+1970" claim this line used to rest on is dead. The durable point survives it: an *event* time is only
+as trustworthy as the clock at the moment of the event, and the clock is now trustworthy across
+boots.
+**Land the monotonic reading and the `clockSynced` flag alongside, as ARCH-003 already does.**
+An event time that might be wrong and does not say so is still a fabricated timestamp.
+
+⚠️ **Scope note for anyone auditing against this:** `utcIsoNow()` appears at **27 call sites across
+18 files** in `src/pi` (measured 2026-09-21). **That is an upper bound on where A″ lands, NOT a
+defect count** — many are legitimate "what time is it now" uses (alert timing, retention sweeps,
+boot progress). **Separating them is an audit, and the audit is not the rule.** Do not cite the
+number as a finding.
+
+### B. Read once → persist → publish → subscribe
+
+**Never read the same source twice, and never acquire it separately for two display locations.**
+The pipeline is one-directional:
+
+```
+   ONE reader  →  persist  →  publish  →  N subscribers (UI, sync, triggers, analytics)
+```
+
+Two surfaces needing the same fact is **not** a reason for two acquisitions. It is the reason the
+published topic exists.
+
+**Worked example 1 — the sharpest one this project has produced.** `PldSensor` (the X1209 GPIO6
+power-present line) was constructed in **two separate processes**: `lifecycle.py:2342` (`eclipse-obd`)
+and `power_watch/__main__.py:376` (`eclipse-powerwatch`). A GPIO line is an **exclusive OS resource**, so
+the second process to start received `GPIO busy` and silently degraded to a fallback — every boot.
+
+Note what distinguishes this from ordinary drift: **a duplicated *config* read merely diverges; a
+duplicated *exclusive-hardware* read fails by construction.** The operating system enforced the contract
+the software did not. Most SSOT violations are quiet; this one could not be.
+
+**Worked example 2.** The version chip is served from **two providers** — the dashboard reads
+`.deploy-version`, while splash and shutdown read `version.txt`. Both derive from `RELEASE_VERSION`, but
+at different deploy steps with a failure gate between them, so a failed restart-verification leaves the
+two surfaces displaying **different versions** — in precisely the scenario where knowing the true
+running version matters most.
+
 ## Why
 
 The V0.27.2–.15 power rabbit hole + near-bricking traced largely to **three
@@ -44,12 +218,287 @@ applies as good practice but isn't gate-enforced.
 line). See:
 
 - `specs/architecture.md` §2 (power-source detection — SSOT narrative)
-- `docs/superpowers/specs/2026-05-18-pi-shutdown-sequencer-design.md` §2
-- `docs/superpowers/plans/2026-05-18-pi-shutdown-sequencer.md` T3/T4
+- `$FLEET_SHARE/knowledge/superpowers/specs/2026-05-18-pi-shutdown-sequencer-design.md` §2
+- `$FLEET_SHARE/knowledge/superpowers/plans/2026-05-18-pi-shutdown-sequencer.md` T3/T4
 - The retired heuristic is retained as a **`NotImplementedError` tripwire** so
   any future reintroduction fails loudly at the call site. That's the SSOT
   enforcement mechanism: when there's one provider, there's also one loud
   failure surface guarding against reintroduction of competing providers.
+
+## Worked examples
+
+The pattern has now bitten — and been enforced — at two different tiers. Both
+are the *same* bug class (divergent copies of one fact) with the *same* cure
+(one canonical source; everything else derives or references; a loud gate guards
+against re-divergence).
+
+1. **Power-source fact (Pi runtime).** Three acquisition paths
+   (`UpsMonitor.getPowerSource` VCELL-trend, `PldSensor` GPIO6, `PowerManager`)
+   could disagree → near-bricking. Cure: one `PowerSourceProvider` (GPIO6 SSOT),
+   competing paths retired to a `NotImplementedError` tripwire. (See Prototype
+   reference above.)
+
+2. **Server-address fact (config / deploy).** The chi-srv-01 address was held as
+   a literal in three sanctioned mirrors — `config.json`, `validator.py`
+   DEFAULTS, `deploy/addresses.sh` — that the B-044 audit *exempts*, plus
+   `config.json` triplicated it internally. The 2026-06-18 `.10 → .120` box move
+   updated some copies and not others → sync broke. This is **"documented
+   duplication," not SSOT.** Cure (Watch item A-15): a mirror-consistency gate
+   (`scripts/audit_address_mirrors.py` + `tests/lint/test_address_mirror_consistency.py`)
+   that fails when any copy diverges — the loud failure surface this pattern
+   requires. Lesson reinforced: *an audit's guarantee is only as wide as what it
+   inspects.* "No new stray literal" (B-044) and "the blessed copies still agree"
+   (A-15) are two different guarantees; you need both gates.
+
+3. **Raw-sensor schema fact (cross-tier EDR persistence).** The EDR raw-sensor
+   tables (`edr_imu_sample` / `edr_light_sample`) are a fact both tiers need: the
+   Pi creates SQLite tables now, and the future server MariaDB migration (F-115)
+   must match column-for-column. Left to hand-written DDL per tier, this is the
+   *same* bug class as the A-15 server-address mirrors — divergent copies of one
+   fact. Cure (A-4 / A-14 gate #4): the DDL is authored **once** in a versioned
+   `src/common/edr/sensor_schema.py` contract (`SCHEMA_VERSION` bare-int stamped
+   into every row, mirroring `power_watch.RECORD_SCHEMA_VERSION`) and both tiers
+   *derive* from it — neither hand-writes its own copy, so the Pi↔server drift
+   cannot arise. The Pi wires the contract by importing `EDR_SCHEMAS`/`EDR_INDEXES`
+   and splatting them into its existing `CREATE IF NOT EXISTS` loop; the server
+   table, when F-115 lands, is generated from the same module. This is SSOT
+   applied *ahead* of the consumers for a cross-tier schema — one source, both
+   tiers reference. Built Sprint 50 / V0.29.4 (US-408). See `specs/architecture.md`
+   §10.8.2 and the ADR
+   `$FLEET_SHARE/knowledge/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §2.
+
+4. **Server-analytics authority — the *derived-data* boundary (server tier, F-104).**
+   Drive identity had fragmented into an id-family — the Pi-minted `drive_id`, the
+   de-facto server identity `drive_summary.id`, and scattered FKs — and a persisted
+   analytic (`drive_statistics`) had **two** writers (the B-104 compute-harness and
+   the `/analyze` path) that could disagree, last-writer-wins. **Same bug class**
+   as the address mirrors and the power-source saga: N divergent copies of one
+   fact. **Cure (F-104):** one canonical server-minted `drives.drive_id` **SSOT for
+   drive identity** (subsuming `drive_summary.id`, anchored by
+   `UNIQUE(source_device, source_drive_id)` + an idempotent upsert-by-natural-key
+   mint that never renumbers); one **sole-writer compute-harness** that derives
+   every persisted-analytics table **from synced raw** (idempotent — re-run = 0
+   owned-row diffs); Pi ids demoted to advisory `source_*` (compute-locally-for-UI,
+   thrown away). The **boundary rule** is the derived-data generalization of "one
+   provider per fact": *a fact is server-authoritative iff the server can reproduce
+   it from raw → server sole-writer; irreproducible → raw, the Pi emits it
+   first-class; no derived state the Pi transmits.* The **loud failure surfaces**
+   this pattern requires: the `attribution_anomaly` tripwire (kept **detecting on
+   the raw** Pi id so a dual-mint still trips — the backstop is not blinded by the
+   deduped server identity) + the `NotImplementedError` trigger-seam tripwire
+   (`enqueueAutoAnalysisForSync`) guarding against re-introducing a Pi-side writer.
+   *Status (Sprint 55 / V0.29.9):* the identity SSOT (US-448) + idempotency proof
+   are **landed**; formalizing the harness as the *sole* writer is in progress —
+   the second `drive_statistics` writer via `/analyze` (`basic.py`) is an open
+   reconciliation (BL-017), the exact "N divergent writers of one fact" this
+   pattern exists to kill, pending an Atlas ruling. See `specs/architecture.md`
+   §10.7.3 + the F-104 ADR
+   `offices/architect/reports/2026-07-04-f104-server-analytics-authority-design-gate-ruling.md`.
+
+## Emerging direction — SSOT for *derived* data, enforced at a broker (EDR bus)
+
+> **STATUS: DRAFT — current CIO thought process, NOT yet ratified.** Captured
+> here so the direction is visible and consistent with the rule above; do **not**
+> treat the bus specifics below as gate-enforced until the CIO firms it. Owning
+> gate: Atlas A-14 #4. Sources: `offices/architect/reports/2026-06-16-edr-vs-b104-architecture-ruling.md`;
+> `$FLEET_SHARE/knowledge/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`.
+
+The EDR epic generalizes SSOT from *raw* facts to *derived* ones. The shape:
+
+- **One dedicated reader-service** reads every source (K-line, 9-DoF IMU, light)
+  at its needed rate and **publishes to an internal bus / pub-sub** — one
+  acquisition path per source, not one per consumer (the §"How to apply" rule,
+  applied to acquisition).
+- **Consumers subscribe and apply their own policy** (FDR vault, UI/display,
+  triggers, server-sync) — the consumer-applies-policy rule, unchanged.
+- **Any transform more than one consumer needs goes in a shared transformation
+  layer *before* publish** — so SSOT holds for *derived* data too, enforced at
+  the broker rather than re-computed divergently downstream. (This is the
+  conceptual extension: today SSOT covers raw facts; the bus extends it to
+  computed ones.)
+- **Server-sync is a uniform subscriber**, not a special path — it subscribes to
+  raw + marker topics, persists locally, hands to the server on upload. This
+  makes the "raw still goes to the server, server keeps persisted-analytics
+  authority" rule a *subscription filter*, not a remembered exception, and forces
+  **per-subscriber QoS** (lossless/durable for sync + safety; lossy-OK for
+  display).
+
+Why this belongs with the rule: the A-15 address drift and the power-source saga
+are both "one fact, N divergent copies." The bus is the same cure applied
+*ahead* of the consumers and *for derived data* — one transform, one published
+value, everyone else subscribes. When the CIO ratifies, this section graduates
+from draft to normative and the EDR contract artifacts become its prototype
+reference.
+
+## Honest availability — the *unavailable-source → typed-NA* pattern
+
+> **STATUS: NORMATIVE (CIO-directed 2026-07-01).** The honest-instrument
+> corollary of SSOT for a live data surface. Applies to every consumer that
+> displays or records source data (carousel emitters, EDR-bus display
+> subscribers, any status surface). Owning gate: Atlas.
+
+**The rule.** A live display/record surface must **always show real data or an
+explicit "not available" — never a blank, a stale value, or a fabricated one —
+from one SSOT.** Two sub-rules make it honest:
+
+1. **Availability is a property of the SOURCE, not the parameter — one truth per
+   source.** When the OBD link is down (car off / disconnected), *every* OBD
+   parameter is unavailable *together*. So each source (OBD link, IMU, light,
+   UPS) owns exactly **one availability fact** — a retained STATE topic
+   `state.source.<x> = available | unavailable`, written by that source's reader.
+   Every parameter from that source inherits it. Do not compute availability
+   per-parameter (that re-imports the "N divergent copies of one fact" bug this
+   whole doc kills).
+
+2. **NA is a TYPED absence (NULL + a reason), NEVER a numeric sentinel.** In the
+   data / bus / DB, an unavailable value is **NULL plus a status** (`unavailable`
+   / `sensor_absent` / `stale` / `no_drive` / `na_this_vehicle`), *never* a magic
+   number (`-1`, `0`, `9999`). A numeric NA silently corrupts aggregations
+   (`AVG` over `-1`s) and gets rendered as if real — the exact class of the
+   `pd_stage = -1` sentinel pain (US-276/277) and the reason `data_source` /
+   `data_quality` are enums and `drive_id` goes NULL not `0`. The **display**
+   *renders* "NA" / "—" (a visual, derived from NULL + the reason); the **datum
+   stays NULL** so analytics never counts it. The reason travels with it so the
+   surface is honest about *why* ("OBD: off" vs "sensor not installed" vs "stale
+   — last seen 40s ago") — a driver reads those very differently.
+
+**Layering (where the NA is resolved).** Keep the raw bus **real-or-silent** —
+`raw.<source>.*` STREAM topics carry real numbers or nothing; do **not** put NA
+onto the raw bus (that would force `Sample.value: float | tuple | None` and drag
+NA through the analytics path). Instead the **transform / display-state tier**
+(the emitters that write the state a UI reads) resolves *value + source-
+availability → real-or-typed-NA* **once**, so every consumer shows the same
+thing — this is the "shared transform before publish" of the EDR-bus direction
+above, applied to the derived "what does the operator see" fact. And it must be
+**fresh every tick**: the emitter writes real-or-NA on each cycle and never
+leaves the last real value sitting stale when the source drops. *(Putting NA on
+the raw bus is a real fork; decide it when the EDR bus grooms. Default: don't —
+keep raw analytics pristine.)*
+
+**Worked example.** Pi on wall power, car off → `state.source.obd = unavailable`
+→ the System Status card shows "OBD: off" and every engine parameter shows
+"NA (no OBD)", all fresh, none fabricated. Meanwhile a wired IMU / light sensor
+has `state.source.imu = available` → those show **real** data on the same
+screen. The display is an honest mosaic — real where the source is live,
+typed-NA-with-reason where it isn't — from one SSOT. (Compare the current splash
+"eclipse-obd: not ready" — same idea, generalized to every card.)
+
+**Anti-patterns this forbids:** green-when-source-down; a card frozen on the last
+real value after the link dropped; a numeric NA sentinel in a table/analytic; a
+takeover/alert firing on an empty/absent state (an absent DTC source must read
+`unavailable`, not "no codes → all-clear" and not a mis-fired alert).
+
+### Detecting it — a non-measurement can look perfectly valid, so test for VARIANCE
+
+Honest availability says *what to publish* when a source is unavailable. This is *how to notice*, because
+the hard cases do not announce themselves.
+
+**Two checks, both on the SUCCESS path** (the absence and error paths are usually already honest — a read
+that raises is easy):
+
+1. **Implausible magnitude.** A value outside what physics permits is not a reading. A resting
+   accelerometer must read ~9.81 m/s²; an all-zero frame is not a quiet measurement, it is no measurement.
+2. **Invariance.** A channel returning **N consecutive BIT-IDENTICAL samples** is not reading.
+
+#### Test bit-identity, NOT "low variance" — this distinction is the whole rule
+
+The intuitive implementation is *"flag a channel whose variance falls below threshold X."* **That is
+wrong twice over:** it needs a tuned magic number, and it **will** false-positive on a legitimately
+stationary system, whose readings really are nearly constant.
+
+**Bit-identity has neither problem.** Every real sensor dithers ±1 LSB from thermal noise and ADC
+quantization **even in a perfectly constant field**. So N consecutive bit-identical samples cannot occur
+naturally, at any threshold, in any environment. The test needs no calibration and cannot cry wolf.
+
+> 🔴 **CORRECTED 2026-09-21 (Spool, who wrote the paragraph above and was wrong in it).** The
+> sentence *"cannot occur naturally, at any threshold, in any environment"* is **TOO STRONG, and it
+> produced a false accusation the same week it was cited.** It holds for a **high-resolution raw ADC
+> channel** — the IMU and magnetometer it was derived from. It does **NOT** hold for a **coarsely
+> quantized OBD-II PID.**
+>
+> **THE PRECONDITION THE RULE DEPENDS ON, now stated:** bit-identity detects a latched channel only
+> where **the physical dither is LARGER than one LSB.** That is what makes the noise floor a
+> detector. Where the quantization step is coarser than the real variation, **a bit-identical run is
+> the correct reading of a quiet input**, and the test has no signal to work with.
+>
+> **MEASURED FALSIFICATION (2026-09-21).** `THROTTLE_POS` (PID `$11`) returned the identical byte —
+> raw `2`, i.e. `2/255 × 100 = 0.784314 %` — for **374 consecutive samples across an entire day**,
+> and that is **CORRECT**: one LSB is `1/255` = **0.39 % of throttle travel**, and a throttle plate
+> resting on its mechanical stop does not move 0.39 %. **The dither is below one LSB, so the byte is
+> genuinely constant.** On the one day in that window when the engine actually ran, the same channel
+> returned **59 distinct values from 1.18 % to 69.41 %.**
+>
+> 🔴 **THE DISCRIMINATOR IS ENGINE STATE, NOT VARIANCE.** Across 2026-09-17 → 09-21 the correlation
+> is exact — with `RPM = 0`, `THROTTLE_POS`, `TIMING_ADVANCE` (const `5.0`) and `O2_B1S1` (const
+> `0.04`) are all single-valued; with `RPM` 644–5260 they carry 59, 33 and 51 distinct values
+> respectively. **Three channels, one cause, and the cause is that the engine was off.**
+>
+> ⇒ **RULE, AMENDED: apply bit-identity to engine PIDs ONLY behind a state gate (`RPM > 0`).**
+> Unqualified, it accuses a parked car of fabricating data. Applied to raw high-resolution sensor
+> channels the original statement stands unchanged — that is where it was derived and where its
+> proof lives.
+>
+> ⚠️ **Why this belongs in the spec rather than a footnote:** this is the SAME failure shape as
+> F-051 — *a rule grounded in one regime and evaluated in another* — and here the regime boundary is
+> invisible, because a latched channel and a quiet channel are **bit-for-bit identical**. **The data
+> cannot tell them apart. Only the state gate can.**
+
+**Measured proof (2026-08-20).** A device held stationary, then hand-rotated, sampled 90 s:
+
+```
+accelerometer : 743 distinct values      <- dithering normally, tracking motion
+magnetometer  :   1 distinct value       <- latched; bit-identical throughout
+```
+
+Same die, same instant, same physical motion. **The noise floor IS the detector.**
+
+*(That 2026-08-20 capture is the evidence for the detector, not the channel's current state — US-565
+fixed the acquisition and the same test now reads 27 distinct mag_x values in 2,108 samples. The gate
+stays: it is what would catch a silent return of the defect.)*
+
+#### The property may live ACROSS samples, not IN one
+
+This is why per-sample validation is insufficient. The magnetometer's `-26.7 µT` was **fresh, finite and
+physically plausible** — every individual sample passed inspection. The defect existed only in the
+*sequence*. A gate that asks only *"is this value possible?"* will pass a latched channel forever; it must
+also ask *"is this channel actually varying?"*
+
+#### Corollary — derived fields go NA with their input
+
+Never derive a precise value from a stale one. A heading printed to 0.1° from a frozen magnetic vector is
+maximum apparent precision over zero information. When a source channel is gated, every field derived from
+it publishes typed NULL + reason.
+
+### Config-time corollary — an unresolved `${VAR}` placeholder is a string sentinel
+
+> **STATUS: NORMATIVE (Atlas ruling 2026-08-02, verified in code).** The
+> config-load analog of sub-rule 2. Verified: `secrets_loader._resolveString`
+> (`src/common/config/secrets_loader.py:151-153`) returns the **literal
+> placeholder string verbatim** when the env var is unset *and* the key carries
+> no inline `${VAR:default}` — a warning is logged, nothing raises.
+
+Consequence: for a `${VAR}`-bound optional key with the env var unset, the
+validated config holds a **truthy `"${PI_HOME_LAT}"` string**, so the validator's
+`None` default **never fires** (the key is already "present"). A downstream
+consumer that reads the key directly gets that literal string — a *confident
+wrong value* masquerading as data. This is the numeric-sentinel failure mode of
+sub-rule 2, in string form, moved to config-load time.
+
+**The rule.** For any placeholder-bound key that may legitimately be unset
+(optional secrets, PII like location, hardware not yet installed):
+
+1. The key's **provider normalizes** an unresolved `${...}` literal to typed-NA
+   (`None` + reason), exactly as `HomeLocationProvider` does (US-517) — the same
+   "resolve availability once, at the provider, not at each consumer" discipline
+   as the live-surface rule above. Never leave a raw consumer to discover the
+   literal.
+2. **OR** the key carries an inline `${VAR:default}` — but only when a committed
+   default is honest. It is **not** honest for PII or a fabricated physical
+   anchor (a coordinate/altitude in source is both committed PII *and* a made-up
+   fact); those stay `${VAR}`-bare and rely on rule 1.
+
+A future config lint could flag placeholder-bound keys read without NA-
+normalization — routed as a candidate, not built here.
 
 ## Cross-references
 

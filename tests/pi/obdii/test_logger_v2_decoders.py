@@ -71,6 +71,12 @@ class FakeObdConnection:
             return SimpleNamespace(value=None, unit=None, is_null=lambda: True)
         return resp
 
+    def query(self, cmd: Any, callerGeneration: int | None = None) -> Any:
+        """US-441: mirror ObdConnection.query -- the serialized read path the
+        logger now calls.  Delegates to the python-obd facade; the wrapper's
+        lock/fence is unit-tested separately (test_obd_connection_thread_safety)."""
+        return self._query(cmd)
+
     def isConnected(self) -> bool:
         return self._connected
 
@@ -115,7 +121,8 @@ class TestBatteryVoltageAdapterPath:
         reading = logger.queryParameter("BATTERY_V")
 
         assert reading.value == pytest.approx(12.6)
-        assert reading.unit == "V"
+        # US-455 / D-4: canonical python-obd native unit ('volt', not 'V').
+        assert reading.unit == "volt"
 
     def test_query_bypassesSupportedPidCheck_forAdapterCommand(self) -> None:
         """BATTERY_V has pidCode=None — supportedPids should be ignored."""
@@ -170,7 +177,7 @@ class TestSupportedPidGating:
         logger = ObdDataLogger(conn, _db())
 
         with pytest.raises(ParameterNotSupportedError):
-            logger.queryParameter("O2_BANK1_SENSOR2_V")  # PID 0x15 not in set
+            logger.queryParameter("O2_B1S2")  # PID 0x15 not in set
 
     def test_supportedPid_proceedsToQuery(self) -> None:
         conn = FakeObdConnection(
@@ -179,7 +186,7 @@ class TestSupportedPidGating:
         )
         logger = ObdDataLogger(conn, _db())
 
-        reading = logger.queryParameter("O2_BANK1_SENSOR2_V")
+        reading = logger.queryParameter("O2_B1S2")
         assert reading.value == pytest.approx(0.7)
 
     def test_noSupportedPidsCache_treatsAsSupported(self) -> None:

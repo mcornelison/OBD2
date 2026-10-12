@@ -25,6 +25,10 @@
 #               |              | data_source, drive_start_timestamp) are
 #               |              | preserved -- is_real is derived from the
 #               |              | Pi event-log data_source per Atlas Q2.
+# 2026-07-02    | Rex (US-437) | N-8: populate drive_summary.profile_id (was
+#               |              | NULL on every row) from realtime_data.profile_id
+#               |              | -- the surviving compute path never copied it
+#               |              | after the trigger-seam writer retired.
 # ================================================================================
 ################################################################################
 
@@ -66,10 +70,12 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from src.server.analytics.drive_identity import upsert_drive
 from src.server.analytics.overlap import detect_overlapping_drives
 from src.server.db.models import (
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
-    DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+    DATA_SOURCE_DEFAULT,
+    DRIVE_SUMMARY_DATA_QUALITY_FULL,
     DriveSummary,
     RealtimeData,
 )
@@ -95,9 +101,10 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
     Reads every ``realtime_data`` row for ``driveId`` (Pi-local drive_id,
     populated on the column by the US-200 sync path) and writes the
     derived analytics columns (``start_time``, ``end_time``,
-    ``duration_seconds``, ``row_count``, ``is_real``) onto the existing
-    Pi-sync ``drive_summary`` row matched by either ``source_id`` or
-    ``drive_id``.
+    ``duration_seconds``, ``row_count``, ``is_real``, ``profile_id``) onto
+    the existing Pi-sync ``drive_summary`` row matched by either
+    ``source_id`` or ``drive_id``.  ``profile_id`` (US-437 / N-8) is the
+    profile the drive ran under, sourced from ``realtime_data.profile_id``.
 
     Pi event-log columns (``drive_start_timestamp``,
     ``ambient_temp_at_start_c``, ``starting_battery_v``, ``data_source``,
@@ -183,7 +190,7 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
     overlappingDriveIds = detect_overlapping_drives(session, driveId)
     dataQuality = (
         DATA_QUALITY_ATTRIBUTION_ANOMALY if overlappingDriveIds
-        else DRIVE_SUMMARY_DATA_QUALITY_DEFAULT
+        else DRIVE_SUMMARY_DATA_QUALITY_FULL
     )
     if overlappingDriveIds:
         logger.warning(
@@ -192,6 +199,24 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
             "data_quality=%s",
             driveId, overlappingDriveIds, DATA_QUALITY_ATTRIBUTION_ANOMALY,
         )
+
+    # US-437 (N-8): stamp the profile the drive ran under.
+    # drive_summary.profile_id was NULL on every row -- the retired trigger-seam
+    # writer (analysis._ensureDriveSummary) sourced it from realtime_data, but
+    # the surviving compute path never copied it.  Read the earliest non-NULL
+    # profile_id for the drive from the canonical raw stream; preserve NULL
+    # (honest-instrument) when the raw data carries none -- and never clobber an
+    # already-set summary value with NULL.  Idempotent (same raw data -> same
+    # profile_id on re-run).
+    profileId = session.execute(
+        select(RealtimeData.profile_id)
+        .where(realtimeFilter)
+        .where(RealtimeData.profile_id.isnot(None))
+        .order_by(RealtimeData.timestamp.asc())
+        .limit(1)
+    ).scalars().first()
+    if profileId is not None:
+        summary.profile_id = profileId
 
     summary.start_time = startTime
     summary.end_time = endTime
@@ -208,6 +233,41 @@ def compute_drive_summary(session: Session, driveId: int) -> int | None:
     if summary.source_id is None:
         summary.source_id = driveId
     session.flush()
+
+    # US-460 / F-104: mint the canonical drives identity for this drive.
+    # ``drives`` is a harness-owned table (US-449); the harness that derives a
+    # drive mints its canonical drive_id here via the natural-key upsert
+    # (``upsert_drive``) so US-451's forward-only FK re-point never orphans a
+    # new-drive write.  Idempotent -- a recompute re-uses the existing drive_id
+    # (upsert_drive never renumbers an already-seen drive).  Only minted when
+    # the advisory natural key is fully specified: a legacy row with a NULL
+    # ``source_device`` is deferred to US-451's unmappable-legacy mint path
+    # (upsert_drive requires a non-empty source_device), never fabricated here.
+    if summary.source_device:
+        canonicalDriveId = upsert_drive(
+            session,
+            source_device=summary.source_device,
+            source_drive_id=driveId,
+            start_time=startTime,
+            end_time=endTime,
+            data_source=(
+                summary.data_source
+                if summary.data_source is not None
+                else DATA_SOURCE_DEFAULT
+            ),
+            data_quality=dataQuality,
+        )
+        logger.info(
+            "compute_drive_summary | drive_id=%s | minted canonical "
+            "drives.drive_id=%s",
+            driveId, canonicalDriveId,
+        )
+    else:
+        logger.info(
+            "compute_drive_summary | drive_id=%s | NULL source_device -- "
+            "canonical drives mint deferred to US-451 unmappable-legacy path",
+            driveId,
+        )
 
     logger.info(
         "compute_drive_summary | drive_id=%s | summary_id=%s | "

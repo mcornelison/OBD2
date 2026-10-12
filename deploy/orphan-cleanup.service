@@ -56,6 +56,11 @@ After=eclipse-obd.service
 [Service]
 Type=oneshot
 
+# systemd defaults TimeoutStartSec to INFINITY for Type=oneshot, so an
+# unbounded hang holds a start job forever and blocks every unit ordered
+# After= this one. Ceiling: copies a 2.2 GB DB then does SQL over it -- legitimately minutes, so the ceiling is generous.
+# (2026-08-27: drain-forensics.service hung ~4h this way and hung the deploy.)
+TimeoutStartSec=45min
 # Run as the same user as the main eclipse-obd service so the SQLite file
 # permissions are consistent (the live writer also runs as mcornelison).
 User=mcornelison

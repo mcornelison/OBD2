@@ -1,0 +1,880 @@
+################################################################################
+# File Name: render_harness.py
+# Purpose/Description: US-499 (S6, F-121) render-regression backstop -- the
+#   render side of the harness. Parses the SHIPPED markup into a DOM tree, runs
+#   the SHIPPED browser JS over it (via the node probes), then resolves the
+#   SHIPPED stylesheet across the resulting tree to decide what actually has a
+#   box on screen.
+#
+#   WHY THIS EXISTS. Sprint 66 shipped three defects that every unit test
+#   passed: US-494 (a dependency the systemd entry point never injected),
+#   US-495 (correct JS defeated by a stylesheet the JS cannot see), US-498 (three
+#   individually-correct animation declarations interacting to a black screen).
+#   All three are COMPOSITION failures, so the backstop has to compose too:
+#   node owns "what did the real JS leave on the DOM", this module owns "what
+#   does the real cascade do with that", and neither process can see the other's
+#   verdict.
+#
+#   FIDELITY LIMITS (stated, not hidden -- the story's conditionalOutcome
+#   requires this, and an unstated limit is how a lenient test passes on a broken
+#   layout):
+#     1. This resolves the CASCADE (importance -> specificity -> source order,
+#        inline declarations, inherited display:none through ancestors). It does
+#        NOT do LAYOUT: it cannot tell you a box overflowed, wrapped, or landed
+#        off-screen. It answers "is this painted at all", which is exactly the
+#        S1/S2 defect class and nothing more.
+#     2. Unresolvable selectors (a pseudo-class this cannot evaluate) are
+#        reported, NOT silently skipped -- `unresolvableDisplaySelectors()` lets
+#        a test fail loudly when the stylesheet grows a rule this harness would
+#        have to guess at. Skipping a `display` rule makes a test LENIENT, and a
+#        lenient render test is worse than none.
+#     3. @media blocks are evaluated only for the width/height the caller states.
+# Author: Ralph Agent (Rex)
+# Creation Date: 2026-07-29
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-07-29    | Ralph (Rex)  | Initial -- US-499 S6 render-regression harness.
+# 2026-08-31    | Ralph (Rex)  | US-641: optional `nowMs` virtual wall clock +
+#                                {advanceMs} step, so a state file can AGE
+#                                without being rewritten (frozen-feed staleness).
+#                                Additive -- omitting nowMs leaves Date.now real.
+# 2026-09-09    | Ralph (Rex)  | US-608 (TD-080): `_fnBody` SSOT -- the single
+#                                shipped-JS function slicer, brace-matched and
+#                                RAISING. Replaces nine indent-blind near-copies.
+# 2026-09-09    | Ralph (Rex)  | US-612 (TD-084): `cssSection` -- banner-delimited
+#                                stylesheet section slicing, so a guard can name
+#                                its REGION structurally instead of by a fixed
+#                                character window. RAISES, never returns "".
+# ================================================================================
+################################################################################
+
+"""Cascade-resolving render harness for the shipped Pi UI kits (US-499)."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import tempfile
+from html.parser import HTMLParser
+from typing import Any
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO = os.path.abspath(os.path.join(_HERE, "..", ".."))
+DASHBOARD_DIR = os.path.join(_REPO, "src", "pi", "ui", "dashboard")
+SPLASH_DIR = os.path.join(_REPO, "src", "pi", "ui", "splash")
+
+# Elements the HTML spec renders as `display: none` with no stylesheet at all.
+_UA_NOT_RENDERED_TAGS = frozenset({"script", "style", "head", "meta", "link", "title"})
+_VOID_TAGS = frozenset(
+    {"meta", "link", "br", "hr", "img", "input", "source", "area", "base", "col"}
+)
+
+
+# --- shipped-JS source slicing (US-608 / TD-080) -----------------------------
+#
+# WHY THIS IS HERE AND WHY IT RAISES. Nine carousel suites each carried their own
+# `_fnBody`, in four mutually incompatible flavours: "cut at the next `function`
+# at a FIXED 2/4/6-space indent" (5 copies), "cut at the next declaration at the
+# SAME indent" (2), "cut at the closing brace at my own indent" (1), and "cut at
+# a hardcoded 4-space `\n    }`" (1). MEASURED 2026-09-09 against a brace-matched
+# body: ALL 17 live call sites got the wrong span -- 16 over-returned (renderHome
+# by 10831 chars, renderTopbarClock by 9105) and one truncated.
+#
+# Over-returning is the silent direction, and it is why this is a gate story: a
+# span that runs past the function makes `assert X in body` pass on text the
+# function never contained, and an empty span makes `assert X not in body` pass
+# on nothing at all. Both are assertions that cannot fail. So this slicer
+# delimits the body by MATCHING BRACES -- not by guessing an indent -- and it
+# RAISES rather than return a partial, an empty string, or the rest of the file.
+
+_SLICE_HAZARD_NOTE = (
+    "the shipped kit uses backtick strings but no ${} interpolation, so a "
+    "single-pass lexer over quotes and comments is sufficient to brace-match"
+)
+
+
+class FunctionSliceError(RuntimeError):
+    """A shipped-JS function could not be located or delimited.
+
+    Deliberately loud. The failure mode this replaces returned a wrong span and
+    let the caller's assertion pass anyway; a test that cannot find its subject
+    must fail as a test, not quietly assert against the wrong bytes.
+    """
+
+
+def _matchingBrace(js: str, openBrace: int) -> int:
+    """Index of the `}` closing the `{` at ``openBrace``, or -1 if unbalanced.
+
+    Skips quoted strings (', ", `) and both comment forms, so a brace inside a
+    string literal or inside prose cannot close a function body. Validated
+    against all 220 `function` declarations in the shipped carousel.js.
+    """
+    depth = 0
+    i = openBrace
+    n = len(js)
+    while i < n:
+        ch = js[i]
+        if ch in "\"'`":
+            quote = ch
+            i += 1
+            while i < n:
+                if js[i] == "\\":
+                    i += 2
+                    continue
+                if js[i] == quote:
+                    break
+                i += 1
+            if i >= n:
+                return -1
+        elif ch == "/" and i + 1 < n and js[i + 1] == "/":
+            i = js.find("\n", i)
+            if i == -1:
+                return -1
+        elif ch == "/" and i + 1 < n and js[i + 1] == "*":
+            end = js.find("*/", i + 2)
+            if end == -1:
+                return -1
+            i = end + 1
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _outermost(
+    declarations: list[re.Match[str]], js: str, name: str
+) -> re.Match[str]:
+    """The least-nested of several same-named declarations; raises on a true tie.
+
+    Resolution is by NESTING DEPTH, not file position. carousel.js declares
+    `render` twice -- the carousel's own transform renderer at 6 spaces and a
+    settings-row closure at 12 -- and a caller writing the bare name means the
+    outer one. The old copies got that right only by accident (the outer one also
+    happens to come first in the file); anchoring on indent makes it right for
+    the stated reason instead.
+
+    Two declarations at the SAME minimum depth are a genuine coin toss, so that
+    raises rather than picks.
+    """
+    byIndent = sorted(declarations, key=lambda m: len(m.group(0)) - len(m.group(0).lstrip()))
+
+    def depthOf(match: re.Match[str]) -> int:
+        return len(match.group(0)) - len(match.group(0).lstrip())
+
+    shallowest = depthOf(byIndent[0])
+    tied = [m for m in byIndent if depthOf(m) == shallowest]
+    if len(tied) > 1:
+        lines = [js[: m.start()].count("\n") + 1 for m in tied]
+        raise FunctionSliceError(
+            f"function {name!r} is declared {len(tied)} times at the same "
+            f"nesting depth (lines {lines}); the slice would be a coin toss. "
+            f"Disambiguate the source or the caller -- see US-608."
+        )
+    return byIndent[0]
+
+
+def _fnBody(js: str, name: str) -> str:
+    """The full source text of the shipped `function <name>(...) { ... }`.
+
+    THE ONE `_fnBody` under tests/ (US-608). Returned span runs from the start of
+    the declaration's own line-leading `function`/`async function` keyword
+    through its matching closing brace, inclusive -- so it is exactly the
+    function and never its neighbours.
+
+    The declaration is anchored at LINE START (optionally `async`), which is what
+    keeps a commented-out example from winning: the old copies did a bare
+    `js.index("function " + name + "(")` over the whole file, and for `imuTick`
+    that resolved to the `//     async function imuTick() {` at carousel.js:186
+    rather than the real declaration 5536 lines later.
+
+    When a name is declared more than once, the LEAST-NESTED declaration wins
+    (see `_outermost`); two at the same depth raise rather than resolve to a coin
+    toss.
+
+    Args:
+        js: The full shipped JS source text.
+        name: The function's declared name, without the `function ` keyword.
+
+    Returns:
+        The declaration and its whole body, closing brace included.
+
+    Raises:
+        FunctionSliceError: The name has no line-anchored declaration, is
+            declared twice at the same nesting depth, or its body has no matching
+            closing brace. Never returns a partial or empty span -- see the
+            section note above.
+    """
+    declarations = list(
+        re.finditer(
+            r"^[ \t]*(?:async[ \t]+)?function[ \t]+" + re.escape(name) + r"[ \t]*\(",
+            js,
+            re.M,
+        )
+    )
+    if not declarations:
+        raise FunctionSliceError(
+            f"no line-anchored declaration of function {name!r} in the "
+            f"{len(js)}-char source (a match inside a comment does not count)"
+        )
+    match = _outermost(declarations, js, name)
+    openBrace = js.find("{", match.end() - 1)
+    if openBrace == -1:
+        raise FunctionSliceError(
+            f"function {name!r} has no opening brace after its parameter list"
+        )
+    closeBrace = _matchingBrace(js, openBrace)
+    if closeBrace == -1:
+        raise FunctionSliceError(
+            f"function {name!r} has no matching closing brace -- body "
+            f"undelimitable ({_SLICE_HAZARD_NOTE})"
+        )
+    # Start at the keyword, not the line start: the leading indent is matched
+    # only to prove the declaration is real (not commented out) and to measure
+    # nesting depth. Excluding it keeps the span identical in shape to what the
+    # nine replaced copies returned, so no call site's assertion shifts meaning.
+    keyword = match.start() + (len(match.group(0)) - len(match.group(0).lstrip()))
+    return js[keyword : closeBrace + 1]
+
+
+# --- markup ------------------------------------------------------------------
+
+
+class _TreeBuilder(HTMLParser):
+    """Parse the shipped markup into a JSON-able element tree.
+
+    Only the BODY subtree is kept: it is what the browser hands the stylesheet,
+    and it is what the node probe rebuilds, so the ancestor chain in the harness
+    is identical to the one on the panel.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root: dict[str, Any] = {"tag": "body", "attrs": {}, "children": []}
+        self._stack: list[dict[str, Any]] = [self.root]
+        self._inBody = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "body":
+            self._inBody = True
+            return
+        if not self._inBody:
+            return
+        node = {
+            "tag": tag,
+            "attrs": {k: ("" if v is None else v) for k, v in attrs},
+            "children": [],
+        }
+        self._stack[-1]["children"].append(node)
+        if tag not in _VOID_TAGS:
+            self._stack.append(node)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if not self._inBody:
+            return
+        self._stack[-1]["children"].append(
+            {
+                "tag": tag,
+                "attrs": {k: ("" if v is None else v) for k, v in attrs},
+                "children": [],
+            }
+        )
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "body":
+            self._inBody = False
+            return
+        if not self._inBody:
+            return
+        for i in range(len(self._stack) - 1, 0, -1):
+            if self._stack[i]["tag"] == tag:
+                del self._stack[i:]
+                return
+
+    def handle_data(self, data: str) -> None:
+        if self._inBody and data.strip():
+            self._stack[-1]["children"].append({"text": data})
+
+
+def parseMarkup(path: str) -> dict[str, Any]:
+    """Return the body subtree of ``path`` as ``{'tag': 'body', ...}``."""
+    with open(path, encoding="utf-8") as fh:
+        builder = _TreeBuilder()
+        builder.feed(fh.read())
+    return builder.root
+
+
+def bodyChildren(tree: dict[str, Any]) -> list[dict[str, Any]]:
+    """The element/text children of a parsed body (what the probe rebuilds)."""
+    return tree["children"]
+
+
+# --- stylesheet --------------------------------------------------------------
+
+
+class Rule:
+    """One selector + its declarations, tagged with its source order."""
+
+    __slots__ = ("selector", "declarations", "order", "media")
+
+    def __init__(self, selector: str, declarations: str, order: int, media: str) -> None:
+        self.selector = selector
+        self.declarations = declarations
+        self.order = order
+        self.media = media
+
+
+def _stripComments(css: str) -> str:
+    return re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+
+
+def parseCss(css: str) -> list[Rule]:
+    """Every style rule in source order, descending into @media blocks."""
+    return _parseBlock(_stripComments(css), media="", startOrder=0)[0]
+
+
+def _parseBlock(text: str, media: str, startOrder: int) -> tuple[list[Rule], int]:
+    rules: list[Rule] = []
+    order = startOrder
+    i = 0
+    while True:
+        brace = text.find("{", i)
+        if brace == -1:
+            return rules, order
+        prelude = text[i:brace].strip()
+        depth = 1
+        j = brace + 1
+        while j < len(text) and depth:
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+            j += 1
+        body = text[brace + 1 : j - 1]
+        if prelude.startswith("@media"):
+            nested, order = _parseBlock(body, prelude[len("@media") :].strip(), order)
+            rules.extend(nested)
+        elif not prelude.startswith("@"):
+            for selector in prelude.split(","):
+                selector = selector.strip()
+                if selector:
+                    rules.append(Rule(selector, body, order, media))
+                    order += 1
+        i = j
+    return rules, order
+
+
+class SectionNotFound(Exception):
+    """A named stylesheet section banner is absent, ambiguous, or not brace-aligned."""
+
+
+_SECTION_BANNER = re.compile(r"^/\* --- ", re.MULTILINE)
+
+
+def cssSection(css: str, banner: str) -> str:
+    """The RAW source of one banner-delimited stylesheet section.
+
+    ``dashboard.css`` divides itself into sections introduced by a ``/* --- ``
+    banner at column 0. This returns everything from the banner whose text
+    starts with ``banner`` up to the next such banner (or EOF). Comments are
+    NOT stripped -- callers wanting declarations run ``parseCss`` on the result.
+
+    This exists so a guard can name the REGION it polices structurally instead
+    of by a character count. A fixed-length window silently changes what it
+    covers whenever the CSS inside it grows (TD-084/US-612).
+
+    Raises:
+        SectionNotFound: if the banner is missing, appears more than once, or
+            the resulting span is not brace-balanced. It NEVER returns an empty
+            or partial span -- a guard handed a silently-empty subject asserts
+            nothing at all, which is the inert guard this project keeps paying
+            for (A-27(a)).
+    """
+    starts = [m.start() for m in _SECTION_BANNER.finditer(css)]
+    hits = [s for s in starts if css.startswith("/* --- " + banner, s)]
+    if len(hits) != 1:
+        raise SectionNotFound(
+            f"expected exactly one '/* --- {banner}' section banner in the "
+            f"{len(css)}-char stylesheet, found {len(hits)}"
+        )
+    begin = hits[0]
+    following = [s for s in starts if s > begin]
+    section = css[begin : following[0] if following else len(css)]
+    stripped = _stripComments(section)
+    if stripped.count("{") != stripped.count("}"):
+        raise SectionNotFound(
+            f"the '/* --- {banner}' section is not brace-balanced "
+            f"({stripped.count('{')} open, {stripped.count('}')} close) -- its "
+            "banner boundaries do not line up with rule boundaries"
+        )
+    return section
+
+
+def declarationOf(declarations: str, prop: str) -> tuple[str, bool] | None:
+    """The LAST declaration of ``prop`` in a block as ``(value, isImportant)``."""
+    found: tuple[str, bool] | None = None
+    for match in re.finditer(rf"(?:^|[;{{])\s*{re.escape(prop)}\s*:\s*([^;}}]+)", declarations):
+        raw = match.group(1).strip()
+        important = "!important" in raw
+        found = (raw.replace("!important", "").strip().lower(), important)
+    return found
+
+
+# --- selectors ---------------------------------------------------------------
+
+_PSEUDO_ELEMENT = re.compile(r"::[\w-]+")
+_KNOWN_STATIC_PSEUDO = frozenset({":root", ":first-child", ":last-child"})
+_COMBINATOR_SPLIT = re.compile(r"\s*([>+~])\s*|\s+")
+
+
+def _compoundParts(compound: str) -> list[str]:
+    return re.findall(r"\[[^\]]*\]|::?[\w-]+(?:\([^)]*\))?|[#.]?[\w-]+|\*", compound)
+
+
+def isResolvable(selector: str) -> bool:
+    """False when this compound uses state the harness cannot decide statically.
+
+    A `:hover`/`:focus`/`:nth-child()` is dynamic or structural state; rather
+    than guess, the caller is told so it can fail loudly.
+    """
+    stripped = _PSEUDO_ELEMENT.sub("", selector)
+    for pseudo in re.findall(r"(?<!:):[\w-]+(?:\([^)]*\))?", stripped):
+        name = pseudo.split("(")[0]
+        if name == ":not":
+            continue
+        if name not in _KNOWN_STATIC_PSEUDO:
+            return False
+    return True
+
+
+def _matchesCompound(compound: str, node: dict[str, Any]) -> bool:
+    compound = _PSEUDO_ELEMENT.sub("", compound).strip()
+    if not compound:
+        return True
+    attrs = node.get("attrs", {})
+    classes = (attrs.get("class") or "").split()
+    for part in _compoundParts(compound):
+        if part == "*":
+            continue
+        if part.startswith(":not("):
+            inner = part[5:-1].strip()
+            if _matchesCompound(inner, node):
+                return False
+        elif part.startswith(":"):
+            if part == ":root":
+                return False  # :root is <html>; never an element in our tree
+            continue  # :first-child etc. -- see _matchesSelector's caller
+        elif part.startswith("#"):
+            if attrs.get("id") != part[1:]:
+                return False
+        elif part.startswith("."):
+            if part[1:] not in classes:
+                return False
+        elif part.startswith("["):
+            name = re.match(r"\[\s*([\w-]+)\s*(?:([~|^$*]?=)\s*\"?([^\"\]]*)\"?)?", part)
+            if name is None:
+                return False
+            attrName = name.group(1)
+            if attrName not in attrs:
+                return False
+            if name.group(2) == "=" and attrs.get(attrName) != name.group(3):
+                return False
+        elif part.lower() != node["tag"].lower():
+            return False
+    return True
+
+
+def _splitComplex(selector: str) -> list[str]:
+    """['#a', '>', '.b'] -- compounds interleaved with combinator tokens."""
+    tokens: list[str] = []
+    buf = ""
+    i = 0
+    while i < len(selector):
+        ch = selector[i]
+        if ch in ">+~":
+            if buf.strip():
+                tokens.append(buf.strip())
+            tokens.append(ch)
+            buf = ""
+        elif ch.isspace():
+            if buf.strip():
+                tokens.append(buf.strip())
+            buf = ""
+            if tokens and tokens[-1] not in (">", "+", "~", " "):
+                tokens.append(" ")
+        else:
+            buf += ch
+        i += 1
+    if buf.strip():
+        tokens.append(buf.strip())
+    while tokens and tokens[-1] in (" ", ">", "+", "~"):
+        tokens.pop()
+    return tokens
+
+
+def matchesSelector(selector: str, path: list[dict[str, Any]]) -> bool:
+    """True when ``selector`` matches the last node of ``path`` (root .. node).
+
+    Handles descendant, child (>), adjacent (+) and general-sibling (~)
+    combinators by walking the ancestor chain right-to-left.
+    """
+    tokens = _splitComplex(selector)
+    if not tokens:
+        return False
+    if not _matchesCompound(tokens[-1], path[-1]):
+        return False
+    idx = len(tokens) - 2
+    pos = len(path) - 1
+    while idx >= 0:
+        combinator = tokens[idx]
+        compound = tokens[idx - 1]
+        if combinator == ">":
+            pos -= 1
+            if pos < 0 or not _matchesCompound(compound, path[pos]):
+                return False
+        elif combinator == " ":
+            pos -= 1
+            while pos >= 0 and not _matchesCompound(compound, path[pos]):
+                pos -= 1
+            if pos < 0:
+                return False
+        elif combinator in ("+", "~"):
+            # Sibling combinators need the parent's child list; the shipped
+            # sheets use none today, so this is reported rather than guessed.
+            return False
+        idx -= 2
+    return True
+
+
+def specificity(selector: str) -> tuple[int, int, int]:
+    """(#ids, #classes+attrs+pseudo-classes, #elements+pseudo-elements)."""
+    cleaned = re.sub(r":not\(([^)]*)\)", r" \1 ", selector)
+    ids = len(re.findall(r"#[\w-]+", cleaned))
+    classes = len(re.findall(r"\.[\w-]+", cleaned))
+    attrs = len(re.findall(r"\[[^\]]*\]", cleaned))
+    pseudoClasses = len(re.findall(r"(?<!:):[\w-]+", cleaned))
+    elements = len(re.findall(r"(?:^|[\s>+~])([a-zA-Z][\w-]*)", cleaned))
+    pseudoElements = len(re.findall(r"::[\w-]+", cleaned))
+    return (ids, classes + attrs + pseudoClasses, elements + pseudoElements)
+
+
+# --- cascade -----------------------------------------------------------------
+
+
+def _mediaApplies(media: str, viewport: tuple[int, int]) -> bool:
+    """Evaluate the min/max-width|height features the kits actually use."""
+    if not media:
+        return True
+    width, height = viewport
+    for feature, value in re.findall(r"\(\s*([\w-]+)\s*:\s*(\d+)px\s*\)", media):
+        num = int(value)
+        if feature == "min-width" and not width >= num:
+            return False
+        if feature == "max-width" and not width <= num:
+            return False
+        if feature == "min-height" and not height >= num:
+            return False
+        if feature == "max-height" and not height <= num:
+            return False
+    return True
+
+
+class Surface:
+    """A parsed markup tree + stylesheet, resolved together.
+
+    ``rendered(node)`` is the whole point: it is the closest honest answer to
+    "would the operator see this?" that a headless harness can give.
+    """
+
+    def __init__(
+        self,
+        tree: dict[str, Any],
+        css: str,
+        viewport: tuple[int, int] = (1920, 1080),
+    ) -> None:
+        self.tree = tree
+        self.rules = parseCss(css)
+        self.viewport = viewport
+        self._paths: list[list[dict[str, Any]]] = []
+        self._collect(tree, [])
+
+    def _collect(self, node: dict[str, Any], ancestors: list[dict[str, Any]]) -> None:
+        if "tag" not in node:
+            return
+        path = ancestors + [node]
+        self._paths.append(path)
+        for child in node.get("children", []):
+            self._collect(child, path)
+
+    # -- queries --------------------------------------------------------------
+
+    def paths(self) -> list[list[dict[str, Any]]]:
+        return list(self._paths)
+
+    def pathById(self, elementId: str) -> list[dict[str, Any]] | None:
+        for path in self._paths:
+            if path[-1].get("attrs", {}).get("id") == elementId:
+                return path
+        return None
+
+    def pathsByClass(self, className: str) -> list[list[dict[str, Any]]]:
+        return [
+            p
+            for p in self._paths
+            if className in (p[-1].get("attrs", {}).get("class") or "").split()
+        ]
+
+    def winningDeclaration(
+        self, path: list[dict[str, Any]], prop: str
+    ) -> tuple[str, str] | None:
+        """Resolve ``prop`` for the element at ``path`` -> (value, source).
+
+        Returns None when no author or inline rule declares it, so the caller
+        can apply the UA default. Order of battle: importance, then inline vs
+        author, then specificity, then source order -- real CSS rules.
+        """
+        best: tuple[str, str] | None = None
+        bestKey: tuple[int, int, tuple[int, int, int], int] | None = None
+        node = path[-1]
+
+        inline = node.get("style") or {}
+        if prop in inline:
+            value = str(inline[prop]).strip().lower()
+            important = "!important" in value
+            best = (value.replace("!important", "").strip(), "inline style")
+            bestKey = (1 if important else 0, 1, (0, 0, 0), 10**9)
+
+        for rule in self.rules:
+            if not _mediaApplies(rule.media, self.viewport):
+                continue
+            if not isResolvable(rule.selector):
+                continue
+            if not matchesSelector(rule.selector, path):
+                continue
+            found = declarationOf(rule.declarations, prop)
+            if found is None:
+                continue
+            value, important = found
+            key = (1 if important else 0, 0, specificity(rule.selector), rule.order)
+            if bestKey is None or key > bestKey:
+                bestKey, best = key, (value, rule.selector)
+        return best
+
+    def displayOf(self, path: list[dict[str, Any]]) -> tuple[str, str]:
+        """The element's effective ``display`` as (value, whoDecidedIt)."""
+        node = path[-1]
+        tag = node["tag"].lower()
+        if tag in _UA_NOT_RENDERED_TAGS:
+            return ("none", "UA sheet (never-rendered element)")
+        winner = self.winningDeclaration(path, "display")
+        if winner is not None:
+            return winner
+        # No author declaration -> the UA sheet applies unopposed. This is the
+        # ONLY place `hidden` gets honoured for free; an author `display` of any
+        # specificity beats it, which is precisely how US-495 happened.
+        if "hidden" in node.get("attrs", {}):
+            return ("none", "UA sheet [hidden]")
+        return ("block", "UA sheet default")
+
+    def rendered(self, path: list[dict[str, Any]]) -> bool:
+        """True when this element AND every ancestor has a box.
+
+        `display: none` on an ancestor removes the whole subtree, so an overlay
+        can be "visible" by its own rule and still paint nothing.
+        """
+        for depth in range(len(path)):
+            subPath = path[: depth + 1]
+            if self.displayOf(subPath)[0] == "none":
+                return False
+            if self.winningDeclaration(subPath, "visibility") == ("hidden", None):
+                return False
+        return True
+
+    def renderedIds(self, candidateIds: list[str]) -> list[str]:
+        """Which of ``candidateIds`` actually paint (order preserved)."""
+        out = []
+        for elementId in candidateIds:
+            path = self.pathById(elementId)
+            if path is not None and self.rendered(path):
+                out.append(elementId)
+        return out
+
+    def unresolvableDisplaySelectors(self) -> list[str]:
+        """`display` rules this harness would have to guess at.
+
+        Non-empty means the stylesheet grew something the backstop cannot judge
+        -- report it loudly rather than let a skipped rule pass as green.
+        """
+        return [
+            rule.selector
+            for rule in self.rules
+            if declarationOf(rule.declarations, "display") is not None
+            and not isResolvable(rule.selector)
+        ]
+
+
+# --- node probe drivers ------------------------------------------------------
+
+
+class ProbeError(RuntimeError):
+    """The node probe failed -- surfaced verbatim, never swallowed."""
+
+
+def _runProbe(probe: str, payload: dict[str, Any]) -> dict[str, Any]:
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".json", delete=False, encoding="utf-8"
+    ) as fh:
+        json.dump(payload, fh)
+        inputPath = fh.name
+    try:
+        completed = subprocess.run(
+            ["node", os.path.join(_HERE, probe), inputPath],
+            capture_output=True,
+            text=True,
+            # TD-068: without an explicit encoding, Windows decodes the probe's
+            # stdout as cp1252 and silently corrupts the kit's non-ASCII copy
+            # (⋮ ⚠ ‹ ·) -- which is exactly the kind of "renders wrong" this
+            # backstop exists to catch, so it must not introduce it itself.
+            encoding="utf-8",
+            timeout=90,
+            check=False,
+        )
+    finally:
+        os.unlink(inputPath)
+    if completed.returncode != 0:
+        raise ProbeError(f"{probe} exited {completed.returncode}: {completed.stderr}")
+    return json.loads(completed.stdout)
+
+
+def runDashboard(
+    routes: dict[str, Any],
+    steps: list[dict[str, Any]] | None = None,
+    carouselPath: str | None = None,
+    markupPath: str | None = None,
+    token: str = "test-token",
+    autoDim: Any = None,
+    viewport: tuple[int, int] = (1920, 1080),
+    nowMs: int | None = None,
+) -> dict[str, Any]:
+    """Boot the SHIPPED carousel.js over the SHIPPED markup; return the DOM.
+
+    ``routes`` maps a fetch path ('/system-status') to its JSON body; an unlisted
+    route 404s, so a test states exactly which state files exist.
+
+    ``nowMs`` (US-641) pins the page's wall clock to a fixed instant that only a
+    ``{"advanceMs": n}`` step moves. Omit it and ``Date.now()`` is untouched
+    (real time), which is what every caller before US-641 gets. Supply it to age
+    a state file WITHOUT rewriting it -- the only honest way to render "the
+    producer stopped and the reading went stale under the operator", as opposed
+    to "the producer wrote an old reading", which is a different fault.
+    """
+    tree = parseMarkup(markupPath or os.path.join(DASHBOARD_DIR, "dashboard.html"))
+    payload: dict[str, Any] = {
+        "carouselPath": carouselPath or os.path.join(DASHBOARD_DIR, "carousel.js"),
+        "tree": bodyChildren(tree),
+        "routes": routes,
+        "token": token,
+        "autoDim": autoDim,
+        "viewport": list(viewport),
+        "steps": steps or [{"flush": 4}],
+    }
+    if nowMs is not None:
+        payload["nowMs"] = nowMs
+    return _runProbe("dom_probe.js", payload)
+
+
+def runSplash(
+    bootStates: list[Any],
+    pollJsPath: str | None = None,
+    markupPath: str | None = None,
+    rounds: int = 80,
+    emitIntervalMs: int = 500,
+    brandLoadMs: int | None = 0,
+) -> dict[str, Any]:
+    """Run the SHIPPED boot-state-poll.js against a boot-state sequence.
+
+    ``bootStates`` is the succession of payloads the emitter WRITES, one every
+    ``emitIntervalMs`` (the eclipse-boot-state.service default), while the
+    splash reads on its own 250 ms cadence -- so a poll sees the last-written
+    entry, exactly as it would on the Pi. The final entry repeats. Returns the
+    settled outcome plus the resulting DOM tree.
+
+    ``brandLoadMs`` (US-525) is the virtual ms at which the brand ``<object>``
+    fires its `load`. The mark is an async SVG document, so on a cold chromium
+    the poll script is already ticking while the brand is still blank; ``None``
+    models an SVG that never loads at all.
+    """
+    tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "index.html"))
+    return _runProbe(
+        "splash_probe.js",
+        {
+            "pollJsPath": pollJsPath or os.path.join(SPLASH_DIR, "boot-state-poll.js"),
+            "tree": bodyChildren(tree),
+            "bootStates": bootStates,
+            "rounds": rounds,
+            "emitIntervalMs": emitIntervalMs,
+            "brandLoadMs": brandLoadMs,
+        },
+    )
+
+
+def runShutdownSplash(
+    shutdownStates: list[Any],
+    pollJsPath: str | None = None,
+    markupPath: str | None = None,
+    rounds: int = 80,
+    emitIntervalMs: int = 500,
+) -> dict[str, Any]:
+    """Run the SHIPPED shutdown-state-poll.js against a shutdown-state sequence.
+
+    ``shutdownStates`` is the succession of payloads the ShutdownSequencer's
+    emit hook WRITES, one every ``emitIntervalMs``, while the closeout splash
+    reads on its own 250 ms cadence -- so a poll sees the last-written entry,
+    exactly as it would on the Pi. The final entry repeats. A ``None`` entry
+    models the state file being ABSENT, which is a materially different outcome
+    from a ``cancelled`` phase and is the pair I-043 could not tell apart.
+
+    Returns the settled outcome including ``terminalCause`` /
+    ``terminalRecord`` (the US-549 report) and the raw ``consoleLines``, which
+    are the same bytes that reach ``journalctl -u splash-grace.service``.
+    """
+    tree = parseMarkup(markupPath or os.path.join(SPLASH_DIR, "shutdown.html"))
+    return _runProbe(
+        "shutdown_probe.js",
+        {
+            "pollJsPath": pollJsPath or os.path.join(SPLASH_DIR, "shutdown-state-poll.js"),
+            "tree": bodyChildren(tree),
+            "shutdownStates": shutdownStates,
+            "rounds": rounds,
+            "emitIntervalMs": emitIntervalMs,
+        },
+    )
+
+
+def dashboardSurface(
+    domTree: dict[str, Any],
+    cssPath: str | None = None,
+    viewport: tuple[int, int] = (1920, 1080),
+) -> Surface:
+    """Resolve the shipped dashboard stylesheet over a post-JS DOM tree."""
+    with open(cssPath or os.path.join(DASHBOARD_DIR, "dashboard.css"), encoding="utf-8") as fh:
+        return Surface(domTree, fh.read(), viewport)
+
+
+def splashSurface(
+    domTree: dict[str, Any],
+    cssPath: str | None = None,
+    viewport: tuple[int, int] = (480, 320),
+) -> Surface:
+    """Resolve the shipped splash stylesheet over a post-JS DOM tree."""
+    with open(cssPath or os.path.join(SPLASH_DIR, "styles.css"), encoding="utf-8") as fh:
+        return Surface(domTree, fh.read(), viewport)

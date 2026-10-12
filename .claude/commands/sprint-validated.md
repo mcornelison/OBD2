@@ -5,13 +5,13 @@ description: "Sprint-validated ritual for Marcus (PM) -- stamps per-sprint valid
 
 # Sprint Validated (PM-driven, dev/main workflow per spec 2026-05-28)
 
-Per-sprint validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm` (Phase 3.5 merged sprint → dev; deploy ran from dev). Per spec `docs/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: validation drills target `dev`; this command stamps the per-sprint validation block + bumps `regression_manifest` for the sprint's `validatesFeatures`. **It does NOT merge to main.** `/chain-validated` does that at chain end (after every sprint in the V0.X chain has its own `/sprint-validated` stamp AND CIO confirms whole-chain green).
+Per-sprint validation ritual for Marcus (PM). Companion to `/sprint-deploy-pm` (Phase 3.5 merged sprint → dev; deploy ran from dev). Per spec `$FLEET_SHARE/_shared/knowledge/superpowers/specs/2026-05-28-dev-main-branching-workflow-design.md`: validation drills target `dev`; this command stamps the per-sprint validation block + bumps `regression_manifest` for the sprint's `validatesFeatures`. **It does NOT merge to main.** `/chain-validated` does that at chain end (after the CHAIN-TIP sprint has its `/sprint-validated` stamp AND CIO confirms whole-chain green -- earlier patches keep `validatedAt: null` and that is expected; `chain_validate_aggregate.py:238` gates on the tip alone).
 
 **WHEN to run**: after a real-hardware drill successfully exercises the sprint's `validation.bigDefinitionOfDone` clauses AND CIO confirms green light.
 
 **WHEN NOT to run**: drill failed (a new patch sprint forks from `dev` → fix → re-run `/sprint-deploy-pm` with V0.X.(Y+1) patch bump → retry validation); drill not yet attempted; sprint not in DEPLOYED-AWAITING-VALIDATION state.
 
-**Output of this command**: `dev`'s sprint.json carries `validation.validatedAt` stamp. `regression_manifest.json` bumps `lastValidated` for features the sprint validated. PM artifacts (backlog.json status, MEMORY.md, projectManager.md) reflect the per-sprint stamp. Sprint N+1 grooming can begin (PM judgement -- see spec §8.1).
+**Output of this command**: `dev`'s sprint.json carries `validation.validatedAt` stamp. `regression_manifest.json` bumps `lastValidated` for features the sprint validated. PM artifacts (backlog.json status, MEMORY.md, offices/pm/CLAUDE.md) reflect the per-sprint stamp. Sprint N+1 grooming can begin (PM judgement -- see spec §8.1).
 
 ---
 
@@ -24,7 +24,7 @@ git branch --show-current                    # MUST be `dev` (sprint already mer
                                              # If on main: abort -- sprint-validated runs from dev
 python -c "
 import json
-d = json.load(open('offices/ralph/sprint.json', encoding='utf-8'))
+d = json.load(open(os.environ['FLEET_SHARE'] + '/ralph/sprint.json', encoding='utf-8'))
 v = d.get('validation', {})
 if not v:
     raise SystemExit('ERROR: sprint.json has no validation block (Sprint 27+ required field)')
@@ -53,7 +53,7 @@ If running interactively, prompt for confirmation. If running via slash command 
 ```bash
 python -c "
 import json
-v = json.load(open('offices/ralph/sprint.json', encoding='utf-8'))['validation']
+v = json.load(open(os.environ['FLEET_SHARE'] + '/ralph/sprint.json', encoding='utf-8'))['validation']
 print('=== bigDefinitionOfDone (Mike confirmed observed?) ===')
 for i, clause in enumerate(v['bigDefinitionOfDone'], 1):
     print(f'  [{i}] {clause}')
@@ -70,7 +70,7 @@ for i, clause in enumerate(v['bigDefinitionOfDone'], 1):
 # Mark validated:
 import json
 from datetime import datetime, timezone
-p = 'offices/ralph/sprint.json'
+p = os.environ['FLEET_SHARE'] + '/ralph/sprint.json'
 d = json.load(open(p, encoding='utf-8'))
 d['validation']['validatedAt'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 d['validation']['validatedBy'] = "Mike (CIO confirmed) + drill: <Drive N / Drain Test N>"
@@ -89,8 +89,8 @@ For each feature in sprint's `validation.validatesFeatures`, bump `lastValidated
 import json
 from datetime import date
 
-sprintP = 'offices/ralph/sprint.json'
-manifestP = 'offices/pm/regression_manifest.json'
+sprintP = os.environ['FLEET_SHARE'] + '/ralph/sprint.json'
+manifestP = os.environ['FLEET_SHARE'] + '/pm/regression_manifest.json'
 
 sprintData = json.load(open(sprintP, encoding='utf-8'))
 manifest = json.load(open(manifestP, encoding='utf-8'))
@@ -133,7 +133,7 @@ print(f'Bumped lastValidated for {len(bumped)} features: {bumped}')
 
 Update Current State: "Sprint X SHIPPED + VALIDATED + MERGED to main; V0.X.Y on main; <validatedBy>".
 
-### 4c -- projectManager.md
+### 4c -- offices/pm/CLAUDE.md (the PM record; `projectManager.md` was RENAMED here in the v2->v3 migration)
 
 Last Updated header + Current Phase: "Sprint X validated by <drill>; merged to main; ready for Sprint X+1 grooming."
 
@@ -141,8 +141,23 @@ Last Updated header + Current Phase: "Sprint X validated by <drill>; merged to m
 
 ## Phase 5 -- Commit validation marker on dev
 
+> **Post-eviction:** the `offices/` artifacts below live on the fleet share and
+> are NOT version controlled -- they cannot be staged. Only repo files are
+> committed here. Edits to `$FLEET_SHARE/pm/*` need no git step at all.
+>
+> 🔴 **CORRECTED 2026-09-02: the share's durability does NOT come from snapshots.
+> THERE ARE NO SNAPSHOTS AND THERE CANNOT BE** -- the volume is `ext4` on RAID 5 and
+> Synology Snapshot Replication requires Btrfs. No snapshot of this tree has ever been
+> taken. **Durability on the share = the backup you take yourself before the edit, plus
+> `obd2db` for anything that matters.** RAID 5 is redundancy, not backup: it mirrors a
+> bad edit faithfully and instantly.
+
 ```bash
-git add offices/ralph/sprint.json offices/pm/regression_manifest.json offices/pm/backlog.json offices/pm/projectManager.md
+# Nothing under $FLEET_SHARE is staged -- sprint.json, regression_manifest.json,
+# backlog.json and offices/pm/CLAUDE.md all live on the share now. If this sprint
+# touched no repo files, there is no commit to make; say so rather than
+# fabricating an empty one.
+git add -- ':!offices'
 git commit -m "chore(validate): Sprint N validated by <drill> -- ready for chain merge"
 git push origin dev
 ```
@@ -151,7 +166,7 @@ git push origin dev
 
 ## Phase 6 -- (RETIRED under dev/main workflow)
 
-Per spec 2026-05-28, the merge to `main` no longer happens at per-sprint validation. The chain merge runs once at chain end via `/chain-validated` after every sprint in the V0.X chain has its own `/sprint-validated` stamp AND CIO confirms whole-chain green. Sprint validation now only stamps the per-sprint records on `dev`.
+Per spec 2026-05-28, the merge to `main` no longer happens at per-sprint validation. The chain merge runs once at chain end via `/chain-validated` after the CHAIN-TIP sprint has its `/sprint-validated` stamp AND CIO confirms whole-chain green. Earlier patches in the chain keep `validatedAt: null` and that is the expected state, not a debt (`chain_validate_aggregate.py:238` gates on the tip alone). Sprint validation now only stamps the per-sprint records on `dev`.
 
 ---
 
@@ -176,7 +191,7 @@ Print to CIO:
 Plus regression manifest status:
 
 ```bash
-python offices/pm/scripts/pm_regression_status.py --stale
+python -m tools.pm.pm_regression_status --stale
 ```
 
 Show what's still STALE / NEVER-validated -> next sprint candidates.
@@ -199,7 +214,7 @@ Show what's still STALE / NEVER-validated -> next sprint candidates.
 
 ## Why this exists
 
-Per Mike 2026-05-08: main = "fully validated stable." Sprint deployment + sprint validation are decoupled. Per CIO 2026-05-23 directive #1 + spec 2026-05-28: under dev/main two-tier workflow, this command no longer performs the merge to main. Instead it stamps the per-sprint validation on `dev` (which carries the active V0.X chain). The chain merge to main happens via `/chain-validated` once every sprint in the chain has its own stamp AND CIO confirms whole-chain green. The three-step gate (deploy → per-sprint validate → chain merge) prevents the Sprint 22 hidden-bug-pattern, the Sprint 25 sibling-bug pattern, and the never-validated-in-real-life class of features.
+Per Mike 2026-05-08: main = "fully validated stable." Sprint deployment + sprint validation are decoupled. Per CIO 2026-05-23 directive #1 + spec 2026-05-28: under dev/main two-tier workflow, this command no longer performs the merge to main. Instead it stamps the per-sprint validation on `dev` (which carries the active V0.X chain). The chain merge to main happens via `/chain-validated` once the CHAIN-TIP sprint has its stamp AND CIO confirms whole-chain green (earlier patches' `validatedAt: null` is expected -- see `chain_validate_aggregate.py:238`). The three-step gate (deploy → per-sprint validate → chain merge) prevents the Sprint 22 hidden-bug-pattern, the Sprint 25 sibling-bug pattern, and the never-validated-in-real-life class of features.
 
 ## Related
 

@@ -1,0 +1,318 @@
+# Shutdown Orchestration — design
+
+**Status:** approved in design, not yet built · **Owner:** Atlas (Architect) ·
+**Ratified by:** the CIO, 2026-09-20 · **Ticket:** ARCH-035
+**Relationship to `specs/architecture.md`:** this design changes shutdown behaviour, so the
+power-watch section of `architecture.md` must be updated **in the same sprint that builds it**
+(PM Rule 10 design-gate DoD). This file is the design; `architecture.md` remains the
+system-of-record description. Neither is superseded until the build lands.
+
+---
+
+## 1. Why this exists
+
+The Pi has never had an orchestrator. It has a **sequencer** — a fixed pipeline that runs
+whether or not the work it is protecting has finished, and which no subsystem can answer.
+Three consequences, all observed:
+
+- **Nothing can say "not yet".** Sync is interrupted mid-transfer with no way to object.
+- **Nothing records why.** After a failed shutdown the next boot reads `RUNNING` and
+  nothing else — not who was busy, not how long, not what was lost.
+- **Subsystems work against each other.** The shutdown drain pushes "until the backlog is
+  empty" while capture is *still writing*, so it chases a moving target.
+
+🔴 **The single fact that frames this whole design:**
+
+    pack, all project software stopped   762 s   (battery_health_log row 42, run to cutoff)
+    pack, our software running          0.49 s   (2026-09-20 wall-power cut, VCELL 3.6787)
+
+**Same pack, same voltage band.** 3.6787 V is a voltage this pack demonstrably runs at for
+*minutes* on its way down to its 3.4712 V cutoff. **0.49 s is therefore not a power budget.
+It is a symptom of a software defect**, and this design must not be built around it.
+
+🔴 **RULE — derive every budget from a MEASURED CAPABILITY, never from an observed failure.**
+An earlier draft of this design sized the shutdown budget from the 0.49 s. That would have
+written the bug into the architecture as a requirement: a system designed to shut down in
+under a second because that is "all we have". The capability is 762 s.
+
+## 2. Two modes, one protocol
+
+| | **NEGOTIATE** (power available) | **NEGOTIATE** (on battery) |
+|---|---|---|
+| Veto | waits | waits |
+| Ends on | subsystems done | **reserve reached** (§5) |
+| Splash | plays | plays *if* reserve not reached |
+
+There is **one protocol and one code path**. The modes differ only in whether a voltage
+reserve is applying pressure. A user-initiated shutdown on wall power takes the identical
+path — deliberately, so the path is exercised constantly and cannot rot unused.
+
+## 3. The subsystem contract
+
+Every participant implements exactly three methods:
+
+```python
+readyToShutdown() -> tuple[bool, str]
+    # Asked repeatedly. The reason string is logged VERBATIM on every NO.
+
+prepareForShutdown() -> None
+    # Called once, when the orchestrator commits. Do your finishing work.
+
+abandon() -> None
+    # Called when the reserve is reached. Stop NOW. Leave durable state.
+```
+
+### The gates — these are enforceable rules, not guidance
+
+1. 🔴 **`abandon()` MUST leave a consistent on-disk state.** A subsystem that cannot be
+   interrupted safely **does not get a vote** — it is shed. This rule is what makes granting
+   a veto risk-free: worst case the reserve is reached, everyone abandons, and the machine is
+   still consistent.
+2. 🔴 **A NO MUST carry a reason, and the reason is written to the durable shutdown log**
+   (§6), not only to the journal.
+3. **No subsystem may veto on state it does not own.** Sync may veto on *"transfer in
+   flight"*. It may not veto on *"I might have work later"*.
+4. **The orchestrator never re-asks a subsystem it has already shed.** One direction, no
+   re-entry.
+5. **Every vote, every re-ask and every override lands in the stage machine**, so the next
+   boot can say who held the shutdown up and for how long.
+6. **A subsystem that raises from any of the three methods is treated as YES and logged.**
+   Bookkeeping is never worth leaving the Pi up.
+
+**Re-ask interval: 2 s** in negotiate mode. Responsive enough to be useful, slow enough that
+the log stays readable.
+
+## 4. The tiers — a DEPENDENCY order, not a priority list
+
+    TIER 1  CAPTURE      stop producing.  OBD, IMU, light, EDR writers.
+       |                 close current write, flush, done.
+       v
+    TIER 2  SYNC         drain what exists.
+       |                 CANNOT converge until Tier 1 has stopped.
+       v
+    TIER 3  UPS/POWER    close the drain event, land battery-health.
+       |                 records the shutdown, so it runs after the work.
+       v
+    TIER 4  SPLASH       the animation. Plays only when 1-3 report done.
+       |                 Its completion IS the all-clear.
+       v
+            log CLEAN_COMPLETE, power off.
+
+🔴 **A tier is asked only once every tier above it has finished.** That is the whole rule.
+
+⚠️ **Tier 1 before Tier 2 is a bug fix, not tidiness.** Today's drain pushes until the
+backlog reads empty *while capture is still running* — a target that keeps moving. It has
+exactly two outcomes and both are observed: it never converges and burns the window, or it
+converges falsely. It converges falsely because **the backlog reader excludes the EDR
+tables** (US-766), so the largest producer is invisible to the count that decides
+"synchronised". Stopping capture first makes the set finite and the count honest.
+
+### Tier 2 asks the home detector first (US-776-c, built Sprint 95)
+
+Whether Tier 2 runs at all is decided by `HomeNetworkDetector.getHomeNetworkState()`, read
+**once** at the top of `SyncWithServerTask.run`:
+
+- **`AWAY` skips Tier 2 at once** — no `forcePush`, no wait, no HTTP call. `AWAY` is only ever a
+  *positive* answer: a foreign SSID, or a successful `hostname -I` with no home-subnet address.
+  The AWAY path's only calls are `nmcli` and `hostname -I`, each bounded at 2.0 s.
+- **`AT_HOME_*` drains**, whether or not the server probe answered.
+- **`AT_HOME_JOINING` waits up to `pi.homeNetwork.joinWaitSec` (120 s), then drains** (US-776-e;
+  ARCH-065a). The home SSID is in NetworkManager's CACHED scan but not associated (the rejoin measured
+  ~49 s after arrival, drive 96, n = 1). The state is re-read every `JOIN_POLL_SEC` (2 s) — the one
+  exception to "read once". Still joining at 120 s is `AT_HOME_JOINING_TIMEOUT` with no attempt; a
+  rejoin that resolves `AWAY` skips as `AWAY`. The wait is NOT drain time: the drain's stall clock starts
+  at association. Known edge (CIO-accepted): a key-off within ~3 min of leaving home can wait up to 120 s
+  while the cached entry ages out.
+- **`UNKNOWN` drains too**, logged `UNKNOWN_NETWORK` at WARNING. `UNKNOWN` means a reader is dead
+  (SSID reader unavailable, or the IP read itself failed) and nothing rules home out. A dead
+  instrument must never disable the drain (`specs/design-patterns.md` §6) — a single always-false
+  probe kept the drain off on every shutdown until Sprint 95.
+
+This decides *whether* Tier 2 runs. **How long it runs is the completion rule (CIO 2026-10-02,
+ARCH-065a; [`battery-health-design.md`](battery-health-design.md) §5): until the backlog is empty,
+or it has not FALLEN for `pi.homeNetwork.stallSec` (60 s, re-read after every attempt), or the battery
+reserve floor ends the drain (`pi.powerWatch.drainFloorVolts` held for `drainFloorDwellReads` = 5
+consecutive reads). There is no time cap**; the US-776-g ceiling (`shutdownSyncCeilingSec`) is retired.
+The per-shutdown outcome record is US-776-d (next section). `specs/architecture.md` §10.6.3 is the system-of-record
+description.
+
+### Tier 2 records why it ended (US-776-d, built Sprint 95)
+
+A skip that writes nothing is indistinguishable from a sync that never ran: for weeks an always-false
+probe read as "server absent" and nobody could tell. So **every** `SyncWithServerTask.run()` writes
+exactly one record into the durable shutdown record (`powerwatch_outcome.json`), the skip and the
+success included, before the task returns:
+
+| `sync_outcome` | The sync ended because |
+|---|---|
+| `DELIVERED` | a drain attempt succeeded |
+| `AWAY` | a positive AWAY: the drain was skipped |
+| `UNKNOWN_NETWORK` | home was never confirmed and the drain stalled undelivered |
+| `AT_HOME_JOINING_TIMEOUT` | (US-776-e) the WiFi rejoin outlasted `joinWaitSec` |
+| `AT_HOME_SERVER_DOWN` | at home, the drain stalled; the server probe got no answer, a 5xx or a 2xx |
+| `PROBE_MISCONFIGURED` | at home, the drain stalled and the probe was answered 404/405/401/403 |
+| `STALLED` | (ARCH-065a) at home, the backlog did not fall for `stallSec` and the last attempt raised nothing |
+| `RESERVE_FLOOR` | (ARCH-065a) the battery reserve floor ended the drain; written by the floor-end pre-poweroff hook, and a late sync record for the same loss is then dropped |
+| `REAL_ERROR` | a non-transient sync fault |
+| `INTERRUPTED` | (US-833) **provisional**: the shutdown sync did not reach its end. Written before it can be cut off and overwritten by the final outcome, so it survives only when the run never finished: a hard cut mid-sync or mid-JOINING-wait, a blind-floor `totalCapSec` end, or the backstop fast path that skips the pipeline |
+
+The record also carries `backlog_start` (unsynced rows before the first attempt) and `backlog_end`
+(after the last), from the shared US-621 backlog reader. That is what tells "delivered 412 rows"
+from "delivered, nothing was owed": the outcome alone reads `DELIVERED` for both. An unreadable count
+is left out and lands NULL. The record also carries `sync_started_at` / `sync_ended_at` (the drain
+only, not the JOINING wait), `vcell_before_cut_v` (the on-wall VCELL snapshotted ONCE at the loss) and
+`loss_at` (the loss's wall time; one owner, `HomeStateAtLoss`). The next boot lands all of them into
+`startup_log.prior_boot_*` (US-776-f; ARCH-065a).
+
+`PROBE_MISCONFIGURED` comes from `HomeNetworkDetector.probeServer()` (a sibling of the bool
+`isServerReachable()`, Atlas ruling 4), read back through `lastProbe` -- recording never probes
+again, so it adds no network call and no wait to the shutdown. One summary line per shutdown is
+logged: INFO for `DELIVERED`/`AWAY`, WARNING for `UNKNOWN_NETWORK`, ERROR otherwise.
+
+**Silence is never the signature of a poweroff (US-833).** A record written only at the end of `run()`
+cannot testify about a run that did not end, so the record exists BEFORE the sync can be cut off:
+
+| Poweroff path | What the next boot lands as `prior_boot_sync_outcome` |
+|---|---|
+| the sync finishes | its final outcome (table above) |
+| hard cut, or a blind-floor `totalCapSec` end, mid-sync or mid-JOINING wait | `INTERRUPTED` + `backlog_start` (+ `sync_started_at` once the drain began) -- the task's PROVISIONAL record, written at run start and again at drain start through its `writeProvisional` seam |
+| the reserve floor (`drainFloorVolts`) ends the drain | `RESERVE_FLOOR`, carrying the provisional's `backlog_start` / `sync_started_at` forward (`recordFloorEnd`) |
+| the backstop fast path (`vcellFloorVolts` at confirmation) skips the pipeline | `INTERRUPTED` + `backlog_start`, no `sync_started_at` (`HomeStateAtLoss.ensureRecorded`, the last pre-poweroff hook) |
+
+- The provisional record goes through the SAME serialised sink as the final one (`syncRecordSink` in
+  `main()`): one file, one writer, ruling 19's stale-loss drop and the floor-end drop apply to both.
+- It is never an OUTCOME: it does not set `lastOutcome` and logs no outcome line. The sink contract stays
+  *exactly one final record per `run()`*.
+- The fast path is `INTERRUPTED`, **not** `RESERVE_FLOOR`, on purpose: `battery_health_finalize` stamps an
+  at-home `RESERVE_FLOOR` `verdict = replace`, and no drain was measured on that path.
+- **Residual window:** between the loss and the sync task's first home-state read (the detector call,
+  timeout-bounded) a HARD cut still leaves only the home-state record, so the sync columns land NULL.
+  A commanded poweroff in that window is covered by `ensureRecorded`.
+
+### The animation is the terminal signal
+
+It is not a competitor for time. It is the **proof the sequence completed**, in the one place
+visible without SSH — which matters because in production the Pi is a data-collection device
+nobody logs into.
+
+- **Completed normally** → animation plays, reports done, `CLEAN_COMPLETE` logged. The
+  visible state and the log agree by construction.
+- **Reserve reached** → animation is **CANCELLED, not skipped**, and the log says
+  `splash=cancelled reason=reserve_reached`. A shutdown with no animation is then *diagnostic
+  information*, not an anomaly.
+
+⚠️ Today `splash-grace.path` still starts the splash the instant the shutdown-state SSOT is
+written, at T=0, alongside the work. The load shed does **not** stop it: US-796-a's attempt to
+shed both splash units failed on every cut and would have removed the animation the CIO kept,
+so US-796 (Sprint 95) took them off the shed lists. Under this design the splash cannot start
+until Tiers 1–3 are done, so it can never compete with the work.
+
+## 5. The reserve, and the override
+
+    RESERVE = measured_graceful_shutdown_duration + 15 s
+
+**The +15 s is not slack for the shutdown to run long.** It is the margin that lets the
+orchestrator stop negotiating *while a graceful shutdown is still possible*. Without it the
+system negotiates until it can only crash — which describes the current behaviour exactly.
+
+When the reserve is reached, the orchestrator **overrides**:
+
+    sync    -> "stop now, finish the current write"
+    splash  -> cancelled, not asked
+    all     -> notified: MANDATORY shutdown
+    then    -> the ordinary clean sequence
+
+The override is an **authority, not a kill**. Every subsystem is still told, and still
+finishes its current write. The difference from today is that today nothing is told anything.
+
+### Detecting the reserve — threshold PLUS dwell
+
+🔴 **The floor is voltage-driven** (CIO ruling, 2026-09-20). 🔴 **A bare `VCELL <= floor`
+comparison is NOT acceptable.**
+
+Measured 2026-09-20: VCELL read **4.1063 → 3.6787 V in 114 ms** at the moment the pack took
+the load. That is the documented *loaded-terminal transition*, not discharge. A bare
+threshold inside a signal's normal operating range is this project's most-repeated defect
+(five instances catalogued in `specs/grounded-knowledge.md`).
+
+**Required:** VCELL must read at or below the floor on **N consecutive reads** before the
+reserve is considered reached. Still one mechanism, still voltage-driven, no timer racing it
+— it simply cannot be tripped by a transient.
+
+⚠️ **The floor value is PROVISIONAL and must be labelled so in config.** The reserve is
+expressed in seconds; the floor is in volts; converting needs the discharge curve, and that
+curve currently rests on **n = 1** (`battery_health_log` row 42 is the only drain in the
+entire ledger carrying VCELL telemetry). Set the first floor conservatively. **US-790 ships
+the curve and replaces it.** Shutdown takes seconds against a 762 s pack, so even a generous
+floor leaves minutes of negotiation.
+
+## 6. Logging — minimal, durable, timestamped
+
+🔴 **The journal CANNOT hold this.** Measured: the journal loses its tail by ~8 s at a hard
+cut (2026-09-20: last line 10:08:46 for a death at 10:08:58). **Every record this design
+exists to produce falls inside the window the journal drops.**
+
+**The shutdown log writes fsync-per-line to local disk.** That is the only reason any of the
+2026-09-20 evidence survived.
+
+Four lines for a normal shutdown. One line per event, greppable prefix, no prose:
+
+    2026-09-20T15:08:58.101Z SHUTDOWN negotiate vcell=4.106 sync=NO:transfer_in_flight edr=YES ups=NO:drain_open
+    2026-09-20T15:09:12.340Z SHUTDOWN mandatory vcell=3.712 reason=reserve_reached dwell=3
+    2026-09-20T15:09:14.002Z SHUTDOWN override  sync=stop_after_current_write splash=cancelled
+    2026-09-20T15:09:18.551Z SHUTDOWN complete  stage=CLEAN_COMPLETE elapsed=20.4s
+
+**Not verbose.** Enough to answer *"who held it up, for how long, and did it finish"* on the
+next boot — the question that has been unanswerable for three months.
+
+## 7. What already exists — build on it, do not rebuild it
+
+The bounded pipeline is roughly 80% of this orchestrator. **Extend it.**
+
+| Existing | Role in this design |
+|---|---|
+| bounded pipeline, `perTaskTimeoutSec` 20 / `totalWindowCapSec` 45 | becomes the tier runner |
+| `boot_progress.py` stage machine, `CLEAN_COMPLETE` | unchanged; gains vote/override rungs |
+| `PHASE_FLUSHING` / `PHASE_POWERING_OFF` emitter | the notification channel |
+| `sync_custody.py` — `DELIVERED / OUTSTANDING / UNKNOWN` | Tier 2's honest verdict |
+| `PowerSourceProvider` SSOT | the only power-source authority; unchanged |
+| `writeAtomicJson` (`outcome.py`) | the durable-write pattern §6 needs |
+
+**What is genuinely new:** the `readyToShutdown()` question, the tier ordering, the reserve
+with dwell, and the durable log. Nothing else.
+
+## 8. Out of scope — deliberately
+
+- **The 0.49 s death itself.** Root cause is still unknown as of this writing; ruled out by
+  measurement or timing: draw spike, depletion, the VCELL floor fast-path, the drain, the
+  systemd watchdog (60 s), and our own `ShutdownHandler` (it never ran — stage was `RUNNING`).
+  🔴 **This design must not be treated as that fix.** It makes shutdowns orderly and
+  observable; it does not explain why the machine stops.
+- Sync protocol, retry policy, server-side custody.
+- The discharge curve (US-790).
+- Any change to `PowerSourceProvider`.
+
+## 9. Open items
+
+| Item | Owner | Blocks |
+|---|---|---|
+| **Measured graceful-shutdown duration** → sets `RESERVE = t + 15 s`. Time from *shutdown committed* (not power loss — that includes the debounce) to *Pi dark*, on wall power, **3 runs**; size the buffer off the worst, not the mean. | **CIO** | the reserve constant only |
+| Discharge curve → replaces the provisional floor | US-790 | refinement, not the build |
+| Dwell count `N` for the floor | Atlas, with the curve | the constant only |
+
+⚠️ Reference point, n=1: the one reconstructable clean sequence ran **~4 s** from
+confirmation to `poweroff.target`. If the CIO's measurement lands near that, the reserve is
+~19 s — about **2.5% of a 762 s pack**.
+
+## 10. Definition of done
+
+1. All four participants implement the three-method contract; each has a test proving
+   `abandon()` leaves consistent state.
+2. Tier order enforced **structurally** — a test that asserts only "all tiers ran" passes
+   with the order wrong, so the test must pin the sequence.
+3. A subsystem returning NO forever is forced through at the reserve, and the log names it.
+4. The durable shutdown log survives a real hard cut — verified by a cut, not a unit test.
+5. `CLEAN_COMPLETE` is reached with the animation completed on wall power, and with
+   `splash=cancelled` on a reserve-reached shutdown.
+6. 🔴 **Acceptance measured over n ≥ 5 real cuts.** A single clean shutdown proves nothing:
+   6 of 17 historical events completed by chance.

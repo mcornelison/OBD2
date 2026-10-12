@@ -73,10 +73,14 @@ from src.server.analytics.drive_statistics_compute import (  # noqa: E402
     DATA_QUALITY_BELOW_THRESHOLD,
     DATA_QUALITY_FULL,
     DATA_QUALITY_SPARSE,
+    _isForeignDrive,
     compute_drive_statistics,
 )
+from src.server.cli.compare_drives import driveExclusionReason  # noqa: E402
 from src.server.db.models import (  # noqa: E402
+    DATA_QUALITY_FOREIGN_VEHICLE,
     Base,
+    Drive,
     DriveStatistic,
     DriveSummary,
     RealtimeData,
@@ -160,6 +164,31 @@ def _seedRealtimeRows(
             total += 1
     session.commit()
     return total
+
+
+def _seedCanonicalDrive(
+    session: Session,
+    *,
+    driveId: int,
+    canonicalDriveId: int,
+    device: str = "chi-eclipse-01",
+) -> int:
+    """Seed a US-448 canonical ``drives`` row (natural-key = device+driveId).
+
+    ``canonicalDriveId`` is the server-minted ``drives.drive_id`` the compute
+    should resolve for the Pi-local ``driveId``.  In production this equals the
+    subsumed ``drive_summary.id``; tests can pass a *divergent* value to prove
+    the stat is keyed on the resolved canonical id, not the bare summary.id.
+    """
+    row = Drive(
+        drive_id=canonicalDriveId,
+        source_device=device,
+        source_drive_id=driveId,
+        data_source="real",
+    )
+    session.add(row)
+    session.commit()
+    return row.drive_id
 
 
 # =========================================================================
@@ -650,3 +679,227 @@ class TestComputeDriveStatisticsAttributionAnomaly:
                 )
             ).scalars().all()
             assert first == second == ["attribution_anomaly"]
+
+
+# =========================================================================
+# US-450 / F-104 -- re-key onto the canonical drives.drive_id (US-448)
+# =========================================================================
+
+
+class TestReKeyCanonicalDriveId:
+    """US-450: the persisted stat is keyed on the canonical ``drives.drive_id``
+    (US-448), resolved by natural key via ``resolve_canonical_drive_id``, with a
+    subsume fallback to ``drive_summary.id`` when no canonical row exists.
+    """
+
+    def test_reKey_keysOnResolvedCanonicalDriveId_notSummaryId(self, engine):
+        """A drives row whose drive_id DIVERGES from summary.id proves the stat
+        keys on the resolved canonical id, not the bare drive_summary.id."""
+        driveId = 61
+        canonicalDriveId = 90061  # deliberately != drive_summary.id
+        startTime = datetime(2026, 7, 4, 12, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            assert summaryId != canonicalDriveId  # guard the premise
+            _seedCanonicalDrive(
+                session, driveId=driveId, canonicalDriveId=canonicalDriveId,
+            )
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0, 1500.0, 2400.0]},
+            )
+            written = compute_drive_statistics(session, driveId)
+            session.commit()
+
+            assert written == 1
+            # Keyed on the canonical drives.drive_id ...
+            onCanonical = session.execute(
+                select(DriveStatistic).where(
+                    DriveStatistic.summary_id == canonicalDriveId,
+                )
+            ).scalars().all()
+            assert len(onCanonical) == 1
+            assert onCanonical[0].parameter_name == "RPM"
+            # ... and NOT on the bare drive_summary.id.
+            onSummary = session.execute(
+                select(DriveStatistic).where(
+                    DriveStatistic.summary_id == summaryId,
+                )
+            ).scalars().all()
+            assert onSummary == []
+
+    def test_reKey_subsumeCase_keysOnDriveIdEqualToSummaryId(self, engine):
+        """The production subsume case: drives.drive_id == drive_summary.id."""
+        driveId = 62
+        startTime = datetime(2026, 7, 4, 13, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedCanonicalDrive(
+                session, driveId=driveId, canonicalDriveId=summaryId,
+            )
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0, 1500.0, 2400.0]},
+            )
+            written = compute_drive_statistics(session, driveId)
+            session.commit()
+            assert written == 1
+            row = session.execute(
+                select(DriveStatistic).where(
+                    DriveStatistic.summary_id == summaryId,
+                )
+            ).scalar_one()
+            assert row.parameter_name == "RPM"
+
+    def test_reKey_fallsBackToSummaryId_whenNoCanonicalRow(self, engine):
+        """No ``drives`` row minted yet -> fall back to drive_summary.id (which
+        is exactly the value the v0018 subsume preserves)."""
+        driveId = 63
+        startTime = datetime(2026, 7, 4, 14, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            # No _seedCanonicalDrive -> drives table empty.
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0, 1500.0, 2400.0]},
+            )
+            written = compute_drive_statistics(session, driveId)
+            session.commit()
+            assert written == 1
+            row = session.execute(
+                select(DriveStatistic).where(
+                    DriveStatistic.summary_id == summaryId,
+                )
+            ).scalar_one()
+            assert row.parameter_name == "RPM"
+
+
+# =========================================================================
+# US-450 / F-116 -- foreign-vehicle guard
+# =========================================================================
+
+
+class TestForeignVehicleGuard:
+    """US-450 / F-116: a foreign / non-'real' drive is EXCLUDED from the
+    authoritative drive_statistics table (no rows written, prior rows cleared).
+    """
+
+    def test_foreign_dataQualityForeignVehicle_writesNoRows(self, engine):
+        driveId = 71
+        startTime = datetime(2026, 7, 4, 15, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            summary = session.get(DriveSummary, summaryId)
+            summary.data_quality = DATA_QUALITY_FOREIGN_VEHICLE
+            session.commit()
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0, 1500.0, 2400.0]},
+            )
+            written = compute_drive_statistics(session, driveId)
+            session.commit()
+            assert written == 0
+            assert session.execute(select(DriveStatistic)).scalars().all() == []
+
+    def test_foreign_dataSourceNonReal_writesNoRows(self, engine):
+        """data_source='foreign' (a non-'real' value) is excluded."""
+        driveId = 72
+        startTime = datetime(2026, 7, 4, 16, 0, 0)
+        with Session(engine) as session:
+            _seedPiSyncedDriveSummary(
+                session, driveId=driveId, dataSource="foreign",
+            )
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0, 1500.0, 2400.0]},
+            )
+            written = compute_drive_statistics(session, driveId)
+            session.commit()
+            assert written == 0
+            assert session.execute(select(DriveStatistic)).scalars().all() == []
+
+    def test_foreign_clearsPreExistingStats(self, engine):
+        """A drive re-tagged foreign has its prior real-data stats cleared."""
+        driveId = 73
+        startTime = datetime(2026, 7, 4, 17, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(session, driveId=driveId)
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0, 1500.0, 2400.0]},
+            )
+            # First compute as a real drive -> rows exist.
+            assert compute_drive_statistics(session, driveId) == 1
+            session.commit()
+            # Re-tag foreign, recompute -> rows cleared, returns 0.
+            summary = session.get(DriveSummary, summaryId)
+            summary.data_quality = DATA_QUALITY_FOREIGN_VEHICLE
+            session.commit()
+            assert compute_drive_statistics(session, driveId) == 0
+            session.commit()
+            assert session.execute(select(DriveStatistic)).scalars().all() == []
+
+    def test_foreign_isIdempotent(self, engine):
+        driveId = 74
+        startTime = datetime(2026, 7, 4, 18, 0, 0)
+        with Session(engine) as session:
+            _seedPiSyncedDriveSummary(
+                session, driveId=driveId, dataSource="foreign",
+            )
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0, 1500.0, 2400.0]},
+            )
+            assert compute_drive_statistics(session, driveId) == 0
+            session.commit()
+            assert compute_drive_statistics(session, driveId) == 0
+            session.commit()
+            assert session.execute(select(DriveStatistic)).scalars().all() == []
+
+    def test_realDrive_isNotExcluded(self, engine):
+        """A normal 'real' drive is unaffected by the guard."""
+        driveId = 75
+        startTime = datetime(2026, 7, 4, 19, 0, 0)
+        with Session(engine) as session:
+            summaryId = _seedPiSyncedDriveSummary(
+                session, driveId=driveId, dataSource="real",
+            )
+            _seedRealtimeRows(
+                session, driveId=driveId, startTime=startTime,
+                paramSeries={"RPM": [800.0, 1500.0, 2400.0]},
+            )
+            assert compute_drive_statistics(session, driveId) == 1
+            session.commit()
+            row = session.execute(
+                select(DriveStatistic).where(
+                    DriveStatistic.summary_id == summaryId,
+                )
+            ).scalar_one()
+            assert row.parameter_name == "RPM"
+
+
+class TestForeignPredicateMirrorsCompareDrives:
+    """A-4 anti-drift: ``_isForeignDrive`` must agree with the F-116 exclusion
+    SSOT ``compare_drives.driveExclusionReason`` on every case, so the two
+    foreign definitions can never silently diverge.
+    """
+
+    @pytest.mark.parametrize(
+        ("dataQuality", "dataSource"),
+        [
+            ("foreign_vehicle", "real"),
+            ("foreign_vehicle", None),
+            ("full", "foreign"),
+            ("full", "replay"),
+            ("full", "physics_sim"),
+            ("full", "real"),
+            ("full", None),
+            (None, None),
+            (None, "real"),
+        ],
+    )
+    def test_predicatesAgree(self, dataQuality, dataSource):
+        summary = DriveSummary(data_quality=dataQuality, data_source=dataSource)
+        assert _isForeignDrive(summary) == (
+            driveExclusionReason(summary) is not None
+        )

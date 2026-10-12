@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<!-- US-482 letterbox scaling: the viewport is the REAL panel (device-width), not
+     the old hard-coded 480x320. The fixed 480x320 design box (#stage) is scaled
+     to fit by carousel.js so the UI fills a 1080p panel instead of rendering in
+     a corner (CIO-locked LETTERBOX 2026-07-21). -->
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
+<title>Eclipse OBD-II Dashboard</title>
+<!-- US-399 carousel shell (F-092). Served same-origin by eclipse-states-http at
+     http://127.0.0.1:9899/dashboard.html so the auth token is injected below
+     (token SSOT never lands on disk -- same seam as the F-103 splash). The
+     dashboard is a PURE CONSUMER: it reads the state files the emitters write
+     and renders them; it never polls hardware (specs/ssot-design-pattern.md).
+     The two card BODIES (System Status / Battery Health) are filled by US-400 /
+     US-401; this shell provides the swipe carousel, page dots, persistent top
+     bar, and the honest-instrument `unavailable` fallback. -->
+<link rel="stylesheet" href="dashboard.css"/>
+</head>
+<body>
+  <!-- US-482 letterbox frame: #screen is the full-viewport black bezel; #stage
+       is the exact 480x320 design box, centered + uniformly scaled as ONE unit
+       (carousel.js sets --scale on resize). Everything below renders INSIDE the
+       transformed #stage, so the shipped 480x320 layout is unchanged -- only the
+       outer scale fills the panel. Black bars read as bezel, not a gap. -->
+  <div id="screen">
+  <div id="stage">
+  <!-- Persistent top bar (D-3): BT / sync / power glyphs + version chip + menu
+       affordance. Glyph STATE (amber on BT drop, etc.) is bound by US-400 from
+       system-status; the shell renders them in a neutral state. The ⋮ button is
+       the System Setup menu affordance -- US-403 wires its behaviour. -->
+  <header id="topbar">
+    <!-- US-555 (F-132): the bar is a `1fr auto 1fr` grid and must have EXACTLY
+         THREE children -- left cluster, clock, right cluster. The clusters are
+         not decoration: five children in a three-column template wrap into an
+         implicit second row that a 28px bar clips. The P-6 WiFi glyph joined
+         the LEFT cluster (ARCH-007). The width bound that keeps the clock on the
+         bar's midpoint is asserted in tests/ui/test_topbar_three_column_grid.py,
+         and it says a FOURTH glyph does not fit without a re-layout (US-720). -->
+    <div class="topbar-left">
+      <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
+      <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
+      <!-- US-696 (CIO ruling 2026-09-09): the lightning POWER glyph stood here
+           and was removed -- "if I can see the screen the power is on", so
+           restating it spent a slot in a band that has none to spare. The
+           MEASUREMENT survived the display: `power.source` is still sensed and
+           the System Status card keeps its Power row with a typed reason. The
+           argument against removal is recorded so it is not rediscovered: the
+           glyph was the only on-screen signal during a UPS ride-down, the one
+           window where "screen lit => mains present" is false. The CIO's call
+           is that the automatic sequenced poweroff makes it unactionable. -->
+      <!-- ARCH-007 (Atlas ruling 2026-08-20): the P-6 WiFi glyph the US-555
+           comment above reserved a slot for. It joins the LEFT cluster and
+           needs no re-layout -- the three-column grid still has exactly three
+           children. Ships `neutral`: nothing has been read yet, and `down`
+           would be a claim we looked. -->
+      <span class="glyph" id="glyph-wifi" data-state="neutral" title="WiFi">((•))</span>
+    </div>
+    <!-- US-542 (F-127): the wall clock, relocated from the retired parked idle
+         face. It is PERSISTENT chrome now -- readable from every card, not just
+         the one screen the operator saw with the engine off. Ships EMPTY, not
+         with a placeholder time: a hard-coded "12:00" would be a fabricated
+         reading for the frame before the first paint, on the one surface that
+         is always visible. carousel.js fills it from `fmtClock` (US-503). -->
+    <span id="topbar-clock"></span>
+    <div class="topbar-right">
+      <!-- US-501: the state server substitutes __DEPLOY_VERSION__ from
+           .deploy-version at serve time (the same _injectHtml seam as
+           __SPLASH_TOKEN__ below), re-read on EVERY serve because the deploy
+           stamps the version after restarting the server. An unreadable stamp
+           becomes the honest 'V?.?.?' sentinel -- never a stale build number.
+           The chip previously shipped that sentinel as a hard literal, so every
+           build on the panel looked identical. -->
+      <span id="version-chip">__DEPLOY_VERSION__</span>
+      <!-- US-659 (CIO ruling, punch-list H6): ships VISIBLE, in every state.
+           This used to carry `hidden`, and US-490's poll revealed it only while
+           the vehicle read parked -- so the glyph implied the menu was
+           unavailable while the 5s long-press was opening it the whole time.
+           The long-press is unchanged and is now the only gate. DO NOT re-add
+           `hidden` here: tests/ui/test_carousel_kebab_always_visible.py fails
+           on the attribute and on the rendered cascade. -->
+      <button id="menu-btn" class="tap-target" aria-label="System Setup">⋮</button>
+    </div>
+  </header>
+
+  <!-- US-506 auto-rotate progress (F-124): a calm THIN time-to-next bar under
+       the top bar. It reads as ambient chrome, never as an alert -- the DTC
+       ribbon owns that register and sits in the same band. JS sets --rotate-fill
+       0..1; the bar is REMOVED (not frozen part-filled) while paused, because a
+       stalled progress bar promises an advance that is not coming. -->
+  <div id="rotate-progress" hidden>
+    <span id="rotate-progress-fill"></span>
+  </div>
+
+  <!-- US-405 persistent DTC ribbon: rides under the top bar on every card while
+       a code is present. STOP state uses the brighter --red-light (R-2, distinct
+       from brand-red) + a leading ⚠ + a subtle pulse. JS sets the level + text. -->
+  <!-- US-691: FOUR SLOTS, not one string. The banner used to carry head, code,
+       description and "+N more" in a single ellipsis-clipped span, so an
+       overflow always ate the count first (it is the tail) and a second stored
+       code became invisible. The slots overflow in a declared order instead --
+       only .ribbon-desc clips; see the dashboard.css rules. -->
+  <div id="dtc-ribbon" hidden>
+    <span class="ribbon-glyph">⚠</span>
+    <span class="ribbon-head"></span>
+    <span class="ribbon-desc"></span>
+    <span class="ribbon-more"></span>
+  </div>
+
+  <!-- US-405 full-screen DTC takeover: fired on a NEW code (newSinceTs), one at a
+       time, severity-styled. STOP has no plain dismiss -- only "Acknowledge"
+       (drops to the ribbon) so the driver always keeps view control. JS fills the
+       content + wires the buttons from the polled `dtc` state. -->
+  <div id="dtc-takeover" hidden role="alertdialog" aria-label="Check engine alert">
+    <div class="takeover-inner">
+      <span class="takeover-icon" id="takeover-icon">⚠</span>
+      <span class="takeover-head">CHECK ENGINE</span>
+      <span class="takeover-chip" id="takeover-chip"></span>
+      <span class="takeover-code" id="takeover-code"></span>
+      <span class="takeover-desc" id="takeover-desc"></span>
+      <span class="takeover-directive" id="takeover-directive"></span>
+      <span class="takeover-more" id="takeover-more" hidden></span>
+      <div class="takeover-actions">
+        <button id="takeover-detail" class="tap-target">View detail ›</button>
+        <button id="takeover-dismiss" class="tap-target">Dismiss</button>
+      </div>
+    </div>
+  </div>
+
+  <main id="carousel" aria-roledescription="carousel">
+    <div id="track">
+      <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
+           card sitting beside an always-present fallback card would poll and
+           paint the same feed twice and put two rules in charge of the slot.
+
+           US-541 + US-542 (F-127) settle WHICH two. The live IMU instrument is
+           the PERMANENT face -- parked, the IMU is correct (a true heading, a
+           true 0.0 g), so the US-481 STANDBY view had nothing to say that the
+           instrument does not say better, and it is RETIRED. The second face is
+           now the honest fallback and nothing else: the motion feed is down and
+           the operator is owed the reason.
+
+           `data-face` is the switch, set by carousel.js from ONE decision
+           (`homeFace`) and read by the stylesheet, so the logical face and the
+           painted face can never disagree. It ships `idle` because that is the
+           honest pre-first-poll state: nothing has been read, so there is no
+           motion to show.
+
+           Still `data-idle-home` with NO `data-state`: the generic availability
+           poll must not reach this slot. Its absence story is not "unavailable"
+           -- an absent/stale states/imu falls back to the fallback face (AC-3),
+           never a frozen or zeroed motion display. -->
+      <section class="card" data-idle-home data-face="idle" id="home-card"
+               aria-label="Home">
+        <div class="card-body"><span class="idle-boot">standby …</span></div>
+      </section>
+      <!-- US-406 Alerts card (F-111): hero (worst code + directive) + a
+           tappable list sorted worst-first (na last). JS fills the body from
+           the polled `dtc` state; a missing/malformed file -> `unavailable`.
+
+           US-540-b moves it to SECOND. Pure markup order -- the carousel finds
+           the Alerts index dynamically (`dtcCardIndex`), so the ribbon tap,
+           the takeover "View detail" and the drill-down all keep working
+           without a nav change. -->
+      <section class="card" data-state="dtc" aria-label="Alerts">
+        <h2 class="card-title">Alerts</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+      <section class="card" data-state="system-status" aria-label="System Status">
+        <h2 class="card-title">System Status</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+      <!-- US-540-b (F-127): the US-507 merged "Health" card RETIRES and its
+           three readouts become cards again (4 -> 6). US-507 merged them
+           because the CIO called six screens too many; the US-540-a legibility
+           scale changes the arithmetic under that call -- at secondary 26px a
+           card affords ~3 facts, and Health was carrying six. A container of
+           three unrelated facts is the one thing the scale cannot pay for, so
+           the screen count is the cheaper thing to spend.
+
+           Each card consumes its OWN state file through the SAME view function
+           it used as a section (and as a standalone card before that), so this
+           is a RELOCATION in the opposite direction, not a redesign. The
+           per-source independence the merge had to fight for is now free: a
+           dead UPS cannot reach the Light card at all.
+
+           US-508: the standalone Motion card stays gone -- the US-497 live
+           instrument is a FACE of the home slot, not a screen of its own. -->
+      <section class="card" data-state="battery-health" aria-label="Battery">
+        <h2 class="card-title">Battery</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+      <!-- Fuel Trim (formerly "LTFT Trend"; plain English, Spool's LTFT
+           semantics unchanged) stays VEHICLE-GATED, and keeps the SPEAKING
+           vocabulary US-507 gave it rather than reverting to the pre-US-507
+           hide. Two reasons, and neither is inertia: this story locks SIX
+           cards, and a card that vanishes on a bench breaks the set in exactly
+           the place the CIO reads the panel most days; and "does not apply
+           right now" is a fact worth stating on a screen the operator swiped
+           to deliberately. So the card renders the honest "no engine data" --
+           never a fabricated 0%.
+
+           Ships data-gated="true" so the pre-first-poll window -- when nothing
+           has been read and "is a car connected?" is genuinely unknown -- fails
+           CLOSED to the gate. The body still reads `unavailable` until the
+           first poll: no read has happened yet, which is a different fact from
+           the gate itself. -->
+      <section class="card" data-state="ltft-trend" data-gated="true"
+               aria-label="Fuel Trim">
+        <h2 class="card-title">Fuel Trim</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+      <section class="card" data-state="light" aria-label="Light">
+        <h2 class="card-title">Light</h2>
+        <div class="card-body">unavailable</div>
+      </section>
+    </div>
+  </main>
+
+  <!-- US-406 per-code detail overlay: opened by a list-row tap, the takeover
+       "View detail", or a ribbon tap. Fixed skeleton (hero · status · freeze-
+       frame-or-realtime fallback · severity-gated fix + trust badge · log/sync
+       footer). A ‹ Back is always present so the operator is never trapped. -->
+  <div id="dtc-detail" hidden role="dialog" aria-label="Code detail">
+    <header class="detail-head">
+      <button id="detail-back" class="tap-target" aria-label="Back to Alerts">‹ Back</button>
+      <span id="detail-code-head" class="detail-code-head"></span>
+    </header>
+    <div id="detail-body" class="detail-body"><!-- JS fills the detail --></div>
+    <!-- US-407 gated Mode-04 clear (design §6): enabled ONLY when every stored
+         code is MINOR + logged + server-acked (the display mirror; the server
+         RE-CHECKS the gate on submit). A STOP/WATCH / un-synced / re-set code
+         disables it with an honest reason. Hidden when nothing is clearable. -->
+    <div id="dtc-clear-zone" class="detail-card">
+      <span class="detail-label">CLEAR CODES</span>
+      <button id="dtc-clear-btn" class="tap-target" hidden></button>
+      <div id="dtc-clear-result" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- US-509 System-Status drill-down: opened by a tap on the "SYSTEM · N ISSUE"
+       summary line, which is a tap target ONLY while a degraded source exists.
+       Deliberately MIRRORS the per-code detail overlay above (same ‹ Back, same
+       head/body skeleton, same shell classes) so the interaction language of the
+       two drill-downs is one language, not two. JS fills the rows worst-first;
+       only actually-degraded sources are ever listed. -->
+  <div id="sys-detail" hidden role="dialog" aria-label="System issues">
+    <header class="detail-head">
+      <button id="sys-detail-back" class="tap-target" aria-label="Back to System Status">‹ Back</button>
+      <span id="sys-detail-head" class="detail-code-head"></span>
+    </header>
+    <div id="sys-detail-body" class="detail-body"><!-- JS fills the rows --></div>
+  </div>
+
+  <!-- US-407 hard-confirm modal (design §6.2): the clear wipes EVERY code, erases
+       the freeze-frame, and resets emissions readiness. Cancel is the easy
+       default; Clear all is the deliberate action. Kept separate from the US-403
+       menu confirm so the two consequential flows never cross-wire. -->
+  <div id="clear-confirm" hidden role="alertdialog" aria-label="Confirm clear codes">
+    <div class="confirm-box">
+      <p id="clear-confirm-title" class="confirm-title"></p>
+      <p id="clear-confirm-text"></p>
+      <div class="confirm-actions">
+        <button id="clear-confirm-cancel" class="tap-target">Cancel</button>
+        <button id="clear-confirm-ok" class="tap-target">Clear all</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Page dots: one per card, ≥40px touch target (S-2). -->
+  <nav id="dots" aria-label="cards"></nav>
+
+  <!-- US-403 long-press ring (D-6): fills during a ~5s hold anywhere on the
+       carousel; releasing early or moving cancels. JS sets --fill 0..1. -->
+  <div id="longpress-ring" hidden></div>
+
+  <!-- US-403 System Setup menu (D-6/D-7/A-7/A-8): opened by the long-press OR
+       the top-bar ⋮. Service control is on the install-fixed allow-list; the
+       powerwatch Stop is rendered disabled (safe-shutdown guard, F-7). A ✕
+       (back) is always present so the menu never traps the operator. -->
+  <div id="setup-menu" hidden role="dialog" aria-label="System Setup">
+    <header class="menu-head">
+      <span class="menu-title">System Setup</span>
+      <button id="menu-close" class="tap-target" aria-label="Back to dashboard">✕</button>
+    </header>
+    <!-- US-532 (F-126) Settings band -- Iris Option B, CIO-chosen 2026-08-03.
+         Deliberately the FIRST section: safe, non-destructive preferences sit
+         above the destructive service/Exit rows, so scrolling for a toggle
+         never puts a Stop under the thumb. JS fills the rows from the injected
+         effective values; the toggles carry no confirm (they are reversible),
+         while the service rows below keep theirs (F-6/F-7).
+         US-533: FOUR rows -- audio alerts was dropped (no consumer exists on
+         the Pi, so the control could only ever no-op). Each row now states the
+         apply-state its consumer actually earned; auto-rotate reloads the page
+         itself, because the states-http restart it would otherwise need is
+         polkit-denied. -->
+    <section class="menu-section">
+      <h3 class="menu-section-title">Settings</h3>
+      <div id="settings-list"><!-- JS fills setting rows (effective values) --></div>
+      <p class="settings-foot">Saved on the Pi · survives deploys &amp; reboots</p>
+    </section>
+    <section class="menu-section">
+      <h3 class="menu-section-title">OBD-II Services</h3>
+      <div id="svc-list"><!-- JS fills service rows (Restart / Stop) --></div>
+    </section>
+    <section class="menu-section">
+      <h3 class="menu-section-title">Display</h3>
+      <button id="menu-exit" class="menu-wide tap-target">Exit / Close UI</button>
+    </section>
+    <div id="menu-status" class="menu-status" aria-live="polite"></div>
+  </div>
+
+  <!-- US-403 confirm modal: Stop / Exit are consequential -> confirm first
+       (F-6 no single accidental consequential tap). Cancel always returns. -->
+  <div id="confirm-modal" hidden role="alertdialog" aria-label="Confirm">
+    <div class="confirm-box">
+      <p id="confirm-text"></p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="tap-target">Cancel</button>
+        <button id="confirm-ok" class="tap-target">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- #stage -->
+  </div><!-- #screen -->
+
+  <script>
+    // Token injected by the state server at serve time (token SSOT). Previewed
+    // from file:// the placeholder stays and the polls fail closed to
+    // `unavailable` -- the carousel shell still renders + swipes.
+    window.SPLASH_TOKEN = "__SPLASH_TOKEN__";
+    // US-483-b: the auto-dim curve config (pi.display.autoDim) the state server
+    // substitutes from config.json at serve time -- so tuning is a config change,
+    // not a code change (CIO 2026-07-22). The QUOTED placeholder keeps this valid
+    // JS when un-substituted (file:// preview) -> a string, which carousel.js
+    // ignores in favor of its built-in grounded defaults.
+    window.DISPLAY_AUTODIM = "__DISPLAY_AUTODIM__";
+    // US-506: the carousel navigation config (pi.display.carousel) -- the
+    // auto-rotate period, the pause self-expiry and the swipe velocity/travel
+    // thresholds. Same serve-time substitution + same quoted-placeholder trick:
+    // un-substituted it stays a valid JS string, which carousel.js ignores in
+    // favour of its built-in grounded defaults.
+    window.DISPLAY_CAROUSEL = "__DISPLAY_CAROUSEL__";
+    // US-532: the Slice-1 operator settings at their EFFECTIVE values (the
+    // US-530 shared resolver), keyed by the overlay's own flat dot-paths -- the
+    // same keys POST /settings takes. Same quoted-placeholder trick; resolved
+    // PER REQUEST by the state server, so a reload after a save renders what is
+    // actually stored rather than the value cached when the unit started.
+    window.DISPLAY_SETTINGS = "__DISPLAY_SETTINGS__";
+  </script>
+  <script src="carousel.js"></script>
+</body>
+</html>

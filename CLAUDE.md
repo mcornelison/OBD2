@@ -21,7 +21,7 @@ When sending A2AL messages, sign as `<Name>/<role>` or `<Name>(<role>)` in the r
 | Argus | QA / Tester | `offices/tester/` |
 | Spool | Tuning SME | `offices/tuner/` |
 | Ralph (Rex) | Dev | `offices/ralph/` |
-| Iris | UI/UX | `offices/uidevloper/` |
+| Iris | UI/UX | `offices/uideveloper/` |
 
 ### When to use A2AL (audience rule, normative — v0.4.1 §2.1)
 
@@ -57,15 +57,66 @@ Fields separated by `; `. One line, ends at first newline. Optional fields: `aud
 - Upstream spec + library: https://github.com/mcornelison/A2AL
 - Each agent's local skill: `offices/<role>/.claude/skills/a2al/SKILL.md` + `offices/<role>/.claude/commands/a2al.md`
 
-## Shared-Checkout Discipline (Multi-Agent Concurrency) — CORE BOOTUP
+## Bench Discipline (Multi-Agent Concurrency) — CORE BOOTUP
 
-All agents share ONE working checkout (`Z:\o\OBD2v2`) on the chi-nas-01 SMB share. Branch switches and concurrent commits **race** — edits, staging, and even committed work can be silently lost. Every agent follows this (ratified CIO 2026-06-01; full text `offices/handbook.md` §13):
+**Supersedes the per-agent-clone model (CIO 2026-08-26).** Per-agent clones fixed
+the `.git/index.lock` collisions but gave every agent a full independent copy and
+no way to stop two agents editing the same file. The fleet now runs ONE object
+store with per-ticket worktrees ("benches").
 
-1. **Commit-immediately, office-scoped** — `add`+`commit` your own `offices/<role>/**` in small commits right after each edit-set. Never leave work uncommitted across turns (that's what disappears on a branch switch).
-2. **Only the PM (Marcus) switches branches / merges / deploys** — no other agent runs `git checkout`/`switch`/`merge`/`rebase`. Stay on the live branch and commit there; the PM integrates.
-3. **PM announces + waits for a quiet window before switching branches.**
-4. **Retry-on-lock, never force** — a stale `.git/index.lock` from the slow share clears in seconds; wait + retry; never delete it while a `git` process is running.
-5. **"file modified since read"** in Edit = another agent is writing it → re-read + re-apply; prefer editing only your own office.
+```
+C:\agents\OBD2v3\
+  repo.git\   bare object store (origin = github.com/mcornelison/OBD2)
+  trunk\      worktree on `dev` -- INTEGRATOR ONLY, do not edit here
+  wt\         your bench lives here: <role>-<ticket>-<slug>
+  fleet.json  layout + env (the SSOT for all of the above)
+```
+
+The agent offices are **not in this repo**. They live on the fleet share at
+`Z:\O\OBD2v3\offices` (`$FLEET_SHARE`), which is not version controlled.
+
+1. **Work only in your own bench.** Lease one with the tooling in this repo at
+   `tools/fleet/` — it is versioned here precisely so the procedure below always
+   has an implementation you can reach:
+
+   ```powershell
+   # ONE entry point. Run it with no arguments for help.
+   .\tools\fleet\fleet.ps1 bench -Role <role> -Ticket <label> -Slug <slug> `
+       -Surface "src/pi/**","tests/pi/**"
+
+   .\tools\fleet\fleet.ps1 doctor    # is my environment sane? run this FIRST
+   .\tools\fleet\fleet.ps1 status    # what is leased, what is on the board
+   ```
+
+   Then `cd` to the path it prints, run `.\bench.ps1` first — it exports
+   `PYTHONUTF8`, `FLEET_SHARE` and `OBD2_REPO_ROOT` — then start your session.
+   **Never edit `trunk\`.**
+
+   `-Ticket` is a **lease label**, not a user story number. It names the bench
+   directory and branch. Do NOT mint one from `pm/story_counter.json` — that
+   counter is the PM's and is for US- stories. Use the story/blocker id you were
+   given if you have one, or ask the PM for a label.
+
+2. **Your ticket declares a file SURFACE, and it is enforced.** Edit outside your
+   declared globs and the integrator REJECTS the whole ticket — it does not merge
+   the in-surface part. Declare what you will touch, or ask for the surface to be
+   widened before you start.
+
+3. **Full git inside your bench: yes.** `add`, `commit`, `branch`, `checkout` on
+   your own branch are all yours. Push your branch to origin for durability.
+
+4. **Merging to `dev` is NOT yours.** `Invoke-FleetMerge.ps1` is the only thing
+   that writes trunk. It takes the merge lock, checks your surface, merges
+   `--no-ff` as one revertible bubble, runs the gate, then reclaims your bench and
+   deletes your branch. Never `git merge` into `dev` yourself.
+
+5. **To submit:** commit on your branch, then move your ticket into
+   `$FLEET_SHARE\board\review\`. Rejected tickets go to `board\wip\` with the
+   reason appended, and your bench STAYS leased so you can fix and resubmit.
+
+6. **`Z:\O\OBD2v2` is the frozen pre-migration tree.** It still contains a full set
+   of offices and a working repo, so an agent that wanders there boots
+   successfully on four-month-old content. Never read or write it.
 
 ## Development Commands
 
@@ -149,6 +200,36 @@ shared keys (`protocolVersion`, `schemaVersion`, `deviceId`, `logging`) plus
 `pi:` and `server:` sections for tier-specific settings. Consumer pattern:
 `config.get('pi', {}).get('<section>', ...)` for Pi sections,
 `config.get('server', {}).get('ai', ...)` for server AI config.
+
+**EDR sensor-bus keys (Sprint 50 / V0.29.4, ship dark).** The EDR raw-sensor
+readers gate behind the F-110 bus master switch. All default off/dark so the
+CIO flips each sensor on as he wires it (connect-when-wired):
+
+- `pi.bus.enabled` (default `false`) — master gate for the whole `SampleBus`.
+- `pi.sensors.imu.enabled` / `pi.sensors.light.enabled` (default `false`) —
+  each **requires** `pi.bus.enabled`.
+- `pi.sensors.imu.sampleHz` (`50`) — IMU bus publish rate; `pi.sensors.imu.persistHz`
+  (`25`) — decimated always-on persist cadence.
+- `pi.sensors.light.sampleHz` (`1`).
+- `pi.sensors.retentionDays` (`7`) — rolling-window purge for the Pi-local
+  `edr_imu_sample` / `edr_light_sample` tables; confirm vs the Pi's free space at
+  deploy.
+
+See `specs/architecture.md` §10.8 and `src/common/edr/sensor_schema.py`.
+
+**Power-mode SSOT key (Sprint 52 / V0.29.6).** `pi.power.mode` is the static
+config-key SSOT for the Pi's **deployment context** — in-car vs. bench/wall
+power — which is a *different fact* from the AC-vs-battery power **source**:
+
+- `pi.power.mode` (default `unknown`) — one of `{car, wall, unknown}`. THE single
+  acquisition path is `PowerModeProvider` (`src/pi/power/`); consumed by
+  `system_status_emitter` → `carousel.js powerTile` (renders CAR/WALL/unknown).
+  An absent/stale/invalid value resolves to `unknown` — **never a confident wrong
+  mode** (honest-instrument). The seam allows a future config→GPIO swap behind the
+  same interface with zero consumer change (GPIO out of scope for V0.29.6).
+
+See `specs/architecture.md` "Power-mode SSOT (US-421 / F-098)" and
+`src/pi/power/` (`PowerModeProvider`).
 
 **Critical Pattern**: In `config.json`, use `${ENV_VAR}` syntax for secrets:
 ```json

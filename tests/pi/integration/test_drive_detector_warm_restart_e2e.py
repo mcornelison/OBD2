@@ -46,7 +46,7 @@ Test A/B/C protocol (synthetic counterpart to the I-019 IRL drill):
 
 * **Test A** -- cold-start cycle.  BATTERY_V trace
   ``[12.7, 12.7, 11.4, 14.4, 14.4, 14.4]`` escalates exactly like
-  Drive 5 baseline (offices/tuner/knowledge.md).  RPM probe fires;
+  Drive 5 baseline ($FLEET_SHARE/tuner/knowledge/knowledge.md).  RPM probe fires;
   detector advances STOPPED -> STARTING -> RUNNING; drive_id=N is
   minted.  Drive A ends via RPM=0 debounce -> drive_id closes.
 
@@ -138,7 +138,7 @@ def _makeReading(parameterName: str, value: float) -> MagicMock:
     reading = MagicMock(spec=["parameterName", "value", "unit"])
     reading.parameterName = parameterName
     reading.value = value
-    reading.unit = "V" if parameterName == "BATTERY_V" else None
+    reading.unit = "volt" if parameterName == "BATTERY_V" else None
     return reading
 
 

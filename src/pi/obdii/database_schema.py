@@ -101,6 +101,20 @@
 #                               story; server-side compute path
 #                               (src/server/analytics/drive_statistics_compute)
 #                               is the sole writer authority.
+# 2026-08-29    | Rex (US-626) | Added observed_by + observer_state TEXT to
+#                               SCHEMA_POWER_LOG: which instrument witnessed a
+#                               power transition, and its honest three-state
+#                               read.  Idempotent ALTER in
+#                               ensurePowerLogObserverColumns (power_db.py).
+# 2026-09-25    | Rex (US-790) | Added drain_vcell_trajectory (one row per drain
+#                               poll) + ensureDrainVcellTrajectoryTable, a
+#                               probe-guarded explicit CREATE.
+# 2026-09-30    | Rex (US-776-f) | startup_log gains prior_boot_home_state /
+#                               _sync_outcome / _backlog_start / _backlog_end +
+#                               replay-safe ensureStartupLogPriorBootSyncColumns.
+# 2026-10-03    | Atlas (ARCH-065a) | startup_log gains prior_boot_sync_started_at /
+#                               _sync_ended_at / _vcell_before_cut_v.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: startup_log gains prior_boot_loss_at.
 # ================================================================================
 ################################################################################
 
@@ -130,6 +144,13 @@ seed scripts; the live-OBD writer auto-derives from
 from __future__ import annotations
 
 import sqlite3
+
+# EDR raw-sensor tables (edr_imu_sample / edr_light_sample) are authored ONCE in
+# the tier-neutral src/common/edr contract so the Pi and the future server never
+# diverge (A-4 anti-divergence, US-408). The Pi imports the DDL and appends it to
+# ALL_SCHEMAS / ALL_INDEXES below -- it never re-declares the columns here.
+from common.edr.sensor_schema import EDR_INDEXES, EDR_SCHEMAS
+from src.pi.power.types import DRAIN_TERMINATION_VALUES, DRAIN_VCELL_TRAJECTORY_TABLE
 
 # ================================================================================
 # Schema Definitions
@@ -177,7 +198,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Audit columns
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -185,7 +206,17 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 """
 
-# Static data queried once per VIN
+# Static data queried once per VIN (VIN, fuel type, etc.).
+#
+# US-456 / F-082 D-5 disposition (CIO-decided 2026-07-04): this table is KEPT,
+# not dropped, but is intentionally HONEST-EMPTY on the current vehicle. The
+# ECU (MD326328) is Mode-09-silent, so the VIN is un-gettable; because `vin` is
+# a NOT NULL foreign key, the collector (`vehicle/static_collector.py`) queries
+# the VIN FIRST and, on a null response, writes ZERO rows -- it never fabricates
+# a placeholder VIN. The empty table is therefore an honest instrument, and the
+# whole subsystem re-activates automatically if a Mode-09-capable ECU is ever
+# connected. Rationale + drop-vs-keep record: docs/static-data-disposition.md.
+# Guarded by tests/pi/obdii/test_static_data_honest_empty.py.
 SCHEMA_STATIC_DATA = """
 CREATE TABLE IF NOT EXISTS static_data (
     -- Primary key
@@ -217,9 +248,21 @@ CREATE TABLE IF NOT EXISTS realtime_data (
     -- Primary key
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- Timestamp with second-resolution canonical ISO-8601 UTC format
-    timestamp DATETIME NOT NULL
-        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    -- CAPTURE time: when the reading was TAKEN. Second-resolution canonical
+    -- ISO-8601 UTC.
+    --
+    -- US-809-b2: NOT NULL with NO DEFAULT, and the missing DEFAULT is the
+    -- point. The default was never the problem -- its LOCATION was. On the
+    -- WRITE column below, a default of 'now' is exactly right: at the instant
+    -- of INSERT, now IS the write time. HERE the same default is a
+    -- FABRICATION -- it guesses about the past and yields a plausible value
+    -- wrong by however long the row waited. Python always has a clock at
+    -- receipt, so an omitted capture time is a CODE DEFECT, not a data state:
+    -- this INSERT must RAISE rather than quietly invent one.
+    -- Retention reads THIS column, which is the other reason it stays NOT
+    -- NULL: `NULL < ?` is NULL, so a nullable predicate column would leak
+    -- rows past the purge forever.
+    timestamp DATETIME NOT NULL,
 
     -- Parameter data
     parameter_name TEXT NOT NULL,
@@ -231,12 +274,41 @@ CREATE TABLE IF NOT EXISTS realtime_data (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200 / Spool Data v2 Story 2).  Nullable --
     -- pre-US-200 rows and rows written while no drive is active remain
     -- NULL; populated rows carry the drive_counter-minted id.
     drive_id INTEGER,
+
+    -- WRITE time (US-809-b1).  `timestamp` above holds the EVENT instant --
+    -- when the reading was TAKEN (spec A-double-prime, US-809-a).  This holds
+    -- when the row reached storage.  Under normal load they differ by
+    -- milliseconds; the difference only appears when it matters, which is
+    -- exactly when a queue has backed up and a batch lands together.
+    -- Keeping BOTH is what makes queueing visible AS queueing instead of as
+    -- driving.
+    --
+    -- 🔴 NULLABLE, RULED BY THE CIO 2026-09-24, and the nullability is what
+    -- makes the whole design land. US-809-b2 originally asked for NOT NULL.
+    -- That is UNSATISFIABLE on a database that already has rows: the car
+    -- holds 405,536 realtime_data rows over five months whose write time was
+    -- never recorded and cannot be recovered. NOT NULL could only be met by
+    -- INVENTING one -- the migration clock (claiming all 405,536 were written
+    -- that afternoon) or the capture time (claiming each was written the
+    -- instant it was measured, which is the exact false continuity
+    -- A-double-prime exists to remove and is indistinguishable afterwards
+    -- from a genuinely prompt write). Sprint 93 constraint 4 governs: a typed
+    -- absence beats a fabricated value, every time.
+    --
+    -- 🟢 Nothing observable is lost. The DEFAULT fills every new row, and
+    -- nothing can write a blank one because it fires on every INSERT that
+    -- omits the column. What is given up is only the constraint's PROOF that
+    -- no future row is blank -- and dropping it is what lets the migration
+    -- put this DEFAULT on an existing table while leaving history honestly
+    -- blank.
+    written_at DATETIME
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
 
     -- Constraints
     CONSTRAINT FK_realtime_data_profile FOREIGN KEY (profile_id)
@@ -298,7 +370,7 @@ CREATE TABLE IF NOT EXISTS statistics (
     -- Data origin -- statistics inherit the tag of the dominant input
     -- rows; live-path defaults to 'real' (US-195 / Spool CR #4).
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200).  Statistics computed post-drive carry
     -- the drive_id of the drive they summarize; multi-drive rollups
@@ -383,7 +455,7 @@ CREATE TABLE IF NOT EXISTS calibration_sessions (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Audit column
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -485,7 +557,7 @@ CREATE TABLE IF NOT EXISTS connection_log (
 
     -- Data origin (US-195 / Spool CR #4)
     data_source TEXT NOT NULL DEFAULT 'real'
-        CHECK (data_source IN ('real','replay','physics_sim','fixture')),
+        CHECK (data_source IN ('real','replay','physics_sim','fixture','foreign')),
 
     -- Per-drive scoping (US-200).  drive_start / drive_end events that
     -- frame a drive carry its drive_id; pre-CRANKING connection attempts
@@ -527,7 +599,26 @@ CREATE TABLE IF NOT EXISTS power_log (
     on_ac_power INTEGER NOT NULL DEFAULT 1,
 
     -- US-252: VCELL volts at stage transition (NULL for legacy rows)
-    vcell REAL
+    vcell REAL,
+
+    -- US-419 (F-080): post-reboot clock-drift honest instrument.  'full' when
+    -- the row's timestamp is trustworthy; 'clock_unsynced' when written
+    -- pre-NTP-sync (dead-RTC reset).  Pi-LOCAL forensic flag -- stripped from
+    -- the sync wire (server computes its own data_quality).  NULL on legacy rows.
+    data_quality TEXT,
+
+    -- US-626: WHICH instrument witnessed this row (e.g. 'pld_gpio6').  A
+    -- disagreement between two observers is only visible if each row says who
+    -- saw it.  Pi-LOCAL, stripped from the sync wire.  NULL on legacy rows.
+    observed_by TEXT,
+
+    -- US-626: the observer's HONEST three-state read at that instant --
+    -- 'present' / 'lost' / 'unknown'.  PldSensor resolves an unreadable line
+    -- to power-present (the correct non-bricking direction for the SHUTDOWN
+    -- path, a confident lie in a forensic log), so without this column a dead
+    -- or contended GPIO6 is indistinguishable from real AC power -- which is
+    -- how ten power losses were logged as healthy.  Pi-LOCAL, wire-stripped.
+    observer_state TEXT
 );
 """
 
@@ -542,6 +633,69 @@ INDEX_POWER_LOG_EVENT_TYPE = """
 CREATE INDEX IF NOT EXISTS IX_power_log_event_type
     ON power_log(event_type);
 """
+
+# US-790 (F-138): the VCELL series of a shutdown drain -- one row per drain
+# poll, the reason on the last row only.  NOT power_log: that is an EVENT log
+# and tests/pi/power/test_power_log_contract.py enforces it.  Append-only with
+# an ``id`` PK (no drive_id, no data_source), so it delta-syncs on the id
+# cursor and stays out of SYNC_UPDATE_TABLES_PK -- a row pushed during the
+# drain is never re-stamped outstanding (the US-789 defect).  It is NOT an EDR
+# table, so the shutdown drain CARRIES it: the rows only exist because the
+# power is going away.  Writer: src/pi/power/power_db.py; the table name lives
+# in src/pi/power/types.py so that writer never imports pi.obdii.
+# No IF NOT EXISTS: ensureDrainVcellTrajectoryTable probes sqlite_master and
+# issues this only for an absent table (specs/design-patterns.md section 10).
+SCHEMA_DRAIN_VCELL_TRAJECTORY = f"""
+CREATE TABLE {DRAIN_VCELL_TRAJECTORY_TABLE} (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- EVENT time: the instant of this poll's VCELL read (canonical ISO-8601
+    -- UTC).  The record -- never a write time in its place.
+    ts_utc TEXT NOT NULL,
+
+    -- Monotonic seconds at the same read; wall clock can step at boot.
+    ts_capture REAL NOT NULL,
+
+    -- 0-based poll number within one drain; 0 opens the next drain.
+    seq INTEGER NOT NULL,
+
+    -- MAX17048 VCELL volts.  NULL = no reading this poll, never a sentinel.
+    vcell_v REAL,
+
+    -- Why the drain ended; set on its LAST row only (DRAIN_TERMINATION_VALUES).
+    termination_reason TEXT
+        CHECK (termination_reason IN ({
+            ', '.join(f"'{value}'" for value in DRAIN_TERMINATION_VALUES)
+        })),
+
+    -- Which cell was fitted: pi.power.cellEpoch, stamped at write time.
+    -- 'unknown' when the key is absent -- never a guess.
+    cell_epoch TEXT NOT NULL
+);
+"""
+
+
+def ensureDrainVcellTrajectoryTable(conn: sqlite3.Connection) -> bool:
+    """Create ``drain_vcell_trajectory`` when it is absent (US-790).
+
+    Replay-safe by construction: the decision is a ``sqlite_master`` lookup by
+    ``name``, which SQLite stores unquoted whatever form the stored DDL takes,
+    and an existing table is never touched -- no CREATE, DROP, RENAME or ALTER.
+
+    Args:
+        conn: Open sqlite3 connection; the caller owns commit semantics.
+
+    Returns:
+        True iff the table was created on this call.
+    """
+    present = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (DRAIN_VCELL_TRAJECTORY_TABLE,),
+    ).fetchone()
+    if present is not None:
+        return False
+    conn.execute(SCHEMA_DRAIN_VCELL_TRAJECTORY)
+    return True
 
 # ================================================================================
 # US-200 / Spool Data v2 Story 2: drive_id indexes
@@ -616,9 +770,47 @@ CREATE TABLE IF NOT EXISTS startup_log (
 
     -- When this row was written (canonical ISO-8601 UTC).
     recorded_at TEXT NOT NULL
-        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+
+    -- US-419 (F-080): post-reboot clock-drift honest instrument.  'full' when
+    -- the boot clock is trustworthy; 'clock_unsynced' when the timestamp was
+    -- written pre-NTP-sync (dead-RTC reset) -- see src/pi/diagnostics/clock_sync.py.
+    -- Pi-LOCAL forensic flag: stripped from the sync wire (server computes its
+    -- own data_quality).  NULL on legacy rows written before US-419.
+    data_quality TEXT,
+
+    -- US-776-f: the prior boot's shutdown-sync record (powerwatch_outcome.json),
+    -- landed by boot_progress.arm.  NULL whenever the record is absent, lacks
+    -- the field, or cannot be proven to belong to the prior boot.
+    prior_boot_home_state TEXT,
+    prior_boot_sync_outcome TEXT,
+    prior_boot_backlog_start INTEGER,
+    prior_boot_backlog_end INTEGER,
+
+    -- ARCH-065: the prior boot's shutdown-sync window and the last VCELL
+    -- read before the cut.
+    prior_boot_sync_started_at TEXT,
+    prior_boot_sync_ended_at TEXT,
+    prior_boot_vcell_before_cut_v REAL,
+
+    -- ARCH-065: the prior loss's wall time (powerwatch HomeStateAtLoss.lossIso);
+    -- keys which battery_health_log row the boot finaliser stamps.
+    prior_boot_loss_at TEXT
 );
 """
+
+#: US-776-f (+ ARCH-065): the eight columns :func:`ensureStartupLogPriorBootSyncColumns`
+#: brings to an existing startup_log, in SCHEMA_STARTUP_LOG order.
+STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("prior_boot_home_state", "TEXT"),
+    ("prior_boot_sync_outcome", "TEXT"),
+    ("prior_boot_backlog_start", "INTEGER"),
+    ("prior_boot_backlog_end", "INTEGER"),
+    ("prior_boot_sync_started_at", "TEXT"),
+    ("prior_boot_sync_ended_at", "TEXT"),
+    ("prior_boot_vcell_before_cut_v", "REAL"),
+    ("prior_boot_loss_at", "TEXT"),
+)
 
 
 def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
@@ -642,6 +834,115 @@ def ensureStartupLogForensicColumns(conn: sqlite3.Connection) -> None:
         if col not in existing:
             conn.execute(f"ALTER TABLE startup_log ADD COLUMN {col} TEXT")
     conn.commit()
+
+
+def ensureStartupLogRecordedAt(conn: sqlite3.Connection) -> bool:
+    """Idempotently ensure startup_log carries the ``recorded_at`` column.
+
+    ``recorded_at`` is the SNAPSHOT_SYNC delta cursor for startup_log (US-417 /
+    F-101): the Pi push reads rows where ``recorded_at > last_snapshot_cursor``.
+    It has shipped in ``SCHEMA_STARTUP_LOG`` since the table was created (US-263,
+    ``665863e``), so on any real Pi DB this guard is a **no-op** -- it exists to
+    satisfy the US-417 "(if absent)" acceptance path defensively (a legacy /
+    partial startup_log created without the column gains it before sync reads
+    it).
+
+    The column is added as plain nullable ``TEXT``: SQLite's ``ALTER TABLE ...
+    ADD COLUMN`` forbids the schema's non-constant ``strftime(...)`` default, and
+    pre-existing legacy rows carry no cursor value anyway (NULL sorts before
+    every ISO-8601 timestamp, so they are simply re-synced once on first push --
+    harmless under the idempotent natural-key server upsert).
+
+    A missing startup_log table is a graceful no-op (lazy-init pattern shared
+    with :func:`src.pi.data.sync_log.ensureSyncModifiedAtSchema`).
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.  The
+            caller owns the connection; this commits after any ALTER.
+
+    Returns:
+        ``True`` iff the ALTER actually ran (the column was previously absent);
+        ``False`` when the column already existed or the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return False
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    if "recorded_at" in existing:
+        return False
+    conn.execute("ALTER TABLE startup_log ADD COLUMN recorded_at TEXT")
+    conn.commit()
+    return True
+
+
+def ensureStartupLogDataQuality(conn: sqlite3.Connection) -> bool:
+    """Idempotently ensure startup_log carries the ``data_quality`` column.
+
+    ``data_quality`` is the US-419 (F-080) post-reboot clock-drift flag: the
+    boot-log writer stamps ``'clock_unsynced'`` when the row was written before
+    systemd-timesyncd disciplined the clock (dead-RTC reset), ``'full'``
+    otherwise.  Fresh DBs get the column from :data:`SCHEMA_STARTUP_LOG`; a
+    legacy startup_log (present on any Pi deployed before US-419) gains it here.
+
+    Added as plain nullable ``TEXT`` -- SQLite ``ALTER TABLE ... ADD COLUMN``
+    permits a nullable column with no default, and pre-existing rows carry no
+    clock verdict anyway (NULL = unassessed).  Mirrors the PRAGMA-guarded,
+    caller-commits-nothing... actually this commits after its own ALTER, exactly
+    like :func:`ensureStartupLogRecordedAt` (both run from the standalone
+    boot-log write path, not the shared ``initialize`` transaction).
+
+    A missing startup_log table is a graceful no-op.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+
+    Returns:
+        ``True`` iff the ALTER actually ran (column was previously absent);
+        ``False`` when the column already existed or the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return False
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    if "data_quality" in existing:
+        return False
+    conn.execute("ALTER TABLE startup_log ADD COLUMN data_quality TEXT")
+    conn.commit()
+    return True
+
+
+def ensureStartupLogPriorBootSyncColumns(conn: sqlite3.Connection) -> list[str]:
+    """Add the US-776-f prior-boot shutdown-sync columns to startup_log.
+
+    Replay-safe per specs/design-patterns.md #10: runs on every boot (from
+    :meth:`ObdDatabase.initialize` and the boot_progress arm writer), adds only
+    the columns a PRAGMA probe reports missing, and is a no-op on the second
+    run.  Plain nullable ``ADD COLUMN`` -- no rebuild, no row moved; existing
+    rows read NULL (never recorded).  The caller owns the commit.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+
+    Returns:
+        Names of the columns added, in order; empty when all were present or
+        the table does not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = 'startup_log'",
+    ).fetchone()
+    if tableExists is None:
+        return []
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(startup_log)")}
+    added: list[str] = []
+    for column, sqlType in STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS:
+        if column not in existing:
+            conn.execute(f"ALTER TABLE startup_log ADD COLUMN {column} {sqlType}")
+            added.append(column)
+    return added
 
 
 # Pi-side ``drive_statistics`` table -- RETIRED V0.27.17 (US-351 / B-104 Step 1b).
@@ -722,6 +1023,64 @@ def ensureDriveStatisticsRetired(conn: sqlite3.Connection) -> bool:
     return True
 
 
+def ensureBatteryLogRetired(conn: sqlite3.Connection) -> bool:
+    """Idempotently drop the legacy Pi-side ``battery_log`` table.
+
+    US-437 (N-4) schema-drift cleanup.  Server migration ``v0003_us223`` dropped
+    ``battery_log`` (dead ``BatteryMonitor`` table, superseded by
+    ``battery_health_log``) server-side, but the Pi never dropped it -- the empty
+    table lingered on the Pi obd.db as pure schema-drift residue (Argus finding
+    2026-05-12 N-4; still present live 2026-07-02, 0 rows).  Mirrors
+    :func:`ensureDriveStatisticsRetired`'s PRAGMA-guarded pattern so re-runs and
+    fresh DBs are safe no-ops -- the durable, redeploy-safe fix (converges any
+    Pi still carrying the legacy table on its next boot).
+
+    On the FIRST invocation against a legacy DB (table present): logs an
+    INFO-level forensic record with the row count about to be dropped, then
+    issues ``DROP TABLE``.  N-4 confirmed 0 rows so no real data is lost, but
+    the log line lands the auditable proof for the per-Pi deploy record.
+
+    On every subsequent invocation (table absent): emits a DEBUG-level
+    absence-confirmation only -- the table is structurally gone.
+
+    Args:
+        conn: Open sqlite3 Connection to the Pi obd database.
+
+    Returns:
+        ``True`` iff the table existed and was dropped on this call,
+        ``False`` when the table was already absent.
+    """
+    import logging
+    logger = logging.getLogger("eclipse-obd")
+
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='battery_log'"
+    ).fetchone()
+    if existing is None:
+        logger.debug(
+            "battery_log table absent (retired per US-223 server-side; "
+            "US-437 N-4 Pi-side cleanup)"
+        )
+        return False
+
+    try:
+        rowCount = conn.execute(
+            "SELECT COUNT(*) FROM battery_log"
+        ).fetchone()[0]
+    except sqlite3.Error:
+        rowCount = -1
+
+    conn.execute("DROP TABLE IF EXISTS battery_log")
+    conn.commit()
+    logger.info(
+        "eclipse-obd | battery_log table dropped (was: %s rows) -- "
+        "US-437 N-4 schema-drift cleanup (server dropped it in US-223 v0003)",
+        rowCount,
+    )
+    return True
+
+
 # All schema statements in order of dependency
 ALL_SCHEMAS = [
     ('vehicle_info', SCHEMA_VEHICLE_INFO),
@@ -739,6 +1098,9 @@ ALL_SCHEMAS = [
     # ``drive_statistics`` retired V0.27.17 per US-351 / B-104 Step 1b
     # (CIO 2026-05-21 ratification).  ensureDriveStatisticsRetired() drops
     # the table on first boot; server-side compute is sole writer now.
+    # EDR raw-sensor tables (US-408, F-114) -- DDL owned by src/common/edr,
+    # imported so the single-source contract is the only authority.
+    *EDR_SCHEMAS,
 ]
 
 # All index statements
@@ -759,4 +1121,8 @@ ALL_INDEXES = [
     # drive_id.ensureDriveIdColumn() so legacy databases (where the
     # column doesn't exist yet at ALL_INDEXES time) don't trip "no such
     # column" when the indexer runs before the migration.
+    # EDR raw-sensor indexes (US-408, F-114) -- drive_id + ts on both tables.
+    # Safe in ALL_INDEXES: drive_id is defined in the EDR CREATE TABLE, so the
+    # column always exists by the time the indexer runs.
+    *EDR_INDEXES,
 ]

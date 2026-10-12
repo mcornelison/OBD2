@@ -328,11 +328,45 @@ class SimulatedObdConnection:
         """
         return self._status.connected
 
-    def connect(self) -> bool:
+    def activeGeneration(self) -> int:
+        """US-441 API parity: the simulated connection has no serial port to
+        race, so it always reports generation 0.  Present so lifecycle daemons
+        can resolve a generation uniformly across real + simulated connections.
+        """
+        return 0
+
+    def query(self, command: Any, callerGeneration: int | None = None) -> Any:
+        """US-441 API parity: delegate to the simulated ``obd`` interface.
+
+        Mirrors :meth:`ObdConnection.query` so the realtime logger + lifecycle
+        query daemon call one method regardless of connection type.  There is
+        no real serial port, so no lock/fence is needed -- ``callerGeneration``
+        is accepted (and ignored) purely for signature compatibility.
+        """
+        return self.obd.query(command)
+
+    def setEngineConfirmedForceMandatory(self, enabled: bool = True) -> None:
+        """US-432 API parity: no-op on the simulated connection.
+
+        The simulator's ``obd`` interface always returns real values (there is
+        no dark-ECU support cache to bypass), so the force-mandatory latch is a
+        no-op here.  Present so the orchestrator's ``_setForceMandatoryPids``
+        seam calls one method regardless of connection type.
+        """
+        return None
+
+    def isForcingMandatoryPids(self) -> bool:
+        """US-432 API parity: the simulated connection never forces (no mask)."""
+        return False
+
+    def connect(self, callerGeneration: int | None = None) -> bool:
         """
         Connect to simulated OBD-II (starts simulator engine).
 
         Simulates connection delay and starts the simulator engine.
+
+        US-441: ``callerGeneration`` is accepted (and ignored) for signature
+        parity with :meth:`ObdConnection.connect`.
 
         Returns:
             True (simulated connection always succeeds)

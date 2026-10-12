@@ -9,8 +9,8 @@
 #
 # Prerequisites:
 #   - SSH access to chi-srv-01 as mcornelison
-#   - Project cloned at /mnt/projects/O/OBD2v2
-#   - .env file configured at /mnt/projects/O/OBD2v2/.env
+#   - Project cloned at /home/mcornelison/obd2-server
+#   - .env file configured at /home/mcornelison/obd2-server/.env
 #   - MariaDB running with obd2db database and obd2 user created
 #
 # What this script does:
@@ -49,7 +49,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=addresses.sh
 . "$SCRIPT_DIR/addresses.sh"
 
-HOST="${SERVER_USER}@${SERVER_HOSTNAME}"
+# Connect via SERVER_HOST (the canonical IP from addresses.sh <- config.json
+# server.network.host), NOT SERVER_HOSTNAME. The hostname depends on local
+# name resolution (~/.ssh/config / DNS / hosts), which drifted stale to the
+# dead 10.27.27.10 after chi-srv-01 relocated to .120 (2026-06-18) and silently
+# routed every deploy to a dead address. The IP is the SSOT; use it directly.
+HOST="${SERVER_USER}@${SERVER_HOST}"
 PROJECT="${SERVER_PROJECT_PATH}"
 VENV="$HOME/obd2-server-venv"
 REMOTE_VENV="/home/${SERVER_USER}/obd2-server-venv"
@@ -74,15 +79,117 @@ for arg in "$@"; do
 done
 
 echo "=== OBD2v2 Server Deployment ==="
-echo "Host: ${SERVER_HOSTNAME}"
+echo "Host: ${SERVER_USER}@${SERVER_HOST} (${SERVER_HOSTNAME})"
 echo "Project: $PROJECT"
 echo ""
+
+# Step 0.9: Narrow the server checkout to what the server actually RUNS.
+#
+# The server is an appliance, not a workshop. Before this, its clone carried the
+# whole repo -- 275 MB of working tree, of which 75 MB was offices/, 39 MB tests,
+# 21 MB specs, 18 MB tools. None of it is imported by src.server.main, and none
+# of it is read at runtime. Tests stay VERSION-LOCKED in git (they are gates and
+# must match the commit they validate); they simply do not need to be ON the box.
+#
+# cone mode is used deliberately: it keeps every file in the ROOT (config.json,
+# requirements*.txt, .deploy-version) and every file in the parent dirs of the
+# listed paths (so src/__init__.py survives), which is exactly the set the unit
+# files and this script read. src/server/migrations rides along under src/server.
+#
+# Untracked files are NOT touched by sparse-checkout, so .env stays put.
+#
+# Idempotent: re-running reapplies the same set. Safe to run before every pull.
+configure_sparse_checkout() {
+    echo "--- Step 0.9: Narrowing server checkout (sparse-checkout) ---"
+
+    # git 2.25+ for cone mode; 2.47 is on chi-srv-01. Refuse rather than guess.
+    if ! ssh $HOST "cd $PROJECT && git sparse-checkout set --cone src/server src/common deploy scripts 2>&1"; then
+        echo "ERROR: sparse-checkout failed on the server." >&2
+        echo "  The clone is unchanged; nothing was removed. Check git version (needs 2.25+):" >&2
+        echo "    ssh $HOST 'git --version'" >&2
+        exit 1
+    fi
+
+    # Absence must be loud. A too-narrow cone removes files the service imports,
+    # and uvicorn would fail at import time with a traceback that looks like a
+    # code bug rather than a deploy-scope bug. Verify before moving on.
+    # Verify by IMPORTING THE APP, not by listing paths. A hand-written path list
+    # is only as good as its author's guess: the first version of this check named
+    # 7 paths derived from the unit files and this script, and missed scripts/ --
+    # which src/server/services/release_reader.py imports at module load. The cone
+    # looked verified and uvicorn died on ModuleNotFoundError at restart.
+    # The import exercises every real dependency, including ones nobody remembered.
+    if ! ssh $HOST "cd $PROJECT && PYTHONPATH=$PROJECT $REMOTE_VENV/bin/python -c 'import src.server.main'" ; then
+        echo "ERROR: the narrowed checkout cannot import src.server.main." >&2
+        echo "  The cone is missing something the app imports (see the traceback above)." >&2
+        echo "  Restore the full tree with: ssh $HOST 'cd $PROJECT && git sparse-checkout disable'" >&2
+        exit 1
+    fi
+
+    echo "Server checkout narrowed; all required paths present."
+    ssh $HOST "cd $PROJECT && du -sh --exclude=.git . 2>/dev/null | sed 's/^/  working tree now: /'"
+    echo ""
+}
+
+# Purge stale Python bytecode on the server (US-553).
+#
+# This is the server half of the 2026-08-11 P0 (obd-server crash-loop,
+# ModuleNotFoundError: No module named 'common'). `git pull` updates tracked
+# .py files and NEVER removes untracked bytecode, so __pycache__ on the server
+# is only ever added to.
+#
+# Two mechanisms let stale bytecode outlive a fix -- both MEASURED 2026-08-28,
+# not assumed. An ordinary edit changes mtime or size and IS invalidated
+# correctly, so the folklore "a stale .pyc masks any fix" is false; these are
+# the two cases that actually bite:
+#   1. GHOST MODULE. A bare `foo.pyc` sitting where `foo.py` used to be is
+#      importable with NO source present -- CPython still registers
+#      SourcelessFileLoader for .pyc on the path hooks. This is the SERVER'S
+#      sharpest edge: Step 0.9 narrows the checkout with sparse-checkout, and
+#      sparse-checkout deliberately does not touch untracked files. The very
+#      property that keeps .env safe also strands every __pycache__ under a
+#      path that just left the cone.
+#   2. (mtime, size) COLLISION. __pycache__ entries are validated against the
+#      source's (mtime, size) PAIR, not a hash; an edit preserving both runs
+#      the old bytecode off the new file.
+#
+# Scoped to the two directories carrying shipped Python. The venv lives at
+# $REMOTE_VENV (/home/<user>/obd2-server-venv), OUTSIDE $PROJECT, so
+# site-packages bytecode is untouched and dependency import cost is unchanged.
+# Reports a count -- a silent purge is an unverifiable one.
+purge_stale_bytecode() {
+    echo "--- Step 1.5: Purging stale bytecode (US-553) ---"
+    ssh $HOST "
+        set -e
+        purged=0
+        for d in '$PROJECT/src' '$PROJECT/scripts'; do
+            [ -d \"\$d\" ] || continue
+            n=\$(find \"\$d\" \\( -type d -name '__pycache__' -o -type f -name '*.pyc' \\) -print | wc -l)
+            purged=\$((purged + n))
+            find \"\$d\" -type d -name '__pycache__' -prune -exec rm -rf {} +
+            find \"\$d\" -type f -name '*.pyc' -delete
+        done
+        echo \"Stale bytecode purged: \$purged path(s) removed under src/ + scripts/.\"
+    "
+    echo ""
+}
+
+if [ "$RESTART_ONLY" = false ]; then
+    configure_sparse_checkout
+fi
 
 # Step 1: Pull latest code
 if [ "$RESTART_ONLY" = false ]; then
     echo "--- Step 1: Pulling latest code ---"
     ssh $HOST "cd $PROJECT && git pull 2>&1"
     echo ""
+fi
+
+# Step 1.5 (US-553): purge stale bytecode AFTER the pull and long before the
+# Step 6 restart. Rationale on the function definition above. Skipped on
+# --restart, which ships no new code.
+if [ "$RESTART_ONLY" = false ]; then
+    purge_stale_bytecode
 fi
 
 # Step 2: Create venv if needed (--init or first run)
@@ -414,7 +521,9 @@ echo ""
 # gitHash overwrites with a refreshed releasedAt.
 echo "--- Step 5.5: Writing .deploy-version on server (US-241) ---"
 LOCAL_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-if [ -d "$LOCAL_REPO_ROOT/.git" ]; then
+# NOT `[ -d .git ]`: a git WORKTREE has .git as a FILE, not a directory. See the
+# matching note in deploy-pi.sh -- same silent "unknown" gitHash.
+if git -C "$LOCAL_REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     GIT_HASH=$(git -C "$LOCAL_REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 else
     GIT_HASH="unknown"

@@ -77,9 +77,15 @@ def _columnInfo(
 # Constants + enum discipline
 # ================================================================================
 
-def test_dataSourceEnum_expectedFourValues():
-    """DATA_SOURCE_VALUES is the Spool-enumerated closed set."""
-    assert DATA_SOURCE_VALUES == ('real', 'replay', 'physics_sim', 'fixture')
+def test_dataSourceEnum_expectedValues():
+    """DATA_SOURCE_VALUES is the Spool-enumerated closed set.
+
+    US-424 (F-116) added 'foreign' -- the foreign-vehicle contamination marker
+    -- to the tail of the Spool CR #4 set.
+    """
+    assert DATA_SOURCE_VALUES == (
+        'real', 'replay', 'physics_sim', 'fixture', 'foreign',
+    )
 
 
 def test_dataSourceDefault_isReal():
@@ -128,8 +134,8 @@ def test_freshSchema_liveInsert_defaultsToReal(freshDb):
     """INSERT without data_source on realtime_data falls through to 'real'."""
     with freshDb.connect() as conn:
         conn.execute(
-            "INSERT INTO realtime_data (parameter_name, value, unit) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO realtime_data (timestamp, parameter_name, value, unit) "
+            "VALUES ('2026-09-24T10:00:00Z', ?, ?, ?)",
             ('RPM', 850.0, 'rpm'),
         )
         row = conn.execute(
@@ -144,8 +150,8 @@ def test_freshSchema_validEnumValueAccepted(freshDb):
     with freshDb.connect() as conn:
         conn.execute(
             "INSERT INTO realtime_data "
-            "(parameter_name, value, unit, data_source) "
-            "VALUES (?, ?, ?, ?)",
+            "(timestamp, parameter_name, value, unit, data_source) "
+            "VALUES ('2026-09-24T10:00:00Z', ?, ?, ?, ?)",
             ('COOLANT_TEMP', 75.0, 'C', 'replay'),
         )
         row = conn.execute(
@@ -167,8 +173,8 @@ def test_freshSchema_invalidEnumValueRejected(freshDb):
         with freshDb.connect() as conn:
             conn.execute(
                 "INSERT INTO realtime_data "
-                "(parameter_name, value, unit, data_source) "
-                "VALUES (?, ?, ?, ?)",
+                "(timestamp, parameter_name, value, unit, data_source) "
+                "VALUES ('2026-09-24T10:00:00Z', ?, ?, ?, ?)",
                 ('RPM', 850.0, 'rpm', 'garbage'),
             )
     assert isinstance(excinfo.value.__cause__, sqlite3.IntegrityError)
@@ -229,7 +235,8 @@ def _createPreUs195Table(conn: sqlite3.Connection) -> None:
         )
     """)
     conn.execute(
-        "INSERT INTO realtime_data (parameter_name, value) VALUES (?, ?)",
+        "INSERT INTO realtime_data (timestamp, parameter_name, value) "
+        "VALUES ('2026-09-24T10:00:00Z', ?, ?)",
         ('RPM', 793.0),
     )
     conn.commit()

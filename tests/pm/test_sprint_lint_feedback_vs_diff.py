@@ -71,15 +71,15 @@ from pathlib import Path
 import pytest
 
 # ================================================================================
-# Module loader (offices/pm/scripts/ is not a package; mirrors US-274 + schema_diff)
+# Module loader (tools/pm/ is not a package; mirrors US-274 + schema_diff)
 # ================================================================================
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_SCRIPT_PATH = _PROJECT_ROOT / "offices" / "pm" / "scripts" / "sprint_lint.py"
+_SCRIPT_PATH = _PROJECT_ROOT / "tools" / "pm" / "sprint_lint.py"
 
 
 def _loadSprintLint():  # noqa: ANN202 -- test helper
-    """Load offices/pm/scripts/sprint_lint.py as a module.
+    """Load tools/pm/sprint_lint.py as a module.
 
     The script lives outside the importable ``src/`` tree so we use
     ``importlib.util`` to load it by absolute path -- same pattern as
@@ -115,6 +115,7 @@ def _runGit(args: list[str], cwd: Path) -> str:
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     return result.stdout.strip()

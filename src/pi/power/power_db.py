@@ -27,26 +27,104 @@
 #                               ERROR + RE-RAISES instead of silently
 #                               swallowing the exception.  Closes Spool's
 #                               Sprint 22 Drain-7 truth-table hypothesis C.
+# 2026-08-29    | Rex (US-626) | Added logPowerObservation writer +
+#                               ensurePowerLogObserverColumns migration for the
+#                               observed_by / observer_state forensic columns.
+#                               A transition row now derives its source from
+#                               the OBSERVATION rather than from monitor state,
+#                               which is what made every power-LOSS row read
+#                               power_source='ac_power'.
+# 2026-09-22    | Rex (US-798) | Module docstring is now THE power_log contract:
+#                               the five writers, their event types, what one
+#                               event writes (measured on the car) and retention.
+# 2026-09-25    | Rex (US-790) | Added DrainVcellTrajectoryWriter: one durable
+#                               row per shutdown-drain poll into
+#                               drain_vcell_trajectory (NOT power_log).
 # ================================================================================
 ################################################################################
 
 """
-Database logging helpers for PowerMonitor.
+Database logging helpers for PowerMonitor -- and THE statement of what
+``power_log`` contains (US-798).  Every other description of the table points
+here; do not restate it anywhere else.
 
-Module-level functions that write power log rows to the DB. Each takes
-the database (or None) + the data to write; PowerMonitor keeps the state
-and delegates row-writing here.
+power_log CONTRACT
+==================
+
+``power_log`` is an EVENT log, never a poll log.  A row is written when
+something about power HAPPENS -- an observer session opens, an observer's
+reading changes, or power-saving is switched (and, historically, the shutdown
+ladder crossed a stage) -- and at no other time.  The only per-poll path,
+``PowerMonitor.start()``'s polling loop, is never started in production:
+``checkPowerStatus`` is reached only from the ``_PowerSourceUiBridge`` sink,
+which fires on an observed CHANGE.
+
+Writers -- every INSERT INTO power_log in src/ is one of these five, and each
+emits only the event types listed beside it (pinned by
+tests/pi/power/test_power_log_contract.py):
+
+    logPowerObservation -> observer_session_start, transition_to_ac, transition_to_battery
+    logPowerTransition -> transition_to_ac, transition_to_battery
+    logPowerSavingEvent -> power_saving_enabled, power_saving_disabled
+    logPowerReading -> ac_power, battery_power
+    logShutdownStage -> stage_warning, stage_imminent, stage_trigger
+
+What each row means:
+
+* ``observer_session_start`` / ``transition_to_*`` with ``observed_by`` SET --
+  one per process start, then one per change in the GPIO6 observer's
+  three-state reading (present / lost / unknown), stamped with
+  ``observer_state``.  These are the rows to COUNT transitions from.
+* ``transition_to_*`` with ``observed_by`` NULL -- PowerMonitor's own record of
+  the same power-source change.  A real change therefore writes its
+  transition TWICE; counting every ``transition_to_*`` row double-counts.
+* ``power_saving_enabled`` / ``power_saving_disabled`` -- PowerMonitor entering
+  or leaving power-saving: on a transition to or from battery, and
+  ``power_saving_disabled`` also when the monitor stops while saving
+  (shutdown on battery).
+* ``ac_power`` / ``battery_power`` -- the source reading that accompanies each
+  change PowerMonitor handles, including the first one of a session.
+* ``stage_warning`` / ``stage_imminent`` / ``stage_trigger`` -- HISTORICAL.
+  Written by the power-down ladder crossing a stage on battery, carrying
+  ``vcell``.  That ladder was deleted (commit 9adb0fbf; eclipse-powerwatch is
+  the sole shutdown decider and writes none), so nothing writes these now:
+  lifecycle still builds the writer and hands it to HardwareManager, which
+  stores it and never calls it.  The last such row on the car is 2026-05-16.
+
+What one event writes, as measured on chi-eclipse-01 (rows 2799-2809,
+2026-09-21/22): a process start writes ``observer_session_start`` +
+``ac_power``; one power LOSS writes four rows -- the observer's
+``transition_to_battery``, ``power_saving_enabled``, PowerMonitor's
+``transition_to_battery`` and ``battery_power``.
+
+Retention: NOTHING purges power_log, on the Pi or on the server (it
+delta-syncs by ``id``).  Growth is bounded by power EVENTS and process starts,
+not by time: 2,809 rows from 2026-05-01 to 2026-09-22 on the car (~20 a day).
+Starting the per-poll loop would change that to one row per poll interval and
+needs a retention rule first.
+
+Each writer below takes the database (or None) + the data to write;
+PowerMonitor keeps the state and delegates row-writing here.
 """
 
 import logging
 import os
 import sqlite3
+import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 from src.common.time.helper import utcIsoNow
+from src.pi.diagnostics.clock_sync import classifyClockQuality
 
-from .types import PowerReading, PowerSource
+from .types import (
+    DRAIN_TERMINATION_VALUES,
+    DRAIN_VCELL_TRAJECTORY_TABLE,
+    PowerObservation,
+    PowerReading,
+    PowerSource,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +133,7 @@ def logPowerReading(
     database: Any | None,
     reading: PowerReading,
     eventType: str,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
 ) -> None:
     """
     Log a power reading to the database.
@@ -63,6 +142,10 @@ def logPowerReading(
         database: ObdDatabase instance (or None)
         reading: The power reading to log
         eventType: Type of event (ac_power, battery_power)
+        clockQuality: US-419 (F-080) clock-drift verdict for the row's
+            timestamp -> data_quality.  Defaults to the floor-only
+            :func:`src.pi.diagnostics.clock_sync.classifyClockQuality`
+            (subprocess-free -- power_log writes must add no latency).
     """
     if database is None:
         return
@@ -74,17 +157,19 @@ def logPowerReading(
             # The reading.timestamp field may be naive local-time (upstream
             # PowerReading default is naive datetime.now()); capture rows must
             # not inherit that drift.
+            ts = utcIsoNow()
             cursor.execute(
                 """
                 INSERT INTO power_log
-                (timestamp, event_type, power_source, on_ac_power)
-                VALUES (?, ?, ?, ?)
+                (timestamp, event_type, power_source, on_ac_power, data_quality)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    ts,
                     eventType,
                     reading.powerSource.value,
                     1 if reading.onAcPower else 0,
+                    clockQuality(ts),
                 )
             )
             logger.debug(f"Logged power status to database | type={eventType}")
@@ -97,6 +182,7 @@ def logPowerTransition(
     eventType: str,
     timestamp: datetime,  # noqa: ARG001 -- kept for BC; DB row uses utcIsoNow at write-time
     currentSource: PowerSource,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
 ) -> None:
     """
     Log a power transition event to the database.
@@ -107,6 +193,8 @@ def logPowerTransition(
         timestamp: Historical transition time (retained for API BC; the
             persisted row uses canonical write-time to satisfy TD-027)
         currentSource: Current power source after transition
+        clockQuality: US-419 clock-drift verdict -> data_quality (floor-only
+            default; see :func:`logPowerReading`).
     """
     if database is None:
         return
@@ -115,17 +203,19 @@ def logPowerTransition(
         with database.connect() as conn:
             cursor = conn.cursor()
             # TD-027 / US-203: canonical ISO-8601 UTC at DB-write boundary.
+            ts = utcIsoNow()
             cursor.execute(
                 """
                 INSERT INTO power_log
-                (timestamp, event_type, power_source, on_ac_power)
-                VALUES (?, ?, ?, ?)
+                (timestamp, event_type, power_source, on_ac_power, data_quality)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    ts,
                     eventType,
                     currentSource.value,
                     1 if currentSource == PowerSource.AC_POWER else 0,
+                    clockQuality(ts),
                 )
             )
             logger.debug(f"Logged power transition to database | type={eventType}")
@@ -137,6 +227,7 @@ def logPowerSavingEvent(
     database: Any | None,
     eventType: str,
     currentSource: PowerSource,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
 ) -> None:
     """
     Log a power saving mode event to the database.
@@ -145,6 +236,8 @@ def logPowerSavingEvent(
         database: ObdDatabase instance (or None)
         eventType: Type of power saving event
         currentSource: Current power source when event occurred
+        clockQuality: US-419 clock-drift verdict -> data_quality (floor-only
+            default; see :func:`logPowerReading`).
     """
     if database is None:
         return
@@ -155,17 +248,19 @@ def logPowerSavingEvent(
             # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
             # Previously used naive datetime.now() -- produced America/Chicago
             # local-time strings, colliding with the schema DEFAULT's UTC form.
+            ts = utcIsoNow()
             cursor.execute(
                 """
                 INSERT INTO power_log
-                (timestamp, event_type, power_source, on_ac_power)
-                VALUES (?, ?, ?, ?)
+                (timestamp, event_type, power_source, on_ac_power, data_quality)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    ts,
                     eventType,
                     currentSource.value,
                     1 if currentSource == PowerSource.AC_POWER else 0,
+                    clockQuality(ts),
                 )
             )
             logger.debug(f"Logged power saving event to database | type={eventType}")
@@ -177,6 +272,7 @@ def logShutdownStage(
     database: Any | None,
     eventType: str,
     vcell: float,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
 ) -> None:
     """Log a PowerDownOrchestrator stage-transition row to power_log (US-252).
 
@@ -218,6 +314,9 @@ def logShutdownStage(
         eventType: One of POWER_LOG_EVENT_STAGE_WARNING /
             POWER_LOG_EVENT_STAGE_IMMINENT / POWER_LOG_EVENT_STAGE_TRIGGER.
         vcell: VCELL volts at the moment of stage transition.
+        clockQuality: US-419 clock-drift verdict -> data_quality.  Floor-only
+            (subprocess-free) default so this durability-critical power-down
+            write adds no latency.
 
     Raises:
         Exception: Any error raised by the INSERT or surrounding
@@ -233,18 +332,25 @@ def logShutdownStage(
             # rows are lost on hard crash before checkpoint.
             conn.execute("PRAGMA synchronous = FULL")
             cursor = conn.cursor()
+            # US-419: floor-only clock verdict (default classifyClockQuality is
+            # subprocess-free) so the power-down race adds no NTP-probe latency;
+            # by shutdown time the clock is long synced, so this is 'full'
+            # unless the RTC is grossly reset (below the sanity floor).
+            ts = utcIsoNow()
             cursor.execute(
                 """
                 INSERT INTO power_log
-                (timestamp, event_type, power_source, on_ac_power, vcell)
-                VALUES (?, ?, ?, ?, ?)
+                (timestamp, event_type, power_source, on_ac_power, vcell,
+                 data_quality)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    ts,
                     eventType,
                     PowerSource.BATTERY.value,
                     0,
                     float(vcell),
+                    clockQuality(ts),
                 ),
             )
             # Explicit commit before context-manager exit; the outer
@@ -280,6 +386,109 @@ def logShutdownStage(
         raise
 
 
+def logPowerObservation(
+    database: Any | None,
+    eventType: str,
+    observation: PowerObservation,
+    clockQuality: Callable[[str], str] = classifyClockQuality,
+) -> None:
+    """Write one observer-stamped ``power_log`` row (US-626).
+
+    The difference from :func:`logPowerTransition` is that the source written
+    here is derived from the OBSERVATION rather than from monitor state.  That
+    matters: the pre-US-626 transition writer read
+    ``PowerMonitor._currentPowerSource``, which ``checkPowerStatus`` had not
+    yet updated, so every power-LOSS row was stamped ``ac_power`` /
+    ``on_ac_power=1``.  An observation cannot disagree with itself.
+
+    ``observer_state`` records the honest three-state read, so a row written
+    off an unreadable GPIO line says ``unknown`` instead of painting a
+    confident ``ac_power`` (US-502 honest-instrument, applied to the forensic
+    log rather than only to the display).
+
+    Args:
+        database: ObdDatabase instance (or None for no-op).
+        eventType: power_log event_type for this row.
+        observation: The reading to persist.
+        clockQuality: US-419 clock-drift verdict -> data_quality.
+
+    Note:
+        Never raises.  This is a forensic writer on a status path; a failed
+        write is logged at ERROR and swallowed so it cannot take down the
+        bridge thread that produced it.
+    """
+    if database is None:
+        return
+
+    try:
+        with database.connect() as conn:
+            cursor = conn.cursor()
+            # TD-027 / US-203: canonical ISO-8601 UTC at the write boundary.
+            ts = utcIsoNow()
+            cursor.execute(
+                """
+                INSERT INTO power_log
+                (timestamp, event_type, power_source, on_ac_power,
+                 data_quality, observed_by, observer_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts,
+                    eventType,
+                    observation.powerSource.value,
+                    1 if observation.onAcPower else 0,
+                    clockQuality(ts),
+                    observation.observedBy,
+                    observation.state,
+                ),
+            )
+            conn.commit()
+            logger.debug(
+                "Logged power observation | type=%s observer=%s state=%s",
+                eventType, observation.observedBy, observation.state,
+            )
+    except Exception as e:
+        logger.error("Error logging power observation to database: %s", e)
+
+
+def ensurePowerLogObserverColumns(conn: sqlite3.Connection) -> bool:
+    """Add ``observed_by`` + ``observer_state`` to ``power_log`` (US-626).
+
+    Idempotent, PRAGMA-guarded -- mirrors :func:`ensurePowerLogVcellColumn`.
+    Both columns are nullable so legacy rows (every row written before this
+    story, including the ten boots' worth of ``ac_power`` rows that motivated
+    it) stay valid with NULL.  The caller owns commit semantics, matching the
+    ``ObdDatabase.initialize`` transaction scope.
+
+    These are Pi-LOCAL forensic columns and are stripped from the sync wire by
+    ``src.pi.data.sync_log._WIRE_STRIPPED_COLUMNS`` -- the US-419
+    ``data_quality`` precedent.  That is deliberate: the server has no such
+    columns and its bulk insert errors on an unmapped key, so following the
+    precedent keeps this a Pi-side change instead of a server migration.
+
+    Args:
+        conn: Open sqlite3 connection.
+
+    Returns:
+        True if any ALTER TABLE ran, False if both columns were already
+        present or the table did not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        ('power_log',),
+    ).fetchone() is not None
+    if not tableExists:
+        return False
+
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(power_log)")}
+    added = False
+    for column in ('observed_by', 'observer_state'):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE power_log ADD COLUMN {column} TEXT")
+            added = True
+    return added
+
+
 def ensurePowerLogVcellColumn(conn: sqlite3.Connection) -> bool:
     """Add ``vcell`` column to ``power_log`` if not already present (US-252).
 
@@ -308,6 +517,186 @@ def ensurePowerLogVcellColumn(conn: sqlite3.Connection) -> bool:
 
     conn.execute("ALTER TABLE power_log ADD COLUMN vcell REAL")
     return True
+
+
+def ensurePowerLogDataQuality(conn: sqlite3.Connection) -> bool:
+    """Add the ``data_quality`` column to ``power_log`` if absent (US-419).
+
+    Idempotent, PRAGMA-guarded -- mirrors :func:`ensurePowerLogVcellColumn`.
+    ``data_quality`` is the F-080 post-reboot clock-drift flag stamped by the
+    power_log writers (``'clock_unsynced'`` when the row was written before
+    systemd-timesyncd disciplined the clock, else ``'full'``).  Added nullable
+    so legacy rows (written before US-419) stay valid with NULL.  The caller
+    owns commit semantics (matches the ``ObdDatabase.initialize`` transaction).
+
+    Args:
+        conn: Open sqlite3 connection.
+
+    Returns:
+        True if the ALTER TABLE ran, False if the column was already present
+        or the table did not exist.
+    """
+    tableExists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        ('power_log',),
+    ).fetchone() is not None
+    if not tableExists:
+        return False
+
+    columns = conn.execute("PRAGMA table_info(power_log)").fetchall()
+    if any(row[1] == 'data_quality' for row in columns):
+        return False
+
+    conn.execute("ALTER TABLE power_log ADD COLUMN data_quality TEXT")
+    return True
+
+
+class DrainVcellTrajectoryWriter:
+    """Durable writer for ``drain_vcell_trajectory`` -- one row per drain poll (US-790).
+
+    NOT a power_log writer: that table is an event log (contract above), and
+    this is a series.  ``ShutdownSequencer`` calls :meth:`record` with the
+    VCELL it just read on each drain poll, and once more with the
+    ``terminationReason`` that ended the drain.  A terminal row closes the
+    drain: the next row starts a new one at ``seq`` 0.
+
+    ``seq`` advances on every call, including one whose row fails to land, so
+    a gap in ``seq`` is a lost row rather than a missing poll.
+
+    Durable per row (PRAGMA synchronous = FULL + a commit per row, the US-267
+    chain): the drain ends in a poweroff or a hard cut, and a buffered row is
+    exactly the row either loses.  Never creates the database or the table --
+    ``ObdDatabase.initialize()`` owns the schema -- and never raises: it runs on
+    the drain's own poll thread.
+    """
+
+    def __init__(
+        self,
+        *,
+        dbPath: str,
+        cellEpoch: str,
+        busyTimeoutSec: float = 1.0,
+        onRowWritten: Callable[[int], None] | None = None,
+        onDrainStart: Callable[[], None] | None = None,
+        monotonicFn: Callable[[], float] | None = None,
+        nowIsoFn: Callable[[], str] | None = None,
+    ) -> None:
+        """Args:
+            dbPath: ``pi.database.path``.
+            cellEpoch: ``pi.power.cellEpoch`` from the validated config,
+                stamped on every row ('unknown' when the key is absent).
+            busyTimeoutSec: sqlite busy timeout.  Callers pass one poll
+                interval, so a lock held by the collector costs this row its
+                slot and never delays the drain's floor check.
+            onRowWritten: Called with the id of each row that actually landed
+                -- custody's own-rows set (sync_custody.OwnTrajectoryRows.add).
+                Never called for a row that failed.
+            onDrainStart: Called as each drain's first row (``seq`` 0) starts,
+                before its write -- whether or not that row lands -- so the
+                own-rows set forgets the previous drain
+                (sync_custody.OwnTrajectoryRows.beginDrain).
+            monotonicFn: DI monotonic clock (default :func:`time.monotonic`).
+            nowIsoFn: DI canonical UTC stamp (default :func:`utcIsoNow`).
+        """
+        self._dbPath = dbPath
+        self._cellEpoch = str(cellEpoch)
+        self._busyTimeoutSec = float(busyTimeoutSec)
+        self._onRowWritten = onRowWritten
+        self._onDrainStart = onDrainStart
+        self._monotonic = monotonicFn or time.monotonic
+        self._nowIso = nowIsoFn or utcIsoNow
+        self._conn: sqlite3.Connection | None = None
+        self._seq = 0
+        self._openFailureLogged = False
+
+    def record(self, vcellV: float | None, *, terminationReason: str | None = None) -> None:
+        """Write one poll's row.  Never raises.
+
+        Args:
+            vcellV: The VCELL volts this poll read, or None when it has no
+                reading (a failed read).  Stored as NULL, never a sentinel.
+            terminationReason: One of ``DRAIN_TERMINATION_VALUES`` on the drain's
+                LAST row; None on every other row.
+        """
+        tsUtc = self._nowIso()
+        tsCapture = self._monotonic()
+        seq = self._seq
+        terminal = terminationReason is not None
+        self._seq = 0 if terminal else seq + 1
+        if seq == 0 and self._onDrainStart is not None:
+            try:
+                self._onDrainStart()
+            except Exception as exc:  # noqa: BLE001 -- bookkeeping must not stall the drain
+                logger.warning("drain-trajectory: drain start not reported (%s)", exc)
+        try:
+            if terminal and terminationReason not in DRAIN_TERMINATION_VALUES:
+                logger.error(
+                    "drain-trajectory: termination reason %r is not one of %s -- "
+                    "row %d NOT written", terminationReason, DRAIN_TERMINATION_VALUES, seq,
+                )
+                return
+            conn = self._connection()
+            if conn is None:
+                return
+            cursor = conn.execute(
+                _INSERT_DRAIN_TRAJECTORY_SQL,
+                (
+                    tsUtc,
+                    float(tsCapture),
+                    int(seq),
+                    float(vcellV) if vcellV is not None else None,
+                    terminationReason,
+                    self._cellEpoch,
+                ),
+            )
+            conn.commit()
+            rowId = cursor.lastrowid
+        except Exception as exc:  # noqa: BLE001 -- one lost row, never a stalled drain
+            logger.warning("drain-trajectory: row %d not written (%s)", seq, exc)
+            return
+        finally:
+            if terminal:
+                self._closeConnection()
+        if rowId is not None and self._onRowWritten is not None:
+            try:
+                self._onRowWritten(int(rowId))
+            except Exception as exc:  # noqa: BLE001 -- bookkeeping must not stall the drain
+                logger.warning("drain-trajectory: row %d id not reported (%s)", seq, exc)
+
+    def _connection(self) -> sqlite3.Connection | None:
+        """The drain's durable write connection, opened on first use."""
+        if self._conn is not None:
+            return self._conn
+        if not os.path.exists(self._dbPath):
+            if not self._openFailureLogged:
+                logger.error(
+                    "drain-trajectory: database %s not found -- NOT creating one; "
+                    "this drain's VCELL series is not recorded", self._dbPath,
+                )
+                self._openFailureLogged = True
+            return None
+        conn = sqlite3.connect(
+            self._dbPath, timeout=self._busyTimeoutSec, check_same_thread=False,
+        )
+        conn.execute("PRAGMA synchronous = FULL")
+        self._conn = conn
+        return conn
+
+    def _closeConnection(self) -> None:
+        conn, self._conn = self._conn, None
+        self._openFailureLogged = False
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001, S110 -- closing is best-effort
+                pass
+
+
+_INSERT_DRAIN_TRAJECTORY_SQL: str = (
+    f"INSERT INTO {DRAIN_VCELL_TRAJECTORY_TABLE} "
+    "(ts_utc, ts_capture, seq, vcell_v, termination_reason, cell_epoch) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
 
 
 def getPowerHistory(

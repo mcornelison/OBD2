@@ -332,6 +332,11 @@ class ShutdownHandler:
                 ['systemctl', 'poweroff'],
                 capture_output=True,
                 text=True,
+                # SHUTDOWN PATH. An undefined cp1252 byte does not mojibake --
+                # `text=True` RAISES UnicodeDecodeError, which here would escape
+                # a poweroff call that the sync-custody handoff runs after.
+                # (US-710 / TD-068)
+                encoding='utf-8',
                 timeout=self._poweroffTimeoutSeconds
             )
         except subprocess.TimeoutExpired as exc:

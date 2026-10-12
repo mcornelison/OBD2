@@ -383,7 +383,11 @@ class TestHelpersLogReadingDataSource:
 
 
 def test_enumValues_unchanged() -> None:
-    assert DATA_SOURCE_VALUES == ("real", "replay", "physics_sim", "fixture")
+    # US-424 (F-116) appended 'foreign' -- the foreign-vehicle marker -- to the
+    # US-195 closed set.
+    assert DATA_SOURCE_VALUES == (
+        "real", "replay", "physics_sim", "fixture", "foreign",
+    )
 
 
 # ================================================================================

@@ -1,0 +1,425 @@
+################################################################################
+# File Name: test_carousel_parked_debounce.py
+# Purpose/Description: US-511 tests for the DEBOUNCED `parked` signal that gates
+#   the context-aware `⋮` kebab (src/pi/ui/dashboard/carousel.js). US-490
+#   keyed the affordance off the raw system-status `idle` SSOT boolean, so every
+#   brief OBD-availability blip flipped the button in and out of existence. This
+#   story inserts a hysteresis debounce between the emitter's flag and the menu
+#   policy: parked = idle held true for >= parkedOnS, reverting only after idle
+#   false for >= parkedOffS. The two thresholds differ ON PURPOSE -- slow to
+#   OFFER the single-tap path into a service stop, quick to WITHDRAW it.
+#   Drives the pure reducer through the node probe (carousel_probe.js) and
+#   guards the wiring by source inspection -- a debouncer the poll never
+#   advances is inert, and one whose state is re-initialised every tick can
+#   never accumulate a hold.
+#   Skipped when node is not on PATH (a node-less CI box).
+# Author: Ralph Agent (Rex)
+# Creation Date: 2026-08-01
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-08-01    | Ralph (Rex)  | Initial -- US-511 debounced parked signal.
+# ================================================================================
+################################################################################
+
+"""US-511 tests for the debounced `parked` signal behind the kebab (via node)."""
+
+import json
+import os
+import shutil
+import subprocess
+
+import pytest
+
+_NODE = shutil.which("node")
+_PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
+_DIST = os.path.join(
+    os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"
+)
+_JS = os.path.join(_DIST, "carousel.js")
+_CONFIG = os.path.join(os.path.dirname(__file__), "..", "..", "config.json")
+
+# The grounded defaults (config.json pi.display.carousel -- mirrored by
+# CAROUSEL_DEFAULTS in carousel.js). Named here so a retune fails on the VALUE
+# rather than silently changing the feel of every test below.
+_PARKED_ON_S = 8
+_PARKED_OFF_S = 3
+
+_ON_MS = _PARKED_ON_S * 1000
+_OFF_MS = _PARKED_OFF_S * 1000
+
+# An arbitrary non-zero epoch. Deliberately NOT 0: a reducer that anchors its
+# hold at 0 instead of at the first observation would credit the whole epoch and
+# park instantly, and a t0 of 0 would hide that.
+_T0 = 1_754_000_000_000
+
+pytestmark = pytest.mark.skipif(
+    _NODE is None,
+    reason="node not on PATH -- carousel.js pure-logic fixture tests need node",
+)
+
+
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _view(fn: str, *args: object) -> object:
+    """Evaluate one carousel.js export against fixtures via the node probe.
+
+    `encoding` is pinned to utf-8 deliberately -- `text=True` alone decodes
+    node's UTF-8 with the Windows locale codepage and mangles any non-ASCII
+    copy under test (TD-068).
+    """
+    cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def _feed(samples: list, cfg: object = None, state: object = None) -> list:
+    """Run `(rawIdle, nowMs)` samples through parkedNext, keeping every step.
+
+    Returns the list of states AFTER each sample, so a test can assert what the
+    signal did DURING a blip and not merely where it landed -- a debounce that
+    dips and recovers between two polls is exactly the flicker this story
+    removes, and only the intermediate states can see it.
+    """
+    if state is None:
+        state = _view("parkedInit")
+    out = []
+    for rawIdle, nowMs in samples:
+        state = _view("parkedNext", state, rawIdle, nowMs, cfg)
+        out.append(state)
+    return out
+
+
+def _parked(samples: list, cfg: object = None) -> list:
+    """Just the `parked` booleans, one per sample."""
+    return [s["parked"] for s in _feed(samples, cfg)]
+
+
+def _settled(nowMs: int = _T0, cfg: object = None) -> dict:
+    """A state that has already SETTLED parked (idle held past parkedOnS).
+
+    Every un-park test needs this precondition, and building it from the public
+    reducer rather than hand-writing a state literal means these tests cannot
+    drift from the shape the implementation actually produces.
+    """
+    on = _ON_MS if cfg is None else int(cfg.get("parkedOnS", _PARKED_ON_S) * 1000)
+    states = _feed([(True, nowMs), (True, nowMs + on)], cfg)
+    assert states[-1]["parked"] is True, "precondition: the fixture must reach parked"
+    return states[-1]
+
+
+# ---------------------------------------------------------------------------
+# AC-1 -- the ON edge. Idle must be HELD, not merely observed once.
+# ---------------------------------------------------------------------------
+
+
+def test_parkedInit_bootIsNotParked():
+    """Before anything has been held, "am I parked?" is unanswered -- and the
+    unanswered side of that question is the one that hands out a single tap into
+    a service stop. Boot fails closed, matching the markup's hidden button."""
+    assert _view("parkedInit")["parked"] is False
+
+
+def test_parkedNext_firstIdleSampleDoesNotPark():
+    """The hold is anchored at the FIRST OBSERVATION, never at the epoch. A
+    reducer that leaves `sinceMs` at 0 reads a 55-year hold off the wall clock
+    and parks on the very first poll -- green against every threshold test below
+    while shipping no debounce at all."""
+    assert _parked([(True, _T0)]) == [False]
+
+
+def test_parkedNext_idleHeldForParkedOnS_becomesParked():
+    assert _parked([(True, _T0), (True, _T0 + _ON_MS)]) == [False, True]
+
+
+def test_parkedNext_idleHeldJustUnderParkedOnS_staysNotParked():
+    assert _parked([(True, _T0), (True, _T0 + _ON_MS - 1)]) == [False, False]
+
+
+def test_parkedNext_idleTrueForever_staysParked():
+    """The OFF timer must be gated on the READING, not merely on elapsed time. A
+    reducer that fires whichever threshold the clock passes would un-park a car
+    that has sat parked in the driveway for two minutes."""
+    settled = _settled()
+    states = _feed([(True, _T0 + _ON_MS + 120_000)], state=settled)
+    assert states[-1]["parked"] is True
+
+
+# ---------------------------------------------------------------------------
+# AC-1 -- the OFF edge, and the asymmetry. Quick to withdraw the affordance.
+# ---------------------------------------------------------------------------
+
+
+def test_parkedNext_notIdleHeldForParkedOffS_unparks():
+    settled = _settled()
+    t = _T0 + _ON_MS
+    states = _feed([(False, t), (False, t + _OFF_MS)], state=settled)
+    assert [s["parked"] for s in states] == [True, False]
+
+
+def test_parkedNext_notIdleHeldJustUnderParkedOffS_staysParked():
+    settled = _settled()
+    t = _T0 + _ON_MS
+    states = _feed([(False, t), (False, t + _OFF_MS - 1)], state=settled)
+    assert [s["parked"] for s in states] == [True, True]
+
+
+def test_parkedNext_offThresholdIsShorterThanOn():
+    """Not a tautology about two constants -- a BEHAVIOURAL pin on the
+    asymmetry. Withdrawing the single-tap path into a service stop must never be
+    slower than offering it; a symmetric debounce would leave the ⋮ on screen
+    for the same 8 s after the car starts moving."""
+    assert _OFF_MS < _ON_MS
+    settled = _settled()
+    t = _T0 + _ON_MS
+    # The un-park lands strictly inside the window the ON edge would still be
+    # waiting out.
+    states = _feed([(False, t), (False, t + _ON_MS - 1)], state=settled)
+    assert states[-1]["parked"] is False
+
+
+def test_parkedNext_notIdleForever_staysNotParked():
+    """The mirror of the always-idle guard: a driving car never spontaneously
+    acquires the affordance because the clock passed a threshold."""
+    assert _parked([(False, _T0), (False, _T0 + 120_000)]) == [False, False]
+
+
+# ---------------------------------------------------------------------------
+# AC-4 -- THE STORY. A sub-threshold blip must not toggle the kebab.
+# ---------------------------------------------------------------------------
+
+
+def test_parkedNext_subThresholdIdleBlip_neverUnparks():
+    """The reported defect, in one sequence: parked in the driveway, OBD
+    availability drops out for 2 s, comes back. `parked` must not dip at ANY
+    sample -- asserting only the final state would pass with a debounce that
+    flickered off and on again between two polls."""
+    settled = _settled()
+    t = _T0 + _ON_MS
+    blip = [
+        (False, t + 250),   # the blip starts
+        (False, t + 1000),
+        (False, t + 2000),  # 2 s < parkedOffS -- still inside the deadzone
+        (True, t + 2250),   # ...and it recovers
+        (True, t + 3000),
+    ]
+    assert all(s["parked"] for s in _feed(blip, state=settled))
+
+
+def test_parkedNext_repeatedBlips_neverUnpark():
+    """Flicker is rarely a single dropout. Six blips over 27 s, none of them
+    individually long enough to un-park: the kebab must sit still through all of
+    them. A debouncer that ACCUMULATES not-idle time across recoveries (rather
+    than re-anchoring on each change) un-parks part-way through this."""
+    settled = _settled()
+    t = _T0 + _ON_MS
+    samples = []
+    for i in range(6):
+        base = t + i * 4500
+        samples += [(False, base), (False, base + 2000), (True, base + 2250)]
+    assert all(s["parked"] for s in _feed(samples, state=settled))
+
+
+def test_parkedNext_subThresholdIdleBlipWhileDriving_neverParks():
+    """The inverse defect, and the one that matters for safety: a 2 s idle blip
+    mid-drive must not hand back the single-tap path into a service stop."""
+    driving = _feed([(False, _T0), (False, _T0 + 60_000)])[-1]
+    t = _T0 + 60_000
+    blip = [(True, t + 250), (True, t + 2000), (False, t + 2250)]
+    assert not any(s["parked"] for s in _feed(blip, state=driving))
+
+
+def test_parkedNext_blipReanchorsTheHold():
+    """Hysteresis is re-anchoring, not summing. 2 s not-idle, one idle sample,
+    then 2 s not-idle again totals 4 s of not-idle but contains no 3 s RUN, so
+    the signal holds; the un-park only lands once a full run completes."""
+    settled = _settled()
+    t = _T0 + _ON_MS
+    states = _feed(
+        [
+            (False, t),
+            (False, t + 2000),
+            (True, t + 2250),      # re-anchors
+            (False, t + 2500),
+            (False, t + 4500),     # 2 s into the NEW run -- still parked
+            (False, t + 5500),     # 3 s into it -- now it goes
+        ],
+        state=settled,
+    )
+    assert [s["parked"] for s in states] == [True, True, True, True, True, False]
+
+
+# ---------------------------------------------------------------------------
+# Honest instrument -- an unreadable input is never a confident reading.
+# ---------------------------------------------------------------------------
+
+
+def test_parkedNext_nonBooleanIdle_readsAsNotIdle():
+    """`carouselIdle` hands this reducer a strict boolean today, but the fail-
+    closed rule has to survive the day something else feeds it. Only a real
+    `true` counts as idle -- the truthy string "false" is the classic lie."""
+    for junk in ("true", "false", 1, {}, None):
+        assert _parked([(junk, _T0), (junk, _T0 + _ON_MS)], None) == [False, False], junk
+
+
+def test_parkedNext_unreadableClock_leavesTheSignalUntouched():
+    """A hold is a MEASURED duration. With no readable clock there is no
+    measurement, so the signal must hold its last value rather than advance on a
+    fabricated one -- the same rule swipeGesture applies to an unmeasurable dt."""
+    settled = _settled()
+    for badClock in (None, "now", {}):
+        states = _feed([(False, badClock)], state=settled)
+        assert states[-1]["parked"] is True, badClock
+        # ...and the anchor must not be poisoned: the next REAL reading has to
+        # still be able to measure a run against it.
+        after = _feed([(False, _T0 + _ON_MS), (False, _T0 + _ON_MS + _OFF_MS)],
+                      state=states[-1])
+        assert after[-1]["parked"] is False, badClock
+
+
+def test_parkedNext_clockStepsBackMidRun_reAnchorsRatherThanStranding():
+    """A backwards clock (an NTP step on a Pi with no RTC -- this hardware has
+    none) taken MID-RUN yields a negative hold. Left alone, that run can never
+    reach its threshold again until the clock catches back up, so the signal is
+    stranded for the size of the step. Here that strands the SAFETY half: the ⋮
+    stays on screen while the car drives away. An impossible elapsed time is not
+    a measurement -- re-anchor and let the next poll measure a real one.
+
+    Deliberately stepped mid-run, with the reading UNCHANGED across the step:
+    a step that coincides with a reading change re-anchors for the ordinary
+    reason and would pass with no negative-hold guard at all."""
+    settled = _settled()
+    t = _T0 + _ON_MS
+    states = _feed(
+        [
+            (False, t),                     # the not-idle run starts here
+            (False, t - 60_000),            # ...and the clock steps back into it
+            (False, t - 60_000 + _OFF_MS),  # a full run measured on the new clock
+        ],
+        state=settled,
+    )
+    assert [s["parked"] for s in states] == [True, True, False]
+
+
+def test_parkedNext_malformedPriorState_startsCleanRatherThanCrashing():
+    """The state rides in a closure across every tick of a kiosk that runs for
+    days. If it is ever lost or replaced, the reducer must resume from a
+    fail-closed start, not throw and take the whole poll down with it."""
+    for junk in (None, "state", 7, {}):
+        state = _view("parkedNext", junk, True, _T0, None)
+        assert state["parked"] is False
+
+
+# ---------------------------------------------------------------------------
+# AC-4 -- the thresholds are CONFIG, not code.
+# ---------------------------------------------------------------------------
+
+
+def test_parkedNext_thresholdsComeFromTheInjectedConfig():
+    """Retuning the feel must be a config change. Pinned by BEHAVIOUR (a 1 s
+    parkedOnS parks in 1 s) rather than by reading the resolved object back --
+    a config the reducer resolves and then ignores would pass the latter."""
+    cfg = {"parkedOnS": 1, "parkedOffS": 1}
+    assert _parked([(True, _T0), (True, _T0 + 1000)], cfg) == [False, True]
+    # ...and the default would NOT have parked by then.
+    assert _parked([(True, _T0), (True, _T0 + 1000)], None) == [False, False]
+
+
+def test_parkedNext_nonPositiveThreshold_fallsBackToTheDefault():
+    """US-506's rule, inherited: a non-positive interval must fail to the
+    grounded default, never to zero. `parkedOnS: 0` read literally means "park
+    the instant idle is observed" -- the debounce silently deleted by a typo."""
+    cfg = {"parkedOnS": 0}
+    assert _parked([(True, _T0), (True, _T0 + 1000)], cfg) == [False, False]
+    assert _parked([(True, _T0), (True, _T0 + _ON_MS)], cfg) == [False, True]
+
+
+def test_resolveCarouselConfig_carriesTheParkedThresholds():
+    cfg = _view("resolveCarouselConfig", None)
+    assert cfg["parkedOnS"] == _PARKED_ON_S
+    assert cfg["parkedOffS"] == _PARKED_OFF_S
+
+
+def test_configJson_carriesTheParkedThresholds():
+    """The tuning SSOT: "it is a config parameter" is a claim with nothing
+    behind it unless the key exists in config.json at the mirrored value."""
+    with open(_CONFIG, encoding="utf-8") as fh:
+        config = json.load(fh)
+    carousel = config["pi"]["display"]["carousel"]
+    assert carousel["parkedOnS"] == _PARKED_ON_S
+    assert carousel["parkedOffS"] == _PARKED_OFF_S
+
+
+# ---------------------------------------------------------------------------
+# US-659 RETIRED THIS FILE'S CONSUMER, and the honest record of that is the
+# section you are reading rather than a quietly shorter file.
+#
+# Eight tests stood here. Four drove `menuAccess`, the kebab-visibility policy
+# this reducer fed; four pinned the WIRING (`updateMenuAccess` advancing the
+# reducer with the shared tick clock, and the closure placement of the state).
+# All eight named code that no longer exists -- the CIO's punch-list H6 ruling
+# removed the ⋮ visibility gate entirely, so the debounce has no consumer.
+#
+# RETIRED, by name, so the count is auditable:
+#   test_menuAccess_parked_offersTheTapAffordance
+#   test_menuAccess_notParked_hidesTheTapAffordance
+#   test_menuAccess_rawSystemStatusPayload_failsClosed
+#   test_menuAccess_longPressStaysUnconditional
+#   test_fnBodySlicerIsTightButNotEmpty
+#   test_menuAccess_noLongerReadsTheRawIdleFlag
+#   test_updateMenuAccess_advancesTheDebounceAndFeedsItToThePolicy
+#   test_debounceStateOutlivesTheTick
+#
+# ⚠️ WHAT THIS LEAVES BEHIND IS TECH DEBT, NOT A CLEAN DELETION. Everything
+# ABOVE this line still passes, because `parkedInit`/`parkedNext` are pure and
+# unchanged -- but nothing in the shipped panel calls them any more. US-659
+# deliberately did NOT delete the reducer: it is a tuned, config-driven
+# behaviour (pi.dashboard.parkedOnS / parkedOffS) whose removal would reach
+# config.json and the validator, which is well outside a story scoped to a
+# visibility gate. Filed as TD-us659 -- retire the reducer and its config keys,
+# or wire it to its next consumer. Until that is settled, this suite is testing
+# code nothing runs, and `test_theDebounceHasNoConsumer_soThisFileIsGuardingDeadCode`
+# below states that in the suite itself rather than only in a ticket.
+# ---------------------------------------------------------------------------
+
+
+def test_carouselJs_stillExportsTheParkedDebounce():
+    """The pure logic stays node-testable (the S-2 contract), so every test
+    above this line remains runnable while TD-us659 is open."""
+    js = _read(_JS)
+    for name in ("parkedInit:", "parkedNext:"):
+        assert name in js, name
+
+
+def test_theDebounceHasNoConsumer_soThisFileIsGuardingDeadCode():
+    """CHARACTERISATION, and it is meant to be uncomfortable.
+
+    US-659 removed `updateMenuAccess`, the reducer's only caller. A suite that
+    keeps passing after its subject stops being reachable is exactly how dead
+    code survives a refactor -- so the absence is asserted rather than left to
+    be noticed. Whoever closes TD-us659 fails this test ON PURPOSE: wire the
+    reducer up and it goes red, delete the reducer and the whole file goes with
+    it. Either outcome is a decision; silence is not.
+    """
+    # Asserted against the STRIPPED source: the deletion left a tombstone comment
+    # naming `updateMenuAccess` so the next reader knows what stood there, and a
+    # raw substring search cannot tell that record from a restored consumer.
+    from tests.ui.test_carousel_kebab_always_visible import _executableCode
+
+    js = _executableCode(_read(_JS))
+    assert "updateMenuAccess" not in js, (
+        "the debounce has a consumer again -- TD-us659 was resolved by wiring it "
+        "up, so retire this characterisation and re-pin the wiring properly"
+    )
+    calls = js.count("parkedNext(")
+    assert calls == 1, (
+        f"parkedNext( appears {calls} times -- expected exactly 1 (its own "
+        "definition, no call sites). The reducer gained a consumer; re-pin it."
+    )

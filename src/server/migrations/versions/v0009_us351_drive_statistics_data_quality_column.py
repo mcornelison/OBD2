@@ -109,7 +109,7 @@ from scripts.apply_server_migrations import (
     serverTableExists,
 )
 from src.server.db.models import (
-    DRIVE_STATISTICS_DATA_QUALITY_DEFAULT,
+    DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT,
     DRIVE_STATISTICS_DATA_QUALITY_VALUES,
 )
 from src.server.migrations.runner import Migration, RunnerContext
@@ -156,11 +156,11 @@ _ALLOWED_VALUES_SQL: str = ','.join(
 # DDLs mirror ``DriveStatistic`` ORM declarations.  Column shape:
 #  * VARCHAR(16)    -- matches ``String(16)`` on the model
 #  * NOT NULL       -- matches ``nullable=False``
-#  * DEFAULT 'full' -- matches ``server_default=DRIVE_STATISTICS_DATA_QUALITY_DEFAULT``
+#  * DEFAULT 'full' -- matches ``server_default=DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT``
 ADD_DATA_QUALITY_COLUMN_DDL: str = (
     f"ALTER TABLE {TABLE_NAME} "
     f"ADD COLUMN {COLUMN_NAME} VARCHAR(16) NOT NULL "
-    f"DEFAULT '{DRIVE_STATISTICS_DATA_QUALITY_DEFAULT}';"
+    f"DEFAULT '{DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT}';"
 )
 
 

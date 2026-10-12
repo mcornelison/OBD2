@@ -32,6 +32,15 @@
 #                              record evidence; stdout/stderr in assertion
 #                              messages; Windows-reliable). Consolidation,
 #                              not duplication. No production edits.
+# 2026-08-21    | US-566  | Added the logging-mechanism guard: the real
+#                              invocation must show a CONFIGURED handler
+#                              (logger name present in the output, not
+#                              lastResort's bare message) and must admit INFO.
+#                              This subprocess is the only place that
+#                              exercises the real main() wiring, so it is the
+#                              only place that can witness the fix end-to-end.
+# 2026-10-01    | Rex (US-776-d) | The one-shot's record is AT_HOME_SERVER_DOWN
+#                              and carries sync_outcome.
 # ================================================================================
 ################################################################################
 """SS-T7: systemd-parity orchestration-proof (the DOA tripwire)."""
@@ -59,8 +68,8 @@ def test_entrypoint_runs_exactly_as_systemd_invokes_it(tmp_path):
     systemd would: the unit's exact dual-path PYTHONPATH (read FROM the unit
     file -- Pi prefix remapped to the local repo), inherited PYTHONPATH
     overridden so conftest cannot mask a missing module. Deterministic
-    PW_TEST_ONESHOT scenario: sync fails transiently twice ->
-    SYNC_FAILED_AFTER_RETRY -> a real outcome record is produced and the
+    PW_TEST_ONESHOT scenario: sync fails transiently up to the ceiling ->
+    AT_HOME_SERVER_DOWN -> a real outcome record is produced and the
     (stubbed) poweroff fires once.
 
     Positive execution evidence (Atlas criterion #4): both a poweroff
@@ -104,20 +113,44 @@ def test_entrypoint_runs_exactly_as_systemd_invokes_it(tmp_path):
             sys.executable, "-m", "src.pi.power.power_watch",
             "--config", str(cfg), "--env-file", str(envFile),
         ],
-        cwd=str(REPO), env=env, capture_output=True, text=True, timeout=180,
+        cwd=str(REPO), env=env, capture_output=True, text=True, encoding="utf-8", timeout=180,
     )
     blob = proc.stdout + proc.stderr
     assert "No module named 'pi'" not in blob, blob
     assert "Traceback (most recent call last)" not in blob, blob
     assert proc.returncode == 0, blob
 
-    # The real outcome-record producer ran (sync_failed_after_retry path).
+    # The real outcome-record producer ran. US-776-d: a drain at home that
+    # never delivers, with no probe answer to blame, is AT_HOME_SERVER_DOWN.
     outcome = tmp_path / "powerwatch_outcome.json"
     assert outcome.exists(), blob
     rec = json.loads(outcome.read_text(encoding="utf-8"))
-    assert rec["kind"] == "sync_failed_after_retry"
+    assert rec["kind"] == "at_home_server_down"
+    assert rec["sync_outcome"] == "AT_HOME_SERVER_DOWN"
     assert rec["task"] == "sync_with_server"
 
     # The bounded controller reached the (stubbed) poweroff exactly once.
     assert marker.exists(), blob
     assert marker.read_text(encoding="utf-8") == "poweroff-invoked"
+
+    # US-566 mechanism guard: a REAL log handler is installed in the real
+    # invocation. Before US-566 this module never configured logging, so
+    # logging.lastResort (level WARNING, stderr, BARE message -- no level, no
+    # logger name) was the only sink and the whole INFO tier was discarded.
+    # Measured on chi-eclipse-01 2026-08-21: zero "powerwatch service up"
+    # lines across 8 service starts.
+    #
+    # Two things are asserted, and each fails for a different reason:
+    #   * the structured format is present -> the record went through a
+    #     configured handler, NOT lastResort (which emits the bare message)
+    #   * an INFO record escaped at all -> the level filter admits INFO
+    # Note this config deliberately carries NO "logging" section, so it also
+    # pins that an absent section resolves to a working default rather than
+    # crashing the safety service.
+    assert "src.pi.power.power_watch" in blob, (
+        "log output carries no logger name -- records are going through "
+        f"logging.lastResort, not a configured handler:\n{blob}"
+    )
+    assert "| INFO" in blob, (
+        f"no INFO record reached stdout; the INFO tier is still on the floor:\n{blob}"
+    )

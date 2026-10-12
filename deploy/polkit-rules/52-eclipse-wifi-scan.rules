@@ -1,0 +1,33 @@
+// ============================================================================
+// 52-eclipse-wifi-scan.rules
+//
+// PolicyKit rule granting user 'mcornelison' the
+// org.freedesktop.NetworkManager.wifi.scan action without interactive auth.
+//
+// Why: eclipse-powerwatch.service runs as User=mcornelison (unprivileged).
+// At every key-off the home check forces ONE fresh WiFi scan
+// (`nmcli -t -f ACTIVE,SSID dev wifi list --rescan yes`, US-776-j1) so it
+// decides home from the air, not from NetworkManager's stale cached list.
+// Without this rule the scan is refused ("not authorized"), the sweep reads
+// FAILED, and a key-off at home can never be told apart from one away.
+//
+// Scope: the scan action ONLY (CIO-approved 2026-10-12). Connecting, editing
+// connections or any other NetworkManager privilege is NOT granted, and every
+// other action gets no decision here -> PolicyKit default. A future privilege
+// gets its own sibling numbered file (53-...), never a widening of this one --
+// the 50-/51- precedent.
+//
+// Install: deploy-pi.sh copies this to
+//   /etc/polkit-1/rules.d/52-eclipse-wifi-scan.rules
+// (root-owned, 0644). PolicyKit auto-reloads on file change; no
+// systemctl daemon-reload needed.
+//
+// Reference: US-776-j2 (Sprint 97 V0.29.80), US-776-j1 home sweep.
+// ============================================================================
+
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.NetworkManager.wifi.scan" &&
+        subject.user == "mcornelison") {
+        return polkit.Result.YES;
+    }
+});

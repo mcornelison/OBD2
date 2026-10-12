@@ -8,7 +8,9 @@
 #                      crashes as clean shutdowns).  Also carries the relocated
 #                      US-263/US-283 startup_log schema pin (TestStartupLogSchema,
 #                      byte-faithful from the deleted test_boot_reason.py) so
-#                      the 7-column STRICT contract guard survives the cutover.
+#                      the STRICT column-set contract guard survives the cutover
+#                      (8 columns as of US-419/F-080 data_quality; see the
+#                      TestStartupLogSchema docstring for the count history).
 # Author: Plan (T10)
 # Creation Date: 2026-05-15
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -29,6 +31,17 @@
 # 2026-05-17    | Plan (T10r2) | Doc-only: protection-migration note now cites
 #               |              | only existing test files (drop phantom
 #               |              | integration filename).
+# 2026-07-22    | Rex (US-486) | Reconcile the startup_log schema guard with the
+#               |              | shipped US-419/F-080 8th column (data_quality):
+#               |              | +('data_quality','TEXT',0,0) in EXPECTED_COLUMNS,
+#               |              | count guard 7 -> 8 (method renamed _isSeven ->
+#               |              | _isEight), docstrings updated. Guard NOT relaxed
+#               |              | (still a STRICT exact-set assertion).
+# 2026-09-30    | Rex (US-776-f) | +4 prior_boot_* sync columns in
+#               |              | EXPECTED_COLUMNS, count guard 8 -> 12 (_isEight ->
+#               |              | _isTwelve). Still a STRICT exact-set assertion.
+# 2026-10-03    | Atlas (ARCH-065a) | +3 ARCH-065 columns in EXPECTED_COLUMNS, count guard
+#               |              | 12 -> 15. Still a STRICT exact-set assertion.
 # ================================================================================
 ################################################################################
 
@@ -43,8 +56,10 @@ honest instrument ``src/pi/diagnostics/boot_progress.py``.  This file:
   (``readCurrentBootId`` + ``_normalizeBootId``);
 * pins that the journal-scan symbols are gone (I-037 regression guard);
 * carries the relocated US-263/US-283 ``startup_log`` schema pin so the
-  STRICT 7-column / sole-PK contract guard survives the deletion of
-  ``test_boot_reason.py`` without weakening a single assertion.
+  STRICT 8-column / sole-PK contract guard survives the deletion of
+  ``test_boot_reason.py`` without weakening a single assertion (US-263
+  5-col + 2026-05-15 honest-instrument 2-col + US-419/F-080
+  ``data_quality`` = 8).
 
 Protection migration (so a future ``git log`` archaeologist on the
 deleted gate files is not misled into thinking coverage was silently
@@ -155,13 +170,16 @@ class TestStartupLogSchema:
     canonical schema uses ``boot_id`` as the PRIMARY KEY and there never
     was an ``id`` column.  Production ``SCHEMA_STARTUP_LOG`` in
     ``src/pi/obdii/database_schema.py`` matches the US-263 contract,
-    which as of the 2026-05-15 honest-instrument addition is now 7
-    columns: the original US-263 5 (``boot_id`` TEXT PK,
-    ``prior_boot_clean`` INTEGER, ``prior_last_entry_ts`` TEXT,
-    ``current_boot_first_entry_ts`` TEXT, ``recorded_at`` TEXT NOT NULL)
-    plus the 2 honest-instrument additions ``prior_boot_last_stage``
-    TEXT and ``prior_boot_reason`` TEXT (spec
-    2026-05-15-honest-boot-progress-instrument-design.md §4.4).
+    which as of the US-419 (F-080) addition is now 8 columns: the
+    original US-263 5 (``boot_id`` TEXT PK, ``prior_boot_clean`` INTEGER,
+    ``prior_last_entry_ts`` TEXT, ``current_boot_first_entry_ts`` TEXT,
+    ``recorded_at`` TEXT NOT NULL), plus the 2 honest-instrument
+    additions ``prior_boot_last_stage`` TEXT and ``prior_boot_reason``
+    TEXT (spec 2026-05-15-honest-boot-progress-instrument-design.md
+    §4.4), plus the US-419 (F-080) post-reboot clock-drift flag
+    ``data_quality`` TEXT (specs/architecture.md "US-419 (F-080): boot
+    clock-quality flag on power_log / startup_log" -- a Pi-local forensic
+    column, nullable, stripped from the sync wire).
 
     These tests apply the production schema to a fresh in-memory SQLite,
     introspect via ``PRAGMA table_info``, and assert the (name, type,
@@ -186,6 +204,25 @@ class TestStartupLogSchema:
         ('prior_boot_last_stage', 'TEXT', 0, 0),
         ('prior_boot_reason', 'TEXT', 0, 0),
         ('recorded_at', 'TEXT', 1, 0),
+        # US-419 (F-080) addition (specs/architecture.md "US-419 (F-080): boot
+        # clock-quality flag"): Pi-local forensic post-reboot clock-drift flag
+        # ('full' / 'clock_unsynced'; NULL on legacy rows). Nullable TEXT,
+        # stripped from the sync wire (server computes its own data_quality).
+        ('data_quality', 'TEXT', 0, 0),
+        # US-776-f addition (Atlas Sprint 95 ruling 3): the prior boot's
+        # shutdown-sync record, landed by boot_progress.arm. Nullable; synced
+        # (server v0034).
+        ('prior_boot_home_state', 'TEXT', 0, 0),
+        ('prior_boot_sync_outcome', 'TEXT', 0, 0),
+        ('prior_boot_backlog_start', 'INTEGER', 0, 0),
+        ('prior_boot_backlog_end', 'INTEGER', 0, 0),
+        # ARCH-065 addition: the prior boot's sync window + last VCELL before the
+        # cut. Nullable; synced (server v0035).
+        ('prior_boot_sync_started_at', 'TEXT', 0, 0),
+        ('prior_boot_sync_ended_at', 'TEXT', 0, 0),
+        ('prior_boot_vcell_before_cut_v', 'REAL', 0, 0),
+        # ARCH-065 T6 fix: the prior loss's wall time (keys the boot finaliser).
+        ('prior_boot_loss_at', 'TEXT', 0, 0),
     )
 
     @staticmethod
@@ -232,17 +269,22 @@ class TestStartupLogSchema:
             "INSERT OR IGNORE idempotency contract."
         )
 
-    def test_startupLogSchema_columnCount_isSeven(self) -> None:
+    def test_startupLogSchema_columnCount_isFifteen(self) -> None:
         # Quick canary on extra columns: any addition (even if otherwise
         # well-formed) widens the contract surface; force a deliberate
-        # spec update instead of silently accepting drift.  2026-05-15
-        # honest-instrument: count grew 5 -> 7 (prior_boot_last_stage +
-        # prior_boot_reason added per design spec
-        # 2026-05-15-honest-boot-progress-instrument-design.md §4.4).
+        # spec update instead of silently accepting drift.  Count history:
+        # US-263 5-col -> +2 (2026-05-15 honest-instrument
+        # prior_boot_last_stage/prior_boot_reason, design spec
+        # 2026-05-15-honest-boot-progress-instrument-design.md §4.4) = 7 ->
+        # +1 (US-419/F-080 data_quality clock-drift flag,
+        # specs/architecture.md "US-419 (F-080)") = 8 -> +4 (US-776-f
+        # prior_boot_home_state/_sync_outcome/_backlog_start/_backlog_end) = 12 -> +3 (ARCH-065
+        # prior_boot_sync_started_at/_sync_ended_at/_vcell_before_cut_v) = 15 -> +1 (ARCH-065 T6 fix prior_boot_loss_at) = 16.
         actual = self._introspectStartupLog()
-        assert len(actual) == 7, (
+        assert len(actual) == 16, (
             f"startup_log has {len(actual)} columns; canonical schema is "
-            f"exactly 7 (US-263 5-col + 2026-05-15 honest-instrument "
-            f"prior_boot_last_stage/prior_boot_reason). "
+            f"exactly 16 (US-263 5-col + 2026-05-15 honest-instrument "
+            f"prior_boot_last_stage/prior_boot_reason + US-419 data_quality + "
+            f"US-776-f four prior-boot sync columns + ARCH-065 four). "
             f"Got: {[name for (name, *_) in actual]}"
         )

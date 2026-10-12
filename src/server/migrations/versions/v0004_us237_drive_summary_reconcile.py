@@ -159,10 +159,19 @@ DRIVE_SUMMARY_NEW_COLUMNS: tuple[tuple[str, str], ...] = (
     ('sync_batch_id', 'INT NULL'),
     ('drive_id', 'INT NULL'),
     ('drive_start_timestamp', 'DATETIME NULL'),
-    ('ambient_temp_at_start_c', 'FLOAT NULL'),
+    # US-563 / F-134: this column was added here as 'ambient_temp_at_start_c'.
+    # It is fed from IAT and was never ambient; v0024 renames it on the
+    # DEPLOYED schema, where v0004 has long since been applied.  The name is
+    # updated here so this tuple keeps mirroring the ORM (its documented job,
+    # asserted by test_migration_0004::test_columnListMirrorsOrm).  A fresh DB
+    # therefore lands the honest name at v0004 and v0024's rename correctly
+    # no-ops on it -- that "new present, old absent" case is handled and tested.
+    ('intake_air_temp_at_start_c', 'FLOAT NULL'),
     ('starting_battery_v', 'FLOAT NULL'),
     ('barometric_kpa_at_start', 'FLOAT NULL'),
-    ('is_real', 'TINYINT(1) DEFAULT 0'),
+    # US-563: DEFAULT 0 removed.  0 is a computed verdict ("not real"); a row
+    # nobody has analysed must read NULL.  v0024 relaxes it on the deployed DB.
+    ('is_real', 'TINYINT(1) NULL DEFAULT NULL'),
     ('data_source', "VARCHAR(16) DEFAULT 'real'"),
 )
 

@@ -1,0 +1,119 @@
+# ==============================================================================
+# File:    dashboard.service.wayland  (one of two variants; install.sh picks)
+# Purpose: US-399 carousel dashboard kiosk, Bookworm/Wayland. Chromium kiosk
+#          that renders the carousel + polls the localhost state server. Touch
+#          enabled (A-5: --touch-events=enabled). Wayland-native
+#          (--ozone-platform=wayland). Loads /dashboard.html (NOT /, which the
+#          splash owns) same-origin so the token is injected (token SSOT).
+# Author:  Ralph Agent (Rex)
+# Created: 2026-06-30 -- Sprint 49 US-399 (carousel shell)
+#
+# A-1 hand-off: this unit is NOT WantedBy=graphical.target. It is started by the
+#   splash-boot.service `OnSuccess=eclipse-dashboard.service` directive -- i.e.
+#   only AFTER the boot splash reaches HEALTHY_YIELD (window.close() -> the
+#   Type=simple splash exits 0). A DEGRADED boot keeps the splash up (no
+#   window.close) so the dashboard never starts on a sick boot. There is no
+#   [Install] section by design (it is dependency-started, not enabled).
+#
+# Token SSOT + assets: requires eclipse-states-http with /opt/dashboard on its
+#   --assets-dir search path (deploy/eclipse-states-http.service, US-399 A-2).
+#
+# Type=simple [A-8] -- matches the splash unit; Exit/Close (US-403) ends it.
+# __PI_USER__ is substituted by install.sh at install time (V-1).
+#
+# US-522 (F-124) -- `--disable-gpu`: WAS ARGUED FOR AND NEVER APPLIED, HERE
+#   EITHER. See the .x11 sibling for what was tried and why it is absent (the two
+#   variants must not drift). In short: this paragraph used to make the case for
+#   the flag as though it were on the ExecStart below, and it never was on either
+#   variant -- measured 2026-08-30, comment lines only. US-522 shipped its
+#   rationale and not its flag. US-536 disposition B then ruled the GPU STAYS ON,
+#   so it must not be added now; see the register below. Corrected under US-648.
+#
+#   The DIAGNOSIS still stands: the bench freeze was chromium's GPU
+#   command-buffer context dying and HOT-LOOPING on the fatal
+#   `AllocateRingBuffer()` failure (6M errors/boot, CPU-pegged, no crash, stale
+#   display) -- the Pi 5 v3d GPU on a 64 MiB CMA pool under the animated
+#   carousel. Atlas RCA:
+#   offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md
+#
+#   STILL TRUE -- the injection mechanism: `--enable-gpu-rasterization` comes
+#   from /etc/chromium.d/default-flags via the /usr/bin/chromium wrapper, which
+#   runs `exec ... $CHROMIUM_FLAGS "$@"`, so the injected flags precede this
+#   unit's argv (verified live, not assumed). NOTE that ordering settles REPEATS
+#   OF ONE SWITCH NAME and nothing more -- it does not decide a contest between
+#   two differently-named contradicting flags. See US-647 in the .x11 sibling.
+#
+# US-522 (reopen 2026-08-03) -- `--password-store=basic`: see the full rationale
+#   in the .x11 sibling (the two variants must not drift). In short: with no
+#   `--password-store` chromium auto-picks the GNOME keyring for its OSCrypt
+#   safe-storage key, and this Pi's password-protected Default keyring is never
+#   unlocked under passwordless auto-login -- so gcr-prompter painted a recurring
+#   "Authentication Required" dialog over the kiosk. `basic` keeps the key in the
+#   wiped /tmp profile below (no meaningful downgrade -- no real password is
+#   stored). The live box's hand-patched unit also carried
+#   `--remote-debugging-port=9222`; that is deliberately NOT adopted (open
+#   DevTools on a car-mounted kiosk) and a test fences it.
+#
+# I-044 (US-550) -- XDG_RUNTIME_DIR is __PI_UID__, NOT the %U specifier. Measured
+#   on the live Pi: with User=mcornelison (id -u = 1000), `systemctl show
+#   splash-boot.service -p Environment` reported XDG_RUNTIME_DIR=/run/user/0 --
+#   root's dir, which this unit's user cannot write and which does not exist
+#   (`ls -d /run/user/*` -> /run/user/1000). Consequence in the boot dc7a3848
+#   journal: "unable to create directory '/run/user/0/dconf': Permission denied"
+#   plus a run of dbus "Could not parse server address". The uid is resolved at
+#   INSTALL time by install.sh (V-4, `id -u $PI_USER`) and substituted here,
+#   exactly like __PI_USER__ and __CHROMIUM_BIN__. LOAD-BEARING on Wayland: the
+#   compositor socket is $XDG_RUNTIME_DIR/wayland-0. The .x11 sibling sets no
+#   XDG_RUNTIME_DIR at all and is deliberately left that way -- X11 needs only
+#   DISPLAY, and adding a runtime dir there is not this issue's business.
+#   Do not "simplify" it back to %U -- it looks correct in the file and is not.
+#
+# NOT APPLIED -- the register (US-648). Every switch NAMED anywhere above that is
+#   deliberately NOT on the ExecStart below, and why. Reconciled against the
+#   ExecStart in BOTH directions by test_dashboardUnitsCommentedFlagCensus_us648.
+#   Where this header defers to the .x11 sibling, the reason is recorded in full
+#   there -- and a test fences that pointer, so the sibling cannot stop
+#   documenting a flag this file forwards the reader to.
+#
+#   NOT APPLIED: --disable-gpu -- US-522 argued for it and never applied it;
+#     US-536 disposition B ruled the GPU STAYS ON. Fenced by
+#     test_dashboardUnits_keepTheGpuOn_us536, which covers BOTH variants.
+#   NOT APPLIED: --disable-gpu-rasterization -- the US-647 stopgap is X11-ONLY
+#     and expires with X11. It is NOT inherited here. This is not a ruling that
+#     Wayland should keep GPU rasterization on; it is a refusal to inherit an
+#     X11 workaround into the stack meant to replace it. If Wayland needs it,
+#     that is a new decision with its own evidence
+#     (test_dashboardWayland_doesNotInheritTheX11Stopgap_us647).
+#   NOT APPLIED: --enable-gpu-rasterization -- OS-injected by
+#     /etc/chromium.d/default-flags, which this repo does not manage and must
+#     never duplicate (test_dashboardUnits_neverReinjectGpuRasterization_us522).
+#   NOT APPLIED: --remote-debugging-port -- an open DevTools port on a
+#     car-mounted kiosk is unauthenticated full-page control.
+#   NOT APPLIED: --assets-dir -- not a chromium switch at all. It belongs to
+#     eclipse-states-http and is named above for the A-2 assets contract.
+# ==============================================================================
+
+[Unit]
+Description=Eclipse OBD carousel dashboard kiosk (Wayland)
+After=graphical.target eclipse-states-http.service
+Wants=eclipse-states-http.service
+
+[Service]
+Type=simple
+User=__PI_USER__
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
+ExecStart=__CHROMIUM_BIN__ \
+  --kiosk \
+  --ozone-platform=wayland \
+  --touch-events=enabled \
+  --noerrdialogs --disable-infobars --hide-scrollbars \
+  --autoplay-policy=no-user-gesture-required \
+  --check-for-update-interval=31536000 \
+  --password-store=basic \
+  --user-data-dir=/tmp/dashboard-chromium \
+  http://127.0.0.1:9899/dashboard.html
+# The kiosk runs until Exit/Close (US-403) calls window.close() or systemd
+# stops it. No hardcoded sleep/pkill.
+Restart=on-failure
+RestartSec=2

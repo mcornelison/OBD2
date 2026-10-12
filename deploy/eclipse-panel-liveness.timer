@@ -1,0 +1,57 @@
+# ==============================================================================
+# File:    eclipse-panel-liveness.timer
+# Purpose: Drive eclipse-panel-liveness.service every 60s (US-654)
+# Author:  Rex (Ralph Agent)
+# Created: 2026-08-31 -- Sprint 78 US-654
+#
+# Why these numbers
+# -----------------
+# OnUnitActiveSec=60s -- LOAD-BEARING, not a polling taste. The probe reaches a
+# verdict only after DEFAULT_OBSERVATION_SECONDS (600s) of accumulated CPU, and
+# ticks inside that window keep the existing baseline rather than restarting it.
+# So the cadence decides how promptly a completed window is NOTICED, not how
+# long the window is. panel_liveness.TIMER_CADENCE_SECONDS mirrors this number
+# and a test asserts the window still spans at least two ticks -- a window
+# shorter than the cadence could never be reached, and the detector would
+# withhold forever while looking exactly like a healthy one.
+#
+# Detection latency is therefore ~600s to ~660s after the panel stops
+# rendering. That is the honest figure and it is bounded BELOW by physics, not
+# by this cadence: the sprint's bigDefinitionOfDone retracted an 8-second CPU
+# sample as unable to discriminate -- a healthy ~3% page reads just as flat over
+# 8 s as a frozen one -- and the reading that DID discriminate spanned 600 s.
+# Faster polling cannot shorten it; only a repaint heartbeat published BY the
+# page could, and that is a dashboard change, not an observer one.
+#
+# For scale, the failure this replaces: the panel was frozen for 7 h 27 m and
+# nothing reported it at all.
+#
+# OnBootSec=180s -- the dashboard does not exist yet during the boot storm; the
+# splash owns the screen until HEALTHY_YIELD and only then hands off via
+# `OnSuccess=eclipse-dashboard.service`. Ticking earlier is harmless (no MainPID
+# is a no-op by design) but pointless, and it keeps the probe out of the way of
+# the boot storm. Later than the kiosk watchdog's 120s on purpose: the first
+# tick only records a baseline, so starting it before the emitters are steadily
+# writing would spend a window on a box that had nothing to render anyway.
+#
+# No Persistent= line: that setting only applies to OnCalendar timers, and a
+# missed monotonic tick needs no catch-up -- the baseline is still on disk and
+# the next fire simply measures a longer span.
+#
+# Installation: see eclipse-panel-liveness.service header.
+# ==============================================================================
+
+[Unit]
+Description=Timer for the Eclipse OBD dashboard panel liveness probe (US-654)
+Requires=eclipse-panel-liveness.service
+
+[Timer]
+# Let the boot storm + splash-to-dashboard hand-off finish first.
+OnBootSec=180s
+# Mirrored by panel_liveness.TIMER_CADENCE_SECONDS.
+OnUnitActiveSec=60s
+AccuracySec=5s
+# `Unit=` defaults to eclipse-panel-liveness.service (matches the basename).
+
+[Install]
+WantedBy=timers.target

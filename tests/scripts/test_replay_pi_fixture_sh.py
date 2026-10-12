@@ -72,6 +72,7 @@ def _runDriver(args: Sequence[str], *, cwd: Path | None = None) -> subprocess.Co
         cwd=str(cwd or _PROJECT_ROOT),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
     )
     return result

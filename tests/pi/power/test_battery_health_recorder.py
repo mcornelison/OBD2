@@ -12,6 +12,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-21    | Rex (US-217) | Initial -- start/end + close-once tests.
+# 2026-09-13    | Rex (US-589) | TD-060: lock start/endDrainEvent docstrings
+#                               to the live DDL (no legacy start_soc/end_soc).
 # ================================================================================
 ################################################################################
 
@@ -27,6 +29,7 @@ import pytest
 from src.pi.obdii.database import ObdDatabase
 from src.pi.power.battery_health import (
     BATTERY_HEALTH_LOG_TABLE,
+    SCHEMA_BATTERY_HEALTH_LOG,
     BatteryHealthRecorder,
     DrainEventCloseResult,
     _computeRuntimeSeconds,
@@ -123,10 +126,12 @@ class TestStartDrainEvent:
         drainId = recorder.startDrainEvent(startSoc=72.5)
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT start_soc FROM {BATTERY_HEALTH_LOG_TABLE} "
+                f"SELECT start_vcell_v FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
+        # US-426: startSoc (VCELL volts) lands in start_vcell_v, not the
+        # dropped legacy start_soc column.
         assert row[0] == 72.5
 
     def test_preCloseEndColumnsAreNull(
@@ -137,7 +142,7 @@ class TestStartDrainEvent:
         drainId = recorder.startDrainEvent(startSoc=100.0)
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_timestamp, end_soc, runtime_seconds, "
+                f"SELECT end_timestamp, end_vcell_v, runtime_seconds, "
                 f"       ambient_temp_c "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
@@ -175,7 +180,7 @@ class TestEndDrainEvent:
 
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_timestamp, end_soc, ambient_temp_c, "
+                f"SELECT end_timestamp, end_vcell_v, ambient_temp_c, "
                 f"       runtime_seconds "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} "
                 f"WHERE drain_event_id = ?",
@@ -249,7 +254,7 @@ class TestCloseOnceSemantic:
         # DB state matches the first close.
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_timestamp, end_soc FROM "
+                f"SELECT end_timestamp, end_vcell_v FROM "
                 f"{BATTERY_HEALTH_LOG_TABLE} WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
@@ -268,3 +273,44 @@ class TestCloseOnceSemantic:
         assert result.endSoc == 20.0
         assert result.endTimestamp is not None
         assert result.runtimeSeconds is not None
+
+
+# ================================================================================
+# Docstrings describe the live schema (US-589 / TD-060)
+# ================================================================================
+
+_DDL_COLUMN = re.compile(r'^\s{4}([a-z][a-z0-9_]*)\s+[A-Z]', re.MULTILINE)
+_DOC_COLUMN = re.compile(r'``([a-z][a-z0-9]*(?:_[a-z0-9]+)+)``')
+
+
+class TestDrainEventDocstringsMatchDdl:
+    """The method docstrings name only columns the live DDL defines."""
+
+    @pytest.mark.parametrize('methodName', ['startDrainEvent', 'endDrainEvent'])
+    def test_noLegacySocOrDualWriteReference(self, methodName: str) -> None:
+        """
+        Given: US-426 dropped start_soc/end_soc and the US-289 dual-write
+        When: the open/close method docstrings are read
+        Then: neither names the dropped columns or the retired contract
+        """
+        doc = getattr(BatteryHealthRecorder, methodName).__doc__ or ''
+
+        assert re.search(r'\b(start|end)_soc\b', doc) is None
+        assert 'dual-write' not in doc
+        assert 'US-289' not in doc
+
+    @pytest.mark.parametrize('methodName', ['startDrainEvent', 'endDrainEvent'])
+    def test_everyDocumentedColumnExistsInDdl(self, methodName: str) -> None:
+        """
+        Given: SCHEMA_BATTERY_HEALTH_LOG is the SSOT for the table
+        When: each ``snake_case`` column in the docstring is extracted
+        Then: every one is defined by the DDL, and both real homes are named
+        """
+        ddlColumns = set(_DDL_COLUMN.findall(SCHEMA_BATTERY_HEALTH_LOG))
+        doc = getattr(BatteryHealthRecorder, methodName).__doc__ or ''
+        prefix = 'start' if methodName == 'startDrainEvent' else 'end'
+
+        documented = set(_DOC_COLUMN.findall(doc))
+
+        assert documented <= ddlColumns, documented - ddlColumns
+        assert {f'{prefix}_vcell_v', f'{prefix}_soc_pct'} <= documented

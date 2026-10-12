@@ -11,6 +11,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-149
+# 2026-10-11    | Rex (US-776-i)| Success fakes now answer with the stored ack:
+#               |              | a bare 2xx no longer advances the mark.
 # ================================================================================
 ################################################################################
 
@@ -43,6 +45,7 @@ import pytest
 from src.common.errors.handler import ConfigurationError
 from src.pi.data import sync_log
 from src.pi.sync import PushStatus, SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckReplyFor
 
 # =============================================================================
 # Helpers / fixtures
@@ -183,12 +186,16 @@ class _FakeResponse:
 
 
 def _successOpener() -> Callable[..., Any]:
-    """Opener that returns 200 OK for every call and records the request."""
+    """Opener that returns 200 OK for every call and records the request.
+
+    US-776-i: the reply carries the stored ack for every row sent -- a bare
+    2xx no longer counts as delivered.
+    """
     calls: list[Any] = []
 
     def _opener(req: Any, timeout: float = 30) -> _FakeResponse:  # noqa: ARG001
         calls.append((req, timeout))
-        return _FakeResponse(body=b'{"status":"ok"}', status=200)
+        return _FakeResponse(body=storedAckReplyFor(req.data), status=200)
 
     _opener.calls = calls  # type: ignore[attr-defined]
     return _opener
@@ -382,7 +389,8 @@ class TestRateLimitRetry:
                     hdrs=None,  # type: ignore[arg-type]
                     fp=io.BytesIO(b""),
                 )
-            return _FakeResponse(body=b'{"status":"ok"}', status=200)
+            # US-776-i: the success carries the stored ack.
+            return _FakeResponse(body=storedAckReplyFor(req.data), status=200)
 
         client = SyncClient(config, httpOpener=_opener, sleep=noSleep)
         result = client.pushDelta("realtime_data")
@@ -536,9 +544,12 @@ class TestDisabledAndEmpty:
 
         results = client.pushAllDeltas()
 
-        assert len(results) == len(sync_log.IN_SCOPE_TABLES)
+        # US-417: the sweep now also covers registered natural-key snapshot
+        # tables (startup_log) after the delta tables.
+        expected = sync_log.IN_SCOPE_TABLES | sync_log.snapshotSyncTables()
+        assert len(results) == len(expected)
         returnedTables = {r.tableName for r in results}
-        assert returnedTables == sync_log.IN_SCOPE_TABLES
+        assert returnedTables == expected
 
         # Only realtime_data has rows in our fixture DB.
         byTable = {r.tableName: r for r in results}
@@ -548,6 +559,10 @@ class TestDisabledAndEmpty:
         # the delta-by-PK model); the remaining delta tables are empty.
         for tableName in sync_log.SNAPSHOT_TABLES:
             assert byTable[tableName].status == PushStatus.SKIPPED
+        # US-417: startup_log is registered for snapshot sync but not created
+        # in this fixture DB -> the missing-table guard yields EMPTY.
+        for tableName in sync_log.snapshotSyncTables():
+            assert byTable[tableName].status == PushStatus.EMPTY
         for tableName in (
             sync_log.IN_SCOPE_TABLES
             - sync_log.SNAPSHOT_TABLES

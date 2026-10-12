@@ -142,7 +142,8 @@ class ShutdownCommand:
             result = subprocess.run(
                 ['systemctl', 'show', self._config.serviceName, '--property=MainPID'],
                 capture_output=True,
-                text=True
+                text=True,
+                encoding='utf-8'
             )
 
             if result.returncode == 0:
@@ -385,7 +386,11 @@ class ShutdownCommand:
             result = subprocess.run(
                 ['sudo', 'systemctl', 'stop', self._config.serviceName],
                 capture_output=True,
-                text=True
+                text=True,
+                # SHUTDOWN PATH -- see shutdown_handler. A decode error escaping
+                # here aborts the stop and the service is killed by the systemd
+                # timeout instead of closing its DB cleanly. (US-710 / TD-068)
+                encoding='utf-8'
             )
             return result.returncode == 0
         except (subprocess.SubprocessError, FileNotFoundError) as e:

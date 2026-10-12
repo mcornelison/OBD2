@@ -47,6 +47,20 @@
 #               |              | UNIQUE index enforcing exactly-one-active-ECU
 #               |              | (MariaDB lacks partial unique indexes).  Append-
 #               |              | only invariant; server-only (Pi schema unchanged).
+# 2026-07-01    | Rex (US-412) | F-101: PowerLog model mirroring Pi's power_log
+#               |              | table (one row per power-source / shutdown-stage
+#               |              | transition).  power_log was Pi-only until US-412.
+# 2026-09-24    | Rex (US-683) | BatteryHealthLog.close_reason (typed close
+#               |              | discriminator) + its named CHECK.  Live table
+#               |              | gains it via migration v0032.
+# 2026-10-03    | Atlas (ARCH-065a) | BatteryHealthLog gains the ten ARCH-065 capacity
+#               |              | columns; StartupLog gains four prior_boot_* columns.
+#               |              | Live tables gain them via migration v0035.
+# 2026-09-25    | Rex (US-790) | DrainVcellTrajectory: the shutdown drain's VCELL
+#               |              | series (one row per poll) + its termination
+#               |              | CHECK.  Created by migration v0033.
+# 2026-09-30    | Rex (US-776-f) | StartupLog gains the four prior_boot_* shutdown-
+#               |              | sync columns.  Added by migration v0034.
 # ================================================================================
 ################################################################################
 
@@ -76,7 +90,7 @@ Usage::
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
@@ -84,6 +98,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -120,6 +135,15 @@ class Base(DeclarativeBase):
 
 DATA_SOURCE_VALUES: tuple[str, ...] = (
     'real', 'replay', 'physics_sim', 'fixture',
+    # US-424 / F-116: foreign-vehicle contamination marker.  Mirrors the Pi
+    # SSOT (src/pi/obdii/data_source.py::DATA_SOURCE_VALUES) so a foreign-tagged
+    # row synced up from the Pi is a known value, and every server-side
+    # ``WHERE data_source='real'`` analytics filter auto-excludes it.  The
+    # server data_source column carries no DB-level CHECK (application-enforced
+    # only), so no server migration is needed to accept the value; the Pi and
+    # server tuples are pinned equal by
+    # tests/pi/data/test_data_source_foreign_marker.py (A-4, no-drift).
+    'foreign',
 )
 DATA_SOURCE_DEFAULT: str = 'real'
 DATA_SOURCE_LENGTH: int = 16
@@ -168,6 +192,26 @@ class RealtimeData(Base):
     # per-drive analytics queries.  NULL = pre-US-200 row or row written
     # outside an active drive.
     drive_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    # US-809-b1: the Pi's WRITE instant, carried across the tier boundary.
+    # `timestamp` is the EVENT instant (US-809-a); this is when the row
+    # reached storage ON THE PI.  Distinct from `synced_at` above, which is
+    # when the row reached the SERVER -- three different questions, and the
+    # CIO's landing-versus-collection distinction needs all three to be
+    # separately answerable.
+    #
+    # 🔴 THIS COLUMN MUST EXIST HERE OR realtime_data SYNC STOPS. US-689 made
+    # sync.py RAISE on any Pi column the server model lacks, because the
+    # alternative was a silent drop. realtime_data is the highest-volume
+    # table on the car, so a Pi-only column would break it on the first batch.
+    # US-809-b2: the schema supplies the write instant, because at INSERT
+    # time "now" IS the write time. NULLABLE by CIO ruling 2026-09-24 -- rows
+    # that predate the column have no recorded write time, and NOT NULL could
+    # only be satisfied by inventing one. The default fills every new row, so
+    # nothing observable is lost; only the constraint's proof that no future
+    # row is blank.
+    written_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
 
 
 class Statistic(Base):
@@ -689,12 +733,163 @@ class CalibrationSession(Base):
     )
 
 
+# ==============================================================================
+# EDR raw sample tables (US-765 / F-142)
+# ==============================================================================
+#
+# The FIRST synced tables whose natural key is not (source_device, source_id).
+# The PK is (source_device, source_id, ts_utc) because MariaDB requires the
+# PARTITION COLUMN in every unique key, and these tables are RANGE-partitioned
+# monthly on ts_utc.  (source_device, source_id) is still unique on its own --
+# source_id is the Pi rowid -- so ts_utc changes the DDL, NOT the identity.
+# That is why runSyncUpsert's insert/update partitioning works unchanged here.
+#
+# There is deliberately NO surrogate id.  ``drives.PRIMARY KEY`` is drive_id
+# ALONE, with no device dimension, and will collide the moment a second vehicle
+# reports; these tables are keyed the way that one should have been.  Do not
+# "simplify" the composite key -- the surrogate is what loses the device.
+#
+# These models exist for the SYNC path.  The live server tables are created by
+# migration v0026 from src/common/edr/server_ddl.py, which GENERATES its DDL
+# from the same EDR_COLUMNS contract these mirror (A-4 anti-divergence).  They
+# are not a second declaration of the schema.
+
+
+class EdrImuSample(Base):
+    """Raw ICM-20948 IMU samples mirrored from the Pi (US-765 / F-142).
+
+    ~25 Hz, always-on (key-on including engine-off -- true black box).  Until
+    this table existed the Pi recorded them faithfully and an hourly age-based
+    purge deleted them, because there was nowhere for them to go.
+
+    The cross-tier contract this mirror belongs to is ``specs/architecture.md``
+    section 10.8.3 (US-773): pointed at, never restated here.
+    """
+
+    __tablename__ = "edr_imu_sample"
+    __sync_conflict_cols__ = ("source_device", "source_id", "ts_utc")
+
+    source_device: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+
+    ts_capture: Mapped[float] = mapped_column(Float, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    accel_x: Mapped[float | None] = mapped_column(Float)
+    accel_y: Mapped[float | None] = mapped_column(Float)
+    accel_z: Mapped[float | None] = mapped_column(Float)
+    gyro_x: Mapped[float | None] = mapped_column(Float)
+    gyro_y: Mapped[float | None] = mapped_column(Float)
+    gyro_z: Mapped[float | None] = mapped_column(Float)
+    mag_x: Mapped[float | None] = mapped_column(Float)
+    mag_y: Mapped[float | None] = mapped_column(Float)
+    mag_z: Mapped[float | None] = mapped_column(Float)
+    temp_c: Mapped[float | None] = mapped_column(Float)
+    # NULL whenever no drive was RUNNING (the A-9 / DTC-KOEO latch rule).  An
+    # unattributed sample stays unattributed -- never back-filled to a drive.
+    drive_id: Mapped[int | None] = mapped_column(Integer)
+    data_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class EdrImuDerived(Base):
+    """PitchFusion OUTPUTS mirrored from the Pi (US-805 / ARCH-045).
+
+    Deliberately NOT columns of :class:`EdrImuSample`. A raw reading never
+    changes; a computed value changes when the ALGORITHM changes, so mixing them
+    would leave early and late rows meaning subtly different things with nothing
+    marking where the maths moved. ``fusion_version`` is what makes the split
+    worth anything -- without it the table cannot say which algorithm produced a
+    row, and it would inherit the very defect the separation prevents.
+
+    Written beside its raw sibling in the SAME Pi-side transaction and stamped
+    with the FUSION's own ``ts_capture``, so the pair lands together and the
+    join (source_device, ts_capture) is exact rather than nearest-neighbour.
+    """
+
+    __tablename__ = "edr_imu_derived"
+    __sync_conflict_cols__ = ("source_device", "source_id", "ts_utc")
+
+    source_device: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+
+    ts_capture: Mapped[float] = mapped_column(Float, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    # NULL under gyro_implausible (US-749). That null is a FINDING -- the only
+    # evidence the plausibility guard fired -- and must never become 0.0.
+    pitch_deg: Mapped[float | None] = mapped_column(Float)
+    stop_count: Mapped[int | None] = mapped_column(Integer)
+    bias_rad: Mapped[float | None] = mapped_column(Float)
+    fusion_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    drive_id: Mapped[int | None] = mapped_column(Integer)
+    data_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # US-810: PitchFusion's learned gyro RATE bias, rad/s -- not bias_rad, the
+    # mount-tilt ANGLE.  NULL is the unlearned state, never 0.0; the rejected
+    # count tells "never learned" from "every stop rejected as a latch".
+    # Added to the live table by migration v0031.
+    gyro_bias_roll_rad_s: Mapped[float | None] = mapped_column(Float)
+    gyro_bias_pitch_rad_s: Mapped[float | None] = mapped_column(Float)
+    gyro_bias_yaw_rad_s: Mapped[float | None] = mapped_column(Float)
+    gyro_bias_stops: Mapped[int | None] = mapped_column(Integer)
+    gyro_bias_rejected_stops: Mapped[int | None] = mapped_column(Integer)
+
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class EdrLightSample(Base):
+    """Raw TSL2591 light samples mirrored from the Pi (US-765 / F-142).
+
+    1 Hz.  ``lux`` is NULL for a saturated or IR-dominated read, never 0 and
+    never a clamped value -- 0 lux reads as darkness, which is the ARCH-010
+    negative-lux defect in a different costume.
+    """
+
+    __tablename__ = "edr_light_sample"
+    __sync_conflict_cols__ = ("source_device", "source_id", "ts_utc")
+
+    source_device: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+
+    ts_capture: Mapped[float] = mapped_column(Float, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    lux: Mapped[float | None] = mapped_column(Float)
+    visible: Mapped[int | None] = mapped_column(Integer)
+    infrared: Mapped[int | None] = mapped_column(Integer)
+    full_spectrum: Mapped[int | None] = mapped_column(Integer)
+    gain: Mapped[str | None] = mapped_column(String(16))
+    integration_ms: Mapped[int | None] = mapped_column(Integer)
+    drive_id: Mapped[int | None] = mapped_column(Integer)
+    data_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+
+#: US-683: battery_health_log.close_reason vocabulary.  Mirrors the Pi SSOT
+#: (src/pi/power/battery_health.py::CLOSE_REASON_VALUES); the two tuples are
+#: pinned equal by tests/server/test_battery_health_close_reason_crosses_tiers.py.
+BATTERY_HEALTH_CLOSE_REASON_VALUES: tuple[str, ...] = (
+    'clean', 'reaped_uncheckpointed', 'reaped_checkpointed',
+)
+CK_BATTERY_HEALTH_LOG_CLOSE_REASON: str = 'ck_battery_health_log_close_reason'
+
+
 class BatteryHealthLog(Base):
     """UPS drain-event records, mirrored from Pi (US-217 / Spool Session 6).
 
     One row per drain event (Pi lost wall power OR CIO ran a scheduled
-    drill).  Opened at event-start with ``start_soc`` + ``load_class``;
-    closed at event-end with ``end_soc`` + ``runtime_seconds``.  The
+    drill).  Opened at event-start with ``start_vcell_v`` + ``load_class``;
+    closed at event-end with ``end_vcell_v`` + ``runtime_seconds``.  SoC%
+    (``start_soc_pct`` / ``end_soc_pct``) is the durable MAX17048-register
+    fact added in US-426 (BL-015).  The
     Pi-side PK is ``drain_event_id`` -- renamed to ``id`` on the wire by
     the sync client so the server's ``source_id`` mapping stays uniform
     with every other synced capture table.
@@ -708,6 +903,12 @@ class BatteryHealthLog(Base):
     __tablename__ = "battery_health_log"
     __table_args__ = (
         UniqueConstraint("source_device", "source_id"),
+        CheckConstraint(
+            "close_reason IN ("
+            + ",".join(f"'{v}'" for v in BATTERY_HEALTH_CLOSE_REASON_VALUES)
+            + ")",
+            name=CK_BATTERY_HEALTH_LOG_CLOSE_REASON,
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -718,13 +919,24 @@ class BatteryHealthLog(Base):
     )
     sync_batch_id: Mapped[int | None] = mapped_column(Integer)
 
-    # Pi-native columns
+    # Pi-native columns.  US-426 (BL-015): dropped the misnamed legacy
+    # start_soc/end_soc (VCELL volts) and added the dedicated *_vcell_v +
+    # *_soc_pct columns so this model is byte-for-byte identical to the Pi
+    # battery_health_log (A-4 -- closes the vcell/soc divergence that the
+    # architecture Watch List A-4 flagged for this table).
     start_timestamp: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(),
     )
     end_timestamp: Mapped[datetime | None] = mapped_column(DateTime)
-    start_soc: Mapped[float] = mapped_column(Float, nullable=False)
-    end_soc: Mapped[float | None] = mapped_column(Float)
+    # LiPo cell voltage at open/close (US-289 Pi rename; US-426 mirrored to
+    # the server so the full sync payload is consumed -- no unmapped keys).
+    start_vcell_v: Mapped[float | None] = mapped_column(Float)
+    end_vcell_v: Mapped[float | None] = mapped_column(Float)
+    # MAX17048 register State-of-Charge percent (0-100) at open/close.  The
+    # durable SoC% home (US-426 / BL-015); nullable -- US-427 wires the real
+    # register read and the cold-start guard records NULL not a garbage %.
+    start_soc_pct: Mapped[float | None] = mapped_column(Float)
+    end_soc_pct: Mapped[float | None] = mapped_column(Float)
     runtime_seconds: Mapped[int | None] = mapped_column(Integer)
     ambient_temp_c: Mapped[float | None] = mapped_column(Float)
     load_class: Mapped[str] = mapped_column(
@@ -733,6 +945,228 @@ class BatteryHealthLog(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     data_source: Mapped[str | None] = mapped_column(
         String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
+    )
+    # US-683: how the drain row was closed -- the typed discriminator that
+    # replaces the notes prose (notes is preserved on upsert, so the server
+    # could never learn a reap from it).  NULL exactly while the row is open.
+    # Added to the live table, and backfilled, by migration v0032.
+    close_reason: Mapped[str | None] = mapped_column(String(32))
+    # ARCH-065 (migration v0035): battery capacity. drain_trigger replaces
+    # load_class as the qualifying key.
+    drain_trigger: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="keyoff",
+    )
+    cell_epoch: Mapped[str | None] = mapped_column(String(32))
+    cut_step_mv: Mapped[float | None] = mapped_column(Float)
+    window_start_s: Mapped[int | None] = mapped_column(Integer)
+    window_end_s: Mapped[int | None] = mapped_column(Integer)
+    drain_rate_mv_s: Mapped[float | None] = mapped_column(Float)
+    verdict: Mapped[str | None] = mapped_column(String(16))
+    t_floor_s: Mapped[int | None] = mapped_column(Integer)
+    floor_vcell_v: Mapped[float | None] = mapped_column(Float)
+    cutoff_vcell_v: Mapped[float | None] = mapped_column(Float)
+
+
+class PowerLog(Base):
+    """Pi power-event log, mirrored from Pi (US-412 / F-101).
+
+    WHAT the table holds -- writers, row kinds, retention -- is defined ONCE
+    in the ``src/pi/power/power_db.py`` module docstring (US-798); this
+    mirror stores the same rows.  Append-only with an integer ``id`` PK, so it
+    delta-syncs on ``id`` -> ``source_id`` exactly like every other synced
+    capture table (the battery_health_log pattern).
+
+    power_log was local-only Pi health telemetry until US-412 mirrored it
+    to the server so power/boot history is queryable server-side alongside
+    the rest of the telemetry.
+
+    See ``src/pi/obdii/database_schema.py::SCHEMA_POWER_LOG`` for the
+    Pi-side DDL.  power_log carries no ``data_source`` column (it predates
+    US-195 origin tagging and only ever records real power events).
+    """
+
+    __tablename__ = "power_log"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns (mirror SCHEMA_POWER_LOG exactly)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    power_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    on_ac_power: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1"),
+    )
+    # US-252: LiPo cell voltage at stage transition; NULL for legacy
+    # power-source-transition rows that carry no voltage reading.
+    vcell: Mapped[float | None] = mapped_column(Float)
+
+
+#: US-790: drain_vcell_trajectory.termination_reason vocabulary.  Mirrors the Pi
+#: SSOT (src/pi/power/types.py::DRAIN_TERMINATION_VALUES); the two tuples are
+#: pinned equal by tests/server/test_drain_vcell_trajectory_crosses_tiers.py.
+DRAIN_TERMINATION_REASON_VALUES: tuple[str, ...] = (
+    'shutdown', 'power_restored', 'drain_floor', 'vcell_floor', 'vcell_unreadable',
+)
+CK_DRAIN_VCELL_TRAJECTORY_TERMINATION_REASON: str = (
+    'ck_drain_vcell_trajectory_termination_reason'
+)
+
+
+class DrainVcellTrajectory(Base):
+    """The shutdown drain's VCELL series, mirrored from the Pi (US-790 / F-138).
+
+    One row per drain poll (1 s), the reason the drain ended on its last row
+    only.  It is what replaces the PROVISIONAL ``drainFloorVolts`` with a
+    measurement, so every row carries the ``cell_epoch`` it was written under:
+    a floor averaged across two batteries would be a number nobody could
+    defend.  Group by ``cell_epoch`` before deriving anything.
+
+    INSERT-only with an integer ``id`` PK on the Pi, delta-synced on
+    ``id`` -> ``source_id`` like power_log.  ``vcell_v`` NULL means that poll
+    had no reading -- never a sentinel.  Pi DDL:
+    ``src/pi/obdii/database_schema.py::SCHEMA_DRAIN_VCELL_TRAJECTORY``.
+    """
+
+    __tablename__ = "drain_vcell_trajectory"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+        CheckConstraint(
+            "termination_reason IN ("
+            + ",".join(f"'{v}'" for v in DRAIN_TERMINATION_REASON_VALUES)
+            + ")",
+            name=CK_DRAIN_VCELL_TRAJECTORY_TERMINATION_REASON,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns (mirror SCHEMA_DRAIN_VCELL_TRAJECTORY)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    ts_capture: Mapped[float] = mapped_column(Float(precision=53), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    vcell_v: Mapped[float | None] = mapped_column(Float)
+    termination_reason: Mapped[str | None] = mapped_column(String(32))
+    cell_epoch: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class StartupLog(Base):
+    """Pi boot/startup log, mirrored from Pi (US-417 / F-101, closes BL-013).
+
+    One row per boot, keyed on the natural TEXT ``boot_id`` (from
+    ``/proc/sys/kernel/random/boot_id``) -- append-only + immutable
+    (``INSERT OR IGNORE`` once per boot).  A TEXT PK has no monotonic integer
+    cursor and the implicit ``rowid`` is VACUUM-renumberable, so this table
+    syncs via the natural-key **snapshot** path (US-416), NOT the integer
+    ``id`` -> ``source_id`` delta path.  There is therefore **no**
+    ``source_id`` column; rows dedup on ``UNIQUE(source_device, boot_id)`` and
+    the server upsert (``runSnapshotUpsert``) is idempotent on re-sync (the
+    Pi's ``recorded_at`` cursor over-reads harmlessly by design).
+
+    The per-table (naturalKeyCols, cursorCol) contract lives ONCE in the shared
+    ``src.common.sync.snapshot_registry.SNAPSHOT_SYNC`` (A-4); this model is the
+    server half, registered in ``sync._SNAPSHOT_TABLE_REGISTRY``.
+
+    See ``src/pi/obdii/database_schema.py::SCHEMA_STARTUP_LOG`` for the Pi-side
+    DDL.  Timestamp-ish columns are stored as canonical ISO-8601 TEXT (matching
+    the Pi's storage) rather than DATETIME so no coercion is applied to journal
+    timestamps that may be NULL or non-parseable.
+    """
+
+    __tablename__ = "startup_log"
+    __table_args__ = (
+        UniqueConstraint("source_device", "boot_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns (mirror SCHEMA_STARTUP_LOG).  boot_id is the natural
+    # key half; the timestamp columns are ISO-8601 TEXT, matching the Pi.
+    boot_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    prior_boot_clean: Mapped[int | None] = mapped_column(Integer)
+    prior_last_entry_ts: Mapped[str | None] = mapped_column(String(40))
+    current_boot_first_entry_ts: Mapped[str | None] = mapped_column(String(40))
+    prior_boot_last_stage: Mapped[str | None] = mapped_column(String(64))
+    prior_boot_reason: Mapped[str | None] = mapped_column(String(64))
+    recorded_at: Mapped[str | None] = mapped_column(String(40))
+
+    # US-776-f (migration v0034): the prior boot's shutdown-sync record, landed
+    # by the Pi at boot.  NULL = not recorded (absent, older build, hard cut).
+    prior_boot_home_state: Mapped[str | None] = mapped_column(String(64))
+    prior_boot_sync_outcome: Mapped[str | None] = mapped_column(String(64))
+    prior_boot_backlog_start: Mapped[int | None] = mapped_column(Integer)
+    prior_boot_backlog_end: Mapped[int | None] = mapped_column(Integer)
+    # ARCH-065 (migration v0035)
+    prior_boot_sync_started_at: Mapped[str | None] = mapped_column(String(40))
+    prior_boot_sync_ended_at: Mapped[str | None] = mapped_column(String(40))
+    prior_boot_vcell_before_cut_v: Mapped[float | None] = mapped_column(Float)
+    prior_boot_loss_at: Mapped[str | None] = mapped_column(String(40))
+
+
+class PiState(Base):
+    """Pi operational-state singleton, mirrored from Pi (US-453 / D-7 / F-082).
+
+    The Pi's ``pi_state`` is a single-row key-value table (``id`` pinned to 1)
+    holding operational flags the Pi must remember across process restart --
+    today only ``no_new_drives`` (the US-216 WARNING-stage gate that suppresses
+    new drive_id minting during a drain event, cleared on AC-restore).  It is
+    **irreproducible Pi-only forensic state** -- the server cannot derive it
+    from synced raw -- so under the F-104 boundary rule it syncs Pi->server as
+    raw (the server does NOT recompute it).
+
+    Its PK is integer ``id`` (not a TEXT natural key), so it rides the integer
+    delta path (``id`` -> ``source_id``) like every other capture table -- but
+    unlike the append-only capture tables it is a **mutable singleton**: the
+    Pi's ``id`` is always 1 and ``no_new_drives`` is UPDATEd in place.  The Pi
+    therefore opts it into the modified_at update-propagation cursor
+    (``sync_log.SYNC_UPDATE_TABLES_PK``) so a flag flip re-syncs; the server
+    upsert on ``(source_device, source_id)`` applies the update, keeping this
+    mirror current.
+
+    See ``src/pi/obdii/pi_state.py::SCHEMA_PI_STATE`` for the Pi-side DDL.
+    Distinct from :class:`DriveCounter` (also an ``id=1`` singleton but synced
+    via the bespoke monotonic ``driveCounter`` payload field, because a drive
+    counter must never rewind -- pi_state has no such monotonicity requirement,
+    so last-writer-wins on the standard upsert is correct).
+    """
+
+    __tablename__ = "pi_state"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native column (mirror SCHEMA_PI_STATE).  0/1 gate flag.
+    no_new_drives: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0"),
     )
 
 
@@ -758,6 +1192,31 @@ class SyncHistory(Base):
     )
     tables_synced: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
+    # US-795-a: what the car STILL held when this session closed -- the only
+    # statement about the Pi that stays true after it goes dark. rows_synced
+    # says what MOVED; these say what REMAINED.
+    #
+    # BOTH ARE NULLABLE WITH NO DEFAULT, and that is the load-bearing part.
+    # Three states must stay distinguishable:
+    #   (0,    True )  the car owed nothing, and every table could be read
+    #   (12,   False)  AT LEAST 12 -- some tables were unreadable
+    #   (NULL, NULL )  we could not determine what the car owed
+    # A NOT NULL column defaulting to 0 would collapse the third into the
+    # first, so every row that predates these columns -- and every session
+    # that could not measure -- would claim the car owed nothing. That is
+    # reporting a healthy car on the evidence of a failed measurement.
+    residual_rows: Mapped[int | None] = mapped_column(Integer)
+    # SyncBacklog.total is documented as a LOWER BOUND whenever
+    # unreadableTables is non-empty. Persisting the integer without this
+    # qualifier would turn a measured lower bound into an apparent exact count
+    # at the moment it is written down, and nothing downstream could recover
+    # the difference.
+    residual_complete: Mapped[bool | None] = mapped_column(Boolean)
+    # US-795(a) / v0036: the residual's split, CIO-ruled -- drive = the car's
+    # own records, sensor = the EDR archive. Nullable, no default, for the same
+    # reason as residual_rows: a split nobody measured must read as unknown.
+    residual_drive_rows: Mapped[int | None] = mapped_column(Integer)
+    residual_sensor_rows: Mapped[int | None] = mapped_column(Integer)
 
 
 class AnalysisHistory(Base):
@@ -832,6 +1291,16 @@ class Device(Base):
 DATA_QUALITY_ATTRIBUTION_ANOMALY: str = "attribution_anomaly"
 
 
+# US-424 / F-116: drive-level foreign-vehicle marker.  The companion to the
+# row-level data_source='foreign' tag -- a drive captured from a vehicle that is
+# NOT the Eclipse (the Ford Explorer, drive 33) is stamped 'foreign_vehicle' on
+# drive_summary + drive_statistics so per-drive analytics can exclude it.
+# Single source of truth for the literal; both the model enums below and the
+# compute-path classifier import it (drive_statistics_compute.py).  15 chars --
+# fits DATA_QUALITY_COLUMN_LENGTH (20) with headroom.
+DATA_QUALITY_FOREIGN_VEHICLE: str = "foreign_vehicle"
+
+
 # US-377 / F-107: shared VARCHAR width for the data_quality columns on both
 # drive_summary and drive_statistics.  Must stay >= the longest CHECK-permitted
 # value ('attribution_anomaly', 19 chars).  The original VARCHAR(16) was too
@@ -843,15 +1312,48 @@ DATA_QUALITY_ATTRIBUTION_ANOMALY: str = "attribution_anomaly"
 DATA_QUALITY_COLUMN_LENGTH: int = 20
 
 
+# US-563 / F-134: the NON-verdict.  Every data_quality column DEFAULTs to this
+# so an untouched row says "nobody has looked" instead of handing itself the
+# best available verdict.
+#
+# This exists because on 2026-08-20 a drive that had ended but had not yet
+# reached the nightly 03:30 analytics batch read back as data_quality='full',
+# is_real=0 -- a confident full-quality verdict on a drive nobody had assessed.
+# It misled BOTH Spool and Atlas into filing a phantom "roll-up regression"
+# story.  The roll-up is a nightly batch and it runs correctly; the defect was
+# entirely that a quality VERDICT column defaulted to the BEST verdict.
+#
+# 'unassessed' is deliberately NOT a quality bucket: it is the absence of an
+# assessment, and it is excluded from every *_ASSESSED_* tuple below so a
+# consumer filtering on assessed values simply does not see pending rows.
+# 10 chars -- fits DATA_QUALITY_COLUMN_LENGTH (20) with headroom.
+DATA_QUALITY_UNASSESSED: str = "unassessed"
+
+
 # drive_summary.data_quality enum: the server compute path writes only 'full'
 # (clean) or 'attribution_anomaly' (overlap detected).  drive_summary carries
 # no sample-count notion, so the sparse / below_threshold buckets that apply to
 # drive_statistics are deliberately NOT allowed here.
-DRIVE_SUMMARY_DATA_QUALITY_DEFAULT: str = "full"
-DRIVE_SUMMARY_DATA_QUALITY_VALUES: tuple[str, ...] = (
-    DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+#
+# US-563 splits what used to be ONE constant (DRIVE_SUMMARY_DATA_QUALITY_DEFAULT)
+# doing double duty as both "the column default" and "the clean verdict".  That
+# conflation is what made the defect unsayable in code: there was no name for
+# "not yet assessed" because the default WAS a verdict.
+DRIVE_SUMMARY_DATA_QUALITY_FULL: str = "full"
+# The verdicts -- values that mean an assessment RAN and reached a conclusion.
+DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DRIVE_SUMMARY_DATA_QUALITY_FULL,
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DATA_QUALITY_FOREIGN_VEHICLE,
 )
+# The full CHECK enum = the verdicts PLUS the non-verdict starting state.
+DRIVE_SUMMARY_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DATA_QUALITY_UNASSESSED,
+    *DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES,
+)
+# What the COLUMN defaults to -- never a verdict.  Named for the layer it
+# belongs to so a compute path cannot reach for it by accident.
+DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT: str = DATA_QUALITY_UNASSESSED
 
 
 # US-372 / F-076: the drive_summary.drive_id <-> source_id invariant.  The
@@ -873,6 +1375,124 @@ DRIVE_SUMMARY_DRIVE_ID_CHECK_CLAUSE: str = (
     "(drive_id IS NULL AND source_id IS NULL) OR "
     "(drive_id IS NOT NULL AND source_id IS NOT NULL AND drive_id = source_id)"
 )
+
+
+# ==============================================================================
+# US-448 / F-104: canonical server-side drive identity (the analytics-authority
+# spine).  ``drives.drive_id`` is the single drive-identity SSOT.  It SUBSUMES
+# the pre-existing de-facto identity ``drive_summary.id`` (v0018 migrates those
+# values in as ``drive_id`` and future stories re-point the FKs), so the server
+# never mints a second orthogonal id.  The Pi's own drive_counter id is demoted
+# to the advisory, nullable ``source_drive_id``.
+#
+# Minting rule (Atlas ruling, answers F-104 Open-Q1): the autoincrement PK is
+# anchored by ``UNIQUE (source_device, source_drive_id)`` so a mint is an
+# upsert-by-natural-key -- an idempotent recompute re-uses the existing
+# ``drive_id`` for an already-seen (device, drive) pair and NEVER renumbers it.
+# See :mod:`src.server.analytics.drive_identity`.
+# ==============================================================================
+
+DRIVES_TABLE: str = "drives"
+
+# The natural key that anchors the mint.  NULL ``source_drive_id`` rows
+# (unmappable legacy -- pre-connection_log drives, foreign-vehicle rows, NULL
+# realtime_data.drive_id) are distinct under SQL UNIQUE semantics, which is
+# exactly the "one row per distinct legacy key, never merged" behaviour US-451
+# relies on.  Name matches the v0018 migration's constraint so SHOW CREATE
+# TABLE is identical across SQLite (tests) and MariaDB (prod).
+DRIVES_SOURCE_UNIQUE_CONSTRAINT: str = "uq_drives_source_device_source_drive_id"
+
+# drives.data_quality carries the drive-level enum it subsumes from drive_summary
+# ('full' | 'attribution_anomaly' | 'foreign_vehicle') PLUS the drives-only
+# 'unmappable_legacy' marker (US-451 / D-8 identity collapse).  A row is
+# 'unmappable_legacy' when it cannot be re-keyed to a Pi identity because its
+# advisory natural key is absent (source_drive_id IS NULL: pre-connection_log
+# drives 1-12, NULL-drive_id raw).  Honest-availability: unmappable = typed-
+# unknown, one row per distinct legacy key, never dropped/merged and never
+# collapsed into another drive.  The marker is drives-only -- drive_summary /
+# drive_statistics keep their own (narrower) enums.  The forward-only CHECK-widen
+# is v0022 (same idiom as v0009/v0010/v0012/v0015).  17 chars fits VARCHAR(20).
+DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY: str = "unmappable_legacy"
+# The value the identity minter stamps on a clean drive.  US-563 renamed this
+# from DRIVES_DATA_QUALITY_DEFAULT: it is a VERDICT the minter writes, not a
+# column default, and the old name invited exactly the confusion that shipped
+# the F-134 defect on drive_summary.  The COLUMN default is
+# DRIVES_DATA_QUALITY_COLUMN_DEFAULT below.
+DRIVES_DATA_QUALITY_FULL: str = DRIVE_SUMMARY_DATA_QUALITY_FULL
+DRIVES_ASSESSED_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    *DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES,
+    DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY,
+)
+DRIVES_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DATA_QUALITY_UNASSESSED,
+    *DRIVES_ASSESSED_DATA_QUALITY_VALUES,
+)
+# US-563 / F-134: the column default is the non-verdict on EVERY data_quality
+# column, not only the one that shipped the misleading read.  Every writer of
+# ``drives`` passes data_quality explicitly, so this changes no behaviour -- but
+# "the writer always sets it" is a claim about intent, never about enforcement,
+# and the applied-schema guard makes no carve-outs.
+DRIVES_DATA_QUALITY_COLUMN_DEFAULT: str = DATA_QUALITY_UNASSESSED
+
+
+class Drive(Base):
+    """Canonical server-minted drive identity -- the F-104 spine (US-448).
+
+    One row per physical drive, keyed on the server-minted autoincrement
+    ``drive_id`` (the single drive-identity SSOT).  ``drives.drive_id``
+    subsumes the historical ``drive_summary.id``: the v0018 migration inserts
+    each existing ``drive_summary.id`` as the ``drive_id`` so the value is
+    preserved and existing ``drive_summary.id`` foreign keys (e.g.
+    ``drive_statistics.summary_id``) stay numerically valid; later spine
+    stories (US-451) formally re-point those FKs at ``drives.drive_id``.
+
+    The Pi's own drive_counter id is recorded only as the advisory, nullable
+    ``source_drive_id``.  ``UNIQUE (source_device, source_drive_id)`` anchors
+    the natural-key upsert mint (:func:`src.server.analytics.drive_identity.
+    upsert_drive`) so a recompute is idempotent and never renumbers a drive.
+
+    The server harness (US-449) is the SOLE writer of this table, deriving
+    rows from synced raw (``connection_log`` lifecycle + ``realtime_data``);
+    the Pi never writes it.
+    """
+
+    __tablename__ = DRIVES_TABLE
+    __table_args__ = (
+        UniqueConstraint(
+            "source_device", "source_drive_id",
+            name=DRIVES_SOURCE_UNIQUE_CONSTRAINT,
+        ),
+        # Enforce the drive-level data_quality enum at the DB layer (SQLite +
+        # MariaDB).  Name matches the v0018 migration's ADD CONSTRAINT so the
+        # physical schema is identical across environments.
+        CheckConstraint(
+            f"data_quality IN "
+            f"({','.join(repr(v) for v in DRIVES_DATA_QUALITY_VALUES)})",
+            name="ck_drives_data_quality",
+        ),
+    )
+
+    drive_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True,
+    )
+    # Advisory Pi-side identity (never authoritative).  source_device is the
+    # Pi host id (e.g. "chi-eclipse-01"); source_drive_id is the Pi's
+    # drive_counter id.  Both nullable so unmappable legacy drives can exist
+    # as one honest row per distinct key (US-451) rather than being dropped.
+    source_device: Mapped[str | None] = mapped_column(String(64))
+    source_drive_id: Mapped[int | None] = mapped_column(Integer)
+
+    start_time: Mapped[datetime | None] = mapped_column(DateTime)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime)
+
+    data_source: Mapped[str | None] = mapped_column(
+        String(DATA_SOURCE_LENGTH), server_default=DATA_SOURCE_DEFAULT,
+    )
+    data_quality: Mapped[str] = mapped_column(
+        String(DATA_QUALITY_COLUMN_LENGTH),
+        nullable=False,
+        server_default=DRIVES_DATA_QUALITY_COLUMN_DEFAULT,
+    )
 
 
 class DriveSummary(Base):
@@ -956,9 +1576,18 @@ class DriveSummary(Base):
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     profile_id: Mapped[str | None] = mapped_column(String(64))
     row_count: Mapped[int | None] = mapped_column(Integer, default=0)
-    is_real: Mapped[bool | None] = mapped_column(
-        Boolean, server_default="0",
-    )
+    # US-563 / F-134: NO server_default -- the column DEFAULTs to NULL.
+    #
+    # It used to be server_default="0", so every Pi-sync row landed claiming
+    # is_real=0 before analytics had looked at it.  0 is a COMPUTED verdict
+    # ("tested, and this drive is not real"); NULL is "nobody has looked".
+    # analysis.py already treats that distinction as load-bearing for Spool's
+    # grading queries (SPEC3_MIN_ROWS_FOR_IS_REAL leaves is_real NULL rather
+    # than FALSE on insufficient data) -- the schema default was quietly
+    # overriding it on every row.  Atlas CONFIRMED 2026-08-20 that the observed
+    # is_real=0 was this default, NOT a compute result: _deriveIsReal works as
+    # designed and there is NO compute defect here.
+    is_real: Mapped[bool | None] = mapped_column(Boolean)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(),
     )
@@ -983,7 +1612,15 @@ class DriveSummary(Base):
 
     # Pi-captured metadata (one snapshot per drive at CRANKING entry).
     drive_start_timestamp: Mapped[datetime | None] = mapped_column(DateTime)
-    ambient_temp_at_start_c: Mapped[float | None] = mapped_column(Float)
+    # US-563 / F-134: renamed from ``ambient_temp_at_start_c``.  The column is
+    # fed from IAT (PID 0x0F) at drive-start and is NOT ambient: drive 41 logged
+    # 47 C / 117 F into it while the real ambient was 24-27 C, and IAT ran
+    # 48.1 -> 40.6 C across speed bands (it cools with airflow and never nears
+    # ambient).  NO ambient source exists on this vehicle -- the 2G 4G63 does
+    # not support PID 0x46 -- so inventing one would be fabrication.  The column
+    # is named for what it actually measures.  Surfaces label it INTAKE AIR,
+    # informational, no alert band.
+    intake_air_temp_at_start_c: Mapped[float | None] = mapped_column(Float)
     starting_battery_v: Mapped[float | None] = mapped_column(Float)
     barometric_kpa_at_start: Mapped[float | None] = mapped_column(Float)
 
@@ -998,17 +1635,31 @@ class DriveSummary(Base):
     # dual-emission pattern), else 'full'.  The Pi never sends this column, so
     # the payload-only sync upsert (sync.py, server-only columns untouched)
     # leaves an analytics-written value intact across re-syncs.
+    #
+    # US-563 / F-134: the DEFAULT is the NON-verdict 'unassessed', not 'full'.
+    # A Pi-sync row exists for hours before the 03:30 batch assesses it; while
+    # it is pending it must be distinguishable from an assessed-clean drive.
     data_quality: Mapped[str] = mapped_column(
         String(DATA_QUALITY_COLUMN_LENGTH),
         nullable=False,
-        server_default=DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+        server_default=DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT,
     )
 
 
-DRIVE_STATISTICS_DATA_QUALITY_VALUES: tuple[str, ...] = (
+DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES: tuple[str, ...] = (
     "full", "sparse", "below_threshold", DATA_QUALITY_ATTRIBUTION_ANOMALY,
+    DATA_QUALITY_FOREIGN_VEHICLE,
 )
-DRIVE_STATISTICS_DATA_QUALITY_DEFAULT: str = "full"
+DRIVE_STATISTICS_DATA_QUALITY_VALUES: tuple[str, ...] = (
+    DATA_QUALITY_UNASSESSED,
+    *DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES,
+)
+# The clean VERDICT the compute path writes at sample_count >= 100.  Renamed
+# from DRIVE_STATISTICS_DATA_QUALITY_DEFAULT by US-563 for the same reason as
+# drive_summary's: one name cannot mean both "the column default" and "the
+# verdict", and the column default is now the non-verdict below.
+DRIVE_STATISTICS_DATA_QUALITY_FULL: str = "full"
+DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT: str = DATA_QUALITY_UNASSESSED
 
 
 class DriveStatistic(Base):
@@ -1020,8 +1671,18 @@ class DriveStatistic(Base):
     DriveSummary delete tears down its DriveStatistic children automatically.
 
     US-371 (F-076): the column was renamed ``drive_id`` -> ``summary_id``.  It
-    never held a Pi-assigned drive_id -- it has always been a ``drive_summary.id``
-    FK -- so the old name lied to readers.  The rename is COMPLETE (no alias).
+    never held a Pi-assigned drive_id -- it has always been a drive-identity FK
+    -- so the old name lied to readers.  The rename is COMPLETE (no alias).
+
+    US-451 (F-104 / D-8 identity collapse): the ``summary_id`` FK is re-pointed
+    from ``drive_summary.id`` to the canonical ``drives.drive_id`` (the single
+    drive-identity SSOT, US-448).  The values are unchanged -- v0018 subsumed
+    ``drive_summary.id`` INTO ``drives.drive_id`` -- so the re-point is 0-orphan
+    for existing rows; and once the harness mints ``drives`` in lockstep
+    (US-460), the compute keys new-drive stats on the (possibly divergent)
+    minted ``drives.drive_id``, which this FK now correctly references.  The
+    column keeps the name ``summary_id`` (a column rename is out of scope and a
+    wider blast radius); it now holds a ``drives.drive_id``.
 
     ``data_quality`` carries Atlas Refinement B's classification (computed by
     :func:`src.server.analytics.drive_statistics_compute.compute_drive_statistics`
@@ -1045,7 +1706,14 @@ class DriveStatistic(Base):
 
     summary_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("drive_summary.id", ondelete="CASCADE"),
+        # US-451: re-pointed drive_summary.id -> canonical drives.drive_id
+        # (values unchanged via the v0018 subsume).  Explicit constraint name
+        # so SHOW CREATE TABLE is identical across SQLite (create_all) + MariaDB
+        # (the v0022 ALTER re-adds the same-named FK).
+        ForeignKey(
+            "drives.drive_id", ondelete="CASCADE",
+            name="fk_drive_statistics_drives",
+        ),
         primary_key=True,
         nullable=False,
     )
@@ -1062,7 +1730,65 @@ class DriveStatistic(Base):
     data_quality: Mapped[str] = mapped_column(
         String(DATA_QUALITY_COLUMN_LENGTH),
         nullable=False,
-        server_default=DRIVE_STATISTICS_DATA_QUALITY_DEFAULT,
+        server_default=DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT,
+    )
+    computed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(),
+    )
+
+
+class DriveDerivedSignal(Base):
+    """Per-drive derived motion signals computed server-side (US-436 / F-106).
+
+    One row per drive, keyed on the canonical ``drives.drive_id`` (mirrors
+    :class:`DriveStatistic`; US-451 re-pointed this FK from ``drive_summary.id``
+    to ``drives.drive_id`` -- values unchanged via the v0018 subsume), written by
+    :func:`src.server.analytics.derived_signals_compute.compute_drive_derived_signals`
+    from the drive's SPEED ``realtime_data`` stream.  No new PIDs -- acceleration
+    and estimated distance are integrated from the existing speed+time series
+    (F-106 "richer motion context without new PIDs").
+
+    Units are explicit + persisted (honest-instrument).  SPEED is stored in
+    km/h, so ``estimated_distance_km`` trapezoidally integrates to km and the
+    ``peak_*_ms2`` values convert km/h -> m/s (/3.6) before dividing by dt so
+    they carry the physical m/s^2 unit.  ``peak_acceleration_ms2`` /
+    ``peak_deceleration_ms2`` are NULL when the drive has no valid segment
+    (every adjacent sample pair was skipped for a zero/negative dt or a
+    gap wider than the soak threshold).
+
+    ``computed_at`` carries ``onupdate=func.now()`` so a re-run of the
+    idempotent compute advances the timestamp while data columns converge
+    (same discipline as :class:`DriveStatistic`).
+    """
+
+    __tablename__ = "drive_derived_signals"
+
+    summary_id: Mapped[int] = mapped_column(
+        Integer,
+        # US-451: re-pointed drive_summary.id -> canonical drives.drive_id
+        # (values unchanged via the v0018 subsume).  Explicit constraint name
+        # matches the v0022 ALTER so SHOW CREATE TABLE is identical across envs.
+        ForeignKey(
+            "drives.drive_id", ondelete="CASCADE",
+            name="fk_drive_derived_signals_drives",
+        ),
+        primary_key=True,
+        nullable=False,
+    )
+    estimated_distance_km: Mapped[float | None] = mapped_column(Float)
+    peak_acceleration_ms2: Mapped[float | None] = mapped_column(Float)
+    peak_deceleration_ms2: Mapped[float | None] = mapped_column(Float)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    segment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    gap_skipped_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    speed_unit: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="km/h",
+    )
+    distance_unit: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="km",
+    )
+    accel_unit: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="m/s^2",
     )
     computed_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(),
@@ -1269,6 +1995,345 @@ class Baseline(Base):
 
 # ---- Public API --------------------------------------------------------------
 
+
+# ================================================================================
+# ARCH-020 -- the vehicle maintenance record (server-only, human-fed)
+# ================================================================================
+#
+# This is the first table in the project fed ENTIRELY by humans and paper.  There
+# is no odometer PID on a 1998 4G63; every mileage figure is operator- or
+# shop-supplied.  So the failure modes here are provenance failure modes, and the
+# columns below exist to make each one representable rather than to describe a
+# reading.
+#
+# Two tables, deliberately:
+#   maintenance_log      -- what was DONE
+#   maintenance_schedule -- what is DUE
+# Collapsing them makes "overdue" unqueryable and produces null-heavy rows.
+
+# How precisely the record actually knows an event's date.  There is NO default:
+# the assembled record holds exact days (2008-05-08), a bare month (May 2025) and
+# a four-year window (spark plugs, ~2022-26).  A defaulting column would let a
+# loader that forgets to set it emit a row claiming day precision it never had,
+# and nothing downstream could tell.  That is SSOT rule A's corollary -- landing
+# must not MANUFACTURE a reading -- applied to a date instead of a sensor value.
+EVENT_DATE_PRECISION_DAY: str = "day"
+EVENT_DATE_PRECISION_MONTH: str = "month"
+EVENT_DATE_PRECISION_YEAR: str = "year"
+EVENT_DATE_PRECISION_RANGE: str = "range"
+EVENT_DATE_PRECISION_VALUES: tuple[str, ...] = (
+    EVENT_DATE_PRECISION_DAY,
+    EVENT_DATE_PRECISION_MONTH,
+    EVENT_DATE_PRECISION_YEAR,
+    EVENT_DATE_PRECISION_RANGE,
+)
+
+# Whether a SOURCE recorded this date or somebody ESTIMATED it (CIO 2026-09-02).
+#
+# This is ORTHOGONAL to precision and the distinction is not academic.  Precision
+# says how fine-grained the date is; certainty says whether anyone actually wrote
+# it down.  The case that forced the column is seed row 3: it stores 1999-04-01
+# for the second of three services inside a Carfax window, and that date is an
+# INTERPOLATION invented to sort the row.  Precision 'range' flagged the
+# granularity, but nothing distinguished that invented anchor from 2008-05-08,
+# which a dealer actually recorded.
+#
+# The two directions are NOT symmetric:
+#   * a non-day precision is ALWAYS estimated -- the anchor's finer components
+#     were invented by the loader, so calling it exact would state a day no
+#     source gave (enforced by ck_maintenance_log_date_certainty_vs_precision);
+#   * a DAY precision may still be estimated -- someone recalling a specific day
+#     with confidence.  That row must remain distinguishable from a dealer
+#     record, which is exactly what a derived-from-precision flag could not do.
+DATE_CERTAINTY_EXACT: str = "exact"
+DATE_CERTAINTY_ESTIMATED: str = "estimated"
+DATE_CERTAINTY_VALUES: tuple[str, ...] = (
+    DATE_CERTAINTY_EXACT,
+    DATE_CERTAINTY_ESTIMATED,
+)
+
+# Odometer provenance tiers, ordered STRONGEST FIRST.  The ordering is measured,
+# not assumed: every Illinois emissions odometer in this vehicle's history is a
+# round thousand (31,000 / 59,000 / 65,000 / 69,000 / 74,000 / 75,000 / 77,000)
+# while shop records are exact to the mile.
+#
+# That rounding MANUFACTURES an apparent rollback -- 2022-04-12 reads 77,000 and
+# 2022-10-11 reads 76,961, six months later and lower.  A schema without source
+# tiers cannot resolve that, and a naive integrity check would flag a healthy car
+# as tampered.  The tier is the thing that makes the pair explicable.
+ODOMETER_SOURCE_SHOP_RECORD: str = "shop_record"
+ODOMETER_SOURCE_PHOTO_EXIF: str = "photo_exif"
+ODOMETER_SOURCE_OWNER_REPORTED: str = "owner_reported"
+ODOMETER_SOURCE_STATE_AGENCY_ROUNDED: str = "state_agency_rounded"
+ODOMETER_SOURCE_PROJECT_TELEMETRY: str = "project_telemetry"
+ODOMETER_SOURCE_VALUES: tuple[str, ...] = (
+    ODOMETER_SOURCE_SHOP_RECORD,
+    ODOMETER_SOURCE_PHOTO_EXIF,
+    ODOMETER_SOURCE_OWNER_REPORTED,
+    ODOMETER_SOURCE_STATE_AGENCY_ROUNDED,
+    ODOMETER_SOURCE_PROJECT_TELEMETRY,
+)
+
+# Tiers whose readings are NOT exact.  Kept as a set rather than a bare string
+# comparison at each call site so a second rounded tier added later is honoured
+# everywhere at once.
+ROUNDED_ODOMETER_SOURCES: frozenset[str] = frozenset(
+    {ODOMETER_SOURCE_STATE_AGENCY_ROUNDED},
+)
+
+# How well the record knows when a scheduled item was last done.  NO default, and
+# this is the most load-bearing decision in either table.
+#
+# The timing belt's only candidate in 28 years is a 2008 "60,000 MILE SERVICE"
+# that never names a belt.  If this column defaulted to 'confirmed', the single
+# most dangerous row in the record would acquire the safest value by omission and
+# the first query anyone ran would report the belt as SERVICED IN 2008.  The 4G63
+# is an interference engine and the interval is 60,000 miles OR 5 years; the car
+# is ~10k miles into it and 18.3 years into it.  'inferred' vs 'confirmed' is the
+# difference between a fact and a guess on a decision that bends valves.
+LAST_DONE_CONFIRMED: str = "confirmed"
+LAST_DONE_INFERRED: str = "inferred"
+LAST_DONE_UNKNOWN: str = "unknown"
+LAST_DONE_CONFIDENCE_VALUES: tuple[str, ...] = (
+    LAST_DONE_CONFIRMED,
+    LAST_DONE_INFERRED,
+    LAST_DONE_UNKNOWN,
+)
+
+MAINTENANCE_LOG_TABLE: str = "maintenance_log"
+MAINTENANCE_SCHEDULE_TABLE: str = "maintenance_schedule"
+
+# Named so the migration's ADD CONSTRAINT and create_all agree -- SHOW CREATE
+# TABLE must be identical across SQLite (tests) and MariaDB (prod).  A-4.
+CK_MAINTENANCE_ODOMETER_PAIRED: str = "ck_maintenance_log_odometer_paired"
+CK_MAINTENANCE_DATE_PRECISION: str = "ck_maintenance_log_date_precision"
+CK_MAINTENANCE_ODOMETER_SOURCE: str = "ck_maintenance_log_odometer_source"
+CK_MAINTENANCE_RANGE_END: str = "ck_maintenance_log_range_end"
+CK_MAINTENANCE_DATE_CERTAINTY: str = "ck_maintenance_log_date_certainty"
+CK_MAINTENANCE_CERTAINTY_VS_PRECISION: str = (
+    "ck_maintenance_log_date_certainty_vs_precision"
+)
+CK_SCHEDULE_SOME_INTERVAL: str = "ck_maintenance_schedule_some_interval"
+CK_SCHEDULE_CONFIDENCE: str = "ck_maintenance_schedule_confidence"
+
+# An odometer reading and its provenance are ONE fact.  A mileage with no stated
+# origin is indistinguishable from a guess, and a source claiming provenance for
+# no value describes nothing.  Both directions are forbidden.
+_ODOMETER_PAIRED_EXPR: str = (
+    "(odometer_mi IS NULL AND odometer_source IS NULL) "
+    "OR (odometer_mi IS NOT NULL AND odometer_source IS NOT NULL)"
+)
+
+# Only a 'range' event may carry an end date, and it MUST carry one -- an
+# open-ended range is not a range, it is an unstated assumption.
+# A date that is not day-precise cannot be called exact: the anchor's finer
+# components were invented, so "exact" would assert a day nobody recorded.  The
+# converse is deliberately permitted -- see DATE_CERTAINTY_VALUES.
+_CERTAINTY_VS_PRECISION_EXPR: str = (
+    "event_date_precision = 'day' OR event_date_certainty = 'estimated'"
+)
+
+_RANGE_END_EXPR: str = (
+    "(event_date_precision = 'range' AND event_date_end IS NOT NULL) "
+    "OR (event_date_precision <> 'range' AND event_date_end IS NULL)"
+)
+
+# A due-item with no interval of any kind can never fire.  THREE intervals, any
+# of which may be the one that does: at ~500 mi/yr (measured across three
+# independent segments of this car's history) a 60,000-mile interval takes 120
+# years, so on this vehicle only calendar intervals can realistically fire.  A
+# mileage-only schema would report the timing belt as healthy.
+_SOME_INTERVAL_EXPR: str = (
+    "interval_miles IS NOT NULL "
+    "OR interval_months IS NOT NULL "
+    "OR interval_engine_hours IS NOT NULL"
+)
+
+
+def _inValuesExpr(columnName: str, values: tuple[str, ...]) -> str:
+    """Render ``col IN ('a','b')`` for a CHECK clause."""
+    rendered = ",".join(f"'{v}'" for v in values)
+    return f"{columnName} IN ({rendered})"
+
+
+def isRoundedOdometer(odometerSource: str | None) -> bool:
+    """True when a reading's tier means it is NOT exact.
+
+    This is what lets a consumer resolve the 2022 apparent rollback from the
+    stored tiers alone, without reading a free-text note.  A note cannot be
+    queried and will not survive being summarised.
+    """
+    return odometerSource in ROUNDED_ODOMETER_SOURCES
+
+
+def formatEventDate(
+    eventDate: object,
+    precision: str,
+    eventDateEnd: object = None,
+) -> str:
+    """Render an event date at the precision the record actually has.
+
+    ``event_date`` is a sortable ANCHOR, not a claim.  For a month-precision row
+    the stored anchor is the first of the month, and rendering that anchor as
+    ``2025-05-01`` would state a day the source never gave -- the same class of
+    error as the retired ``~76,000`` odometer estimate, running in the opposite
+    direction: there vagueness hid a wrong number, here false precision would
+    hide a vague one.  Both end with nobody able to tell.
+    """
+    if precision == EVENT_DATE_PRECISION_RANGE:
+        if eventDateEnd is None:
+            return f"{eventDate.year} onwards"
+        # A window that opens and closes inside ONE year must show its months.
+        # Rendering it as "1999-1999" reads as a typo, and a reader who assumes
+        # it is one treats the row as a single-day event -- reintroducing, at the
+        # display layer, exactly the false precision this column exists to
+        # prevent.  Six of the 48 seed rows are same-year Carfax windows.
+        if eventDate.year == eventDateEnd.year:
+            if eventDate.month == eventDateEnd.month:
+                return eventDate.strftime("%b %Y")
+            return (
+                f"{eventDate.strftime('%b')}-{eventDateEnd.strftime('%b')} "
+                f"{eventDate.year}"
+            )
+        return f"{eventDate.year}-{eventDateEnd.year}"
+    if precision == EVENT_DATE_PRECISION_YEAR:
+        return str(eventDate.year)
+    if precision == EVENT_DATE_PRECISION_MONTH:
+        return eventDate.strftime("%B %Y")
+    return eventDate.isoformat()
+
+
+class MaintenanceLog(Base):
+    """What was DONE to the vehicle -- one row per dated event.
+
+    Server-only; the Pi neither produces nor consumes it.  Provenance is stated
+    PER FIELD in :attr:`provenance`, never per row: the 2026-08-22 oil change
+    carries a CIO-declared odometer FACT, a recollected brand (*"I believe"*) and
+    an ABSENT viscosity in one row, and a single row-level confidence column
+    would force downgrading the odometer or upgrading the brand.  Both are lies.
+
+    ECU identity is REFERENCED, not duplicated: the 2026-05-22 swap lives in
+    ``vehicle_info`` with its install/removal timestamps.  A second home for that
+    fact is a bug.
+    """
+
+    __tablename__ = MAINTENANCE_LOG_TABLE
+    __table_args__ = (
+        CheckConstraint(_ODOMETER_PAIRED_EXPR, name=CK_MAINTENANCE_ODOMETER_PAIRED),
+        CheckConstraint(
+            _inValuesExpr("event_date_precision", EVENT_DATE_PRECISION_VALUES),
+            name=CK_MAINTENANCE_DATE_PRECISION,
+        ),
+        CheckConstraint(
+            "odometer_source IS NULL OR "
+            + _inValuesExpr("odometer_source", ODOMETER_SOURCE_VALUES),
+            name=CK_MAINTENANCE_ODOMETER_SOURCE,
+        ),
+        CheckConstraint(_RANGE_END_EXPR, name=CK_MAINTENANCE_RANGE_END),
+        CheckConstraint(
+            _inValuesExpr("event_date_certainty", DATE_CERTAINTY_VALUES),
+            name=CK_MAINTENANCE_DATE_CERTAINTY,
+        ),
+        CheckConstraint(
+            _CERTAINTY_VS_PRECISION_EXPR,
+            name=CK_MAINTENANCE_CERTAINTY_VS_PRECISION,
+        ),
+        Index("ix_maintenance_log_event_date", "event_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # ---- when, and how precisely we know it ---------------------------------
+    event_date: Mapped[date] = mapped_column(Date, nullable=False)
+    event_date_precision: Mapped[str] = mapped_column(String(8), nullable=False)
+    event_date_certainty: Mapped[str] = mapped_column(
+        String(16), nullable=False,
+    )
+    event_date_end: Mapped[date | None] = mapped_column(Date)
+
+    # ---- the odometer and its tier (one fact, enforced as one) --------------
+    odometer_mi: Mapped[int | None] = mapped_column(Integer)
+    odometer_source: Mapped[str | None] = mapped_column(String(32))
+
+    # ---- what happened ------------------------------------------------------
+    work_performed: Mapped[str] = mapped_column(Text, nullable=False)
+    # The primary document's EXACT wording, kept beside the normalised category.
+    # Carfax rendered "Reset PCM memory" as "Computer reprogrammed", which
+    # manufactured a conflict with the prior ECU's never-flashed status that
+    # stood as unresolvable until the repair order itself was read.  A normalised
+    # summary is a LOSSY view of a record and the loss is NOT random: it flattens
+    # distinctions exactly where they matter.
+    source_verbatim: Mapped[str | None] = mapped_column(Text)
+    dtc_code: Mapped[str | None] = mapped_column(String(16))
+
+    # ---- who did it and what it cost ---------------------------------------
+    venue: Mapped[str | None] = mapped_column(String(128))
+    document_ref: Mapped[str | None] = mapped_column(String(64))
+    # A pointer to the primary document, so the PDFs are not the only copy.
+    source_document_path: Mapped[str | None] = mapped_column(Text)
+    parts: Mapped[str | None] = mapped_column(Text)
+    part_customer_supplied: Mapped[bool | None] = mapped_column(Boolean)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+
+    # ---- analysis hooks -----------------------------------------------------
+    # Oil change, O2 sensor, reflash and battery disconnect all invalidate
+    # before/after comparison across them.  US-661's LTFT trend card needs
+    # exactly this concept for its epoch breaks; flagging it here means the
+    # analytics tier gets it free instead of hard-coding drive numbers.
+    is_epoch_boundary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0"),
+    )
+
+    # ---- provenance + custody ----------------------------------------------
+    provenance: Mapped[str] = mapped_column(Text, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    # CIO data rule 2026-08-29: land it, STAMP it, and name who landed it.
+    recorded_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+
+
+class MaintenanceSchedule(Base):
+    """What is DUE -- one row per recurring item.
+
+    Three interval columns, any of which can fire.  See
+    :data:`_SOME_INTERVAL_EXPR` for why a mileage-only schema is wrong on this
+    specific car, and :data:`LAST_DONE_CONFIDENCE_VALUES` for why the confidence
+    column is the one that matters most.
+    """
+
+    __tablename__ = MAINTENANCE_SCHEDULE_TABLE
+    __table_args__ = (
+        CheckConstraint(_SOME_INTERVAL_EXPR, name=CK_SCHEDULE_SOME_INTERVAL),
+        CheckConstraint(
+            _inValuesExpr("last_done_confidence", LAST_DONE_CONFIDENCE_VALUES),
+            name=CK_SCHEDULE_CONFIDENCE,
+        ),
+        UniqueConstraint("item", name="uq_maintenance_schedule_item"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    interval_miles: Mapped[int | None] = mapped_column(Integer)
+    interval_months: Mapped[int | None] = mapped_column(Integer)
+    interval_engine_hours: Mapped[int | None] = mapped_column(Integer)
+
+    # NULL means "no candidate event at all" (spark plugs).  A non-NULL pointer
+    # is only as strong as last_done_confidence says it is.
+    last_done_log_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey(f"{MAINTENANCE_LOG_TABLE}.id", name="fk_schedule_last_done_log"),
+    )
+    last_done_confidence: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    notes: Mapped[str | None] = mapped_column(Text)
+    recorded_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+
 __all__ = [
     "Base",
     # Synced
@@ -1291,6 +2356,8 @@ __all__ = [
     "CalibrationSession",
     "DtcLog",
     "DtcFreezeFrame",
+    "StartupLog",
+    "PiState",
     "VEHICLE_INFO_APPEND_ONLY_COMMENT",
     # Server-only
     "SyncHistory",
@@ -1298,13 +2365,60 @@ __all__ = [
     "AnalysisRecommendation",
     "Device",
     # Analytics
+    "Drive",
+    "DRIVES_TABLE",
+    "DRIVES_SOURCE_UNIQUE_CONSTRAINT",
+    # US-563 split "the column default" from "the verdict" on every
+    # data_quality column; the old *_DATA_QUALITY_DEFAULT names meant both and
+    # are deliberately NOT re-exported under an alias.
+    "DRIVES_DATA_QUALITY_FULL",
+    "DRIVES_DATA_QUALITY_COLUMN_DEFAULT",
+    "DRIVES_ASSESSED_DATA_QUALITY_VALUES",
+    "DRIVES_DATA_QUALITY_VALUES",
+    "DRIVES_DATA_QUALITY_UNMAPPABLE_LEGACY",
     "DriveSummary",
     "DriveStatistic",
+    "DriveDerivedSignal",
+    "DRIVE_SUMMARY_DATA_QUALITY_FULL",
+    "DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT",
+    "DRIVE_SUMMARY_ASSESSED_DATA_QUALITY_VALUES",
+    "DRIVE_SUMMARY_DATA_QUALITY_VALUES",
     "DRIVE_STATISTICS_DATA_QUALITY_VALUES",
-    "DRIVE_STATISTICS_DATA_QUALITY_DEFAULT",
+    "BATTERY_HEALTH_CLOSE_REASON_VALUES",
+    "CK_BATTERY_HEALTH_LOG_CLOSE_REASON",
+    "DRIVE_STATISTICS_ASSESSED_DATA_QUALITY_VALUES",
+    "DRIVE_STATISTICS_DATA_QUALITY_FULL",
+    "DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT",
+    "DATA_QUALITY_UNASSESSED",
+    "DATA_QUALITY_FOREIGN_VEHICLE",
     "DATA_QUALITY_COLUMN_LENGTH",
     "TrendSnapshot",
     "AnomalyLog",
     "Baseline",
+    "MaintenanceLog",
+    "MaintenanceSchedule",
+    "MAINTENANCE_LOG_TABLE",
+    "MAINTENANCE_SCHEDULE_TABLE",
+    "EVENT_DATE_PRECISION_VALUES",
+    "EVENT_DATE_PRECISION_DAY",
+    "EVENT_DATE_PRECISION_MONTH",
+    "EVENT_DATE_PRECISION_YEAR",
+    "EVENT_DATE_PRECISION_RANGE",
+    "DATE_CERTAINTY_VALUES",
+    "DATE_CERTAINTY_EXACT",
+    "DATE_CERTAINTY_ESTIMATED",
+    "ODOMETER_SOURCE_VALUES",
+    "ODOMETER_SOURCE_SHOP_RECORD",
+    "ODOMETER_SOURCE_PHOTO_EXIF",
+    "ODOMETER_SOURCE_OWNER_REPORTED",
+    "ODOMETER_SOURCE_STATE_AGENCY_ROUNDED",
+    "ODOMETER_SOURCE_PROJECT_TELEMETRY",
+    "ROUNDED_ODOMETER_SOURCES",
+    "LAST_DONE_CONFIDENCE_VALUES",
+    "LAST_DONE_CONFIRMED",
+    "LAST_DONE_INFERRED",
+    "LAST_DONE_UNKNOWN",
+    "isRoundedOdometer",
+    "formatEventDate",
     "DriveCounter",
 ]

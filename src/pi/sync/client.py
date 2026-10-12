@@ -45,6 +45,42 @@
 #                               inner `with conn:` retains the existing
 #                               commit-on-clean-exit / rollback-on-exception
 #                               transaction semantics.
+# 2026-06-28    | Rex (US-391) | F-076 queue-level quarantine.  After N
+#                               consecutive SERVER-REJECTION failures on a
+#                               table the push is quarantined: re-attempts are
+#                               throttled to once per quarantineThrottleSeconds
+#                               (instead of every cadence tick) and the event
+#                               is surfaced exactly ONCE.  A successful push
+#                               clears it (re-drainable -- e.g. after US-367
+#                               backfills the ECU era the orphan resolves).
+#                               Transient network failures do NOT quarantine.
+#                               forcePush bypasses the throttle (explicit
+#                               re-drain).  Injected clock for deterministic
+#                               throttle math.
+# 2026-07-01    | Rex (US-418) | F-078: idle sync_history hygiene.
+#                               pushDriveCounter() now skips the POST when
+#                               last_drive_id is unchanged since the last
+#                               SUCCESSFUL push (process-local high-water mark),
+#                               so an engine-off heartbeat stops writing a
+#                               server sync_history row every 60s tick.
+#                               forcePush passes force=True to bypass the gate
+#                               (power-down flush must always deliver).
+# 2026-07-01    | Rex (US-416) | F-101/F-115: pushSnapshot() -- the natural-key
+#                               snapshot-sync push for append-only TEXT-PK tables
+#                               registered in src.common.sync.snapshot_registry.
+#                               Reads the per-table time-cursor from sync_log,
+#                               fetches rows where cursorCol > cursor, POSTs them
+#                               on the standard /api/v1/sync envelope (the server
+#                               routes snapshot tables to its natural-key upsert),
+#                               and advances the cursor to max(cursorCol) on
+#                               success.  pushAllDeltas now also sweeps the
+#                               registered snapshot tables (empty until US-417
+#                               registers startup_log, so no behaviour change yet).
+# 2026-10-11    | Rex (US-776-i)| pushDelta advances a table's mark only on the
+#                               server's post-commit stored ack (US-776-h):
+#                               storedCount == rows sent AND maxStoredSourceId
+#                               == max sent.  A 2xx without a matching ack is
+#                               FAILED with the mark held; no bare-2xx fallback.
 # ================================================================================
 ################################################################################
 
@@ -71,7 +107,7 @@ Uses stdlib :mod:`urllib.request` (no new dependencies on the Pi).  A
 ``POST /api/v1/sync`` looks like::
 
     POST /api/v1/sync HTTP/1.1
-    Host: 10.27.27.10:8000
+    Host: 10.27.27.120:8000
     Content-Type: application/json
     X-API-Key: <COMPANION_API_KEY>
 
@@ -108,6 +144,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Collection
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -115,9 +152,12 @@ from enum import StrEnum
 from typing import Any
 
 from src.common.config.secrets_loader import getSecret
+from src.common.edr.sync_contract import EDR_SYNC_TABLES
 from src.common.errors.handler import ConfigurationError
+from src.common.sync.snapshot_registry import getSnapshotSpec, snapshotSyncTables
 from src.pi.data import sync_log
 from src.pi.obdii.drive_id import DRIVE_COUNTER_TABLE
+from src.pi.sync.backlog import countOutstandingRows, residualAfterBatch
 
 __all__ = ["PushResult", "PushStatus", "PushSummary", "SyncClient"]
 
@@ -142,6 +182,11 @@ class PushStatus(StrEnum):
     # integrity problem.  A future upsert-sync story will introduce a
     # separate path for these tables.
     SKIPPED = "skipped"
+    # US-391: the table is quarantined (N consecutive server-rejection
+    # failures) and the throttle window has not elapsed, so this cycle skips
+    # the push entirely -- no network call.  Distinct from FAILED (which DID
+    # attempt + fail).  Cleared by the next successful push or a forcePush.
+    QUARANTINED = "quarantined"
 
 
 @dataclass(slots=True)
@@ -226,6 +271,55 @@ def _isRetryableHttpStatus(code: int) -> bool:
     return code == 429 or code >= 500
 
 
+def _parseReplyBody(rawBody: Any) -> dict[str, Any] | None:
+    """Return a 2xx reply body as a JSON object, or ``None`` if it is not one."""
+    try:
+        text = rawBody.decode("utf-8") if isinstance(rawBody, bytes) else rawBody
+        parsed = json.loads(text)
+    except (TypeError, ValueError):  # UnicodeDecodeError is a ValueError
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _storedAckMismatch(
+    replyBody: dict[str, Any] | None,
+    tableName: str,
+    *,
+    sentCount: int,
+    maxSent: int,
+) -> str | None:
+    """Check the server's stored ack for one pushed table (US-776-i).
+
+    Delivered means stored, per the server's post-commit count (US-776-h):
+    ``storedCount`` equals the rows sent AND ``maxStoredSourceId`` equals the
+    largest source id sent.  A missing ack is a mismatch -- there is no
+    fall-back to a bare 2xx.
+
+    Args:
+        replyBody: The parsed 2xx reply, or ``None`` if it was not a JSON object.
+        tableName: The table that was pushed.
+        sentCount: Rows sent for ``tableName``.
+        maxSent: Largest source id (Pi PK) sent for ``tableName``.
+
+    Returns:
+        ``None`` when the ack matches; otherwise the mismatch line to log
+        (table, sent, stored, maxSent, maxStored).
+    """
+    stored = replyBody.get("stored") if replyBody is not None else None
+    ack = stored.get(tableName) if isinstance(stored, dict) else None
+    storedCount: Any = "missing"
+    maxStored: Any = "missing"
+    if isinstance(ack, dict):
+        storedCount = ack.get("storedCount", "missing")
+        maxStored = ack.get("maxStoredSourceId", "missing")
+        if storedCount == sentCount and maxStored == maxSent:
+            return None
+    return (
+        f"stored-count mismatch | table={tableName} | sent={sentCount} "
+        f"stored={storedCount} | maxSent={maxSent} maxStored={maxStored}"
+    )
+
+
 def _renamePkToId(
     rows: list[dict[str, Any]],
     pkColumn: str,
@@ -306,6 +400,7 @@ class SyncClient:
         dbPath: str | None = None,
         httpOpener: Any | None = None,
         sleep: Any | None = None,
+        clock: Any | None = None,
     ) -> None:
         """Construct a SyncClient from a validated Pi config dict.
 
@@ -321,6 +416,9 @@ class SyncClient:
             sleep: Callable taking a float-seconds argument; injected in
                 tests so backoff windows don't actually sleep.  Defaults to
                 :func:`time.sleep`.
+            clock: Zero-arg callable returning an aware UTC ``datetime``;
+                injected in tests so the US-391 quarantine throttle window is
+                deterministic.  Defaults to ``datetime.now(UTC)``.
 
         Raises:
             ConfigurationError: If ``companionService.enabled`` is True but
@@ -344,10 +442,20 @@ class SyncClient:
 
         self._httpOpener = httpOpener or urllib.request.urlopen
         self._sleep = sleep or time.sleep
+        self._clock = clock or (lambda: datetime.now(UTC))
 
         self._apiKey: str | None = None
         if self.isEnabled:
             self._apiKey = self._resolveApiKey()
+
+        # US-418 (F-078): last drive_counter value SUCCESSFULLY delivered to
+        # the server on the interval-sync path.  ``pushDriveCounter`` skips the
+        # POST when the local value is unchanged since this, so an engine-off
+        # heartbeat stops writing a server-side sync_history row every tick.
+        # ``None`` = never pushed -> the first tick always delivers a baseline.
+        # Process-local (resets on restart): a single re-push per boot is
+        # harmless because the server upsert is a monotonic GREATEST().
+        self._lastPushedDriveCounter: int | None = None
 
     # ---- config surface ----------------------------------------------------
 
@@ -385,7 +493,7 @@ class SyncClient:
 
         US-340 / I-035: skip ``pushAllDeltas`` from the orchestrator
         when this returns False so a Pi mid-drive (away from home WiFi,
-        no route to 10.27.27.10) doesn't pump ~84s of doomed TCP SYN
+        no route to 10.27.27.120) doesn't pump ~84s of doomed TCP SYN
         retries through brcmfmac per "5s" ACTIVE-mode cadence tick.
         Sustained retry activity on the BCM4345 combo chip contends
         with concurrent BT HCI traffic and is one of the WiFi-soft-off
@@ -439,9 +547,38 @@ class SyncClient:
         maxAttempts = int(self._companion.get("retryMaxAttempts", 0))
         return [float(s) for s in schedule[:maxAttempts]]
 
+    def _readQuarantineThreshold(self) -> int:
+        """Consecutive server-rejection failures before a table is quarantined."""
+        return int(self._companion.get("quarantineThreshold", 5))
+
+    def _readQuarantineThrottleSeconds(self) -> float:
+        """Min seconds between re-attempts of a quarantined table (US-391)."""
+        return float(self._companion.get("quarantineThrottleSeconds", 3600))
+
+    def _nowIso(self) -> str:
+        """Aware-UTC ISO-8601 stamp from the injected clock (US-391)."""
+        return self._clock().isoformat()
+
+    def _quarantineThrottleElapsed(self, quarantinedAt: str) -> bool:
+        """Return True when enough time has passed to re-attempt a quarantined push.
+
+        An unparseable stamp degrades to True so a record can never get stuck
+        quarantined forever on a bad timestamp.
+        """
+        try:
+            stamped = datetime.fromisoformat(quarantinedAt)
+        except ValueError:
+            return True
+        if stamped.tzinfo is None:
+            stamped = stamped.replace(tzinfo=UTC)
+        elapsed = (self._clock() - stamped).total_seconds()
+        return elapsed >= self._readQuarantineThrottleSeconds()
+
     # ---- public API --------------------------------------------------------
 
-    def pushDelta(self, tableName: str) -> PushResult:
+    def pushDelta(
+        self, tableName: str, *, bypassQuarantine: bool = False,
+    ) -> PushResult:
         """Push one table's delta rows.  See module docstring for semantics.
 
         Args:
@@ -450,6 +587,9 @@ class SyncClient:
                 tables (see :data:`sync_log.SNAPSHOT_TABLES`) surface as
                 :data:`PushStatus.SKIPPED` rather than being pushed --
                 they do not fit the delta-by-PK model (US-194).
+            bypassQuarantine: When True, ignore the US-391 quarantine throttle
+                and attempt the push regardless (used by :meth:`forcePush` as
+                the explicit re-drain).
 
         Returns:
             A :class:`PushResult` describing the outcome.  A failed network
@@ -519,12 +659,61 @@ class SyncClient:
         with closing(sqlite3.connect(self._dbPath)) as conn, conn:
             sync_log.initDb(conn)  # idempotent; makes the client robust to
             #                         a fresh DB being handed in by tests.
+            # US-766: a registered DELTA table may not be CREATE-d in this DB --
+            # a fresh/partial DB, or a Pi whose schema predates the table. Skip
+            # it gracefully (EMPTY) rather than letting the raw "no such table"
+            # propagate out of getDeltaRows and abort the WHOLE pushAllDeltas
+            # sweep. Exactly the guard pushSnapshot already carries (US-417) and
+            # _readLocalDriveCounter before it; the delta path never needed one
+            # because every delta table was created unconditionally by
+            # ObdDatabase.initialize().
+            #
+            # MEASURED, not hypothetical: registering edr_imu_sample took down
+            # sync for realtime_data, drive_summary and dtc_log alike, because
+            # one missing table raised out of the sweep and nothing else got
+            # pushed. A registration must never be able to do that.
+            tableExists = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name = ?",
+                (tableName,),
+            ).fetchone()
+            if tableExists is None:
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.EMPTY,
+                )
             # US-315: lazy idempotent migration -- ensures the modified_at
             # column + AFTER UPDATE trigger exist on opt-in tables before
             # the cursor query references them.  Pre-flight on a stale Pi
             # DB picks up the schema on first push.  No-op if already done.
             if supportsUpdateSync:
                 sync_log.ensureSyncModifiedAtSchema(conn)
+            # US-391: queue-level quarantine.  If this table was quarantined
+            # after N consecutive server-rejection failures, throttle the
+            # re-attempt -- skip the push entirely until the throttle window
+            # elapses (or forcePush bypasses it).  This is what stops the
+            # silent 27x/day retry without ever advancing the high-water mark.
+            sync_log.ensureQuarantineSchema(conn)
+            _, quarantinedAt = sync_log.getQuarantineState(conn, tableName)
+            if (
+                quarantinedAt is not None
+                and not bypassQuarantine
+                and not self._quarantineThrottleElapsed(quarantinedAt)
+            ):
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.QUARANTINED,
+                    reason=(
+                        f"{tableName} quarantined at {quarantinedAt}; "
+                        "re-attempt throttled (US-391)"
+                    ),
+                )
             lastId, _, _, _ = sync_log.getHighWaterMark(conn, tableName)
             lastModifiedAt: str | None = (
                 sync_log.getModifiedHighWaterMark(conn, tableName)
@@ -562,17 +751,48 @@ class SyncClient:
             # error on the SQLAlchemy insert.
             payloadRows = _renamePkToId(rows, pkColumn) if pkColumn != "id" else rows
 
+            # US-795(a): what remains once this batch lands -- only its rows
+            # ABOVE the cursor leave the backlog (a re-sent modified row was
+            # never counted).
+            residual = self._measureResidual(
+                batchTable=tableName,
+                batchNewRows=sum(1 for row in rows if int(row[pkColumn]) > lastId),
+            )
             batchId = _makeBatchId(self._deviceId)
             try:
-                self._postBatchWithRetry(tableName, batchId, payloadRows, lastId)
+                replyBody = self._postBatchWithRetry(
+                    tableName, batchId, payloadRows, lastId, residual=residual,
+                )
             except _PushFailure as failure:
                 # On failure, record status='failed' + last_batch_id +
-                # last_synced_at WITHOUT advancing last_synced_id.  We do
-                # this by re-writing the existing mark through the UPSERT
-                # with the same lastId it already held.
-                sync_log.updateHighWaterMark(
-                    conn, tableName, lastId, batchId, status="failed",
-                )
+                # last_synced_at WITHOUT advancing last_synced_id (US-149
+                # invariant -- the raw record must stay re-sendable).
+                if failure.serverRejected:
+                    # US-391: the server REACHED us and rejected the push
+                    # (e.g. an unresolvable cross-tier FK -> HTTP 500).  Count
+                    # it toward quarantine so a permanently-unresolvable record
+                    # stops being re-attempted every cycle.
+                    justQuarantined = sync_log.recordPushFailure(
+                        conn, tableName, batchId,
+                        quarantineThreshold=self._readQuarantineThreshold(),
+                        nowIso=self._nowIso(),
+                    )
+                    if justQuarantined:
+                        # Surface ONCE on the transition (not per-cycle).
+                        logger.warning(
+                            "SYNC_QUARANTINE table=%s quarantined after %d "
+                            "consecutive server-rejection failures; throttling "
+                            "re-attempts to once per %.0fs. Last reason: %s",
+                            tableName, self._readQuarantineThreshold(),
+                            self._readQuarantineThrottleSeconds(), str(failure),
+                        )
+                else:
+                    # Transient network failure (DNS/refused/timeout): NOT an
+                    # identical resolution failure -- preserve the mark without
+                    # advancing the quarantine counter (pre-US-391 behavior).
+                    sync_log.updateHighWaterMark(
+                        conn, tableName, lastId, batchId, status="failed",
+                    )
                 return PushResult(
                     tableName=tableName,
                     rowsPushed=0,
@@ -585,6 +805,27 @@ class SyncClient:
             # New high-water mark comes from the source rows (pre-rename),
             # which still carry the authoritative PK under its real name.
             newHighWater = max(int(row[pkColumn]) for row in rows)
+            # US-776-i: a 2xx says the server ANSWERED, not that it stored.
+            # Advance only on the server's post-commit ack (US-776-h) for this
+            # table; a short count, a different maximum or no ack at all holds
+            # the mark (US-149) so the same rows are re-sent.  Not a server
+            # rejection, so the US-391 quarantine counter is left alone.
+            mismatch = _storedAckMismatch(
+                replyBody, tableName, sentCount=len(rows), maxSent=newHighWater,
+            )
+            if mismatch is not None:
+                logger.warning(mismatch)
+                sync_log.updateHighWaterMark(
+                    conn, tableName, lastId, batchId, status="failed",
+                )
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId=batchId,
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.FAILED,
+                    reason=mismatch,
+                )
             # US-315: also advance the modified_at cursor for opt-in tables
             # so the next sync doesn't re-push the same row.  The advance
             # uses MAX(_sync_modified_at) of pushed rows; rows with NULL
@@ -600,6 +841,10 @@ class SyncClient:
                 conn, tableName, newHighWater, batchId, status="ok",
                 lastModifiedAt=newModifiedAt,
             )
+            # US-391: a successful push clears any quarantine so the record is
+            # re-drainable and the consecutive-failure counter resets (e.g.
+            # once US-367 backfills the ECU era the orphan now resolves).
+            sync_log.clearQuarantine(conn, tableName)
             # US-319 (B-071): forensic INFO at cursor advance.  Stable
             # journalctl-grep token "FORENSIC sync_push_table_advance".
             # Confirms US-315 dual-cursor (id + modified_at) progression
@@ -652,24 +897,166 @@ class SyncClient:
         )
         return {int(pk): str(modAt) for pk, modAt in cursor.fetchall()}
 
-    def pushAllDeltas(self) -> list[PushResult]:
-        """Push every in-scope table in deterministic order.
+    def pushSnapshot(self, tableName: str) -> PushResult:
+        """Push one natural-key snapshot table's new rows (US-416 / F-101).
 
-        Snapshot tables return :data:`PushStatus.SKIPPED` -- they are still
-        in the result set so operator output (``scripts/sync_now.py``) keeps
-        visibility into all eight in-scope tables.
+        The snapshot-sync path for append-only, immutable, TEXT-PK tables
+        registered in :data:`src.common.sync.snapshot_registry.SNAPSHOT_SYNC`
+        (startup_log, the F-115 event-vault).  Unlike :meth:`pushDelta` this
+        deltas by an explicit time-cursor (``cursorCol > last_snapshot_cursor``)
+        rather than an integer PK, and the server upserts on the natural key
+        ``(source_device, *naturalKeyCols)``.
+
+        Because the server upsert is idempotent on the natural key, an
+        over-reading cursor is harmless -- re-pushed rows dedup.  A failed push
+        does NOT advance the cursor (mirrors the US-149 failed-push invariant),
+        so the rows are re-sent next cycle.
+
+        Args:
+            tableName: Must be registered in :data:`SNAPSHOT_SYNC`.
 
         Returns:
-            One :class:`PushResult` per table in
-            :data:`sync_log.IN_SCOPE_TABLES`, ordered by table name so
-            operator-facing output is stable across runs.
+            A :class:`PushResult`.  ``DISABLED`` when the companion service is
+            off, ``EMPTY`` when the cursor is caught up, ``OK`` on a successful
+            push, ``FAILED`` (not raised) on a transport error.
+
+        Raises:
+            ValueError: If ``tableName`` is not registered in SNAPSHOT_SYNC.
         """
+        # Whitelist guard (delegates to sync_log; SQL-injection defence).
+        sync_log._validateSnapshotTable(tableName)  # noqa: SLF001 -- intentional reuse
+
+        start = time.monotonic()
+
+        if not self.isEnabled:
+            return PushResult(
+                tableName=tableName,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.DISABLED,
+            )
+
+        cursorCol = getSnapshotSpec(tableName).cursorCol
+
+        with closing(sqlite3.connect(self._dbPath)) as conn, conn:
+            sync_log.initDb(conn)
+            sync_log.ensureSnapshotSyncSchema(conn)
+
+            # US-417: a registered snapshot table may not be CREATE-d yet -- a
+            # fresh/partial DB, or a real Pi before its first boot-log row is
+            # written.  Skip it gracefully (EMPTY) rather than letting the raw
+            # "no such table" propagate and abort the whole pushAllDeltas sweep.
+            # Mirrors the missing-table guard in _readLocalDriveCounter.
+            tableExists = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name = ?",
+                (tableName,),
+            ).fetchone()
+            if tableExists is None:
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.EMPTY,
+                )
+
+            lastCursor = sync_log.getSnapshotCursor(conn, tableName)
+            rows = sync_log.getSnapshotRows(
+                conn, tableName, lastCursor, self._readBatchSize(),
+            )
+
+            if not rows:
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.EMPTY,
+                )
+
+            batchId = _makeBatchId(self._deviceId)
+            try:
+                # lastSyncedId is informational for snapshot tables (they carry
+                # no integer delta cursor); the server routes by table name.
+                self._postBatchWithRetry(
+                    tableName, batchId, rows, 0, residual=self._measureResidual(),
+                )
+            except _PushFailure as failure:
+                # Do NOT advance the cursor on failure -- rows stay re-sendable.
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId=batchId,
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.FAILED,
+                    reason=str(failure),
+                )
+
+            newCursor = max(str(row[cursorCol]) for row in rows)
+            sync_log.updateSnapshotCursor(
+                conn, tableName, newCursor, batchId, status="ok",
+            )
+            logger.info(
+                "FORENSIC sync_push_snapshot_advance | table=%s | "
+                "old_cursor=%s | new_cursor=%s | rows=%d",
+                tableName, lastCursor, newCursor, len(rows),
+            )
+            return PushResult(
+                tableName=tableName,
+                rowsPushed=len(rows),
+                batchId=batchId,
+                elapsed=time.monotonic() - start,
+                status=PushStatus.OK,
+            )
+
+    def pushAllDeltas(
+        self,
+        *,
+        bypassQuarantine: bool = False,
+        excludeTables: Collection[str] = (),
+    ) -> list[PushResult]:
+        """Push every in-scope table in deterministic order.
+
+        Snapshot/upsert reject-list tables (``profiles`` / ``vehicle_info``)
+        return :data:`PushStatus.SKIPPED` -- they are still in the result set so
+        operator output (``scripts/sync_now.py``) keeps visibility into every
+        in-scope table.  Natural-key snapshot-sync tables (US-416, registered in
+        :data:`SNAPSHOT_SYNC`) are swept AFTER the delta tables via
+        :meth:`pushSnapshot`; the registry is empty until US-417 registers
+        startup_log, so this adds no rows to the sweep until then.
+
+        Args:
+            bypassQuarantine: Forwarded to :meth:`pushDelta`; when True the
+                US-391 quarantine throttle is ignored (explicit re-drain via
+                :meth:`forcePush`).
+            excludeTables: Tables to skip entirely this sweep (US-766). The
+                power-loss drain passes the EDR set: those rows are archival
+                and catch up on the next ordinary tick, while the shutdown
+                budget is seconds and the EDR backlog is millions of rows.
+                An excluded table yields NO PushResult at all -- it was never
+                attempted, and reporting it as SKIPPED would put it in the
+                operator's table list as though it had been considered.
+
+        Returns:
+            One :class:`PushResult` per non-excluded delta table in
+            :data:`sync_log.IN_SCOPE_TABLES` (sorted), then one per registered
+            snapshot-sync table (sorted), so operator-facing output is stable.
+        """
+        skip = set(excludeTables)
         results: list[PushResult] = []
         for tableName in sorted(sync_log.IN_SCOPE_TABLES):
-            results.append(self.pushDelta(tableName))
+            if tableName in skip:
+                continue
+            results.append(
+                self.pushDelta(tableName, bypassQuarantine=bypassQuarantine),
+            )
+        for tableName in sorted(snapshotSyncTables()):
+            results.append(self.pushSnapshot(tableName))
         return results
 
-    def forcePush(self) -> PushSummary:
+    def forcePush(self, *, excludeTables: Collection[str] = ()) -> PushSummary:
         """Explicit-intent manual sync flush (US-225 / TD-034).
 
         Wraps :meth:`pushAllDeltas` with an explicit log line + an
@@ -703,8 +1090,17 @@ class SyncClient:
         logger.info(
             "forcePush: flushing pending deltas (explicit manual trigger)"
         )
-        results = self.pushAllDeltas()
-        results.append(self.pushDriveCounter())
+        # US-391: forcePush is the explicit re-drain -- bypass the quarantine
+        # throttle so a deploy-time / pre-poweroff flush re-attempts any
+        # quarantined table (e.g. after US-367 lands the ECU lineage spine).
+        results = self.pushAllDeltas(
+            bypassQuarantine=True, excludeTables=excludeTables,
+        )
+        # US-418: forcePush is the explicit power-down flush -- bypass the
+        # unchanged-value idle gate so the server singleton is guaranteed
+        # current before poweroff, even if an interval tick already delivered
+        # the same value.
+        results.append(self.pushDriveCounter(force=True))
 
         rowsPushed = 0
         tablesOk = 0
@@ -743,7 +1139,7 @@ class SyncClient:
             elapsed=elapsed,
         )
 
-    def pushDriveCounter(self) -> PushResult:
+    def pushDriveCounter(self, *, force: bool = False) -> PushResult:
         """Push the local ``drive_counter`` singleton to the server (US-314).
 
         ``drive_counter`` is a single-row state mirror, not a delta-by-PK
@@ -756,10 +1152,20 @@ class SyncClient:
 
         * :data:`PushStatus.DISABLED` -- companion service off in config.
         * :data:`PushStatus.EMPTY` -- counter table missing OR
-          ``last_drive_id`` is 0 (no drives minted yet); no POST sent.
+          ``last_drive_id`` is 0 (no drives minted yet), OR the value is
+          unchanged since the last successful push and ``force`` is False
+          (US-418 idle gate); no POST sent.
         * :data:`PushStatus.FAILED` -- transport error, retries
           exhausted; the singleton stays where it was on the server.
         * :data:`PushStatus.OK` -- value successfully delivered.
+
+        Args:
+            force: When True, bypass the US-418 unchanged-value idle gate
+                and POST the current value regardless.  :meth:`forcePush`
+                (the US-216 power-down flush) sets this so the server
+                singleton is guaranteed current before ``systemctl
+                poweroff``.  The interval-sync path leaves it False so an
+                engine-off heartbeat does not re-POST a static counter.
 
         Returns:
             :class:`PushResult` with ``tableName='drive_counter'``.
@@ -789,6 +1195,30 @@ class SyncClient:
                 status=PushStatus.EMPTY,
             )
 
+        # US-418 (F-078): idle-noise gate.  The counter only advances when a
+        # NEW drive is minted, so re-POSTing an unchanged value on every 60s
+        # engine-off heartbeat is pure noise -- each POST writes one server
+        # sync_history row (~1/min at idle).  Skip the POST when the value is
+        # unchanged since the last SUCCESSFUL delivery.  The high-water mark
+        # advances only on OK (below), so a FAILED push stays re-sendable, and
+        # ``force`` (forcePush power-down flush) bypasses the gate entirely.
+        if (
+            not force
+            and self._lastPushedDriveCounter is not None
+            and lastDriveId == self._lastPushedDriveCounter
+        ):
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.EMPTY,
+                reason=(
+                    f"drive_counter unchanged at {lastDriveId} since last "
+                    "push; idle re-POST suppressed (US-418)"
+                ),
+            )
+
         # US-319 (B-071): forensic INFO before drive_counter push.
         # Stable journalctl-grep token "FORENSIC sync_push_drive_counter".
         # Resolves V0.27.3 US-314 watch-item: drive_counter advance +
@@ -800,8 +1230,12 @@ class SyncClient:
 
         batchId = _makeBatchId(self._deviceId)
         try:
-            self._postDriveCounterWithRetry(batchId, lastDriveId)
+            self._postDriveCounterWithRetry(
+                batchId, lastDriveId, residual=self._measureResidual(),
+            )
         except _PushFailure as failure:
+            # Do NOT advance the idle-gate high-water mark on failure -- the
+            # value must stay re-sendable on the next tick (US-418).
             return PushResult(
                 tableName=DRIVE_COUNTER_TABLE,
                 rowsPushed=0,
@@ -811,6 +1245,9 @@ class SyncClient:
                 reason=str(failure),
             )
 
+        # US-418: record the delivered value so an unchanged interval tick is
+        # gated until the next real drive-start advance.
+        self._lastPushedDriveCounter = lastDriveId
         return PushResult(
             tableName=DRIVE_COUNTER_TABLE,
             rowsPushed=1,
@@ -821,21 +1258,52 @@ class SyncClient:
 
     # ---- internals ---------------------------------------------------------
 
+    def _measureResidual(
+        self, *, batchTable: str | None = None, batchNewRows: int = 0,
+    ) -> dict[str, Any] | None:
+        """US-795(a): the residual this POST carries, or None to omit it.
+
+        Read with the same ``countOutstandingRows`` the power-watch custody
+        verdict uses (one measurement, one implementation). MEASURED on the car
+        2026-10-06: ~6 ms per 100k backlog rows. Any failure -- an unreadable
+        database or an unexpected error -- omits the field: the push is never
+        blocked by its own report, and an unmeasured residual is never sent as 0.
+        """
+        try:
+            return residualAfterBatch(
+                countOutstandingRows(self._dbPath),
+                batchTable=batchTable,
+                batchNewRows=batchNewRows,
+                sensorTables=EDR_SYNC_TABLES,
+            )
+        except Exception as exc:  # noqa: BLE001 -- the report must never block the push
+            logger.warning("sync residual not measured (omitted): %s", exc)
+            return None
+
     def _postBatchWithRetry(
         self,
         tableName: str,
         batchId: str,
         rows: list[dict[str, Any]],
         lastSyncedId: int,
-    ) -> None:
-        """POST the batch; retry on transient failures; raise on final fail."""
-        payload = {
+        *,
+        residual: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """POST the batch; retry on transient failures; raise on final fail.
+
+        Returns:
+            The 2xx reply parsed as a JSON object, or ``None`` when the body is
+            not one.  It carries the server's stored ack (US-776-i).
+        """
+        payload: dict[str, Any] = {
             "deviceId": self._deviceId,
             "batchId": batchId,
             "tables": {
                 tableName: {"lastSyncedId": lastSyncedId, "rows": rows},
             },
         }
+        if residual is not None:
+            payload["residual"] = residual
         body = json.dumps(payload, default=str).encode("utf-8")
         url = f"{self.baseUrl}/api/v1/sync"
         headers = {
@@ -849,6 +1317,9 @@ class SyncClient:
         # backoff, subsequent attempts sleep delays[attempt-1] before firing.
         totalAttempts = 1 + len(delays)
         lastReason: str = "no attempts executed"
+        # US-391: track whether the FINAL failure was a server HTTP rejection
+        # (counts toward quarantine) vs a transient network failure (does not).
+        lastWasServerRejection = False
 
         for attempt in range(totalAttempts):
             if attempt > 0:
@@ -857,38 +1328,41 @@ class SyncClient:
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
             try:
                 with self._httpOpener(req, timeout=timeout) as response:
-                    # Reading the body drains the socket cleanly; we don't
-                    # care about the parsed content because 2xx is the
-                    # success signal by itself.
-                    _ = response.read()
-                return
+                    # US-776-i: the body is the server's stored ack; the
+                    # caller decides delivery from it, never from the 2xx.
+                    rawBody = response.read()
+                return _parseReplyBody(rawBody)
             except urllib.error.HTTPError as exc:
                 code = getattr(exc, "code", 0) or 0
                 lastReason = f"HTTP {code} {exc.reason}"
+                lastWasServerRejection = True
                 if not _isRetryableHttpStatus(code):
                     logger.warning(
                         "sync push for %s -> %s rejected: %s (no retry)",
                         tableName, url, lastReason,
                     )
-                    raise _PushFailure(lastReason) from exc
+                    raise _PushFailure(lastReason, serverRejected=True) from exc
                 logger.warning(
                     "sync push for %s -> %s attempt %d/%d failed: %s",
                     tableName, url, attempt + 1, totalAttempts, lastReason,
                 )
             except _RETRYABLE_NETWORK_EXCEPTIONS as exc:
                 lastReason = f"{type(exc).__name__}: {exc}"
+                lastWasServerRejection = False
                 logger.warning(
                     "sync push for %s -> %s attempt %d/%d network error: %s",
                     tableName, url, attempt + 1, totalAttempts, lastReason,
                 )
 
-        raise _PushFailure(lastReason)
+        raise _PushFailure(lastReason, serverRejected=lastWasServerRejection)
 
 
     def _postDriveCounterWithRetry(
         self,
         batchId: str,
         lastDriveId: int,
+        *,
+        residual: dict[str, Any] | None = None,
     ) -> None:
         """POST the drive_counter snapshot; retry policy mirrors _postBatch.
 
@@ -903,6 +1377,8 @@ class SyncClient:
             "tables": {},
             "driveCounter": {"lastDriveId": lastDriveId},
         }
+        if residual is not None:
+            payload["residual"] = residual
         body = json.dumps(payload, default=str).encode("utf-8")
         url = f"{self.baseUrl}/api/v1/sync"
         headers = {
@@ -956,4 +1432,13 @@ class _PushFailure(Exception):
 
     Never propagates out of :meth:`SyncClient.pushDelta`; caught there and
     converted into ``PushResult(status=FAILED)``.
+
+    US-391: ``serverRejected`` is True when the final failure was an HTTP error
+    response (the server reached us and rejected the push -- counts toward
+    quarantine) and False for a transient network failure (DNS/refused/timeout
+    -- must NOT quarantine).
     """
+
+    def __init__(self, reason: str, *, serverRejected: bool = False) -> None:
+        super().__init__(reason)
+        self.serverRejected = serverRejected

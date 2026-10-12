@@ -38,7 +38,7 @@ from scripts import apply_server_migrations as asm
 from src.server.db.models import (
     DATA_QUALITY_ATTRIBUTION_ANOMALY,
     DRIVE_STATISTICS_DATA_QUALITY_VALUES,
-    DRIVE_SUMMARY_DATA_QUALITY_DEFAULT,
+    DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT,
     DRIVE_SUMMARY_DATA_QUALITY_VALUES,
     DriveStatistic,
     DriveSummary,
@@ -353,9 +353,14 @@ class TestDriveSummaryDdlMirrorsOrm:
         assert 'NOT NULL' in m0010.ADD_DRIVE_SUMMARY_COLUMN_DDL
 
     def test_addColumnDdlDefaultMatchesOrm(self) -> None:
+        # US-563 MOVED this pin.  It used to assert the default was literally
+        # 'full' -- a quality VERDICT column defaulting to the BEST verdict,
+        # pinned here as correct, which is precisely why the F-134 defect
+        # survived review.  The property under test ("the DDL default agrees
+        # with the ORM") is unchanged; only the value moved.
         ddl = m0010.ADD_DRIVE_SUMMARY_COLUMN_DDL
-        assert f"DEFAULT '{DRIVE_SUMMARY_DATA_QUALITY_DEFAULT}'" in ddl
-        assert DRIVE_SUMMARY_DATA_QUALITY_DEFAULT == 'full'
+        assert f"DEFAULT '{DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT}'" in ddl
+        assert DRIVE_SUMMARY_DATA_QUALITY_COLUMN_DEFAULT == 'unassessed'
 
     def test_addCheckDdlAllowedValuesMatchOrm(self) -> None:
         ddl = m0010.ADD_DRIVE_SUMMARY_CHECK_DDL

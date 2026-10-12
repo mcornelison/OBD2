@@ -49,11 +49,12 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from common.time.helper import utcIsoNow
+from common.time.helper import localNaiveToCanonicalIso
 
 from ..data_source import DATA_SOURCE_DEFAULT, DATA_SOURCE_VALUES
 from ..drive_id import getCurrentDriveId
 from ..error_classification import CaptureErrorClass
+from ..foreign_guard import installForeignVehicleGuardFromConfig
 from .exceptions import DataLoggerError
 from .logger import ObdDataLogger
 from .realtime import RealtimeDataLogger
@@ -88,6 +89,7 @@ def logReading(
     database: Any,
     reading: LoggedReading,
     dataSource: str = DATA_SOURCE_DEFAULT,
+    config: dict[str, Any] | None = None,
 ) -> bool:
     """
     Log a reading to the database.
@@ -106,6 +108,12 @@ def logReading(
             :data:`DATA_SOURCE_VALUES`.  Defaults to
             :data:`DATA_SOURCE_DEFAULT` (``'real'``) to match the
             live-OBD collector path.
+        config: Validated configuration supplying ``pi.time.localZone``
+            (US-809-a) -- the zone a NAIVE ``reading.timestamp`` is
+            expressed in.  Without it a naive timestamp is REFUSED rather
+            than converted against the host's zone: a guessed zone yields a
+            plausible instant wrong by a whole-hour offset.  An already
+            tz-aware timestamp needs no zone and is used as-is.
 
     Returns:
         True if logged successfully.
@@ -129,6 +137,14 @@ def logReading(
             # TD-027 / US-203: canonical ISO-8601 UTC via the shared helper.
             # reading.timestamp may be naive local-time; capture rows must be
             # canonical UTC so time-window queries (US-195 / US-197) line up.
+            # US-809-a: THE SECOND WRITER. This function and
+            # ObdDataLogger.logReading INSERT into realtime_data with the same
+            # column list, and both discarded reading.timestamp. Converting
+            # only one would leave the column holding converted capture times
+            # from one writer and write times from the other with nothing to
+            # tell them apart -- worse than the old state, which was at least
+            # uniformly a write time. The canonical-UTC guarantee above is
+            # preserved; only WHICH instant is made canonical has changed.
             # US-200: stamp the active drive_id (or NULL if no drive).
             # US-212: pass dataSource explicitly instead of inheriting the
             # schema DEFAULT so callers cannot accidentally mis-tag.
@@ -140,7 +156,7 @@ def logReading(
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    utcIsoNow(),
+                    localNaiveToCanonicalIso(reading.timestamp, config),
                     reading.parameterName,
                     reading.value,
                     reading.unit,
@@ -224,6 +240,9 @@ def createDataLoggerFromConfig(
 
     return ObdDataLogger(
         connection, database, profileId=activeProfile, dataSource=dataSource,
+        # US-809-a: the writer converts capture instants against the declared
+        # zone, so it needs the config this factory already holds.
+        config=config,
     )
 
 
@@ -235,6 +254,7 @@ def createRealtimeLoggerFromConfig(
     *,
     captureErrorHandler: Callable[[BaseException], CaptureErrorClass] | None = None,
     onFatalError: Callable[[BaseException], None] | None = None,
+    bus: Any = None,
 ) -> RealtimeDataLogger:
     """
     Create a RealtimeDataLogger from configuration.
@@ -255,6 +275,12 @@ def createRealtimeLoggerFromConfig(
             exception when the classifier re-raises FATAL.  Production
             wires this to the orchestrator's ``stop()`` so systemd
             ``Restart=always`` bounces the process.
+        bus: US-385 (EDR bus slice 1) optional :class:`SampleBus`.  When
+            provided, the returned :class:`RealtimeDataLogger` publishes
+            ``raw.obd.<param>`` Samples instead of writing the DB inline --
+            the orchestrator's PersistenceSubscriber owns the write.  When
+            ``None`` (the default, ``pi.bus.enabled=false``) the legacy
+            inline write path runs unchanged.
 
     Returns:
         Configured RealtimeDataLogger instance.
@@ -272,9 +298,16 @@ def createRealtimeLoggerFromConfig(
     profilesConfig = config.get('pi', {}).get('profiles', {})
     activeProfile = profilesConfig.get('activeProfile', None)
 
+    # US-424 (F-116): install the process-wide foreign-vehicle ingest guard.
+    # Ships DARK -- installForeignVehicleGuardFromConfig is a no-op (clears the
+    # singleton) unless pi.foreignGuard.enabled is true, so the live write path
+    # is unchanged until the CIO arms it after the bench drill.
+    installForeignVehicleGuardFromConfig(config, database)
+
     return RealtimeDataLogger(
         config, connection, database,
         profileId=activeProfile, dataSource=dataSource,
         captureErrorHandler=captureErrorHandler,
         onFatalError=onFatalError,
+        bus=bus,
     )

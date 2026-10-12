@@ -97,6 +97,12 @@ class _FakeConnection:
         self.obd = _FakeObd(responses or [])
         self.supportedPids = None  # Skip PID-support probe branch.
 
+    def query(self, cmd: Any, callerGeneration: int | None = None) -> Any:
+        """US-441: mirror ObdConnection.query -- the serialized path the logger
+        now calls; delegates to the python-obd facade so error routing is
+        unchanged."""
+        return self.obd.query(cmd)
+
     def isConnected(self) -> bool:
         return True
 

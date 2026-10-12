@@ -14,6 +14,8 @@
 # 2026-04-19    | Rex          | US-194 -- verify snapshot tables (profiles,
 #               |              | vehicle_info) are excluded cleanly from
 #               |              | pushDelta / pushAllDeltas rather than crashing
+# 2026-10-11    | Rex (US-776-i)| The recording opener now answers with the
+#               |              | stored ack: a bare 2xx no longer advances.
 # ================================================================================
 ################################################################################
 
@@ -53,6 +55,7 @@ import pytest
 
 from src.pi.data import sync_log
 from src.pi.sync import PushStatus, SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckReplyFor
 
 # --------------------------------------------------------------------------- #
 # Shared test scaffolding
@@ -81,8 +84,10 @@ def _baseConfig(dbPath: str) -> dict[str, Any]:
 class _RecordingOpener:
     """Fake ``urllib.request.urlopen`` that records every POST.
 
-    Returns an HTTP 200 empty body.  Tests use ``self.calls`` to assert
-    which tables actually hit the wire (vs were skipped before network).
+    Returns an HTTP 200 whose body is the stored ack for every row sent
+    (US-776-i: a bare 2xx no longer counts as delivered).  Tests use
+    ``self.calls`` to assert which tables actually hit the wire (vs were
+    skipped before network).
     """
 
     def __init__(self) -> None:
@@ -92,7 +97,7 @@ class _RecordingOpener:
         body = req.data.decode("utf-8") if req.data else ""
         payload = json.loads(body) if body else {}
         self.calls.append({"url": req.full_url, "payload": payload})
-        return _fakeResponse(status=200, body=b"{}")
+        return _fakeResponse(status=200, body=storedAckReplyFor(req.data))
 
 
 class _FakeHttpResponse:
@@ -174,24 +179,52 @@ def _createAllInScopeStubs(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE TABLE drive_summary ("
         "drive_id INTEGER PRIMARY KEY, "
-        "ambient_temp_at_start_c REAL, "
+        "intake_air_temp_at_start_c REAL, "
         "starting_battery_v REAL, "
         "barometric_kpa_at_start REAL, "
         "data_source TEXT NOT NULL DEFAULT 'real')"
     )
     # US-217: battery_health_log -- drain_event_id INTEGER PK AUTOINCREMENT.
+    # US-426 shape: legacy start_soc/end_soc dropped; *_vcell_v + *_soc_pct.
     conn.execute(
         "CREATE TABLE battery_health_log ("
         "drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT, "
         "start_timestamp TEXT NOT NULL, "
         "end_timestamp TEXT, "
-        "start_soc REAL NOT NULL, "
-        "end_soc REAL, "
+        "start_vcell_v REAL, "
+        "end_vcell_v REAL, "
+        "start_soc_pct REAL, "
+        "end_soc_pct REAL, "
         "runtime_seconds INTEGER, "
         "ambient_temp_c REAL, "
         "load_class TEXT NOT NULL DEFAULT 'production', "
         "notes TEXT, "
         "data_source TEXT NOT NULL DEFAULT 'real')"
+    )
+    # US-412 (F-101): power_log -- append-only id INTEGER PK, mirrors
+    # SCHEMA_POWER_LOG.  Joined the delta-sync set in US-412, so the
+    # production-shaped fixture must create it (else getDeltaRows raises
+    # "no such table: power_log" when pushAllDeltas iterates it).
+    conn.execute(
+        "CREATE TABLE power_log ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "timestamp DATETIME NOT NULL "
+        "DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), "
+        "event_type TEXT NOT NULL, "
+        "power_source TEXT NOT NULL, "
+        "on_ac_power INTEGER NOT NULL DEFAULT 1, "
+        "vcell REAL)"
+    )
+    # US-453 (D-7 / F-082): pi_state -- the operational-state singleton
+    # (id pinned to 1).  Joined the delta-sync set in US-453 (mirrors
+    # SCHEMA_PI_STATE), so the production-shaped fixture must create it (else
+    # getDeltaRows raises "no such table: pi_state" when pushAllDeltas iterates
+    # it).  It also opts into the modified_at cursor, but that column + trigger
+    # are added lazily by ensureSyncModifiedAtSchema on first push.
+    conn.execute(
+        "CREATE TABLE pi_state ("
+        "id INTEGER PRIMARY KEY CHECK (id = 1), "
+        "no_new_drives INTEGER NOT NULL DEFAULT 0)"
     )
     # Snapshot tables with natural TEXT PKs.
     conn.execute(
@@ -323,6 +356,61 @@ class TestPushDeltaOnSnapshotTables:
 
 
 # --------------------------------------------------------------------------- #
+# A REGISTERED delta table this DB does not have (US-766)
+# --------------------------------------------------------------------------- #
+
+
+class TestPushDeltaOnAMissingTable:
+    """Registering a table must never be able to abort the whole sweep.
+
+    MEASURED 2026-09-16, not hypothetical: adding edr_imu_sample to PK_COLUMN
+    made ``getDeltaRows`` raise ``sqlite3.OperationalError: no such table`` out
+    of ``pushAllDeltas``, so realtime_data, drive_summary and dtc_log stopped
+    syncing too -- one absent table took the entire pipeline down.
+
+    ``productionShapedDb`` genuinely lacks the EDR tables (``_createAllInScopeStubs``
+    is a hand-kept list that predates them), so this exercises the real
+    condition rather than a staged one. That is deliberate: teaching the stub
+    helper to create EDR would turn this green while production stayed broken.
+    """
+
+    def test_pushDelta_missingTable_returnsEmptyRatherThanRaising(
+        self, syncClient: SyncClient,
+    ) -> None:
+        result = syncClient.pushDelta("edr_imu_sample")
+        assert result.status is PushStatus.EMPTY
+
+    def test_pushDelta_missingTable_isNotReportedAsAFailure(
+        self, syncClient: SyncClient,
+    ) -> None:
+        """A table this DB never created is not an integrity fault.
+
+        FAILED would mark it for re-attempt and pollute the operator report;
+        the absence is expected on a fresh or older DB.
+        """
+        result = syncClient.pushDelta("edr_imu_sample")
+        assert result.status is not PushStatus.FAILED
+
+    def test_pushDelta_missingTable_makesNoNetworkCall(
+        self, syncClient: SyncClient, recordingOpener: _RecordingOpener,
+    ) -> None:
+        _ = syncClient.pushDelta("edr_imu_sample")
+        assert recordingOpener.calls == []
+
+    def test_pushAllDeltas_sweepSurvivesAnAbsentRegisteredTable(
+        self, syncClient: SyncClient,
+    ) -> None:
+        """The load-bearing one: the sweep must reach PAST the missing table.
+
+        Without the guard this raised and nothing after it was ever pushed.
+        """
+        results = syncClient.pushAllDeltas()
+        returnedNames = {r.tableName for r in results}
+        assert "edr_imu_sample" in returnedNames
+        assert "realtime_data" in returnedNames
+
+
+# --------------------------------------------------------------------------- #
 # pushAllDeltas end-to-end shape after the fix
 # --------------------------------------------------------------------------- #
 
@@ -333,7 +421,8 @@ class TestPushAllDeltasAfterFix:
     def test_pushAllDeltas_returns_one_result_per_in_scope_table(
         self, syncClient: SyncClient,
     ) -> None:
-        """BC: result set length still equals IN_SCOPE_TABLES count.
+        """BC: result set covers every delta table + every registered
+        natural-key snapshot table (US-417 registered startup_log).
 
         Snapshot tables surface as SKIPPED-style results, not missing
         entries.  This preserves operator-visible table coverage in
@@ -341,7 +430,9 @@ class TestPushAllDeltasAfterFix:
         """
         results = syncClient.pushAllDeltas()
         returnedNames = {r.tableName for r in results}
-        assert returnedNames == sync_log.IN_SCOPE_TABLES
+        assert returnedNames == (
+            sync_log.IN_SCOPE_TABLES | sync_log.snapshotSyncTables()
+        )
 
     def test_pushAllDeltas_completes_without_exceptions(
         self, syncClient: SyncClient,

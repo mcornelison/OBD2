@@ -6,16 +6,31 @@
 # Created:   2026-04-19
 # Story:     US-196 — lift + generalise from Pi ~/Projects/Eclipse-01/scripts/
 #
+# Modification History
+# --------------------
+#   2026-07-31 | Rex | HOTFIX (Atlas CIO-directed P0, BL-025 half 2; supersedes
+#              |     | shelved US-475). The embedded pexpect driver could not
+#              |     | pair AT ALL: it waited for the legacy `[bluetooth]#`
+#              |     | prompt while the Pi's bluez 5.82 prints `[bluetoothctl]>`,
+#              |     | so it timed out on the FIRST command; and it registered
+#              |     | `agent NoInputNoOutput`, under which the Confirm-passkey
+#              |     | branch below it is dead code and SSP can auth-fail.
+#              |     | The driver moved OUT of the heredoc into
+#              |     | scripts/pair_obdlink_driver.py so it is importable and
+#              |     | unit-testable (tests/pi/obdii/test_pair_obdlink_driver.py
+#              |     | drives it against a transcript captured live from the Pi).
+#
 # Why this script exists
 # ----------------------
 # The OBDLink LX Bluetooth adapter uses Secure Simple Pairing (SSP) with
-# passkey confirmation, not the legacy "PIN 1234" flow. bluez's default
-# NoInputNoOutput agent handles most SSP "Just Works" devices, but the LX
-# firmware sends an actual numeric passkey and bluez prompts:
+# passkey confirmation, not the legacy "PIN 1234" flow. The LX firmware sends
+# an actual numeric passkey and bluez prompts:
 #
 #     Confirm passkey N (yes/no):
 #
-# bt-agent, the stock non-interactive agent, does not intercept this —
+# That prompt only fires under a DISPLAY-CAPABLE agent (DisplayYesNo /
+# KeyboardDisplay) — which is why the CIO's phone pairs and this script did
+# not. bt-agent, the stock non-interactive agent, does not intercept it either:
 # bt-device's internal agent grabs the callback first and asks to its own
 # stdin. So non-interactive pairing needs pexpect to drive bluetoothctl
 # directly, spot the "Confirm passkey" prompt, and send "yes".
@@ -23,6 +38,7 @@
 # Usage
 # -----
 #   scripts/pair_obdlink.sh <MAC>              # do the pair
+#   scripts/pair_obdlink.sh <MAC> --force      # re-pair even if already bonded
 #   scripts/pair_obdlink.sh <MAC> --dry-run    # preview; does not touch BT stack
 #   scripts/pair_obdlink.sh --dry-run <MAC>    # flag order interchangeable
 #   scripts/pair_obdlink.sh --help             # this text
@@ -35,6 +51,12 @@
 #   - --dry-run must not invoke bluetoothctl or any external BT stack.
 #   - sudo inside the bash script only; Python (pexpect) must not call sudo.
 #   - Requires pexpect on PATH (pip install pexpect OR apt install python3-pexpect).
+#   - Without --force the script is IDEMPOTENT: an existing durable bond is
+#     reported and left alone. Re-pairing needs the dongle powered (engine on),
+#     so blindly removing a working bond can strand the car.
+#   - Success is claimed only after re-reading `bluetoothctl info` and seeing
+#     Paired+Bonded+Trusted. "Pairing successful" alone describes the LINK, not
+#     a bond that survives a reboot — which is the actual deliverable.
 #
 # Operator UX notes
 # -----------------
@@ -59,7 +81,11 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 MAC_REGEX='^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$'
 DRY_RUN=false
+FORCE=false
 MAC=""
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DRIVER="${SCRIPT_DIR}/pair_obdlink_driver.py"
 
 # ------------------------------------------------------------------------------
 # Usage / help
@@ -69,7 +95,7 @@ show_help() {
 pair_obdlink.sh — one-time pair of an OBDLink LX via bluetoothctl + pexpect.
 
 USAGE
-    scripts/pair_obdlink.sh <MAC> [--dry-run]
+    scripts/pair_obdlink.sh <MAC> [--force] [--dry-run]
     scripts/pair_obdlink.sh --dry-run <MAC>
     scripts/pair_obdlink.sh --help
 
@@ -78,8 +104,16 @@ ARGUMENTS
                    Falls back to $OBD_BT_MAC if no positional arg.
 
 OPTIONS
+    --force        Re-pair even when a durable bond already exists (clears the
+                   existing bond first). Without it, an already-bonded dongle
+                   is reported and left untouched.
     --dry-run      Print what would be done; do not touch the BT stack.
     --help, -h     Show this help and exit.
+
+ENVIRONMENT
+    OBD_BT_MAC     Fallback MAC when no positional arg is given.
+    PAIR_TIMEOUT_S Seconds to wait for the pair handshake (default 60).
+    PAIR_SCAN_S    Seconds of discovery before pairing (default 7).
 
 EXAMPLES
     scripts/pair_obdlink.sh AA:BB:CC:DD:EE:FF
@@ -87,8 +121,9 @@ EXAMPLES
     scripts/pair_obdlink.sh --dry-run AA:BB:CC:DD:EE:FF
 
 EXIT CODES
-    0   pair succeeded (or dry-run previewed successfully)
-    1   pair attempt failed — dongle may not be in pair mode
+    0   pair succeeded, or the dongle was already bonded, or dry-run previewed
+    1   pair attempt failed — dongle may not be powered / in pair mode, or the
+        resulting bond was not durable (Paired+Bonded+Trusted)
     2   usage error (missing/invalid MAC, unknown flag)
 
 See specs/architecture.md §3.4 and docs/testing.md for the full walkthrough.
@@ -106,6 +141,9 @@ for arg in "$@"; do
             ;;
         --dry-run)
             DRY_RUN=true
+            ;;
+        --force)
+            FORCE=true
             ;;
         --*)
             echo "error: unknown flag '$arg'" >&2
@@ -143,12 +181,15 @@ fi
 # ------------------------------------------------------------------------------
 if $DRY_RUN; then
     cat <<EOF
-DRY-RUN: would pair MAC ${MAC} via bluetoothctl+pexpect.
-    1. scan on
-    2. agent NoInputNoOutput; default-agent
-    3. pair ${MAC}       (auto-'yes' to SSP passkey prompt)
-    4. trust ${MAC}      (survives reboot, allows auto-reconnect)
-    5. scan off
+DRY-RUN: would pair MAC ${MAC} via ${DRIVER} (bluetoothctl+pexpect).
+    1. info ${MAC}       (already bonded? -> stop, unless --force)
+    2. remove ${MAC}     (only if a stale/partial bond exists, or --force)
+    3. power on; agent DisplayYesNo; default-agent
+    4. scan on -> wait ${PAIR_SCAN_S:-7}s -> scan off
+    5. pair ${MAC}       (auto-'yes' to the SSP passkey prompt)
+    6. trust ${MAC}      (survives reboot, allows auto-reconnect)
+    7. info ${MAC}       (VERIFY Paired+Bonded+Trusted, else fail)
+    force re-pair: ${FORCE}
 No BT stack commands were invoked.
 EOF
     exit 0
@@ -159,6 +200,12 @@ fi
 # ------------------------------------------------------------------------------
 if ! command -v bluetoothctl >/dev/null 2>&1; then
     echo "error: bluetoothctl not found; install bluez (apt install bluez bluez-tools)" >&2
+    exit 1
+fi
+
+if [[ ! -f "$DRIVER" ]]; then
+    echo "error: pairing driver not found at ${DRIVER}" >&2
+    echo "  (it lives beside this script — a partial deploy/copy will do this)" >&2
     exit 1
 fi
 
@@ -183,96 +230,25 @@ fi
 echo "--- pairing OBDLink LX at ${MAC} (SSP passkey auto-confirm) ---"
 
 # ------------------------------------------------------------------------------
-# The pexpect driver — embedded Python that understands the SSP prompt
+# Hand off to the pairing driver
 # ------------------------------------------------------------------------------
-# MAC is exported so the python block can read it without string-interpolation
-# risks (a MAC can't contain anything exotic, but keeping interpolation out of
-# the embedded script makes it easier to audit and keeps this shellcheck-clean).
+# The driver used to be an embedded `python3 - <<PYEOF` heredoc. Heredoc code
+# cannot be imported, so it could not be tested — and it shipped broken for
+# months (wrong prompt regex + a non-display agent, see the modification
+# history above). It now lives in pair_obdlink_driver.py, covered by
+# tests/pi/obdii/test_pair_obdlink_driver.py against a real captured
+# bluetoothctl transcript.
+#
+# MAC is exported rather than interpolated: it keeps operator input out of the
+# command line the driver is invoked with, and keeps this shellcheck-clean.
 export MAC
 
-"$PYTHON_BIN" - <<'PYEOF'
-"""Embedded pexpect driver — spawns bluetoothctl and auto-confirms SSP passkey."""
-import os
-import sys
-import time
+DRIVER_ARGS=()
+if $FORCE; then
+    DRIVER_ARGS+=(--force)
+fi
 
-try:
-    import pexpect  # type: ignore[import-not-found]
-except ImportError:
-    sys.stderr.write("pexpect missing — see pair_obdlink.sh pre-flight message\n")
-    sys.exit(1)
-
-mac = os.environ["MAC"]
-timeoutSeconds = int(os.environ.get("PAIR_TIMEOUT_S", "60"))
-
-# pexpect.spawn does not invoke a shell; bluetoothctl itself is the REPL.
-child = pexpect.spawn("bluetoothctl", encoding="utf-8", timeout=timeoutSeconds)
-child.logfile_read = sys.stdout  # stream bluetoothctl output live for operator visibility
-
-def send(line: str) -> None:
-    child.sendline(line)
-    # Wait for the prompt to return before the next command.
-    child.expect(r"\[.+\]#", timeout=10)
-
-try:
-    # Wait for first prompt.
-    child.expect(r"\[.+\]#", timeout=10)
-
-    send("agent NoInputNoOutput")
-    send("default-agent")
-    send("scan on")
-
-    # Give the dongle a moment to appear in the scan results. LX needs to be
-    # in pair mode (solid blue LED). If the scan never finds it, the `pair`
-    # command below will time out — we surface that clearly.
-    time.sleep(5)
-
-    child.sendline(f"pair {mac}")
-
-    # The SSP passkey prompt is the critical dance. Possible endings:
-    #   - "Confirm passkey NNNNNN (yes/no):"          -> send 'yes'
-    #   - "Pairing successful"                         -> done
-    #   - "Failed to pair: org.bluez.Error.*"          -> fatal
-    #   - timeout                                      -> fatal (probably not in pair mode)
-    while True:
-        index = child.expect(
-            [
-                r"Confirm passkey \d+ \(yes/no\):",
-                r"Pairing successful",
-                r"Failed to pair[^\r\n]*",
-                pexpect.TIMEOUT,
-                pexpect.EOF,
-            ],
-            timeout=timeoutSeconds,
-        )
-        if index == 0:
-            child.sendline("yes")
-            continue
-        if index == 1:
-            break
-        if index == 2:
-            raise SystemExit(f"pair failed: {child.after!s}")
-        if index == 3:
-            raise SystemExit(
-                "pair timed out — is the LX in pair mode (solid blue LED)?"
-            )
-        if index == 4:
-            raise SystemExit("bluetoothctl exited before pair completed")
-
-    # Back to the prompt now that pairing finished.
-    child.expect(r"\[.+\]#", timeout=10)
-
-    send(f"trust {mac}")   # auto-reconnect on future sessions
-    send("scan off")
-    send("quit")
-    child.expect(pexpect.EOF, timeout=5)
-
-    sys.stdout.write(f"\n--- pair + trust successful for {mac} ---\n")
-except SystemExit as exc:
-    sys.stderr.write(f"\n{exc}\n")
-    child.close(force=True)
-    sys.exit(1)
-PYEOF
+"$PYTHON_BIN" "$DRIVER" "${DRIVER_ARGS[@]+"${DRIVER_ARGS[@]}"}"
 
 echo ""
 echo "--- post-pair check: run scripts/verify_bt_pair.sh to confirm ---"

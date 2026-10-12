@@ -1,6 +1,6 @@
 # src/pi/ — Raspberry Pi Tier
 
-Deployed to `chi-eclipse-tuner` only. Contains all hardware-interfacing and
+Deployed to `chi-eclipse-01` only. Contains all hardware-interfacing and
 real-time data collection code.
 
 ## Structure

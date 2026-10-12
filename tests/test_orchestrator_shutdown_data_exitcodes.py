@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-003
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
+# 2026-09-30    | Rex (US-780) | Component timeout now keeps EXIT_CODE_CLEAN + WARNING
 # ================================================================================
 ################################################################################
 
@@ -377,17 +378,21 @@ class TestShutdownExitCodes:
         # Assert
         assert exitCode == EXIT_CODE_CLEAN
 
-    def test_shutdown_setsNonZeroExitCodeOnComponentTimeout(
-        self, shutdownConfig: dict[str, Any]
+    def test_shutdown_componentTimeout_keepsCleanExitCodeAndWarns(
+        self, shutdownConfig: dict[str, Any], caplog: pytest.LogCaptureFixture
     ):
         """
         Given: A component that times out during stop
         When: _stopComponentWithTimeout is called
-        Then: Exit code is set to EXIT_CODE_FORCED
+        Then: Exit code stays EXIT_CODE_CLEAN and a WARNING names the
+              component and its elapsed stop time (US-780: a bounded
+              force-stop of one component is not a failed stop)
         """
         # Arrange
+        import logging
+
         from pi.obdii.orchestrator import (
-            EXIT_CODE_FORCED,
+            EXIT_CODE_CLEAN,
             ApplicationOrchestrator,
         )
 
@@ -398,10 +403,17 @@ class TestShutdownExitCodes:
         orchestrator._shutdownTimeout = 0.1
 
         hangingComponent = MagicMock()
-        hangingComponent.stop.side_effect = lambda: time.sleep(5)
+        hangingComponent.stop.side_effect = lambda: time.sleep(1)
 
         # Act
-        orchestrator._stopComponentWithTimeout(hangingComponent, 'slowComponent')
+        with caplog.at_level(logging.WARNING):
+            orchestrator._stopComponentWithTimeout(hangingComponent, 'slowComponent')
 
         # Assert
-        assert orchestrator._exitCode == EXIT_CODE_FORCED
+        assert orchestrator._exitCode == EXIT_CODE_CLEAN
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert any(
+            'slowComponent' in msg and 'elapsed=' in msg for msg in warnings
+        ), f"Expected a WARNING naming slowComponent with elapsed time, got: {warnings}"

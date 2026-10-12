@@ -10,29 +10,46 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-05-27    | Marcus (PM)  | Initial implementation -- Task 5 TDD
+# 2026-08-29    | Rex (Dev)    | US-609: retire the two freeze-field tests (the
+#               |              | mechanic was retired 2026-07-13); replace with a
+#               |              | negative guard that the retirement holds.
 # ================================================================================
 ################################################################################
 
 """Tests for prd_to_sprint -- PRD MD -> sprint.json conversion."""
 import json
-import re
 import shutil
 from pathlib import Path
 
-from offices.pm.scripts.prd_to_sprint import convertPrdToSprint
+import pytest
+
+from tools.pm.prd_to_sprint import convertPrdToSprint
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+@pytest.fixture(autouse=True)
+def _fleetShare(tmp_path, monkeypatch):
+    """Point $FLEET_SHARE at this test's tmp tree.
+
+    The tools resolve their share root through
+    :func:`tools.pm._paths.resolveShareRoot`, so setting the env var exercises
+    the REAL resolution path rather than injecting a root that production
+    callers never inject.
+    """
+    monkeypatch.setenv("FLEET_SHARE", str(tmp_path))
+    return tmp_path
+
 
 
 def _setupFakeRepo(tmpRoot: Path):
     """Build a minimal repo layout that convertPrdToSprint can read."""
-    (tmpRoot / "offices/pm/backlog").mkdir(parents=True)
-    (tmpRoot / "offices/pm/prds").mkdir(parents=True)
-    (tmpRoot / "offices/ralph").mkdir(parents=True)
+    (tmpRoot / "pm/backlog").mkdir(parents=True)
+    (tmpRoot / "pm/prds").mkdir(parents=True)
+    (tmpRoot / "ralph").mkdir(parents=True)
     shutil.copy(FIXTURES / "v2_backlog_sample.json",
-                tmpRoot / "offices/pm/backlog.json")
+                tmpRoot / "pm/backlog.json")
     shutil.copy(FIXTURES / "prd_sample.md",
-                tmpRoot / "offices/pm/prds/prd-V0.28.0-sprint-43.md")
+                tmpRoot / "pm/prds/prd-V0.28.0-sprint-43.md")
     # also need a Story.md for US-359 with full content
     storyMd = """---
 id: US-359
@@ -61,14 +78,14 @@ As CIO, I want a boot splash so I know when the Pi is ready.
 |---|---|---|
 | V-1 | Boot Pi cold | Splash within 3s |
 """
-    (tmpRoot / "offices/pm/backlog/US-359-boot-splash.md").write_text(storyMd, encoding="utf-8")
+    (tmpRoot / "pm/backlog/US-359-boot-splash.md").write_text(storyMd, encoding="utf-8")
 
 
 def test_convertPrdToSprint_basicConversion(tmp_path):
     _setupFakeRepo(tmp_path)
-    prdPath = tmp_path / "offices/pm/prds/prd-V0.28.0-sprint-43.md"
-    outPath = tmp_path / "offices/ralph/sprint.json"
-    convertPrdToSprint(prdPath, outPath, repoRoot=tmp_path)
+    prdPath = tmp_path / "pm/prds/prd-V0.28.0-sprint-43.md"
+    outPath = tmp_path / "ralph/sprint.json"
+    convertPrdToSprint(prdPath, outPath)
     assert outPath.exists()
     sprint = json.loads(outPath.read_text())
     assert sprint["version"] == "V0.28.0"
@@ -96,36 +113,35 @@ def test_convertPrdToSprint_basicConversion(tmp_path):
     assert "[from US-359]" in bigDoD
 
 
-def test_convertPrdToSprint_writesFreezeFields(tmp_path):
+def test_convertPrdToSprint_doesNotStampRetiredFreezeFields(tmp_path):
     """
     Given: the sample PRD fixture is converted
     When: convertPrdToSprint runs
-    Then: sprint.json validation block carries frozenAt (ISO format) + bigDoDHash (64 char hex)
+    Then: the validation block carries NEITHER frozenAt NOR bigDoDHash
+
+    The freeze mechanic was retired by CIO directive 2026-07-13.  Two tests
+    here previously asserted the OPPOSITE (``writesFreezeFields`` and
+    ``freezeHash_deterministic``) and failed with ``KeyError`` on a pristine
+    tree.  They are RETIRED rather than "fixed": the tool is correct, and
+    re-adding the stamping to make them pass would resurrect a mechanic the
+    CIO retired (US-609).
+
+    This replacement is deliberately a NEGATIVE assertion.  Deleting the two
+    stale tests alone would leave nothing pinning the retirement, so a silent
+    re-add of freeze stamping would pass the suite.
+
+    Scope fence: ``sprint_lint`` still drift-checks ARCHIVED sprints that
+    carry the fields -- 14 of them on the share, V0.28.1 through V0.29.9,
+    the newest 2026-07-05.  That path is deliberately untouched and is
+    covered by ``test_sprint_lint_freeze.py``.
     """
     _setupFakeRepo(tmp_path)
-    prdPath = tmp_path / "offices/pm/prds/prd-V0.28.0-sprint-43.md"
-    outPath = tmp_path / "offices/ralph/sprint.json"
-    convertPrdToSprint(prdPath, outPath, repoRoot=tmp_path)
-    data = json.loads(outPath.read_text(encoding="utf-8"))
-    v = data["validation"]
-    # ISO 8601 'Z' suffix
-    assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", v["frozenAt"])
-    # SHA-256 hex
-    assert re.match(r"^[0-9a-f]{64}$", v["bigDoDHash"])
-
-
-def test_convertPrdToSprint_freezeHash_deterministic(tmp_path):
-    """
-    Given: the same PRD converted twice
-    When: convertPrdToSprint runs both times
-    Then: bigDoDHash is identical (deterministic over canonical bigDoD content)
-    """
-    _setupFakeRepo(tmp_path)
-    prdPath = tmp_path / "offices/pm/prds/prd-V0.28.0-sprint-43.md"
-    outA = tmp_path / "a.json"
-    outB = tmp_path / "b.json"
-    convertPrdToSprint(prdPath, outA, repoRoot=tmp_path)
-    convertPrdToSprint(prdPath, outB, repoRoot=tmp_path)
-    dataA = json.loads(outA.read_text(encoding="utf-8"))
-    dataB = json.loads(outB.read_text(encoding="utf-8"))
-    assert dataA["validation"]["bigDoDHash"] == dataB["validation"]["bigDoDHash"]
+    prdPath = tmp_path / "pm/prds/prd-V0.28.0-sprint-43.md"
+    outPath = tmp_path / "ralph/sprint.json"
+    convertPrdToSprint(prdPath, outPath)
+    v = json.loads(outPath.read_text(encoding="utf-8"))["validation"]
+    # Premise check FIRST: a negative assertion passes vacuously if the block
+    # it inspects vanishes, so pin that there is still a contract to freeze.
+    assert v["bigDefinitionOfDone"], "premise gone: no bigDefinitionOfDone to freeze"
+    assert "frozenAt" not in v, "freeze stamping resurrected -- retired 2026-07-13"
+    assert "bigDoDHash" not in v, "freeze stamping resurrected -- retired 2026-07-13"

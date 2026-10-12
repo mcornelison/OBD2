@@ -53,6 +53,19 @@
 #               |              | adapter+ECU readiness flips the tracker
 #               |              | True on a subsequent pass and fires
 #               |              | _handleConnectionRestored.
+# 2026-06-29    | Rex (US-388) | F-107 Root-2: runLoop now calls
+#               |              | _driveDetector.evaluateTimeouts() each pass
+#               |              | (exception-isolated) so the drive-close
+#               |              | deadline is evaluated OFF the reading-tick --
+#               |              | a STOPPING / ECU-silent drive closes even when
+#               |              | the OBD poll loop quiesces, instead of leaking
+#               |              | open and absorbing a later key-on (drives
+#               |              | 28/29).  Atlas C-alpha off-tick close.
+# 2026-09-14    | Rex (US-751) | Own _obdWakeEvent, the event both reconnect
+#               |              | heartbeats observe (requestObdLinkWake).
+# 2026-09-30    | Rex (US-674) | stop() marks _stopBegun on entry, so a capture
+#               |              | error raised mid-stop is expected and no longer
+#               |              | escalates to force-exit before the drive closes.
 # ================================================================================
 ################################################################################
 
@@ -85,18 +98,21 @@ from typing import Any
 from ..database import ObdDatabase
 from .backup_coordinator import BackupCoordinatorMixin
 from .bt_resilience import BtResilienceMixin
+from .card_state_emitter import CardStateEmitterMixin
 from .connection_recovery import ConnectionRecoveryMixin
 from .event_router import EventRouterMixin
 from .health_monitor import HealthMonitorMixin
 from .lifecycle import LifecycleMixin
 from .signal_handler import SignalHandlerMixin
 from .types import (
+    DEFAULT_CARD_STATE_EMIT_INTERVAL,
     DEFAULT_CONNECTION_CHECK_INTERVAL,
     DEFAULT_DATA_RATE_LOG_INTERVAL,
     DEFAULT_HEALTH_CHECK_INTERVAL,
     DEFAULT_MAX_RECONNECT_ATTEMPTS,
     DEFAULT_RECONNECT_DELAYS,
     DEFAULT_SHUTDOWN_TIMEOUT,
+    DEFAULT_SYNC_STALE_THRESHOLD_SECONDS,
     EXIT_CODE_CLEAN,
     EXIT_CODE_FORCED,
     HealthCheckStats,
@@ -121,13 +137,15 @@ class ApplicationOrchestrator(  # type: ignore[misc]
     ConnectionRecoveryMixin,
     BtResilienceMixin,
     EventRouterMixin,
+    CardStateEmitterMixin,
 ):
     """
     Central orchestrator for the OBD-II monitoring application.
 
     Manages the lifecycle of all system components, handling initialization,
     startup, shutdown, and status reporting. Components are initialized in
-    dependency order and shut down in reverse order.
+    dependency order and shut down in reverse order, except that the capture
+    loop and then the drive detector come down first (US-674).
 
     Initialization Order:
     1. database
@@ -163,16 +181,27 @@ class ApplicationOrchestrator(  # type: ignore[misc]
     # Construction
     # ================================================================================
 
-    def __init__(self, config: dict[str, Any], simulate: bool = False):
+    def __init__(
+        self,
+        config: dict[str, Any],
+        simulate: bool = False,
+        configPath: str | None = None,
+    ):
         """
         Initialize the application orchestrator.
 
         Args:
             config: Configuration dictionary with all component settings
             simulate: If True, use simulated OBD-II connection instead of real hardware
+            configPath: Path config was loaded from (US-533). Lets components
+                that must follow an operator's live setting change RE-READ the
+                effective value instead of closing over this boot-time snapshot
+                -- today the card-state power-mode provider. ``None`` (the test
+                / embedded call sites) keeps the snapshot behaviour.
         """
         self._config = config
         self._simulate = simulate
+        self._configPath = configPath
         self._running = False
 
         # Component references - all start as None
@@ -257,12 +286,46 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # that bypass lifecycle init).
         self._syncCadenceController: Any | None = None
 
+        # US-480-a: carousel card-state emitters (F-092 system-status / F-097
+        # battery-health / F-111 dtc).  Constructed by
+        # lifecycle._initializeCardStateEmitters and INVOKED in-process from
+        # runLoop -- per Atlas Q-1, the OBD-fed emitters must run inside this
+        # process (the single ObdConnection owner) so no second connection is
+        # opened (A-17).  All three stay None when disabled via
+        # ``pi.dashboard.stateEmitEnabled=false`` or construction fails (soft).
+        self._systemStatusEmitter: Any | None = None
+        self._batteryHealthEmitter: Any | None = None
+        self._dtcEmitter: Any | None = None
+        # Card-state emit cadence + cached sync status (updated by the sync
+        # trigger path so the system-status tile reflects the REAL last push
+        # without a per-tick DB scan).  None before the first tick so the very
+        # first runLoop pass emits (no boot-instant lag).
+        self._lastCardStateEmitTime: datetime | None = None
+        dashConfig = config.get('pi', {}).get('dashboard', {})
+        self._cardStateEmitEnabled: bool = (
+            dashConfig.get('stateEmitEnabled', True) is not False
+        )
+        self._cardStateEmitInterval: float = float(
+            dashConfig.get('stateEmitIntervalSeconds', DEFAULT_CARD_STATE_EMIT_INTERVAL)
+        )
+        self._cardSyncStaleThresholdS: float = float(
+            dashConfig.get(
+                'syncStaleThresholdSeconds', DEFAULT_SYNC_STALE_THRESHOLD_SECONDS
+            )
+        )
+        self._lastSyncOkTsIso: str | None = None
+        self._lastSyncRows: int = 0
+        # for the system-status power tile; built once in
+        # _initializeCardStateEmitters.  None on the bench / when disabled.
+
         # Backup scheduling state
         self._backupScheduleTimer: threading.Timer | None = None
         self._lastScheduledBackupCheck: datetime | None = None
 
         # Shutdown state management
         self._shutdownState = ShutdownState.RUNNING
+        # US-674: set when stop() begins; read by _isStopInProgress.
+        self._stopBegun = False
         self._shutdownTimeout = config.get('pi', {}).get('shutdown', {}).get(
             'componentTimeout', DEFAULT_SHUTDOWN_TIMEOUT
         )
@@ -275,6 +338,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         # retryDelays cap (~60-90s) and forcing systemd to SIGKILL.
         # The signal handler mixin sets this alongside _shutdownState.
         self._shutdownEvent: threading.Event = threading.Event()
+        # US-751: "the car may have just woken".  Passed to both reconnect
+        # heartbeats; requestObdLinkWake() sets it to cut a backoff short.
+        self._obdWakeEvent: threading.Event = threading.Event()
 
         # Main loop configuration
         self._healthCheckInterval = config.get('pi', {}).get('monitoring', {}).get(
@@ -664,6 +730,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
 
         logger.info("Stopping ApplicationOrchestrator...")
         startTime = time.time()
+        # US-674: from here on a capture-boundary error is the ECU going
+        # silent at key-off, not a fault; it must not force-exit the stop.
+        self._stopBegun = True
 
         # Check for force exit state (double Ctrl+C)
         if self._shutdownState == ShutdownState.FORCE_EXIT:
@@ -761,6 +830,20 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                             self._handleConnectionLost()
                         lastConnectionState = currentConnectionState
 
+                    # US-388 (F-107 Root-2, Atlas C-alpha): drive the detector's
+                    # OFF-TICK close every loop pass.  The drive-close state
+                    # machine is otherwise tick-driven -- when the OBD readings
+                    # stop (engine off, poll loop quiesces) a STOPPING / ECU-
+                    # silent drive would never close and a later key-on would be
+                    # absorbed into the stale-open drive_id (drives 28/29).
+                    # Cheap: evaluateTimeouts early-exits when no drive is active
+                    # or the deadline has not yet elapsed.
+                    if self._driveDetector is not None:
+                        try:
+                            self._driveDetector.evaluateTimeouts()
+                        except Exception as e:  # noqa: BLE001 -- must not crash loop
+                            logger.debug(f"Drive timeout evaluation failed: {e}")
+
                     # Perform health check if interval elapsed
                     now = datetime.now()
                     if self._lastHealthCheckTime is not None:
@@ -775,6 +858,21 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                         if elapsed >= self._dataRateLogInterval:
                             self._logDataLoggingRate()
                             self._lastDataRateLogTime = now
+
+                    # US-605 (Spool US-504a "Consequence 2"): checkpoint the
+                    # OPEN drain row every 30 s while draining, so a lost
+                    # shutdown write degrades the measurement instead of
+                    # discarding it.  Cheap fast-path -- the writer is its own
+                    # cadence gate and short-circuits when not due or when no
+                    # drain is open (the overwhelmingly common case).
+                    self._maybeTriggerDrainCheckpoint()
+
+                    # ARCH-023 (US-407): service a pending CLEAR CODES request.
+                    # This orchestrator is the only process allowed to touch the
+                    # OBD port, so the HTTP route publishes a request and this
+                    # answers it.  Cheap fast-path -- one stat on tmpfs, and the
+                    # usual answer is "no request".
+                    self._maybeServiceDtcClearRequest()
 
                     # US-226: interval-based Pi->server sync trigger.
                     # Cheap to call every loop pass -- the method is its
@@ -799,6 +897,16 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                     # until CIO opts in.
                     self._maybeTriggerUpdateApply()
 
+                    # US-480-a: refresh the carousel card-state files
+                    # (system-status + battery-health) on their own cadence.
+                    # Cheap fast-path -- the method is its own cadence gate and
+                    # short-circuits when not due; all reads are best-effort +
+                    # exception-isolated so a dashboard hiccup never crashes the
+                    # loop.  Orchestrator-invoked (Atlas Q-1) so the OBD-fed
+                    # system-status tile is fed from THIS process's single
+                    # ObdConnection -- no second connection is ever opened.
+                    self._maybeEmitCardStates()
+
                     # Sleep briefly to avoid busy-waiting
                     # This allows shutdown signals to be processed promptly
                     time.sleep(self._loopSleepInterval)
@@ -821,6 +929,162 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             if self._startTime is not None:
                 uptime = (datetime.now() - self._startTime).total_seconds()
                 logger.info(f"Main loop exited | uptime={uptime:.1f}s")
+
+    # ================================================================================
+    # US-605: 30 s checkpoint of the OPEN drain row
+    # ================================================================================
+
+    def _maybeServiceDtcClearRequest(self) -> bool:
+        """Service a pending US-407 CLEAR CODES request (ARCH-023).
+
+        Called once per :meth:`runLoop` pass.  Cheap fast-path: one stat on
+        tmpfs, and the overwhelmingly common answer is "no request".
+
+        WHY THIS LIVES HERE AND NOT IN THE HTTP SERVER.  The route that offers
+        the button runs in eclipse-states-http.service, a DIFFERENT PROCESS with
+        no OBD connection -- which is why its ``clearRunner`` was never injected
+        and the button answered 503.  It cannot simply open the port: this
+        orchestrator is the single owner, and a second opener is exactly the
+        defect that killed capture for a month (A-17, a DTC read that bypassed
+        the io lock) and battery health for 111 days (A-26, GPIO6 taken twice).
+        So the HTTP process asks, and the process that already holds the
+        connection answers -- ``specs/ssot-design-pattern.md`` rule B.
+
+        EVERY OUTCOME IS PUBLISHED, INCLUDING REFUSALS.  Staying silent when we
+        cannot clear is indistinguishable, from the requester's side, from a
+        dead orchestrator: it would report "timed out" when the truth is "not
+        connected".  A refusal that names itself is the honest instrument.
+
+        THE REQUEST IS ALWAYS CONSUMED.  Mode 04 is an irreversible,
+        all-or-nothing wipe; a request left in place would be serviced again on
+        the next pass -- a second wipe nobody asked for.
+
+        Returns:
+            True when a request was found and answered (either way), else False.
+        """
+        from pi.splash import dtc_clear_channel
+
+        statesDir = (
+            (self._config.get("pi", {}) or {}).get("splash", {}) or {}
+        ).get("statesDir", "/run/eclipse-obd/states")
+
+        request = dtc_clear_channel.readRequest(statesDir)
+        if request is None:
+            return False
+        requestId = str(request.get("requestId") or "")
+
+        # Consume FIRST.  If anything below throws, the request must not survive
+        # to be re-serviced on the next pass.
+        dtc_clear_channel.consumeRequest(statesDir)
+
+        connection = self._connection
+        connected = connection is not None
+        if connected:
+            try:
+                connected = bool(connection.isConnected())
+            except Exception:  # noqa: BLE001 -- an unhealthy wrapper is "not connected"
+                connected = False
+
+        if not connected:
+            self._publishDtcClearOutcome(
+                statesDir, requestId, ok=False, stored=[], pending=[], mil=False,
+                error="no OBD connection -- the ECU was not contacted",
+            )
+            return True
+
+        try:
+            client = self._dtcClearClientFactory()
+            readback = client.clearDtcs(connection)
+            stored = [str(c) for c in (getattr(readback, "stored", None) or [])]
+            pending = [str(c) for c in (getattr(readback, "pending", None) or [])]
+            self._publishDtcClearOutcome(
+                statesDir, requestId, ok=True, stored=stored, pending=pending,
+                mil=bool(stored), error=None,
+            )
+            # US-752: Mode 04 wiped every code, so the remembered ones must go
+            # too -- otherwise the resting Alerts card would show codes that no
+            # longer exist. Isolated: the clear HAPPENED and was published; a
+            # failed watermark must never rewrite that outcome as a failure.
+            try:
+                from pi.obdii.dtc_last_known import recordClearWatermark
+
+                recordClearWatermark(getattr(self, "_database", None))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "US-752 clear watermark not written for request %s: %s -- "
+                    "the resting Alerts card may still show pre-clear codes",
+                    requestId, exc,
+                )
+        except Exception as exc:  # noqa: BLE001
+            # This runs inside the capture loop: a failed clear must never take
+            # capture down, and the requester is owed the reason.
+            logger.error("US-407 clear failed for request %s: %s", requestId, exc)
+            self._publishDtcClearOutcome(
+                statesDir, requestId, ok=False, stored=[], pending=[], mil=False,
+                error=str(exc),
+            )
+        return True
+
+    def _dtcClearClientFactory(self):
+        """Build the DTC client used to issue Mode 04.  Injectable for tests.
+
+        Constructing a client is NOT a second acquisition of the port: the client
+        is stateless and takes the connection as an argument, and ``clearDtcs``
+        goes through ``_serializedQuery`` -- the serialized path US-474 made a
+        typed Protocol member precisely so the raw ``.obd`` handle could never be
+        reached from the DTC path again (the A-17 fix).
+        """
+        from pi.obdii.dtc_client import DtcClient
+
+        return DtcClient()
+
+    def _publishDtcClearOutcome(
+        self, statesDir, requestId, *, ok, stored, pending, mil, error
+    ) -> None:
+        """Publish the outcome; a publish failure must not break the loop."""
+        from pi.splash import dtc_clear_channel
+
+        try:
+            dtc_clear_channel.writeOutcome(
+                statesDir, requestId=requestId, ok=ok, stored=stored,
+                pending=pending, mil=mil, error=error,
+            )
+        except OSError as exc:
+            logger.error(
+                "US-407 clear outcome could not be published for %s: %s",
+                requestId, exc,
+            )
+
+    def _maybeTriggerDrainCheckpoint(self) -> bool:
+        """Checkpoint the open ``battery_health_log`` drain row (US-605).
+
+        Called once per :meth:`runLoop` pass.  The cadence gate lives inside
+        :meth:`DrainEventWriter.checkpointOpenDrainEvent` rather than here, so
+        this method holds no state and the 30 s interval is a property of the
+        MECHANISM -- not of whichever caller happens to drive it.  Spool's
+        US-504a ruling pins that interval at [EXACT: 30].
+
+        Why this belongs on the run loop: it is the only periodic tick in the
+        process that OPENS the drain and owns the ``UpsMonitor``.  A starved
+        loop checkpoints LATE, which is a degraded record rather than a false
+        one -- every value written was read at the moment it was written.
+
+        **Exception isolation:** the writer swallows its own faults and this
+        adds a second guard, because the loop it shares also drives OBD
+        capture.  Battery bookkeeping must never cost a drive.
+
+        Returns:
+            True when a checkpoint was actually written; False when gated (no
+            writer, not yet due, or no drain open).
+        """
+        writer = getattr(self, '_drainEventWriter', None)
+        if writer is None:
+            return False
+        try:
+            return writer.checkpointOpenDrainEvent() is not None
+        except Exception as e:  # noqa: BLE001 -- must never crash the loop
+            logger.debug(f"Drain checkpoint failed: {e}")
+            return False
 
     # ================================================================================
     # US-226: Interval-based Pi->server sync trigger
@@ -897,7 +1161,17 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             return False
 
         try:
-            results = self._syncClient.pushAllDeltas()
+            results = list(self._syncClient.pushAllDeltas())
+            # US-413 (F-064): drive_counter is a single-row state mirror, not
+            # a delta-by-PK table, so pushAllDeltas skips it.  Push it on every
+            # regular sync tick so the server's last_drive_id tracks the Pi --
+            # previously it advanced only on the forcePush power-down flush, so
+            # an unclean power cycle stranded the server counter behind the Pi
+            # (e.g. Pi minted drive 10, server still at 3).  The server upsert
+            # is a monotonic GREATEST(), so a repeat push never regresses.
+            # This runs only past the offline route gate above, so it adds no
+            # doomed-retry cost when the Pi has no route (US-340 guard).
+            results.append(self._syncClient.pushDriveCounter())
         except Exception as e:  # noqa: BLE001 -- sync must never crash runLoop
             logger.error("Interval sync push crashed: %s", e, exc_info=True)
             # Even on a transport hiccup the controller must learn the
@@ -935,6 +1209,12 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             logger.debug(
                 "Interval sync tick: no pending deltas",
             )
+        # US-480-a: cache the REAL sync outcome for the system-status tile so it
+        # renders the actual last-push time + row count without a per-tick DB
+        # scan.  Only stamp when the push actually completed past the route gate
+        # (this line is unreachable when hasRoute() was false) -- honest: a
+        # tick that never left the Pi does not advance "last synced".
+        self._recordSyncOutcome(rowsPushed)
         return True
 
     def triggerDriveEndSync(self) -> bool:
@@ -958,7 +1238,13 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._lastSyncAttemptTime = datetime.now()
         controller = self._syncCadenceController
         try:
-            results = self._syncClient.pushAllDeltas()
+            results = list(self._syncClient.pushAllDeltas())
+            # US-413 (F-064): a drive just ended, so the drive_counter singleton
+            # advanced at this drive's start.  Push it here too (pushAllDeltas
+            # skips singletons) so the server's last_drive_id tracks the Pi with
+            # minimal lag -- not only on the forcePush power-down flush.  Server
+            # upsert is monotonic GREATEST(), so a repeat push never regresses.
+            results.append(self._syncClient.pushDriveCounter())
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "Drive-end sync push crashed: %s", e, exc_info=True,
@@ -986,6 +1272,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         logger.info(
             "Drive-end sync: rowsPushed=%d", rowsPushed,
         )
+        # US-480-a: cache the real drive-end sync outcome for the system-status
+        # tile (same as the interval path).
+        self._recordSyncOutcome(rowsPushed)
         return True
 
     # ================================================================================
@@ -1165,6 +1454,12 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             self._engineOnSampleCount,
         )
         self._engineOnEscalated = True
+        # US-432 (BL-016): engine-on is now confirmed, so arm the connection's
+        # force-mandatory latch BEFORE the probe reads RPM.  This un-masks RPM
+        # past python-obd's stale cold-boot-key-OFF support cache for BOTH the
+        # single-shot escalation probe below AND the ongoing realtime poll
+        # (both read through the same self._connection wrapper).
+        self._setForceMandatoryPids(True)
         self._injectRpmProbeForEscalation()
         return True
 
@@ -1223,6 +1518,45 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 e,
             )
 
+    def _setForceMandatoryPids(self, enabled: bool) -> None:
+        """Arm/clear the connection's force-mandatory-PID latch (US-432 / BL-016).
+
+        Delegates to :meth:`ObdConnection.setEngineConfirmedForceMandatory` so
+        the read path (both the escalation probe and the ongoing poll) forces
+        the known-mandatory Mode-01 PIDs (RPM) past python-obd's dark-ECU
+        support cache while the engine is confirmed on.  Best-effort: a missing
+        connection, a connection type without the latch (legacy/simulated
+        without the seam), or any error is a WARN-level no-op -- the latch must
+        never crash the runLoop.
+
+        Args:
+            enabled: True on the engine-on escalation edge; False on
+                ``drive_end`` (via :meth:`_resetEngineOnEscalation`).
+        """
+        conn = self._connection
+        if conn is None:
+            logger.debug(
+                "Force-mandatory latch %s skipped -- no connection (US-432)",
+                'arm' if enabled else 'clear',
+            )
+            return
+        setter = getattr(conn, 'setEngineConfirmedForceMandatory', None)
+        if setter is None:
+            logger.debug(
+                "Force-mandatory latch %s skipped -- connection lacks the latch "
+                "seam (US-432)",
+                'arm' if enabled else 'clear',
+            )
+            return
+        try:
+            setter(enabled)
+        except Exception as e:  # noqa: BLE001 -- latch must never crash runLoop
+            logger.warning(
+                "Force-mandatory latch %s failed: %s (runLoop continues; US-432)",
+                'arm' if enabled else 'clear',
+                e,
+            )
+
     def _resetEngineOnEscalation(self) -> None:
         """Re-arm the alternator-active escalation for the next drive.
 
@@ -1241,6 +1575,10 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         """
         self._engineOnEscalated = False
         self._consecutiveAlternatorActiveSamples = 0
+        # US-432 (BL-016): drive_end -> the engine is off, so clear the
+        # force-mandatory latch.  The next engine-on escalation re-arms it; a
+        # disconnect also clears it (fresh connection is dark again).
+        self._setForceMandatoryPids(False)
 
     # ================================================================================
     # US-225 / TD-034: Poll-tier pause hooks (US-216 IMMINENT stage)
@@ -1354,7 +1692,8 @@ class ApplicationOrchestrator(  # type: ignore[misc]
 
 def createOrchestratorFromConfig(
     config: dict[str, Any],
-    simulate: bool = False
+    simulate: bool = False,
+    configPath: str | None = None
 ) -> ApplicationOrchestrator:
     """
     Create an ApplicationOrchestrator from configuration.
@@ -1362,6 +1701,8 @@ def createOrchestratorFromConfig(
     Args:
         config: Configuration dictionary
         simulate: If True, use simulated OBD-II connection
+        configPath: Path config was loaded from (US-533); see
+            :class:`ApplicationOrchestrator`.
 
     Returns:
         Configured ApplicationOrchestrator instance
@@ -1371,7 +1712,9 @@ def createOrchestratorFromConfig(
         orchestrator = createOrchestratorFromConfig(config, simulate=True)
         orchestrator.start()
     """
-    return ApplicationOrchestrator(config=config, simulate=simulate)
+    return ApplicationOrchestrator(
+        config=config, simulate=simulate, configPath=configPath
+    )
 
 
 __all__ = [

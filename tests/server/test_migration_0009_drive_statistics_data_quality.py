@@ -41,7 +41,7 @@ import pytest
 
 from scripts import apply_server_migrations as asm
 from src.server.db.models import (
-    DRIVE_STATISTICS_DATA_QUALITY_DEFAULT,
+    DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT,
     DRIVE_STATISTICS_DATA_QUALITY_VALUES,
     DriveStatistic,
 )
@@ -318,13 +318,20 @@ class TestDdlMirrorsOrm:
         assert 'NOT NULL' in ddl
 
     def test_addColumnDdlDefaultMatchesOrm(self) -> None:
-        # The ORM's server_default ('full') is the source of truth.  The
-        # V0.27.18 dispatch note proposed 'unknown' but that value is
-        # not in the CHECK enum and would silently violate the constraint
-        # on the very first row that took the default path.
+        # The ORM's server_default is the source of truth.  The V0.27.18
+        # dispatch note proposed 'unknown' but that value is not in the CHECK
+        # enum and would silently violate the constraint on the very first row
+        # that took the default path.
+        #
+        # US-563 MOVED this pin.  It used to assert the default was literally
+        # 'full', which is what made the F-134 defect invisible: a quality
+        # VERDICT column defaulting to the BEST verdict, pinned as correct.  The
+        # default is now the non-verdict 'unassessed' and the DDL follows the
+        # ORM constant, so the "DDL agrees with the ORM" property this test was
+        # actually built to protect is unchanged -- only the value moved.
         ddl = m0009.ADD_DATA_QUALITY_COLUMN_DDL
-        assert f"DEFAULT '{DRIVE_STATISTICS_DATA_QUALITY_DEFAULT}'" in ddl
-        assert DRIVE_STATISTICS_DATA_QUALITY_DEFAULT == 'full'
+        assert f"DEFAULT '{DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT}'" in ddl
+        assert DRIVE_STATISTICS_DATA_QUALITY_COLUMN_DEFAULT == 'unassessed'
 
     def test_addCheckDdlAllowedValuesMatchOrm(self) -> None:
         # Every value in the ORM's exported tuple must appear in the

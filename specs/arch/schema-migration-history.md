@@ -230,6 +230,13 @@ option-(c) code is now re-keyed forward to the SSOT `ecu_id` FK).*
 Prod `ecu` id=2 corrected by direct UPDATE; the code seed sites corrected
 all-coherently in US-378 (V0.28.2). The seed literals above now read `MD326328`.*
 
+*Speed-cal correction (2026-06-28, CIO-directed): the `correction_factor` `0.5`
+seed on `ecu_id=2` referenced above was corrected to **`1.0`** in prod
+`speed_pid_calibration` (provenance `empirical-gps-correlation-Drive-27`). The
+`0.5` / "~2x SPEED drift" was a km/h-read-as-mph mislabel, GPS-disproven on
+Drive 27 (Spool + Atlas); the dormant seed was never applied to any computed
+value. SPEED now reads true at factor `1.0` on BOTH ECUs.*
+
 ### V0.28.2 — `data_quality` column-width hotfix (Sprint 45, US-377)
 
 The V0.28.1 IRL drill (2026-06-01) exposed a **width-vs-CHECK** defect on the

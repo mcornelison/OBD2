@@ -17,6 +17,12 @@
 #                               non-empty heartbeat in IDLE auto-promotes
 #                               to ACTIVE).  Decision-API only -- US-299
 #                               wires the integration into SyncClient.
+# 2026-10-08    | Atlas (US-418)| ACTIVE demotes to IDLE after 12 consecutive
+#                               EMPTY pushes (CIO 2026-10-08). MEASURED
+#                               2026-10-07: the startup backlog promoted a
+#                               parked Pi 1 s after start and nothing could
+#                               demote it -- 330/362 pushes at 5 s for
+#                               15.8 h, ~275k journal lines/day.
 # ================================================================================
 ################################################################################
 
@@ -59,6 +65,21 @@ startup is the canonical case), an IDLE-state heartbeat that comes back
 with rows is a strong signal the engine actually started.  We escalate to
 ACTIVE so we don't spend a whole drive at 60s cadence because of a single
 missed event.  Empty heartbeats (the normal idle case) leave state alone.
+
+Empty-push demotion (US-418)
+----------------------------
+
+The fallback's trigger is any pushed row, and the most common source of one
+is NOT an engine: it is the startup backlog drain. On 2026-10-07 that
+promoted a parked Pi one second after start, and because drive_end was the
+only way out of ACTIVE it synced every 5 s for its whole uptime. ACTIVE now
+demotes after :data:`DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES` CONSECUTIVE empty
+pushes -- threshold + consecutive dwell (specs/design-patterns.md section 1).
+In a real drive every push carries realtime_data, so only a capture stall of
+about a minute demotes, and the next non-empty push re-promotes through the
+fallback above. A failed push counts as empty (``core.py`` reports it with
+``hadRows=False``), so a minute off WiFi also drops to the heartbeat rather
+than retrying every 5 s.
 """
 
 from __future__ import annotations
@@ -84,6 +105,10 @@ DEFAULT_IDLE_CADENCE_SECONDS: float = 60.0
 # workflow" = post-drive batch review (5s is plenty for Spool's tuning
 # analysis; 1s would be over-engineering and burn battery).
 DEFAULT_ACTIVE_CADENCE_SECONDS: float = 5.0
+
+# US-418 (CIO 2026-10-08): consecutive EMPTY pushes that end an ACTIVE stint.
+# 12 x 5 s = one idle heartbeat period (~60 s).
+DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES: int = 12
 
 
 class SyncCadenceState(StrEnum):
@@ -111,6 +136,9 @@ class SyncCadenceController:
             to :data:`DEFAULT_IDLE_CADENCE_SECONDS` (60s).
         activeSeconds: ACTIVE-state cadence in seconds.  Defaults to
             :data:`DEFAULT_ACTIVE_CADENCE_SECONDS` (5s).
+        demoteAfterEmptyPushes: Consecutive empty pushes that return ACTIVE
+            to IDLE (US-418).  Defaults to
+            :data:`DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES` (12).
     """
 
     def __init__(
@@ -118,10 +146,14 @@ class SyncCadenceController:
         now: Callable[[], float] | None = None,
         idleSeconds: float = DEFAULT_IDLE_CADENCE_SECONDS,
         activeSeconds: float = DEFAULT_ACTIVE_CADENCE_SECONDS,
+        demoteAfterEmptyPushes: int = DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES,
     ) -> None:
         self._now: Callable[[], float] = now if now is not None else time.monotonic
         self._idleSeconds: float = idleSeconds
         self._activeSeconds: float = activeSeconds
+        self._demoteAfterEmptyPushes: int = demoteAfterEmptyPushes
+        # US-418: empty pushes in a row during the CURRENT ACTIVE stint.
+        self._consecutiveEmptyPushes: int = 0
         self._state: SyncCadenceState = SyncCadenceState.IDLE
         # ``None`` = never synced; first :meth:`shouldSyncNow` returns True
         # so the sync loop establishes a baseline cursor.
@@ -156,6 +188,7 @@ class SyncCadenceController:
         """
         if self._state == SyncCadenceState.IDLE:
             self._state = SyncCadenceState.ACTIVE
+            self._consecutiveEmptyPushes = 0
             logger.info("SyncCadenceController: IDLE -> ACTIVE (drive_start)")
 
     def onDriveEnd(self) -> None:
@@ -197,7 +230,9 @@ class SyncCadenceController:
         Refreshes the cadence cooldown.  Applies the missed-drive-start
         fallback if state is IDLE and the sync returned rows (engine is
         likely running but drive_start callback never fired).  Resolves
-        DRAINING -> IDLE because the single final flush is now done.
+        DRAINING -> IDLE because the single final flush is now done.  In
+        ACTIVE, demotes to IDLE once ``demoteAfterEmptyPushes`` consecutive
+        pushes came back empty (US-418); any row restarts the count.
 
         Args:
             hadRows: ``True`` if the sync attempt pushed at least one
@@ -216,10 +251,25 @@ class SyncCadenceController:
             # Missed drive_start fallback -- a non-empty heartbeat in IDLE
             # is a strong signal the engine is running.
             self._state = SyncCadenceState.ACTIVE
+            self._consecutiveEmptyPushes = 0
             logger.warning(
                 "SyncCadenceController: IDLE -> ACTIVE (missed drive_start "
                 "fallback; non-empty heartbeat sync)"
             )
+        elif self._state == SyncCadenceState.ACTIVE:
+            # US-418: a RUN of empty pushes ends ACTIVE; one row restarts it.
+            if hadRows:
+                self._consecutiveEmptyPushes = 0
+                return
+            self._consecutiveEmptyPushes += 1
+            if self._consecutiveEmptyPushes >= self._demoteAfterEmptyPushes:
+                self._state = SyncCadenceState.IDLE
+                logger.info(
+                    "SyncCadenceController: ACTIVE -> IDLE (%d consecutive empty "
+                    "pushes; nothing to stream)",
+                    self._consecutiveEmptyPushes,
+                )
+                self._consecutiveEmptyPushes = 0
 
     # -- internal ---------------------------------------------------------
 

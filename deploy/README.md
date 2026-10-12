@@ -21,7 +21,7 @@ and the home analysis server (chi-srv-01).
 ## Pi Tier — `deploy-pi.sh`
 
 Single script that runs from a Windows git-bash shell, SSHes to
-`mcornelison@10.27.27.28`, mirrors the working tree to the Pi, updates the
+`mcornelison@chi-eclipse-01`, mirrors the working tree to the Pi, updates the
 Python venv, and restarts the systemd service.
 
 ### Modes
@@ -39,7 +39,7 @@ Python venv, and restarts the systemd service.
 ```bash
 # 1. Make a local override of the Pi connection details (gitignored)
 cp deploy/deploy.conf.example deploy/deploy.conf
-# (edit deploy.conf if your Pi is not at 10.27.27.28)
+# (edit deploy.conf if your Pi is not reachable as chi-eclipse-01)
 
 # 2. First-time Pi bootstrap (wipes legacy ~/Projects, sets hostname, etc.)
 bash deploy/deploy-pi.sh --init
@@ -54,7 +54,7 @@ bash deploy/deploy-pi.sh --restart
 ### Re-deploy in 30 seconds (operator quick-card)
 
 ```bash
-cd /z/o/OBD2v2          # or wherever your local clone lives
+cd /c/agents/OBD2v3/trunk   # the trunk worktree (see fleet.json)
 bash deploy/deploy-pi.sh
 ```
 
@@ -64,7 +64,7 @@ mtimes on extract, so a second default-mode run converges to the same state).
 
 ### Prerequisites
 
-- **Local (Windows git-bash):** key-based SSH to `mcornelison@10.27.27.28` already
+- **Local (Windows git-bash):** key-based SSH to `mcornelison@chi-eclipse-01` already
   works. The script prefers `rsync` for incremental sync; if `rsync` isn't
   installed, it automatically falls back to a `tar -cz | ssh … | tar -xz`
   pipe (no extra install needed — `tar` and `ssh` ship with git-bash).
@@ -114,6 +114,77 @@ pytest tests/deploy/ -v
 
 Asserts flag parsing, `--help`, `--dry-run` safety (no real SSH, no real rsync),
 mutual exclusion of `--init`/`--restart`, and `deploy.conf` override behavior.
+
+## Pre-drive OBD green-light — `verify_pre_drive.sh` (US-479 / F-117)
+
+**The one command to run before every drive.** Proves, in order, that the Pi is
+(1) BT-bonded/linked to the OBDLink LX `00:04:3E:85:0D:FB`, (2) rfcomm-bound to
+`/dev/rfcomm0`, (3) able to complete a KOEO (engine-off) read in the driveway,
+and (4) actually landing `realtime_data` rows during a live window **while the
+A-17 connect-edge is exercised** — a KOEO/idle DTC read co-occurring with the
+realtime logger on the *one* connection. That is the exact race that let a
+weekend of drives capture zero rows, so a happy-path-only pass is impossible: the
+gate refuses to green-light unless the edge was crossed and capture survived it.
+Its output is copy-pasteable evidence for `/sprint-validated`.
+
+```bash
+# Authoritative in-car gate (engine warm, idling) — 30 s window:
+make pre-drive                        # bash scripts/verify_pre_drive.sh
+bash scripts/verify_pre_drive.sh --duration 60
+
+# Driveway, engine OFF — earliest signal (link + one read), no live window:
+make pre-drive-koeo                   # bash scripts/verify_pre_drive.sh --koeo-only
+
+# Off-Pi logic check (simulator) — NOT a substitute for a live PASS:
+make pre-drive-bench                  # bash scripts/verify_pre_drive.sh --bench
+```
+
+Ends with `CAPTURE: PASS` (exit 0, green-light the drive) or `CAPTURE: FAIL`
+(exit 1, do **not** drive blind). The live steps SSH to the Pi (stop the
+collector so the probe owns `/dev/rfcomm0`, then restart it); `--dry-run` prints
+the plan without touching the Pi. The capture probe
+(`scripts/pre_drive_greenlight.py`) writes to a dedicated temp DB, never the
+production `data/obd.db`. Suite coverage: `pytest tests/deploy/test_verify_pre_drive.py`
+and `pytest tests/pi/obdii/test_pre_drive_gate.py`.
+
+## On-Pi service control — `obdctl` (US-492 / F-122)
+
+**One command, run ON the Pi, to service any OBD unit or all of them** — instead
+of hand-typing `systemctl` eight times and remembering the unit list. Installed
+to `/usr/local/bin/obdctl` by `deploy-pi.sh` (`step_install_obdctl`), so it is
+there after any deploy.
+
+```bash
+obdctl                          # = status all (a bare call is NEVER destructive)
+obdctl status all               # live state of all 8 units
+obdctl restart obd              # aliases: obd powerwatch states boot-state
+obdctl stop all                 #          splash grace dashboard rfcomm
+obdctl kill dashboard           # SIGKILL a STUCK unit (confirms first)
+obdctl start powerwatch         # bring the safe-shutdown guard back
+obdctl --dry-run stop all       # print the plan, execute nothing
+obdctl --help
+```
+
+`all` starts in dependency order and stops in **reverse**-dependency order
+(kiosk/splash → state server → core), so nothing is orphaned or raced.
+
+**Safety.** `eclipse-powerwatch` is the safe-shutdown guard (D-7/F-7): with it
+stopped the Pi has **no graceful shutdown on power loss**. A `stop`/`kill` of it —
+directly or via `all` — warns loudly and asks first (`--yes`/`--force` to script
+it); `restart` and `status` are unrestricted. Declining during `stop all` stops
+everything *except* the guard. `kill` is SIGKILL and always confirms; it is never
+an automatic fallback for a failed `stop`. Any run that finds the guard down
+prints the recovery command.
+
+**Exit codes:** `0` all good, `1` usage error, `2` an action failed, was declined,
+or a unit named by hand is not installed. States are always read back from
+`systemctl`, never assumed; an unreadable state reports `unknown`, not a guess.
+
+The unit list, aliases and ordering come from `src/pi/ops/unit_manifest.py` — the
+SSOT shared with the US-403 kiosk allow-list, so the two can never disagree about
+what a unit is called. `obdctl` runs on **system** `python3` (not the app venv)
+and imports nothing from the application, so it still works when the venv or the
+config is broken. Suite coverage: `pytest tests/pi/ops/ tests/deploy/test_obdctl_install.py`.
 
 ## Pi Tier — systemd service (eclipse-obd.service)
 

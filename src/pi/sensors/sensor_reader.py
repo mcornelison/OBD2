@@ -1,0 +1,1448 @@
+################################################################################
+# File Name: sensor_reader.py
+# Purpose/Description: EDR IMU + light sensor readers (US-409, F-113). Each reader
+#                      probes its I2C device at init, and -- only if present --
+#                      runs a poll loop publishing raw readings onto the F-110
+#                      SampleBus as ADDITIVE LOSSY channels (never touching
+#                      raw.obd.*). The IMU is read as one burst per poll
+#                      (accel+gyro+mag+temp together) so all four topics carry the
+#                      SAME seq (the persistence subscriber, US-410, assembles one
+#                      edr_imu_sample row per seq). Graceful-absence: an unwired
+#                      sensor produces SILENCE (a retained state.sensor.*=absent
+#                      marker + zero samples), never a fabricated 0.0/null a
+#                      consumer could mistake for a real zero-g / zero-lux reading.
+#                      Light saturation publishes lux=None (never inf). Ships dark
+#                      behind pi.sensors.{imu,light}.enabled under pi.bus.enabled.
+#                      ADR: $FLEET_SHARE/knowledge/superpowers/specs/
+#                      2026-06-30-edr-sensor-reader-schema-bus-adr.md sections 1/3.
+# Author: Rex (US-409)
+# Creation Date: 2026-06-30
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-06-30    | Rex (US-409) | Initial -- IMU + light readers, additive bus
+#               |              | topics, burst-poll shared seq, graceful-absence,
+#               |              | presence STATE, saturation->None, config factory.
+# 2026-08-21    | Rex (US-565) | IMU magnetometer acquired DIRECTLY at 0x0C over
+#               |              | I2C bypass instead of through the ICM's aux-I2C
+#               |              | shadow, which was measured performing a single
+#               |              | transfer and then stopping. Mag-only fault is
+#               |              | non-fatal; accel/gyro unchanged.
+# 2026-08-21    | Rex (US-564) | Plausibility/invariance gate on the SUCCESS path:
+#               |              | an implausible or bit-identical read is routed
+#               |              | into the EXISTING failed-poll path (no new
+#               |              | silence mechanism) + a retained per-channel gate
+#               |              | STATE; failed-poll WARNING rate-limited.
+# 2026-09-22    | Rex (US-801) | DEFAULT_IMU_SAMPLE_HZ imported from the single
+#               |              | definition in common.config.validator (now 4).
+# 2026-09-28    | Atlas        | ARCH-064 Task 2: magMode "direct" (acquisition C,
+#               | (ARCH-064)   | clean-reset bypass, I2C master never enabled) via
+#               |              | _makeIcm20948Direct/_buildImuDeviceDirect. Review
+#               |              | Focus 1: a mag-only read fault in _readAndPublish
+#               |              | now drops only the mag channel -- previously it
+#               |              | aborted the whole burst, discarding an already-
+#               |              | read accel/gyro too.
+# 2026-09-30    | Atlas        | FIXED-RATE poll loop (nextPollDeadline). The loop
+#               | (ARCH-064d,  | waited a full interval AFTER each poll's work, so
+#               | CIO-directed)| the real period was 1/sampleHz + work: MEASURED on
+#               |              | drive 96 at 24.72 ms vs 20 ms configured (40.5 Hz,
+#               |              | not 50). Deadlines are now anchored to the schedule;
+#               |              | an overrun skips missed ticks, never bursts.
+# 2026-10-06    | Atlas (US-731,| The TSL2591 reads DAYLIGHT. It had run at the
+#               | CIO-directed)| library default (medium gain, 100 ms) on every
+#               |              | sample ever taken, so it saturated at ~3,400 lux and
+#               |              | published NULL in sun. Now: AUTO-RANGE LOW<->MEDIUM
+#               |              | (never above medium: night stays as today, CIO), and
+#               |              | lux computed from the raw counts with the DATASHEET
+#               |              | gains (24.5x, not the library's 25x; CIO). Still
+#               |              | four sensor reads per sample (CIO).
+# ================================================================================
+################################################################################
+
+"""EDR IMU + light sensor readers that publish onto the F-110 SampleBus."""
+
+from __future__ import annotations
+
+import logging
+import math
+import threading
+import time
+from collections.abc import Callable
+from typing import Any
+
+# US-801: the IMU rate default is DEFINED once, in the validator, and imported
+# here under this module's historical name (tests monkeypatch it).
+from common.config.validator import DEFAULT_IMU_SAMPLE_HZ
+from common.time.helper import utcIsoNow
+from pi.bus.bus import SampleBus
+from pi.bus.sample import Sample
+from pi.obdii.drive_id import getCurrentDriveId
+
+# ARCH-033: the AK09916's axis map into the ICM frame. A top-level import is
+# safe here -- ak09916_bypass imports only logging and typing, so there is no
+# cycle back into this module. It was first written BELOW the import block
+# with an E402 suppression, which silenced the symptom and broke `make lint`
+# on dev (ruff I001, un-sorted import block). A suppression that needs a
+# second lint suppressed to stay quiet is the wrong fix.
+#   (And writing that suppression out longhand in this comment made ruff parse
+#    the comment itself as a directive -- so it is described, not spelled.)
+from pi.sensors.ak09916_bypass import (
+    MAG_SOURCE_BYPASS,
+    MAG_SOURCE_ICM_SHADOW,
+    toIcmFrame,
+)
+
+# US-803-a: the A-34 recovery tunables and their absent-key fallbacks.
+# gyro_recovery imports only the standard library, so there is no cycle.
+from pi.sensors.gyro_recovery import (
+    DEFAULT_SAMPLE_COUNT,
+    DEFAULT_SETTLE_S,
+    GYRO_FAULT_MIN_RAD_S,
+    GyroRecoverySettings,
+)
+
+# The accel floor is the SAME constant the tilt maths already refuses to work
+# below -- imported, never retyped, so the gate and the level frame cannot drift
+# into disagreeing about what counts as a usable specific-force vector.
+from pi.sensors.mag_keepalive import MAG_PLAUSIBLE_MAX_UT
+from pi.sensors.pitch_fusion import MIN_GRAVITY_MS2
+
+# US-564: the gate owns the MECHANISM (bit-identity + magnitude); this module
+# owns the PHYSICS (which channel gets which check, and what the floor is).
+from pi.sensors.plausibility_gate import (
+    DEFAULT_INVARIANT_DWELL_S,
+    GATE_OK,
+    ChannelPolicy,
+    PlausibilityGate,
+    channelStateTopic,
+    magnitudeAtLeast,
+    magnitudeAtMost,
+)
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "ImuReader",
+    "LightReader",
+    "createSensorReadersFromConfig",
+    "PRESENT",
+    "ABSENT",
+    "STATE_IMU",
+    "STATE_LIGHT",
+    "TOPIC_IMU_ACCEL",
+    "TOPIC_IMU_GYRO",
+    "TOPIC_IMU_MAG",
+    "TOPIC_IMU_TEMP",
+    "TOPIC_LIGHT_LUX",
+    "TOPIC_LIGHT_RANGE",
+    "TOPIC_LIGHT_RAW",
+]
+
+# --- Bus topics (additive -- never touch raw.obd.*) -- ADR section 1.1 --------
+TOPIC_IMU_ACCEL = "raw.imu.accel"
+TOPIC_IMU_GYRO = "raw.imu.gyro"
+TOPIC_IMU_MAG = "raw.imu.mag"
+TOPIC_IMU_TEMP = "raw.imu.temp"
+TOPIC_LIGHT_LUX = "raw.light.lux"
+TOPIC_LIGHT_RAW = "raw.light.raw"
+# ARCH-009 -- the RANGE CONTEXT a reading was taken under (gain code,
+# integration ms). Rule A: the driver must set both to read the chip at all, so
+# they are observed and accessible; landing the lux without them stores a number
+# whose meaning cannot be reconstructed. They are also the two values that
+# separate "mis-ranged sensor" from "IR-subtraction limit" on a negative lux.
+TOPIC_LIGHT_RANGE = "raw.light.range"
+
+# Retained presence STATE topics (ADR section 3). STATE = last-value cache.
+STATE_IMU = "state.sensor.imu"
+STATE_LIGHT = "state.sensor.light"
+
+# Presence encoded as a float on the STATE topic (the bus Sample.value envelope
+# is numeric); the human-readable label rides in the unit field.
+PRESENT = 1.0
+ABSENT = 0.0
+_LABEL_PRESENT = "present"
+_LABEL_ABSENT = "absent"
+
+# Units (ADR section 1.1).
+UNIT_ACCEL = "m/s^2"
+UNIT_GYRO = "rad/s"
+UNIT_MAG = "uT"
+UNIT_TEMP = "degC"
+UNIT_LUX = "lux"
+UNIT_COUNT = "count"
+UNIT_RANGE = "gain/ms"
+
+#: ARCH-057: the magnetometer acquisition modes. See
+#: ``validator.py: 'pi.sensors.imu.magMode'`` for why 'master' is the default and
+#: why 'bypass' is retained rather than deleted.
+MAG_MODE_MASTER = "master"
+MAG_MODE_BYPASS = "bypass"
+#: ARCH-064 acquisition C: a clean-reset build that NEVER enables the ICM's
+#: internal I2C master (built via SparkFun primitives, not adafruit -- see
+#: icm20948_direct.py's module header for what MEASURED 2026-09-28 ruled out
+#: about 'master' and 'bypass' on this board). Not yet the default (Task 5).
+MAG_MODE_DIRECT = "direct"
+
+
+# I2C addresses (ADR: ICM-20948 @0x69, TSL2591 @0x29).
+ADDR_IMU = 0x69
+ADDR_TSL = 0x29
+
+# Default bus publish rates (ADR section 1.2 / 4) -- the safety fallbacks used
+# when a caller passes an unvalidated config. The IMU rate is imported above
+# (US-801); the light rate is mirrored by the validator DEFAULTS registry.
+DEFAULT_LIGHT_SAMPLE_HZ = 1
+
+# Fallback poll interval when a non-positive sampleHz slips through (defensive;
+# the validated config always carries a positive rate).
+_FALLBACK_INTERVAL_S = 1.0
+
+
+def nextPollDeadline(prevDue: float, *, now: float, intervalS: float) -> float:
+    """Return the next poll deadline on a FIXED-RATE schedule (ARCH-064d).
+
+    The schedule is anchored to ``prevDue``, never to ``now``: a poll's own work
+    time is absorbed by the interval instead of being added to it. Waiting a
+    full interval after the work (the old loop) made the real period
+    ``1/sampleHz + work`` -- MEASURED on drive 96 as 24.72 ms against a
+    configured 20 ms, so a "50 Hz" reader ran at 40.5 Hz.
+
+    An overrun (work longer than the time left in the slot) SKIPS the missed
+    ticks and returns the first tick strictly in the future, on the original
+    phase. It never returns a deadline in the past, so the loop cannot fire a
+    catch-up burst of back-to-back polls after a stall.
+
+    Args:
+        prevDue: The deadline the poll that just finished was scheduled for.
+        now: The current monotonic time.
+        intervalS: The poll interval (1 / sampleHz), seconds.
+
+    Returns:
+        The next deadline, in the same monotonic time base.
+    """
+    due = prevDue + intervalS
+    if due <= now:
+        missed = math.floor((now - due) / intervalS) + 1
+        due += missed * intervalS
+    return due
+
+# TSL2591 raises on a saturated/overflow lux read; treat these as "unreadable"
+# (publish None) rather than a fabricated value.
+_SATURATION_ERRORS = (RuntimeError, OverflowError, ValueError, ZeroDivisionError)
+
+# ---- US-731: TSL2591 range + lux -------------------------------------------------
+# Source: ams TSL2591 datasheet v3-00 (2023-02-08), hardware/datasheets/tsl2591/.
+# AGAIN register codes (CONTROL 0x01, bits 5:4): 00 low, 01 medium, 10 high, 11 max.
+TSL_GAIN_LOW = 0x00
+TSL_GAIN_MED = 0x10
+TSL_GAIN_HIGH = 0x20
+TSL_GAIN_MAX = 0x30
+#: "Gain scaling, relative to 1x gain setting", TYPICAL (p.6: medium 22/24.5/27,
+#: high 360/400/440). MAX is absent ON PURPOSE: the datasheet gives it per
+#: channel (CH0 9,200 / CH1 9,900) and the lux equation takes one multiplier, so a
+#: MAX-gain lux would be a guess. The library uses 25 / 428 / 9876 (not these).
+_TSL_GAIN_X: dict[int, float] = {TSL_GAIN_LOW: 1.0, TSL_GAIN_MED: 24.5, TSL_GAIN_HIGH: 400.0}
+#: Max ADC count by ATIME index (p.7 and the CONTROL register table): 100 ms -> 36,863,
+#: 200-600 ms -> 65,535. A channel AT the max is saturated: not a reading.
+_TSL_MAX_COUNT: dict[int, int] = {0: 36863, 1: 65535, 2: 65535, 3: 65535, 4: 65535, 5: 65535}
+#: The lux equation is NOT in the ams datasheet. It is Adafruit's (adafruit_tsl2591
+#: 1.4.8, ported from their Arduino library) and the library notes it is "not
+#: calibrated". Kept as-is; only its GAIN input changes (US-731, CIO).
+_TSL_LUX_DF = 408.0
+_TSL_LUX_COEF_B = 1.64
+_TSL_LUX_COEF_C = 0.59
+_TSL_LUX_COEF_D = 0.86
+
+# Auto-ranging, LOW <-> MEDIUM only (CIO 2026-10-06: never above medium, so night
+# readings stay exactly as today). Integration stays 100 ms.
+#: Step DOWN at medium when either channel reaches 90 % of the max count -- before
+#: it overflows, so the reading that triggers the step is usually still valid.
+TSL_STEP_DOWN_FRACTION = 0.90
+#: Step UP at low only when the reading, scaled by the datasheet's WORST-CASE
+#: medium gain (27x, p.6), would sit under 50 % of the max count -- far below the
+#: 90 % step-down, so a light level near the boundary cannot flap between ranges.
+TSL_STEP_UP_FRACTION = 0.50
+_TSL_MED_GAIN_WORST_X = 27.0
+
+# US-564 / Atlas AC-7: how often an ONGOING poll fault re-states itself. The
+# TRANSITION always logs immediately; only the repetition is rate-limited. The
+# failed-poll WARNING previously fired once per poll, i.e. 50 times a second on
+# the IMU (seq reached 128,422 in minutes) -- which is how a real fault hides in
+# its own noise. Do NOT silence it: a fault nobody can find in the journal and a
+# fault nobody logged are the same fault operationally.
+DEFAULT_POLL_FAULT_SUMMARY_S = 60.0
+
+
+class GatedReadingError(Exception):
+    """A successful read that the plausibility gate refused as a non-measurement.
+
+    Raised for a CRITICAL channel only, so it lands in the reader's existing
+    ``pollOnce`` failure handler: the poll publishes nothing, the seq still
+    advances, and the consumer sees the same honest gap an I/O fault produces.
+    Reusing that path is deliberate -- a second silence mechanism would be a
+    second thing to keep honest.
+    """
+
+    def __init__(self, topic: str, reason: str) -> None:
+        """Bind the refusal to the channel and reason that caused it."""
+        super().__init__(f"{reason} on {topic}")
+        self.topic = topic
+        self.reason = reason
+
+
+class _PollFaultLog:
+    """Transition-plus-summary logger for a repeating poll fault.
+
+    Logs the moment a fault STARTS, stays quiet while it persists, re-states it
+    with a suppressed-count every ``summaryEveryS``, and logs the recovery. The
+    count is part of the message because "still failing" and "failed 3,000 more
+    times" are different operational facts.
+    """
+
+    def __init__(
+        self,
+        summaryEveryS: float = DEFAULT_POLL_FAULT_SUMMARY_S,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        """Bind the summary interval and (injectable) monotonic clock."""
+        self._summaryEveryS = summaryEveryS
+        self._clock = clock if clock is not None else time.monotonic
+        self._since: dict[str, float] = {}
+        self._suppressed: dict[str, int] = {}
+
+    def note(self, key: str, message: str, *args: Any) -> None:
+        """Record one occurrence of ``key``, logging on start or on summary."""
+        now = self._clock()
+        last = self._since.get(key)
+        if last is None:
+            self._since[key] = now
+            self._suppressed[key] = 0
+            logger.warning(message, *args)
+            return
+        self._suppressed[key] = self._suppressed.get(key, 0) + 1
+        if (now - last) >= self._summaryEveryS:
+            logger.warning(
+                "%s -- still failing: %d further occurrences in the last %.0fs",
+                message % args if args else message,
+                self._suppressed[key],
+                now - last,
+            )
+            self._since[key] = now
+            self._suppressed[key] = 0
+
+    def clear(self, key: str, message: str, *args: Any) -> None:
+        """Log a recovery iff ``key`` was actually in a fault state."""
+        if key not in self._since:
+            return
+        suppressed = self._suppressed.pop(key, 0)
+        self._since.pop(key, None)
+        logger.warning("%s (%d occurrences suppressed)", message % args if args else message, suppressed)
+
+
+class _BaseSensorReader:
+    """Shared scaffold for a single-sensor reader (probe + poll loop + STATE).
+
+    Subclasses declare ``source`` / ``stateTopic`` and implement
+    :meth:`_defaultDeviceFactory` (the real hardware handle) and
+    :meth:`_readAndPublish` (one poll's reads + publishes). The scaffold owns the
+    probe/graceful-absence discipline, the per-producer ``seq`` counter, the
+    retained presence STATE topic, and the daemon poll thread.
+    """
+
+    source: str = ""
+    stateTopic: str = ""
+
+    # US-564: the per-channel physics this reader is willing to assert. A topic
+    # absent from this map is published unchecked -- enrolling a channel is an
+    # evidence decision, never a default (see plausibility_gate's header).
+    channelPolicies: dict[str, ChannelPolicy] = {}
+
+    # Channels whose refusal invalidates the WHOLE burst. A gated critical
+    # channel routes the poll into the failed-poll path, so no partial row is
+    # persisted for that seq; a gated NON-critical channel is silenced alone and
+    # its healthy siblings still publish.
+    criticalTopics: tuple[str, ...] = ()
+
+    def __init__(
+        self,
+        bus: SampleBus,
+        *,
+        sampleHz: int = 1,
+        deviceFactory: Callable[[], Any] | None = None,
+        dataSource: str = "real",
+        invariantDwellSeconds: float = DEFAULT_INVARIANT_DWELL_S,
+        clockFn: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Bind a reader to the bus.
+
+        Args:
+            bus: The SampleBus this reader publishes onto (producer role).
+            sampleHz: Bus publish rate in Hz. The poll loop keeps a FIXED-RATE
+                schedule of 1 / sampleHz (ARCH-064d), so this is the rate the
+                reader actually runs at while a poll takes less than one interval.
+            deviceFactory: callable() -> device handle; DI'd for tests/non-Pi.
+                Defaults to the subclass's real-hardware factory, which raises
+                on a non-Pi host or an absent sensor (the graceful-absent path).
+            dataSource: Origin tag stamped on every sample (US-195 contract).
+            invariantDwellSeconds: US-564 check-2 dwell -- how long a channel
+                must stay BIT-IDENTICAL before it is reported ``sensor_stale``.
+            clockFn: Monotonic clock for the poll schedule (injection seam).
+        """
+        self._bus = bus
+        self._clock = clockFn
+        self._sampleHz = sampleHz
+        self._intervalS = 1.0 / sampleHz if sampleHz and sampleHz > 0 else _FALLBACK_INTERVAL_S
+        self._deviceFactory = deviceFactory if deviceFactory is not None else self._defaultDeviceFactory
+        self._dataSource = dataSource
+        self._device: Any | None = None
+        self._present = False
+        self._probed = False
+        self._seq = 0
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._gate = PlausibilityGate(
+            sampleHz=sampleHz,
+            policies=self.channelPolicies,
+            invariantDwellSeconds=invariantDwellSeconds,
+        )
+        self._faultLog = _PollFaultLog()
+
+    # -- subclass hooks --------------------------------------------------------
+    def _defaultDeviceFactory(self) -> Any:
+        """Construct the real I2C device handle (raises when absent/non-Pi)."""
+        raise NotImplementedError
+
+    def _readAndPublish(self, seq: int) -> None:
+        """Read one poll's worth of data and publish it under ``seq``."""
+        raise NotImplementedError
+
+    # -- lifecycle -------------------------------------------------------------
+    @property
+    def isPresent(self) -> bool:
+        """True iff the sensor was detected at probe time."""
+        return self._present
+
+    def probe(self) -> bool:
+        """Detect the sensor once. Absent -> log once at WARN, stay silent.
+
+        Constructing the device performs the I2C handshake (a test read); a
+        failure means the sensor is not wired (or we are off-Pi). Absent is
+        SAFE, never fatal -- a flag flipped on before the sensor is physically
+        present takes this path, not a crash.
+
+        Returns:
+            True if the sensor is present, else False.
+        """
+        self._probed = True
+        # A re-probe is a discontinuity: a value read before it must not pair
+        # with one read after it to manufacture an invariant run across a gap
+        # when the channel was not reading at all.
+        self._gate.reset()
+        try:
+            self._device = self._deviceFactory()
+            self._present = True
+            logger.info("%s sensor present -- reader armed", self.source)
+        except Exception as exc:  # noqa: BLE001 -- absent must be safe, never fatal
+            self._device = None
+            self._present = False
+            logger.warning(
+                "%s sensor absent (%s) -- publishing silence (state=absent), "
+                "no fabricated samples",
+                self.source,
+                exc,
+            )
+        return self._present
+
+    def start(self) -> None:
+        """Probe (if not yet), publish the retained STATE, and -- if present --
+        start the poll thread. Absent -> STATE=absent + no thread (silence)."""
+        if not self._probed:
+            self.probe()
+        self._publishState()
+        if self._present:
+            self._stop.clear()
+            self._thread = threading.Thread(
+                target=self._loop, name=f"SensorReader-{self.source}", daemon=True
+            )
+            self._thread.start()
+
+    def stop(self, timeoutS: float = 5.0) -> None:
+        """Signal the poll loop to exit, join the thread, and release the device.
+
+        Args:
+            timeoutS: Maximum seconds to wait for the poll thread to finish.
+        """
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeoutS)
+            self._thread = None
+        self._closeDevice()
+
+    def pollOnce(self) -> None:
+        """Run exactly one poll: bump seq, read, publish. Absent -> no-op.
+
+        A read fault is isolated (logged, no sample) -- reader isolation, the
+        producer-side analogue of the PersistenceSubscriber's per-write guard.
+        The seq still advances so a downstream consumer sees an honest gap.
+
+        US-564: a read that SUCCEEDS but returns a non-measurement on a critical
+        channel lands here too, via GatedReadingError. That is the point -- the
+        outcome an operator sees is the same honest gap, produced by the same
+        code, and there is exactly one path that means "no sample this poll".
+        """
+        if self._device is None:
+            return
+        self._seq += 1
+        try:
+            self._readAndPublish(self._seq)
+        except GatedReadingError as gated:
+            self._faultLog.note(
+                f"gate:{gated.topic}",
+                "%s burst REFUSED by the plausibility gate (seq=%d, %s on %s) "
+                "-- no sample this poll; the device answered, the answer was not a reading",
+                self.source,
+                self._seq,
+                gated.reason,
+                gated.topic,
+            )
+        except Exception as exc:  # noqa: BLE001 -- one bad read never crashes the loop
+            self._faultLog.note(
+                "read",
+                "%s read failed (seq=%d, %s) -- no sample this poll",
+                self.source,
+                self._seq,
+                exc,
+            )
+        else:
+            self._faultLog.clear("read", "%s read recovered (seq=%d)", self.source, self._seq)
+
+    def _loop(self) -> None:
+        """Poll on a fixed-rate schedule of 1 / sampleHz until stopped (ARCH-064d)."""
+        due = self._clock()
+        while not self._stop.is_set():
+            self.pollOnce()
+            due = nextPollDeadline(due, now=self._clock(), intervalS=self._intervalS)
+            self._stop.wait(max(0.0, due - self._clock()))
+
+    # -- publishing ------------------------------------------------------------
+    def _publishBurst(
+        self, readings: tuple[tuple[str, Any, str], ...], seq: int
+    ) -> None:
+        """Gate one poll's readings, then publish the survivors under ``seq``.
+
+        Every reading is gated BEFORE any of them is published, so the atomic
+        burst contract (one edr_imu_sample row per seq, or none) holds regardless
+        of the order a subclass lists its channels in. Ordering the checks after
+        the publishes would make the guarantee depend on which topic happened to
+        be written first -- a correctness property resting on a list's order.
+
+        Args:
+            readings: ``(topic, value, unit)`` triples read this poll.
+            seq: The shared sequence number for the burst.
+
+        Raises:
+            GatedReadingError: When a CRITICAL channel is refused -- nothing has
+                been published at that point, so the poll produces the same
+                honest silence an I/O fault would.
+        """
+        verdicts = {topic: self._gate.check(topic, value) for topic, value, _ in readings}
+        for topic, verdict in verdicts.items():
+            if verdict.changed:
+                self._publishChannelState(topic, verdict.reason)
+        for topic in self.criticalTopics:
+            verdict = verdicts.get(topic)
+            if verdict is not None and not verdict.ok:
+                raise GatedReadingError(topic, verdict.reason or "")
+        for topic, value, unit in readings:
+            verdict = verdicts[topic]
+            if verdict.ok:
+                self._faultLog.clear(
+                    f"gate:{topic}", "%s %s channel reading again", self.source, topic
+                )
+                self._publish(topic, value, unit, seq)
+            else:
+                self._faultLog.note(
+                    f"gate:{topic}",
+                    "%s %s REFUSED by the plausibility gate (seq=%d, %s) -- channel "
+                    "silenced; derived fields go typed-NA rather than carry it forward",
+                    self.source,
+                    topic,
+                    seq,
+                    verdict.reason,
+                )
+
+    def _publishChannelState(self, topic: str, reason: str | None) -> None:
+        """Publish the retained per-channel gate STATE on a transition.
+
+        Retained + transition-only: a consumer that starts late still learns the
+        channel is gated (last-value cache), and a channel gated at 50 Hz costs
+        one marker, not fifty a second. The reason rides in the unit field
+        exactly as the presence STATE's present/absent label does -- one existing
+        mechanism, extended, rather than a second vocabulary to keep honest.
+        """
+        sample = Sample(
+            topic=channelStateTopic(topic),
+            source=self.source,
+            value=ABSENT if reason else PRESENT,
+            unit=reason or GATE_OK,
+            tsUtc=utcIsoNow(),
+            tsCapture=time.monotonic(),
+            driveId=None,
+            dataSource=self._dataSource,
+            seq=0,
+        )
+        self._bus.publish(sample, retain=True)
+
+    def _publish(
+        self, topic: str, value: float | tuple[float, ...] | None, unit: str, seq: int
+    ) -> None:
+        """Fan one reading out on the bus (never blocks -- LOSSY drop-oldest)."""
+        sample = Sample(
+            topic=topic,
+            source=self.source,
+            value=value,
+            unit=unit,
+            tsUtc=utcIsoNow(),
+            tsCapture=time.monotonic(),
+            driveId=getCurrentDriveId(),
+            dataSource=self._dataSource,
+            seq=seq,
+        )
+        self._bus.publish(sample)
+
+    def _publishState(self) -> None:
+        """Publish the retained presence STATE (present|absent) once."""
+        sample = Sample(
+            topic=self.stateTopic,
+            source=self.source,
+            value=PRESENT if self._present else ABSENT,
+            unit=_LABEL_PRESENT if self._present else _LABEL_ABSENT,
+            tsUtc=utcIsoNow(),
+            tsCapture=time.monotonic(),
+            driveId=None,
+            dataSource=self._dataSource,
+            seq=0,
+        )
+        self._bus.publish(sample, retain=True)
+
+    def _closeDevice(self) -> None:
+        """Release the device handle if it exposes ``close`` (best-effort)."""
+        dev = self._device
+        self._device = None
+        close = getattr(dev, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:  # noqa: BLE001 -- close error is non-fatal
+                logger.debug("%s device close error (ignored): %s", self.source, exc)
+
+
+class ImuReader(_BaseSensorReader):
+    """ICM-20948 9-DoF IMU reader. One burst poll -> accel+gyro+mag+temp, all
+    published under a SINGLE shared seq (ADR section 1.1)."""
+
+    source = "imu"
+    stateTopic = STATE_IMU
+
+    # US-564 physics for this chip, and every entry is grounded in a measurement:
+    #  - accel carries a MAGNITUDE floor because a stationary sensor must read
+    #    ~9.81 m/s^2 and a moving one reads more -- never ~0 (the 43,203 all-zero
+    #    rows of 08-17). MIN_GRAVITY_MS2 is the same floor the level frame uses.
+    #  - accel/gyro/mag are all enrolled in the BIT-IDENTITY check because this
+    #    die was measured dithering: 743 distinct accel values in 90 s stationary
+    #    while the magnetometer served 1.
+    #  - temp is deliberately NOT enrolled. It is a coarse, slowly-varying
+    #    housekeeping channel that is already best-effort/honest-null, nobody has
+    #    measured its dither, and it feeds no displayed or derived field.
+    channelPolicies = {
+        TOPIC_IMU_ACCEL: ChannelPolicy(
+            plausible=magnitudeAtLeast(MIN_GRAVITY_MS2), invariance=True
+        ),
+        TOPIC_IMU_GYRO: ChannelPolicy(invariance=True),
+        # ARCH-059: a magnitude CEILING as well as invariance. The 18 overflow rows
+        # measured on drive 84 (+/-4895..4915 uT) passed the old policy because
+        # invariance only catches a channel that has stopped MOVING, and a
+        # saturated channel still dithers. NO FLOOR: that would be invented
+        # physics (the pinned enrolment test says so) and invariance already
+        # catches a stuck-at-zero channel. Earth's field is 25-65 uT globally.
+        TOPIC_IMU_MAG: ChannelPolicy(
+            plausible=magnitudeAtMost(MAG_PLAUSIBLE_MAX_UT),
+            invariance=True,
+        ),
+    }
+
+    # Accel is the burst's load-bearing channel: without it there is no gravity
+    # reference, no level frame and no usable edr_imu_sample row, so its refusal
+    # takes the whole poll. A refused MAG must NOT -- the 08-20 measurement is
+    # that accel and gyro are HEALTHY while the magnetometer is latched, and
+    # discarding the burst would throw away valid g-force, pitch and grade data.
+    criticalTopics = (TOPIC_IMU_ACCEL,)
+
+    def __init__(
+        self,
+        bus: SampleBus,
+        *,
+        sampleHz: int = DEFAULT_IMU_SAMPLE_HZ,
+        deviceFactory: Callable[[], Any] | None = None,
+        dataSource: str = "real",
+        invariantDwellSeconds: float = DEFAULT_INVARIANT_DWELL_S,
+        gyroRecovery: GyroRecoverySettings | None = None,
+        magKeepAliveFactory: Callable[[Any], Any | None] | None = None,
+        magMode: str = MAG_MODE_MASTER,
+    ) -> None:
+        # US-803-a: held for the real device factory, which is the only path
+        # that runs the A-34 startup recovery. An injected deviceFactory never
+        # reaches it.
+        self._gyroRecovery = gyroRecovery or GyroRecoverySettings()
+        super().__init__(
+            bus,
+            sampleHz=sampleHz,
+            deviceFactory=deviceFactory,
+            dataSource=dataSource,
+            invariantDwellSeconds=invariantDwellSeconds,
+        )
+        # ARCH-057. Bound LAZILY: the device does not exist at construction time
+        # and the watchdog must hold a handle to it.
+        self._magKeepAliveFactory = (
+            magKeepAliveFactory if magKeepAliveFactory is not None
+            else makeMagKeepAlive
+        )
+        self._magKeepAlive: Any | None = None
+        self._magKeepAliveBound = False
+        self._magMode = magMode
+
+    def _defaultDeviceFactory(self) -> Any:
+        return _makeIcm20948(
+            magMode=self._magMode, gyroRecovery=self._gyroRecovery
+        )
+
+    def _keepAlive(self) -> Any | None:
+        """The magnetometer watchdog for the current device, or None.
+
+        Bound once. A factory that raises disables the WATCHDOG, not the reader:
+        accel and gyro must survive a magnetometer fault, the same degrade
+        principle as :func:`_attachDirectMagnetometer`.
+        """
+        if not self._magKeepAliveBound:
+            self._magKeepAliveBound = True
+            try:
+                self._magKeepAlive = self._magKeepAliveFactory(self._device)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "mag keep-alive unavailable (%s: %s) -- the channel will be "
+                    "judged by the ARCH-056 rotation gate alone",
+                    type(exc).__name__, exc,
+                )
+                self._magKeepAlive = None
+        return self._magKeepAlive
+
+    def _readAndPublish(self, seq: int) -> None:
+        dev = self._device
+        # Read the whole burst FIRST so a mid-read fault publishes nothing for
+        # this seq (atomic burst -> one edr_imu_sample row per seq).
+        accel = _vec3(dev.acceleration)
+        gyro = _vec3(dev.gyro)
+        # ARCH-033: map the AK09916's axes into the ICM's frame ONCE, here.
+        #
+        # This is the single seam where BOTH magnetometer paths converge --
+        # ``dev`` is either the bypass device or the ICM shadow that
+        # _attachDirectMagnetometer falls back to. Applying it inside
+        # ak09916_bypass.magnetic would correct only the bypass, and the bypass
+        # is the path that is currently FAILING (ARCH-032), so production runs
+        # the fallback and would have been left uncorrected.
+        #
+        # Measured against GPS course over two clean laps, 2026-09-18:
+        # circular concentration R = 0.170 -> 0.861. See
+        # ak09916_bypass.AK09916_TO_ICM_AXES for the evidence and for why this
+        # is NOT computeHeadingDeg (correct) and NOT IMU_BODY_FRAME (a separate
+        # defect, ARCH-034, which owns the remaining constant offset).
+        #
+        # ARCH-064 Task 2, Review Focus 1: a mag-only read fault must NOT cost
+        # accel/gyro/temp. Pre-fix this raised straight out of the property
+        # access, past this whole function, into pollOnce's outer except --
+        # which then discarded the ENTIRE burst as 'no sample this poll' even
+        # though accel and gyro, above, had already been read successfully.
+        # Same degrade principle as the temp handling below and as
+        # _attachDirectMagnetometer's construction-time fallback: one broken
+        # channel must not punish the healthy ones.
+        try:
+            mag = toIcmFrame(_vec3(dev.magnetic))
+        except Exception as exc:  # noqa: BLE001 -- a mag-only fault must not cost accel/gyro
+            self._faultLog.note(
+                "read:mag",
+                "%s magnetometer read failed (seq=%d, %s) -- mag channel silenced "
+                "this poll; accel/gyro/temp still publish",
+                self.source,
+                seq,
+                exc,
+            )
+            mag = None
+        else:
+            self._faultLog.clear(
+                "read:mag", "%s magnetometer read recovered (seq=%d)", self.source, seq
+            )
+        # ARCH-057: the RUNTIME keep-alive. MEASURED 2026-09-18 on this hardware:
+        # doing nothing 0/20, re-init once 17/20, re-init + verify + retry x3
+        # 20/20. The freeze arrives AFTER good readings, so this cannot be a
+        # startup check. Detection is a bit-identical dwell (2 s of wall clock,
+        # count derived from sampleHz); repair is verified by SAMPLING, never by
+        # the init's return value -- that returned True on a run where the sensor
+        # stayed frozen.
+        keepAlive = self._keepAlive()
+        if keepAlive is not None and keepAlive.noteSample(mag, sampleHz=self._sampleHz):
+            # 🔴 requestRestore RETURNS IMMEDIATELY (ARCH-059). ARCH-057 called a
+            # synchronous restore here and blocked this thread for up to 12.4 s --
+            # measured on drive 84 as 154 intervals over 0.6 s and 87% of the
+            # samples lost. The repair now runs on its own thread and THIS SEQ
+            # publishes the frozen value it already has; the plausibility gate and
+            # the ARCH-056 rotation gate are what mark it. A poll is never traded
+            # for a repair again.
+            keepAlive.requestRestore("bit-identical dwell reached")
+        # US-500: the genuine adafruit_icm20x.ICM20948 does NOT expose
+        # .temperature (the clone/FakeImu assumption did). temp is NOT in the
+        # states/imu display contract and edr_imu_sample.temp_c is nullable, so a
+        # missing/bad temp degrades to honest-null (never fabricated) and must
+        # NOT drop the accel/gyro/mag burst the card + EDR need. Best-effort,
+        # decoupled from the atomic critical trio above.
+        try:
+            temp = float(dev.temperature)
+        except (AttributeError, TypeError, ValueError):
+            temp = None
+        self._publishBurst(
+            (
+                (TOPIC_IMU_ACCEL, accel, UNIT_ACCEL),
+                (TOPIC_IMU_GYRO, gyro, UNIT_GYRO),
+                (TOPIC_IMU_MAG, mag, UNIT_MAG),
+                (TOPIC_IMU_TEMP, temp, UNIT_TEMP),
+            ),
+            seq,
+        )
+
+
+class LightReader(_BaseSensorReader):
+    """TSL2591 light reader. Publishes lux (None when saturated -- never inf) and
+    the raw channel counts, both under one shared seq (ADR sections 1.1/3)."""
+
+    source = "light"
+    stateTopic = STATE_LIGHT
+
+    # US-564: DELIBERATELY EMPTY, and that is a finding rather than an omission.
+    # A photon-counting sensor in real darkness can legitimately return a
+    # bit-exact zero indefinitely, so enrolling it in the invariance check would
+    # gate a working sensor at night -- and enrolling it WITHOUT first measuring
+    # its dither would repeat the unmeasured-assumption defect this whole story
+    # exists to delete. Enrol it when a dark-garage capture says what it does.
+    channelPolicies: dict[str, ChannelPolicy] = {}
+    criticalTopics: tuple[str, ...] = ()
+
+    def __init__(
+        self,
+        bus: SampleBus,
+        *,
+        sampleHz: int = DEFAULT_LIGHT_SAMPLE_HZ,
+        deviceFactory: Callable[[], Any] | None = None,
+        dataSource: str = "real",
+    ) -> None:
+        super().__init__(
+            bus, sampleHz=sampleHz, deviceFactory=deviceFactory, dataSource=dataSource
+        )
+
+    def _defaultDeviceFactory(self) -> Any:
+        return _makeTsl2591()
+
+    def _readAndPublish(self, seq: int) -> None:
+        dev = self._device
+        # ARCH-009: the range context the sample is taken under, read BEFORE any
+        # US-731 range change, so the row names the gain that produced it.
+        gainCode = getattr(dev, "gain", None)
+        integrationIndex = getattr(dev, "integration_time", None)
+        # US-731: read 1 of 4 (unchanged count, CIO) -- the raw counts the lux
+        # AND the ranging decision both come from.
+        counts = _readCounts(dev)
+        lux = (
+            None if counts is None
+            else _luxFromCounts(counts[0], counts[1], gainCode, integrationIndex)
+        )
+        visible = int(dev.visible)
+        infrared = int(dev.infrared)
+        full = int(dev.full_spectrum)
+        # Honest instrument: lux may be None (saturation), raw counts always go.
+        # Published on THIS burst, not separately, so either all three fields
+        # arrive or none do -- a diagnostic must never be able to delay or block
+        # the reading it describes.
+        self._publishBurst(
+            (
+                (TOPIC_LIGHT_LUX, lux, UNIT_LUX),
+                (TOPIC_LIGHT_RAW, (visible, infrared, full), UNIT_COUNT),
+                (TOPIC_LIGHT_RANGE, (gainCode, _integrationMs(integrationIndex)), UNIT_RANGE),
+            ),
+            seq,
+        )
+        # US-731: choose the gain for the NEXT sample (1 Hz; one 100 ms integration
+        # settles long before it). After the publish, so ranging can never delay
+        # or lose the reading it is based on.
+        if counts is not None:
+            self._autoRange(dev, gainCode, integrationIndex, counts)
+
+    def _autoRange(
+        self, dev: Any, gainCode: Any, integrationIndex: Any, counts: tuple[int, int]
+    ) -> None:
+        """Write the next gain when the rule asks for one. Never raises (US-731)."""
+        nextGain = nextTslGain(gainCode, integrationIndex, counts[0], counts[1])
+        if nextGain is None or nextGain == gainCode:
+            return
+        try:
+            dev.gain = nextGain
+        except Exception as exc:  # noqa: BLE001 -- a failed write retries next sample
+            logger.warning(
+                "light: TSL2591 gain write 0x%02x failed (%s) -- staying at 0x%02x, "
+                "retried next sample", nextGain, exc,
+                gainCode if isinstance(gainCode, int) else -1,
+            )
+            return
+        logger.info(
+            "light: TSL2591 gain 0x%02x -> 0x%02x (CH0=%d CH1=%d)",
+            gainCode if isinstance(gainCode, int) else -1, nextGain, counts[0], counts[1],
+        )
+
+
+def nextTslGain(
+    gainCode: Any, integrationIndex: Any, ch0: int, ch1: int
+) -> int | None:
+    """US-731: the gain the NEXT sample should use, LOW <-> MEDIUM only.
+
+    At MEDIUM: step down to LOW when either channel reaches
+    ``TSL_STEP_DOWN_FRACTION`` of the max count. At LOW: step up to MEDIUM when CH0,
+    scaled by the datasheet's worst-case medium gain, would stay under
+    ``TSL_STEP_UP_FRACTION`` of the max count. Never ranges above MEDIUM (CIO).
+
+    Returns:
+        The gain code to write, the current one when no change is due, or None when
+        the current gain or integration is not one this rule manages.
+    """
+    maxCount = _TSL_MAX_COUNT.get(integrationIndex) if isinstance(integrationIndex, int) else None
+    if maxCount is None:
+        return None
+    if gainCode == TSL_GAIN_MED:
+        if max(ch0, ch1) >= TSL_STEP_DOWN_FRACTION * maxCount:
+            return TSL_GAIN_LOW
+        return TSL_GAIN_MED
+    if gainCode == TSL_GAIN_LOW:
+        if ch0 * _TSL_MED_GAIN_WORST_X < TSL_STEP_UP_FRACTION * maxCount:
+            return TSL_GAIN_MED
+        return TSL_GAIN_LOW
+    return None
+
+
+def _integrationMs(index: Any) -> int | None:
+    """TSL2591 integration-time INDEX -> milliseconds.
+
+    The Adafruit driver exposes an index (0..5), not a duration; the chip steps
+    in 100 ms from 100 ms. Returning the INDEX would land a number that reads
+    like milliseconds and is not -- the mislabelling class this project keeps
+    finding. An unrecognised value is None, never a guess.
+    """
+    if not isinstance(index, int) or isinstance(index, bool):
+        return None
+    if 0 <= index <= 5:
+        return (index + 1) * 100
+    return None
+
+
+def _vec3(v: Any) -> tuple[float, float, float]:
+    """Coerce a 3-vector reading into a plain float 3-tuple."""
+    x, y, z = v
+    return (float(x), float(y), float(z))
+
+
+def _readCounts(dev: Any) -> tuple[int, int] | None:
+    """US-731: one raw read -> (CH0 full spectrum, CH1 infrared), or None if unreadable."""
+    try:
+        ch0, ch1 = dev.raw_luminosity
+        return (int(ch0), int(ch1))
+    except (*_SATURATION_ERRORS, TypeError):
+        return None
+
+
+def _luxFromCounts(ch0: int, ch1: int, gainCode: Any, integrationIndex: Any) -> float | None:
+    """US-731: lux from raw counts with the DATASHEET's gain, or None.
+
+    The equation is Adafruit's (``adafruit_tsl2591`` 1.4.8; not in the ams
+    datasheet, "not calibrated"); its GAIN input is the datasheet's typical value
+    (24.5x medium, not the library's 25x -- CIO 2026-10-06). None when a channel is
+    saturated (at or above the documented max count), the gain or integration is
+    not one we can compute honestly (MAX gain, an unknown code), or the result is
+    non-finite or negative (ARCH-010, below).
+    """
+    gainX = _TSL_GAIN_X.get(gainCode) if isinstance(gainCode, int) else None
+    maxCount = _TSL_MAX_COUNT.get(integrationIndex) if isinstance(integrationIndex, int) else None
+    if gainX is None or maxCount is None:
+        return None
+    if ch0 >= maxCount or ch1 >= maxCount:
+        return None  # saturated: the honest answer is "no reading", never a clipped one
+    atimeMs = 100.0 * (integrationIndex + 1)
+    cpl = (atimeMs * gainX) / _TSL_LUX_DF
+    luxF = max(
+        (ch0 - _TSL_LUX_COEF_B * ch1) / cpl,
+        (_TSL_LUX_COEF_C * ch0 - _TSL_LUX_COEF_D * ch1) / cpl,
+    )
+    return _honestLux(luxF)
+
+
+def _honestLux(value: Any) -> float | None:
+    """A computed lux as a reading, or None when it is not one (ARCH-010 / US-409).
+
+    None for a missing or non-numeric value, a non-finite one (never inf/nan) and a
+    NEGATIVE one; ZERO is a reading. US-731 split this rule out of the device read so
+    it states one thing and is tested as one thing.
+    """
+    if value is None:
+        return None
+    try:
+        luxF = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(luxF):  # never inf/nan
+        return None
+    # ARCH-010: a NEGATIVE lux is a computation failure, not a dark reading.
+    # The TSL2591 lux equation subtracts a multiple of the IR channel, so an
+    # IR-dominated sample -- low sun through a windscreen -- computes negative.
+    # Measured: 452 such samples on 2026-08-28, worst -721.4, at 83% infrared.
+    #
+    # Published as None, NOT clamped to 0. Clamping is the convenient answer and
+    # the wrong one: 0 lux reads as darkness, so the display would still dim in
+    # bright sun -- which is the defect. None is the honest answer (we could not
+    # compute a lux) and it routes to the fixed default, i.e. full brightness.
+    # The honest answer and the correct behaviour are the same answer.
+    #
+    # ZERO is deliberately NOT rejected: a photon-counting sensor in real
+    # darkness can return a bit-exact zero (US-564 says so about this device),
+    # and rejecting it would delete a real measurement.
+    if luxF < 0:
+        return None
+    return luxF
+
+
+def _makeI2c() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
+    """Open the primary I2C bus (Pi only; raises on a non-Pi host)."""
+    import board  # local import: optional on dev hosts
+    import busio
+
+    return busio.I2C(board.SCL, board.SDA)
+
+
+def makeMagKeepAlive(device: Any) -> Any | None:
+    """Bind an ARCH-057 keep-alive to ``device``, or None when unsupported.
+
+    The repair is ``_magnetometer_init()`` -- adafruit's own API, and the function
+    the 20/20 measurement was taken on. A device that does not expose it (the
+    bypass wrapper, a fake, a bare 6-DoF part) gets no watchdog rather than a
+    broken one.
+
+    🔴 AND THAT ABSENCE IS ARCHITECTURALLY LOAD-BEARING, NOT AN OVERSIGHT.
+    ``_magnetometer_init()`` sets ``_bypass_i2c_master = False`` and re-enables the
+    ICM's internal I2C master -- it is a MASTER-MODE repair and is incompatible
+    with our bypass by construction. Calling it on a bypassed chip would silently
+    convert the acquisition path mid-drive and the direct 0x0C reads would start
+    failing. So the watchdog binds ONLY where the repair is valid, and
+    ``pi.sensors.imu.magMode`` is what selects between them.
+    """
+    from pi.sensors.mag_keepalive import MagKeepAlive  # noqa: PLC0415
+
+    reinit = getattr(device, "_magnetometer_init", None)
+    if not callable(reinit):
+        logger.info(
+            "mag keep-alive not bound: %s exposes no _magnetometer_init "
+            "(expected for the bypass path -- see ARCH-057)",
+            type(device).__name__,
+        )
+        return None
+    # 🔴 NO livenessFn (ARCH-059). Verification used to be an 8 x 30 ms blocking
+    # sample loop ON THE POLL THREAD. The poll loop already samples at 4 Hz and IS
+    # a liveness test, so the dwell recurring is the verification and it costs
+    # nothing.
+    return MagKeepAlive(reinitFn=reinit)
+
+
+def _makeIcm20948(
+    *,
+    magMode: str = MAG_MODE_MASTER,
+    gyroRecovery: GyroRecoverySettings | None = None,
+) -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
+    """Construct the ICM-20948 IMU handle (@0x69). Raises when absent/non-Pi.
+
+    ``gyroRecovery`` carries the config-resolved A-34 recovery tunables
+    (US-803-a) through to :func:`_buildImuDevice`.
+
+    US-565: the magnetometer is read DIRECTLY at 0x0C rather than through the
+    ICM's auxiliary-I2C shadow. MEASURED 2026-08-21 -- the shadow's cyclic slave0
+    readout performs one transfer and then stops, which is what froze
+    ``headingDeg`` at a single value for entire drives; the chip itself was
+    converting correctly the whole time. Accel and gyro still come from the ICM
+    at 0x69 and are unaffected by bypass.
+
+    A magnetometer that cannot be identified or verified is NOT fatal: the IMU's
+    accel and gyro are healthy and load-bearing (gMag, pitch, grade, g-trail), so
+    a mag-only fault degrades to the ICM's own magnetometer property, which the
+    US-564 invariance gate then refuses as ``sensor_stale``. Losing the whole IMU
+    over one channel would throw away valid data to punish a broken one.
+
+    ARCH-064 acquisition C (``magMode == MAG_MODE_DIRECT``) dispatches to its
+    own builder entirely -- it is a SparkFun-primitives build, never adafruit,
+    so it cannot share this function's ``adafruit_icm20x`` import or
+    ``_buildImuDevice``'s attach/recover seam.
+    """
+    if magMode == MAG_MODE_DIRECT:
+        return _makeIcm20948Direct(gyroRecovery=gyroRecovery)
+
+    import adafruit_icm20x  # local import: optional on dev hosts
+
+    i2cBus = _makeI2c()
+    icm = adafruit_icm20x.ICM20948(i2cBus, address=ADDR_IMU)
+    return _buildImuDevice(
+        icm, i2cBus, magMode=magMode, gyroRecovery=gyroRecovery
+    )
+
+
+def _makeIcm20948Direct(  # pragma: no cover -- real-hardware glue (Pi only)
+    gyroRecovery: GyroRecoverySettings | None = None,
+) -> Any:
+    """ARCH-064 acquisition C real-hardware glue: build the SparkFun ICM-20948
+    and the direct AK09916 reader, then run A-34 gyro recovery over them.
+
+    ``qwiic_icm20948`` is imported HERE, lazily, and nowhere else in
+    production -- ``icm20948_direct.makeIcm20948Direct`` and
+    ``GyroRecoveryHandle`` are driven entirely through injected factories /
+    plain objects so they (and their unit tests) never require the SparkFun
+    package to be importable.
+    """
+    import qwiic_icm20948  # local import: optional on dev hosts, needs I2C
+    from adafruit_bus_device import i2c_device  # local import: optional off-Pi
+
+    from pi.sensors.ak09916_bypass import AK09916_I2C_ADDRESS, Ak09916Direct
+
+    return _buildImuDeviceDirect(
+        lambda: qwiic_icm20948.QwiicIcm20948(address=ADDR_IMU),
+        lambda: Ak09916Direct(i2c_device.I2CDevice(_makeI2c(), AK09916_I2C_ADDRESS)),
+        gyroRecovery=gyroRecovery,
+    )
+
+
+def _buildImuDeviceDirect(
+    icmFactory: Callable[[], Any],
+    akFactory: Callable[[], Any],
+    *,
+    buildFn: Callable[[Callable[[], Any], Callable[[], Any]], Any] | None = None,
+    recoverFn: Callable[[Any], Any] | None = None,
+    gyroRecovery: GyroRecoverySettings | None = None,
+) -> Any:
+    """Build the clean-reset bypass device, THEN run the A-34 gyro check.
+
+    ARCH-064's own version of ARCH-032's finding: order is load-bearing.
+    ``icm20948_direct.makeIcm20948Direct`` already enables bypass and
+    configures the AK09916 before it returns, so by construction this
+    function's ``recover`` call always runs after that -- but it is split out
+    here, exactly as :func:`_buildImuDevice` is for the master/bypass path, so
+    the ordering claim is REACHABLE BY TEST rather than living only inside
+    ``_makeIcm20948Direct``'s ``pragma: no cover`` real-hardware glue.
+
+    Args:
+        icmFactory: Returns the SparkFun handle (called once; the SAME
+            instance is then wrapped for gyro recovery, never a second one).
+        akFactory: Returns the ``Ak09916Direct`` handle.
+        buildFn: Injection seam for tests; defaults to
+            ``icm20948_direct.makeIcm20948Direct``.
+        recoverFn: Injection seam for tests; defaults to :func:`_recoverGyro`.
+        gyroRecovery: Config-resolved recovery tunables (US-803-a) for the real
+            recovery; ``None`` means the gyro_recovery module defaults. The
+            merge with Sprint 94 (2026-10-01) threaded this through: the
+            direct path used to drop it, so the car's mode ran the defaults.
+
+    Returns:
+        The built device (an ``Icm20948Direct`` in production).
+    """
+    from pi.sensors.icm20948_direct import GyroRecoveryHandle, makeIcm20948Direct
+
+    icm = icmFactory()
+    build = buildFn or makeIcm20948Direct
+    device = build(lambda: icm, akFactory)
+    recover = recoverFn or (lambda chip: _recoverGyro(chip, settings=gyroRecovery))
+    try:
+        # The adapter over the RAW icm, never `device`: recovery writes
+        # power-management registers on the chip itself, the same rule
+        # _buildImuDevice follows for the master/bypass path.
+        recover(GyroRecoveryHandle(icm))
+    except Exception as exc:  # noqa: BLE001 -- a gyro fault must not cost the mag
+        # The clean-reset bypass has ALREADY succeeded here, so discarding it
+        # now would throw away a working magnetometer to punish a broken
+        # gyro -- the same degrade principle _buildImuDevice uses.
+        logger.error(
+            "IMU gyro startup check raised after the direct-mode bypass (%s); "
+            "keeping the magnetometer and continuing without recovery",
+            exc,
+        )
+    return device
+
+
+def _buildImuDevice(
+    icm: Any,
+    i2cBus: Any,
+    *,
+    attachFn: Callable[[Any, Any], Any] | None = None,
+    recoverFn: Callable[[Any], Any] | None = None,
+    magMode: str = MAG_MODE_MASTER,
+    gyroRecovery: GyroRecoverySettings | None = None,
+) -> Any:
+    """Establish the magnetometer bypass, THEN run the gyro check. ORDER IS LOAD-BEARING.
+
+    🔴 ARCH-032. Reversing these two lines is the V0.29.55 defect. Measured on
+    the Pi 2026-09-20, n=20 per arm, interleaved, both I2C contenders stopped::
+
+        control -- no gyro read                      14/20 = 70%
+        DEFECT  -- 20x icm.gyro, THEN bypass          2/20 = 10%
+        FIX     -- bypass FIRST, then 20x icm.gyro   16/20 = 80%
+
+        Fisher two-sided:  fix vs defect  p = 0.000017
+                           fix vs control p = 0.7164   (parity restored)
+
+    Merely READING the gyro through the driver before the hand-over collapses
+    the 0x0C probe. Why a pure read on the primary bus disturbs a different chip
+    on the auxiliary bus is still unexplained -- this avoids the question rather
+    than settling it, which is why the order is pinned by test rather than left
+    to whoever next reads the code and finds the old argument persuasive.
+
+    ⚠️ This restores PARITY, not correctness. The control itself is only ~73%
+    pooled, so roughly one hand-over in four still fails with no gyro read
+    anywhere near it. That second, older defect is NOT this one and stays open.
+
+    Split out of :func:`_makeIcm20948` because that function is
+    ``pragma: no cover`` real-hardware glue -- the defect shipped with a GREEN
+    suite precisely because the only place the order was expressed could not be
+    tested. Both steps were called; both were individually correct.
+
+    Args:
+        icm: The constructed ICM-20948.
+        i2cBus: The primary I2C bus it was constructed on.
+        attachFn: Injection seam for tests; defaults to the real bypass attach.
+        recoverFn: Injection seam for tests; defaults to the real gyro recovery.
+        gyroRecovery: Config-resolved recovery tunables (US-803-a) for the
+            real recovery; ``None`` means the gyro_recovery module defaults.
+
+    Returns:
+        The wrapped device from the bypass attach, or the bare ICM when the
+        magnetometer could not be brought up.
+    """
+    attach = attachFn or _attachDirectMagnetometer
+    recover = recoverFn or (lambda chip: _recoverGyro(chip, settings=gyroRecovery))
+    # ARCH-057: in MASTER mode the bypass is never attempted, so the chip stays in
+    # the configuration adafruit's _magnetometer_init() expects -- which is what
+    # the runtime keep-alive re-runs to repair a frozen channel. Attempting the
+    # bypass first would set BYPASS_EN and make that repair convert the
+    # acquisition path out from under the reader mid-drive.
+    #
+    # ⚠️ An explicit attachFn always wins, so tests keep driving both paths.
+    if attachFn is None and magMode == MAG_MODE_MASTER:
+        logger.info(
+            "IMU magnetometer: MASTER mode (%r) -- bypass not attempted; the "
+            "ARCH-057 runtime keep-alive owns liveness", MAG_MODE_MASTER,
+        )
+        device = icm
+    else:
+        device = attach(icm, i2cBus)
+    try:
+        # The raw ICM, never `device`: recovery writes power-management
+        # registers on the chip itself. Reaching them through the bypass
+        # wrapper would work only by attribute delegation -- an accident,
+        # not a contract.
+        recover(icm)
+    except Exception as exc:  # noqa: BLE001 -- a gyro fault must not cost the mag
+        # The bypass has ALREADY succeeded here, so discarding it now would
+        # throw away a working magnetometer to punish a broken gyro -- the same
+        # degrade principle as _attachDirectMagnetometer, in the other direction.
+        logger.error(
+            "IMU gyro startup check raised after the magnetometer bypass (%s); "
+            "keeping the magnetometer and continuing without recovery",
+            exc,
+        )
+    return device
+
+
+def _recoverGyro(
+    icm: Any,
+    recoveryFn: Callable[[Any], Any] | None = None,
+    settings: GyroRecoverySettings | None = None,
+) -> Any:
+    """Clear the A-34 latched gyro fault at startup, if it is present.
+
+    🔴 ARCH-032, 2026-09-20 -- ORDERING CORRECTED. This used to run BEFORE
+    :func:`_attachDirectMagnetometer`, and its docstring argued that it must:
+    "both touch bank 0, and the recovery writes a power-management register, so
+    it runs while the chip is in its freshly-initialised state rather than after
+    the magnetometer bypass has reconfigured the auxiliary bus."
+
+    **That argument is plausible and it is wrong.** It was never measured. The
+    gyro READ alone -- not the power-management write, which the no-attempt
+    branch never performs -- collapses the subsequent bypass hand-over from
+    ~70% to ~10%. The order is now pinned by
+    ``tests/pi/sensors/test_imu_startup_order.py``. Do not restore it on the
+    strength of the reasoning above.
+
+    Placed at startup because the precondition the detector needs -- a
+    STATIONARY vehicle -- is guaranteed here and nowhere else: the engine has
+    just been keyed on and the car has not moved. A latched gyro and a real turn
+    produce the same signature, so the check is only sound while we know the car
+    is still.
+
+    A failure NEVER costs the IMU. Same principle as the magnetometer degrade
+    path: losing accel, gyro and mag to fix one channel throws away valid data
+    to punish a broken one. When the recovery does not take, the RUNNING
+    engine's gyro guard withholds pitch and grade once it trips
+    (``gyro_recovery.WITHHOLD_CONDITION``; ARCH-064 Ruling 35).
+
+    Args:
+        icm: The constructed ICM-20948.
+        recoveryFn: Injection seam for tests; defaults to the real recovery.
+        settings: The config-resolved tunables (US-803-a) handed to the real
+            recovery; ``None`` means the gyro_recovery module defaults. Ignored
+            when ``recoveryFn`` is injected.
+
+    Returns:
+        The outcome, for callers that want to log or assert on it.
+    """
+    from pi.sensors.gyro_recovery import recoverGyroIfFaulted
+
+    tunables = settings or GyroRecoverySettings()
+    runRecovery = recoveryFn or (
+        lambda chip: recoverGyroIfFaulted(
+            chip,
+            sampleCount=tunables.sampleCount,
+            settleS=tunables.settleS,
+            faultMinRadS=tunables.faultMinRadS,
+        )
+    )
+    try:
+        outcome = runRecovery(icm)
+    except Exception as exc:  # noqa: BLE001 -- a broken recovery must not cost the IMU
+        logger.error("IMU gyro startup check raised (%s); continuing without recovery", exc)
+        return None
+    if outcome is not None and getattr(outcome, "attempted", False):
+        logger.warning("IMU gyro startup check: %s", outcome.describe())
+    return outcome
+
+
+def _attachDirectMagnetometer(
+    icm: Any, i2cBus: Any, bypassFactory: Callable[[Any, Any], Any] | None = None
+) -> Any:
+    """Wrap an ICM with a direct magnetometer, degrading to accel/gyro on failure.
+
+    Split out of :func:`_makeIcm20948` so the degrade path is REACHABLE BY TEST.
+    "A magnetometer fault must not cost accel and gyro" is a behavioural claim,
+    and a claim that only exists as a try/except inside hardware-only glue is a
+    claim nothing enforces.
+
+    Args:
+        icm: The constructed ICM-20948.
+        i2cBus: The primary I2C bus it was constructed on.
+        bypassFactory: Injection seam for tests; defaults to the real factory.
+
+    Returns:
+        The wrapped device on success, or the bare ICM when the magnetometer
+        cannot be identified or verified.
+    """
+    from pi.sensors.ak09916_bypass import (
+        MagnetometerConfigError,
+        makeBypassMagnetometer,
+    )
+
+    factory = bypassFactory or makeBypassMagnetometer
+    try:
+        return factory(icm, i2cBus)
+    except (MagnetometerConfigError, OSError, ValueError) as exc:
+        # ARCH-056: this was a WARNING promising "the US-564 gate will refuse it as
+        # stale rather than publish a latched heading". 🔴 THAT PROMISE WAS FALSE,
+        # and the record proves it: five of twelve drives (69/72/74/75/76)
+        # PERSISTED a frozen channel -- 5.25-9.30 uT of per-axis excursion where a
+        # turning car must sweep ~40 uT -- and every hard-iron fit was then made on
+        # that corpus, which is why none of them ever transferred. The US-564 gate
+        # fires on AGE, and a frozen channel is FRESH: new timestamps, unchanging
+        # content. It never could have caught this.
+        #
+        # ⇒ ERROR rather than WARNING, and it names the MECHANISM instead of
+        # citing a guard that cannot fire. The channel is now judged on ROTATION
+        # (imu_state_bridge.assessMagRotation), which compares the magnetometer
+        # against the gyro and can actually tell frozen from merely uncalibrated.
+        logger.error(
+            "IMU magnetometer bypass unavailable (%s) -- mag source is %r, NOT %r. "
+            "That is the adafruit dev.magnetic path, which US-565 MEASURED returning "
+            "a FROZEN vector because its read does not extend through ST2. Accel and "
+            "gyro continue; heading from this path is judged by the ARCH-056 rotation "
+            "gate, never by staleness.",
+            exc, MAG_SOURCE_ICM_SHADOW, MAG_SOURCE_BYPASS,
+        )
+        return icm
+
+
+def _makeTsl2591() -> Any:  # pragma: no cover -- real-hardware glue (Pi only)
+    """Construct the TSL2591 light handle (@0x29). Raises when absent/non-Pi."""
+    import adafruit_tsl2591  # local import: optional on dev hosts
+
+    return adafruit_tsl2591.TSL2591(_makeI2c(), address=ADDR_TSL)
+
+
+def createSensorReadersFromConfig(
+    config: dict[str, Any], bus: SampleBus
+) -> list[_BaseSensorReader]:
+    """Build the enabled sensor readers from validated config.
+
+    Each per-sensor flag REQUIRES ``pi.bus.enabled`` (the master bus gate): with
+    the bus off, no reader is built regardless of the per-sensor flags. Ships
+    dark -- every flag defaults false, so the returned list is empty until the
+    CIO flips a sensor on as he wires it (connect-when-wired).
+
+    Args:
+        config: The validated tier-aware config (reads the ``pi`` section).
+        bus: The SampleBus the readers publish onto.
+
+    Returns:
+        The list of enabled readers (empty when the bus or both sensors are off).
+    """
+    pi = config.get("pi", {})
+    if not pi.get("bus", {}).get("enabled", False):
+        return []
+    sensors = pi.get("sensors", {})
+    readers: list[_BaseSensorReader] = []
+    imu = sensors.get("imu", {})
+    if imu.get("enabled", False):
+        readers.append(
+            ImuReader(
+                bus,
+                sampleHz=imu.get("sampleHz", DEFAULT_IMU_SAMPLE_HZ),
+                # US-564: the gate's dwell is a filter constant, not a tuning
+                # value, but it is still a NUMBER -- so it lives in config where
+                # it can be changed without a code edit.
+                invariantDwellSeconds=imu.get(
+                    "invariantDwellSeconds", DEFAULT_INVARIANT_DWELL_S
+                ),
+                # US-803-a: the A-34 startup-recovery tunables. The validator
+                # has already bounded each one; the module constants apply
+                # only when a key is absent.
+                gyroRecovery=GyroRecoverySettings(
+                    faultMinRadS=imu.get("gyroFaultMinRadS", GYRO_FAULT_MIN_RAD_S),
+                    sampleCount=imu.get("gyroRecoverySampleCount", DEFAULT_SAMPLE_COUNT),
+                    settleS=imu.get("gyroRecoverySettleSec", DEFAULT_SETTLE_S),
+                ),
+                # ARCH-057: which acquisition path to use. Config, not code,
+                # so the CIO can revert master->bypass in the car with a
+                # restart instead of waiting for a deploy.
+                magMode=imu.get("magMode", MAG_MODE_MASTER),
+            )
+        )
+    light = sensors.get("light", {})
+    if light.get("enabled", False):
+        readers.append(
+            LightReader(bus, sampleHz=light.get("sampleHz", DEFAULT_LIGHT_SAMPLE_HZ))
+        )
+    return readers

@@ -11,6 +11,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-18    | Rex          | Initial implementation for US-165 Spool Gate 2
+# 2026-09-10    | Rex          | US-721: repo root on sys.path -- documented Usage ran
 # ================================================================================
 ################################################################################
 """
@@ -18,7 +19,7 @@ Render a sample advanced-tier primary screen to a PNG.
 
 Used for the Spool Gate 2 review packet: produces an offscreen 480x320
 pygame surface with representative simulator data, and dumps it to
-``offices/tuner/inbox/us165-gate2/advanced_tier_sample.png`` (or the path
+``$FLEET_SHARE/tuner/inbox/us165-gate2/advanced_tier_sample.png`` (or the path
 passed via ``--out``).
 
 Usage (Windows dev)::
@@ -43,12 +44,28 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+# The repo root too, as src/pi/main.py does: pi.alert.manager imports
+# `src.common.*` and this script imports `tools.pm._paths`, and both resolve only
+# from the root. `python scripts/<this>.py` puts scripts/ on the path, not the cwd.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Headless pygame: choose the 'dummy' SDL video driver so this script runs
 # on CI and SSH sessions without an X server / HDMI output.
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
-import pygame  # noqa: E402
+# IMPORT ORDER BELOW IS LOAD-BEARING -- DO NOT SORT IT, AND DO NOT RUN
+# `ruff check --fix` ON THIS BLOCK. Sorting merges it into the stdlib block at
+# the top of the file, which moves both imports above two runtime constraints:
+#   1. `import pygame` must stay BELOW the SDL_VIDEODRIVER setdefault above --
+#      pygame reads that variable AT IMPORT TIME. Hoisted, this script asks for
+#      a real display and dies on CI, on SSH, and on the Pi over ssh.
+#   2. The pi.display import must stay BELOW the `sys.path.insert` at the top --
+#      that insert is what puts src/ on the path. Hoisted, it is unresolvable.
+# The E402 markers already on these lines suppress the same class of constraint;
+# I001 is the isort half of it. US-706 / PM ruling 2026-09-10: a targeted,
+# documented suppression of a rule that is wrong for this file, NOT a
+# per-file-ignore and NOT a pyproject change.
+import pygame  # noqa: E402, I001
 
 from pi.display.screens.primary_screen_advanced import (  # noqa: E402
     AdvancedTierFooter,
@@ -61,9 +78,14 @@ from pi.display.screens.primary_screen_advanced import (  # noqa: E402
     computeAdvancedTierLayout,
 )
 
+from tools.pm._paths import SHARE_ROOT
+
+# This script WRITES its sample into a tuner inbox -- an agent-fleet location,
+# not product output. Resolve it through the _paths SSOT so the destination
+# follows the share ($FLEET_SHARE post-eviction, offices/ before it) rather
+# than assuming offices/ sits inside the repo.
 _DEFAULT_OUT = (
-    Path(__file__).resolve().parent.parent
-    / "offices"
+    SHARE_ROOT
     / "tuner"
     / "inbox"
     / "us165-gate2"

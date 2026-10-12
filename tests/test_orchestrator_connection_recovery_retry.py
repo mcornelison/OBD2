@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-012
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
+# 2026-09-14    | Rex (US-690) | Mocks drive reconnectOnce -- the loop's one-attempt seam
 # ================================================================================
 ################################################################################
 
@@ -245,7 +246,7 @@ class TestMaxRetryAttempts:
         orchestrator._reconnectAttempt = 0
 
         mockConnection = MagicMock()
-        mockConnection.reconnect.return_value = False
+        mockConnection.reconnectOnce.return_value = False
         orchestrator._connection = mockConnection
 
         # Act
@@ -253,7 +254,7 @@ class TestMaxRetryAttempts:
 
         # Assert
         assert orchestrator._reconnectAttempt == 3
-        assert mockConnection.reconnect.call_count == 3
+        assert mockConnection.reconnectOnce.call_count == 3
 
     def test_reconnectionLoop_stopsEarlyOnSuccess(
         self, recoveryConfig: dict[str, Any]
@@ -271,7 +272,7 @@ class TestMaxRetryAttempts:
         orchestrator._reconnectAttempt = 0
 
         mockConnection = MagicMock()
-        mockConnection.reconnect.side_effect = [False, True]
+        mockConnection.reconnectOnce.side_effect = [False, True]
         orchestrator._connection = mockConnection
 
         # Act
@@ -279,5 +280,5 @@ class TestMaxRetryAttempts:
 
         # Assert - _handleReconnectionSuccess resets _reconnectAttempt to 0
         assert orchestrator._reconnectAttempt == 0
-        assert mockConnection.reconnect.call_count == 2
+        assert mockConnection.reconnectOnce.call_count == 2
         assert orchestrator._isReconnecting is False

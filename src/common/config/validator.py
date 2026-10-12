@@ -73,6 +73,53 @@
 #                                + _validatePowerWatch (the stated alias death
 #                                date now that __main__/controller consume the
 #                                canonical smoothing* names).
+# 2026-08-29    | Rex (US-627) | Add the pi.display.autoDim FLOOR COUPLING to
+#                                _validateDisplayAutoDim: defaultLevel must be
+#                                >= minLevel. brightnessLevel() clamps only its
+#                                CURVE branch, so the absent/stale-feed fallback
+#                                could render BELOW a floor just raised for
+#                                legibility. Checked on EFFECTIVE values (raising
+#                                minLevel alone is the 2026-08-29 case) and
+#                                REJECTED, never clamped at runtime.
+# 2026-09-22    | Rex (US-801) | DEFAULT_IMU_{SAMPLE,PERSIST,STATE}_HZ = 4/2/1:
+#                                the ONE definition of the IMU rate triple;
+#                                DEFAULTS and the pi module fallbacks import it.
+# 2026-09-25    | Rex (US-790) | pi.power.cellEpoch: default 'unknown', closed
+#                                vocabulary CELL_EPOCH_VALUES.
+# 2026-09-28    | Atlas        | ARCH-064 Task 5, CIO ruling 2026-09-28:
+#               |              | DEFAULT_IMU_SAMPLE_HZ 4 -> 50. sampleHz is now
+#               |              | the IMU's INTERNAL acquisition/fusion read rate
+#               |              | (every proven AHRS assumes a fast gyro read;
+#               |              | see specs/data-acquisition-architecture.md
+#               |              | §4.2 amendment). persistHz/stateHz (the STORED,
+#               |              | 4 Hz-ceilinged rows paired to the drive window)
+#               |              | are UNCHANGED at 2/1 -- this ruling does not
+#               |              | touch the ceiling. Added magMode 'direct'
+#               |              | default + allowed-set, and fusionEngine /
+#               |              | magDeclinationDeg / magCalibration DEFAULTS.
+# 2026-09-28    | Atlas        | ARCH-064 Task 6b: accelCalibration default
+#               | (ARCH-064)   | (zero/identity) + validation (finite 3-vector,
+#               |              | finite 3x3, determinant > 0).
+# 2026-09-28    | Atlas        | Ruling 32: the same shape validation for
+#               | (ARCH-064)   | magCalibration (shared _validateCalibrationBlock).
+# 2026-09-30    | Atlas        | ARCH-064d (CIO-directed): persist is a UTC time
+#               | (ARCH-064d)  | grid, so the "not an exact divisor" warning is
+#               |              | retired; RECOMMENDED_IMU_PERSIST_HZ (1, 2, 4) and
+#               |              | a warning for any other recording rate added.
+# 2026-09-30    | Rex (US-776-a)| pi.homeNetwork.serverPingPath default is
+#                                /api/v1/health; the old ping path was a 404.
+# 2026-10-01    | Rex (US-776-g)| pi.homeNetwork.shutdownSyncCeilingSec: 60 (CIO
+#                                ruling 2026-09-30), positive number only.
+# 2026-10-03    | Atlas (ARCH-065a)| ARCH-065 T3: shutdownSyncCeilingSec retired (the
+#                                at-home sync has no time cap, CIO 2026-10-02);
+#                                pi.homeNetwork.joinWaitSec 120 + stallSec 60,
+#                                integers >= 1 only.
+# 2026-10-03    | Atlas (ARCH-065a)| Ruling 19 (M8): drainFloorDwellReads is an integer
+#                                >= 1 (bool / float / str rejected).
+# 2026-10-11    | Rex (US-776-j1)| pi.homeNetwork.sweepTimeoutSec 6 (forced WiFi
+#                                sweep bound), refused unless < smoothingSec;
+#                                smoothingSec default 5 -> 7 (CIO 2026-10-12,
+#                                option A: matches config.json).
 # ================================================================================
 ################################################################################
 
@@ -94,6 +141,8 @@ Usage:
 
 import ipaddress
 import logging
+import math
+import zoneinfo
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -118,6 +167,68 @@ REQUIRED_KEYS: list[str] = [
 
 # Top-level sections that must exist as dicts on a valid config.json.
 REQUIRED_SECTIONS: tuple[str, ...] = ('pi', 'server')
+
+# US-801: THE single definition of the IMU rate triple. Every other site --
+# the DEFAULTS entries below and the fallbacks in pi.sensors.sensor_reader,
+# pi.sensors.imu_state_bridge and pi.bus.edr_persistence_subscriber --
+# imports these names; none re-declares a literal. Consumers still read
+# config first; these apply only when a key is absent. Pinned against
+# config.json by tests/pi/sensors/test_imu_rate_single_source.py.
+#
+# ARCH-064 (CIO ruling 2026-09-28) split what "sampleHz" means. It is now the
+# IMU's INTERNAL acquisition/fusion read rate -- every proven AHRS (the x-io
+# Fusion engine, pi.sensors.ahrs_fusion) assumes a fast gyro read, and
+# acquisition C (src/pi/sensors/icm20948_direct.py) is measured live at up to
+# 100 Hz -- raised from the 4 Hz US-796-b/ARCH-036 value accordingly. The 4 Hz
+# HARD CAP (tightened from 5 Hz on 2026-09-21) still governs what is STORED:
+# persistHz/stateHz are UNCHANGED at 2/1 and stay under it, paired to the
+# drive window. See specs/data-acquisition-architecture.md §4.2's 2026-09-28
+# amendment for the full reasoning. ARCH-064d (§4.2.b): stored rows are a UTC
+# time grid of 1/persistHz s, not a keep-1-of-N factor -- the "50 -> 2 = 25,
+# exact" factor stored 1.62 Hz on drive 96 because the loop ran at 40.5 Hz.
+DEFAULT_IMU_SAMPLE_HZ = 50
+DEFAULT_IMU_PERSIST_HZ = 2
+DEFAULT_IMU_STATE_HZ = 1
+
+# US-776-j1: bound on the ONE forced WiFi scan (nmcli --rescan yes) a key-off
+# runs to decide home. MEASURED on the Pi (Atlas): a forced scan takes
+# 4.07-4.10 s. Must stay below pi.powerWatch.smoothingSec so an away key-off's
+# sweep fits inside the 7 s loss-confirmation window (validated cross-key).
+DEFAULT_HOME_SWEEP_TIMEOUT_SEC = 6
+
+# US-803-a: the gyro's full scale, the ceiling on pi.sensors.imu.gyroFaultMinRadS.
+# MEASURED, not chosen: the Pi runs the ICM-20948 gyro at +/-500 dps --
+# GYRO_CONFIG_1 = 0x03 read off the deployed Pi 2026-09-14 decodes to FS_SEL=1
+# (tools/imu/imu_probe.py), and specs/grounded-knowledge.md states the same from
+# the installed adafruit_icm20x 2.1.10 driver's initialize(). A fault threshold
+# above full scale can never be reached, so fault detection would be silently
+# OFF. (Not the datasheet's +/-250 dps: that is the RESET value, not this Pi.)
+GYRO_FULL_SCALE_RAD_S = math.radians(500)
+
+# US-790: pi.power.cellEpoch -- WHICH cell was fitted, stamped on every
+# drain_vcell_trajectory row so a floor measured from them is never an average
+# across batteries. CIO ruling 2026-09-25. Vocabulary from
+# specs/grounded-knowledge.md: the 450 mAh pouch until the 2026-09-21 18:50Z
+# swap and the 2000 mAh pouch after it (:1045), then the 18650 pack from its
+# INSTALLATION on 2026-09-26 (battery epoch 3; Atlas ruled 2026-09-27 that the
+# epoch names the physical battery from installation, not from first
+# discharge -- charge state is vcellV's job). 'unknown' is the default so an
+# absent key is recorded honestly -- never a guessed epoch.
+CELL_EPOCH_UNKNOWN = 'unknown'
+CELL_EPOCH_VALUES: tuple[str, ...] = (
+    '450mah-pouch',
+    '2000mah-pouch',
+    '18650-pack',
+    CELL_EPOCH_UNKNOWN,
+)
+
+# ARCH-064d, CIO 2026-09-30: "you can always sample at whatever is easiest, but
+# from a data recording standpoint 4 Hz, 2 Hz or 1 Hz is desirable." Stored IMU
+# rows sit on a UTC grid of 1/persistHz s; at these rates every grid boundary is
+# a whole second or an exact quarter/half of one, so each row shares its ts_utc
+# second with the whole-second ECU rows in realtime_data. Any other persistHz is
+# still stored exactly, and WARNED (never rejected) by _warnImuRatesAboveSource.
+RECOMMENDED_IMU_PERSIST_HZ = (1, 2, 4)
 
 # Define default values for optional settings. Paths use the tier-aware
 # nested shape (pi.*, server.*) introduced in sweep 4. Legacy leaf paths
@@ -151,6 +262,25 @@ DEFAULTS: dict[str, Any] = {
     'pi.hardware.upsMonitor.vcellSlopeThresholdVoltsPerMinute': -0.005,
     'pi.hardware.upsMonitor.vcellBatteryThresholdVolts': 3.95,
     'pi.hardware.upsMonitor.vcellBatteryThresholdSustainedSeconds': 30,
+    # US-431 / F-048: the MAX17048 ModelGauge mis-reads SoC% by 30-40 points
+    # for the first few minutes after a cold power-up, so register reads inside
+    # this window are recorded as NULL, not a garbage percent (US-234/US-427
+    # honest-instrument guard, consumed by scripts/record_drain_test.py).  The
+    # 180s default is PROVISIONAL -- run scripts/calibrate_max17048.py on the
+    # UPS-drain rig and replace it with the measured settle-time recommendation
+    # (that is the "real data, not a guessed constant" this key exists for).
+    'pi.hardware.upsMonitor.socColdStartWindowSeconds': 180.0,
+    # US-424 / F-116: foreign-vehicle contamination ingest guard.  Ships DARK
+    # (enabled=false) so the CIO arms it after the bench drill confirms the
+    # Eclipse never false-trips.  busRateThresholdHz sits just above the 1998
+    # Eclipse GST ISO 9141-2 K-line sustained PID-response ceiling (~6.3/s); a
+    # sustained realtime_data row rate above it means a non-Eclipse (faster
+    # protocol) vehicle is connected.  windowSeconds is the rolling averaging
+    # window that makes the check sustained, not instantaneous.
+    'pi.foreignGuard.enabled': False,
+    'pi.foreignGuard.busRateThresholdHz': 7.0,
+    'pi.foreignGuard.sustainedSeconds': 10.0,
+    'pi.foreignGuard.measurementWindowSeconds': 3.0,
     # US-243 / B-050: PowerMonitor activation. Spool's 2026-04-21 audit +
     # 2026-04-29 inverted-power drill found PowerMonitor (783 lines, the
     # writer for power_log) was never instantiated in production -- 5 drain
@@ -159,15 +289,42 @@ DEFAULTS: dict[str, Any] = {
     # the next deploy populates power_log; the gate is kept for tests +
     # any future legacy fallback.
     'pi.power.power_monitor.enabled': True,
+    # US-790: which cell is fitted (CELL_EPOCH_VALUES). 'unknown' so an absent
+    # key stamps an honest value on drain rows, never a guessed epoch.
+    'pi.power.cellEpoch': CELL_EPOCH_UNKNOWN,
+    # US-421 / BL-014: static config-key SSOT for the power-MODE fact (in-car
+    # vs bench/wall deployment) -- distinct from the AC-vs-battery power SOURCE.
+    # Default 'unknown' so an absent key renders an honest badge, never a
+    # (the single acquisition path); operator sets car/wall on a bench<->car
+    # deploy. Future: swap acquisition to a GPIO sense line behind the same SSOT.
     # Honest boot-progress instrument (spec 2026-05-15). filePath is
     # relative to the Pi project root (systemd WorkingDirectory);
-    # nasArchiveDir is the home-only NAS mount; maxTrailBytes bounds the
-    # file against a restart loop. poweroffTimeoutSeconds replaces the
-    # previously hardcoded subprocess.run(timeout=...) literal in
+    # maxTrailBytes bounds the file against a restart loop.
+    # poweroffTimeoutSeconds replaces the previously hardcoded
+    # subprocess.run(timeout=...) literal in
     # src/pi/hardware/shutdown_handler.py (wired in a later task).
+    #
+    # THE PI REACHES NO NETWORK STORAGE (CIO 2026-08-26). It talks to the server
+    # only during a data sync -- never to the NAS, never to any other host. These
+    # two keys previously defaulted to ENABLED pointing at a NAS path
+    # (/mnt/projects/O/OBD2v2/boot-progress), and config.json carries no
+    # bootProgress section, so the default was live on the car.
+    #
+    # That default could not work and could not be seen failing. archivePriorTrail
+    # calls os.makedirs(..., exist_ok=True), which CREATES PARENTS: on a Pi with
+    # no NAS mount it either builds a phantom /mnt/projects/... tree on the SD
+    # card and copies a trail into it every boot (unbounded, read by nobody), or
+    # raises PermissionError into a best-effort `except` that only logs a warning.
+    # Silent either way.
+    #
+    # The archive is redundant regardless: the canonical one-per-boot record is
+    # the startup_log DB row written just above it, which is what syncs to the
+    # server. So the copy is OFF by default, and the path is Pi-LOCAL so that
+    # enabling it cannot reach off-box. The key keeps its historical name;
+    # renaming a published config key is a separate change.
     'pi.bootProgress.filePath': 'data/boot_progress',
-    'pi.bootProgress.nasArchiveDir': '/mnt/projects/O/OBD2v2/boot-progress',
-    'pi.bootProgress.nasArchiveEnabled': True,
+    'pi.bootProgress.nasArchiveDir': 'data/boot_progress_archive',
+    'pi.bootProgress.nasArchiveEnabled': False,
     'pi.bootProgress.maxTrailBytes': 65536,
     'pi.shutdown.poweroffTimeoutSeconds': 30,
     # Phase-2 power-watch (spec 2026-05-17). CONSERVATIVE INTERIM values --
@@ -178,6 +335,15 @@ DEFAULTS: dict[str, Any] = {
     'pi.powerWatch.perTaskTimeoutSec': 20,
     'pi.powerWatch.totalWindowCapSec': 45,
     'pi.powerWatch.vcellFloorVolts': 3.50,
+    # US-776-b: the drain's OWN stopping point, above the vcellFloorVolts
+    # emergency backstop. PROVISIONAL (Atlas 2026-09-17): 3.585 V is the only
+    # voltage on record at a shutdown that FINISHED (in-car key-off #2,
+    # CLEAN_COMPLETE), rounded up. Derivation: specs/architecture.md 10.6.3.
+    # Do not change without the drain's VCELL trajectory data.
+    'pi.powerWatch.drainFloorVolts': 3.60,
+    # ARCH-065: the reserve floor must hold for this many consecutive reads
+    # before it ends the drain (threshold + dwell, design-patterns.md 1).
+    'pi.powerWatch.drainFloorDwellReads': 5,
     'pi.powerWatch.poweroffTimeoutSec': 30,
     # 2026-05-18 bricking-loop HOTFIX. UpsMonitor.getPowerSource() is a
     # VCELL-trend heuristic; its slope rule reports BATTERY on the boot
@@ -190,7 +356,9 @@ DEFAULTS: dict[str, Any] = {
     # before the shutdown window opens (blip rejection -- spec sec 3, the
     # safety property that prevents the 2026-05-18 boot-sag bricking loop).
     # smoothingPollSec: re-sample cadence during the smoothing interval.
-    'pi.powerWatch.smoothingSec': 5,
+    # 7, matching config.json (CIO 2026-10-12, US-776-j1): the old default 5
+    # disagreed with the live value and left no room for the 6 s sweep.
+    'pi.powerWatch.smoothingSec': 7,
     'pi.powerWatch.smoothingPollSec': 1,
     # GPIO6 PLD = the X1209's DETERMINISTIC external-power-present line
     # (HIGH=present, LOW=lost; Geekworm x120x reference pld.py). This is now
@@ -207,24 +375,40 @@ DEFAULTS: dict[str, Any] = {
     # the safety trigger, which is the T5 GPIO6+smoothing loop). Low-rate by
     # design (status surface, YAGNI). Config, never a literal.
     'pi.powerWatch.uiPollSec': 2,
+    # ARCH-065: days between monthly capacity tests (the hold time is
+    # battery_capacity.TEST_HOLD_S, not config).
+    'pi.batteryHealth.monthlyIntervalDays': 30,
     # Pi-tier companion-service (Chi-Srv-01 reach) — US-151.
     # Consumed by src.pi.sync.SyncClient (US-149) to authenticate + reach
     # the server /api/v1/sync endpoint.  API key resolved from the env var
     # named by `apiKeyEnv` via secrets_loader.
     'pi.companionService.enabled': True,
-    'pi.companionService.baseUrl': 'http://10.27.27.10:8000',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.companionService.apiKeyEnv': 'COMPANION_API_KEY',
     'pi.companionService.syncTimeoutSeconds': 30,
     'pi.companionService.batchSize': 500,
     'pi.companionService.retryMaxAttempts': 3,
     'pi.companionService.retryBackoffSeconds': [1, 2, 4, 8, 16],
+    # US-391 (F-076): queue-level quarantine.  After this many consecutive
+    # server-rejection failures on one table the push is quarantined and
+    # re-attempts are throttled to once per quarantineThrottleSeconds (instead
+    # of every cadence tick) -- stops a single unresolvable record from
+    # retrying forever and masking a real sync failure in the noise.
+    'pi.companionService.quarantineThreshold': 5,
+    'pi.companionService.quarantineThrottleSeconds': 3600,
     # Pi-tier home-network detection (US-188, B-043 component 1).  Consumed
     # by src.pi.network.HomeNetworkDetector to decide at shutdown time
     # whether the Pi should attempt a sync push before powering off.
     'pi.homeNetwork.ssid': 'DeathStarWiFi',
     'pi.homeNetwork.subnet': '10.27.27.0/24',  # b044-exempt: DEFAULTS registry mirrors config.json
     'pi.homeNetwork.pingTimeoutSeconds': 3,
-    'pi.homeNetwork.serverPingPath': '/api/v1/ping',
+    'pi.homeNetwork.serverPingPath': '/api/v1/health',
+    # ARCH-065: the at-home shutdown sync runs to completion. joinWaitSec bounds
+    # the WiFi-join wait; stallSec ends a drain whose backlog stopped falling.
+    'pi.homeNetwork.joinWaitSec': 120,
+    'pi.homeNetwork.stallSec': 60,
+    # US-776-j1: the key-off's forced WiFi sweep is bounded by this; it must
+    # be < pi.powerWatch.smoothingSec (checked in _validateHomeNetwork).
+    'pi.homeNetwork.sweepTimeoutSec': DEFAULT_HOME_SWEEP_TIMEOUT_SEC,
     # Pi-tier sync trigger semantics (US-226).  Orchestrator-level trigger
     # policy; the transport config lives in pi.companionService above.
     # intervalSeconds MUST fire independently of drive_end so a bugged
@@ -232,6 +416,257 @@ DEFAULTS: dict[str, Any] = {
     'pi.sync.enabled': True,
     'pi.sync.intervalSeconds': 60,
     'pi.sync.triggerOn': ['interval', 'drive_end'],
+    # US-809-0: the zone naive timestamps are expressed in, DECLARED rather than
+    # inherited from whatever OS the code booted on. PREVENTIVE -- measured on
+    # chi-eclipse-01 2026-09-23: it already reads America/Chicago and keeps its
+    # RTC in UTC, so nothing is shifted today. What this removes is the reimage
+    # or raspi-config change that would move every converted timestamp with no
+    # code change and no failing test.
+    # (The same reading showed `System clock synchronized: no` with NTP active,
+    # which is why A-double-prime wants the clockSynced flag landed BESIDE the
+    # event time. A declared zone does not make a clock trustworthy.)
+    # Ratified by the CIO 2026-09-23. Do NOT derive it or seed it from the host.
+    # b044-exempt: DEFAULTS registry mirrors config.json.
+    'pi.time.localZone': 'America/Chicago',
+    # Pi-tier EDR in-process pub/sub bus (US-384 / F-110, EDR slice 1).
+    # Defaults False so slice 1 ships DARK: the SampleBus publish seam in
+    # RealtimeDataLogger + the PersistenceSubscriber are wired but dormant
+    # until a separate PM/CIO deploy flips this on the Pi (and confirms
+    # byte-identical realtime_data + healthy sync).
+    'pi.bus.enabled': False,
+    # Pi-tier EDR raw-sensor readers (US-409 / F-113).  Each per-sensor flag
+    # REQUIRES pi.bus.enabled (the master bus gate) -- enforced in
+    # createSensorReadersFromConfig, which builds no reader when the bus is off.
+    # Ships DARK: both enabled default False so nothing is read until the CIO
+    # flips a sensor on as he wires it (connect-when-wired).  sampleHz is the bus
+    # publish rate; persistHz is the decimated always-on persist cadence and
+    # retentionDays bounds the Pi-local rolling window -- both consumed by the
+    # EDR persistence subscriber (US-410 / ADR 2.3, 2.6).
+    'pi.sensors.imu.enabled': False,
+    # US-801: the rate triple is DEFINED ONCE, above (DEFAULT_IMU_*_HZ = 4/2/1);
+    # these entries reference it and must never carry a literal.
+    'pi.sensors.imu.sampleHz': DEFAULT_IMU_SAMPLE_HZ,
+    'pi.sensors.imu.persistHz': DEFAULT_IMU_PERSIST_HZ,
+    # US-478 (F-113): the raw.imu.* -> states/imu DERIVED display bridge.
+    # stateHz is the state-file write cadence -- latest-wins/lossy (no history
+    # on the display path); the DURABLE EDR persist is the separate persistHz
+    # -- one producer, two cadences.  US-508 once raised it 4 -> 10 Hz for the
+    # home-slot card; US-796-b set the shipped triple to 4/2/1 under the CIO's
+    # 4 Hz hard cap (ARCH-036), and US-801 moved this default to match.
+    # gravityTauSec is the gravity low-pass time constant that separates static
+    # mount tilt / road grade (slow) from vehicle acceleration (fast) -- without
+    # it a board bolted in at a 10-degree tilt pins a phantom 0.17 g on the
+    # g-meter forever.
+    #
+    # US-708 RETIRED 'pi.sensors.imu.mount.*' FROM HERE.  The body frame is a
+    # MOUNTING FACT, not a tuning value: it is established by measurement (X is
+    # lateral, Y is fore-aft, Z is up) and settled by a confirming drive, and an
+    # adjustable-looking key reads as something a future session may adjust.  It
+    # now lives beside the sensor definition as imu_state_bridge.IMU_BODY_FRAME,
+    # with the measurement that established it in the comment.  A stale mount
+    # block left in config.json is inert -- nothing reads it.
+    'pi.sensors.imu.stateHz': DEFAULT_IMU_STATE_HZ,
+    'pi.sensors.imu.gravityTauSec': 5.0,
+    # US-521 (F-125) gyro-fused pitch + ZUPT.  An accelerometer cannot
+    # distinguish grade from acceleration, so a 0.3 g pull reads as a
+    # 16.7-degree climb; the gyro carries the short term and the accel corrects
+    # it ONLY near 1 g (accelTrustBand, a fraction of g -- must stay tighter
+    # than the 4.4% excess a 0.3 g pull produces or the phantom leaks back in).
+    # zuptMinStopSec is Spool's [EXACT: 3] s zero-velocity gate -- LOAD-BEARING,
+    # flag him before any drift.  The rest are Rex-derived and routed to Spool
+    # for sigma sizing with the sample rates (US-521 AC4).
+    'pi.sensors.imu.pitchTauSec': 5.0,
+    'pi.sensors.imu.accelTrustBand': 0.02,
+    'pi.sensors.imu.zuptMinStopSec': 3.0,
+    'pi.sensors.imu.zuptSpeedMaxAgeSec': 2.0,
+    'pi.sensors.imu.zuptMinStops': 5,
+    'pi.sensors.imu.zuptWindowStops': 20,
+    # US-803-a: the A-34 gyro startup recovery (pi.sensors.gyro_recovery).
+    # gyroFaultMinRadS sits in the measured empty gap between quiet (0.013-0.015
+    # rad/s) and latched (0.487-0.553) starts; the count is how many at-rest
+    # reads each side of the power cycle; the settle is each wait in the cycle.
+    # Values equal the module constants, which apply only when a key is absent.
+    'pi.sensors.imu.gyroFaultMinRadS': 0.10,
+    'pi.sensors.imu.gyroRecoverySampleCount': 20,
+    'pi.sensors.imu.gyroRecoverySettleSec': 1.0,
+    # US-803-b: the mag/gyro pairing window in SECONDS (was 5 polls, whose
+    # duration moved with sampleHz). 1.25 = 5 polls at the shipped 4 Hz.
+    'pi.sensors.imu.magMaxAgeSec': 1.25,
+    # US-564 (F-135) plausibility gate: how long a channel must stay BIT-
+    # IDENTICAL before it is reported sensor_stale.  A DWELL, not a physical
+    # threshold -- bit-identity is a proof (real sensors dither +/-1 LSB, so a
+    # stationary car gave 743 distinct accel values in 90 s while the latched
+    # magnetometer gave 1), and this margin only guards against a scheduler
+    # hiccup re-serving one buffered frame.  Seconds, not samples, so a 50 Hz
+    # and a 1 Hz channel wait the same wall-clock time.
+    'pi.sensors.imu.invariantDwellSeconds': 2.0,
+    # Which magnetometer ACQUISITION path runs. One of three, in the order
+    # they were shipped: 'bypass' (A) -> 'master' (B) -> 'direct' (C, current
+    # default). Allowed set enforced in _validateImuStateBridge.
+    #
+    # 🔴 ARCH-064 (2026-09-28) MADE 'direct' (C) THE DEFAULT, SUPERSEDING THE
+    # ARCH-057 'master' RULING BELOW. MEASURED on the real hardware: with the
+    # ICM-20948's internal I2C master enabled -- what 'master' is -- the
+    # AK09916 freezes after exactly one reading, under BOTH the adafruit AND
+    # the SparkFun libraries, with every other project process stopped (see
+    # src/pi/sensors/icm20948_direct.py header). 'direct' configures the chip
+    # from a clean software reset with the I2C master NEVER enabled and reads
+    # the AK09916 in bypass per its own datasheet -- live at 100 Hz, no
+    # freeze. ⚠️ Switching to bypass AFTER the master has already run (i.e.
+    # falling back from 'master' to 'bypass' at runtime rather than from a
+    # clean boot) can hang the whole I2C bus -- a second, worse failure mode;
+    # a magMode change is a config edit + service RESTART, never a live flip.
+    #
+    # ⚠️ 'master' and 'bypass' are BOTH RETAINED DELIBERATELY as revert paths,
+    # not dead config -- switch to either with a service restart if 'direct'
+    # misbehaves in the car. Their original ARCH-057/pre-ARCH-057 rationale is
+    # preserved below verbatim; it is superseded as the DEFAULT, not deleted.
+    #
+    # --- ARCH-057 (2026-09-18), superseded as the default by ARCH-064 above ---
+    # 🔴 'master' WAS THE DEFAULT BECAUSE IT WAS THE CONFIGURATION THE FIX WAS
+    # MEASURED IN. The runtime keep-alive (0/20 -> 20/20 on this hardware,
+    # 2026-09-18) repairs the channel by re-running adafruit's
+    # _magnetometer_init(), which sets BYPASS_EN=False and re-enables the ICM's
+    # internal I2C master. It is a MASTER-MODE repair, incompatible with the
+    # bypass by construction: calling it on a bypassed chip would convert the
+    # acquisition path mid-drive and the direct 0x0C reads would start failing.
+    # Shipping the measured repair therefore MEANT shipping master mode -- that
+    # was a consequence of the evidence, not a preference. ARCH-064 measured
+    # that master mode itself freezes the magnetometer on this board (above),
+    # which is why it is now a revert path rather than the default.
+    #
+    # 'bypass' (A) is the pre-ARCH-057 path (ak09916_bypass: direct 0x0C,
+    # ST1..ST2, with a real DRDY and HOFL check that master mode does NOT get,
+    # because adafruit's burst starts at 0x11 and never decodes ST2). It gets
+    # no runtime keep-alive, per the above.
+    #
+    # ⚠️ The 20/20 was measured with eclipse-obd STOPPED, i.e. sole owner of the
+    # bus. ARCH-032 measured contention taking the magnetometer hand-over from
+    # ~80% to ~12%, so that figure is UNCONTENDED and is not yet demonstrated in
+    # production. Do not quote it as a production number.
+    'pi.sensors.imu.magMode': 'direct',
+    # ARCH-064: which AHRS fusion engine imu_state_bridge builds. 'imufusion'
+    # (the x-io Fusion AHRS, pi.sensors.ahrs_fusion) is the default; 'legacy'
+    # is the US-521 PitchFusion, kept selectable and byte-identical to before
+    # so a bad drive can be rolled back by config instead of a redeploy.
+    # Allowed set enforced in _validateImuStateBridge. 🔴 Under 'imufusion' the
+    # legacy pitch knobs above (pitchTauSec, accelTrustBand, zupt*) have NO
+    # EFFECT -- Fusion has no ZUPT stop detector and no mount-tilt bias
+    # (AhrsFusion.stopCount / .biasRad are always 0 for surface parity only).
+    # They still apply, unchanged, when fusionEngine is 'legacy'.
+    'pi.sensors.imu.fusionEngine': 'imufusion',
+    # ARCH-064: magnetic declination, degrees, EAST positive (true heading =
+    # magnetic heading + declination). Consumed only by AhrsFusion -- the
+    # legacy engine's headingDeg is magnetic, uncorrected. 0.0 here is an
+    # inert module default; the real value (car's location) belongs in config.json
+    # and is DOCUMENTED there with its NOAA/WMM source and date.
+    'pi.sensors.imu.magDeclinationDeg': 0.0,
+    # ARCH-064: hard/soft-iron magnetometer calibration, consumed only by
+    # AhrsFusion (m_c = softIron . (m_uncalibrated - hardIronUt)). Zero/
+    # identity is a NO-OP -- uncalibrated readings pass through unchanged --
+    # so an unset car ships with the same (uncorrected) heading accuracy as
+    # before rather than a silently wrong correction. Fit with
+    # tools/imu/fit_mag_calibration.py (ARCH-064 Task 6) once drive data
+    # exists.
+    'pi.sensors.imu.magCalibration': {
+        'hardIronUt': [0.0, 0.0, 0.0],
+        'softIron': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    },
+    # ARCH-064 Task 6b: accelerometer calibration, consumed only by AhrsFusion
+    # (a_c = matrix . (a - offsetMs2), BODY frame, m/s^2, applied before
+    # speed-aided compensation). Zero/identity is a NO-OP. Fit from a hand
+    # tumble with tools/imu/accel_cal_cli.py --ellipsoid, which emits this
+    # block already conjugated into the body frame. A partial block is
+    # completed leaf-by-leaf in _validateImuAccelCalibration.
+    'pi.sensors.imu.accelCalibration': {
+        'offsetMs2': [0.0, 0.0, 0.0],
+        'matrix': [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    },
+    'pi.sensors.light.enabled': False,
+    'pi.sensors.light.sampleHz': 1,
+    'pi.sensors.retentionDays': 7,
+    # US-767-b: link-gated EDR logging (Atlas's US-734 plan, Tasks 7-8). Rows
+    # are written while the OBD link is up, plus a pre-roll written when it
+    # opens and a hold after it drops. Wired as a pass-through until US-767-c.
+    'pi.sensors.logGate.enabled': True,
+    'pi.sensors.logGate.preRollSec': 60,
+    'pi.sensors.logGate.holdSec': 300,
+    # US-630 (F-138, punch-list 1.4): the DERIVED gear.  This car exposes no
+    # gear PID, so gear is computed once from the realtime SPEED + RPM SSOT and
+    # published -- never recomputed per consumer.  Ships DARK
+    # (connect-when-wired, the pi.bus.enabled precedent): with enabled False
+    # createGearDeriverFromConfig builds nothing and the tile keeps its honest
+    # typed-NA.
+    #
+    # `bands` STAYS EMPTY HERE and that is deliberate, even though the measured
+    # table now exists (Atlas, 2026-08-31, drives 50/51 -- BL-us630 closed).  The
+    # table is a property of THIS car's gearbox, final drive and tyres; a
+    # validator default carrying it would hand it to any deployment that forgot
+    # the key, which is a fabricated calibration.  The numbers live in
+    # config.json under `pi.gear.bands`, ONE place, and an unkeyed deployment
+    # reports `not_calibrated` rather than guessing.  See
+    # src/pi/obdii/gear_derivation.py.  The thresholds below are Spool's
+    # US-508 semantics.
+    'pi.gear.enabled': False,
+    'pi.gear.bands': [],
+    'pi.gear.minSpeedKph': 5.0,
+    'pi.gear.minRpm': 900,
+    'pi.gear.debounceSec': 2.0,
+    # US-686 -- the freshness window for one SPEED/RPM sample.  Spool ruled 3.0
+    # on 2026-09-06, superseding 2.0.
+    #
+    # 🔴 THE CADENCE ANY RATIONALE FOR THIS VALUE MUST CITE IS THE MEASURED
+    # PER-PID PERIOD: 2.206-2.249 s for SPEED (Atlas, 2026-09-06, 3,494 paired
+    # samples across drives 64-67).  NOT an aggregate bus rate, and NOT
+    # `pi.pollingTiers` -- that block has ZERO importers in `src/` and describes
+    # a system this project does not have.  It has misled two builds (A-28), and
+    # THIS ENTRY WAS ONE OF THEM: the note that used to sit here grounded 2.0 in
+    # an aggregate bus rate nothing on this car produces.
+    #
+    # 2.0 WAS A UNIT ERROR.  The window was SHORTER than the interval between the
+    # readings it judged, so every sample aged out before its successor arrived
+    # and the tile could never latch (drive 64: engaged 0).  3.0 is 1.33x the
+    # period; it admits a sample that has missed one poll and still rejects one
+    # that has missed two.  Full reasoning:
+    # src/pi/obdii/gear_derivation.py DEFAULT_MAX_AGE_S.
+    'pi.gear.maxAgeSec': 3.0,
+    # US-687-b -- how long RPM must stay UNUSABLE, with a healthy OBD link,
+    # before the tile reads P.  Spool ratified 20.0 on 2026-09-07 and it is
+    # bounded on BOTH sides, which is the half that keeps getting lost:
+    #   FLOOR ~13 s -- the worst in-drive RPM gap measured over 2,141 samples
+    #     (drives 64-68).  Below it, an ordinary bus stall paints Park at speed.
+    #   CEILING ~45 s -- at key-off the Pi runs a bounded pre-shutdown pipeline
+    #     (perTask=20s totalCap=45s), so it has roughly 45 s of life after the
+    #     event that stops the RPM data, and this dwell counts down INSIDE that
+    #     budget.  At 45 s or more, P NEVER RENDERS AT ALL.
+    # THE CEILING IS SOFT: it depends on that pre-shutdown budget, which is under
+    # active work.  If `totalCap` is ever shortened, re-check this value.
+    # Full reasoning: src/pi/obdii/gear_derivation.py DEFAULT_PARK_DWELL_S.
+    'pi.gear.parkDwellSec': 20.0,
+    # US-688 -- the CAPTURE-HEALTH alert. `data_logger_last_row_seconds_ago` has
+    # been logged every 60 s since US-302 with no consumer; on 2026-09-04 it read
+    # `never_written` for two days while a loose dongle produced zero rows.
+    #
+    # 🔴 THE GATE IS THE POWER SOURCE, NOT THE ENGINE, and that is not a
+    # simplification. Every engine-running signal this system owns -- RPM (0x0C),
+    # the `engineOnVoltageThreshold` escalation below (0x42), and drive detection
+    # derived from both -- arrives over the OBDLink transport WHOSE FAILURE IS
+    # THE INCIDENT. Gated on any of them the alert cannot fire in the one case it
+    # was written for. `powerSource` is sensed on the X1209 GPIO6 PLD line and
+    # survives a dead dongle.
+    'pi.captureHealth.enabled': True,
+    # ⚠️ NOT RATIFIED BY SPOOL -- derived, and filed for ratification. Bounded
+    # BELOW by two measurements already on file:
+    #   13 s -- worst in-drive RPM inter-sample gap (2,141 samples, drives 64-68).
+    #   30 s -- `initialConnectTimeoutSec` below; a booting Pi has legitimately
+    #           written nothing while it connects.
+    # 60 s clears the larger by 2x. The ceiling is soft and generous: the outage
+    # this reports lasted TWO DAYS, so any value in minutes still catches it --
+    # so the value is biased toward the RECOVERABLE error, because a false alarm
+    # is permanent (an alert that has cried wolf is off forever) while a slow one
+    # only costs uninformed driving time. Full reasoning:
+    # src/pi/obdii/capture_health.py DEFAULT_STALL_SECONDS.
+    'pi.captureHealth.stallSeconds': 60.0,
     # Pi-tier orchestrator engine-on escalation (US-242 / B-049).  When the
     # adapter-level BATTERY_V sample exceeds engineOnVoltageThreshold for
     # engineOnSampleCount consecutive samples, the orchestrator transitions
@@ -277,6 +712,23 @@ DEFAULTS: dict[str, Any] = {
     'pi.update.applyEnabled': False,
     'pi.update.stagingPath': '/tmp/eclipse-obd-staging',
     'pi.update.rollbackEnabled': True,
+    # US-517 / F-125: the home-location reference -- altitude anchor (US-518
+    # re-anchors derived altitude to elevationM on every successful server sync)
+    # and the future GPS home-geofence.  Every default is None ON PURPOSE:
+    # location is PII, so the real values live ONLY in the gitignored .env and
+    # reach config.json through the ${PI_HOME_LAT} / ${PI_HOME_LON} /
+    # ${PI_HOME_ELEVATION_M} placeholders.  A shipped coordinate default would
+    # be committed PII AND a fabricated anchor -- the None keeps the key SHAPE
+    # guaranteed while leaving the VALUE honestly unknown.
+    # Deliberately NOT validated with a fail-fast _validate* sub-check: this
+    # runs on the Pi's boot path, and refusing to start the orchestrator over a
+    # typo'd optional altitude anchor would trade a dead OBD capture for a
+    # cosmetic fault.  src.pi.location.HomeLocationProvider is the single read
+    # path and reports the honest unknown instead -- same policy as
+    # (pi.power.mode was removed by US-668.)
+    'pi.location.home.lat': None,
+    'pi.location.home.lon': None,
+    'pi.location.home.elevationM': None,
     'hardware.display.enabled': True,
     'hardware.display.refreshRate': 2,
     # US-257 / B-052: HDMI dashboard full-canvas redesign. The legacy
@@ -289,6 +741,26 @@ DEFAULTS: dict[str, Any] = {
     'pi.display.displayCanvas.width': 1920,
     'pi.display.displayCanvas.height': 1080,
     'pi.display.displayCanvas.mode': 'auto',
+    # US-483-b (F-121): the carousel auto-dim curve -- GROUNDED, PARAMETERIZED
+    # values so tuning the screen brightness is a config change, not a code change
+    # (CIO 2026-07-22). NOTE the distinct key: pi.display.autoDim.* is the
+    # carousel's 0.0-1.0 SOFTWARE-dim multiplier, NOT pi.display.brightness (the
+    # live 0-100 hardware-backlight scalar the adafruit adapter / power_display
+    # dim). luxMin/luxFull grounding = standard illuminance references (civil-
+    # twilight dark ~3.4 lux; overcast daylight ~1000 lux -- see
+    # specs/grounded-knowledge.md illuminance note). Level defaults are Iris's to
+    # tune via config. b044-exempt: DEFAULTS registry mirrors config.json.
+    'pi.display.autoDim.luxMin': 3.0,
+    'pi.display.autoDim.luxFull': 1000.0,
+    'pi.display.autoDim.minLevel': 0.15,
+    'pi.display.autoDim.defaultLevel': 0.70,
+    # US-595: alarmFloorLevel is RETIRED, not omitted by accident. US-484-b made
+    # a live STOP alarm full brightness always, so the only condition that ever
+    # consumed the floor is now the condition that short-circuits to 1.0. A
+    # deployed config.json may still carry the key; it resolves to nothing and is
+    # ignored by both tiers (guarded by tests/test_alarm_floor_level_retired.py).
+    'pi.display.autoDim.luxStaleSec': 10,
+    'pi.display.autoDim.curve': 'logarithmic',
     # US-290 / TD-007: generateTimeoutSeconds closes the lone holdout from
     # US-OLL-002 (which made apiTimeoutSeconds + healthTimeoutSeconds
     # configurable but left the 120 s model-inference timeout hardcoded in
@@ -297,6 +769,16 @@ DEFAULTS: dict[str, Any] = {
     # the tier split -- see src/pi/obdii/config/loader.py:124).  Constant
     # OLLAMA_GENERATE_TIMEOUT in types.py remains the back-compat fallback
     # when this key is absent.
+    # US-392 (A-15 address de-dup): the server address is the SINGLE source
+    # held here (validator mirror) + config.json server.network.serverHost
+    # ONLY. The companion-service + server base URLs are DERIVED from
+    # serverHost:serverPort in _deriveServerUrls below -- they are NOT
+    # duplicated as independent literals that nothing forces to agree (the
+    # structural gap behind the 2026-06-18 .10 -> .120 sync breakage).
+    # Mirrors deploy/addresses.sh, which already derives SERVER_BASE_URL from
+    # ${SERVER_HOST}:${SERVER_PORT}.
+    'server.network.serverHost': '10.27.27.120',  # b044-exempt: DEFAULTS registry mirrors config.json
+    'server.network.serverPort': 8000,
     'server.ai.generateTimeoutSeconds': 120,
     'hardware.telemetry.logInterval': 10,
     'hardware.telemetry.logPath': '/var/log/carpi/telemetry.log',
@@ -311,6 +793,11 @@ DEFAULTS: dict[str, Any] = {
     'backup.compressBackups': True,
     'backup.catchupDays': 2,
 }
+
+
+def _isPositiveNumber(value: Any) -> bool:
+    """True for an int/float above zero (a bool is not a number here)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
 
 
 class ConfigValidator:
@@ -383,6 +870,11 @@ class ConfigValidator:
         # Apply defaults
         config = self._applyDefaults(config)
 
+        # Derive base URLs from the single serverHost:serverPort source
+        # (US-392 A-15 de-dup) -- runs after defaults so the source keys are
+        # guaranteed present.
+        self._deriveServerUrls(config)
+
         # Post-default semantic validation of tier-specific sections that
         # carry numeric ranges / shape constraints beyond "key present".
         self._validateCompanionService(config)
@@ -390,9 +882,48 @@ class ConfigValidator:
         self._validatePiSync(config)
         self._validateBootProgress(config)
         self._validatePowerWatch(config)
+        self._validateBatteryHealth(config)
+        self._validateCellEpoch(config)
+        self._validateDisplayAutoDim(config)
+        self._validateImuStateBridge(config)
+        self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
         return config
+
+    def _deriveServerUrls(self, config: dict[str, Any]) -> None:
+        """Derive base URLs from the single serverHost:serverPort source (US-392).
+
+        A-15 address de-dup: config.json holds the server address in ONE key
+        (``server.network.serverHost``); the companion-service base URL
+        (``pi.companionService.baseUrl``) and the server base URL
+        (``server.network.serverBaseUrl``) are DERIVED here rather than
+        duplicated as independent literals that nothing forces to agree -- the
+        structural gap that let the 2026-06-18 chi-srv-01 ``.10 -> .120`` move
+        break sync. This mirrors ``deploy/addresses.sh``, which already derives
+        ``SERVER_BASE_URL`` from ``${SERVER_HOST}:${SERVER_PORT}``.
+
+        Derivation only fills a base URL that is ABSENT; an explicitly
+        configured baseUrl still wins (the addresses.sh ``:-`` fallback
+        semantics), so this is behavior-preserving for any config that set the
+        URL directly. Called after :meth:`_applyDefaults`, so serverHost +
+        serverPort are guaranteed present (DEFAULTS supply them when the
+        section omits them); if the host is somehow still absent, derivation is
+        skipped rather than producing a malformed URL.
+
+        Args:
+            config: Validated configuration (post-default-application);
+                mutated in place.
+        """
+        host = self._getNestedValue(config, 'server.network.serverHost')
+        port = self._getNestedValue(config, 'server.network.serverPort')
+        if not host or port is None:
+            return
+        derived = f"http://{host}:{port}"
+        if self._getNestedValue(config, 'server.network.serverBaseUrl') is None:
+            self._setNestedValue(config, 'server.network.serverBaseUrl', derived)
+        if self._getNestedValue(config, 'pi.companionService.baseUrl') is None:
+            self._setNestedValue(config, 'pi.companionService.baseUrl', derived)
 
     def _validateCompanionService(self, config: dict[str, Any]) -> None:
         """
@@ -461,6 +992,34 @@ class ConfigValidator:
                 missingFields=['pi.companionService.retryBackoffSeconds'],
             )
 
+        # US-391: quarantine threshold (consecutive failures) must be a
+        # positive int; bool rejected first so a stray true/false can't pose
+        # as 1/0.
+        quarantineThreshold = section.get('quarantineThreshold')
+        if quarantineThreshold is not None and (
+            isinstance(quarantineThreshold, bool)
+            or not isinstance(quarantineThreshold, int)
+            or quarantineThreshold < 1
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.quarantineThreshold must be an integer "
+                f">= 1 (got {quarantineThreshold!r})",
+                missingFields=['pi.companionService.quarantineThreshold'],
+            )
+
+        # US-391: throttle window (seconds) must be a positive number.
+        quarantineThrottle = section.get('quarantineThrottleSeconds')
+        if quarantineThrottle is not None and (
+            isinstance(quarantineThrottle, bool)
+            or not isinstance(quarantineThrottle, (int, float))
+            or quarantineThrottle <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.companionService.quarantineThrottleSeconds must be a "
+                f"positive number (got {quarantineThrottle!r})",
+                missingFields=['pi.companionService.quarantineThrottleSeconds'],
+            )
+
     def _validateHomeNetwork(self, config: dict[str, Any]) -> None:
         """Validate pi.homeNetwork shape + CIDR + numeric ranges (US-188).
 
@@ -523,6 +1082,49 @@ class ConfigValidator:
                 f"starting with '/' (got {pingPath!r})",
                 missingFields=['pi.homeNetwork.serverPingPath'],
             )
+
+        for key in ('joinWaitSec', 'stallSec'):
+            value = section.get(key)
+            # bool first -- isinstance(True, int) is True in Python.
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value <= 0
+            ):
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.{key} must be a positive number (got {value!r})",
+                    missingFields=[f'pi.homeNetwork.{key}'],
+                )
+
+        sweepTimeout = section.get('sweepTimeoutSec')
+        if sweepTimeout is not None:
+            # bool first -- isinstance(True, int) is True in Python.
+            if (
+                isinstance(sweepTimeout, bool)
+                or not isinstance(sweepTimeout, (int, float))
+                or sweepTimeout <= 0
+            ):
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.sweepTimeoutSec must be a positive number "
+                    f"(got {sweepTimeout!r})",
+                    missingFields=['pi.homeNetwork.sweepTimeoutSec'],
+                )
+            # US-776-j1: the key-off sweep runs inside the loss-confirmation
+            # window, so an away key-off adds no wait only if the sweep's bound
+            # is strictly shorter. A malformed smoothingSec is
+            # _validatePowerWatch's to reject, so it is skipped here.
+            smoothing = self._getNestedValue(config, 'pi.powerWatch.smoothingSec')
+            if (
+                isinstance(smoothing, (int, float))
+                and not isinstance(smoothing, bool)
+                and sweepTimeout >= smoothing
+            ):
+                raise ConfigValidationError(
+                    f"pi.homeNetwork.sweepTimeoutSec ({sweepTimeout!r}) must be "
+                    f"less than pi.powerWatch.smoothingSec ({smoothing!r}) so the "
+                    f"key-off WiFi sweep fits inside the power-loss window",
+                    missingFields=['pi.homeNetwork.sweepTimeoutSec'],
+                )
 
     def _validatePiSync(self, config: dict[str, Any]) -> None:
         """Validate pi.sync shape + trigger membership (US-226).
@@ -621,6 +1223,22 @@ class ConfigValidator:
                 missingFields=['pi.shutdown.poweroffTimeoutSeconds'],
             )
 
+    def _validateBatteryHealth(self, config: dict[str, Any]) -> None:
+        """Validate pi.batteryHealth.* (ARCH-065): positive numbers only.
+
+        Raises:
+            ConfigValidationError: If monthlyIntervalDays is not an integer >= 1.
+        """
+        for key in ('pi.batteryHealth.monthlyIntervalDays',):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool) or not isinstance(val, int) or val < 1
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be an integer >= 1 (got {val!r})",
+                    missingFields=[key],
+                )
+
     def _validatePowerWatch(self, config: dict[str, Any]) -> None:
         """Validate pi.powerWatch.* numeric bounds (Phase-2 spec sec 9).
 
@@ -661,17 +1279,31 @@ class ConfigValidator:
                     missingFields=[key],
                 )
 
-        floor = self._getNestedValue(config, 'pi.powerWatch.vcellFloorVolts')
-        if floor is not None and (
-            isinstance(floor, bool)
-            or not isinstance(floor, (int, float))
-            or not (3.0 < floor < 4.3)
+        # A COUNT of consecutive reads (Ruling 19, M8): an integer >= 1 only.
+        for key in ('pi.powerWatch.drainFloorDwellReads',):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool) or not isinstance(val, int) or val < 1
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be an integer >= 1 (got {val!r})",
+                    missingFields=[key],
+                )
+
+        for floorKey in (
+            'pi.powerWatch.vcellFloorVolts',
+            'pi.powerWatch.drainFloorVolts',
         ):
-            raise ConfigValidationError(
-                f"pi.powerWatch.vcellFloorVolts must be a number in "
-                f"(3.0, 4.3) volts (got {floor!r})",
-                missingFields=['pi.powerWatch.vcellFloorVolts'],
-            )
+            floor = self._getNestedValue(config, floorKey)
+            if floor is not None and (
+                isinstance(floor, bool)
+                or not isinstance(floor, (int, float))
+                or not (3.0 < floor < 4.3)
+            ):
+                raise ConfigValidationError(
+                    f"{floorKey} must be a number in (3.0, 4.3) volts (got {floor!r})",
+                    missingFields=[floorKey],
+                )
 
         php = self._getNestedValue(config, 'pi.powerWatch.pldPowerPresentHigh')
         if php is not None and not isinstance(php, bool):
@@ -680,6 +1312,517 @@ class ConfigValidator:
                 f"(got {php!r})",
                 missingFields=['pi.powerWatch.pldPowerPresentHigh'],
             )
+
+    def _validateCellEpoch(self, config: dict[str, Any]) -> None:
+        """Validate pi.power.cellEpoch against CELL_EPOCH_VALUES (US-790).
+
+        A closed vocabulary, compared exactly: a near-miss spelling would file
+        drain rows under an epoch no query groups with the rest.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the value is not one of CELL_EPOCH_VALUES.
+        """
+        key = 'pi.power.cellEpoch'
+        value = self._getNestedValue(config, key)
+        if value is not None and (
+            not isinstance(value, str) or value not in CELL_EPOCH_VALUES
+        ):
+            raise ConfigValidationError(
+                f"{key} must be one of {list(CELL_EPOCH_VALUES)} (got {value!r})",
+                missingFields=[key],
+            )
+
+    def _validateDisplayAutoDim(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.autoDim.* (US-483-b carousel auto-dim curve).
+
+        Called after defaults are applied. The brightness LEVELS (minLevel,
+        defaultLevel) must each be a fraction in [0, 1] -- an out-of-band value
+        would blank the screen or wash it out. The lux
+        anchors must be positive with ``luxFull > luxMin`` so the curve has a real
+        (non-degenerate) range, and ``luxStaleSec`` must be positive. These are
+        Iris-tunable via config; the validator only rejects values that are unsafe
+        or nonsensical by construction, it does not pin the grounded defaults.
+
+        US-595 REMOVED ``alarmFloorLevel`` from this loop. It was not merely
+        unused: US-484-b (Spool 6d ch.4) short-circuits ``brightnessLevel()`` to
+        full brightness while a STOP alert is live, so the alarm floor could
+        never be reached by the one condition it existed for. Validating it kept
+        a dead tunable looking adjustable. An old config.json still carrying the
+        key now passes through unvalidated and unread, by design (AC-6).
+
+        US-627 adds ONE cross-field rule: ``defaultLevel >= minLevel``. The
+        carousel's ``brightnessLevel()`` clamps its CURVE branch to ``minLevel``
+        but returns ``defaultLevel`` UNCLAMPED when the light feed is absent,
+        stale or saturated -- so ``minLevel`` is a floor on the curve, never on
+        displayed brightness. A ``defaultLevel`` beneath it renders below the
+        floor precisely when the sensor has failed.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If any pi.display.autoDim value is the wrong
+                type or outside its allowed range.
+        """
+        for key in (
+            'pi.display.autoDim.minLevel',
+            'pi.display.autoDim.defaultLevel',
+        ):
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not (0.0 <= val <= 1.0)
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a number in [0.0, 1.0] (got {val!r})",
+                    missingFields=[key],
+                )
+
+        # US-627 -- THE FLOOR COUPLING. Deliberately AFTER the per-key loop, so a
+        # badly typed level always reports its own range error rather than
+        # exploding on this comparison.
+        #
+        # Compared on the EFFECTIVE (post-default) values because that is what
+        # the panel resolves: raising minLevel ALONE leaves defaultLevel on its
+        # grounded default, which IS the 2026-08-29 incident (minLevel 0.5 ->
+        # 0.75 against a defaultLevel still on 0.70). A rule reading only the
+        # explicitly-set keys would miss the very case it exists for.
+        #
+        # Rejected here rather than clamped in brightnessLevel() (US-627 AC-4): a
+        # runtime clamp would HIDE a bad config instead of reporting it, which is
+        # the inert-guard shape this project has catalogued repeatedly.
+        minLevel = self._getNestedValue(config, 'pi.display.autoDim.minLevel')
+        defaultLevel = self._getNestedValue(
+            config, 'pi.display.autoDim.defaultLevel'
+        )
+        if (
+            isinstance(minLevel, (int, float))
+            and not isinstance(minLevel, bool)
+            and isinstance(defaultLevel, (int, float))
+            and not isinstance(defaultLevel, bool)
+            and defaultLevel < minLevel
+        ):
+            raise ConfigValidationError(
+                f"pi.display.autoDim.defaultLevel ({defaultLevel!r}) must be >= "
+                f"pi.display.autoDim.minLevel ({minLevel!r}) -- the fallback used "
+                f"when the light feed is absent/stale/saturated is NOT clamped to "
+                f"the curve floor, so a lower default renders BELOW the floor "
+                f"exactly when the light sensor has failed",
+                missingFields=['pi.display.autoDim.defaultLevel'],
+            )
+
+        luxMin = self._getNestedValue(config, 'pi.display.autoDim.luxMin')
+        luxFull = self._getNestedValue(config, 'pi.display.autoDim.luxFull')
+        for key, val in (
+            ('pi.display.autoDim.luxMin', luxMin),
+            ('pi.display.autoDim.luxFull', luxFull),
+            (
+                'pi.display.autoDim.luxStaleSec',
+                self._getNestedValue(config, 'pi.display.autoDim.luxStaleSec'),
+            ),
+        ):
+            if val is not None and (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a positive number (got {val!r})",
+                    missingFields=[key],
+                )
+
+        if (
+            isinstance(luxMin, (int, float))
+            and not isinstance(luxMin, bool)
+            and isinstance(luxFull, (int, float))
+            and not isinstance(luxFull, bool)
+            and luxFull <= luxMin
+        ):
+            raise ConfigValidationError(
+                f"pi.display.autoDim.luxFull ({luxFull!r}) must be greater than "
+                f"luxMin ({luxMin!r})",
+                missingFields=['pi.display.autoDim.luxFull'],
+            )
+
+        curve = self._getNestedValue(config, 'pi.display.autoDim.curve')
+        if curve is not None and curve not in ('logarithmic', 'linear'):
+            raise ConfigValidationError(
+                f"pi.display.autoDim.curve must be 'logarithmic' or 'linear' "
+                f"(got {curve!r})",
+                missingFields=['pi.display.autoDim.curve'],
+            )
+
+    # Every IMU knob that must be a POSITIVE number.  A zero or negative one is
+    # not a slow filter or a lenient gate, it is a divide-by-zero or a
+    # permanently-open window -- and US-521's accelTrustBand at 0 would gate the
+    # accel correction off forever, leaving pure gyro drift with nothing to
+    # correct it (a silently-wrong instrument, which is what fails fast here).
+    _IMU_POSITIVE_KEYS = (
+        'pi.sensors.imu.stateHz',
+        'pi.sensors.imu.gravityTauSec',
+        'pi.sensors.imu.pitchTauSec',
+        'pi.sensors.imu.accelTrustBand',
+        'pi.sensors.imu.zuptMinStopSec',
+        'pi.sensors.imu.zuptSpeedMaxAgeSec',
+        'pi.sensors.imu.zuptMinStops',
+        'pi.sensors.imu.zuptWindowStops',
+        # US-564: a zero or negative dwell would make the run limit collapse to
+        # its floor, gating a channel on two identical samples -- fast enough to
+        # fire on a real scheduler hiccup. Fail fast rather than silently.
+        'pi.sensors.imu.invariantDwellSeconds',
+        # US-803-a: a zero sample count reads nothing, and gyroLooksFaulted
+        # treats no samples as healthy -- fault detection silently off.
+        'pi.sensors.imu.gyroFaultMinRadS',
+        'pi.sensors.imu.gyroRecoverySampleCount',
+        'pi.sensors.imu.gyroRecoverySettleSec',
+        # US-803-b: a zero window never pairs a mag, so heading goes NA forever.
+        'pi.sensors.imu.magMaxAgeSec',
+        # US-767-b: a zero pre-roll keeps nothing from before the link, and a
+        # zero hold closes the gate on the first dropped read.
+        'pi.sensors.logGate.preRollSec',
+        'pi.sensors.logGate.holdSec',
+    )
+
+    # ARCH-064: the three magnetometer acquisition paths a build can name, and
+    # the two fusion engines a build can select. See the DEFAULTS comments
+    # above for what each value means and why an unknown one is rejected
+    # rather than silently coerced to the default -- a typo'd magMode must not
+    # quietly ship whichever acquisition path happens to be this release's
+    # default.
+    _IMU_MAG_MODES = frozenset({'direct', 'bypass', 'master'})
+    _IMU_FUSION_ENGINES = frozenset({'imufusion', 'legacy'})
+
+    def _validateImuStateBridge(self, config: dict[str, Any]) -> None:
+        """Validate pi.sensors.imu.{rates,pitch,zupt} (US-478, US-521, US-708).
+
+        Called after defaults are applied.
+
+        US-708 REMOVED THE MOUNT-AXIS CHECK, and removing it was the point rather
+        than a casualty. The axis map was validated here because it is a
+        CALIBRATION fact whose wrongness is silent -- and being config was
+        exactly what let it BE wrong: config.json pinned the identity map,
+        overrode the code default, and no amount of well-formedness checking
+        could notice that a well-formed map described the wrong board. The
+        mounting is now a declared constant beside the sensor
+        (``imu_state_bridge.IMU_BODY_FRAME``), settled by measurement and a
+        confirming drive, so there is nothing left here to validate.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If one of the IMU rates is non-positive.
+        """
+        for key in self._IMU_POSITIVE_KEYS:
+            val = self._getNestedValue(config, key)
+            if val is not None and (
+                isinstance(val, bool) or not isinstance(val, (int, float)) or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a positive number (got {val!r})",
+                    missingFields=[key],
+                )
+        self._validateImuEnums(config)
+        self._validateImuDeclination(config)
+        self._validateImuAccelCalibration(config)
+        self._validateImuMagCalibration(config)
+        self._validateGyroRecovery(config)
+        self._warnImuRatesAboveSource(config)
+
+    def _validateImuEnums(self, config: dict[str, Any]) -> None:
+        """Reject a ``magMode`` or ``fusionEngine`` outside its allowed set (ARCH-064).
+
+        Called after defaults are applied, so an absent key never reaches
+        here -- only an explicit, wrong value does.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If ``pi.sensors.imu.magMode`` is not one of
+                'direct' / 'bypass' / 'master', or ``pi.sensors.imu.fusionEngine``
+                is not one of 'imufusion' / 'legacy'.
+        """
+        magMode = self._getNestedValue(config, 'pi.sensors.imu.magMode')
+        if magMode is not None and magMode not in self._IMU_MAG_MODES:
+            raise ConfigValidationError(
+                f"pi.sensors.imu.magMode has unknown value {magMode!r}; "
+                f"allowed: {sorted(self._IMU_MAG_MODES)}",
+                missingFields=['pi.sensors.imu.magMode'],
+            )
+
+        fusionEngine = self._getNestedValue(config, 'pi.sensors.imu.fusionEngine')
+        if fusionEngine is not None and fusionEngine not in self._IMU_FUSION_ENGINES:
+            raise ConfigValidationError(
+                f"pi.sensors.imu.fusionEngine has unknown value {fusionEngine!r}; "
+                f"allowed: {sorted(self._IMU_FUSION_ENGINES)}",
+                missingFields=['pi.sensors.imu.fusionEngine'],
+            )
+
+    def _validateImuDeclination(self, config: dict[str, Any]) -> None:
+        """Require ``pi.sensors.imu.magDeclinationDeg`` to be a finite angle in [-180, 180].
+
+        ARCH-064 Ruling 35 (M1). It used to be only DEFAULTED: a NaN reached
+        AhrsFusion and made every published heading NaN, and a string failed
+        inside the engine build and silently fell back to the legacy engine.
+        Called after defaults, so an absent key is already 0.0 here.
+
+        Raises:
+            ConfigValidationError: a non-number (bools included), a NaN/inf,
+                or a magnitude above 180 degrees.
+        """
+        key = 'pi.sensors.imu.magDeclinationDeg'
+        val = self._getNestedValue(config, key)
+        # Absent = nothing to validate, the same rule _validateImuEnums applies. It
+        # only happens when a caller builds the validator with its OWN defaults map
+        # (so the registry's 0.0 never lands); the engine build then falls back to
+        # its default. Merge with dev, 2026-10-01: raising here broke two dev tests
+        # (TestEdgeCases) that validate a custom-defaults config with no imu section.
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or abs(val) > 180.0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number of degrees within [-180, 180] "
+                f"(EAST positive), got {val!r}",
+                missingFields=[key],
+            )
+
+    def _validateImuAccelCalibration(self, config: dict[str, Any]) -> None:
+        """Validate (and complete) ``pi.sensors.imu.accelCalibration`` (ARCH-064 Task 6b).
+
+        ``offsetMs2`` a finite 3-vector, ``matrix`` a finite 3x3 with det > 0.
+        See :meth:`_validateCalibrationBlock`.
+        """
+        self._validateCalibrationBlock(config, 'pi.sensors.imu.accelCalibration', 'offsetMs2', 'matrix')
+
+    def _validateImuMagCalibration(self, config: dict[str, Any]) -> None:
+        """Validate (and complete) ``pi.sensors.imu.magCalibration`` (Ruling 32).
+
+        ``hardIronUt`` a finite 3-vector, ``softIron`` a finite 3x3 with det > 0.
+        Before this, a malformed block reached AhrsFusion, which refused it at
+        runtime and silently fell back to the legacy engine.
+        """
+        self._validateCalibrationBlock(config, 'pi.sensors.imu.magCalibration', 'hardIronUt', 'softIron')
+
+    def _validateCalibrationBlock(
+        self, config: dict[str, Any], key: str, vectorKey: str, matrixKey: str
+    ) -> None:
+        """Validate (and complete) one ``{vector, matrix}`` calibration block.
+
+        The vector must be 3 finite numbers and the matrix a finite 3x3 with a
+        POSITIVE determinant: a calibration is a correction near the identity,
+        and det <= 0 is a mirror or a collapse -- an axis would read reversed.
+        A missing leaf is filled with its no-op value (zero / identity), so a
+        partial block means what it says.
+
+        Rejected here rather than left to AhrsFusion, which would refuse it at
+        runtime and silently fall back to the legacy engine.
+
+        Args:
+            config: Validated configuration (post-default-application).
+            key: Dot path of the block.
+            vectorKey: Name of the offset leaf.
+            matrixKey: Name of the matrix leaf.
+
+        Raises:
+            ConfigValidationError: If the block, the vector or the matrix is
+                malformed, non-finite, or the matrix determinant is <= 0.
+        """
+        block = self._getNestedValue(config, key)
+        if block is None:
+            return
+        if not isinstance(block, dict):
+            raise ConfigValidationError(
+                f"{key} must be an object {{{vectorKey}, {matrixKey}}} (got {block!r})",
+                missingFields=[key],
+            )
+
+        def finite(value: Any) -> bool:
+            return (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+
+        vector = block.setdefault(vectorKey, [0.0, 0.0, 0.0])
+        if not (
+            isinstance(vector, (list, tuple)) and len(vector) == 3 and all(finite(v) for v in vector)
+        ):
+            raise ConfigValidationError(
+                f"{key}.{vectorKey} must be 3 finite numbers (got {vector!r})",
+                missingFields=[f"{key}.{vectorKey}"],
+            )
+
+        matrix = block.setdefault(matrixKey, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        if not (
+            isinstance(matrix, (list, tuple))
+            and len(matrix) == 3
+            and all(
+                isinstance(row, (list, tuple)) and len(row) == 3 and all(finite(v) for v in row)
+                for row in matrix
+            )
+        ):
+            raise ConfigValidationError(
+                f"{key}.{matrixKey} must be a 3x3 of finite numbers (got {matrix!r})",
+                missingFields=[f"{key}.{matrixKey}"],
+            )
+        (a, b, c), (d, e, f), (g, h, i) = matrix
+        determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+        if not determinant > 0.0:
+            raise ConfigValidationError(
+                f"{key}.{matrixKey} determinant must be > 0 (got {determinant:g}): a mirror "
+                "or singular matrix is not a calibration",
+                missingFields=[f"{key}.{matrixKey}"],
+            )
+
+    def _validateGyroRecovery(self, config: dict[str, Any]) -> None:
+        """Bound the A-34 gyro-recovery keys beyond positivity (US-803-a).
+
+        Runs after the positive check, so each value here is already a
+        positive int or float.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the sample count is not an integer, or
+                the fault threshold exceeds the gyro's full scale.
+        """
+        countKey = 'pi.sensors.imu.gyroRecoverySampleCount'
+        count = self._getNestedValue(config, countKey)
+        # An INTEGER, not merely positive: a float reaches range(count) in
+        # gyro_recovery._sampleGyro and raises TypeError, which the recovery
+        # does not catch and _recoverGyro swallows -- so 2.5 (or 20.0) would
+        # silently disable the recovery on every boot while the IMU looks healthy.
+        if count is not None and not isinstance(count, int):
+            raise ConfigValidationError(
+                f"{countKey} must be an integer (got {count!r})",
+                missingFields=[countKey],
+            )
+
+        thresholdKey = 'pi.sensors.imu.gyroFaultMinRadS'
+        threshold = self._getNestedValue(config, thresholdKey)
+        if threshold is not None and threshold > GYRO_FULL_SCALE_RAD_S:
+            raise ConfigValidationError(
+                f"{thresholdKey} {threshold!r} exceeds the gyro's full scale "
+                f"({GYRO_FULL_SCALE_RAD_S:.3f} rad/s = 500 dps) -- the sensor can "
+                f"never report that rate, so fault detection would be silently off",
+                missingFields=[thresholdKey],
+            )
+
+    def _warnImuRatesAboveSource(self, config: dict[str, Any]) -> None:
+        """WARN when an IMU consumer rate cannot be what its config field says (US-796-b).
+
+        persistHz and stateHz are consumers of sampleHz. A consumer rate above
+        its source carries no new data: it degrades safely rather than fails, but
+        a silent clamp is a config field that lies, so it is named here with both
+        values and the rate actually delivered.
+
+        ARCH-064d: the persist path is a UTC time grid of ``1 / persistHz`` s
+        (``edr_persistence_subscriber._UtcGridSelector``), so ANY persistHz at or
+        below sampleHz is stored exactly -- the old "not an exact divisor"
+        warning described the retired keep-1-of-N rule and is gone. What is
+        warned instead is a rate outside ``RECOMMENDED_IMU_PERSIST_HZ`` (the CIO's
+        1/2/4 Hz), whose grid does not tile the ECU's whole-second rows evenly.
+
+        Args:
+            config: Validated configuration (post-default-application).
+        """
+        sampleHz = self._getNestedValue(config, 'pi.sensors.imu.sampleHz')
+        if not _isPositiveNumber(sampleHz):
+            return
+
+        persistHz = self._getNestedValue(config, 'pi.sensors.imu.persistHz')
+        if _isPositiveNumber(persistHz):
+            if persistHz > sampleHz:
+                logger.warning(
+                    "pi.sensors.imu.persistHz %g exceeds its source pi.sensors.imu.sampleHz %g -- "
+                    "every burst persisted, effective rate %g Hz",
+                    persistHz, sampleHz, sampleHz,
+                )
+            elif persistHz not in RECOMMENDED_IMU_PERSIST_HZ:
+                logger.warning(
+                    "pi.sensors.imu.persistHz %g is not an ECU-matchable recording rate "
+                    "(%s Hz, CIO 2026-09-30) -- rows are stored at %g Hz on a %g s UTC grid",
+                    persistHz, ", ".join(f"{r:g}" for r in RECOMMENDED_IMU_PERSIST_HZ),
+                    persistHz, 1.0 / persistHz,
+                )
+
+        stateHz = self._getNestedValue(config, 'pi.sensors.imu.stateHz')
+        if _isPositiveNumber(stateHz) and stateHz > sampleHz:
+            logger.warning(
+                "pi.sensors.imu.stateHz %g exceeds its source pi.sensors.imu.sampleHz %g -- "
+                "writes past the sample rate repeat the same burst, effective rate %g Hz",
+                stateHz, sampleHz, sampleHz,
+            )
+
+    def _validateLocalZone(self, config: dict[str, Any]) -> None:
+        """Reject a declared timezone the host's IANA database cannot resolve (US-809-0).
+
+        Called after defaults are applied. The key is present for the shipped
+        config, but NOT for a caller that injects its own narrow defaults dict,
+        which is why absence returns rather than raising (see the comment on
+        that branch).
+
+        WHY A WELL-FORMEDNESS CHECK IS WORTH HAVING HERE, when US-708 removed
+        the IMU mount-axis check on the grounds that validating a well-formed
+        value proves nothing: a mount axis could be well-formed and describe
+        the wrong board, so the check was theatre. A zone name cannot. Either
+        the database resolves it or it does not, and an unresolvable zone makes
+        every conversion refuse at runtime. This check moves that failure from
+        the first timestamp of a drive to boot, which is the whole difference.
+
+        ZoneInfo signals the two bad cases differently -- ZoneInfoNotFoundError
+        (a KeyError) for an unknown key, ValueError for a malformed one such as
+        '../etc/passwd'. Catching only the first would admit the second.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the zone is PRESENT but empty, not a
+                string, or not resolvable on this host. An absent key is left
+                to DEFAULTS and to resolveLocalZone()'s refusal.
+        """
+        key = 'pi.time.localZone'
+        declared = self._getNestedValue(config, key)
+
+        # ABSENCE IS NOT THIS METHOD'S BUSINESS, per the idiom every sibling
+        # post-default validator follows (see _validateHomeNetwork's
+        # `if pingPath is not None`). DEFAULTS supplies the key for the shipped
+        # config; a caller that INJECTS a narrow defaults dict -- as
+        # tests/test_config_validator.py legitimately does with
+        # {'logging.level': 'INFO'} -- is entitled to omit it, and raising here
+        # would make this method reject configs that are not its to judge.
+        # A MISSING zone is still caught, at the layer the story names for it:
+        # resolveLocalZone() refuses and produces no timestamp.
+        if declared is None:
+            return
+
+        if not declared or not isinstance(declared, str):
+            raise ConfigValidationError(
+                f"{key} must be an IANA zone name (got {declared!r})",
+                missingFields=[key],
+            )
+
+        try:
+            zoneinfo.ZoneInfo(declared)
+        except (KeyError, ValueError) as exc:
+            raise ConfigValidationError(
+                f"{key} is {declared!r}, which this host's IANA time-zone "
+                f"database cannot resolve ({type(exc).__name__}). Declare a "
+                "valid zone; the host zone is deliberately not substituted.",
+                missingFields=[key],
+            ) from exc
 
     def _validateRequired(self, config: dict[str, Any]) -> list[str]:
         """

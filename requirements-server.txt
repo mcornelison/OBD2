@@ -10,7 +10,11 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.23.0
 
 # Database
-sqlalchemy>=2.0.0
+# [asyncio] pulls in greenlet. SQLAlchemy 2.1 stopped installing it by default,
+# and the async engine (aiomysql) cannot import without it. MEASURED 2026-09-28:
+# the migration-drift CI installed 2.1.1, had no greenlet, and died at
+# collection before testing a single migration (PR #65).
+sqlalchemy[asyncio]>=2.0.0
 aiomysql>=0.2.0
 # pymysql: synchronous MariaDB driver. scripts/report.py rewrites the async
 # DATABASE_URL (+aiomysql://) to +pymysql:// for CLI use (_toSyncDriverUrl);

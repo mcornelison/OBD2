@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<!--
+  ARCH-058 -- the in-car drive console screen. BUTTON-driven (CIO, 2026-09-27).
+
+  🔴 WHY EVERYTHING IS ENORMOUS. The OSOYOO HDMI35 is a SCALER panel: it
+  advertises no 480x320 mode, so the shipping configuration is 720p (BL-034).
+  That means a 1280x720 viewport on a 3.5-inch screen -- roughly 420 DPI. Text
+  that looks generous in a desktop browser is about 2 mm tall on the dash. The
+  CIO asked for "very large. Very large."
+
+  🔴 THE BUTTON IS PRESSED AT A STOP, AND IS HOLD-TO-FIRE. A press restarts the
+  production collector on the next acquisition mechanism: ~45 s settle, up to
+  four attempts (hand-over ~75 %/start, ARCH-032). A bump on the road must not
+  fire it, so it needs a deliberate 1 s hold -- same pattern as END.
+
+  🔴 A FAILED SWITCH IS SAID OUT LOUD. After four failed draws the screen goes
+  red with NOT RECORDING THIS ALGORITHM and the button becomes RETRY. A phase
+  silently running on the wrong channel produces data that looks fine and
+  means nothing.
+
+  Poll contract: GET /status every 500 ms; POST /advance; POST /end.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drive console</title>
+<style>
+  :root {
+    --bg: #0b0f14; --fg: #e8eef5; --dim: #7d8b9a;
+    --ok: #35d07f; --bad: #ff4d4d; --warn: #ffc043; --accent: #4aa3ff;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body {
+    height: 100%; background: var(--bg); color: var(--fg);
+    font-family: "DejaVu Sans", system-ui, sans-serif;
+    overflow: hidden; -webkit-user-select: none; user-select: none;
+  }
+  body { display: flex; gap: 18px; padding: 14px 18px; }
+  #left  { flex: 1 1 58%; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+
+  #phase { font-size: 46px; font-weight: 700; color: var(--accent); line-height: 1; }
+  #mech  { font-size: 72px; font-weight: 800; line-height: 1.02; }
+
+  #countWrap { display: flex; align-items: baseline; gap: 16px; margin-top: 2px; }
+  #countK  { font-size: 34px; color: var(--dim); text-transform: uppercase; }
+  #count   { font-size: 130px; font-weight: 800; line-height: 0.92;
+             font-variant-numeric: tabular-nums; }
+
+  #circles { font-size: 44px; font-weight: 800; color: var(--warn);
+             display: none; line-height: 1.05; }
+  #circles.on { display: block; }
+
+  #magRow  { display: flex; align-items: baseline; gap: 20px; margin-top: 4px; }
+  #magK    { font-size: 34px; color: var(--dim); }
+  #mag     { font-size: 80px; font-weight: 800; line-height: 1; }
+  #mag.live    { color: var(--ok); }
+  #mag.frozen  { color: var(--bad); }
+  #mag.unknown { color: var(--dim); }
+
+  #stats   { display: flex; gap: 28px; font-size: 30px; color: var(--dim);
+             margin-top: auto; flex-wrap: wrap; padding-left: 190px; }  /* clear #end */
+  #stats b { color: var(--fg); font-size: 38px; font-variant-numeric: tabular-nums; }
+
+  /* THE button. Right side of the screen, hold-to-fire. */
+  #next {
+    flex: 0 0 40%; border: 4px solid var(--accent); border-radius: 22px;
+    background: #10263f; color: var(--fg); position: relative; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 12px;
+  }
+  #next .big   { font-size: 88px; font-weight: 900; line-height: 1; position: relative; }
+  #next .small { font-size: 34px; color: var(--dim); position: relative; margin-top: 10px; }
+  #next .to    { font-size: 40px; font-weight: 700; position: relative; margin-top: 8px; }
+  #nfill { position: absolute; inset: auto 0 0 0; height: 0; background: #1f4f80; }
+  #next.retry { border-color: var(--bad); background: #3a1414; }
+  #next.retry #nfill { background: #7a2020; }
+  #next.off   { border-color: #2a3542; background: #11161c; color: var(--dim); }
+
+  /* Switching / NOT RECORDING notice -- covers the left column. */
+  #sw {
+    position: fixed; left: 0; top: 0; bottom: 0; width: 60%;
+    display: none; flex-direction: column; justify-content: center;
+    padding: 24px; gap: 10px; z-index: 8;
+  }
+  #sw.switching { display: flex; background: #3a2f0b; color: var(--warn); }
+  #sw.failed    { display: flex; background: #3a0f0f; color: var(--bad); }
+  #swTop { font-size: 56px; font-weight: 900; line-height: 1.02; }
+  #swSub { font-size: 40px; font-weight: 700; color: var(--fg); }
+
+  #banner {
+    position: fixed; inset: 0; background: var(--accent); color: #04121f;
+    display: none; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; padding: 20px; z-index: 9;
+  }
+  #banner.on { display: flex; }
+  #bTop  { font-size: 54px; font-weight: 700; opacity: .85; }
+  #bMech { font-size: 104px; font-weight: 900; line-height: 1.02; }
+
+  #end {
+    position: fixed; left: 10px; bottom: 10px; width: 170px; height: 64px;
+    border: 2px solid #33414f; border-radius: 10px; background: #131a22;
+    color: var(--dim); font-size: 18px; font-weight: 700; overflow: hidden; z-index: 10;
+  }
+  #fill { position: absolute; inset: 0 auto 0 0; width: 0; background: #3a2a2a; }
+  #end span { position: relative; }
+  #err { color: var(--bad); font-size: 24px; min-height: 26px; }
+</style>
+
+<div id="left">
+  <div id="phase">STEP — of —</div>
+  <div id="mech">starting…</div>
+  <div id="countWrap">
+    <div id="countK">in phase</div>
+    <div id="count">--:--</div>
+  </div>
+  <div id="circles">▶ LOOP IN PROGRESS</div>
+  <div id="magRow">
+    <div id="magK">MAG</div>
+    <div id="mag" class="unknown">—</div>
+  </div>
+  <div id="stats">
+    <span>mode <b id="mode">—</b></span>
+    <span>hdg <b id="rows">—</b></span>
+    <span>tries <b id="res">0</b></span>
+    <span>obd <b id="obd">—</b></span>
+  </div>
+  <div id="err"></div>
+</div>
+
+<button id="next" class="off">
+  <div id="nfill"></div>
+  <div class="big" id="nBig">WAIT</div>
+  <div class="to" id="nTo"></div>
+  <div class="small" id="nSmall">hold 1 s — only when stopped</div>
+</button>
+
+<div id="sw"><div id="swTop"></div><div id="swSub"></div></div>
+
+<button id="end"><div id="fill"></div><span>hold 2 s<br>end session</span></button>
+
+<div id="banner"><div id="bTop">NOW RECORDING</div><div id="bMech">—</div></div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const BANNER_MS = 8000, NEXT_HOLD = 1000, END_HOLD = 2000;
+  let lastVerified = null, bannerUntil = 0, ended = false, button = 'WAIT';
+
+  const mmss = s => {
+    if (s === null || s === undefined) return null;
+    s = Math.max(0, Math.round(s));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  };
+
+  function paint(s) {
+    const idx = s.stepIndex, tot = s.stepTotal;
+    $('phase').textContent = (idx === null || idx === undefined)
+      ? 'STEP — of —' : `PRESSED ${idx} of ${tot}`;
+    $('mech').textContent = s.phaseLabel || '—';
+
+    // Button-driven: there is no switch time to count toward, so the screen
+    // shows elapsed time IN the phase (s.elapsedInPhaseS), never a countdown.
+    const c = mmss(s.elapsedInPhaseS);
+    $('count').textContent = c === null ? '--:--' : c;
+    $('circles').classList.toggle('on',
+      s.state === 'recording' && /LOOP/.test(s.phaseLabel || ''));
+
+    const m = $('mag');
+    if (s.magLive === true)       { m.textContent = 'LIVE';   m.className = 'live'; }
+    else if (s.magLive === false) { m.textContent = 'FROZEN'; m.className = 'frozen'; }
+    else                          { m.textContent = '—';      m.className = 'unknown'; }
+
+    $('mode').textContent = s.magMode || '—';
+    $('rows').textContent = (s.headingDeg === null || s.headingDeg === undefined)
+      ? '—' : Math.round(s.headingDeg);
+    $('res').textContent  = s.attempt ?? 0;
+    $('obd').textContent  = s.obd || '—';
+    $('err').textContent  = s.error ? s.error.slice(0, 140) : '';
+
+    const sw = $('sw');
+    if (s.state === 'switching') {
+      sw.className = 'switching';
+      $('swTop').textContent = `SWITCHING TO ${s.phaseLabel}`;
+      $('swSub').textContent = `attempt ${s.attempt || 1} of 4 — STAY PARKED`;
+    } else if (s.state === 'failed') {
+      sw.className = 'failed';
+      $('swTop').textContent = 'NOT RECORDING THIS ALGORITHM';
+      $('swSub').textContent = `${s.phaseLabel} did not attach — hold RETRY`;
+    } else { sw.className = ''; }
+
+    button = s.button || 'WAIT';
+    const live = !['WAIT', 'DONE', 'ENDED'].includes(button);
+    const nb = $('next');
+    nb.className = button === 'RETRY' ? 'retry' : (live ? '' : 'off');
+    $('nBig').textContent = button === 'DONE' ? 'ALL DONE' : button;
+    $('nTo').textContent  = button === 'RETRY' ? ('↻ ' + (s.phaseLabel || ''))
+                          : (live && s.nextSwitches) ? ('switches → ' + (s.nextLabel || ''))
+                          : live ? 'instant — marks the loop' : '';
+    $('nSmall').textContent = !live
+      ? (button === 'DONE' ? 'drive on — key off ends it' : '')
+      : (s.nextSwitches || button === 'RETRY')
+        ? 'hold 1 s — STOPPED, then wait ~1–1.5 min'
+        : 'hold 1 s';
+
+    // Banner on a newly VERIFIED switch only -- never on a request that may fail.
+    const verifiedKey = s.state === 'recording' ? `${s.magMode}@${s.phaseLabel}` : null;
+    if (verifiedKey !== null && verifiedKey !== lastVerified && s.magMode) {
+      if (lastVerified !== null) {
+        $('bMech').textContent = s.phaseLabel || '—';
+        $('banner').classList.add('on');
+        bannerUntil = performance.now() + BANNER_MS;
+      }
+      lastVerified = verifiedKey;
+    }
+    if (bannerUntil && performance.now() > bannerUntil) {
+      $('banner').classList.remove('on'); bannerUntil = 0;
+    }
+    if (s.sessionOver) {
+      $('mech').textContent = 'SESSION ENDED';
+      $('count').textContent = s.collectorRestored ? 'restored' : 'CHECK THE CAR';
+    }
+  }
+
+  async function poll() {
+    if (ended) return;
+    try { paint(await (await fetch('/status', { cache: 'no-store' })).json()); }
+    catch (e) { $('err').textContent = 'console unreachable'; }
+  }
+
+  function holdButton(el, fillEl, holdMs, vertical, canFire, fire) {
+    let t0 = null, raf = null;
+    const reset = () => { t0 = null; cancelAnimationFrame(raf);
+                          fillEl.style[vertical ? 'height' : 'width'] = '0'; };
+    const tick = () => {
+      if (t0 === null) return;
+      const p = Math.min(1, (performance.now() - t0) / holdMs);
+      fillEl.style[vertical ? 'height' : 'width'] = (p * 100) + '%';
+      if (p >= 1) { reset(); fire(); return; }
+      raf = requestAnimationFrame(tick);
+    };
+    el.addEventListener('pointerdown', e => { e.preventDefault();
+      if (!canFire()) return; t0 = performance.now(); raf = requestAnimationFrame(tick); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(k => el.addEventListener(k, reset));
+  }
+
+  holdButton($('next'), $('nfill'), NEXT_HOLD, true,
+    () => !ended && !['WAIT', 'DONE', 'ENDED'].includes(button),
+    async () => { try { await fetch('/advance', { method: 'POST' }); } catch (e) {} poll(); });
+
+  holdButton($('end'), $('fill'), END_HOLD, false, () => !ended,
+    async () => { ended = true; $('mech').textContent = 'ending…';
+                  try { await fetch('/end', { method: 'POST' }); } catch (e) {} });
+
+  setInterval(poll, 500);
+  poll();
+</script>

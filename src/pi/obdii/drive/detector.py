@@ -77,6 +77,41 @@
 #                               structurally moot: server reads raw
 #                               realtime_data MIN/MAX/COUNT directly,
 #                               needs no marker.
+# 2026-06-29    | Rex (US-388) | F-107 Root-2 fix: guaranteed deadline-anchored
+#                               close (Atlas C-alpha..delta ruling 2026-06-29).
+#                               (1) _processRpmValue STOPPING branch now
+#                               evaluates the drive-end deadline FIRST via the
+#                               new _maybeCloseOnDeadline helper -- so a close
+#                               whose debounce completed inside a reading GAP
+#                               fires when the next tick arrives, and a fresh
+#                               crank then mints a NEW drive_id instead of being
+#                               absorbed into the stale-open session (drives
+#                               28/29 missed-close leak).  (2) new public
+#                               evaluateTimeouts(now) runs the SAME close paths
+#                               OFF the reading-tick (orchestrator main loop
+#                               calls it each pass) so the close fires even when
+#                               readings stop entirely; acquires the existing
+#                               self._lock (C-beta re-entrancy guard).  A
+#                               confirmed RPM-debounce close does NOT set the
+#                               US-361 ECU-silence marker, so it mints fresh
+#                               (vs the tentative link-dropped close that
+#                               re-attaches within MIN_INTER_DRIVE_SECONDS).
+# 2026-08-29    | Rex (US-625) | A-9 Root 2: bounded-idle close for a STALE-OPEN
+#                               drive.  Both US-388 close paths are
+#                               state-guarded (_maybeCloseOnDeadline needs
+#                               STOPPING; _checkEcuSilenceDriveEnd needs
+#                               RUNNING/STOPPING) and evaluateTimeouts itself
+#                               early-returned with no session -- so a live
+#                               drive_id in any other shape was unclosable and
+#                               kept claiming rows (drive 51 took 24 rows
+#                               ~52 min after its last real sample).  Adds
+#                               _maybeCloseStaleDriveId (depends only on the
+#                               context's own idle clock), arms the bound at
+#                               _startDrive, notes activity on ECU readings,
+#                               closes a STOPPING drive on stop(), and releases
+#                               the context in stop()/reset().  All internal
+#                               reads move to getRawCurrentDriveId (owner view)
+#                               so drive_end still stamps its own id.
 # ================================================================================
 ################################################################################
 """
@@ -114,7 +149,15 @@ from typing import Any
 from src.common.time.helper import utcIsoNow
 
 from ..decoders import isEcuDependentParameter
-from ..drive_id import getCurrentDriveId, nextDriveId, setCurrentDriveId
+from ..drive_id import (
+    armDriveIdleBound,
+    clearCurrentDriveId,
+    getRawCurrentDriveId,
+    isDriveIdStale,
+    nextDriveId,
+    noteDriveActivity,
+    setCurrentDriveId,
+)
 from ..engine_state import EngineState
 from ..pi_state import getNoNewDrives
 from .types import (
@@ -466,9 +509,28 @@ class DriveDetector:
     def stop(self) -> None:
         """Stop the drive detector."""
         with self._lock:
-            # If drive is active, end it
-            if self._driveState == DriveState.RUNNING and self._currentSession:
+            # If drive is active, end it.
+            #
+            # US-625: STOPPING counts as active.  It previously did not, and
+            # STOPPING is the state engine-off LEAVES BEHIND -- so the single
+            # most common shutdown shape closed no drive, wrote no drive_end
+            # row, and left the drive_id live.  After this method the detector
+            # is IDLE and evaluateTimeouts early-returns forever, so stop() is
+            # the last moment any close can fire.
+            if self._currentSession and self._driveState in (
+                DriveState.RUNNING, DriveState.STOPPING,
+            ):
                 self._endDrive()
+
+            # US-625: a drive_id with no session left to close still has to be
+            # released here, for the same reason -- nothing runs after this.
+            if getRawCurrentDriveId() is not None:
+                logger.warning(
+                    "drive detector stopping with drive_id=%s still live | "
+                    "releasing the context so no later row inherits it",
+                    getRawCurrentDriveId(),
+                )
+                clearCurrentDriveId()
 
             self._detectorState = DetectorState.IDLE
             logger.info("Drive detector stopped")
@@ -544,6 +606,10 @@ class DriveDetector:
             # drive_end never fires.
             if isEcuDependentParameter(parameterName):
                 self._lastEcuReadingTime = now
+                # US-625: the same signal extends the context's bounded idle,
+                # so "the ECU is alive" and "keep attributing rows" are driven
+                # by one fact rather than two that can drift apart.
+                self._noteDriveActivity()
 
             # Update tracked values
             if parameterName == 'RPM':
@@ -616,7 +682,7 @@ class DriveDetector:
             "FORENSIC drive_check | RPM=%s | SPEED=%s | state=%s | "
             "above_start=%s | at_or_below_end=%s | drive_id=%s",
             rpm, self._lastSpeedValue, self._driveState.value,
-            rpmAboveStart, rpmAtOrBelowEnd, getCurrentDriveId(),
+            rpmAboveStart, rpmAtOrBelowEnd, getRawCurrentDriveId(),
         )
 
         # Update peak RPM if driving
@@ -663,18 +729,186 @@ class DriveDetector:
                 self._belowThresholdSince = None
 
         elif self._driveState == DriveState.STOPPING:
-            if rpmAtOrBelowEnd:
-                # Check if duration met
-                if self._belowThresholdSince:
-                    elapsed = (now - self._belowThresholdSince).total_seconds()
-                    if elapsed >= self._config.driveEndDurationSeconds:
-                        # Drive ended!
-                        self._endDrive()
-            else:
-                # RPM went back up, drive continues
+            # F-107 Root-2 (US-388): evaluate the drive-end deadline FIRST,
+            # regardless of this reading's RPM.  The close debounce can complete
+            # inside a reading GAP -- the readings stop at engine-off and the
+            # next tick (or an off-tick evaluateTimeouts pass) only arrives after
+            # belowThresholdSince + driveEndDurationSeconds has already elapsed.
+            # The pre-US-388 code only checked the deadline while rpmAtOrBelowEnd
+            # was still True, so a key-on tick (RPM back up) after the gap was
+            # treated as a continuation and ABSORBED the second physical drive
+            # into the first's stale-open drive_id (the drives 28/29 leak).
+            if self._maybeCloseOnDeadline(now):
+                # Drive closed (deadline-anchored).  Re-evaluate THIS same
+                # reading in the now-STOPPED state so a fresh crank reaches
+                # _startDrive and mints a NEW drive_id (no absorption).  A
+                # confirmed RPM-debounce close leaves the ECU-silence marker
+                # unset, so _isEcuSilenceContinuation is False -> fresh id, not a
+                # re-attach.  Recursion depth is 1: STOPPED never re-enters this
+                # branch within a single call.
+                self._processRpmValue(rpm, now)
+            elif not rpmAtOrBelowEnd:
+                # RPM back up BEFORE the deadline -> genuine continuation; the
+                # engine never actually stopped (US-361 short-blip path).
                 self._belowThresholdSince = None
                 self._transitionState(DriveState.RUNNING)
                 logger.debug("RPM went above threshold, drive continues")
+
+    def _maybeCloseOnDeadline(self, now: datetime) -> bool:
+        """Close the drive if the STOPPING RPM-debounce deadline has elapsed.
+
+        F-107 Root-2 (US-388), Atlas constraint C-gamma (deadline-anchored).
+        Returns ``True`` iff the detector is in ``STOPPING`` with
+        ``_belowThresholdSince`` set and at least ``driveEndDurationSeconds`` has
+        elapsed since -- in which case the drive is ended NOW.  The elapsed
+        window is measured to ``now``, so the close fires correctly even when
+        the completing instant fell inside a reading GAP (the missed close that
+        the triggering tick, or :meth:`evaluateTimeouts`, only arrives after).
+        No-op (returns ``False``) in any other state.
+
+        This is a CONFIRMED engine-off close (an RPM=0 reading was observed to
+        arm STOPPING): it deliberately does NOT set the ECU-silence continuation
+        marker, so the next :meth:`_startDrive` mints a fresh ``drive_id`` rather
+        than re-attaching.  Contrast :meth:`_checkEcuSilenceDriveEnd`, the
+        tentative link-dropped close that DOES re-attach within
+        ``MIN_INTER_DRIVE_SECONDS`` (US-361).
+        """
+        if self._driveState != DriveState.STOPPING:
+            return False
+        if self._belowThresholdSince is None:
+            return False
+        elapsed = (now - self._belowThresholdSince).total_seconds()
+        if elapsed < self._config.driveEndDurationSeconds:
+            return False
+        self._endDrive()
+        return True
+
+    def _armDriveIdleBound(self, nowMono: float | None = None) -> None:
+        """Arm the US-625 bounded idle on the freshly-opened drive context.
+
+        The bound IS ``driveEndDurationSeconds`` -- the value that already
+        decides a drive is over via the ECU-silence close.  Reusing it rather
+        than inventing a second idle number is deliberate (Rule 2): one number
+        means the close and the attribution latch can never disagree about
+        whether a given instant is still part of the drive.
+
+        Anchored on ``time.monotonic()`` rather than on the caller's
+        ``datetime``.  The drive-state machine's timers are wall-clock because
+        they are compared against reading timestamps; this bound is not, and
+        must not be -- US-620 measured this Pi booting at 1970 and stepping
+        hours forward when NTP lands, and such a step would read as hours of
+        silence and NULL the rest of a healthy drive.
+        """
+        armDriveIdleBound(self._config.driveEndDurationSeconds, nowMono)
+
+    def _noteDriveActivity(self, nowMono: float | None = None) -> None:
+        """Extend the US-625 idle window -- a sample was just attributed.
+
+        Called on ECU-sourced readings only, matching the US-229 rule that
+        adapter-level heartbeats (``BATTERY_V`` via ``ELM_VOLTAGE``) must not
+        count as drive activity.  They keep ticking past engine-off, so letting
+        them refresh the window would hold a finished drive open forever --
+        which is the very defect being fixed.
+        """
+        noteDriveActivity(nowMono)
+
+    def _maybeCloseStaleDriveId(self) -> bool:
+        """Close a drive that has gone silent past its bounded idle.
+
+        US-625 (A-9 Root 2).  This is the LAST-RESORT close, and it exists
+        because both US-388 close paths are state-guarded:
+        :meth:`_maybeCloseOnDeadline` requires ``STOPPING`` and
+        :meth:`_checkEcuSilenceDriveEnd` requires ``RUNNING``/``STOPPING``.
+        A live ``drive_id`` in any OTHER shape -- session lost, or state reset
+        to ``STOPPED`` by a stop()/start() cycle -- is unclosable by every
+        existing path, so it stays claimable for the life of the process.  That
+        is "an end signal that never fires" (AC-5), and it is what let drive 51
+        take 24 rows 52 minutes after its last real sample.
+
+        Deliberately depends on NOTHING but the context's own idle clock: not
+        on ``_currentSession``, not on ``_driveState``, and not on
+        ``_lastEcuReadingTime``.  A backstop that needs the bookkeeping which
+        may itself have gone missing is not a backstop.
+
+        Returns:
+            ``True`` iff a stale drive was closed.
+        """
+        staleId = getRawCurrentDriveId()
+        if staleId is None:
+            return False
+        if not isDriveIdStale():
+            return False
+
+        logger.warning(
+            "STALE-OPEN DRIVE CLOSED ON BOUNDED IDLE | drive_id=%s | "
+            "no ECU sample for >= driveEndDurationSeconds=%.1fs | "
+            "state=%s | session=%s",
+            staleId, self._config.driveEndDurationSeconds,
+            self._driveState.value,
+            'held' if self._currentSession is not None else 'lost',
+        )
+
+        if self._currentSession is not None:
+            # A real session is still held: run the normal close so the
+            # drive_end row, post-drive analysis and callbacks all happen.
+            # The reason is greppable and says the close was LATE -- the
+            # drive's true end is its last attributed sample, not this instant.
+            self._endDrive(reason='stale_open_idle_bound')
+        else:
+            # No session to close; the context is all that leaked.  Release it
+            # directly -- _endDrive would return immediately and the id would
+            # stay live.
+            clearCurrentDriveId()
+            self._transitionState(DriveState.STOPPED)
+        return True
+
+    def evaluateTimeouts(self, now: datetime | None = None) -> DriveState:
+        """Evaluate the drive-close deadlines OFF the reading-tick path.
+
+        F-107 Root-2 (US-388), Atlas constraint C-alpha.  The drive-close state
+        machine is otherwise tick-driven -- every close decision is evaluated
+        only inside :meth:`processValue`.  When the data-acquisition readings
+        STOP (engine off, OBD poll loop quiesces) no close is ever evaluated, so
+        the drive sits open and a later key-on is absorbed into the stale
+        session (the drives 28/29 stale-open leak).
+
+        The orchestrator main loop (:meth:`...orchestrator.core.runLoop`) calls
+        this on every pass so the close fires when the deadline elapses even if
+        NO further reading ever arrives.  It evaluates the SAME two close paths a
+        tick would: the ``STOPPING`` RPM-debounce deadline
+        (:meth:`_maybeCloseOnDeadline`) and the ECU-silence backstop
+        (:meth:`_checkEcuSilenceDriveEnd`).
+
+        Atlas C-beta: acquires the EXISTING ``self._lock`` (the re-entrancy
+        guard) before reading or mutating drive state, exactly like
+        :meth:`processValue` -- so an off-tick close is safe against an in-flight
+        tick.  Atlas C-gamma: deadline-anchored -- it never closes a healthy
+        ``RUNNING`` drive or a ``STOPPING`` drive whose debounce has not yet
+        elapsed; the bare connection-lost event does not reach this path.
+
+        Args:
+            now: Evaluation instant; defaults to ``datetime.now()``.  Injectable
+                so tests can drive the deadline deterministically.
+
+        Returns:
+            The drive state after evaluation.
+        """
+        if self._detectorState != DetectorState.MONITORING:
+            return self._driveState
+        with self._lock:
+            evalNow = now if now is not None else datetime.now()
+            # US-625: the no-session branch USED to return here, which is
+            # precisely how a leaked drive_id became unclosable -- the one
+            # periodic pass that could have released it declined to look.
+            if self._currentSession is None:
+                self._maybeCloseStaleDriveId()
+                return self._driveState
+            self._maybeCloseOnDeadline(evalNow)
+            self._checkEcuSilenceDriveEnd(evalNow)
+            # US-625 last resort: both paths above are state-guarded, so a
+            # drive parked outside RUNNING/STOPPING survives them untouched.
+            self._maybeCloseStaleDriveId()
+            return self._driveState
 
     def _transitionState(self, newState: DriveState) -> None:
         """
@@ -694,7 +928,7 @@ class DriveDetector:
         # Discriminates I-019 / US-311 warm-restart hypothesis on Drive 11+.
         logger.info(
             "FORENSIC drive_state_transition | from=%s | to=%s | drive_id=%s",
-            oldState.value, newState.value, getCurrentDriveId(),
+            oldState.value, newState.value, getRawCurrentDriveId(),
         )
 
         # Trigger callback
@@ -735,6 +969,12 @@ class DriveDetector:
             self._openDriveId()
         self._clearEcuSilenceMarker()
 
+        # US-625 (A-9 Root 2): arm the bounded idle on the context we just
+        # opened.  _startDrive is the ONLY place a drive_id comes into
+        # existence, so arming here makes the latch complete for every real
+        # drive without a single writer having to opt in.
+        self._armDriveIdleBound()
+
         self._currentSession = DriveSession(
             startTime=startTime,
             profileId=self._config.profileId,
@@ -750,7 +990,7 @@ class DriveDetector:
 
         logger.info(
             f"DRIVE STARTED | profile={self._config.profileId} | "
-            f"RPM={self._lastRpmValue} | drive_id={getCurrentDriveId()}"
+            f"RPM={self._lastRpmValue} | drive_id={getRawCurrentDriveId()}"
         )
 
         # Log to database
@@ -884,7 +1124,7 @@ class DriveDetector:
     def _triggerAnalysis(self) -> None:
         """Trigger post-drive statistical analysis.
 
-        US-306: snapshot ``getCurrentDriveId()`` synchronously HERE,
+        US-306: snapshot ``getRawCurrentDriveId()`` synchronously HERE,
         before ``scheduleAnalysis`` spawns the background thread.
         ``_endDrive`` calls ``_closeDriveId`` (clearing the singleton
         to ``None``) immediately after this method returns, so a
@@ -898,7 +1138,7 @@ class DriveDetector:
             return
 
         try:
-            currentDriveId = getCurrentDriveId()
+            currentDriveId = getRawCurrentDriveId()
             logger.info(
                 f"Triggering post-drive statistical analysis "
                 f"(drive_id={currentDriveId})"
@@ -975,13 +1215,13 @@ class DriveDetector:
             "elapsed=%.1fs >= driveEndDurationSeconds=%.1fs | "
             "drive_id=%s | lastRpm=%s",
             elapsed, self._config.driveEndDurationSeconds,
-            getCurrentDriveId(), self._lastRpmValue,
+            getRawCurrentDriveId(), self._lastRpmValue,
         )
         # F-107 (US-361): this end is TENTATIVE (inferred engine-off from a
         # quiet OBD link, not a confirmed RPM=0).  Record the id + time BEFORE
         # _endDrive clears the process-wide context so a quick engine resume
         # re-attaches to the same leg instead of minting a second drive_id.
-        self._lastEcuSilenceDriveId = getCurrentDriveId()
+        self._lastEcuSilenceDriveId = getRawCurrentDriveId()
         self._lastEcuSilenceEndTime = now
         self._endDrive()
 
@@ -1052,7 +1292,7 @@ class DriveDetector:
             self._driveSummaryBackfillFromState = None
             return
 
-        driveId = getCurrentDriveId()
+        driveId = getRawCurrentDriveId()
         if driveId is None:
             self._driveSummaryBackfillComplete = True
             self._driveSummaryBackfillDriveId = None
@@ -1188,7 +1428,7 @@ class DriveDetector:
             summary = result.summary
             cold = result.coldStart
             ambientComplete = (
-                summary.ambientTempAtStartC is not None or not cold
+                summary.intakeAirTempAtStartC is not None or not cold
             )
             if (
                 ambientComplete
@@ -1278,7 +1518,7 @@ class DriveDetector:
             logger.warning(
                 "forceKeyOff(%r): forcing drive termination "
                 "(state=%s drive_id=%s)",
-                reason, self._driveState.value, getCurrentDriveId(),
+                reason, self._driveState.value, getRawCurrentDriveId(),
             )
             self._endDrive(reason=reason)
             return True
@@ -1331,7 +1571,7 @@ class DriveDetector:
                         f"profile:{self._config.profileId}",
                         True,
                         reason,
-                        getCurrentDriveId(),
+                        getRawCurrentDriveId(),
                     )
                 )
                 logger.debug(
@@ -1417,4 +1657,9 @@ class DriveDetector:
             self._lastValueTime = None
             self._lastEcuSilenceEndTime = None
             self._lastEcuSilenceDriveId = None
+            # US-625: reset() cleared _currentSession but left the
+            # process-wide drive_id live -- an id with no session that no
+            # close path could ever reach.  "Initial state" has to include
+            # the context this detector owns.
+            clearCurrentDriveId()
             logger.debug("Drive detector reset")

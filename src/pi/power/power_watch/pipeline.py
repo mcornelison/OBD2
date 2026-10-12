@@ -13,6 +13,11 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-05-17    | Plan    | Initial -- P2-T3 bounded per-task pipeline runner.
+# 2026-09-17    | Rex (US-776-a) | sequencerBoundedTasks: a task named there is
+#                           joined WITHOUT perTaskTimeoutSec, so it is never
+#                           abandoned mid-drain. Its bound is the sequencer's
+#                           VCELL-floor poll. Default () = every task bounded,
+#                           exactly as before -- future plugin tasks included.
 # ================================================================================
 ################################################################################
 """Bounded best-effort pre-shutdown pipeline runner."""
@@ -20,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Collection
 
 from src.pi.power.power_watch.contract import OutcomeKind, ShutdownTask
 
@@ -27,14 +33,33 @@ logger = logging.getLogger(__name__)
 __all__ = ["runPipeline"]
 
 
-def runPipeline(tasks: list[ShutdownTask], *, perTaskTimeoutSec: float) -> dict[str, OutcomeKind]:
+def runPipeline(
+    tasks: list[ShutdownTask],
+    *,
+    perTaskTimeoutSec: float,
+    sequencerBoundedTasks: Collection[str] = (),
+) -> dict[str, OutcomeKind]:
     """Run tasks in order, best-effort, each hard-bounded by
     perTaskTimeoutSec. A task that raises OR times out -> REAL_ERROR for
     that task; never blocks the next task; never raises out of here.
 
+    US-776-a: the timeout does not CANCEL a task, it ABANDONS it -- the daemon
+    thread keeps running (calling forcePush, writing SQLite) while the pipeline
+    moves on and ``systemctl poweroff`` starts. For the shutdown drain that is
+    the wrong bound twice over: it cuts a drain the battery could still fund,
+    and it leaves the drain running unobserved. A task named in
+    ``sequencerBoundedTasks`` is therefore joined with no timeout. Its bound is
+    the ShutdownSequencer's poll, which re-reads the VCELL floor on a fixed
+    cadence and powers off from its own thread whatever this one is doing.
+
     Args:
         tasks: Ordered ShutdownTask list.
-        perTaskTimeoutSec: Hard per-task wall-clock bound (seconds).
+        perTaskTimeoutSec: Hard per-task wall-clock bound (seconds) for every
+            task NOT named in ``sequencerBoundedTasks``.
+        sequencerBoundedTasks: Names of tasks whose bound is the sequencer's
+            floor poll rather than ``perTaskTimeoutSec``. Default empty: every
+            task keeps the per-task bound, so a plugin task appended to
+            ``buildV1Tasks`` is bounded unless its wiring says otherwise.
 
     Returns:
         Mapping of task name -> its OutcomeKind result.
@@ -50,7 +75,10 @@ def runPipeline(tasks: list[ShutdownTask], *, perTaskTimeoutSec: float) -> dict[
                 b["r"] = OutcomeKind.REAL_ERROR
         th = threading.Thread(target=_runner, name=f"pw-{task.name}", daemon=True)
         th.start()
-        th.join(timeout=perTaskTimeoutSec)
+        if task.name in sequencerBoundedTasks:
+            th.join()  # bounded by the sequencer's floor poll, not by a timer
+        else:
+            th.join(timeout=perTaskTimeoutSec)
         if th.is_alive():
             logger.error("powerwatch task %s exceeded %.1fs -- abandoning (shutdown imminent)",
                          task.name, perTaskTimeoutSec)

@@ -45,6 +45,61 @@
 #               |              | (drive_summary + drive_statistics data_quality
 #               |              | VARCHAR(16)->VARCHAR(20); drill-revealed
 #               |              | DataError 1406 on 'attribution_anomaly').
+# 2026-07-01    | Rex (US-426) | Sprint 52 V0.29.6 -- registered v0016
+#               |              | (battery_health_log: drop legacy start_soc/
+#               |              | end_soc + add *_vcell_v + *_soc_pct; BL-015).
+# 2026-07-01    | Rex (US-424) | Sprint 51 V0.29.5 -- registered v0015 (widen
+#               |              | data_quality CHECK with 'foreign_vehicle'; F-116).
+# 2026-07-01    | Rex (US-417) | Sprint 51 V0.29.5 -- registered v0014 (create
+#               |              | startup_log; natural-key snapshot sync, BL-013).
+# 2026-07-01    | Rex (US-412) | Sprint 50 V0.29.4 -- registered v0013 (create
+#               |              | power_log table on live MariaDB; F-101 Pi
+#               |              | power-event history mirror).  Forward-only.
+# 2026-07-02    | Rex (US-436) | Sprint 53 V0.29.7 -- registered v0017 (create
+#               |              | drive_derived_signals table; F-106 per-drive
+#               |              | acceleration + estimated distance).  Forward-only.
+# 2026-07-04    | Rex (US-448) | Sprint 55 V0.29.9 -- registered v0018 (create
+#               |              | canonical drives identity table + subsume
+#               |              | drive_summary.id as drive_id; F-104 spine).
+#               |              | Forward-only.
+# 2026-07-04    | Rex (US-453) | Sprint 55 V0.29.9 -- registered v0019 (create
+#               |              | pi_state table; D-7/F-082 Pi operational-state
+#               |              | singleton mirrored as raw forensic).  Forward-only.
+# 2026-07-04    | Rex (US-454) | Sprint 55 V0.29.9 -- registered v0020 (re-map O2
+#               |              | parameter_name 'O2_BANK1_SENSOR2_V' -> canonical
+#               |              | 'O2_B1S2' across all parameter_name tables;
+#               |              | D-3/F-082).  Forward-only.
+# 2026-07-04    | Rex (US-455) | Sprint 55 V0.29.9 -- registered v0021 (re-map
+#               |              | realtime_data.unit abbreviations 'V'->'volt',
+#               |              | 'kPa'->'kilopascal', 's'->'second' to the
+#               |              | python-obd native canonical form; D-4/F-082).
+#               |              | Forward-only.
+# 2026-07-05    | Rex (US-451) | Sprint 55 V0.29.9 -- registered v0022 (drive-
+#               |              | identity collapse: widen drives.data_quality
+#               |              | CHECK with 'unmappable_legacy' + flag NULL-key
+#               |              | legacy drives + re-point drive_statistics/
+#               |              | drive_derived_signals summary_id FKs to
+#               |              | drives.drive_id; F-104/D-8).  Forward-only.
+# 2026-07-05    | Rex (US-458) | Sprint 55 V0.29.9 -- registered v0023 (drop the
+#               |              | stale live data_source CHECK US-424 never
+#               |              | ALTERed away; discovery-driven schema-wide;
+#               |              | F-116/BL-019 A'/A-10/TD-055).  Forward-only.
+# 2026-08-21    | Rex (US-563) | Sprint 75 V0.29.30 -- registered v0024 (F-134:
+#               |              | data_quality columns DEFAULT to the non-verdict
+#               |              | 'unassessed'; drive_summary.is_real DEFAULTs
+#               |              | NULL; ambient_temp_at_start_c renamed to
+#               |              | intake_air_temp_at_start_c).  Forward-only.
+# 2026-09-24    | Rex (US-810) | Sprint 94 -- registered v0031 (edr_imu_derived
+#               |              | gyro RATE bias columns).  Forward-only.
+# 2026-09-24    | Rex (US-683) | Sprint 94 -- registered v0032 (battery_health_log
+#               |              | close_reason + backfill).  Forward-only.
+# 2026-09-25    | Rex (US-790) | Sprint 94 -- registered v0033 (drain_vcell_trajectory
+#               |              | table).  Forward-only.
+# 2026-09-30    | Rex (US-776-f) | Sprint 95 -- registered v0034 (startup_log
+#               |              | prior-boot shutdown-sync columns).  Forward-only.
+# 2026-10-03    | Atlas (ARCH-065a) | Registered v0035 (ARCH-065 battery capacity
+#               |              | columns on battery_health_log + startup_log).
+#               |              | Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -110,6 +165,78 @@ from src.server.migrations.versions.v0011_us376_ecu_identity import (
 from src.server.migrations.versions.v0012_us377_data_quality_widen import (
     MIGRATION as _V0012,
 )
+from src.server.migrations.versions.v0013_us412_power_log import (
+    MIGRATION as _V0013,
+)
+from src.server.migrations.versions.v0014_us417_startup_log import (
+    MIGRATION as _V0014,
+)
+from src.server.migrations.versions.v0015_us424_foreign_vehicle_data_quality import (
+    MIGRATION as _V0015,
+)
+from src.server.migrations.versions.v0016_us426_battery_health_soc_pct import (
+    MIGRATION as _V0016,
+)
+from src.server.migrations.versions.v0017_us436_drive_derived_signals import (
+    MIGRATION as _V0017,
+)
+from src.server.migrations.versions.v0018_us448_canonical_drives import (
+    MIGRATION as _V0018,
+)
+from src.server.migrations.versions.v0019_us453_pi_state import (
+    MIGRATION as _V0019,
+)
+from src.server.migrations.versions.v0020_us454_o2_name_normalization import (
+    MIGRATION as _V0020,
+)
+from src.server.migrations.versions.v0021_us455_unit_string_canonicalization import (
+    MIGRATION as _V0021,
+)
+from src.server.migrations.versions.v0022_us451_drive_identity_collapse import (
+    MIGRATION as _V0022,
+)
+from src.server.migrations.versions.v0023_us458_drop_stale_data_source_check import (
+    MIGRATION as _V0023,
+)
+from src.server.migrations.versions.v0024_us563_unassessed_defaults_and_intake_rename import (  # noqa: E501
+    MIGRATION as _V0024,
+)
+from src.server.migrations.versions.v0025_arch020_maintenance_record import (
+    MIGRATION as _V0025,
+)
+from src.server.migrations.versions.v0026_us765_edr_raw_tables import (
+    MIGRATION as _V0026,
+)
+from src.server.migrations.versions.v0027_us805_edr_imu_derived import (
+    MIGRATION as _V0027,
+)
+from src.server.migrations.versions.v0028_us795a_sync_history_residual import (
+    MIGRATION as _V0028,
+)
+from src.server.migrations.versions.v0029_us809b1_realtime_written_at import (
+    MIGRATION as _V0029,
+)
+from src.server.migrations.versions.v0030_us809b2_written_at_default import (
+    MIGRATION as _V0030,
+)
+from src.server.migrations.versions.v0031_us810_edr_gyro_rate_bias import (
+    MIGRATION as _V0031,
+)
+from src.server.migrations.versions.v0032_us683_battery_health_close_reason import (
+    MIGRATION as _V0032,
+)
+from src.server.migrations.versions.v0033_us790_drain_vcell_trajectory import (
+    MIGRATION as _V0033,
+)
+from src.server.migrations.versions.v0034_us776f_startup_log_prior_boot_sync import (
+    MIGRATION as _V0034,
+)
+from src.server.migrations.versions.v0035_arch065_battery_capacity_columns import (
+    MIGRATION as _V0035,
+)
+from src.server.migrations.versions.v0036_us795a_sync_history_residual_groups import (
+    MIGRATION as _V0036,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -128,6 +255,30 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0010,
     _V0011,
     _V0012,
+    _V0013,
+    _V0014,
+    _V0015,
+    _V0016,
+    _V0017,
+    _V0018,
+    _V0019,
+    _V0020,
+    _V0021,
+    _V0022,
+    _V0023,
+    _V0024,
+    _V0025,
+    _V0026,
+    _V0027,
+    _V0028,
+    _V0029,
+    _V0030,
+    _V0031,
+    _V0032,
+    _V0033,
+    _V0034,
+    _V0035,
+    _V0036,
 )
 
 

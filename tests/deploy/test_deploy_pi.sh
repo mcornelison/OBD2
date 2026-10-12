@@ -167,6 +167,16 @@ assert_not_contains "dry-run did NOT call real ssh (no Permission denied/Connect
                   "Permission denied" "$DRY_OUT"
 assert_not_contains "dry-run did NOT call real ssh (no Connection refused)" \
                   "Connection refused" "$DRY_OUT"
+# US-428: the kiosk-install step is exercised in the default-mode dry-run (the
+# banner always prints). This isolated-copy smoke has NO UI kit on disk, so the
+# step takes the absent-kit path: it must WARN and let the deploy continue
+# (exit 0, asserted above) -- never BLOCK. The seat0 session-detection line only
+# prints when a kit IS present; that path is covered by the repo-root dry-run in
+# test_kiosk_install.py::test_deployDryRun_kioskStepDetectsSeat0.
+assert_contains   "dry-run exercises the kiosk-install step (US-428)" \
+                  "chromium kiosk units" "$DRY_OUT"
+assert_contains   "absent-kit kiosk path WARNs, deploy continues (A-9)" \
+                  "skipping kiosk-unit install" "$DRY_OUT"
 
 # ---- test 6: --dry-run --init mode is also offline-safe ----
 

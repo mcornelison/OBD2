@@ -26,6 +26,12 @@
 #                              | VCELL-slope transitions.  See also
 #                              | tests/pi/hardware/test_ups_monitor_power_source.py
 #                              | for the full decision-tree coverage.
+# 2026-10-07    | Atlas        | US-848: take the I2C exception classes from the
+#                              | module UpsMonitor actually uses, so the file
+#                              | passes after tests/pi/power (8 failed there);
+#                              | caplog listens on the module's real logger name.
+# 2026-10-10    | Atlas        | US-444: F-051 RETIRED -- removed the two
+#                              | slow-drain detector tests and their import.
 # ================================================================================
 ################################################################################
 
@@ -49,6 +55,7 @@ wiring, real RotatingFileHandler elsewhere.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import threading
 from unittest.mock import MagicMock
@@ -56,18 +63,32 @@ from unittest.mock import MagicMock
 import pytest
 
 # tests/conftest.py puts src/ on sys.path.
-from pi.hardware.i2c_client import (
-    I2cCommunicationError,
-    I2cDeviceNotFoundError,
-)
 from pi.hardware.ups_monitor import (
     CRATE_DISABLED_RAW,
     EXT5V_EXTERNAL_THRESHOLD_V,
+    MAX17048_VCELL_LSB_V,
     UpsMonitor,
     UpsMonitorError,
     UpsNotAvailableError,
     _byteSwap16,
 )
+
+# US-848: the I2C exceptions the mock raises MUST be the classes UpsMonitor's
+# `except` clauses catch. ups_monitor self-aliases its two import names
+# (`pi.hardware.ups_monitor` / `src.pi.hardware.ups_monitor`) into one module,
+# but it reaches i2c_client by a RELATIVE import and i2c_client has no such
+# guard. When tests/pi/power ran first, ups_monitor was loaded as `src.pi...`
+# (via power_watch/__main__), so it caught `src.pi.hardware.i2c_client`
+# classes while this file raised `pi.hardware.i2c_client` ones: 8 tests failed
+# after tests/pi/power and passed alone. Resolving the module through
+# UpsMonitor itself gives the same classes in either load order. Production is
+# unaffected: no caller injects an I2cClient, so UpsMonitor always builds its
+# own through the same import its handlers use.
+_i2cClientModule = importlib.import_module(
+    importlib.import_module(UpsMonitor.__module__).I2cError.__module__
+)
+I2cCommunicationError = _i2cClientModule.I2cCommunicationError
+I2cDeviceNotFoundError = _i2cClientModule.I2cDeviceNotFoundError
 
 # ================================================================================
 # Helpers
@@ -441,7 +462,9 @@ def test_startPolling_recoveryAfterTransient_resetsErrorCounter(
     ]
     monitor = _makeMonitor(mockClient, pollInterval=0.02)
 
-    with caplog.at_level(logging.INFO, logger="pi.hardware.ups_monitor"):
+    # US-848: the module's logger is named after whichever identity loaded it
+    # first (`src.pi...` after tests/pi/power), so listen on THAT name.
+    with caplog.at_level(logging.INFO, logger=UpsMonitor.__module__):
         monitor.startPolling()
         threading.Event().wait(0.3)
         monitor.stopPolling()
@@ -458,6 +481,47 @@ def test_startPolling_recoveryAfterTransient_resetsErrorCounter(
 # ups_monitor.py. UpsMonitor is now battery-health only; the UI power-source
 # transition path is owned by the lifecycle _PowerSourceUiBridge over the
 # PowerSourceProvider SSOT (covered by tests/pi/orchestrator/test_lifecycle_power_source_ssot.py).
+
+
+# ================================================================================
+# Poll tick -- VCELL history (the F-051 slow-drain detector it once also fed
+# was RETIRED by US-444, CIO 2026-10-08; see test_f051_slow_drain_retired.py)
+# ================================================================================
+
+
+def _leVcell(volts: float) -> int:
+    """Encode a VCELL voltage back to the little-endian wire word the mock
+    I2cClient returns, so getBatteryVoltage() decodes to ~`volts`."""
+    rawBigEndian = round(volts / MAX17048_VCELL_LSB_V)
+    return _byteSwap16(rawBigEndian)
+
+
+def test_pollOnce_socReadFailure_stillFeedsVcell() -> None:
+    """
+    Given: SOC reads fail but VCELL reads succeed
+    When:  _pollOnce() runs
+    Then:  the tick is not dropped -- the VCELL history still gets the sample
+           (SOC failure is non-fatal), so a flaky SOC register does not blind
+           the VCELL consumers.
+    """
+    clockBox = {"t": 0.0}
+    monitor = UpsMonitor(
+        i2cClient=MagicMock(),
+        monotonicClock=lambda: clockBox["t"],
+    )
+
+    def readWord(_addr: int, register: int) -> int:
+        if register == 0x02:  # VCELL
+            return _leVcell(4.10)
+        raise I2cCommunicationError("SOC NACK")  # 0x04 SOC fails
+
+    monitor._i2cClient.readWord.side_effect = readWord
+
+    clockBox["t"] = 0.0
+    monitor._pollOnce()
+
+    # History recorded despite the SOC failure (SOC fell back to 0).
+    assert monitor.getVcellHistory() != []
 
 
 # ================================================================================

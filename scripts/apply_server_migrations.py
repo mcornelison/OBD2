@@ -53,7 +53,7 @@ Run from the project root:
     python scripts/apply_server_migrations.py --execute
 
 Both modes require SSH reachability to ``SERVER_HOST`` (chi-srv-01).  The
-server DSN is read from ``/mnt/projects/O/OBD2v2/.env`` over SSH so the
+server DSN is read from ``/home/mcornelison/obd2-server/.env`` over SSH so the
 MariaDB password never leaves the server host.
 
 Intent: after this lands, US-205 --execute runs clean (data_source filters
@@ -245,6 +245,7 @@ def _defaultRunner(
         input=input,
         capture_output=True,
         text=True,
+        encoding='utf-8',
         timeout=timeout,
         check=False,
         env=_buildSubprocessEnv(),
@@ -463,7 +464,7 @@ def loadServerCreds(
 
     remote = f'{addrs.serverUser}@{addrs.serverHost}'
     script = (
-        "grep '^DATABASE_URL=' /mnt/projects/O/OBD2v2/.env | "
+        "grep '^DATABASE_URL=' /home/mcornelison/obd2-server/.env | "
         "head -1 | cut -d= -f2-"
     )
     result = runner(['ssh', remote, script])
@@ -969,11 +970,21 @@ def runRegistry(
         MigrationRunner,
         RunnerContext,
     )
+    from src.server.migrations.preflight import (  # noqa: PLC0415
+        assertAppliedMigrationFkTopology,
+    )
     effectiveRunner: CommandRunner = runner or _defaultRunner
     addrs = loadAddresses(addressesPath, runner=effectiveRunner)
     creds = loadServerCreds(addrs, runner=effectiveRunner)
     ctx = RunnerContext(addrs=addrs, creds=creds, runner=effectiveRunner)
-    return MigrationRunner(ALL_MIGRATIONS).runAll(ctx)
+    reg = MigrationRunner(ALL_MIGRATIONS)
+    # US-462 applied-schema FK topology preflight -- assert (BEFORE the migration
+    # set) that already-applied migrations' promised drive-identity FKs still
+    # exist on the deployed schema.  Fails the deploy fast on A-10 drift; skips
+    # honestly when MariaDB is unreachable.  PreflightError is a MigrationError,
+    # so main(--run-all) maps it to a non-zero exit.
+    assertAppliedMigrationFkTopology(ctx, reg)
+    return reg.runAll(ctx)
 
 
 if TYPE_CHECKING:

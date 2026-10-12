@@ -75,7 +75,7 @@ _DRIVE_SUMMARY_DDL = """
 CREATE TABLE drive_summary (
     drive_id INTEGER PRIMARY KEY,
     drive_start_timestamp TEXT,
-    ambient_temp_at_start_c REAL,
+    intake_air_temp_at_start_c REAL,
     starting_battery_v REAL,
     barometric_kpa_at_start REAL,
     data_source TEXT DEFAULT 'real'
@@ -536,7 +536,7 @@ class TestApplyBackfill:
         # Pretend US-228 wrote a populated drive_summary row for drive 3
         freshDb.execute(
             "INSERT INTO drive_summary "
-            "(drive_id, drive_start_timestamp, ambient_temp_at_start_c, "
+            "(drive_id, drive_start_timestamp, intake_air_temp_at_start_c, "
             "starting_battery_v, barometric_kpa_at_start) "
             "VALUES (3, ?, 19.0, 13.4, 100.5)",
             (_iso(d3Start),),
@@ -551,7 +551,7 @@ class TestApplyBackfill:
         matches = bf.findOrphanBackfillMatches(freshDb)
         bf.applyBackfill(freshDb, matches)
         row = freshDb.execute(
-            "SELECT drive_start_timestamp, ambient_temp_at_start_c, "
+            "SELECT drive_start_timestamp, intake_air_temp_at_start_c, "
             "starting_battery_v, barometric_kpa_at_start "
             "FROM drive_summary WHERE drive_id=3",
         ).fetchone()

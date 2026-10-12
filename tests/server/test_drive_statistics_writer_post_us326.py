@@ -136,7 +136,7 @@ def _piDriveSummaryRow(driveId: int) -> dict:
     return {
         "id": driveId,
         "drive_start_timestamp": _DRIVE_START.isoformat() + "Z",
-        "ambient_temp_at_start_c": 18.0,
+        "intake_air_temp_at_start_c": 18.0,
         "starting_battery_v": 14.5,
         "barometric_kpa_at_start": 100.0,
         "data_source": "real",

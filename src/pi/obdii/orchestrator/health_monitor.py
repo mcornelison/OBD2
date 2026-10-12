@@ -133,24 +133,126 @@ class HealthMonitorMixin:
         US-302: the property may not exist on older logger shapes
         (legacy mocks, future replacement) -- return ``None`` (==
         ``never_written``) on a missing attribute so the health check
-        never crashes.  Must coerce to ``float`` and validate the type
-        because pytest MagicMock auto-creates attributes that lure the
-        ``:.1f`` formatter into a TypeError; only a real numeric value
-        survives the ``int|float`` filter.
+        never crashes.
+
+        US-688: the body MOVED to :meth:`_readDataLoggerRowFreshness`, which
+        returns the same value plus the REASON it is None.  This wrapper is
+        unchanged in behaviour and keeps the US-302 log line's contract; it
+        delegates rather than re-reading so there stays exactly ONE acquisition
+        of this fact (ssot-design-pattern rule B).
         """
+        value, _reason = self._readDataLoggerRowFreshness()
+        return value
+
+    def _readDataLoggerRowFreshness(self) -> tuple[float | None, str | None]:
+        """Read the logger's row freshness AND why it is absent (US-688).
+
+        🔴 THE DISTINCTION THIS EXISTS TO MAKE.  US-302 collapsed three very
+        different facts into one ``None``: the logger has written nothing (a
+        MEASUREMENT, and the 2026-09-04 incident), there is no logger at all (an
+        ABSENCE, the ordinary bench shape), and the read failed (a fault in the
+        Pi).  Only the first is a capture fault.  The health-check LOG could
+        blur them because a human reads it in context; an ALERT cannot, because
+        alerting on the other two is how an alert gets ignored.
+
+        Must coerce to ``float`` and validate the type because pytest MagicMock
+        auto-creates attributes that lure the ``:.1f`` formatter into a
+        TypeError; only a real numeric value survives the ``int|float`` filter.
+
+        Returns:
+            ``(secondsAgo, reason)``.  ``reason`` is None exactly when
+            ``secondsAgo`` is a real reading, and otherwise one of
+            ``capture_health``'s three read reasons.
+        """
+        from pi.obdii.capture_health import (
+            REASON_LOGGER_ABSENT,
+            REASON_UNREADABLE,
+        )
+
         if self._dataLogger is None:
-            return None
+            return (None, REASON_LOGGER_ABSENT)
         try:
             value = getattr(self._dataLogger, 'lastRowWrittenSecondsAgo', None)
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.debug(f"lastRowWrittenSecondsAgo read failed: {e}")
-            return None
+            return (None, REASON_UNREADABLE)
         if value is None:
-            return None
+            # US-727: the logger is there and THIS PROCESS has written nothing,
+            # which is NOT the same fact as "nothing was ever written".
+            # ``lastRowWrittenSecondsAgo`` is a time.monotonic() marker on the
+            # logger INSTANCE, so every restart clears it -- and a Pi dead since
+            # yesterday then read identically to one that booted forty seconds
+            # ago. Ask the DURABLE record before concluding "never".
+            return self._readDurableRowFreshness()
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            # MagicMock or non-numeric stand-in -- treat as never_written.
-            return None
-        return float(value)
+            # MagicMock or non-numeric stand-in -- we could not read a number.
+            # NOT `never_written`: this is an unreadable instrument, and calling
+            # it a capture stall would alarm on every legacy mock in the suite.
+            return (None, REASON_UNREADABLE)
+        return (float(value), None)
+
+    def _readDurableRowFreshness(self) -> tuple[float | None, str | None]:
+        """Age of the newest ``realtime_data`` row, or a typed absence (US-727).
+
+        The fallback for a RESTART: the in-process marker is per-process by
+        construction, the table is not. Consulted ONLY when that marker is
+        absent, so a capturing process still reports its own reading and this
+        never runs on the hot path.
+
+        CHEAP AND NON-BLOCKING, which the emitter's contract requires:
+        ``MAX(timestamp)`` is served by ``IX_realtime_data_timestamp`` --
+        measured at 32 ms against the car's 400,755-row table (2026-09-22).
+
+        Three outcomes, and they stay distinct:
+
+        * a real age -> ``(seconds, None)``;
+        * the table is present and EMPTY -> ``never_written``, the honest
+          answer for a Pi that genuinely has not captured;
+        * no database, a raising query, an uncoercible value, or a NEGATIVE age
+          -> ``unreadable``. An instrument fault is never reported as a
+          measurement of capture, and the age is NEVER clamped to zero: this Pi
+          boots at 1970 and steps forward when NTP lands, so a row stamped in
+          the future is a broken clock, not a fresh capture.
+
+        Returns:
+            ``(secondsAgo, reason)``, with ``reason`` None exactly when the
+            value is a real reading.
+        """
+        from pi.obdii.capture_health import (
+            REASON_NEVER_WRITTEN,
+            REASON_UNREADABLE,
+        )
+
+        database = getattr(self, '_database', None)
+        if database is None:
+            return (None, REASON_UNREADABLE)
+        try:
+            with database.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT "
+                    "  CAST((julianday('now') - "
+                    "        julianday(MAX(timestamp))) * 86400 AS REAL) "
+                    "FROM realtime_data"
+                )
+                row = cursor.fetchone()
+        except Exception as e:  # noqa: BLE001 -- the health check never raises
+            logger.debug(f"durable row-freshness read failed: {e}")
+            return (None, REASON_UNREADABLE)
+        if not row or row[0] is None:
+            # MAX over an empty table is NULL: nothing was ever captured.
+            return (None, REASON_NEVER_WRITTEN)
+        try:
+            ageS = float(row[0])
+        except (TypeError, ValueError):
+            return (None, REASON_UNREADABLE)
+        if ageS < 0:
+            logger.debug(
+                "durable row-freshness is negative (%.1fs): the clock is behind "
+                "the newest row -- reporting unreadable", ageS,
+            )
+            return (None, REASON_UNREADABLE)
+        return (ageS, None)
 
     def _collectComponentStats(self) -> None:
         """Collect additional statistics from components for health check."""

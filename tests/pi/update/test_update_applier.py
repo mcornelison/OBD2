@@ -140,6 +140,7 @@ class _FakeSubprocess:
         *,
         capture_output: bool = False,  # noqa: ARG002 -- match subprocess.run
         text: bool = False,  # noqa: ARG002
+        encoding: str | None = None,  # noqa: ARG002
         check: bool = False,  # noqa: ARG002
         timeout: float | None = None,  # noqa: ARG002
     ) -> subprocess.CompletedProcess[str]:

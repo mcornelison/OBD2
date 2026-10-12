@@ -13,6 +13,12 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+# NOTE (2026-08-24): the two `!specs/UI/dist/` negations that used to live here
+# are GONE, and deliberately so. The generic `dist/` rule above matched
+# specs/UI/dist/ -- the hand-authored Pi web root -- so the only thing keeping
+# the deployed dashboard in version control was a pair of un-ignore rules
+# fighting a wildcard. That tree now lives at src/pi/ui/ with no `dist` segment
+# in its path, so it is tracked by default and nothing has to fight for it.
 downloads/
 eggs/
 .eggs/
@@ -85,6 +91,8 @@ logs/
 # (server-side sim) or scripts/export_regression_fixture.sh (pi-side live).
 !data/regression/inputs/*.db
 !data/regression/pi-inputs/*.db
+# ARCH-065a T8: the 1 Hz witness-log fixture for tools/power (*.log is ignored above).
+!tests/tools/fixtures/*.log
 
 # --------------------------------------------------------------------------------
 # Secrets and Environment
@@ -96,6 +104,13 @@ secrets.json
 credentials.json
 *.pem
 *.key
+
+# --------------------------------------------------------------------------------
+# Pi-local config overlay (US-530 / F-126)
+# --------------------------------------------------------------------------------
+# Operator settings written on the Pi by the settings screen. Layers OVER the
+# shipped config.json; deploy-excluded like .env so a deploy never clobbers it.
+config.local.json
 
 # --------------------------------------------------------------------------------
 # OS Generated
@@ -119,14 +134,53 @@ output/
 temp/
 tmp/
 
-# Downloaded tools (SQLite CLI, etc.)
-tools/
+# Agent-fleet offices -- EVICTED from version control 2026-08-24.
+# This tree now lives on the fleet share (Z:\O\OBD2v3\offices, $FLEET_SHARE)
+# and is NOT version controlled. It stays on disk here in the trunk worktree as
+# a transitional convenience; nothing in the repo may depend on it. Recovery for
+# these 1836 files is Synology snapshot + Hyper Backup, not git.
+offices/
 
-# Claude settings (local only) -- root + per-agent offices/<agent>/.claude/
+# Downloaded tools (SQLite CLI, etc.). NOTE: `tools/*` not `tools/` so git can
+# descend and the negation below works -- tools/pm/ is first-party source (the
+# PM tool cluster, moved out of offices/pm/scripts/ in the offices decouple).
+# A NEW first-party tools/ directory needs its own `!tools/<dir>/` negation below,
+# or `git add` skips it silently (US-808). tests/lint/test_tools_not_gitignored.py
+# fails on any tracked tools/ path these rules match -- stage, then run it.
+tools/*
+!tools/pm/
+# tools/fleet/ is first-party too: New-Bench.ps1 and Invoke-FleetMerge.ps1.
+# They lived at C:gents\_fleet\scripts -- outside the repo, outside the
+# share, unversioned, and named by CLAUDE.md's Bench Discipline section
+# without ANY file telling an agent where they were. Spool went to lease a
+# bench on 2026-08-27 and correctly reported the documented procedure had no
+# implementation on disk. In the repo they are versioned and reachable.
+!tools/fleet/
+# tools/sync/ is first-party too: the Pi->server reconciliation that verifies
+# a sync ACTUALLY landed (row count AND every column value), rather than
+# trusting the server's 2xx receipt -- whose `errors` field is a hardcoded 0.
+!tools/sync/
+
+# tools/imu/ is first-party too (ARCH-027): the independent IMU probe harness.
+# Without this line `tools/*` swallowed it, `git add` skipped it SILENTLY, and the
+# first commit landed a test whose import target was not in the repo. Negating the
+# directory is the fix rather than `git add -f`, which would leave the next file
+# added here to be skipped exactly the same way.
+!tools/imu/
+
+# tools/connlog/ is first-party too (US-808-d): the connection_log window export
+# and gap analysis. Their Sprint 93 originals sat directly under tools/, were
+# matched by `tools/*`, and were lost -- a package directory plus this one
+# negation is the fix, never a per-file negation.
+!tools/connlog/
+
+# tools/power/ is first-party too (ARCH-065a T8): the drain calibration / seed tool.
+!tools/power/
+
+
+# Claude settings (local only)
 .claude/settings.local.json
-offices/*/.claude/settings.local.json
 .claude/scheduled_tasks.lock
-offices/*/.claude/scheduled_tasks.lock
 
 # Test results (keep committed test specs, ignore outputs)
 tests/*_output.txt
@@ -135,8 +189,6 @@ tests/test_results_*.txt
 # Deploy configuration (contains real Pi connection details)
 deploy/deploy.conf
 
-# Ralph supervisor: last headless-iteration transcript (post-mortem only)
-offices/ralph/.last-iteration.log
 
 # Honest boot-progress instrument runtime artifacts (Sprint 38 / V0.27.12).
 # The breadcrumb trail + its atomic-replace temp are Pi-side runtime state,
@@ -145,7 +197,11 @@ data/boot_progress
 data/boot_progress.tmp
 data/spool/
 
-# V0.28 backlog-v2 migration safety nets (local only)
-offices/pm/backlog.v1-backup.json
-offices/pm/backlog.v1-backup/
-offices/pm/story_counter.v1-backup.json
+
+# Per-bench provisioning (New-Bench.ps1). Stamped into every leased worktree,
+# never part of the project. A bench must start with a clean status: untracked
+# noise is how an agent talks itself into blanket staging, and the surface
+# check at merge depends on status being meaningful.
+CLAUDE.local.md
+.fleet/
+bench.ps1

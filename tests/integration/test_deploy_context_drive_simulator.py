@@ -79,7 +79,7 @@ faithfully captures the failure mode: drive_summary computed fields stay
 NULL, drive_statistics has zero rows.  Companion procedure for an
 out-of-tree retroactive run against the actual V0.27.16 commit
 (``c04d36e``) is documented in
-``docs/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md``.
+``$FLEET_SHARE/knowledge/superpowers/specs/2026-05-21-deploy-context-drive-simulator.md``.
 
 Test discipline (post-I-040)
 ----------------------------
@@ -209,6 +209,17 @@ def serverEngine():
       + Session-based INSERT path -- DOES surface the column-missing
       OperationalError when given correctly-divergent schema, via a
       separate two-phase engine that we manipulate directly).
+
+    Real-MariaDB coverage exists now (US-464 / US-470, F-104): the
+    *migration-chain* drift class is caught by
+    ``tests/server/test_migration_chain_real_mariadb.py`` (applies the
+    real v0022/v0023 chain against a real MariaDB 11.x -- NOT
+    ``create_all``), wired into CI via
+    ``.github/workflows/migration-drift.yml`` +
+    ``requirements-dev.txt`` (testcontainers, dev/CI-only). THIS
+    fixture's own ``create_all`` refactor is still deferred (TD-055
+    stays OPEN-downgraded until the CI job runs green -- Atlas TIGHTEN
+    2026-07-13; see BL-022).
     """
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
@@ -257,7 +268,7 @@ def _simulateSequencerTerminatedDrive(
             INSERT INTO drive_summary (
                 drive_id,
                 drive_start_timestamp,
-                ambient_temp_at_start_c,
+                intake_air_temp_at_start_c,
                 starting_battery_v,
                 barometric_kpa_at_start,
                 data_source
@@ -363,7 +374,7 @@ def _syncPiToServer(
                     drive_start_timestamp=_parseSqliteTimestamp(
                         row["drive_start_timestamp"],
                     ),
-                    ambient_temp_at_start_c=row["ambient_temp_at_start_c"],
+                    intake_air_temp_at_start_c=row["intake_air_temp_at_start_c"],
                     starting_battery_v=row["starting_battery_v"],
                     barometric_kpa_at_start=row["barometric_kpa_at_start"],
                     data_source=row["data_source"],
@@ -781,7 +792,7 @@ class TestHarnessIntegrity:
                 conn.exec_driver_sql("DROP TABLE drive_statistics")
                 conn.exec_driver_sql(
                     "CREATE TABLE drive_statistics ("
-                    "    drive_id INTEGER NOT NULL,"
+                    "    summary_id INTEGER NOT NULL,"
                     "    parameter_name VARCHAR(64) NOT NULL,"
                     "    min_value FLOAT,"
                     "    max_value FLOAT,"
@@ -791,14 +802,14 @@ class TestHarnessIntegrity:
                     "    outlier_max FLOAT,"
                     "    sample_count INTEGER NOT NULL,"
                     "    computed_at DATETIME,"
-                    "    PRIMARY KEY (drive_id, parameter_name),"
-                    "    FOREIGN KEY (drive_id) REFERENCES "
+                    "    PRIMARY KEY (summary_id, parameter_name),"
+                    "    FOREIGN KEY (summary_id) REFERENCES "
                     "drive_summary(id) ON DELETE CASCADE"
                     ")"
                 )
 
             # Seed a drive_summary parent row so the FK on the
-            # reconstructed drive_statistics drive_id column resolves.
+            # reconstructed drive_statistics summary_id column resolves.
             with Session(engine) as session:
                 summary = DriveSummary(
                     source_device="harness", source_id=999,

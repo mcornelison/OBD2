@@ -26,6 +26,15 @@
 #                               first successful row.  Lets the health
 #                               check catch a stuck logger in 60s instead
 #                               of 11h.  _monotonicFn is the test seam.
+# 2026-06-19    | Rex (US-384) | EDR bus slice 1 publish seam: optional bus +
+#                               producerSource kwargs + _seq counter.  With a
+#                               bus injected, _logReadingSafe publishes a
+#                               raw.obd.<param> Sample instead of writing the
+#                               DB (the PersistenceSubscriber owns the write);
+#                               with bus=None the write path is byte-for-byte
+#                               unchanged.  dataLogger property exposes the
+#                               inner ObdDataLogger for subscriber reuse.
+#                               Ships dark behind pi.bus.enabled (default off).
 # ================================================================================
 ################################################################################
 """
@@ -68,7 +77,12 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from common.time.helper import localNaiveToCanonicalIso
+from pi.bus.sample import Sample
+
+from ..drive_id import getCurrentDriveId
 from ..error_classification import CaptureErrorClass, classifyCaptureError
+from ..foreign_guard import observeSample
 from .exceptions import DataLoggerError, ParameterNotSupportedError, ParameterReadError
 from .logger import ObdDataLogger
 from .types import LoggedReading, LoggingState, LoggingStats
@@ -134,6 +148,8 @@ class RealtimeDataLogger:
         captureErrorHandler: Callable[[BaseException], CaptureErrorClass] | None = None,
         onFatalError: Callable[[BaseException], None] | None = None,
         ecuSilentMultiplier: int = DEFAULT_ECU_SILENT_MULTIPLIER,
+        bus: Any = None,
+        producerSource: str = "obd",
     ):
         """
         Initialize the realtime data logger.
@@ -167,6 +183,15 @@ class RealtimeDataLogger:
                 reported ECU_SILENT.  Cleared on the first successful
                 query so the loop snaps back to normal cadence when
                 the ECU wakes up.
+            bus: US-384 (EDR bus slice 1) optional :class:`SampleBus`.
+                When provided, :meth:`_logReadingSafe` publishes a
+                ``raw.obd.<param>`` :class:`Sample` instead of writing
+                the database directly -- the bus PersistenceSubscriber
+                owns the write (byte-identical row).  When ``None``
+                (the default, ``pi.bus.enabled=false``), the legacy
+                inline write path runs unchanged.
+            producerSource: Producer id stamped on published Samples'
+                ``source`` field (US-384).  Defaults to ``"obd"``.
         """
         self.config = config
         self.connection = connection
@@ -197,7 +222,20 @@ class RealtimeDataLogger:
         self._dataLogger = ObdDataLogger(
             connection, database,
             profileId=self.profileId, dataSource=dataSource,
+            # US-809-a: the writer converts capture instants against the
+            # declared zone (pi.time.localZone), so it needs this config.
+            config=config,
         )
+
+        # US-384 (EDR bus slice 1): optional publish seam.  With a bus wired,
+        # _logReadingSafe publishes a raw.obd.<param> Sample (per-producer
+        # monotonic _seq) instead of writing the DB; the PersistenceSubscriber
+        # owns the write.  _dataSource is retained here (the inner logger also
+        # derives its own) so published Samples carry the origin tag.
+        self._bus = bus
+        self._producerSource = producerSource
+        self._seq = 0
+        self._dataSource = dataSource
 
         # Callbacks
         self._onReading: Callable[[LoggedReading], None] | None = None
@@ -218,6 +256,16 @@ class RealtimeDataLogger:
         # time.monotonic.
         self._lastRowWrittenMonotonic: float | None = None
         self._monotonicFn: Callable[[], float] = time.monotonic
+
+    @property
+    def dataLogger(self) -> ObdDataLogger:
+        """The internal :class:`ObdDataLogger` (US-384).
+
+        Exposed so the bus :class:`PersistenceSubscriber` reuses the exact
+        same writer instance, guaranteeing byte-identical ``realtime_data``
+        rows across the inline and bus paths.
+        """
+        return self._dataLogger
 
     @property
     def state(self) -> LoggingState:
@@ -517,17 +565,29 @@ class RealtimeDataLogger:
                 break
 
             try:
-                # Query the parameter - use high-precision timestamp
-                timestamp = datetime.now()  # Includes microseconds
-
                 reading = self._queryParameterSafe(paramName)
 
                 if reading is not None:
-                    # Override timestamp for millisecond precision
-                    reading.timestamp = timestamp
+                    # US-809-c: the capture instant is taken WHEN THE READING
+                    # ARRIVES, not before the query is issued. This clock read
+                    # used to sit ABOVE the Bluetooth round-trip, so the stored
+                    # 'read time' was when we ASKED -- early by the whole
+                    # round-trip, and on a slow or retrying link that gap is not
+                    # small. Under spec A-double-prime the column means EVENT
+                    # time, and the event is the ECU answering.
+                    # (datetime.now() includes microseconds.)
+                    reading.timestamp = datetime.now()
 
                     # Log to database
                     self._logReadingSafe(reading)
+
+                    # US-424 (F-116): feed the captured sample (one OBD
+                    # query-response = one realtime_data row) to the
+                    # foreign-vehicle guard.  No-op when the guard is dark
+                    # (pi.foreignGuard.enabled=false, the default); when armed a
+                    # sustained row rate above the Eclipse K-line ceiling latches
+                    # the drive foreign.
+                    observeSample(getCurrentDriveId())
 
                     # Update stats
                     self._stats.totalReadings += 1
@@ -676,12 +736,19 @@ class RealtimeDataLogger:
         """
         Log a reading safely, catching database errors.
 
+        US-384 (EDR bus slice 1): when a :class:`SampleBus` is wired
+        (``pi.bus.enabled``), publish a ``raw.obd.<param>`` :class:`Sample`
+        instead of writing the database -- the PersistenceSubscriber owns the
+        write.  With no bus the original inline write path runs unchanged.
+
         Args:
             reading: LoggedReading to store
 
         Returns:
-            True if logged successfully
+            True if logged (published or written) successfully
         """
+        if self._bus is not None:
+            return self._publishReading(reading)
         try:
             self._dataLogger.logReading(reading)
             self._stats.totalLogged += 1
@@ -694,6 +761,46 @@ class RealtimeDataLogger:
             logger.warning(f"Failed to log reading: {e}")
             self._stats.totalErrors += 1
             return False
+
+    def _publishReading(self, reading: LoggedReading) -> bool:
+        """Publish a ``raw.obd.<param>`` Sample to the bus (producer role).
+
+        US-384: the OBD poll loop's producer side.  Stamps a per-producer
+        monotonic ``seq`` so the bus / subscribers can detect drops or gaps.
+        ``driveId``/``dataSource`` mirror exactly what the inline write path
+        stamps, so a downstream PersistenceSubscriber reproduces byte-identical
+        rows.
+
+        US-809-c: ``tsUtc`` carries THE READING'S OWN INSTANT, converted
+        against the declared zone (``pi.time.localZone``), rather than
+        ``utcIsoNow()``. Publishing the clock here discarded the capture time
+        two hops before the logger, where no later fix could recover it. The
+        conversion REFUSES when no zone is declared rather than guessing the
+        host's -- a guessed zone yields a plausible instant that is wrong by a
+        whole-hour offset, which is worse than a loud failure.
+
+        Args:
+            reading: LoggedReading to publish.
+
+        Returns:
+            True (publish never blocks; the bounded queue absorbs overflow).
+        """
+        self._seq += 1
+        sample = Sample(
+            topic=f"raw.obd.{reading.parameterName}",
+            source=self._producerSource,
+            value=reading.value,
+            unit=reading.unit,
+            tsUtc=localNaiveToCanonicalIso(reading.timestamp, self.config),
+            tsCapture=time.monotonic(),
+            driveId=getCurrentDriveId(),
+            dataSource=self._dataSource or "real",
+            seq=self._seq,
+        )
+        self._bus.publish(sample)
+        self._stats.totalLogged += 1
+        self._markRowWritten()
+        return True
 
     def _handleParameterError(self, paramName: str, error: Exception) -> None:
         """

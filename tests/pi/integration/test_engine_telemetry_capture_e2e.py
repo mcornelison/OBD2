@@ -156,7 +156,7 @@ _INIT_CHAIN_WATCHDOG_SEC: float = _TEST_INITIAL_CONNECT_TIMEOUT_SEC * 4
 
 # Spool's spec: feed RPM=750 samples (well above the 500 RPM
 # driveStartRpmThreshold; matches a typical Eclipse warm-idle baseline
-# per offices/tuner/knowledge.md Drive 5).
+# per $FLEET_SHARE/tuner/knowledge/knowledge.md Drive 5).
 _RPM_ENGINE_ON: float = 750.0
 
 
@@ -173,6 +173,9 @@ def _baseConfig(initialConnectTimeoutSec: float) -> dict[str, Any]:
         "schemaVersion": "1.0.0",
         "deviceId": "chi-eclipse-01",
         "pi": {
+            # US-809-a: the realtime_data writers convert the capture instant
+            # against the DECLARED zone; without it the write REFUSES.
+            "time": {"localZone": "America/Chicago"},
             "database": {"path": ":memory:"},
             "obdii": {
                 "orchestrator": {
@@ -470,6 +473,9 @@ def engineOnHarness(lifecycleDb: ObdDatabase) -> dict[str, Any]:
     scriptedQuery = _ScriptedObdQuery(rpmValue=_RPM_ENGINE_ON)
     mockConnection.obd = MagicMock()
     mockConnection.obd.query = scriptedQuery
+    # US-441: logger reads through the wrapper's serialized query(); route it to
+    # the same scripted BT edge (a bare MagicMock .query returns a junk response).
+    mockConnection.query = lambda cmd, callerGeneration=None: scriptedQuery(cmd)
     orchestrator._connection = mockConnection
 
     detector = DriveDetector(config=config, database=lifecycleDb)
@@ -485,6 +491,9 @@ def engineOnHarness(lifecycleDb: ObdDatabase) -> dict[str, Any]:
         database=lifecycleDb,
         profileId='daily',
         dataSource='real',
+        # US-809-a: the writer converts the capture instant against the
+        # DECLARED zone, so the direct construction needs it too.
+        config={'pi': {'time': {'localZone': 'America/Chicago'}}},
     )
     outerDataLogger = MagicMock()
     outerDataLogger._dataLogger = innerLogger
@@ -614,7 +623,7 @@ class TestEngineTelemetryCapturePostInitFullPath:
 
         with lifecycleDb.connect() as conn:
             postIatAmbient = conn.execute(
-                "SELECT ambient_temp_at_start_c FROM "
+                "SELECT intake_air_temp_at_start_c FROM "
                 f"{DRIVE_SUMMARY_TABLE} WHERE drive_id = ?",
                 (driveId,),
             ).fetchone()

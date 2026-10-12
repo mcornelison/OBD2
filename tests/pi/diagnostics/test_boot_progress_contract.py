@@ -63,7 +63,7 @@ def test_cli_finalize_invokedAsTheUnitInvokesIt(tmp_path):
     r = subprocess.run(
         [sys.executable, "-m", "src.pi.diagnostics.boot_progress",
          "--finalize", "--file", str(f), "--boot-id", "b"],
-        capture_output=True, text=True, cwd=".",
+        capture_output=True, text=True, encoding="utf-8", cwd=".",
     )
     assert r.returncode == 0, r.stderr
     assert "CLEAN_COMPLETE" in f.read_text(encoding="utf-8")
@@ -71,7 +71,7 @@ def test_cli_finalize_invokedAsTheUnitInvokesIt(tmp_path):
 
 def test_auditScript_usesSharedSuccessConstant():
     spec = importlib.util.spec_from_file_location(
-        "audit", "offices/pm/scripts/audit_historical_drain_canary.py")
+        "audit", "tools/pm/audit_historical_drain_canary.py")
     mod = importlib.util.module_from_spec(spec)
     # Register before exec so @dataclass(slots=True) can resolve the
     # module via sys.modules on Python 3.13 (else AttributeError).

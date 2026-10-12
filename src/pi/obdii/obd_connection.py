@@ -25,6 +25,93 @@
 #                |              | heartbeat callers so they can log
 #                |              | already_in_flight and skip instead of
 #                |              | stacking concurrent attempts.
+# 2026-07-03    | Rex (US-441) | F-117/A-17 capture fix.  The V0.27.1 lock only
+#                |              | guarded connect(); the realtime logger reads
+#                |              | self.connection.obd.query() DIRECTLY, racing
+#                |              | orphaned timeout daemons -> "device disconnected
+#                |              | while reading" -> 0 rows.  Rename _connectLock ->
+#                |              | _ioLock and make it the SINGLE serialization
+#                |              | lock for EVERY .obd access: connect(), the new
+#                |              | query() method, disconnect()'s close(), and the
+#                |              | supported-PID probe.  Add a generation/epoch
+#                |              | counter (bumped on each connect-success + each
+#                |              | disconnect) so a superseded (timed-out, left-
+#                |              | running) connect/query daemon is FENCED from
+#                |              | touching a connection a newer owner now holds:
+#                |              | connect(callerGeneration=) skips re-open,
+#                |              | query(callerGeneration=) raises
+#                |              | ObdConnectionSupersededError.  Callers with no
+#                |              | generation (the live logger read path) are
+#                |              | never fenced -- they always read the current
+#                |              | connection.  TD-036 no-boot-hang preserved
+#                |              | (the daemon+wall-clock pattern is untouched;
+#                |              | only .obd access is serialized).
+# 2026-07-03    | Rex (US-432) | BL-016 Option B capture fix.  A cold-boot-key-
+#                |              | OFF connect runs the US-199 supported-PID probe
+#                |              | with the engine off, so the dark ECU poisons
+#                |              | python-obd's supported_commands cache for RPM --
+#                |              | every later obd.query(RPM) returns null with NO
+#                |              | wire traffic and the drive never starts.  Add an
+#                |              | engine-confirmed latch (setEngineConfirmedForce-
+#                |              | Mandatory, cleared on drive_end + disconnect) so
+#                |              | query() force-reads the KNOWN-MANDATORY Mode-01
+#                |              | PIDs (MANDATORY_MODE01_PIDS = RPM) past the stale
+#                |              | cache.  SCOPED, never blanket (a blanket force
+#                |              | re-exposes the 0x42/0x0B/0x15 garbage US-199
+#                |              | skips).  Read-path only -- the DriveDetector
+#                |              | RPM-sustained machine (US-388) is untouched.
+# 2026-08-02    | Rex (US-512) | BL-025 P1 capture hardening.  An rfcomm bind is a
+#                |              | KERNEL TABLE ENTRY that OUTLIVES the ACL link, and
+#                |              | bindRfcomm is idempotent -- so after the dongle
+#                |              | drops, every retry short-circuits on the surviving
+#                |              | entry and re-opens the SAME DEAD tty, forever.
+#                |              | Worse, the entry also outlives the PROCESS: a
+#                |              | SIGKILLed predecessor leaves it bound, the new
+#                |              | process has _boundRfcomm=False so its disconnect
+#                |              | never releases it, and `systemctl restart` does not
+#                |              | clear the fault.  Fix: resetTransport() (Spool's
+#                |              | disconnect -> releaseRfcomm -> re-bind), used by
+#                |              | reconnect(); plus a per-failed-attempt binding drop
+#                |              | keyed on "the configured port is a MAC" (NOT on our
+#                |              | own bookkeeping) so the US-338 heartbeat -- which
+#                |              | calls connect() and never reconnect() -- re-binds
+#                |              | each tick.  Also assures the bluez bond (trust) at
+#                |              | connect time, the runtime half of the durable-bond
+#                |              | story pair_obdlink.sh only ever wrote at pair time.
+#                |              | Deliberately never touches the radio (rfkill /
+#                |              | hciconfig / `power off`) -- that class of recovery
+#                |              | is what got persisted as the 07-03 soft-block.
+# 2026-09-14    | Rex (US-690) | One retry authority.  A wall-clock cap that
+#                |              | abandoned a connect left its retry loop running
+#                |              | beside the loop that replaced it -- two counters,
+#                |              | two backoffs, interleaved retry_count series in
+#                |              | connection_log.  Add cancelPendingConnects(): a
+#                |              | lock-free cancel epoch that a call captures at
+#                |              | entry and checks before every attempt and every
+#                |              | backoff, so a capped caller can CANCEL the
+#                |              | abandoned call instead of merely walking away.
+#                |              | Add reconnectOnce(): transport reset + ONE attempt,
+#                |              | for the recovery loop that owns its own count.
+# 2026-09-14    | Rex (US-751) | retry_count is ONE series per outage.  Every
+#                |              | port attempt is numbered by _outageAttempts, not
+#                |              | by the calling loop's local index, and the number
+#                |              | lands in connection_log AND status.retryCount the
+#                |              | moment the attempt fails.  Reset on success.
+# 2026-09-18    | Rex (US-767-a)| ConnectionStatus.signalReadable: False only when
+#                |              | is_connected() raised.  getStatus() sets it in the
+#                |              | same read as `connected`, whose meaning is
+#                |              | unchanged; the raise is logged, not swallowed.
+# 2026-09-21    | Rex (US-793-a)| ConnectionStatus.reachability: FOUR states
+#                |              | (Reachability) from the outcomes of ECU reads
+#                |              | query() already makes -- no new poll.  ANSWERED
+#                |              | goes stale after driveEndDurationSeconds; a new
+#                |              | generation is NOT_YET_ATTEMPTED.  `connected`
+#                |              | and signalReadable are unchanged.
+# 2026-09-21    | Rex (US-793-c)| A reachability TRANSITION writes one
+#                |              | connection_log `ecu_reachability` row (after each
+#                |              | query and generation bump, outside _ioLock);
+#                |              | steady state writes none.  getStatus() and
+#                |              | toDict() unchanged.
 # ================================================================================
 ################################################################################
 
@@ -62,7 +149,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from . import bluetooth_helper
+from . import bluetooth_helper, bond_self_heal, decoders
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +168,29 @@ except ImportError:
 # Constants
 # ================================================================================
 
-# Default retry delays in seconds (exponential backoff)
+# Default retry delays in seconds (exponential backoff).  This is the RAMP,
+# not the whole schedule -- see DEFAULT_RETRY_CEILING_SECONDS and
+# nextRetryDelaySeconds() for what happens once the ramp is exhausted.
 DEFAULT_RETRY_DELAYS = [1, 2, 4, 8, 16]
+
+# US-673: hard ceiling on the escalated inter-attempt delay, in seconds.
+#
+# GROUNDING -- this number is NOT invented for US-673.  320s is the ceiling the
+# fleet has actually run on since 2026-05-11: reconnect_loop's US-325 / I-025
+# production figure, HEARTBEAT_TICK_INTERVAL_SEC (10) * 2 ** BACKOFF_EXP_CAP (5).
+# Reusing it means this story adds a REACHABLE ceiling to the schedule rather
+# than a second, differently-shaped number beside the existing one.
+#
+# WHY A CEILING AT ALL.  Before US-673 the schedule was consumed as
+# ``retryDelays[min(attempt, len - 1)]`` -- so it PLATEAUED at its last entry
+# (16s) and stayed there for as many attempts as the caller allowed, with no
+# terminal state.  Measured cost: 275+ connect retries over 13 hours against a
+# dongle that could not answer (drives 42/43/44), and a Pi 5 whose shared
+# WiFi+BT combo chip starves under that much continuous rfcomm churn (I-025).
+#
+# Overridable via ``pi.bluetooth.retryCeilingSeconds``.  A non-positive value
+# is the documented opt-out: it restores the pre-US-673 plateau exactly.
+DEFAULT_RETRY_CEILING_SECONDS: float = 320.0
 
 # Default connection timeout in seconds
 DEFAULT_CONNECTION_TIMEOUT = 30
@@ -99,6 +207,96 @@ EVENT_TYPE_CONNECT_FAILURE = 'connect_failure'
 EVENT_TYPE_DISCONNECT = 'disconnect'
 EVENT_TYPE_RECONNECT = 'reconnect'
 
+# US-432 (BL-016, Option B): the set of KNOWN-MANDATORY Mode-01 PID command
+# names that :meth:`ObdConnection.query` is allowed to force-read past
+# python-obd's dark-ECU support cache while the engine-confirmed latch is set.
+# RPM (PID 0x0C) is mandatory Mode-01 per SAE J1979 -- always supported by any
+# OBD-II ECU with the engine running -- so forcing it corrects a false-negative
+# (a stale engine-OFF probe result), NOT an unsupported PID.  Deliberately
+# NARROW: a blanket force re-exposes the 0x42/0x0B/0x15 garbage the US-199 probe
+# silent-skips.  Keyed by python-obd command name (obdlib.commands.RPM.name), or
+# the bare parameter string when obdlib is unavailable.
+MANDATORY_MODE01_PIDS: frozenset[str] = frozenset({'RPM'})
+
+
+# ================================================================================
+# Retry schedule policy (US-673)
+# ================================================================================
+
+def nextRetryDelaySeconds(
+    attempt: int,
+    retryDelays: list[int] | list[float] | None,
+    ceilingSeconds: float | None,
+) -> float:
+    """Return the backoff to wait before retry number ``attempt + 1``.
+
+    THE single acquisition point for "how long do we wait before knocking
+    again".  Both the configured ramp and the escalation past it are decided
+    here so no caller re-derives either.
+
+    Policy:
+
+    * Within ``retryDelays``, the configured entry is used VERBATIM -- the
+      escalation appends a tail, it never rewrites the head an operator set.
+    * Past the end of ``retryDelays``, the last entry DOUBLES on each further
+      attempt instead of plateauing on it.  The plateau is the US-673 defect:
+      a schedule ending in 16s answered "16 seconds" for every attempt after
+      the fifth, forever, with no terminal state.
+    * Every value -- ramp and tail alike -- is clamped to ``ceilingSeconds``.
+      A ceiling that governed only the tail would let a configured entry
+      exceed it, which is a suffix rule wearing a ceiling's name.
+
+    Args:
+        attempt: Zero-based attempt index.  Negative values are treated as 0.
+        retryDelays: The configured ramp (``pi.bluetooth.retryDelays``).  Empty
+            or ``None`` means no backoff at all -- the repo's fast-test config.
+        ceilingSeconds: The escalation ceiling
+            (``pi.bluetooth.retryCeilingSeconds``).  ``None`` or a non-positive
+            value is the DOCUMENTED OPT-OUT: escalation and clamping are both
+            disabled and the pre-US-673 plateau is reproduced exactly, so an
+            operator who wants the old fixed cadence has a config route to it
+            rather than a code edit.
+
+    Returns:
+        Seconds to wait.  Never negative.
+    """
+    if not retryDelays:
+        return 0.0
+    if attempt < 0:
+        attempt = 0
+
+    lastIndex = len(retryDelays) - 1
+    if attempt <= lastIndex:
+        delay = float(retryDelays[attempt])
+    elif ceilingSeconds is None or ceilingSeconds <= 0:
+        # Documented opt-out -- plateau on the last entry, as before US-673.
+        return float(retryDelays[lastIndex])
+    else:
+        # Escalate geometrically past the end of the configured ramp.  Computed
+        # against the ceiling first so a long outage cannot build an enormous
+        # intermediate before the clamp applies.
+        overshoot = attempt - lastIndex
+        last = float(retryDelays[lastIndex])
+        if last <= 0:
+            # An explicit no-backoff schedule stays no-backoff: doubling zero
+            # is zero, and pinning that keeps a future "last + step" rewrite
+            # from silently inventing a delay the operator disabled.
+            return 0.0
+        if last >= ceilingSeconds:
+            return float(ceilingSeconds)
+        # Bounded exponent: enough doublings to reach the ceiling and no more,
+        # so a 10,000th attempt does not build a 2**10000 intermediate.
+        maxDoublings = 0
+        probe = last
+        while probe < ceilingSeconds:
+            probe *= 2.0
+            maxDoublings += 1
+        delay = last * float(2 ** min(overshoot, maxDoublings))
+
+    if ceilingSeconds is not None and ceilingSeconds > 0:
+        delay = min(delay, float(ceilingSeconds))
+    return max(delay, 0.0)
+
 
 # ================================================================================
 # Enums and Data Classes
@@ -111,6 +309,26 @@ class ConnectionState(Enum):
     CONNECTED = 'connected'
     RECONNECTING = 'reconnecting'
     ERROR = 'error'
+
+
+class Reachability(Enum):
+    """Whether the ECU answered, as observed by the data path (US-793-a).
+
+    A Bluetooth link is not an ECU: the dongle is powered and linked with the
+    key out, so ``connected`` is True on a parked car.  This is the separate
+    fact.  The four states must never collapse into one another:
+
+    * ``ANSWERED`` -- an ECU read returned data within the freshness bound.
+    * ``DID_NOT_ANSWER`` -- ECU reads completed with no data, or the last
+      answer is older than the bound.  An answer never latches.
+    * ``COULD_NOT_DETERMINE`` -- the latest ECU read WAS attempted and raised.
+    * ``NOT_YET_ATTEMPTED`` -- no ECU read in this connection generation.  The
+      cold-boot state on a parked car; it is NOT ``COULD_NOT_DETERMINE``.
+    """
+    ANSWERED = 'answered'
+    DID_NOT_ANSWER = 'did_not_answer'
+    COULD_NOT_DETERMINE = 'could_not_determine'
+    NOT_YET_ATTEMPTED = 'not_yet_attempted'
 
 
 @dataclass
@@ -128,6 +346,14 @@ class ConnectionStatus:
         retryCount: Number of retry attempts for current connection
         totalConnections: Total successful connections in session
         totalErrors: Total connection errors in session
+        signalReadable: Whether the read that set ``connected`` completed
+            (US-767-a).  False ONLY when the underlying ``is_connected()``
+            raised; ``connected`` is then False too, but it means "could not
+            read the link", not "the link is down".  ``obd is None`` is a
+            readable verdict (True).  ``connected`` keeps its exact meaning.
+        reachability: Whether the ECU answered (US-793-a); see
+            :class:`Reachability`.  Independent of ``connected``: linked to
+            the dongle with no ECU is ``connected=True`` + ``DID_NOT_ANSWER``.
     """
     state: ConnectionState = ConnectionState.DISCONNECTED
     macAddress: str | None = None
@@ -138,6 +364,8 @@ class ConnectionStatus:
     retryCount: int = 0
     totalConnections: int = 0
     totalErrors: int = 0
+    signalReadable: bool = True
+    reachability: Reachability = Reachability.NOT_YET_ATTEMPTED
 
     def toDict(self) -> dict[str, Any]:
         """Convert status to dictionary for logging/serialization."""
@@ -152,6 +380,49 @@ class ConnectionStatus:
             'totalConnections': self.totalConnections,
             'totalErrors': self.totalErrors
         }
+
+
+# US-793-a: python-obd command names that the ADAPTER answers, not the ECU.
+# Derived from the US-229 decoder registry (isEcuDependent=False), so the
+# DriveDetector's ECU-silence check and reachability share one classification.
+_ADAPTER_LEVEL_COMMAND_NAMES: frozenset[str] = frozenset(
+    entry.obdCommand
+    for entry in decoders.PARAMETER_DECODERS.values()
+    if not entry.isEcuDependent
+)
+
+# ELM327 adapter commands are sent as "AT..." (ATRV, ATI); ECU requests are
+# mode+PID hex ("010C").
+_ELM_AT_PREFIX = b'AT'
+
+
+def _isAdapterLevelCommand(command: Any) -> bool:
+    """True when ``command`` is answered by the dongle, not the ECU (US-793-a).
+
+    Args:
+        command: python-obd command object, or its bare name string.
+    """
+    name = command if isinstance(command, str) else getattr(command, 'name', None)
+    if name in _ADAPTER_LEVEL_COMMAND_NAMES:
+        return True
+    request = getattr(command, 'command', None)
+    return isinstance(request, bytes) and request.upper().startswith(_ELM_AT_PREFIX)
+
+
+def _responseOutcome(response: Any) -> Reachability:
+    """Classify a completed ECU read: data is ANSWERED, null is DID_NOT_ANSWER.
+
+    A response whose ``is_null()`` raises could not be read.
+    """
+    if response is None:
+        return Reachability.DID_NOT_ANSWER
+    isNull = getattr(response, 'is_null', None)
+    if not callable(isNull):
+        return Reachability.ANSWERED
+    try:
+        return Reachability.DID_NOT_ANSWER if isNull() else Reachability.ANSWERED
+    except Exception:  # noqa: BLE001 -- recorded as its own state, not swallowed
+        return Reachability.COULD_NOT_DETERMINE
 
 
 # ================================================================================
@@ -179,6 +450,18 @@ class ObdNotAvailableError(ObdConnectionError):
 
 class ObdConnectionFailedError(ObdConnectionError):
     """Connection to OBD dongle failed after all retries."""
+    pass
+
+
+class ObdConnectionSupersededError(ObdConnectionError):
+    """A query/connect was fenced because a newer connection generation owns
+    the port (US-441 epoch fence).
+
+    Raised by :meth:`ObdConnection.query` when the caller passes a
+    ``callerGeneration`` that no longer matches the wrapper's current
+    generation -- i.e. the caller is a superseded (timed-out, left-running)
+    daemon whose I/O must NOT touch the serial port a later owner established.
+    """
     pass
 
 
@@ -215,6 +498,7 @@ class ObdConnection:
         database: Any | None = None,
         obdFactory: Callable[..., Any] | None = None,
         shutdownEvent: threading.Event | None = None,
+        monotonicFn: Callable[[], float] = time.monotonic,
     ):
         """
         Initialize OBD connection manager.
@@ -229,6 +513,8 @@ class ObdConnection:
                 ``False`` within a few ms instead of sleeping the full
                 ``retryDelays`` entry (worst case ~90s). Main-thread signal
                 handlers installed by the orchestrator set the event.
+            monotonicFn: Monotonic clock for reachability freshness (US-793-a);
+                injected by tests.
         """
         self.config = config
         self.database = database
@@ -240,6 +526,13 @@ class ObdConnection:
         self.macAddress = btConfig.get('macAddress', '')
         self.retryDelays = btConfig.get('retryDelays', DEFAULT_RETRY_DELAYS)
         self.maxRetries = btConfig.get('maxRetries', len(self.retryDelays))
+        # US-673: ceiling for the escalation past the end of retryDelays.  Read
+        # from the SAME config section as retryDelays deliberately -- the two
+        # halves of one schedule belong in one place, not split between config
+        # and a module constant.
+        self.retryCeilingSeconds = btConfig.get(
+            'retryCeilingSeconds', DEFAULT_RETRY_CEILING_SECONDS
+        )
         self.connectionTimeout = btConfig.get('connectionTimeoutSeconds', DEFAULT_CONNECTION_TIMEOUT)
         self.rfcommDevice = btConfig.get('rfcommDevice', DEFAULT_RFCOMM_DEVICE)
         self.rfcommChannel = btConfig.get('rfcommChannel', DEFAULT_RFCOMM_CHANNEL)
@@ -252,19 +545,84 @@ class ObdConnection:
         # configured a literal /dev/rfcommN path (BC), we never bind and
         # must not release.
         self._boundRfcomm: bool = False
-        # V0.27.1 hotfix: serialize concurrent callers of connect().  Sprint
-        # 27 engine-on test #2 evidence: the Sprint 25 _runInitialConnect-
-        # WithTimeout leaked daemon and the US-301 heartbeat's per-tick
-        # connect daemon both invoked self._connection.connect() against the
-        # same /dev/rfcomm0; pyserial rejected the second open with
-        # "multiple access on port?" and zero rows landed in realtime_data.
-        # connect() now runs under this lock so callers serialize naturally;
+        # US-441 (F-117/A-17): THE single serialization lock for every access
+        # to the underlying python-obd connection (self.obd).  python-obd wraps
+        # one serial port and is NOT thread-safe; two threads driving it at once
+        # interleave the ELM327 frames -> "device disconnected while reading" ->
+        # 0 rows.  V0.27.1 introduced this as _connectLock but only guarded
+        # connect(); the realtime logger reads self.obd.query() DIRECTLY, so its
+        # reads raced the orphaned connect/query daemons.  Renamed _ioLock and
+        # now held around connect(), query(), disconnect()'s close(), and the
+        # supported-PID probe so no two threads ever drive the port concurrently.
         # isConnectInFlight() exposes the lock state to heartbeat probers.
-        self._connectLock = threading.Lock()
+        self._ioLock = threading.Lock()
+        # US-441 epoch fence: a monotonically increasing "connection generation".
+        # Bumped on every successful connect and every disconnect, so a live
+        # connection carries a stable generation between the two.  A bounded
+        # timeout daemon captures the generation at spawn (via activeGeneration())
+        # and passes it back to connect()/query(); if the generation has moved on
+        # by the time the orphaned daemon finally acquires the lock, it is fenced
+        # -- it must NOT touch a connection a newer owner now holds.  Guarded by
+        # _ioLock.
+        self._generation = 0
+        # US-690: cancel epoch.  A connect call captures it at entry; any bump
+        # after that cancels the call's REMAINING attempts and backoffs.  Guarded
+        # by its own lock, NOT _ioLock -- the caller cancelling is precisely the
+        # one that gave up waiting on a call which may be holding _ioLock inside
+        # a slow obd.OBD() handshake, so cancelling must never block behind it.
+        self._cancelLock = threading.Lock()
+        self._cancelEpoch = 0
+        # US-751: port attempts made in the CURRENT outage, across every call
+        # and every caller.  Each loop used to log its own local attempt index
+        # as retry_count, so a boot connect() (0..5) followed by the heartbeat's
+        # single attempts (0, 0, 0, ...) read as two series -- and obdLink.retries
+        # sat at 0 through the whole overnight backoff.  The connection is the
+        # one thing every caller shares, so it counts.  Reset on a successful
+        # connect.  Guarded by _ioLock (read and bumped inside the attempt).
+        self._outageAttempts = 0
         # US-199: Supported-PID probe result cached at connection-open time.
         # None until connect() runs the probe. Consumers (ObdDataLogger) use
         # it to silent-skip unsupported PIDs before dispatching a K-line query.
         self.supportedPids: Any | None = None
+        # US-432 (BL-016): engine-confirmed latch.  On a cold-boot-key-OFF
+        # connect the US-199 probe runs with the engine off, so a dark ECU
+        # answers "RPM unsupported" and python-obd caches that -- every later
+        # obd.query(RPM) then returns null WITHOUT wire traffic and the drive
+        # never starts.  When the orchestrator confirms engine-on (the
+        # alternator-active BATTERY_V escalation edge) it sets this latch so
+        # query() force-reads the known-mandatory Mode-01 PIDs (RPM) past the
+        # stale cache.  Cleared on drive_end and on disconnect().  A plain
+        # atomic bool (not guarded by _ioLock) so setting it from the runLoop
+        # never blocks behind an in-flight bounded query; query() reads it while
+        # already holding _ioLock, and the CPython bool read/write is atomic so
+        # the worst case is one un-forced read on the tick the latch flips.
+        self._forceMandatoryPids: bool = False
+        # US-767-a: True while is_connected() keeps raising, so a failed link
+        # read logs one WARNING per streak instead of one per poll.
+        self._signalFaultActive: bool = False
+        # US-793-a: what ECU reads through query() observed, for reachability.
+        # One tuple replaced whole, so getStatus() reads it coherently without
+        # taking _ioLock -- which a slow query holds, and the EDR gate must
+        # never block behind:
+        #   (generation, lastAnswerAt | None, latest ECU-read outcome | None)
+        self._now = monotonicFn
+        self._ecuObservation: tuple[int, float | None, Reachability | None] = (
+            self._generation, None, None
+        )
+        # ANSWERED goes stale after the drive detector's own ECU-silence bound
+        # (US-229 _checkEcuSilenceDriveEnd): the silence that ends a drive is the
+        # silence that ends "the ECU is answering" -- one bound, not two.
+        # Read through the detector's own acquisition point.  A non-positive
+        # value is the detector's "silence check disabled" test knob; here it
+        # would mean "never fresh" or, worse, a latch, so it takes the default.
+        # Imported here, not at module level, to keep the import graph as it is.
+        from .drive.helpers import getDriveDetectionConfig
+        from .drive.types import DEFAULT_DRIVE_END_DURATION_SECONDS
+
+        freshness = float(getDriveDetectionConfig(config)['driveEndDurationSeconds'])
+        self.reachabilityFreshnessSeconds = (
+            freshness if freshness > 0 else float(DEFAULT_DRIVE_END_DURATION_SECONDS)
+        )
 
     def getStatus(self) -> ConnectionStatus:
         """
@@ -275,11 +633,76 @@ class ObdConnection:
         """
         # Update connected state from OBD object if available
         if self.obd is not None:
-            self._status.connected = self._isConnected()
+            # US-767-a: both facts come from the SAME read.
+            connected, readable = self._readLink()
+            self._status.connected = connected
+            self._status.signalReadable = readable
             if not self._status.connected and self._status.state != ConnectionState.ERROR:
                 # Only reset to DISCONNECTED if not in ERROR state (preserve error state)
                 self._status.state = ConnectionState.DISCONNECTED
+        else:
+            # No connection object is a readable verdict, not a failed read.
+            self._status.signalReadable = True
+        # US-793-a: derived from reads already made -- this issues none.
+        self._status.reachability = self._readReachability()
         return self._status
+
+    def _readReachability(self) -> Reachability:
+        """Derive ECU reachability from what :meth:`query` observed (US-793-a).
+
+        Side-effect free: no OBD request, no lock.  An observation from an
+        earlier connection generation counts as none at all.
+        """
+        generation, lastAnswerAt, latest = self._ecuObservation
+        if generation != self._generation or latest is None:
+            return Reachability.NOT_YET_ATTEMPTED
+        if (
+            lastAnswerAt is not None
+            and self._now() - lastAnswerAt <= self.reachabilityFreshnessSeconds
+        ):
+            return Reachability.ANSWERED
+        if latest is Reachability.COULD_NOT_DETERMINE:
+            return Reachability.COULD_NOT_DETERMINE
+        # A null read, or an answer that went stale: never a latched ANSWERED.
+        return Reachability.DID_NOT_ANSWER
+
+    def _recordEcuRead(self, command: Any, outcome: Reachability) -> None:
+        """Record one completed ECU read's outcome (US-793-a).
+
+        Adapter-level commands (ELM327 ``AT``, e.g. ``ELM_VOLTAGE``/ATRV) are
+        ignored: the dongle answers them with the key out, so they say nothing
+        about the ECU.  Called with ``_ioLock`` held.
+        """
+        if _isAdapterLevelCommand(command):
+            return
+        generation, lastAnswerAt, _ = self._ecuObservation
+        if generation != self._generation:
+            lastAnswerAt = None
+        if outcome is Reachability.ANSWERED:
+            lastAnswerAt = self._now()
+        self._ecuObservation = (self._generation, lastAnswerAt, outcome)
+
+    def _logReachabilityTransition(self) -> None:
+        """Write one ``ecu_reachability`` row if reachability changed (US-793-c).
+
+        Called where the observation can change -- after each :meth:`query`
+        and each connection generation bump -- never from :meth:`getStatus`,
+        which stays side-effect free.  Whether the state is a repeat is
+        decided by ``shouldSuppressAsRepeat``, the one connection_log dedup;
+        a steady state writes nothing.  Freshness decay with no reads in
+        between surfaces at the next read.
+        """
+        if self.database is None:
+            return
+        from src.pi.data.connection_logger import EVENT_ECU_REACHABILITY
+
+        reachability = self._readReachability()
+        self._logConnectionEvent(
+            EVENT_ECU_REACHABILITY,
+            success=reachability is Reachability.ANSWERED,
+            errorMessage=reachability.value,
+            state=reachability.value,
+        )
 
     def isConnected(self) -> bool:
         """
@@ -291,7 +714,7 @@ class ObdConnection:
         return self._isConnected()
 
     def isConnectInFlight(self) -> bool:
-        """Return True when another thread is currently inside ``connect()``.
+        """Return True when another thread is currently driving OBD I/O.
 
         V0.27.1 hotfix observability seam.  Heartbeat callers probe this
         before invoking ``connect()`` themselves so a tick that fires while
@@ -300,70 +723,375 @@ class ObdConnection:
         ``outcome=already_in_flight`` and skips, rather than spawning a
         competing connect that collides on ``/dev/rfcomm0``.
 
+        US-441: the probe now reflects the unified ``_ioLock`` -- True while
+        ANY serialized OBD operation (connect OR query OR disconnect) is in
+        flight, not just connect.  In PENDING state (the only time the
+        heartbeat runs) the logger is not querying, so this remains an
+        accurate "a connect is already happening" signal for the heartbeat.
+
         Cheap (no Bluetooth I/O) -- just inspects the local
         :class:`threading.Lock` state.  Always safe to call from any thread.
 
         Returns:
-            True if any thread holds ``self._connectLock``, False otherwise.
+            True if any thread holds ``self._ioLock``, False otherwise.
         """
-        return self._connectLock.locked()
+        return self._ioLock.locked()
+
+    def cancelPendingConnects(self) -> None:
+        """Cancel every connect call already in progress (US-690).
+
+        THE cancel for a wall-clock cap that gives up on a connect.  Before
+        US-690 such a cap only stopped WAITING: the call it abandoned kept
+        running its own retry loop -- its own attempt counter, its own backoff
+        -- beside whatever loop the caller started next.  That is the two
+        interleaved ``retry_count`` series in ``connection_log``.
+
+        Semantics:
+
+        * A call that started BEFORE this makes no further attempt and sleeps
+          no further backoff.  It returns False at its next attempt boundary.
+        * An attempt already inside ``obd.OBD()`` cannot be interrupted --
+          python-obd offers no abort -- so it finishes.  If it establishes the
+          link, the link is kept: a live connection is what every caller wants,
+          and discarding it would only force another handshake.  What cancel
+          guarantees is that no LOOP continues, not that no I/O completes.
+        * A call that starts AFTER this is unaffected.
+
+        Never blocks on ``_ioLock``; safe from any thread.
+        """
+        with self._cancelLock:
+            self._cancelEpoch += 1
+        logger.info(
+            "Pending connect calls cancelled by their owner -- no further "
+            "attempts or backoffs will run under them (US-690)"
+        )
+
+    def _currentCancelEpoch(self) -> int:
+        """Return the cancel epoch (US-690); see :meth:`cancelPendingConnects`."""
+        with self._cancelLock:
+            return self._cancelEpoch
+
+    def _isConnectCancelled(self, startEpoch: int) -> bool:
+        """True when :meth:`cancelPendingConnects` ran after ``startEpoch``."""
+        return self._currentCancelEpoch() != startEpoch
 
     def _isConnected(self) -> bool:
         """Internal connection check."""
-        if self.obd is None:
-            return False
-        try:
-            # Check if OBD connection is active
-            return self.obd.is_connected()
-        except Exception:
-            return False
+        return self._readLink()[0]
 
-    def connect(self) -> bool:
+    def _readLink(self) -> tuple[bool, bool]:
+        """Read the link once and report whether the read completed (US-767-a).
+
+        A raising ``is_connected()`` still yields ``connected=False`` -- every
+        caller keeps its bool -- but the fault is logged rather than swallowed:
+        WARNING on the first failed read of a streak, DEBUG while it persists,
+        INFO when the read recovers.
+
+        Returns:
+            ``(connected, signalReadable)``.  ``signalReadable`` is False only
+            when ``is_connected()`` raised; ``obd is None`` is readable.
+        """
+        obdConn = self.obd
+        if obdConn is None:
+            return (False, True)
+        try:
+            connected = obdConn.is_connected()
+        except Exception as e:  # noqa: BLE001 -- recorded, never swallowed
+            if self._signalFaultActive:
+                logger.debug("OBD link read still failing: %r", e)
+            else:
+                self._signalFaultActive = True
+                logger.warning(
+                    "OBD link read FAILED (is_connected raised %r) -- "
+                    "connected=False here means UNREADABLE, not link down",
+                    e,
+                )
+            return (False, False)
+        if self._signalFaultActive:
+            self._signalFaultActive = False
+            logger.info("OBD link read recovered")
+        return (connected, True)
+
+    def activeGeneration(self) -> int:
+        """Return the current connection generation (US-441 epoch fence).
+
+        A bounded timeout daemon (the lifecycle ``_connectInThread`` /
+        ``_queryInThread``) captures this at spawn and passes it back to
+        :meth:`connect` / :meth:`query`.  If the generation has advanced by the
+        time the (possibly orphaned) daemon acquires the lock, its operation is
+        fenced.  Cheap (no serial I/O) -- takes ``_ioLock`` only to read the
+        counter coherently.
+
+        Returns:
+            The current generation integer (starts at 0; +1 per connect-success
+            and per disconnect).
+        """
+        with self._ioLock:
+            return self._generation
+
+    def setEngineConfirmedForceMandatory(self, enabled: bool = True) -> None:
+        """Arm/clear the engine-confirmed force-mandatory-PID latch (US-432).
+
+        When ``enabled`` is True, subsequent :meth:`query` calls for a
+        known-mandatory Mode-01 PID (see :data:`MANDATORY_MODE01_PIDS` -- RPM)
+        pass ``force=True`` to python-obd, bypassing the stale engine-OFF
+        support cache that a cold-boot-key-OFF connect poisoned.  SCOPED: only
+        the mandatory PIDs are forced; every other PID still honors the probe
+        (no blanket un-mask -- BL-016 / Refusal Rule 3).
+
+        Called by the orchestrator on the alternator-active escalation edge
+        (engine-on confirmed) and cleared on ``drive_end``; :meth:`disconnect`
+        also clears it so a fresh connection starts dark.
+
+        Idempotent; logs at INFO only on an actual state change so the poll-rate
+        RPM reads do not spam the journal.
+
+        Args:
+            enabled: True to force mandatory PIDs; False to return to the
+                probe-honoring read path.
+        """
+        if self._forceMandatoryPids == enabled:
+            return
+        self._forceMandatoryPids = enabled
+        logger.info(
+            "Engine-confirmed force-mandatory latch %s -- mandatory Mode-01 "
+            "PIDs %s force-read past the dark-ECU support cache "
+            "(US-432 / BL-016)",
+            'ARMED' if enabled else 'CLEARED',
+            'WILL BE' if enabled else 'will NOT be',
+        )
+
+    def isForcingMandatoryPids(self) -> bool:
+        """Return True when the engine-confirmed force latch is armed (US-432).
+
+        Observability seam for tests + logging; cheap (a bool read, no I/O).
+        """
+        return self._forceMandatoryPids
+
+    def connect(self, callerGeneration: int | None = None) -> bool:
         """
         Connect to OBD-II dongle with retry logic.
 
         Attempts to connect using exponential backoff retry delays.
         Logs all connection attempts to database if available.
 
-        Thread safety (V0.27.1):
-            ``connect()`` runs under ``self._connectLock`` so concurrent
-            invocations serialize.  A second caller that invokes ``connect()``
-            while a first caller is still inside the inner 6-attempt-with-
-            backoff schedule will block on the lock acquire; if the second
-            caller is the US-301 heartbeat, it should probe
-            :meth:`isConnectInFlight` first and log ``already_in_flight``
-            instead of blocking.  See ``test_connect_thread_safety.py`` for
-            the runtime-validation contract.
+        Thread safety (V0.27.1 / US-441):
+            ``connect()`` runs under ``self._ioLock`` -- THE single lock that
+            also guards :meth:`query` and :meth:`disconnect` -- so no two
+            threads ever drive the serial port concurrently.  A second caller
+            that invokes ``connect()`` while a first is mid-connect blocks on
+            the lock; the US-301 heartbeat probes :meth:`isConnectInFlight`
+            first and logs ``already_in_flight`` instead of blocking.
+
+        Epoch fence (US-441):
+            When ``callerGeneration`` is provided and no longer matches the
+            wrapper's current generation, this attempt has been SUPERSEDED (a
+            newer connection was established while this -- likely orphaned,
+            timed-out -- daemon was blocked).  It refuses to re-open the port
+            and returns the current connectedness instead.  Live callers
+            (``reconnect()``, the heartbeat) pass no generation and always
+            proceed.
+
+        Args:
+            callerGeneration: Optional generation token captured via
+                :meth:`activeGeneration` before spawning a bounded connect
+                daemon.  ``None`` (default) never fences.
 
         Returns:
-            True if connection successful, False otherwise
+            True if connection successful (or already connected on a fenced
+            call), False otherwise.
 
         Raises:
             ObdNotAvailableError: If python-OBD library not available
         """
-        with self._connectLock:
-            return self._performConnect()
+        return self._performConnect(callerGeneration)
 
-    def _performConnect(self) -> bool:
-        """Internal connect implementation; runs under ``self._connectLock``.
+    def connectOnce(self, callerGeneration: int | None = None) -> bool:
+        """Attempt ONE connect, with no internal retry burst (US-673).
 
-        Body factored out of :meth:`connect` so the V0.27.1 thread-safety
-        wrapper is a single ``with`` line at the public entry point.  Do not
-        call this directly from production code -- always go through
-        :meth:`connect` so the lock is held for the entire attempt.
+        The seam for callers that own their own cadence -- specifically the
+        long-lived :func:`~src.pi.obdii.reconnect_loop.runReconnectHeartbeat`,
+        which already carries an exponentially-backed-off, ceilinged inter-tick
+        interval (US-325 / I-025).
+
+        WHY THIS EXISTS.  The heartbeat's per-tick attempt used to call
+        :meth:`connect`, which is ITSELF a retry loop -- so a tick that was
+        supposed to cost one probe cost six binds over 31 seconds, and the
+        heartbeat's carefully-ceilinged "one attempt every 320s" idle cadence
+        was in practice a 31-second burst of rfcomm churn every 350s.  That 6x
+        amplification is most of the 275+ retries measured over 13 hours on
+        drives 42/43/44, and it is the shape I-025's WiFi-starvation finding
+        warned about one layer up.  :meth:`_spawnReconnectHeartbeatDaemon`'s
+        own docstring has claimed "attempt a single ``connect()``" since
+        US-301; this method is what makes that sentence true.
+
+        Behaviourally identical to ``connect()`` in every other respect --
+        same lock, same epoch fence, same partial-close and rfcomm-release
+        cleanup on failure.  It simply never waits a backoff, because the
+        caller's own loop owns the waiting.
+
+        Args:
+            callerGeneration: Optional epoch-fence token; see :meth:`connect`.
+
+        Returns:
+            True if the single attempt established the link, False otherwise.
+        """
+        return self._performConnect(callerGeneration, maxAttempts=1)
+
+    def query(self, command: Any, callerGeneration: int | None = None) -> Any:
+        """Run a single OBD query under the serialization lock (US-441).
+
+        THE serialized read path.  Every caller that would otherwise touch
+        ``self.obd.query(...)`` directly -- the realtime logger, the lifecycle
+        query daemon -- goes through here so its serial I/O cannot interleave
+        with a connect, a disconnect, or another query on the one non-thread-
+        safe python-obd connection.  Holding ``_ioLock`` for the whole query is
+        what closes the F-117/A-17 "device disconnected while reading" race.
+
+        Args:
+            command: python-obd command name or command instance to query.
+            callerGeneration: Optional generation token (see
+                :meth:`activeGeneration`).  When provided and stale, the read is
+                fenced -- an orphaned daemon must not read a connection a newer
+                owner holds.  Live readers (the logger) pass ``None`` and are
+                never fenced; they always read the current connection.
+
+        Returns:
+            The python-obd response object.
+
+        Raises:
+            ObdConnectionSupersededError: If ``callerGeneration`` is stale.
+            ObdConnectionError: If there is no live OBD interface (obd is None).
+        """
+        try:
+            with self._ioLock:
+                if callerGeneration is not None and callerGeneration != self._generation:
+                    logger.warning(
+                        "query() fenced -- caller generation %d superseded by "
+                        "current %d; dropping orphaned read (US-441 epoch fence)",
+                        callerGeneration,
+                        self._generation,
+                    )
+                    raise ObdConnectionSupersededError(
+                        "OBD query dropped: caller generation superseded by a "
+                        "newer connection",
+                        details={
+                            'callerGeneration': callerGeneration,
+                            'currentGeneration': self._generation,
+                        },
+                    )
+                if self.obd is None:
+                    raise ObdConnectionError(
+                        "Cannot query: OBD interface is not connected (obd is None)"
+                    )
+                # US-432 (BL-016): while the engine-confirmed latch is armed, force
+                # known-mandatory Mode-01 PIDs (RPM) past python-obd's dark-ECU
+                # support cache.  SCOPED to MANDATORY_MODE01_PIDS -- never blanket.
+                # US-793-a: every outcome of this read is recorded for reachability.
+                # This is the read the data path was making anyway -- never a poll.
+                try:
+                    if self._shouldForceMandatory(command):
+                        logger.debug(
+                            "query() force-reading mandatory Mode-01 PID past the "
+                            "dark-ECU support cache (US-432 engine-confirmed latch)"
+                        )
+                        response = self.obd.query(command, force=True)
+                    else:
+                        response = self.obd.query(command)
+                except Exception:
+                    self._recordEcuRead(command, Reachability.COULD_NOT_DETERMINE)
+                    raise
+                self._recordEcuRead(command, _responseOutcome(response))
+                return response
+        finally:
+            # US-793-c: a changed reachability is written once, AFTER _ioLock is
+            # released -- a SQLite write never holds the serial port.
+            self._logReachabilityTransition()
+
+    def _shouldForceMandatory(self, command: Any) -> bool:
+        """Return True when ``command`` must be force-read (US-432).
+
+        True only when the engine-confirmed latch is armed AND ``command``
+        resolves to a name in :data:`MANDATORY_MODE01_PIDS`.  Resolves the name
+        from a python-obd command object (``.name``) or a bare string (the
+        obdlib-absent fallback path in ``ObdDataLogger._getObdCommand``).
+
+        Args:
+            command: The python-obd command object or name being queried.
+
+        Returns:
+            True to pass ``force=True`` to the underlying query.
+        """
+        if not self._forceMandatoryPids:
+            return False
+        name = getattr(command, 'name', None)
+        if name is None and isinstance(command, str):
+            name = command
+        return name in MANDATORY_MODE01_PIDS
+
+    def _performConnect(
+        self,
+        callerGeneration: int | None = None,
+        maxAttempts: int | None = None,
+    ) -> bool:
+        """Internal connect implementation with PER-ATTEMPT serialization.
+
+        Atlas A-17 fix (2026-07-27, "capture-dead-since-0703"): ``_ioLock`` is
+        acquired PER ATTEMPT around only the discrete port work (resolve +
+        ``obd.OBD(...)`` construction + probe) and RELEASED across the backoff
+        sleep.  The US-441 regression held the lock for the WHOLE multi-attempt
+        loop (backoff included), so a timed-out-but-still-running connect daemon
+        monopolized the port lifecycle -- :meth:`disconnect` could never acquire
+        the lock to free ``/dev/rfcommN``, and each retry re-opened the port over
+        an unclosed partial handle -> "device disconnected or multiple access on
+        port?" -> 0 rows for 24 days.
+
+        Fix A: lock released across backoff (below) so ``disconnect()`` /
+        ``query()`` can interleave.  Fix B: :meth:`_closePartialConnection`
+        closes the partial ``obd`` on every failed attempt before the next open.
+
+        The US-441 epoch fence is re-checked at the top of EACH attempt (under
+        the lock) -- because the lock is now free across backoff, a newer
+        connection may have won meanwhile, and a superseded daemon must fence
+        rather than re-open the port.  Live callers (``callerGeneration=None``)
+        are never fenced.
+
+        Args:
+            callerGeneration: Optional US-441 epoch-fence token.
+            maxAttempts: US-673.  Total attempts this call may make.  ``None``
+                (every pre-existing caller) means the configured budget,
+                ``self.maxRetries + 1``.  :meth:`connectOnce` passes 1 so the
+                reconnect heartbeat's per-tick attempt is singular and the
+                cadence is owned by the heartbeat's own ceiling rather than
+                multiplied by this loop.
         """
         if not OBD_AVAILABLE and self._obdFactory is None:
             error = "python-OBD library not available"
             self._logConnectionEvent(EVENT_TYPE_CONNECT_FAILURE, success=False, errorMessage=error)
             raise ObdNotAvailableError(error)
 
+        # US-690: captured once, so a cancel issued after this call began
+        # stops THIS call's loop and leaves later calls untouched.
+        cancelEpoch = self._currentCancelEpoch()
+
         self._status.state = ConnectionState.CONNECTING
-        self._status.retryCount = 0
+        # US-751: retries so far in this outage, not in this call.
+        self._status.retryCount = self._outageAttempts
+
+        # US-673: the attempt budget for THIS call.  `lastAttemptIndex` replaces
+        # the bare `self.maxRetries` everywhere below so a single-attempt caller
+        # (connectOnce) takes the same code path -- one budget, not two loops.
+        if maxAttempts is not None:
+            lastAttemptIndex = max(int(maxAttempts), 1) - 1
+        else:
+            lastAttemptIndex = self.maxRetries
+        totalAttempts = lastAttemptIndex + 1
 
         logger.info(f"Connecting to OBD-II dongle | mac={self.macAddress}")
 
-        # Attempt connection with retries
-        for attempt in range(self.maxRetries + 1):
+        # Attempt connection with retries.  The lock is taken PER ATTEMPT (around
+        # the port work only) and released across the backoff (fix A).
+        for attempt in range(totalAttempts):
             # US-232 / TD-035: honor an already-set shutdown event before
             # even dispatching the next attempt. Covers the pre-set path
             # (SIGTERM arrived while we were preparing for the next retry).
@@ -376,105 +1104,207 @@ class ObdConnection:
                 self._status.state = ConnectionState.DISCONNECTED
                 return False
 
-            try:
-                self._logConnectionEvent(
-                    EVENT_TYPE_CONNECT_ATTEMPT,
-                    retryCount=attempt
+            # US-690: the owner that started this call has given up on it.
+            if self._isConnectCancelled(cancelEpoch):
+                logger.info(
+                    "Connect retry loop exiting -- cancelled by its owner "
+                    "before attempt %d/%d (US-690)",
+                    attempt + 1,
+                    totalAttempts,
                 )
+                self._status.state = ConnectionState.DISCONNECTED
+                return False
 
-                # Resolve MAC -> /dev/rfcommN if needed. When the caller
-                # passed a literal device path (or left config empty) we
-                # pass it through unchanged for backwards compatibility.
-                serialPort = self._resolvePort()
+            attemptFailed = False
+            with self._ioLock:
+                # US-441 epoch fence, re-checked each attempt: because the lock
+                # is released across backoff, a newer connection may have won in
+                # the meantime -- a superseded (orphaned) daemon must fence here
+                # and NOT re-open the port a newer owner now holds.
+                if callerGeneration is not None and callerGeneration != self._generation:
+                    logger.warning(
+                        "connect() fenced -- caller generation %d superseded by "
+                        "current %d; a newer connection owns the port, not "
+                        "re-opening (US-441 epoch fence)",
+                        callerGeneration,
+                        self._generation,
+                    )
+                    return self._isConnected()
 
-                # Create OBD connection
-                if self._obdFactory is not None:
-                    self.obd = self._obdFactory(serialPort, self.connectionTimeout)
-                else:
-                    self.obd = self._createObdConnection(serialPort)
+                # US-751: this port attempt's number within the outage -- the
+                # retry_count every row of this attempt carries.  `attempt`
+                # stays the per-call index; it only drives this call's backoff.
+                outageAttempt = self._outageAttempts
+                self._outageAttempts += 1
 
-                # Check if connection was successful
-                if self._isConnected():
-                    self._status.state = ConnectionState.CONNECTED
-                    self._status.connected = True
-                    self._status.lastConnectTime = datetime.now()
-                    self._status.totalConnections += 1
-                    self._status.retryCount = attempt
-
-                    # US-199: one-shot supported-PID probe so the realtime
-                    # logger can silent-skip unsupported PIDs (0x42/0x0B/0x15
-                    # candidates on 2G). Best-effort — probe failure never
-                    # fails the connection itself.
-                    self._runSupportedPidProbe()
-
+                try:
                     self._logConnectionEvent(
-                        EVENT_TYPE_CONNECT_SUCCESS,
-                        success=True,
-                        retryCount=attempt
+                        EVENT_TYPE_CONNECT_ATTEMPT,
+                        retryCount=outageAttempt
                     )
 
-                    logger.info(f"Connected to OBD-II dongle | mac={self.macAddress} | attempts={attempt + 1}")
-                    return True
-                else:
-                    # Connection object created but not connected
-                    raise ObdConnectionError("OBD connection not active after creation")
+                    # Resolve MAC -> /dev/rfcommN if needed. When the caller
+                    # passed a literal device path (or left config empty) we
+                    # pass it through unchanged for backwards compatibility.
+                    serialPort = self._resolvePort()
 
-            except Exception as e:
-                self._status.lastError = str(e)
-                self._status.lastErrorTime = datetime.now()
-                self._status.totalErrors += 1
-
-                logger.warning(
-                    f"Connection attempt {attempt + 1}/{self.maxRetries + 1} failed | "
-                    f"mac={self.macAddress} | error={e}"
-                )
-
-                # Check if we should retry
-                if attempt < self.maxRetries:
-                    # Get delay for this attempt (use 0 if empty, else last delay if index out of range)
-                    if not self.retryDelays:
-                        delay = 0
+                    # Create OBD connection
+                    if self._obdFactory is not None:
+                        self.obd = self._obdFactory(serialPort, self.connectionTimeout)
                     else:
-                        delayIndex = min(attempt, len(self.retryDelays) - 1)
-                        delay = self.retryDelays[delayIndex]
+                        self.obd = self._createObdConnection(serialPort)
 
-                    logger.info(f"Retrying in {delay}s...")
-                    # US-232 / TD-035: use event.wait() when a shutdown event
-                    # is plumbed in so a signal handler set() wakes us mid-
-                    # backoff. Returns True when the event fired; return
-                    # False to abort the retry loop cleanly. When no event
-                    # is plumbed in, fall back to legacy time.sleep so the
-                    # behavior is unchanged for any caller that didn't
-                    # opt into the responsiveness seam.
-                    if delay > 0:
-                        if self.shutdownEvent is not None:
-                            if self.shutdownEvent.wait(timeout=delay):
-                                logger.info(
-                                    "Connect retry loop exiting -- shutdown "
-                                    "signaled during backoff (attempt %d/%d)",
-                                    attempt + 1,
-                                    self.maxRetries + 1,
-                                )
-                                self._status.state = ConnectionState.DISCONNECTED
-                                return False
-                        else:
-                            time.sleep(delay)
-                    self._status.retryCount = attempt + 1
-                else:
-                    # All retries exhausted
-                    self._status.state = ConnectionState.ERROR
-                    self._logConnectionEvent(
-                        EVENT_TYPE_CONNECT_FAILURE,
-                        success=False,
-                        errorMessage=str(e),
-                        retryCount=attempt
+                    # Check if connection was successful
+                    if self._isConnected():
+                        self._status.state = ConnectionState.CONNECTED
+                        self._status.connected = True
+                        self._status.lastConnectTime = datetime.now()
+                        self._status.totalConnections += 1
+                        self._status.retryCount = outageAttempt
+                        # US-751: the outage is over; the next one counts from 0.
+                        self._outageAttempts = 0
+
+                        # US-441 epoch fence: a new live connection = a new
+                        # generation.  Runs under the held _ioLock so the bump is
+                        # atomic w.r.t. activeGeneration()/query().
+                        self._generation += 1
+
+                        # US-199: one-shot supported-PID probe so the realtime
+                        # logger can silent-skip unsupported PIDs (0x42/0x0B/0x15
+                        # candidates on 2G). Best-effort — probe failure never
+                        # fails the connection itself.
+                        self._runSupportedPidProbe()
+
+                        self._logConnectionEvent(
+                            EVENT_TYPE_CONNECT_SUCCESS,
+                            success=True,
+                            retryCount=outageAttempt
+                        )
+                        # US-793-c: a new generation has not been read yet.
+                        self._logReachabilityTransition()
+
+                        logger.info(f"Connected to OBD-II dongle | mac={self.macAddress} | attempts={attempt + 1}")
+                        return True
+                    else:
+                        # Connection object created but not connected
+                        raise ObdConnectionError("OBD connection not active after creation")
+
+                except Exception as e:
+                    attemptFailed = True
+                    self._status.lastError = str(e)
+                    self._status.lastErrorTime = datetime.now()
+                    self._status.totalErrors += 1
+                    # US-751: visible the moment the attempt fails, whichever
+                    # loop made it -- the heartbeat never reaches the backoff
+                    # branch below, so setting it only there left it at 0.
+                    self._status.retryCount = self._outageAttempts
+
+                    # Fix B: close the partially-opened obd (and the serial fd it
+                    # opened on /dev/rfcommN) BEFORE the next attempt re-opens the
+                    # same port -- otherwise pyserial rejects the second open with
+                    # "device disconnected or multiple access on port?".  Runs
+                    # under the held _ioLock.
+                    self._closePartialConnection()
+
+                    # US-512: and drop the rfcomm BINDING too, so the next
+                    # attempt re-binds instead of taking bindRfcomm's
+                    # already-bound short-circuit.  Closing the fd is not
+                    # enough: the kernel bind entry survives the dead link, so
+                    # without this the retry re-opens the identical dead tty --
+                    # BL-025's stale-rfcomm-retry-forever.  This is the ONLY
+                    # place the US-338 post-failure heartbeat gets a transport
+                    # reset, because it drives connect() and never reconnect().
+                    self._releaseRfcommBinding()
+
+                    logger.warning(
+                        f"Connection attempt {attempt + 1}/{totalAttempts} failed | "
+                        f"mac={self.macAddress} | error={e}"
                     )
-                    logger.error(
-                        f"Failed to connect after {self.maxRetries + 1} attempts | "
-                        f"mac={self.macAddress}"
+
+                    if attempt >= lastAttemptIndex:
+                        # All retries exhausted
+                        self._status.state = ConnectionState.ERROR
+                        self._logConnectionEvent(
+                            EVENT_TYPE_CONNECT_FAILURE,
+                            success=False,
+                            errorMessage=str(e),
+                            retryCount=outageAttempt
+                        )
+                        logger.error(
+                            f"Failed to connect after {totalAttempts} attempts | "
+                            f"mac={self.macAddress}"
+                        )
+            # --- _ioLock released here (fix A) ---
+
+            # Backoff OUTSIDE the lock so disconnect()/query() can acquire it and
+            # free the port while this (possibly orphaned) connect waits.
+            if attemptFailed and attempt < lastAttemptIndex:
+                # US-690: a cancelled call must not sleep a backoff it will never
+                # use -- the loop that replaced it owns the waiting now.
+                if self._isConnectCancelled(cancelEpoch):
+                    logger.info(
+                        "Connect retry loop exiting -- cancelled by its owner "
+                        "after attempt %d/%d, before backoff (US-690)",
+                        attempt + 1,
+                        totalAttempts,
                     )
+                    self._status.state = ConnectionState.DISCONNECTED
+                    return False
+
+                # US-673: ONE acquisition point for the delay.  This used to be
+                # `retryDelays[min(attempt, len - 1)]`, which PLATEAUED on the
+                # last entry (16s) for every further attempt, forever, with no
+                # ceiling and no terminal state.  nextRetryDelaySeconds escalates
+                # past the ramp to self.retryCeilingSeconds instead.  The
+                # escalation is per-CALL state -- `attempt` restarts at 0 on the
+                # next connect() -- so a link that comes back is never punished
+                # by the previous outage's backoff level.
+                delay = nextRetryDelaySeconds(
+                    attempt, self.retryDelays, self.retryCeilingSeconds
+                )
+
+                if delay > 0:
+                    logger.info(f"Retrying in {delay:.0f}s...")
+                    # US-232 / TD-035: use event.wait() when a shutdown event is
+                    # plumbed in so a signal handler set() wakes us mid-backoff;
+                    # else legacy time.sleep for callers that didn't opt in.
+                    if self.shutdownEvent is not None:
+                        if self.shutdownEvent.wait(timeout=delay):
+                            logger.info(
+                                "Connect retry loop exiting -- shutdown "
+                                "signaled during backoff (attempt %d/%d)",
+                                attempt + 1,
+                                totalAttempts,
+                            )
+                            self._status.state = ConnectionState.DISCONNECTED
+                            return False
+                    else:
+                        time.sleep(delay)
 
         return False
+
+    def _closePartialConnection(self) -> None:
+        """Close a partially-opened ``obd`` after a FAILED connect attempt (B).
+
+        A python-obd ``OBD()`` constructor that fails the ELM327 handshake can
+        leave the serial fd on ``/dev/rfcommN`` open; the retry loop would then
+        re-open the same port and pyserial rejects the second open with "device
+        reports readiness to read but returned no data (device disconnected or
+        multiple access on port?)".  Closing the partial handle before the next
+        attempt (and before returning on final failure) prevents that
+        self-inflicted collision -- the A-17 capture-dead-since-0703 regression.
+
+        MUST be called with ``self._ioLock`` held (it touches ``self.obd``).
+        Never raises -- cleanup must not mask the original connect error.
+        """
+        if self.obd is None:
+            return
+        try:
+            self.obd.close()
+        except Exception as e:  # noqa: BLE001 -- cleanup must never mask the real error
+            logger.warning("Partial-connection close after failed attempt failed: %s", e)
+        finally:
+            self.obd = None
 
     def _runSupportedPidProbe(self) -> None:
         """Populate :attr:`supportedPids` from python-obd's auto-probed commands.
@@ -500,6 +1330,179 @@ class ObdConnection:
             logger.warning("Supported-PID probe failed (%s) — falling back to always-supported", exc)
             self.supportedPids = SupportedPidSet.alwaysSupported()
 
+    def _releaseRfcommBinding(self) -> bool:
+        """Drop the rfcomm binding for a MAC-configured port (US-512).
+
+        Keyed on "the configured port is a MAC", NOT on ``self._boundRfcomm``.
+        That distinction is the whole fix for the restart-proof form of
+        BL-025: a predecessor process that was SIGKILLed (or crashed) never
+        ran :meth:`disconnect`, so its bind entry is still in the kernel table
+        when we start.  We did not create it, so ``_boundRfcomm`` is False and
+        a release keyed on our own bookkeeping skips -- then ``bindRfcomm``
+        short-circuits on the inherited entry and we open the predecessor's
+        dead tty.  Restarting the service does not clear that; only releasing
+        an entry we did not make does.
+
+        Path-style configuration (a literal ``/dev/rfcommN``) is exempt: we
+        never bind it, and something else -- ``connect_obdlink.sh``, an
+        operator -- owns it.
+
+        MUST be called with ``self._ioLock`` held.  Never raises: this runs on
+        recovery paths where an exception would surface as FATAL and bounce
+        the service.
+
+        Returns:
+            True when a release was issued without error.
+        """
+        if not bluetooth_helper.isMacAddress(self.macAddress):
+            return False
+        try:
+            bluetooth_helper.releaseRfcomm(device=self.rfcommDevice)
+        except Exception as exc:  # noqa: BLE001 -- recovery cleanup never raises
+            logger.warning(
+                "rfcomm release during transport reset failed | device=%d | %s",
+                self.rfcommDevice,
+                exc,
+            )
+            return False
+        finally:
+            self._boundRfcomm = False
+        return True
+
+    def resetTransport(self) -> str | None:
+        """Spool's transport reset: disconnect -> releaseRfcomm -> re-bind.
+
+        The recovery primitive for a dropped BT link.  Re-opening
+        ``obd.OBD()`` on the surviving ``/dev/rfcommN`` cannot work -- the
+        binding is a kernel table entry that outlived the ACL link, so the
+        device node is present and dead.  This tears the transport down to the
+        binding and builds a genuinely new one, which is what the next
+        :meth:`connect` (and the reconnect loop's reachability probe) needs in
+        order to answer honestly.
+
+        Deliberately leaves the transport BOUND rather than released.  The
+        US-211 reconnect loop probes
+        :func:`bluetooth_helper.isRfcommReachable`, which requires the binding
+        to EXIST -- so a recovery path that only released would leave that
+        probe permanently False and the loop waiting forever for a state its
+        own teardown had made unreachable.
+
+        Never raises, and never touches the radio (no rfkill / ``hciconfig
+        down`` / ``bluetoothctl power off``): systemd-rfkill persists radio
+        state across a reboot, which is how the 07-03 soft-block became sticky.
+
+        Returns:
+            The freshly-bound ``/dev/rfcommN`` path, or ``None`` when the port
+            is path-style (someone else owns the bind) or the re-bind failed
+            (no transport -- an honest answer the caller can act on).
+        """
+        self.disconnect()
+
+        if not bluetooth_helper.isMacAddress(self.macAddress):
+            logger.debug(
+                "resetTransport: port %r is path-style -- not ours to re-bind",
+                self.macAddress,
+            )
+            return None
+
+        with self._ioLock:
+            try:
+                path = bluetooth_helper.resetRfcommBinding(
+                    macAddress=self.macAddress,
+                    device=self.rfcommDevice,
+                    channel=self.rfcommChannel,
+                )
+            except Exception as exc:  # noqa: BLE001 -- recovery must not raise
+                logger.warning(
+                    "Transport reset could not re-bind rfcomm | mac=%s | %s",
+                    self.macAddress,
+                    exc,
+                )
+                self._boundRfcomm = False
+                return None
+            self._boundRfcomm = True
+
+        logger.info(
+            "Transport RESET complete | mac=%s port=%s -- next open gets a "
+            "fresh binding, not the dead one (US-512 / BL-025)",
+            self.macAddress,
+            path,
+        )
+        return path
+
+    def _assureDurableBond(self, macAddress: str) -> None:
+        """Restore a lost ``Trusted`` flag before binding (US-512).
+
+        ``scripts/pair_obdlink.sh`` writes Paired+Bonded+Trusted at pair time
+        and verifies all three; nothing at runtime ever read them back.  A bond
+        that loses ``Trusted`` still reports as paired, but bluez refuses the
+        unattended reconnect -- so the symptom is a dead link whose only
+        apparent remedy is a manual re-pair, which needs the dongle powered,
+        i.e. the engine running.  Trust is a local bluez flag and IS repairable
+        here; pairing is not, so an absent bond record is reported loudly with
+        the actual remedy rather than papered over.
+
+        US-545 (A-18): a bond bluez has actually DROPPED is no longer just a
+        warning.  This runs on every connect -- so it is also the reconnect
+        path -- and now delegates to the bounded self-heal.  It delegates
+        rather than heals in-place because the heal must stop this very
+        service first (never pair while the logger holds the port); see
+        :mod:`~src.pi.obdii.bond_self_heal`.
+
+        Best-effort by construction: never raises, and a failure here must
+        never fail a connect attempt that would otherwise have worked.
+
+        Args:
+            macAddress: The configured dongle MAC.
+        """
+        try:
+            state = bluetooth_helper.ensureTrusted(macAddress)
+        except Exception as exc:  # noqa: BLE001 -- advisory check only
+            logger.debug("Bond assurance skipped (%s)", exc)
+            return
+
+        if bluetooth_helper.isDurableBond(state):
+            return
+
+        # US-545: an unreadable bluez produces the SAME all-False state as a
+        # genuinely cleared bond.  Classify against the adapter reading before
+        # acting, or a slow-to-start bluetooth.service would have us stopping
+        # capture and re-pairing the dongle in response to our own blindness.
+        try:
+            healer = bond_self_heal.BondSelfHealer(macAddress)
+            verdict = bond_self_heal.classifyBond(
+                state, adapterPresent=healer.readAdapterPowered() is not None
+            )
+        except Exception as exc:  # noqa: BLE001 -- advisory check only
+            logger.debug("Bond verdict unavailable (%s)", exc)
+            return
+
+        if verdict is bond_self_heal.BondVerdict.UNKNOWN:
+            logger.debug(
+                "Bond for %s could not be classified (bluez unreadable) -- "
+                "not requesting a self-heal off a blind reading",
+                macAddress,
+            )
+            return
+
+        logger.warning(
+            "Bond for %s is NOT durable (known=%s paired=%s bonded=%s "
+            "trusted=%s) -- bluez will not reconnect it unattended. Run "
+            "scripts/pair_obdlink.sh %s with the dongle powered (engine "
+            "on) and in pair mode.",
+            macAddress,
+            state.known,
+            state.paired,
+            state.bonded,
+            state.trusted,
+            macAddress,
+        )
+
+        try:
+            bond_self_heal.requestBondSelfHeal(macAddress)
+        except Exception as exc:  # noqa: BLE001 -- must never fail a connect
+            logger.debug("Self-heal request failed (%s)", exc)
+
     def _resolvePort(self) -> str | None:
         """
         Resolve the configured port value to a serial device path.
@@ -522,6 +1525,10 @@ class ObdConnection:
         if not bluetooth_helper.isMacAddress(port):
             # Literal path (e.g. /dev/rfcomm0) — pass through unchanged.
             return port
+
+        # US-512: assure the bluez bond before binding.  A binding over a
+        # non-trusted bond binds fine and then refuses to carry traffic.
+        self._assureDurableBond(port)
 
         try:
             resolved = bluetooth_helper.bindRfcomm(
@@ -582,37 +1589,63 @@ class ObdConnection:
         Disconnect from OBD-II dongle.
 
         Cleanly closes the OBD connection and logs the event.
-        """
-        if self.obd is not None:
-            try:
-                logger.info(f"Disconnecting from OBD-II dongle | mac={self.macAddress}")
-                self.obd.close()
-            except Exception as e:
-                logger.warning(f"Error during disconnect: {e}")
-            finally:
-                self.obd = None
 
-        # Release the rfcomm device we bound so the next connect() is idempotent
-        # and the kernel slot is free for reuse. Path-style BC (self._boundRfcomm
-        # is False) skips this — someone else owns the bind.
-        if self._boundRfcomm:
-            try:
-                bluetooth_helper.releaseRfcomm(device=self.rfcommDevice)
-            except bluetooth_helper.BluetoothHelperError as exc:
-                logger.warning("rfcomm release during disconnect failed | %s", exc)
-            finally:
-                self._boundRfcomm = False
+        US-441: the close + generation bump run under ``self._ioLock`` so a
+        disconnect never interleaves with an in-flight query, and any daemon
+        holding the pre-disconnect generation is fenced from the next
+        connection.  The DB event log is written outside the lock (different
+        resource; no need to hold the serial lock for a SQLite write).
+        """
+        with self._ioLock:
+            if self.obd is not None:
+                try:
+                    logger.info(f"Disconnecting from OBD-II dongle | mac={self.macAddress}")
+                    self.obd.close()
+                except Exception as e:
+                    logger.warning(f"Error during disconnect: {e}")
+                finally:
+                    self.obd = None
+
+            # US-441 epoch fence: tearing down the connection advances the
+            # generation so a superseded connect/query daemon bound to the old
+            # connection is fenced when it finally wakes.
+            self._generation += 1
+
+            # US-432 (BL-016): clear the engine-confirmed force latch on
+            # teardown.  The next connect() re-runs the US-199 probe (dark ECU
+            # again on a cold-boot connect), so a stale force must not carry
+            # across connections -- the escalation re-arms it when engine-on is
+            # re-confirmed.
+            self._forceMandatoryPids = False
+
+            # Release the rfcomm device we bound so the next connect() is
+            # idempotent and the kernel slot is free for reuse. Path-style BC
+            # (self._boundRfcomm is False) skips this — someone else owns the bind.
+            if self._boundRfcomm:
+                try:
+                    bluetooth_helper.releaseRfcomm(device=self.rfcommDevice)
+                except bluetooth_helper.BluetoothHelperError as exc:
+                    logger.warning("rfcomm release during disconnect failed | %s", exc)
+                finally:
+                    self._boundRfcomm = False
 
         self._status.state = ConnectionState.DISCONNECTED
         self._status.connected = False
 
         self._logConnectionEvent(EVENT_TYPE_DISCONNECT)
+        # US-793-c: the generation bump reset reachability to NOT_YET_ATTEMPTED.
+        self._logReachabilityTransition()
 
     def reconnect(self) -> bool:
         """
         Reconnect to OBD-II dongle.
 
-        Disconnects if connected, then attempts to connect again.
+        US-512: resets the TRANSPORT first (disconnect -> releaseRfcomm ->
+        re-bind) rather than just disconnecting.  ``disconnect()`` alone only
+        releases a binding *this instance* created, so a binding inherited
+        from a killed predecessor -- or left behind by a connect that failed
+        before ``_boundRfcomm`` was set -- survives, ``bindRfcomm``
+        short-circuits on it, and the "reconnect" re-opens the same dead tty.
 
         Returns:
             True if reconnection successful, False otherwise
@@ -622,15 +1655,37 @@ class ObdConnection:
 
         self._logConnectionEvent(EVENT_TYPE_RECONNECT)
 
-        self.disconnect()
+        self.resetTransport()
         return self.connect()
+
+    def reconnectOnce(self) -> bool:
+        """Reset the transport and make ONE connect attempt (US-690).
+
+        :meth:`reconnect` ends in :meth:`connect`, which is itself a retry loop.
+        The orchestrator's recovery loop called it once per ITS attempt, so each
+        "attempt 1/5" was up to six port attempts with a backoff of their own --
+        two nested loops, two counters, and a ceiling of 5 that was really 30.
+        This is :meth:`reconnect` with the inner loop removed: the caller's own
+        loop is the only thing that counts and the only thing that waits.
+
+        Returns:
+            True if the single attempt established the link, False otherwise.
+        """
+        logger.info("Attempting single-shot reconnection to OBD-II dongle")
+        self._status.state = ConnectionState.RECONNECTING
+
+        self._logConnectionEvent(EVENT_TYPE_RECONNECT)
+
+        self.resetTransport()
+        return self.connectOnce()
 
     def _logConnectionEvent(
         self,
         eventType: str,
         success: bool = False,
         errorMessage: str | None = None,
-        retryCount: int = 0
+        retryCount: int = 0,
+        state: str | None = None,
     ) -> None:
         """
         Log connection event to database.
@@ -640,6 +1695,9 @@ class ObdConnection:
             success: Whether the event was successful
             errorMessage: Error message if failed
             retryCount: Number of retry attempts
+            state: For a state-valued event (US-793-c ``ecu_reachability``),
+                the state the row records; a repeat of the last one is not
+                written.  Reachability starts at NOT_YET_ATTEMPTED.
         """
         if self.database is None:
             return
@@ -648,7 +1706,10 @@ class ObdConnection:
         # Shared module-level dedup so this writer + connection_logger.py
         # writer see the same "last logged event_type" state.
         from src.pi.data.connection_logger import shouldSuppressAsRepeat
-        if shouldSuppressAsRepeat(self.macAddress, eventType):
+        if shouldSuppressAsRepeat(
+            self.macAddress, eventType,
+            state=state, initialState=Reachability.NOT_YET_ATTEMPTED.value,
+        ):
             return
 
         try:

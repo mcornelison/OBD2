@@ -39,6 +39,20 @@ class PowerSourceProvider:
         """
         self._pld = pld
 
+    @property
+    def isAvailable(self) -> bool:
+        """True iff the underlying line is readable at all.
+
+        The fact, not a policy: it lets each consumer resolve uncertainty its
+        own way over this ONE provider. The ShutdownSequencer keeps the
+        non-bricking direction (unreadable => treat as power present); a
+        DISPLAY consumer must not, because taking that at face value paints a
+        confident "external" off a dead GPIO (US-502 honest-instrument). A pld
+        that does not report readability resolves to False -- unknown beats
+        assumed-good.
+        """
+        return bool(getattr(self._pld, "isAvailable", False))
+
     def isExternalPowerPresent(self) -> bool:
         """Instantaneous ground-truth power-source reading."""
         return bool(self._pld.isExternalPowerPresent())
@@ -48,9 +62,13 @@ class PowerSourceProvider:
         return bool(self._pld.isPowerLost())
 
     def startupArmCheck(self) -> bool:
-        """The Pi only booted because power is live, so at start the line
-        MUST read power-present. False => wrong pin/polarity/unreadable =>
-        caller refuses to arm the shutdown path."""
+        """True iff the line is readable AND reads power-present right now.
+
+        A Pi woken by its power key boots on the battery pack, so power may be
+        absent at start (US-748-b). False therefore means one of two facts:
+        power absent at start (arming waits for car power), or the line is
+        unreadable / wrong pin or polarity. Either way the caller refuses to
+        arm the shutdown path; isAvailable tells the two apart."""
         ok = bool(self._pld.startupPolarityOk())
         if not ok:
             logger.error(

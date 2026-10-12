@@ -25,7 +25,15 @@
 # ==============================================================================
 
 # Raspberry Pi 5 (chi-eclipse-01) connection details
-PI_HOST=10.27.27.28
+# ADDRESS THE PI BY HOSTNAME, never a hardcoded IP (CIO directive 2026-08-17).
+# ~/.ssh/config is the single HostName+User acquisition point, so one edit there
+# follows everywhere. PI_HOST is only ever used for ssh/rsync in deploy-pi.sh,
+# so the alias is sufficient -- it does not require network-wide DNS.
+# Static fixed IPs behind the aliases (2026-08-15, B-102/US-473 -- ends the
+# .28/.100/.9/.27 DHCP flap):
+#   chi-eclipse-01      -> 10.27.27.124  WiFi/wlan0, primary headless interface
+#   chi-eclipse-01-eth  -> 10.27.27.123  eth0, usually unplugged
+PI_HOST=chi-eclipse-01
 PI_USER=mcornelison
 PI_PATH=/home/mcornelison/Projects/Eclipse-01
 PI_PORT=22

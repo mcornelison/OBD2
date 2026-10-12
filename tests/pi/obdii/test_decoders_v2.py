@@ -135,7 +135,8 @@ class TestDecodeRuntimeSec:
     def test_decode_returnsRuntimeSeconds_fromPintQuantity(self) -> None:
         result = decoders.decodeRuntimeSec(_response(42, unit="second"))
         assert result.valueNumeric == 42.0
-        assert result.unit == "s"
+        # US-455 / D-4: canonical python-obd native unit ('second', not 's').
+        assert result.unit == "second"
 
     def test_decode_returnsZero_forNewlyStartedEngine(self) -> None:
         result = decoders.decodeRuntimeSec(_response(0, unit="second"))
@@ -156,7 +157,8 @@ class TestDecodeBarometricKpa:
     def test_decode_returnsKpaValue(self) -> None:
         result = decoders.decodeBarometricKpa(_response(101, unit="kilopascal"))
         assert result.valueNumeric == 101.0
-        assert result.unit == "kPa"
+        # US-455 / D-4: canonical python-obd native unit ('kilopascal', not 'kPa').
+        assert result.unit == "kilopascal"
 
     def test_decode_handlesSeaLevelNominal(self) -> None:
         """Chicago near sea level — expect ~101 kPa."""
@@ -174,7 +176,8 @@ class TestDecodeBatteryVoltage:
         """python-obd ELM_VOLTAGE returns a pint Quantity in volts."""
         result = decoders.decodeBatteryVoltage(_response(12.8, unit="volt"))
         assert result.valueNumeric == pytest.approx(12.8)
-        assert result.unit == "V"
+        # US-455 / D-4: canonical python-obd native unit ('volt', not 'V').
+        assert result.unit == "volt"
 
     @pytest.mark.parametrize("v", [11.5, 12.0, 13.8, 14.5])
     def test_decode_preservesVoltageAcrossRunningRange(self, v: float) -> None:
@@ -197,7 +200,8 @@ class TestDecodeO2PostCatVoltage:
         resp = SimpleNamespace(value=(vQ, stftQ), unit=None, is_null=lambda: False)
         result = decoders.decodeO2PostCatVoltage(resp)
         assert result.valueNumeric == pytest.approx(0.75)
-        assert result.unit == "V"
+        # US-455 / D-4: canonical python-obd native unit ('volt', not 'V').
+        assert result.unit == "volt"
 
     def test_decode_acceptsBareNumericResponse(self) -> None:
         """When a mock sends a plain float (not a tuple), treat it as voltage directly."""
@@ -223,7 +227,7 @@ class TestDecoderRegistry:
         "RUNTIME_SEC",
         "BAROMETRIC_KPA",
         "BATTERY_V",
-        "O2_BANK1_SENSOR2_V",
+        "O2_B1S2",
     }
 
     def test_registry_containsAllRequiredParameters(self) -> None:
@@ -251,7 +255,7 @@ class TestDecoderRegistry:
             ("FUEL_SYSTEM_STATUS", "FUEL_STATUS", "0x03"),
             ("RUNTIME_SEC", "RUN_TIME", "0x1F"),
             ("BAROMETRIC_KPA", "BAROMETRIC_PRESSURE", "0x33"),
-            ("O2_BANK1_SENSOR2_V", "O2_B1S2", "0x15"),
+            ("O2_B1S2", "O2_B1S2", "0x15"),
         ],
     )
     def test_registry_bindsSpoolNamesToCorrectPythonObdCommands(

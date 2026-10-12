@@ -17,6 +17,11 @@
 #               |                | while completed_at was datetime.now(UTC) — 5h
 #               |                | apart in the same row.  Tests pin the writer to
 #               |                | a single UTC clock for both columns.
+# 2026-07-01    | Ralph (US-414) | F-079 (= B-079) coverage completion: the fail
+#               |                | path (_failSyncHistoryRow) also stamps
+#               |                | completed_at and was unpinned.  Added a
+#               |                | regression pin so all three writer paths
+#               |                | (create/complete/fail) are held to UTC.
 # ================================================================================
 ################################################################################
 
@@ -52,6 +57,7 @@ from src.server.api import sync as sync_module  # noqa: E402
 from src.server.api.sync import (  # noqa: E402
     _completeSyncHistoryRow,
     _createSyncHistoryRow,
+    _failSyncHistoryRow,
 )
 from src.server.db.models import Base, SyncHistory  # noqa: E402
 
@@ -175,6 +181,47 @@ async def test_syncHistoryDuration_isSecondsNotTimezoneOffset(monkeypatch):
             "~18000s CDT/UTC artifact"
         )
         assert delta == timedelta(seconds=3)
+    finally:
+        await engine.dispose()  # type: ignore[attr-defined]
+        Path(path).unlink(missing_ok=True)
+
+
+@_skipNoAsyncDb
+@pytest.mark.asyncio
+async def test_failSyncHistoryRow_stampsCompletedAtFromUtcClock(monkeypatch):
+    """The fail path stamps completed_at from the SAME UTC clock as started_at.
+
+    Given: the sync module's clock is frozen; a row is created (started_at) then
+           marked failed 4 seconds later (completed_at) on that same clock.
+    When:  the failed sync_history row is read back.
+    Then:  completed_at equals the frozen fail moment and
+           completed_at - started_at is the real 4s duration — not the ~18000s
+           CDT/UTC artifact.
+
+    F-079 completion: the failure writer also stamps completed_at, but no test
+    pinned it to UTC.  Reverting _failSyncHistoryRow to a DB-local clock
+    (``func.now()``) would silently reintroduce the 5h intra-row mismatch on the
+    error path; this pin catches that.
+    """
+    engine, path = _freshAsyncEngine()
+    try:
+        started = datetime(2031, 6, 1, 12, 0, 0, tzinfo=UTC)
+        failed = datetime(2031, 6, 1, 12, 0, 4, tzinfo=UTC)
+        monkeypatch.setattr(sync_module, "datetime", _FrozenClock(started, failed))
+
+        historyId = await _createSyncHistoryRow(engine, "chi-eclipse-01")
+        await _failSyncHistoryRow(engine, historyId, "boom: upsert exploded")
+        row = await _readSyncHistoryRow(engine, historyId)
+
+        assert row.status == "failed"
+        assert row.started_at == started.replace(tzinfo=None)
+        assert row.completed_at == failed.replace(tzinfo=None)
+        delta = row.completed_at - row.started_at
+        assert timedelta(0) <= delta < timedelta(seconds=60), (
+            f"failed-sync duration {delta} — expected a seconds-scale value, not "
+            "the ~18000s CDT/UTC artifact"
+        )
+        assert delta == timedelta(seconds=4)
     finally:
         await engine.dispose()  # type: ignore[attr-defined]
         Path(path).unlink(missing_ok=True)

@@ -80,7 +80,7 @@ class TestUS199NewPidsPresent:
         "RUNTIME_SEC",
         "BAROMETRIC_KPA",
         "BATTERY_V",
-        "O2_BANK1_SENSOR2_V",
+        "O2_B1S2",
     }
 
     def test_allNewParametersAppearInPollSet(self, pollingConfig) -> None:
@@ -96,7 +96,7 @@ class TestUS199NewPidsPresent:
             ("DTC_COUNT", "0x01"),
             ("RUNTIME_SEC", "0x1F"),
             ("BAROMETRIC_KPA", "0x33"),
-            ("O2_BANK1_SENSOR2_V", "0x15"),
+            ("O2_B1S2", "0x15"),
         ],
     )
     def test_eachNewPidHasCorrectHexCode(
@@ -171,7 +171,7 @@ class TestSpoolRecommendedTierAssignments:
             ("FUEL_SYSTEM_STATUS", 1),
             ("MIL_ON", 2),
             ("DTC_COUNT", 2),
-            ("O2_BANK1_SENSOR2_V", 2),
+            ("O2_B1S2", 2),
             ("RUNTIME_SEC", 3),
             ("BATTERY_V", 3),
             ("BAROMETRIC_KPA", 4),

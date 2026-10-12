@@ -9,6 +9,13 @@
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
+# 2026-06-19    | Rex (US-385) | EDR bus slice 1 (ships dark): _initializeData
+#               |              | Logger builds a SampleBus + starts a
+#               |              | PersistenceSubscriber on ['raw.obd.*'] LOSSLESS
+#               |              | + injects the bus into createRealtimeLogger
+#               |              | FromConfig ONLY when pi.bus.enabled is True;
+#               |              | _shutdownDataLogger stops the subscriber.
+#               |              | Flag off (default) == today's behavior.
 # 2026-05-15    | Plan (T10)   | Cutover: removed in-process _recordStartupLog/
 #               |              | recordBootReason wiring (US-287). startup_log
 #               |              | is now written by boot-progress-arm.service
@@ -243,14 +250,47 @@
 #               |              | drive-end signal doesn't fire on
 #               |              | sequencer-driven termination) is moot:
 #               |              | server reads raw realtime_data directly.
+# 2026-08-29    | Rex (US-626) | _PowerSourceUiBridge now detects change on the
+#               |              | HONEST three-state reading rather than the
+#               |              | bool (an unreadable line collapses to
+#               |              | power-present, so a blind GPIO6 read as
+#               |              | permanent AC and no transition was ever
+#               |              | observed), and RECORDS the observation before
+#               |              | -- and independently of -- the sink, whose
+#               |              | swallowed faults previously discarded the only
+#               |              | record of a power loss.
+# 2026-09-14    | Rex (US-690) | One retry authority.  The initial-connect cap
+#               |              | now CANCELS the connect() it abandons (its own
+#               |              | 6-attempt loop used to keep running beside the
+#               |              | PENDING heartbeat -- two counters, two backoffs),
+#               |              | and the heartbeat is wired with cancelFn so its
+#               |              | own 30s cap cancels too.
+# 2026-09-14    | Rex (US-751) | The PENDING heartbeat is wired with the
+#               |              | orchestrator's _obdWakeEvent, so
+#               |              | requestObdLinkWake() cuts its backoff short.
+# 2026-09-18    | Rex (US-767-c)| EDR log gate reads ObdConnection.getStatus()
+#               |              | lazily, honours pi.sensors.logGate.enabled and
+#               |              | publishes states/edr-log-gate.
+# 2026-09-30    | Rex (US-780) | A component stop-timeout no longer sets
+#               |              | EXIT_CODE_FORCED: it logs a WARNING naming the
+#               |              | component and its elapsed stop time and the
+#               |              | orderly stop exits 0.
+# 2026-09-30    | Rex (US-674) | Mechanism A: once stop() has begun or the stop
+#               |              | signal arrived, a FATAL capture-boundary error
+#               |              | is expected and no longer force-exits.  The
+#               |              | stop sequence stops the capture loop FIRST,
+#               |              | then driveDetector (writes drive_end), then
+#               |              | the rest.
+# 2026-10-03    | Atlas (ARCH-065a) | DrainEventWriter built with cellEpoch from pi.power.cellEpoch.
+#                               ARCH-065 T5: via resolveCellEpoch (one resolver).
 # ================================================================================
 ################################################################################
 
 """
 Component lifecycle mixin for ApplicationOrchestrator.
 
-Owns the 12-step initialization sequence and the 12-step reverse shutdown
-sequence, plus the component-stop-with-timeout helper. Init order must match
+Owns the 12-step initialization sequence and the shutdown sequence (capture
+loop and drive close first, US-674; otherwise reverse of init), plus the component-stop-with-timeout helper. Init order must match
 TD-003 dependency chain.
 
 This module is deliberately kept as a single file even though it exceeds the
@@ -261,13 +301,14 @@ making it harder to audit that every component has matching setup/teardown.
 """
 
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
 from ..reconnect_loop import runReconnectHeartbeat
-from .types import EXIT_CODE_FORCED, ComponentInitializationError, ShutdownState
+from .types import ComponentInitializationError, ShutdownState
 
 # Unified logger name matches the original monolith module so existing tests
 # that filter caplog by logger name continue to work unchanged.
@@ -325,6 +366,28 @@ COMPONENT_INIT_ORDER = [
 COMPONENT_SHUTDOWN_ORDER = list(reversed(COMPONENT_INIT_ORDER))
 
 
+def _resolveGeneration(connection: Any) -> int | None:
+    """Resolve a connection's US-441 epoch generation, or None if unavailable.
+
+    Only a real integer engages the epoch fence (see ``ObdConnection.
+    activeGeneration``).  Connection doubles that lack ``activeGeneration()``
+    -- or whose ``activeGeneration()`` returns a ``MagicMock`` rather than an
+    int -- resolve to ``None`` so the caller takes the legacy no-generation
+    path, keeping every pre-US-441 mock-based lifecycle test working unchanged.
+    ``bool`` is excluded (it is an ``int`` subclass but never a real generation).
+    """
+    activeGenFn = getattr(connection, 'activeGeneration', None)
+    if not callable(activeGenFn):
+        return None
+    try:
+        candidate = activeGenFn()
+    except Exception:  # noqa: BLE001 -- a status probe must never break daemon spawn
+        return None
+    if isinstance(candidate, bool) or not isinstance(candidate, int):
+        return None
+    return candidate
+
+
 class _PowerSourceUiBridge:
     """SS-T4 B1: bridges the PowerSourceProvider SSOT to the PowerMonitor
     UI / ``power_log`` status surface.
@@ -351,6 +414,7 @@ class _PowerSourceUiBridge:
         provider: Any,
         sink: Callable[[bool], Any],
         pollSec: float,
+        recorder: Callable[[Any], Any] | None = None,
     ) -> None:
         """Args:
             provider: PowerSourceProvider-shaped (``isExternalPowerPresent()``).
@@ -358,29 +422,64 @@ class _PowerSourceUiBridge:
                 (typically ``PowerMonitor.checkPowerStatus``).
             pollSec: Poll cadence (seconds) -- a validated config value,
                 never a literal.
+            recorder: US-626. Called ``recorder(observation)`` with the honest
+                three-state :class:`PowerObservation` on every state change,
+                BEFORE the sink and independently of it. Optional so existing
+                construction sites keep working.
         """
         self._provider = provider
         self._sink = sink
         self._pollSec = float(pollSec)
+        self._recorder = recorder
+        self._lastState: str | None = None
         self._lastPresent: bool | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def pollOnce(self) -> bool:
-        """Read the provider once; on the first read or a present<->lost
-        transition, feed the sink. Returns True iff the sink fired this
-        call. Never raises out -- a provider or sink fault is logged and
-        swallowed so the bridge thread (a status surface) cannot die."""
-        try:
-            present = bool(self._provider.isExternalPowerPresent())
-        except Exception as e:  # noqa: BLE001 -- status surface must not die
-            logger.error("PowerSourceUiBridge provider read failed: %s", e)
+        """Read the provider once; on the first read or any change in the
+        observed state, record it and feed the sink. Returns True iff the
+        sink fired this call. Never raises out -- a provider, recorder or
+        sink fault is logged and swallowed so the bridge thread (a status
+        surface) cannot die.
+
+        US-626 changes two things here.
+
+        1. The change is detected on the HONEST THREE-STATE reading, not on
+           the bool. ``PldSensor`` resolves an unreadable line to
+           power-present, so on the bool alone a GPIO that goes blind while
+           on battery reads as a RESTORE that never happened, and a line
+           dead from boot reads as permanent AC -- no transition is ever
+           observed. That is the measured ten-boot symptom.
+        2. The observation is RECORDED BEFORE the sink runs, and the two are
+           isolated from each other. Previously the persistence of a
+           transition hung off ``sink`` -> ``PowerMonitor.checkPowerStatus``,
+           whose exceptions this method swallows by design -- so a sink fault
+           discarded the only record of a power loss, leaving a log line.
+           AC-5: a power loss with no corresponding row must be impossible by
+           construction. (US-621's composePrePowerOffHooks lesson: two
+           independent consumers of one event must not be able to silently
+           disable one another.)
+        """
+        from src.pi.power.types import POWER_OBSERVER_PLD_GPIO6, PowerObservation
+
+        observation = PowerObservation.fromProvider(
+            self._provider, observedBy=POWER_OBSERVER_PLD_GPIO6
+        )
+        if self._lastState is not None and observation.state == self._lastState:
             return False
-        if self._lastPresent is not None and present == self._lastPresent:
-            return False
-        self._lastPresent = present
+        self._lastState = observation.state
+        self._lastPresent = observation.onAcPower
+
+        # Record FIRST, and never let a recorder fault suppress the sink.
+        if self._recorder is not None:
+            try:
+                self._recorder(observation)
+            except Exception as e:  # noqa: BLE001 -- status surface must not die
+                logger.error("PowerSourceUiBridge recorder failed: %s", e)
+
         try:
-            self._sink(present)
+            self._sink(observation.onAcPower)
         except Exception as e:  # noqa: BLE001 -- ditto
             logger.error("PowerSourceUiBridge sink failed: %s", e)
             return False
@@ -439,6 +538,7 @@ class LifecycleMixin:
     _profileSwitcher: Any | None
     _syncClient: Any | None
     _powerMonitor: Any | None
+    _drainEventWriter: Any | None
     _updateChecker: Any | None
     _updateApplier: Any | None
     _vehicleVin: str | None
@@ -459,6 +559,30 @@ class LifecycleMixin:
     # F-107 (US-361) Mechanism B: pidfile single-instance guard.  Stays None
     # unless ``pi.runtime.singleInstanceGuard.enabled`` is True in config.
     _singleInstanceGuard: Any | None
+    # US-385 (EDR bus slice 1): the in-process SampleBus + its raw.obd.*
+    # PersistenceSubscriber.  Both stay None unless ``pi.bus.enabled`` is True
+    # (slice 1 ships dark).  Built in _initializeDataLogger, stopped in
+    # _shutdownDataLogger.
+    _sampleBus: Any | None
+    _persistenceSubscriber: Any | None
+    # US-410 (EDR sensor persistence, ships dark): the EDR sensor readers and the
+    # sibling persistence subscriber that drains raw.imu.*/raw.light.* into the
+    # edr_*_sample tables.  Both stay None unless ``pi.bus.enabled`` AND at least
+    # one ``pi.sensors.{imu,light}.enabled`` is set.  Built in _initializeDataLogger
+    # (alongside the OBD PersistenceSubscriber), stopped in _shutdownDataLogger.
+    _sensorReaders: list[Any] | None
+    _edrPersistenceSubscriber: Any | None
+    # US-483-a (F-121): the light -> states/light bridge (a PURE bus consumer of
+    # raw.light.lux; no I2C/OBD connection).  Stays None unless ``pi.bus.enabled``
+    # AND ``pi.sensors.light.enabled`` are both set.  Built alongside the EDR
+    # sensor path in _initializeDataLogger, stopped in _shutdownDataLogger.
+    _lightStateBridge: Any | None
+    # US-478 (F-113): the IMU -> states/imu bridge (a PURE bus consumer of
+    # raw.imu.{accel,mag}; no I2C/OBD connection).  Stays None unless
+    # ``pi.bus.enabled`` AND ``pi.sensors.imu.enabled`` are both set.  Built
+    # alongside the EDR sensor path in _initializeDataLogger, stopped in
+    # _shutdownDataLogger.
+    _imuStateBridge: Any | None
 
     def _initializeAllComponents(self) -> None:
         """
@@ -511,6 +635,17 @@ class LifecycleMixin:
         # ensureDriveStatisticsRetired in database_schema.py).
         self._initializeSyncClient()
         self._initializePowerMonitor()
+        # US-526 (F-123): the PRODUCTION drain-event writer hangs off the
+        # PowerMonitor built immediately above, so it must follow it. It also
+        # runs the boot reaper, which is why it sits this early -- before any
+        # power transition can open a row.
+        self._initializeDrainEventWriter()
+        # US-480-a: wire the carousel card-state emitters (F-092 system-status /
+        # F-097 battery-health / F-111 dtc) LAST among the data components -- it
+        # is a pure consumer of the connection / drive-detector / power-monitor /
+        # hardware-manager (UpsMonitor) already built above, and opens no
+        # connection of its own (Atlas Q-1 single-ObdConnection invariant).
+        self._initializeCardStateEmitters()  # type: ignore[attr-defined]
         self._initializeUpdateChecker()
         self._initializeUpdateApplier()
         self._initializeBackupManager()  # type: ignore[attr-defined]
@@ -686,9 +821,8 @@ class LifecycleMixin:
         if not completed:
             logger.warning(
                 "Initial connect timed out after %.1fs, runLoop starting in "
-                "PENDING (connect daemon thread continues; US-211 reconnect "
-                "path will transition to CONNECTED if/when adapter+ECU "
-                "become responsive)",
+                "PENDING (the abandoned connect is cancelled; the reconnect "
+                "heartbeat is the one retry authority from here -- US-690)",
                 timeoutSec,
             )
             # US-301 Spool 2026-05-08 BUG-1: spawn the heartbeat daemon so the
@@ -742,11 +876,16 @@ class LifecycleMixin:
         US-244 / TD-036: dispatches connect on a background thread so the
         wall-clock cap can return control to ``_initializeAllComponents``
         even when the underlying retry loop has not yet exhausted its
-        configured delays.  On timeout, the daemon thread is left running
-        -- it may eventually transition the connection to CONNECTED in
-        the background.  The runLoop's existing ``_checkConnectionStatus``
-        path observes the late transition and fires
-        ``_handleConnectionRestored`` automatically.
+        configured delays.
+
+        US-690: on timeout the abandoned call is CANCELLED via
+        ``cancelPendingConnects()``.  Before US-690 it was left running its
+        whole retry budget beside the PENDING heartbeat spawned next -- two
+        retry loops, each with its own counter and backoff.  Cancel stops that
+        loop at its next attempt boundary; an attempt already inside the
+        handshake still completes, and if it establishes the link the runLoop's
+        ``_checkConnectionStatus`` observes the late transition and fires
+        ``_handleConnectionRestored`` as before.
 
         Args:
             timeoutSec: Wall-clock cap in seconds.
@@ -763,9 +902,22 @@ class LifecycleMixin:
         connectDoneEvent = threading.Event()
         connectResult: dict[str, Any] = {'success': False, 'error': None}
 
+        # US-441 epoch fence: capture the connection generation BEFORE spawning
+        # so that if this daemon times out (is left running) and a newer connect
+        # wins in the meantime, the wrapper fences this orphan's late re-open.
+        # Resolved defensively -- only a real int (from ObdConnection /
+        # SimulatedObdConnection) engages the fence; MagicMock-based test
+        # connections resolve to None and take the legacy no-generation path.
+        callerGen = _resolveGeneration(self._connection)
+
         def _connectInThread() -> None:
             try:
-                connectResult['success'] = bool(self._connection.connect())
+                if callerGen is not None:
+                    connectResult['success'] = bool(
+                        self._connection.connect(callerGeneration=callerGen)
+                    )
+                else:
+                    connectResult['success'] = bool(self._connection.connect())
             except BaseException as exc:  # noqa: BLE001 -- surface to caller
                 connectResult['error'] = exc
             finally:
@@ -774,7 +926,7 @@ class LifecycleMixin:
         connectThread = threading.Thread(
             target=_connectInThread,
             daemon=True,
-            name="initial-obd-connect",
+            name=f"obd-connect-gen{callerGen if callerGen is not None else '?'}",
         )
         connectThread.start()
 
@@ -810,6 +962,9 @@ class LifecycleMixin:
                 elapsed,
                 elapsed / timeoutSec if timeoutSec > 0 else float('inf'),
             )
+
+        if not completed:
+            self._cancelAbandonedConnect()
 
         return (
             completed,
@@ -854,9 +1009,23 @@ class LifecycleMixin:
         queryDoneEvent = threading.Event()
         queryResult: dict[str, Any] = {'value': None, 'error': None}
 
+        # US-441 epoch fence + serialized read: capture the generation before
+        # spawning and route through the wrapper's locked query() so this bounded
+        # (potentially orphaned) query cannot interleave with the realtime logger
+        # or a connect on the one non-thread-safe port.  If the daemon times out
+        # and a reconnect supersedes it, the wrapper fences the late read
+        # (ObdConnectionSupersededError -> surfaced as the query 'error').
+        # MagicMock test connections resolve to None -> legacy .obd.query path.
+        callerGen = _resolveGeneration(self._connection)
+
         def _queryInThread() -> None:
             try:
-                queryResult['value'] = self._connection.obd.query(command)
+                if callerGen is not None:
+                    queryResult['value'] = self._connection.query(
+                        command, callerGeneration=callerGen
+                    )
+                else:
+                    queryResult['value'] = self._connection.obd.query(command)
             except BaseException as exc:  # noqa: BLE001 -- surface to caller
                 queryResult['error'] = exc
             finally:
@@ -865,7 +1034,7 @@ class LifecycleMixin:
         threading.Thread(
             target=_queryInThread,
             daemon=True,
-            name=f"obd-query-{command}",
+            name=f"obd-query-{command}-gen{callerGen if callerGen is not None else '?'}",
         ).start()
 
         completed = queryDoneEvent.wait(timeout=timeoutSec)
@@ -925,6 +1094,8 @@ class LifecycleMixin:
             isConnectedFn = self._buildHeartbeatIsConnectedFn()
             inFlightProbeFn = self._buildHeartbeatInFlightProbeFn()
             shutdownEvent = getattr(self, '_shutdownEvent', None)
+            # US-751: requestObdLinkWake() cuts this heartbeat's backoff short.
+            wakeEvent = getattr(self, '_obdWakeEvent', None)
 
             def _run() -> None:
                 try:
@@ -932,7 +1103,9 @@ class LifecycleMixin:
                         connectFn=connectFn,
                         isConnectedFn=isConnectedFn,
                         inFlightProbeFn=inFlightProbeFn,
+                        cancelFn=self._cancelAbandonedConnect,
                         shutdownEvent=shutdownEvent,
+                        wakeEvent=wakeEvent,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
@@ -971,12 +1144,22 @@ class LifecycleMixin:
         callable that returns True on connect success, False otherwise.  May
         raise -- the heartbeat loop classifies exceptions as the ``"error"``
         outcome and continues.
+
+        US-673: prefers :meth:`ObdConnection.connectOnce` over ``connect()``.
+        ``connect()`` is itself a retry loop, so a tick that this docstring has
+        described as "a single connect" since US-301 actually cost six rfcomm
+        binds over 31 seconds -- multiplying the heartbeat's own ceilinged idle
+        cadence by 6 and producing most of the 275+ retries measured over 13
+        hours.  Duck-typed connections without ``connectOnce`` (the simulator,
+        test doubles) fall back to ``connect()`` unchanged.
         """
         def _attempt() -> bool:
             conn = self._connection
             if conn is None:
                 return False
-            connectMethod = getattr(conn, 'connect', None)
+            connectMethod = getattr(conn, 'connectOnce', None)
+            if connectMethod is None:
+                connectMethod = getattr(conn, 'connect', None)
             if connectMethod is None:
                 return False
             return bool(connectMethod())
@@ -1029,6 +1212,31 @@ class LifecycleMixin:
             except Exception:  # noqa: BLE001
                 return False
         return _isInFlight
+
+    def _cancelAbandonedConnect(self) -> None:
+        """Cancel the connect a wall-clock cap just gave up on (US-690).
+
+        Shared by the initial-connect cap and the heartbeat's per-tick cap so
+        both mean the same thing by "timed out": stop waiting AND stop the call
+        from retrying.  Resolves ``self._connection`` lazily; duck-typed
+        connections without ``cancelPendingConnects`` (the simulator, older
+        doubles) are left alone.  Never raises -- a cap firing is already the
+        failure path.
+        """
+        conn = self._connection
+        if conn is None:
+            return
+        cancelMethod = getattr(conn, 'cancelPendingConnects', None)
+        if cancelMethod is None:
+            return
+        try:
+            cancelMethod()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Cancelling the abandoned connect raised %r -- it may keep "
+                "retrying beside the reconnect heartbeat (US-690)",
+                exc,
+            )
 
     def _verifyReconnectDaemonAlive(self) -> None:
         """V0.24.1-style boot canary: prove the heartbeat daemon was spawned.
@@ -1323,11 +1531,9 @@ class LifecycleMixin:
 
         logger.info("Starting hardwareManager...")
         try:
-            batteryHealthRecorder = self._createBatteryHealthRecorder()
             powerLogWriter = self._createPowerLogWriter()
             self._hardwareManager = createHardwareManagerFromConfig(
                 self._config,
-                batteryHealthRecorder=batteryHealthRecorder,
                 powerLogWriter=powerLogWriter,
             )
             logger.info("HardwareManager initialized successfully")
@@ -1335,37 +1541,13 @@ class LifecycleMixin:
             logger.warning(f"Failed to initialize hardwareManager: {e}")
             self._hardwareManager = None
 
-    def _createBatteryHealthRecorder(self) -> Any | None:
-        """US-216: build a BatteryHealthRecorder when the DB is available.
-
-        The recorder is consumed by the PowerDownOrchestrator inside
-        HardwareManager; constructing it here keeps the DB dependency in
-        lifecycle.py (where the database is already initialized) rather
-        than forcing hardware_manager to know about ObdDatabase.
-        """
-        if self._database is None:
-            logger.info(
-                "BatteryHealthRecorder skipped: database not initialized"
-            )
-            return None
-        try:
-            from pi.power.battery_health import BatteryHealthRecorder
-            return BatteryHealthRecorder(database=self._database)
-        except Exception as e:
-            logger.warning(
-                "BatteryHealthRecorder init failed (orchestrator ladder "
-                "will be disabled): %s", e,
-            )
-            return None
-
     def _createPowerLogWriter(self) -> Any | None:
         """US-252: build a (eventType, vcell) -> None closure over the DB.
 
         The closure persists each PowerDownOrchestrator stage transition
         to ``power_log`` for forensic reconstruction of drain events.
-        Same pattern as :meth:`_createBatteryHealthRecorder` -- the DB
-        dependency stays in lifecycle.py; hardware_manager receives a
-        plain callable.
+        The DB-isolation pattern keeps the ObdDatabase dependency in
+        lifecycle.py; hardware_manager receives a plain callable.
         """
         if self._database is None:
             logger.info(
@@ -1479,15 +1661,58 @@ class LifecycleMixin:
         ADAPTER_UNREACHABLE / ECU_SILENT) and the ``_onCaptureFatalError``
         shutdown hook bounces the process on genuinely broken state via
         systemd ``Restart=always``.
+
+        US-385 (EDR bus slice 1): when ``pi.bus.enabled`` is True, route the
+        OBD reader through an in-process :class:`SampleBus` and a
+        :class:`PersistenceSubscriber` (subscribed to ``raw.obd.*``, LOSSLESS)
+        instead of the inline DB write.  The subscriber reuses the logger's
+        own :class:`ObdDataLogger` so the persisted rows are byte-identical to
+        the inline path.  Slice 1 ships dark: with the flag off (the default)
+        no bus or subscriber is built and behavior is identical to today.
         """
         logger.info("Starting dataLogger...")
+        # US-385: default to no bus / no subscriber (the ships-dark state).
+        self._sampleBus = None
+        self._persistenceSubscriber = None
+        # US-410: default to no EDR sensor readers / subscriber (ships dark too).
+        self._sensorReaders = None
+        self._edrPersistenceSubscriber = None
+        # US-483-a: default to no light-state bridge (ships dark with light off).
+        self._lightStateBridge = None
+        # US-478: default to no IMU-state bridge (ships dark with the IMU off).
+        self._imuStateBridge = None
+        busEnabled = bool(
+            self._config.get('pi', {}).get('bus', {}).get('enabled', False)
+        )
         try:
             from ..data import createRealtimeLoggerFromConfig
+            bus = None
+            if busEnabled:
+                from pi.bus.bus import SampleBus
+                bus = SampleBus()
+                self._sampleBus = bus
             self._dataLogger = createRealtimeLoggerFromConfig(
                 self._config, self._connection, self._database,
                 captureErrorHandler=self.handleCaptureError,
                 onFatalError=self._onCaptureFatalError,
+                bus=bus,
             )
+            if busEnabled:
+                from pi.bus.persistence_subscriber import PersistenceSubscriber
+                from pi.bus.sample import QoS
+                sub = bus.subscribe(["raw.obd.*"], QoS.LOSSLESS, "persistence")
+                self._persistenceSubscriber = PersistenceSubscriber(
+                    sub, self._dataLogger.dataLogger
+                )
+                self._persistenceSubscriber.start()
+                logger.info(
+                    "SampleBus + PersistenceSubscriber started (pi.bus.enabled)"
+                )
+                # US-410: EDR sensor readers + sibling persistence subscriber.
+                # Additive + gated behind pi.sensors.{imu,light}.enabled -- a
+                # no-op (nothing built) when both sensor flags are off, so the
+                # raw.obd.* -> realtime_data golden master is untouched.
+                self._startEdrSensorPath(bus)
             logger.info("DataLogger started successfully")
         except ImportError:
             logger.warning("DataLogger not available, skipping")
@@ -1497,6 +1722,116 @@ class LifecycleMixin:
                 f"DataLogger initialization failed: {e}",
                 component='dataLogger'
             ) from e
+
+    def _startEdrSensorPath(self, bus: Any) -> None:
+        """Build + start the EDR sensor readers and their persistence subscriber.
+
+        US-410 (F-113/F-114): the readers publish raw.imu.*/raw.light.* onto the
+        bus and the sibling subscriber drains them into edr_imu_sample /
+        edr_light_sample.  Everything is gated behind
+        ``pi.sensors.{imu,light}.enabled`` (each requiring ``pi.bus.enabled``),
+        so this is a no-op with the default flags off -- nothing is built and the
+        OBD ``raw.obd.* -> realtime_data`` path is untouched.
+
+        The subscriber is started BEFORE the readers so no early burst is missed
+        (STREAM topics carry no history).  The drive_id latch resolves the live
+        DriveDetector's ``isDriving()`` at persist time -> drive_id is stamped
+        only when a drive is RUNNING, else explicit NULL (ADR 2.4).  Any failure
+        here is caught + logged: an EDR wiring fault must never crash the boot
+        path or disturb the OBD capture path.
+        """
+        try:
+            from pi.sensors.sensor_reader import createSensorReadersFromConfig
+            readers = createSensorReadersFromConfig(self._config, bus)
+            if not readers:
+                return  # no sensor enabled -> ships dark
+            from pi.bus.edr_log_gate import (
+                DEFAULT_HOLD_SEC,
+                DEFAULT_PRE_ROLL_SEC,
+                EdrLogGate,
+            )
+            from pi.bus.edr_persistence_subscriber import (
+                DEFAULT_STATES_DIR,
+                createEdrPersistenceSubscriberFromConfig,
+                makeEdrLogGateStateEmitter,
+            )
+            # US-767-c: the gate reads the link from its PRODUCER --
+            # ObdConnection.getStatus() (both link facts from one read) --
+            # resolved lazily per row so a rebuilt connection is honoured. Never
+            # a states/ file or other rendered value (SSOT rule B). No connection
+            # object raises, which the gate reads as unreadable -> fail OPEN.
+            def edrLinkSignal() -> Any:
+                conn = getattr(self, '_connection', None)
+                if conn is None:
+                    raise RuntimeError("no OBD connection object")
+                return conn.getStatus()
+
+            piCfg = self._config.get('pi', {})
+            gateCfg = piCfg.get('sensors', {}).get('logGate', {})
+            logGate = EdrLogGate(
+                edrLinkSignal,
+                # Absent key -> pass-through, the gate's own never-lose-a-row
+                # default; the validator supplies true for a validated config.
+                enabled=bool(gateCfg.get('enabled', False)),
+                preRollSec=gateCfg.get('preRollSec', DEFAULT_PRE_ROLL_SEC),
+                holdSec=gateCfg.get('holdSec', DEFAULT_HOLD_SEC),
+            )
+            gateStateEmit = makeEdrLogGateStateEmitter(
+                piCfg.get('splash', {}).get('statesDir', DEFAULT_STATES_DIR)
+            )
+            edrSubscriber = createEdrPersistenceSubscriberFromConfig(
+                self._config, bus, self._database,
+                driveDetector=self._driveDetector,
+                logGate=logGate,
+                gateStateEmitFn=gateStateEmit,
+            )
+            if edrSubscriber is None:
+                return
+            edrSubscriber.start()
+            # US-483-a: mirror raw.light.lux -> states/light for the dashboard
+            # brightness consumer (US-483-b).  A PURE bus consumer -- it opens no
+            # I2C device and no OBD connection, so it cannot re-introduce the A-17
+            # second-connection race.  Subscribe + start its drain BEFORE the
+            # readers publish so no early lux sample is missed (STREAM has no
+            # history).  Built only when pi.sensors.light.enabled (else None).
+            from pi.sensors.light_state_bridge import (
+                createLightStateBridgeFromConfig,
+            )
+            lightBridge = createLightStateBridgeFromConfig(self._config, bus)
+            if lightBridge is not None:
+                lightBridge.start()
+            self._lightStateBridge = lightBridge
+            # US-478: mirror the raw.imu.* burst -> states/imu (the DERIVED
+            # display view the US-497 live-instrument card polls).  Same pure-bus-
+            # consumer seam as the light bridge, and subscribed BEFORE the readers
+            # publish so no early burst is missed (STREAM has no history).  Built
+            # only when pi.sensors.imu.enabled (else None).
+            from pi.sensors.imu_state_bridge import (
+                createImuStateBridgeFromConfig,
+            )
+            imuBridge = createImuStateBridgeFromConfig(self._config, bus)
+            if imuBridge is not None:
+                imuBridge.start()
+                # US-805: hand the EDR writer a READ-ONLY view of what the
+                # estimator believes, so pitch/stopCount/biasRad are persisted
+                # beside the raw sample they were computed from. Wired HERE
+                # rather than at construction because the subscriber is built
+                # and started above, before this bridge exists -- and that
+                # ordering is deliberate (readers must not publish before their
+                # consumers are subscribed). Unwired, the subscriber writes no
+                # derived rows and behaves exactly as it did before.
+                edrSubscriber.setDerivedSnapshotFn(imuBridge.derivedSnapshot)
+            self._imuStateBridge = imuBridge
+            for reader in readers:
+                reader.start()
+            self._sensorReaders = readers
+            self._edrPersistenceSubscriber = edrSubscriber
+            logger.info(
+                "EDR sensor path started (pi.sensors.*): %d reader(s) + "
+                "persistence subscriber", len(readers),
+            )
+        except Exception as e:  # noqa: BLE001 -- EDR wiring must not crash boot
+            logger.error("Failed to start EDR sensor path (continuing): %s", e)
 
     def _onCaptureFatalError(self, exc: BaseException) -> None:
         """Signal orchestrator shutdown when the capture loop reports FATAL.
@@ -1514,6 +1849,19 @@ class LifecycleMixin:
         the shutdown state lets the main loop observe it on the next
         iteration and run the normal stop sequence.
         """
+        # US-674 (mechanism A): at key-off the ECU goes silent while the
+        # capture loop is still running, so the error is EXPECTED once the
+        # stop is under way.  Escalating here flipped the orderly stop to
+        # force-exit, which skipped driveDetector (no drive_end) and exited 1.
+        # The capture loop has already stopped itself; leave the shutdown
+        # state and exit code to the orderly stop.
+        if self._isStopInProgress():
+            logger.warning(
+                "Capture-boundary error during stop -- expected (ECU silent at "
+                "key-off), not escalating | exc=%r", exc,
+            )
+            return
+
         # Local import to keep this file's top-level imports narrow.
         from .types import EXIT_CODE_FORCED as _FORCED
         logger.error(
@@ -1523,6 +1871,19 @@ class LifecycleMixin:
         self._exitCode = _FORCED
         self._shutdownState = ShutdownState.FORCE_EXIT
         self._running = False
+
+    def _isStopInProgress(self) -> bool:
+        """Return True once the orchestrator is on its way down (US-674).
+
+        Two facts mean the stop has begun: stop() has been entered, or the
+        stop signal has arrived.  The second is how a confirmed power loss
+        reaches this process -- powerwatch confirms the loss and powers the
+        Pi off, and systemd delivers SIGTERM, which sets SHUTDOWN_REQUESTED
+        before runLoop returns and stop() is called.
+        """
+        if getattr(self, '_stopBegun', False):
+            return True
+        return getattr(self, '_shutdownState', None) == ShutdownState.SHUTDOWN_REQUESTED
 
     def _initializeProfileSwitcher(self) -> None:
         """
@@ -1804,6 +2165,94 @@ class LifecycleMixin:
             )
             self._powerMonitor = None
 
+    def _initializeDrainEventWriter(self) -> None:
+        """Wire the PRODUCTION drain-event writer (US-526 / F-123 / BL-028).
+
+        ``BatteryHealthRecorder`` has written ``battery_health_log`` correctly
+        since US-217, but no production caller has existed since the US-216
+        auto-open path was retired (US-442 / TD-058) -- so the battery Health
+        verdict has had no rows to read and has honestly reported ``unknown``.
+        This method is that caller, in Atlas's Option C shape (ruling
+        2026-08-02):
+
+        * OPEN at wall-power loss and CLOSE at restore, both driven by
+          ``PowerMonitor.onTransition`` -- which the US-502
+          ``_PowerSourceUiBridge`` feeds GPIO6 ground truth.
+        * The cutoff close is the ShutdownSequencer's (a different PROCESS --
+          ``eclipse-powerwatch``), which is why the writer re-finds its row in
+          the table instead of holding an id in memory.
+        * REAP first: a row still open at boot was orphaned by a crash, so it
+          is stamped closed with ``runtime_seconds`` AND ``end_vcell_v`` left
+          NULL (honest-NA). Reaping BEFORE ``onTransition`` is registered is
+          load-bearing -- reversed, the reaper would stamp THIS boot's live
+          drain as interrupted, and it also means any row later found open is
+          necessarily same-boot, which is what makes the close's computed
+          runtime truthful.
+
+        The UpsMonitor is resolved LATE, at transition time: it is created
+        inside ``HardwareManager.start()``, well after this wiring, so a
+        reference captured here would pin None forever and every drain would
+        record NULL gauge values (the US-501/502/503 boot-order trap).
+
+        Gated on the SAME ``pi.power.power_monitor.enabled`` flag as the
+        PowerMonitor itself (no second flag for one fact) plus a live database.
+        Soft-fail: any fault leaves ``_drainEventWriter`` None and boot
+        continues -- battery-health bookkeeping must never cost the drive
+        capture it sits beside.
+        """
+        self._drainEventWriter = None
+        if self._powerMonitor is None:
+            logger.info(
+                "drain-event writer skipped -- no PowerMonitor "
+                "(battery_health_log gains no production rows)"
+            )
+            return
+        if self._database is None:
+            logger.info(
+                "drain-event writer skipped -- database not initialized"
+            )
+            return
+
+        def _resolveUpsMonitor() -> Any | None:
+            """Resolve the live UpsMonitor at TRANSITION time, never earlier."""
+            hardwareManager = getattr(self, '_hardwareManager', None)
+            if hardwareManager is None:
+                return None
+            return getattr(hardwareManager, 'upsMonitor', None)
+
+        try:
+            from pi.power.battery_health import resolveCellEpoch
+            from pi.power.drain_event_writer import DrainEventWriter
+            from pi.power.soc_calibration import resolveColdStartWindowSeconds
+
+            writer = DrainEventWriter(
+                database=self._database,
+                upsResolver=_resolveUpsMonitor,
+                coldStartWindowSeconds=resolveColdStartWindowSeconds(
+                    self._config
+                ),
+                cellEpoch=resolveCellEpoch(self._config),
+            )
+            # Backstop BEFORE the open path is live (see docstring).
+            reaped = writer.reapOpenDrainEvents()
+            self._powerMonitor.onTransition(writer.handlePowerTransition)
+            self._drainEventWriter = writer
+        except Exception as e:  # noqa: BLE001 -- bookkeeping must not fail boot
+            logger.warning(
+                "drain-event writer wiring failed, battery_health_log stays "
+                "empty: %s (type=%s)",
+                e, type(e).__name__,
+            )
+            self._drainEventWriter = None
+            return
+
+        logger.info(
+            "drain-event writer wired to PowerMonitor.onTransition "
+            "(US-526 production battery_health_log path active; "
+            "%d interrupted drain(s) reaped at boot)",
+            len(reaped),
+        )
+
     def _initializeUpdateChecker(self) -> None:
         """Initialize the Pi UpdateChecker (US-247 / B-047 US-C).
 
@@ -2065,18 +2514,48 @@ class LifecycleMixin:
         pldPowerPresentHigh = bool(pwCfg.get('pldPowerPresentHigh', True))
         uiPollSec = float(pwCfg.get('uiPollSec', 2))
 
+        # ---- US-668: SUBSCRIBE. Do NOT open GPIO6. ---------------------------
+        # eclipse-powerwatch OWNS BCM GPIO6. This process used to construct its
+        # own PldSensor on the same line; a GPIO line is claimed exclusively
+        # per-process, so one of the two always lost with EBUSY and went
+        # PERMANENTLY blind -- PldSensor latches `_dev = None` at construction
+        # and has no re-open path. Three separately-filed punch-list items came
+        # from that one cause: power.source reading unknown, the battery-health
+        # verdict reading stale, and battery_health_log frozen since 2026-05-16.
+        #
+        # ⚠️ Neither unit orders against the other, so the loser was not stable
+        # between boots. Retrying the acquisition "more carefully" would only
+        # make the race rarer, which is strictly worse than impossible: a defect
+        # that fires one boot in twenty is one nobody can reproduce.
+        #
+        # The provider below is UNCHANGED -- only its backing source is. It
+        # consumes a duck type, so a subscription substitutes for the GPIO line
+        # and nothing downstream needed to know.
         try:
-            from pi.hardware.pld_sensor import PldSensor
             from pi.power.power_source_provider import PowerSourceProvider
+            from pi.power.power_source_pubsub import (
+                POWER_SOURCE_FILENAME,
+                SubscribedPld,
+            )
         except ImportError as e:
             logger.warning(
-                "PowerSourceProvider wiring skipped (PldSensor import failed "
-                "on non-Pi or due to %s); UI power-source path stays inert.",
+                "PowerSourceProvider wiring skipped (import failed due to %s); "
+                "UI power-source path stays inert.",
                 e,
             )
             return
 
-        pld = PldSensor(pin=pldGpioPin, powerPresentHigh=pldPowerPresentHigh)
+        statesDir = (
+            self._config.get('pi', {}).get('splash', {}).get('statesDir')
+            or '/run/eclipse-obd/states'
+        )
+        powerSourcePath = os.path.join(statesDir, POWER_SOURCE_FILENAME)
+        logger.info(
+            "PowerSource: SUBSCRIBING to %s (GPIO%d is owned by "
+            "eclipse-powerwatch; this process never opens it -- US-668)",
+            powerSourcePath, pldGpioPin,
+        )
+        pld = SubscribedPld(path=powerSourcePath)
         self._powerSourceProvider = PowerSourceProvider(pld=pld)
 
         powerMonitor = self._powerMonitor
@@ -2091,10 +2570,39 @@ class LifecycleMixin:
                     e, type(e).__name__,
                 )
 
+        # US-626: persist every observed power transition independently of the
+        # sink.  The FIRST observation of a session lands as an
+        # observer_session_start row, which is what makes a quiet log legible:
+        # with it, "no transitions occurred" is a positive statement; without
+        # it, an empty power_log and an observer that never ran are the same
+        # result.  It also records the observer's readability, so a session
+        # opened against a dead GPIO6 says 'unknown' rather than painting a
+        # confident 'ac_power' -- the reading that hid ten losses.
+        from src.pi.power.power_db import logPowerObservation
+        from src.pi.power.types import (
+            POWER_LOG_EVENT_OBSERVER_SESSION_START,
+            POWER_LOG_EVENT_TRANSITION_TO_AC,
+            POWER_LOG_EVENT_TRANSITION_TO_BATTERY,
+        )
+
+        database = self._database
+        firstObservation = [True]
+
+        def _recorder(observation: Any) -> None:
+            if firstObservation[0]:
+                firstObservation[0] = False
+                eventType = POWER_LOG_EVENT_OBSERVER_SESSION_START
+            elif observation.onAcPower:
+                eventType = POWER_LOG_EVENT_TRANSITION_TO_AC
+            else:
+                eventType = POWER_LOG_EVENT_TRANSITION_TO_BATTERY
+            logPowerObservation(database, eventType, observation)
+
         bridge = _PowerSourceUiBridge(
             provider=self._powerSourceProvider,
             sink=_sink,
             pollSec=uiPollSec,
+            recorder=_recorder,
         )
         bridge.start()
         self._powerSourceUiBridge = bridge
@@ -2154,17 +2662,21 @@ class LifecycleMixin:
                 stopComplete.set()
 
         stopThread = threading.Thread(target=doStop, daemon=True)
+        stopStart = time.monotonic()
         stopThread.start()
 
         # Wait for stop with timeout
         cleanStop = stopComplete.wait(timeout=self._shutdownTimeout)
 
         if not cleanStop:
+            # US-780: a bounded force-stop of one component is not a failed
+            # stop, so it leaves the exit code alone.  Exiting 1 here made
+            # systemd mark every such orderly stop 'failed' (mechanism B).
+            elapsed = time.monotonic() - stopStart
             logger.warning(
                 f"{componentName} did not stop within {self._shutdownTimeout}s, "
-                f"force-stopping"
+                f"force-stopping | elapsed={elapsed:.2f}s"
             )
-            self._exitCode = EXIT_CODE_FORCED
             return False
         elif stopError is not None:
             logger.warning(f"Error stopping {componentName}: {stopError}")
@@ -2175,31 +2687,36 @@ class LifecycleMixin:
 
     def _shutdownAllComponents(self) -> None:
         """
-        Shutdown all components in reverse dependency order.
+        Shutdown all components, closing the drive before anything else.
 
-        Order (reverse of initialization):
-        1. backupManager (first, was initialized last)
-        2. profileSwitcher (before driveDetector uses it)
-        3. dataLogger
-        4. alertManager
-        5. driveDetector (before statisticsEngine - may still be triggering analysis)
+        Order:
+        1. dataLogger (the capture loop -- FIRST, so a capture error from the
+           ECU going silent at key-off cannot race the drive close)
+        2. driveDetector (writes drive_end for the active drive)
+        3. backupManager, powerSourceUiBridge, powerMonitor, syncClient
+        4. profileSwitcher
+        5. alertManager
         6. statisticsEngine
         7. hardwareManager (before displayManager - may be using display)
         8. displayManager
         9. vinDecoder
         10. connection
         11. profileManager
-        12. database
+        12. database (last, so drive_end has somewhere to land)
         """
+        # US-674: capture loop first, then the drive close, then the rest.
+        # driveDetector used to come seventh, behind a capture loop that was
+        # still polling a silent ECU; its error force-exited the stop and
+        # every component after it -- driveDetector included -- was skipped.
+        self._shutdownDataLogger()
+        self._shutdownDriveDetector()
         self._shutdownBackupManager()  # type: ignore[attr-defined]
         # SS-T4: stop the source-side producer before tearing down the sink.
         self._shutdownPowerSourceUiBridge()
         self._shutdownPowerMonitor()
         self._shutdownSyncClient()
         self._shutdownProfileSwitcher()
-        self._shutdownDataLogger()
         self._shutdownAlertManager()
-        self._shutdownDriveDetector()
         self._shutdownStatisticsEngine()
         self._shutdownHardwareManager()
         self._shutdownDisplayManager()
@@ -2212,7 +2729,63 @@ class LifecycleMixin:
         self._shutdownSingleInstanceGuard()
 
     def _shutdownDataLogger(self) -> None:
-        """Shutdown the data logger component."""
+        """Shutdown the data logger component.
+
+        US-385: stop the EDR PersistenceSubscriber drain thread first (if the
+        bus was enabled) so it stops consuming before the logger/DB tear down.
+        A no-op when the flag was off (subscriber stays None).
+
+        US-410: stop the EDR sensor readers (producers) first so no new samples
+        are published, then stop the sibling subscriber (which flushes any
+        pending burst), then fall through to the OBD subscriber below.  All
+        no-ops when the sensor flags were off (both stay None).
+        """
+        readers = getattr(self, '_sensorReaders', None)
+        if readers:
+            for reader in readers:
+                try:
+                    reader.stop()
+                except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                    logger.warning("Failed to stop EDR sensor reader: %s", e)
+            self._sensorReaders = None
+        # US-483-a: stop the light-state bridge drain thread (no-op when light
+        # was off -- the bridge stays None).
+        lightBridge = getattr(self, '_lightStateBridge', None)
+        if lightBridge is not None:
+            try:
+                lightBridge.stop()
+            except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                logger.warning("Failed to stop light-state bridge: %s", e)
+            finally:
+                self._lightStateBridge = None
+        # US-478: stop the IMU-state bridge drain thread (no-op when the IMU was
+        # off -- the bridge stays None).  An orphaned drain thread would keep
+        # writing tmpfs after the process that owned it went away.
+        imuBridge = getattr(self, '_imuStateBridge', None)
+        if imuBridge is not None:
+            try:
+                imuBridge.stop()
+            except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                logger.warning("Failed to stop IMU-state bridge: %s", e)
+            finally:
+                self._imuStateBridge = None
+        edrSubscriber = getattr(self, '_edrPersistenceSubscriber', None)
+        if edrSubscriber is not None:
+            try:
+                edrSubscriber.stop()
+            except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                logger.warning("Failed to stop EDR persistence subscriber: %s", e)
+            finally:
+                self._edrPersistenceSubscriber = None
+        subscriber = getattr(self, '_persistenceSubscriber', None)
+        if subscriber is not None:
+            try:
+                subscriber.stop()
+            except Exception as e:  # noqa: BLE001 -- shutdown must not raise out
+                logger.warning("Failed to stop PersistenceSubscriber: %s", e)
+            finally:
+                self._persistenceSubscriber = None
+                self._sampleBus = None
         self._stopComponentWithTimeout(self._dataLogger, 'dataLogger')
         self._dataLogger = None
 

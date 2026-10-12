@@ -104,6 +104,7 @@ class TestStdlibTypesShadowRegression:
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
         )
         # The discriminator we care about: NO GenericAlias error in

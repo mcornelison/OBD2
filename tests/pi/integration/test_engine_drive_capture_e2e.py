@@ -207,6 +207,9 @@ def _baseConfig() -> dict[str, Any]:
         "schemaVersion": "1.0.0",
         "deviceId": "chi-eclipse-01",
         "pi": {
+            # US-809-a: the realtime_data writers convert the capture instant
+            # against the DECLARED zone; without it the write REFUSES.
+            "time": {"localZone": "America/Chicago"},
             "database": {"path": ":memory:"},
             "obdii": {
                 "orchestrator": {
@@ -355,6 +358,10 @@ def engineOnHarness(lifecycleDb: ObdDatabase) -> dict[str, Any]:
     scriptedQuery = _ScriptedObdQuery(rpmValue=_RPM_ENGINE_ON)
     mockConnection.obd = MagicMock()
     mockConnection.obd.query = scriptedQuery
+    # US-441: the logger now reads through the wrapper's serialized query();
+    # route it to the same scripted BT edge (a bare MagicMock .query would
+    # return a junk response and never hit _ScriptedObdQuery).
+    mockConnection.query = lambda cmd, callerGeneration=None: scriptedQuery(cmd)
     orchestrator._connection = mockConnection
 
     # Real DriveDetector with zero-duration debounce.
@@ -381,6 +388,9 @@ def engineOnHarness(lifecycleDb: ObdDatabase) -> dict[str, Any]:
         database=lifecycleDb,
         profileId='daily',
         dataSource='real',
+        # US-809-a: the writer converts the capture instant against the
+        # DECLARED zone, so the direct construction needs it too.
+        config={'pi': {'time': {'localZone': 'America/Chicago'}}},
     )
     outerDataLogger = MagicMock()
     outerDataLogger._dataLogger = innerLogger
@@ -404,7 +414,7 @@ def _readSummaryRow(
 ) -> tuple[Any, Any, Any] | None:
     with db.connect() as conn:
         row = conn.execute(
-            f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+            f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
             f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
             f"WHERE drive_id = ?",
             (driveId,),
@@ -640,7 +650,7 @@ class TestEngineDriveCaptureEndToEnd:
             "Defer-INSERT contract: row appears when first "
             "IAT/BATTERY_V/BARO arrives in the snapshot."
         )
-        assert rowAfterIat[0] == 85.0  # ambient_temp_at_start_c
+        assert rowAfterIat[0] == 85.0  # intake_air_temp_at_start_c
         # battery + baro still pending -- backfill machine completes
         # them on subsequent ticks (US-260 covers the backfill chain;
         # US-286's contract is the INSERT happening at all).

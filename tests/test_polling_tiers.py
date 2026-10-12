@@ -957,7 +957,7 @@ class TestOBDConfigIntegration:
         Given: obd_config.json loaded
         When: Checking tier 2
         Then: Matches Spool spec: cycle=3, driving-context PIDs
-            (US-199 added MIL_ON, DTC_COUNT, O2_BANK1_SENSOR2_V)
+            (US-199 added MIL_ON, DTC_COUNT, O2_B1S2)
         """
         config = loadPollingTiers(obdConfig)
         tier2 = config.tiers[1]
@@ -968,7 +968,7 @@ class TestOBDConfigIntegration:
             "SPEED",
             "MIL_ON",
             "DTC_COUNT",
-            "O2_BANK1_SENSOR2_V",
+            "O2_B1S2",
         }
 
     def test_obdConfig_tier3_matchesSpool(self, obdConfig: dict[str, Any]) -> None:

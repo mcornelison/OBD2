@@ -85,7 +85,7 @@ class TestStartDriveInvokesRecorder:
 
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+                f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
                 f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE}"
             ).fetchone()
         assert row is not None, "drive_summary row should be written"
@@ -129,7 +129,7 @@ class TestStartDriveInvokesRecorder:
 
         with freshDb.connect() as conn:
             rows = conn.execute(
-                f"SELECT drive_id, ambient_temp_at_start_c "
+                f"SELECT drive_id, intake_air_temp_at_start_c "
                 f"FROM {DRIVE_SUMMARY_TABLE} ORDER BY drive_id"
             ).fetchall()
         assert len(rows) == 2

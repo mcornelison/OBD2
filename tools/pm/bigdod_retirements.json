@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0.0",
+  "_comment": "Retirement ledger for chain bigDefinitionOfDone clauses invalidated by a LATER finding. Read by tools/pm/chain_validate_aggregate.py. This file is the retire/supersede ROUTE (US-619): archives are testimony and are never edited, so a clause is retired by ADDING a record here, never by rewriting the snapshot it came from. Matching is EXACT on (currentVersion, clause) -- never substring, because sibling clauses routinely share keywords.",
+  "retirements": [
+    {
+      "currentVersion": "V0.29.29",
+      "clause": "(on the Pi after deploy, read the active output mode + view a card) → (output is the panel-native 480x320 (no 1080p downsample); glyphs render 1:1 sharp)  [from US-552]",
+      "retiredAt": "2026-08-28",
+      "retiredBy": "Atlas(Architect) BL-034 ruling R1, CIO-ratified 2026-08-27",
+      "authority": "offices/pm/archive/intake-records/blockers/BL-034-us560-panel-does-not-advertise-480x320-edid-finding.md",
+      "reason": "UNSATISFIABLE BY HARDWARE. The OSOYOO HDMI35 is a SCALER panel: 480x320 glass behind a chip that accepts standard HDMI timings and downsamples in hardware. Its EDID advertises no 480x320 mode (measured on the car Pi 2026-08-21 -- full mode list and the commands that read it are in the cited authority). BL-034 ruling R1 (Atlas 2026-08-27, CIO-ratified): display mode STAYS 720p and US-560 is retired as written -- 720p IS the shipping configuration. The clause cannot be discharged truthfully, ever, so any sweep reaching it has only two outs: fail the chain, or write evidence for something that did not happen.",
+      "supersededStory": "US-560",
+      "retiredUnderStory": "US-619"
+    }
+  ]
+}

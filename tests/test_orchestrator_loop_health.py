@@ -419,3 +419,53 @@ class TestHealthCheckLogging:
 
         assert orchestrator._healthCheckStats.totalReadings == 42
         assert orchestrator._healthCheckStats.totalErrors == 3
+
+
+# ================================================================================
+# US-388 (F-107 Root-2, Atlas C-alpha): off-tick close wiring
+# ================================================================================
+
+
+@pytest.mark.integration
+class TestOffTickCloseWiring:
+    """The main loop drives the detector's off-tick close every pass.
+
+    The drive-close state machine is otherwise tick-driven only; when readings
+    stop (engine off, data loop quiesces) a STOPPING/ECU-silent drive never
+    closes and a later key-on is absorbed (drives 28/29).  runLoop must call
+    ``DriveDetector.evaluateTimeouts`` on every pass so the close fires even
+    when no reading arrives.
+    """
+
+    def test_runLoop_callsDriveDetectorEvaluateTimeouts(
+        self, loopConfig: dict[str, Any]
+    ) -> None:
+        """
+        Given: an orchestrator whose drive detector is a stand-in.
+        When: the main loop runs for a few passes then shuts down.
+        Then: evaluateTimeouts was called at least once (off-tick close wired).
+        """
+        from pi.obdii.orchestrator import ApplicationOrchestrator, ShutdownState
+
+        orchestrator = ApplicationOrchestrator(config=loopConfig, simulate=True)
+
+        mockDetector = MagicMock()
+        mockDetector.isDriving.return_value = False
+        orchestrator._driveDetector = mockDetector
+
+        orchestrator._running = True
+        orchestrator._shutdownState = ShutdownState.RUNNING
+
+        def triggerShutdown() -> None:
+            time.sleep(0.5)
+            orchestrator._shutdownState = ShutdownState.SHUTDOWN_REQUESTED
+
+        shutdownThread = threading.Thread(target=triggerShutdown, daemon=True)
+        shutdownThread.start()
+
+        orchestrator.runLoop()
+
+        assert mockDetector.evaluateTimeouts.called, (
+            "runLoop must call driveDetector.evaluateTimeouts() each pass so the "
+            "drive close fires off-tick when readings stop (US-388 C-alpha)"
+        )

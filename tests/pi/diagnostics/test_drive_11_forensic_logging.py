@@ -20,6 +20,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-05-10    | Rex (US-319) | Initial -- B-071 forensic regression gate.
+# 2026-10-11    | Rex (US-776-i)| Cursor-advance test's stubbed POST now
+#               |              | returns the stored ack, not a bare success.
 # ================================================================================
 ################################################################################
 
@@ -363,9 +365,20 @@ class TestSyncClientForensicLogging:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         client = self._makeClient(syncDbPath, monkeypatch)
-        monkeypatch.setattr(
-            client, '_postBatchWithRetry', lambda *a, **k: None,
-        )
+
+        # US-776-i: the mark advances only on the server's stored ack, so the
+        # stubbed POST answers with a full store of the one row sent instead
+        # of a bare success (None).
+        def _storedAckPost(
+            tableName: str, batchId: str, rows: list[dict[str, Any]],
+            lastId: int, **_: Any,
+        ) -> dict[str, Any]:
+            ids = [int(row['id']) for row in rows]
+            return {'stored': {tableName: {
+                'storedCount': len(ids), 'maxStoredSourceId': max(ids),
+            }}}
+
+        monkeypatch.setattr(client, '_postBatchWithRetry', _storedAckPost)
         with caplog.at_level(logging.INFO, logger="src.pi.sync.client"):
             client.pushDelta('battery_health_log')
         advanceLines = [

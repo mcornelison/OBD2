@@ -1,0 +1,750 @@
+################################################################################
+# File Name: _mariadb_chain_harness.py (tests/server/)
+# Purpose/Description: US-464 (TD-055) real-MariaDB migration-chain test harness.
+#                      Reusable, importable (NOT a test file -- underscore prefix
+#                      keeps pytest from collecting it) support module that lets
+#                      the *real* server migration chain run unmodified against a
+#                      real MariaDB 11.x, so the migration-vs-live-DB drift class
+#                      (BL-019 -> BL-020 -> US-459 theater-trap -> BL-021) is
+#                      caught in CI instead of one deploy at a time.
+#
+#                      The crux is MariaDbCommandRunner: every migration issues
+#                      SQL via ctx.runner(argv, input=<sql>) and parses
+#                      ``mysql -B -N`` output (tab-delimited, header-less, SQL
+#                      NULL -> literal 'NULL').  This adapter pipes the input SQL
+#                      into a real MariaDB (testcontainer OR a service DSN) and
+#                      re-emits ``-B -N``-shaped output, so MigrationRunner.runAll
+#                      + the real v0022/v0023 apply() run against real DDL --
+#                      NOT SQLite/create_all, which is precisely what shipped
+#                      BL-020 + BL-021 green.
+#
+# Author: Rex (Ralph Agent)
+# Creation Date: 2026-07-13
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-07-13    | Rex (US-464) | Initial -- Sprint 57 US-464 (TD-055 graduates to
+#               |              | funded; Atlas ruling + TIGHTEN-2 version pin).
+# 2026-08-23    | Rex (US-568) | Seeds now IMPLEMENT the ledger they claim: the
+#               |              | drive_summary skeleton carried none of the
+#               |              | columns migrations 0001-0021 create, so v0024
+#               |              | (the first migration to touch one) fatalled on
+#               |              | real MariaDB with 1054. Shapes measured from the
+#               |              | deployed obd2db, pinned as literals on purpose.
+# 2026-10-06    | Atlas (US-795-b) | The chain stopped at v0028 ('sync_history'
+#               |              | missing) because three tables production creates
+#               |              | via create_all were never seeded. Seeded now in
+#               |              | their PRE-migration shape (production SHOW CREATE
+#               |              | TABLE, 2026-10-06, minus exactly what v0028/v0032/
+#               |              | v0034/v0035 add), so v0028-v0035 really RUN in CI.
+#               |              | Reset also drops the tables the chain itself creates.
+# ================================================================================
+################################################################################
+
+"""Real-MariaDB migration-chain test harness (US-464 / TD-055).
+
+Why this exists (the A-10 / TD-055 drift class, Atlas's 4th cycle)
+-----------------------------------------------------------------
+
+The server migration chain reconciles the deployed MariaDB against the ORM.
+Its unit tests (``tests/server/test_migrations.py`` +
+``tests/server/test_migration_0022*.py`` + ``test_migration_0023*.py``) drive a
+scripted ``FakeRunner`` -- hermetic, fast, and structurally **incapable** of
+reproducing MariaDB DDL semantics (1091 on ``DROP CONSTRAINT`` of an inline
+CHECK; 1064 on ``DROP CHECK``; ``create_all``-vs-ORM FK-naming drift).  Four
+successive deploys shipped green through that gap:
+
+* **BL-019** -- US-424 widened the ``data_source`` enum in Python but never
+  ALTERed the live DB; the stale 4-value CHECK rejected ``data_source='foreign'``.
+* **BL-020** -- v0022's FK re-point fatalled on the drifted prod schema where
+  ``create_all`` never auto-named the FK the ORM assumed (``drive_statistics``
+  had no ``summary_id`` FK at all -- state 3).
+* **US-459** -- a "green" applied-schema test that compared two equal Python
+  tuples: theatre, not a real-DB probe (the theater-trap).
+* **BL-021** -- v0023 dropped an **inline** CHECK with ``DROP CONSTRAINT``
+  (1091) / ``DROP CHECK`` (1064); the V0.29.10 deploy stalled at v0023.
+
+Each was caught one deploy at a time because no test ran the chain against a
+**real** MariaDB.  This harness closes that: it applies the real migrations
+against a real MariaDB 11.x (pinned to the prod major, 11.8.6 -- Atlas
+TIGHTEN-2: a wrong-version container can green-pass a prod-failing migration)
+seeded with the exact drifted historical shape, and asserts the chain fixes the
+drift or fails **loudly** -- never green over a broken DB.
+
+A seed must IMPLEMENT the ledger it claims (US-568)
+---------------------------------------------------
+
+Both seeders are paired with :func:`markMigrationsAppliedStatements`, which
+tells the runner that migrations 0001-0021 have already been applied.  That is a
+CLAIM ABOUT THE SCHEMA, and the seed has to honour it: whatever those migrations
+create must actually be present.
+
+It was not.  ``drive_summary`` was seeded as a three-column skeleton
+(``id``, ``source_device``, ``source_id``) because v0022 and v0023 -- the only
+migrations this harness was written for -- never look past ``drive_summary(id)``.
+So the fixture asserted v0010's POST-state in the ledger while seeding v0010's
+PRE-state in SQL, and nothing noticed for a full sprint.  v0024 became the first
+migration to touch a column v0010 creates and fatalled on real MariaDB with
+``(1054, "Unknown column 'data_quality' in 'CHECK'")``, halting the V0.29.30
+deploy at the CI gate.
+
+The gate was right and the migration was innocent: the deployed obd2db carries
+every column v0024 needs.  The FIXTURE was the defect -- the same shape as
+US-560's ``PANEL_MODES``, where a fixture asserted a hardware fact nobody had
+measured and the suite could therefore only ever go green.  A fixture that
+states a precondition instead of establishing it is not a test; it is a claim
+wearing a test's clothes.
+
+Rule this leaves behind: **when you add a migration that touches a column, check
+that both seeders declare it.**  ``LEDGER_PROMISED_COLUMNS`` +
+``test_seeds_implement_the_ledger_they_claim`` enforce it mechanically.
+
+Acquisition + honest skip
+-------------------------
+
+:func:`acquireMariaDb` yields a real MariaDB from either (1) a service DSN in
+``$OBD2_MARIADB_TEST_DSN`` (run locally against a MariaDB 11.x service) or
+(2) a ``testcontainers`` MariaDB 11.x container (CI, once Docker is wired).  If
+neither is reachable it raises :class:`MariaDbUnavailable` so the caller can
+``pytest.skip`` with a clear reason.  That skip is **honest** (it names exactly
+why + the CI-enablement follow-up); it is NOT the ``create_all`` substitution
+that is the whole trap -- SQLite is never used as a stand-in here.
+
+CI-enablement follow-up (do NOT silently skip -- documented per the AC's
+conditionalOutcome): add ``testcontainers`` to a dev/CI requirements set and a
+Docker-enabled CI job (or a MariaDB 11.x service container) so this suite runs
+on every push.  Until then it runs locally against a MariaDB service via
+``$OBD2_MARIADB_TEST_DSN`` and skips honestly elsewhere.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+import subprocess
+from collections.abc import Iterable, Sequence
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy.engine import make_url
+
+from scripts.apply_server_migrations import HostAddresses, ServerCreds
+from src.server.migrations.runner import (
+    SCHEMA_MIGRATIONS_TABLE,
+    SCHEMA_MIGRATIONS_TABLE_DDL,
+    RunnerContext,
+)
+from src.server.migrations.versions.v0023_us458_drop_stale_data_source_check import (
+    EXPECTED_STALE_CHECK_TABLES,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+__all__ = [
+    'DATA_SOURCE_CHECK_TABLES',
+    'LEDGER_PROMISED_COLUMNS',
+    'MARIADB_MAJOR',
+    'MARIADB_TEST_DSN_ENV',
+    'MARIADB_TEST_IMAGE',
+    'PROD_DRIVE_STATISTICS_DATA_QUALITY_SQL',
+    'PROD_DRIVE_SUMMARY_DATA_QUALITY_SQL',
+    'PROD_DRIVE_SUMMARY_V0024_COLUMNS_DDL',
+    'TD055_LINEAGE',
+    'MariaDbCommandRunner',
+    'MariaDbUnavailable',
+    'acquireMariaDb',
+    'cleanDriveIdentityStatements',
+    'driftedDriveIdentityStatements',
+    'dropEveryTableStatements',
+    'execStatements',
+    'formatMysqlBatchOutput',
+    'inlineDataSourceCheckTableDdl',
+    'makeContext',
+    'markMigrationsAppliedStatements',
+    'productionSnapshotStatements',
+    'resetSchemaStatements',
+]
+
+
+# ================================================================================
+# Version pin + acquisition constants
+# ================================================================================
+
+# Atlas TIGHTEN-2: pin the container to the PROD MariaDB major (11.x, matching
+# 11.8.6).  The BL-021 quirk is MariaDB-version-sensitive; a wrong-version
+# container could green-pass a prod-failing migration.
+MARIADB_TEST_IMAGE: str = 'mariadb:11.8'
+MARIADB_MAJOR: str = '11'
+MARIADB_TEST_DSN_ENV: str = 'OBD2_MARIADB_TEST_DSN'
+
+# The tables that carry the stale inline data_source CHECK on prod (BL-021).
+# Reused from v0023 (define-once) so a future table addition tracks one source.
+DATA_SOURCE_CHECK_TABLES: tuple[str, ...] = EXPECTED_STALE_CHECK_TABLES
+
+TD055_LINEAGE: str = (
+    'TD-055 lineage: BL-019 (stale data_source enum, never ALTERed) -> '
+    'BL-020 (v0022 FK re-point fatalled on create_all drift) -> US-459 '
+    '(tuple-compare theater-trap) -> BL-021 (inline-CHECK DROP CONSTRAINT 1091); '
+    "Atlas's 4th cycle. This harness runs the real chain on real MariaDB 11.x."
+)
+
+
+class MariaDbUnavailable(Exception):
+    """Raised when no real MariaDB 11.x can be reached (caller should skip).
+
+    Distinct from a test failure: absence of infrastructure is an honest skip,
+    NOT a green pass and NOT a fall-back to SQLite/create_all (the trap).
+    """
+
+
+# ================================================================================
+# mysql -B -N output formatting
+# ================================================================================
+
+def formatMysqlBatchOutput(rows: Iterable[Sequence[Any]]) -> str:
+    """Render DB rows the way ``mysql -B -N`` does, for the migration parsers.
+
+    The migrations read their probe output with ``mysql``-batch semantics:
+    tab-delimited fields, one row per line, NO header, and a SQL ``NULL``
+    rendered as the literal token ``NULL`` (v0023's ``_noneIfSqlNull`` maps it
+    back to ``None``).  Reproducing that shape lets the real ``_runServerSql``
+    consumers parse a live query result unchanged.
+    """
+    lines: list[str] = []
+    for row in rows:
+        fields = ['NULL' if value is None else str(value) for value in row]
+        lines.append('\t'.join(fields))
+    return '\n'.join(lines)
+
+
+# ================================================================================
+# The CommandRunner adapter -- the crux of running the real chain on real DDL
+# ================================================================================
+
+class MariaDbCommandRunner:
+    """A ``CommandRunner`` that pipes ``input`` SQL into a real MariaDB.
+
+    The migration chain shells out via ``ctx.runner(argv, input=<sql>)`` (an
+    ``ssh ... mysql -B -N`` invocation in production).  This adapter ignores the
+    ssh/mysql argv wrapper and executes the ``input`` SQL against a live DB-API
+    connection (pymysql -> MariaDB testcontainer / service), returning a
+    :class:`subprocess.CompletedProcess` whose ``stdout`` is ``-B -N``-shaped and
+    whose ``returncode`` is ``1`` on any DB error -- so every migration's
+    ``if res.returncode != 0`` branch fires exactly as it would against ``mysql``.
+
+    The wrapped connection MUST autocommit (each statement is its own unit, like
+    piping to the ``mysql`` CLI); DDL is implicit-commit on MariaDB regardless.
+    """
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        input: str | None = None,  # noqa: A002 -- matches CommandRunner Protocol
+        timeout: float | None = None,  # noqa: ARG002 -- part of the Protocol
+    ) -> subprocess.CompletedProcess[str]:
+        sql = (input or '').strip()
+        if not sql:
+            # e.g. loadAddresses' ``bash -c`` is never routed here; an empty
+            # payload is a benign no-op with clean output.
+            return subprocess.CompletedProcess(list(argv), 0, '', '')
+        statement = sql.rstrip(';').strip()
+        cursor = self._connection.cursor()
+        try:
+            cursor.execute(statement)
+            if cursor.description is not None:
+                stdout = formatMysqlBatchOutput(cursor.fetchall())
+            else:
+                stdout = ''
+            return subprocess.CompletedProcess(list(argv), 0, stdout, '')
+        except Exception as err:  # noqa: BLE001 -- mirror mysql's nonzero-exit
+            return subprocess.CompletedProcess(list(argv), 1, '', str(err))
+        finally:
+            cursor.close()
+
+
+def makeContext(connection: Any, dbName: str) -> RunnerContext:
+    """Build a :class:`RunnerContext` that drives the real chain at ``dbName``.
+
+    ``addrs`` is a placeholder (the adapter ignores the ssh transport);
+    ``creds.dbName`` MUST equal the connected database so the migrations'
+    ``information_schema`` probes (``WHERE ...SCHEMA='{dbName}'``) resolve.
+    """
+    return RunnerContext(
+        addrs=HostAddresses(serverHost='mariadb-test', serverUser='test'),
+        creds=ServerCreds(dbUser='test', dbPassword='test', dbName=dbName),
+        runner=MariaDbCommandRunner(connection),
+    )
+
+
+# ================================================================================
+# Acquisition (service DSN OR testcontainer) + honest skip
+# ================================================================================
+
+def _pymysqlConnect(url: Any) -> Any:
+    """Open an autocommitting pymysql connection from a SQLAlchemy URL."""
+    import pymysql  # noqa: PLC0415 -- server dep; hermetic tests never reach here
+
+    return pymysql.connect(
+        host=url.host or '127.0.0.1',
+        port=url.port or 3306,
+        user=url.username,
+        password=url.password or '',
+        database=url.database,
+        autocommit=True,
+    )
+
+
+def _assertMariaDbMajor(connection: Any) -> None:
+    """Skip (via :class:`MariaDbUnavailable`) unless the target is MariaDB 11.x.
+
+    Atlas TIGHTEN-2: the BL-021 semantics are version-sensitive; refuse to run
+    against a mismatched engine rather than risk a green pass over a
+    prod-failing migration.
+    """
+    cursor = connection.cursor()
+    try:
+        cursor.execute('SELECT VERSION();')
+        row = cursor.fetchone()
+    finally:
+        cursor.close()
+    version = str(row[0]) if row else ''
+    if 'mariadb' not in version.lower() or version.split('.', 1)[0] != MARIADB_MAJOR:
+        raise MariaDbUnavailable(
+            f'expected MariaDB {MARIADB_MAJOR}.x (prod 11.8.6) but the target '
+            f'reports {version!r}; refusing to run against a mismatched engine '
+            '(Atlas TIGHTEN-2: a wrong-version DB can green-pass a prod-failing '
+            'migration).',
+        )
+
+
+@contextmanager
+def acquireMariaDb() -> Iterator[tuple[Any, str]]:
+    """Yield ``(connection, dbName)`` for a real MariaDB 11.x, or skip honestly.
+
+    Order: an explicit ``$OBD2_MARIADB_TEST_DSN`` service first (local runs),
+    then a ``testcontainers`` MariaDB 11.x container (CI).  Raises
+    :class:`MariaDbUnavailable` when neither is reachable -- the caller skips.
+    """
+    dsn = os.environ.get(MARIADB_TEST_DSN_ENV)
+    if dsn:
+        url = make_url(dsn)
+        connection = _pymysqlConnect(url)
+        try:
+            _assertMariaDbMajor(connection)
+            yield connection, url.database
+        finally:
+            connection.close()
+        return
+
+    if importlib.util.find_spec('testcontainers') is None:
+        raise MariaDbUnavailable(
+            f'no {MARIADB_TEST_DSN_ENV} env DSN set and the "testcontainers" '
+            'package is not installed; cannot reach a real MariaDB 11.x. '
+            'Install testcontainers + Docker, or point '
+            f'{MARIADB_TEST_DSN_ENV} at a MariaDB 11.x service. (SQLite / '
+            'create_all is NOT a valid substitute -- that is the BL-019/020/021 '
+            'trap this test exists to close.)',
+        )
+
+    from testcontainers.mysql import MySqlContainer  # noqa: PLC0415
+
+    # US-807: the CONSTRUCTOR is INSIDE the try, and that placement is the whole
+    # fix. MySqlContainer.__init__ builds a DockerClient, so with no daemon the
+    # DockerException is raised HERE, not in start(). Constructed outside, it
+    # escaped as a raw DockerException that never became MariaDbUnavailable --
+    # so the caller's `except MariaDbUnavailable: pytest.skip(...)` never ran,
+    # and the one gate standing on the Pi/server seam reported a FAILURE where
+    # the honest answer is "not checked". Measured on this bench 2026-09-21:
+    # 73 passed, 1 raw DockerException.
+    container = None
+    try:
+        container = MySqlContainer(MARIADB_TEST_IMAGE)
+        container.start()
+    except Exception as err:  # noqa: BLE001 -- Docker absent / down / pull failure
+        # Names BOTH acquisition paths and refuses the substitute, so the skip
+        # reads the same whether testcontainers is missing or Docker is.
+        raise MariaDbUnavailable(
+            f'the "testcontainers" package is installed but no MariaDB '
+            f'{MARIADB_TEST_IMAGE} container could be started '
+            f'({type(err).__name__}: {err}); is Docker running? Start Docker, '
+            f'or point {MARIADB_TEST_DSN_ENV} at a MariaDB 11.x service. '
+            '(SQLite / create_all is NOT a valid substitute -- that is the '
+            'BL-019/020/021 trap this test exists to close.)',
+        ) from err
+    try:
+        url = make_url(container.get_connection_url())
+        connection = _pymysqlConnect(url)
+        try:
+            _assertMariaDbMajor(connection)
+            yield connection, url.database
+        finally:
+            connection.close()
+    finally:
+        container.stop()
+
+
+# ================================================================================
+# Seed-DDL builders (drifted historical shapes + clean shapes)
+# ================================================================================
+
+def execStatements(connection: Any, statements: Iterable[str]) -> None:
+    """Execute each statement against the live connection (seed/reset helper)."""
+    cursor = connection.cursor()
+    try:
+        for statement in statements:
+            stripped = statement.strip().rstrip(';').strip()
+            if stripped:
+                cursor.execute(stripped)
+    finally:
+        cursor.close()
+
+
+def inlineDataSourceCheckTableDdl(tableName: str) -> str:
+    """CREATE TABLE with the BL-021 stale INLINE data_source CHECK.
+
+    Reproduces the historical (pre-US-424) provisioning: a column-level
+    ``data_source VARCHAR(16) ... CHECK (...)`` whose 4-value enum lacks
+    ``'foreign'``.  MariaDB names an inline CHECK after the column
+    (``CONSTRAINT_NAME == 'data_source'``), which is exactly what v0023 must
+    strip via a definition-preserving MODIFY COLUMN.  The current ORM declares
+    NO such CHECK, so ``create_all`` cannot produce this -- it must be seeded.
+    """
+    return (
+        f'CREATE TABLE {tableName} ('
+        '  id INT AUTO_INCREMENT PRIMARY KEY,'
+        '  data_source VARCHAR(16) CHARACTER SET utf8mb4 '
+        '    COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT \'real\''
+        "    CHECK (data_source IN ('real','replay','physics_sim','fixture'))"
+        ') ENGINE=InnoDB;'
+    )
+
+
+# ================================================================================
+# US-568 -- the post-0021 drive_summary shape, MEASURED from the deployed obd2db
+# ================================================================================
+#
+# WHY THESE ARE LITERALS AND NOT IMPORTS FROM models.py
+# -----------------------------------------------------
+# Both seeders below hand the runner a ledger saying migrations 0001-0021 are
+# already applied.  The seeded schema must therefore be what those migrations
+# ACTUALLY LEAVE BEHIND -- i.e. the pre-0022 shape -- not what the current ORM
+# declares.  Importing the live ``DRIVE_SUMMARY_DATA_QUALITY_VALUES`` here would
+# seed an enum that ALREADY contains 'unassessed', so v0024 would find nothing to
+# widen, no-op, and the test would go green having exercised nothing.  That is
+# the US-459 theater-trap in a new costume, and it is precisely the failure mode
+# this harness exists to prevent.  These values are pinned to the deployed
+# database and are deliberately allowed to fall behind the ORM.
+#
+# MEASURED 2026-08-23 against chi-srv-01 obd2db (MariaDB 11.8.6), read-only via
+# information_schema, with the ledger standing at 0023:
+#   drive_summary.data_quality              varchar(20) NOT NULL DEFAULT 'full'
+#   drive_summary.is_real                   tinyint(1)  NULL     DEFAULT 0
+#   drive_summary.ambient_temp_at_start_c   float       NULL     DEFAULT NULL
+#   ck_drive_summary_data_quality     ('full','attribution_anomaly',
+#                                      'foreign_vehicle')
+#   ck_drive_statistics_data_quality  ('full','sparse','below_threshold',
+#                                      'attribution_anomaly','foreign_vehicle')
+#   drive_statistics.data_quality           varchar(20) NOT NULL DEFAULT 'full'
+#   drives.data_quality                     varchar(20) NOT NULL DEFAULT 'full'
+#
+# The command that produced them is recorded in the US-568 completionNotes.
+
+# Pre-0024 enum on drive_summary -- no 'unassessed' yet (that IS v0024's work).
+PROD_DRIVE_SUMMARY_DATA_QUALITY_SQL: str = (
+    "'full','attribution_anomaly','foreign_vehicle'"
+)
+# Pre-0024 enum on drive_statistics -- carries the sample-count buckets too.
+PROD_DRIVE_STATISTICS_DATA_QUALITY_SQL: str = (
+    "'full','sparse','below_threshold','attribution_anomaly','foreign_vehicle'"
+)
+
+# The drive_summary columns v0024 operates on, in the deployed pre-0024 shape.
+# v0010 (US-363) creates data_quality + ck_drive_summary_data_quality + the
+# index; v0012 (US-377) widens it to VARCHAR(20); v0004 (US-237) supplies the
+# drive-start temperature column.  A seed that claims 0001-0021 applied and then
+# omits these is asserting a ledger state it does not implement -- the US-568
+# defect.
+PROD_DRIVE_SUMMARY_V0024_COLUMNS_DDL: str = (
+    "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
+    '  is_real TINYINT(1) NULL DEFAULT 0,'
+    '  ambient_temp_at_start_c FLOAT NULL,'
+    '  CONSTRAINT ck_drive_summary_data_quality CHECK '
+    f'    (data_quality IN ({PROD_DRIVE_SUMMARY_DATA_QUALITY_SQL})),'
+)
+
+# Every (table, column) pair the post-0021 ledger promises exists.  The hermetic
+# guard test asserts BOTH seeders declare all of them, so the next migration to
+# touch one of these columns cannot be ambushed the way v0024 was.
+LEDGER_PROMISED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ('drive_summary', 'data_quality'),
+    ('drive_summary', 'is_real'),
+    ('drive_summary', 'ambient_temp_at_start_c'),
+    ('drive_statistics', 'data_quality'),
+    ('drives', 'data_quality'),
+)
+
+# US-795-b: tables production creates through ``create_all`` (never through a
+# migration) and that the post-0027 migrations ALTER. Seeded in their shape
+# BEFORE those migrations: production's ``SHOW CREATE TABLE`` on chi-srv-01,
+# 2026-10-06, minus exactly what each migration adds --
+#   sync_history        - v0028 residual_rows, residual_complete
+#   battery_health_log  - v0032 close_reason + ck_battery_health_log_close_reason;
+#                         v0035 drain_trigger .. cutoff_vcell_v (ten columns)
+#   startup_log         - v0034 prior_boot_home_state, _sync_outcome,
+#                         _backlog_start, _backlog_end; v0035 prior_boot_sync_
+#                         started_at, _sync_ended_at, _vcell_before_cut_v, _loss_at
+# Pinned as LITERALS (US-568): a seed derived from the ORM would already carry the
+# columns and the migrations would have nothing to do -- green without testing them.
+POST_V0027_SEEDED_TABLES: tuple[str, ...] = (
+    'sync_history',
+    'battery_health_log',
+    'startup_log',
+)
+
+# Tables the chain itself CREATES (v0026 edr raw, v0027 edr_imu_derived, v0033
+# drain_vcell_trajectory). Not seeded; dropped by the reset so each test starts clean.
+CHAIN_CREATED_TABLES: tuple[str, ...] = (
+    'edr_imu_sample',
+    'edr_light_sample',
+    'edr_imu_derived',
+    'drain_vcell_trajectory',
+)
+
+
+def preMigrationTableStatements() -> list[str]:
+    """US-795-b: seed the three create_all tables in their pre-v0028 production shape."""
+    return [
+        'CREATE TABLE sync_history ('
+        '  id INT(11) NOT NULL AUTO_INCREMENT,'
+        '  device_id VARCHAR(64) NOT NULL,'
+        '  started_at DATETIME NOT NULL DEFAULT current_timestamp(),'
+        '  completed_at DATETIME DEFAULT NULL,'
+        '  rows_synced INT(11) DEFAULT NULL,'
+        '  status VARCHAR(32) NOT NULL,'
+        '  tables_synced TEXT DEFAULT NULL,'
+        '  error_message TEXT DEFAULT NULL,'
+        '  PRIMARY KEY (id)'
+        ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;',
+        'CREATE TABLE battery_health_log ('
+        '  id INT(11) NOT NULL AUTO_INCREMENT,'
+        '  source_id INT(11) NOT NULL,'
+        '  source_device VARCHAR(64) NOT NULL,'
+        '  synced_at DATETIME DEFAULT current_timestamp(),'
+        '  sync_batch_id INT(11) DEFAULT NULL,'
+        '  start_timestamp DATETIME NOT NULL DEFAULT current_timestamp(),'
+        '  end_timestamp DATETIME DEFAULT NULL,'
+        '  runtime_seconds INT(11) DEFAULT NULL,'
+        '  ambient_temp_c FLOAT DEFAULT NULL,'
+        "  load_class VARCHAR(16) NOT NULL DEFAULT 'production',"
+        '  notes TEXT DEFAULT NULL,'
+        "  data_source VARCHAR(16) DEFAULT 'real',"
+        '  start_vcell_v FLOAT DEFAULT NULL,'
+        '  end_vcell_v FLOAT DEFAULT NULL,'
+        '  start_soc_pct FLOAT DEFAULT NULL,'
+        '  end_soc_pct FLOAT DEFAULT NULL,'
+        '  PRIMARY KEY (id),'
+        '  UNIQUE KEY uq_battery_health_log_source (source_device, source_id)'
+        ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;',
+        'CREATE TABLE startup_log ('
+        '  id INT(11) NOT NULL AUTO_INCREMENT,'
+        '  source_device VARCHAR(64) NOT NULL,'
+        '  synced_at DATETIME DEFAULT current_timestamp(),'
+        '  sync_batch_id INT(11) DEFAULT NULL,'
+        '  boot_id VARCHAR(64) NOT NULL,'
+        '  prior_boot_clean INT(11) DEFAULT NULL,'
+        '  prior_last_entry_ts VARCHAR(40) DEFAULT NULL,'
+        '  current_boot_first_entry_ts VARCHAR(40) DEFAULT NULL,'
+        '  prior_boot_last_stage VARCHAR(64) DEFAULT NULL,'
+        '  prior_boot_reason VARCHAR(64) DEFAULT NULL,'
+        '  recorded_at VARCHAR(40) DEFAULT NULL,'
+        '  PRIMARY KEY (id),'
+        '  UNIQUE KEY uq_startup_log_boot (source_device, boot_id)'
+        ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;',
+    ]
+
+
+def driftedDriveIdentityStatements() -> list[str]:
+    """Seed the BL-020 drifted drive-identity shape (v0022's pre-migration state).
+
+    * ``drives`` -- canonical identity with a PRE-widen ``ck_drives_data_quality``
+      CHECK (no ``'unmappable_legacy'``, so v0022 substep 1 has work to do).
+    * ``drive_statistics`` -- **state 3**: ``summary_id`` with NO FK at all
+      (create_all never auto-named the FK the ORM assumed -- the BL-020 fatal).
+    * ``drive_derived_signals`` -- **state 1**: ``summary_id`` FK -> the LEGACY
+      ``drive_summary(id)`` (the v0017-era name), which v0022 must drop + re-point.
+
+    Seed rows keep the orphan guard at zero (every ``summary_id`` matches a
+    ``drives.drive_id``) and give substep 2 exactly one NULL-natural-key legacy
+    drive to re-label.
+    """
+    return [
+        'CREATE TABLE drive_summary ('
+        '  id INT AUTO_INCREMENT PRIMARY KEY,'
+        '  source_device VARCHAR(64), source_id INT,'
+        f'{PROD_DRIVE_SUMMARY_V0024_COLUMNS_DDL}'
+        '  KEY idx_drive_summary_data_quality (data_quality)'
+        ') ENGINE=InnoDB;',
+        'CREATE TABLE drives ('
+        '  drive_id INT AUTO_INCREMENT PRIMARY KEY,'
+        '  source_device VARCHAR(64), source_drive_id INT NULL,'
+        '  start_time DATETIME NULL, end_time DATETIME NULL,'
+        "  data_source VARCHAR(16) DEFAULT 'real',"
+        "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
+        "  CONSTRAINT ck_drives_data_quality CHECK (data_quality IN ('full'))"
+        ') ENGINE=InnoDB;',
+        'CREATE TABLE drive_statistics ('
+        '  summary_id INT NOT NULL, parameter_name VARCHAR(64) NOT NULL,'
+        '  sample_count INT NOT NULL DEFAULT 0,'
+        "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
+        '  CONSTRAINT ck_drive_statistics_data_quality CHECK '
+        f'    (data_quality IN ({PROD_DRIVE_STATISTICS_DATA_QUALITY_SQL})),'
+        '  PRIMARY KEY (summary_id, parameter_name)'
+        ') ENGINE=InnoDB;',
+        'CREATE TABLE drive_derived_signals ('
+        '  summary_id INT NOT NULL PRIMARY KEY,'
+        '  CONSTRAINT fk_drive_derived_signals_summary'
+        '    FOREIGN KEY (summary_id) REFERENCES drive_summary(id) ON DELETE CASCADE'
+        ') ENGINE=InnoDB;',
+        "INSERT INTO drive_summary (id, source_device, source_id) "
+        "VALUES (1, 'chi-eclipse-01', 1);",
+        'INSERT INTO drives (drive_id, source_device, source_drive_id, data_quality) '
+        "VALUES (1, 'chi-eclipse-01', 100, 'full');",
+        'INSERT INTO drives (drive_id, source_device, source_drive_id, data_quality) '
+        "VALUES (2, 'chi-eclipse-01', NULL, 'full');",
+        'INSERT INTO drive_statistics (summary_id, parameter_name, sample_count) '
+        "VALUES (1, 'RPM', 100);",
+        'INSERT INTO drive_derived_signals (summary_id) VALUES (1);',
+    ]
+
+
+def cleanDriveIdentityStatements() -> list[str]:
+    """Seed the already-collapsed (post-v0022) clean drive-identity shape.
+
+    Both ``summary_id`` FKs already reference ``drives.drive_id`` and the
+    ``ck_drives_data_quality`` CHECK is already widened -- so v0022 is a no-op
+    (state 2 everywhere).  Used to assert the clean-schema case
+    (validationCriterion 2): the chain applies + passes with no changes.
+    """
+    return [
+        'CREATE TABLE drive_summary ('
+        '  id INT AUTO_INCREMENT PRIMARY KEY,'
+        '  source_device VARCHAR(64), source_id INT,'
+        f'{PROD_DRIVE_SUMMARY_V0024_COLUMNS_DDL}'
+        '  KEY idx_drive_summary_data_quality (data_quality)'
+        ') ENGINE=InnoDB;',
+        'CREATE TABLE drives ('
+        '  drive_id INT AUTO_INCREMENT PRIMARY KEY,'
+        '  source_device VARCHAR(64), source_drive_id INT NULL,'
+        '  start_time DATETIME NULL, end_time DATETIME NULL,'
+        "  data_source VARCHAR(16) DEFAULT 'real',"
+        "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
+        '  CONSTRAINT ck_drives_data_quality CHECK '
+        "    (data_quality IN ('full','unmappable_legacy'))"
+        ') ENGINE=InnoDB;',
+        'CREATE TABLE drive_statistics ('
+        '  summary_id INT NOT NULL, parameter_name VARCHAR(64) NOT NULL,'
+        '  sample_count INT NOT NULL DEFAULT 0,'
+        "  data_quality VARCHAR(20) NOT NULL DEFAULT 'full',"
+        '  CONSTRAINT ck_drive_statistics_data_quality CHECK '
+        f'    (data_quality IN ({PROD_DRIVE_STATISTICS_DATA_QUALITY_SQL})),'
+        '  PRIMARY KEY (summary_id, parameter_name),'
+        '  CONSTRAINT fk_drive_statistics_drives'
+        '    FOREIGN KEY (summary_id) REFERENCES drives(drive_id) ON DELETE CASCADE'
+        ') ENGINE=InnoDB;',
+        'CREATE TABLE drive_derived_signals ('
+        '  summary_id INT NOT NULL PRIMARY KEY,'
+        '  CONSTRAINT fk_drive_derived_signals_drives'
+        '    FOREIGN KEY (summary_id) REFERENCES drives(drive_id) ON DELETE CASCADE'
+        ') ENGINE=InnoDB;',
+        'INSERT INTO drives (drive_id, source_device, source_drive_id, data_quality) '
+        "VALUES (1, 'chi-eclipse-01', 100, 'full');",
+        'INSERT INTO drive_statistics (summary_id, parameter_name, sample_count) '
+        "VALUES (1, 'RPM', 100);",
+        'INSERT INTO drive_derived_signals (summary_id) VALUES (1);',
+    ]
+
+
+def markMigrationsAppliedStatements(versions: Iterable[str]) -> list[str]:
+    """Create ``schema_migrations`` + record ``versions`` as already applied.
+
+    Lets a test present the runner with a partially-migrated ledger so
+    ``runAll`` plans only the pending tail (e.g. the V0.29.10 resume where
+    0001-0021 were applied and 0022/0023 are pending).
+    """
+    statements = [SCHEMA_MIGRATIONS_TABLE_DDL + ';']
+    for version in versions:
+        statements.append(
+            f'INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, description) '
+            f"VALUES ('{version}', 'seeded-applied');",
+        )
+    return statements
+
+
+def productionSnapshotStatements() -> list[str]:
+    """Build the DEPLOYED server schema + stamp production's ledger (US-807).
+
+    The A-4 applied-schema gate builds from this instead of ``create_all``:
+    the tables production actually has (``_production_schema_snapshot``,
+    regenerated by ``scripts/snapshot_production_schema.py``) and the
+    migrations production has actually applied. The runner then plans exactly
+    the migrations newer than production -- what the next deploy would run --
+    so a model column with no migration behind it stays absent and the gate
+    goes red. Foreign keys are off while building: the snapshot is in name
+    order, not dependency order.
+    """
+    from tests.server import _production_schema_snapshot as snapshot  # noqa: PLC0415
+
+    statements = ['SET FOREIGN_KEY_CHECKS=0;']
+    statements.extend(ddl + ';' for ddl in snapshot.PRODUCTION_TABLE_DDL.values())
+    statements.extend(markMigrationsAppliedStatements(snapshot.PRODUCTION_LEDGER))
+    statements.append('SET FOREIGN_KEY_CHECKS=1;')
+    return statements
+
+
+def dropEveryTableStatements(connection: Any, dbName: str) -> list[str]:
+    """DROP every base table in ``dbName`` -- whatever an earlier test left.
+
+    The chain tests reset only the tables they own; the snapshot build needs a
+    truly empty database, or a leftover table would be compared in place of
+    the one production has.
+    """
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            'SELECT TABLE_NAME FROM information_schema.TABLES '
+            f"WHERE TABLE_SCHEMA = '{dbName}' AND TABLE_TYPE = 'BASE TABLE'",
+        )
+        names = [row[0] for row in cursor.fetchall()]
+    finally:
+        cursor.close()
+    statements = ['SET FOREIGN_KEY_CHECKS=0;']
+    statements.extend(f'DROP TABLE IF EXISTS `{name}`;' for name in names)
+    statements.append('SET FOREIGN_KEY_CHECKS=1;')
+    return statements
+
+
+def resetSchemaStatements() -> list[str]:
+    """DROP every table this harness seeds -- and every table the chain creates
+    (US-795-b) -- so each test starts on a clean DB."""
+    tables = [
+        'drive_derived_signals',
+        'drive_statistics',
+        'drive_summary',
+        'drives',
+        SCHEMA_MIGRATIONS_TABLE,
+        *DATA_SOURCE_CHECK_TABLES,
+        *POST_V0027_SEEDED_TABLES,
+        *CHAIN_CREATED_TABLES,
+    ]
+    statements = ['SET FOREIGN_KEY_CHECKS=0;']
+    statements.extend(f'DROP TABLE IF EXISTS {table};' for table in tables)
+    statements.append('SET FOREIGN_KEY_CHECKS=1;')
+    return statements

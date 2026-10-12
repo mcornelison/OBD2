@@ -13,9 +13,10 @@
 #                      timestamp falls in [drain.start_timestamp,
 #                      next_drain.start_timestamp).  This script reads those
 #                      rows and replays them into the stranded battery_health_log
-#                      rows -- end_timestamp / end_soc / end_vcell_v /
+#                      rows -- end_timestamp / end_vcell_v /
 #                      runtime_seconds, exactly the shape `endDrainEvent`
-#                      writes (sans ambient_temp_c, which has no source).  The
+#                      writes post-US-426 (sans ambient_temp_c, which has no
+#                      source; the legacy end_soc column was dropped).  The
 #                      now-working (V0.27.4 US-315 + V0.27.7 US-326 + V0.27.8
 #                      US-331) sync UPDATE path then propagates these to the
 #                      server-side rows for source_id IN (1, 9), which is also a
@@ -79,16 +80,16 @@ For each configured ``drain_event_id`` (default ``1`` and ``9``):
    in ``[start_timestamp, next_drain.start_timestamp)``    -> skip (no
    timing-truth source; stopCondition -- never fabricate close-event values).
 5. Otherwise emit ``UPDATE battery_health_log SET end_timestamp = <trigger.ts>,
-   end_soc = <trigger.vcell>, end_vcell_v = <trigger.vcell>,
+   end_vcell_v = <trigger.vcell>,
    runtime_seconds = <trigger.ts - start_timestamp> WHERE drain_event_id = N
    AND end_timestamp IS NULL;``.
 
-``end_soc`` and ``end_vcell_v`` both receive the ``power_log.vcell`` value --
-this mirrors the US-289 dual-write contract that
-:meth:`src.pi.power.battery_health.BatteryHealthRecorder.endDrainEvent`
-follows, so a backfilled row is shaped exactly like a recorder-closed one.  If
-the ``stage_trigger`` row predates the US-252 ``vcell`` column (NULL), both
-``end_soc`` and ``end_vcell_v`` stay NULL but ``end_timestamp`` /
+``end_vcell_v`` receives the ``power_log.vcell`` value -- this matches the
+post-US-426 :meth:`src.pi.power.battery_health.BatteryHealthRecorder.endDrainEvent`
+shape (VCELL volts land only in ``end_vcell_v``; the legacy ``end_soc`` column
+was dropped in US-426), so a backfilled row is shaped exactly like a
+recorder-closed one.  If the ``stage_trigger`` row predates the US-252
+``vcell`` column (NULL), ``end_vcell_v`` stays NULL but ``end_timestamp`` /
 ``runtime_seconds`` are still written.
 
 Safety
@@ -152,11 +153,11 @@ POWER_LOG_TABLE: str = 'power_log'
 # Spool 2026-05-12 Story E: the two Pi-side rows with NULL end_timestamp.
 HISTORICAL_DRAIN_EVENT_IDS: tuple[int, ...] = (1, 9)
 
-# battery_health_log columns this script writes.  end_soc + end_vcell_v both
-# get the power_log.vcell value (US-289 dual-write parity with endDrainEvent);
-# ambient_temp_c is left NULL -- there is no source for it.
+# battery_health_log columns this script writes.  US-426 dropped the legacy
+# end_soc column; the power_log.vcell value now lands only in end_vcell_v (its
+# sole home).  ambient_temp_c is left NULL -- there is no source for it.
 BACKFILL_COLUMNS: tuple[str, ...] = (
-    'end_timestamp', 'end_soc', 'end_vcell_v', 'runtime_seconds',
+    'end_timestamp', 'end_vcell_v', 'runtime_seconds',
 )
 
 # Default DB path: ./data/obd.db relative to the repo root (mirrors
@@ -472,11 +473,11 @@ def applyBackfill(conn: sqlite3.Connection, rows: Iterable[BackfillRow]) -> int:
         for row in rowList:
             cursor = conn.execute(
                 f'UPDATE {BATTERY_HEALTH_LOG_TABLE} SET '
-                'end_timestamp = ?, end_soc = ?, end_vcell_v = ?, '
+                'end_timestamp = ?, end_vcell_v = ?, '
                 'runtime_seconds = ? '
                 'WHERE drain_event_id = ? AND end_timestamp IS NULL',
                 (
-                    row.endTimestamp, row.endSoc, row.endSoc,
+                    row.endTimestamp, row.endSoc,
                     row.runtimeSeconds, int(row.drainEventId),
                 ),
             )
@@ -520,7 +521,7 @@ def renderReport(
     for row in plan.toUpdate:
         lines.append(
             f'    {verb} drain_event_id={row.drainEventId}: '
-            f'end_timestamp={row.endTimestamp} end_soc={row.endSoc} '
+            f'end_timestamp={row.endTimestamp} '
             f'end_vcell_v={row.endSoc} runtime_seconds={row.runtimeSeconds}',
         )
     if plan.skipped:

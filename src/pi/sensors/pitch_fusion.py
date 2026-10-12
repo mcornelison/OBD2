@@ -1,0 +1,781 @@
+################################################################################
+# File Name: pitch_fusion.py
+# Purpose/Description: US-521 (F-125) gyro-fused chassis pitch + ZUPT bias
+#   update -- the honest pitch source behind states/imu gradePct and the
+#   prerequisite the future interim altitude (US-519) integrates.
+#
+#   THE DEFECT THIS EXISTS TO DELETE (Spool, 2026-08-01): an accelerometer
+#   cannot distinguish grade from acceleration -- they are the same measurement.
+#   Specific force is ``a_vehicle - g_vector``, so a 0.3 g pull on FLAT ground
+#   adds 0.3 g to the forward axis and any accel-derived tilt reads
+#   ``atan(0.3)`` = 16.7 degrees of climb. US-478 low-passed the accel over 5 s,
+#   which rejects a 1 s event but NOT a 10 s on-ramp (2 tau) -- that contamination
+#   propagates almost fully into the "gravity" estimate the grade was read from.
+#
+#   THE FIX, exactly as Spool specified it:
+#     1. GYRO INTEGRATION carries the short term. The gyro sees real chassis
+#        rotation and is blind to linear acceleration.
+#     2. THE ACCEL CORRECTS THE GYRO ONLY NEAR 1 g. Gyro alone drifts; accel
+#        alone is contaminated; neither works standalone. The magnitude gate is
+#        what rejects the 16.7-degree phantom: under 0.3 g the specific force is
+#        1.044 g, comfortably outside DEFAULT_ACCEL_TRUST_BAND.
+#     3. ZUPT at every confirmed stop (OBD speed 0 for > [EXACT: 3] s -- Spool,
+#        load-bearing). At zero velocity the accel reads PURE GRAVITY, so the
+#        measured tilt is the true chassis pitch: the one uncontaminated fix the
+#        estimator ever gets. One stop cannot separate the mount tilt from the
+#        slope you are parked on, but the mean over many stops converges on the
+#        BIAS -- valid because Chicagoland is glacial-flat, so real road slopes
+#        genuinely average ~0. City stoplights are the free calibration signal.
+#
+#   HONEST-INSTRUMENT, per branch: the pitch starts None and is NEVER a
+#   fabricated 0.0 (a level board and an unknown attitude must not look alike);
+#   it seeds only from an UNCONTAMINATED reading, because seeding mid-pull would
+#   bake the phantom in as the origin the gyro then integrates from; no bias is
+#   applied until enough stops have been seen to have actually measured one; and
+#   an ABSENT or STALE OBD speed is never read as "stopped" -- that would
+#   hard-correct the attitude to a contaminated accel while the car is moving,
+#   which is strictly worse than the drift it would be trying to fix.
+#
+#   Pure and I/O-free by construction: no bus, no device, no clock. The caller
+#   supplies vehicle-frame vectors and monotonic capture times, so the whole
+#   estimator is deterministically testable and US-519 can reuse it unchanged.
+# Author: Rex (US-521)
+# Creation Date: 2026-08-02
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-08-02    | Rex (US-521) | Initial -- complementary gyro/accel pitch filter
+#               |              | + ZUPT stop detector and rolling bias mean.
+#               |              | Owns the gravity/tilt constants US-478 defined
+#               |              | (imu_state_bridge re-exports them; ONE home).
+# 2026-09-14    | Rex (US-749) | Plausibility guard: a trusted accel that
+#               |              | disagrees with the fused pitch beyond the trust
+#               |              | band's own contamination bound for > 3 tau marks
+#               |              | the gyro implausible; pitchRad is then None.
+# 2026-09-16    | Rex (US-779) | Per-run gyro RATE-bias learning at confirmed
+#               |              | stops, applied before integration; a stop whose
+#               |              | standing rate reaches GYRO_BIAS_MAX_RAD_S (A-34
+#               |              | latch) is rejected, never absorbed.
+# 2026-09-24    | Rex (US-802-c)| Comments only: the pitchTauSec/accelTrustBand
+#               |              | notes now say where the config key lives.
+# ================================================================================
+################################################################################
+
+"""Gyro-fused chassis pitch with a zero-velocity (ZUPT) bias update."""
+
+from __future__ import annotations
+
+import logging
+import math
+from collections import deque
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "DEFAULT_ACCEL_TRUST_BAND",
+    "DEFAULT_PITCH_TAU_S",
+    "DEFAULT_ZUPT_MIN_STOPS",
+    "FUSION_VERSION",
+    "DEFAULT_ZUPT_SPEED_MAX_AGE_S",
+    "DEFAULT_ZUPT_WINDOW_STOPS",
+    "GYRO_BIAS_MAX_RAD_S",
+    "GYRO_IMPLAUSIBLE_SETTLE_TAUS",
+    "MAX_GRADE_PITCH_DEG",
+    "MIN_GRAVITY_MS2",
+    "STANDARD_GRAVITY_MS2",
+    "ZUPT_MIN_STOP_S",
+    "PitchFusion",
+    "accelTrustContaminationRad",
+    "gradePctFromPitchRad",
+    "pitchRadFromAccel",
+]
+
+# Standard gravity (BIPM/CODATA g_n = 9.80665 m/s^2 exactly). The divisor that
+# turns the reader's m/s^2 into g units, and the reference the trust band is
+# measured against. Defined HERE and re-exported by imu_state_bridge so the two
+# modules cannot drift apart on the value (US-478 originally owned it).
+STANDARD_GRAVITY_MS2 = 9.80665
+
+# A specific-force vector shorter than this is not a usable level reference
+# (free-fall, an unreadable burst, or garbage) -- every tilt-derived field grays.
+MIN_GRAVITY_MS2 = 0.5
+
+# Beyond this pitch, tan() runs away (tan(85 deg) = 1143%) and the reading is not
+# a road grade by any reading -- report unknown rather than an absurd number.
+MAX_GRADE_PITCH_DEG = 85.0
+
+# Display precision for the published grade (a display view, not the estimate).
+_GRADE_DECIMALS = 1
+
+# US-805: which ALGORITHM produced a derived row, stamped into every
+# edr_imu_derived row. The CIO's reason for a separate table is that a raw
+# reading never changes while a computed value changes when the maths does --
+# and that is only recoverable later if each row says which maths it was.
+#
+# BUMP THIS whenever the fusion's OUTPUT for the same input would differ: the
+# filter form, tau, the trust band, the ZUPT rule, the bias model. Do NOT bump
+# it for refactors, logging or diagnostics that leave the numbers identical --
+# a version that changes without the output changing is noise, and a reader
+# comparing epochs would see a boundary that is not there.
+FUSION_VERSION: int = 1
+
+# SPOOL [EXACT: 3] -- the zero-velocity gate. A stop counts only once OBD speed
+# has been OBSERVED at zero across a span longer than this. LOAD-BEARING SME
+# value: flag Spool before any drift.
+ZUPT_MIN_STOP_S = 3.0
+
+# Complementary-filter time constant, seconds: how fast a TRUSTED accel reading
+# pulls the gyro-integrated pitch back. Rex-derived (mirrors US-478's gravity
+# low-pass, which was sized the same way and flagged the same way). Routed to
+# Spool with the sample rates under the story's SPOOL SIZING acceptance criterion.
+# To CHANGE it, set pi.sensors.imu.pitchTauSec in config.json (shipped at 5.0 by
+# US-802-a, 2026-09-24); imu_state_bridge.buildImuStateBridge reads that key and
+# passes it to PitchFusion. This constant is only the fallback when the key is
+# absent -- editing it here does not change a car running the shipped config.
+DEFAULT_PITCH_TAU_S = 5.0
+
+# The "near 1 g" window, as a FRACTION of standard gravity, inside which the
+# accelerometer is trusted to correct the gyro (Spool's condition).
+#
+# WHY 0.02 AND NOT MORE: the specific force under a longitudinal pull of a g is
+# sqrt(1 + a^2), so the band admits accelerations up to ~sqrt(2 * band) g. At
+# 0.02 that is ~0.2 g, and the 0.3 g case the story names (1.044 g, a 4.4%
+# excess) is rejected outright. WHY NOT LESS: road vibration alone would then
+# gate the accel off permanently, leaving pure gyro drift with nothing to
+# correct it. The residual -- a sustained sub-0.2 g pull still leaks in -- is
+# bounded by the tau blend above and erased by the next ZUPT, which is precisely
+# why Spool specified both mechanisms rather than either alone. Rex-derived,
+# routed to Spool. To CHANGE it, set pi.sensors.imu.accelTrustBand in config.json
+# (shipped at 0.02 by US-802-a, 2026-09-24); imu_state_bridge.buildImuStateBridge
+# reads that key and passes it to PitchFusion. This constant is only the fallback
+# when the key is absent.
+DEFAULT_ACCEL_TRUST_BAND = 0.02
+
+# How stale an OBD speed reading may be and still count as evidence about the
+# vehicle's motion. Sized just above the ~1 Hz SPEED poll to bridge scheduler
+# jitter -- deliberately BELOW the ZUPT gate, so a link that drops mid-stop
+# stops being treated as a stop quickly rather than pinning the estimator to a
+# stale zero while the car drives away. Rex-derived; see the class docstring.
+DEFAULT_ZUPT_SPEED_MAX_AGE_S = 2.0
+
+# Minimum confirmed stops before ANY bias is applied. One stop cannot separate
+# the mount tilt from the slope of the spot you parked on, so a bias claimed
+# from it would be a calibration we have not measured. Rex-derived.
+DEFAULT_ZUPT_MIN_STOPS = 5
+
+# Rolling window of stop observations the bias mean is taken over. A cumulative
+# mean over all history would freeze on an old calibration and never recover
+# from a physical remount. Rex-derived.
+DEFAULT_ZUPT_WINDOW_STOPS = 20
+
+# ARCH-027: how many recent updates the accel-trust diagnostic averages over.
+# 100 at the 50 Hz sensor rate is a ~2 s window -- long enough that a single
+# pothole does not swing it, short enough to answer "is grade trustworthy NOW"
+# rather than reporting a lifetime average in which a bad minute disappears
+# inside a good hour. The diagnostic changes no filter behaviour; it only
+# reports the decision `update()` already makes, which until now was invisible
+# to every consumer of pitch and grade. (imufusion exposes the same thing as
+# `accelerometer_ignored`; it measured 3-5% on drive 77, 2026-09-16.)
+DEFAULT_ACCEL_TRUST_WINDOW = 100
+
+# US-749: how long a trusted accel must disagree with the fused pitch before the
+# gyro is declared implausible, in multiples of the filter's own tau. 3 tau is the
+# textbook settling time of a first-order filter (1 - e^-3 = 95%): any transient
+# the accel correction can pull out has been pulled out by then. What SURVIVES it
+# is not a transient -- the complementary filter settles at
+# ``accelPitch + rate * tau``, so a sustained disagreement is a standing gyro
+# rate, which a parked or cruising chassis cannot physically be turning at.
+# (2026-09-14: 0.2457 rad/s x 5 s = 70.4 deg, published as a confident pitch.)
+GYRO_IMPLAUSIBLE_SETTLE_TAUS = 3
+
+# US-779: the largest standing rate, rad/s on ANY vehicle axis, a confirmed stop
+# may teach the rate-bias learner. At or above it the stop is REJECTED as the A-34
+# latch -- never absorbed, because a learner that subtracts the latch hides it from
+# the plausibility guard (imufusion at a 50 deg/s threshold did exactly that).
+# MEASURED, not tuned (Atlas gyro-quality classifier, 2026-09-14, every quiet
+# minute since 2026-09-05, metric = max over axes of |mean gyro|): healthy
+# 0.0127-0.0153 over 4,337 minutes, faulted 0.4871-0.5531 over 5,976, and ZERO
+# minutes between 0.02 and 0.40. 0.10 rad/s (5.7 deg/s) is his threshold: >6x the
+# healthy ceiling and well under half the 14-30 deg/s fault band's lower edge.
+GYRO_BIAS_MAX_RAD_S = 0.10
+
+# Vehicle-frame axis names for the learner's report: rotation ABOUT forward is
+# roll, about left is pitch, about up is yaw.
+_GYRO_AXIS_NAMES = ("roll", "pitch", "yaw")
+
+# The integrated pitch is clamped here: past vertical the attitude is not merely
+# wrong, it makes every downstream tan() nonsense.
+_MAX_PITCH_RAD = math.pi / 2.0
+
+
+def _finiteVec3(value) -> tuple[float, float, float] | None:
+    """Coerce a value to a finite float 3-tuple, else None.
+
+    Args:
+        value: Anything the caller believes is a 3-vector.
+
+    Returns:
+        The coerced ``(x, y, z)``, or None when it is malformed or carries a
+        non-finite component. NaN is rejected explicitly: it propagates silently
+        through every later sum and never compares unequal to itself, so nothing
+        downstream would ever detect it.
+    """
+    if value is None:
+        return None
+    try:
+        x, y, z = value
+        out = (float(x), float(y), float(z))
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(c) for c in out):
+        return None
+    return out
+
+
+def pitchRadFromAccel(accel) -> float | None:
+    """Chassis pitch in radians from one specific-force reading.
+
+    This is the CONTAMINATED estimate -- correct only when the vehicle is not
+    accelerating. It is the accel half of the complementary filter and the ZUPT
+    measurement, never the published pitch on its own.
+
+    Args:
+        accel: Specific force in VEHICLE coordinates ``(forward, left, up)``,
+            m/s^2.
+
+    Returns:
+        Pitch in radians, positive = nose up = climbing, or None when the vector
+        is malformed or too short to be a level reference.
+    """
+    vec = _finiteVec3(accel)
+    if vec is None:
+        return None
+    fwd, left, up = vec
+    if math.sqrt(fwd * fwd + left * left + up * up) < MIN_GRAVITY_MS2:
+        return None
+    return math.atan2(fwd, math.hypot(left, up))
+
+
+def gradePctFromPitchRad(pitchRad: float | None) -> float | None:
+    """Road grade in percent from a chassis pitch (Atlas: tan(pitch) * 100).
+
+    Args:
+        pitchRad: The fused, bias-corrected pitch in radians, or None when the
+            estimator has no attitude yet.
+
+    Returns:
+        Signed grade percent (positive = climbing), or None when the pitch is
+        unknown or past MAX_GRADE_PITCH_DEG, where tan runs away and the number
+        would be a lie dressed as precision.
+    """
+    if pitchRad is None or not math.isfinite(pitchRad):
+        return None
+    if abs(math.degrees(pitchRad)) > MAX_GRADE_PITCH_DEG:
+        return None
+    return round(math.tan(pitchRad) * 100.0, _GRADE_DECIMALS)
+
+
+def accelTrustContaminationRad(accelTrustBand: float) -> float:
+    """The largest tilt error a TRUSTED accel reading can carry, radians (US-749).
+
+    A longitudinal pull of ``a`` g reads ``|f| = g * sqrt(1 + a^2)``, so the
+    trust band admits pulls up to ``a = sqrt((1 + band)^2 - 1)`` and each fakes
+    ``atan(a)`` of tilt (~11.4 deg at the default 2%). A disagreement larger than
+    this cannot be the accelerometer being contaminated, so it is the plausibility
+    guard's bound -- derived from the existing band, not a new judgement.
+
+    Args:
+        accelTrustBand: Fractional deviation of |accel| from 1 g the filter trusts.
+
+    Returns:
+        The contamination bound in radians.
+    """
+    band = max(0.0, accelTrustBand)
+    return math.atan(math.sqrt((1.0 + band) ** 2 - 1.0))
+
+
+class PitchFusion:
+    """Complementary gyro/accel pitch filter with a ZUPT bias update.
+
+    Owns three running facts: the fused attitude, the rolling mean of the tilts
+    measured at confirmed stops (the mount-tilt bias), and -- since US-779 -- the
+    rolling mean of the gyro RATES measured at those same stops (the rate bias,
+    subtracted before integration). The published pitch is ``fused - bias``,
+    which is the road grade rather than the board's angle in its bracket.
+
+    THE RATE BIAS IS PER RUN AND CANNOT CONCEAL A LATCH. It lives only in this
+    object (a bias carried between drives measurably made stop error worse,
+    3.77 -> 4.45 deg), and a stop whose standing rate reaches
+    ``GYRO_BIAS_MAX_RAD_S`` on any axis is rejected rather than learned, so the
+    A-34 latch keeps integrating uncorrected into the US-749 plausibility guard.
+    With no accepted stop the gyro passes through untouched.
+
+    THE DANGEROUS CASE IS NOT A FAILED SPEED READ, IT IS A STALE ONE. If the OBD
+    link drops while the car is stopped at a light and the last thing the
+    estimator heard was "speed 0", then treating that reading as durable would
+    keep hard-correcting the attitude to whatever the accelerometer says for the
+    rest of the drive -- i.e. snapping the pitch to the 16.7-degree phantom on
+    every on-ramp, with more confidence than the drift it was fixing. So a stop
+    requires speed to have been OBSERVED at zero across the whole gate AND to
+    still be fresh; absence resolves to "unknown motion", never to "stopped".
+
+    Not thread-safe by design: the IMU bridge drains one bus subscription on one
+    thread, and adding a lock would only hide a caller that had introduced a
+    second one.
+    """
+
+    def __init__(
+        self,
+        *,
+        pitchTauSec: float = DEFAULT_PITCH_TAU_S,
+        accelTrustBand: float = DEFAULT_ACCEL_TRUST_BAND,
+        zuptMinStopSec: float = ZUPT_MIN_STOP_S,
+        zuptSpeedMaxAgeSec: float = DEFAULT_ZUPT_SPEED_MAX_AGE_S,
+        zuptMinStops: int = DEFAULT_ZUPT_MIN_STOPS,
+        zuptWindowStops: int = DEFAULT_ZUPT_WINDOW_STOPS,
+        accelTrustWindow: int = DEFAULT_ACCEL_TRUST_WINDOW,
+    ) -> None:
+        """Bind the estimator to its filter + ZUPT parameters.
+
+        Args:
+            pitchTauSec: Complementary blend time constant, seconds.
+            accelTrustBand: Fractional deviation of |accel| from 1 g inside
+                which the accelerometer may correct the gyro.
+            zuptMinStopSec: Spool's [EXACT: 3] s zero-velocity gate.
+            zuptSpeedMaxAgeSec: How stale a speed reading may be and still be
+                evidence about motion.
+            zuptMinStops: Confirmed stops required before any bias is applied.
+            zuptWindowStops: Length of the rolling stop-observation window.
+            accelTrustWindow: Updates the accel-trust diagnostic averages over.
+                Reporting only -- it changes no filter behaviour.
+        """
+        self._tauS = pitchTauSec if pitchTauSec > 0 else DEFAULT_PITCH_TAU_S
+        self._trustBand = accelTrustBand if accelTrustBand > 0 else DEFAULT_ACCEL_TRUST_BAND
+        self._minStopS = zuptMinStopSec if zuptMinStopSec > 0 else ZUPT_MIN_STOP_S
+        self._speedMaxAgeS = (
+            zuptSpeedMaxAgeSec if zuptSpeedMaxAgeSec > 0 else DEFAULT_ZUPT_SPEED_MAX_AGE_S
+        )
+        self._minStops = max(1, int(zuptMinStops))
+        window = max(1, int(zuptWindowStops))
+        # Attitude state.
+        self._pitch: float | None = None
+        self._lastCapture: float | None = None
+        # ZUPT state.
+        self._stopSince: float | None = None
+        self._lastSpeedCapture: float | None = None
+        self._stopSum = 0.0
+        self._stopSamples = 0
+        self._stopObs: deque[float] = deque(maxlen=window)
+        # US-779 per-run gyro rate-bias state (never persisted).
+        self._gyroStopSum = [0.0, 0.0, 0.0]
+        self._gyroStopSamples = 0
+        self._gyroBiasObs: deque[tuple[float, float, float]] = deque(maxlen=window)
+        self._gyroBiasRejected = 0
+        # US-749 plausibility guard state.
+        self._implausibleBoundRad = accelTrustContaminationRad(self._trustBand)
+        self._disagreeSince: float | None = None
+        # ARCH-027 accel-trust diagnostic. Rolling, so it answers "is grade
+        # trustworthy NOW" rather than reporting a lifetime average in which a
+        # bad minute disappears inside a good hour.
+        self._accelIgnoredLast = False
+        self._accelTrustWindow: deque[float] = deque(
+            maxlen=max(1, int(accelTrustWindow))
+        )
+
+    # -- read side -------------------------------------------------------------
+    @property
+    def pitchRad(self) -> float | None:
+        """The fused, bias-corrected chassis pitch, or None when unknown.
+
+        None is the honest answer before the filter has seeded from an
+        uncontaminated reading -- never a fabricated 0.0 -- and, since US-749,
+        while ``gyroImplausible``: a number the estimator has evidence is wrong
+        must not reach any consumer as a confident attitude (``rawPitchRad``
+        still carries it for diagnostics).
+        """
+        if self._pitch is None or self.gyroImplausible:
+            return None
+        return self._pitch - self.biasRad
+
+    @property
+    def gyroImplausible(self) -> bool:
+        """Whether a trusted accel has disagreed past the bound for > 3 tau (US-749).
+
+        No clamp and no offset: the verdict withholds the number, it does not
+        replace it with a plausible-looking one. It clears as soon as a trusted
+        reading agrees again.
+        """
+        if self._disagreeSince is None or self._lastCapture is None:
+            return False
+        return (self._lastCapture - self._disagreeSince) > GYRO_IMPLAUSIBLE_SETTLE_TAUS * self._tauS
+
+    @property
+    def rawPitchRad(self) -> float | None:
+        """The fused pitch BEFORE bias removal (board angle, diagnostics only)."""
+        return self._pitch
+
+    @property
+    def biasRad(self) -> float:
+        """The mount-tilt bias: the mean tilt measured over recent stops.
+
+        0.0 until ``zuptMinStops`` stops have been observed -- reporting a bias
+        measured from one stop would be reporting the slope of a parking spot as
+        a calibration constant.
+        """
+        if len(self._stopObs) < self._minStops:
+            return 0.0
+        return sum(self._stopObs) / len(self._stopObs)
+
+    @property
+    def gyroBiasRadS(self) -> tuple[float, float, float] | None:
+        """The learned gyro rate bias, vehicle frame, rad/s -- or None.
+
+        The mean standing rate over the accepted stops in the rolling window.
+        None until one stop has been accepted in THIS run: an unlearned bias is
+        not a reason to guess one, so the gyro is then used exactly as read.
+        Unlike the tilt bias, one stop suffices -- a stopped chassis is not
+        rotating, so the stop's mean rate IS the bias, with no parking-slope
+        ambiguity to average out.
+        """
+        if not self._gyroBiasObs:
+            return None
+        n = len(self._gyroBiasObs)
+        return (
+            sum(o[0] for o in self._gyroBiasObs) / n,
+            sum(o[1] for o in self._gyroBiasObs) / n,
+            sum(o[2] for o in self._gyroBiasObs) / n,
+        )
+
+    @property
+    def gyroBiasCorrection(self) -> dict[str, float] | None:
+        """Which axes the learner is correcting, and by how much (rad/s).
+
+        Keyed ``roll`` / ``pitch`` / ``yaw`` (rotation about forward / left / up).
+        Only ``pitch`` feeds this estimator's attitude; roll and yaw are reported
+        so the bias they carry is visible rather than inferred. None when no
+        stop has been accepted.
+        """
+        bias = self.gyroBiasRadS
+        if bias is None:
+            return None
+        return dict(zip(_GYRO_AXIS_NAMES, bias, strict=True))
+
+    @property
+    def gyroBiasStopCount(self) -> int:
+        """Accepted stops currently held in the rate-bias window."""
+        return len(self._gyroBiasObs)
+
+    @property
+    def gyroBiasRejectedStops(self) -> int:
+        """Stops refused as a latched-magnitude standing rate this run (A-34)."""
+        return self._gyroBiasRejected
+
+    @property
+    def accelIgnored(self) -> bool:
+        """Whether the LAST update ran without an accelerometer correction.
+
+        True means the reading was too far from 1 g to be treated as gravity, so
+        pitch advanced on gyro integration alone -- which drifts. A consumer
+        seeing this cannot be sure the published grade is fused rather than
+        dead-reckoned.
+
+        Copied in spirit from imufusion's ``accelerometer_ignored`` (ARCH-027,
+        2026-09-16): the one diagnostic that library had which we lacked. It
+        RECORDS the decision ``update()`` already made -- it does not recompute
+        it, because a second copy could disagree with the first and then describe
+        a filter we are not running.
+        """
+        return self._accelIgnoredLast
+
+    @property
+    def accelIgnoredFraction(self) -> float:
+        """Fraction of recent updates that ran without an accel correction.
+
+        Rolling, not lifetime: the useful question is "is grade trustworthy
+        NOW", and a lifetime average buries a bad minute inside a good hour.
+        0.0 before any update -- an absence of evidence, not a clean bill.
+
+        Reference: imufusion measured 3-5% on drive 77. Sustained HIGH values
+        mean the accelerometer is rarely being believed, which on a stationary
+        vehicle points at a scale error rather than at real acceleration.
+        """
+        if not self._accelTrustWindow:
+            return 0.0
+        return sum(self._accelTrustWindow) / len(self._accelTrustWindow)
+
+    @property
+    def stopCount(self) -> int:
+        """Confirmed stops currently held in the rolling bias window."""
+        return len(self._stopObs)
+
+    @property
+    def inConfirmedStop(self) -> bool:
+        """Whether the last processed sample fell inside a confirmed stop."""
+        return self._confirmedStopAt(self._lastCapture) if self._lastCapture is not None else False
+
+    # -- ingest ----------------------------------------------------------------
+    def observeSpeed(self, speed, capture: float) -> None:
+        """Fold one OBD speed reading into the stop detector.
+
+        Unit-agnostic ON PURPOSE. The gate is "speed is zero", which is the same
+        fact in km/h or mph -- so this reader cannot repeat the km/h-read-as-mph
+        mislabel that produced the phantom 2x SPEED drift, because it never
+        depends on the magnitude at all.
+
+        Args:
+            speed: The reading's value; None or non-finite is treated as SILENCE
+                (it neither starts a stop nor refreshes freshness), because an
+                unreadable speed is not a zero speed.
+            capture: The reading's monotonic capture time, seconds.
+        """
+        try:
+            value = float(speed)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(value):
+            return
+        self._lastSpeedCapture = capture
+        if value <= 0.0:
+            if self._stopSince is None:
+                self._stopSince = capture
+        else:
+            self._endStop()
+
+    def update(self, accel, gyro, capture: float) -> None:
+        """Fold one IMU burst into the fused pitch.
+
+        Args:
+            accel: Specific force in VEHICLE coordinates (forward, left, up),
+                m/s^2. A malformed or non-finite vector is ignored outright --
+                it must never be able to poison the running estimate.
+            gyro: Angular rate in VEHICLE coordinates, rad/s, or None when the
+                burst carried no usable gyro. Without it the estimator holds its
+                attitude and leans on the accel correction (the pre-US-521
+                behaviour), rather than freezing or fabricating a rate.
+            capture: The burst's monotonic capture time, seconds.
+        """
+        vec = _finiteVec3(accel)
+        if vec is None:
+            return
+
+        self._expireStaleStop(capture)
+        self._accumulateStopGyro(gyro, capture)
+        accelPitch = pitchRadFromAccel(vec)
+        trusted = accelPitch is not None and self._accelIsNearOneG(vec)
+
+        # ARCH-027: record the decision update() is about to act on. Recorded
+        # HERE, before the re-seed branch returns, so a re-seed counts too -- a
+        # filter repeatedly re-seeding across gaps is struggling, and a
+        # diagnostic that skipped those updates would look healthiest then.
+        self._accelIgnoredLast = not trusted
+        self._accelTrustWindow.append(0.0 if trusted else 1.0)
+
+        prev, last = self._pitch, self._lastCapture
+        self._lastCapture = capture
+
+        # Seed, or re-seed across a gap the gyro history cannot span. Only ever
+        # from an uncontaminated reading: seeding mid-pull would bake the
+        # acceleration phantom in as the origin the gyro integrates from.
+        dt = capture - last if last is not None else None
+        if prev is None or dt is None or dt <= 0.0 or dt > self._tauS:
+            # A re-seed discards the history the disagreement was measured over.
+            self._disagreeSince = None
+            if trusted:
+                self._pitch = accelPitch
+            return
+
+        # 1. Gyro integration -- the short-term truth, blind to linear g.
+        predicted = prev
+        rate = self._pitchRateFromGyro(self._correctGyro(gyro))
+        if rate is not None:
+            predicted = _clampPitch(prev + rate * dt)
+
+        # 2. Accel correction -- ONLY near 1 g (Spool).
+        if trusted:
+            assert accelPitch is not None  # narrowed by `trusted`
+            if self._confirmedStopAt(capture):
+                # ZUPT: at zero velocity the accel is pure gravity, so this is a
+                # measurement, not an estimate. Snap, do not blend -- a blend
+                # would leave the gyro drift decaying over seconds when we have
+                # the true value in hand right now.
+                predicted = accelPitch
+                self._stopSum += accelPitch
+                self._stopSamples += 1
+            else:
+                alpha = dt / (self._tauS + dt)
+                predicted = predicted + alpha * (accelPitch - predicted)
+
+        self._pitch = _clampPitch(predicted)
+        if trusted:
+            assert accelPitch is not None  # narrowed by `trusted`
+            self._trackDisagreement(accelPitch, capture)
+
+    def reset(self) -> None:
+        """Drop the attitude estimate (e.g. the sensor went absent).
+
+        The ZUPT bias survives: it is a property of how the board is BOLTED IN,
+        which an unplug does not change, and re-converging it costs another five
+        stoplights.
+
+        The gyro RATE bias does NOT survive (US-779): it is a property of the
+        powered die, not of the bolting, and a re-plugged chip is re-powered --
+        it can come up with a different bias, or latched. The old value is no
+        evidence about the new power-on.
+        """
+        self._pitch = None
+        self._lastCapture = None
+        self._endStop()
+        self._stopSince = None
+        self._lastSpeedCapture = None
+        self._disagreeSince = None
+        self._gyroBiasObs.clear()
+        # The trust history describes the attitude we just discarded, so it goes
+        # with it -- unlike the MOUNT TILT bias in ``_stopObs``, which survives on
+        # purpose because it is a property of how the board is BOLTED IN.  (A-48:
+        # two biases share one word.  ``_gyroBiasObs`` above is the gyro RATE bias
+        # and is per-run, so it IS cleared here -- do not read the line above as a
+        # counter-example to this comment.)
+        self._accelIgnoredLast = False
+        self._accelTrustWindow.clear()
+
+    # -- internals -------------------------------------------------------------
+    def _trackDisagreement(self, accelPitch: float, capture: float) -> None:
+        """Open or close the disagreement window on a TRUSTED reading (US-749).
+
+        Only trusted readings are evidence: an untrusted one leaves the window as
+        it was, neither confirming nor clearing it. A ZUPT snap sets pitch to the
+        accel measurement, so a confirmed stop always closes the window.
+        """
+        assert self._pitch is not None  # set by the caller's update
+        if abs(self._pitch - accelPitch) > self._implausibleBoundRad:
+            if self._disagreeSince is None:
+                self._disagreeSince = capture
+        else:
+            self._disagreeSince = None
+
+    def _accelIsNearOneG(self, vec: tuple[float, float, float]) -> bool:
+        """Whether |accel| sits inside the trust band around standard gravity."""
+        magnitudeG = math.sqrt(sum(c * c for c in vec)) / STANDARD_GRAVITY_MS2
+        return abs(magnitudeG - 1.0) <= self._trustBand
+
+    @staticmethod
+    def _pitchRateFromGyro(gyro) -> float | None:
+        """Nose-up pitch rate, rad/s, from a vehicle-frame angular rate.
+
+        SIGN, derived rather than guessed, because it must agree with the accel
+        tilt convention or the two halves of the filter fight each other. The
+        frame is right-handed (forward x left = up), so a point at the nose
+        moves as ``omega x forward = omega_left * (left x forward) =
+        -omega_left * up``: the nose rises when the LEFT-axis rate is NEGATIVE.
+
+        NOTE on mounts: this is correct only if the caller has already put the
+        rate in VEHICLE coordinates. It did not until US-708 -- the board's
+        index 1 is the FORE-AFT axis, not the left one, so this was integrating
+        ROLL RATE as pitch. The fix is one constant applied at the bridge's
+        boundary (``imu_state_bridge.IMU_BODY_FRAME``); nothing here changed, and
+        nothing here should: a second copy of the mounting is the defect, not the
+        remedy. That constant is a physical ROTATION (determinant +1), which
+        every realizable remount is -- an axis map that MIRRORS the board is not
+        a mount, and it would silently invert this rate rather than fail.
+        """
+        vec = _finiteVec3(gyro)
+        if vec is None:
+            return None
+        return -vec[1]
+
+    def _confirmedStopAt(self, capture: float) -> bool:
+        """Whether ``capture`` falls inside a confirmed zero-velocity window.
+
+        Requires zero speed to have been OBSERVED across a span longer than the
+        gate -- not merely that the gate's worth of time has ELAPSED since one
+        zero reading. Elapsed time after a single sample is not evidence the car
+        stayed still; it is evidence only that we stopped being told.
+        """
+        if self._stopSince is None or self._lastSpeedCapture is None:
+            return False
+        if capture - self._lastSpeedCapture > self._speedMaxAgeS:
+            return False
+        return (self._lastSpeedCapture - self._stopSince) > self._minStopS
+
+    def _expireStaleStop(self, capture: float) -> None:
+        """Retire a stop whose speed evidence has gone stale (link drop)."""
+        if self._lastSpeedCapture is None:
+            return
+        if capture - self._lastSpeedCapture > self._speedMaxAgeS:
+            self._endStop()
+            self._lastSpeedCapture = None
+
+    def _endStop(self) -> None:
+        """Close the current stop, committing ONE averaged bias observation.
+
+        One observation per STOP, not per sample: Spool's mean is over stops, and
+        per-sample accumulation would let a single long red light outvote a whole
+        drive's worth of stoplights.
+        """
+        self._stopSince = None
+        if self._stopSamples > 0:
+            self._stopObs.append(self._stopSum / self._stopSamples)
+        self._stopSum = 0.0
+        self._stopSamples = 0
+        self._commitGyroStop()
+
+    def _accumulateStopGyro(self, gyro, capture: float) -> None:
+        """Add one RAW gyro sample to the current stop's rate sum (US-779).
+
+        Raw, not corrected: the stop measures the bias itself, so subtracting the
+        previous estimate first would make each stop measure only the change.
+        """
+        if not self._confirmedStopAt(capture):
+            return
+        vec = _finiteVec3(gyro)
+        if vec is None:
+            return
+        for i in range(3):
+            self._gyroStopSum[i] += vec[i]
+        self._gyroStopSamples += 1
+
+    def _commitGyroStop(self) -> None:
+        """Close the stop's rate observation: learn it, or reject it as a latch."""
+        if self._gyroStopSamples == 0:
+            return
+        n = self._gyroStopSamples
+        obs = (self._gyroStopSum[0] / n, self._gyroStopSum[1] / n, self._gyroStopSum[2] / n)
+        self._gyroStopSum = [0.0, 0.0, 0.0]
+        self._gyroStopSamples = 0
+        peak = max(abs(c) for c in obs)
+        if peak >= GYRO_BIAS_MAX_RAD_S:
+            # Rejected, and loudly: absorbing this would subtract the A-34 latch
+            # and hide it from the plausibility guard.
+            self._gyroBiasRejected += 1
+            logger.warning(
+                "imu gyro bias: stop REJECTED as latched-magnitude standing rate "
+                "(peak %.4f rad/s >= %.2f; roll=%.4f pitch=%.4f yaw=%.4f) -- not learned",
+                peak,
+                GYRO_BIAS_MAX_RAD_S,
+                *obs,
+            )
+            return
+        self._gyroBiasObs.append(obs)
+        logger.info(
+            "imu gyro bias: learned at stop (roll=%.5f pitch=%.5f yaw=%.5f rad/s, %d stops)",
+            *obs,
+            len(self._gyroBiasObs),
+        )
+
+    def _correctGyro(self, gyro):
+        """Subtract the learned rate bias; the gyro unchanged when none is learned."""
+        bias = self.gyroBiasRadS
+        if bias is None:
+            return gyro
+        vec = _finiteVec3(gyro)
+        if vec is None:
+            return gyro
+        return (vec[0] - bias[0], vec[1] - bias[1], vec[2] - bias[2])
+
+
+def _clampPitch(pitchRad: float) -> float:
+    """Hold the integrated attitude inside +/- vertical."""
+    return max(-_MAX_PITCH_RAD, min(_MAX_PITCH_RAD, pitchRad))

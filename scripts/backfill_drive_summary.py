@@ -11,7 +11,7 @@
 #                      short-circuited and zero rows landed.  This script
 #                      walks connection_log for drive_start events without a
 #                      corresponding drive_summary row, then reconstructs
-#                      ambient_temp_at_start_c / starting_battery_v /
+#                      intake_air_temp_at_start_c / starting_battery_v /
 #                      barometric_kpa_at_start from realtime_data using the
 #                      earliest non-NULL reading per parameter within a
 #                      bounded window after drive_start.  Idempotent --
@@ -96,7 +96,7 @@ DEFAULT_WINDOW_SECONDS: int = 600  # 10 min covers a typical short drive
 # Parameter-name -> drive_summary column mapping.  Aligned with
 # src.pi.obdii.drive_summary._PARAM_* constants.
 _PARAM_TO_COLUMN: dict[str, str] = {
-    'INTAKE_TEMP': 'ambient_temp_at_start_c',
+    'INTAKE_TEMP': 'intake_air_temp_at_start_c',
     'BATTERY_V': 'starting_battery_v',
     'BAROMETRIC_KPA': 'barometric_kpa_at_start',
 }
@@ -131,7 +131,7 @@ class BackfillRow:
 
     driveId: int
     startIso: str
-    ambientTempAtStartC: float | None
+    intakeAirTempAtStartC: float | None
     startingBatteryV: float | None
     barometricKpaAtStart: float | None
 
@@ -255,7 +255,7 @@ def reconstructMetadata(
     return BackfillRow(
         driveId=drive.driveId,
         startIso=drive.startIso,
-        ambientTempAtStartC=metadata['ambient_temp_at_start_c'],
+        intakeAirTempAtStartC=metadata['intake_air_temp_at_start_c'],
         startingBatteryV=metadata['starting_battery_v'],
         barometricKpaAtStart=metadata['barometric_kpa_at_start'],
     )
@@ -270,14 +270,14 @@ def insertBackfillRow(
         """
         INSERT INTO drive_summary
             (drive_id, drive_start_timestamp,
-             ambient_temp_at_start_c, starting_battery_v,
+             intake_air_temp_at_start_c, starting_battery_v,
              barometric_kpa_at_start, data_source)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
             row.driveId,
             row.startIso,
-            row.ambientTempAtStartC,
+            row.intakeAirTempAtStartC,
             row.startingBatteryV,
             row.barometricKpaAtStart,
             'real',
@@ -319,7 +319,7 @@ def runBackfill(
                 "drive_id=%s | start=%s | ambient=%s | battery=%s | baro=%s",
                 row.driveId,
                 row.startIso,
-                row.ambientTempAtStartC,
+                row.intakeAirTempAtStartC,
                 row.startingBatteryV,
                 row.barometricKpaAtStart,
             )

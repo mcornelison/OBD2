@@ -17,7 +17,114 @@ This document describes the system architecture, technology decisions, and desig
 > behavior + invariants). −35% file size; no current-system content removed. (§11
 > Deployment was reviewed — it's all current reference, nothing extracted.)
 
-**Last Updated**: 2026-06-01 (Sprint 44 / V0.28.1 — new §5 "V0.28.1 — B-076
+**Last Updated**: 2026-07-04 (Sprint 55 / V0.29.9 — F-104 Server-Side Analytics
+Authority spine doc-sync (US-457, Rule-10). New **§10.7.3 "Server-Side Analytics
+Authority (F-104)"** formalizes §10.7's B-104 Step-1 principle into the F-104
+**boundary rule** (a fact is server-authoritative iff the server can reproduce it
+from synced raw → server sole-writer, Pi does not transmit it; irreproducible →
+raw, Pi emits first-class; "no derived state the Pi transmits"; B-076 = schema,
+F-104 = authority + writers). Documents the LANDED identity spine (US-448): the
+canonical `drives` table + server-minted `drive_id` (AUTOINCREMENT anchored by
+`UNIQUE(source_device, source_drive_id)` + upsert-by-natural-key mint, never
+renumbers) **subsuming** `drive_summary.id` (not a 5th orthogonal id; `v0018`
+explicit-id insert keeps `drive_statistics.summary_id` FKs numerically valid),
+Pi ids demoted to advisory `source_drive_id`, and the `attribution_anomaly`
+tripwire re-point (keeps DETECTING on raw `realtime_data.drive_id` — backstop not
+blinded — anomaly OUTPUT maps to canonical identity). The **sole-writer harness +
+owned-table registry** (the EXISTING harness, not a parallel one) is documented as
+the **target** with an honest **Implementation-status** note: US-449 sole-writer
+formalization is BLOCKED (BL-017 — live `/analyze` → `basic.py::computeDriveStatistics`
+dual-write of `drive_statistics`, last-writer-wins), and US-450/451/452 sit
+downstream of that Atlas ruling (idempotency proof landed). LANDED schema
+normalization enumerated: D-7 `power_log`+`pi_state` raw-sync (US-453/`v0019`),
+D-3 O2 name canonicalization (US-454/`v0020`), D-4 unit-string canonicalization to
+python-obd native (US-455/`v0021`), D-5 `static_data` honest-empty (US-456).
+Stale-ref audit: no now-false "Pi transmits derived X" prose (§10.7 already states
+the boundary rule; §5's Pi-`drive_id`→`source_id` is CURRENT — US-451 collapse not
+landed — deliberately left). Also added `[[ssot-design-pattern]]` worked example #4
+(server-analytics authority as the derived-data boundary) +
+`regression_manifest.json` F-082 gains Sprint 55 (US-452/454/455/456 changed its
+data-profile items; F-104/F-075 already registered by Marcus). BENCH-ONLY,
+Rule-10 per Atlas A-11. Docs-only; no `src/` change; full detail in
+`specs/arch/architecture-changelog.md`.)
+Prior: 2026-07-04 (Sprint 54 / V0.29.8 — OBD capture-reliability +
+power-hygiene doc-sync (US-447, Rule-10). New **§3.5 "OBD Connection Threading
+Model — serialization + epoch fence" (US-441 / F-117 / A-17)** [authored in-sprint
+by US-441 under its bound Rule-10 AC; registered here + in the changelog]:
+python-obd's connection wraps ONE non-thread-safe serial port driven from multiple
+threads (the lifecycle connect/query timeout daemons left running on timeout per
+TD-036, the US-301 reconnect heartbeat, the realtime logger). The **A-17 defect**
+was the V0.27.1 lock guarding only `connect()` while the logger read
+`self.connection.obd.query()` *directly* → its reads raced an orphaned timed-out
+daemon on the one port → interleaved ELM327 frames → **0 rows on every connect**.
+The model: THE single serialization lock `ObdConnection._ioLock` lives on the
+**wrapper** (not `lifecycle.py`) and guards every `self.obd` access
+(connect/query/close/probe); every caller — the daemons, the heartbeat, AND the
+logger's `queryParameter`/`_queryViaDecoder` (now `connection.query()`, not
+`.obd.query()`) — goes through it. An **epoch fence** (`_generation` bumped per
+connect-success + disconnect, captured via `activeGeneration()`) bars a superseded/
+orphaned connect (refuses re-open) or query (raises `ObdConnectionSupersededError`,
+never touches the port); live callers pass no generation and are never fenced.
+TD-036 no-boot-hang preserved (only `.obd` *access* serialized, daemon + wall-clock
+shape untouched); daemons thread-named `obd-connect-gen<N>`/`obd-query-<cmd>-gen<N>`
+for observability. **Battery Health Log §** gains a "Sprint 54 power-path additions"
+para (US-444/F-051 `SlowDrainDetector` HEALTH verdict in `UpsMonitor` + US-445/F-054
+boot-time VCELL HEALTH verdict → `boot-battery-test` state slot — both battery-health
+signals, neither writes the drain-event-shaped `battery_health_log`). US-432/F-049
+(idle-poll cold-boot RPM-mask force-read) is a read-path fix on the existing OBD
+connection with no new arch surface (documented in-story); US-442 (drain-row
+annotation) + US-443 (data-profile triage) changed no runtime arch.
+`regression_manifest.json`: F-117/F-051/F-054 pre-registered by Marcus, F-049 gains
+Sprint 54. Docs-only; full detail in `specs/arch/architecture-changelog.md`.)
+Prior: 2026-07-02 (Sprint 53 / V0.29.7 — bench-only bug/ops rollup
+doc-sync (US-440, Rule-10): new **§10.7.2 "Derived motion signals + cross-drive
+comparison (F-106/F-069)"** — server-side per-drive `drive_derived_signals` (peak
+accel/decel m/s², estimated distance km via trapezoidal ∫speed·dt) computed by
+`derived_signals_compute.py`, wired as the 3rd per-drive compute in the recompute
+CLI + nightly batch, plus the read-only `compare_drives` CLI (F-069) over the
+already-computed analytics tables. §10.7 Compute-path list + on-demand-CLI updated
+for the 3rd compute; `drive_summary.profile_id` now populated from `realtime_data`
+(US-437 N-8, preserve-NULL/never-clobber); Pi-side retirement scope gains
+`ensureBatteryLogRetired()` (US-437 N-4). **Battery Health Log §** gains the
+MAX17048 SoC% calibration protocol + the config-driven
+`pi.hardware.upsMonitor.socColdStartWindowSeconds` cold-start window
+(US-431/F-048, `scripts/calibrate_max17048.py`). US-433/US-434 were verify-only
+(no code, no schema change → no doc change). Docs-only; full detail in
+`specs/arch/architecture-changelog.md`.)
+Prior: 2026-07-02 (Sprint 52 / V0.29.6 — BL-014/BL-015 landings +
+display hardening doc-sync (US-430, Rule-10): **Battery Health Log §** re-pinned
+to `start_vcell_v`/`end_vcell_v` (volts) + dedicated `start_soc_pct`/`end_soc_pct`
+(SoC%) — the legacy misnamed `start_soc`/`end_soc` dropped in one forward-only
+both-tier migration (server `v0016`); register SoC% recorded via the bench drain
+CLI under the US-234 cold-start guard; the retired-in-SS-T5 orchestrator drain
+consumer documented as removed (US-427/TD-058). New **"Power-mode SSOT" §** in
+the System Status card (US-421/F-098): `PowerModeProvider` reads static config
+`pi.power.mode ∈ {car,wall,unknown}` (honest `unknown`, config→GPIO seam). F-8
+voltage-is-not-percent trap re-pinned to `*_vcell_v`/`*_soc_pct`. Kiosk-unit
+install contract (US-428/F-103) documented in-story. Docs-only; full detail in
+`specs/arch/architecture-changelog.md`.)
+Prior: 2026-07-01 (Sprint 50 / V0.29.4 — new **§10.8 EDR Sensor Bus
+Architecture**: **§10.8.1** F-110 `SampleBus` recap (Sprint 46 / V0.29.0) +
+**§10.8.2** EDR sensor reader + raw-sensor persistence (F-113/F-114) — additive
+`raw.imu.*`/`raw.light.*` LOSSY topics on the F-110 bus (one `seq` per IMU
+burst), sibling `edr_imu_sample`/`edr_light_sample` tables authored once in the
+`src/common/edr/sensor_schema.py` versioned contract (A-4 anti-divergence),
+always-on decimated persist (`persistHz` 2 since US-796-b, was 25) + rolling-window retention
+(`retentionDays` 7), `drive_id` NULL-when-no-drive latch, graceful-absent probe,
+ships dark behind `pi.sensors.*` under `pi.bus.enabled`. Rule-10 in-sprint per
+Atlas's 2026-06-30 EDR ADR §5 (US-415). BENCH-validated (US-411 golden-master +
+absent-path); live IRL acceptance (`i2cdetect` 0x29/0x69 + connect-when-wired)
+pending the first V0.29.4 Pi deploy.)
+Prior: 2026-06-29 (Sprint 47 / V0.29.1 — F-107 A-9 closure, two new
+subsections under §10.7.1: **§10.7.1.1** Root-1 deploy-invariant closure
+(US-389 — single-instance guard ⇄ `RuntimeDirectory` matched-pair tested deploy
+invariant + version stamp) and **§10.7.1.2** Root-2 guaranteed-close (US-388 —
+deadline-anchored close + off-tick `DriveDetector.evaluateTimeouts` driven by
+the orchestrator loop, per Atlas's 2026-06-29 C-α…δ shape ruling). Both per the
+2026-05-18 design-gate governance rule (PM Rule 10 / C-4 DoD); A-9 stays OPEN
+until the live IRL re-gate (short / back-to-back / key-on-after-missed-close /
+deploy-double-start) passes.)
+Prior: 2026-06-01 (Sprint 44 / V0.28.1 — new §5 "V0.28.1 — B-076
 first slice" subsection documenting the normalized `ecu` identity dimension
 (pair-keyed on (ecu_signature, cal_signature); immutability carve-out),
 `vehicle_info.ecu_id` NOT NULL FK + transitional-snapshot coherence guard, and
@@ -123,7 +230,7 @@ Prior: 2026-05-19 (SS-T9 — design-gate reconciliation:
 |--------|---------|-------------------|
 | OBDLink LX (MAC: `00:04:3E:85:0D:FB`, FW 5.6.19) | Vehicle data acquisition | Bluetooth (ELM327 protocol) |
 | NHTSA API | VIN decoding | HTTPS REST API |
-| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.10:11434) -- GPU-accelerated, never local on Pi |
+| Ollama on Chi-Srv-01 | AI recommendations | HTTP (10.27.27.120:11434) -- GPU-accelerated, never local on Pi |
 
 ### Hardware
 
@@ -135,6 +242,46 @@ Prior: 2026-05-19 (SS-T9 — design-gate reconciliation:
 | Database | SQLite (WAL mode) | Local file database |
 | Power | Geekworm X1209 UPS HAT | 18650 battery backup |
 | Monitoring | I2C | Battery voltage/SOC/charge-rate via MAX17048 fuel gauge at 0x36 |
+
+**⚠️ GPIO6 OWNERSHIP (US-668, 2026-09-02) -- read this before touching the PLD.**
+`eclipse-powerwatch.service` **OWNS BCM GPIO6 exclusively.** No other process may
+open it. `eclipse-obd.service` **SUBSCRIBES** to a published state
+(`states/power-source.json`, `src/pi/power/power_source_pubsub.py`) and never
+touches the line.
+
+*The defect this replaced:* both units constructed `PldSensor` on GPIO6. A GPIO
+line is claimed exclusively per-process, so the loser got `EBUSY`, `_dev` latched
+to `None`, and `isAvailable` went **permanently** False -- `PldSensor` has no
+re-open path. Three separately-filed punch-list items had that single cause:
+`power.source` reading unknown, the battery-health verdict reading stale, and
+`battery_health_log` frozen since 2026-05-16.
+
+*Why ownership is DECLARED, not discovered:* neither unit orders against the
+other (`eclipse-powerwatch` has `After=local-fs.target`; `eclipse-obd` has
+`After=network.target bluetooth.target`), so the loser of that race is **not
+stable between boots**. powerwatch owns it because it carries the graceful
+poweroff and sync custody -- a safety interlock whose hardware access depends on
+another service's start order is not an interlock.
+
+🔴 *The safety property:* a **missing, stale or corrupt** publication resolves to
+**unavailable**, never to "external power present". Silence is not good news: if
+absence read as power-present, a dead publisher would be indistinguishable from a
+healthy car and the graceful shutdown would never fire. The publisher runs on its
+**own thread** so a slow filesystem write can never delay the interlock.
+
+*`PldSensor` now discriminates* `contended` (EBUSY -- someone else has it) from
+`absent` (ENODEV -- it is not there). Those demand opposite fixes, and a sensor
+that cannot tell them apart sends every operator down the wrong one.
+
+⚠️ **`pi.power.mode` WAS REMOVED by US-668** (CIO 2026-09-02: *"if I can see the
+screen then the power is on, it doesn't matter if it is car or wall, it is on"*).
+It was operator-declared, `card_state_emitter` was its only consumer, and no
+shutdown or lifecycle policy branched on it. `PowerModeProvider` is deleted.
+**`power.source` is unaffected and must not be conflated with it** -- source is
+SENSED, and it answers the one power question the display cannot answer by
+existing: external power, or UPS battery? During the 2026-08-31 UPS test the
+panel stayed lit for the whole time the Pi ran on battery toward a graceful
+poweroff.
 
 **Power-source detection (SSOT).** The power-source fact ("is external/USB-C
 power present?") has exactly one authoritative provider: `PowerSourceProvider`
@@ -154,6 +301,29 @@ VCELL sag while external power was physically connected). Do not reintroduce
 any second power-source acquisition path (SSOT invariant; Atlas design gate).
 The retired method is retained in the codebase as a `NotImplementedError`
 tripwire so any future reintroduction fails loudly at the call site.
+
+**UI consumer wired (US-502, Sprint 69 / V0.29.24).** The "UI consumes this one
+provider" half of the design above was specified but never built: the System-
+Status power tile read `PowerMonitor.readPowerStatus()`, whose reader is never
+configured in the orchestrator, so `power.source` was permanently `unknown` —
+tile "unavailable", header bolt gray — while the real fact flowed to
+`power_log` through the B1 `_PowerSourceUiBridge`. `CardStateEmitterMixin.
+_gatherPowerSource` now reads `PowerSourceProvider` directly (one fact, one
+provider) and `PowerMonitor` is no longer consulted for it. Two load-bearing
+details:
+
+- **Policy split on uncertainty.** `PowerSourceProvider.isAvailable` (new)
+  exposes whether the PLD line is readable at all. The ShutdownSequencer keeps
+  the non-bricking direction (unreadable ⇒ treat as power present); the DISPLAY
+  must not, because that paints a confident `external` off a dead GPIO — it
+  resolves unreadable/raising ⇒ `unknown` ⇒ the tile's honest "unavailable"
+  branch. Same fact, one provider, two policies — the SSOT pattern, not a
+  second acquisition path.
+- **Lazy read, per emit.** The card emitters are constructed in
+  `_initializeAllComponents`; `_powerSourceProvider` does not exist until
+  `_startHardwareManager` runs later in `runLoop`. A reference captured at
+  emitter-init time is `None` for the life of the process (dead tile, green
+  tests), so the provider is fetched at emit time.
 
 ---
 
@@ -285,9 +455,8 @@ unit-file persistence).
 
 **Pairing prerequisites.** Pairing is a **separate, one-time**
 operational step — the OBDLink LX uses Secure Simple Pairing (SSP) with
-passkey confirmation, NOT the legacy "PIN 1234" flow. bluez's default
-`NoInputNoOutput` agent handles most SSP "Just Works" devices, but the
-LX firmware sends a numeric passkey and bluez prompts:
+passkey confirmation, NOT the legacy "PIN 1234" flow. The LX firmware
+sends a numeric passkey and bluez prompts:
 
 ```
 Confirm passkey NNNNNN (yes/no):
@@ -296,9 +465,52 @@ Confirm passkey NNNNNN (yes/no):
 `bt-agent -c NoInputNoOutput` does not intercept this — `bt-device`'s
 internal agent grabs the callback first and prompts to its own stdin. So
 non-interactive pairing needs a `pexpect`-driven bluetoothctl session
-that auto-confirms the passkey. That is what `scripts/pair_obdlink.sh`
-does, via a bash wrapper that execs Python+pexpect inside a heredoc —
-keeping shellcheck-clean arg parsing outside the pexpect block.
+that auto-confirms the passkey. That is `scripts/pair_obdlink.sh`
+(shellcheck-clean arg parsing + preflight) delegating to
+`scripts/pair_obdlink_driver.py` (the session itself).
+
+**The pairing driver contract (2026-07-31 hotfix, BL-025 half 2).** The
+script was **unable to pair at all** from the Trixie/bluez upgrade until this
+fix, for two independent reasons. Both are now regression-pinned in
+`tests/pi/obdii/`:
+
+- **Prompt.** bluez 5.82 prompts `[bluetoothctl]>` — a `>`, not the legacy
+  `#` — and wraps it in ANSI: the captured bytes are
+  `\x1b[0;94m[bluetoothctl]> \x1b[0m`. The old pattern `\[.+\]#` therefore
+  timed out on the *first* `expect()`, before any command was sent. Note the
+  escape sequence itself contains a `[`, so the greedy `.+` was wrong twice
+  over — it would span from the escape into the prompt even on a `#` box. The
+  driver's `PROMPT_PATTERN` forbids `[`/`]` inside the bracket body and
+  accepts either terminator, so old and new bluez both work.
+- **Agent capability.** The script registered `agent NoInputNoOutput`
+  ("just works") while waiting for a `Confirm passkey` line that **only a
+  display-capable agent produces** — the confirm branch was dead code and SSP
+  could fail with `org.bluez.Error.AuthenticationFailed`. The agent is now
+  `DisplayYesNo` (the mode the CIO's phone pairs with).
+
+Three further properties of the driver are contract, not implementation
+detail:
+
+- **Success means a DURABLE bond, not a link.** `Pairing successful` is
+  bluez's word for the connection. The driver re-reads `info <MAC>` after
+  `trust` and **fails** unless `Paired`+`Bonded`+`Trusted` are all yes,
+  because the in-car requirement is a bond that survives a reboot and
+  reconnects unattended. An unread flag is never rendered as a positive.
+- **Idempotent without `--force`.** An existing durable bond is reported and
+  left alone. Re-pairing requires the dongle *powered* (engine on), so a
+  reflexive `remove` on a working bond can strand the car. A *partial* bond is
+  cleared first — that half-state is what makes `pair` fail with
+  `AlreadyExists`.
+- **Echo anchoring.** bluetoothctl redraws its prompt several times during
+  startup, so a naive `sendline(); expect(PROMPT)` matches a **stale** prompt
+  and reads terminal padding back as the command's output — a silent wrong
+  answer rather than a hang. Each command waits for its own pty echo first.
+
+The session lives in an importable module rather than a `<<'PYEOF'` heredoc
+specifically so it can be tested: heredoc code cannot be imported, which is
+why both defects above shipped undetected. `tests/pi/obdii/test_pair_obdlink_driver.py`
+drives the real state machine against a bluetoothctl transcript **captured
+verbatim from the Pi**, ANSI escapes included.
 
 **Pair-mode re-trigger UX (operator-visible).** The LX drops out of
 pair mode ~30s after each failed attempt. Solid blue LED = discoverable.
@@ -310,7 +522,42 @@ power-cycle the dongle before re-running the pair script. Keep within
 reboot — bluez stores it under `/var/lib/bluetooth/<adapter>/<mac>/`.
 `scripts/pair_obdlink.sh` issues `trust <MAC>` after `pair`, which is
 what enables the adapter to reconnect without user prompts on future
-boots.
+boots. Measured state 2026-07-31: `devices Paired` on adapter
+`88:A2:9E:84:46:1D` returned **empty** — there is currently no bond of any
+kind on this Pi, which is the second half of BL-025 and why the engine-on
+re-pair is still owed.
+
+**Radio soft-block survival — the layer below everything else (BL-025).**
+Before a bond or an rfcomm bind can matter, the adapter has to be *unblocked*.
+`systemd-rfkill` **persists rfkill soft-block state across reboots** under
+`/var/lib/systemd/rfkill/<id>:bluetooth` and replays it at every boot. This Pi
+carried a saved `[1]` there from ~2026-07-03, so Bluetooth came up soft-blocked
+on every single boot and OBD capture recorded **zero rows for ~4 weeks** — while
+every layer above reported an honest "no adapter". The lesson is the diagnostic
+order: *radio → bond → bind → connect*, and the four-week cost came from
+starting at the top.
+
+`deploy/eclipse-rfkill-unblock.service` is the standing safety net
+(`Type=oneshot`, `RemainAfterExit=yes`, `ExecStart=/usr/sbin/rfkill unblock all`).
+Two details are load-bearing rather than stylistic:
+
+- **`After=systemd-rfkill.service`** — that unit is what *restores* the saved
+  block. Unblocking before it runs just lets it re-block afterwards: a green
+  unit on a dark adapter.
+- **`unblock all`, not `unblock bluetooth`** — the saved-block mechanism is
+  per-radio and the WiFi phy can acquire one identically. On this Pi WiFi is
+  also the remote-access path, so leaving a sibling radio blocked would move the
+  outage rather than end it.
+
+Installed + enabled by `step_install_rfkill_unblock` in `deploy-pi.sh` on
+**every** deploy (not gated behind `--init`, same posture as
+`step_reassert_obd_mac`: a block can be re-saved at any shutdown, so a drifted
+Pi self-heals on the next ordinary re-deploy). The step additionally clears the
+live block and zeroes any stale saved one, closing the window between deploying
+and the next reboot. The unit is registered first in
+`src/pi/ops/unit_manifest.py` START order, so `obdctl status all` surfaces it
+ahead of the units that depend on it. Origin RCA of the saved block is tracked
+separately (BL-025 #4 / US-513); this net stands regardless of the origin.
 
 **RFCOMM bind reboot-survival.** While the bluez bond is persistent,
 `rfcomm bind 0 <MAC> 1` state is NOT — it's cleared on every boot. Two
@@ -348,6 +595,159 @@ Install via `deploy/install-rfcomm-bind.sh` (runs on the Pi) or let
 answered on ISO 9141-2 K-line @ 10,400 bps via the LX; python-obd
 reported `Car Connected | ISO 9141-2 | ELM327 v1.4b` on the first live
 handshake. This matches the protocol documented in `specs/obd2-research.md`.
+
+### 3.5 OBD Connection Threading Model — serialization + epoch fence (US-441 / F-117 / A-17)
+
+`python-obd`'s connection object wraps **one serial port and is NOT
+thread-safe**. eclipse-obd drives that connection from **multiple threads**:
+
+- the lifecycle's bounded connect/query **timeout daemons**, which the caller
+  stops **waiting** on at the cap (TD-036 / US-244 anti-boot-hang —
+  `_runInitialConnectWithTimeout`, `_queryWithTimeout`). Since US-690 an
+  abandoned **connect** is also **cancelled** (see "One retry authority" below);
+  the thread lives on only until its in-flight handshake returns;
+- the **US-301 reconnect heartbeat** daemon (a second connect path);
+- the **realtime logger**, which reads `ObdConnection.query()` on the capture
+  loop thread.
+
+**The defect (A-17, root-caused live 2026-07-03).** The V0.27.1 lock guarded
+only `connect()`. The realtime logger read `self.connection.obd.query()`
+*directly*, so its reads raced an **orphaned** (timed-out, left-running)
+connect/query daemon on the one serial port → interleaved ELM327 frames →
+`elm327 __read | Device disconnected while reading` → **0 rows on every
+connect**. (A raw single-threaded `python-obd` session on the same port read
+RPM flawlessly — proving the bug is eclipse-obd's concurrency, not the
+dongle/ECU/K-line/pairing.)
+
+**The model (US-441).** THE single serialization lock — `ObdConnection._ioLock`
+— lives on the **wrapper** (`obd_connection.py`), NOT on `lifecycle.py`, and
+guards **every** access to the underlying `self.obd`:
+
+| Access | Path |
+|--------|------|
+| connect | `connect()` holds `_ioLock` for the whole attempt (ctor + probe) |
+| query | `query()` holds `_ioLock` around `self.obd.query(cmd)` |
+| close | `disconnect()` holds `_ioLock` around `self.obd.close()` |
+| probe | US-199 supported-PID probe runs inside the held connect lock |
+
+**Every caller goes through the wrapper** so no two threads ever drive the
+port at once: the lifecycle connect/query daemons, the US-301 heartbeat's
+`connectFn`, the realtime logger's reads (`logger.py` `queryParameter` /
+`_queryViaDecoder`), **and the DTC read/clear paths (`DtcClient` — Mode 03 /
+07 / 04, including the US-404 KOEO connect-edge read) — all call
+`connection.query()`, never raw `connection.obd.query()`.** US-474 (F-117/A-17)
+removed the last `getattr`-based raw fallback in `DtcClient._serializedQuery`
+and made `query()` a **typed member of the `ObdConnectionLike` Protocol**
+(`obd` stays exposed as the python-obd facade but is explicitly *not* the DTC
+read path), so the raw-bypass hole that killed capture — a KOEO DTC read
+interleaving with the logger's read on the one non-thread-safe port — is now
+closed at the type level, not just by convention.
+
+**Epoch fence (orphaned-daemon reconciliation).** A monotonically increasing
+**generation** (`ObdConnection._generation`, guarded by `_ioLock`) is bumped on
+each **successful connect** and each **disconnect**, so a live connection
+carries a stable generation between the two. A bounded timeout daemon captures
+the generation via `activeGeneration()` *before* it spawns and passes it back:
+
+- `connect(callerGeneration=…)` — a superseded connect (a newer connection
+  already won while this orphan was blocked) **refuses to re-open** and returns
+  the current connectedness.
+- `query(command, callerGeneration=…)` — a superseded read raises
+  `ObdConnectionSupersededError` and **never touches the port**.
+
+**Live callers pass no generation and are never fenced** — the realtime logger
+always reads the *current* connection. Thus a timed-out daemon that finally
+wakes cannot corrupt (re-open / read) a connection a newer owner now holds,
+even though it cannot be force-killed.
+
+**TD-036 preserved.** Only `.obd` *access* is serialized; the daemon-launch +
+wall-clock-timeout shape (why boot never hangs) is untouched. A wedged connect
+daemon holding `_ioLock` cannot hang boot because `_initializeConnection`
+returns on its own wall-clock cap regardless, and a later query daemon that
+blocks on the lock is itself wall-clock-bounded (and daemon=True, reaped at
+exit).
+
+**Observability.** Connection/query daemons are thread-named with their
+generation (`obd-connect-gen<N>`, `obd-query-<cmd>-gen<N>`); the heartbeat is
+`obd-reconnect-heartbeat`. `isConnectInFlight()` reflects `_ioLock` (any OBD
+I/O in flight) so the heartbeat still skips a tick when a connect is already
+happening.
+
+Code: `src/pi/obdii/obd_connection.py` (`_ioLock`, `_generation`,
+`activeGeneration`, `query`), `orchestrator/lifecycle.py`
+(`_runInitialConnectWithTimeout`, `_queryWithTimeout`, `_resolveGeneration`),
+`data/logger.py` (serialized reads), `obdii/dtc_client.py` (`ObdConnectionLike`
+Protocol + `_serializedQuery` — all DTC reads via the locked `query()`).
+Contract tests: `tests/pi/obdii/test_obd_connection_thread_safety.py`
+(real-concurrency: logger read path + orphaned daemon on the same wrapper, no
+interleaving) and `tests/pi/obdii/test_dtc_connect_edge_concurrency.py`
+(US-474 / F-117 GAP-1: a real `DtcClient` KOEO read + a logger read serialize
+through `_ioLock` on one faked non-thread-safe port; reverting the lock makes
+it RED).
+
+**One retry authority (US-690).** The epoch fence only moves when a connection
+is *made* or *torn down*, so it cannot stop an orphan that keeps **failing**:
+with the ECU asleep the generation never changes, and a timed-out
+`connect()` used to run its whole retry budget beside the loop that replaced
+it. The live V0.29.43 trace recorded that as two interleaved `retry_count`
+series in `connection_log`. Three rules now hold:
+
+- **A cap that abandons also cancels.** `ObdConnection.cancelPendingConnects()`
+  bumps a cancel epoch (its own lock, never `_ioLock`, so cancelling cannot
+  block behind the slow handshake it is giving up on). A connect call captures
+  the epoch at entry and returns False before its next attempt or backoff once
+  it moves. An attempt already inside `obd.OBD()` cannot be interrupted and
+  finishes; a link it establishes is kept. Both caps call it: the initial-
+  connect cap (`_runInitialConnectWithTimeout`) and the heartbeat's per-tick
+  cap (`runReconnectHeartbeat(cancelFn=…)`).
+- **No nested retry loops.** A loop that owns a count calls a single-attempt
+  seam: the heartbeats call `connectOnce()` (US-673) and the recovery loop
+  (`_reconnectionLoop`) calls `reconnectOnce()`. So the recovery loop's
+  `maxRetries` means that many port attempts, not that many × `connect()`'s
+  own budget.
+- **At most one retry thread.** `_liveRetryAuthorityName()` checks the US-301
+  heartbeat, the recovery loop and the US-338 post-failure heartbeat, skipping
+  the calling thread so the recovery loop can still hand off to the
+  post-failure heartbeat. `_startReconnection` and the post-failure spawn do
+  nothing while another retry thread is alive.
+
+Contract tests: `tests/pi/obdii/test_single_retry_authority.py` (the real
+initial-connect cap over a real `ObdConnection`: 1 port attempt after the cap
+fires, 6 with the cancel turned off).
+
+**Key-on latency is backoff latency (US-751).** `connection_log` on 2026-09-14
+showed the Pi retrying all night at the heartbeat's 320 s ceiling, each attempt
+failing in ~42-45 s with `OBD connection not active after creation` — i.e.
+`obd.OBD()` returned (the rfcomm link opened) but never reached car-connected.
+So the adapter was reachable and the ECU was asleep; a key-on that lands just
+after a failed attempt waits out the whole ceiling. Two rules now hold:
+
+- **A wake cuts the backoff short.** `runReconnectHeartbeat(wakeEvent=…)`: a
+  `set()` ends the current backoff, is cleared, and restarts the failure count
+  at 0 — the next attempt runs at once and the ladder climbs again from 10 s
+  (the same ladder a boot or fresh dropout already pays). A wake that lands
+  during an attempt takes effect when it returns, so wake → next attempt is at
+  most one attempt (~45 s), never the ceiling. Never set, the cadence is
+  identical, so the I-025 radio duty cycle is unchanged. Both heartbeats carry
+  the orchestrator's `_obdWakeEvent`; `requestObdLinkWake(reason)` is the one
+  entry point. It never touches the port — the next attempt goes through the
+  connection's `_ioLock` owner as always. **It is not yet wired to a physical
+  signal**: which signal means "key-on" on this install is open (US-751
+  blocker).
+- **Retries are one series per outage.** `ObdConnection` numbers every port
+  attempt in the current outage, whichever loop makes it, and resets on a
+  successful connect. `connection_log.retry_count` and `obdLink.retries` both
+  read that number, so a boot `connect()` followed by the heartbeat reads
+  0, 1, 2, … instead of 0..5 then 0, 0, 0.
+
+A `/dev/rfcomm0` present beside `Connected: no` is `rfcomm-bind.service`'s
+lazy binding: `rfcomm bind` creates the node without opening the link. Every
+failed attempt closes its partial `obd` and releases a MAC binding (US-512), so
+the OBD layer holds no node open across a failed session.
+
+Contract tests: `tests/pi/obdii/test_key_on_link_latency.py` (modelled wake →
+attempt: 319 s without a wake, 0 s with one in a backoff, 44 s with one
+mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 
 ---
 
@@ -429,7 +829,8 @@ handshake. This matches the protocol documented in `specs/obd2-research.md`.
 | `calibration_sessions` | Calibration session tracking | FK to profiles | SET NULL |
 | `alert_log` | Threshold violation alerts | FK to profiles | SET NULL |
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
-| `power_log` | AC/battery power transitions (Pi-only, not synced) | No FK | — |
+| `power_log` | Power **events**, never polls — contents, writers, row kinds and retention are defined ONCE in the `src/pi/power/power_db.py` module docstring (US-798); read that, not a paraphrase. Pi-authoritative; delta-synced to server since US-412 / F-101 | No FK | — |
+| `startup_log` | Boot-progress / RTC boot markers (Pi-authoritative; natural-key snapshot-synced since US-417 / F-101) | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
 
@@ -451,11 +852,14 @@ One row per synced table; `table_name` is the PRIMARY KEY.
 `statistics`, `profiles`, `vehicle_info`, `ai_recommendations`,
 `connection_log`, `alert_log`, `calibration_sessions`.
 
-**Excluded (Pi-only health telemetry)**: `power_log`. Stays resident on
-the Pi for local diagnostics and is never uploaded.  (`battery_log` was
-the companion Pi-only exclusion until US-223 deleted the table with its
-sole writer `BatteryMonitor`; US-216's `PowerDownOrchestrator` + US-217's
-`battery_health_log` now cover the battery-protection domain.)
+**Also synced (Pi health telemetry, added Sprint 50–51)**: `power_log`
+(delta-by-PK, US-412 / F-101) and `startup_log` (natural-key snapshot,
+US-416/US-417 / F-101). These were Pi-only "never uploaded" until F-101 gave
+each a server mirror — see the *power_log + startup_log server sync*
+subsection below.  (`battery_log` was the historical Pi-only exclusion until
+US-223 deleted the table with its sole writer `BatteryMonitor`; US-216's
+`PowerDownOrchestrator` + US-217's `battery_health_log` now cover the
+battery-protection domain.)
 
 ##### US-194 (TD-025 + TD-026): Per-table PK registry + delta/snapshot split
 
@@ -509,6 +913,27 @@ connection management):
   `(last_synced_id, last_synced_at, last_batch_id, status)` or the default
   `(0, None, None, 'pending')` if the row has not been created yet.
 
+##### US-776-i: "delivered" means stored, per the server's post-commit count
+
+For the Pi, **"delivered" means "stored, per the server's post-commit
+count"** — never "the server answered 2xx". Every `POST /api/v1/sync` reply
+carries `stored`: per table, `storedCount` and `maxStoredSourceId`, read back
+by the server AFTER the batch commits over the batch's own `source_id`s for
+the pushing device (US-776-h, `readStoredAck` in `src/server/api/sync.py`).
+
+`SyncClient.pushDelta` advances a table's `last_synced_id` only when that
+table's `storedCount == len(rows sent)` **and** `maxStoredSourceId ==
+max(source_id sent)`. A 2xx with no ack, a lower `storedCount` or a different
+`maxStoredSourceId` is `PushStatus.FAILED`: the mark stays where it was (the
+US-149 invariant), `status` reads `failed`, and one WARNING names the
+mismatch — `stored-count mismatch | table=… | sent=… stored=… | maxSent=…
+maxStored=…` (`missing` when the ack is absent). There is no fall-back to a
+bare 2xx, so the server must be on the US-776-h build before the Pi (deploy
+order). A mismatch is not a server rejection and does not count toward the
+US-391 quarantine. `tests/integration/test_pi_to_server_stored_ack_e2e.py`
+pushes every `DELTA_SYNC_TABLES` member through the real server app and
+asserts each mark lands on its stored maximum.
+
 ##### US-226: Sync trigger semantics + recovery playbook
 
 The transport configuration (`pi.companionService.*`) defines HOW sync
@@ -528,6 +953,20 @@ interval tick.  A transport failure in one path (logged as WARNING) does
 not affect the other; the high-water mark stays put per US-149 so the
 next tick resends.
 
+**Engine-aware cadence (B-053 / US-298, US-418).** The interval gate is
+driven by `src/pi/sync/sync_cadence_controller.py`, not by `intervalSeconds`
+alone: **IDLE** pushes every 60 s, **ACTIVE** every 5 s, and **DRAINING** is
+the one final flush after `drive_end`. `drive_start` promotes IDLE → ACTIVE,
+and so does any push that carries a row while IDLE (the missed-`drive_start`
+fallback). 🔴 **ACTIVE demotes to IDLE after 12 CONSECUTIVE empty pushes**
+(`DEFAULT_ACTIVE_DEMOTE_EMPTY_PUSHES`, CIO 2026-10-08), which is threshold +
+consecutive dwell (`specs/design-patterns.md` §1). Before US-418, `drive_end`
+was the only way out of ACTIVE. MEASURED 2026-10-07: the startup backlog
+promoted a parked Pi 1 s after start and nothing demoted it, so it pushed
+every 5 s for 15.8 h (~275k journal lines/day). A real drive's pushes carry
+`realtime_data`, so only a capture stall of about a minute demotes it. A failed
+push counts as empty, so a minute off WiFi also drops to the heartbeat.
+
 **Recovery playbook** — when the sync pipeline is observed stalled:
 
 1. Confirm last-sync state (Pi side):
@@ -539,7 +978,7 @@ next tick resends.
    ```
 2. Check server-side counts:
    ```
-   ssh mcornelison@10.27.27.10 \
+   ssh mcornelison@10.27.27.120 \
      'mysql obd2db -e "SELECT COUNT(*) FROM realtime_data"'
    ```
 3. Manual flush (Walk-phase path — still valid in Run phase as an
@@ -557,6 +996,96 @@ next tick resends.
      `"SyncClient initialized: baseUrl=... intervalSeconds=... triggerOn=..."`
      (healthy) or
      `"SyncClient initialization failed, sync disabled: ..."` (warning).
+
+##### US-412 / US-416 / US-417 (F-101): power_log + startup_log server sync
+
+Sprint 50–51 extend sync past the eight US-194 tables to the two Pi
+health-telemetry tables, using two distinct transports chosen by PK shape:
+
+- **`power_log` — delta-by-PK (US-412).** `power_log` has an integer `id`
+  PK, so it joins the US-194 delta path: `sync_log.PK_COLUMN['power_log'] =
+  'id'`, delta cursor on `id`, server maps `id → source_id` with
+  `UNIQUE(source_device, source_id)`; migration `v0013` creates the MariaDB
+  mirror. This retires the old "power_log is Pi-only, never uploaded" rule.
+- **`startup_log` — natural-key snapshot (US-416 mechanism, US-417
+  registration).** `startup_log`'s PK is a TEXT `boot_id`, which has no
+  stable integer cursor (and the SQLite `rowid` is unusable — `VACUUM`
+  renumbers it), so it uses a new **snapshot-sync** path built by US-416 and
+  reusable by F-115's future event-vault:
+  - **Shared registry** `src/common/sync/snapshot_registry.py::SNAPSHOT_SYNC`
+    maps `table → SnapshotSyncSpec(naturalKeyCols, cursorCol)`. Defined once;
+    **both tiers import the same object** (A-4 — proven structurally by
+    `test_piAndServerSeeTheSameRegistration`, which asserts Pi and server
+    return the *identical* `SnapshotSyncSpec` instance, so the two lists
+    physically cannot drift). `SNAPSHOT_SYNC['startup_log'] =
+    (naturalKeyCols=('boot_id',), cursorCol='recorded_at')`; the registry is
+    otherwise empty (mechanism-only).
+  - **Pi reader** (`src/pi/data/sync_log.py`) deltas by an explicit
+    `recorded_at` cursor tracked in `sync_log.last_snapshot_cursor` per table
+    (never rewinds; MAX-guarded). Over-reading is harmless — the server dedups.
+  - **Server upsert** (`src/server/api/sync.py::runSnapshotUpsert`) upserts on
+    `UNIQUE(source_device, *naturalKeyCols)` with ON-CONFLICT — a new pattern
+    **distinct** from the `id → source_id` delta path and carrying **no
+    `source_id`**. Migration `v0014` creates `startup_log` with
+    `UNIQUE KEY uq_startup_log_boot(source_device, boot_id)`.
+  - `dtc_freeze_frame`'s pre-existing FK-resolution special-case is left
+    untouched.
+
+The Pi sweep (`pushAllDeltas`) runs the registered snapshot tables after the
+delta tables and guards a registered-but-not-yet-created table (fresh/partial
+DB) as EMPTY rather than crashing.
+
+##### US-419 (F-080): boot clock-quality flag on power_log / startup_log
+
+Post-reboot the Pi's RTC can read a stale/epoch time before
+`systemd-timesyncd` corrects it, which would write drifted timestamps as
+truth. US-419 adds a **Pi-local forensic** `data_quality` TEXT column to
+`power_log` and `startup_log` (nullable; legacy rows stay NULL = unassessed).
+`src/pi/diagnostics/clock_sync.py` is the SSOT for "is this boot timestamp
+trustworthy?": a subprocess-free sanity FLOOR (a wall clock before
+`CLOCK_SANITY_FLOOR_ISO='2025-01-01T00:00:00Z'` is a definitive dead-RTC
+reset, flagged unconditionally — the floor wins even if NTP later reads
+synced) combined with a best-effort `timedatectl NTPSynchronized` probe
+(tri-state: an *unreachable* probe on a non-systemd/dev box returns None and
+falls back to the floor alone, so it never false-flags). A drifted boot row is
+stamped `data_quality='clock_unsynced'` rather than silently trusted; boot-log
+writers apply the verdict as *policy* (they do not each re-acquire a clock
+signal). The RTC coin-cell / timesyncd-ordering fix itself is ops (AI-1), out
+of the code scope.
+
+**Wire-strip.** `data_quality` here is Pi-local only — the server `power_log`
+/ `startup_log` mirrors have no such column — so
+`sync_log._WIRE_STRIPPED_COLUMNS` drops it on both the delta and snapshot push
+paths (safe globally: `power_log` + `startup_log` are the only Pi tables
+carrying `data_quality`).
+
+##### `startup_log` columns (US-263 → US-776-f)
+
+One row per Pi boot, written by `boot-progress-arm.service`
+(`src/pi/diagnostics/boot_progress.py::arm`). Pi schema:
+`src/pi/obdii/database_schema.py::SCHEMA_STARTUP_LOG`; server mirror:
+`src/server/db/models.py` (plus `source_device`, no `data_quality`).
+
+| Column | Type | Meaning |
+|--------|------|---------|
+| `boot_id` | TEXT PK | `/proc/sys/kernel/random/boot_id`, lowercase, no dashes |
+| `prior_boot_clean` | INTEGER | 1 = the prior boot's journal shows a graceful shutdown; 0 = none (hard cut); NULL = no prior boot |
+| `prior_last_entry_ts` | TEXT | Last journal timestamp of the prior boot |
+| `current_boot_first_entry_ts` | TEXT | First journal timestamp of this boot |
+| `prior_boot_last_stage` | TEXT | Highest boot_progress milestone the prior boot reached |
+| `prior_boot_reason` | TEXT | That milestone's decoded reason |
+| `recorded_at` | TEXT | When the row was written (ISO-8601 UTC); the snapshot-sync cursor |
+| `data_quality` | TEXT | US-419 clock-quality flag; Pi-local, wire-stripped |
+| `prior_boot_home_state` | TEXT | US-776-f / US-741: the prior shutdown's `HomeNetworkState` name |
+| `prior_boot_sync_outcome` | TEXT | US-776-f / US-776-d: why the prior shutdown's sync ended -- an `OutcomeKind` NAME; the values are tabled in `specs/shutdown-orchestration-design.md` (`INTERRUPTED` = the sync never reached its end, US-833) |
+| `prior_boot_backlog_start` | INTEGER | US-776-d: unsynced rows before the prior shutdown's first sync attempt |
+| `prior_boot_backlog_end` | INTEGER | US-776-d: unsynced rows after its last attempt |
+
+The four `prior_boot_*` sync columns are landed from powerwatch's durable
+shutdown record (`powerwatch_outcome.json`, §10.6.3) only when that record's
+`boot_id` belongs to the prior boot; otherwise — an older build, a hard cut
+before the record was written, or a count that could not be read — they are
+NULL, never a guessed value.
 
 ```
 ┌─────────────────────┐     ┌─────────────────────┐
@@ -665,8 +1194,15 @@ Every row written into a capture table carries a `data_source` column identifyin
 | `replay` | Flat-file replay harness (US-191, B-045) | Deterministic SQLite fixtures seeded ahead of a sync test |
 | `physics_sim` | Physics simulator (SensorSimulator / scenario runner) | Simulator-driven captures + `scripts/seed_scenarios.py` output |
 | `fixture` | Regression fixture seeder | `scripts/seed_pi_fixture.py` rows + hand-rolled test fixtures |
+| `foreign` | Foreign-vehicle contamination marker (US-424 / F-116) | Rows captured from a vehicle that is **not** the Eclipse (the Ford Explorer, drive 33). Set by the Pi ingest guard's retro-tag + the writer latch — real captures of the wrong vehicle, preserved as evidence, NOT synthetic test data |
 
 **Scope** — tables that carry the column (both Pi SQLite and server MariaDB): `realtime_data`, `connection_log`, `statistics`, `calibration_sessions`, `profiles`. Server also adds it to analytics `drive_summary`, and US-204 adds it to `dtc_log`. Tables that can only ever carry real data (`vehicle_info`, `sync_log`, `ai_recommendations`, `alert_log`, `power_log`) do not need the column.  (`battery_log` was also in this list until US-223 deleted the table with its writer BatteryMonitor.)
+
+**SSOT + no-drift (A-4)** — the enum tuple is defined once per tier (`src/pi/obdii/data_source.py::DATA_SOURCE_VALUES` on the Pi, `src/server/db/models.py::DATA_SOURCE_VALUES` on the server) and pinned equal by `tests/pi/data/test_data_source_foreign_marker.py`. On the Pi every capture-table CHECK is *derived* from the tuple (`DATA_SOURCE_CHECK_CLAUSE` / `DATA_SOURCE_COLUMN_DDL`), so a new value propagates to all nine schema literals without hand-editing each. The server `data_source` column carries no DB-level CHECK (application-enforced), so widening the enum needs no server migration; the Pi widens existing DBs via the forward-only SQLite table-rebuild `ensureDataSourceCheckWidened('realtime_data')` (SQLite cannot `ALTER` a CHECK).
+
+**Foreign-vehicle marker (US-424 / F-116) — two axes.** `data_source='foreign'` is the **primary row-level** exclusion axis: because the filter rule below already selects `WHERE data_source='real'`, foreign rows are auto-excluded with zero consumer changes. Its drive-level companion is `data_quality='foreign_vehicle'` on `drive_summary` / `drive_statistics` (see §7 / v0015 migration). Contamination is **re-tagged, never deleted** — evidence is preserved.
+
+**Ingest guard (US-424 / F-116; ships DARK behind `pi.foreignGuard.enabled=false`).** The discriminator is protocol speed, not identity: a dongle-MAC allowlist can't tell the two cars apart (same dongle) and Mode-09 VIN is silent on the Eclipse's ECU. The 1998 Eclipse GST speaks ISO 9141-2 over the K-line with a sustained PID-response ceiling of ~6.3/s; one `realtime_data` row is written per response, so a **sustained** row rate above ~7/s (`pi.foreignGuard.busRateThresholdHz`) over a rolling window means a faster-protocol (non-Eclipse) vehicle is connected. `src/pi/obdii/foreign_guard.py::ForeignVehicleGuard` is the SSOT for the "is this drive foreign?" fact — the poll loop feeds it samples (`observeSample`) and the writer consults it (`isDriveForeign`); neither classifies on its own. "Sustained" is structural (rate held above the bar for the full `sustainedSeconds` window), so a legit start-of-drive Eclipse burst never false-trips. On trip the guard (a) retro-tags the open drive's already-written `'real'` rows `'foreign'` and (b) latches the drive so the writer stamps subsequent rows `'foreign'`. The rows still sync, but land tagged `'foreign'` so the server's `WHERE data_source='real'` filter excludes them — tagging **is** the exclusion.
 
 **Default** — `'real'` at the DB level is a **narrow safety net for the single live-OBD collector path**, NOT a catchall for dev writers. Writers outside the live-OBD path MUST pass `data_source` explicitly at the call site. The live-OBD writer (:class:`src.pi.obdii.data.logger.ObdDataLogger` + :func:`src.pi.obdii.data.helpers.logReading`) honors this contract by auto-deriving the tag from `connection.isSimulated`: real connections produce `'real'`, :class:`SimulatedObdConnection` produces `'physics_sim'`. An explicit `dataSource=` override wins in both constructors so fixture harnesses can tag correctly. The call-site discipline is enforced by `tests/pi/data/test_data_source_hygiene.py`, an AST audit that fails the suite if any seed script INSERT into a capture table omits the `data_source` column (US-212 closed the ~352K-row hygiene bug surfaced by US-205).
 
@@ -958,9 +1494,15 @@ Invariants (Spool Session 6 amendment):
 
 ### Battery Health Log (US-217, Spool Session 6 Story 3)
 
+> **SUPERSEDED IN PART — BUILT ON ARCH-065a (CIO 2026-10-02): [`battery-health-design.md`](battery-health-design.md) is the source**
+> for the capacity columns (`drain_trigger`, `cell_epoch`, `cut_step_mv`, `window_start_s`/`_end_s`, `drain_rate_mv_s`, `verdict`,
+> `t_floor_s`, `floor_vcell_v`, `cutoff_vcell_v`), the monthly test and the verdict. The `load_class`-based qualifying rule this section
+> leads to is RETIRED (no reachable input since the ladder deletion `9adb0fbf`, 2026-05-18). Where this section and that file disagree,
+> that file governs; the table's original columns below are unchanged.
+
 Per CIO directive 3 (Spool Session 6 — monthly drain tests May–Sept driving season; quarterly in storage), the Pi maintains a `battery_health_log` capture table with one row per UPS drain event. US-217 lands the schema + writer surface; US-216 (Power-Down Orchestrator) will consume it when it wires the staged 30/25/20 SOC shutdown ladder.
 
-**Table shape** — Pi SQLite `battery_health_log`: `drain_event_id INTEGER PK AUTOINCREMENT`, `start_timestamp TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')`, `end_timestamp TEXT NULL`, `start_soc REAL NOT NULL`, `end_soc REAL NULL`, `runtime_seconds INTEGER NULL`, `ambient_temp_c REAL NULL`, `load_class TEXT NOT NULL DEFAULT 'production' CHECK IN ('production','test','sim')`, `notes TEXT NULL`, `data_source TEXT NOT NULL DEFAULT 'real'` with CHECK enum. Index `IX_battery_health_log_start` on `start_timestamp` for time-range queries.
+**Table shape** — Pi SQLite `battery_health_log`: `drain_event_id INTEGER PK AUTOINCREMENT`, `start_timestamp TEXT NOT NULL DEFAULT strftime('%Y-%m-%dT%H:%M:%SZ','now')`, `end_timestamp TEXT NULL`, `start_vcell_v REAL NULL`, `end_vcell_v REAL NULL`, `start_soc_pct REAL NULL`, `end_soc_pct REAL NULL`, `runtime_seconds INTEGER NULL`, `ambient_temp_c REAL NULL`, `load_class TEXT NOT NULL DEFAULT 'production' CHECK IN ('production','test','sim')`, `notes TEXT NULL`, `data_source TEXT NOT NULL DEFAULT 'real'` with CHECK enum. Index `IX_battery_health_log_start` on `start_timestamp` for time-range queries. **US-426 (Sprint 52 / V0.29.6)** dropped the legacy misnamed `start_soc`/`end_soc` columns (which stored VCELL **volts**, not percent) and added the dedicated `start_soc_pct`/`end_soc_pct` (REAL nullable) as the durable home for MAX17048 State-of-Charge % — one forward-only both-tier migration (Pi SQLite CREATE-AS-SELECT-DROP-RENAME + server MariaDB `v0016`; both tiers now byte-identical incl. `*_vcell_v`, closing the A-4 divergence).
 
 **load_class enum**:
 
@@ -972,31 +1514,219 @@ Analytics filter `production` + `test` for runtime-trend baselines; `sim` is exc
 
 **Writer** — `src/pi/power/battery_health.BatteryHealthRecorder` exposes two methods:
 
-- `startDrainEvent(startSoc, loadClass='production', notes=None, dataSource='real') → drain_event_id` — INSERTs a new row with NULL end columns.
-- `endDrainEvent(drainEventId, endSoc, ambientTempC=None) → DrainEventCloseResult` — UPDATEs end_timestamp + end_soc + runtime_seconds (+ optional ambient). **Close-once semantic**: re-calling on an already-closed row is a no-op that returns the stored values; the original close is authoritative.
+- `startDrainEvent(startSoc, loadClass='production', notes=None, dataSource='real', startSocPct=None) → drain_event_id` — INSERTs a new row with NULL end columns. `startSoc` is VCELL **volts** and lands in `start_vcell_v` (its sole home post-US-426); the optional `startSocPct` register SoC% lands in `start_soc_pct` (NULL when omitted).
+- `endDrainEvent(drainEventId, endSoc, ambientTempC=None, endSocPct=None) → DrainEventCloseResult` — UPDATEs end_timestamp + end_vcell_v + runtime_seconds (+ optional ambient, + optional `endSocPct → end_soc_pct`). **Close-once semantic**: re-calling on an already-closed row is a no-op that returns the stored values; the original close is authoritative.
 
-**CLI helper** — `scripts/record_drain_test.py` opens and closes a drain event in one invocation for the CIO's monthly drill. Accepts `--start-soc`, `--end-soc`, `--runtime`, `--load-class`, `--ambient`, `--notes`. Follow with `scripts/sync_now.py` to push the row to Chi-Srv-01.
+**CLI helper** — `scripts/record_drain_test.py` opens and closes a drain event in one invocation for the CIO's monthly drill. Accepts `--start-soc`, `--end-soc`, `--runtime`, `--load-class`, `--ambient`, `--notes` — the operator-typed `--start-soc`/`--end-soc` are VCELL **volts** and land in `start_vcell_v`/`end_vcell_v`. **US-427 (Sprint 52 / V0.29.6)** additionally reads the real MAX17048 register SoC% (`UpsMonitor.getBatteryPercentage()`) into `start_soc_pct`/`end_soc_pct`, guarded by the **US-234 cold-start rule**: a read inside the ~3-min MAX17048 calibration window (or on a box that can't determine uptime) records **NULL, never a garbage percent** (honest-instrument). Follow with `scripts/sync_now.py` to push the row to Chi-Srv-01.
+
+**SoC% calibration protocol + config-driven cold-start window (US-431 / F-048, Sprint 53 / V0.29.7).** The `~3-min` cold-start window that gates the SoC% read is no longer a bare constant — it is config-driven via the new `pi.hardware.upsMonitor.socColdStartWindowSeconds` key (validator DEFAULT + `config.json`, provisional `180.0`), read by `record_drain_test._resolveColdStartWindowSeconds` (falls back to the `COLD_START_CALIBRATION_WINDOW_SECONDS` constant), so the empirically-measured settle time can *feed* the guard rather than a guessed value. The bench tool `scripts/calibrate_max17048.py` samples the register SoC% / VCELL / CRATE at a fixed cadence from a **cold power-up**, logs a schema-free CSV (no `battery_health_log` write — it is a measurement, not a drain event), and its pure `analyzeSettling()` measures how long the MAX17048 ModelGauge takes to settle → prints a margin-padded recommended window + the exact config key to set. The step-by-step bench protocol is `docs/max17048-soc-calibration-protocol.md`. **BENCH-OWED**: the CIO runs the tool on the UPS-drain rig from a cold power-up and writes the measured settle recommendation into `socColdStartWindowSeconds`; `180.0` stays as the grounded provisional default until that rig run (Rule 2 — the measured number was not fabricated).
 
 **Sync shape** — `sync_log.PK_COLUMN['battery_health_log'] = 'drain_event_id'`; the Pi sync client's `_renamePkToId` renames `drain_event_id → id` on the wire; the server's `runSyncUpsert` maps `id → source_id`. Server mirror `BatteryHealthLog` SQLAlchemy model with `UNIQUE(source_device, source_id)`. Registered in `_TABLE_REGISTRY`; deploy-time migration `v0002_us217_battery_health_log.py` creates the MariaDB table.
 
 **Invariants**:
 
-1. `start_soc` + `start_timestamp` are authoritative once written; the close path only touches end-event columns.
+1. `start_vcell_v` + `start_soc_pct` + `start_timestamp` are authoritative once written; the close path only touches end-event columns.
 2. `drain_event_id` is auto-incremented + monotonic (per-event, not a singleton).
 3. Close-once: first `endDrainEvent` wins; re-call is a no-op so a crashed orchestrator that retries on next boot cannot overwrite the original close data.
 4. Timestamps route through `src.common.time.helper.utcIsoNow` (US-202 canonical ISO-8601 UTC).
 
-**Use case — US-216 consumer**:
+**`start_soc_pct` / `end_soc_pct` hold the SOC register AS THE CHIP REPORTS IT (US-685, CIO 2026-10-07).**
+`UpsMonitor.getSocPercentAsRead()` keeps the fractional low byte and does not clamp at 100 (DOCUMENTED,
+datasheet 19-6171: no cap stated; MEASURED: 100.7 % occurs); the unbacked-register sentinel `0xFFFF`
+is NULL. The whole-number 0–100 `getBatteryPercentage()` is the DISPLAY rendering of the same single
+register read. ⚠️ **VCELL and SOC can disagree inside a row, and that is the instrument, not the
+writer:** both are read milliseconds apart, but SOC is ModelGauge's *model*. On the 450 mAh pouch
+(epoch 1) it read 93–100 % at any voltage from 3.49 to 4.23 V, and after the 2000 mAh swap it read
+8 % at 3.75 V. On the 18650 pack (epoch 3) the two agree. **Trust VCELL for the cell's state; read
+SOC only alongside the epoch it came from.**
 
-- At WARNING (30% SOC): `startDrainEvent(startSoc=30, loadClass='production')` → returns drain_event_id.
-- At TRIGGER (20% SOC): `endDrainEvent(drainEventId=…, endSoc=20, ambientTempC=…)` → closes the row just before `systemctl poweroff`.
+**Use case — the live consumer (bench drain CLI)**. The original US-216
+Power-Down Orchestrator drain-event consumer was **retired in the SS-T5 shutdown
+redesign** (its dead `batteryHealthRecorder` wiring was removed end-to-end in
+US-427 / TD-058). The live consumer is now the CIO's monthly bench drill via
+`scripts/record_drain_test.py`, which opens + closes one event per invocation.
+**As of US-526 (Sprint 70 / V0.29.25) it is no longer the only one — see the
+production drain-event writer below.**
+
+### Production drain-event writer (US-526 / F-123 / BL-028, Sprint 70 — Atlas Option C)
+
+`battery_health_log` had **no production writer** between the US-216 retirement
+and this story: `BatteryHealthRecorder` wrote its columns correctly but nothing
+in `src/` called it, so the F-123 battery-Health verdict had no rows and
+honestly reported `unknown`. `src/pi/power/drain_event_writer.DrainEventWriter`
+is that caller, in the shape Atlas ruled on 2026-08-02
+(`offices/pm/inbox/2026-08-02-from-atlas-v0.29.25-prd-review.md`).
+
+**The writer spans two PROCESSES, and that is the whole design constraint:**
+
+| Event | Process | Site |
+|---|---|---|
+| OPEN at wall-power loss (AC→BATTERY) | collector (`src/pi/main.py`) | `PowerMonitor.onTransition` ← US-502 `_PowerSourceUiBridge` (GPIO6 truth) |
+| CLOSE at restore (BATTERY→AC) | collector | same callback |
+| CLOSE at cutoff — **the PRIMARY close** | `eclipse-powerwatch` | `ShutdownSequencer(prePowerOffFn=…)` |
+| REAP still-open rows — crash BACKSTOP | collector, at boot | `LifecycleMixin._initializeDrainEventWriter` |
+
+🔴 **The OPEN writes the row FIRST and reads the gauge AFTER (US-684, Atlas, CIO-ruled 2026-10-07).**
+The open used to read VCELL and SOC *before* its INSERT — two I²C reads that take ~24 s each on a
+failing bus — and on **2026-09-27 18:03:08Z** the bridge saw the loss, the reads stalled, power-watch
+powered off at the end of its window, and **the loss left no row** (journal, boot −21; the other
+17 epoch-3 losses all opened their row in the same second). Now `openDrainEvent` INSERTs at the loss with NULL
+start values (so `start_timestamp` **is** the loss), and `_fillStartReading` reads the gauge on a
+short-lived daemon thread and UPDATEs that row **by id** — correct even if the drain closed meanwhile;
+a failed read leaves the start values NULL (honest-instrument). Invariant 1 still holds: the start
+columns are written once and the close never touches them.
+⚠️ **Stated limit (CIO ruling):** a blip shorter than one bridge poll (`pi.powerWatch.uiPollSec`,
+default 2 s) is invisible to the writer and gets no row. Power-watch's 7 s smoothing ignores it too:
+a blip that recovers inside one poll is not a drain.
+
+Because the open and the cutoff close are in **different processes**, a
+`drain_event_id` held in memory is unavailable exactly where it matters most —
+so every close **re-finds its row by query**. This is why Atlas disqualified the
+memory-held option: under Spool's depth gate the run-to-cutoff drain is the only
+qualifying drain, and a hard crash would drop precisely that row.
+
+**`prePowerOffFn` fires on BOTH poweroff paths, and the fast path is the point.**
+The VCELL-floor backstop **skips the bounded pipeline** and goes straight to
+poweroff — which is exactly how a run-to-cutoff drain ends. A close implemented
+as a pipeline `ShutdownTask` would therefore miss every depth-gate-qualifying
+row. The hook is guarded like `phaseEmitFn` (§10.6): a close that raises can
+never delay poweroff, and it is **not** called on an abort (transient blip, or
+power returning mid-window) because an aborted shutdown is not a drain end.
+
+**Three honest-NA rules (load-bearing):**
+
+1. **An unreadable gauge writes NULL.** US-526 made `startDrainEvent(startSoc=…)`
+   and `endDrainEvent(endSoc=…)` accept `None`, so a dead MAX17048 at the loss
+   instant records NULL rather than a guessed voltage. The row still opens — the
+   drain *did* happen. VCELL is read unguarded (trustworthy at cold start);
+   SoC% routes through the shared US-234 cold-start guard, now at
+   `src/pi/power/soc_calibration.py` so the CLI and the production writer share
+   **one** implementation (a `src/` module must never import from `scripts/`).
+2. **The reaper NEVER calls `endDrainEvent`.** That method derives
+   `runtime_seconds` from the start/end timestamp delta, so across a reboot it
+   would manufacture a multi-hour runtime. The reaper issues its own UPDATE
+   stamping **`end_timestamp` only**, leaving `runtime_seconds` **and**
+   `end_vcell_v` NULL — an interrupted drain's duration and depth are both
+   unknown, and a fabricated `end_vcell_v ≤ 3.50 V` would falsely *pass* the
+   depth gate. A NULL on either field fails the gate, so a reaped orphan cannot
+   vote (double-safe). Its signature is queryable: `end_timestamp` NOT NULL with
+   `runtime_seconds` NULL and `end_vcell_v` NULL; every reap logs at WARNING.
+3. **Only rows the writer opened are ever touched.** Atlas's DoD says the reaper
+   targets `WHERE end_timestamp IS NULL`; the implementation **narrows** that to
+   still-open rows whose `notes` equal `DRAIN_OPEN_NOTE` (a stored ownership
+   marker, not a log string). A narrowing can only make the backstop more
+   conservative, and it is load-bearing: the four US-442 historical orphans
+   (`drain_event_id` 1/9/18/21) hold `end_timestamp IS NULL` **deliberately** —
+   there is no timing-truth source for them, and that NULL is what keeps
+   `scripts/annotate_orphan_production_drain_events.py` idempotent. Without the
+   narrowing, the first power-restore close would hand a months-old row to
+   `endDrainEvent` and mint a row with a multi-month `runtime_seconds` **and** a
+   real `end_vcell_v` — i.e. one that looks QUALIFYING to the verdict. That is
+   strictly worse than the reaper trap the ruling names.
+
+**Ordering invariant:** the reaper runs **before** `onTransition` is registered.
+Reversed, it would stamp this boot's live drain as interrupted. It also means a
+row later found open is necessarily *same-boot*, which is what makes every
+`runtime_seconds` the writer computes truthful.
+
+**Boot-order trap (US-501/502/503, sixth sighting):** the `UpsMonitor` is
+resolved **late**, at transition time, via a closure over
+`HardwareManager.upsMonitor`. It is built inside `HardwareManager.start()`, long
+after this wiring — a reference captured at wiring time would pin `None` and
+every drain would record NULL gauge values.
+
+**Enum identity:** power-source comparison is on `.value`, never on enum
+members. `pi.power.types` and `src.pi.power.types` are distinct module objects,
+so their `PowerSource` members are not `==` — comparing members would let a
+dual-imported enum make the writer silently inert (the cross-module
+enum-identity class that cost the 9-drain saga).
+
+**Import weight:** the powerwatch service builds its writer with
+`makeDrainEventWriterForPath`, a stdlib-sqlite3 `DatabaseLike` adapter, rather
+than `ObdDatabase` — importing `pi.obdii` would drag that whole package into a
+shutdown-critical process for the sake of a `connect()` (the V0.27.12-DOA import
+class). Its sqlite busy timeout is `pi.powerWatch.perTaskTimeoutSec` — the bound
+the shutdown path already defines for one unit of work — so a locked database
+cannot delay poweroff. No new config key.
+
+**Scope note:** gated on the same `pi.power.power_monitor.enabled` flag as
+`PowerMonitor` (no second flag for one fact) and soft-fail throughout —
+battery-health bookkeeping must never cost the drive capture beside it.
+**Qualifying-gate remap — LANDED US-527 / TD-074** (was "rides US-527" here).
+`battery_health_verdict` admits a row on **depth, not duration**:
+`end_vcell_v <= [EXACT:3.50] V AND runtime_seconds >= [EXACT:60] s`
+(Spool ruling `c72677e`). The retired `runtime_seconds >= 600` gate was Spool's
+own spec bug: 600 s sat **above** the 582 s good/degraded boundary, so every
+surviving row necessarily landed in `good` and `degraded`/`replace` were
+unreachable — the verdict failed toward *reassurance*, the one direction a health
+verdict must never fail.
+
+Note the vocabulary, because the phrase "depth bands" (used in the US-526-era
+note this replaces) does not describe anything real: **there is no depth band.**
+Only the *gate* is depth-based. The **bands are unchanged runtime bands** —
+`good` ≥582 s, `degraded` 436–582 s, `replace` <436 s on the 727 s baseline —
+and they are now fully reachable precisely because duration no longer filters
+admission. Depth answers *"did the pack reach its shutdown region?"*; runtime is
+still the capacity *measurement*.
+
+Consequence worth carrying: because `end_vcell_v ≤ 3.50 V` is reachable only by
+running down to cutoff, an AC→BATTERY→AC bench tap restored at ~3.8 V writes a
+perfectly good row that **correctly never qualifies**. A green drain-writer
+drill therefore does *not* demonstrate a working verdict — proving that
+end-to-end needs a real run-to-cutoff drain (Spool, 2026-08-02).
 
 **Use case — monthly drain drill (CIO)**:
 
 - Unplug wall power, let Pi drain to the trigger threshold.
-- Record results: `python scripts/record_drain_test.py --start-soc 100 --end-soc 20 --runtime 1440 --load-class test --ambient 22`.
+- Record results (the `--start-soc`/`--end-soc` values are VCELL **volts**): `python scripts/record_drain_test.py --start-soc 4.15 --end-soc 3.42 --runtime 1440 --load-class test --ambient 22`. Outside the MAX17048 cold-start window the CLI also stamps `start_soc_pct`/`end_soc_pct` from the register (US-427).
 - Push to server: `python scripts/sync_now.py`.
 - Analytics downstream tracks `runtime_seconds` decay for battery-replacement signal (future story).
+
+**Sprint 52 / V0.29.6 status (BL-015 resolved).** The SoC% rework shipped this
+sprint (Atlas-ruled, CIO-ratified): **US-426 (F-061)** dropped the legacy
+misnamed `start_soc`/`end_soc` columns (they stored VCELL **volts**, not
+percent) and added the dedicated `start_soc_pct`/`end_soc_pct` columns as one
+forward-only both-tier migration; **US-427 (F-060)** wired the real MAX17048
+register SoC% into the bench drain CLI's recording path under the US-234
+cold-start guard. The BL-015 blocker (no `soc_pct` column + the removed
+drain-event path) is closed: the durable column now exists, and the ruling moved
+the SoC% recording onto the bench CLI rather than the deleted orchestrator path.
+(Sprint 51's only `battery_health_log` change was US-424 widening the
+`data_source` CHECK enum to include `'foreign'` — the column already existed.)
+
+**Sprint 54 / V0.29.8 power-path additions (US-444 / F-051 + US-445 / F-054) —
+battery-health signals adjacent to this log, NOT drain-event writes.** Two new
+battery-health instruments landed this sprint. **Neither writes `battery_health_log`**
+— that table is drain-EVENT-shaped (start/close/runtime/`load_class`) and feeds
+drain baselines, so a health *snapshot* or *trend* written there would pollute the
+baseline and re-open the US-442 orphan-row class.
+
+- 🔴 **Slow-drain detector (US-444 / F-051) — RETIRED 2026-10-10 (CIO ruling 2026-10-08).**
+  It was a rolling-window VCELL decline verdict (`SlowDrainDetector`, `300 s` / `0.005 V` /
+  `30 s` debounce) built into `UpsMonitor` and exposed as `getSlowDrainState()`. **All of
+  that is deleted.** Why, measured: on the charger the X1209's 4.23 V cut-off / 4.1 V
+  recharge sawtooth produced false `slow_drain` episodes of up to **1,580 s** (Spool,
+  2026-09-21), longer than the Pi lives on battery, so no threshold or dwell could work.
+  The ratified fix (a state gate: UNKNOWN on external power) would have made the verdict
+  UNKNOWN almost always: a key-off lives ~10–15 s against a ~270 s window. Nothing read
+  the verdict, and two processes (power_watch and main) each ran a copy, each polling the
+  MAX17048. **Battery health is owned by ARCH-065's monthly test**
+  (`specs/battery-health-design.md`). `tests/pi/hardware/test_f051_slow_drain_retired.py`
+  keeps it gone. `UpsMonitor`'s VCELL/SOC history is unaffected.
+- **Boot-time battery test (US-445).** `src/pi/splash/boot_battery_test` reads the
+  MAX17048 VCELL once at boot and writes a grounded health verdict to the
+  `boot-battery-test` **state slot** via the F-103/F-097 honest-instrument emitter idiom
+  (pure builder + atomic tmpfs write, best-effort never-raise). `assessBootBatteryHealth(vcellV)`
+  → `OK` at/above the ~3.70 V discharge knee; `WEAK` below it (a read below the ~3.30 V
+  buck dropout knee = Drain-7 empirical carries a distinct reason, same coarse verdict);
+  `UNKNOWN` when the read is `None` OR outside the ~2.5-4.35 V physical LiPo band (the
+  classic ~20 V un-byte-swapped read → `UNKNOWN`, never a confident wrong health). The
+  verdict is **VCELL-only** (a direct register read, trustworthy at power-up); the SoC%
+  register needs a ~3-min ModelGauge warmup so it is carried as CONTEXT only (`socPct` +
+  `socCalibrated` caveat), never the health basis. `runBootBatteryTest(...)` is
+  best-effort (a reader that raises → `UNKNOWN`; a state-write failure is logged, never
+  raised — a battery test must never fail boot); a `main()` CLI lets a boot oneshot unit
+  invoke it (wiring that unit at boot is a deploy follow-up, out of scope here).
 
 ### Data Retention
 
@@ -1064,7 +1794,7 @@ permanently.
 
 **Post-deploy verification.**
 
-    ssh mcornelison@10.27.27.10 'mysql obd2db -e \
+    ssh mcornelison@10.27.27.120 'mysql obd2db -e \
         "SELECT version, description, applied_at FROM schema_migrations ORDER BY version"'
 
 Should list every applied migration with its apply timestamp.  On an
@@ -1085,7 +1815,8 @@ identity dimension keyed on the `(ecu_signature, cal_signature)` pair (both
 carries append-only ECU lineage + a STORED single-active marker;
 `dtc_freeze_frame` is the Mode-02 capture table;
 `drive_summary`/`drive_statistics.data_quality` are `VARCHAR(20)` with the
-`attribution_anomaly` tripwire; `drive_statistics`'s former `drive_id` is
+`attribution_anomaly` tripwire (and the US-424 / F-116 `foreign_vehicle`
+marker, added by the v0015 CHECK-widen migration); `drive_statistics`'s former `drive_id` is
 `summary_id`; `drive_summary.drive_id ↔ source_id` is CHECK-invariant. See the
 migration-history file for how each landed.
 
@@ -1140,6 +1871,7 @@ Resolved at runtime from environment variables. Supports defaults: `${VAR:defaul
 | `pi.homeNetwork` | Pi home-network detection (SSID/subnet/ping) for B-043 auto-sync building block (US-188) |
 | `pi.network` | Pi infrastructure addresses (host, user, path, port, hostname, deviceId) — B-044 canonical source (US-201) |
 | `server.network` | Server infrastructure addresses (host, user, port, hostname, projectPath, baseUrl) — B-044 canonical source (US-201) |
+| `pi.location.home` | Home reference point (lat/lon + elevation ASL) — altitude anchor + future GPS home-geofence; PII, `.env`-only (US-517) |
 
 ### B-044: Config-Driven Infrastructure Addresses (US-201)
 
@@ -1196,18 +1928,20 @@ with `ConfigValidationError` at config-load time.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `ssid` | `DeathStarWiFi` | Home WiFi SSID expected from `iwgetid -r` |
+| `ssid` | `DeathStarWiFi` | Home WiFi SSID, read from the active row of `nmcli -t -f ACTIVE,SSID device wifi list --rescan no` (US-776-b) |
 | `subnet` | `10.27.27.0/24` | Home LAN CIDR; defense-in-depth co-check with SSID |
 | `pingTimeoutSeconds` | `3` | Bounded timeout on `GET {baseUrl}{serverPingPath}` |
-| `serverPingPath` | `/api/v1/ping` | Must be absolute (start with `/`) |
+| `serverPingPath` | `/api/v1/health` | Must be absolute (start with `/`) and a real server GET route (US-776-a) |
 
 Defense in depth: `isAtHomeWifi()` is True ONLY when BOTH the SSID check
 AND the subnet check pass.  A spoofed home-SSID on a foreign router
 fails subnet; a tethered hotspot that happens to use the home CIDR
-fails SSID.  The composed `getHomeNetworkState()` returns `UNKNOWN`
-(distinct from `AWAY`) when the `iwgetid` binary is missing or the
-subprocess times out — the orchestrator can branch on that separately
-(e.g., "retry later" vs "definitely not home").
+fails SSID.  The composed `getHomeNetworkState()` returns `AWAY` only on a
+positive answer (a foreign SSID, or a successful `hostname -I` with no
+home-subnet address), and `UNKNOWN` (distinct from `AWAY`) when a reader is
+dead and nothing rules home out: `nmcli` missing or timing out, or the
+`hostname -I` read itself failing (US-776-c).  The shutdown sync drains on
+`UNKNOWN` (§10.6.3).
 
 #### `pi.companionService` — Pi → server reach (US-151)
 
@@ -1220,12 +1954,96 @@ rejects non-positive `syncTimeoutSeconds`, `batchSize < 1`, non-list
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `enabled` | `true` | When `false`, sync short-circuits to a no-op (US-149 owns the check) |
-| `baseUrl` | `http://10.27.27.10:8000` | Chi-Srv-01 FastAPI root |
+| `baseUrl` | `http://10.27.27.120:8000` | Chi-Srv-01 FastAPI root |
 | `apiKeyEnv` | `COMPANION_API_KEY` | Env var name resolved by `secrets_loader` — key itself is never in the JSON |
 | `syncTimeoutSeconds` | `30` | Per-request HTTP timeout (positive number) |
 | `batchSize` | `500` | Rows per `/api/v1/sync` POST (integer >= 1) |
 | `retryMaxAttempts` | `3` | Retry budget on retryable failures (integer >= 0) |
 | `retryBackoffSeconds` | `[1, 2, 4, 8, 16]` | Exponential-backoff schedule in seconds (list) |
+
+#### `pi.location.home` — home reference point (US-517 / F-125)
+
+The Pi's home location: the anchor US-518 re-anchors derived altitude to on
+every successful server sync, and the reference point for the future GPS
+home-geofence (US-516, hardware not yet ordered).
+
+**This section is location PII and is the first config section whose VALUES
+may never be committed.** The real coordinates live only in the gitignored
+`.env`; `config.json` carries bare `${PI_HOME_LAT}` / `${PI_HOME_LON}` /
+`${PI_HOME_ELEVATION_M}` placeholders, and the validator DEFAULTS are `None`.
+The `${VAR:default}` inline-default form is deliberately NOT used — a fallback
+coordinate baked into source would be both committed PII and a fabricated
+anchor.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `lat` | `None` | Home latitude, decimal degrees WGS-84 (`[-90, 90]`) |
+| `lon` | `None` | Home longitude, decimal degrees WGS-84 (`[-180, 180]`) |
+| `elevationM` | `None` | Home elevation above sea level in metres (`[-500, 9000]`) |
+
+**Single read path:** `src.pi.location.HomeLocationProvider`
+(`getHomeElevationM()` / `getHomeCoordinates()` / `getHome()`). Consumers call
+the provider and never parse these keys themselves
+(`specs/ssot-design-pattern.md`).
+
+**No fail-fast validator sub-check, on purpose.** Unlike `pi.homeNetwork` and
+`pi.companionService`, a malformed value here does NOT raise
+`ConfigValidationError`. `validate()` runs on the Pi's boot path, so raising
+would refuse to start the orchestrator over a typo in an *optional* altitude
+anchor — trading a dead OBD capture for a cosmetic fault. The provider reports
+the honest unknown instead; same policy as `pi.power.mode` (US-421).
+
+**Honest-unknown surface.** The provider returns `None` for an absent key, a
+blank env var, an unresolved `${...}` placeholder, a non-numeric string, a
+NaN/infinity, a boolean, or a magnitude outside the physical band above. Two
+consequences worth knowing:
+
+- `elevationM` and the `(lat, lon)` pair are **separate facts**. US-518 needs
+  only the elevation, so it is not coupled to a GPS fix the project has no
+  hardware for. The coordinate pair is both-or-neither — half a fix is not a
+  partial location, it is a different one.
+- The provider **never logs a coordinate value**. `PIIMaskingFilter` (§8) masks
+  email/phone/SSN only, so a coordinate written to journald is PII on a surface
+  with no mask for it. Rejection warnings name the key and the reason only.
+
+**Operational note (owed, not codeable):** `deploy/deploy-pi.sh` excludes
+`.env` from the deploy payload, so the Pi keeps its own `.env`. The `PI_HOME_*`
+values therefore do **not** propagate from the dev checkout — until they are
+written into the Pi's `.env`, the placeholders stay unresolved and the provider
+correctly reports unknown on the box.
+
+#### Derived-altitude re-anchor on sync success (US-518 / F-125)
+
+`AltitudeAnchor` (`src/pi/location/altitude_anchor.py`) owns the derived-altitude
+**accumulator** and resets it to `pi.location.home.elevationM` on every successful
+server sync. A completed push to the companion service means the Pi reached the
+home network, so the car is home — a *verified* "at home" event. Re-anchoring
+there bounds integration error to a single drive between syncs (Spool's altitude
+ruling, 2026-08-01, item 4).
+
+**Seam.** The hook is `CardStateEmitterMixin._recordSyncOutcome`, which is the one
+point both sync-success paths (`_maybeTriggerIntervalSync` and
+`triggerDriveEndSync`) converge on, and which runs only *after* a push completed
+past the US-340 offline route gate. Hooking the convergence point rather than the
+two call sites means a future third sync path cannot silently skip the re-anchor.
+The powerwatch power-down `forcePush` runs in a **separate process**, so it has no
+in-memory accumulator to re-anchor and is deliberately not wired.
+
+**Scope — this owns the reset, not the integration.** The integrator that advances
+the value (`altitude = home + ∫ sin(pitch)·speed dt`) is US-519, deferred pending
+Spool's σ sizing on US-521's gyro-fused pitch; the display is US-520. Until then
+nothing calls `setDerivedAltitudeM` in production and `states/imu.altitude` stays a
+typed NULL with reason `no_source` (`imu_state_bridge`). Publishing
+home-elevation-forever as an altitude would be a confident wrong number — strictly
+worse than the honest "no source" shown today.
+
+**Honest-instrument rules.** The accumulator starts at `None`, never `0.0` (sea
+level is a 209 m error in Chicagoland). When the home elevation is unknown — the
+Pi's actual state today per the operational note above — the re-anchor is a
+**no-op**: it neither fabricates a value nor destroys the one the integrator owns,
+and `getLastAnchoredAtIso()` is stamped only on a re-anchor that actually fired.
+The whole path is exception-isolated: drift control is cosmetic, the sync is not,
+so it can never turn a successful push into a reported failure (I-038 lesson).
 
 ---
 
@@ -1360,6 +2178,34 @@ checks the deploy post-check runs).
 
 ## 10. Display Architecture
 
+### Display Failure Contract (ARCH-014, 2026-08-30)
+
+**A render loop must reschedule itself on a path an exception cannot skip, and a
+failure that costs a frame must be visible.**
+
+This section exists because there was no home for the invariant. Both live loops
+(`tick` at 4 Hz, `imuTick` at 10 Hz in `carousel.js`) booked the next tick on the
+LAST line of an `async` body, so any throw skipped the reschedule and ended the
+loop permanently. Nothing awaited the returned promise, so the failure was an
+unhandled rejection -- silent by construction, with no log written anywhere.
+Measured on the car 2026-08-30: the renderer sat at flat cumulative CPU in state
+`Sl` while every state file kept updating. **Zero CPU was the tell -- the loop was
+not stuck, it had ceased to exist**, and touch died with it because a
+deterministic throw in the render path also kills the touch-driven redraw.
+
+The contract is enforced by `makeResilientLoop`, which books the next tick exactly
+once whether the body returns, throws, or rejects, and by a level-gated reporter
+whose **error level is never gated** -- the absence of error reporting is what hid
+this defect for weeks, so making errors configurable would rebuild that blindness.
+`setInterval` is NOT the remedy despite surviving a throw for free: it stacks when a
+read outruns its period, which is why US-508 chose `setTimeout` in the first place.
+
+⚠️ **This is a failure contract, not a scheduling implementation.** It binds any
+future display stack, including the Ozone/DRM kiosk migration -- a rewritten render
+loop inherits the obligation, and the reason this is written down is that the
+invariant is precisely the kind of fact that gets silently re-broken by someone
+tidying an async body.
+
 ### Display Layout (480x320)
 
 ```
@@ -1409,43 +2255,39 @@ color. No config duplication.
 which reduces the last N rows of the `statistics` table per parameter
 (N configurable, default 5).
 
-### Two Display Surfaces (primary + status_display overlay)
+### Display Surface (primary driving screen)
 
-The Pi runtime wires two distinct pygame surfaces that must not fight over
-GPU resources:
+> **pygame status overlay fully retired (US-485, V0.29.15).** There used to be
+> **two** pygame surfaces (primary + a `pi.hardware.status_display` overlay). The
+> overlay was config-disabled in US-402 (V0.29.3) once the F-092 HTML carousel
+> reached parity, then **fully removed in US-485**: `status_display.py`,
+> `dashboard_layout.py`, all `HardwareManager` wiring, and the
+> `pi.hardware.statusDisplay` config key are gone. The **carousel is the sole
+> dashboard surface** (fed by the US-480 state-file emitters), and the single
+> remaining pygame surface is the primary driving screen below.
+
+The Pi runtime wires one pygame surface for the live driving screen:
 
 | Surface | Module | Owner | Renderer |
 |---------|--------|-------|----------|
 | Primary (driving screen) | `pi.display.manager` + `pi.display.screens.*` | Orchestrator | Headless / Minimal / Developer drivers; the Minimal driver calls `pygame.display.set_mode` under X11 with `DISPLAY=:0 XAUTHORITY=~/.Xauthority SDL_VIDEODRIVER=x11` per Session 22 baseline. |
-| Status overlay | `pi.hardware.status_display` | HardwareManager | Software renderer (US-198). `pygame.display.set_mode((480,320), NOFRAME)` is wrapped by SDL env hints forcing the software path — `SDL_RENDER_DRIVER=software`, `SDL_VIDEO_X11_FORCE_EGL=0`, `SDL_FRAMEBUFFER_ACCELERATION=0` — set *before* `pygame.init()`. |
 
-**Why the split matters (TD-024 / US-198)**: pygame's wheel-bundled SDL2
-defaulted to an EGL/GL context when the overlay initialized under X11 and
-the X server denied GLX with `BadAccess`. Xlib's default error handler calls
-`exit()`, killing the orchestrator runLoop at uptime ~0.6s (Session 23 live
-drill). The software path on the overlay renders visibly and avoids GL
-entirely. The primary display keeps the native x11 renderer because its
-path was already proven in Session 22.
+**Historical note (TD-024 / US-198)** — the retired status overlay ran on SDL's
+*software* renderer because pygame's wheel-bundled SDL2 defaulted to an EGL/GL
+context under X11 and the X server denied GLX with `BadAccess`, whose Xlib
+default handler calls `exit()` and killed the orchestrator runLoop at uptime
+~0.6s (Session 23 live drill). That failure mode retired with the overlay
+(US-485). The primary display keeps the native x11 renderer, proven in Session 22.
 
-**Config surface**:
+### Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21) — RETIRED (US-485)
 
-```json
-"pi": {
-  "hardware": {
-    "statusDisplay": {
-      "enabled": true,
-      "forceSoftwareRenderer": true
-    }
-  }
-}
-```
-
-Operators can set `enabled: false` to disable the overlay entirely if it
-ever breaks again — the orchestrator tolerates a null `statusDisplay`.
-Operators can override any `SDL_*` env var at the `.service` / shell level;
-the code only fills in missing values, never clobbering.
-
-### Full-Canvas Status Overlay Redesign (US-257, B-052, Sprint 21)
+> **Retired (US-485, V0.29.15).** This section documents the pygame status
+> overlay's canvas-aware redesign. The overlay is **fully removed** —
+> `status_display.py`, `dashboard_layout.py` (`computeLayout` / `DashboardLayout`
+> / the 4-quadrant layout / `updateShutdownStage` / `ShutdownStage`), and their
+> tests no longer exist. Kept below only as historical record; the HTML carousel
+> is the sole dashboard surface. The `pi.display.displayCanvas` config keys are
+> likewise orphaned (no live consumer).
 
 The legacy 480x320 strip rendered fine on the OSOYOO touchscreen but
 occupied a small fraction of the Eclipse's HDMI canvas (CIO observation
@@ -1505,13 +2347,11 @@ the stage at a glance. NORMAL leaves the background black to avoid
 `pi.display.width`/`height` keys are unchanged so existing dev/test rigs
 keep working.
 
-**Test surface**: `tests/pi/hardware/test_dashboard_layout.py` exercises
-the geometry across (1920,1080) / (1280,720) / (480,320) and asserts the
-quadrants tile the canvas-minus-footer with no gaps, no overlaps, and no
-zero-dim quadrants. `tests/pi/hardware/test_status_display.py`
-parameterizes the constructor + render path over the same three sizes
-and verifies `updateShutdownStage` accepts both the enum and string forms
-with case-insensitive coercion.
+**Test surface** (retired US-485): `tests/pi/hardware/test_dashboard_layout.py`
+and `tests/pi/hardware/test_status_display.py` were removed alongside the
+modules they exercised. They previously covered the geometry tiling across
+(1920,1080) / (1280,720) / (480,320) and the `updateShutdownStage` enum/string
+coercion.
 
 ### Live-Data HDMI Render (US-192)
 
@@ -1611,7 +2451,7 @@ health review — has a recorded answer.
 | `first_seen_timestamp` | DEFAULT `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` — US-202 canonical. |
 | `last_seen_timestamp` | Same default; bumped via UPDATE on duplicate within the same drive. |
 | `drive_id` | INTEGER NULL — inherited from US-200 context (`getCurrentDriveId()`). |
-| `data_source` | DEFAULT `'real'` per US-195; CHECK enum (`real`/`replay`/`physics_sim`/`fixture`). |
+| `data_source` | DEFAULT `'real'` per US-195; CHECK enum (`real`/`replay`/`physics_sim`/`fixture`/`foreign`). `foreign` = US-424 foreign-vehicle marker. |
 
 Indexes: `IX_dtc_log_drive_id` (per-drive analytics) + `IX_dtc_log_dtc_code`
 (cross-drive lookup of a specific code).
@@ -1694,7 +2534,8 @@ Phase-2 T9). The sole shutdown decider is `ShutdownSequencer`
 (`pi.powerWatch.smoothingSec`, configurable; a single power-present read
 within the interval cancels — pure blip rejection; this is the safety
 property, shipped in V1) and **boot-grace** → arm-self-check (refuse to arm
-if GPIO6 does not read power-present at start) → a bounded pre-shutdown
+if GPIO6 does not read power-present at start; a readable-absent start arms
+late, see below) → a bounded pre-shutdown
 **window** of ordered `ShutdownTask`s (V1: exactly one, `SyncWithServerTask`;
 pluggable seam via `__main__.buildV1Tasks`) → window exits on
 **all-tasks-terminal OR `windowCapSec`** → graceful `systemctl poweroff`.
@@ -1702,11 +2543,767 @@ pluggable seam via `__main__.buildV1Tasks`) → window exits on
 straight to poweroff; a *failed* VCELL read never powers off
 (uncertainty ≠ power loss).
 
+**bootGrace scopes the floor fast path, NOT the trigger (US-788, Sprint 89 /
+V0.29.57).** A PLD loss inside `pi.powerWatch.bootGraceSec` (120 s) runs the
+NORMAL path — load shed + loss heartbeat (`powerLossObservedFn`), smoothing,
+bounded pipeline, drain close, graceful poweroff. The watch loop calls
+`handleOnBattery(suppressFloorFastPath=True)`, and the sequencer takes the
+existing *failed-VCELL-read* branch: no floor fast path this cycle, pipeline
+instead. There is no second poweroff path. Outside grace the call is the bare
+`handleOnBattery()`, byte-identical to before, floor fast path included.
+
+Why: bootGrace was sized for the VCELL-slope heuristic that reported BATTERY on
+the boot VCELL sag (validator.py, 2026-05-18). The GPIO6 PLD line replaced that
+heuristic as the trigger the **same day** — it is deterministic, so the trigger
+needs no grace. `smoothingSec` is the blip rejection. The boot sag still reaches
+exactly one decision, the floor fast path, and skipping the pipeline is the
+irreversible act worth protecting there. Gating the trigger instead suppressed
+the shed, the heartbeat and the drain close with it: four in-grace suppressions
+in the service's life, zero false positives, three hard cuts. No constant
+changed — un-shed carry at real load is 0.678 s, so any nonzero grace on the
+trigger is a hard cut; the fix is scope, not duration. `bootGraceSec` is kept:
+whether boot VCELL approaches the floor on AC is unmeasured.
+
+The in-grace fire is edge-triggered (one loss, one call) and does not set the
+post-grace `firedAlready` guard, so an in-grace blip followed by a post-grace
+loss still fires (the F-7 level trigger is unchanged).
+
+**The `firedAlready` latch is scoped to a loss EPISODE, not to the boot (US-792,
+Sprint 89 / V0.29.57).** It means *a decision is in flight or complete for THIS
+loss episode* — and conflating that with *for this boot* was the defect. The flag
+is set after `handleOnBattery` **returns**, which is all three of its exits:
+poweroff, the VCELL-floor fast path, and **cancel**. Nothing reset it, so a power
+blip that cancelled a shutdown left the trigger dead for the rest of the boot and
+the next genuine key-off was a hard cut. `_runPldWatchLoop` now clears the flag on
+the tick that reads the line present (`if not lost: firedAlready = False`). The
+clear lives in the **loop**, which owns the line, and not on the cancel path: the
+sequencer's exits can grow, and putting the latch's lifetime in one file and its
+meaning in another is a second copy of one fact.
+
+The re-arm is **deliberately asymmetric with `smoothingSec`** and carries **no
+debounce**. Into shutdown a loss is debounced 5 s, because committing on a blip
+bricked the Pi on 2026-05-18. Back to armed, one power-present reading is enough:
+failing to re-arm costs a hard cut, and un-shed carry at real load is 0.678 s — a
+blind window would outlast the Pi's entire life on battery. Thrash protection
+already exists and is `smoothingSec` inside `handleOnBattery`, so a flicker that
+re-arms can cause a shed and a restore, never a poweroff. The re-entry guard
+itself is untouched: `not lost` is false on every tick of a level-stuck LOW line,
+so a stuck line still fires exactly once.
+
+**The late arm IS debounced (US-748, Sprint 97 / V0.29.80).** A Pi woken by its
+power key boots on the pack, so GPIO6 can honestly read power ABSENT at start —
+the arm self-check does not mean "the Pi only booted because power is live".
+Readable-and-absent is reported as `ARM DECISION = NOT-ARMED (power absent at
+start; arming waits for car power)`; only an unreadable line keeps the
+wiring-fault text and its remedy. The service then arms LATE after an
+**unbroken `pi.powerWatch.smoothingSec` of present reads** (polled every
+`pi.powerWatch.smoothingPollSec`; a single absent read restarts the run) and
+says so once: `ARM DECISION = ARMED (late: GPIO6 changed absent -> present on
+this run; ...)`. The late line does not write `pld_witness`, which records
+power-LOSS transitions only.
+
+Why the late arm is debounced when the re-arm after a cancelled loss is not:
+**arming turns every later absence into a poweroff**, so it needs presence
+evidence as strong as the loss evidence — the same `smoothingSec` the loss
+direction waits. The re-arm only restores a state this boot already earned with
+that evidence, and its thrash is caught by `smoothingSec` inside
+`handleOnBattery`; a first arm on a single present read would let a contact
+bounce while the key turns commit the service to poweroff. Both directions use
+the one dwell helper (`heldFor`, `controller.py`).
+
+Why it became reachable now: a cancelled shutdown used to be a brief event. US-776-a
+made the drain run until the backlog is empty or the VCELL floor is reached rather
+than until three timers expire, and US-776-b gave that drain its own floor — between
+them the post-loss window went from one sample to minutes of them, so a cancel is now
+something the loop routinely survives and must re-arm from.
+
 > **History extracted (2026-06-01):** the superseded `PowerDownOrchestrator`
 > ladder + the SOC%-calibration lesson + the Sprint-40 **F-7** (boot-grace latch)
 > and **F-8** (boot-progress instrument) bug-fix narratives + the Rule-10 gate
 > record → **`specs/arch/subsystem-evolution-history.md`**. Current behavior is
 > the Flow above.
+
+### 10.6.1 F-103 shutdown-splash phase-emit hook (US-394, Sprint 48 / V0.29.2) [Atlas A-2]
+
+The `ShutdownSequencer` is the **SSOT of shutdown phase + timing**. US-394 added a
+**phase-emit hook** so the F-103 grace-period shutdown splash can render the staged
+shutdown the driver is watching, instead of a frozen/blank screen. The hook is a
+single OPTIONAL constructor dependency — `phaseEmitFn` — injected in
+`__main__.py` from `pi.splash.shutdown_state_emitter.makeShutdownPhaseEmitter`
+(gated on `pi.splash.enabled`). When unwired (`None`) the sequencer runs the exact
+legacy path with **no extra `isOnBattery()` read** — byte-identical behavior.
+
+**Dependency direction is strictly unidirectional (spec §6/§481).** The sequencer
+owns the phase **decisions** and the canonical phase-string constants
+(`PHASE_GRACE` / `PHASE_CANCELLED` / `PHASE_FLUSHING` / `PHASE_POWERING_OFF` in
+`controller.py`); the splash subsystem **consumes** them
+(`pi.splash.shutdown_state_emitter` imports them). The sequencer **never imports
+the splash** — it calls a generic callback and stays ignorant of the splash schema.
+
+**Phases emitted (mapped to the sequencer's code-path transitions):**
+
+| Transition point in `handleOnBattery` | Phase | Splash response |
+|---|---|---|
+| Power-lost signal present at entry, **before** smoothing resolves (T=0) | `grace` | TRIGGER splash; play PRE_ROLL + ANIMATING (the animation *is* the grace countdown) |
+| Smoothing window failed (power returned mid-smoothing) | `cancelled` | ABORT splash (kill chromium, no fadeout) |
+| Smoothing confirmed + above VCELL floor; bounded pipeline about to run | `flushing` | CONTINUE (no state change) |
+| Immediately before `systemctl poweroff` (normal path **or** VCELL-floor fast-path) | `powering_off` | CONTINUE → enters BLACK_TAIL |
+| Power returned during the bounded pipeline window (late abort) | `cancelled` | ABORT splash (so it does not sit in BLACK_TAIL awaiting a poweroff that will not fire) |
+
+The VCELL-floor fast-path skips the pipeline, so it emits `powering_off` **without**
+a preceding `flushing` (honest instrument — no flush happened).
+
+**Emit-hook constraints (Atlas A-2):** (a) the write is best-effort and non-blocking;
+(b) emission happens **after** each transition is decided, never before; (c) a write
+failure (or a hook that raises) is logged but **NEVER blocks shutdown progress** —
+the emitter closure catches, and the sequencer's `_emitPhase` wraps the call site
+belt-and-braces. The shutdown-state schema (`phase`, `tGraceStartedAt`,
+`tGraceTotalS`, `tRemainingS`, `reason`, `ts`) is written atomically to
+`/run/eclipse-obd/states/shutdown-state` (the `splash-grace.path` unit watches that
+file; the kiosk polls it at 250 ms).
+
+**The grace splash is NOT shed (US-796, Sprint 95; reverses US-796-a).**
+US-796-a (Sprint 90 / V0.29.59) put `splash-grace.path` and `splash-grace.service`
+on the power-loss `LoadShedder` set, to stop a second chromium cold-starting during a
+shutdown. The stop failed on every cut ("could not stop splash-grace.service" in the
+journal), and had it succeeded it would have removed the shutdown animation the CIO
+ruled to keep. Both units are off `DEFAULT_SHED_UNITS`; `TRIGGERED_UNITS` is empty
+(the restore mechanism stays). `eclipse-dashboard` is still shed (ARCH-031), so the
+splash runs exactly as the `grace` row in the table above describes: `splash-grace.path`
+fires on the first `shutdown-state` write and the kiosk renders the countdown.
+
+- **The sequencer stays decoupled.** It never names a splash unit (F-103: it writes
+  state, consumers react). Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`,
+  which fails if either splash unit is added back to either list.
+
+### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
+
+A second OPTIONAL constructor dependency, `prePowerOffFn`, runs immediately
+**before** `powerOffFn` on **every** path that actually powers off — the
+bounded-pipeline path *and* the VCELL-floor fast path. `__main__.py` wires it via
+`buildDrainCloseHook` to the production drain-event writer's close (§ *Production
+drain-event writer*, Atlas Option C 2026-08-02).
+
+**Why not a `ShutdownTask`:** the VCELL-floor fast path **skips the pipeline**,
+and that path is exactly how a run-to-cutoff drain ends. Under Spool's depth gate
+the run-to-cutoff drain is the *only* qualifying drain, so a task-based close
+would miss every row the battery-Health verdict needs.
+
+Ordering and guarantees mirror `phaseEmitFn` (§10.6.1): it runs **after**
+`powering_off` is emitted and **last** before poweroff (so the recorded depth is
+as deep as the drain actually got); a hook that raises is logged and **never**
+blocks poweroff — a bookkeeping row is not worth leaving the Pi up on a dying
+battery; and it is **not** called on either abort (transient blip, or power
+returning mid-window), because an aborted shutdown is not a drain end and the
+collector's BATTERY→AC transition owns that close. `None` (the default) runs the
+exact legacy path. A missed close is not data loss with a wrong value — the boot
+reaper marks that row interrupted (`runtime_seconds` + `end_vcell_v` NULL).
+
+**Timing invariant [Atlas A-6]** (owned by the `controller.py` module docstring;
+splash holds it by trust): the splash's 7.5 s animation budget fits inside the
+sequencer's ~10–12 s time-to-poweroff at the default `pi.powerWatch.smoothingSec=7`.
+If `smoothingSec < 4` the animation may be killed mid-frame — *acceptable* failure
+mode (degraded UX, no data loss). No new config key, no runtime coordination.
+
+**C-5 lifecycle — `shutdown-state` must survive `eclipse-obd.service` stop.** The
+shutdown splash reads `shutdown-state` *during* the shutdown sequence, after
+`eclipse-obd.service` may already have stopped. **systemd does NOT ref-count a
+`RuntimeDirectory` shared between units** (US-737, measured by Atlas on systemd
+257.13, 2026-09-13: two units sharing one dir, A with `RuntimeDirectoryPreserve=yes`
+and B without — stopping B removed the dir while A was still running).
+`RuntimeDirectoryPreserve=yes` protects only against the unit that declares it. So
+the states dir survives `eclipse-obd`'s stop **only because every sharer —
+`eclipse-obd.service`, `eclipse-states-http.service`, `eclipse-boot-state.service` —
+declares `RuntimeDirectoryPreserve=yes`**, and the
+`/etc/tmpfiles.d/eclipse-obd-states.conf` entry recreates `states/` at every boot.
+Together these keep `/run/eclipse-obd/states/shutdown-state` readable across
+`eclipse-obd`'s stop. ⚠️ Until US-737 (V0.29.48) `eclipse-obd.service` lacked the
+directive, so every deploy, `Restart=` and poweroff deleted the dir — including
+powerwatch's `power-source.json` (A-26 SSOT publish → EPERM). Consumers were already
+protected from the frozen file by `readPowerSource`'s 30 s freshness bound
+(`power_source_pubsub.py`); the directory was the whole defect.
+`tests/deploy/test_shared_runtime_dir_preserve.py` pins the directive on every sharer. The multi-owner runtime-dir contract is documented in full in
+the **F-103 Splash Subsystem** section below (US-393); this section is the
+shutdown-state half of that contract.
+
+### 10.6.3 Sync custody at poweroff (US-621, Sprint 77 / V0.29.34) [Atlas Rule 10]
+
+**The defect this closes.** On 2026-08-28 the CIO drove off-WiFi, returned, and the Pi ran a full
+graceful shutdown -- `systemd-poweroff`, filesystems synced, journal closed. Every signal said the
+system had shut down correctly. **~35 minutes of capture, on the order of 15,000 rows, had never
+left the Pi.**
+
+The shutdown sequencer was correct about the thing it was built for -- the local DB is `fsync`'d and
+crash-safe -- and simply had **no concept of the upload queue**. Verified at the time: `grep -i sync`
+over `src/pi/power/` returned only SQLite-durability references.
+
+**Why that is a defect and not a limitation.** Nothing was lost; the backlog drains on the next boot
+in range. The defect is that **the operator could not tell.** "Clean shutdown" is precisely the
+signal a human uses to decide the data is safe, and it was silent about the half that was not. That
+is the same species as `power_log` recording only the healthy state and `data_quality` reading
+`full` over a 751 s gap: *a system reporting a confidence it has not earned.*
+
+**Shape: record first, drain second.** The recording half is cheap, needs no network, and closes the
+*silent* defect on its own. A bounded drain is the optimisation. **Shipping only the drain would
+have left the same false confidence every time the bound was hit.**
+
+⚠️ **Wired on the PRE-POWEROFF path, NOT as a pipeline `ShutdownTask`** -- and the reason is
+load-bearing. The **VCELL floor fast-path SKIPS the pipeline**, and that is precisely the
+run-to-cutoff shutdown carrying the most undelivered data. A custody record that is absent from the
+worst case is not a custody record. (Same reasoning as the US-526 drain close, §10.6.2.)
+
+**Invariants:** never raises, and **never delays a poweroff.** The record is a diagnostic; a
+diagnostic that can hold a dying machine open is worse than no diagnostic.
+
+**Explicit non-goal:** a *guaranteed* full drain. On a UPS budget that is not achievable, and
+promising it would be the same over-claim this section exists to remove.
+
+**The shutdown's own drain-close row is excluded, by primary key, and reported beside the verdict
+(US-789, Sprint 89 / V0.29.57) [Atlas shape (c), 2026-09-17].** `composePrePowerOffHooks(drainCloseFn,
+custodyFn)` runs the US-526 close FIRST, and the close UPDATEs a `battery_health_log` row -- a delta
+table with the `_sync_modified_at` cursor -- so custody counted a row the shutdown had just written and
+**read `OUTSTANDING` on every graceful shutdown**. The fix:
+
+- **Named type:** `RowExclusion(table, pk, reason)` (`src/pi/sync/backlog.py`). `countOutstandingRows(...,
+  excludeRows=)` subtracts each excluded row **only if it is actually outstanding** (tested through the
+  same `_deltaPredicate` a push uses) and lists it in `SyncBacklog.excludedRows`. It is ROW-level and
+  does **not** reuse `excludeTables`: **one primary key, never a table.** A `battery_health_log` row
+  stranded by an *earlier* drain still counts and still yields `OUTSTANDING`.
+- **Handoff:** `OwnDrainCloseSlot` (`sync_custody.py`), a single slot. `buildDrainCloseHook` **clears** it,
+  closes, and records the `drain_event_id` **only when the close actually wrote the row**. Hook isolation
+  is unchanged -- return values are still discarded -- and custody never depends on the close: an empty
+  slot (close failed, raised, or found nothing) means custody counts every row.
+- **Beside the verdict:** the record's `ownDrainCloseExcluded` field
+  (`{table, drain_event_id, reason, wasOutstanding}`, or `null` when no exclusion was requested) and a
+  WARNING line under its own prefix `powerwatch: OWN DRAIN CLOSE =` -- the `edrOutstandingRows` /
+  `EDR BACKLOG =` pattern from US-766. Nothing is hidden.
+- **The close does not move.** It stays first, with its close-time UPS read, so `end_vcell_v` (Spool's
+  `<= 3.50 V` depth gate) is unchanged. The exclusion applies on the VCELL-floor fast path too, which
+  uses the same pre-poweroff hook.
+
+**The drain is bounded by the battery, not by three timers (US-776-a, Sprint 89 / V0.29.57).** At
+home the drain now keeps pushing until the shared backlog reader returns total 0 -- the server has
+ACKNOWLEDGED every drive row; far-side retention is not observed -- or the VCELL floor is reached,
+whichever comes first (CIO ruling 2026-09-17: "keep syncing until sync complete or out of power").
+Three bounds used to end it first, and each is removed where it lived:
+
+1. **`_buildRunSync` budget** (`__main__.py`). A further pass only started if one as long as the
+   last still fitted `perTaskTimeoutSec` (20 s). Removed: the loop ends on an empty backlog, a failing
+   pass (`RuntimeError` -> the task retries with doubling waits of 2, 4, 8, 16 s ... and starts
+   no attempt once the backlog has not fallen for `pi.homeNetwork.stallSec`, 60 s (ARCH-065a; the US-776-g
+   `shutdownSyncCeilingSec` ceiling is retired, see `battery-health-design.md` §5) -> recorded as
+   `AT_HOME_SERVER_DOWN`, `PROBE_MISCONFIGURED` or `UNKNOWN_NETWORK`, US-776-d), a pass that moves
+   nothing, or an unreadable backlog. Custody re-reads the SAME reader, so those last cases record
+   `OUTSTANDING` or `UNKNOWN`, never `DELIVERED`. Every pass still excludes
+   `SHUTDOWN_DRAIN_EXCLUDED_TABLES`.
+2. **`runPipeline` thread abandonment** (`pipeline.py`). `th.join(timeout=perTaskTimeoutSec)` did not
+   cancel a task; it ABANDONED the daemon thread, which kept calling `forcePush` and writing SQLite
+   while `systemctl poweroff` ran. A task named in `sequencerBoundedTasks` is now joined without a
+   timeout. `main()` names only the sync task; every other task, including any future plugin appended
+   to `buildV1Tasks`, keeps the per-task bound.
+3. **The sequencer cap** (`controller.py`). The single `done.wait(totalCapSec)` (45 s) is now a poll on
+   `smoothingPollSec`. The pipeline stays on its own daemon thread. Each interval, the sequencer's
+   thread re-checks `isOnBattery` (power returned -> the existing single cancel and restore) and
+   re-reads VCELL: a SUCCESSFUL read `<= vcellFloorVolts` ends the drain and powers off, **whatever the
+   pipeline thread is doing.** The floor has to be read there. One `forcePush` pass can block for
+   ~25 min (4 attempts x 30 s + 7 s backoff = 127 s per table, x 12 delta tables, `bypassQuarantine=True`)
+   and never reach a pass boundary where the drain loop could check anything (A-24: WiFi drops
+   mid-pass).
+
+`totalCapSec` survives only as the bound while the floor is **blind**: there has been no successful
+VCELL read for `totalCapSec`, or the floor is suppressed for a bootGrace loss (US-788, where the boot
+sag can read below the floor). A hung pipeline behind an unreadable gauge would otherwise hold the Pi
+up until the hardware cut. Stopping early leaves rows for the next sync and can be recovered from; a
+hard cut mid-write cannot. This story terminates on the existing `vcellFloorVolts`; US-776-b gives the
+drain its own floor.
+
+**The drain has its own floor, above the emergency backstop (US-776-b, Sprint 89 / V0.29.57).** Two
+different decisions, two keys. `pi.powerWatch.vcellFloorVolts` (3.50 V, **unchanged**) answers "is the
+battery already too low to START?" -- read once before the pipeline, and a successful read at or below
+it still skips the pipeline and powers off (the backstop fast path). `pi.powerWatch.drainFloorVolts`
+(**3.60 V, PROVISIONAL**) answers "stop draining NOW" -- it is what the poll in (3) above terminates on.
+Both carry the same `(3.0, 4.3)` V range check in the validator.
+
+*Derivation of 3.60 V.* 3.585 V is the only voltage on record associated with a shutdown that actually
+FINISHED (in-car key-off #2, `CLEAN_COMPLETE`). 3.60 V is that rounded up. It sits above the 3.50 V
+backstop and well above the 3.4712 V measured cliff.
+
+*Why an unmeasured quantity may license this constant (Atlas).* An unmeasured quantity can still license
+a decision, PROVIDED the decision errs in the direction the evidence cannot be wrong about. Terminating
+too EARLY leaves rows on the Pi to sync next trip -- recoverable. Terminating too LATE is a hard cut
+mid-write -- unrecoverable, and the defect this sprint exists to remove. Reading 3.585 V as headroom to
+ARRIVE at 3.50 V is unsound; reading the same endpoint as a STOPPING point can only err toward stopping
+early.
+
+**No claim of safety is made, and a short drain is not a failure.** Neither this section nor the story
+asserts the floor is safe to run to. Loaded VCELL under drain load is NOT measured: on an already
+depleted pack a 3.60 V terminator may end the drain within seconds -- VCELL between 3.50 V and 3.60 V
+starts the pipeline and the first poll ends it. **That is correct behaviour** -- a depleted pack should
+not fund a long drain. A short drain is not evidence that "the bound did not work". Do not change
+3.60 V without the drain's VCELL trajectory data -- that capture is US-790 (deferred; its storage shape
+needs an architectural ruling, because a row written to a synced table during the shutdown turns the
+custody verdict OUTSTANDING, the US-789 defect). Until US-790 ships, 3.60 V stands.
+
+**The drain is gated on the home detector, not on one server probe (US-776-c, Sprint 95; Atlas
+review 2026-09-30, gaps 2 and 5).** The 2026-09-17 gate (Atlas ruling 1) was a single
+`isServerReachable()` read. It probed `/api/v1/ping`, a route that does not exist, so it read False
+on every shutdown and the drain never ran (US-776-a moved the probe to `/api/v1/health`). Its
+deeper fault was the design: any dead instrument in the gate disabled the drain, silently.
+
+`SyncWithServerTask.run` (`sync_with_server.py`) now reads `HomeNetworkDetector.getHomeNetworkState()`
+**once** and decides from it:
+
+| Detector state | Means | The task |
+|---|---|---|
+| `AWAY` | a **positive** not-home answer: a foreign SSID (whatever the IP read says), or a *successful* `hostname -I` with no home-subnet address | skips at once: no `forcePush`, no sleep; records `AWAY` (US-776-d); poweroff follows |
+| `AT_HOME_SERVER_REACHABLE` / `AT_HOME_SERVER_DOWN` | home SSID **and** a home-subnet IP | drains |
+| `UNKNOWN` | no positive AWAY, but home is unconfirmed: the SSID reader is dead (`nmcli` missing / timed out) with a home-subnet IP or a failed IP read, or the home SSID with a failed IP read | **drains anyway**, logging `UNKNOWN_NETWORK` at WARNING |
+
+- **Only a positive AWAY skips.** A dead instrument must never disable the drain
+  (`specs/design-patterns.md` section 6). Both readers are three-way: a value on a successful read,
+  `""` / `[]` for a genuine "not associated" / "no addresses", and `None` when the read itself failed.
+  A detector that raises is treated as `UNKNOWN`.
+- **The AWAY path cannot block on the network.** It runs `nmcli` (2.0 s timeout) and `hostname -I`
+  (2.0 s, never longer than the SSID reader's) and makes no HTTP call: the server probe runs only
+  once the home SSID and a home-subnet IP are both seen.
+- **At home with the server down it still drains.** The drain decides *whether* to try; the probe
+  verdict no longer vetoes it. Retrying until delivered or a ceiling is US-776-g; the outcome record
+  per shutdown is US-776-d (below).
+- **Read once, not polled.** A network that changes mid-drain is not re-detected; the drain then
+  ends on a failing pass, or on the floor while a pass is blocked.
+
+**AWAY comes only from a fresh sweep; once home is seen, only association or `joinWaitSec` ends the
+join wait (US-776-k1 / US-776-k2, Sprint 97).** The detector's ordinary read uses NetworkManager's
+CACHED scan list (`--rescan no`), which after a drive often lacks home: on 2026-10-11 13:14:47 a key-off
+in the driveway read AWAY and left 9,492 rows on the Pi.
+
+- **At the key-off** `HomeStateAtLoss.observe` runs ONE forced sweep (`HomeNetworkDetector.sweep`,
+  bounded by `pi.homeNetwork.sweepTimeoutSec`) before anything else. `NOT_VISIBLE` -> `AWAY` and
+  `FAILED` -> `UNKNOWN` (never AWAY) are decided from the sweep alone; `VISIBLE` -> `AT_HOME_JOINING`;
+  `ACTIVE_HOME` continues on the detector's read. **AWAY is never decided from the cache.**
+- **Inside the join wait** each poll still reads the cached list, so a poll can read AWAY with home in
+  range. Home has already been seen, so an AWAY poll does **not** end the wait: it ends only on the
+  association (an `AT_HOME_SERVER_*` read -> drain), on `UNKNOWN` (drains, per the rule above), or when
+  `pi.homeNetwork.joinWaitSec` (120 s) is spent -> `AT_HOME_JOINING_TIMEOUT`, no attempt, custody
+  OUTSTANDING. No new outcome: a wait that read AWAY and never associated is a join timeout. A car
+  cannot drive away during a key-off, so the only AWAY the wait could honour is a false one.
+- After association the drain is unchanged: a failing server ends it `stallSec` after the drain start
+  (plus at most one retry wait) as `AT_HOME_SERVER_DOWN`, custody OUTSTANDING.
+
+**Every shutdown sync records why it ended (US-776-d, Sprint 95; Atlas review 2026-09-30, ruling 4
+and gap 3).** Until Sprint 95 a skipped sync wrote nothing, so a probe that was always false read as
+an absent server for weeks: 16 of 16 shutdowns logged "unreachable -- benign skip" at INFO and left
+no record. Now **every** `SyncWithServerTask.run()` -- the skip and the success included -- hands
+exactly one `SyncOutcomeRecord(kind, detail, backlogStart, backlogEnd)` to its sink, and logs one
+`outcome=<NAME> backlog_start=<n> backlog_end=<n>` line.
+
+**The outcome table lives in ONE place: `specs/shutdown-orchestration-design.md` (the `sync_outcome`
+table, and the "Silence is never the signature of a poweroff" table for which path lands which
+outcome).** The code SSOT is `OutcomeKind` in `src/pi/power/power_watch/contract.py`. *(This file
+carried a second copy until 2026-10-05; it had drifted -- it still described the retired ceiling and
+lacked `STALLED`, `RESERVE_FLOOR` and `INTERRUPTED` -- so it was replaced by this pointer, US-833.)*
+
+- **A misconfigured probe is told from a down server by a sibling, not by changing the bool.**
+  `HomeNetworkDetector.probeServer()` returns `ProbeResult(status, error)`; `isServerReachable()` is
+  its 2xx, so every existing caller is untouched. The detector keeps the probe behind its last state
+  as `lastProbe` (cleared whenever a state is decided without probing), and the task reads that --
+  it never probes again, so recording adds no network call to the shutdown.
+- **`backlog_start` and `backlog_end`.** Read from the shared US-621 reader with the drain's own
+  exclusions (`readDrainBacklog`), before the first attempt and after the last; on `AWAY` the one
+  read is both. A count the reader could not complete (an unreadable table, an unopenable database)
+  is `None`, never a lower bound presented as exact. `DELIVERED` with `backlog_start = 0` (nothing
+  was owed) is therefore distinguishable from `DELIVERED` with `backlog_start > 0` -- the 2026-09-27
+  shutdown read DELIVERED with the drain never having run.
+- **Where it lands.** `__main__.makeOutcomeSink` writes the record into `powerwatch_outcome.json`
+  (`outcome.writeOutcomeRecord`: atomic, never raises) with `sync_outcome` = the outcome NAME and the
+  two counts (an unknown count is omitted). The next boot's `boot_progress.arm` lands them into
+  `startup_log.prior_boot_sync_outcome` / `prior_boot_backlog_start` / `prior_boot_backlog_end`
+  (US-776-f), which reach the server through the existing snapshot sync.
+- **No poweroff leaves the record silent (US-833, 2026-10-05).** A provisional `INTERRUPTED` record
+  is written before the sync can be cut off, and the floor and fast paths record too. Which path
+  lands which outcome: `specs/shutdown-orchestration-design.md`. *(Until US-833 the backstop fast path
+  and a floor-ended pass landed the sync columns NULL; this bullet said so.)*
+
+### 10.6.4 The open drain row is checkpointed every 30 s (US-605, Sprint 77 / V0.29.34) [Atlas Rule 10]
+
+An in-progress drain event was written once, at close. A power loss before that close lost the whole
+event -- the exact scenario a drain log exists to describe.
+
+The row is now checkpointed at **30 s** (Spool `[EXACT: 30]`), which converts a lost write from
+*"the drain never happened"* into *"the drain is known up to its last checkpoint."*
+
+⚠️ **The reaper can now close ONTO a checkpoint**, which is what the cadence buys. And an
+**un-checkpointed reaped row is identifiable by its signature** -- so the record distinguishes
+*"ended here"* from *"we stopped knowing here."* That distinction is the whole value: without it a
+truncated drain and a completed one are indistinguishable rows.
+
+### 10.6.5 `power_log` records transitions, not only the healthy state (US-626, Sprint 77 / V0.29.34) [Atlas Rule 10]
+
+**The defect.** Across ten Pi boots on 2026-08-28, `power_log` held **14 rows, every one
+`ac_power`.** Zero `battery_power`, zero `transition_to_battery`; `battery_power` last written
+2026-08-17, `transition_to_battery` last written 2026-05-20. **A power monitor that cannot record
+power loss is not a monitor** -- it reads "healthy" through every outage.
+
+**Two structural additions:**
+
+- **`PowerObservation` -- an honest THREE-STATE read.** The power source is *present*, *absent*, or
+  *unknown*. Collapsing unknown into either of the other two is what let an unread sensor look like
+  mains.
+- **Which instrument witnessed a row is recorded.** A row now carries its observer, so "no
+  transitions occurred" becomes a *positive statement* rather than an inference from an empty log.
+  **An empty log and a dead writer were previously the same evidence.**
+
+⚠️ **What this does NOT fix:** an in-process logger still cannot witness its own machine's death.
+On a hard rail collapse there is no poll interval left and no time to reach SQLite. The structural
+answer -- reconstructing the loss at next boot from a last-known-good heartbeat (A-22) -- is
+§10.6.6. This section documents a monitor that records what it *can* see; it does not claim
+coverage of the case where the observer dies with the observed.
+
+### 10.6.6 Surviving a power loss is MEASURED, not assumed — the loss heartbeat (US-748, Sprint 86 / V0.29.50) [Atlas Rule 10]
+
+**What the flow above does NOT establish.** §10.6 describes a sequence that needs roughly
+`smoothingSec` (7) + the sync drain (`perTaskTimeoutSec` 20, capped by `totalWindowCapSec` 45) to
+reach `systemctl poweroff`. (Superseded by US-776-a: at home the drain is now bounded by the VCELL
+floor, not by those two timers -- §10.6.3.) **Nothing in this section guarantees the supply keeps the Pi up that
+long.** Atlas cut power twice on 2026-09-14 (16:04:44Z, 16:40:03Z), with all services running.
+Both times:
+
+- GPIO6 fired and `power_log` `transition_to_battery` was written.
+- The collector opened the drain row at **4.18 V** and **3.95 V**.
+- The Pi was dead **before the row's first 30 s checkpoint** (§10.6.4). There was no
+  `CLEAN_COMPLETE`, and the journal's last persisted line predates the transition.
+
+Both software explanations are excluded by evidence. The VCELL floor fast path needs ≤ 3.50 V, and a
+graceful poweroff writes `CLEAN_COMPLETE`. **Until the cause is known (US-748, CIO/hardware), read
+§10.6.2–§10.6.3 as what happens IF the machine lives through the window, not as a claim that it
+does.** The pre-shutdown budget is deliberately **unchanged**: shortening it to fit a machine with
+no time left would not help, and it would break the sync-custody sequencing.
+
+**The instrument.** At `handleOnBattery` **entry** (after the ARCH-019 witness, **before**
+smoothing) the sequencer calls the optional `powerLossObservedFn`. powerwatch wires this to
+`PowerLossHeartbeat.start` (`src/pi/power/power_watch/loss_heartbeat.py`). The heartbeat writes one
+row per **1 s** for **60 s** into the Pi-local `power_loss_heartbeat` table, following Atlas's gate
+(2026-09-14 §1). Each row holds:
+
+| column | meaning |
+|---|---|
+| `loss_started_utc` | event key — UTC instant the loss was observed |
+| `seq` | 0-based row number |
+| `elapsed_s` | **monotonic** seconds since the loss (never wall clock — US-620) |
+| `vcell_v` | VCELL, NULL if the gauge could not be read |
+| `power_lost` | PLD at that row: 1 lost / 0 returned / NULL unknown |
+| `recorded_at` | wall-clock write time, context only |
+
+**Invariants.**
+
+- The heartbeat runs on its own daemon thread, and `start()` never blocks. A hook that raises is
+  logged and **never** delays shutdown.
+- Every row is committed with `PRAGMA synchronous = FULL` (the US-267 chain). A buffered row is
+  exactly the row a hard cut loses.
+- An unreadable gauge or PLD writes NULL. The row is still written, because its **existence** is the
+  measurement.
+- A missing database is never created.
+- The table is **not synced** (absent from `IN_SCOPE_TABLES`) and sits outside `ALL_SCHEMAS`, so it
+  adds no Pi-only server-parity drift (TD-039).
+
+**The reading.** At every start powerwatch logs one `powerwatch: LOSS HEARTBEAT =` line for the most
+recent event, via `readLatestLossHeartbeat`. The line gives the last surviving `elapsed_s`, the
+**floor** on how long the machine lived (understated by at most one interval), plus the min VCELL
+and whether power returned.
+
+- If the rows reach the end of the window, the machine outlived the instrument.
+- Otherwise the number is **time-to-death** when the prior boot has no `CLEAN_COMPLETE`, and
+  **time-to-poweroff** when it does. Poweroff stops the service, which ends the rows.
+
+**Scope.** Since US-788, losses inside boot-grace reach `handleOnBattery` and start the
+heartbeat like any other loss (see §10.6).
+
+### 10.6.7 The shutdown ceremony — an empty backlog shortens the drain, never the ceremony (US-796-d, Sprint 90 / V0.29.59)
+
+A confirmed power loss that reaches poweroff runs the same **ceremony** whatever the depth of
+the sync backlog. "Nothing to send" makes the **drain** shorter. It does not remove any other step.
+
+| # | Step | Owner | Mandatory at an empty backlog |
+|---|---|---|---|
+| 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
+| 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops (at home or `UNKNOWN`; a positive `AWAY` skips it, US-776-c) |
+| 3 | **Drain close** — the US-526 primary close (§10.6.2) | `buildDrainCloseHook` via `prePowerOffFn` | yes; a no-op close when no row is open |
+| 4 | **Custody** — the record states its verdict (§10.6.3) | `makeSyncCustodyHook` via `prePowerOffFn` | yes; `DELIVERED` |
+| 5 | **Poweroff** — `systemctl poweroff` | `ShutdownSequencer` | yes |
+| 6 | **`CLEAN_COMPLETE`** — the finalizer's `ExecStop` | `boot-progress-finalize.service` | yes |
+| 7 | **`prior_boot_clean = 1`** on the next boot | `boot-progress-arm.service` | yes |
+
+**The animation is not a step.** The grace splash is no longer shed (§10.6.1, US-796): the CIO
+kept the animation, and it plays at key-off. The ceremony still asserts no display, because the
+animation is the splash's response to `shutdown-state`, not a step the sequencer runs.
+
+**The guard.** `tests/pi/power/power_watch/test_shutdown_ceremony_guard.py` drives one sustained
+loss with an empty backlog through the real sequencer, pipeline, drain, hooks and `boot_progress`
+finalize/arm, then checks the seven steps in order. It is proved able to **fail**. A shutdown
+that reaches poweroff without `CLEAN_COMPLETE` fails it, and so does each of these, while still
+reaching poweroff:
+
+- a drain skipped because the backlog is empty;
+- unwired pre-poweroff hooks;
+- a missing shed;
+- a shed that follows the drain.
+
+The guard does not depend on what separates a survivable cut from a fatal one. It states what a
+completed shutdown must contain. It adds no bound on the drain, so a shutdown **with** a backlog
+still drains fully (§10.6.3).
+
+### 10.6.8 A sync session records the RESIDUAL, never the count alone (US-795-a, Sprint 93 / V0.29.64) [Atlas Rule 10]
+
+`sync_history` recorded what **moved** — `rows_synced` — and never what **remained**. That single
+omission was the whole gap, because **the residual is the only statement about the Pi that stays
+true after it goes dark.** Row counts describe a transfer that already succeeded; the residual
+describes the device, and the device is what you cannot ask once it stops answering.
+
+Two columns, added by `v0028`, both **nullable with no default**:
+
+| `residual_rows` | `residual_complete` | Means |
+|---|---|---|
+| `0` | `TRUE` | the car owed nothing, and every table could be read |
+| `12` | `FALSE` | **at least** 12 — some tables were unreadable |
+| `NULL` | `NULL` | we could not determine what the car owed |
+
+🔴 **The count may never travel alone.** `SyncBacklog.total` is documented as a **lower bound**
+whenever `unreadableTables` is non-empty — its own docstring says so. Persisting the integer
+without that qualifier converts a measured lower bound into an apparent exact count at the moment
+it is written down, and nothing downstream can recover the difference afterwards. A schema able to
+store the number without the qualifier is the defect, not a write path that happens to set both.
+
+🔴 **Zero and unknown are different facts and must stay differently stored.** A `NOT NULL DEFAULT
+0` would collapse the third row of that table into the first, so every session that failed to
+measure — and every row predating the migration — would assert that the car owed nothing. That is
+reporting a healthy car **on the evidence of a failed measurement**, which is the same shape of
+defect as a substituted timestamp (§A″): a manufactured value is indistinguishable from a measured
+one once it lands. `v0028` therefore backfills **nothing**.
+
+⚠️ **What the residual still cannot answer, and the worked case that proves it.** At 19:35:30Z
+session 216962 completed: 216 rows, zero errors, and the Pi genuinely *was* caught up. The CIO then
+drove, and the Pi never contacted the server again. **A residual of 0 would have been entirely
+correct and entirely useless** — the queue did not exist yet at the last contact. The residual
+answers *"was it current **as of** t"*, never *"is it current now"*. Anything that reads this
+column and says "synced" is making a claim about the present out of a fact about the past; §10.6.9
+(US-795-b) is where that distinction is spoken out loud.
+
+**Not a heartbeat.** One was proposed and withdrawn within the hour, correctly: a heartbeat needs
+the Pi to be alive to be informative, and the case that matters is exactly the one where it is not.
+
+**Measured, never recomputed.** The value is carried from the Pi's `SyncBacklog` (US-789,
+`3c921c65`) through the sync request and written at session close. The server does not recount:
+a second implementation of the same measurement would be a second source of truth for one fact.
+
+🟢 **The producer gap is CLOSED (US-795(a), Atlas, CIO-directed 2026-10-06).** Until then the Pi
+never sent the residual — **0 of 234,331** `sync_history` rows carried one. Now **every POST the Pi
+makes** carries it — the delta push, the snapshot push and the drive-counter push
+(`SyncClient._measureResidual`) — so the newest contact the server holds always measured the queue.
+- **Residual = the backlog read just before the POST, minus this batch's NEW rows** (primary key
+  above the cursor; a re-sent modified row was never counted) — `backlog.residualAfterBatch`, using
+  the same `countOutstandingRows` as the power-watch custody verdict: one measurement, one
+  implementation. A count that fails **omits the field** — never blocks a push, never sends 0.
+- **Per POST, not per run — MEASURED, not assumed:** the count costs ~6 ms per 100k backlog rows on
+  the car (2026-10-06, `edr_imu_sample` / `realtime_data`), and a pass sends at most one 500-row
+  batch per table, so a 1M-row backlog costs a few × ~30–60 ms a minute.
+- **The split (CIO ruling):** `groups: {drive, sensor}` — `sensor` = `EDR_SYNC_TABLES`, `drive` =
+  everything else. Optional on the wire (an older Pi still syncs) and stored by `v0036` in
+  `residual_drive_rows` / `residual_sensor_rows`, nullable, no default — same rule as the total.
+- 🔴 **Deploy order: SERVER BEFORE PI.** `ResidualReport` is `extra="forbid"`: an old server
+  rejects every push that carries `groups`.
+
+### 10.6.9 The server states what it knows, and nothing it cannot (US-795-b reader, US-795(a) surfaces) [Atlas Rule 10]
+
+`src/server/api/currency.py` is the **only** reader: three states (`current` / `holding` /
+`unknown`), each stamped with the contact it describes, plus one alarm — a backlog that did not
+decrease across ≥ 3 consecutive contacts **spanning ≥ 120 s** (Threshold + Dwell,
+`specs/design-patterns.md` §1; US-795 reopened 2026-10-11 after a fading link at a departure
+raised it in 8 s). Leading zero-backlog contacts do not start the clock; the text is past tense.
+A contact is one per-table POST, so the reader reads 500 rows to see the dwell at ACTIVE density.
+**Age alone is never a fault.** `src/server/services/sync_status.py` turns `sync_history` rows into its
+input; **the CLI (`python -m src.server.cli.sync_status`) and `GET /api/v1/sync/status` both call
+it**, so there is one judgement and one sentence. The sentence (CIO ruling 2026-10-06):
+
+    last contact <ts> (<age> ago): N queued (exact | at least) - drive D, sensor S; nothing known since [| ALARM: ...]
+
+**No online/offline verdict, ever**: the server cannot see rows created after the last contact, so
+it says what was true then and states its age. A device never heard from reads `no contact
+recorded; nothing known` — a word, not an invented timestamp.
+
+### 10.6.10 How a drain row was CLOSED is a typed column — `battery_health_log.close_reason` (US-683, Sprint 94) [Atlas Rule 10]
+
+
+**The distance this closes.** Since §10.6.4 a drain row can be closed three different ways, and they
+do not carry the same evidence. Until US-683 the only home of that distinction was the module
+docstring of `src/pi/power/drain_event_writer.py`, and the only per-row statement of it was a
+**prose suffix appended to `notes`**. Neither reaches a server-side reader honestly: `sync.py`'s
+`_PRESERVE_ON_UPDATE` holds `notes` for every table, so a row the server first received **open**
+never sees the reap suffix added at close. **A cross-tier semantic that a server-side consumer must
+honour is not documented only in a Pi module's docstring** — and it is not carried only in a column
+the sync deliberately freezes.
+
+#### The three close cases
+
+| `close_reason` | Written by | What the row carries | Votes in the battery-health verdict? |
+|---|---|---|---|
+| `clean` | `BatteryHealthRecorder.endDrainEvent` — power restored, shutdown close (§10.6.2), or a drill | Measured end depth, end SoC and runtime at the actual close | **Yes**, subject to the depth gate |
+| `reaped_uncheckpointed` | Boot reaper, on an owned row **no checkpoint ever measured** | `end_timestamp` only; `runtime_seconds` **and** `end_vcell_v` stay NULL | **No.** Nothing measured the drain. Excluded by type, and again by its NULL runtime and depth |
+| `reaped_checkpointed` | Boot reaper, closing **onto the last 30 s checkpoint** (§10.6.4) | Real checkpointed depth and runtime; `end_timestamp` = `start_timestamp + runtime_seconds`, never the reap instant | **Yes** — see the ruling below |
+
+**NULL means OPEN, and only that.** There is deliberately no `open` value: `end_timestamp IS NULL`
+stays the open marker, and a row has `close_reason` exactly when it has `end_timestamp`. That pairing
+is held **in code** — every statement that sets `end_timestamp` sets `close_reason` in the same
+UPDATE — not by a schema CHECK, because SQLite tests an `ADD COLUMN`'s CHECKs against every existing
+row and a paired CHECK would fail every closed row before the backfill could run (only a rebuild
+could add it). The column carries a single-column CHECK on the three values, on both tiers.
+
+⚠️ **Three states, not a boolean.** The two reap cases have **opposite** verdict eligibility; a
+`reaped` flag cannot carry that. The `notes` suffix stays as human context only — **a consumer reads
+the column, never the prose.** The clean close's trigger (`power_restored` / `shutdown`) is log
+context and is **not** stored: the column records *how* a row was closed, not *which event* closed
+it cleanly.
+
+#### The ruling: a checkpointed reap VOTES (Atlas, 2026-09-24)
+
+A `reaped_checkpointed` row is eligible and votes. Its depth and runtime **understate** the real
+drain by at most one checkpoint interval — **≤ 30 s on runtimes of 600–800 s, i.e. ≤ ~5 %** — and
+excluding it would discard real measurements from a table of ~61 rows. The verdict's qualifying
+query already implements this: it excludes `reaped_uncheckpointed` by type (`IS NOT`, so a closed row
+with no recorded reason is still judged on its measured values) and admits the other two.
+
+🔴 **THE DANGER IS THE TREND, NOT THE ROW. Eligibility is unchanged; attribution is added.** One
+understated row inside a verdict is bounded and harmless. A **trend** computed over a mixture is
+not: if the share of checkpointed reaps changes — a run of real power losses, a change to the
+shutdown path — the average moves with the mix and **manufactures drift in a battery that did not
+change**. Therefore:
+
+- `close_reason` is **carried into any trend computation** over `battery_health_log`.
+- A trend is computed **either within one `close_reason` class, or with the flag carried through**
+  to its output — **never over an unmarked mixture**.
+
+This is the same shape as pooling across the UPS cell swap (A-41): a population whose composition
+can change underneath a statistic must be stratified by the thing that changed, or the statistic
+reports the composition instead of the battery.
+
+⚠️ **Consumers today.** The Pi's `battery_health_verdict` is the only reader that computes a
+statistic, and it computes a verdict, not a trend. On the server nothing in `src/server` reads
+`battery_health_log`; the only server-side readers are one-shot repair scripts
+(`scripts/backfill_server_battery_health_log_stranded.py`) that compute no statistic. **The first
+server-side analytic to read the table inherits the rule above** — it is written here so that reader
+finds it without finding this sprint.
+
+#### Cross-tier
+
+Pi: `ensureBatteryHealthLogCloseReasonColumn`, wired into `ObdDatabase.initialize()` after the
+US-426 rebuild, adds the column by `PRAGMA`-guarded `ADD COLUMN` and backfills **once**: the reap
+suffix in `notes` ⇒ `reaped_checkpointed`; `runtime_seconds` **and** `end_vcell_v` both NULL ⇒
+`reaped_uncheckpointed`; any other closed row ⇒ `clean`. Open rows are never touched.
+
+Server: migration **v0032** adds the column and the named CHECK `ck_battery_health_log_close_reason`,
+and backfills **from the server's own rows** with the Pi's derivation verbatim. That is a floor, not
+the last word — the server may lack a reap suffix the preserve set withheld. The Pi's backfill fires
+the US-315 `modified_at` trigger and `close_reason` is **not** in the preserve set, so each backfilled
+Pi row re-syncs and **the Pi's value overwrites the server's**. The server vocabulary
+(`BATTERY_HEALTH_CLOSE_REASON_VALUES`) is pinned equal to the Pi's `CLOSE_REASON_VALUES` by
+`tests/server/test_battery_health_close_reason_crosses_tiers.py`.
+
+🔴 **Server before Pi.** `sync.py` RAISES on any Pi column the server model lacks (US-689), so a Pi
+carrying `close_reason` against a server without v0032 **stops `battery_health_log` sync on the
+first batch**.
+
+### 10.6.11 The shutdown-drain inclusion rule — a dataset the drain GENERATES rides the drain (US-790, Sprint 94) [Atlas Rule 10]
+
+**The distance this closes.** The only statement in the tree about which tables the power-loss drain
+carries is `SHUTDOWN_DRAIN_EXCLUDED_TABLES` (`src/common/edr/sync_contract.py`), and it reads as a
+blanket rule: *every EDR table is excluded, the drain budget is for drive data.* That is correct for
+EDR (§10.8.3) and **wrong as a precedent.** An author adding a table of shutdown-time telemetry who
+copies it gets a table that exists, whose schema matches on both tiers, whose tests are green — and
+that **holds no rows on the server after any real power loss**, which is the only thing it was
+built to describe. US-790's `drain_vcell_trajectory` is the first table on the other side of the
+line. **A rule whose only home is a closed ticket is not a rule; it is a thing someone once knew** —
+so it is written here as a property, with that table as its first instance.
+
+#### The property
+
+**A table's drain membership follows from WHEN its rows come into existence, not from what kind of
+sensor produced them.**
+
+| The table's rows are… | Drain membership | Why |
+|---|---|---|
+| **Archival backlog that predates the shutdown** and is unbounded against the drain budget (EDR: millions of rows, §10.8.3) | **EXCLUDED** — listed in `SHUTDOWN_DRAIN_EXCLUDED_TABLES` | The drain budget is seconds and exists to protect drive data. This backlog loses nothing by waiting; it catches up on the next ordinary sync tick. |
+| **GENERATED BY the shutdown drain itself** (US-790: the drain's per-poll VCELL series) | **INCLUDED** — NOT listed | The rows exist only because the power is going away. Excluded, they are stranded on the Pi at exactly the moment they were written for, and the server — where the analysis happens — has none for any shutdown that ended in a real loss. |
+
+🔴 **`SHUTDOWN_DRAIN_EXCLUDED_TABLES` is the MECHANISM, and membership is a decision, not a
+default.** It is one frozenset, read by the drain's push, the drain's exit check and custody alike
+(`power_watch/__main__.py` never re-lists it at a call site). Adding a table to it removes that
+table from all three at once. **Copying the EDR precedent for shutdown-time telemetry is wrong:** it
+passes every gate and is empty exactly when it mattered.
+
+#### An included drain-generated table carries two obligations
+
+Including the table is necessary and not sufficient. A drain that carries a table it is **writing
+to while it drains** has two traps, and US-790 closes both; a future table must do the same.
+
+1. **Exclude THIS drain's own rows — by primary key, never the table — from the exit check and
+   from custody.** The drain ends when the backlog reader returns 0 (§10.6.3, US-776-a). A row lands
+   every poll, so every pass would find the one written since the last push and go again — the rows
+   chasing `backlog == 0` until the floor ends the drain. And custody, counting them, would read
+   `OUTSTANDING` on every graceful shutdown: **the US-789 defect, recreated.** US-790's mechanism is
+   `OwnTrajectoryRows` (`power_watch/sync_custody.py`): an **append-only** set of ids, added to only
+   after a write is known to have landed, and read by **both** the exit check and custody so the two
+   cannot disagree about which rows are the shutdown's own. It is the set form of US-789's single
+   `OwnDrainCloseSlot` — same `RowExclusion` type, same "subtract only if actually outstanding".
+2. **Scope the own-rows set to the CURRENT drain.** The power-watch service outlives a drain that
+   power returning cancelled. That drain's undelivered rows are **genuine backlog for the next one**,
+   not this drain's own; a set scoped to the process would hide them. The writer calls
+   `beginDrain()` as each drain's first row (`seq` 0) starts.
+
+⚠️ **Excluded rows are reported, never hidden.** Custody records them beside the verdict as
+`ownTrajectoryExcluded` — table, reason, requested count, id range, and how many were actually
+outstanding (at ~1,500 rows a drain, a list of ids is useless; a count and a range stay falsifiable).
+Same shape as `ownDrainCloseExcluded` (§10.6.3) and `edrOutstandingRows` (§10.8.3).
+
+⚠️ **INSERT-only, and out of `SYNC_UPDATE_TABLES_PK`.** The table rides the `id` cursor
+(`PK_COLUMN` in `src/pi/data/sync_log.py`) and is never UPDATEd, so a row pushed mid-drain is never
+re-stamped outstanding by a `modified_at` trigger. A drain-generated table that is UPDATEd after
+insert re-opens the chase above through a door the id set does not guard.
+
+#### The instance: `drain_vcell_trajectory`
+
+| Column | Meaning |
+|---|---|
+| `ts_utc` / `ts_capture` | **Event time** of this poll's VCELL read (ISO-8601 UTC) and the monotonic seconds at the same read. Never a write time. |
+| `seq` | 0-based poll number within one drain; `0` opens the next drain. `seq` advances even when the row fails to land, so **a gap in `seq` is a lost row, not a missing poll.** |
+| `vcell_v` | MAX17048 VCELL volts. **NULL = no reading on that poll**, never a sentinel and never a zero. |
+| `termination_reason` | Set on the drain's **LAST** row only — `shutdown`, `power_restored`, `drain_floor`, `vcell_floor`, `vcell_unreadable` — NULL on every other row. |
+| `cell_epoch` | `pi.power.cellEpoch`, stamped at write time: **which cell was fitted.** `unknown` when the key is absent — never a guessed epoch. |
+
+🔴 **What a reader must not conclude.** A drain with no terminal row did not end cleanly with an
+unrecorded reason — **it was cut** (or its last write failed; the `seq` gap says which). A series
+averaged across `cell_epoch` values is an average across **different batteries** (A-41), not a
+floor. And a short series is not a failed drain: §10.6.3 already establishes that a depleted pack
+ending the drain within seconds is correct behaviour.
+
+#### What US-790 does NOT change
+
+**No floor.** `drainFloorVolts` stays **3.60 V, PROVISIONAL** (§10.6.3). US-790 records the series
+that decision was waiting for; it does not measure it, and nothing here re-derives the constant.
+The drain's bounds, the custody verdict's meaning and the EDR exclusion are unchanged.
+
+#### Cross-tier
+
+Pi: `ensureDrainVcellTrajectoryTable` (`src/pi/obdii/database_schema.py`), wired into
+`ObdDatabase.initialize()`, creates the table only when a `sqlite_master` probe finds it absent and
+never touches an existing one (the replay-safe step, `specs/design-patterns.md` §10). Writer:
+`DrainVcellTrajectoryWriter` (`src/pi/power/power_db.py`), durable per row, never raises — it runs on
+the drain's own poll thread. Server: migration **v0033**, probe-guarded, with the named CHECK
+`ck_drain_vcell_trajectory_termination_reason`; the vocabulary is pinned equal across tiers by
+`tests/server/test_drain_vcell_trajectory_crosses_tiers.py`. Because the table is created by an
+ensure step rather than `ALL_SCHEMAS`, it is also registered by hand in
+`scripts/schema_diff.loadPiSchema` (TD-079).
+
+🔴 **Server before Pi.** The Pi pushes this table **during the drain itself**; a server without
+v0033 rejects every batch that carries the series.
 
 ## 10.7 Data Pipeline Architecture (B-104 Step 1, Sprint 41 / V0.27.17)
 
@@ -1725,9 +3322,11 @@ it from raw data, the Pi does not transmit it.*
 
 The server compute path lives in
 `src/server/analytics/drive_summary_compute.py` (US-350; analytics columns
-on `drive_summary`) and `src/server/analytics/drive_statistics_compute.py`
-(US-351; per-`parameter_name` aggregate rows on `drive_statistics`). Both
-are keyed on the Pi-local `drive_id` (matches `realtime_data.drive_id` and
+on `drive_summary`), `src/server/analytics/drive_statistics_compute.py`
+(US-351; per-`parameter_name` aggregate rows on `drive_statistics`), and
+`src/server/analytics/derived_signals_compute.py` (US-436 / F-106; one
+`drive_derived_signals` row per drive — see §10.7.2). All three are keyed on
+the Pi-local `drive_id` (matches `realtime_data.drive_id` and
 `drive_summary.source_id`) and persist on the server-side
 `drive_summary.id` PK.
 
@@ -1741,7 +3340,13 @@ are keyed on the Pi-local `drive_id` (matches `realtime_data.drive_id` and
   (`drive_start_timestamp`, `ambient_temp_at_start_c`,
   `starting_battery_v`, `barometric_kpa_at_start`, `data_source`) are
   preserved unchanged — the server compute path enriches from those
-  columns but never overwrites them.
+  columns but never overwrites them. **US-437 (N-8, Sprint 53 / V0.29.7)**
+  additionally backfills `drive_summary.profile_id` from the earliest
+  non-NULL `realtime_data.profile_id` for the drive (preserve-NULL,
+  never-clobber, idempotent): the profile_id-population path was collateral
+  of the US-350/B-104 trigger-seam retirement (the writer that set it was
+  removed and `compute_drive_summary` never carried the assignment forward),
+  which had left every server row's `profile_id` NULL.
 - `drive_statistics` is computed via `compute_drive_statistics(session,
   driveId)`: read raw rows grouped by `parameter_name`, run
   `src/server/analytics/helpers.computeBasicStats` (Spool FLAG-1 SSOT
@@ -1781,6 +3386,16 @@ are keyed on the Pi-local `drive_id` (matches `realtime_data.drive_id` and
   `src/pi/obdii/orchestrator/lifecycle.py`) is reverted to the
   pre-US-349 shape. Any future `from pi.obdii.drive_statistics import …`
   raises `ImportError` by design.
+- The Pi-side legacy `battery_log` table (whose sole writer
+  `BatteryMonitor` was deleted in US-223) is retired the same way
+  (US-437 N-4, Sprint 53 / V0.29.7): the new
+  `ensureBatteryLogRetired()` helper in
+  `src/pi/obdii/database_schema.py` performs an idempotent
+  `DROP TABLE IF EXISTS`, invoked by `ObdDatabase.initialize()` — an
+  empty `battery_log` had been lingering on the live Pi after the server
+  dropped it in US-223 / `v0003`. Mirrors `ensureDriveStatisticsRetired()`
+  exactly (forensic row-count log on first boot; no-op when absent). The
+  battery-protection domain is covered by US-217's `battery_health_log`.
 - Pi-side raw `realtime_data` table + sync transport
   (`src/pi/obdii/realtime_data.py`, `src/pi/obdii/sync/`) are
   unchanged — the canonical raw event stream still flows to the
@@ -1807,12 +3422,24 @@ independent of any Pi-side end-of-drive marker:
    next boot). The unit runs the on-demand CLI in `--all-stale` mode
    and refreshes every drive with NULL `drive_summary` analytics
    columns or missing `drive_statistics` rows.
+   **US-418 (CIO 2026-10-08): its FIRST step prunes `sync_history`** —
+   `python -m src.server.cli.prune_sync_history`, run as `ExecStart=-…` so a
+   prune failure cannot skip the recompute. The horizon is v0007's
+   `RETENTION_DAYS_DEFAULT` (90) or its `SYNC_HISTORY_RETENTION_DAYS`
+   override, against a UTC cutoff (`started_at` is UTC; MariaDB `NOW()` here
+   is CDT). 🔴 **Evidence is the step's own journal line**
+   (`sync_history retention: horizon=… deleted=… past_horizon_after=…`,
+   printed on every run, including `deleted=0`), never the unit's status:
+   the recompute exits 0 on failure (US-840).
 2. **On-demand CLI** — `python -m src.server.cli.recompute_drive_analytics`
    with `--drive-id N` / `--drive-id-range A-B` / `--all-stale` /
    `--dry-run`. The per-drive loop invokes
-   `compute_drive_summary` and `compute_drive_statistics`
-   atomically so a single CLI tick refreshes both analytics tables
-   (Atlas Q1 single-timer-fires-both-paths).
+   `compute_drive_summary`, `compute_drive_statistics`, and
+   `compute_drive_derived_signals` (US-436) atomically so a single CLI
+   tick refreshes all three analytics tables (Atlas Q1
+   single-timer-fires-both-paths). The derived-signals compute degrades
+   silently — a drive with `<2` SPEED rows returns `None`, writes nothing,
+   and leaves the existing OK/anomaly log untouched.
 
 The sync receipt path is **decoupled from compute**:
 `_tryAutoAnalysisTrigger` in `src/server/api/sync.py` is deleted;
@@ -1915,6 +3542,14 @@ nonzero exit the deploy script checks) plus a deploy-hygiene check proving
 `systemctl restart` release-then-acquire ordering — incremental US-361
 follow-up, not this sprint.
 
+> **Status update (Sprint 47 / V0.29.1, US-389 — both gates now met).** The
+> two-concurrent-process overlap DID recur in production (drives 28/29,
+> ~2026-06-06), so per Atlas's 2026-06-19 RCA ruling the guard was
+> **enabled out-of-band** (`pi.runtime.singleInstanceGuard.enabled=true`,
+> commit `d6d8b05`) with its required `RuntimeDirectory=eclipse-obd` partner
+> (commit `fae7ee7`) and deployed to the Pi. US-389 makes that durable: see
+> **§10.7.1.1** below. Mechanism B is now **LIVE**, not dark.
+
 **Mechanism C — server-side `attribution_anomaly` tripwire (LIVE; US-362 +
 US-363).** `src/server/analytics/overlap.py::detect_overlapping_drives` is
 the SSOT detector over raw `realtime_data` (US-362). US-363 wires it into
@@ -1934,10 +3569,1764 @@ F-005 + F-007 HOLDs on the observed result — runs as part of the Sprint-43
 IRL validation drill, not a headless dev iteration (BL-022). It executes the
 already-built path; it does not change the architecture documented here.
 
+### 10.7.1.1 Root 1 deploy-invariant closure (US-389, Sprint 47 / V0.29.1)
+
+The drives-28/29 recurrence re-confirmed Root 1 (two concurrent `eclipse-obd`
+processes racing the shared `drive_counter` — the per-process `_currentDriveId`
+singleton means neither sees the other's open drive, so a single physical leg
+splits across two minting processes; full trace in
+`docs/rca/2026-06-28-us387-drivedetector-close-signal-rca.md`). The guard +
+`RuntimeDirectory` mitigation was applied out-of-band; US-389 bakes it into the
+boot/deploy path as a **tested invariant** so it cannot silently regress.
+
+**Matched-pair invariant (Atlas C-5).** The guard config flag
+(`pi.runtime.singleInstanceGuard.enabled=true`) and the systemd unit's
+`RuntimeDirectory=eclipse-obd` are a **matched pair** — neither may ship
+without the other:
+
+- guard ON **without** `RuntimeDirectory` ⇒ the non-root service (`User=mcornelison`)
+  hits `EPERM` on `mkdir(/run/eclipse-obd)` when `acquire()` creates the lock's
+  parent dir, and crash-loops on boot;
+- `RuntimeDirectory` **without** the guard ⇒ the Root-1 dual-process defect is
+  left un-prevented.
+
+`deploy/deploy-pi.sh::step_assert_single_instance_matched_pair` shells out to
+`scripts/deploy_invariants.py check-pair` (the testable assertion) **before**
+`sync_tree`, so a broken pair **fails the deploy on the workstation** (exit 10)
+and never reaches the Pi. The assertion logic + its loud-failure contract are
+pinned by `tests/deploy/test_deploy_invariants.py` (guard-flag-false and
+`RuntimeDirectory`-removed fixtures both raise `MatchedPairViolation`) and the
+deploy wiring by `tests/deploy/test_deploy_pi.py` (US-389 static assertions).
+
+**Release-then-acquire deploy hygiene.** `step_restart_service` now does an
+explicit `systemctl stop` → settle → `systemctl start` (not a bare
+`systemctl restart`), pairing with the US-354 deploy-hygiene class: the outgoing
+orchestrator fully exits and **releases** the single-instance pidfile before the
+incoming process **acquires** it, so the guard cannot observe a still-dying old
+pid and refuse the new instance.
+
+**Version stamp.** `step_write_deploy_version` embeds the live
+`{guardEnabled, runtimeDirectory}` summary under the `.deploy-version`
+`singleInstance` key (via `deploy_invariants.py summarize` →
+`version_helpers.py compose-record --single-instance`), so the V0.29.1 stamp
+records the matched-pair state rather than being silent on top of V0.28.2.
+
+**06-06 spawn-trigger (Atlas RCA condition C-3) — best-available evidence.**
+The two concurrent `eclipse-obd` PIDs at ~2026-06-06 02:25 predate this sprint
+by ~3 weeks; the boot-window journal has aged out of the Pi's persistent ring,
+so the precise spawn event cannot be re-read (US-389 `conditionalOutcome`:
+document best-available + most-likely trigger rather than block). **Most-likely
+trigger:** a `systemctl restart` (or `Restart=always` flap, `StartLimitBurst=10`
+within 300 s) that re-spawned the orchestrator **before** the prior process had
+exited — at the time there was no `RuntimeDirectory` lock and no stop-before-start
+ordering, so two `main.py` processes could briefly co-exist, each minting from
+the shared counter. A manual `python src/pi/main.py` run overlapping the live
+service is the secondary candidate. **Both are now structurally prevented**: the
+guard refuses the second instance, the matched-pair invariant guarantees the
+`RuntimeDirectory` lock exists, and stop-before-start removes the restart race.
+Residual overlap remains backstopped server-side by the Mechanism C
+`attribution_anomaly` tripwire (US-390 confirms it stays armed).
+
+### 10.7.1.2 Root 2 guaranteed-close (US-388, Sprint 47 / V0.29.1)
+
+Root 1 (above) explains the *overlap*; Root 2 explains the *stale-open leak*
+that re-recurred on drives 28/29 (`drive_start` fired 29×, `drive_end` only
+18× — 11 drives never closed). RCA:
+`docs/rca/2026-06-28-us387-drivedetector-close-signal-rca.md`. The close state
+machine was **tick-driven only**: every close decision is evaluated inside
+`processValue`, whose sole caller is `EventRouter._handleReading`. When the
+engine stops and the data-acquisition readings stop *before* the
+`driveEndDurationSeconds` (60 s) RPM-debounce completes — with no adapter
+heartbeat to drive the ECU-silence backstop either — **no close is ever
+evaluated**. A later key-on then re-enters the still-open `STOPPING` session
+(RPM-above-end → `belowThresholdSince=None` → back to `RUNNING`), never reaching
+`_startDrive`, so the second physical drive is **absorbed** into the first's
+`drive_id` (fewer ids than drives — the inverse signature of Root 1's overlap).
+`_handleConnectionLost` does **not** close a drive, and the US-361
+`_isEcuSilenceContinuation` path does not cover this (it requires a silence
+`drive_end` to have fired first).
+
+US-388 makes the close **guaranteed** under Atlas's 2026-06-29 shape ruling
+(`offices/architect/reports/2026-06-29-us387-rca-acceptance-us388-close-shape-ruling.md`),
+four binding constraints:
+
+- **Deadline-anchored close (C-γ), evaluated regardless of the current reading.**
+  `DriveDetector._processRpmValue`'s `STOPPING` branch now calls the new
+  `_maybeCloseOnDeadline(now)` **first**: if `now - belowThresholdSince ≥
+  driveEndDurationSeconds` the drive ends immediately — *even if this tick's RPM
+  is back above threshold*. The debounce can complete inside a reading gap; the
+  first tick after the gap (a key-on) is then past the deadline, so the stale
+  drive closes and the same reading is re-evaluated in the now-`STOPPED` state,
+  reaching `_startDrive` and minting a **fresh** `drive_id` (no absorption). A
+  short blip that resumes *before* the deadline is still a continuation
+  (`RUNNING`), so US-361 is not regressed.
+- **Off-tick close (C-α).** New public `DriveDetector.evaluateTimeouts(now=None)`
+  runs the same two close paths (`_maybeCloseOnDeadline` + the US-229
+  `_checkEcuSilenceDriveEnd`) **off the reading-tick**. The orchestrator main
+  loop (`orchestrator/core.py::runLoop`) calls it on every pass (every
+  `_loopSleepInterval`, exception-isolated), so the close fires when the deadline
+  elapses **even if no further reading ever arrives** — reusing the existing
+  periodic loop rather than adding a watchdog thread.
+- **Lock discipline (C-β).** `evaluateTimeouts` acquires the **existing**
+  `self._lock` before reading/mutating `_currentSession`/`_driveState`, exactly
+  like `processValue` — the off-tick writer is safe against an in-flight tick. No
+  new lock, no lock-free mutation.
+- **Fresh-mint vs re-attach.** A confirmed RPM-debounce/deadline close does **not**
+  set the ECU-silence continuation marker, so the next `_startDrive` mints a fresh
+  id (the missed-close *is* a real engine-off). Only the tentative link-dropped
+  `_checkEcuSilenceDriveEnd` close arms the US-361 re-attach. This is what
+  distinguishes "two back-to-back drives" (two ids) from "one drive with a
+  mid-leg dropout" (one id).
+
+**Gap-fence corollary.** Because the close now fires, `_closeDriveId` clears the
+process-wide `drive_id` latch, so idle/KOEO rows after the close carry `NULL`
+`drive_id` — a stale-open can no longer absorb a later key-on (US-388 AC#4).
+
+**Oracle.** `tests/pi/obdii/drive/test_drive2829_close_signal_reproducer.py` (the
+US-386 in-process reproducer, `xfail` markers removed) is the code oracle for the
+gap-resume half; `tests/pi/obdii/drive/test_off_tick_close.py` pins the off-tick
+method; `tests/test_orchestrator_loop_health.py::TestOffTickCloseWiring` pins the
+loop wiring. Per Atlas, **true acceptance is the live IRL re-gate** (short /
+back-to-back / key-on-after-missed-close / deploy-double-start) — an off-tick
+close that rides the heartbeat loop can only be fully validated on the car;
+A-9 stays OPEN until that passes.
+
 *Gate-ratification note: §10.7.1 added per the 2026-05-18 design-gate
 governance rule (PM Rule 10) + Atlas's Sprint-43 PM Rule 13 validation-block
 PASS. Mechanism B's keep-dark production-enable disposition is the Atlas
 Rule 10 ruling of 2026-05-29 (CIO-ratified), recorded here + in §20.*
+
+### 10.7.1.3 Root 2 bounded-idle close — a finished drive stops claiming rows (US-625, Sprint 77 / V0.29.34) [Atlas Rule 10]
+
+**Root 2 was never closed.** §10.7.1.2 shipped the *guaranteed close*, and it holds for the paths it
+covers. It did not cover a drive whose session ends without any close signal ever firing.
+
+**The evidence, measured on the server 2026-08-29.** Drive 51's real leg ran
+`22:09:43 → 22:49:48`, 17,539 rows at a healthy 438 rows/min. Then **24 rows at
+`23:42:15-23:42:24` — 52 minutes after the leg ended — still stamped `drive_id=51`.** The detector
+never closed 51 and never opened 52.
+
+The damage is not the 24 rows. It is that **drive 51 then reads as 189 rows/min when its real leg
+ran 438** — so the row-rate cross-check, which is our best coarse quality signal, flags the drive
+correctly while pointing at the wrong diagnosis. **Mis-attribution, not loss.**
+
+**Two mechanisms, both fixed:**
+
+- **`STOPPING` now counts as active.** It previously did not — so a context in `STOPPING` read as
+  IDLE, `evaluateTimeouts` early-returned forever, and `stop()` was never reached. The state that
+  exists to end a drive was invisible to the thing that ends drives.
+- **A bounded idle clock, armed per context.** A `drive_id` with no session left to close still has
+  to be closed, and the same activity signal that keeps a drive alive extends its bound. So the
+  bound expires on *silence*, not on wall-clock alone.
+
+⚠️ **DIRECTIONAL FENCE — this must never share a ticket with the start-side gap (US-567).** Root 2
+is **OVER-attribution**: a dead drive claiming rows that are not its own. US-567 is
+**UNDER-attribution**: live rows carrying no `drive_id` at all. **Opposite directions, opposite
+fixes — and a fix for one re-opens the other if they are built together.** Spool's ruling of
+2026-08-20, upheld.
+
+⚠️ **AND: drives 45/46 are NOT evidence for Root 1.** They were filed as Root 1 regressing
+(concurrent capture). **Ruled 2026-08-29: they are the A-23 clock artifact** — the two drives sit in
+different boots whose *recorded windows themselves overlap*, and their `source_id` blocks are
+disjoint and contiguous, which concurrent writers on one autoincrement cannot produce. **Root 1
+stays CLOSED. Do not re-open it on that evidence.**
+
+**What closes Root 2 for good is still owed:** the acceptance test must include the shape that
+produced it — a drive whose session ends with no close signal — because *absence of reproduction is
+not evidence of repair.* That criticism (Spool, 2026-08-28) is upheld: Root 1 was closed on one
+clean pair, and that was too narrow.
+
+### 10.7.1.4 The drive-attribution contract — a row is attributed at CAPTURE (US-777, Sprint 91 / V0.29.60)
+
+**When a `drive_id` is assigned.** A `realtime_data` row carries the drive that was live **at the
+instant the reading was captured**, and no other. The producer
+(`RealtimeDataLogger._publishReading`) stamps `Sample.driveId = getCurrentDriveId()` when it
+publishes; `PersistenceSubscriber.handleSample` hands that value to
+`ObdDataLogger.logReading(reading, capturedDriveId=sample.driveId)`, which writes it as-is. The
+inline no-bus path (no `capturedDriveId`) still resolves in `logReading` — there, write time **is**
+capture time.
+
+**The defect this closes.** With `pi.bus.enabled` (on in `config.json`) the row is written by the
+subscriber's drain thread, and before US-777 `logReading` re-resolved `getCurrentDriveId()` at
+**write** time. A drain lag that spans a drive close therefore wrote rows captured during drive *N*
+as NULL (the drive had gone stale) or as drive *N+1* (the next drive had opened). Measured
+2026-09-21: a 90 s drain lag against the 60 s bound NULLed 31 rows. 🔴 **The write-time lookup was
+the inheritance** — it attached an id that was never valid for that datum. A capture-time id *was*
+valid: at the instant of the read that drive was live and non-stale (Atlas ruling 2026-09-21).
+
+**When NULL is correct, and stays NULL.** A reading captured with **no live drive** — before any
+drive opens, or after the live drive has passed its bounded idle (§10.7.1.3) — carries
+`driveId=None`, and that is written as **explicit NULL even if a drive has opened by the time the
+drain reaches it**. A captured `None` is never upgraded.
+
+**Why a stale id is never substituted.** Guessing is worse than the defect: NULL rows are retained
+and filterable (`WHERE drive_id IS NOT NULL`), while a wrong id silently corrupts a drive's window,
+rate and statistics — the drive-51 shape of §10.7.1.3. The EDR tables keep their own rule
+(`EdrPersistenceSubscriber._resolveDriveId`: an id only while `isDrivingFn()`, else explicit NULL);
+their NULL rows during the gate's hold tail are correct by design and are **out of scope** here.
+
+**One staleness predicate.** `isDriveIdStale` (`src/pi/obdii/drive_id.py`) remains the single
+predicate: the detector's bounded-idle close (`DriveDetector._maybeCloseStaleDriveId`) and the
+attribution read (`getCurrentDriveId`, now evaluated at capture) call the **same function** with
+the **same bound** (`driveEndDurationSeconds`, armed by `_startDrive`). Pinned by
+`tests/pi/bus/test_persistence_drive_attribution.py::TestOneStalenessPredicate`. Loosening
+staleness on the attribution side alone would split the predicate and re-open drive 51.
+
+⚠️ **Not this contract's cause: the 2026-09-15 leg.** Those rows are NULL because drive detection
+never opened a drive (no `DRIVE STARTED` in the leg, per the Pi journal) — a detector/orchestrator
+defect, not a drain-lag one. Capture-time stamping correctly writes those rows NULL. The 4,259
+already-orphaned rows are untouched; no backfill.
+
+⚠️ **Still write-time: the `timestamp` column.** `logReading` stamps `utcIsoNow()` at write, so under
+drain lag a row's `timestamp` trails its capture by the lag even though its `drive_id` is now the
+capturing drive. Out of US-777's scope fence; recorded so nobody reads the two as one clock.
+
+### 10.7.2 Derived motion signals + cross-drive comparison (F-106 / F-069, Sprint 53 / V0.29.7)
+
+**Derived motion signals (US-436, F-106).** A third server-side per-drive
+compute derives *motion context* from the existing SPEED + timestamp stream — no
+new PID, no Pi change (B-104: server is the sole analytics writer).
+
+- **Compute** — `src/server/analytics/derived_signals_compute.py`. The core is a
+  **pure** `computeDerivedSignals((timestamp, speed_kmh) series) → DerivedSignals`
+  (`src/server/analytics/analytics_types.py`), fully unit-testable off-Pi against
+  canned series:
+  - `estimated_distance_km` = trapezoidal integral of `speed · dt` (SPEED is
+    stored km/h per `obd_parameters.py`, so the integral is km).
+  - `peak_acceleration_ms2` / `peak_deceleration_ms2` = most-positive /
+    most-negative per-segment finite difference. km/h is converted to m/s
+    (`/3.6`) **before** dividing by `dt`, so the peaks carry the physical m/s²
+    unit (not km/h-per-second).
+  - **Guards** (the AC's divide-by-zero / time-gap requirement): `dt ≤ 0`
+    (duplicate / non-monotonic timestamps) → segment skipped, never divided by;
+    `dt > GAP_DETECTION_THRESHOLD_SECONDS` (reuses the `drive_summary_compute`
+    300 s SSOT — no second magic number) → excluded from distance + accel and
+    tallied in `gap_skipped_count`; `<2` samples → `None`.
+- **Storage** — `drive_derived_signals` (server MariaDB): one row per drive,
+  `summary_id` PK + `FK drive_summary.id ON DELETE CASCADE` (mirrors
+  `DriveStatistic`; ORM `DriveDerivedSignal` in `src/server/db/models.py`). Value
+  columns (`estimated_distance_km`, `peak_acceleration_ms2`,
+  `peak_deceleration_ms2`, `gap_skipped_count`) persist **alongside their unit
+  strings** (`speed_unit`/`distance_unit`/`accel_unit`) so a downstream reader
+  never guesses units (honest-instrument), plus `computed_at`. Created by
+  forward-only migration `v0017_us436_drive_derived_signals.py` (mirrors the
+  `v0013` power_log pattern — `INFORMATION_SCHEMA` probe + `CREATE TABLE IF NOT
+  EXISTS` + post-condition probe; registered in `ALL_MIGRATIONS`).
+- **DB adapter** — `compute_drive_derived_signals(session, driveId)` reads the
+  ordered SPEED `realtime_data` rows, calls the pure core, and does an idempotent
+  delete + insert keyed on `drive_summary.id`. Wired as the 3rd per-drive compute
+  in the recompute CLI + nightly batch (degrades silently on `<2` SPEED rows).
+
+**Cross-drive comparison CLI (US-438, F-069).**
+`python -m src.server.cli.compare_drives` is a **read-only** reporting tool over
+the already-computed analytics tables (it computes nothing, writes nothing → zero
+base-module touch). It renders a side-by-side table (metrics = rows, drives =
+columns) so a Spool tuning read scans one metric across N drives at a glance.
+
+- **Data-driven metric registry** abstracts the 3 physical shapes a metric can
+  live in: **statistic** — an EAV row in `drive_statistics`
+  (`peak_rpm`=`RPM.max_value`, `ltft`=`LONG_FUEL_TRIM_1.avg_value`,
+  `stft`=`SHORT_FUEL_TRIM_1.avg_value`); **derived** — a real column in
+  `drive_derived_signals` (`peak_accel`, `peak_decel`, `distance`);
+  **unavailable** — `knock_retard` honestly renders `--` with a note (the stock
+  2G ECU exposes no OBD knock PID; ECMLink knock-retard is USB-only — Rule 2, no
+  fabricated parameter name). Adding an ECMLink knock param later = one registry
+  line, no consumer change.
+- **F-116 honesty** — `driveExclusionReason()` excludes a drive stamped
+  `data_quality='foreign_vehicle'` **or** `data_source ∉ {real, NULL}` (NULL =
+  pre-US-195 real, matching `basic.py`); an excluded drive is **shown** with an
+  EXCLUDED header + footnote (never silently dropped), and `--include-foreign`
+  overrides for explicit inspection. Missing data (no computed row / NULL value)
+  renders `--`, distinct from a real `0`. Flags: `--drives '11,20,27'|'11-14,27'`,
+  `--metrics` (default all), `--include-foreign`, `--list-metrics`, `-v`.
+
+### 10.7.3 Server-Side Analytics Authority (F-104, Sprint 55 / V0.29.9)
+
+**The boundary rule (F-104, generalizes §10.7's B-104 Step-1 principle into a
+formal authority contract).** A fact is **server-authoritative** iff the server
+can reproduce it from synced raw → the **server is its sole writer** and the Pi
+does **not** transmit it (the Pi *may* compute it locally for a live UI, thrown
+away). If a fact is **irreproducible** → it is **raw** → the Pi emits it as a
+first-class raw event and the server mirrors it (never recomputes). **There is no
+"derived state the Pi transmits."** Division of labour: **B-076 = the schema;
+F-104 = the authority + the writers.** Binding design authority is Atlas's F-104
+ADR (`offices/architect/reports/2026-07-04-f104-server-analytics-authority-design-gate-ruling.md`);
+the sprint implements it, does not deviate.
+
+**Canonical `drives` identity SSOT (US-448 — LANDED).** A server-owned `drives`
+table is the single drive-identity SSOT:
+
+- `drive_id INTEGER PK AUTOINCREMENT` is the canonical identity, anchored by a
+  `UNIQUE (source_device, source_drive_id)` constraint with an
+  **upsert-by-natural-key mint** (`src/server/analytics/drive_identity.py::upsert_drive`)
+  — a recompute/backfill re-uses the existing id for an already-seen drive and
+  **never renumbers** (straight autoincrement would break US-449 idempotency and
+  orphan FKs — Atlas Open-Q1). Advisory columns: `source_device VARCHAR`,
+  `source_drive_id INTEGER NULL` (the Pi's id, **demoted to advisory**),
+  `start_time`, `end_time NULL`, `data_source`, `data_quality`
+  (`ck_drives_data_quality` reuses the `drive_summary` enum set).
+- **`drive_id` SUBSUMES the de-facto identity `drive_summary.id`** (the existing
+  server autoincrement PK that `drive_statistics_compute.py:41,144-186` already
+  FKs to) — it is **not** a 5th orthogonal id (that would worsen the D-8
+  id-family sprawl this spine exists to fix). The `v0018` forward-only migration
+  inserts existing `drive_summary.id` values *in* as `drive_id`
+  (`INSERT INTO drives (drive_id,…) SELECT ds.id,…`), so existing
+  `drive_statistics.summary_id → drive_summary.id` FKs stay **numerically** valid;
+  re-pointing those FK *constraints* onto `drives.drive_id` is the (blocked)
+  US-451 family-collapse pass.
+
+**Attribution tripwire re-point (US-448 — LANDED, backstop preserved).**
+`src/server/analytics/overlap.py::detect_overlapping_drives` MUST keep **detecting**
+overlap on the **raw** `realtime_data.drive_id` — that Pi-stamped id is the very
+signal it exists to catch (the Pi minting two ids for one physical leg). It is
+**not** regrouped by the server `drive_id` (already deduped → would blind the
+Pi-dual-mint backstop). "Re-point" means only its anomaly **output/flag** maps to
+the canonical identity (`drive_identity.map_overlap_to_canonical`; an unminted raw
+id resolves to `None`, **never silently dropped**). A regression fixture proves a
+raw Pi dual-mint pair (drives 23/24) still trips `data_quality='attribution_anomaly'`
+against the new schema (extends the §10.7.1 Mechanism-C backstop, US-362/363).
+
+**Pi ids → advisory (US-448 schema — LANDED).** The Pi's `drive_id` is recorded
+only as advisory `source_drive_id`; the server never treats it as identity. (The
+FK *migration* that collapses `drive_summary`/`drive_annotations` onto
+`drives.drive_id` is US-451 — see status below.)
+
+**Sole-writer compute-harness + owned-table registry (US-449 — formalization
+IN PROGRESS).** The authority is the **existing** server harness, not a new one:
+`src/server/analytics/{drive_summary_compute.py (US-350), drive_statistics_compute.py
+(US-351), derived_signals_compute.py (US-436)}` fired by the on-demand
+`recompute_drive_analytics` CLI + the `server-analytics-batch.timer` (§10.7
+"Trigger seam shift"). Target owned-table registry (server-authoritative,
+harness-derived-from-raw): `drive_summary` analytics columns · `drive_statistics`
+· `drive_derived_signals` · the `statistics` rollup. It reads **only** synced raw
+(`realtime_data`/`connection_log`) — never Pi-transmitted derived state — and is
+**idempotent**: re-running over the same raw yields byte-identical owned rows
+(proven by `tests/server/analytics/test_harness_idempotency.py`, excluding the
+intentionally-advancing `computed_at` observability timestamp).
+
+> **Implementation status (V0.29.9) — honest-instrument.** The boundary rule +
+> the identity spine (US-448) + the idempotency proof are **landed**. Formalizing
+> the harness as the *sole* writer is **BLOCKED (BL-017)**: `drive_statistics` has
+> a **second live writer** — `POST /api/v1/analyze` → `services/analysis.py::runAnalysis`
+> → `basic.py::computeDriveStatistics` writes the same table with *different*
+> row-selection (drive time-window + `source_device` vs. the harness's
+> `realtime_data.drive_id`), last-writer-wins. (This also contradicts the
+> `analysis.py:72-75` header claim that US-351 "retired the parallel
+> drive_statistics writer" — US-351 retired the *trigger-seam* writer, not the
+> `/analyze` path.) Awaiting an Atlas ruling (read-vs-recompute). Downstream and
+> blocked on the same ruling: **US-450** (re-key `drive_statistics` from
+> `drive_summary.id` → canonical `drives.drive_id`; resolve the empty-table
+> deploy gap), **US-451** (collapse the drive-identity id-families onto
+> `drives.drive_id`; flag unmappable legacy — drives 1-12, foreign drive 33,
+> NULL-`drive_id` — with `data_quality='unmappable_legacy'`, one row per distinct
+> legacy key, never dropped/merged), **US-452** (reconcile `statistics` rollup
+> vs. `drive_statistics` granular SSOT, no independent dual-write). The
+> owned-table **manifest** (US-449 AC1) finalizes once the sole-writer question is
+> ruled. Until then the authority-writer layer is documented as the **target**,
+> not asserted as realized.
+
+**Schema normalization landed this sprint (F-082 D-items, migration-first).**
+These are the schema/data-hygiene half of the sprint, independent of the blocked
+authority chain:
+
+- **D-7 (US-453):** `power_log` + `pi_state` sync Pi→server as **raw** (the server
+  mirrors, does not recompute — F-104 boundary rule); `pi_state`, a mutable
+  singleton, rides the delta path *and* the `modified_at` update-propagation cursor
+  so in-place flips re-sync (`v0019`). `startup_log` confirmed already-synced
+  (US-416).
+- **D-3 (US-454):** O2 sensor name canonicalization — the one divergent stored
+  label `O2_BANK1_SENSOR2_V` → `O2_B1S2` (grounded in the `decoders.py` registry
+  convention its sibling `O2_B1S1` already follows). Full source→data rename
+  (`config.json` poll names + `decoders.py` key + US-229 fixture in lockstep) +
+  forward-only `v0020` re-map across all 6 `parameter_name` tables (idempotent
+  guard + zero-survivor post-probe).
+- **D-4 (US-455):** unit-string canonicalization — the decoder path now emits the
+  python-obd **native** strings (`volt`/`kilopascal`/`second`, not `V`/`kPa`/`s`),
+  so a physical unit has ONE label across both write paths; the python-obd native
+  enum overload (`CL`/`OL`/`ON`/`OFF`) is kept; `v0021` re-maps `realtime_data.unit`;
+  a source-scan test pins `unit` as a **typed label, never numeric**.
+- **D-5 (US-456):** `static_data` kept **honest-empty** (not dropped) — the VIN is
+  un-gettable (the MD326328 ECU is Mode-09-silent) so no valid `vehicle_info(vin)`
+  FK can exist; the collector already refuses to fabricate a placeholder VIN, now
+  a guarded invariant. No `TD-061` (that path was only for the drop option).
+
+**Stale-reference audit (US-457 AC).** No "Pi computes/transmits derived X" prose
+is now false: §10.7's principle ("Pi = telemetry emitter; server = sole authority;
+if the server can redo it from raw, the Pi does not transmit it") already states
+the F-104 boundary rule, which this section formalizes. §5's Pi-`drive_id` →
+`drive_summary.source_id` prose remains **current** — the US-451 FK collapse has
+**not** landed — so it is deliberately left unchanged (honest-instrument: do not
+document a migration that hasn't shipped).
+
+**Cross-links.** §10.7 (the B-104 Step-1 pipeline this authority formalizes) ·
+§10.7.1 Mechanism C (the tripwire this re-points) · §5 (schema / B-076) ·
+`[[ssot-design-pattern]]` worked example #4 (server-analytics authority as the
+derived-data boundary).
+
+*Gate-ratification note: §10.7.3 is the Rule-10 in-sprint design-gate deliverable
+(Atlas A-11 — US-448/US-449 do not close until this section lands). Sprint 55 is
+**BENCH-ONLY**: every migration is forward-only + deployed-AND-verified via
+`INFORMATION_SCHEMA` at PM-integration (no MariaDB on the Windows dev bench); the
+authority-writer chain (US-449-452) awaits the BL-017 ruling. No drive drills.*
+
+---
+
+## 10.8 EDR Sensor Bus Architecture (F-110 bus + F-113/F-114 sensor reader)
+
+### 10.8.1 F-110 SampleBus (Sprint 46 / V0.29.0)
+
+The Event Data Recorder (EDR) program introduces a dedicated in-process
+publish/subscribe bus, the **`SampleBus`** (`src/pi/bus/{bus,sample,persistence_subscriber}.py`),
+so every data source is read once by a dedicated reader and published to N
+policy-applying consumers — the "SSOT for derived data, enforced at a broker"
+direction (`specs/ssot-design-pattern.md`). Slice 1 (F-110) shipped the bus
+itself plus an OBD path that mirrors the inline logger: a `Sample` envelope
+(`topic, source, value, unit, tsUtc, tsCapture, driveId, dataSource, seq`),
+per-subscriber QoS (LOSSLESS/durable for the sync + safety lane, LOSSY
+drop-oldest for display so a producer never blocks), and a `PersistenceSubscriber`
+that drains `raw.obd.*` to `realtime_data`. It **ships dark** behind
+`pi.bus.enabled` (default `false`); enabling it must reproduce the byte-identical
+`realtime_data` golden master. Contract:
+`$FLEET_SHARE/knowledge/superpowers/specs/2026-06-18-edr-dedicated-reader-bus-contract-design.md`.
+
+### 10.8.2 EDR sensor reader + raw-sensor persistence (Sprint 50 / V0.29.4)
+
+**EDR sensor reader (F-113/F-114).** A dedicated reader polls two I²C sensors on
+bus-1 — ICM-20948 9-DoF IMU (@0x69) and TSL2591 light (@0x29) — and publishes
+them on the F-110 `SampleBus` as **additive** LOSSY topics
+(`raw.imu.{accel,gyro,mag,temp}`, `raw.light.{lux,raw}`), sharing one `seq` per
+IMU burst. The channels never touch the `raw.obd.* → realtime_data` path, so the
+F-110 byte-identical golden master is preserved by construction. A sibling
+persistence subscriber writes `edr_imu_sample` / `edr_light_sample`, whose DDL is
+authored once in the versioned `src/common/edr/sensor_schema.py` contract (A-4
+anti-divergence: the future server table derives from the same module — **that
+promise was kept by US-764; see §10.8.3**).
+Persistence is **always-on** (key-on incl. engine-off — true black-box) at a
+decimated baseline (`persistHz`, **2** since US-796-b — was 25; one definition
+since US-801, `common.config.validator.DEFAULT_IMU_PERSIST_HZ`); rows stamp
+`drive_id` only when
+a drive is RUNNING, else explicit NULL (the A-9/DTC-KOEO latch rule). A
+rolling-window purge job (`retentionDays`, **45** since US-761 — this paragraph
+said `7` until 2026-09-16) bounds the Pi-local volume.
+The reader is **graceful-absent** (probe → silence, never fabricate) and ships
+**dark** behind `pi.sensors.{imu,light}.enabled` under `pi.bus.enabled`. Raw
+samples were **Pi-local** until F-142 — **server sync is §10.8.3**; the event
+vault and the event-triggered high-rate (100–200 Hz) capture remain F-115. The reader stores
+**sensor-frame** values; vehicle-frame rotation + magnetometer hard/soft-iron
+calibration are deferred transforms (F-115), pending the recorded mounting
+axis-orientation.
+
+**TSL2591 range and lux (US-731, CIO-directed, 2026-10-06).** Until US-731 the
+reader never set a gain, so every sample ever stored ran at the `adafruit_tsl2591`
+library default (medium 25×, 100 ms), saturated at ~3,400 lux and published NULL
+lux in daylight (10,000–100,000 lux). Now:
+- **Auto-range LOW ↔ MEDIUM, never above medium** (CIO: night readings stay as
+  before). `nextTslGain`: at medium, step DOWN when either channel reaches 90 % of
+  the max count; at low, step UP only when CH0 × the datasheet's worst-case medium
+  gain (27×) stays under 50 % of it (no flapping). The new gain applies to the next
+  sample (1 Hz; one 100 ms integration settles first). A failed gain write retries
+  next sample and never raises. Integration stays 100 ms.
+- **Lux is computed from the raw counts** (`_luxFromCounts`) with the **datasheet's
+  typical gains** (low 1×, medium **24.5×**, high 400×; CIO), not the library's
+  25 / 428 / 9876 ⇒ **medium-gain lux reads ~2 % higher than every sample stored
+  before US-731** (25 / 24.5). MAX gain is not computed (the datasheet gives it per
+  channel). The equation itself is Adafruit's (not in the ams datasheet, "not
+  calibrated"); a channel at or above the documented max count (36,863 at 100 ms,
+  65,535 above) is saturated ⇒ None. ARCH-010 (negative ⇒ None, zero is a
+  reading) is `_honestLux`.
+- Four sensor reads per sample, as before (CIO): `raw_luminosity`, then `visible`,
+  `infrared`, `full_spectrum`. The `gain`/`integration_ms` columns (ARCH-009) record
+  the range each row was taken under, so ranging is visible in the data.
+- Source: ams TSL2591 datasheet v3-00 (2023-02-08), `hardware/datasheets/tsl2591/`.
+
+**Bus → `states/light` bridge (US-483-a / F-121, Sprint 61 / V0.29.15).** The
+carousel display auto-dim consumer (US-483-b) is a **pure consumer of a
+reader-owned state file** (Atlas DELTA-2) — it never touches the TSL2591. A
+dedicated bridge (`src/pi/sensors/light_state_bridge.py`, `LightStateBridge`)
+subscribes to the additive `raw.light.lux` channel (LOSSY — a display needs only
+the freshest reading) and mirrors it into `states/light` (`{lux, ts}`, written
+atomically via the shared `boot_state_emitter` primitives and served by
+`eclipse-states-http` alongside the US-480-a card states). The bridge opens **no
+I²C device and no OBD connection** — it is orchestrator-invoked as a bus
+subscriber inside `_startEdrSensorPath` (subscribed *before* the readers publish,
+stopped in `_shutdownDataLogger`), so it cannot re-introduce the A-17
+second-connection race. Honest-instrument carries through the seam: a saturated
+read (`lux=None`) is written as JSON `null` (never `inf`/fabricated), and the
+freshness `ts` is the **sample's own read-time** (not write-time), so a stalled
+feed goes honestly stale and the consumer falls back rather than trusting a
+frozen value. Gated behind `pi.bus.enabled` + `pi.sensors.light.enabled`.
+
+**Bus → `states/imu` DERIVED bridge (US-478 / F-113, Sprint 66 / V0.29.20).** The
+same seam, one tier further: `src/pi/sensors/imu_state_bridge.py`
+(`ImuStateBridge`) subscribes to `raw.imu.{accel,mag}` + the retained
+`state.sensor.imu` presence topic (LOSSY) and writes the **display-derived view**
+into `states/imu`. Two artifacts, deliberately separate (Atlas A-4): **raw**
+accel/gyro/mag stay on the bus and in the versioned `edr_imu_sample` store; this
+file is the *derived* view and holds no raw axes at all. **The reader computes,
+the display consumes** (Atlas DELTA-2) — the card never fuses.
+
+**Startup gyro recovery (A-34 / ARCH-027, 2026-09-16).** The ICM-20948's gyro
+channel can latch into a faulted analog state reporting **14–30 °/s on a
+motionless car**. It **survives `DEVICE_RESET`** (0 of 16 collector inits cleared
+it) and **fails the factory self-test** (0.062/0.087/0.126 against a 0.5 floor),
+while the **same silicon self-tests at 1.007–1.016 once recovered** — so the part
+is healthy and the state is recoverable. `src/pi/sensors/gyro_recovery.py` detects
+it at startup and clears it with a **`PWR_MGMT_2` gyro off/on** (cleared it 3 of 3,
+plus live on 2026-09-15), wired via `sensor_reader._recoverGyro`, which
+`sensor_reader._buildImuDevice` runs **after** the magnetometer bypass is
+established. 🔴 **ARCH-032, 2026-09-20 — ordering corrected.** This sentence
+originally said recovery ran *before* the bypass, because both touch bank 0 and
+the chip should be recovered in its freshly-initialised state. That argument was
+plausible, never measured, and **wrong**: on the Pi (n=20 per arm, interleaved)
+merely *reading* the gyro before the hand-over dropped the bypass probe from ~70 %
+to ~10 % — the V0.29.55 defect. The live order is attach-then-recover, pinned by
+`tests/pi/sensors/test_imu_startup_order.py`; do not restore the old order on the
+strength of the old argument. *Startup is the only sound place for the
+check: a latched gyro and a real turn are the same signature, and at key-on we
+know the car has not moved.* The driver exposes no `PWR_MGMT_2` symbol and no step
+that could recover the gyro, so the register is written through its own
+`i2c_device` — the precedent `ak09916_bypass.enableI2cBypass` set. 🔴 **The
+post-check is not optional:** writing the register is not evidence the gyro
+recovered, so a failed recovery reports `recovered=False` and US-749's guard keeps
+withholding pitch and grade. **A failure never costs the IMU** (same principle as
+the magnetometer degrade path). ⚠️ **Hardware-verified on the no-op path only**
+(healthy gyro ⇒ zero writes to 0x07); the **faulted path awaits a natural latch**
+and must not be reported as verified until then.
+
+**Accel-trust diagnostic (ARCH-027, 2026-09-16).** `PitchFusion` trusts the
+accelerometer as gravity only while `|a|/g − 1 ≤ accelTrustBand`; outside it the
+correction is skipped and **pitch advances on gyro integration alone, which
+drifts**. `accelIgnored` (last update) and `accelIgnoredFraction` (rolling ~2 s)
+expose that decision, which was previously invisible to every consumer of pitch
+and grade. It **records** the decision `update()` already makes rather than
+recomputing it (a second copy could disagree — SSOT rule B), counts the re-seed
+branch, and clears on `reset()`. ⚠️ **Reporting only — no filter behaviour
+changes.** ⚠️ **NOT part of the `states/imu` contract below**; publishing it is a
+contract change routed to the PM. *Measured relevance: rest reading **1.0184 g**
+against a 0.02 band — inside by 0.0016, while in-car readings of 1.020–1.021 g
+fall outside. **The fix is a scale calibration, never a wider band**, which would
+also admit braking.*
+
+*Contract (Atlas Q-A, 2026-07-30; `pitchDeg` added by US-521; `stopCount` /
+`biasRad` by US-708).* `{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg,
+gradePct, altitude, stopCount, biasRad, reasons}`:
+
+| Field | Meaning | Notes |
+|---|---|---|
+| `gLat` / `gLon` / `gMag` | horizontal acceleration, **units = g** (`g_n` = 9.80665 m/s²) | `gLon` + = accelerating, − = braking; `gLat` + = **RIGHT** (automotive convention); `gMag` = hypot. All three are measured in the **vehicle** frame produced by `IMU_BODY_FRAME` — see the body-frame note below; before US-708 the two horizontal components were **transposed**. *Re-checked under (B) by US-745 (2026-09-14): holds unchanged, because the derivation is written in vehicle coordinates* |
+| `headingDeg` | magnetic bearing of the vehicle nose, 0–359 | tilt-compensated; **magnetic, not true** (no declination in the contract). ⚠️ US-708 fixed the AXES only: the magnetometer carries a second, independent defect (A-30, ~28 % field, heading uncorrelated with rotation over 668 turns) and is **not** trustworthy today |
+| `pitchDeg` | **gyro-fused, ZUPT-corrected** chassis pitch (US-521) | + = nose up; the single published attitude fact — US-519's altitude integrand and `gradePct` both read *this*, never a second derivation. **Since US-749 it is `null` + `gyro_implausible` when a trusted accelerometer has contradicted the fusion for > 3 τ** (see *Plausibility guard* below) — never the contradicted number, never clamped |
+| `gradePct` | `tan(pitchDeg) × 100` | + = climbing; `null` past `MAX_GRADE_PITCH_DEG` (85°), where `tan` runs away. Until US-708 this was derived from the **lateral** axis, i.e. from the car's ROLL — every corner and crowned road read as a hill |
+| `altitude` | **always typed `null`** + `reasons.altitude = "no_source"` | the ICM-20948 has no barometer; a zeroed altitude renders as sea level — a confident lie. US-519 derives it from `pitchDeg`; a future GPS/baro supersedes that, not this bridge |
+| `stopCount` / `biasRad` | **US-708 pitch-path diagnostics**: confirmed ZUPT stops in the rolling window, and the mount-tilt bias currently subtracted from the fused pitch (radians) | NOT derived fields, never gated, and deliberately **still published while the instrument is unavailable** — they describe the *estimator*, and the bias survives an unplug because how the board is bolted in did not change. `biasRad` is unreadable without `stopCount`: 0.0 means "no bias measured yet" until you can see how many stops are behind it |
+| `available` / `ts` | freshness | absent/stale → the US-497 idle-card fallback |
+| `reasons` | per-field absence vocabulary | `sensor_absent`, `no_mag_reading`, `tilt_unresolved`, `pitch_out_of_range`, `pitch_unseeded`, `gyro_implausible` (US-749, on `pitchDeg` + `gradePct`), `no_source` |
+
+##### The body frame (US-708 / F-135, Sprint 83 / V0.29.46)
+
+**One wrong fact, three wrong readouts.** The code assumed the board was mounted
+`X = forward, Y = left, Z = up`. It is not: **X is LATERAL and Y is FORE-AFT.**
+Heading's `atan2` arguments were therefore transposed (90° of error at N/E, 180°
+at S/W); `gLat` and `gLon` were swapped; and `pitch_fusion`, which reads index 0
+as forward, computed **grade from the car's ROLL** — the CIO's "gradients of 20 %
+or more" on flat Chicagoland roads. Both halves of the complementary filter were
+affected: the gyro half took index 1 as the left-axis rate, which under the real
+mounting is fore-aft, so it was integrating **roll rate** as pitch.
+
+*Measured, not inferred* (Atlas 2026-09-10, all from this car): `accel_X` vs
+`gyro_Z` = **+0.712** over 26,208 turning samples ⇒ X is lateral; `accel_Y` vs
+`d(SPEED)/dt` = **−0.945** over 829 accelerate/decelerate windows, slope **0.86×**
+theory ⇒ Y is fore-aft; gravity `z` = **+9.920 / +9.687** flat ⇒ Z is up. And a
+closed proof independent of the datasheet: those three are right-handed **only**
+under Z-up (`left × tail = up`); Z-down gives `right × nose = −Z`, left-handed and
+therefore impossible.
+
+**🔴 ARCH-033 — THE AK09916 DOES NOT SHARE THE ICM'S AXES, AND WE APPLIED NO TRANSFORM
+(fixed 2026-09-18).** The magnetometer die inside the ICM-20948 sits in a different
+orientation from the accel/gyro dies. The mapping is `x ← ak_y`, `y ← ak_x`,
+`z ← −ak_z` (TDK's orientation drawing; **determinant +1**, a proper rotation, which a
+die orientation must physically be). It is declared as
+`ak09916_bypass.AK09916_TO_ICM_AXES` and applied **once**, at `sensor_reader`'s burst
+read — the single seam where the bypass device and the ICM-shadow fallback converge.
+*Not* inside `ak09916_bypass.magnetic`, which would correct only the bypass; the bypass
+is the path currently failing under ARCH-032, so production runs the fallback.
+
+⚠️ **This is a SEPARATE transform from `IMU_BODY_FRAME` and must not be folded into it.**
+The body frame is a *mounting* fact and changes whenever the board is moved; this is a
+*package* fact and never changes. One is measured per install, the other is fixed by TDK.
+
+**Evidence.** Drive 2026-09-18, three laps of one loop, Strava GPX course as independent
+truth (it shares no sensor, no bus and no axis convention with the magnetometer). All 48
+axis permutations swept, scored by circular concentration *R* of the heading error, on
+two clean laps:
+
+| mag transform | det | R lap 1 | R lap 3 |
+|---|---:|---:|---:|
+| identity — what shipped | +1 | **0.170** | **0.357** |
+| **`(+y, +x, −z)`** | **+1** | **0.861** | **0.878** |
+
+🔴 **This is A-30's "the compass is UNCORRELATED WITH ROTATION".** A-30 named this exact
+hypothesis on 2026-09-09 and recorded that the data refuted it — correctly, at the time:
+the IMU then sat on the stereo amplifier at SNR ≈ 1.2, where an axis error cannot express
+itself. A-30 predicted the sequel verbatim: *"It will surface the moment SNR is fixed and
+will look like the original fault returning."*
+
+⚠️ **Two things it is NOT**, both checked and both rejected on measurement:
+`computeHeadingDeg` is **correct** (`atan2(+left, forward)` is a clockwise bearing in a
+forward/left/up frame; negating it breaks four existing tests), and `IMU_BODY_FRAME` is
+**not the tracking defect** (swapping (B) ↔ identity leaves *R* unchanged at 0.170 and
+moves only the offset). Both are rotations, and **a rotation cannot repair an axis map of
+this kind** — it can only be corrected at the sensor seam, which is why every attempt
+above that layer appeared to work at 0° and 180° and nowhere else.
+
+⚠️ **What it does NOT fix:** the absolute offset (that is `IMU_BODY_FRAME`, still set to
+(B) for a superseded mount — **ARCH-034**) and the residual spread of 32–39° (that is
+A-30's soft iron, ellipticity 1.78, which needs the calibration).
+
+**🔴 ARCH-034 — THE BODY FRAME IS NOW (C), THE IDENTITY (2026-09-18).** The CIO refitted
+the board on Iris's screwless dash mount with **+X toward the nose**, bubble-levelled
+(static tilt 0.68° / −0.67°, against the old mount's −4.55°). `IMU_BODY_FRAME` binds to
+`IMU_BODY_FRAME_C = {forward:"+x", left:"+y", up:"+z"}`.
+
+**Measured, by US-745's own gate re-run offline** on the 2026-09-18 drive (lap 1, 210
+accel/decel windows, least-squares speed slope over ±1.5 s — adjacent differencing is
+useless because OBD speed is quantised to exactly 1 km/h and one step at dt≈0.1 s fakes
+2.8 m/s²): `r(ax, dv/dt) = +0.798` against `r(ay, dv/dt) = 0.401` ⇒ **X is fore-aft.**
+
+⚠️ **(B) WAS NOT A MISTAKE.** It was measured on 23,770 samples and was correct for the
+mount that existed then. A body frame is a **mounting** fact: it changes when the board
+moves. (A) and (B) stay declared as this vehicle's history.
+
+⚠️ **AND (C) DOES NOT FIX THE COMPASS.** That was **ARCH-033** (the AK09916 axis map — a
+**package** fact that never changes). Swapping this constant leaves the heading's circular
+concentration *R* unchanged at 0.170; it moves only the **offset**, which is all a rotation
+can do. The two were fixed in separate tickets precisely so the verification could tell
+them apart.
+
+🔴 **THE TESTS WERE A SECOND COPY OF THE MOUNTING, and that is the wider lesson.** Thirteen
+tests failed on a one-line change because they hand-wrote *raw board vectors* for one
+mounting (`raw = (-G·sin, 0, G·cos)  # X is the LATERAL one`). They now express
+**vehicle-frame intent** and derive the raw vector through `_toRawAxes()`, so they assert
+the contract and survive the next remount. `pitch_fusion` already warned that *"a second
+copy of the mounting is the defect, not the remedy"* — it was right about the source and
+silent about the suite.
+
+⚠️ **Three tests needed the OPPOSITE treatment and keep literal old-mount vectors:** the
+halves of `test_crownedRoadRoll`, `test_realClimb` and the heading test that record what
+the **identity** frame did wrong under US-708. The identity is now the live frame, so
+deriving those would compare it with itself and assert nothing. Likewise
+`test_gyro_bias_learning`, which replays **real recorded rest data** and is pinned to (B),
+the frame it was measured in. **Derive what asserts the contract; pin what records history.**
+
+⚠️ **Residual yaw is UNSETTLED** — 19.4° (accel vs dv/dt) against ~1.5° and ~13.7° (heading
+vs GPS, two laps), not significantly different at n=22–38 with spreads of 32–39°. This
+constant cannot express a yaw anyway. **Settle it with a square against the board.**
+
+*One transform, at the boundary.* `imu_state_bridge.IMU_BODY_FRAME` is the single
+declaration, and `resolveMountFrame` applies it **once** to each raw channel
+(accel, gyro, mag) on the way in. `_levelFrame` and `PitchFusion` both receive
+vehicle coordinates and neither re-spells the mounting — patching them separately
+would be two copies of one fact (SSOT rule B). Two candidates are named, 180° of
+yaw apart: **(A)** `+Y = nose` ⇒ `(fwd, left, up) = (+y, −x, +z)` and **(B)**
+`+Y = tail` ⇒ `(−y, +x, +z)` **(shipped, US-745 / V0.29.50)**. Flipping between
+them is **one line**, which matters because they differ by the sign of pitch and
+of both g axes: **picking wrong inverts grade rather than fixing it.**
+
+🔴 **The confirming gate RAN and (A) FAILED it (Atlas ruling 2026-09-11; bound by
+US-745).** US-708 shipped (A) as the *reasoned* default pending a drive on the
+relocated dash mount: strongly positive `accel_Y` vs `d(SPEED)/dt` keeps (A),
+strongly negative flips to (B), `|r| < 0.15` stops. Drives **70/71** (NEW mount,
+23,770 IMU samples): `accel_Y` vs `d(SPEED)/dt` = **−0.906** over 235
+accelerate/decelerate windows ⇒ **(B)**; `accel_X` vs `d(SPEED)/dt` = **+0.039**
+(X carries no fore/aft content); mean accel `x=+0.315 y=−0.722 z=+9.845` (Z up).
+Independently, grade vs **GPS ground truth** scored **+0.411 for (B)** against
+**−0.411 for (A)** over 125 constant-speed windows. Under (B) `forward = −accel_Y`,
+so the same windows correlate **+0.906** against `d(SPEED)/dt` by construction.
+*Why (A) was chosen first — so it is not later read as carelessness:* the old
+under-seat board measured as (B), and after the relocation the CIO read the
+board's silkscreen **Y arrow** as facing the nose, which is a 180° yaw = (A). The
+reading was reasonable; the drive disproved it, which is exactly why it was a gate.
+`tests/pi/sensors/test_imu_body_frame.py` pins the binding to (B) with this basis
+in its failure message, so a revert to (A) fails loudly. ⚠️ Drives on or before
+2026-09-09 are all the OLD mount and will confirm (B) whatever the dash is doing.
+
+🟢 **(B) IS NOW SETTLED BY A DIRECT PHYSICAL TEST, independent of any drive
+(ARCH-027, 2026-09-16).** The drive correlations above are remote inferences and
+carry the caveat on the line before. A 15-second manipulation does not: with the
+collector recording, the CIO **lifted the NOSE-facing edge** of the board ~30°.
+An accelerometer at rest reads `f = −g_body`, so **whichever end RISES reads
+POSITIVE on its axis**.
+
+| | `accel_x` | `accel_y` | `accel_z` |
+|---|---|---|---|
+| baseline (2,000+ samples, flat) | +0.05 | **−0.27** | 9.98 |
+| nose lifted | +0.95 | **−5.19** | 8.54 |
+
+`accel_y` went strongly **negative** ⇒ the nose is on the **−Y** side ⇒ **+Y = tail
+= (B)**. `accel_z` 9.98 → 8.54 confirms ~31° of lift. ⇒ **Three independent lines
+agree** (this tilt test; `accel_y` vs `d(SPEED)/dt` at **r = −0.94** drive 77 and
+**−0.85** drive 71), and **grade is NOT inverted**. 🔴 **The silkscreen Y arrow is
+MISLABELLED** — do not use it as a source. *(Precedent on this same board: the
+AK09916 die does not share the accel/gyro axes either.)* **Re-run this test after
+any remount; it costs 15 seconds and needs no drive.**
+
+⚠️ 🔴 **CORRECTED (ARCH-027, 2026-09-16): the residual grade error is NOT the
+"gyro-Y bias".** Under (B) `left = +x` and `PitchFusion._pitchRateFromGyro`
+returns `−vec[1]` — the **left** axis — so the **pitch-relevant raw axis is X**,
+and **raw Y is ROLL**. Measured at rest on the dash mount (455 samples):
+raw **X = −0.012 °/s**, raw Y = +0.730, raw Z = +0.156. The pitch-axis bias is
+therefore ~**60× smaller** than the figure this paragraph previously named, and
+any story sized from it (US-779) must be re-sized. *The wrong-axis attribution is
+an easy one to repeat — it was made twice in one day before being caught — so
+re-derive the mapping from the frame constant and the consuming function at the
+point of use, never from recollection.* The flip does **not** fix the compass, which is a
+separate defect: the residual grade error is an **uncancelled gyro RATE bias**, and
+`IMU_BODY_FRAME` is **not tuned to absorb it**.
+⚠️ **A-30 UPDATED 2026-09-18 — neither "stuck" nor "uncalibrated" is still correct.**
+The compass fault was the **AK09916 axis map** (`x<-ak_y, y<-ak_x, z<--ak_z`, TDK,
+det +1), fixed in **ARCH-033** `a8478d23`. What remains open is only A-30's
+**soft-iron** residual (ellipticity 1.78, 32-39 deg spread), now unblocked by a firm mount.
+
+*The mounting is not config.* It lived at `pi.sensors.imu.mount.*` until US-708,
+where it pinned the identity map and **overrode the code default** — so correcting
+the constant alone would have shipped a no-op. It is a fact about how the board is
+bolted to the dash, established by measurement and settled by a drive, not a knob;
+an adjustable-looking key reads as something a future session may adjust. The
+validator's mount-axis check went with it: no amount of well-formedness checking
+could notice that a well-formed map described the wrong board.
+
+*Honest-availability is PER FIELD.* A dead magnetometer grays `headingDeg` alone
+while the g fields stay live; an unwired sensor writes an **explicit**
+`available: false` state (a state *change* bypasses the write-cadence window, so
+an unplug can never leave the last live g reading frozen on the card looking
+current); and a stale mag reading grays the heading rather than carrying an old
+bearing forward — a frozen compass needle is worse than an absent one.
+
+*Why a gravity low-pass (`pi.sensors.imu.gravityTauSec`, default 5 s).* The
+accelerometer measures gravity and vehicle acceleration summed into one vector.
+Publishing the raw horizontal components would pin a permanent phantom **0.17 g**
+on the g-meter for a board bolted in at a 10° tilt. The slow estimate tracks
+mount tilt and road grade (which change over tens of seconds); the fast residual
+is the acceleration the g-meter exists to show. The **same** estimate defines the
+level frame for `gLat`/`gLon` **and** the tilt compensation for `headingDeg` —
+one gravity fact, two consumers, no chance for two derivations to disagree. The
+default τ is a **Rex-derived filter constant flagged for Atlas/Spool confirmation
+against a real drive**, not a tuning value.
+
+##### Gyro-fused pitch + ZUPT (US-521 / F-125, Sprint 69 / V0.29.24)
+
+**Why the low-pass above was not enough for pitch.** An accelerometer cannot
+distinguish grade from acceleration — they are literally the same measurement
+(Spool, 2026-08-01). Specific force is `a_vehicle − g_vector`, so a 0.3 g pull on
+*flat* ground adds 0.3 g to the forward axis and any accel-derived tilt reads
+`atan(0.3)` = **16.7° of climb**. The 5 s gravity τ rejects a 1 s event but *not*
+a 10 s on-ramp (2 τ), so `gradePct` was structurally wrong under sustained
+acceleration — and it is the integrand US-519's interim altitude would have
+inherited, where a 0.5° sustained bias is 70 m of fake climb over a 10-minute
+drive against ±10–20 m of real Chicagoland relief.
+
+**`src/pi/sensors/pitch_fusion.py` (`PitchFusion`)** replaces that path. Pure and
+I/O-free — no bus, no device, no clock — so it is deterministically testable and
+US-519 reuses it unchanged. Three mechanisms, all Spool's:
+
+1. **Gyro integration** carries the short term (`raw.imu.gyro`, rad/s, already
+   published by the reader under the same burst `seq`; the bridge simply had
+   never subscribed). Sign is *derived*, not guessed: the frame is right-handed
+   `forward × left = up`, so `ω × forward = −ω_left · up` and a nose-up rate is a
+   **negative** left-axis rate. It must agree with the accel convention or the
+   two halves of the filter fight each other. ⚠️ That derivation is correct *given
+   vehicle coordinates* — which is what it did not get until US-708 fixed the
+   body frame above; the index it reads was the fore-aft axis, so it integrated
+   **roll rate** as pitch. The estimator itself did not change.
+2. **The accel corrects the gyro only near 1 g** (`accelTrustBand`, default
+   0.02 = 2%). This is what rejects the phantom: under 0.3 g the specific force is
+   1.044 g, a 4.4% excess, well outside the band. The band cannot be much tighter
+   or road vibration gates the accel off permanently, leaving pure gyro drift.
+3. **ZUPT** at every confirmed stop — OBD speed 0 across `[EXACT: 3] s` (Spool,
+   **load-bearing**). At zero velocity the accel reads *pure gravity*, so the
+   measured tilt is the true chassis pitch: the one uncontaminated fix the
+   estimator gets, applied as a **snap, not a blend**. One stop cannot separate
+   mount tilt from the slope you parked on, but the rolling mean over stops
+   converges on the **bias** — valid because this terrain is flat, so real road
+   slopes average ~0. City stoplights are the free calibration signal. Published
+   pitch is `fused − bias`.
+
+**`raw.obd.SPEED` is the ZUPT gate and the bridge stays a pure bus consumer.**
+The capture loop already publishes it onto the *same* `SampleBus`
+(`realtime._publishReading`), so this is one more subscription, not a second
+acquisition path — the bridge still opens no OBD connection and no I²C device.
+The value is used as a boolean "is it zero", **never as a magnitude**, so the
+reading's unit is irrelevant here by construction.
+
+*Honest-instrument, per branch.* The pitch starts `null` and is never a
+fabricated 0.0 (`reasons.pitchDeg = "pitch_unseeded"`, distinct from
+`tilt_unresolved` — the sensor is fine, the attitude is simply not known yet); it
+seeds **only** from an uncontaminated reading, because seeding mid-pull bakes the
+phantom in as the origin the gyro then integrates from; no bias is applied until
+`zuptMinStops` stops have been observed, since a bias claimed from one stop is a
+calibration nobody measured; the bias window is **rolling**, so a physical
+remount ages out rather than freezing on an old constant; and **an absent or
+stale OBD speed is never read as "stopped"**. That last one is the dangerous
+case, not a failed read: honouring a stale zero after a mid-stop link drop would
+keep hard-correcting the attitude to whatever the accelerometer says for the rest
+of the drive — snapping pitch to the 16.7° phantom on every on-ramp, with more
+confidence than the drift it was fixing. A stop therefore requires zero speed
+*observed across* the whole gate **and** still fresh (`zuptSpeedMaxAgeSec`,
+default 2 s, deliberately **below** the 3 s gate); elapsed time after one zero
+reading is evidence only that we stopped being told.
+
+*Stop detector, stated (US-749).* A stop does **not** need a moving→stopped
+transition: `observeSpeed` opens one on the first observed zero, so a car that
+starts parked with a live link is ZUPT-snapped after 3 s like any other. The bias
+observation is committed **per stop, when it ends** (moving again, stale speed or
+reset), so `stopCount` reads 0 *during* one long stop, and `biasRad` stays 0.0
+until `zuptMinStops` (5) stops. With the OBD link down there is no SPEED at all,
+so `stopCount = 0` is correct.
+
+**Plausibility guard (US-749 / F-135, Sprint 86 / V0.29.50).** On 2026-09-14 the
+gyro carried a standing offset (0.2457 rad/s on the pitch channel, stationary car)
+and the fusion published **70° as a confident pitch** (`gradePct` 276) beside a
+level, trusted accelerometer. The mechanism is exact: the complementary filter
+settles at `accelPitch + rate × τ`, and 0.2457 × 5 s = 70.4°. The accelerometer
+term *was* contributing (without it pitch integrates to the 90° clamp); nothing
+checked the answer against it. ⚠️ `gLat`/`gLon` are gravity-removed and **cannot**
+see this error, so a healthy g-meter is no evidence about pitch.
+`PitchFusion` now tracks, on **trusted** readings only, how long `|fused −
+accelPitch|` has exceeded `accelTrustContaminationRad(accelTrustBand)` — the
+largest tilt a pull the trust band still admits can fake, `atan(√((1+band)² − 1))`
+≈ **11.4°** at 2% (derived from the existing band, not a new number). Past
+**`GYRO_IMPLAUSIBLE_SETTLE_TAUS` = 3 τ** (a first-order filter's 95% settling time)
+`gyroImplausible` is true, `pitchRad` returns `None` (`rawPitchRad` still carries
+the value, and the bridge logs it on the transition), and the bridge publishes
+`pitchDeg`/`gradePct` `null` + `gyro_implausible`. Why this discriminates: a
+contaminated or stepped accel is *followed* by the filter, so its disagreement
+decays inside ~τ; only a standing rate holds one past 3 τ, i.e. a trip means a
+rate above ≈ 11.4° / 5 s ≈ 0.040 rad/s, against ≤ 0.015 rad/s measured healthy on
+this car. The verdict clears on the first trusted reading that agrees; a ZUPT snap
+always agrees. **No clamp and no hard-coded offset** — the guard withholds the
+number; the gyro offset itself must be fixed upstream.
+
+*Config (`pi.sensors.imu.*`, all positive-checked in `_validateImuStateBridge`).*
+`pitchTauSec` (5.0), `accelTrustBand` (0.02), `zuptMinStopSec` (**3.0 — Spool
+`[EXACT]`, flag him before any drift**), `zuptSpeedMaxAgeSec` (2.0),
+`zuptMinStops` (5), `zuptWindowStops` (20). All but `zuptMinStopSec` are
+**Rex-derived and routed to Spool for σ_pitch sizing** (US-521 AC4) before
+US-519/US-520 build the altitude display on top.
+
+*Config (all under `pi.sensors.imu.*`, validated in `_validateImuStateBridge`).*
+`stateHz` (**1** since US-796-b — 4 when this paragraph was written, then 10
+under US-508) is the state-file write cadence, grounded to the **consumer** —
+`carousel.js POLL_MS = 250` — not the sensor's burst (**4 Hz** since US-796-b,
+50 Hz before it);
+writing tmpfs faster than the only reader polls is churn with no observable
+effect. 🔴 **`mount.{forward,left,up}` was RETIRED by US-708** — it is a mounting
+fact, not a knob, and it now lives as `imu_state_bridge.IMU_BODY_FRAME` with the
+measurement that established it in the comment (see the body-frame note above).
+The validator's axis check went with it. A stale `mount` block left in
+`config.json` is **inert**: nothing reads it. Gated behind `pi.bus.enabled` +
+`pi.sensors.imu.enabled`
+(flipped on in Sprint 66 — connect-when-wired, the genuine Adafruit ICM-20948
+#4554 confirmed @0x69 via `WHO_AM_I = 0xEA`).
+
+##### ARCH-064 — reliable IMU: acquisition C + the x-io Fusion AHRS (2026-09-28)
+
+**Why a third acquisition path.** Evidence:
+`offices/architect/findings/2026-09-28-PLAN-ARCH-064-reliable-imu.md`,
+`2026-09-28-PREDICTION-ARCH-064-sparkfun-master-liveness.md`. **MEASURED** on the real hardware,
+all other project software stopped: with the ICM-20948's internal I2C master enabled — what
+`magMode: "master"` (B, ARCH-057) is, under **both** the adafruit and the SparkFun libraries — the
+AK09916 freezes after exactly one reading. Bypassing **after** the master has already run (a
+runtime fallback from B to A) can additionally **hang the whole I2C bus**, a worse failure than the
+freeze it would be working around. `src/pi/sensors/icm20948_direct.py` (`magMode: "direct"`, C) is
+the fix: the chip is configured from a **clean software reset**, the I2C master is **never
+enabled**, and the AK09916 is read directly in bypass per its own datasheet — live at up to 100 Hz,
+no freeze observed. `magMode` is now `"direct"` by default (`src/common/config/validator.py`
+DEFAULTS); **A (`"bypass"`) and B (`"master"`) are kept as revert paths** — a config edit + service
+restart, never a live flip, per the hang risk above.
+
+**Axis map — corrected (ARCH-064, supersedes ARCH-033).** Per **TDK DS-000189 p.83 Fig. 13** (the
+manufacturer's own AK09916 orientation drawing): mag +X = accel +X, mag +Y is **opposite** accel
++Y, mag +Z points **down** while accel +Z points **up** — `x <- ak_x, y <- -ak_y, z <- -ak_z`
+(`ak09916_bypass.AK09916_TO_ICM_AXES`). The retired ARCH-033 map differed by exactly a 90° rotation
+about z, which a heading-vs-GPS-course concentration sweep cannot discriminate (constant offsets
+are invariant to that statistic by construction); only an absolute reference could — a garage
+measurement, nose due east, read ~97° (east, correct) under this map and ~187° (south) under the
+retired one.
+
+**The AHRS engine (`src/pi/sensors/ahrs_fusion.py`, `AhrsFusion`) — x-io Fusion (`imufusion`
+1.3.3), selected via `pi.sensors.imu.fusionEngine` (default `"imufusion"`; `"legacy"` reverts to the
+byte-identical US-521 `PitchFusion` above, config-only, no redeploy).** Settings, ruled exactly, not
+tuned blindly:
+
+| Setting | Value | Why |
+|---|---|---|
+| `gain` | 0.5 | ARCH-064 ruling |
+| `acceleration_rejection` | **7°** | Not the ruled 10° — tightened with a stated, measured reason: speed aiding cannot see an acceleration ONSET until the next OBD SPEED sample (up to ~2.3 s later), so the rejection angle alone must hold attitude through that blind window. At 10° a 0.15 g pull (atan = 8.5°) is never rejected and leaks ~5° of phantom pitch before the first `dv/dt` arrives (measured: 2.76° still present 4 s in). 7° rejects any pull ≥ 0.123 g at onset with margin |
+| `magnetic_rejection` | 10° | ARCH-064 ruling |
+| `rejection_timeout` | 5 s | ARCH-064 ruling (`imufusion` 1.3.3 takes this in seconds) |
+| `Bias` stationary threshold | 3 dps over 3 s | imufusion's **fine-tune** on top of the ZARU offset (below) — fed only when OBD speed does not say the car is rolling |
+
+**Speed-aided compensation** (`AhrsFusion._compensate`) removes the vehicle's own specific force
+before the AHRS sees it, so sustained acceleration is not read as tilt (the same phantom §"Why the
+low-pass above was not enough for pitch" describes for the legacy engine): longitudinal `a_long =
+Δv/Δt` from OBD `SPEED` (held between samples, clamped to ±0.6 g — a road car does not exceed that
+longitudinally); lateral `v · ω_z` (centripetal, from the gyro's yaw rate). **Both switch OFF when
+the last OBD `SPEED` sample is more than 3 s stale (`SPEED_STALE_S`)** — never compensate on old
+data or a fabricated rate. The centripetal term uses the **bias-corrected** yaw rate (gyro − the
+learned offset): with the raw rate, a 0.747 dps bias at 30 m/s was a fake lateral force worth 5.77°
+of heading and 2.28° of roll on a straight road (final review I1, Ruling 35).
+
+**Gyro-bias learning is gated on speed (Ruling 35, I3).** Fusion's `Bias` calls anything under
+3 dps for 3 s "stationary", so a 1.5 dps highway curve held 60 s was learned as a −1.5 dps offset
+(2.97° heading error). The learner is not fed while the latest OBD `SPEED` — fresh **or stale** —
+exceeds `BIAS_LEARN_MAX_SPEED_KMH` (1 km/h); a dropout mid-curve is not evidence of a stop. With no
+speed ever seen, or a last reading of 0, Fusion's own detector is used. ⚠️ Cost: a bias not yet
+converged when the car pulls away stays unconverged until the next stop (15 s parked, 1 dps bias:
+1.84° heading / 0.58° roll at 30 m/s, against 7.7° / 3.06° before the fix).
+
+**The gyro offset comes from the car's own stops — ZARU (ARCH-066, US-819; RCA 2026-10-04).**
+`imufusion.Bias` is, in its author's words, for "fine-tune existing offset calibration that may
+already be in place"; run from zero as our only learner, its per-sample 3 dps stationary gate is
+**starved by idle-engine vibration** (MEASURED at stops, drives 96–100: pitch-axis sd 0.4–2.5 dps,
+peaks 6.6 dps; on that noise it learned **2 % of the bias in 90 s**). Unlearned, the measured
+resting bias (x −0.2 / y +0.7 / z +0.15 dps) reads **−1.6° pitch (~2.8 % phantom grade) and +2.2°
+heading** at speed, plus phantom roll through `v · ω_z`. So the offset is set from the vehicle's
+own stationary truth: while **fresh** OBD `SPEED` reads 0 (the A-34 latch's window), the raw rate is
+averaged over the whole stop and, at every completed 3 s window that is **not faulted**, the stop's
+**mean** becomes the offset (a zero-angular-rate update — the offset is the mean at rest, as in
+Adafruit SensorLab's and jremington's ICM-20948 practice). A faulted window is never adopted: it
+would zero the evidence the latch rests on. Each boot is **seeded** with the last ZARU offset,
+persisted by `imu_state_bridge.GyroOffsetSeedStore` at `/var/lib/eclipse-obd/imu-gyro-offset-seed.json`
+(at most once a minute; a seed at or above the A-34 cut is refused), and `AhrsFusion.reset()`
+returns to that seed, not to zero. **In-motion learning is not needed:** with the magnetometer live
+a yaw bias costs ≈ 1.9° per dps steady state (MEASURED in the production engine, = bias / gain), and
+the bias moves ≤ 0.05 dps between clean stops.
+
+**The A-34 latch under the AHRS (Ruling 35, I2).** `AhrsFusion.gyroImplausible` latches when fresh
+OBD speed has read 0 for ≥ 3 s and the largest per-axis mean of (gyro − learned offset) over that
+window reaches `gyro_recovery.GYRO_FAULT_MIN_RAD_S` (0.10 rad/s, the bimodal cut). While latched,
+`pitchRad`/`rollRad`/`headingDeg` read `None` and the bridge publishes `pitchDeg`, `gradePct` **and
+`headingDeg`** as null with `gyro_implausible` (heading too, because this heading integrates the
+gyro; the legacy mag-only heading is not withheld). It clears on `reset()` or on a parked window
+that reads quiet (a successful power cycle), and the attitude is then restarted so the integrated
+fault is never published. **It cannot latch without fresh speed** — a turning car and a latched
+gyro are the same signal. Before this, the flag was hard-wired `False` and a latched gyro
+published pitch −44…−90° parked, with no reason code.
+
+**Heading is TRUE north, not magnetic**, once `magDeclinationDeg` is set
+(`headingDeg = (-yaw + declinationDeg) mod 360`, east-positive convention) — the legacy engine's
+`headingDeg` remains magnetic, uncorrected; `headingCalibrated` distinguishes the two in published
+state. `magCalibration` (`hardIronUt`, `softIron`) corrects the raw field before the AHRS update;
+zero/identity is a no-op, so an unset car ships unchanged accuracy rather than a silently wrong
+correction (fit with `tools/imu/fit_mag_calibration.py`, ARCH-064 Task 6).
+
+**Bounded gyro coasting, never unbounded drift.** Heading may coast on the gyro alone for at most
+`MAG_MAX_COAST_S = 5.0 s` after the last valid magnetometer reading, then reads `None` rather than
+an unaided integration that drifts without bound (review probe: 0.05 rad/s over 10 s moved a
+heading 90.0° → 73.7° with no correcting mag). A fresh mag reading restores it.
+
+**A FROZEN mag is withheld from the engine (Ruling 13).** While the ARCH-056 rotation verdict is
+`FROZEN`, `imu_state_bridge` passes `mag_ut=None` to the AHRS rather than the frozen vector: Fusion
+would reject it through a turn, then its recovery would **snap** heading onto it, wrong for up to
+~5 s after the verdict clears. The rotation gate itself still reads the bridge's own `_freshMag`,
+so withholding the AHRS's copy cannot stop the verdict clearing. The rotation score is accumulated
+in steps of ≥ `MAG_ROT_STEP_S` = 0.25 s of capture time (Ruling 35, I4): its 0.15 floor and the
+~0.06 frozen score were measured at 4 Hz, and summing |Δbearing| per sample at 50 Hz counts a
+dithering channel's noise 12.5× as often, so `FROZEN` never fired.
+
+⚠️ **Under `fusionEngine: "imufusion"` the legacy pitch knobs above have NO EFFECT** —
+`pitchTauSec`, `accelTrustBand`, `zuptMinStopSec`, `zuptSpeedMaxAgeSec`, `zuptMinStops`,
+`zuptWindowStops` are `PitchFusion`-only. `AhrsFusion.stopCount` / `.biasRad` are always `0`
+(surface parity only): there is no ZUPT stop detector and no mount-tilt bias under this engine.
+They apply again, unchanged, when `fusionEngine: "legacy"`.
+
+**`sampleHz` is now 50 Hz — the IMU's internal acquisition/fusion read rate, not a stored rate.**
+The 4 Hz ceiling this document's data-acquisition companion sets still governs what is STORED
+(`persistHz` 2 / `stateHz` 1, unchanged). See
+`specs/data-acquisition-architecture.md` §4.2.a for the full rate ruling and the exact decimation
+factor (50 → 2 = 25) — not restated here.
+
+**Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
+/ V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
+Chromium kiosk can't reach the panel backlight) from the `states/light` feed via
+pure, node-tested logic in `carousel.js`: `brightnessLevel(lightData, cfg, nowMs,
+alarmActive)` = `clamp(minLevel, brightnessCurve(lux), 1.0)` when the feed is
+fresh, else a fixed `defaultLevel` (honest fallback — an absent/stale/`null`
+reading never fabricates an "auto" behavior), then raised to at least
+**FULL brightness** while a **real active STOP** alert is present
+(`brightnessAlarmActive` — the load-bearing safety guard: the PULL-OVER alarm is
+never dimmed, regardless of lux). US-484-b made the alarm go to FULL, which is
+stronger than any floor, and **US-595 therefore RETIRED `alarmFloorLevel`
+entirely** — a floor beneath a value that is already the maximum is unreachable
+config. Applied as a CSS var
+(`--display-brightness`) `filter: brightness()` on the `#screen` frame (the black
+letterbox bars stay black; `#stage`'s own transform remains the containing block
+for its descendants, so US-482 scaling is untouched). The curve values are
+**GROUNDED CONFIG PARAMETERS** under `pi.display.autoDim.*` (`luxMin` 3.0 /
+`luxFull` **300.0**; `minLevel` **0.75** / `defaultLevel` **1.0**; `luxStaleSec`
+10; `curve` `logarithmic`)
+
+> ⚠️ **These four values all moved on 2026-08-29/30 and this paragraph described
+> the old ones.** Recorded because the drift was mine: `luxFull` was documented
+> as a *"standard illuminance anchor"* of 1000 and had never been measured on
+> this car — **measured overcast daylight through the windscreen is ~209 lux**,
+> ~4.8x below it, so the panel sat at its floor through real daylight
+> (ARCH-008). `minLevel` 0.15 → 0.5 → **0.75** and `defaultLevel` 0.70 → **1.0**
+> are the CIO's, from a dark-garage check; `defaultLevel` is deliberately NOT
+> matched to `minLevel` because the same fallback serves absent, stale **and
+> saturated**, and saturated is bright sun where 0.75 is unreadable.
+> `alarmFloorLevel` is retired (US-595).
+>
+> ⚠️ **`minLevel` at 0.75 makes the floor dominate until ~234 lux at
+> `luxFull` 1000, ~42 lux at 300.** Auto-dim therefore has a deliberately narrow
+> working range. That is a CHOICE, not a defect — do not "fix" it back.
+
+**A NEGATIVE lux is not a dark reading (ARCH-010).** The TSL2591 lux equation
+subtracts a multiple of the infrared channel, so an IR-dominated sample — low sun
+through a windscreen — computes negative; 452 such samples were recorded on
+2026-08-28, worst −721.4 at 83% IR. `freshLux` rejected non-finite values but not
+negatives, and a negative **is** finite, so it passed every type check and hit
+`lux <= luxMin -> 0`: **the brighter the sun, the dimmer the panel.** It is now
+published as `null` at the producer and rejected again at the consumer.
+⚠️ **Published as `null`, never CLAMPED to 0** — 0 lux reads as darkness and would
+still dim. `null` routes to `defaultLevel`, i.e. full. The honest answer and the
+correct behaviour are the same answer here, **NOT** `pi.display.brightness` (the distinct live 0–100
+hardware-backlight scalar). Tuning is a **config change, not code** (CIO
+2026-07-22): `eclipse-states-http` injects the `pi.display.autoDim` object into
+the served `dashboard.html` at serve time — the same same-origin seam as the
+`__SPLASH_TOKEN__` SSOT — via the quoted `"__DISPLAY_AUTODIM__"` placeholder
+(`states_http_server.loadDisplayAutoDimConfig` reads config.json fail-safe; no
+config → `null` → the carousel's built-in grounded defaults, which mirror
+config.json). The consumer reads **only** `states/light` — it opens no OBD/second
+connection.
+
+**Config (connect-when-wired).** Master `pi.bus.enabled` → `pi.sensors.imu.enabled`
+/ `pi.sensors.light.enabled` (each requires the bus gate);
+`pi.sensors.imu.sampleHz` (**`4`** since US-796-b — was `50`; bus publish rate),
+`pi.sensors.imu.persistHz` (**`2`** — was `25`; decimated persist),
+`pi.sensors.imu.stateHz` (**`1`** — was `10`; display write cadence),
+`pi.sensors.light.sampleHz` (`1`),
+`pi.sensors.retentionDays` (**`45`** since US-761 — was `7`; rolling-window purge,
+confirm vs Pi free space at deploy). Built US-408 (schema contract + Pi tables) / US-409 (IMU + light
+readers) / US-410 (persistence subscriber + retention) / US-411 (bench harness +
+golden-master regression + connect-when-wired drill). **US-483-a (V0.29.15)
+flipped `pi.bus.enabled` + `pi.sensors.light.enabled` ON** — the TSL2591 is wired
++ I²C-addressable @0x29 (verified on the Pi 2026-07-22), so the light feed is now
+live and bridged to `states/light`; the IMU stays dark (clone boards absent — the
+graceful-absent reader stays silent, isolating the live light feed).
+
+**The IMU rate triple: 4 / 2 / 1 (US-796-b, Sprint 90 / V0.29.59).** The IMU
+runs at `sampleHz 4` → `persistHz 2` → `stateHz 1`, ruled exactly by the CIO on
+2026-09-21. **The ceiling:** **4 Hz, a HARD CAP on every acquisition rate in the
+system** — above it the data is noise that would be averaged away anyway, so
+collecting it costs power and yields nothing. 🔴 The CIO tightened this from
+5 Hz to 4 Hz on 2026-09-21 (*"max 4 per second and must align with ECU data...
+this is a flight/drive data recorder not a garage data recorder"*); the 5 Hz
+figure was faithfully recorded on 2026-09-20 and is preserved as the superseded
+ruling in ARCH-036 §4.2.1, not repeated as current. The IMU now sits under
+that ceiling alongside the other feeds: light already runs at **1 Hz** and the
+battery/UPS gauge at **0.2 Hz**. The rule and its reasoning live in
+**`specs/data-acquisition-architecture.md` (ARCH-036)**; this note records only
+the change.
+
+- 🔴 *(Superseded 2026-09-30 by ARCH-064d — `specs/data-acquisition-architecture.md` §4.2.b:
+  storage is a UTC time grid, `_decimationFactor` is deleted, and the "not an exact divisor"
+  warning is replaced by a warning for any `persistHz` outside 1/2/4 Hz. The two bullets below
+  are the 2026-09-21 record.)*
+- **Every factor is exact.** `_decimationFactor(4, 2) == 2` (the EDR subscriber
+  persists 1 of every 2 bursts) and `4 / 1` gives 4 (the state bridge's 1 s
+  write interval takes 1 of every 4 bursts). No rounding and no clamp are
+  involved at the shipped values.
+- **No silent clamp.** A consumer rate above its source still degrades safely —
+  `_decimationFactor` keeps every burst, and a state write past the sample rate
+  repeats the last burst — but `_warnImuRatesAboveSource` in the validator now
+  logs a **WARNING naming both values and the effective rate** whenever
+  `persistHz` or `stateHz` exceeds `sampleHz`, or `persistHz` does not divide
+  `sampleHz` exactly (e.g. `persistHz 3` / `sampleHz 4` actually persists 4 Hz).
+- **Only config values moved.** The code defaults (`50 / 25 / 10` in the
+  validator registry and the mirrored module fallbacks) are unchanged; they
+  apply only when a key is absent. Consumers derive their windows from the
+  configured `sampleHz` rather than assuming 50 Hz. What derives from the new
+  rates is re-checked by US-796-f (below).
+- Pinned by `tests/pi/bus/test_imu_rate_triple.py`.
+
+**What derives from the rates, at 4 / 2 / 1 (US-796-f).** Two consumers compute
+a window from `sampleHz`; both take the rate from config through their
+production factories, and neither window got shorter than what it guards.
+
+| Consumer | Derivation | At 50 Hz | At 4 Hz | Wall-clock window |
+|---|---|---|---|---|
+| `PlausibilityGate` stuck-value run limit | `ceil(sampleHz × invariantDwellSeconds)` | 100 samples | **8 samples** | **2.0 s** at both rates. The dwell is stated in seconds precisely so the rate change does not move it |
+| `ImuStateBridge` mag/gyro pairing | `MAG_MAX_AGE_POLLS (5) / sampleHz` | 0.1 s | **1.25 s** | Five burst intervals at both rates, since the reader bursts accel, gyro and mag under one `seq` |
+
+- **`stateHz 1` does not starve the pairing.** Pairing is judged against the
+  burst that triggers a write, not against the display interval. Every 1 s write
+  carries a heading from its own burst. The one effect: during a mag or gyro
+  dropout, a write can still carry a reading up to 1.25 s old, where the old
+  limit was 0.1 s.
+- **Neither consumer needs the high rate to detect anything.** The gate rejects
+  a non-measurement, and a stuck channel is still refused on its 8th identical
+  sample. The pairing only rejects a stale reading.
+- The module fallbacks (`DEFAULT_IMU_SAMPLE_HZ = 50` in `sensor_reader`,
+  `imu_state_bridge` and `edr_persistence_subscriber`) still exist. US-801 owns
+  collapsing them into one definition. The tests poison the `sensor_reader` and
+  `imu_state_bridge` fallbacks (the two consumers' rate sources) and prove that
+  neither derived window moves.
+- Pinned by `tests/pi/sensors/test_imu_rate_derived_consumers.py`.
+
+
+#### F-114 measured state, 2026-09-22 (V0.29.61) [Atlas Rule 10]
+
+**Four sub-defects were open against this feature. ALL FOUR ARE NOW SETTLED AS FACTS** (sub-defect 3
+closed 2026-09-24), **leaving one bounded residual — two days, 09-17/09-18 — explicitly undetermined.
+Recorded here so none of them is re-derived at full cost.**
+
+**1. 🟢 `temp_c` — SETTLED, and FIXED by ARCH-066 (2026-10-04).** `Icm20948Direct.temperature`
+converts the `TEMP_OUT` that SparkFun's `getAgmt()` already reads (`tmpRaw`, which SparkFun does
+**not** sign-convert — the 16-bit two's complement is applied in our property). Re-measured on the
+car 2026-10-04: `WHO_AM_I 0xEA`, `TEMP_DIS` clear, raw 1264..1424 ⇒ 24.8..25.3 °C. Only the
+`direct` mag path carries it; `bypass`/`master` (adafruit) still write NULL honestly. It is **die**
+temperature, above cabin air. *(History, kept:)* The register works; the gap was in our DRIVER.
+`temp_c` is NULL in **6,940,143 of 6,940,143 rows across both tiers** — every row that exists
+anywhere. This bounced for two days between *"the vendor guide says the part has one"* and *"the
+column is empty"*, because **one side argued from the DRIVER and the other from the COLUMN and
+neither read the CHIP.**
+**MEASURED on `chi-eclipse-01` with `eclipse-obd` stopped, 120 samples over 60 s, read-only raw
+SMBus** (`tools/imu/temp_register_probe.py`):
+
+    WHO_AM_I    0xEA                        the genuine part, bank 0
+    PWR_MGMT_1  0x01  TEMP_DIS(bit3) CLEAR  the sensor is ENABLED
+    TEMP_OUT    raw 1408..1648  =>  25.217 .. 25.936 degC
+    CONTROL     accel 63 distinct, gyro 53 distinct, 0 read errors
+
+⇒ **The register EXISTS, is ENABLED and WORKS. The NULLs are purely a driver gap** —
+`adafruit_icm20x` 2.1.10 exposes no `temperature` property. **Nothing is wrong with the part, the bus
+or the configuration.** Reading it costs 2 bytes per burst;
+`degC = ((raw − 0) / 333.87) + 21` (DS-000189 §8.31), pinned by a test. **Whether to read it in
+production is a decision, not a research question.**
+⚠️ **The probe carries a CONTROL and reports VOID, never "dead register", when accel and gyro are
+frozen too.** A frozen reading proves nothing unless the read path is proven live in the same run —
+and it distinguishes **three** outcomes (works / dead / enabled-but-`TEMP_DIS`-disabled), the third
+of which was nobody's hypothesis.
+
+**2. 🔴 `mag_x` — NOT "intermittent across boots". A DATED REGRESSION.**
+The row described a 71 % NULL rate as flaky I²C. **71 % is an average across a regime change.**
+Server-side, per day: `09-10 0.0 % · 09-14 0.1 % · 09-15 0.1 % · 09-16 44.9 % · 09-17 97.6 % ·
+09-18 100 % · 09-19 75.8 % · 09-21 26.3 %`. **The step is on 09-16, and 44.9 % is the partial-day
+signature of a mid-afternoon deploy** — V0.29.55 / ARCH-027a, reported the same day
+(`_attachDirectMagnetometer: No I2C device at address: 0xc`, 15:58:46).
+⚠️ **Accepting 71 % as this row's threshold would enshrine a regression as the healthy baseline.**
+
+**3. 🟢 The "~89 % Pi-local shortfall" — CAUSE FOUND 2026-09-24. A 7-DAY WINDOW, ~1.77M ROWS/DAY.**
+🔴 **AND THE RETRACTION THIS BLOCK USED TO CARRY WAS WRONG. Read that first, because it was mine.**
+
+**The mechanism, from the car's own journal** (`journalctl -u eclipse-obd`, 67 matching lines,
+journal covering 09-11 → 09-23):
+
+    Sep 13 11:12:08  EDR retention purge: deleted imu=73798 light=3575 (older than 7 days)
+    Sep 13 12:12:08  EDR retention purge: deleted imu=73797 light=3575 (older than 7 days)
+    ...  ~73,800 EVERY HOUR, hour after hour, near-constant  ...
+    Sep 14 13:41:49  EDR retention purge: deleted imu=73828 light=3575 (older than 7 days)
+
+**One hour of capture at the measured 20.4 Hz is 73,440 rows. The purge was deleting exactly one
+hour of data per hour** — a 7-day rolling window in steady state against a sensor that ran 24/7,
+parked or not (the garage gate came later, US-793-b). ⇒ **~1.77 MILLION rows/day destroyed by
+design. That is the "~11 million ids on neither tier."** It is not a pipeline defect.
+
+🟢 **ALREADY FIXED:** `b25acc7d`, 2026-09-14 — *"raise pi.sensors.retentionDays 7 -> 45 (US-761
+stop-loss)"*. **MEASURED on `chi-eclipse-01` 2026-09-24: `pi.sensors.retentionDays = 45`** — the
+deployed artefact, not the repo — and **no purge has deleted anything since Sep 14 13:41.**
+**Do not groom a retention fix.**
+
+🟢 **THE GUARD IS SOUND — the purge cannot destroy undelivered data:**
+
+    imuMark = sync_log.getHighWaterMark(conn, "edr_imu_sample")[0]
+    DELETE FROM edr_imu_sample WHERE ts_utc < ? AND id <= ?        (cutoff, imuMark)
+
+It deletes only at or below the **synced** high-water mark and deletes **nothing** if the mark is
+unreadable. Everything it removed had already landed — which is why the server holds 6.28M of them,
+and why **09-20 / 09-21 / 09-24 match Pi↔server EXACTLY**. The recent pipeline is provably lossless.
+
+🔴 **THE CORRECTION, AND IT IS A RETRACTION OF A RETRACTION.** This block previously read *"retention
+does NOT explain it… retention explains NONE of the gap."* **That was wrong.** The 2026-09-22 claim
+it overturned — *"most of the shortfall is the rolling window working"* — was **substantially
+RIGHT**; it merely cited the wrong artefact (`'pi.sensors.retentionDays': 7` from the validator's
+DEFAULTS registry) instead of the running system. On 09-23 I found `config.json` sets 45 and inverted
+the conclusion. **The config was right; the car was RUNNING 7.**
+⇒ 🔴 **WHEN THE EVIDENCE FOR A CLAIM COLLAPSES, RE-DERIVE THE CLAIM — DO NOT INVERT IT.** A bad
+reason for a belief is not a reason for its opposite. One `git log -S` and one `journalctl` would
+have settled it; neither was run. ⚠️ **The over-correction was convincing because it was
+SELF-CRITICAL** — retracting my own claim read as rigour and drew less scrutiny than the claim had.
+**A correction is an assertion and carries the same burden of proof.**
+
+⚠️ **ONE RESIDUAL REMAINS, BOUNDED, AND DELIBERATELY NOT GUESSED.** The Pi is missing
+**ids 52,564,225–57,917,001** — a **contiguous** ~5.35M block covering **09-17 and 09-18** — which
+the **server holds at 100 % density**. The id sequence ran *through* the gap (09-19 resumes at
+57,917,002) and `sqlite_sequence` is intact at 58,492,373, so those rows were written to this
+database and later removed. **Ruled out:** the retention purge (logged nothing in that window; at 45
+days nothing in September is eligible), any other code path (`DELETE FROM edr_*` appears in exactly
+one file), and a restore-from-backup (the sequence would have resumed lower). **Nearby:** a backup at
+Sep 17 03:00 and a reboot at Sep 17 15:22–15:28. ⇒ **CAUSE UNDETERMINED — a bounded question about
+TWO DAYS, not a claim about the dataset.**
+
+🔴 **THE ONE CODE CHANGE THIS FEATURE STILL NEEDS: `maybePurge` must log when it deletes ZERO.**
+It logs `if imuDeleted or lightDeleted`, so **"ran and deleted nothing" is indistinguishable from
+"never ran."** That ambiguity is why this row could not exclude the purge for two days, and it is
+what made the 09-23 inversion possible. One line converts silence into evidence.
+**4. 🟢 Zero rows since the last reboot is THE GATE WORKING, not a fault.**
+`edr_log_gate` is documented OPEN only while the OBD link is up. Verified at V0.29.62, parked:
+gate `CLOSED`, and **`edr_imu_sample` is equally static** (max id 58,491,390, newest
+2026-09-21T19:05:45Z) while `states/imu` publishes live. **Both tables gated identically ⇒ zero rows
+is correct behaviour.** ⚠️ `bufferedRows` reads 1; the CLOSED ring's depth is still unmeasured, so
+how much pre-link data survives a long park is **assumed, not known**.
+
+⚠️ **Verifying a sync is a separate instrument:** `tools/sync/reconcile.py` compares a **bounded**
+`source_id` range Pi→server, row count and every column value. It **requires** a bounded range —
+whole-table counts diverge by design — which means **it can PASS while sub-defect 3 above is
+completely untouched.** It answers *"did the rows in THIS range arrive intact?"*, never *"is any range
+missing?"*
+
+### 10.8.3 EDR reaches the server (F-142, Sprint 87–88 / V0.29.51–52) [Atlas Rule 10]
+
+**The distance this closes.** The Pi has recorded EDR samples faithfully since
+V0.29.4 and **none of them ever left the device**. Measured on the Pi
+2026-09-16: **14,461,121** `edr_imu_sample` rows and **700,217**
+`edr_light_sample` rows, 2026-09-07 → 2026-09-16, accumulating at ~1.6M rows/day.
+Recorded is not the same as usable.
+
+⚠️ **Status boundary — read the date on it.** **AT THE SPRINT 88 DESIGN GATE
+(2026-09-16)** US-764 (the shared contract) was live on `dev` at V0.29.51, and
+US-765/766/767/768 were the **ratified design**, not running code. That is the
+history, and it is kept because the design was ratified before it was built.
+
+🟢 **SINCE THEN, ALL FOUR SHIPPED** (recorded US-773, 2026-09-22, verified in
+the repo rather than inferred): US-765 (the server tables — `models.py`,
+`sync.py` and migration `v0026_us765_edr_raw_tables.py`), US-766 (the
+registration — `PK_COLUMN` entries for both EDR tables — and the drain
+exclusion, read by `power_watch/__main__.py` at both drain call sites), US-767
+(the log gate, `src/pi/bus/edr_log_gate.py`) and US-768 (the sync-gated purge).
+**So this subsection now describes running code**, and each row below carries
+its own marker: *designed* rows are architecture awaiting code, *built* rows
+name the story that shipped them. No story appears as both — pinned by
+`tests/lint/test_edr_section_status_consistency.py`.
+
+**One contract, two tiers — the A-4 promise, kept.** `EDR_COLUMNS` in
+`src/common/edr/sensor_schema.py` is the single column list. `server_ddl.py`
+**generates** the MariaDB DDL from it; `sync_contract.py` publishes
+`EDR_SYNC_TABLES` and `SHUTDOWN_DRAIN_EXCLUDED_TABLES`. **The server table is not
+authored, it is derived** — so the Pi↔server divergence A-4 tracks cannot open by
+someone editing one side. A migration that restates the DDL instead of comparing
+against the generator re-opens it; the story's acceptance therefore *compares*.
+
+**The two tiers deliberately differ in shape, and that is NOT divergence.**
+
+| | Pi (SQLite) | Server (MariaDB) |
+|---|---|---|
+| Key | `id INTEGER PRIMARY KEY AUTOINCREMENT` | composite `(source_device, source_id, ts_utc)`, **no surrogate id** |
+| Why | the `id` **is the sync cursor** — monotonic per device, and what the delta push walks | the server receives from **N devices**; a per-device autoincrement is not unique across them |
+| Storage | rolling window, `retentionDays` 45 | monthly `RANGE COLUMNS` on `ts_utc` + `pmax`, `PAGE_COMPRESSED=1` |
+
+🔴 **`source_device` is the dimension that prevents a known, already-instantiated
+defect.** `drives.PRIMARY KEY` is `drive_id` **alone**, with no device dimension —
+so two edge devices will collide the moment a second vehicle arrives. The EDR
+tables are keyed the way `drives` should have been. Do not "simplify" the
+composite key to a surrogate id; the surrogate is what loses the device.
+
+**Sync is insert-only and rides the existing path** *(built, US-766)*.
+Registration is an entry in `PK_COLUMN` (`src/pi/data/sync_log.py`) — the same
+id-cursor delta mechanism every other table uses. **No new transport, no new
+protocol version.**
+
+🔴 **EDR must never ride the shutdown drain** *(built, US-766)*. The drain
+budget is **seconds**; the EDR backlog is **millions of rows**. The exclusion is
+read from `SHUTDOWN_DRAIN_EXCLUDED_TABLES`, never re-listed at the call site.
+**The custody verdict (§10.6.3) must be byte-identical with and without
+outstanding EDR rows**, and `edrOutstandingRows` is reported on a **separate**
+journal line. The reason is architectural, not cosmetic: sync custody answers
+*"did the safety-critical data survive this shutdown?"* Folding an unbounded
+archival backlog into that verdict would make every healthy shutdown report a
+failure forever, and a verdict that is always failing is a verdict nobody reads.
+
+**The log gate: record while linked, keep the seconds before** *(built,
+US-767)*. CLOSED holds a monotonic 60 s ring and writes nothing; opening flushes
+that ring **in order**; OPEN→HOLD keeps writing for 300 s and re-arms when the
+link returns. A parked car otherwise logs millions of rows nobody will read, and
+the moments just before a link opens are the ones worth keeping.
+
+*Built as a pass-through (US-767-b).* `EdrLogGate` (`src/pi/bus/edr_log_gate.py`)
+reads the two producer facts (`connected`, `signalReadable`) and follows the
+fail-OPEN table below; a signal callable that raises, or none at all, counts as
+unreadable → OPEN with a WARNING at most once per 60 s. `enabled=False` is
+always OPEN and never reads the signal. Config: `pi.sensors.logGate.enabled`
+(`true`), `.preRollSec` (`60`), `.holdSec` (`300`) — both windows must be
+positive. US-767-b had `lifecycle._startEdrSensorPath` build the gate with
+**`enabled=False` and no signal** and hand it to `EdrPersistenceSubscriber`, which routes every
+row through `admit()` (drive_id resolved at capture, so a flushed pre-roll row
+keeps its attribution). A linked run therefore writes byte-identical rows to the
+pre-gate path.
+
+*Live (US-767-c).* `_startEdrSensorPath` now passes the gate a **lazy callable
+over `ObdConnection.getStatus()`**, resolving `self._connection` on every row
+(a rebuilt connection is honoured; no connection object raises → unreadable →
+OPEN), and honours `pi.sensors.logGate.enabled` (an absent key falls back to the
+gate's pass-through default; the validator supplies `true`). Nothing in the path
+reads a `states/` file. Every row still goes through `admit()`, so a fully
+linked run writes the same rows as no gate at all. Transitions are logged by the
+gate (`EDR log gate: CLOSED->OPEN reason=… buffered=N`) and the subscriber
+**publishes `states/edr-log-gate`** (`pi.splash.statesDir`) on the first row and
+on every state change after it — never per row:
+`{"state": "CLOSED"|"OPEN"|"HOLD", "enabled", "from", "reason", "bufferedRows",
+"ts"}` (`from`/`reason` are `null` before the first transition). The write is
+best-effort and can never cost a row. The fail-OPEN branch is pinned by a
+mutation test (`tests/pi/bus/test_edr_log_gate_live.py`): the same unreadable-
+signal run that passes on the shipped gate must fail on a copy compiled with
+that one return inverted.
+
+*~~The gate signal is `ObdConnection.getStatus().connected`, and it is lawful.~~*
+**SUPERSEDED by US-793-b (Sprint 91)** — see *"Three layers, and the ECU gates
+capture"* below. The reasoning that follows was the Sprint 88 premise; in the
+car the link reads connected with the key out, so a parked car still logged.
+It is kept because the rendered-value and capture-health warnings still hold.
+`obd.py` `is_connected()` returns `status() == OBDStatus.CAR_CONNECTED` and is
+explicitly **False** at `ELM_CONNECTED` — so it is an **ECU-level** fact, not an
+adapter-level one, and a powered dongle on a parked car does not open the gate.
+⚠️ **Do not substitute a rendered or derived UI value** (SSOT rule B: that is a
+second acquisition of one fact). ⚠️ **And do not substitute the capture-health
+freshness signal**, which stays alive on adapter-only `ATRV` reads with the key
+out — a different consumer with a different defect. The two must not be
+"reconciled".
+
+**Three layers, and the ECU gates capture** *(built, US-793-b; Atlas rulings
+2026-09-21)*. "Connected" names three different facts, and they must never be
+collapsed into one another:
+
+| Layer | Fact | Where it is read | Gates capture? |
+|---|---|---|---|
+| **Powered** | the dongle has power | nowhere in software; the OBDLink LX is powered with the key **out** | no |
+| **Bluetooth-connected** | the RFCOMM link to the dongle is up | `ConnectionStatus.connected` (+ `signalReadable`, US-767-a) | **no** — up on a parked car |
+| **ECU-connected** | an ECU read the data path already made **returned data** | `ConnectionStatus.reachability` (US-793-a), one of `answered` / `did_not_answer` / `not_yet_attempted` / `could_not_determine` | **yes — this is the gate signal** |
+
+🔴 **A `connect_success` (or `reconnect_success`) connection_log row is NOT
+evidence of ECU reachability.** It records the Bluetooth layer. ECU reachability
+is its own state-valued row, `ecu_reachability` (US-793-c), written on each
+transition; only that row says whether the engine answered.
+
+`EdrLogGate._readLink` reads **only** `reachability`, never `connected`. The
+mapping is explicit per state, and **only a definite negative closes the gate**:
+
+| Signal | Gate |
+|---|---|
+| `answered` | OPEN (reason `ecu_answered`) |
+| `did_not_answer` | CLOSED — buffer (`ecu_did_not_answer`) |
+| `not_yet_attempted` | CLOSED — buffer (`ecu_not_yet_attempted`); the cold-boot state on a parked car |
+| `could_not_determine` | OPEN + the rate-limited WARNING (`signal_unreadable`) |
+| the signal callable raises — **any** exception | OPEN + WARNING |
+| no callable wired (`linkSignalFn=None`) | OPEN + WARNING |
+| a status **without** a `reachability` field | OPEN + WARNING — **never** a fallback to `connected` |
+| any other value | OPEN + WARNING |
+
+*Why the asymmetry:* closing wrongly loses rows that cannot be recovered;
+opening wrongly costs disk and is trivially filtered later — so every "we do not
+know" fails toward the recoverable error. A silent fallback to `connected` for a
+producer lacking the field would keep the Bluetooth-link defect with nothing
+reporting it (the inert-guard shape, `specs/anti-patterns.md`). The gate compares
+the producer's **string values** and imports nothing from `pi.obdii`; the only
+`pi.obdii` module that may import the gate is the composition root
+`orchestrator/lifecycle.py`. Both directions are pinned by
+`tests/lint/test_edr_log_gate_import_direction.py` (a one-entry literal
+allowlist, with a scanner self-test that goes red on a deliberate import). The
+pre-roll (60 s) and hold (300 s) are unchanged; `did_not_answer → answered`
+releases the buffered pre-roll exactly as US-767-b specified, so a driving car
+captures the same rows as before.
+
+🔴 **The gate must distinguish "link down" from "signal unreadable."**
+`ObdConnection._isConnected()` wraps its read in `try/except Exception: return
+False`, so **every** failure of the signal arrives as `connected=False`, byte-
+identical to a genuinely down link. A gate that treats the two alike fails
+**CLOSED** on a broken signal — it silently stops recording, which is the outcome
+the gate exists to avoid. The stated contract is **fail OPEN on an unreadable
+signal**; satisfying it requires a typed availability, not an exception path,
+because production cannot raise here. *(Raised at the Sprint 88 design gate;
+recorded because a test that patches a raise would pass while production could
+never produce one — the inert-guard shape, `specs/anti-patterns.md`.)*
+
+**`ConnectionStatus.signalReadable` — the producer records whether its read
+completed** *(built, US-767-a; Atlas ruling 2026-09-16, shape (c))*. A new
+`bool` field on `ConnectionStatus` (`src/pi/obdii/obd_connection.py`).
+`getStatus()` sets it **in the same read** that sets `connected`
+(`_readLink()` returns both). It is **False only when `is_connected()`
+raised**; `obd is None` is a *readable* verdict ("no connection object"), so it
+is True there. **`connected` is unchanged** — same value in every case it had
+before, and `_isConnected()` / `isConnected()` keep their bool return. The raise
+is no longer swallowed silently: a WARNING on the first failed read of a streak,
+DEBUG while it persists, INFO on recovery. `toDict()` is deliberately unchanged
+(no serialised consumer moves). No module other than `obd_connection.py` reads
+the field until the gate does (US-767-c); **capture-health must never read it**
+— it would reintroduce the transport-failure blind spot `validator.py` warns
+about. The raising case is reachable today only by patching (python-obd's
+`is_connected()` compares a cached status, no I/O), so US-767-c's mutation test
+is what proves the gate never closes on it.
+
+| `connected` | `signalReadable` | Gate |
+|---|---|---|
+| `False` | `True` | **CLOSED** — the link is genuinely down. Buffer. |
+| `False` | `False` | **OPEN** — we cannot tell. Fail open, rate-limited WARNING. |
+| `True` | `True` | **OPEN** — normal. |
+
+**Retention is sync-gated: it deletes only what the server already has**
+*(built, US-768)*. `purgeExpired()` was modified in place:
+`DELETE … WHERE ts_utc < cutoff AND id <= ?`, bound to that table's
+`sync_log.last_synced_id` (read via `sync_log.getHighWaterMark`; `PK_COLUMN` is
+`id` for both EDR tables). **Age alone never authorises a delete** — age is
+evidence about time, never about whether a reading was preserved. A table with
+no `sync_log` row has mark 0, so nothing in it is deleted. Both marks are read
+**before any delete**; if either read raises (including a missing `sync_log`
+table — the purge never creates sync schema to get a mark), the purge **deletes
+nothing** and logs a WARNING — a purge that guesses at what was synced is the
+defect being removed. Below **15 GB** free on the database volume
+(`_LOW_DISK_WARN_BYTES`, decimal GB) the job **WARNS and still deletes no
+unsynced row** — the delete is identical to the one it runs with plenty of
+space: a disk-space emergency must not become a data-loss event. An unreadable
+free-space read is logged and changes nothing. This is **not** US-762's
+whole-disk guard; the two are separate and must stay separate. Pinned by
+`tests/pi/bus/test_edr_purge_sync_gated.py`, which also greps `src/pi` for
+`DELETE FROM edr_` and requires exactly the two gated statements inside
+`purgeExpired`.
+
+⚠️ **There must be exactly ONE EDR delete path.** `purgeExpired()` in
+`src/pi/bus/edr_persistence_subscriber.py` already deletes by `ts_utc < cutoff`
+with **no sync gate**. That is the path which must *gain* the high-water-mark
+condition. Adding a second, sync-gated purge beside it leaves the age-only one
+running and the guarantee above is false on the shipped system while every test
+of the new module passes.
+
+**The deadline this carries.** US-761 raised retention 7 → 45 days, so Pi-side
+deletion resumes about **2026-10-22**. Until sync is live the high-water mark is
+0 and the correct behaviour is that **nothing is deleted** — an expected
+validation outcome, not a defect. EDR sync has been live since 2026-09-16, so
+from that date the purge deletes rows the server has acknowledged.
+
+*Gate-ratification note: §10.8 added per the 2026-05-18 design-gate governance
+rule (PM Rule 10 / C-4 DoD, in-sprint) from Atlas's 2026-06-30 EDR ADR
+(`$FLEET_SHARE/knowledge/superpowers/specs/2026-06-30-edr-sensor-reader-schema-bus-adr.md` §5).
+BENCH-validated (US-411 golden-master + absent-path); live IRL acceptance —
+`i2cdetect` 0x29/0x69 + connect-when-wired — pending the first V0.29.4 Pi
+deploy.*
+*§10.8.3 added 2026-09-16 (ARCH-028) at the Sprint 88 design gate, same Rule-10
+obligation: the sprint wires EDR across a tier boundary, so §10.8 gains the
+server tier in-sprint rather than as follow-up. Verified against the tree at
+`3946d041`, not against the PRD's prose.*
+
+---
+
+## 10.9 Vehicle Maintenance Record (ARCH-020, v0025)
+
+**Rule-10 design-gate deliverable for ARCH-020.** Server-only; the Pi neither
+produces nor consumes these tables, so they are outside the A-4 Pi↔server parity
+contract by design rather than by omission.
+
+
+### 10.8.4 EDR derived values — `edr_imu_derived` (US-805, Sprint 92 / V0.29.62) [Atlas Rule 10]
+
+**The distance this closes.** `pitchDeg`, `stopCount` and `biasRad` were computed every sample,
+published live to `states/imu`, and **never stored**. The state file is a tmpfs snapshot of *now*; it
+has no history. So **no pitch or grade fix was verifiable by anyone** — you could see what the car
+believed this second and never what it believed during the drive you were trying to explain. That is
+why US-805 was the V0.29 closure blocker.
+
+#### The ruling: a SEPARATE TABLE, not new columns (CIO, 2026-09-22)
+
+**A raw reading never changes. A computed value changes when the ALGORITHM changes.** Mixed into
+`edr_imu_sample`, the early `pitchDeg` values and the late ones would mean subtly different things
+with nothing in the table marking where the maths moved — and the raw data could no longer be
+re-derived and compared against what the car actually believed at the time.
+
+🔴 **`fusion_version` is what makes the separation worth anything.** A derived table that cannot say
+WHICH algorithm produced a row inherits the exact defect the split prevents. It is `NOT NULL` **with
+no DEFAULT**, deliberately: a default would let a forgetful writer record a plausible *wrong* version
+instead of failing. **Bump it when the fusion's OUTPUT for the same input would differ** — filter
+form, tau, trust band, ZUPT rule, bias model — and **never** for refactors or logging that leave the
+numbers identical. A version that changes without the output changing shows a reader an epoch
+boundary that is not there.
+
+🔴 **`pitch_deg` is NULLABLE and the NULL is a FINDING.** `PitchFusion.pitchRad` returns `None` under
+`gyroImplausible` (US-749). That null is the only evidence the plausibility guard fired. **A writer
+or schema that coerces it to 0.0 destroys it.**
+
+⚠️ **No foreign key to `edr_imu_sample.id`.** That `id` is the **Pi's** id-space and arrives on the
+server as `source_id` (A-45: a row minted into it from the server side was silently overwritten by
+the Pi's own, with no error and no log). **The join is `(source_device, ts_capture)`.**
+
+#### Who writes it, and why not the obvious component
+
+The values live in `ImuStateBridge` (it owns `PitchFusion`); the rows are written by
+`EdrPersistenceSubscriber`. **The bridge does NOT write them, and the reason is not style:**
+
+- **The bridge holds no database handle at all** — it is a pure bus→tmpfs state writer. Giving it one
+  is new coupling too, so "no new coupling" does not select it.
+- **ATOMICITY.** One component, one connection, one transaction: the raw row and its derived sibling
+  land together or not at all. Two writers cannot give that, and an **orphaned belief** — a derived
+  row whose raw evidence is gone — is precisely the un-re-derivable value this table exists to
+  prevent.
+- **THE LOG GATE.** `EdrLogGate` admits rows here. A writer outside this component would produce
+  derived rows for periods the gate excluded from the raw table: **orphans by construction.**
+
+The seam is an injected read-only `derivedSnapshotFn`, wired **after** construction
+(`setDerivedSnapshotFn`) because the subscriber is built and started *before* the bridge exists —
+readers must not publish before their consumers are subscribed, and reordering boot to suit this
+table would trade a real guarantee for a convenience.
+
+#### Cadence: `persistHz`, NOT the fusion rate
+
+**Fusion updates at `sampleHz` (4 Hz); raw persists at `persistHz` (2 Hz); the derived table writes
+at `persistHz`.** The intuitive choice — write at the rate the value updates — is wrong: a 4 Hz
+derived table leaves **half its rows with no possible raw sibling**, and every derived-vs-raw
+comparison then needs interpolation. **Interpolating a fusion output against its own input
+manufactures agreement.**
+
+🟢 **Alignment is structural, not lucky.** Both subscriptions are `QoS.LOSSY` with independent queues,
+so they can drop different samples — but **decimation is a function of the SAMPLE and not of arrival
+order** (since ARCH-064d the burst's UTC grid slot, decided once per `seq`; before it, `seq % N`), and
+the derived row rides the raw row's transaction, so a dropped burst costs both rows or neither. **LOSSY divergence costs COVERAGE
+of the comparison, never its correctness.**
+
+⚠️ **The stamp is the FUSION's own `ts_utc`/`ts_capture`/`seq`, not the burst being flushed.** The
+estimator may not have processed that sample yet; claiming it had would be a lie about when the
+belief was held (`ssot-design-pattern.md` §A″ — event time is the record).
+
+#### Retention: parent-slaved
+
+The purge deletes derived rows under the **same cutoff, in the same transaction** as the raw table.
+An independent purge would diverge the first time the two tables' sync progress differed, leaving
+either a widowed raw row or — worse — **a belief whose raw evidence is gone**.
+`purgeExpired` returns **three** counts (imu, light, derived), never two with the derived folded into
+the imu one: a quantity that names the wrong thing is how a number outlives the scrutiny it deserves.
+
+#### Cross-tier
+
+`EDR_COLUMNS` in `src/common/edr/sensor_schema.py` is the single source; `server_ddl.py` derives the
+MariaDB table from it and `tests/common/test_edr_contract.py` pins the two together, so parity is
+**structural rather than remembered**. Server table created by migration **v0027**, partitioned on
+the same monthly window as v0026 — derived rows are written beside their raw siblings from the same
+sample, and retention is a partition DROP, so a different floor would let a pair straddle a partition
+that exists on one table and not the other.
+
+#### 🔴 What closing US-805 does NOT mean
+
+**It does not fix the parked-grade defect.** It makes it **visible and falsifiable** for the first
+time — the three values become queryable history instead of a live file nobody stores. **It changes
+no fusion behaviour.** Measured on the car at V0.29.62, parked: `states/imu` reports
+`pitchDeg −3.62°, stopCount 0, biasRad 0.0` — the phantom grade, within ~3 % of the 3.74° predicted
+from the healthy residual gyro bias (0.01304 rad/s × the 5 s tau). **That defect is unaddressed and
+has no row.**
+
+### 10.8.5 The gyro RATE bias is published — `edr_imu_derived.gyro_bias_*` (US-810, Sprint 94) [Atlas Rule 10]
+
+**The distance this closes.** `PitchFusion` learns a gyro **rate** bias at ZUPT stops (US-779) and
+subtracts it from every sample **before** integrating pitch. That correction shaped every stored
+`pitch_deg` since it shipped and was **never stored itself**. §10.8.4 made the fusion's belief
+falsifiable; a belief whose correction term is invisible is only half falsifiable — a wrong
+`pitch_deg` could not be traced to a wrong bias, and a latched gyro that the learner *refused* left
+no trace at all.
+
+⚠️ **Two biases share one word (A-48).** `bias_rad` (§10.8.4) is the mount-tilt **ANGLE** — a
+property of how the board is bolted in, averaged over stops and kept across a re-plug. These five
+columns are the gyro **RATE** bias in rad/s — a property of the **powered die**, learned per run and
+**cleared on a re-plug**, because a re-powered chip can come up with a different bias, or latched.
+Neither column is a refinement of the other; a reader who joins them is comparing an angle with a
+rate.
+
+#### The five columns
+
+| Column | Meaning |
+|---|---|
+| `gyro_bias_roll_rad_s` / `gyro_bias_pitch_rad_s` / `gyro_bias_yaw_rad_s` | The learned rate bias, **vehicle frame**, rad/s: the mean standing rate over the accepted stops in the rolling window. **Only the pitch axis feeds the attitude**; roll and yaw are recorded so the bias they carry is visible rather than inferred. |
+| `gyro_bias_stops` | Accepted stops currently held in the rate-bias window (bounded by the window length, so it is not a lifetime count). One stop suffices to learn: a stopped chassis is not rotating, so the stop's mean rate *is* the bias. |
+| `gyro_bias_rejected_stops` | Stops **refused** because their standing rate reached `GYRO_BIAS_MAX_RAD_S` (0.10 rad/s) — the A-34 latch signature, >6× the measured healthy ceiling. Absorbing such a stop would subtract the latch and hide it from the US-749 plausibility guard, so it is counted and logged at WARNING instead. |
+
+🔴 **NULL rates are the UNLEARNED state, never a measured zero.** Until a stop is accepted in this
+run, `gyroBiasRadS` is `None`, the gyro is used exactly as read, and the snapshot carries **three
+NULLs** — never `0.0`. A zero bias is a measurement; an unlearned one is the absence of one. A writer
+or consumer that coerces the NULL to 0.0 makes the two indistinguishable.
+
+🔴 **`gyro_bias_rejected_stops` is what separates "never learned" from "every stop rejected".** Both
+leave the three rates NULL. The difference is the whole A-34 story:
+
+| rates | `gyro_bias_stops` | `gyro_bias_rejected_stops` | Reading |
+|---|---|---|---|
+| NULL | 0 | 0 | **Never learned** — no confirmed stop has closed yet this run. Benign. |
+| NULL | 0 | > 0 | **Every stop rejected** — the gyro stood at a latched-magnitude rate at each stop. A faulted gyro, not a quiet one. |
+| values | ≥ 1 | any | **Learned** from that many stops; a non-zero rejected count says some stops were refused alongside. |
+| NULL | NULL | NULL | **Never recorded** — a row written before US-810. No claim either way. |
+
+⚠️ **The rejected count is per PROCESS, the rates are per POWER-ON.** A re-plug reset clears the
+accepted stops (so the rates return to NULL) but not the rejected counter, so rejections after a
+re-plug may predate it. Read a non-zero rejected count as *"the learner refused a latch at least
+once in this collector run"*, not *"since the last re-plug"*.
+
+#### What US-810 does NOT change
+
+**No fusion output.** US-810 **publishes** a value the fusion already computed and already applied;
+for the same input the fusion produces the same `pitch_deg`. `FUSION_VERSION` is therefore
+**unchanged** (§10.8.4: bump only when the output would differ). The same snapshot, the same
+`persistHz` cadence, the same log gate and the same parent-slaved retention as §10.8.4 apply — the
+five columns ride the existing row, they are not a new stream.
+
+#### Cross-tier
+
+`EDR_COLUMNS` (`src/common/edr/sensor_schema.py`) remains the single source and gains the five
+columns, **appended last** so a fresh Pi table and one upgraded in place have the same column order.
+Pi: `ensureEdrImuDerivedGyroRateBiasColumns`, wired into `ObdDatabase.initialize()`, adds each
+column by `PRAGMA table_info`-guarded `ADD COLUMN` on every boot and rewrites no row. Server:
+migration **v0031** adds them with `AFTER`, probe-guarded per column — v0027 generates the table from
+the *current* `EDR_COLUMNS`, so a fresh server already has them and v0031 must no-op there. No
+backfill on either tier: **historical rows read NULL because their bias was never recorded, and that
+is the truth about them.**
+
+🔴 **Server before Pi.** `sync.py` RAISES on any Pi column the server model lacks (US-689), so a Pi
+carrying these columns against a server without v0031 **stops `edr_imu_derived` sync on the first
+batch**.
+
+### 10.9.1 Why it exists
+
+Until 2026-09-01 `obd2db` carried **no** maintenance, service or odometer
+surface — 30 tables, and the nearest was `vehicle_info` holding two ECU-epoch
+rows. The vehicle's service history — 47 dated events and 26 odometer readings,
+assembled from five independent sources (Carfax export, Maas Automotive repair
+orders, Peter's Highline invoices, photo EXIF, this project's telemetry) — lived
+**only** as Markdown on the fleet share.
+
+That share was confirmed on 2026-09-01 to have **no snapshots and no undo of any
+kind**: the volume is ext4 on RAID 5 and Synology Snapshot Replication requires
+Btrfs, so none were ever taken and none can be until the volume is rebuilt. RAID
+5 is redundancy, not backup — it survives a disk failing, not a truncating
+script, because the corruption mirrors faithfully across the array.
+
+Not hypothetical: in S41 a script opened a 22,588-byte knowledge file with mode
+`"w"` — which truncates immediately — then raised before writing a byte. The
+content survived **only** because a copy also lived in `obd2db.drive_annotations`.
+The maintenance record had no such copy.
+
+### 10.9.2 The architectural distinction that shapes every column
+
+**This is the first table in the project fed entirely by humans and paper.**
+There is no odometer PID on a 2G 4G63; every mileage figure is operator- or
+shop-supplied. So the failure modes are **provenance** failure modes, not sensor
+failure modes, and the schema is shaped to make each one *representable* rather
+than to describe a reading.
+
+Everywhere else in this system, a column's job is to carry a measurement. Here, a
+column's job is to carry **how well the fact behind it is known**. Four columns
+exist purely for that, and each has **no default** — because in every case the
+value a consumer trusts is the one that must never arrive by omission.
+
+### 10.9.3 `maintenance_log` — what was DONE
+
+| Concern | Columns | Invariant |
+|---|---|---|
+| When | `event_date`, `event_date_precision`, `event_date_end` | precision ∈ {day, month, year, range}; a `range` carries an end and nothing else may |
+| How well the date is known | `event_date_certainty` | ∈ {exact, estimated}; a non-`day` precision is **always** estimated |
+| Mileage | `odometer_mi`, `odometer_source` | both NULL or both set — never one |
+| What happened | `work_performed`, `source_verbatim`, `dtc_code` | normalised category **and** the primary document's exact wording |
+| Who / cost | `venue`, `document_ref`, `source_document_path`, `parts`, `part_customer_supplied`, `cost_usd` | — |
+| Analysis hook | `is_epoch_boundary` | events that invalidate before/after comparison |
+| Custody | `provenance` (NOT NULL), `notes`, `recorded_by`, `recorded_at` | per-FIELD provenance; CIO data rule 2026-08-29 |
+
+**Date precision is stated, never implied.** The record holds exact days
+(`2008-05-08`), a bare month (`May 2025`) and an owner-estimated four-year window
+(spark plugs). A plain `DATE NOT NULL` forces the loader to write `2025-05-01`
+for "May 2025" — manufacturing a day no source recorded. That is SSOT rule A's
+corollary (*landing must not manufacture a reading*) applied to a date instead of
+a sensor value. `event_date` is a **sortable anchor, not a claim**;
+`formatEventDate()` renders at the precision the record actually has.
+
+**Precision and certainty are ORTHOGONAL** (CIO, 2026-09-02). Precision says how
+fine-grained the date is; certainty says whether a source *recorded* it or
+somebody *estimated* it. The case that forced the second column is seed row 3,
+which stores `1999-04-01` for the second of three services inside a Carfax
+window — an **interpolation invented by the loader** to sort the row. Precision
+`range` flagged the granularity; nothing distinguished that invented anchor from
+`2008-05-08`, which a dealer wrote down. The enforcement is deliberately
+one-directional (`ck_maintenance_log_date_certainty_vs_precision`):
+
+- a non-`day` precision is **always** estimated — its finer components were
+  invented, so `exact` would assert a day no source gave;
+- a `day` precision **may** be estimated — a confident recollection of a specific
+  day, which must stay distinguishable from a dealer record. A flag *derived*
+  from precision could not express this, which is why certainty is stored.
+
+**An odometer and its source are ONE fact**
+(`ck_maintenance_log_odometer_paired`, enforced both directions). The tiers —
+`shop_record` > `photo_exif` > `owner_reported` > `state_agency_rounded` — are
+**measured, not assumed**: every Illinois emissions odometer in this history is a
+round thousand while shop records are exact to the mile. That rounding
+**manufactures an apparent rollback** — 77,000 on 2022-04-12, then 76,961 on
+2022-10-11, six months later and lower. A schema without source tiers cannot
+resolve that pair, and a naive integrity check would flag a healthy car as
+tampered. `isRoundedOdometer()` makes the resolution queryable rather than
+buried in a note.
+
+**Provenance is per FIELD, not per row.** The 2026-08-22 oil change carries a
+CIO-declared odometer *fact*, a recollected oil brand (*"I believe"*) and an
+*absent* viscosity in a single row. One row-level confidence column would force
+downgrading the odometer or upgrading the brand; both are false.
+
+**`source_verbatim` sits beside the normalised category.** Carfax rendered the
+repair order's *"Reset PCM memory"* as *"Computer reprogrammed"*, manufacturing a
+conflict with the prior ECU's never-flashed status that stood as unresolvable
+until the primary document was read. A normalised summary is a **lossy view of a
+record, and the loss is not random** — it flattens distinctions exactly where
+they matter.
+
+### 10.9.4 `maintenance_schedule` — what is DUE
+
+Three interval columns — `interval_miles`, `interval_months`,
+`interval_engine_hours` — any of which may fire, at least one required
+(`ck_maintenance_schedule_some_interval`). This is not generality for its own
+sake: usage measured across three independent segments of this car's history runs
+**~460–500 mi/yr**, so a 60,000-mile interval would take 120 years. On this
+vehicle only calendar intervals can realistically fire, and a mileage-only schema
+would report the timing belt as healthy.
+
+**`last_done_confidence` ∈ {confirmed, inferred, unknown}, NO default — the most
+load-bearing column in either table.** `last_done_log_id` for the timing belt
+points at the 2008 *"60,000 MILE SERVICE"*, which **names no belt**; no
+timing-belt line item appears in any of four independent sources. Without this
+column the first query anyone runs returns `2008-05-08` and the belt reads as
+**serviced**. The 4G63 is an **interference engine** and the interval is 60,000
+miles OR 5 years — the car is ~10k miles into it and 18.3 years into it. Had the
+column defaulted to `confirmed`, the single most dangerous row in the record
+would have acquired the safest value by omission.
+
+This is §7's own lesson — *a normalised summary is a lossy view* — reappearing
+one level up, inside the schema built to prevent it.
+
+### 10.9.5 Boundaries
+
+- **ECU identity is REFERENCED, not duplicated.** The 2026-05-22 swap
+  (`MD346675` → `MD326328`) lives in `vehicle_info` with its install/removal
+  timestamps; the log row records that the event happened and points there. A
+  second home for that fact would be a bug.
+- **`is_epoch_boundary` is the analytics seam.** Oil change, O2 sensor, PCM reset
+  and battery disconnect all invalidate before/after comparison across them.
+  US-661's LTFT trend card should read this column rather than hard-coding drive
+  numbers.
+- **Write paths.** `scripts/load_maintenance_seed.py` is the one-time seed
+  (dry-run by default; `--commit` takes a `mysqldump` first). Ongoing
+  contribution is `python -m src.server.cli.maintenance add|list|due`, which
+  refuses an unattributed odometer, an unchosen precision, an `exact` non-day
+  date, a range with no end, and an unsigned row — with a sentence rather than a
+  MariaDB errno.
+
+### 10.9.6 Known gap
+
+v0025 has **never been applied against a live MariaDB**. The define-once tests
+assert that the migration's constraint names and enum values match the ORM; they
+prove the strings agree, **not** that MariaDB accepts the DDL. That is the A-10
+divergence class this project has hit four times (BL-019/020/021, US-459), and
+the only thing that closes it is the real-MariaDB migration test — TD-055's third
+leg, funded 2026-07-13 and still unbuilt. These tables are a new argument for it.
+
 
 ---
 
@@ -1976,7 +5365,7 @@ Tier-specific differences:
 | Concern | Pi (eclipse-obd) | Server (obd-server) |
 |---------|------------------|---------------------|
 | `After=` deps | `network.target bluetooth.target` | `network.target mariadb.service` |
-| Working directory | `/home/mcornelison/Projects/Eclipse-01` | `/mnt/projects/O/OBD2v2` |
+| Working directory | `/home/mcornelison/Projects/Eclipse-01` | `/home/mcornelison/obd2-server` |
 | Venv | `/home/mcornelison/obd2-venv` | `/home/mcornelison/obd2-server-venv` |
 | ExecStart | `python src/pi/main.py` | `uvicorn src.server.main:app --host 0.0.0.0 --port 8000` |
 | Display env | DISPLAY/XAUTHORITY/SDL_VIDEODRIVER (US-192) | n/a (headless) |
@@ -2028,9 +5417,9 @@ StartLimitBurst=10
 [Service]
 Type=simple
 User=mcornelison
-WorkingDirectory=/mnt/projects/O/OBD2v2
-EnvironmentFile=/mnt/projects/O/OBD2v2/.env
-Environment=PYTHONPATH=/mnt/projects/O/OBD2v2
+WorkingDirectory=/home/mcornelison/obd2-server
+EnvironmentFile=/home/mcornelison/obd2-server/.env
+Environment=PYTHONPATH=/home/mcornelison/obd2-server
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/mcornelison/obd2-server-venv/bin/uvicorn src.server.main:app --host 0.0.0.0 --port 8000
 Restart=always
@@ -2039,6 +5428,1476 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+
+### F-103 Splash Subsystem -- state server + emitters + `/run/eclipse-obd/states/` lifecycle (US-393, Sprint 48 / V0.29.2)
+
+The boot/shutdown splash is a **pure SSOT consumer** (`specs/ssot-design-pattern.md`):
+a chromium kiosk that *renders* state but never *decides* system condition. Three
+cooperating processes communicate via a tmpfs directory.
+
+| Unit | Source of Truth | Role |
+|------|-----------------|------|
+| `eclipse-boot-state.service` | `deploy/eclipse-boot-state.service` | [A-1] Boot-state emitter (`python -m pi.splash.boot_state_emitter`). Polls `systemctl is-active` for the **CORE-readiness** set + checks the dashboard assets are installed, writes `boot-state` JSON @ 500ms. The authority for `healthy`/`degraded`. The eclipse-obd tier is sampled + reported but **does not gate** (US-494, below). |
+| `eclipse-states-http.service` | `deploy/eclipse-states-http.service` | [A-4] Localhost state server (`python -m pi.splash.states_http_server`). Binds **127.0.0.1:9899 only**, serves the read-only `states/*` JSON, **token-gated** (token SSOT), path-traversal-guarded, `Cache-Control: no-store`. The only IPC chromium can `fetch()`. |
+| `splash-boot.service.{wayland,x11}` | `src/pi/ui/splash/` | [A-8] Chromium kiosk. Loads `http://127.0.0.1:9899/` (same-origin, token injected) and runs the `boot-state-poll.js` state machine. |
+
+**Code:** `src/pi/splash/` — `boot_state_emitter.py` (honest-instrument verdict
+logic: CORE-readiness gate, dashboard-asset gate, informational 3-tier
+eclipse-obd health with retry-once, hard-cap degrade), `states_http_server.py`
+(the localhost server), `token.py` (the one-source auth token).
+
+**Readiness contract = "Pi core / UI is up", NOT "a vehicle is connected"
+(US-494, Sprint 66 / V0.29.20).** The handoff gate (`CORE_SERVICES_DEFAULT`) is
+`eclipse-states-http` + `eclipse-powerwatch` + `boot-progress-finalize`, plus the
+dashboard assets being installed (`/opt/dashboard/dashboard.html`). `eclipse-obd`
+is **deliberately not a gate member**: the Pi spends most of its life on a bench
+with no car, and a vehicle-shaped readiness gate makes the dashboard unreachable
+there. The tier is still assessed and published in the payload's own `obdTier`
+field for post-boot/vehicle-slice consumers, and `services` now carries **only**
+`systemctl is-active` strings (one vocabulary per field) rather than overloading
+the `eclipse-obd` entry with a tier verdict.
+
+*Why this was a bug, not a preference:* before US-494 the tier was gating **and**
+the systemd entry point never injected an `obdProbeFn`, so the probe defaulted to
+`lambda: OBD_STARTING` — a claim that checks are *in progress*, permanently. The
+tier never went terminal → `progress` capped at 2/3 → `healthy` never became true
+→ `boot-state-poll.js` never called `window.close()` → `OnSuccess=eclipse-dashboard.service`
+never fired. After the 12 s cap the splash pinned at *"eclipse-obd: not ready
+(starting)"* until reboot. An absent probe now reports `OBD_NOT_PROBED`
+(`"not-probed"`) — a reading **not taken** is never dressed up as a state.
+Missing dashboard assets likewise **hold the splash with a named reason** rather
+than handing off to a blank screen (the A-16 lesson, made loud).
+
+*Guarded end-to-end since US-499:* `tests/ui/test_render_regression.py` runs the
+**production wiring** (`buildEmitter` — what the systemd unit constructs) against
+a faked `systemctl`, feeds the emitted payload sequence to the **shipped**
+`boot-state-poll.js`, and asserts `window.close()` is actually called. Its
+partner test loads the **pre-US-494 emitter from git** and asserts the splash
+pins instead — the defect above is now reproducible on demand. See the
+render-regression backstop under F-092.
+
+**Launcher-URL ↔ served-route contract (US-525, Sprint 70 / V0.29.25 — I-042).**
+The server serves exactly three buckets: `/` (and `index.html`) → the *first*
+assets dir's index with placeholders injected; any name matching a file in an
+assets dir → that asset **by extension** (`*.html` also gets injection); and
+**everything else → a token-gated `states/` lookup**. So a *bare* route such as
+`/boot`, `/dashboard` or `/shutdown` is not a page at all — it falls through to
+the state bucket and answers **401 by design**. I-042 read those 401s as "a new
+gate on bare routes" and suspected US-501's `_injectHtml`; both were wrong. No
+launcher ever requests them: `splash-boot` loads `/`, `splash-grace` loads
+`/shutdown.html`, `dashboard` loads `/dashboard.html` — all 200 with the token
+injected. `_injectHtml` is **exonerated** (the index path serves 200).
+
+*Guarded by `tests/pi/splash/test_splash_launcher_route_contract.py`:* it parses
+the URL out of every real kiosk unit (both session variants) and drives it against
+the real server over the real shipped kits, so the units and the router cannot
+drift apart independently — the two-correct-halves class. The same file asserts
+the bare routes **stay 401**: opening them re-opens TD-067 and is an Atlas BLOCK.
+
+**Boot-splash minimum-VISIBLE floor (US-525).** `MIN_PLAY_MS` (2500 ms, spec §5)
+is now anchored to the brand `<object>`'s `load` event, not to script parse. The
+mark is a separate async SVG document, so on a cold chromium the poll loop ticks
+while the stage is still blank — the old anchor let the splash satisfy its own
+2.5 s floor having shown the brand for a fraction of it, then fade (I-042 cause
+b). Measured on the Pi (boot `dc7a3848`, 2026-08-02): `splash-boot` lived
+**9.806 s** but chromium's startup consumed the first ~5.4 s. The floor is
+**bounded by `HARD_CAP_MS`** and falls back to the parse anchor when the brand
+never loads — a cosmetic asset fault must never withhold the dashboard hand-off
+(that is the US-494 pin-until-reboot failure, re-entered through its own fix).
+
+**Shutdown splash fires only on a POWER-LOSS shutdown (US-525 finding, not a
+defect).** The sole production writer of `shutdown-state` is the powerwatch
+`ShutdownSequencer` grace path (`pi.power.power_watch.__main__` →
+`makeShutdownPhaseEmitter`). A manual `sudo reboot`/`poweroff` stops
+`eclipse-powerwatch.service` by SIGTERM without entering a grace sequence, so
+`shutdown-state` is never written, `splash-grace.path` never triggers, and **no
+reverse splash appears — correctly.** I-042's "shutdown splash did not appear"
+after a deploy+reboot is therefore expected behaviour, not the regression. Any
+future drill of the reverse splash must be a real AC-loss/grace event.
+
+**Token SSOT (US-393 DoD):** exactly one file — `/run/eclipse-obd/states/.http-token`
+(0600) — is the authority. `token.loadOrCreateToken` generates it once and never
+regenerates. The server loads it to validate the `X-Splash-Token` /
+`Authorization: Bearer` header on the state-JSON endpoints; the kiosk receives it
+**injected into the index page the server serves same-origin**, so the token never
+lands in an on-disk asset.
+
+**`/run/eclipse-obd/states/` ownership + lifecycle (Atlas C-5 — the load-bearing
+multi-owner runtime-dir contract).** `/run` is tmpfs (wiped every reboot). The dir
+has three would-be owners that must be reconciled so they do not fight:
+
+1. **`eclipse-obd.service`** declares `RuntimeDirectory=eclipse-obd` → systemd
+   creates `/run/eclipse-obd` on *its* start, and it never creates the `states/`
+   subdir. Without `RuntimeDirectoryPreserve=yes` systemd **removes the dir on
+   its stop**, making `states/` (and `shutdown-state`) vanish the moment
+   eclipse-obd stops — exactly when the US-394 shutdown splash needs it.
+2. **The F-103 units share `RuntimeDirectory=eclipse-obd`.** 🔴 **Sharing the name
+   does NOT make systemd ref-count it** (US-737, measured on systemd 257.13): any
+   sharer that stops without `RuntimeDirectoryPreserve=yes` deletes the dir for
+   every other sharer, running or not. `/run/eclipse-obd` outlives
+   eclipse-obd.service's stop/restart **only because every sharer declares
+   `RuntimeDirectoryPreserve=yes`** — `eclipse-obd.service` was missing it until
+   V0.29.48. `tests/deploy/test_shared_runtime_dir_preserve.py` pins it on every
+   sharer.
+3. **`/etc/tmpfiles.d/eclipse-obd-states.conf`** (`deploy/eclipse-obd-states.conf`)
+   creates `/run/eclipse-obd/states/` (owned `mcornelison`) **at every boot,
+   independent of any unit's start order** — the cold-reboot invariant the bench
+   drill proves (splash renders without eclipse-obd having provisioned the dir).
+
+The emitter + server also `ensureStatesDir()` the `states/` subdir in-process
+(`RuntimeDirectory` makes only the parent `/run/eclipse-obd`, not `states/`).
+Together: tmpfiles guarantees boot-time existence; `RuntimeDirectoryPreserve=yes`
+on every sharer guarantees mid-session survival across eclipse-obd's lifecycle.
+The old deploy-time `install -d` alone is **insufficient** (tmpfs wipes it on the
+next reboot).
+
+**Deploy provisioning (US-395).** `deploy-pi.sh` folds the whole F-103 backend into
+every Pi deploy, in dependency order, all `sync-if-changed` (mirroring the sibling
+unit installers — `cmp -s`, `daemon-reload` only on change, `enable --now`
+idempotent):
+
+1. `step_install_states_tmpfiles` installs `deploy/eclipse-obd-states.conf` →
+   `/etc/tmpfiles.d/` **and runs `systemd-tmpfiles --create`** so
+   `/run/eclipse-obd/states/` exists *this* deploy, not only after the next reboot
+   (the boot-durable provisioning mechanism AC#4 requires — **not** `install -d`
+   alone).
+2. `step_install_splash_assets` installs the served kit from
+   `src/pi/ui/splash/` into `/opt/splash` and writes
+   `/opt/splash/version.txt` (the bare SemVer string the kiosk version chip
+   fetches; derived from `deploy/RELEASE_VERSION`, `V?.?.?` fallback). The
+   manifest covers **both** surfaces — boot (`index.html`, `styles.css`,
+   `boot-state-poll.js`, `splash.svg`) *and* closeout (`shutdown.html`,
+   `shutdown-state-poll.js`, `splash-shutdown.svg`) — force-refreshed and
+   byte-verified (US-498; see the `/opt` asset-ownership contract below).
+   **A-9:** a missing splash kit **WARNs and the deploy continues** — it
+   never blocks.
+3. `step_install_state_server_units` installs + enables `eclipse-boot-state.service`
+   + `eclipse-states-http.service`; both are long-running `Type=simple`, so they
+   also `systemctl restart` on every deploy (the US-354 dead-code-in-memory class).
+
+The chromium kiosk **unit** (`splash-boot.service.{wayland,x11}`) + the shutdown
+render assets are the **render side (US-396)** — the same producer/render seam as
+US-394.
+
+> **Cross-ref:** the shutdown-state half of this contract (the ShutdownSequencer
+> phase-emit hook + the "shutdown-state survives eclipse-obd stop" guarantee) is
+> documented in **§10.6.1** (landed by US-394, same sprint).
+
+**Closeout (shutdown) surface — the reversal contract (US-498).** The closeout
+splash is the boot splash **played backwards**: one kit, one set of keyframes,
+`splash-shutdown.svg` differing from `splash.svg` only by a trailing override
+block. Two things have to be reversed there, and shipping only the first is a
+black screen:
+
+1. **direction** — `animation-direction: reverse` on every animated class; and
+2. **order** — `animation-delay` recomputed as `T − (bootDelay + bootDuration)`,
+   `T` = the boot animation's total (6.5 s). The *last* thing to happen on boot
+   must be the *first* thing to happen on shutdown.
+
+Skipping (2) is not a cosmetic ordering nit. The boot timeline ends with a
+fadeout **delayed 6 s**, and `animation-fill-mode: both` holds the reversed
+animation's *first relevant* keyframe throughout that delay — which for
+`direction: reverse` is `to`, i.e. `opacity: 0`. The mark was therefore
+invisible for 6 s of a 7 s grace window (`pi.powerWatch.smoothingSec`): the
+operator watched a black screen for the whole shutdown while the code, the unit,
+the state file and the poll script were all working correctly. The animation is
+sized to **finish inside the grace window** so the closeout completes rather
+than being cut off mid-motion by the power drop; after it completes the HTML
+overlays (wordmark + version chip) remain on screen for the flush/poweroff tail,
+so the surface is quiet, never blank.
+
+`tests/ui/test_shutdown_splash_render.py` resolves the shipped CSS on a clock
+(cascade, comma-list shorthands, fill-mode/direction/delay) and samples the
+mark's opacity every 250 ms across the real grace window, so the guard is a
+measurement of what is on screen at second *n*, not a grep for a magic string;
+it re-derives the delays from `splash.svg`, so re-timing the boot animation
+re-aims the closeout instead of silently leaving it out of step.
+`tests/pi/splash/test_shutdown_splash_wiring.py` pins the chain end to end —
+a real `ShutdownSequencer` grace transition writes the real state file, the real
+`eclipse-states-http` serves the real kit, and the page is fetched at the URL
+taken **out of the shipped `splash-grace.service` unit** (the US-494 lesson: the
+defect lives in the seam nobody asserted, not in the parts).
+
+**Kiosk-unit install contract (`step_install_ui_kiosk_units`, Bug-1/2/4 — finding
+`offices/architect/findings/2026-07-01-pi-display-blank-deploy-contract-gaps.md`,
+hardened US-428).** The asset + state-server steps above install what
+`eclipse-states-http` *serves*; a separate deploy step installs the chromium kiosk
+**units** that actually draw it (without it the backend serves 127.0.0.1:9899 with
+no browser and the 3.5″ panel stays blank, pygame being sunset). It runs the kits'
+own session-aware `install.sh` (`src/pi/ui/{splash-pi,dashboard-pi}/`) after the
+state server is up. Three install-contract gaps are closed:
+
+- **Bug-1 (units never installed):** deploy invokes both kit installers every deploy
+  (idempotent), so a fresh deploy is sufficient to render — no manual `install.sh`.
+- **Bug-2 (chromium binary name):** the unit templates parameterize the browser as
+  `ExecStart=__CHROMIUM_BIN__`; each installer's **V-3** check detects the real path
+  (`chromium-browser` OR `chromium` — Raspberry Pi OS Trixie ships `/usr/bin/chromium`)
+  and substitutes it into `ExecStart`, exactly like **V-1** substitutes `User=`. This
+  is **OS-version-proof with no `/usr/bin/chromium-browser` symlink shim**; an absent
+  chromium makes the installer **fail loudly** (its non-zero exit is wrapped
+  WARN-not-BLOCK by the deploy step, A-9), never a silent 203/EXEC unit.
+- **Bug-4 (screen blanking):** deploy installs the persistent xorg drop-in
+  `deploy/eclipse-kiosk-no-blank.conf` → `/etc/X11/xorg.conf.d/` (BlankTime/DPMS all
+  `0`) so the status panel never sleeps to "no input", and applies it live via `xset`.
+
+**Session detection (D-3 guard).** Over SSH the calling session reads as `tty`, so the
+step detects the **ACTIVE graphical `seat0` session** type (x11|wayland) on the Pi and
+passes it via `{SPLASH,DASHBOARD}_FORCE_SESSION`; if it genuinely can't be determined
+it **WARN + skips** (never guesses — a wrong X11-vs-Wayland guess is the D-3
+black-screen bug). **A-9 posture throughout:** an absent kit/installer WARNs and the
+deploy continues; the step never BLOCKs. The units are installed + **enabled** (splash)
+so the splash renders at the **next boot** (`WantedBy=graphical.target`) — the step does
+not thrash the live screen mid-deploy. Coverage: `tests/deploy/test_kiosk_install.py`
+(V-3 substitution + fail-loud + step assertions) and the `deploy-pi.sh` `--dry-run`
+smoke test.
+
+### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
+
+The post-boot touch dashboard reuses the F-103 splash seam wholesale: it is a
+**pure SSOT consumer** chromium kiosk that *renders* state files and **never
+polls hardware**. The carousel shell (US-399) is the frame; the System Status /
+Battery Health card bodies + emitters are US-400 / US-401; the DTC card (Card 5)
++ viewer is US-404..407.
+
+| Piece | Source | Role |
+|------|--------|------|
+| Dashboard kit | `src/pi/ui/dashboard/` | `dashboard.html` (top bar + card slots + page dots -- see the card model below), `dashboard.css` (≥40px tap targets), `carousel.js` (swipe-nav + dots + honest-instrument availability poll). Served at `/dashboard.html`. |
+| `eclipse-dashboard.service.{wayland,x11}` | `src/pi/ui/dashboard/` | [A-5] Chromium **touch** kiosk (`--touch-events=enabled`). Loads `http://127.0.0.1:9899/dashboard.html` same-origin (token injected). **No `[Install]`** -- started by the splash hand-off, not enabled. |
+
+**A-1 splash → dashboard hand-off.** `splash-boot.service.{wayland,x11}` carries
+`OnSuccess=eclipse-dashboard.service`. When the boot splash reaches
+`HEALTHY_YIELD`, `boot-state-poll.js` calls `window.close()`; the `Type=simple`
+splash unit exits 0; systemd starts the dashboard. A **DEGRADED** boot keeps the
+splash up (no `window.close`), so the dashboard never starts on a sick boot
+(honest-instrument: the operator sees the amber-ring splash, not a dashboard
+pretending all is well). No watchdog/timer, no `pkill` -- the same JS-driven exit
+discipline as the splash (D-3). *(US-523 adds a watchdog that **restarts** an
+already-running kiosk; it never **starts** one, so this hand-off remains the sole
+path from splash to dashboard -- see the wedge-recovery subsection below.)*
+
+**Kiosk freeze class + wedge recovery (F-124: US-522 primary, US-523
+defense-in-depth).** The bench UI froze with chromium **alive**: its GPU
+command-buffer context died and the client hot-looped on the fatal
+`AllocateRingBuffer()` failure (Atlas measured 6,063,554 errors in one boot,
+~500/sec, renderer/GPU/main pegged 39/31/24% CPU, **no crash**) -- the Pi 5 v3d
+GPU on a 64 MiB CMA pool driving the animated carousel with GPU rasterization on.
+Because nothing crashed, the kiosk unit's `Restart=on-failure` never fired; the
+panel simply stopped updating while X stayed live. RCA:
+`offices/architect/findings/2026-08-02-pi-ui-freeze-chromium-gpu-command-buffer-hotloop.md`.
+
+- **US-522 (primary, removes the mechanism):** `--disable-gpu` in the
+  `eclipse-dashboard.service.{wayland,x11}` `ExecStart`. It is an **override, not
+  a deletion** -- `--enable-gpu-rasterization` is not in this repo; Debian/RPi-OS
+  exports it from `/etc/chromium.d/default-flags`, which the `/usr/bin/chromium`
+  wrapper sources before `exec`ing chromium with the caller's argv **last**. That
+  `/etc/chromium.d/` surface is OS-shipped and repo-unmanaged: a chromium package
+  upgrade can reintroduce GPU flags (noted at the deploy step, A-16 family).
+- **US-523 (defense-in-depth, recovers if it recurs):**
+  `deploy/eclipse-kiosk-watchdog.{service,timer}` +
+  `src/pi/display/kiosk_watchdog.py`. A 30 s `Type=oneshot` tick counts
+  `AllocateRingBuffer` markers in the kiosk's journal over a 60 s window and, at
+  ≥100, restarts `eclipse-dashboard.service` -- the mitigation Atlas proved live
+  (fresh GPU context, error count back to 0). It runs **unprivileged**, reusing
+  the existing polkit `restart` grant
+  (`deploy/polkit-rules/51-eclipse-service-control.rules`) and
+  `SupplementaryGroups=systemd-journal`.
+  **Honest-instrument bounds, all load-bearing:** it never restarts an *inactive*
+  kiosk (that would usurp the A-1 hand-off); an unreadable journal is *uncertain*,
+  never a wedge; the journal window never reaches back past the last restart; a
+  cooldown separates attempts; and an **hourly restart budget** caps the loop --
+  once spent the watchdog stops restarting, logs at ERROR and exits non-zero so
+  the unit reads FAILED. A restart appearing in its journal means **US-522 did not
+  hold**, which is the point: the watchdog surfaces a live freeze class instead of
+  masking it. The attempt is recorded to a tmpfs ledger **before** the restart
+  fires, so an unwritable ledger cancels the restart rather than silently
+  uncapping it. Only the command-buffer signature is detected; the "CPU-pegged
+  renderer with no repaint" variant is deliberately **not** implemented (repaint
+  is not observable outside the browser and software rendering has no measured CPU
+  baseline yet -- a threshold there would be fabricated, not grounded).
+
+**A-2 "full runtime" extension of `eclipse-states-http`.** The server already
+ran *continuously* (C-5: `WantedBy=multi-user.target`), so "boot-only → full
+runtime" is a **serving** extension, not a lifecycle one: `states_http_server`
+now accepts a **repeatable `--assets-dir`** (an ordered search path, first match
+wins) so one server serves **both** co-located kits same-origin --
+`deploy/eclipse-states-http.service` passes `--assets-dir /opt/splash
+--assets-dir /opt/dashboard`. The splash owns `/` (its `index.html`); the
+dashboard is reached at `/dashboard.html`. The token is injected into either
+kit's HTML, so it still never lands on disk. A missing `/opt/dashboard` is
+harmless (the asset lookup just skips it). The new state files the dashboard
+reads (`system-status`, `battery-health`, `dtc`) are served by the existing
+generic token-gated state route -- no per-endpoint code (US-400/401/404 add the
+*emitters*; the server already serves whatever they write).
+
+**Honest-instrument availability (carousel shell).** `carousel.js` polls each
+card's `data-state` file at 4 Hz; a missing/malformed payload sets the card to
+`unavailable` (never a fabricated value, never green-when-broken). Until the
+US-400/401 emitters exist, both cards correctly read `unavailable`.
+
+**Navigation model: wrap + auto-rotate + velocity swipe (US-506, F-124).** The
+shipped shell clamped at both ends and classified swipes by *distance alone*.
+Both are replaced:
+
+| Fact | Owner | Contract |
+|------|-------|----------|
+| Wrap | `nextVisibleIndex(current, dir, hidden)` | Past the last card → the first, and back. **Traverses only VISIBLE cards** — a wrap onto a vehicle-gated card paints a blank frame the operator cannot swipe out of, strictly worse than the clamp it replaces. Bounded by `hidden.length`, so a row with ≤1 visible card terminates on `current` instead of spinning. |
+| Auto-rotate | `shouldAutoAdvance(paused, sinceMs, autoRotateS)` | Visible cards cycle every `autoRotateS` while unpaused. A non-positive period **disables** rotation rather than firing every tick (fail-to-off: a carousel spinning at the poll rate reads as a hardware fault). |
+| Time-to-next | `rotateProgress(sinceMs, autoRotateS)` | 0..1 for the calm thin `#rotate-progress` bar — a bar, never a countdown number. Clamped at 1 (the redraw is the 4 Hz poll tick, not a real-time clock). **Removed while paused**, not frozen part-filled: a stalled progress bar promises an advance that is not coming. Sits at `z-index: 8` under the DTC ribbon's `9` — an alert always wins that band. |
+| Gesture class | `swipeGesture(dx, dy, dtMs, widthPx, cfg)` → `{dir, fast}` | Distance ≥ `swipeMinPx` is still required to be a swipe *at all* (the deadzone survives). `fast` = `|v| ≥ swipeFastVelocityPxPerMs` **or** travel ≥ `swipeFastTravelFrac` of the card. Flick → advance + **resume**; settle → advance one + **pause**. |
+| Pause self-expiry | `shouldAutoResume(paused, idleMs, resumeIdleS)` | A pause expires after `resumeIdleS` of no interaction, so it can never become a freeze. |
+
+Two honest-instrument guards on the derived quantities: an unmeasurable gesture
+duration (`dt ≤ 0`) or an unusable card width (a transient 0×0 layout pass)
+contributes **nothing** rather than a fabricated `Infinity`. Dividing by either
+would manufacture a flick out of a measurement failure — and `fast` is the signal
+that *resumes rotation under the operator's finger*, so a fabricated one is felt
+immediately.
+
+Pausing is hung on `document` `pointerdown` — **one** entry point — so a tap on a
+card, a page dot, the kebab or any overlay pauses, and an overlay added later
+cannot forget to. All of these constants are `pi.display.carousel.*` in `config.json`
+(the tuning SSOT), injected at serve time as `window.DISPLAY_CAROUSEL` through
+the *same* quoted-placeholder seam US-483-b built for the auto-dim curve
+(`_DISPLAY_CAROUSEL_PLACEHOLDER`, `loadDisplayCarouselConfig`). `resolveCarouselConfig`
+accepts only finite **positive** numbers over the grounded defaults — which is
+what makes a permanent freeze *inexpressible in config*: a `resumeIdleS: 0` can
+never reach the resume predicate to disable the self-unpause. Pinned by
+`tests/ui/test_carousel_nav_model.py`.
+
+**Debounced `parked` signal behind the `⋮` (US-511, F-124).** US-490 gated the
+top-bar kebab directly on the emitter's `idle` SSOT boolean, so every brief
+OBD-availability blip removed the button and put it straight back. Flicker on a
+fixed affordance does not read as *"the state changed"* — it reads as a broken
+panel. A hysteresis debounce now sits between the flag and the menu policy:
+
+| Fact | Owner | Contract |
+|------|-------|----------|
+| Raw "is the vehicle idle?" | `carouselIdle(systemStatusData)` | Unchanged. Reads the `idle` SSOT boolean strictly; never re-derived from the drive-state string (Atlas idle-SSOT b). Fails closed to *not*-idle. |
+| Debounced "is the vehicle parked?" | `parkedNext(prev, rawIdle, nowMs, cfg)` → `{parked, raw, sinceMs}` | `not parked → parked` needs idle held **true** for ≥ `parkedOnS` (8 s); `parked → not parked` needs idle held **false** for ≥ `parkedOffS` (3 s). `parkedInit()` starts **not parked** (fail-closed, matching the button's hidden-in-markup boot state). |
+| Menu policy | `menuAccess(parked)` | Applies policy **only**. `tapVisible = parked === true`; `longPress` stays unconditional. |
+
+**The thresholds are asymmetric on purpose.** Offering a single tap into a
+service stop is a convenience and can afford to be slow; *withdrawing* it once
+the car is moving is the safety half, so it is the fast one. A symmetric
+debounce would hold the `⋮` on screen for a full 8 s of driving.
+
+Three properties carry the design:
+
+- **Re-anchor, don't accumulate.** Every change of reading restarts the run, so
+  six 2 s blips never add up to one 3 s run — otherwise the flicker this removes
+  merely takes longer to arrive.
+- **`menuAccess` no longer acquires.** It used to call `carouselIdle` itself, so
+  an upstream debounce could be bypassed by the next edit for free; it now
+  receives the debounced boolean and cannot reach the raw flag (the standing
+  SSOT directive — one authoritative provider per fact, consumers apply policy).
+  The strict `parked === true` closes the footgun the signature change creates:
+  a caller left un-migrated would pass an *object*, and a truthy test would read
+  that as parked forever — the `⋮` pinned on screen at 70 mph.
+- **An unmeasured hold is not a hold.** An unreadable clock returns the state
+  untouched (recording the reading without a timestamp would let the next real
+  clock credit this run's elapsed time to the previous reading), and a *negative*
+  hold — an NTP step back on a Pi with no RTC — re-anchors rather than stranding
+  the signal for the size of the step.
+
+Display-side only, per the story's own AC: no emitter field, no new contract.
+Promoting `parked` to an *emitted* fact is the same class of question as the open
+idle-SSOT one and needs an Atlas ruling. `parkedOnS`/`parkedOffS` join the same
+`pi.display.carousel.*` section and inherit `resolveCarouselConfig`'s
+positive-only rule, so `parkedOnS: 0` falls back to the default rather than
+silently deleting the debounce. Pinned by
+`tests/ui/test_carousel_parked_debounce.py`.
+
+**Surface invariant: `hidden` means NOT RENDERED (US-495, F-111).** Every
+show/hide on this surface is `carousel.js` setting `el.hidden`. The UA sheet's
+`[hidden] { display: none }` is a *user-agent* declaration, so **any** author
+`display` outranks it -- and each of the five full-screen overlays
+(`#dtc-takeover`, `#setup-menu`, `#confirm-modal`, `#dtc-detail`,
+`#clear-confirm`) plus `#dtc-ribbon` set `display: flex` through an ID selector.
+The attribute was therefore inert: all six painted simultaneously over the
+carousel, and the stack swallowed every tap. The JS was correct throughout; the
+stylesheet defeated it.
+
+`dashboard.css` now declares **`[hidden] { display: none !important; }`**. The
+`!important` is load-bearing, not defensive: an ID selector already outranks any
+plain `[hidden]` rule, so the guard must win on *importance* or be duplicated
+onto every element -- and the next overlay added would ship the bug again. This
+is the one declaration on the surface that must not be overridable. An element
+that needs to be present-but-invisible must therefore **not** use `hidden` (use
+`aria-hidden` + `visibility`). Pinned by
+`tests/ui/test_dashboard_overlay_hidden_guard.py`, which resolves the real
+cascade (importance → specificity → source order) for every element the shipped
+markup ships `hidden`, so a future overlay is covered the day it is added --
+and, since US-499, by the render-regression backstop below, which reaches what
+that static sweep cannot: JS-created elements, and the surface *after* the real
+`carousel.js` has run.
+
+##### Card model: always-present vs vehicle-gated (US-496, F-121)
+
+Per the CIO-locked card model (Atlas,
+`$FLEET_SHARE/knowledge/superpowers/specs/2026-07-28-pi-ui-carousel-ssot-wiring-design.md` §4) the
+carousel has **two tiers**, and the difference is *availability semantics*, not
+styling:
+
+| Card | `data-state` | Tier | Absence renders |
+|---|---|---|---|
+| **Home** (US-508) | *(none -- `data-idle-home`)* | always-present | **the fallback face, see below** |
+| Alerts (DTC) | `dtc` | always-present | **"no data -- codes not read"** |
+| System Status (Pi Health) | `system-status` | always-present | `unavailable` |
+| Battery | `battery-health` | always-present | "no data -- UPS feed absent" |
+| Fuel Trim | `ltft-trend` | **vehicle-gated** | *gated:* **"no engine data"** / *ungated but silent:* "no data -- trend not computed" |
+| Light | `light` | always-present | "no data -- light feed absent" |
+
+The carousel is **six cards** as of V0.29.29, **in the order above**. US-507 had
+merged the three slow-moving reference readouts into one *Health* card because
+the CIO called six screens too many; **US-540-b split them back out** once
+US-540-a's legibility scale changed the arithmetic that call rested on -- at
+secondary 26px a card affords about three facts, and Health was carrying six, so
+a screen became the cheaper thing to spend than a container of three unrelated
+facts. The same markup moved **Alerts to second**.
+
+The bare count remains a **vacuous** assertion and the warning still earns its
+place, for a reason US-508 already demonstrated: the `class="card"` count stayed
+4 across US-508 while the set changed underneath it, because the pre-US-508 idle
+card wore `class="card idle-card"` and was not counted at all. The deploy-kit
+inventory test therefore names every slot -- and, as of US-540-b, asserts them as
+an **ordered** list, because Alerts moving to second is invisible to a
+set-or-count assertion.
+
+##### The three source cards (US-540-b / F-127)
+
+Battery, Light and Fuel Trim are **three standalone cards** driven from one
+table, `SOURCE_CARDS` in `carousel.js`, looked up per tick by
+`sourceCardSpec(key)` and rendered through `sourceCardView()` /
+`renderSourceCard()`. The table **is** the vocabulary -- one place, so a retitle
+cannot land in the markup and the renderer out of step:
+
+| Card | state | Gated? | Absence renders |
+|---|---|---|---|
+| Battery | `battery-health` | no | "no data -- UPS feed absent" |
+| Light | `light` | no | "no data -- light feed absent" |
+| Fuel Trim (was "LTFT Trend") | `ltft-trend` | **vehicle-gated** | *gated:* **"no engine data"** / *ungated but silent:* "no data -- trend not computed" |
+
+> **The US-507 merged *Health* card is RETIRED.** It no longer exists, and
+> neither do `data-states` (plural), `healthCardView()` or `renderHealthCard()`
+> -- all deleted by US-540-b rather than left unreachable (US-500). A reader
+> looking for a multi-source dispatch path will not find one, and the *plausible*
+> wrong conclusion -- that fuel trim is still special-cased through it -- is
+> precisely the design US-540-b removed.
+
+Two properties are load-bearing and are pinned by test. Both **survived** the
+split, but their justification inverted:
+
+- **Availability is resolved PER SOURCE, never once for the group.** As a merged
+  card this had to be *fought for*: one card-level check would have blanked two
+  live instruments out of one real fault -- a fabricated *"nothing is
+  readable."* Split back out it is **structural**: a dead UPS cannot reach the
+  Light card at all. `SOURCE_CARDS` is what keeps this a per-source route rather
+  than a group-level branch.
+- **The gate SPEAKS instead of hiding.** Fuel trim keeps the US-507 *wording*
+  rather than reverting to the pre-US-507 `hidden`, but for a new reason: the set
+  is now locked at **six**, so a card that vanishes on a bench breaks the set
+  exactly where the CIO reads the panel most days. The gate is still evaluated
+  **before** the data and short-circuits, so a gated card carries **no view at
+  all** and a stale `ltft-trend` file left from the last drive cannot paint a
+  confident trim for an engine that is not running. It ships `data-gated="true"`
+  to fail closed before the first poll.
+
+Note the vocabulary now has **three** dispositions, not two: *gated* ("does not
+apply"), *no-data* ("the instrument is broken"), and a live reading. Collapsing
+the first two would tell an operator with a running engine that there is no
+engine.
+
+The card-level `data-vehicle-gated` mechanism below is **retained with zero
+current members** -- the Slice-2 Live Engine Data card is its next user.
+
+**Gray vs hidden is a real distinction.** Gray says *"this instrument is
+broken/unreadable"*; hidden says *"this instrument does not apply right now."* On
+a bench with no car, a grayed fuel-trim card is a false fault report. A card
+marked **`data-vehicle-gated`** is therefore revealed only while
+`vehicleConnected(sysData)` holds -- an **explicit** `source.obd.available ===
+true`. That is deliberately stricter than `sourceUnavailable()`, which treats an
+absent `source` block as available for pre-US-429 backward compatibility: that
+default is right for "should I gray this tile?" and wrong for "should I reveal a
+vehicle card?" An unreadable `system-status` leaves *"is a car plugged in?"*
+genuinely **unknown**, and an unknown must never render as a state (the recurring
+US-492/US-494 finding), so the gate **fails closed to hidden** and the card ships
+`hidden` in the markup for the pre-first-poll window. The Slice-2 Live Engine Data
+card carries the same attribute; gating LTFT is also what takes it out of the
+always-present set while its emitter is orphaned, without faking or deleting it.
+
+**Consequence -- the carousel geometry counts VISIBLE cards.** `#track` is a flex
+row of full-width cards, so a card the `[hidden]` guard removes takes **no slot**.
+`visualPosition` / `nextVisibleIndex` / `nearestVisibleIndex` (pure, node-tested)
+own that math: the `translateX` step count is the visible position, a swipe steps
+*over* a hidden card, a hidden card owns no page dot, and if the card the operator
+is on disappears mid-session the view lands on the nearest visible one (preferring
+the earlier -- the operator's "back", never a jump past unseen cards). This makes
+`.card`/`.dot` keeping **plain** (non-`!important`) `display` declarations
+load-bearing: adding `!important` to either would tie importance against the
+`[hidden]` guard and restore a gated card to the track. Pinned in
+`tests/ui/test_carousel_pi_local_cards.py`.
+
+**Absent-state message per card.** The shell used to write the bare word
+`unavailable` on every card. Two cards get a named `noDataView` because the wrong
+reading of *their* silence is the dangerous one: a missing `dtc` state means the
+codes were **never read** and must never render as "No stored codes" (a fabricated
+clean read) or as an alert -- the F-6 no-phantom rule at card level; a missing
+`light` state means the **feed stopped**, not "dark" (a fabricated 0 lux). Cards
+not listed keep the one-word fallback.
+
+**Light card (US-496).** A pure consumer of the same `states/light` file
+(`{lux, ts}`) that drives the auto-dim (§ Display auto-dim consumer), so the
+reading on the card can never disagree with the screen it explains -- one clock
+per poll tick resolves both. Two tiles through the shared tokenized `.tile`
+component: **AMBIENT** (the reading + its read age) and **CONDITION** (`DARK` /
+`DIM` / `DAYLIGHT`, a *name* for the existing grounded `luxMin`/`luxFull`
+thresholds -- not a third set of numbers that could drift from the curve). A null
+`lux` (the bridge's honest saturated/unreadable marker), an undated payload, or a
+reading older than `luxStaleSec` grays **both fields individually** with the
+*reason* as the tile detail, so the operator learns which fault it is; the card
+itself stays present. Screen brightness is deliberately **not** shown: a live STOP
+alarm holds the surface at full regardless of lux (US-484-b ch.4), so a
+lux-derived percent would contradict the actual screen exactly when it matters
+most.
+
+##### The HOME SLOT is two-faced -- live instrument / honest fallback (US-508, US-541/US-542 / F-124, F-127)
+
+The CIO-locked round-2 design puts the live instrument on the **home slot**.
+**US-541/US-542 (F-127) settle which two faces**: the live motion instrument is
+the **permanent** face, and the second face is the honest fallback and nothing
+else. **One slot, two faces**, not two cards -- a separate always-present motion
+card beside a live home slot would poll and paint the same feed twice and put two
+rules in charge of what the driver lands on.
+
+`homeFace(imuData, nowMs)` is **the only arbiter** (a second one would be two
+rules owning one fact -- exactly why US-497 declined to build the swap). It reads
+**the motion feed only**; the vehicle state is deliberately **not** a parameter,
+so a function that cannot see `system-status` cannot be re-coupled to it without
+a visible signature change:
+
+1. A **live and fresh** `states/imu` → the live face. This holds **parked**: the
+   IMU is Pi-local and always-live, so parked is exactly when its readings are
+   both true and worth reading (a true heading, a true 0.0 g). US-508's *"parked
+   wins outright"* is **reversed** -- it spent the one always-on instrument on
+   the one state where nothing else is readable.
+2. Everything else -- no file, `available:false`, undated payload, reading older
+   than `IMU_STALE_SEC` -- falls back to the fallback face (AC-3: never a frozen
+   motion display).
+
+**The fallback must not fabricate a parked state**, and US-542 closes that trap
+by **deletion** rather than by a better condition. The old idle hero read
+*"STANDBY · engine off · OBD asleep"*; with the fallback now reachable only from
+a dead sensor, rendering it would state a confident fact about the vehicle
+manufactured out of a sensor fault. The **STANDBY hero is retired** -- no
+sentence claiming "engine off" survives on the surface -- and the single
+surviving disposition renders **"NO MOTION DATA"** plus the bridge's own reason.
+
+Two things left with the retired parked screen and neither is lost: the **wall
+clock moved to the top bar** (`#topbar-clock`), where it is readable from every
+card, and **"DTC not read · since key-off" moved to the Alerts card**, where it
+was always an Alerts fact. The **date** was **not** relocated -- the 480px top
+bar at the US-540-a scale affords a clock, not a clock and a date. That is a
+deliberate, named copy loss, alongside US-510's locked parked-screen navigation
+footer (the ⋮ affordance it taught is untouched and still in the top bar).
+
+The retirement is **display-only**: `carouselIdle` / `parkedNext` remain the
+parked SSOT for the auto-rotate pause and the ⋮ reveal, and
+`tests/ui/test_carousel_idle_face_retirement.py` pins that separation so a future
+edit cannot re-couple them. (Two different things in `carousel.js` are spelled
+*idle* -- the parked SSOT and the retired face -- which is precisely why the
+split is asserted rather than assumed.)
+
+Navigation was **retargeted, not dropped**. US-481 sent the operator to System
+Status when `idle` flipped false, because the home card was a parked-only view.
+The home slot now *becomes* the live instrument, so both edges land on **home**.
+
+**Transport (Atlas ruling, US-508).** A compass tape and a g-trail do not
+animate at the 4 Hz card tick, so the live feed gets its **own ~10 Hz loop**
+(`IMU_POLL_MS = 100`) against the same `states_http_server`, and the bridge
+writes at `pi.sensors.imu.stateHz` = **1 Hz** latest-wins/lossy (**10 Hz** when
+US-508 ruled this transport; lowered by US-796-b under the CIO's 4 Hz cap — see
+"The IMU rate triple" in §10.8.2, and note the card now re-reads an unchanged
+file between writes, by design). Deliberately a
+second loop rather than a faster shared tick: the tick reads five other state
+files, and 2.5×-ing all of them to animate one card would be five reads nobody
+can see for every one they can. The durable EDR persist stays at `persistHz` --
+**one producer, two cadences**. No new transport; SSE remains a future EDR-bus
+target and is explicitly not a gate here.
+
+##### The live instrument itself (US-497 / F-113, re-issued by US-508)
+
+A pure consumer of the `states/imu` file the § 10.8.2 bridge writes. The bridge
+already resolved the hard physics (one slow gravity estimate defining the level
+frame, the pitch *and* the heading tilt-compensation); the card **maps and
+formats only** -- it never fuses and never re-derives, because a second
+derivation is a second chance for the compass and the grade to disagree about
+which way is down (Atlas DELTA-2). It is **always-present, not vehicle-gated**:
+the ICM-20948 is a *Pi-local* sensor that reads on the bench with no car, so
+gating it behind a vehicle would hide a working instrument.
+
+**A live graphical instrument can FREEZE; a text tile cannot.** This is the one
+property that shapes the whole card. A gray "NA" reads as dead at a glance, but a
+g-dot frozen at 0.4 g reads exactly like a car holding a steady corner -- a
+fabricated measurement, not a visible gap. So the freshness gate blanks the
+**instrument** rather than graying a label: an explicit `available: false`, an
+undated payload, or a reading older than `IMU_STALE_SEC` renders the calm gray
+MOTION body and *no geometry at all* (US-497 AC-3). Within a live reading,
+absence is still per field -- a dead magnetometer grays HEADING alone (and hides
+the needle: a needle frozen at its last bearing is worse than an absent one),
+an unresolved tilt grays G-FORCE **and carries no dot**, and `altitude` is
+**always** typed-NA `"no source"` without ever blocking the card.
+
+The **compass TAPE** (US-508) replaces the built rotating needle outright --
+CIO-locked, and leaving the needle beside it would be two heading instruments on
+one card that can disagree. A fixed caret marks the vehicle's bearing and the
+tape scrolls under it: a bearing *clockwise* of the current heading sits to the
+**right**, so turning right walks it toward the caret and the labels travel
+right-to-left. That direction is the most likely defect in the whole card -- a
+backwards tape is a perfectly plausible instrument, and no screenshot reveals
+it -- so it is pinned by test, as is the wrap across north. A dead magnetometer
+renders **no ticks at all**; a tape frozen under the caret reads as a confident
+heading exactly as the frozen needle did.
+
+**GEAR is not an IMU fact.** Atlas kept it out of the `states/imu` contract: it
+is Spool's OBD derivation from a **separate producer** (F5M33 ratios + tyre
+circumference, debounced, validated against drive 30). *That producer does not
+exist yet*, so the glyph follows the **altitude precedent** on this same card --
+the field stays in the contract so a real producer is zero-rework, and it
+resolves to an honest `--` until one lands, never a guessed number. Nothing
+polls a `states/gear` file, because a 404 ten times a second is not a data
+source. The reason rides beside the glyph so *"no producer wired"* stays
+distinguishable from *"the producer is refusing to guess right now"*.
+
+| Constant | Value | Grounding |
+|---|---|---|
+| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
+| `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
+| `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |
+| `GRADE_TREND_WINDOW_SEC` | 900 s | Iris locked spec's "~15-min moving trend". |
+| `GRADE_TREND_BUCKET_MS` | 5000 | Decimation: 15 min at 10 Hz is ~9000 raw samples; one retained point per 5 s bucket is ≤180, more than a 480×320 sparkline resolves. **Latest-wins within a bucket** -- the retained value is a real reading, never an average that never happened. |
+| `GRADE_TREND_SCALE_PCT` | 10 % | The sparkline's **fixed** vertical scale, deliberately not autoscaled to the observed range: an autoscale stretches a flat road's hundredth-of-a-percent wobble to full height and renders it as a mountain range -- a fabricated terrain built out of real noise. Beyond scale it clamps to the edge (pinned, not vanished). *Rex-derived DISPLAY scale -- flagged for Spool.* |
+
+**Sign contract on screen.** `gLon` + = accelerating → the dot moves **up**
+(negative screen y); `gLat` + = **right** → positive x. The G-FORCE tile spells
+both components out in words ("0.30 right · 0.12 brake") so a board mounted
+backwards becomes obvious to the operator instead of silently mirroring the dot.
+
+🟢 **Re-verified against the US-708 body-frame transform and UNCHANGED, on
+purpose.** US-708 altered how `gLat`/`gLon` are *derived* (before it, the two were
+transposed — a corner rendered as an acceleration), but not what they *mean*: the
+producer still publishes `gLon` + = accelerating and `gLat` + = right, and the fix
+makes the card's contract true rather than redefining it. **Nothing on this line
+moves and no consumer changes.** ⚠️ And the sentence above becomes load-bearing
+rather than decorative: the two US-708 candidate mountings differ by exactly a
+180° yaw, so if the shipped constant is the wrong one, "a board mounted backwards"
+is *precisely* what the operator is looking at — the words on the tile are how
+that gets caught on the first drive. 🔴 **That case HAPPENED:** (A) shipped, the
+first drives on the new mount (70/71) measured (B), and **US-745** re-bound the
+constant (2026-09-14). The contract was re-derived under (B) and **the meaning did
+not move**: `resolveMountFrame` applies the mount once per raw channel and every
+downstream formula (`_levelFrame`, `computeHorizontalG`, `computeHeadingDeg`,
+`pitch_fusion`) is written in vehicle coordinates, so `gLon` + = accelerating,
+`gLat` + = right, heading = nose bearing and pitch + = nose up hold *iff* the
+binding produces true vehicle coordinates. Under (A) on a (B)-physical board all
+four published inverted (heading rotated 180°). **No consumer changes.**
+An over-scale reading **clamps along its own direction** (never per-axis, which
+would swing the dot to a corner and misreport which way the car was loaded) and
+turns amber, while the tile keeps the true magnitude -- the clamp cannot
+understate a 1.4 g stop as a tidy 1.0 g one.
+
+**The trail is the card's only client state** (Atlas Q-B: animate from the
+polled values; a higher-rate transport is a later refinement, not a gate). It
+lives in the poll closure, is drawn as a single `<polyline>` -- 140 discrete
+nodes rebuilt at 4 Hz would churn ~560 elements/sec on a kiosk Pi for nothing --
+and is **reset the moment the instrument is not live**. Splicing a point from
+before an outage onto one after it would draw a trail the vehicle never took;
+eviction also runs on a tick with no usable point, so a stopped feed decays the
+trail to empty instead of freezing its last shape.
+
+**Deploy.** `deploy-pi.sh step_install_dashboard_assets` installs the served kit
+to `/opt/dashboard` (WARN-not-BLOCK if absent, A-9), mirroring
+`step_install_splash_assets`; the kiosk **unit** is installed by the kit's
+session-aware `install.sh` (V-1/V-2), the same seam as the splash kiosk unit.
+
+##### `/opt` asset-ownership contract -- force-refresh + prune (US-495, F-111)
+
+The ordered search path above has a sharp edge that cost a sprint of "the deploy
+succeeded but the Pi renders something else": **`/opt/splash` is searched
+first**, so any file sitting there shadows the same-named file in
+`/opt/dashboard` permanently, and the dashboard step -- which only ever writes to
+`/opt/dashboard` -- can never dislodge it. Both asset steps used to *only*
+install on top of `/opt`; nothing was ever removed, so retired kit generations
+accumulated there indefinitely. That is how the Pi came to serve a wordmark
+("Eclipse ODB2") that exists nowhere in this repo.
+
+Both steps now delegate to **`deploy/asset-refresh.sh` →
+`refresh_asset_dir SRC DST MANIFEST [KEEP]`**, which makes the installed dir an
+exact mirror of what the repo vouches for:
+
+1. **install** every manifest asset the source kit ships;
+2. **prune** everything else -- including a *manifest* asset the source kit no
+   longer ships. A file the repo cannot vouch for must not be served: an honest
+   404 beats a confident stale render;
+3. **verify** each installed file byte-for-byte against its source.
+
+| Dir | Manifest (installed + owned) | Keep-list (another installer owns) |
+|---|---|---|
+| `/opt/splash` | `index.html`, `styles.css`, `boot-state-poll.js`, `shutdown.html`, `shutdown-state-poll.js`, `splash.svg`, `splash-shutdown.svg` | `version.txt` (generated by the same step, after) |
+| `/opt/dashboard` | `dashboard.html`, `dashboard.css`, `carousel.js` | *(none -- single installer)* |
+
+`/opt/<kit>` is **deploy-owned, not hand-edited**: anything dropped there
+out-of-band is pruned by design.
+
+**The keep-list is a cost, not a safety net (US-498).** A keep-listed asset is
+never installed, never pruned and never byte-verified by the deploy, so every
+entry is a piece of `/opt` the guard cannot vouch for. US-495 keep-listed the
+whole closeout surface on the reasoning that the kit's own `install.sh` owns it
+-- but that installer is the **A-9 kiosk-unit step, which is allowed to WARN and
+skip** (it aborts outright when it cannot detect the session type or the
+chromium binary), so the closeout surface had no guaranteed refresh path at all.
+The exact hole US-495 closed for the boot surface stayed open for the shutdown
+one, where a stale render only reveals itself *during a shutdown*, with nobody
+watching and no way to re-run it. Both installers copy the same bytes from the
+same synced kit dir, so the deploy owning them costs nothing and buys the
+byte-verify. `version.txt` is the only legitimate entry: the deploy **generates**
+it from `deploy/RELEASE_VERSION` after the refresh, so it is not a kit file the
+manifest could name. Pruning it in the window before it is rewritten is the only
+thing the keep-list now prevents.
+
+**Posture change vs A-9, deliberate.** *Absence* still warns and continues (a Pi
+without the UI kit still ships the rest of the tier). A *failed write* now
+**blocks**. They are different facts: absence is a Pi that was never given a UI;
+a failed write is a deploy that believes it shipped one and did not. Continuing
+past the second is what prints "Deploy OK" over a stale surface and sends the
+operator to debug the UI instead of the deploy (the A-16 lesson). Behaviour is
+pinned by `tests/deploy/test_asset_refresh.py`, which drives the real shell
+function against temp dirs rather than grepping the deploy script.
+
+##### Render-regression backstop -- the automated A-16 guard (US-499, F-121)
+
+Sprint 66 shipped three defects that **every unit test passed**, because all
+three were *composition* failures rather than component failures:
+
+| Defect | Every part was correct | What was broken |
+|---|---|---|
+| US-494 (S1) | `computeBootState` was right; the splash JS was right | the systemd entry point never injected `obdProbeFn`, so the payload the **production wiring** emits never reached `healthy` -> no handoff |
+| US-495 (S2) | `carousel.js` set `el.hidden` correctly on 18 call sites | an ID-selector `display: flex` outranked the UA `[hidden]` rule, so six overlays painted at once |
+| US-498 (S5) | the delay, the fill-mode and the direction were each valid | their *interaction* held the closeout mark at `opacity: 0` for 6 s of a 7 s grace window |
+
+`tests/ui/test_render_regression.py` is the permanent guard on that class. It is
+deliberately **compositional**, in two processes that cannot see each other's
+verdict:
+
+1. **node** (`tests/ui/dom_probe.js`, `splash_probe.js`, on `mini_dom.js`) boots
+   the **shipped** `carousel.js` / `boot-state-poll.js` against the **shipped**
+   markup and the state files a test declares, then dumps the resulting DOM. It
+   knows nothing about CSS.
+2. **python** (`tests/ui/render_harness.py`) resolves the **shipped** stylesheet
+   over that DOM -- importance -> specificity -> source order, inline
+   declarations, `display: none` inherited through ancestors -- and answers the
+   only question that matters: *does this element have a box?*
+
+The mini-DOM reflects IDL properties onto **content attributes** (`el.hidden =
+true` becomes the `hidden` attribute) because the attribute is what the cascade
+selects on. A harness that stored `hidden` as a private flag would have
+reproduced the US-495 blind spot instead of catching it.
+
+**It is proven RED, not asserted to be.** Each guard has a partner test that runs
+the same harness against the **real pre-fix artifact from git** -- the
+pre-US-495 stylesheet (all six overlays paint) and the pre-US-494 emitter loaded
+as a live module (the splash pins, degrading with the literal
+`eclipse-obd: not ready (starting)` the CIO read off the panel). Two **mutation**
+proofs run unconditionally beside them (delete the `[hidden]` guard rule; strip
+its `!important`), so the backstop stays self-verifying even where git history
+is unavailable -- and they pin the `!important` as load-bearing, which is the
+fragility US-496 flagged.
+
+It also covers the one surface no static sweep can reach: the **page dots are
+created by JS**, so `test_dashboard_overlay_hidden_guard.py` (which enumerates
+elements the *markup* ships `hidden`) can never see them. Here they are built by
+the real `carousel.js` and rendered through the real cascade, against the
+visible-card geometry the US-496 vehicle gate introduced.
+
+**Fidelity limit, stated because an unstated one is how a lenient test passes on
+a broken layout:** this resolves the **cascade**, not **layout**. It sees "not
+painted"; it cannot see overflow, wrapping, or a box pushed off-screen. Sibling
+combinators (`+`, `~`) are not resolved. To stop that leniency being silent,
+`Surface.unresolvableDisplaySelectors()` reports any `display` rule behind a
+pseudo-class the resolver cannot evaluate, and
+`test_harnessCanJudgeEveryDisplayRule` **fails** when one appears -- teach the
+resolver or move the rule; do not delete the test. The residual gap is a real
+kiosk smoke on the panel, which remains the per-story on-Pi render check.
+
+> **Sequencing note (A-4):** the dashboard and the pygame `status_display` must
+> never run simultaneously. The pygame surface was **retired (parity-gated) in
+> US-402** — once the System Status + Battery Health cards reached parity
+> (US-400/401) — by setting `pi.hardware.statusDisplay.enabled=false`, then
+> **fully removed in US-485 (V0.29.15)** (module + wiring + config key deleted).
+> There is now **exactly one** dashboard surface (the carousel) with no overlay
+> flag left to re-enable. See the US-402 subsection below for the original
+> cut-over fix.
+
+#### System Status card + `system-status` emitter (US-400) [Atlas A-3]
+
+The **System Status** card (Card 1) renders the `system-status` state file at 4
+Hz: OBD-link / sync / power / drive tiles + the top-bar BT/sync/power glyphs.
+
+**`system-status` emitter (`src/pi/splash/system_status_emitter.py`).** The
+**orchestrator/sync tier owns this emitter** (A-3): it holds the live BT-link,
+the `sync_log` high-water mark, the power source, and the `DriveDetector` state,
+so it calls the injected `makeSystemStatusEmitter(...)` → `emit(...)` callable —
+the same unidirectional seam as the shutdown emitter (`power_watch` → splash):
+the emitter never reaches back into the orchestrator. The emit is **best-effort**
+(write failures logged, never raised → the dashboard hook can never block the
+orchestrator loop) and writes the A-3 schema atomically (`writeStateAtomic`,
+reusing the boot-state primitives). Schema (spec §7):
+
+```json
+{ "obdLink": {"state":"reconnecting","retries":3,"lastSeenS":14},
+  "sync": {"lastOkTs":"…","rows":1204,"pending":0,"stale":false},
+  "power": {"mode":"car","source":"external"},
+  "drive": {"state":"recording","driveId":27},
+  "ts":"…" }
+```
+
+**I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
+`linked` (green) / `reconnecting` (amber, with `retries` + `lastSeenS`) / `down`
+(red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop
+flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
+tile and an amber BT glyph within ≤2 s (the operator finally *sees* the
+reconnect, closing the I-033 "did it capture my drive?" blind spot).
+
+**Power-mode SSOT (US-421 / F-098, Sprint 52 / V0.29.6).** The `power.mode`
+field (`car` / `wall` / `unknown`) reports the **deployment context** — Pi
+installed in-car vs. bench/wall power — which is a *different fact* from
+`power.source` (AC-vs-battery, the `power_source_provider`). Its single
+acquisition path is `PowerModeProvider` (`src/pi/power/`), which reads the
+static config key **`pi.power.mode ∈ {car, wall, unknown}`** (validator DEFAULT
+`unknown`) and is THE SSOT for the fact (zero other acquisition paths). The
+provider is wired through `system_status_emitter.buildSystemStatusState` into
+`carousel.js#powerTile`, which renders CAR / WALL / **unknown**. An
+absent/stale/invalid config resolves to `unknown` — **never a confident wrong
+mode** (honest-instrument). The seam is designed so acquisition can later swap
+config → a GPIO sense line behind the same `PowerModeProvider` interface with
+zero consumer change (future; the GPIO line is out of scope for V0.29.6).
+
+**Honest-instrument render (F-1).** `carousel.js#systemStatusView` maps the state
+to tile levels (`ok`/`amber`/`down`/`unavailable`) + glyph states; a level/glyph
+is **`ok` (green) only when the underlying state is genuinely good**. A
+down/reconnecting link, a stale sync, or running on battery renders
+amber/down/neutral — never green. A missing sub-object renders that tile
+`unavailable` (the rest of the card still renders); a missing/malformed file
+renders the whole card `unavailable` and resets the glyphs to neutral (no
+lingering stale-green). Tiles are built with `textContent` (no `innerHTML`), so
+emitter values render verbatim, never as markup.
+
+**Stale-while-driving (I-4).** `isSyncStaleWhileDriving` flags `sync.stale=true`
+**only while recording** (a parked Pi catches up on WiFi return) when the last
+sync exceeds the threshold — and treats an absent/unparseable last-sync as stale
+(never claim a freshness we can't prove). The **threshold is Spool-owned (S-3)**
+and supplied by config: the emitter takes `syncStaleThresholdS` as a required
+parameter and **hardcodes no tuning number** (PM Rule 7 / Refusal Rule 2).
+
+**Summary drill-down (US-509, Sprint 68 / V0.29.23).** The US-489 one-glance
+`SYSTEM · N ISSUE` line is **tappable → a drill-down overlay** (`#sys-detail`,
+`carousel.js#systemIssueRows` / `#systemDrill`), one row per non-OK source,
+**worst-first**: source label + state chip + the tile's own reason + freshness,
+with a `‹ Back` that always returns. It is a **presentation of the same tiles**
+the 2×2 grid renders — the drill rows travel on `systemStatusView().drill`, so
+one read of the state file feeds the grid, the summary **and** the overlay, and
+the overlay is structurally incapable of contradicting the card behind it. No
+source state is recomputed. Four decisions are load-bearing:
+
+- **The listing floor is `unavailable`, not `amber`.** `ok` is never listed (a
+  green source in a fault list is a *fabricated* fault) and `neutral` is not
+  either — `DRIVE=IDLE` means "not recording", **not broken**, so listing it
+  would report a fault in the commonest state there is. But a known-**unknown**
+  *is* listed: the summary reads `SYSTEM · N UNAVAILABLE` in that state, so
+  excluding unavailables would make a tappable headline open an **empty**
+  overlay — the exact dead end this surface exists to remove.
+- **Freshness is never fabricated.** Only `obdLink` publishes `lastSeenS`; rows
+  for sources that publish no age read **"age not reported"**, never
+  `"seen 0s ago"` (which would claim we had just seen a source we never timed —
+  the zeroed-altitude lie of US-508 in a different costume).
+- **The affordance is gated on `drill.tappable`** (`rows.length > 0`), so a
+  healthy card never advertises detail it does not have.
+- **An open overlay repaints on every poll** rather than freezing on the
+  snapshot that opened it — a frozen age readout is the same fabrication the
+  g-dot (US-497) and the rotate bar (US-506) are guarded against.
+
+The overlay **reuses the US-406 per-code detail shell** (`.detail-head` /
+`.detail-body` / `.detail-card`, the same `‹ Back`) so the two drill-downs speak
+one interaction language, and it inherits the auto-rotate pause from the single
+document-level `pointerdown` seam US-506 established — no per-overlay pause call
+site to forget.
+
+#### Battery Health card + `battery-health` emitter (US-401) [Atlas A-3]
+
+> **VERDICT SUPERSEDED — BUILT ON ARCH-065a (CIO 2026-10-02): [`battery-health-design.md`](battery-health-design.md) is the source.**
+> Same card, same `health` vocabulary (`good`/`degraded`/`replace`/`unknown`) and F-9 line; the verdict is T (battery time to the
+> reserve floor) vs J (the at-home job). The six `reasons.health` codes, `timeToFloorS`/`jobAvgS`/`jobMaxS`/`provisional`, and
+> `runtimeToCutoffS` (now = T) are defined there. Where this section and that file disagree, that file governs.
+
+The **Battery Health** card (Card 2) renders the `battery-health` state file at 4
+Hz: the Spool health verdict + VCELL + charge + temp, and a failsafe drain ladder
+**only during a real drain**. The cell is the **Pi UPS-HAT LiPo (MAX17048 fuel
+gauge), never the car's 12 V lead-acid (F-11)**.
+
+**`battery-health` emitter (`src/pi/splash/battery_health_emitter.py`).** The
+**orchestrator/power tier owns this emitter** (A-3): it holds the live MAX17048
+reads, the `battery_health_log` history, and the power-watch draining state, so it
+calls `makeBatteryHealthEmitter(...)` → `emit(...)` — the same unidirectional
+best-effort seam as the system-status + shutdown emitters (write failures logged,
+never raised; atomic `writeStateAtomic`). Schema (spec §7):
+
+```json
+{ "vcellV":4.02, "soc":76, "socCalibrated":false,
+  "crate":1.8, "charging":true, "draining":false,
+  "restedVcellV":4.05, "weakEvents30d":0, "restedHistory":[…],
+  "health":"green", "fullChargeReached":true, "runtimeToCutoffS":714,
+  "ambientTempC":null, "lastHealthCheckTs":"2026-05-16T00:00:00Z",
+  "ladder":null, "ts":"…" }
+```
+
+**Two render-breaking honesty traps locked at the data contract:**
+
+- **Voltage-is-not-percent (F-8).** `battery_health_log.*_vcell_v` columns hold
+  **volts**; the dedicated `*_soc_pct` columns (US-426) hold percent — the legacy
+  misnamed `*_soc` columns that stored volts were dropped in US-426. The emitter
+  has **no code path from `vcellV` to `soc`** —
+  the percent comes only from the MAX17048 SoC register, and a `null` register read
+  passes through as `soc:null`. `carousel.js#batteryHealthView`/`socTile` renders
+  the percent **only when `soc` is a real number** (tagged `(uncalibrated)` when
+  `socCalibrated:false`); a `null` soc omits the percent and the card shows volts
+  (`vcellTile`, `"3.44 V"`). The trap is locked by **absence** — a voltage can
+  never be painted as a percent.
+- **Stale-green guard (F-9).** A GREEN verdict **always** carries
+  `"last health check · <date> (<age>)"`, computed by `healthCheckLine` from
+  `ts − lastHealthCheckTs` (both in the state file, so the age is deterministic /
+  node-testable, not browser-clock dependent). A month-old reading is never
+  mistaken for live.
+- **Unknown says why (US-736).** An `unknown` verdict carries one of the six
+  US-632 machine reasons in `reasons.health` (`battery_health_verdict.UNKNOWN_REASONS`).
+  `carousel.js#BATTERY_HEALTH_REASON_TEXT` is the ONE renderer table for them;
+  its keys equal `UNKNOWN_REASONS` exactly (guard:
+  `tests/ui/test_carousel_battery_health_reason_text.py`). The HEALTH tile's
+  detail reads `"<reason text> · last health check · <date> (<age>)"` -- the F-9
+  line is kept whole, never swapped out. Fallbacks are typed and never equal a
+  known string: no usable reason -> `"reason not reported"`; an unrecognised
+  code -> `"unrecognised reason (<code>)"`. A resolved verdict (good/degraded/
+  replace) ignores any reason. The idle-home BATTERY fact is unchanged.
+
+**Temp honest (F-10).** `ambientTempC:null` → the card renders **"not captured"**,
+never a fabricated number.
+
+**No-false-failsafe (A-6 / F-2).** The failsafe `ladder` block (stage + thresholds
++ runtime) renders **only when `draining === true`**. The invariant is enforced in
+the **pure builder** (`buildBatteryHealthState` forces `ladder=None` whenever
+`draining` is false, even if a caller supplies one) — the SSOT, so a buggy caller
+can't light a phantom drain. The **live runtime-remaining + ladder thresholds
+(3.70/3.55/3.45 V) are Spool-owned (S-2, failsafe-only)** and arrive inside the
+caller's `ladder` dict; the emitter/render **never fabricate** them — a draining
+pack with no Spool data shows the stage + volts only, no minutes.
+
+**C-5 states-dir writers.** The `battery-health` emitter is the third post-boot
+writer into the F-103-provisioned `states/` tmpfs dir, after `system-status` and
+before the **fourth writer `dtc` (US-404)**. All four reuse
+`ensureStatesDir`/`writeStateAtomic`, ordered after the states-dir provisioning —
+they never re-invent the lifecycle. The full post-boot writer set is therefore
+`system-status` · `battery-health` · `dtc` (the F-103 boot/shutdown emitters own
+`boot-state` / `shutdown-state`).
+
+#### Card-state emitter run-model + deploy-install (US-480, Sprint 61 / V0.29.15) [Atlas Q-1]
+
+The three post-boot card emitters above describe **which tier owns each fact**
+(A-3) — but an emitter only *runs* if something invokes it each loop, and only
+survives a reboot if that host is deploy-installed to boot-start. Both were the
+gap that shipped the emitters **dark**: code merged, but `/run/eclipse-obd/states/`
+held only `boot-state` and the carousel cards rendered the NA/unavailable wall.
+
+**Run-model (US-480-a — orchestrator-invoked, NOT standalone units).** The
+OBD-dependent emitters are driven *in-process from the orchestrator process that
+owns the single `ObdConnection`*, via `CardStateEmitterMixin`
+(`src/pi/obdii/orchestrator/card_state_emitter.py`). The mixin constructs the
+three emitters once (`_initializeCardStateEmitters`) and the run-loop calls
+`_maybeEmitCardStates()` once per pass on a ~2 s cadence gate; every read is
+best-effort + exception-isolated so a dashboard hiccup can never crash the
+capture loop. The emitters are **pure consumers** of `self._connection` — they
+open **no** connection of their own. This is load-bearing: a standalone systemd
+unit that read OBD would open a **second** connection to the non-thread-safe
+python-obd port and re-introduce the **A-17** serialization race the DTC-read
+work just closed. (`battery-health` reads the MAX17048 over I²C, not the OBD
+port, so it is safe either way, but rides the same in-process cadence for
+coherence.) The `idle` boolean is written by the `system-status` emitter — it
+owns both inputs (`obd.available` + `driveState`), so `idle` is an explicit SSOT
+flag, not a display-derived guess (consumed by the idle home card, US-481).
+
+**Deploy-install (US-480-b — boot-persistence).** Because the emitters run inside
+`eclipse-obd.service`, deploy-installing their *execution* reduces to one systemd
+fact: `deploy-pi.sh` must **`systemctl enable eclipse-obd`**
+(`step_install_eclipse_obd_unit`) so a fresh `--init` Pi + reboot auto-starts the
+orchestrator — and with it the emitters — with **no manual step**. The unit has
+always declared `WantedBy=multi-user.target`, but "installed" ≠ "enabled"; the
+deploy previously installed + restarted the unit yet never asserted the enable.
+It is `enable` (not `enable --now`): `step_restart_service` owns the actual start
+via an explicit stop→start (US-389 release-then-acquire of the single-instance
+pidfile; a `--now` here would race it). The enable is re-asserted on every deploy
+**outside** the `cmp -s` sync-if-changed gate, so a Pi installed pre-US-480-b —
+or disabled out-of-band — self-heals on a routine re-deploy. The `states/` dir
+itself is already boot-durable via the tmpfiles.d entry (Atlas C-5, above),
+independent of the orchestrator's start order, so the cards render an honest
+state even before eclipse-obd finishes coming up. **No separate emitter unit
+exists — the orchestrator IS the emitter host.**
+
+#### Pygame sunset — parity-gated cut-over (US-402) then full removal (US-485) [Atlas A-4]
+
+Once the System Status (US-400) and Battery Health (US-401) cards reached parity
+with the legacy pygame **status overlay**, that overlay was **retired** so the HTML
+carousel is the **sole** dashboard surface (failure **F-4**: the two must never be
+active simultaneously). The data the overlay used to paint is now republished
+through the `system-status` + `battery-health` emitters into the state files the
+carousel reads.
+
+**US-402 cut-over mechanism (V0.29.3).** The initial retirement was a single
+config flip: `pi.hardware.statusDisplay.enabled` → `false` in `config.json`. With
+the overlay off, `HardwareManager` never opened a pygame surface; the carousel
+kiosk (launched by the splash `OnSuccess=` hand-off) was the only surface. This
+was parity-gated — pygame retired **only** once the cards existed, never before.
+(That cut-over relied on a factory resolution fix: the canonical flag lives at the
+pi-**nested** `pi.hardware.statusDisplay.*` path that `lifecycle.py` passes, so the
+factory had to resolve the nested path first — the flat top-level path alone had
+silently launched the overlay on its `True` default.)
+
+**US-485 full removal (V0.29.15).** The config-disabled overlay was dead code
+carrying a re-enable footgun, so US-485 completed the sunset: `status_display.py`,
+`dashboard_layout.py`, every `HardwareManager` launch/wiring member
+(`_initializeStatusDisplay`, the `_startComponents` display branch,
+`_displayUpdateLoop`, the `_cleanup` branch, the `statusDisplay` property, the
+`display*` constructor params + factory reads), the `pi.hardware.statusDisplay`
+config key, and the two module tests are all **removed**. `HardwareManager` no
+longer owns any display; its `updateObdStatus` / `updateErrorCount` remain as
+documented **no-op stubs** so the orchestrator's best-effort status push
+(`event_router`) stays valid without an `AttributeError`, and `getStatus()['display']`
+is a permanent `None` for consumer back-compat. There is no longer any bench
+re-enable path — the overlay is gone, not merely disabled.
+
+#### System Setup menu + gated service control (US-403) [Atlas A-7/A-8]
+
+The dashboard's persistent `⋮` and a deliberate **~5s long-press** (a filling
+ring; an early release or any movement >10px cancels — `carousel.js`
+`longPressProgress`/`isLongPressComplete`/`exceedsMoveCancel`) both open the
+**System Setup menu** (D-6). The menu offers **gated service control** over an
+**install-fixed allow-list** of `eclipse-*` units and an **Exit / Close UI**
+item (A-8). Confirm-before-consequential: **Stop** and **Exit** require a confirm
+modal; **Restart** acts directly; a `✕`/Back is always present (the operator is
+never trapped, F-6).
+
+**Two ways out (US-747).** No overlay may be escapable only by its own single
+control: the same ~5s hold, made on the open menu, closes it (the ring paints
+above the menu, `z-index` 45, below the confirm modal). Each press **owns** its
+interval — a new contact restarts the hold, and an interval that is not the
+live press stops itself. Before US-747 a second contact overwrote the only
+handle; the orphaned interval read `Date.now() - null` after release and
+re-opened the menu every 50 ms, so `✕` produced a flicker and the same screen
+until a reboot. The menu's open state is **not persisted** anywhere (no
+storage, hash or cookie). Guard: `tests/ui/test_carousel_setup_menu_escape.py`.
+
+**Privilege path (A-7) — three independent defense-in-depth layers.** The
+chromium kiosk runs **unprivileged** and can only do HTTP; it never runs as root
+and never holds sudo.
+
+1. **UI layer** — the menu mirrors the allow-list (`carousel.js`
+   `SERVICE_ALLOWLIST`/`serviceMenuItems`/`actionRequest`); `eclipse-powerwatch`'s
+   Stop button is rendered **disabled** (it is the safe-shutdown guard — D-7).
+2. **Action-path layer** — the kiosk POSTs `/service-control {unit, verb}` to the
+   token-gated route on `eclipse-states-http` (the only IPC the kiosk has). The
+   server delegates to `src/pi/splash/service_control.py`, the **SSOT** for the
+   allow-list, which **re-checks** every action at execution time (a tampered or
+   bypassed UI can never drive an off-list action — the F-092 analog of US-407's
+   S-10 clear-gate re-check). Off-list → 403, never executed.
+3. **PolicyKit layer** — `service_control` shells out to `systemctl <verb> <unit>`
+   as the unprivileged `mcornelison` user; the net-new
+   `deploy/polkit-rules/51-eclipse-service-control.rules` authorizes it. The rule
+   grants `org.freedesktop.systemd1.manage-units` **keyed on BOTH the unit AND
+   the verb**, so the verb can be denied per-unit. It is a **sibling** of the
+   I-036 `50-…poweroff` rule (a different action, `manage-units`), **not** a
+   widening of it and **not** a privileged helper daemon.
+
+**Allow-list (one SSOT mirrored across the three layers):**
+
+| Unit | Verbs | Note |
+|------|-------|------|
+| `eclipse-obd.service` | start / stop / restart | data capture |
+| `eclipse-sync.service` | start / stop / restart | server upload (unit not yet deployed — see below) |
+| `eclipse-dashboard.service` | stop / restart | **A-8**: Exit = stop the kiosk |
+| `eclipse-powerwatch.service` | **restart ONLY** | **D-7/F-7**: stop/kill DENIED at the polkit rule itself |
+
+**The powerwatch restart-only guard (D-7/F-7) is the load-bearing invariant.**
+Stopping the safe-shutdown guard could leave the Pi unprotected on key-off. A
+`stop`/`kill` is refused at **all three** layers — and critically at the polkit
+rule (an explicit `polkit.Result.NO`), so even a direct
+`systemctl stop eclipse-powerwatch` issued at the action path with the UI
+bypassed is refused. This mirrors US-407's "re-check at the action path, never
+trust the UI."
+
+**Exit/Close lifecycle (A-8).** Exit issues `stop eclipse-dashboard.service`,
+dropping to the desktop. The unit has no `[Install]` section — it is started by
+the splash `OnSuccess=` hand-off — so the next **reboot** re-launches it (or
+`systemctl restart eclipse-dashboard` over SSH brings it back immediately); the
+confirm dialog states how it returns.
+
+**Deploy note — `eclipse-sync.service` is not yet a deployed unit.** The design
+names `eclipse-sync` as a controllable service, but no such unit ships in
+`deploy/` yet (Pi sync currently runs inside the orchestrator / `sync_now.py`,
+not a standalone unit). It is included in the install-fixed allow-list +
+polkit rule as designed; until the unit exists, an action on it returns an honest
+`systemctl` failure (the status reflects reality, no fabrication). Filed to PM as
+a deploy gap — the mechanism is complete and forward-compatible.
+
+#### DTC capture path — key-on (KOEO) read + `dtc` emitter (US-404) [Atlas A-9 / F-111]
+
+The DTC viewer (Alerts card US-406, takeover/ribbon US-405, Mode-04 clear US-407)
+is a **pure consumer** of a new `dtc` state file. US-404 builds the Pi-side data
+layer that publishes it: the key-on read, the emitter, the severity loader, and
+the read-only HTTP endpoint. One direction of data flow — the display never reads
+hardware and never decides severity.
+
+**Key-on (KOEO) read on the connection edge.** `EventRouterMixin._dispatchKeyOnDtcs`
+fires a **one-shot** Mode 03(+07) read on the OBD **connection-established edge**
+(`_handleConnectionRestored`), **gated on no active RUNNING drive**
+(`_driveDetector.isDriving()` — the gate **fails closed**: an unverifiable drive
+state skips the read). While a drive is RUNNING the drive-scoped paths
+(session-start / MIL / periodic) own capture; the KOEO read exists only for
+key-on/engine-off (RPM 0) where `DriveDetector` never arms — closing the "blank at
+key-on" gap. **Ownership is the DTC capture path, NOT DriveDetector** (Atlas A-9):
+the new `DtcLogger.logKeyOnDtcs` reuses the existing `DtcClient` and persists every
+`dtc_log` row with **`drive_id = NULL` stamped EXPLICITLY** — it does **not**
+consult `getCurrentDriveId`. A pre-US-388 stale-open-drive leak could leave a
+phantom `drive_id` on the process context; inheriting it would mis-attribute a
+key-on read to a drive that isn't happening (cross-links A-9 Root 2). NULL is the
+honest attribution, and the display renders "key-on read" rather than "Drive N".
+
+**`dtc` emitter (fourth states-dir writer).** `src/pi/splash/dtc_emitter.py`
+mirrors the `system-status` / `battery-health` seam: a pure `buildDtcState` +
+best-effort `makeDtcEmitter` that reuses `ensureStatesDir`/`writeStateAtomic` (C-5)
+and writes `/run/eclipse-obd/states/dtc` atomically; a write failure is logged,
+never raised, so the publish hook can never block the connection-edge read. The
+DTC capture path **owns and calls** the emitter (the `_dtcEmitter` hook on the
+orchestrator — its live injection follows the US-400/401 deferral pattern). The
+state schema is design-spec §8: `mil` · `codes[]` (each with
+`severity`/`severityCaveat`/`short`/`setAtTs`/`driveId`/`freezeFrame`/
+`suggestedFix`/`fixProvenance`/`logged`/`syncAcked`/`clearEligible`) · `newSinceTs`
+· `clearGate` · `sessionResetLock` · `lastKnown` · `source` · `ts`.
+
+**Resting state: honest nulls + `lastKnown` (US-752, Atlas ruling 2026-09-14).**
+When no live read is possible (boot, key-off, process restart) the live fields
+are **absences, not values**: `codes: null`, `mil: null` beside
+`source.dtc.available: false`. This **deliberately changes** the US-429
+fresh-empty contract, whose `codes: []` / `mil: false` read as a measurement ("no
+codes, lamp off") to any consumer that skipped `source`. What the system already
+holds rides in a **separate** `lastKnown` block `{codes, mil, asOfTs, source:
+"dtc_log"}` — `codes` is never overloaded. The block is null when the source is
+available (a live read always wins) and null when nothing is remembered, so "DTC
+not read" keeps its meaning. `src/pi/obdii/dtc_last_known.py` reads it from the
+persisted `dtc_log` **only** (SSOT rule B — the ECU is never re-queried to
+populate a resting state): `data_source='real'` rows, one entry per code (newest
+wins), each enriched from the severity table like a live code and carrying
+`lastSeenTs`. `asOfTs` is the newest `last_seen_timestamp`, a read-time column the
+DB stamps at the read and bumps on re-read — not an insert time. `lastKnown.mil`
+is the same stored-code proxy the live KOEO path publishes; `dtc_log` has no MIL
+column.
+
+**Remembered codes are never actionable.** The clear gate computes from LIVE
+`codes` only (`dtc_clear` reads `codes or []`, so null → `no_codes`; the emitter's
+`clearGate` is built from live codes). `newSinceTs` stays null, and the ribbon and
+takeover already return early on an unavailable source, so a remembered code never
+takes over. The Alerts card renders them as **inert rows** under "LAST KNOWN CODES ·
+last read <age> · not a live read": no detail overlay (where the clear button
+lives) opens from them.
+
+**Not sticky.** A successful Mode-04 clear (`_maybeServiceDtcClearRequest`) writes
+one `status='cleared'` `dtc_log` row per remembered code — the status the schema
+reserved for clear events. The reader drops every `stored`/`pending` row before
+that watermark (by `id`, or by `last_seen_timestamp` for an older row re-read
+after the clear). The watermark write is isolated: a failure is logged and never
+rewrites a clear that happened. **Limit:** a read that finds no codes writes no
+row, so a code that stops reporting without a Mode 04 stays remembered (dated)
+until a clear. The pinned design-spec §8 lives on the fleet share (PM-owned).
+
+**Honest-instrument by construction.** The Pi never decides severity: a static
+loader (`dtc_severity_table.py`) parses **Spool's SSOT**
+(`offices/tuner/dsm-p1xxx-severity-table.md`) into the `{code → enrichment}` map
+the emitter merges verbatim — engine P1xxx → `watch`, condition-dependent codes
+carry a `severityCaveat` that **never auto-upgrades the tier** (R-1), auto-trans
+P1xxx → `na` (quiet disposition). A code **absent** from the table degrades to
+`severity: unknown` with whatever description python-obd supplied (empty → the
+display shows "No description yet") — no fabricated severity or fix. `freezeFrame`
+is always `null` (Mode 02 confirmed unsupported on MD326328; US-406 renders the
+realtime fallback). The `clearGate` is the honest UI-side derivation from the
+captured codes (severity_present → sync_pending → ok); **US-407 re-checks it
+authoritatively at the privileged action path** — the UI is never the gate.
+
+**Read-only endpoint.** `eclipse-states-http` already serves any safe file in the
+states dir token-gated; the carousel polls `GET /dtc`. The endpoint is strictly
+read-only — the only write route is `/service-control` (US-403), so `POST /dtc` →
+404.
+
+#### DTC takeover + STOP-red ribbon (US-405) [F-111 / design §5.1–5.2]
+
+The dashboard-side consumers of the `dtc` state. The carousel polls `GET /dtc` in
+the same 4 Hz tick as the cards and drives two surfaces, both pure functions in
+`carousel.js` (node-tested) with thin DOM wiring:
+
+**Full-screen takeover (`takeoverView` / `takeoverShouldShow`).** Fired on a
+**new** code only. The `dtc` state is level-triggered (it always carries the
+present codes), but the alarm must be **edge-triggered** — so the emitter stamps
+`newSinceTs` when a new code appears and the display tracks the
+last-acknowledged stamp: `takeoverShouldShow` compares them, so the same code
+never re-takes-over, but a **newer** code (a different stamp) re-fires
+(escalation, design D-3). One takeover at a time — the **highest-severity code is
+the hero**, the rest fold into "+N more". The overlay is **severity-styled** (the
+display maps a tier → color + directive + dismiss controls; it never classifies):
+🔴 STOP = brand `--red` bg · "REDUCE LOAD · PULL OVER" · **Acknowledge only** (no
+plain dismiss); 🟡 WATCH = amber · "DRIVE GENTLY · GET DIAGNOSED" · Dismiss; 🟢
+MINOR = dark-green · "SAFE TO CLEAR ONCE LOGGED" · Dismiss. Every dismiss path
+(incl. STOP's Acknowledge) **drops to the ribbon** — the driver always keeps view
+control, never trapped full-screen while the road needs watching. `unknown`
+(uncurated) gets the honest middle — a "GET DIAGNOSED" caution, never a false
+"safe to clear" or a false "pull over".
+
+**Persistent ribbon (`ribbonView`).** While any alert-eligible code is present, a
+ribbon rides under the top bar on every card: `⚠ CHECK ENGINE · <hero code>
+<desc> · +N more`. **R-2 (ribbon red ≠ brand red):** the ribbon shares cards with
+brand-red chrome, so its STOP state uses the **brighter alert `--red-light`
+(#F61D2D)** — distinct from brand `--red` (#E60012, used by the takeover bg) — plus
+a leading ⚠ glyph and a subtle pulse, so it reads as an alarm and never as
+decoration.
+
+**`na` is a quiet disposition (design §4).** Auto-trans P1xxx on the manual F5M33
+are dropped from `alertableCodes` — **no takeover, no ribbon**, and not counted in
+"+N more". A missing/malformed `dtc` file → no alert (honest: absence of the state
+= no active fault), never a fabricated code. The Mode-04 clear is US-407.
+
+#### DTC Alerts card (Card 5) + detail (US-406) [F-111 / design §5.3–5.4]
+
+The persistent home of the DTC state — a third carousel card (`data-state="dtc"`,
+label **Alerts**) plus a per-code detail overlay. Both are pure functions in
+`carousel.js` (node-tested) with thin DOM wiring; the Alerts card is polled in the
+same 4 Hz tick as the other cards (the tick now fetches `GET /dtc` **once** and
+shares it with the card render *and* the US-405 ribbon/takeover). The display maps
+a Spool-classified tier → chip label + color + directive; **it never classifies.**
+
+**Alerts card (`alertsCardView`).** Hero + list (design D-4). The **hero** is the
+worst *alert-eligible* code (via `alertableCodes`, so `na` and unrecognized
+severities are **never** a hero — S-12) with its tier directive; the **list**
+(`dtcListSorted`) shows every code worst-first with **`na` sorted last** (design
+§5.3, `DTC_LIST_RANK` gives `na` the lowest rank). A no-description code shows a
+neutral `?` chip + "No description yet" (never blank — I-3). An empty `codes`
+array is an honest **"No stored codes"** (never a fabricated green). A
+missing/malformed file → the shell's `unavailable` (S-9). Every row + the hero are
+≥40px tap targets that open the detail.
+
+**Detail (`codeDetailView`).** Fixed skeleton: hero (chip + code + short) ·
+severity directive band (🔴/🟡 only) · condition-dependent caveat **line** ·
+status meta · freeze-frame-or-realtime fallback · severity-gated fix · log/sync
+footer. Two render-safety invariants are **locked in the pure builders** (the SSOT,
+so a buggy DOM layer can't violate them):
+
+- **Severity-gated fix (`fixArea`, S-4/F-1 — load-bearing).** A 🔴/🟡 (or uncurated
+  `unknown`) code's fix slot is **REPLACED** by a "diagnose, don't swap parts"
+  directive — the raw `suggestedFix` is never rendered for it, **even when
+  non-null**. Only a 🟢 MINOR code shows the actual fix + a **3-state trust badge**
+  (`trustBadge`: `spool-validated` → ✓ Verified · Spool; `auto-unverified`/
+  `sourced` → 👥 Community · unverified; `none`/absent → ⏳ Looking into it). A
+  missing MINOR fix is honest text ("arrives on next sync"), never fabricated.
+- **Caveat never upgrades the tier (S-13).** `severityCaveat` renders as a caveat
+  line beneath the base chip; the display reads `severity` verbatim, so a P1300
+  WATCH with a "🔴 if knock" caveat stays a **WATCH** chip.
+
+**Freeze-frame fallback (`freezeFrameView`, S-5).** Mode 02 is confirmed
+unsupported on MD326328, so `freezeFrame` is null and the default render is the
+labeled realtime-context fallback ("no freeze frame captured (this ECU) — showing
+context at fault time") — never blank. A grid renders only if a future
+Mode-02-capable ECU supplies one. **`driveId` null → "key-on read"** (a US-404 KOEO
+read), never a fabricated "Drive N" (A-9 cross-link). The takeover "View detail" +
+a ribbon tap both navigate to the Alerts card and open the hero's detail. The
+Mode-04 clear button + gate are US-407.
+
+#### DTC Clear (Mode-04) path — the only vehicle-write (US-407) [F-111 / design §6, advisory §4]
+
+The single DTC path that **writes to the ECU**. Mode 04 is **all-or-nothing**: it
+wipes every stored + pending code, erases the freeze-frame, and resets emissions
+readiness monitors in one shot — so the whole design is built around never
+clearing a real fault's evidence and never being forced by a tampered UI. It
+renders against **Spool's SSOT** (`offices/tuner/dtc-display-clear-safety-advisory.md`);
+this story implements those semantics, it does not redefine them.
+
+**The gate is re-checked at the privileged action path — never trusted from the
+UI (S-10 / F-3, load-bearing).** `src/pi/splash/dtc_clear.py` is the authoritative
+gate SSOT. `evaluateClearGate` **re-derives** the verdict from the raw captured
+codes and deliberately **ignores** any precomputed `clearGate.enabled` in the
+state: enabled only when **every stored (non-`na`) code is MINOR (green) AND
+logged AND server-sync-acked**, and no code re-set this session. Any STOP/WATCH →
+`severity_present`; else any ungraded code (`unknown`, absent or unrecognised
+severity) → `severity_unknown` ("severity could not be determined" — US-753: the
+refusal is identical, but it is a different fact from a graded STOP/WATCH, so it
+gets its own reason); an un-synced MINOR → `sync_pending` (capture-before-clear,
+advisory §4c); a returned code (`sessionResetLock`) → `session_locked` ("don't
+chase the light", §4d); nothing clearable → `no_codes`. This is the DTC analog of
+US-403's action-path allow-list re-check in `service_control.py`.
+
+**Three defense-in-depth layers (same shape as US-403's privilege path).**
+1. **UI layer** — `carousel.js` `clearButtonView` mirrors the gate *for display*
+   (the Clear button in the detail overlay is disabled with an honest reason
+   label for a STOP/WATCH / un-synced / re-set code); a hard-confirm modal
+   (`confirmClearText`) names the freeze-frame-erase + readiness-reset
+   consequences (S-7). The button is convenience, not the gate.
+2. **Action-path layer** — the unprivileged kiosk POSTs `/dtc-clear` (token-gated)
+   to `eclipse-states-http`, which **re-reads its own `dtc` state** and calls
+   `dtc_clear.performClear`. If the re-derived gate fails, the injected Mode-04
+   runner is **never called** (403; no vehicle-write, no freeze-frame destroyed).
+3. **Vehicle-write primitive** — `DtcClient.clearDtcs` issues Mode 04 (`CLEAR_DTC`)
+   and then **immediately re-reads Mode 03(+07)** to *prove* the clear ("0 stored,
+   0 pending, MIL off") rather than reporting a bare "command sent" (§4d), which
+   also catches an **instant re-set**: a code present before AND after the wipe is
+   flagged (`reSetCodes`) so US-407 locks Clear for the session.
+
+**Honest unavailability + deferred live wiring.** `eclipse-states-http` runs as a
+standalone service and holds **no** OBD connection, so `makeStatesHandler` takes
+an injected `clearRunner` (owned by the connection holder — the orchestrator on
+the Pi). When it is `None`, `POST /dtc-clear` returns an honest **503** rather than
+fabricating a success. Wiring the live runner across the process boundary (the
+orchestrator consuming the clear request on its OBD loop, then re-emitting the
+`dtc` state with the updated `sessionResetLock`) is the same Pi-bench-deferred
+integration as US-404's live `_dtcEmitter` injection; the gate, the Mode-04
+primitive, and the endpoint mechanism are complete and unit-tested.
+
+#### LTFT multi-drive trend card (Card 4) + `ltft-trend` emitter (US-420) [F-096]
+
+The **LTFT Trend** card renders a long-term-fuel-trim trend across the last N
+drives so the CIO can watch LTFT migrate toward 0 (healthy) vs drift beyond
+±10%. It follows the same **SSOT / pure-consumer** carousel pattern as the
+System Status / Battery Health / DTC cards: a Python emitter is the single
+authoritative provider that **classifies** the drift; the JS card only maps the
+verdict → colour, it never classifies.
+
+**`ltft-trend` emitter (`src/pi/splash/ltft_trend_emitter.py`) — as built (US-661; US-420 epoch paging 2026-10-05).**
+🔴 **The SEMANTICS live in ONE place: `specs/grounded-knowledge.md` › "LTFT trend contract (US-661)"** — the
+warm closed-loop gate, the 5-drive median, the epoch baseline, the bit-identity reset rule. This section
+describes only the mechanism. *(Until 2026-10-05 it described the pre-US-661 `readLtftTrend()` /
+`classifyLtftDrift()` / `MIN_DRIVES_FOR_TREND` design, none of which exists any more.)*
+
+- **Reader — `readLtftDriveRows()`.** `realtime_data` rows of LTFT, STFT, coolant and fuel-system status,
+  `data_source='real'` and non-NULL `drive_id` only (replay/sim/fixture and the US-424 `'foreign'` rows
+  never enter), `LEFT JOIN drive_summary` for the axis timestamp. It reads the newest
+  `DEFAULT_TREND_DRIVES` (20) drives; **if none of them is an adaptive-memory reset it PAGES BACK** 20
+  drive ids at a time, reading LTFT only and classifying each drive with `isAdaptiveResetDrive` (the ONE
+  definition — no second one in SQL), until it meets a reset (whose drive it includes: the boundary) or
+  the oldest drive. It returns `LtftDriveRows` — the per-drive dict plus `historyExhausted`. **The epoch
+  is bounded by the reset, never by a count; raising the count is rejected** (F-096, ruled 2026-09-22).
+- **Builder — `buildLtftTrendState()`** (pure): gate → per-drive points → the current epoch
+  (`_currentEpoch`; `epochClipped` only when a reader could not reach the boundary) → the baseline =
+  the **epoch grand mean**, rolling 5-drive medians, trend and `sustained` over the **whole epoch**.
+  `points` (one card bar each) is the newest `DEFAULT_TREND_DRIVES` epoch points; `driveCount` and
+  `epochDriveCount` count the whole epoch. Every absence is typed (`reason`).
+- **Emitter — `makeLtftTrendEmitter()`**, wired by `card_state_emitter` every
+  `pi.dashboard.ltftTrendIntervalSeconds` (default **300 s**: the value cannot change until a drive ends).
+  It trusts `LtftDriveRows.historyExhausted`; a plain-dict reader keeps the count rule (exactly
+  `driveLimit` drives with no reset reads as clipped — the safe failure). Best-effort atomic
+  `ensureStatesDir`/`writeStateAtomic` (C-5), write failures logged, never raised.
+- **Cost, MEASURED on the car 2026-10-05** (read-only, 3 runs each): today's 20-drive read+build **0.79 s**
+  (and clipped); the paging read+build over the live 64-drive epoch **2.33 s** (read 0.80, build 1.53) —
+  **+1.5 s once per 300 s, growing ~linearly with epoch length.** Evidence:
+  `offices/architect/evidence/2026-10-05-us420-live-probe/`.
+
+**Render (`carousel.js`).** `ltftTrendView()` (pure) + `renderLtftTrendBody()`
+paint a multi-drive bar row, each bar coloured by its **own** drift level so a
+>±10% drive is visibly not-green. US-507 relocated the surface into the merged
+Health card; **US-540-b returned it to a standalone "Fuel Trim" card**, reached
+by the normal `data-state` dispatch through `sourceCardSpec()` /
+`sourceCardView()` / `renderSourceCard()`. `healthCardView()` and
+`renderHealthCard()` **no longer exist**. Across all three arrangements the
+retitle is a LABEL change only -- the emitter, the thresholds, the classifier
+and the insufficient guard are all untouched, so Spool's LTFT semantics are
+preserved exactly. Defense-in-depth: the view re-forces `'insufficient'`
+when `sufficient !== true`, so a mislabeled state can't paint green. The
+runtime `emit()` is wired by `card_state_emitter._initializeLtftTrendProducer`
+(see the emitter bullets above). *(This sentence said "no `src` call site yet"
+until 2026-10-05; that stopped being true when US-661 wired it.)*
+
+#### Visual token SSOT + the two-file mirror (US-510, Sprint 68 / V0.29.23) [Atlas Rule-10 2026-07-31]
+
+`src/pi/ui/tokens.css` is the **visual SSOT** (Iris owns values; Atlas gates
+additions under Rule-10). `dashboard.html` links **only `dashboard.css`**, so the
+dist `:root` is a **runtime MIRROR** of the SSOT, not a second source: every
+token is declared in both files and `tests/ui/test_dashboard_token_ssot.py` +
+`test_dashboard_fidelity_pass.py` compare the VALUES. A value that exists in only
+one file is drift by definition.
+
+US-510 closed the TD-065/TD-067 residue and recorded three decisions worth
+keeping:
+
+1. **Promotion is zero-visual-change by construction.** `--bg #000000` /
+   `--surface #111111` were dist-only literals; Atlas ruled them into the SSOT
+   **at their shipped values**, making "a diff that moves a rendered pixel FAILS"
+   the DoD gate. The same rule drove the takeover's deep gradient edges
+   (`--amber-deep` / `--green-deep` / `--green-deepest`) to **named tokens
+   holding the existing literals** rather than a derived `color-mix()`: a
+   computed mix would produce a *different* colour, which is a restyle wearing a
+   tokenization's clothes.
+2. **A destructive ACTION is a different axis from an alarm STATE.**
+   `--destructive #C62828` + `--destructive-border #7F1D1D` dress the Mode-04
+   clear-confirm and **MUST stay distinct from `--critical-red #D32F2F`**.
+   Aliasing them would "tokenize" the surface while destroying the distinction
+   the split exists for — the operator could no longer tell "you are about to
+   erase your codes" from "pull over". With these landed the brand reds
+   (`--red*`) have **zero consumers** on the dashboard; they stay declared
+   because the mirror carries the tier, not because anything paints it.
+3. **Type is a token tier too.** `--font-mono` (all data/values — the tabular
+   instrument vernacular, deliberately unchanged) and `--font-display` (brand
+   moments ONLY: the `ECLIPSE OBD-II` wordmark + card titles). US-510 landed the
+   token + the bindings; the woff2 payload followed as a fast-follow (below).
+
+**BL-027 CLOSED (fast-follow, 2026-08-01) — the brand face is an EMBEDDED
+asset, and the mirror rule extends to it.** The face is an OFL-licensed
+**Oswald** subset (A–Z / 0–9 / space / hyphen, weight 600, 2,896 B) inlined as a
+CSP-safe `@font-face` **base64 data-URI**. Four decisions worth keeping:
+
+- **The mirror is load-bearing for the face, not just for values.** The
+  `@font-face` is declared in **both** `tokens.css` and `dashboard.css`, because
+  `dashboard.html` links only the latter. An SSOT-only drop leaves the panel on a
+  fallback face **with a fully green suite** — the two-correct-halves-that-stopped-
+  agreeing shape (US-494/US-499). `tests/ui/test_dashboard_brand_font_payload.py`
+  asserts the kit sheet carries the face and that both payloads are identical.
+- **Host-only faces left the stack.** The stack is `"Oswald", "Arial Narrow",
+  system-ui, sans-serif`. The previously-locked **Bahnschrift is Microsoft-
+  proprietary, absent from Pi OS and not redistributable** — naming it never put
+  it on the panel, which is why BL-027 existed. Leading with any host-only face
+  means a dev box and the Pi render *different* brand faces; the embedded face is
+  the one face, so the stack lead is pinned **against the embedded family**, not
+  a hardcoded name.
+- **A single-weight subset constrains its consumers.** The subset carries weight
+  600 only, so every rule binding `--font-display` must request 600 — a 700
+  request yields a **synthesised** bold, which on a condensed face reads as a
+  rendering fault. Pinned over the SET of bound rules, and the brand copy is
+  pinned to stay inside the cut glyph range (a stray `·` falls back *per glyph*,
+  splitting a title across two faces mid-word).
+- **The licence ships with the artifact.** SIL OFL 1.1 travels with the font, and
+  the font now travels *inside* the stylesheet — so `OFL.txt` is in the kit **and
+  vouched in `deploy-pi.sh`'s asset list**, since `refresh_asset_dir` prunes
+  unvouched files (an unvouched licence looks compliant in the repo while
+  `/opt/dashboard` ships the face bare).
+
+The no-CDN rule is pinned independently of the asset and now covers the `src`
+descriptor itself: the plausible future "fix" when someone thinks the face is
+broken is a Google Fonts `@import`, which works everywhere except in the car.
+
+Remaining deliberate exception, enumerated rather than silent: `#fff`/`#000` on
+a tiered chip/ribbon/takeover are **contrast pairs** chosen against that tier's
+fill, not palette entries. Naming them means inventing `--on-amber`/`--on-critical`
+(Iris's design call + an Atlas token addition) — routed as **TD-071**, which also
+carries SSOT promotion of the three `--*-deep` edge tokens.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
@@ -2076,7 +6935,7 @@ stamps a JSON record onto the deployed tier:
 | Tier | Path |
 |------|------|
 | Pi   | `/home/mcornelison/Projects/Eclipse-01/.deploy-version` |
-| Server | `/mnt/projects/O/OBD2v2/.deploy-version` |
+| Server | `/home/mcornelison/obd2-server/.deploy-version` |
 
 Record shape: `{version, releasedAt, gitHash, description}`. `releasedAt` is
 UTC ISO-8601 with `T` separator + `Z` suffix (e.g.,
@@ -2434,7 +7293,7 @@ ssh chi-eclipse-01 'tail -n 200 /var/log/carpi/telemetry.log | jq .'
 ssh chi-eclipse-01 'zcat /var/log/carpi/telemetry.log.1 | jq "select(.power_source==\"battery\")"'
 ```
 
-This complements `power_log` (post-US-243, every poll, schema-typed) and `battery_health_log` (one row per drain event). Where the DB tables are queryable but require a working SQLite/sync path, this file survives a database lock or sync outage.
+This complements `power_log` (an event log, not a poll log — its contract is the `src/pi/power/power_db.py` module docstring, US-798) and `battery_health_log` (one row per drain event). Where the DB tables are queryable but require a working SQLite/sync path, this file survives a database lock or sync outage.
 
 ### Non-Pi Fallback
 

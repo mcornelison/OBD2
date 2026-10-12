@@ -10,17 +10,32 @@
   },
   "pi": {
     "network": {
-      "piHost": "10.27.27.28",
+      "piHost": "chi-eclipse-01",
       "piUser": "mcornelison",
       "piPath": "/home/mcornelison/Projects/Eclipse-01",
       "piPort": 22,
       "piHostname": "chi-eclipse-01",
-      "piDeviceId": "chi-eclipse-01"
+      "piDeviceId": "chi-eclipse-01",
+      "piHostEth": "10.27.27.123",
+      "piHostWifi": "10.27.27.124",
+      "wifi": {
+        "weakRssiDbm": -70,
+        "downRssiDbm": -90
+      }
     },
     "application": {
       "name": "Eclipse OBD-II Performance Monitor",
       "version": "1.0.0",
       "environment": "${APP_ENVIRONMENT:production}"
+    },
+    "time": {
+      "localZone": "America/Chicago"
+    },
+    "runtime": {
+      "singleInstanceGuard": {
+        "enabled": true,
+        "lockPath": "/run/eclipse-obd/orchestrator.lock"
+      }
     },
     "database": {
       "path": "${DB_PATH:./data/obd.db}",
@@ -37,6 +52,7 @@
         8,
         16
       ],
+      "retryCeilingSeconds": 320.0,
       "maxRetries": 5,
       "connectionTimeoutSeconds": 30
     },
@@ -57,6 +73,23 @@
         "width": 1920,
         "height": 1080,
         "mode": "auto"
+      },
+      "carousel": {
+        "autoRotateS": 0,
+        "resumeIdleS": 45,
+        "swipeMinPx": 40,
+        "swipeFastVelocityPxPerMs": 0.6,
+        "swipeFastTravelFrac": 0.55,
+        "parkedOnS": 8,
+        "parkedOffS": 3
+      },
+      "autoDim": {
+        "luxMin": 3.0,
+        "luxFull": 300.0,
+        "minLevel": 0.75,
+        "defaultLevel": 1.0,
+        "luxStaleSec": 10,
+        "curve": "logarithmic"
       }
     },
     "autoStart": {
@@ -190,7 +223,7 @@
           "displayOnDashboard": false
         },
         {
-          "name": "O2_BANK1_SENSOR2_V",
+          "name": "O2_B1S2",
           "logData": true,
           "displayOnDashboard": false
         }
@@ -298,7 +331,7 @@
             "caveat": "US-199: Mode 01 PID 0x01 bits 0-6 \u00e2\u20ac\u201d same PID as MIL_ON; K-line cost absorbed by python-obd response cache"
           },
           {
-            "name": "O2_BANK1_SENSOR2_V",
+            "name": "O2_B1S2",
             "pid": "0x15",
             "caveat": "US-199: SUPPORT UNCERTAIN on 2G; probe at connection open and silent-skip if unsupported (Spool priority 6)"
           }
@@ -356,12 +389,12 @@
     },
     "tieredThresholds": {
       "coolantTemp": {
-        "unit": "fahrenheit",
-        "normalMin": 180,
-        "cautionMin": 210,
-        "dangerMin": 220,
-        "cautionMessage": "Coolant temperature elevated ({value}F). Monitor closely.",
-        "dangerMessage": "DANGER: Coolant temperature critical ({value}F). Risk of head gasket failure. Reduce load immediately."
+        "unit": "celsius",
+        "normalMin": 85,
+        "cautionMin": 103.5,
+        "dangerMin": 109.5,
+        "cautionMessage": "Coolant temperature elevated ({value} C). Check fan, coolant level and water pump; reduce load.",
+        "dangerMessage": "DANGER: Coolant temperature critical ({value} C). Pull over. Risk of head gasket failure."
       },
       "stft": {
         "unit": "percent",
@@ -419,8 +452,10 @@
       "cleanupTimeHour": 3
     },
     "powerWatch": {
- 	  "smoothingSec": 7,
-	  "smoothingPollSec": 1
+      "drainFloorVolts": 3.6,
+      "drainFloorDwellReads": 5,
+      "smoothingSec": 7,
+      "smoothingPollSec": 1
     },
     "powerMonitoring": {
       "enabled": false,
@@ -435,11 +470,8 @@
         "historyWindowSeconds": 60,
         "vcellSlopeThresholdVoltsPerMinute": -0.005,
         "vcellBatteryThresholdVolts": 3.95,
-        "vcellBatteryThresholdSustainedSeconds": 30
-      },
-      "statusDisplay": {
-        "enabled": true,
-        "forceSoftwareRenderer": true
+        "vcellBatteryThresholdSustainedSeconds": 30,
+        "socColdStartWindowSeconds": 180.0
       }
     },
     "dtc": {
@@ -448,9 +480,47 @@
     "driveSummary": {
       "enabled": true
     },
+    "gear": {
+      "enabled": true,
+      "bands": [
+        {
+          "gear": 5,
+          "ratioMin": 0.0,
+          "ratioMax": 29.5
+        },
+        {
+          "gear": 4,
+          "ratioMin": 29.5,
+          "ratioMax": 37.8
+        },
+        {
+          "gear": 3,
+          "ratioMin": 37.8,
+          "ratioMax": 54.3
+        },
+        {
+          "gear": 2,
+          "ratioMin": 54.3,
+          "ratioMax": 86.7
+        },
+        {
+          "gear": 1,
+          "ratioMin": 86.7,
+          "ratioMax": 999.0
+        }
+      ],
+      "minSpeedKph": 5.0,
+      "minRpm": 900,
+      "debounceSec": 2.0,
+      "maxAgeSec": 3.0,
+      "parkDwellSec": 20.0
+    },
+    "captureHealth": {
+      "enabled": true,
+      "stallSeconds": 60.0
+    },
     "companionService": {
       "enabled": true,
-      "baseUrl": "http://10.27.27.10:8000",
       "apiKeyEnv": "COMPANION_API_KEY",
       "syncTimeoutSeconds": 30,
       "batchSize": 500,
@@ -461,7 +531,9 @@
         4,
         8,
         16
-      ]
+      ],
+      "quarantineThreshold": 5,
+      "quarantineThrottleSeconds": 3600
     },
     "sync": {
       "enabled": true,
@@ -470,6 +542,73 @@
         "interval",
         "drive_end"
       ]
+    },
+    "bus": {
+      "enabled": true
+    },
+    "sensors": {
+      "imu": {
+        "enabled": true,
+        "sampleHz": 50,
+        "magMode": "direct",
+        "fusionEngine": "imufusion",
+        "magDeclinationDeg": -4.0,
+        "magCalibration": {
+          "hardIronUt": [-4.4974, 1.7186, 6.1315],
+          "softIron": [[1.003814, 0.017776, -0.011429], [0.019606, 1.006167, -0.009419], [-0.012002, -0.008964, 0.990653]]
+        },
+        "accelCalibration": {
+          "offsetMs2": [-0.034698, -0.184143, 0.136256],
+          "matrix": [[0.999277, 0.000351, 0.000869], [0.000351, 0.998685, -0.000318], [0.000869, -0.000318, 0.994586]]
+        },
+        "persistHz": 2,
+        "stateHz": 1,
+        "gravityTauSec": 5.0,
+        "pitchTauSec": 5.0,
+        "accelTrustBand": 0.02,
+        "zuptMinStopSec": 3.0,
+        "zuptSpeedMaxAgeSec": 2.0,
+        "zuptMinStops": 5,
+        "zuptWindowStops": 20,
+        "gyroFaultMinRadS": 0.10,
+        "gyroRecoverySampleCount": 20,
+        "gyroRecoverySettleSec": 1.0,
+        "magMaxAgeSec": 1.25,
+        "mount": {
+          "forward": "+x",
+          "left": "+y",
+          "up": "+z"
+        }
+      },
+      "light": {
+        "enabled": true,
+        "sampleHz": 1
+      },
+      "retentionDays": 45,
+      "logGate": {
+        "enabled": true,
+        "preRollSec": 60,
+        "holdSec": 300
+      }
+    },
+    "splash": {
+      "enabled": true,
+      "statesDir": "/run/eclipse-obd/states",
+      "tokenPath": "/run/eclipse-obd/states/.http-token",
+      "assetsDir": "/opt/splash",
+      "stateServer": {
+        "host": "127.0.0.1",
+        "port": 9899
+      },
+      "bootState": {
+        "pollIntervalMs": 500,
+        "hardCapSeconds": 12,
+        "criticalServices": [
+          "eclipse-powerwatch",
+          "eclipse-obd",
+          "boot-progress-finalize"
+        ]
+      }
     },
     "update": {
       "enabled": true,
@@ -484,7 +623,17 @@
       "ssid": "DeathStarWiFi",
       "subnet": "10.27.27.0/24",
       "pingTimeoutSeconds": 3,
-      "serverPingPath": "/api/v1/ping"
+      "serverPingPath": "/api/v1/health",
+      "joinWaitSec": 120,
+      "stallSec": 60,
+      "sweepTimeoutSec": 6
+    },
+    "location": {
+      "home": {
+        "lat": "${PI_HOME_LAT}",
+        "lon": "${PI_HOME_LON}",
+        "elevationM": "${PI_HOME_ELEVATION_M}"
+      }
     },
     "export": {
       "directory": "${EXPORT_DIR:./exports/}",
@@ -526,17 +675,20 @@
     "power": {
       "power_monitor": {
         "enabled": true
-      }
+      },
+      "cellEpoch": "18650-pack"
+    },
+    "batteryHealth": {
+      "monthlyIntervalDays": 30
     }
   },
   "server": {
     "network": {
-      "serverHost": "10.27.27.10",
+      "serverHost": "10.27.27.120",
       "serverUser": "mcornelison",
       "serverPort": 8000,
       "serverHostname": "chi-srv-01",
-      "serverProjectPath": "/mnt/projects/O/OBD2v2",
-      "serverBaseUrl": "http://10.27.27.10:8000"
+      "serverProjectPath": "/home/mcornelison/obd2-server"
     },
     "ai": {
       "enabled": false,

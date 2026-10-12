@@ -12,14 +12,20 @@ This folder contains the project's coding standards, architecture reference, and
 | [standards.md](standards.md) | Coding standards, naming conventions, file headers, best practices |
 | [methodology.md](methodology.md) | TDD workflow, development processes, Ralph agent instructions |
 | [anti-patterns.md](anti-patterns.md) | Common mistakes and what NOT to do |
+| [design-patterns.md](design-patterns.md) | Catalogued patterns and when they apply -- the remedies to `anti-patterns.md`'s failure shapes. Route stories to these BY NAME |
 | [glossary.md](glossary.md) | Terms, acronyms, and domain language definitions |
 
 ## Subfolders
 
 | Folder | Description |
 |--------|-------------|
-| [samples/](samples/) | Reference documents and hardware specs |
 | [user-stories/](user-stories/) | Ralph agent user story format and token budgeting |
+
+**Moved off-repo 2026-08-24:** `samples/` (brainstorming docs, AI mock-up PNGs,
+an unadopted font) now lives on the fleet share at
+`$FLEET_SHARE/knowledge/samples/`. It had no code reader and no product role --
+it is provenance, not specification. `UI/` moved the other way, into the product
+tree at `src/pi/ui/`, because it is the Pi's deployed web root.
 
 ## How to Use
 
@@ -27,7 +33,8 @@ This folder contains the project's coding standards, architecture reference, and
 2. **Architecture decisions**: Reference `architecture.md`
 3. **Process questions**: Refer to `methodology.md`
 4. **Avoiding mistakes**: Check `anti-patterns.md`
-5. **Domain terms**: Look up in `glossary.md`
+5. **Choosing an approach**: Name the pattern from `design-patterns.md` -- if it applies in two or more places it belongs there, not in a ticket
+6. **Domain terms**: Look up in `glossary.md`
 
 ## Related
 

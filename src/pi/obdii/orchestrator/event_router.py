@@ -28,6 +28,10 @@
 #               |              | pattern.  Closes the 8-second-of-live-OBD-
 #               |              | with-zero-rows window in the 2026-05-08
 #               |              | engine-on test journal.
+# 2026-09-30    | Rex (US-674) | On the stop path _handleDriveEnd skips the
+#               |              | drive-end Mode 07 read (logs 'drive-end DTC
+#               |              | skipped: ecu_unpowered_at_stop') and the
+#               |              | drive-end sync push.  Ignition-on unchanged.
 # ================================================================================
 ################################################################################
 
@@ -97,6 +101,19 @@ class EventRouterMixin:
     def _maybeEscalateOnAlternatorActiveSignature(
         self, batteryVoltage: float
     ) -> bool: ...
+
+    # US-630: provided by CardStateEmitterMixin -- declared here so
+    # type-checkers see the binding when _handleReading routes SPEED/RPM into
+    # the derived-gear producer.
+    #
+    # AN ANNOTATION, NOT A `def ... : ...` STUB, and the difference is
+    # load-bearing: a stub is a real method with a real (empty) body, and this
+    # mixin precedes CardStateEmitterMixin in the orchestrator's MRO -- so a
+    # stub would SHADOW the implementation and the gear would silently never be
+    # derived. Caught here by the wiring test in tests/pi/obdii/
+    # test_gear_state_emitter.py, which is why that test drives the real
+    # callback rather than calling observeGearInput directly.
+    observeGearInput: Callable[[str, Any], None]
 
     def registerCallbacks(
         self,
@@ -270,16 +287,27 @@ class EventRouterMixin:
             except Exception as e:
                 logger.debug(f"Display update failed: {e}")
 
+        # US-674: the drive closed by stop() is the key-off close.  The ECU is
+        # unpowered and the Pi is about to power off, so neither the network
+        # push nor the ECU query below belongs on it.
+        isStopInProgress = getattr(self, '_isStopInProgress', None)
+        onStopPath = callable(isStopInProgress) and bool(isStopInProgress())
+
         # US-226: fire the drive-end sync trigger when configured.
         # Independent of the interval trigger -- either or both may be
         # enabled.  Exception-safe: a transport hiccup must not block
         # downstream drive-end handlers or the external callback.
-        try:
-            triggerFn = getattr(self, 'triggerDriveEndSync', None)
-            if callable(triggerFn):
-                triggerFn()
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"drive-end sync trigger error: {e}")
+        # US-674: not on the stop path.  The drive close used to run after
+        # syncClient was released, so this push never fired at stop; the
+        # reorder must not add a network wait before poweroff.  powerwatch's
+        # shutdown sync owns the drain.
+        if not onStopPath:
+            try:
+                triggerFn = getattr(self, 'triggerDriveEndSync', None)
+                if callable(triggerFn):
+                    triggerFn()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"drive-end sync trigger error: {e}")
 
         # US-292: Mode 07 (pending DTCs) at drive_end.  Pending codes are
         # the leading indicator -- they fire BEFORE the MIL ladder, so
@@ -288,7 +316,14 @@ class EventRouterMixin:
         # callback (and BEFORE DriveDetector._closeDriveId clears the
         # process-wide drive_id) so DtcLogger can fall back to
         # getCurrentDriveId() when stamping the dtc_log row.
-        self._dispatchDriveEndDtcs()
+        # US-674 (Atlas 5th ruling): the stop-path close does not query the
+        # ECU -- 4/4 key-off reads failed -- and says so in one typed line, so
+        # "skipped" can never read as "read, none found".  The ignition-on
+        # path is unchanged.
+        if onStopPath:
+            logger.info("drive-end DTC skipped: ecu_unpowered_at_stop")
+        else:
+            self._dispatchDriveEndDtcs()
 
         # Call external callback
         if self._onDriveEnd is not None:
@@ -399,6 +434,19 @@ class EventRouterMixin:
                 self._displayManager.updateValue(paramName, value, unit)
             except Exception as e:
                 logger.debug(f"Display update failed: {e}")
+
+        # US-630: route SPEED/RPM into the derived-gear producer. This car has
+        # no gear PID, so the ratio of these two IS the gear signal, and this
+        # callback is where both arrive freshest -- the 2 s card-state cadence
+        # would hand the derivation samples as old as its own freshness window.
+        # observeGearInput ignores every other parameter and returns immediately
+        # when the derivation is dark, so the cost on the poll path is a name
+        # comparison.
+        if paramName is not None:
+            try:
+                self.observeGearInput(paramName, value)
+            except Exception as e:  # noqa: BLE001 -- must never crash the poll
+                logger.debug(f"Gear derivation failed: {e}")
 
         # Pass reading to drive detector for state machine processing
         if self._driveDetector is not None:
@@ -586,6 +634,12 @@ class EventRouterMixin:
         # already RUNNING) so calling here is safe regardless of state.
         self._restartDataLoggerOnConnectionRestored()
 
+        # US-404: one-shot key-on (KOEO) DTC read on the connection-established
+        # edge.  Gated internally on no active RUNNING drive -- it surfaces
+        # codes at key-on/engine-off (RPM 0) where DriveDetector never arms,
+        # closing the "blank at key-on" gap (F-111 / DTC-A9).
+        self._dispatchKeyOnDtcs()
+
         # Call external callback
         if self._onConnectionRestored is not None:
             try:
@@ -655,6 +709,77 @@ class EventRouterMixin:
             )
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.warning(f"DTC session-start dispatch failed: {e}")
+
+    def _dispatchKeyOnDtcs(self) -> None:
+        """Fire a one-shot key-on (KOEO) DTC read on the connection edge (US-404).
+
+        Gated on NO active RUNNING drive: while a drive is RUNNING the
+        drive-scoped DTC paths (session-start / MIL / periodic) own capture; the
+        KOEO read exists only for key-on/engine-off (RPM 0) where DriveDetector
+        never arms (Atlas A-9).  Skips silently when DTC capture isn't applicable
+        (no logger / no live connection -- e.g. simulator or replay).  Persists
+        every row ``drive_id = NULL`` (DtcLogger.logKeyOnDtcs) and, when a ``dtc``
+        emitter is wired, publishes the enriched state.  Exception-isolated so
+        the connection-restored handler stays non-fatal; the drive gate FAILS
+        CLOSED (an unverifiable drive state skips the read) so a KOEO row is
+        never written while a drive might be in progress.
+        """
+        if self._dtcLogger is None or self._connection is None:
+            return
+
+        driveDetector = getattr(self, '_driveDetector', None)
+        if driveDetector is not None:
+            try:
+                if driveDetector.isDriving():
+                    return  # a RUNNING drive owns DTC capture, not the KOEO path
+            except Exception as e:  # noqa: BLE001 -- fail closed on an unknown state
+                logger.debug(f"KOEO drive-state gate uncertain, skipping: {e}")
+                return
+
+        try:
+            result = self._dtcLogger.logKeyOnDtcs(connection=self._connection)
+            logger.info(
+                "DTC key-on | stored=%d | pending=%d",
+                getattr(result, 'storedCount', 0),
+                getattr(result, 'pendingCount', 0),
+            )
+            self._emitDtcState(result)
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.warning(f"DTC key-on dispatch failed: {e}")
+
+    def _emitDtcState(self, result: Any) -> None:
+        """Publish the captured KOEO codes to the ``dtc`` state file (US-404).
+
+        Best-effort: when no ``dtc`` emitter is wired (the live call-site
+        injection follows the US-400/401 deferral pattern) this is a no-op.
+        Converts the captured ``DiagnosticCode`` list into the emitter's raw
+        code dicts, stamping ``driveId = None`` (a KOEO read is never a drive)
+        and ``logged = True`` (the rows were just written).  ``mil`` is the
+        honest "a stored fault is present" proxy; ``newSinceTs`` (the takeover
+        trigger) is US-405's concern and ``sessionResetLock`` is US-407's.
+        """
+        emitter = getattr(self, '_dtcEmitter', None)
+        if emitter is None:
+            return
+        codes = getattr(result, 'codes', None) or []
+        rawCodes = [
+            {
+                "code": getattr(c, 'code', None),
+                "status": getattr(c, 'status', None),
+                "description": getattr(c, 'description', ''),
+                "driveId": None,
+                "setAtTs": None,
+                "logged": True,
+                "syncAcked": False,
+            }
+            for c in codes
+        ]
+        emitter(
+            codes=rawCodes,
+            mil=getattr(result, 'storedCount', 0) > 0,
+            newSinceTs=None,
+            sessionResetLock=[],
+        )
 
     def _dispatchMilEventDtcs(self) -> None:
         """Fire DtcLogger.logMilEventDtcs from _handleReading on rising edge."""

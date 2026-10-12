@@ -708,6 +708,402 @@ class Orchestrator:
 
 ---
 
+## Guard / Verification Anti-Patterns
+
+> **The family, in one line: EVIDENCE THAT CANNOT DO THE JOB IT IS CITED FOR.**
+>
+> - *the inert guard* — a check that cannot fail is not evidence of correctness
+> - *the census as acceptance* — a count is not evidence of completeness
+> - *ask the instrument a question it can answer* — a proxy that reads the same in the healthy
+>   case and the failure case is not evidence of anything
+> - *scope* — a run cited for a path it could not have touched is not evidence about that path
+> - *currency* — a record cited as current is not evidence about today
+> - *the write fence that reads like a test boundary* — a limit on what you may EDIT is not
+>   evidence about what you have BROKEN
+> - *the tool's PASS as the verdict* — an instrument that answers one question is not evidence
+>   about the question you are actually asking
+> - *the fresh-substrate gate* — a test run against an EMPTY store is not evidence about a
+>   POPULATED one. **On a fresh database a rebuild and a create are indistinguishable**, so a
+>   green suite says nothing about the only case that matters. This took the collector down on
+>   2026-09-24 (V0.29.66) with **every gate green**: the car's database was five months and
+>   400,755 rows old, and nothing anywhere had run a schema step against a populated one.
+>   Mechanism and remedy: `specs/design-patterns.md` §10.
+>
+> All eight pass review, because in all eight something **looks like information and is not.**
+>
+> ⚠️ *scope* carries a sub-case worth knowing by name — **the restated gate**, where the wrong
+> scope came from the **contract** rather than from the author, so the agent who satisfied their
+> own Definition of Done faithfully still shipped a red gate.
+>
+> **The one question that catches every member:** *what would this evidence look like if the claim
+> were FALSE?* If the answer is **"the same"**, it is not evidence. ⚠️ **Apply it to ABSENT evidence
+> too** — the hunt for a Synology snapshot was debugged as a *visibility* problem for two days when
+> it was an *existence* problem, because the thing being searched for was assumed to be there.
+
+
+### The inert guard — a check that is syntactically present and semantically does nothing
+
+**The pattern.** A guard exists, reads correctly, passes review, and enforces nothing. It is worse than
+having no guard at all, because its presence stops anyone looking.
+
+**Five real instances, all found 2026-08-17..20:**
+
+| Guard | Why it was inert |
+|---|---|
+| `Write(path)` permission rules | Path-scoped file rules are `Edit(path)` ONLY; `Write(path)` matches nothing. A `Write(**/.ssh/**)` **deny** guarded nothing while reading as protection. |
+| `.gitignore` for office settings files | The rule was correct and 3 months old — but `.gitignore` does **not untrack already-tracked files**, so the files it "covered" stayed committed. |
+| Kiosk watchdog threshold | Set to 100 markers/60 s, calibrated against a ~30,000/window catastrophic wedge. The observed regime was 84–101 — **inside the signal's own band**, so it reported `healthy; markers=84` while the display was frozen. |
+| `drive_summary.data_quality` | `NOT NULL DEFAULT 'full'` — a verdict column defaulting to the **best verdict**, so "never assessed" and "assessed and complete" are the same stored value. |
+| `journalctl --grep` exit code | Exits 1 on **zero matches**; the caller treated non-zero as "journal unreadable", so a perfectly healthy system was reported as an honest-unknown — the inverse of the documented intent. |
+
+**A sixth instance, added 2026-09-04 (Atlas) — and it is one layer DOWN, which makes it worse:**
+
+| Guard | Why it was inert |
+|---|---|
+| `pi.pollingTiers` in `config.json` | A complete four-tier OBD rate plan, plus a tier engine in `src/pi/obdii/data/polling_tiers.py` that **nothing imports** — `grep -rn "^\s*\(from\|import\).*polling_tiers" src/` returns **0**. The live poll list is `pi.realtimeData.parameters` — flat, every PID every cycle. Measured: ~1,747 rows for **each** of 16 PIDs on drives 64-67, where tiers would give 1 : 1/3 : 1/10 : 1/30. Four PIDs the Pi actually polls appear in **no tier at all**. |
+
+⚠️ **Check that claim with the import-statement grep above, not a bare name search.** A bare
+`grep -rn pollingTiers src/` returns **4** — one config-schema field and three comments, two of
+which document this very defect. **Counting the token instead of the construct would make this
+row read false.** It is the same discriminating move as `grep -c 'PldSensor('` rather than
+`grep -c PldSensor` (US-668, Marcus).
+
+⚠️ **Dead CONFIG is strictly worse than a dead CHECK, and the difference is worth naming.** A dead
+check merely *fails to catch*. Dead config **actively supplies wrong numbers to anyone who reasons
+from it** — and it survives review precisely *because* those numbers are properly sourced. It had
+already misled one build (`DEFAULT_MAX_AGE_S = 2.0` in `gear_derivation.py` was derived from it by
+an author who cited his source scrupulously), and it came within one note of misleading a second:
+a complete, self-consistent, **false** root cause for a display defect, killed only by one query
+against `realtime_data`.
+
+> **A config file is an instrument. It is evidence about INTENT, never about BEHAVIOUR.**
+> Before quoting any rate, list, threshold or topology from config, confirm it in the running
+> system's output.
+
+**Why they survive review.** Each is *locally* reasonable. The code is innocent; the failure lives at a
+boundary — a matcher's syntax, a tool's exit convention, a schema default, a threshold's relationship to
+the noise it sits in. Reading the guard tells you what its author *meant*.
+
+**The rule:**
+
+> **The presence of a check is evidence about intent, never about enforcement. The only way to know a
+> guard works is to make it fail on purpose.**
+
+**How to apply it.** For every guard you write or inherit:
+
+1. **Mutate the thing it guards and prove it goes RED.** (This is exactly how the `data_quality` parity
+   guard was validated — dropping a column from the strip set produced 5 RED, which is what confirmed the
+   teeth were real.)
+2. **Check the threshold against the signal's actual noise band**, not against the catastrophic case it
+   was calibrated on. A threshold inside the oscillation band nuisance-fires or silently never fires.
+3. **Verify the APPLIED state, not the declared one** — schema defaults, effective permissions, the
+   deployed unit file. Declared config and effective config are two different facts. *(See the A-10
+   applied-schema-drift family: the guard family that caught four drift instances would have missed the
+   `data_quality` default, because it asserted column presence and type but never DEFAULTS.)*
+4. **Make a guard's failure message name the RIGHT remedy.** It fires exactly when someone is already
+   confused; a message offering the harmful fix converts a correct detection into a wrong change.
+
+**Related:** the *honest availability* + *variance detection* sections of
+`specs/ssot-design-pattern.md` — an inert guard and a fabricated reading are the same disease
+(something that looks like information and is not) at two different layers.
+
+### The census as acceptance — a counted number in a DoD is a fact with a shelf life
+
+**Added 2026-08-30 (Atlas), after a count was wrong three times on one story.**
+
+A removal, rename or sweep story whose Definition of Done says *"remove it from all 3 sites"* has
+put a **measurement** where a **contract** belongs. The number was true when someone ran the search;
+it decays silently between filing and building, and nobody re-runs it because the DoD already
+states an answer.
+
+#### The worked example — US-595, `alarmFloorLevel`
+
+| stage | claimed | reality |
+|---|---|---|
+| Story DoD | **3 sites** | wrong |
+| Atlas design gate — *"corrected, verified against current code"* | **4 sites** | still wrong |
+| Rex, picking the story up | **9 sites** | the four were only the PRODUCTION sites; the tests pinning them were not counted |
+| Ralph shipped | **8 of 9** | site 9 was `specs/architecture.md`, inside his surface, and nothing stopped him |
+
+**A correction that was itself verified against current code still undercounted by five, and the
+corrected census still shipped one short.** Care is not the fix — care is what failed, three times,
+on one story.
+
+#### The rule
+
+> **A removal/sweep story's acceptance must be an EXECUTABLE PREDICATE, never a count.**
+> A number may appear as a sizing hint. It must never be the acceptance.
+
+```
+WRONG   DoD: remove alarmFloorLevel from all 3 sites
+
+RIGHT   DoD: this command reports no site that DEFINES, READS, or DOCUMENTS-AS-LIVE the key:
+             grep -rn 'alarmFloorLevel' -- src/ specs/ tests/ config.json
+             (the count is whatever it is on the day; the command is the contract)
+```
+
+Why it works where care did not: a predicate is **re-evaluated by whoever runs it, on the day,
+against the tree they actually have.** It cannot undercount — the "4" and the "9" both become
+irrelevant. And it is **falsifiable by anyone in one line**, so no reviewer has to trust anybody's
+verification.
+
+#### ⚠️ The refinement, found by applying the rule to the very story that produced it
+
+**A bare `returns zero` is too crude, and would have been wrong here.** Running the predicate over
+the finished work returned **27 lines** — and almost all of them were correct: deliberate
+retirement notes (*"alarmFloorLevel was HERE and is RETIRED"*) and the guard tests that exist
+precisely to assert its absence, including one that pins that an **old config still carrying the key
+resolves cleanly**.
+
+So the predicate must be **scoped to the violation, not to the string**:
+
+> the key must not be **defined**, **read**, or **documented as live**.
+> Naming it as *retired* is not a violation — it is the record of the retirement.
+
+A predicate that forbids the string outright would delete its own history and fail the moment
+someone documents the removal. **Precision in what counts as a violation is part of the contract,
+not a detail of running it.**
+
+#### Scope
+
+Removal, rename and sweep stories — anywhere a DoD says *"all N sites"*, *"every consumer"*, *"the 3
+places"*. **Not** feature stories, where a count is usually a scope statement rather than an
+acceptance.
+
+**Related:** *the inert guard*, above — both are cases of something that **looks like information
+and is not.** A census in a DoD looks like verification; it is a snapshot of someone else's morning.
+
+### Ask the instrument a question it can answer
+
+**The pattern.** A measurement is taken with a working instrument, and the reading is used to
+answer a question that instrument cannot distinguish. Nothing errors. The number is real. The
+conclusion is unsupported.
+
+This is the hardest of the three to catch, because **the instrument is not broken.** There is no
+failure to notice — only a silent mismatch between what was measured and what was claimed.
+
+**Seven real instances, 2026-08-29..31, across two agents and one program:**
+
+| # | The proxy | The question it was asked | Why it could not answer |
+|---|---|---|---|
+| 1 | `markers=0` from the kiosk watchdog | *is the kiosk wedged?* | its own `journalctl` had **timed out**. "I could not look" was reported as "nothing there" |
+| 2 | A photograph of the panel | *is the Bluetooth glyph correct?* | **the panel was frozen.** A display that has stopped repainting cannot testify about any live value |
+| 3 | `ls` sorted by **mtime** | *which inbox notes are recent?* | the share migration **restamped every file**. Three same-day notes were missed, one carrying an assignment |
+| 4 | `grep -c '\n'` | *did a literal escape survive the edit?* | the shell ate the backslash; it counted every line containing the letter **n** |
+| 5 | ESTABLISHED socket count | *is the page still polling?* | the polls are short. A **healthy** page reads 0 as often as a dead one |
+| 6 | Elapsed uptime | *did this boot accumulate less damage?* | the panel was **frozen for most of it**. 7.4 hours of doing nothing is not 7.4 hours of running |
+| 7 | `ps -o time=` (1-second granularity) | *is this process frozen or working?* | a healthy ~3% process accrues **0.24 s in 8 s** and displays as FLAT. **So does a frozen one** |
+
+#### ⚠️ Instance 7 is the one to read twice
+
+The first proposed fix for #7 was *"sample over 30 seconds instead of 8."* **It has the same
+defect** — 3% of 30 s is 0.9 s, still below the 1-second granularity, still FLAT in both cases.
+
+**The seventh instance appeared inside the correction for the first six, written by someone who
+had just articulated the rule.** That is the evidence that this failure is *structural, not
+careless*: a proxy **feels** like evidence, and the feeling survives knowing better.
+
+#### The test
+
+> **Ask what the proxy would read in the FAILURE case and in the HEALTHY case.
+> If both produce the same reading, it is not evidence.**
+
+One line, and it catches instances 1, 2, 4, 5, 6 and 7 — including the correction that failed.
+
+#### The fix is usually RESOLUTION, not patience
+
+A longer window is the instinctive repair and it is often the wrong one, because it requires
+guessing the healthy rate in advance — the very thing you do not know. Prefer a higher-resolution
+source:
+
+```bash
+# NOT: ps -o time=   (1-second granularity — cannot see a 3% process at all)
+awk '{print $14+$15}' /proc/<pid>/stat   # utime+stime in JIFFIES, 100/s
+# a healthy 3% process = ~24 jiffies in 8 s, unmistakable against a frozen 0
+# verified on chi-eclipse-01 2026-08-31: 37 jiffies in 8 s = 4.6%
+```
+
+#### Fields that ARE trustworthy on this project
+
+Learned the hard way, each one replacing a proxy above:
+
+| To establish | Use | Never |
+|---|---|---|
+| A process is alive/working | `/proc/<pid>/stat` jiffies | `ps -o time=` over a short window |
+| An asset actually deployed | `md5sum` against the source | `grep` for a string the code builds at runtime |
+| Code is **running**, not merely present | process start time **vs** asset mtime | "the file is on disk" |
+| Which boot an event belongs to | `journalctl -b` | `--since=@<epoch>` — a **time** filter cannot isolate a boot on a box whose clock steps |
+| A recent file | the **filename date** | `mtime`, on a share that has been migrated |
+
+#### Scope
+
+Any diagnosis, any RCA, any acceptance that rests on a measurement. **Especially when the
+measurement confirms what you already believe** — six of the seven above did.
+
+**Related:** *the inert guard* and *the census as acceptance*, above. Same family: something that
+looks like information and is not. The inert guard fails at enforcement, the census at
+completeness, this one at **discrimination.**
+
+### Scope — a run cited for a path it could not have touched
+
+**Added 2026-09-09 (Atlas; the worked example is Marcus's).**
+
+**The pattern.** A command really ran. Its output is real. It is then cited as evidence about a
+code path **the run never executed**. Nothing in the output says so, because an instrument does not
+report the questions it was not asked.
+
+**Two worked examples, both from this project:**
+
+| Claim | The run | Why it could not support the claim |
+|---|---|---|
+| *"bench provisioning is verified"* | A bench leased **with** a venv | Cited as evidence about the **`-SkipVenv`** path — which that run, by construction, never entered |
+| *"8 failures on the bench, 8 on trunk, no new failures"* (Atlas, US-668) | `pytest tests/pi tests/common tests/lint` | **A set the author chose himself.** The regression was in `tests/ui`, outside it. The evidence could not detect the regressions that existed, and the story was rejected at merge |
+
+**Why it survives review.** The run is genuine, the output is genuine, and the reader has no way to
+see the gap between *what executed* and *what is being claimed* — that gap lives in the author's
+head, not in the artefact. A green result is equally consistent with "the path works" and "the path
+was never reached."
+
+**The rule:**
+
+> **Before citing a run, state what it could NOT have shown.** If the failure being ruled out would
+> have produced the *same* output, the run is not evidence about it.
+
+**How to apply it.** Name the command **and** its scope in the same sentence as the claim. *"No new
+failures across `tests/pi tests/common tests/ui`, on both trees"* is a claim someone can check;
+*"no new failures"* is not. ⚠️ **Where a story deletes a symbol or changes a signature, the scope
+that matters is every CALLER** — see *the write fence*, below.
+
+#### Sub-case: the restated gate — when the CONTRACT supplies the wrong scope, not the author
+
+**Added 2026-09-11 (Atlas, ruling on Rex's finding; the measurement and the remedy are his).**
+
+The two examples above share a blame: the **author** chose a run narrower than the claim needed.
+**This sub-case is the one where the author is blameless** — they ran exactly what their Definition
+of Done named, and the DoD was wrong.
+
+| | |
+|---|---|
+| `ruff check src/ tests/` — **US-603's acceptance predicate** | **0** |
+| `make lint` — **what every story's DoD actually names** | **8, exit 1** |
+
+`Makefile:52` also lints `scripts/`, `validate_config.py`, `tools/pm` and
+`specs/golden_code_sample.py` — widened by US-207/TD-018 **after** US-603's predicate was written.
+So US-603 met its predicate, went green, and **left the gate it existed to fix still red.**
+
+🔴 **Why this needs naming separately from the rest of SCOPE.** Rex's framing, and it is exact:
+
+> *"The record decayed in a dimension nobody was counting — the count was not the failure mode
+> here, the SCOPE was."*
+
+⚠️ **It is not CURRENCY:** the number was honestly re-measured (TD-075 and US-603 both did).
+⚠️ **It is not a census:** the predicate was executable and falsifiable. **It ran, it could have
+failed, and it still measured the wrong thing.** The existing rule — *before citing a run, state
+what it could NOT have shown* — puts the duty on the **citer**, and here the citer discharged it
+faithfully. The gap was written into the contract before they arrived.
+
+⚠️ **And it produces the most demoralising outcome this project can generate:** an agent finishes a
+story, runs the command their own DoD names, and sees red — which is precisely the position the
+story existed to end.
+
+**The mechanism is duplication.** A DoD that *restates* a gate's scope is holding a **mirror** of
+that gate, and nothing asserts the two still agree. That is the same disease as the server-address
+mirror-drift (A-15), one layer up: the copy drifts, and only the copy is checked.
+
+**The rule:**
+
+> **A Definition of Done must INVOKE the gate, never RESTATE its scope.** `make lint` is a claim
+> that cannot decay. `ruff check src/ tests/` is a snapshot of what `make lint` meant on the day
+> someone typed it.
+
+**The remedy, already built — US-706 (`01c33cac`), and it is the generalisable move:** the standing
+test does not carry a path list of its own. It **extracts the recipe out of the Makefile and runs
+that.** ⚠️ **A predicate that re-declares the scope can decay away from the gate again; one that
+extracts it cannot.** Where a gate cannot be invoked directly, derive the scope from the gate's own
+definition at run time — never transcribe it.
+
+⚠️ **The generalisation beyond lint:** any acceptance criterion that names paths, table lists, PID
+sets or file globs which exist authoritatively somewhere else is a mirror. **Read them from the
+authority.**
+
+### Currency — a record cited as current that is not
+
+**Added 2026-09-09 (Atlas; the TD-074 example is Marcus's, and it is the sharpest one we have).**
+
+**The pattern.** A ticket, TD, comment or spec states a fact about the system. It was true when
+written. It is read later as though it still is. **Prose has no expiry date and no dirty bit**, so
+nothing about the record signals that the world moved underneath it.
+
+**The canonical instance — and it was wrong in BOTH directions at once:**
+
+> **TD-074** recorded that a battery-health defect was *"entirely latent — there is no production
+> writer."* By 2026-09-02 **US-526 had shipped that writer** and `battery_health_log` took its first
+> row in **111 days**, so the record's own stated precondition for latency had **expired**.
+> Meanwhile **US-527 had already fixed the defect**, which the record also did not say.
+> ⇒ Reading it in either direction produced a wrong action: file a newly-live P1 that does not
+> exist, or dismiss a live trigger that had already fired.
+
+**Four more, all inside three sprints:**
+
+| Record | What had changed underneath it |
+|---|---|
+| US-583 | Its **own intake record carried a `RESOLVED` block**, and the story sat `pending` for **72 more days** |
+| US-674 (Sprint 80) | Scoped as if US-625 had never shipped — the fix was already on `dev` |
+| US-692 / US-663 (Sprint 81) | Both scoped against defects that **did not exist as described**; each story's acceptance was already true, so both would have shipped green having changed nothing |
+| US-701 / US-702 (F-141) | Scoped as new work; the altitude integrator was **already designed** (US-519/US-520) and the distance integrator **already shipped** (US-436) |
+
+⚠️ **A test FIXTURE is a record too, and it is the least visible kind.** US-617's seven failures
+were caused by a `_FakeDatabase` that predates a qualifying gate added by US-527 and never migrated:
+the fixture supplies no `end_vcell_v`, the gate requires it, so every fixture row is filtered and
+the verdict is honestly `unknown`. **The fixture asserted a fact using an input that could no longer
+produce it.** US-681 was the same shape one sprint earlier.
+
+**Why it survives review.** Nothing decays visibly. The prose is as confident on the day it is wrong
+as on the day it was right, and the reader has no cue to re-check. **This is structural, not a
+competence failure** — five occurrences in three sprints across two careful authors says the process
+has no re-measurement step, not that people were careless.
+
+**The rule:**
+
+> **A record is evidence about the day it was written. Re-measure before acting on it.**
+> The cheapest form is one live check of the thing the record names — a query, a `grep` for the
+> symbol, a read of the file it cites.
+
+⚠️ **And a documented defect window in PROSE is the thing a query never reads.** Where a record
+states a condition that must be re-checked later, make it **executable** — a lint that fails the
+build — or accept that it will be read years later by someone who has never heard of it. *(Worked
+example: the gear display-only ruling, converted from a `conditionalOutcomes` paragraph into
+`tests/lint/test_gear_is_display_only.py`, which fails the build if gear ever becomes persisted,
+synced or polled.)*
+
+### The write fence that reads like a test boundary
+
+**Added 2026-09-09 (Atlas). The finding is Marcus's and the compounding half was Atlas's own.**
+
+**The pattern.** A bench's declared **surface** stops an agent EDITING outside it. It is silently
+read as though it also bounds what the change can BREAK. It does not.
+
+> **A signature change INSIDE a surface breaks callers OUTSIDE it, and nothing in the bench model
+> surfaces that.**
+
+**The worked example.** US-668 was rejected at merge: `pytest tests/ui` failed to **collect** — two
+files, both green on clean trunk. ⚠️ **The compounding half is the instructive one:** the author's
+own regression evidence was *"8 failures on the bench, 8 on trunk, no new failures"*, taken from
+`tests/pi tests/common tests/lint` — **a set chosen from his own surface.** The evidence could not
+detect the regressions that existed. That is the *scope* member, occurring inside the verification
+step meant to catch this.
+
+**The rule, and both halves are required:**
+
+> **A story that DELETES a symbol or CHANGES a signature OWNS every caller of it. Its surface must
+> cover them, or the story is mis-sized.**
+> **And baseline with the SAME command you will claim, across the full affected tree, on BOTH
+> trees.** A correct surface with an agent who still only runs its own subtree fails identically.
+
+**Related:** *scope*, above — this is that member specialised to the bench model, where the fence is
+a real, enforced, useful mechanism that happens to answer a different question from the one a
+reader assumes.
+
 ## Adding New Anti-Patterns
 
 When you encounter a new anti-pattern:
@@ -716,6 +1112,65 @@ When you encounter a new anti-pattern:
 2. Include: Problem, Why It's Bad, Solution, Example
 3. Keep examples concise and clear
 4. Update the "Last Updated" date
+
+### The tool's PASS as the verdict — ACTION → DATA → ANALYSIS → VERDICT
+
+**The pattern.** A validation runs a tool, the tool reports PASS, and the PASS is recorded as the
+verdict. But a verdict is the end of a four-link chain, and **every link can be complete while the
+next is absent**:
+
+    ACTION  ->  DATA  ->  ANALYSIS  ->  VERDICT
+    (we did   (it       (somebody    (and concluded
+     the       produced  actually     something about
+     thing)    rows)     read them)   the CLAIM)
+
+**Doing the action is not producing the data. Producing the data is not analysing it. Analysing it
+is not a verdict about the claim.** A row closed at link 2 has been closed on evidence that nobody
+looked at; a row closed at link 3 has been closed on an analysis of the wrong question.
+
+🔴 **THE SHARPEST CASE IS A TOOL THAT IS WORKING PERFECTLY.**
+`tools/sync/reconcile.py` compares Pi rows against server rows column by column. Run it with the
+parked-phantom-grade defect live (F-140) and the Pi faithfully records a 6 % grade on a stationary
+car, syncs it, and the tool reports **PASS — 200 rows, every column equal.**
+
+**It is telling the truth.** We faithfully transported a wrong number.
+
+⇒ the tool answers **"did what we recorded ARRIVE INTACT?"** It has never answered **"was what we
+recorded RIGHT?"** — and no amount of making it greener will change which question it answers.
+
+**Ask of any green instrument: WHICH of the two questions did it just answer?**
+
+| The tool validates | It says nothing about |
+|---|---|
+| fidelity of transport | correctness of content |
+| the rows that are present | the rows that are missing (F-114's four absent days) |
+| the window you gave it | any interval outside it |
+| that a check ran | that the check could have failed (*the inert guard*) |
+
+**Consequences:**
+
+1. 🔴 **No single instrument closes a row.** A tool's PASS is **one contributor** to a verdict,
+   never the verdict. (CIO, 2026-09-22.)
+2. 🔴 **A Definition of Done must ENUMERATE its contributors.** If the DoD does not say what else
+   has to be true, then whichever instrument runs first becomes the verdict by default. F-140's
+   four numbered closing items are this done right.
+3. **A tool built FOR a validation is a `closingAction`, not a new story.** The manifest already
+   carries `closingAction` / `closingAnalysis`, and the split exists precisely because the action
+   and the analysis are different links. Use the field.
+4. ⚠️ **State what the instrument CANNOT show, in the same breath as the result.** A green run
+   reported without its scope is read as a verdict about everything.
+
+**Worked example of the chain breaking at link 3, 2026-09-22:** a cross-tier comparison produced
+1,190 "data loss" mismatches. Action done, data produced. The analysis was wrong — the query client
+renders FLOAT to ~6 significant figures, so a rendered `0.220267` was being compared against a
+stored `0.220266550779342650`. **The tell was that the float-aware count came back IDENTICAL to the
+naive one: a correction that changes nothing is evidence you are correcting the wrong thing.**
+
+**Related:** *the inert guard* (a check that cannot fail) and *ask the instrument a question it can
+answer* (a proxy that reads the same either way). This one is their sibling at the other end of the
+pipeline: **the instrument is sound, the reading is real, and the INFERENCE from it is the defect.**
+
+---
 
 ---
 

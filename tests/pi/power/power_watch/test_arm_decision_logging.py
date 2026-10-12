@@ -1,0 +1,1026 @@
+################################################################################
+# File Name: test_arm_decision_logging.py
+# Purpose/Description: US-566 gate -- eclipse-powerwatch must state its arm
+#                      decision. Covers the three halves of the fix: the
+#                      decision line itself (unconditional, both branches,
+#                      above lastResort's WARNING floor, carrying its
+#                      evidence), the disarmed hold that re-states its cause
+#                      instead of falling silent, and the structural pins that
+#                      main() configures logging BEFORE the decision and never
+#                      re-opens a bare block-forever on the disarmed branch.
+# Author: (Ralph / Agent 1)
+# Creation Date: 2026-08-21
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author  | Description
+# ================================================================================
+# 2026-08-21    | US-566  | Initial -- Sprint 75 / V0.29.30 arm-decision
+#                           observability gate.
+# 2026-09-13    | US-666  | Sprint 85: a pin that has only been READ no longer
+#                           reports ARMED. It reports PIN READABLE, TRANSITION
+#                           UNVERIFIED, and the PROVEN line says its proof is
+#                           a PRIOR run's witness, not this start.
+# 2026-10-11    | US-748-b| Sprint 97: a late-arm line, and NOT-ARMED split
+#                           into readable-absent and unreadable texts.
+# 2026-10-11    | US-748-c| Sprint 97: the readable-pin disarmed hold polls the
+#                           pin and arms late after an unbroken smoothingSec.
+# ================================================================================
+################################################################################
+"""US-566: the powerwatch arm decision must never be silent."""
+
+from __future__ import annotations
+
+import inspect
+import logging
+
+import pytest
+
+from src.pi.power.power_watch import __main__ as m
+
+LOGGER_NAME = m.logger.name
+
+# The facts the pre-US-566 ERROR message carried. US-566 rewrites that message,
+# so these are MOVED pins, not new ones: the rewrite must not quietly drop the
+# remediation the only diagnostic line on this path used to carry.
+PRE_US566_ERROR_FACTS = (
+    "REFUSING to arm",
+    "OBD collector",
+    "NOTHING will be powered off",
+    "pi.powerWatch.pldGpioPin",
+    "pldPowerPresentHigh",
+    "redeploy",
+)
+
+
+def _decisionRecords(caplog):
+    return [r for r in caplog.records if r.name == LOGGER_NAME]
+
+
+# --------------------------------------------------------------------------
+# The decision line -- unconditional, both branches
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("armed", [True, False])
+def test_emitArmDecision_isNeverSilentOnEitherBranch(caplog, armed):
+    """
+    Given: either disposition of the startup arm self-check
+    When: the service reports its arm decision
+    Then: exactly one record is emitted -- there is no input that logs nothing
+
+    This is the story in one assertion. The defect was not a missing branch;
+    it was that the taken branch produced nothing observable.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    m.emitArmDecision(armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed)
+
+    assert len(_decisionRecords(caplog)) == 1
+
+
+@pytest.mark.parametrize("armed", [True, False])
+def test_emitArmDecision_clearsTheLastResortWarningFloor(caplog, armed):
+    """
+    Given: a process with NO logging configuration installed
+    When: the arm decision is emitted
+    Then: its level is >= WARNING, so logging.lastResort still prints it
+
+    The measured root cause: with no root handler Python falls back to
+    logging.lastResort, whose level is WARNING. The arm-success line was INFO
+    and was therefore discarded on every one of 8 observed service starts. A
+    safety fact must not sit on a tier that a configuration change can silence,
+    so this pins the FLOOR rather than the exact level -- defence in depth
+    behind the setupLogging() call, not instead of it.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    m.emitArmDecision(armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed)
+
+    record = _decisionRecords(caplog)[0]
+    assert record.levelno >= logging.WARNING, (
+        f"arm decision emitted at {record.levelname}; lastResort drops "
+        "anything below WARNING and that is exactly how this fact went missing"
+    )
+
+
+def test_emitArmDecision_armedIsWarning_notArmedIsError(caplog):
+    """
+    Given: each disposition in turn
+    When: the arm decision is emitted
+    Then: armed logs WARNING, not-armed logs ERROR
+
+    Both directions pinned. A refusal is more severe than a routine start, and
+    collapsing them to one level would cost the operator the distinction while
+    still passing the floor test above.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    m.emitArmDecision(armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True)
+    m.emitArmDecision(armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False)
+
+    armedRec, notArmedRec = _decisionRecords(caplog)
+    assert armedRec.levelno == logging.WARNING
+    assert notArmedRec.levelno == logging.ERROR
+
+
+@pytest.mark.parametrize("armed", [True, False])
+def test_emitArmDecision_bothBranchesShareOneGreppablePrefix(caplog, armed):
+    """
+    Given: either disposition
+    When: the arm decision is emitted
+    Then: the line carries ARM_DECISION_PREFIX
+
+    The deliverable is that ONE grep answers "did safety arm?":
+      journalctl -u eclipse-powerwatch.service --grep='ARM DECISION'
+    If only one branch carried the token, a silent journal would still be
+    ambiguous -- which is the state this story exists to end.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    m.emitArmDecision(armed=armed, pldGpioPin=6, pldAvailable=True, readsPowerPresent=armed)
+
+    assert m.ARM_DECISION_PREFIX in _decisionRecords(caplog)[0].getMessage()
+
+
+def test_emitArmDecision_returnsTheExactLineItLogged(caplog):
+    """
+    Given: the not-armed branch
+    When: the decision is emitted
+    Then: the returned string is byte-identical to the record logged
+
+    The disarmed hold re-states this string verbatim. Returning it is what
+    keeps ONE formatting site -- the alternative is recomposing the message at
+    the hold, which also means re-reading the hardware to do it.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    returned = m.emitArmDecision(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert returned == _decisionRecords(caplog)[0].getMessage()
+
+
+# --------------------------------------------------------------------------
+# The message -- a verdict without its evidence cannot be diagnosed
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("armed", [True, False])
+def test_buildArmDecisionMessage_carriesEvidenceNotJustAVerdict(armed):
+    """
+    Given: either disposition, with distinctive evidence values
+    When: the message is composed
+    Then: the pin, the line readability and the actual reading all appear
+
+    "NOT-ARMED" alone routes nobody anywhere. The CIO's X1209 diagnosis needs
+    to separate "wrong pin/polarity" from "line unreadable", and that is only
+    possible if the line reports what was measured.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=armed,
+        pldGpioPin=17,
+        pldAvailable=False,
+        readsPowerPresent=False,
+    )
+
+    assert "gpio=17" in message
+    assert "pld.available=False" in message
+    assert "reads-power-present=False" in message
+
+
+def test_buildArmDecisionMessage_statesTheProtectionStateInPlainWords():
+    """
+    Given: each disposition
+    When: the message is composed
+    Then: it says whether safe-shutdown protection is ON, UNVERIFIED or OFF
+
+    The operator's question is not "did a self-check pass", it is "am I
+    protected". All three answers must be readable from the one line. US-666:
+    a pin that has only been READ earns UNVERIFIED, not ON.
+    """
+    assert "protection is ON" in m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc="2026-09-11T19:02:36Z",
+    )
+    unwitnessed = m.buildArmDecisionMessage(
+        armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True
+    )
+    assert "protection is UNVERIFIED" in unwitnessed
+    assert "protection is ON" not in unwitnessed
+    assert "protection is OFF" in m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=True, readsPowerPresent=False
+    )
+
+
+@pytest.mark.parametrize("fact", PRE_US566_ERROR_FACTS)
+def test_buildArmDecisionMessage_notArmedKeepsEveryPreUs566Fact(fact):
+    """
+    Given: the not-armed branch
+    When: the message is composed
+    Then: every fact the pre-US-566 ERROR carried is still present
+
+    A MOVED pin. US-566 rewrites the only diagnostic line on this path; the
+    rewrite must be additive. Losing the remediation while adding a prefix
+    would be a net regression that every other test here would still pass.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert fact in message
+
+
+def test_buildArmDecisionMessage_armedDoesNotCarryRemediationText():
+    """
+    Given: the armed branch
+    When: the message is composed
+    Then: it does NOT tell the operator to fix the pin and redeploy
+
+    The two branches share a formatting site, not their content. An ARMED line
+    carrying "REFUSING to arm ... redeploy" would read as a failure on the
+    happy path -- the inverse of the honest-instrument goal.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True
+    )
+
+    assert "REFUSING to arm" not in message
+    assert m.ARM_DECISION_NOT_ARMED not in message
+
+
+# --------------------------------------------------------------------------
+# The disarmed hold -- declining to arm is not a claim of wellness
+# --------------------------------------------------------------------------
+def test_runDisarmedHold_reStatesTheCauseUntilTheWaitEnds(caplog):
+    """
+    Given: a wait that times out three times, then returns True
+    When: the disarmed hold runs
+    Then: the cause is re-stated exactly three times, each at ERROR
+
+    Pre-US-566 this branch was `threading.Event().wait()` -- one announcement,
+    then permanent silence behind a unit that `systemctl is-active` still
+    reports as active. A disarmed service must keep declaring itself.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    calls = []
+
+    def waitFn(timeoutSec):
+        calls.append(timeoutSec)
+        return len(calls) > 3
+
+    m.runDisarmedHold(message="NOT-ARMED because reasons", waitFn=waitFn)
+
+    records = _decisionRecords(caplog)
+    assert len(records) == 3
+    assert all(r.levelno == logging.ERROR for r in records)
+    assert all("STILL NOT-ARMED" in r.getMessage() for r in records)
+
+
+def test_runDisarmedHold_reStatesTheOriginalCauseVerbatim(caplog):
+    """
+    Given: a decision line carrying its evidence
+    When: the hold re-states it
+    Then: the full original cause rides along, not a bare "still disarmed"
+
+    A re-statement that drops the cause is a heartbeat, not an instrument --
+    the operator reading the journal a week later would see that something is
+    wrong and still not know what.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    original = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    m.runDisarmedHold(message=original, waitFn=lambda _s: len(_decisionRecords(caplog)) >= 1)
+
+    assert original in _decisionRecords(caplog)[0].getMessage()
+
+
+def test_runDisarmedHold_usesTheDeclaredRestateInterval():
+    """
+    Given: no explicit interval
+    When: the disarmed hold runs
+    Then: it waits DISARMED_RESTATE_SEC between re-statements
+
+    Pins the constant to the call site. A default that drifted to 0 would spin
+    the CPU on a shutdown-critical box; one that drifted large would restore
+    the silence.
+    """
+    seen = []
+
+    m.runDisarmedHold(message="x", waitFn=lambda s: (seen.append(s), True)[1])
+
+    assert seen == [m.DISARMED_RESTATE_SEC]
+    assert m.DISARMED_RESTATE_SEC > 0
+
+
+def test_runDisarmedHold_returnsZeroSoTheServiceExitsCleanly():
+    """
+    Given: a wait that ends immediately
+    When: the disarmed hold returns
+    Then: the exit code is 0
+
+    Refusing to arm is a deliberate safe state, not a crash. A non-zero exit
+    under Restart=always would put the unit into a restart loop.
+    """
+    assert m.runDisarmedHold(message="x", waitFn=lambda _s: True) == 0
+
+
+# --------------------------------------------------------------------------
+# Structural pins -- shape that behaviour alone cannot hold
+# --------------------------------------------------------------------------
+def test_main_configuresLoggingBeforeTheArmDecision():
+    """
+    Given: main()'s source
+    When: the order of setupLogging and the arm self-check is compared
+    Then: logging is configured first
+
+    THE root cause, and behaviour cannot pin it here: main() does real
+    hardware wiring, and a run that configured logging afterwards would still
+    emit the decision (it is above the lastResort floor) while silently
+    dropping every INFO line before that point -- including "powerwatch
+    service up". Ordering is the deliverable, so ordering is what is asserted.
+    """
+    source = inspect.getsource(m.main)
+
+    setupAt = source.find("setupLogging(")
+    armCheckAt = source.find("startupArmCheck()")
+
+    assert setupAt != -1, "main() no longer configures logging at all"
+    assert armCheckAt != -1
+    assert setupAt < armCheckAt
+
+
+def test_main_doesNotPassALogFileToSetupLogging():
+    """
+    Given: main()'s source
+    When: the setupLogging call is inspected
+    Then: no logFile argument is passed
+
+    Deliberate: this shutdown-critical service must not open a second writer
+    on the OBD app's log file. Its stdout is already the journal.
+    """
+    source = inspect.getsource(m.main)
+    call = source[source.find("setupLogging(") :]
+    call = call[: call.find(")") + 1]
+
+    assert "logFile" not in call
+
+
+def test_main_holdsDisarmedViaTheReStatingHoldNotABareWait():
+    """
+    Given: main()'s source
+    When: the disarmed branch is inspected
+    Then: it delegates to runDisarmedHold
+
+    Guards the regression that reads as a simplification: swapping the hold
+    back for `threading.Event().wait()` restores the silent-but-active service
+    and every behavioural test above still passes, because none of them call
+    main().
+    """
+    source = inspect.getsource(m.main)
+
+    assert "runDisarmedHold(" in source
+
+
+def test_armDecisionIsEmittedUnconditionally_notOnlyOnFailure():
+    """
+    Given: main()'s source
+    When: the arm-decision emit is located
+    Then: it sits OUTSIDE the `if not armed:` block
+
+    The pre-US-566 shape logged only inside the failure branch, so a healthy
+    start said nothing and silence was ambiguous. Asserting the emit precedes
+    the branch is what makes "unconditional" checkable.
+    """
+    source = inspect.getsource(m.main)
+
+    emitAt = source.find("emitArmDecision(")
+    branchAt = source.find("if not armed:")
+
+    assert emitAt != -1 and branchAt != -1
+    assert emitAt < branchAt
+
+
+# ---------------------------------------------------------------------------
+# ARCH-019 -- the armed line must state what it VERIFIED, not what it PREDICTS.
+#
+# The old line ended: "A sustained external-power loss WILL run the bounded
+# pre-shutdown pipeline and then poweroff." That is a claim about future
+# behaviour asserted from ONE instantaneous read. On 2026-08-31 the Pi died a
+# hard cut with that line in the journal and the pipeline never ran.
+# ---------------------------------------------------------------------------
+
+
+def test_armed_but_NEVER_witnessed_does_not_predict_what_it_will_do():
+    """The load-bearing test. No witness -> no promise.
+
+    A pin that reads but has never been seen to change is indistinguishable from
+    a wire that is not connected, and the line must not claim otherwise.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=None,
+    )
+    # US-666 moved this pin: the unwitnessed verdict is no longer ARMED (UNPROVEN).
+    assert m.ARM_DECISION_UNVERIFIED in message
+    assert "will run" not in message, (
+        "the line still PREDICTS the pipeline will run, on evidence that is one "
+        "instantaneous read -- this is the defect ARCH-019 exists to remove"
+    )
+    assert "READS" in message and "CHANGES" in message, (
+        "the line must say what the self-check actually established"
+    )
+    # It still runs the watch, and still says so: the fix is not to stop arming.
+    assert "watch is RUNNING" in message
+
+
+def test_armed_AND_witnessed_may_state_what_it_will_do():
+    """Once the pin has been SEEN to move, the promise is earned."""
+    message = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc="2026-08-31T20:15:00Z",
+    )
+    assert "PROVEN" in message and "UNPROVEN" not in message
+    assert "will run" in message
+    assert "2026-08-31T20:15:00Z" in message, (
+        "the operator needs to know WHEN it was last proven, not merely that it was"
+    )
+
+
+def test_the_two_armed_lines_are_distinguishable_by_grep():
+    """An operator scanning the journal must be able to tell them apart."""
+    unproven = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=None,
+    )
+    proven = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc="2026-08-31T20:15:00Z",
+    )
+    assert unproven != proven
+    assert m.ARM_DECISION_PREFIX in unproven and m.ARM_DECISION_PREFIX in proven
+
+
+def test_the_witness_is_actually_WIRED_at_both_ends():
+    """A helper nothing calls proves nothing.
+
+    ⚠️ This is the third time in two days a guard has been written whose target
+    was never invoked. The unit tests above pass whether or not powerwatch reads
+    the witness and whether or not the controller ever records one -- so the
+    call sites are pinned here explicitly, in the shipped source.
+    """
+    import inspect
+    from pathlib import Path as _P
+
+    main_src = _P(inspect.getfile(m)).read_text(encoding="utf-8")
+    assert "lastTransitionUtc=readWitness()" in main_src, (
+        "the arm decision does not READ the witness -- it would report UNPROVEN "
+        "forever, even after the pin has been seen to move"
+    )
+
+    from src.pi.power.power_watch import controller as _c
+
+    ctrl_src = _P(inspect.getfile(_c)).read_text(encoding="utf-8")
+    assert "recordTransitionWitnessed(atIso=" in ctrl_src, (
+        "nothing RECORDS a witnessed transition -- PROVEN would be unreachable "
+        "and the arm line would be permanently, if honestly, unproven"
+    )
+
+
+# ---------------------------------------------------------------------------
+# US-666 -- the self-check proves the pin can be READ, never that it CHANGES.
+#
+# A stuck pin and a live one give the startup check the same single reading,
+# so readability alone must not earn the word ARMED. The only evidence that the
+# pin changes is a witnessed transition, and that witness is always from a
+# PRIOR run -- this start cannot exercise a power loss in software.
+# ---------------------------------------------------------------------------
+WITNESS_UTC = "2026-09-11T19:02:36Z"
+
+
+def test_US666_pinHeldInOneState_neverWitnessed_isNotReportedArmed(caplog):
+    """
+    Given: the pin reads power-present (held in one state) and no transition
+        has ever been witnessed
+    When: the arm decision is emitted
+    Then: the logged line does NOT contain ARMED; it carries the downgraded
+        verdict PIN READABLE, TRANSITION UNVERIFIED
+
+    VC1 + VC3. This is exactly what a stuck pin looks like to the check.
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    m.emitArmDecision(armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True)
+
+    message = _decisionRecords(caplog)[0].getMessage()
+    assert m.ARM_DECISION_UNVERIFIED == "PIN READABLE, TRANSITION UNVERIFIED"
+    assert f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_UNVERIFIED} --" in message
+    assert m.ARM_DECISION_ARMED not in message, (
+        "a pin that has only been READ is still being reported as ARMED"
+    )
+
+
+def test_US666_witnessedTransition_isTheOnlyPathToArmed():
+    """
+    Given: the same pin reading, with and without a witnessed transition
+    When: each message is composed
+    Then: only the witnessed one says ARMED
+
+    VC2. The observed transition is the evidence; the reading is not.
+    """
+    witnessed = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=WITNESS_UTC,
+    )
+    unwitnessed = m.buildArmDecisionMessage(
+        armed=True, pldGpioPin=6, pldAvailable=True, readsPowerPresent=True
+    )
+
+    assert f"{m.ARM_DECISION_ARMED} (PROVEN)" in witnessed
+    assert m.ARM_DECISION_UNVERIFIED not in witnessed
+    assert m.ARM_DECISION_ARMED not in unwitnessed
+
+
+@pytest.mark.parametrize("lastTransitionUtc", [None, WITNESS_UTC])
+def test_US666_readabilityIsNotCalledAnArmSelfCheckPass(lastTransitionUtc):
+    """
+    Given: either armed rendering
+    When: the message is composed
+    Then: the startup read is named a READABILITY check, never an "arm
+        self-check PASSED"
+
+    "arm self-check PASSED" is the phrase that was read as proof for weeks.
+    What passed is that the line reads.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=lastTransitionUtc,
+    )
+
+    assert "arm self-check PASSED" not in message
+    assert "GPIO6 PLD readability check PASSED" in message
+
+
+def test_US666_provenLineSaysItsProofIsFromAPriorRun_notThisStart():
+    """
+    Given: a witnessed transition
+    When: the PROVEN line is composed
+    Then: it says the transition was observed on a PRIOR run, that THIS start
+        verified readability only, and that the line is not itself an event
+
+    ARMED (PROVEN) prints at every start once a witness exists -- including on
+    the boot that later died with nothing recorded. Read alone it looked like
+    proof that the witness fired this time.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lastTransitionUtc=WITNESS_UTC,
+    )
+
+    assert "observed on a PRIOR run" in message
+    assert "THIS start verified readability only" in message
+    assert "printed at every start" in message
+
+
+def test_US666_notArmedBranchIsUnchanged():
+    """
+    Given: the pin reads power-absent or is unreadable
+    When: the message is composed
+    Then: it is still NOT-ARMED, and never the downgraded unverified verdict
+
+    The downgrade is for a readable pin. A failed read is a refusal and stays
+    one -- three facts, three strings.
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} --" in message
+    assert m.ARM_DECISION_UNVERIFIED not in message
+
+
+# ---------------------------------------------------------------------------
+# US-748-b -- a late arm has its own line, and NOT-ARMED stops blaming the
+# wiring when the pin simply read absent.
+#
+# A Pi woken by its power key boots on the pack: the pin READS, and correctly
+# says power is absent. Today's NOT-ARMED text calls that a wiring fault and
+# tells the operator to redeploy -- the false premise "the Pi only booted
+# because power is live". Boot 335 (2026-10-11) carried that line for 75 min.
+# ---------------------------------------------------------------------------
+def _lateLine(**overrides):
+    kwargs = dict(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+    kwargs.update(overrides)
+    return m.buildArmDecisionMessage(**kwargs)
+
+
+def test_US748b_lateArm_hasItsOwnArmedLateLine():
+    """
+    Given: the pin was seen absent at start and then present for the dwell
+    When: the late arm decision is composed
+    Then: it reads 'ARM DECISION = ARMED (late' and carries the dwell and the
+        time since service start
+    """
+    message = _lateLine()
+
+    assert "ARM DECISION = ARMED (late" in message
+    assert message.startswith(f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_ARMED} (late")
+    assert "present for 7 s" in message
+    assert "4215 s after service start" in message
+    assert m.ARM_DECISION_NOT_ARMED not in message
+    assert m.ARM_DECISION_UNVERIFIED not in message
+
+
+def test_US748b_lateArm_saysThePinChangedAbsentToPresentOnThisRun():
+    """
+    Given: a late arm
+    When: the line is composed
+    Then: it states the pin was observed to CHANGE from absent to present on
+        THIS run -- the evidence that earns ARMED, unlike a single read
+    """
+    message = _lateLine()
+
+    assert "GPIO6 changed absent -> present on this run" in message
+    assert "CHANGE" in message and "THIS run" in message
+
+
+@pytest.mark.parametrize("lastTransitionUtc", [None, WITNESS_UTC])
+def test_US748b_lateArm_winsOverThePriorRunRenderings(lastTransitionUtc):
+    """
+    Given: a late arm, with or without a prior-run witness on file
+    When: the line is composed
+    Then: it is the late line -- this run's observed change outranks both the
+        PROVEN (prior run) and UNVERIFIED (read only) renderings
+    """
+    message = _lateLine(lastTransitionUtc=lastTransitionUtc)
+
+    assert "ARMED (late" in message
+    assert "(PROVEN)" not in message
+    assert "observed on a PRIOR run" not in message
+
+
+def test_US748b_lateArm_isEmittedAtWarningAndReturnedVerbatim(caplog):
+    """
+    Given: a late arm
+    When: emitArmDecision is called with the late facts
+    Then: one WARNING record, byte-identical to the returned line
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    returned = m.emitArmDecision(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+
+    records = _decisionRecords(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].getMessage() == returned
+    assert "ARMED (late" in returned
+
+
+def test_US748b_lateArm_doesNotWriteThePldWitness(monkeypatch, tmp_path, caplog):
+    """
+    Given: the witness writers replaced by recorders, and a witness path that
+        does not exist
+    When: the late line is composed and emitted
+    Then: nothing writes pld_witness -- the witness records a power-LOSS
+        transition the pipeline handled, and an absent -> present arm is not one
+    """
+    from src.pi.power.power_watch import controller as ctrl
+    from src.pi.power.power_watch import pld_witness
+
+    writes = []
+    monkeypatch.setattr(
+        pld_witness, "recordTransitionWitnessed", lambda *a, **k: writes.append((a, k))
+    )
+    monkeypatch.setattr(
+        pld_witness, "_writeWitnessAtomically", lambda *a, **k: writes.append((a, k))
+    )
+    if hasattr(ctrl, "recordTransitionWitnessed"):
+        monkeypatch.setattr(
+            ctrl, "recordTransitionWitnessed", lambda *a, **k: writes.append((a, k))
+        )
+    witnessPath = tmp_path / "witness.json"
+    monkeypatch.setattr(pld_witness, "DEFAULT_WITNESS_PATH", witnessPath)
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+    _lateLine()
+    m.emitArmDecision(
+        armed=True,
+        pldGpioPin=6,
+        pldAvailable=True,
+        readsPowerPresent=True,
+        lateArmPresentSec=7.0,
+        lateArmAfterStartSec=4215.0,
+    )
+
+    assert writes == []
+    assert not witnessPath.exists()
+
+
+def test_US748b_lateArm_needsBothItsFacts():
+    """
+    Given: a late arm with only one of its two facts
+    When: the line is composed
+    Then: ValueError -- a late line missing its dwell or its offset would state
+        a number nobody measured
+    """
+    with pytest.raises(ValueError):
+        _lateLine(lateArmAfterStartSec=None)
+    with pytest.raises(ValueError):
+        _lateLine(lateArmPresentSec=None)
+
+
+def test_US748b_notArmed_readableAbsent_saysPowerWasAbsentAndArmingWaits():
+    """
+    Given: the line is readable and reads power ABSENT at start
+    When: the not-armed line is composed
+    Then: it says power was absent at start and arming waits for car power,
+        and does NOT call it a wiring fault or ask for a redeploy
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=True, readsPowerPresent=False
+    )
+
+    assert (
+        f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} "
+        "(power absent at start; arming waits for car power)"
+    ) in message
+    assert "protection is OFF" in message
+    assert "gpio=6 pld.available=True reads-power-present=False" in message
+    assert "FAILED" not in message
+    assert "redeploy" not in message
+    assert "wrong pin/polarity" not in message
+    assert "booted on a live feed" not in message
+
+
+def test_US748b_notArmed_unreadable_keepsTodaysWiringFaultText():
+    """
+    Given: the line is unreadable
+    When: the not-armed line is composed
+    Then: it is today's wiring-fault text and remedy, unchanged
+    """
+    message = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert message == (
+        f"{m.ARM_DECISION_PREFIX} {m.ARM_DECISION_NOT_ARMED} -- safe-shutdown "
+        "protection is OFF. CAUSE: GPIO6 PLD SSOT arm self-check FAILED "
+        "(gpio=6 pld.available=False reads-power-present=False). The Pi booted "
+        "on a live feed so GPIO6 must read power-present at startup; it does not "
+        "(wrong pin/polarity, or the line is unreadable). REFUSING to arm -- "
+        "service stays up disarmed, OBD collector unaffected, NOTHING will be "
+        "powered off. Fix pi.powerWatch.pldGpioPin / pldPowerPresentHigh and "
+        "redeploy."
+    )
+    assert "arming waits for car power" not in message
+
+
+def test_US748b_theThreeNotArmedOrLateTextsAreDistinct():
+    """Each input renders its own text: one grep tells them apart."""
+    readableAbsent = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=True, readsPowerPresent=False
+    )
+    unreadable = m.buildArmDecisionMessage(
+        armed=False, pldGpioPin=6, pldAvailable=False, readsPowerPresent=False
+    )
+
+    assert len({readableAbsent, unreadable, _lateLine()}) == 3
+
+
+def test_US748b_theFalsePremiseIsGoneFromMainsComment():
+    """
+    Given: __main__'s shipped source
+    When: searched for the 'only starts because the Pi booted' premise
+    Then: it is absent -- a Pi woken by its power key boots on the pack
+    """
+    from pathlib import Path as _P
+
+    source = _P(inspect.getfile(m)).read_text(encoding="utf-8")
+
+    assert "only starts because the Pi booted" not in source
+    assert "only booted because" not in source
+
+
+# ---------------------------------------------------------------------------
+# US-748-c -- a Pi that boots on its pack arms once car power is steady.
+#
+# Boot 335 (2026-10-11): NOT-ARMED at 09:08:35, then [STILL NOT-ARMED] every
+# 5 min for 75 min, through drive 101 and its key-off. The hold never re-read
+# the pin, so car power appearing changed nothing.
+# ---------------------------------------------------------------------------
+class _FakeClock:
+    """Monotonic clock that only moves when the hold waits."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _scriptedPin(clock, reads, then):
+    """isPresentFn reading ``reads`` in order, then ``then`` forever.
+
+    Records (time, value) for every read so a test can tell WHEN the pin was
+    sampled, not only what it said.
+    """
+    seen = []
+    it = iter(reads)
+
+    def isPresent():
+        value = next(it, then)
+        seen.append((clock.now, value))
+        return value
+
+    return isPresent, seen
+
+
+def _pollingHold(clock, isPresentFn, *, stopAfterSec=100_000.0, waits=None, **overrides):
+    """Run the readable-pin hold on the fake clock with the production cadence."""
+
+    def waitFn(timeoutSec):
+        if waits is not None:
+            waits.append(timeoutSec)
+        clock.now += timeoutSec
+        return clock.now > stopAfterSec
+
+    kwargs = dict(
+        message="NOT-ARMED (power absent at start)",
+        waitFn=waitFn,
+        pldAvailable=True,
+        isPresentFn=isPresentFn,
+        pldGpioPin=6,
+        dwellSec=7.0,
+        pollSec=1.0,
+        monotonicFn=clock.monotonic,
+    )
+    kwargs.update(overrides)
+    return m.runDisarmedHold(**kwargs)
+
+
+def _lateRecords(caplog):
+    return [r for r in _decisionRecords(caplog) if "ARMED (late" in r.getMessage()]
+
+
+def test_US748c_absentThenSteadyPresent_armsAfterTheUnbrokenDwell(caplog):
+    """
+    Given: a readable pin reading absent x3, then present
+    When: the disarmed hold runs (dwell 7 s, poll 1 s)
+    Then: it returns None (fall through to the armed block) at 7 s after the
+        first present read, and emits the late line exactly once
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    clock = _FakeClock()
+    isPresent, seen = _scriptedPin(clock, [False, False, False], then=True)
+
+    result = _pollingHold(clock, isPresent)
+
+    firstPresentAt = next(t for t, v in seen if v)
+    assert result is None
+    assert firstPresentAt == 3.0
+    assert clock.now == firstPresentAt + 7.0
+    late = _lateRecords(caplog)
+    assert len(late) == 1
+    assert late[0].levelno == logging.WARNING
+    assert "present for 7 s" in late[0].getMessage()
+    assert "10 s after service start" in late[0].getMessage()
+
+
+def test_US748c_brokenRun_doesNotArmAtSixSeconds_armsAfterAnUnbrokenSeven(caplog):
+    """
+    Given: present x6, absent x1, then present
+    When: the disarmed hold runs
+    Then: the 6 s run does not arm; the arm comes 7 s after the run restarts,
+        and the late line is emitted exactly once
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    clock = _FakeClock()
+    isPresent, seen = _scriptedPin(clock, [True] * 6 + [False], then=True)
+
+    result = _pollingHold(clock, isPresent)
+
+    assert result is None
+    absentAt = next(t for t, v in seen if not v)
+    assert absentAt == 6.0
+    assert clock.now == absentAt + 1.0 + 7.0
+    assert len(_lateRecords(caplog)) == 1
+
+
+def test_US748c_readablePin_isPolledEverySmoothingPollSec():
+    """
+    Given: a readable pin that stays absent
+    When: the disarmed hold runs
+    Then: every wait is one poll interval, and the pin is read after each
+    """
+    clock = _FakeClock()
+    isPresent, seen = _scriptedPin(clock, [], then=False)
+    waits = []
+
+    result = _pollingHold(clock, isPresent, stopAfterSec=20.0, waits=waits, pollSec=1.0)
+
+    assert result == 0
+    assert set(waits) == {1.0}
+    assert [t for t, _v in seen][:5] == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+
+def test_US748c_restateStillFiresEvery300sWhileDisarmed(caplog):
+    """
+    Given: a readable pin that stays absent for just over 900 s
+    When: the polling hold runs
+    Then: the cause is re-stated verbatim at 300, 600 and 900 s -- polling the
+        pin must not silence the US-566 restate, nor multiply it per poll
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    clock = _FakeClock()
+    isPresent, _seen = _scriptedPin(clock, [], then=False)
+
+    _pollingHold(clock, isPresent, stopAfterSec=900.5)
+
+    restates = [r for r in _decisionRecords(caplog) if "STILL NOT-ARMED" in r.getMessage()]
+    assert len(restates) == 3
+    assert all(r.levelno == logging.ERROR for r in restates)
+    assert all("NOT-ARMED (power absent at start)" in r.getMessage() for r in restates)
+    assert _lateRecords(caplog) == []
+
+
+def test_US748c_unreadablePin_keepsTheForeverHold_neverArms(caplog):
+    """
+    Given: pld.available False, with a pin that reads 'present' every time
+        (PldSensor reports present when UNREADABLE -- the safe direction for
+        the sequencer, the dangerous one for an arm)
+    When: the hold runs for ten hours of fake time
+    Then: it never arms and never reads the pin; it keeps today's hold
+    """
+    caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+    clock = _FakeClock()
+    isPresent, seen = _scriptedPin(clock, [], then=True)
+    waits = []
+
+    result = _pollingHold(
+        clock, isPresent, pldAvailable=False, stopAfterSec=36_000.0, waits=waits
+    )
+
+    assert result == 0
+    assert seen == []
+    assert set(waits) == {m.DISARMED_RESTATE_SEC}
+    assert _lateRecords(caplog) == []
+
+
+def test_US748c_main_armsLateThroughTheReadablePredicate_andFallsThrough():
+    """
+    Given: main()'s source
+    When: the disarmed branch is inspected
+    Then: the hold is given the pin, the dwell and the poll from config, its
+        late-arm return falls through (no unconditional return), and the
+        armed block exists once and starts AFTER the hold -- so
+        serviceStartMono is the arm instant
+    """
+    source = inspect.getsource(m.main)
+
+    holdAt = source.find("runDisarmedHold(")
+    assert "return runDisarmedHold(" not in source
+    assert "dwellSec=smoothingSec" in source
+    assert "pollSec=smoothingPollSec" in source
+    assert "provider.isAvailable and provider.isExternalPowerPresent()" in source
+    assert source.count("_runPldWatchLoop(") == 1
+    assert source.count("monitor.startPolling()") == 1
+    assert holdAt < source.find("serviceStartMono = time.monotonic()")
+    assert holdAt < source.find("monitor.startPolling()")

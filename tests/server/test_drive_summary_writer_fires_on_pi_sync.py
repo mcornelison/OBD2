@@ -187,7 +187,7 @@ def _buildRealisticPiSyncPayload(
         # rename machinery).
         "id": driveId,
         "drive_start_timestamp": DRIVE_START_TS.isoformat(),
-        "ambient_temp_at_start_c": 18.5,
+        "intake_air_temp_at_start_c": 18.5,
         "starting_battery_v": 12.7,
         "barometric_kpa_at_start": 100.2,
         "data_source": "real",
@@ -390,7 +390,7 @@ class TestDriveSummaryWriterFiresOnPiSyncRow:
         assert row.duration_seconds == 119  # 120 rows, 1-sec stride.
         # Pi-sync fields preserved -- analytics UPDATE must not clobber 9-12.
         assert row.drive_start_timestamp == DRIVE_START_TS
-        assert row.ambient_temp_at_start_c == pytest.approx(18.5)
+        assert row.intake_air_temp_at_start_c == pytest.approx(18.5)
         assert row.starting_battery_v == pytest.approx(12.7)
 
     @pytest.mark.asyncio
@@ -518,7 +518,7 @@ class TestExtractDriveIdsFromDriveSummaryPayload:
             {
                 "id": 17,
                 "drive_start_timestamp": "2026-05-20T18:30:00",
-                "ambient_temp_at_start_c": 18.5,
+                "intake_air_temp_at_start_c": 18.5,
             },
         ]
         assert extractDriveIdsFromDriveSummaryPayload(rows) == {17}

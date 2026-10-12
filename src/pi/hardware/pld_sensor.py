@@ -23,6 +23,7 @@
 """X1209 GPIO6 power-loss-detection reader (deterministic, not heuristic)."""
 from __future__ import annotations
 
+import errno
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -30,7 +31,30 @@ from typing import Any
 from .platform_utils import isRaspberryPi
 
 logger = logging.getLogger(__name__)
-__all__ = ["PldSensor"]
+__all__ = [
+    "PLD_UNAVAILABLE_ABSENT",
+    "PLD_UNAVAILABLE_CONTENDED",
+    "PLD_UNAVAILABLE_ERROR",
+    "PldSensor",
+]
+
+# Why an unavailable PldSensor must say WHICH kind of unavailable it is
+# (US-668, Atlas 2026-09-02).
+#
+# Before this, ANY exception at construction set ``_dev = None`` and
+# ``isAvailable`` went False, with no way to ask what happened.  So a GPIO line
+# ALREADY CLAIMED BY ANOTHER PROCESS was reported identically to a Pi with no
+# PLD wired at all.  eclipse-powerwatch and eclipse-obd both opened BCM 6, the
+# loser of that race got EBUSY, and it read as "no power sensor fitted" --
+# permanently, because there is no re-open path.  It looked like missing
+# hardware from 2026-05-16 onward.
+#
+# EBUSY means "someone else has it." ENODEV means "it is not there."  Those
+# demand opposite responses -- fix the ownership, versus fit the hardware -- and
+# a sensor that cannot tell them apart sends every operator down the wrong one.
+PLD_UNAVAILABLE_CONTENDED: str = "contended"
+PLD_UNAVAILABLE_ABSENT: str = "absent"
+PLD_UNAVAILABLE_ERROR: str = "error"
 
 
 def _defaultDeviceFactory(pin: int) -> Any:
@@ -76,6 +100,7 @@ class PldSensor:
         self._powerPresentHigh = powerPresentHigh
         factory = deviceFactory if deviceFactory is not None else _defaultDeviceFactory
         self._dev: Any | None = None
+        self._unavailableReason: str | None = None
         try:
             self._dev = factory(pin)
             logger.info("PldSensor armed on GPIO%d (powerPresentHigh=%s)",
@@ -87,11 +112,38 @@ class PldSensor:
                 pin, exc,
             )
             self._dev = None
+            self._unavailableReason = self._classifyFailure(exc)
+
+    @staticmethod
+    def _classifyFailure(exc: BaseException) -> str:
+        """Name WHY the line could not be opened.
+
+        The distinction is the whole point: contention and absence look
+        identical to ``isAvailable`` and demand opposite fixes.
+        """
+        errno_ = getattr(exc, "errno", None)
+        if errno_ == errno.EBUSY:
+            return PLD_UNAVAILABLE_CONTENDED
+        if errno_ in (errno.ENODEV, errno.ENOENT, errno.ENXIO):
+            return PLD_UNAVAILABLE_ABSENT
+        # gpiozero raises its own types; fall back to the message, then to a
+        # generic error rather than guessing one of the two specific answers.
+        text = str(exc).lower()
+        if "busy" in text or "in use" in text:
+            return PLD_UNAVAILABLE_CONTENDED
+        if "not running on raspberry pi" in text or "no such device" in text:
+            return PLD_UNAVAILABLE_ABSENT
+        return PLD_UNAVAILABLE_ERROR
 
     @property
     def isAvailable(self) -> bool:
         """True iff the GPIO line was opened."""
         return self._dev is not None
+
+    @property
+    def unavailableReason(self) -> str | None:
+        """Why the line is unavailable, or None when it opened fine."""
+        return None if self._dev is not None else self._unavailableReason
 
     def isExternalPowerPresent(self) -> bool:
         """True if external/input power is present. Unavailable/error -> True

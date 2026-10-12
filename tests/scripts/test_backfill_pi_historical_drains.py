@@ -74,7 +74,8 @@ bp = _loadScript()
 # Synthetic Pi DB fixture
 # ================================================================================
 
-# drain_event_id -> (start_timestamp, end_timestamp, start_soc, start_vcell_v)
+# drain_event_id -> (start_timestamp, end_timestamp, startSoc[legacy volts],
+#                    start_vcell_v).  US-426: seeded into start_vcell_v now.
 _DRAIN_ROWS = {
     1: ('2026-05-04T13:21:08Z', None, 3.60, None),       # pre-US-289 row, NULL end
     9: ('2026-05-09T01:47:10Z', None, 3.70, 3.70),       # post-US-289 row, NULL end
@@ -92,9 +93,11 @@ _POWER_LOG_ROWS = [
     ('2026-05-10T14:10:06Z', 'stage_trigger', 3.445),  # drain 15 close (already closed)
 ]
 
-# Expected derived close values for the two stranded drains.
-_EXPECT_DRAIN_1 = {'end_timestamp': '2026-05-04T13:34:09Z', 'end_soc': 3.42, 'runtime_seconds': 781}
-_EXPECT_DRAIN_9 = {'end_timestamp': '2026-05-09T01:59:30Z', 'end_soc': 3.41, 'runtime_seconds': 740}
+# Expected derived close values for the two stranded drains.  US-426: the
+# script writes the power_log VCELL into end_vcell_v (the legacy end_soc column
+# is dropped); the value keys are named end_vcell_v accordingly.
+_EXPECT_DRAIN_1 = {'end_timestamp': '2026-05-04T13:34:09Z', 'end_vcell_v': 3.42, 'runtime_seconds': 781}
+_EXPECT_DRAIN_9 = {'end_timestamp': '2026-05-09T01:59:30Z', 'end_vcell_v': 3.41, 'runtime_seconds': 740}
 
 
 def _seedDb(dbPath: Path) -> None:
@@ -102,17 +105,21 @@ def _seedDb(dbPath: Path) -> None:
     try:
         conn.execute(SCHEMA_BATTERY_HEALTH_LOG)
         conn.execute(SCHEMA_POWER_LOG)
+        # US-426 shape: no legacy start_soc/end_soc.  The pre-US-289 row's
+        # voltage (startVcell None) lands in start_vcell_v -- mimicking the
+        # rebuild's COALESCE(vcell, soc) -- so the fixture matches production.
         for drainId, (startTs, endTs, startSoc, startVcell) in _DRAIN_ROWS.items():
-            endSoc = startSoc if endTs is not None else None
+            startVcellCol = startVcell if startVcell is not None else startSoc
+            endVcell = startVcellCol if endTs is not None else None
             runtimeSec = 786 if endTs is not None else None
             conn.execute(
                 'INSERT INTO battery_health_log '
-                '(drain_event_id, start_timestamp, end_timestamp, start_soc, '
-                ' end_soc, start_vcell_v, end_vcell_v, runtime_seconds, '
+                '(drain_event_id, start_timestamp, end_timestamp, start_vcell_v, '
+                ' end_vcell_v, start_soc_pct, end_soc_pct, runtime_seconds, '
                 ' load_class, data_source) '
                 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                (drainId, startTs, endTs, startSoc, endSoc, startVcell,
-                 startVcell if endTs is not None else None, runtimeSec,
+                (drainId, startTs, endTs, startVcellCol,
+                 endVcell, None, None, runtimeSec,
                  'production', 'real'),
             )
         for ts, eventType, vcell in _POWER_LOG_ROWS:
@@ -138,7 +145,7 @@ def _readDrainRow(dbPath: Path, drainId: int) -> dict:
     conn = sqlite3.connect(str(dbPath))
     try:
         row = conn.execute(
-            'SELECT end_timestamp, end_soc, end_vcell_v, runtime_seconds '
+            'SELECT end_timestamp, end_vcell_v, runtime_seconds '
             'FROM battery_health_log WHERE drain_event_id = ?',
             (drainId,),
         ).fetchone()
@@ -147,9 +154,8 @@ def _readDrainRow(dbPath: Path, drainId: int) -> dict:
     assert row is not None
     return {
         'end_timestamp': row[0],
-        'end_soc': row[1],
-        'end_vcell_v': row[2],
-        'runtime_seconds': row[3],
+        'end_vcell_v': row[1],
+        'runtime_seconds': row[2],
     }
 
 
@@ -223,10 +229,10 @@ class TestPlanBackfill:
         byId = {r.drainEventId: r for r in plan.toUpdate}
         assert set(byId) == {1, 9}
         assert byId[1].endTimestamp == _EXPECT_DRAIN_1['end_timestamp']
-        assert byId[1].endSoc == _EXPECT_DRAIN_1['end_soc']
+        assert byId[1].endSoc == _EXPECT_DRAIN_1['end_vcell_v']
         assert byId[1].runtimeSeconds == _EXPECT_DRAIN_1['runtime_seconds']
         assert byId[9].endTimestamp == _EXPECT_DRAIN_9['end_timestamp']
-        assert byId[9].endSoc == _EXPECT_DRAIN_9['end_soc']
+        assert byId[9].endSoc == _EXPECT_DRAIN_9['end_vcell_v']
         assert byId[9].runtimeSeconds == _EXPECT_DRAIN_9['runtime_seconds']
 
     def test_planBackfill_alreadyClosedRow_skippedAsIdempotent(self, piDb: Path) -> None:
@@ -292,13 +298,11 @@ class TestCli:
         assert rc == 0
         row1 = _readDrainRow(piDb, 1)
         assert row1['end_timestamp'] == _EXPECT_DRAIN_1['end_timestamp']
-        assert row1['end_soc'] == _EXPECT_DRAIN_1['end_soc']
-        assert row1['end_vcell_v'] == _EXPECT_DRAIN_1['end_soc']  # vcell mirrors end_soc
+        assert row1['end_vcell_v'] == _EXPECT_DRAIN_1['end_vcell_v']
         assert row1['runtime_seconds'] == _EXPECT_DRAIN_1['runtime_seconds']
         row9 = _readDrainRow(piDb, 9)
         assert row9['end_timestamp'] == _EXPECT_DRAIN_9['end_timestamp']
-        assert row9['end_soc'] == _EXPECT_DRAIN_9['end_soc']
-        assert row9['end_vcell_v'] == _EXPECT_DRAIN_9['end_soc']
+        assert row9['end_vcell_v'] == _EXPECT_DRAIN_9['end_vcell_v']
         assert row9['runtime_seconds'] == _EXPECT_DRAIN_9['runtime_seconds']
 
     def test_main_execute_doesNotTouchAlreadyClosedRow(self, piDb: Path) -> None:
@@ -338,7 +342,7 @@ class TestCli:
         try:
             conn.execute(
                 'INSERT INTO battery_health_log '
-                '(drain_event_id, start_timestamp, start_soc, load_class, data_source) '
+                '(drain_event_id, start_timestamp, start_vcell_v, load_class, data_source) '
                 'VALUES (?, ?, ?, ?, ?)',
                 (20, '2026-05-13T00:00:00Z', 3.8, 'production', 'real'),
             )

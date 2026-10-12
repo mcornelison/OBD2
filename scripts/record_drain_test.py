@@ -22,6 +22,23 @@
 #                                orchestrator auto-writes real shutdowns as
 #                                'production'.  Library LOAD_CLASS_DEFAULT stays
 #                                'production' (US-216 auto-write path).
+# 2026-06-29    | Rex (US-397) | Normalize to the Pi-tier pi.*-on-src convention
+#                                (put src/ on sys.path + import pi.*/common.*) so
+#                                the operator's bare `python scripts/...` no
+#                                longer dies with No module named 'pi'.
+# 2026-07-01    | Rex (US-427) | BL-015: wire the MAX17048 register SoC% into
+#                                start_soc_pct/end_soc_pct (US-426's new columns)
+#                                via UpsMonitor.getBatteryPercentage(), separate
+#                                from the operator --start-soc voltage slot.
+#                                Added the US-234 cold-start guard: a register
+#                                read inside the ~3-min ModelGauge calibration
+#                                window (or when uptime is unknowable) records
+#                                NULL, never a garbage percent (honest-instrument).
+# 2026-07-02    | Rex (US-431) | F-048: make the cold-start window config-driven
+#                                (pi.hardware.upsMonitor.socColdStartWindowSeconds)
+#                                via _resolveColdStartWindowSeconds so the value
+#                                measured by scripts/calibrate_max17048.py feeds
+#                                the guard.  180s constant kept as the fallback.
 # ================================================================================
 ################################################################################
 
@@ -56,12 +73,21 @@ Output (non-dry-run):
     drain_event_id: 3
     start_soc:      100.0
     end_soc:        20.0
+    start_soc_pct:  84 (MAX17048 register)
+    end_soc_pct:    19 (MAX17048 register)
     runtime_s:      1440 (24.0 min)
     load_class:     test
     ambient_c:      22.5
     notes:          April baseline drill
 
     Next step: run `python scripts/sync_now.py` to push to Chi-Srv-01.
+
+The ``--start-soc`` / ``--end-soc`` values are the LiPo cell VOLTAGE
+(they land in ``start_vcell_v`` / ``end_vcell_v``).  The register
+State-of-Charge percent (``*_soc_pct``, US-426) is read straight from
+the MAX17048 fuel gauge -- never operator-typed.  A read taken inside
+the ~3-min cold-start calibration window (or when the gauge is absent)
+records ``NULL``, never a garbage percent (US-234 honest-instrument).
 
 Exit codes:
     * 0 -- success (event recorded or dry-run clean)
@@ -78,14 +104,55 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+# Pi-tier entry-point path bootstrap (mirrors src/pi/main.py + sync_now.py).
+# src/ goes on sys.path so the Pi imports below resolve as the canonical
+# `pi.*` form -- and so the bare `from pi.display import ...` in
+# pi.obdii.__init__ (pulled in transitively) resolves.  Inserting only the
+# repo ROOT (the old behavior) left top-level `pi` unimportable, so the
+# operator's plain `python scripts/record_drain_test.py` died with
+# `ModuleNotFoundError: No module named 'pi'` (US-397).  ROOT stays on the
+# path too: the shared `common.*` modules keep the legacy `from src.common...`
+# form on purpose (the pi codebase raises src.common exceptions that main()
+# must catch by identity -- see the import note below).
+# Convention: see [[feedback-path-convention-no-src-prefix]].
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
+_SRC_DIR = _PROJECT_ROOT / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# `common.*` shared modules stay on the legacy `src.common.*` form on purpose:
+# the deeper pi code raises `src.common.errors.handler.ConfigurationError`, so
+# main() must catch that exact class object (the `common.*` form resolves to a
+# different, non-caught class).  Only the `pi.*` imports flip to the convention.
+from pi.hardware.ups_monitor import UpsMonitor  # noqa: E402
+from pi.obdii.database import initializeDatabase  # noqa: E402
+from pi.power.battery_health import (  # noqa: E402
+    LOAD_CLASS_VALUES,
+    BatteryHealthRecorder,
+)
+
+# US-526: the cold-start-guarded register read moved to src/ so the PRODUCTION
+# drain writer (pi.power.drain_event_writer) reuses the SAME guard -- a src/
+# module must never import from scripts/.  These are re-bound at module level so
+# this CLI's public surface (and its tests) are unchanged: ONE implementation,
+# two callers, no copy that can drift.
+from pi.power.soc_calibration import (  # noqa: E402
+    COLD_START_CALIBRATION_WINDOW_SECONDS,
+    readCalibratedRegisterSocPct,
+)
+from pi.power.soc_calibration import (  # noqa: E402
+    readSystemUptimeSeconds as _readSystemUptimeSeconds,
+)
+from pi.power.soc_calibration import (  # noqa: E402
+    resolveColdStartWindowSeconds as _resolveColdStartWindowSeconds,
+)
 from src.common.config.secrets_loader import (  # noqa: E402
     loadConfigWithSecrets,
     loadEnvFile,
@@ -95,11 +162,6 @@ from src.common.config.validator import (  # noqa: E402
     ConfigValidator,
 )
 from src.common.errors.handler import ConfigurationError  # noqa: E402
-from src.pi.obdii.database import initializeDatabase  # noqa: E402
-from src.pi.power.battery_health import (  # noqa: E402
-    LOAD_CLASS_VALUES,
-    BatteryHealthRecorder,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +172,13 @@ logger = logging.getLogger(__name__)
 # Power-Down Orchestrator auto-write path for real shutdowns.
 CLI_DEFAULT_LOAD_CLASS: str = 'test'
 
-__all__ = ['CLI_DEFAULT_LOAD_CLASS', 'main', 'parseArguments']
+__all__ = [
+    'CLI_DEFAULT_LOAD_CLASS',
+    'COLD_START_CALIBRATION_WINDOW_SECONDS',
+    'main',
+    'parseArguments',
+    'readCalibratedRegisterSocPct',
+]
 
 
 # ==============================================================================
@@ -220,6 +288,15 @@ def _loadConfig(configPath: str) -> dict[str, Any]:
 
 
 # ==============================================================================
+# Register SoC% + cold-start guard -- SHARED (US-526)
+# ==============================================================================
+# The implementation moved to src/pi/power/soc_calibration.py so the production
+# drain writer reuses the identical guard (imported at module top).  Nothing
+# lives here any more -- adding a local copy back would re-create the drift
+# this move removed.
+
+
+# ==============================================================================
 # Core flow
 # ==============================================================================
 
@@ -229,6 +306,8 @@ def _printResult(
     drainEventId: int,
     startSoc: float,
     endSoc: float,
+    startSocPct: int | None,
+    endSocPct: int | None,
     runtimeSeconds: int | None,
     loadClass: str,
     ambientC: float | None,
@@ -239,11 +318,21 @@ def _printResult(
         f'{runtimeSeconds} ({runtimeSeconds / 60.0:.1f} min)'
         if runtimeSeconds is not None else 'n/a'
     )
+    startPctStr = (
+        f'{startSocPct} (MAX17048 register)' if startSocPct is not None
+        else 'NULL (uncalibrated / no gauge)'
+    )
+    endPctStr = (
+        f'{endSocPct} (MAX17048 register)' if endSocPct is not None
+        else 'NULL (uncalibrated / no gauge)'
+    )
     print('Drain event recorded')
     print('---------------------')
     print(f'drain_event_id: {drainEventId}')
     print(f'start_soc:      {startSoc}')
     print(f'end_soc:        {endSoc}')
+    print(f'start_soc_pct:  {startPctStr}')
+    print(f'end_soc_pct:    {endPctStr}')
     print(f'runtime_s:      {runtimeMin}')
     print(f'load_class:     {loadClass}')
     print(f'ambient_c:      {ambientC if ambientC is not None else "n/a"}')
@@ -276,21 +365,53 @@ def _overrideRuntimeSeconds(
 def _recordEvent(
     config: dict[str, Any],
     args: argparse.Namespace,
+    *,
+    monitor: Any | None = None,
+    uptimeReader: Callable[[], float | None] | None = None,
 ) -> int:
-    """Open + close a drain event and return its ``drain_event_id``."""
+    """Open + close a drain event and return its ``drain_event_id``.
+
+    The operator ``--start-soc`` / ``--end-soc`` values are LiPo cell VOLTAGE
+    (they land in ``start_vcell_v`` / ``end_vcell_v``).  The register
+    State-of-Charge percent is read straight from the MAX17048 fuel gauge at
+    open + close, cold-start-guarded, and written to ``start_soc_pct`` /
+    ``end_soc_pct`` (US-426 columns) -- never operator-typed (US-427).
+
+    Args:
+        config: Validated Pi config.
+        args: Parsed CLI namespace.
+        monitor: Optional ``UpsMonitor``-like double (tests inject a fake so
+            no real I2C hardware is needed); defaults to a real ``UpsMonitor``.
+        uptimeReader: Optional seconds-since-power-up reader for the cold-start
+            guard; defaults to :func:`_readSystemUptimeSeconds`.
+    """
     database = initializeDatabase(config)
     recorder = BatteryHealthRecorder(database=database)
+    ups = monitor if monitor is not None else UpsMonitor()
+    readUptime = uptimeReader or _readSystemUptimeSeconds
+    coldStartWindow = _resolveColdStartWindowSeconds(config)
 
+    startSocPct = readCalibratedRegisterSocPct(
+        ups, uptimeSeconds=readUptime(),
+        calibrationWindowSeconds=coldStartWindow,
+    )
     drainEventId = recorder.startDrainEvent(
         startSoc=args.start_soc,
         loadClass=args.load_class,
         notes=args.notes,
         dataSource='real',
+        startSocPct=startSocPct,
+    )
+
+    endSocPct = readCalibratedRegisterSocPct(
+        ups, uptimeSeconds=readUptime(),
+        calibrationWindowSeconds=coldStartWindow,
     )
     closeResult = recorder.endDrainEvent(
         drainEventId=drainEventId,
         endSoc=args.end_soc,
         ambientTempC=args.ambient,
+        endSocPct=endSocPct,
     )
 
     runtimeSeconds = closeResult.runtimeSeconds
@@ -302,6 +423,8 @@ def _recordEvent(
         drainEventId=drainEventId,
         startSoc=args.start_soc,
         endSoc=args.end_soc,
+        startSocPct=startSocPct,
+        endSocPct=endSocPct,
         runtimeSeconds=runtimeSeconds,
         loadClass=args.load_class,
         ambientC=args.ambient,

@@ -21,8 +21,10 @@ B-044 standing rule enforcement: no hardcoded infrastructure addresses.
 The audit logic scans the repository for literal IPs, hostnames, ports, and
 MAC addresses that should instead live in config.json or be marked with an
 inline `# b044-exempt: <reason>` pragma. Exempted paths (specs, docs,
-offices, *.md, tool caches, the lint itself, canonical config files) are
-skipped wholesale.
+*.md, tool caches, the lint itself, canonical config files) are skipped
+wholesale. (offices/ was exempt until it was evicted from the repo on
+2026-08-24; the prefix now matches nothing, so the rule is gone rather than
+left to rot as a check that silently enforces nothing.)
 
 This test acts as the standing CI gate. Running it locally:
     pytest tests/lint/test_no_hardcoded_addresses.py -v
@@ -131,13 +133,6 @@ class TestAuditRepositoryExemptPaths:
         for f in findings:
             assert not str(f.path).replace("\\", "/").startswith("docs/"), (
                 f"Found unexpected finding in docs/: {f}"
-            )
-
-    def test_auditRepository_skipsOfficesDir(self) -> None:
-        findings = auditRepository(REPO_ROOT)
-        for f in findings:
-            assert not str(f.path).replace("\\", "/").startswith("offices/"), (
-                f"Found unexpected finding in offices/: {f}"
             )
 
     def test_auditRepository_skipsMarkdownFiles(self) -> None:

@@ -335,10 +335,10 @@ if ! [[ "${SUM_COUNT:-x}" =~ ^[0-9]+$ ]]; then
     record_fail "drive_summary table missing (US-206 not applied?)"
 elif [ "$SUM_COUNT" = "1" ]; then
     record_pass "drive_summary: 1 row for drive_id=$DRIVE_ID"
-    SUM_ROW=$(sqlite_query_pi "SELECT ambient_temp_at_start_c, starting_battery_v, barometric_kpa_at_start FROM drive_summary WHERE drive_id = $DRIVE_ID" 2>/dev/null)
+    SUM_ROW=$(sqlite_query_pi "SELECT intake_air_temp_at_start_c, starting_battery_v, barometric_kpa_at_start FROM drive_summary WHERE drive_id = $DRIVE_ID" 2>/dev/null)
     echo "    ambient/battery/baro: $SUM_ROW"
     # Ambient NULL is OK (warm restart); surface it explicitly so the CIO knows.
-    AMBIENT_NULL=$(sqlite_query_pi "SELECT COUNT(*) FROM drive_summary WHERE drive_id = $DRIVE_ID AND ambient_temp_at_start_c IS NULL" 2>/dev/null | tr -d '[:space:]')
+    AMBIENT_NULL=$(sqlite_query_pi "SELECT COUNT(*) FROM drive_summary WHERE drive_id = $DRIVE_ID AND intake_air_temp_at_start_c IS NULL" 2>/dev/null | tr -d '[:space:]')
     if [ "${AMBIENT_NULL:-0}" = "1" ]; then
         echo "    ambient=NULL -> warm restart (per US-206 cold-start rule)"
     fi

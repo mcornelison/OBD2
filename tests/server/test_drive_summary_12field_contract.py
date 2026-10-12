@@ -111,7 +111,7 @@ def _insertPiSyncRow(
         source_id=driveId,
         drive_id=driveId,
         drive_start_timestamp=driveStartTs,
-        ambient_temp_at_start_c=18.5,
+        intake_air_temp_at_start_c=18.5,
         starting_battery_v=12.7,
         barometric_kpa_at_start=100.2,
         data_source="real",
@@ -353,7 +353,7 @@ class TestRaceSemantics:
         ).scalar_one()
         # Fields 9-12 untouched by analytics.
         assert row.drive_start_timestamp == START
-        assert row.ambient_temp_at_start_c == pytest.approx(18.5)
+        assert row.intake_air_temp_at_start_c == pytest.approx(18.5)
         assert row.starting_battery_v == pytest.approx(12.7)
         assert row.barometric_kpa_at_start == pytest.approx(100.2)
         # Fields 3-8 derived from realtime.
@@ -386,7 +386,7 @@ class TestRaceSemantics:
         assert row.is_real is True
         # 9-12 NULL until Pi-sync arrives.
         assert row.drive_start_timestamp is None
-        assert row.ambient_temp_at_start_c is None
+        assert row.intake_air_temp_at_start_c is None
         assert row.starting_battery_v is None
         assert row.barometric_kpa_at_start is None
 

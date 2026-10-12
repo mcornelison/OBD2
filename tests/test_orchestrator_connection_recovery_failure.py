@@ -407,9 +407,38 @@ class TestUS338PostFailureHeartbeat:
         )
 
         # Assert: wired to the LIVE connection so a successful tick affects
-        # orchestrator state.  bound-method identity is the cheapest probe.
+        # orchestrator state.  That -- liveness -- is THIS test's contract, and
+        # it is what US-338 / I-033 is about: pre-fix the failure handler was a
+        # dead-end, so the thing worth pinning is that the heartbeat holds the
+        # real adapter rather than a stub, a copy or None.
+        #
+        # US-703: this assertion used to name `connect` specifically, and went
+        # RED when US-673 (d81e2b67) moved the per-tick attempt to `connectOnce`
+        # to stop each tick costing six rfcomm binds over 31s.  The production
+        # change was correct; this file was a SECOND COPY of a contract owned
+        # elsewhere, and it went stale because the person changing the seam had
+        # no reason to read a distant US-338 regression file.  (US-610 found the
+        # same mechanism in `sync.py`'s accepted-table list this same sprint: a
+        # central copy rots precisely because it is maintained by someone who is
+        # not working on the thing it describes.)
+        #
+        # So the seam PREFERENCE is deliberately NOT re-asserted here.  It is
+        # pinned BEHAVIOURALLY -- one port open per tick -- at both spawn sites
+        # in tests/pi/obdii/test_obd_connection_retry_ceiling.py
+        # (TestBothHeartbeatSpawnSitesUseTheSingleAttemptConnect), which is the
+        # file whoever edits the seam is already in.  Re-pinning it here by
+        # identity would rebuild the stale copy this story exists to remove, and
+        # would be weaker than what already exists: an identity check still
+        # passes if `connectOnce` is quietly redefined to burst.
         assert 'connectFn' in spawned_kwargs and 'isConnectedFn' in spawned_kwargs
-        assert spawned_kwargs['connectFn'] == orchestrator._connection.connect
+        assert spawned_kwargs['connectFn'] in (
+            orchestrator._connection.connectOnce,
+            orchestrator._connection.connect,
+        ), (
+            "Heartbeat's connectFn must be drawn from the LIVE connection "
+            "(either single-attempt seam), not a stub or a stale reference -- "
+            "otherwise a successful tick never reaches orchestrator state."
+        )
         assert spawned_kwargs['isConnectedFn'] == orchestrator._connection.isConnected
 
     def test_postFailureHeartbeat_isIdempotent_whenThreadAlreadyAlive(

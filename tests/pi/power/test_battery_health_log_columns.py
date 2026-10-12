@@ -51,6 +51,7 @@ from src.pi.obdii.database import ObdDatabase
 from src.pi.power.battery_health import (
     BATTERY_HEALTH_LOG_TABLE,
     BatteryHealthRecorder,
+    ensureBatteryHealthLogSocPctColumns,
     ensureBatteryHealthLogTable,
     ensureBatteryHealthLogVcellColumns,
 )
@@ -109,14 +110,19 @@ class TestNewColumnsPresentAfterInitialize:
         assert cols['end_vcell_v']['notnull'] == 0
         assert cols['end_vcell_v']['type'].upper() == 'REAL'
 
-    def test_legacyColumnsStillPresent(self, freshDb: ObdDatabase) -> None:
-        """Deprecation phase: old start_soc / end_soc remain in the schema."""
+    def test_legacySocColumnsDropped_socPctPresent(
+        self, freshDb: ObdDatabase,
+    ) -> None:
+        """US-426: the misnamed legacy start_soc / end_soc are gone; the
+        dedicated start_soc_pct / end_soc_pct SoC% columns replace them."""
         cols = {
             c['name']: c
             for c in freshDb.getTableInfo(BATTERY_HEALTH_LOG_TABLE)
         }
-        assert 'start_soc' in cols
-        assert 'end_soc' in cols
+        assert 'start_soc' not in cols
+        assert 'end_soc' not in cols
+        assert 'start_soc_pct' in cols
+        assert 'end_soc_pct' in cols
 
 
 # ================================================================================
@@ -257,43 +263,43 @@ class TestEnsureBatteryHealthLogVcellColumnsIdempotency:
 
 
 class TestRecorderEmitsToBothColumns:
-    """During the deprecation phase the writer populates both columns."""
+    """Post-US-426 the writer puts VCELL volts in *_vcell_v only; the legacy
+    *_soc columns are gone and *_soc_pct stays NULL absent the SocPct kwarg."""
 
     def test_startDrainEventEmitsToStartVcellV(
         self,
         recorder: BatteryHealthRecorder,
         freshDb: ObdDatabase,
     ) -> None:
-        """startSoc=3.85 (a VCELL value) lands in start_vcell_v as well."""
+        """startSoc=3.85 (a VCELL value) lands in start_vcell_v; soc_pct NULL."""
         drainId = recorder.startDrainEvent(startSoc=3.85)
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT start_soc, start_vcell_v FROM "
+                f"SELECT start_vcell_v, start_soc_pct FROM "
                 f"{BATTERY_HEALTH_LOG_TABLE} WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
-        # Both columns receive the same VCELL voltage.  The double-write is
-        # the bridge for stopCondition[1] (existing analytics readers must
-        # not break mid-rename).
-        assert row[0] == 3.85  # legacy start_soc still populated
-        assert row[1] == 3.85  # new start_vcell_v populated
+        # US-426: VCELL volts live only in start_vcell_v now; start_soc_pct is
+        # NULL until US-427 wires the MAX17048 register SoC% read.
+        assert row[0] == 3.85  # start_vcell_v populated
+        assert row[1] is None  # start_soc_pct NULL (no SocPct kwarg)
 
     def test_endDrainEventEmitsToEndVcellV(
         self,
         recorder: BatteryHealthRecorder,
         freshDb: ObdDatabase,
     ) -> None:
-        """endSoc=3.41 (TRIGGER threshold) lands in end_vcell_v as well."""
+        """endSoc=3.41 (TRIGGER threshold) lands in end_vcell_v; soc_pct NULL."""
         drainId = recorder.startDrainEvent(startSoc=4.10)
         recorder.endDrainEvent(drainEventId=drainId, endSoc=3.41)
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_soc, end_vcell_v FROM "
+                f"SELECT end_vcell_v, end_soc_pct FROM "
                 f"{BATTERY_HEALTH_LOG_TABLE} WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
-        assert row[0] == 3.41  # legacy end_soc still populated
-        assert row[1] == 3.41  # new end_vcell_v populated
+        assert row[0] == 3.41  # end_vcell_v populated
+        assert row[1] is None  # end_soc_pct NULL (no SocPct kwarg)
 
     def test_endVcellNullBeforeClose(
         self,
@@ -310,43 +316,43 @@ class TestRecorderEmitsToBothColumns:
             ).fetchone()
         assert row[0] is None
 
-    def test_recorderRoundTripBothColumnsAcrossFullDrain(
+    def test_recorderRoundTripVcellAcrossFullDrain(
         self,
         recorder: BatteryHealthRecorder,
         freshDb: ObdDatabase,
     ) -> None:
-        """A complete drain leaves all four columns coherent + equal pairs."""
+        """A complete drain lands VCELL volts in *_vcell_v; *_soc_pct NULL."""
         drainId = recorder.startDrainEvent(startSoc=4.12)
         recorder.endDrainEvent(drainEventId=drainId, endSoc=3.45)
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT start_soc, end_soc, start_vcell_v, end_vcell_v "
+                f"SELECT start_vcell_v, end_vcell_v, start_soc_pct, end_soc_pct "
                 f"FROM {BATTERY_HEALTH_LOG_TABLE} WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
-        assert row[0] == row[2] == 4.12  # start_soc == start_vcell_v
-        assert row[1] == row[3] == 3.45  # end_soc == end_vcell_v
+        assert row[0] == 4.12  # start_vcell_v
+        assert row[1] == 3.45  # end_vcell_v
+        assert row[2] is None  # start_soc_pct NULL (no SocPct kwarg)
+        assert row[3] is None  # end_soc_pct NULL
 
-    def test_closeOnceSemanticPreservedForBothPairs(
+    def test_closeOnceSemanticPreservedForVcell(
         self,
         recorder: BatteryHealthRecorder,
         freshDb: ObdDatabase,
     ) -> None:
-        """Re-call of endDrainEvent does NOT overwrite either pair."""
+        """Re-call of endDrainEvent does NOT overwrite end_vcell_v."""
         drainId = recorder.startDrainEvent(startSoc=4.10)
         recorder.endDrainEvent(drainEventId=drainId, endSoc=3.55)
         # Re-call with a different value would overwrite if close-once
-        # were broken.  US-217 invariant says first close wins for both
-        # legacy and new pairs.
+        # were broken.  US-217 invariant says first close wins.
         recorder.endDrainEvent(drainEventId=drainId, endSoc=2.99)
         with freshDb.connect() as conn:
             row = conn.execute(
-                f"SELECT end_soc, end_vcell_v FROM "
+                f"SELECT end_vcell_v FROM "
                 f"{BATTERY_HEALTH_LOG_TABLE} WHERE drain_event_id = ?",
                 (drainId,),
             ).fetchone()
-        assert row[0] == 3.55  # first-close-wins on legacy column
-        assert row[1] == 3.55  # first-close-wins on new column
+        assert row[0] == 3.55  # first-close-wins on end_vcell_v
 
 
 # ================================================================================
@@ -382,3 +388,140 @@ class TestEnsureChainComposability:
             assert 'end_vcell_v' in columns
         finally:
             conn.close()
+
+
+# ================================================================================
+# US-426 (BL-015): the SoC% rebuild migration -- drop legacy *_soc, add *_soc_pct
+# ================================================================================
+
+
+def _makeLegacyBhlDb(path: Path) -> sqlite3.Connection:
+    """Create a pre-US-426 battery_health_log (start_soc/end_soc + vcell)."""
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE battery_health_log ("
+        "drain_event_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "start_timestamp TEXT NOT NULL, "
+        "end_timestamp TEXT, "
+        "start_soc REAL NOT NULL, "
+        "end_soc REAL, "
+        "start_vcell_v REAL, "
+        "end_vcell_v REAL, "
+        "runtime_seconds INTEGER, "
+        "ambient_temp_c REAL, "
+        "load_class TEXT NOT NULL DEFAULT 'production', "
+        "notes TEXT, "
+        "data_source TEXT NOT NULL DEFAULT 'real')"
+    )
+    conn.commit()
+    return conn
+
+
+class TestEnsureBatteryHealthLogSocPctColumns:
+    """The US-426 CREATE-SELECT-DROP-RENAME rebuild helper."""
+
+    def test_freshSchema_isNoOp(self, freshDb: ObdDatabase) -> None:
+        """A fresh DB already lands in the target shape -> helper is a no-op."""
+        with freshDb.connect() as conn:
+            assert ensureBatteryHealthLogSocPctColumns(conn) is False
+
+    def test_missingTable_isNoOp(self, tmp_path: Path) -> None:
+        conn = sqlite3.connect(str(tmp_path / "bare.db"))
+        try:
+            assert ensureBatteryHealthLogSocPctColumns(conn) is False
+        finally:
+            conn.close()
+
+    def test_legacyDb_dropsSocAddsSocPct(self, tmp_path: Path) -> None:
+        conn = _makeLegacyBhlDb(tmp_path / "legacy.db")
+        try:
+            assert ensureBatteryHealthLogSocPctColumns(conn) is True
+            conn.commit()
+            columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(battery_health_log)"
+                ).fetchall()
+            }
+            assert 'start_soc' not in columns
+            assert 'end_soc' not in columns
+            assert 'start_soc_pct' in columns
+            assert 'end_soc_pct' in columns
+            assert 'start_vcell_v' in columns
+            assert 'end_vcell_v' in columns
+        finally:
+            conn.close()
+
+    def test_secondCallIsNoOp(self, tmp_path: Path) -> None:
+        conn = _makeLegacyBhlDb(tmp_path / "legacy.db")
+        try:
+            assert ensureBatteryHealthLogSocPctColumns(conn) is True
+            conn.commit()
+            assert ensureBatteryHealthLogSocPctColumns(conn) is False
+        finally:
+            conn.close()
+
+    def test_preservesVoltage_coalescingLegacySocIntoVcell(
+        self, tmp_path: Path,
+    ) -> None:
+        """Pre-US-289 rows carry voltage only in start_soc/end_soc (vcell NULL);
+        the rebuild COALESCEs it into *_vcell_v so no voltage is lost."""
+        conn = _makeLegacyBhlDb(tmp_path / "legacy.db")
+        try:
+            # Row A: pre-US-289 -- voltage only in start_soc/end_soc.
+            conn.execute(
+                "INSERT INTO battery_health_log "
+                "(drain_event_id, start_timestamp, end_timestamp, start_soc, "
+                " end_soc) VALUES (1, '2026-04-01T00:00:00Z', "
+                "'2026-04-01T00:30:00Z', 4.10, 3.55)"
+            )
+            # Row B: post-US-289 -- vcell populated, soc mirrors it.
+            conn.execute(
+                "INSERT INTO battery_health_log "
+                "(drain_event_id, start_timestamp, start_soc, start_vcell_v) "
+                "VALUES (2, '2026-05-01T00:00:00Z', 4.05, 4.05)"
+            )
+            conn.commit()
+
+            assert ensureBatteryHealthLogSocPctColumns(conn) is True
+            conn.commit()
+
+            rows = conn.execute(
+                "SELECT drain_event_id, start_vcell_v, end_vcell_v, "
+                "       start_soc_pct, end_soc_pct "
+                "FROM battery_health_log ORDER BY drain_event_id"
+            ).fetchall()
+            # Row A: legacy volts preserved via COALESCE into vcell.
+            assert rows[0] == (1, 4.10, 3.55, None, None)
+            # Row B: existing vcell preserved.
+            assert rows[1] == (2, 4.05, None, None, None)
+        finally:
+            conn.close()
+
+    def test_rebuildPreservesIndex(self, tmp_path: Path) -> None:
+        conn = _makeLegacyBhlDb(tmp_path / "legacy.db")
+        try:
+            ensureBatteryHealthLogSocPctColumns(conn)
+            conn.commit()
+            names = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' "
+                    "AND tbl_name='battery_health_log'"
+                ).fetchall()
+            }
+            assert 'IX_battery_health_log_start' in names
+        finally:
+            conn.close()
+
+    def test_initializeRunsRebuildOnLegacyDb(self, tmp_path: Path) -> None:
+        """ObdDatabase.initialize() wires the rebuild after the vcell helper:
+        a legacy DB opened through it lands in the US-426 shape."""
+        path = tmp_path / "legacy_full.db"
+        _makeLegacyBhlDb(path).close()
+        db = ObdDatabase(str(path), walMode=False)
+        db.initialize()
+        cols = {c['name'] for c in db.getTableInfo(BATTERY_HEALTH_LOG_TABLE)}
+        assert 'start_soc' not in cols
+        assert 'end_soc' not in cols
+        assert {'start_soc_pct', 'end_soc_pct'}.issubset(cols)

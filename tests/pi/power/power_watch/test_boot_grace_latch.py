@@ -31,6 +31,18 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-05-20    | US-344  | Initial -- F-7 boot-grace latch regression gate.
+# 2026-09-17    | US-788  | In-grace losses now reach the sequencer (flagged
+#                           suppressFloorFastPath); the fake counts them apart
+#                           so these gates still pin the post-grace fires.
+# 2026-09-19    | US-792  | Added the latch-RELEASE gate. firedAlready is set on
+#                           all three exits of handleOnBattery, including cancel,
+#                           and nothing reset it, so a blip that cancelled a
+#                           shutdown left the trigger dead for the rest of the
+#                           boot. Its absence is what let a one-shot latch ship;
+#                           it asserts the call COUNT, because a single-call
+#                           assertion passes on the broken code.
+# 2026-10-11    | US-748-c| A late arm seeds serviceStartMono with the arm
+#                           instant, so a key-off just after it is in-grace.
 # ================================================================================
 ################################################################################
 """F-7 regression gate: in-grace transient + level-stuck-LOW post-grace must
@@ -43,7 +55,7 @@ from __future__ import annotations
 
 import threading
 
-from src.pi.power.power_watch.__main__ import _runPldWatchLoop
+from src.pi.power.power_watch.__main__ import _runPldWatchLoop, runDisarmedHold
 
 
 class _FakeSequencer:
@@ -53,9 +65,15 @@ class _FakeSequencer:
 
     def __init__(self) -> None:
         self.fireCount = 0
+        self.inGraceFireCount = 0
 
-    def handleOnBattery(self) -> None:
-        self.fireCount += 1
+    def handleOnBattery(self, *, suppressFloorFastPath: bool = False) -> None:
+        # US-788: in-grace losses reach the sequencer too, flagged. The F-7
+        # gates below count POST-grace fires, the behaviour they pin.
+        if suppressFloorFastPath:
+            self.inGraceFireCount += 1
+        else:
+            self.fireCount += 1
 
 
 class _CountingStop:
@@ -186,3 +204,99 @@ def test_firedAlready_preventsDoubleFire_postGrace():
         f"firedAlready guard broken: {sequencer.fireCount} fires "
         f"(level-stuck-LOW should fire exactly once, not every poll)"
     )
+
+
+def test_firedAlready_releases_whenLineReadsPresentAgain():
+    """US-792: THE LATCH MUST RELEASE. A post-grace loss that CANCELS (power
+    returned during smoothing) still sets firedAlready, because it is set on
+    ALL THREE exits of handleOnBattery -- poweroff, VCELL-floor fast path, and
+    cancel -- and nothing ever reset it. The trigger was therefore dead for the
+    rest of the boot, and the next genuine key-off was a hard cut.
+
+    The loop cannot see WHICH exit handleOnBattery took, and does not need to:
+    the line reading PRESENT is the end of that loss episode. The latch means
+    "a decision is in flight or complete for THIS episode", never "for this
+    boot" -- that conflation is the defect (specs/architecture.md 10.6).
+
+    ONE present reading re-arms, deliberately with NO debounce (asymmetric with
+    smoothingSec): iter2 below is a single present tick and it is enough.
+    Into shutdown we debounce 7 s because committing on a blip bricked the Pi
+    on 2026-05-18; back to armed we do not, because failing to re-arm costs a
+    hard cut and un-shed carry at real load is only 0.678 s.
+
+    ASSERTS THE CALL COUNT, not merely that it was called -- a single-call
+    assertion passes on the broken code and would have let this ship again.
+    """
+    sequencer = _FakeSequencer()
+    # All ticks post-grace. init: healthy. iter1 (t=100ms): loss -> FIRE #1,
+    # which CANCELS (power returned during smoothing) but still latches.
+    # iter2 (t=200ms): line reads PRESENT -> must re-arm. iter3 (t=300ms):
+    # second, genuine loss -> FIRE #2.
+    _runLoop(
+        states=[False, True, False, True],
+        times=[0.100, 0.200, 0.300],
+        bootGraceSec=0.050,
+        maxIters=3,
+        sequencer=sequencer,
+    )
+    assert sequencer.fireCount == 2, (
+        f"US-792: latch never released -- expected 2 fires (the cancelled "
+        f"loss, then the genuine key-off), got {sequencer.fireCount}. With "
+        f"1 fire the sequencer is blind for the rest of the boot and the next "
+        f"key-off is a hard cut."
+    )
+
+
+def test_US748c_lossWithinBootGraceOfALateArm_takesTheBootGraceEdgePath():
+    """US-748-c: a late arm falls through into the armed block, so the watch
+    loop's serviceStartMono is the ARM instant, not the process start. A key-off
+    seconds after the arm is therefore an in-grace loss and must take the
+    boot-grace edge path (suppressFloorFastPath=True), exactly as on a Pi that
+    booted on car power.
+
+    The hold runs on a fake clock to its late arm; its return instant then
+    seeds the loop the way main() does.
+    """
+    clock = {"now": 0.0}
+
+    def waitFn(timeoutSec: float) -> bool:
+        clock["now"] += timeoutSec
+        return False
+
+    reads = iter([False] * 40)
+    result = runDisarmedHold(
+        message="NOT-ARMED",
+        waitFn=waitFn,
+        pldAvailable=True,
+        isPresentFn=lambda: next(reads, True),
+        pldGpioPin=6,
+        dwellSec=7.0,
+        pollSec=1.0,
+        monotonicFn=lambda: clock["now"],
+    )
+    assert result is None
+    armInstant = clock["now"]
+    bootGraceSec = 30.0
+
+    sequencer = _FakeSequencer()
+    states = iter([False, False, True, True])
+    times = iter([armInstant + 2.0, armInstant + 5.0, armInstant + 6.0])
+    _runPldWatchLoop(
+        isPowerLostFn=lambda: next(states, True),
+        stop=_CountingStop(3),
+        serviceStartMono=armInstant,
+        bootGraceSec=bootGraceSec,
+        pldPollSec=0.001,
+        pldGpioPin=6,
+        handleLock=threading.Lock(),
+        shutdownSequencer=sequencer,
+        monotonicFn=lambda: next(times, armInstant + 999.0),
+    )
+
+    # Absent for 40 s, then 7 s present: the arm is 47 s into the process, so
+    # the loss (arm + 5 s) is PAST grace measured from process start and
+    # inside it measured from the arm. Only the arm instant gives the edge path.
+    assert armInstant == 47.0
+    assert armInstant + 5.0 > bootGraceSec
+    assert sequencer.inGraceFireCount == 1
+    assert sequencer.fireCount == 0

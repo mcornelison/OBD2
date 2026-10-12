@@ -1,8 +1,8 @@
 ################################################################################
 # File Name: test_sync_task.py
 # Purpose/Description: Tests: SyncWithServerTask CIO state machine --
-#                      reachable?/sync/retry-once/classify; benign skip writes
-#                      no record; real fault recorded; run() never raises.
+#                      home?/sync/retry/classify; every run writes one
+#                      outcome record; run() never raises.
 # Author: (implementation plan 2026-05-17)
 # Creation Date: 2026-05-17
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -12,16 +12,26 @@
 # Date          | Author  | Description
 # ================================================================================
 # 2026-05-17    | Plan    | Initial -- P2-T5 sync_with_server tests.
+# 2026-10-01    | Rex     | US-776-c: gated on the home state (AWAY skips).
+# 2026-10-01    | Rex     | US-776-g: retries run to a ceiling on a fake clock.
+# 2026-10-01    | Rex     | US-776-d: one record per run, the AWAY skip included.
+# 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec -> stallSec; the ceiling test is now the stall test.
 # ================================================================================
 ################################################################################
+from src.pi.network.home_detector import HomeNetworkState
 from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.tasks.sync_with_server import SyncWithServerTask
 
 
-def _task(reachable, syncSeq, rec):
+def _task(reachable, syncSeq, rec, *, stallSec=60.0):
     """Build a SyncWithServerTask whose runSync pops syncSeq each call and
-    raises any item that is an Exception (else returns success)."""
+    raises any item that is an Exception (else returns success). Waits run
+    on a fake clock that only the task's own sleeps advance."""
     seq = iter(syncSeq)
+    now = [0.0]
+
+    def sleep(seconds):
+        now[0] += seconds
 
     def runSync():
         item = next(seq)
@@ -29,31 +39,40 @@ def _task(reachable, syncSeq, rec):
             raise item
 
     return SyncWithServerTask(
-        serverReachable=lambda: reachable,
+        homeState=lambda: (
+            HomeNetworkState.AT_HOME_SERVER_REACHABLE if reachable else HomeNetworkState.AWAY
+        ),
         runSync=runSync,
         writeRecord=rec,
+        joinWaitSec=120.0,
+        stallSec=stallSec,
+        sleepFn=sleep,
+        monotonic=lambda: now[0],
     )
 
 
-def test_server_unavailable_is_benign_skip():
+def test_away_is_benign_skip():
     recs = []
     result = _task(False, [], recs.append).run()
-    assert result == OutcomeKind.SERVER_UNAVAILABLE
-    assert recs == []  # benign -> no real-error record
+    assert result == OutcomeKind.AWAY
+    assert [r[0] for r in recs] == [OutcomeKind.AWAY]  # US-776-d: the skip is recorded too
 
 
 def test_sync_ok_first_try():
-    assert _task(True, [None], [].append).run() == OutcomeKind.OK
+    assert _task(True, [None], [].append).run() == OutcomeKind.DELIVERED
 
 
 def test_sync_fails_then_retry_ok():
-    assert _task(True, [RuntimeError("net"), None], [].append).run() == OutcomeKind.OK
+    assert _task(True, [RuntimeError("net"), None], [].append).run() == OutcomeKind.DELIVERED
 
 
-def test_sync_fails_twice():
+def test_sync_fails_until_stall():
+    # A 3 s stall window: attempts at 0, 2 and 3 s, then no progress for 3 s.
     recs = []
-    result = _task(True, [RuntimeError("net"), RuntimeError("net")], recs.append).run()
-    assert result == OutcomeKind.SYNC_FAILED_AFTER_RETRY
+    result = _task(
+        True, [RuntimeError("net")] * 3, recs.append, stallSec=3.0
+    ).run()
+    assert result == OutcomeKind.AT_HOME_SERVER_DOWN
     assert len(recs) == 1  # logged + recorded, then continue
 
 

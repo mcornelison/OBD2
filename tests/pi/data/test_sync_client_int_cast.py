@@ -14,6 +14,8 @@
 # 2026-04-19    | Rex          | US-194 -- regress the Session 23 crash.
 #               |              | Pre-fix behavior documented in TD-026 spec;
 #               |              | post-fix asserts graceful SKIP + no ValueError.
+# 2026-10-11    | Rex (US-776-i)| The fake opener now answers with the stored
+#               |              | ack: a bare 2xx no longer advances the mark.
 # ================================================================================
 ################################################################################
 
@@ -54,6 +56,7 @@ import pytest
 
 from src.pi.data import sync_log
 from src.pi.sync import PushStatus, SyncClient
+from tests.pi.sync.stored_ack_reply import storedAckReplyFor
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -94,7 +97,12 @@ class _FakeHttpResponse:
 
 
 def _noopOpener(req: Any, timeout: float) -> _FakeHttpResponse:
-    return _FakeHttpResponse(status=200, body=b"{}")
+    """Answer 200 with the stored ack for every row sent.
+
+    US-776-i: a bare ``{}`` 2xx no longer counts as delivered, so the
+    success reply carries the server's stored ack.
+    """
+    return _FakeHttpResponse(status=200, body=storedAckReplyFor(req.data))
 
 
 # --------------------------------------------------------------------------- #

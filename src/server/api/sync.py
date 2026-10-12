@@ -74,6 +74,21 @@
 #               |              | autoAnalysisTriggered stays in SyncResponse for
 #               |              | Pi-side wire-format compatibility but is always
 #               |              | False (server compute runs out-of-band).
+# 2026-07-01    | Rex (US-416) | F-101/F-115: natural-key SNAPSHOT upsert path
+#               |              | for append-only TEXT-PK tables registered in
+#               |              | src.common.sync.snapshot_registry (A-4 shared
+#               |              | contract).  runSnapshotUpsert + _upsertSnapshotBatch
+#               |              | upsert on (source_device, *naturalKeyCols) against
+#               |              | a UNIQUE(source_device, *naturalKeyCols) constraint
+#               |              | -- a NEW pattern, distinct from the id->source_id
+#               |              | registry path AND from dtc_freeze_frame's FK
+#               |              | resolver (left untouched).  Registry + model
+#               |              | registry ship empty; startup_log registers US-417.
+# 2026-09-25    | Rex (US-790) | Registered drain_vcell_trajectory (no rename).
+# 2026-10-11    | Rex (US-776-h)| Push reply gains 'stored': per table
+#               |              | storedCount + maxStoredSourceId, read back
+#               |              | AFTER the commit (readStoredAck).  Existing
+#               |              | response keys unchanged.
 # ================================================================================
 ################################################################################
 
@@ -122,11 +137,16 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func as sa_func
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select, tuple_, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from src.common.sync.snapshot_registry import (
+    getSnapshotSpec,
+    isSnapshotSyncTable,
+    snapshotSyncTables,
+)
 from src.server.db.connection import getAsyncSession
 from src.server.db.models import (
     AiRecommendation,
@@ -134,16 +154,24 @@ from src.server.db.models import (
     BatteryHealthLog,
     CalibrationSession,
     ConnectionLog,
+    DrainVcellTrajectory,
     DriveCounter,
     DriveSummary,
     DtcFreezeFrame,
     DtcLog,
+    EdrImuDerived,
+    EdrImuSample,
+    EdrLightSample,
+    PiState,
+    PowerLog,
     Profile,
     RealtimeData,
+    StartupLog,
     Statistic,
     SyncHistory,
     VehicleInfo,
 )
+from src.server.services.sync_status import readSyncStatusAsync
 
 # US-350 / B-104 Step 1a (V0.27.17): enqueueAutoAnalysisForSync import retired.
 # Drive analytics is now computed server-side from raw realtime_data via
@@ -178,12 +206,52 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # model is shared with analytics but the Pi-sync natural key is
     # (source_device, source_id); see DriveSummary docstring for the
     # dual-writer contract.
+    #
+    # US-689 REMOVED the US-563 / F-134 rename seam that accepted the retired
+    # pre-rename spelling of the drive-start IAT column here (the name itself
+    # is deliberately not repeated: this module must not carry a second
+    # vocabulary for the column, and the rename is recorded on the Pi side as
+    # ``drive_summary.LEGACY_INTAKE_AIR_COLUMN``).  The seam existed for the
+    # rolling deploy window and that window has closed: the Pi RENAMED its own
+    # column (``src/pi/obdii/drive_summary.py::_migrateIntakeAirColumn``), and
+    # the deployed car's APPLIED schema was read on 2026-09-22 to confirm it --
+    # so no Pi in the fleet can emit the old key.
+    # A row spelled the old way is now REJECTED rather than translated, which
+    # is the safe direction -- the alternative to translating was never
+    # "translate or drop", it was "raise or drop a real measurement silently".
+    # With this gone, NO non-PK rename remains in this registry;
+    # tests/lint/test_pi_server_contract_parity.py asserts that structurally,
+    # against this live dict.
     "drive_summary": (DriveSummary, ()),
     # US-217: battery_health_log capture table.  drain_event_id is the
     # Pi-side PK -> renamed to 'id' on the wire by the sync client
     # -> mapped to source_id by runSyncUpsert, matching every other
     # synced capture table.  One row per UPS drain event.
     "battery_health_log": (BatteryHealthLog, ()),
+    # US-412 (F-101): power_log capture table.  Integer 'id' PK -> mapped to
+    # source_id by runSyncUpsert.  One row per power-source / shutdown-stage
+    # transition (NOT per poll).  Formerly Pi-only health telemetry.
+    "power_log": (PowerLog, ()),
+    # US-790 (F-138): the shutdown drain's VCELL series -- one row per drain
+    # POLL, which is exactly why it is not power_log.  Integer 'id' PK ->
+    # source_id, no rename.  INSERT-only on the Pi.
+    "drain_vcell_trajectory": (DrainVcellTrajectory, ()),
+    # US-453 (D-7 / F-082): pi_state operational-state singleton.  Integer 'id'
+    # PK (pinned to 1 on the Pi) -> mapped to source_id; the generic upsert on
+    # (source_device, source_id) applies the Pi's no_new_drives flips (the Pi
+    # opts pi_state into the modified_at cursor so those UPDATEs re-sync).
+    # Irreproducible forensic state -- the server mirrors it, never recomputes.
+    "pi_state": (PiState, ()),
+    # US-765 (F-142): the EDR raw sample tables -- the destination that did not
+    # exist while the Pi recorded ~1.77M rows a day and purged them by age.
+    # Their upsert conflict target is the TRIPLE, declared on the models as
+    # __sync_conflict_cols__ (the server tables are RANGE-partitioned on ts_utc
+    # and MariaDB requires the partition column in every unique key).  Nothing
+    # else about their sync path is special: the Pi 'id' maps to source_id like
+    # every other capture table.
+    "edr_imu_sample": (EdrImuSample, ()),
+    "edr_imu_derived": (EdrImuDerived, ()),   # US-805
+    "edr_light_sample": (EdrLightSample, ()),
 }
 
 # US-369 (F-109): dtc_freeze_frame is a synced capture table but is NOT a
@@ -193,9 +261,35 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
 # here and routed through the dedicated resolver _syncDtcFreezeFrameRows.
 DTC_FREEZE_FRAME_TABLE: str = "dtc_freeze_frame"
 
+# US-416 (F-101/F-115): server-side model registry for the natural-key SNAPSHOT
+# sync path.  Maps a snapshot-sync table name -> its SQLAlchemy model.  The
+# per-table (naturalKeyCols, cursorCol) contract lives in the SHARED registry
+# src.common.sync.snapshot_registry.SNAPSHOT_SYNC (A-4); this map only supplies
+# the server model for each registered table.  startup_log (US-417) is the first
+# registrant; the F-115 event-vault registers here too.
+_SNAPSHOT_TABLE_REGISTRY: dict[str, type] = {
+    "startup_log": StartupLog,
+}
+
+# NOTE: ACCEPTED_TABLES is the STATIC delta + dtc_freeze_frame set, preserved for
+# back-compat (it is imported by tests + operator tooling).  The payload
+# whitelist is computed dynamically by :func:`acceptedTables` so a snapshot-sync
+# registration (module-level in US-417, or a test fixture) is honoured without
+# editing this constant.
 ACCEPTED_TABLES: frozenset[str] = (
     frozenset(_TABLE_REGISTRY.keys()) | {DTC_FREEZE_FRAME_TABLE}
 )
+
+
+def acceptedTables() -> frozenset[str]:
+    """Return every table name the sync payload accepts, computed live.
+
+    ``ACCEPTED_TABLES`` (delta tables + dtc_freeze_frame) UNION the currently
+    registered natural-key snapshot-sync tables.  Computed on each call so a
+    registration in :data:`SNAPSHOT_SYNC` -- whether module-level or a test
+    fixture -- is visible to the Pydantic validator immediately.
+    """
+    return ACCEPTED_TABLES | snapshotSyncTables()
 
 # Columns never overwritten on upsert conflict.
 #
@@ -255,6 +349,47 @@ class DriveCounterData(BaseModel):
     )
 
 
+class ResidualGroups(BaseModel):
+    """The residual split the CIO ruled (US-795(a), 2026-10-06).
+
+    ``drive`` is the car's own records; ``sensor`` is the EDR archive
+    (``src/common/edr/sync_contract.EDR_SYNC_TABLES``). Measured by the Pi from
+    the same backlog read as the total, so the two always come from one
+    instant.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    drive: int = Field(..., ge=0, description="Outstanding rows outside the EDR archive.")
+    sensor: int = Field(..., ge=0, description="Outstanding rows in the EDR archive.")
+
+
+class ResidualReport(BaseModel):
+    """What the Pi still held when this sync session closed (US-795-a).
+
+    Carried from the Pi's :class:`SyncBacklog`, never recomputed here: a second
+    implementation of the same measurement would be a second source of truth
+    for it. ``complete`` is the qualifier that keeps the number honest --
+    ``SyncBacklog.total`` is a LOWER BOUND whenever any table was unreadable,
+    and an integer stored without that fact reads as an exact count forever
+    after.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    outstandingRows: int = Field(
+        ..., ge=0, description="Rows the Pi still held at close, per SyncBacklog.",  # b044-exempt: pydantic Field description
+    )
+    complete: bool = Field(
+        ...,
+        description="False when any table was unreadable, making the count a lower bound.",  # b044-exempt: pydantic Field description
+    )
+    groups: ResidualGroups | None = Field(
+        default=None,
+        description="Optional drive/sensor split of outstandingRows (US-795(a)).",
+    )
+
+
 class SyncRequest(BaseModel):
     """Top-level sync request body."""
 
@@ -273,18 +408,23 @@ class SyncRequest(BaseModel):
         default=None,
         description="Optional Pi drive_counter singleton snapshot (US-314).",  # b044-exempt: pydantic Field description
     )
+    residual: ResidualReport | None = Field(
+        default=None,
+        description="Optional residual the Pi still held at session close (US-795-a).",  # b044-exempt: pydantic Field description
+    )
 
     @field_validator("tables")
     @classmethod
     def _tablesMustBeAccepted(
         cls, value: dict[str, TableData],
     ) -> dict[str, TableData]:
-        """Reject any table name not in ACCEPTED_TABLES."""
-        unknown = set(value) - ACCEPTED_TABLES
+        """Reject any table name not accepted (delta + dtc_ff + snapshot-sync)."""
+        accepted = acceptedTables()
+        unknown = set(value) - accepted
         if unknown:
             raise ValueError(
                 f"Unknown table name(s): {sorted(unknown)}. "
-                f"Accepted: {sorted(ACCEPTED_TABLES)}.",
+                f"Accepted: {sorted(accepted)}.",
             )
         return value
 
@@ -297,6 +437,17 @@ class TableResult(BaseModel):
     errors: int = 0
 
 
+class StoredAck(BaseModel):
+    """Per-table post-commit stored ack (US-776-h).
+
+    Read back AFTER the commit over the batch's source_ids for the pushing
+    device, so it measures what the server holds, not what it was sent.
+    """
+
+    storedCount: int
+    maxStoredSourceId: int | None
+
+
 class SyncResponse(BaseModel):
     """Response envelope for POST /sync (server spec §2.2)."""
 
@@ -306,6 +457,9 @@ class SyncResponse(BaseModel):
     syncedAt: str
     driveDataReceived: bool
     autoAnalysisTriggered: bool
+    # US-776-h: additive, so a Pi on an older build that ignores it keeps
+    # working.  tablesProcessed is a PRE-write count; this is the post-commit one.
+    stored: dict[str, StoredAck] = Field(default_factory=dict)
 
 
 # ==============================================================================
@@ -337,6 +491,17 @@ def _parseDateTime(value: Any) -> Any:
     return value
 
 
+def _modelColumnNames(model: type) -> frozenset[str]:
+    """Every column name the server model declares (US-689).
+
+    Read from the mapped table rather than a list, so it cannot drift from the
+    schema it is meant to describe.
+    """
+    return frozenset(
+        c.name for c in model.__table__.columns  # type: ignore[attr-defined]
+    )
+
+
 def _coerceRowColumns(model: type, row: dict[str, Any]) -> None:
     """In-place: parse DateTime column values into datetime objects."""
     from sqlalchemy import DateTime
@@ -357,6 +522,7 @@ def runSyncUpsert(
     batchId: str,
     tables: dict[str, Any],
     syncHistoryId: int,
+    batchSourceIds: dict[str, list[int]] | None = None,
 ) -> dict[str, dict[str, int]]:
     """
     Upsert every accepted table's delta rows inside a single DB transaction.
@@ -372,6 +538,11 @@ def runSyncUpsert(
             ``rows`` list of Pi-native rows (each including an ``id`` field).
         syncHistoryId: PK of the sync_history row that triggered this call;
             stamped into ``sync_batch_id`` on rows that carry that column.
+        batchSourceIds: Optional collector (US-776-h).  When given, it is
+            filled with table name → the server ``source_id`` of every row
+            this batch writes, for each source_id-keyed table (the delta
+            registry and dtc_freeze_frame; not the natural-key snapshot
+            tables).  :func:`readStoredAck` reads these back after the commit.
 
     Returns:
         Mapping of table name → ``{"inserted": N, "updated": M, "errors": 0}``.
@@ -379,6 +550,8 @@ def runSyncUpsert(
         present with empty rows report zero counts.
     """
     result: dict[str, dict[str, int]] = {}
+    if batchSourceIds is None:
+        batchSourceIds = {}
 
     for tableName, payload in tables.items():
         # US-369: dtc_freeze_frame needs cross-tier FK resolution; it is
@@ -386,10 +559,16 @@ def runSyncUpsert(
         # in this same batch are already upserted and resolvable.
         if tableName == DTC_FREEZE_FRAME_TABLE:
             continue
+        # US-416: natural-key snapshot-sync tables use a different resolver
+        # (upsert on (source_device, *naturalKeyCols), no id->source_id); they
+        # are processed after this generic loop.
+        if isSnapshotSyncTable(tableName):
+            continue
         model, renames = _TABLE_REGISTRY[tableName]
         rows = payload["rows"] if isinstance(payload, dict) else payload.rows
         if not rows:
             result[tableName] = {"inserted": 0, "updated": 0, "errors": 0}
+            batchSourceIds[tableName] = []
             continue
 
         # Shape Pi-native rows into server schema dicts.
@@ -414,6 +593,28 @@ def runSyncUpsert(
                     serverRow[renamedKey] = value
                     serverRow["source_id"] = len(prepared) + 1
                 else:
+                    # US-689: a key the server model does not have is REFUSED,
+                    # not quietly skipped. SQLAlchemy's executemany ignores
+                    # surplus dict keys, so the row used to insert cleanly with
+                    # errors=0 while the value it carried was discarded -- a
+                    # green suite and a lost measurement, which is exactly the
+                    # shape the rename seam removed above was hiding. Raising
+                    # names the table and the key, so a Pi/server vocabulary
+                    # split is visible on the first batch instead of being
+                    # inferred later from missing data.
+                    if renamedKey not in _modelColumnNames(model):
+                        raise ValueError(
+                            f"sync: table {tableName!r} row carries column "
+                            f"{key!r}, which the server model does not have"
+                            + (
+                                f" (after rename to {renamedKey!r})"
+                                if renamedKey != key
+                                else ""
+                            )
+                            + ". Rename the column on the Pi, or migrate the "
+                            "server -- the value would otherwise be dropped "
+                            "silently (US-689).",
+                        )
                     serverRow[renamedKey] = value
             serverRow["source_device"] = deviceId
             # US-372 (F-076): mirror the Pi drive id onto drive_id.  The Pi
@@ -455,6 +656,7 @@ def runSyncUpsert(
             "updated": updated,
             "errors": 0,
         }
+        batchSourceIds[tableName] = sourceIds
 
     # US-369 (F-109): dtc_freeze_frame last -- its FK resolution reads the
     # dtc_log / vehicle_info rows just upserted above.
@@ -464,8 +666,103 @@ def runSyncUpsert(
         result[DTC_FREEZE_FRAME_TABLE] = _syncDtcFreezeFrameRows(
             session, deviceId, ffRows, syncHistoryId,
         )
+        # _syncDtcFreezeFrameRows maps the Pi 'id' straight onto source_id.
+        batchSourceIds[DTC_FREEZE_FRAME_TABLE] = [r["id"] for r in ffRows]
+
+    # US-416: natural-key snapshot-sync tables, routed by the shared registry.
+    for tableName, payload in tables.items():
+        if not isSnapshotSyncTable(tableName):
+            continue
+        model = _SNAPSHOT_TABLE_REGISTRY.get(tableName)
+        if model is None:
+            raise ValueError(
+                f"snapshot-sync table {tableName!r} has no server model "
+                f"registered in _SNAPSHOT_TABLE_REGISTRY",
+            )
+        snapRows = payload["rows"] if isinstance(payload, dict) else payload.rows
+        result[tableName] = runSnapshotUpsert(
+            session, deviceId, tableName, model, snapRows, syncHistoryId,
+        )
 
     return result
+
+
+def readStoredAck(
+    session: Session,
+    deviceId: str,
+    batchSourceIds: dict[str, list[int]],
+) -> dict[str, dict[str, int | None]]:
+    """Read back what the server holds for a batch, after its commit (US-776-h).
+
+    ``tablesProcessed`` is taken before the write, so it says what was
+    received.  This is the count the Pi may treat as "stored": a SELECT over
+    the batch's own source_ids, scoped to the pushing device, run on a session
+    that sees only committed data.  A row that did not land shows as a
+    ``storedCount`` below the rows sent.  DISTINCT keeps the count per source
+    row for tables whose conflict key is wider than (device, source_id).
+
+    Args:
+        session: A sync Session opened AFTER the batch transaction committed.
+        deviceId: The pushing device; another device's rows never count.
+        batchSourceIds: Table name → the batch's source_ids, as collected by
+            :func:`runSyncUpsert`.
+
+    Returns:
+        Table name → ``{"storedCount": N, "maxStoredSourceId": M}``.  A table
+        with no rows in the batch, or none stored, reads ``0`` / ``None``.
+    """
+    ack: dict[str, dict[str, int | None]] = {}
+    for tableName, sourceIds in batchSourceIds.items():
+        if not sourceIds:
+            ack[tableName] = {"storedCount": 0, "maxStoredSourceId": None}
+            continue
+        model = (
+            DtcFreezeFrame
+            if tableName == DTC_FREEZE_FRAME_TABLE
+            else _TABLE_REGISTRY[tableName][0]
+        )
+        storedCount, maxStored = session.execute(
+            select(
+                sa_func.count(sa_func.distinct(model.source_id)),  # type: ignore[attr-defined]
+                sa_func.max(model.source_id),  # type: ignore[attr-defined]
+            ).where(
+                model.source_device == deviceId,  # type: ignore[attr-defined]
+                model.source_id.in_(sourceIds),  # type: ignore[attr-defined]
+            ),
+        ).one()
+        ack[tableName] = {
+            "storedCount": int(storedCount),
+            "maxStoredSourceId": maxStored,
+        }
+    return ack
+
+
+# The conflict target every synced table used before US-765, and still uses
+# unless it says otherwise.  Kept as a named constant rather than a literal so
+# the "unchanged" half of the US-765 seam is assertable in a test.
+_DEFAULT_SYNC_CONFLICT_COLS: tuple[str, ...] = ("source_device", "source_id")
+
+
+def _syncConflictCols(model: type) -> tuple[str, ...]:
+    """Return the upsert conflict target for ``model``.
+
+    Reads ``__sync_conflict_cols__`` off the model when present, else the
+    historic ``(source_device, source_id)`` pair.  US-765 needed this because
+    the EDR raw tables are RANGE-partitioned on ``ts_utc`` and MariaDB requires
+    the partition column in every unique key, so their key is the triple.
+
+    The default is what matters here.  Eleven tables were already upserting
+    against a HARDCODED pair, and a conflict target that shifts silently does
+    not fail loudly -- rows simply start, or stop, colliding.  So the attribute
+    is opt-in per model and its absence is the old behaviour exactly.
+
+    Args:
+        model: A SQLAlchemy model class registered for sync.
+
+    Returns:
+        The ordered conflict column names.
+    """
+    return tuple(getattr(model, "__sync_conflict_cols__", _DEFAULT_SYNC_CONFLICT_COLS))
 
 
 def _upsertBatch(
@@ -473,12 +770,16 @@ def _upsertBatch(
     model: type,
     rows: list[dict[str, Any]],
 ) -> None:
-    """Dialect-aware bulk upsert on ``(source_device, source_id)``."""
+    """Dialect-aware bulk upsert on the model's sync conflict columns.
+
+    Defaults to ``(source_device, source_id)`` -- see :func:`_syncConflictCols`.
+    """
     if not rows:
         return
 
     table = model.__table__  # type: ignore[attr-defined]
     dialectName = session.bind.dialect.name  # type: ignore[union-attr]
+    conflictCols = _syncConflictCols(model)
 
     # Normalise keys — executemany needs identical columns on every row.
     allKeys: set[str] = set()
@@ -488,23 +789,30 @@ def _upsertBatch(
         for k in allKeys:
             r.setdefault(k, None)
 
+    # Never SET a conflict column on update.  For every pre-US-765 table both
+    # conflict columns are already in _PRESERVE_ON_UPDATE, so this clause is a
+    # no-op for them and the generated SQL is unchanged; it earns its keep only
+    # for a key column (EDR's ts_utc) that is not server-owned bookkeeping.
+    def _updateColNames() -> list[str]:
+        return [
+            c.name
+            for c in table.columns
+            if c.name in allKeys
+            and c.name not in _PRESERVE_ON_UPDATE
+            and c.name not in conflictCols
+        ]
+
     if dialectName in {"mysql", "mariadb"}:
         stmt = mysql_insert(table)
-        updateCols = {
-            c.name: stmt.inserted[c.name]
-            for c in table.columns
-            if c.name in allKeys and c.name not in _PRESERVE_ON_UPDATE
-        }
+        updateCols = {name: stmt.inserted[name] for name in _updateColNames()}
         stmt = stmt.on_duplicate_key_update(**updateCols)
     elif dialectName == "sqlite":
         stmt = sqlite_insert(table)
         updateCols = {
-            c.name: getattr(stmt.excluded, c.name)
-            for c in table.columns
-            if c.name in allKeys and c.name not in _PRESERVE_ON_UPDATE
+            name: getattr(stmt.excluded, name) for name in _updateColNames()
         }
         stmt = stmt.on_conflict_do_update(
-            index_elements=["source_device", "source_id"],
+            index_elements=list(conflictCols),
             set_=updateCols,
         )
     else:
@@ -689,6 +997,155 @@ def _syncDtcFreezeFrameRows(
 
 
 # ==============================================================================
+# Natural-key snapshot upsert (US-416 / F-101 / F-115-reusable)
+# ==============================================================================
+#
+# The GENERAL server-side resolver for append-only TEXT-PK tables that the Pi
+# pushes via the SNAPSHOT_SYNC path (startup_log, the F-115 event-vault).  Unlike
+# the generic id->source_id registry path, these rows have no meaningful integer
+# id to map; they dedup on the NATURAL key.  The upsert keys on
+# (source_device, *naturalKeyCols) against a matching UNIQUE constraint, so a
+# re-sync (the Pi's cursor over-reads harmlessly by design) is idempotent -- no
+# duplicates.  This is a NEW pattern, distinct from dtc_freeze_frame's cross-tier
+# FK resolver (which is orthogonal and deliberately left untouched).
+
+
+def runSnapshotUpsert(
+    session: Session,
+    deviceId: str,
+    tableName: str,
+    model: type,
+    rows: list[dict[str, Any]],
+    syncHistoryId: int,
+) -> dict[str, int]:
+    """Upsert Pi snapshot rows onto ``model``, deduped on the natural key.
+
+    Args:
+        session: Caller-owned SQLAlchemy session (shares the batch transaction).
+        deviceId: Stamped as ``source_device`` on every row + half of the
+            dedup key.
+        tableName: The snapshot-sync table name; must be registered in the
+            shared :data:`SNAPSHOT_SYNC` registry (supplies ``naturalKeyCols``).
+        model: The server SQLAlchemy model for ``tableName``.
+        rows: Pi-native rows for this table (each carrying every
+            ``naturalKeyCols`` column).
+        syncHistoryId: Stamped into ``sync_batch_id`` when the model has it.
+
+    Returns:
+        ``{"inserted": N, "updated": M, "errors": 0}``.
+
+    Raises:
+        KeyError: If ``tableName`` is not registered in :data:`SNAPSHOT_SYNC`.
+    """
+    naturalKeyCols = getSnapshotSpec(tableName).naturalKeyCols
+    if not rows:
+        return {"inserted": 0, "updated": 0, "errors": 0}
+
+    columnNames = {c.name for c in model.__table__.columns}  # type: ignore[attr-defined]
+    prepared: list[dict[str, Any]] = []
+    incomingKeys: list[tuple[Any, ...]] = []
+    for piRow in rows:
+        # Copy only columns the server model actually has; drop any Pi-native
+        # ``id`` (the server autoincrements its own PK -- natural-key tables
+        # have no id->source_id mapping).
+        serverRow: dict[str, Any] = {
+            k: v for k, v in piRow.items()
+            if k in columnNames and k != "id"
+        }
+        serverRow["source_device"] = deviceId
+        if "sync_batch_id" in columnNames:
+            serverRow["sync_batch_id"] = syncHistoryId
+        if "synced_at" in columnNames:
+            serverRow["synced_at"] = datetime.now(UTC).replace(tzinfo=None)
+        # US-195 parity: coerce missing/None data_source to 'real' when present.
+        if "data_source" in columnNames and serverRow.get("data_source") is None:
+            serverRow["data_source"] = "real"
+        _coerceRowColumns(model, serverRow)
+        prepared.append(serverRow)
+        incomingKeys.append(tuple(serverRow[c] for c in naturalKeyCols))
+
+    keyCols = [getattr(model, c) for c in naturalKeyCols]
+    existing = session.execute(
+        select(*keyCols).where(
+            model.source_device == deviceId,  # type: ignore[attr-defined]
+            tuple_(*keyCols).in_(incomingKeys),
+        ),
+    ).all()
+    existingSet = {tuple(row) for row in existing}
+    inserted = sum(1 for k in incomingKeys if k not in existingSet)
+    updated = len(incomingKeys) - inserted
+
+    _upsertSnapshotBatch(session, model, prepared, naturalKeyCols)
+    return {"inserted": inserted, "updated": updated, "errors": 0}
+
+
+def _upsertSnapshotBatch(
+    session: Session,
+    model: type,
+    rows: list[dict[str, Any]],
+    naturalKeyCols: tuple[str, ...],
+) -> None:
+    """Dialect-aware bulk upsert on ``(source_device, *naturalKeyCols)``."""
+    if not rows:
+        return
+
+    table = model.__table__  # type: ignore[attr-defined]
+    dialectName = session.bind.dialect.name  # type: ignore[union-attr]
+    conflictCols = ("source_device", *naturalKeyCols)
+
+    # Normalise keys -- executemany needs identical columns on every row.
+    allKeys: set[str] = set()
+    for r in rows:
+        allKeys.update(r.keys())
+    for r in rows:
+        for k in allKeys:
+            r.setdefault(k, None)
+
+    # Columns to SET on conflict: everything present in the payload except the
+    # server-owned bookkeeping (_PRESERVE_ON_UPDATE) and the conflict key itself.
+    def _updatableColNames() -> list[str]:
+        return [
+            c.name for c in table.columns
+            if c.name in allKeys
+            and c.name not in _PRESERVE_ON_UPDATE
+            and c.name not in conflictCols
+        ]
+
+    if dialectName in {"mysql", "mariadb"}:
+        stmt = mysql_insert(table)
+        updatable = _updatableColNames()
+        if updatable:
+            stmt = stmt.on_duplicate_key_update(
+                **{name: stmt.inserted[name] for name in updatable},
+            )
+        else:
+            # Nothing to update beyond the key -- keep it a no-op idempotent
+            # write by re-setting a key column to itself (MariaDB has no
+            # DO NOTHING for INSERT ... ON DUPLICATE KEY).
+            firstKey = conflictCols[0]
+            stmt = stmt.on_duplicate_key_update(
+                **{firstKey: getattr(table.c, firstKey)},
+            )
+    elif dialectName == "sqlite":
+        stmt = sqlite_insert(table)
+        updatable = _updatableColNames()
+        if updatable:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=list(conflictCols),
+                set_={name: getattr(stmt.excluded, name) for name in updatable},
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=list(conflictCols))
+    else:
+        raise ValueError(
+            f"Unsupported dialect for upsert: {dialectName!r}. "
+            "Expected mysql, mariadb, or sqlite.",
+        )
+
+    session.execute(stmt, rows)
+
+
+# ==============================================================================
 # drive_counter singleton upsert (US-314 / B-064)
 # ==============================================================================
 
@@ -784,26 +1241,60 @@ async def _createSyncHistoryRow(engine: Any, deviceId: str) -> int:
     return rowId
 
 
+def residualColumnValues(residual: ResidualReport | None) -> dict[str, Any]:
+    """The sync_history column values for a reported residual.
+
+    Only what the Pi MEASURED is returned: no residual leaves all four columns
+    unset, and a residual without ``groups`` leaves the split unset (US-795(a)).
+    An absent value stays unknown in the table; it is never written as 0.
+    """
+    if residual is None:
+        return {}
+    values: dict[str, Any] = {
+        "residual_rows": residual.outstandingRows,
+        "residual_complete": residual.complete,
+    }
+    if residual.groups is not None:
+        values["residual_drive_rows"] = residual.groups.drive
+        values["residual_sensor_rows"] = residual.groups.sensor
+    return values
+
+
 async def _completeSyncHistoryRow(
     engine: Any,
     historyId: int,
     tablesProcessed: dict[str, dict[str, int]],
     syncedAt: datetime,
+    residual: ResidualReport | None = None,
 ) -> None:
-    """Mark the sync_history row completed with row counts + per-table summary."""
+    """Mark the sync_history row completed with row counts + per-table summary.
+
+    US-795-a: ``rows_synced`` says what MOVED; ``residual_rows`` /
+    ``residual_complete`` say what REMAINED. When the Pi reported no residual
+    the columns are LEFT UNSET rather than written as 0 -- an unmeasured
+    residual is unknown, and a 0 would assert the car owed nothing on the
+    evidence of a measurement that never happened.
+
+    Args:
+        engine: Async engine.
+        historyId: The sync_history row to complete.
+        tablesProcessed: Per-table inserted/updated counts.
+        syncedAt: Session completion instant.
+        residual: What the Pi still held at close, when it reported it.
+    """
     totalRows = sum(c["inserted"] + c["updated"] for c in tablesProcessed.values())
     tablesSyncedBlob = json.dumps(tablesProcessed, sort_keys=True)
+    values: dict[str, Any] = {
+        "status": "completed",
+        "rows_synced": totalRows,
+        "tables_synced": tablesSyncedBlob,
+        "completed_at": syncedAt,
+    }
+    values.update(residualColumnValues(residual))
     factory = getAsyncSession(engine)
     async with factory() as session:
         await session.execute(
-            update(SyncHistory)
-            .where(SyncHistory.id == historyId)
-            .values(
-                status="completed",
-                rows_synced=totalRows,
-                tables_synced=tablesSyncedBlob,
-                completed_at=syncedAt,
-            ),
+            update(SyncHistory).where(SyncHistory.id == historyId).values(**values),
         )
         await session.commit()
 
@@ -842,6 +1333,23 @@ def _readMaxPayloadBytes(request: Request) -> int:
     settings = getattr(request.app.state, "settings", None)
     maxMb = getattr(settings, "MAX_SYNC_PAYLOAD_MB", 10) if settings else 10
     return int(maxMb) * 1024 * 1024
+
+
+@router.get("/sync/status")
+async def getSyncStatus(request: Request, deviceId: str | None = None) -> list[dict[str, Any]]:
+    """US-795(a): each car's sync queue as of its last contact (read-only).
+
+    The same reader and sentence as ``src/server/cli/sync_status.py``. States
+    what was true at the contact and its age; never an online/offline verdict.
+    """
+    engine = getattr(request.app.state, "engine", None)
+    if engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database engine not configured",
+        )
+    statuses = await readSyncStatusAsync(engine, now=datetime.now(UTC), deviceId=deviceId)
+    return [s.toDict() for s in statuses]
 
 
 @router.post("/sync", response_model=SyncResponse)
@@ -903,8 +1411,9 @@ async def postSync(request: Request) -> SyncResponse:
         for name, td in syncRequest.tables.items()
     }
     driveCounter = syncRequest.driveCounter
+    batchSourceIds: dict[str, list[int]] = {}
+    factory = getAsyncSession(engine)
     try:
-        factory = getAsyncSession(engine)
         async with factory() as session:
             def _runAllUpserts(s: Session) -> dict[str, dict[str, int]]:
                 processed = runSyncUpsert(
@@ -913,6 +1422,7 @@ async def postSync(request: Request) -> SyncResponse:
                     batchId=syncRequest.batchId,
                     tables=tablesForCore,
                     syncHistoryId=historyId,
+                    batchSourceIds=batchSourceIds,
                 )
                 # US-314: Pi drive_counter snapshot rides on the same
                 # transaction so a partial failure rolls back BOTH the
@@ -933,7 +1443,27 @@ async def postSync(request: Request) -> SyncResponse:
 
     # 6) Update sync_history to completed.
     syncedAt = datetime.now(UTC).replace(tzinfo=None)
-    await _completeSyncHistoryRow(engine, historyId, tablesProcessed, syncedAt)
+    await _completeSyncHistoryRow(
+        engine, historyId, tablesProcessed, syncedAt, syncRequest.residual,
+    )
+
+    # 6b) US-776-h: read the batch back in a NEW session, so the count is of
+    #     committed rows only.  A readback that fails is a 500, never an ack
+    #     without counts: the Pi must not take silence for "stored".  The
+    #     batch itself stays committed and re-pushing it is an idempotent upsert.
+    try:
+        async with factory() as session:
+            storedAck = await session.run_sync(
+                lambda s: readStoredAck(s, syncRequest.deviceId, batchSourceIds),
+            )
+    except Exception as exc:  # noqa: BLE001 — any DB error → 500
+        logger.error(
+            "Stored-count readback failed for batch %s: %s", syncRequest.batchId, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Stored-count readback failed: {exc}",
+        ) from exc
 
     # 7) US-350 / B-104 Step 1a (V0.27.17): the V0.27.7-V0.27.16
     #    auto-analysis trigger is retired.  Server-side drive analytics now
@@ -955,6 +1485,7 @@ async def postSync(request: Request) -> SyncResponse:
         syncedAt=syncedAt.isoformat(),
         driveDataReceived=driveDataReceived,
         autoAnalysisTriggered=autoAnalysisTriggered,
+        stored={name: StoredAck(**ack) for name, ack in storedAck.items()},
     )
 
 
@@ -990,8 +1521,10 @@ __all__ = [
     "SyncResponse",
     "TableData",
     "TableResult",
+    "acceptedTables",
     "detectDriveDataReceived",
     "router",
     "runDriveCounterUpsert",
+    "runSnapshotUpsert",
     "runSyncUpsert",
 ]

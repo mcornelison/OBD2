@@ -83,7 +83,7 @@ Mocks live at the same boundaries the unit tests use:
   boundary; the test asserts the drive-end trigger fires the push
   exactly once and the result reports OK.
 
-Trace shape (Drive 5 baseline -- see ``offices/tuner/knowledge.md``):
+Trace shape (Drive 5 baseline -- see ``$FLEET_SHARE/tuner/knowledge/knowledge.md``):
 
 * Idle BATTERY_V: 12.7V, 12.7V (engine off, key on).
 * Cranking dip: 11.4V (single sample, ECU silent).
@@ -180,7 +180,7 @@ def _makeReading(parameterName: str, value: float) -> MagicMock:
     reading = MagicMock(spec=["parameterName", "value", "unit"])
     reading.parameterName = parameterName
     reading.value = value
-    reading.unit = "V" if parameterName == "BATTERY_V" else None
+    reading.unit = "volt" if parameterName == "BATTERY_V" else None
     return reading
 
 
@@ -271,7 +271,7 @@ def _readSummaryRow(
 ) -> tuple[Any, Any, Any] | None:
     with db.connect() as conn:
         row = conn.execute(
-            f"SELECT ambient_temp_at_start_c, starting_battery_v, "
+            f"SELECT intake_air_temp_at_start_c, starting_battery_v, "
             f"barometric_kpa_at_start FROM {DRIVE_SUMMARY_TABLE} "
             f"WHERE drive_id = ?",
             (driveId,),
