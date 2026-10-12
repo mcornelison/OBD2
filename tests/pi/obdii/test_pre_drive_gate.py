@@ -455,3 +455,139 @@ def test_runConnectEdgeCapture_scriptBenchConfig_capturePasses(tmp_path: Path) -
     assert result.writerErrorText is None
     assert verdict.passed is True, verdict.reason
     assert verdict.reason.startswith("PASS")
+
+
+# ================================================================================
+# US-487 (reopened 2026-10-12) -- the live probe db, and the post-restart window
+# ================================================================================
+
+
+def _liveShapedConfig() -> dict[str, Any]:
+    """The script's bench config plus config.json's OWN profiles section.
+
+    That section is what the live config carries and the bench config lacks:
+    ``activeProfile`` makes the logger stamp every row ``profile_id='daily'``.
+    """
+    import json
+
+    profiles = json.loads(
+        (_GREENLIGHT_SCRIPT.parents[1] / "config.json").read_text(encoding="utf-8")
+    )["pi"]["profiles"]
+    config = _loadGreenlightScript()._benchConfig()
+    config["pi"]["profiles"] = profiles
+    return config
+
+
+def test_runConnectEdgeCapture_activeProfileIntoUnseededDb_refusesEveryRow(
+    tmp_path: Path,
+) -> None:
+    """The 2026-10-12 live failure, reproduced: a bare initialize() leaves
+    profiles empty, so every row stamped with the active profile breaks the
+    realtime_data -> profiles foreign key and the gate fails naming it."""
+    from src.pi.obdii.database import ObdDatabase
+
+    db = ObdDatabase(str(tmp_path / "gate_unseeded.db"))
+    db.initialize()
+    conn, _port = _realConnectionWithFakePort()
+
+    result = runConnectEdgeCapture(
+        connection=conn, database=db, config=_liveShapedConfig(), durationSec=0.6
+    )
+
+    assert result.rowsWritten == 0
+    assert result.writerErrors > 0
+    assert "FOREIGN KEY" in (result.writerErrorText or "")
+
+
+def test_scriptOpenProbeDatabase_seedsProfilesFromConfig_capturePasses(
+    tmp_path: Path,
+) -> None:
+    """Given the live-shaped config, When the script opens its probe db, Then the
+    config's profiles are present (production's own seeding path) and the
+    capture lands rows with no refusal."""
+    config = _liveShapedConfig()
+    script = _loadGreenlightScript()
+    db = script._openProbeDatabase(str(tmp_path / "gate_seeded.db"), config)
+
+    with db.connect() as c:
+        ids = {row[0] for row in c.execute("SELECT id FROM profiles")}
+    assert {p["id"] for p in config["pi"]["profiles"]["availableProfiles"]} <= ids
+
+    conn, _port = _realConnectionWithFakePort()
+    result = runConnectEdgeCapture(
+        connection=conn, database=db, config=config, durationSec=1.0
+    )
+    verdict = evaluateGate(
+        result, minRows=1, minDistinctParams=DEFAULT_MIN_DISTINCT_PARAMS
+    )
+
+    assert result.writerErrors == 0, result.writerErrorText
+    assert verdict.passed is True, verdict.reason
+
+
+def test_scriptOpenProbeDatabase_secondRun_isAFreshWindow(tmp_path: Path) -> None:
+    """Re-opening the same probe db (a second gate run) keeps the profiles and
+    clears the prior run's realtime rows."""
+    config = _liveShapedConfig()
+    script = _loadGreenlightScript()
+    path = str(tmp_path / "gate_rerun.db")
+
+    db = script._openProbeDatabase(path, config)
+    conn, _port = _realConnectionWithFakePort()
+    first = runConnectEdgeCapture(
+        connection=conn, database=db, config=config, durationSec=0.6
+    )
+    assert first.rowsWritten > 0
+
+    db = script._openProbeDatabase(path, config)
+    with db.connect() as c:
+        assert c.execute("SELECT COUNT(*) FROM realtime_data").fetchone()[0] == 0
+        assert c.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] > 0
+
+
+def test_productionRecoveryWindow_isConfiguredConnectTimeoutPlusOneHeartbeat() -> None:
+    """The post-restart growth window = the configured initial-connect timeout
+    (production waits that long before its first retry) + one heartbeat tick +
+    one heartbeat attempt -- read from their owners, never restated."""
+    from src.common.config.validator import DEFAULTS
+    from src.pi.obdii.reconnect_loop import (
+        HEARTBEAT_ATTEMPT_TIMEOUT_SEC,
+        HEARTBEAT_TICK_INTERVAL_SEC,
+    )
+
+    script = _loadGreenlightScript()
+    config = script._benchConfig()
+    timeout = config["pi"]["obdii"]["orchestrator"]["initialConnectTimeoutSec"]
+    assert timeout == DEFAULTS["pi.obdii.orchestrator.initialConnectTimeoutSec"]
+
+    assert script.productionRecoveryWindowSec(config) == (
+        timeout + HEARTBEAT_TICK_INTERVAL_SEC + HEARTBEAT_ATTEMPT_TIMEOUT_SEC
+    )
+
+    config["pi"]["obdii"]["orchestrator"]["initialConnectTimeoutSec"] = 45
+    assert script.productionRecoveryWindowSec(config) == (
+        45 + HEARTBEAT_TICK_INTERVAL_SEC + HEARTBEAT_ATTEMPT_TIMEOUT_SEC
+    )
+
+
+def test_productionRecoveryWindow_coversThe2026_10_12LiveRecovery() -> None:
+    """Measured live 2026-10-12: production capture resumed ~60 s after the
+    probe restarted eclipse-obd (initial connect timed out at 30 s, the
+    heartbeat connected 37 s later). The old 15 s + 10 s window could not see
+    that; the derived window must."""
+    script = _loadGreenlightScript()
+    assert script.productionRecoveryWindowSec(script._benchConfig()) >= 60
+
+
+def test_scriptPrintProdWindow_printsWholeSecondsAndExitsZero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--print-prod-window`` is how verify_pre_drive.sh asks the Pi for the
+    window: one integer on stdout, exit 0, no connection opened."""
+    script = _loadGreenlightScript()
+    rc = script.main(["--bench", "--print-prod-window"])
+    out = capsys.readouterr().out.strip()
+
+    assert rc == 0
+    assert out.isdigit()
+    assert int(out) == int(round(script.productionRecoveryWindowSec(script._benchConfig())))

@@ -20,6 +20,9 @@
 #               |              | pi.obdii.pre_drive_gate.
 # 2026-10-11    | Rex (US-487-a) | Bench config built through ConfigValidator.
 # 2026-10-12    | Rex (US-487-a) | Bench identity keys read from config.json (B-044).
+# 2026-10-12    | Atlas (US-487) | Probe db seeded with the config's profiles (live
+#               |              | FK refusal); --print-prod-window gives the wrapper
+#               |              | its post-restart window, derived from config.
 # ================================================================================
 ################################################################################
 
@@ -118,6 +121,13 @@ def _parseArgs(argv: list[str] | None = None) -> argparse.Namespace:
         help="Override the core-PID coverage floor (default from pre_drive_gate).",
     )
     parser.add_argument(
+        "--print-prod-window",
+        action="store_true",
+        help="Print the post-restart production-capture window in whole seconds "
+        "(initial-connect timeout + one reconnect heartbeat) and exit. Used by "
+        "verify_pre_drive.sh; opens no connection.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the plan and exit without opening a connection.",
@@ -180,6 +190,13 @@ def _buildConnection(args: argparse.Namespace, config: dict):
 def main(argv: list[str] | None = None) -> int:
     args = _parseArgs(argv)
 
+    if args.print_prod_window:
+        config = _benchConfig() if args.bench else _loadLiveConfig(args.config)
+        if config is None:
+            return EXIT_MISUSE
+        print(int(round(productionRecoveryWindowSec(config))))
+        return EXIT_PASS
+
     from pi.obdii.pre_drive_gate import (
         DEFAULT_MIN_DISTINCT_PARAMS,
         DEFAULT_MIN_ROWS_PER_SEC,
@@ -229,12 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     if config is None:
         return EXIT_MISUSE
 
-    from pi.obdii.database import ObdDatabase
-
-    database = ObdDatabase(dbPath)
-    database.initialize()
-    # Fresh window: clear any rows from a prior probe run in this temp db.
-    _truncate(database)
+    database = _openProbeDatabase(dbPath, config)
 
     connection = _buildConnection(args, config)
     result = runConnectEdgeCapture(
@@ -289,6 +301,59 @@ def _loadLiveConfig(configPath: str) -> dict | None:
     except ConfigValidationError as exc:
         print(f"ERROR: invalid config: {exc}", file=sys.stderr)
         return None
+
+
+def productionRecoveryWindowSec(config: dict) -> float:
+    """How long production capture may take to resume after eclipse-obd restarts.
+
+    US-487 (reopened 2026-10-12): the restarted service first waits up to the
+    configured ``pi.obdii.orchestrator.initialConnectTimeoutSec`` on its initial
+    connect, then hands over to the reconnect heartbeat, whose first attempt
+    starts one tick later and may run one full attempt. Live that day: timeout
+    at 30 s, connected 37 s later -- rows ~60 s after the restart, against a
+    15 s + 10 s check. Each term is read from its owner, never restated.
+
+    Args:
+        config: Validated config (carries the initial-connect timeout).
+
+    Returns:
+        Seconds the wrapper should keep polling for production row growth.
+    """
+    from pi.obdii.reconnect_loop import (
+        HEARTBEAT_ATTEMPT_TIMEOUT_SEC,
+        HEARTBEAT_TICK_INTERVAL_SEC,
+    )
+
+    initialConnect = float(config["pi"]["obdii"]["orchestrator"]["initialConnectTimeoutSec"])
+    return initialConnect + HEARTBEAT_TICK_INTERVAL_SEC + HEARTBEAT_ATTEMPT_TIMEOUT_SEC
+
+
+def _openProbeDatabase(dbPath: str, config: dict):
+    """Open the dedicated probe db the way production opens its own.
+
+    US-487 (reopened 2026-10-12): a bare ``initialize()`` leaves ``profiles``
+    empty; the live config's ``activeProfile`` stamps every row
+    ``profile_id='daily'``, so every write broke the realtime_data -> profiles
+    foreign key (108 refused live). Production seeds profiles through
+    ``createProfileManagerFromConfig`` at start-up; the probe now does the same,
+    from the same config, so its rows are shaped exactly like production's.
+
+    Args:
+        dbPath: The probe's own SQLite path (never data/obd.db).
+        config: The validated config the capture will run with.
+
+    Returns:
+        The initialized, profile-seeded ObdDatabase with an empty realtime window.
+    """
+    from pi.obdii.database import ObdDatabase
+    from pi.profile import createProfileManagerFromConfig
+
+    database = ObdDatabase(dbPath)
+    database.initialize()
+    createProfileManagerFromConfig(config, database)
+    # Fresh window: clear any rows from a prior probe run in this temp db.
+    _truncate(database)
+    return database
 
 
 def _truncate(database) -> None:
