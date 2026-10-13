@@ -106,6 +106,14 @@ Reached from **SETTINGS ›** (System, parked) and from the **⋮** overlay band
 | Auto-analyze | toggle | existing |
 | Power mode | car / wall | existing; CIO kept it (S-11) |
 
+**Visual design (CIO-approved 2026-10-13; mockup https://claude.ai/artifact/Vfsd6VugUGfoQAMYJZPo6R, `proposals/2026-10-13-v030-settings-screen.html`):**
+- Top bar: `‹ BACK` (left) · clock · `SETTINGS` (page-name slot). Two sections, **DISPLAY** (brightness, auto-dim range, rotate pages) and **SYSTEM** (calibration mode, analyze each drive, power source), with headers in `--accent`.
+- Each row: name (Michroma), a one-line plain description, the control on the right, then a status line (`stored: …` / `saving…` / `saved · …` / `couldn't save · kept …`) and the apply tag (`applies now` / `next drive` / `after a restart`).
+- **Controls (CIO):** **steppers `− value +`** for numbers (40 px targets): brightness 5 % steps (20–100 %, shown only when FIXED); auto-dim on a 1-2-3-5 lux ladder whose two ends **cannot cross**; rotate pages `OFF · 5 · 8 · 10 · 15 · 30 s`. Segmented choices for `AUTO|FIXED` and `CAR|WALL|UNKNOWN` (power mode stays **3-state**, as shipped; `UNKNOWN` = let the system decide). Switches for the two booleans.
+- **Each change saves on its own** (CIO); no Save button.
+- The Light page shortcut opens Settings **scrolled to Brightness**.
+- A footer line points to the ⋮ menu for service controls; they never appear in Settings.
+
 One list; **scrolls with a visible scrollbar** if taller than the panel (no silent clip). **Honest write, unchanged from W-18:** each control shows the real stored value; on tap `saving…` → confirm **from the re-read**, or snap back + `couldn't save`; never optimistic success. Per-row apply tag (live / next drive / restart). Destructive service controls stay in their own band below, with confirms (unchanged).
 
 ## 5. Data contract
