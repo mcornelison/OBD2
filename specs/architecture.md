@@ -2931,7 +2931,7 @@ in the driveway read AWAY and left 9,492 rows on the Pi.
 - **Inside the join wait** each poll still reads the cached list, so a poll can read AWAY with home in
   range. Home has already been seen, so an AWAY poll does **not** end the wait: it ends only on the
   association (an `AT_HOME_SERVER_*` read -> drain), on `UNKNOWN` (drains, per the rule above), or when
-  `pi.homeNetwork.joinWaitSec` (120 s) is spent -> `AT_HOME_JOINING_TIMEOUT`, no attempt, custody
+  `pi.homeNetwork.joinWaitSec` (30 s, CIO 2026-10-12) is spent -> `AT_HOME_JOINING_TIMEOUT`, no attempt, custody
   OUTSTANDING. No new outcome: a wait that read AWAY and never associated is a join timeout. A car
   cannot drive away during a key-off, so the only AWAY the wait could honour is a false one.
 - After association the drain is unchanged: a failing server ends it `stallSec` after the drain start

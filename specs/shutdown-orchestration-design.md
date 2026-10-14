@@ -116,13 +116,15 @@ Whether Tier 2 runs at all is decided by `HomeNetworkDetector.getHomeNetworkStat
   *positive* answer: a foreign SSID, or a successful `hostname -I` with no home-subnet address.
   The AWAY path's only calls are `nmcli` and `hostname -I`, each bounded at 2.0 s.
 - **`AT_HOME_*` drains**, whether or not the server probe answered.
-- **`AT_HOME_JOINING` waits up to `pi.homeNetwork.joinWaitSec` (120 s), then drains** (US-776-e;
-  ARCH-065a). The home SSID is in NetworkManager's CACHED scan but not associated (the rejoin measured
+- **`AT_HOME_JOINING` waits up to `pi.homeNetwork.joinWaitSec` (30 s; 120 s until CIO 2026-10-12), then drains**
+  (US-776-e; ARCH-065a; ARCH-068). The home SSID is in NetworkManager's CACHED scan but not associated (the rejoin measured
   ~49 s after arrival, drive 96, n = 1). The state is re-read every `JOIN_POLL_SEC` (2 s) — the one
-  exception to "read once". Still joining at 120 s is `AT_HOME_JOINING_TIMEOUT` with no attempt; a
+  exception to "read once". Still joining at `joinWaitSec` is `AT_HOME_JOINING_TIMEOUT` with no attempt; a
   rejoin that resolves `AWAY` skips as `AWAY`. The wait is NOT drain time: the drain's stall clock starts
-  at association. Known edge (CIO-accepted): a key-off within ~3 min of leaving home can wait up to 120 s
-  while the cached entry ages out.
+  at association. Known edge (CIO-accepted): a key-off within ~3 min of leaving home can wait up to `joinWaitSec`
+  while the cached entry ages out. Basis for 30 s (MEASURED 2026-10-12): once home is seen, the join took
+  3.4 s on arrival (4 of 6) and 0.32-0.36 s on live cycles (n = 5); the full arrival from the final stop
+  peaked at 19.3 s, and the wait only starts after the sweep has seen home.
 - **`UNKNOWN` drains too**, logged `UNKNOWN_NETWORK` at WARNING. `UNKNOWN` means a reader is dead
   (SSID reader unavailable, or the IP read itself failed) and nothing rules home out. A dead
   instrument must never disable the drain (`specs/design-patterns.md` §6) — a single always-false

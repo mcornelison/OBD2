@@ -10,7 +10,7 @@ Authoritative, fact-based sources for the Eclipse OBD-II Performance Monitoring 
 - **URL**: https://www.dsmtuners.com/
 - **What it is**: The primary online community for Diamond Star Motors (DSM) vehicles — Mitsubishi Eclipse, Eagle Talon, Plymouth Laser (1989-1999). Forum-based knowledge with decades of accumulated tuning experience.
 - **What we use it for**:
-  - Safe operating ranges (coolant 190-210F, boost ~12 psi stock, AFR 11.0-11.8 WOT, knock count 0 ideal)
+  - Safe operating ranges (coolant: see the Safe Operating Ranges *Coolant Temp* row, which supersedes the community 190-210F; boost ~12 psi stock, AFR 11.0-11.8 WOT, knock count 0 ideal)
   - 2G DSM-specific OBD-II quirks and limitations
   - Community consensus on monitoring approaches ("OBDII loggers suck on 2G's" but adequate for health monitoring)
   - Mod compatibility and tuning advice
@@ -81,7 +81,7 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 | **IAT (Intake Air Temp)** | **20–55 °C; heat-soak to ~62 °C is normal** | ⚠ **Informational only — no red** | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured — 16,156 samples).** 🔴 **A ">60 °C danger" threshold was WITHDRAWN, and the refresh makes the case far stronger: it now fires on 2,115 of 16,156 samples = 13.1 % of the healthy corpus**, up from 157/10,917 (1.4 %) at withdrawal. **All-time max is now 64 °C** (was 62), set during drive 48 — an 81-minute *deliberate stationary idle* whose bay heat-soak drove IAT to a 61.5 °C average with the car never moving. That is heat soak — expected, benign, and it self-clears with airflow. 🔴 **IAT IS NOT AMBIENT** (US-206 DISPROVEN): runs 14–24 °C high always, cools with airflow, never nears true ambient. **No ambient source exists on this car.** Proven **four** ways now — speed-banded (drive 41: 48.1→40.6 °C by speed band), stop-and-go heat-soak (drives 42→44: 26→45 °C while parked between legs), sustained stationary idle (drive 48: avg 61.5 °C / max 64 °C on a far cooler day), and **inversely under load** (drive 51: IAT *fell* 43→36 °C during the WOT pull as airflow rose, then climbed back). Label it **INTAKE AIR**, never "ambient". ⇒ `drive_summary.ambient_temp_at_start_c` is **MISLABELED**; rename owed. |
 | **Engine Load** | **15–25% idle · 30–50% cruise · up to 100% at WOT** | ⚠ **Compound condition only** — high load **with** positive STFT under boost, or with knock | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured).** 🔴 **A ">90% sustained = danger" threshold was WITHDRAWN — this car has now reached 100% load on THREE WOT pulls with no thermal or knock distress** (drives 7 and 11 on the prior ECU; **drive 51 on the current ECU, 2026-08-28**). 35 samples exceed 90 % across the corpus. **Load alone is not a danger signal on a turbo engine**; it is the *expected* reading at full throttle. Only meaningful paired with a lean indication or knock. |
 | **MAF** | **2–4 g/s idle; scales with RPM/load** | ⚠ **~150 g/s = stock sensor SATURATION, not a fault** | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool, measured).** All-time max **158.7 g/s** (Drive 7 WOT) — unchanged; this car **does** reach the stock MAF ceiling at full load. The current-ECU WOT pull (drive 51) peaked at **147.7 g/s — just *below* saturation**, which is why that sample is usable for the VE inference and Drive 7's is not. A MAF pinned ~150+ during a pull is **expected**; treat it as a *measurement limit*, not an engine problem. ✅ Also the basis for the **MAF→VE boost inference** (below) on a car where boost is unreadable. |
-| **RPM** | **700–800 idle; redline 7000 (97–99 2G)** | 🔴 >7000 (valve float on stock springs) | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool).** ⚠ **Manufacturer spec — still NEVER exercised. All-time max is now 5,896 RPM** (drive 51, 2026-08-28 — the first WOT under the current ECU; supersedes 5,441 from Drive 11, which was the *prior* ECU). Everything above 5,896 remains unmeasured. |
+| **RPM** | **700–800 idle; redline 7000 (97–99 2G)** | 🟡 ≥5,500 (CIO display cue 2026-10-13, R35 — **not an engine limit**) · 🔴 >7000 (valve float on stock springs) | **ADDED 2026-08-27, REFRESHED 2026-08-28 (Spool).** ⚠ **Manufacturer spec — still NEVER exercised. All-time max is now 5,896 RPM** (drive 51, 2026-08-28 — the first WOT under the current ECU; supersedes 5,441 from Drive 11, which was the *prior* ECU). Everything above 5,896 remains unmeasured. |
 | **Fuel Trims (LTFT / STFT)** | **LTFT ±4 pp of the CURRENT EPOCH's baseline · STFT oscillates, judge only its mean** | 🟡 5-drive median ≥ **4.0 pp** from epoch baseline, sustained ≥3 **consecutive** qualifying drives · 🔴 \|LTFT\| ≥ **10 %** **on the 5-drive median** *(convention, NEVER fired here — untested)* *(both qualifiers restored 2026-09-28, TUNER-008 — they were in the office advisory and had been dropped here)* | **ADDED 2026-08-31 (Spool, measured — 17,634 LTFT + 17,638 STFT samples, 56 drives).** 🔴 **Resolution is 0.78125 pp** (one raw ECU count, 100/128); the parameter has taken **18 distinct values in this engine's recorded lifetime** — any threshold finer than one count is below the instrument. 🔴 **Noise floor: drive means spread up to 3.72 pp BETWEEN DRIVES ON THE SAME DAY** on a healthy engine (drives 45–51); between-drive SD **1.43 pp**; worst healthy deviation from epoch mean **2.50 pp**. ⇒ **a single-drive delta carries no information and must trigger nothing.** ⚠ **Epoch-scoped, always** — see the trend contract below. |
 
 | **Battery Voltage** | see §Battery Voltage via ELM_VOLTAGE below | ⚠ **Engine-running only** — gate on `RPM > 0` and not within ~3 s of a crank | **QUALIFIER ADDED 2026-08-27 (Spool, measured — 14,221 samples).** The bands are correct but **unconditioned**: the <12.0 V floor **trips on cranking** (13 samples, all-time min 11.0 V), and 1,083 samples (7.6%) sit below the 13.5 V "normal" floor — key-on-engine-off, cranking, and immediate post-start. Without an engine-state gate the alert misgrades normal starting as a charging fault. Healthy reference: drives 42–44 cruised at **14.4 V**; drives 50/51 (2026-08-28) cruised at **13.8 V avg, 14.2 V max**, min 12.3 V (engine state at that sample not established — do not read a cause into it). |
@@ -103,7 +103,7 @@ Source: DSMTuners community consensus, compiled in `specs/obd2-research.md` Sect
 
 ### Boost inference on a car that cannot read boost (MAF→VE) — ADDED 2026-08-27
 
-**Why**: `INTAKE_PRESSURE` **0x0B is probe-dead *and* wired to the MDP/EGR monitor — it reports the wrong quantity.** "Unsupported" understates it: an unsupported PID returns nothing, whereas 0x0B can return a *plausible number that is not manifold pressure*. A real reading needs a **GM 3-bar sensor + ECMLink**.
+**Why**: `INTAKE_PRESSURE` **0x0B is probe-dead *and* wired to the MDP/EGR monitor — it reports the wrong quantity.** "Unsupported" understates it: an unsupported PID returns nothing, whereas 0x0B can return a *plausible number that is not manifold pressure*. A real reading needs a **buffered 4-bar sensor (OmniPower 4-bar) read by ECMLink speed density** — **not** a GM 3-bar: the 2G baro input's 3.3 kΩ pull-down (R39) loads a GM 3-bar to 1.76 V max (Spool 2026-10-13; ECMTuning wiki *2gbaroinputworkaround*).
 
 Until then MAF gives a proxy, because **volumetric efficiency above 100% *is* positive manifold pressure**:
 
@@ -302,7 +302,7 @@ any alert is built on it** (standing method rule).
 | DTC severity tiers | 🔴 STOP (never clearable): misfire **P0300–P0304**; knock/detonation-related; lean-at-load **P0171 under boost**; overheat-linked; oil-pressure; cam/crank correlation; **P0325**. 🟡 WATCH (not clearable): moderate fuel trim; single O2/HO2S circuit **P0130–P0167**; **P0401**; **P0420**; intermittent sensor. 🟢 MINOR (conditionally clearable): **P0440 / P0442 / P0455**; non-powertrain body/comfort; **P0443** (emissions-only on this car) | Policy, CIO-ratified 2026-06-05 | `tuner/dtc-display-clear-safety-advisory.md` §3 |
 | DTC clear gate | Clear enabled **only when every stored code is 🟢 MINOR**; log-before-clear with sync ACK; **refuse a 2nd clear** of a code that re-set in the same session | Policy, CIO-ratified 2026-06-05 | same, §4 |
 | DTC capture cadence | Mode 03 every **30 s** during drive + Mode 07 at drive end (built: `dtc_logger.py`) | Implemented | same, §1 |
-| Polling tiers (K-line) | Tier 1 every cycle ~1.2 Hz: COOLANT_TEMP, RPM, ENGINE_LOAD · Tier 2 every 3rd ~0.41 Hz: THROTTLE_POS, SPEED, SHORT_FUEL_TRIM_1, TIMING_ADVANCE, O2_B1S1, MIL_ON · Tier 3 every 10th ~0.12 Hz: LONG_FUEL_TRIM_1, INTAKE_TEMP, O2_B1S2, FUEL_SYSTEM_STATUS · voltage off-K-line via `ATRV` | Allocation (Spool 2026-07-26); rates scale with poll-set size | `tuner/edr-pid-priority-allocation.md` §3 |
+| Polling tiers (K-line) | **MEASURED 2026-10-13 (obd2db drives 115–117): every captured PID samples at 0.446 Hz (~2.24 s), RPM and O2 alike. `config.json` `pi.pollingTiers` (1/3/10/30 cycles) is NOT applied by the poller.** R34 (CIO 2026-10-13) banks tiering for V0.30. 🔴 If tiering is enabled later, SPEED must be tier 1: at tier 2 (~3.6 s) it exceeds `gear_derivation` `DEFAULT_MAX_AGE_S` 3.0. *The 2026-07-26 allocation (Tier 1 COOLANT_TEMP, RPM, ENGINE_LOAD · Tier 2 THROTTLE_POS, SPEED, SHORT_FUEL_TRIM_1, TIMING_ADVANCE, O2_B1S1, MIL_ON · Tier 3 LONG_FUEL_TRIM_1, INTAKE_TEMP, O2_B1S2, FUEL_SYSTEM_STATUS) describes a design that is not running.* Voltage is off-K-line via `ATRV` | Tiers banked (R34); measured rate is the fact | `tuner/edr-pid-priority-allocation.md` §3 |
 
 **Not promoted, deliberately:** the drive-review checklist's community heuristics (O2 switching range/rate, idle
 variation bands, warm-up ramp, cruise MAF/STFT, connected ratio, minimum capture duration). They were never
@@ -330,7 +330,6 @@ Authoritative empirical observations from this specific Eclipse. These values wi
 | 0x10 | MAF Air Flow Rate | Session 23 live capture |
 | 0x11 | Throttle Position | Session 23 live capture |
 | 0x14 | O2 Sensor B1S1 (upstream narrowband) | Session 23 live capture |
-| 0x42 | Control Module Voltage | **Drive 33 live capture (2026-08-20)** — 76 rows / 29 distinct / 12.975–14.451 V. Supersedes the Session-23 "unsupported" verdict. |
 | 0x1F | Run Time Since Engine Start | Drive 33 live capture — 75 rows, 75 distinct, monotonic 53→196 s |
 
 **Live capture set = 16 parameters** (drives 39/40/41, 24,342 rows, 2026-08-20). The 11 rows above are the
@@ -344,14 +343,18 @@ table with per-PID row counts: `$FLEET_SHARE/tuner/knowledge/knowledge.md` §"OB
 | PID | Name | Workaround |
 |-----|------|-----------|
 | 0x0A | Fuel Pressure | None via OBD-II. ECMLink or aftermarket sensor in future phases. |
-| 0x0B | Intake Manifold Pressure (MAP) | None via OBD-II. Aftermarket 3-bar MAP (GM) or ECMLink in Phase 2. |
-| _(0x42 moved — see correction below)_ | | |
+| 0x0B | Intake Manifold Pressure (MAP) | None via OBD-II. A buffered 4-bar (OmniPower) via ECMLink speed density — not a GM 3-bar (see *Boost inference* above). |
+| 0x42 | Control Module Voltage | **NOT a source.** Answered on drive 33 only (2026-07-01, 76 rows, 12.975–14.451 V); absent from the supported-PID bitmap and refused on every probe since (Spool full sweep 2026-10-13). Battery voltage = `ATRV`. |
 
-> **⚠️ CORRECTION 2026-08-20 (Spool, Session 37): PID `0x42` CONTROL_MODULE_VOLTAGE IS LIVE on this ECU.**
-> The Session-23 "confirmed unsupported" verdict above is **WRONG** and is retained only for the diagnostic trail.
-> Drive 33 holds **76 real samples across 29 distinct values, 12.975–14.451 V** — a textbook charging curve, not a
-> stuck or defaulted value. The `ATRV` path (below) still works and remains in production; the *claim of
-> unsupported* is what was false. Do not re-derive "0x42 is dead" from the Session-23 row.
+> **✅ RE-CORRECTED 2026-10-13 (Spool full sweep; Atlas as keeper): `0x42` is NOT a source** — see its row in the table above.
+> The 2026-08-20 block below generalised one drive's window to the ECU. It is kept struck for the diagnostic trail;
+> its `0x33` paragraph and the method rule still stand.
+>
+> ~~**⚠️ CORRECTION 2026-08-20 (Spool, Session 37): PID `0x42` CONTROL_MODULE_VOLTAGE IS LIVE on this ECU.**~~
+> ~~The Session-23 "confirmed unsupported" verdict above is **WRONG** and is retained only for the diagnostic trail.~~
+> ~~Drive 33 holds **76 real samples across 29 distinct values, 12.975–14.451 V** — a textbook charging curve, not a~~
+> ~~stuck or defaulted value. The `ATRV` path (below) still works and remains in production; the *claim of~~
+> ~~unsupported* is what was false. Do not re-derive "0x42 is dead" from the Session-23 row.~~
 >
 > **`0x33` BAROMETRIC remains genuinely UNRESOLVED** — 75 real rows exist, all on drive 33, all exactly 99.0 kPa.
 > Flatness is *expected* at 1 kPa resolution over 143 s, so it neither proves nor disproves liveness. Settle with
@@ -363,7 +366,7 @@ table with per-PID row counts: `$FLEET_SHARE/tuner/knowledge/knowledge.md` §"OB
 
 ### Battery Voltage — NOT a PID on this car
 
-*(Heading retained for the link trail. **PID 0x42 is LIVE** — see the correction above.)* The battery voltage source for the primary display and all voltage alerts remains the **ELM327 adapter's `ATRV` command** — by choice, because it is adapter-local and free of the K-line budget (accessed in python-obd as `obd.commands.ELM_VOLTAGE`). This is an adapter function, not an OBD-II Mode 01 PID — it measures voltage directly at the OBD-II port's pin 16 and is independent of ECU bandwidth. All code and tests that reference battery voltage must use this path.
+*(Heading retained for the link trail. **PID 0x42 is NOT a source** — re-corrected 2026-10-13, see above.)* The battery voltage source for the primary display and all voltage alerts remains the **ELM327 adapter's `ATRV` command** — by choice, because it is adapter-local and free of the K-line budget (accessed in python-obd as `obd.commands.ELM_VOLTAGE`). This is an adapter function, not an OBD-II Mode 01 PID — it measures voltage directly at the OBD-II port's pin 16 and is independent of ECU bandwidth. All code and tests that reference battery voltage must use this path.
 
 ### Battery Voltage via ELM_VOLTAGE (2G workaround) — Thresholds
 
