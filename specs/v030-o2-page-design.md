@@ -51,7 +51,7 @@
 ### 4.1 Values and trace
 - Voltages step per reading with their age. **No AFR anywhere** (narrowband).
 - **Trace:** one dot per real sample at its own timestamp; never interpolated or joined.
-- Stale / null: dim + age / `--` + reason (shared rule; stale keeps its number, Driving §4.4).
+- Stale / null: dim + age / `--` + reason (shared rule: a stale value renders `last.value` dimmed, Driving §4.4).
 
 ### 4.2 Front verdict (Spool 2026-10-13; provider-derived, the page renders the word)
 

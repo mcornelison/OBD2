@@ -42,6 +42,21 @@
 - **Centre:** local 12-hour clock (US-559 helper).
 - **Right: the current page name** (CIO). **Pages no longer spend a title row**, returning ~22 px to every page body. **The version string moves to the System → Pi detail.**
 
+### 3.1 Data-source marker (US-901-b; named 2026-10-13 for Marcus's Sprint 98 ask)
+When the numbers on the glass are not the car's live data, the clock's slot says so instead. The clock is hidden while the marker is up, because a wall clock is wrong for replayed data.
+
+| Source (`system-status.runMode`, else `obd-live.dataSource`; replay wins) | Marker text |
+|---|---|
+| `live` and `dataSource` real | *(no marker; clock shows)* |
+| `replay` | **`REPLAY`** |
+| `simulate` | **`SIM`** |
+| any other or unreadable non-live value | **`NOT LIVE`**, at `--fs-meta` so it fits the same box |
+
+- **Why `SIM`, not `SIMULATED`:** the marker sits over the centre slot, and with the left glyph cluster present that slot is only ~100–110 px wide, about what `REPLAY` takes in Michroma at `--fs-label`. `SIMULATED` (~160 px) would paint over the WiFi and sync glyphs. **No marker text may be wider than `REPLAY`**, so one layout check covers all three. `SIM` is the CIO's own word: the flag is `--simulate`, and a simulate run only ever happens at the desk (R37 refuses the production database).
+- **Never blank and never hidden:** a non-live value that the page doesn't recognise still raises a marker (`NOT LIVE`). Hiding it would present unknown data as live.
+- Look: the same for all three. `--text-primary` on `--bg`, `--font-display` at `--fs-label`, **no state colour and no `--accent`**, because it shows a mode, not a severity. `pointer-events: none`.
+- Layering (Marcus's fold): a direct child of `body`, fixed over the centre slot of `--bar-h`, with a z-index above every other declared z-index (so it stays above the R31 takeover).
+
 ## 4. Visual style — "90s Mitsubishi OEM" (CIO)
 
 ### 4.1 Character

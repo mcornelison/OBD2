@@ -100,7 +100,7 @@ Clamped to 1..5. **A hint never becomes solid**; only gear derivation makes a so
 
 ### 4.4 Staleness
 - After **5 s** without a new reading (**`pi.display.stale.obdLiveSec` = 5**, Atlas 2026-10-13; 0.3 % of RPM gaps over 57 drives exceed it, and those are real stalls), a value **dims** (opacity ≈ 0.4) and shows its age in `--amber-warn` `--fs-meta` (`12 s`). Applies to RPM, speed, coolant, intake air, battery and gear.
-- **A stale value must still arrive with its number.** The provider keeps `value` + `ts` and adds `stale: true`; `value: null` means only "never read". The Sprint 98 PRD (US-874, :387) nulls stale values, which would make this rule impossible to build; raised as review blocker B-3 (Marcus + Atlas, 2026-10-13). Age = now − `ts` (clock arithmetic, not a threshold).
+- **A stale value still arrives with its number** (review B-3, shape ruled by Atlas and folded into US-874, 2026-10-13): a stale PID publishes `{value: null, ts, stale: true, band: null, last: {value, band}}`. The page renders **`last.value` dimmed**, coloured by `last.band`, with age = now − `ts` (clock arithmetic, not a threshold). `value: null` **without** `stale: true` means not read ⇒ `--` + reason (`noBandReason` / reason field).
 - Covers the ARCH-061 case (Bluetooth up, ECU silent): the page shows **old numbers that admit their age**, never fresh-looking ones.
 
 ## 5. Data contract
@@ -112,8 +112,8 @@ Clamped to 1..5. **A hint never becomes solid**; only gear derivation makes a so
 | Gear | `states/gear` (`gear_state_emitter.py`) | exists | — |
 | Gear hint | `hintGear`, `hintDirection` on `states/gear` | **names approved** (G-2); rule ruled (§4.2) | Ralph builds |
 | Per-value band | provider band incl. dwell / reset floor / red bypass / voltage gate (US-875 / R26) | **in Sprint 98**; Spool spec sent 2026-10-13 | Spool · Atlas |
-| RPM zone edges | proposed `params.RPM.scale {amberFrom: 5500, redFrom: 7000}` | **proposed** (review S-6) | Atlas |
-| Stale flag | proposed `params.<PID>.stale: true`, value + ts kept | **proposed** (review B-3) | Atlas |
+| RPM zone edges | `params.RPM.scale {amberFrom: 5500, redFrom: 7000}` | **in US-874/875** (review S-6) | — |
+| Stale shape | `{value: null, ts, stale: true, band: null, last: {value, band}}` | **ruled** (Atlas, folded in US-874) | — |
 | `--fs-giant` | `tokens.css` | **approved** (G-1) | Ralph |
 | Staleness timeout | `pi.display.stale.obdLiveSec` = 5 | **named** | — |
 
@@ -126,7 +126,7 @@ Clamped to 1..5. **A hint never becomes solid**; only gear derivation makes a so
 5. The gear glide fires only when the gear changes (two readings with the same gear ⇒ no animation).
 6. A hinted gear renders hollow, with arrow; a measured gear renders solid. They are never visually identical.
 7. Band colour comes only from the provider's band field. Grep gate: no threshold number in `carousel.js` for this page.
-8. Stale: with `ts` held for 5 s and `stale: true`, all values **still show their numbers**, dimmed, with age.
+8. Stale fixture (`stale: true`, `last.value` set): every value shows **`last.value`**, dimmed, with age; never `--`. Not-read fixture (`value: null`, no `stale`): `--` + reason.
 8a. RPM zones: fixtures at 5,499 / 5,500 / 6,999 / 7,000 light green / yellow / yellow / red segments; zone edges come from the provider (grep gate: no `5500` or `7000` in `carousel.js`).
 8b. Gear hint fixtures render exactly the provider's `hintGear` + `hintDirection`; with the hint null, `--`.
 8c. Live-red fixture: the takeover covers this page with `PULL OVER` + value + unit (Warnings AC 3).
@@ -142,6 +142,6 @@ Boost, AFR, oil pressure, fuel pressure (no sensor, hardware deferred) · a shif
 
 ## 9. Open items
 - ~~Spool: gear-hint logic~~ (ruled 2026-10-13, §4.2) · ~~RPM yellow start~~ (5,500). **Still Spool:** band producer (in Sprint 98).
-- ~~Atlas: `--fs-giant`, hint names, OBD state file, stale key~~ (all ruled 2026-10-13). **Still Atlas:** `stale: true` shape (B-3) and `params.RPM.scale` (S-6), both from the Sprint 98 review.
+- ~~Atlas: `--fs-giant`, hint names, OBD state file, stale key~~ (all ruled 2026-10-13). ~~Still Atlas: stale shape, RPM scale~~ (both ruled and folded into Sprint 98, 2026-10-13).
 - **Marcus:** R9 is read as "the RPM **bar** is central" (CIO D-11), recorded so it is not raised later as a deviation.
 - **Revisit after the first drive:** D-5 shift flash with ~2 s lag (Iris's standing recommendation: remove if it fires after the shift).

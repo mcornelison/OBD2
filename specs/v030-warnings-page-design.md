@@ -83,7 +83,7 @@ Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest
 **Trigger.** The **top active STOP entry** in `states/alerts` (the arbiter decides; the page never compares a value). Today the only live red is coolant: **≥ 110 °C on the first sample, or ≥ 104 °C for ≥ 120 s** (band producer, R26).
 
 ```
-┌──────────────────────────────────────────────┐ top bar stays (REPLAY marker visible above it)
+┌──────────────────────────────────────────────┐ covers the top bar too; the REPLAY marker stays visible above it
 │                                              │
 │                PULL OVER                     │ --fs-hero, --critical-red
 │                                              │
@@ -102,7 +102,7 @@ Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest
 | **Stored STOP code** | Uses the same surface (one takeover, W-12). Acknowledge **closes** it for that code, because a stored code is not damage in progress. A STOP code is never clearable here. |
 | **Brightness** | **Full brightness while up**, independent of auto-dim. |
 | **Motion** | The frame does a slow 2-step pulse. `prefers-reduced-motion`: a steady frame. |
-| **Layering** | Above every page, menu and detail overlay. **Below the REPLAY marker only** (Sprint 98 review B-2): a replayed overheat must still say REPLAY. `pointer-events` stay on the takeover, never on the marker. |
+| **Layering** | Above every page, menu and detail overlay. **Below the REPLAY marker only** (Sprint 98 review B-2): a replayed overheat must still say REPLAY. The marker is a direct child of `body` (not of `#topbar`, which is its own stacking context at z 10), with a z-index above the highest declared in `dashboard.css` (US-901-b, as folded by Marcus). `pointer-events` stay on the takeover, never on the marker. |
 | **Touch** | Not required at any point (R5). |
 
 Acknowledge is stored by the provider (`POST /alerts-ack`, Atlas §7), so a kiosk restart does not re-pulse.
@@ -130,7 +130,7 @@ Parked-only tap on a CODE entry ⇒ detail (directive-first, carded sections, fr
 4. Live-red fixture: no control removes the takeover or the entry while the provider reports it `active`. Flip `active` to false: the takeover closes and the page underneath returns unchanged.
 4a. Stored-STOP fixture: acknowledge closes the takeover; the entry stays; no clear button.
 4b. Takeover brightness is full regardless of the auto-dim level.
-4c. Replay + live-STOP fixture: `document.elementFromPoint` at the REPLAY marker's centre returns the marker.
+4c. Stylesheet assert (the render harness does no layout): the REPLAY marker's z-index exceeds the takeover's and every other declared z-index in `dashboard.css`, so a future overlay above it fails the suite.
 5. Order equals the arbiter's order (fixture with mixed tiers/sources/ages).
 6. 7-entry fixture: all 7 reachable by scroll; scrollbar + `n more below` visible; top entries are the most severe.
 7. UNRATED code never renders a STOP/WATCH/MINOR chip.
