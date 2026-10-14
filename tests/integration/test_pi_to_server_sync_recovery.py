@@ -24,7 +24,8 @@ Test path:
 1. Seed a temp Pi SQLite with realtime_data + connection_log rows.
 2. Stand up a local stdlib mock server that accepts POST /api/v1/sync.
 3. Build a full (validator-walked) Pi config pointing at the mock.
-4. Construct :class:`ApplicationOrchestrator` with ``simulate=True``.
+4. Construct :class:`ApplicationOrchestrator` with ``simulate=False`` (R37:
+   a --simulate run refuses every push).
 5. Call ``_initializeSyncClient`` + ``_maybeTriggerIntervalSync``
    (bypasses the real runLoop so the test doesn't need to cancel a
    thread).
@@ -252,7 +253,7 @@ class TestSyncRecovery:
         baseUrl, store = mockServer
         config = _buildConfig(piDb, baseUrl)
 
-        orch = ApplicationOrchestrator(config=config, simulate=True)
+        orch = ApplicationOrchestrator(config=config, simulate=False)
         orch._initializeSyncClient()
 
         assert orch.syncClient is not None
@@ -282,7 +283,7 @@ class TestSyncRecovery:
         monkeypatch.setenv("COMPANION_API_KEY", _EXPECTED_API_KEY)
         baseUrl, store = mockServer
         config = _buildConfig(piDb, baseUrl)
-        orch = ApplicationOrchestrator(config=config, simulate=True)
+        orch = ApplicationOrchestrator(config=config, simulate=False)
         orch._initializeSyncClient()
 
         fired1 = orch._maybeTriggerIntervalSync()
@@ -302,7 +303,7 @@ class TestSyncRecovery:
         monkeypatch.setenv("COMPANION_API_KEY", _EXPECTED_API_KEY)
         baseUrl, store = mockServer
         config = _buildConfig(piDb, baseUrl)
-        orch = ApplicationOrchestrator(config=config, simulate=True)
+        orch = ApplicationOrchestrator(config=config, simulate=False)
         orch._initializeSyncClient()
 
         fired = orch.triggerDriveEndSync()
@@ -318,7 +319,7 @@ class TestSyncRecovery:
         baseUrl, store = mockServer
         config = _buildConfig(piDb, baseUrl)
         config["pi"]["sync"]["triggerOn"] = ["interval"]  # interval only
-        orch = ApplicationOrchestrator(config=config, simulate=True)
+        orch = ApplicationOrchestrator(config=config, simulate=False)
         orch._initializeSyncClient()
 
         fired = orch._maybeTriggerIntervalSync()

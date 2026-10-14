@@ -125,6 +125,8 @@
 # 2026-10-14    | Rex (US-875) | pi.bands.{coolant,battery,rpm}.* band producer
 #                                keys; _validateBands rejects a non-positive or
 #                                mis-ordered band edge.
+# 2026-10-14    | Rex (US-901-a)| pi.replay.active: False (replay never reaches
+#                                the server or the production database).
 # ================================================================================
 ################################################################################
 
@@ -807,6 +809,11 @@ DEFAULTS: dict[str, Any] = {
     # 2G redline, specs/grounded-knowledge.md RPM row (:84).
     'pi.bands.rpm.amberRpm': 5500,
     'pi.bands.rpm.redRpm': 7000,
+    # US-901-a (F-162): a replay run. True makes SyncClient refuse every push
+    # (REFUSED, nothing written to sync_log), main.py refuse the production
+    # database and states dir, and rows carry data_source 'replay'. Off in
+    # production: with it false sync and start-up are unchanged.
+    'pi.replay.active': False,
     # US-290 / TD-007: generateTimeoutSeconds closes the lone holdout from
     # US-OLL-002 (which made apiTimeoutSeconds + healthTimeoutSeconds
     # configurable but left the 120 s model-inference timeout hardcoded in

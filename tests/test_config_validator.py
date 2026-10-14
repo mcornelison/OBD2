@@ -1098,6 +1098,17 @@ def test_bands_rejectsMisorderedEdges(section, overrides):
         ConfigValidator().validate(bad)
 
 
+def test_replay_active_defaultsToFalse_andAnExplicitTrueIsKept():
+    """US-901-a: pi.replay.active exists with validator default false (production
+    unchanged), and a replay config's true survives validation."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["replay"]["active"] is False
+
+    replay = _baseCfg()
+    replay["pi"] = {"replay": {"active": True}}
+    assert ConfigValidator().validate(replay)["pi"]["replay"]["active"] is True
+
+
 def test_powerWatch_rejectsNonPositiveTimeout():
     cfg = _baseCfg()
     cfg["pi"] = {"powerWatch": {"perTaskTimeoutSec": 0}}

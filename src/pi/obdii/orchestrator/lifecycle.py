@@ -283,6 +283,8 @@
 #               |              | the rest.
 # 2026-10-03    | Atlas (ARCH-065a) | DrainEventWriter built with cellEpoch from pi.power.cellEpoch.
 #                               ARCH-065 T5: via resolveCellEpoch (one resolver).
+# 2026-10-14    | Rex (US-901-a)| SyncClient built with simulate=self._simulate so
+#                               a --simulate run refuses every push (CIO R37).
 # ================================================================================
 ################################################################################
 
@@ -2045,7 +2047,9 @@ class LifecycleMixin:
             return
         try:
             from pi.sync.client import SyncClient
-            self._syncClient = SyncClient(self._config)
+            # US-901-a (CIO R37): a --simulate run must never reach the
+            # server, so the client is told which run it belongs to.
+            self._syncClient = SyncClient(self._config, simulate=self._simulate)
             if not self._syncClient.isEnabled:
                 logger.info(
                     "SyncClient constructed but companion service disabled "

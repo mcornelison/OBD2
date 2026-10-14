@@ -18,6 +18,9 @@
 #                                (CIO Session 6 directive 1). Operators running the
 #                                flag manually must see an obvious banner so they
 #                                never mistake sim output for real-OBD capture.
+# 2026-10-14    | Rex (US-901-a)| CIO R37: a replay (pi.replay.active) or --simulate
+#                                run exits 2 when aimed at the production database
+#                                (data/obd.db under the repo root) or states dir.
 # ================================================================================
 ################################################################################
 
@@ -40,6 +43,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -77,6 +81,13 @@ EXIT_UNKNOWN_ERROR = 3
 # literal appears in stdout.
 SIMULATE_BANNER_SENTINEL = 'SIMULATE MODE -- NOT FOR PRODUCTION'
 
+# US-901-a (CIO R37): what a replay or --simulate run must never touch. The
+# production database is data/obd.db under the repo root (no absolute path is
+# hardcoded: it is resolved against projectRoot), and the production states
+# dir is the emitters' tmpfs default.
+PRODUCTION_DB_RELPATH = Path('data') / 'obd.db'
+PRODUCTION_STATES_DIR = '/run/eclipse-obd/states'
+
 
 def _printSimulateBanner() -> None:
     """Print a high-visibility warning to stdout when --simulate is active.
@@ -101,6 +112,58 @@ def _printSimulateBanner() -> None:
     # print() so it hits stdout before logger setup finishes configuring
     # handlers; flush to guarantee ordering vs. the logger banner below.
     print('\n'.join(lines), flush=True)
+
+
+def _isSamePath(first: str | Path, second: str | Path) -> bool:
+    """True when both paths resolve to the same file (symlinks, '..', case)."""
+    return os.path.normcase(os.path.realpath(first)) == os.path.normcase(
+        os.path.realpath(second)
+    )
+
+
+def checkReplayStartGuard(
+    config: dict,
+    simulate: bool,
+    repoRoot: str | Path | None = None,
+) -> str | None:
+    """Refuse a replay or --simulate run aimed at production (US-901-a, R37).
+
+    A relative ``pi.database.path`` resolves against the working directory,
+    exactly as the database opens it.  Checked before the orchestrator is
+    built, so the refused database is never opened and nothing is written.
+
+    Args:
+        config: Validated configuration.
+        simulate: True for a ``--simulate`` run.
+        repoRoot: Repo root the production database lives under; defaults to
+            this checkout's root.
+
+    Returns:
+        The refusal message naming the path, or ``None`` when the run may
+        start (not a replay / --simulate run, or not aimed at production).
+    """
+    piConfig = config.get('pi', {}) or {}
+    replayActive = bool((piConfig.get('replay') or {}).get('active', False))
+    if not (replayActive or simulate):
+        return None
+    mode = 'replay' if replayActive else '--simulate'
+    root = Path(repoRoot) if repoRoot is not None else projectRoot
+
+    dbPath = (piConfig.get('database') or {}).get('path')
+    if (
+        dbPath
+        and dbPath != ':memory:'
+        and _isSamePath(dbPath, root / PRODUCTION_DB_RELPATH)
+    ):
+        return f'REFUSED: {mode} will not open the production database {dbPath}'
+
+    statesDir = (piConfig.get('splash') or {}).get('statesDir')
+    if statesDir and _isSamePath(statesDir, PRODUCTION_STATES_DIR):
+        return (
+            f'REFUSED: {mode} will not write the production states dir '
+            f'{statesDir}'
+        )
+    return None
 
 
 def parseArgs() -> argparse.Namespace:
@@ -302,6 +365,15 @@ def main() -> int:
     try:
         # Load configuration
         config = loadConfiguration(args.config, args.env_file)
+
+        # US-901-a (CIO R37): a replay or --simulate run never touches the
+        # production database or states dir. Refused here, before anything
+        # opens them.
+        refusal = checkReplayStartGuard(config, simulate=args.simulate)
+        if refusal is not None:
+            print(refusal, file=sys.stderr, flush=True)
+            logger.error(refusal)
+            return EXIT_RUNTIME_ERROR
 
         # Run workflow with orchestrator
         exitCode = runWorkflow(
