@@ -12,7 +12,7 @@ from __future__ import annotations
 
 DATABASE: str = 'obd2db'
 SERVER_VERSION: str = '11.8.6-MariaDB-0+deb13u1 from Debian'
-MEASURED_AT: str = '2026-10-06T21:55:08Z'
+MEASURED_AT: str = '2026-10-14T20:19:29Z'
 
 # The migrations production had applied when this was read, in order.
 PRODUCTION_LEDGER: tuple[str, ...] = (
@@ -51,6 +51,8 @@ PRODUCTION_LEDGER: tuple[str, ...] = (
     '0033',
     '0034',
     '0035',
+    '0036',
+    '0037',
 )
 
 # SHOW CREATE TABLE for every base table except the ledger (the harness
@@ -155,6 +157,19 @@ PRODUCTION_TABLE_DDL: dict[str, str] = {
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_battery_health_log_source` (`source_device`,`source_id`),
   CONSTRAINT `ck_battery_health_log_close_reason` CHECK (`close_reason` in ('clean','reaped_uncheckpointed','reaped_checkpointed'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci''',
+    'boot_milestone': '''CREATE TABLE `boot_milestone` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `source_device` varchar(64) NOT NULL,
+  `source_id` int(11) NOT NULL,
+  `synced_at` datetime DEFAULT current_timestamp(),
+  `sync_batch_id` int(11) DEFAULT NULL,
+  `boot_id` varchar(64) NOT NULL,
+  `milestone` varchar(32) NOT NULL,
+  `ts_utc` datetime NOT NULL,
+  `uptime_s` double NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_boot_milestone_source` (`source_device`,`source_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci''',
     'calibration_sessions': '''CREATE TABLE `calibration_sessions` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -571,6 +586,8 @@ PRODUCTION_TABLE_DDL: dict[str, str] = {
   `error_message` text DEFAULT NULL,
   `residual_rows` int(11) DEFAULT NULL,
   `residual_complete` tinyint(1) DEFAULT NULL,
+  `residual_drive_rows` int(11) DEFAULT NULL,
+  `residual_sensor_rows` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci''',
     'trend_snapshots': '''CREATE TABLE `trend_snapshots` (
