@@ -19,6 +19,7 @@
 # 2026-09-18    | Rex (US-767-c) | Fixture sets logGate.enabled false (the
 #               |                | lifecycle now honours it) and a tmp statesDir.
 # 2026-09-21    | Rex (US-793-b) | Routing test drives the gate by reachability.
+# 2026-10-14    | Rex (US-900)   | Replay feeder takes the readers' place.
 # ================================================================================
 ################################################################################
 """Tests for the EdrLogGate pass-through wiring (US-767-b)."""
@@ -227,3 +228,83 @@ class TestSubscriberRouting:
         imu, light = _rows(db)
         assert [r[3] for r in imu] == [0, 1, 2]  # seq column, in order
         assert [r[3] for r in light] == [0, 3]
+
+
+class TestReplayFeederWiring:
+    """US-900: in replay mode the feeder takes the hardware readers' place."""
+
+    @pytest.fixture()
+    def stubs(self, monkeypatch: pytest.MonkeyPatch) -> dict:
+        import pi.sensors.imu_state_bridge as imuBridge
+        import pi.sensors.light_state_bridge as lightBridge
+        import pi.sensors.replay_feeder as replayFeeder
+        import pi.sensors.sensor_reader as sensorReader
+
+        calls: dict = {"readers": 0, "feeder": 0, "reader": _Reader(), "feederObj": _Reader()}
+
+        def _readers(c: dict, b: Any) -> list:
+            calls["readers"] += 1
+            return [calls["reader"]]
+
+        def _feeder(c: dict, b: Any) -> Any:
+            calls["feeder"] += 1
+            return calls["feederObj"]
+
+        monkeypatch.setattr(sensorReader, "createSensorReadersFromConfig", _readers)
+        monkeypatch.setattr(replayFeeder, "createSensorReplayFeederFromConfig", _feeder)
+        monkeypatch.setattr(lightBridge, "createLightStateBridgeFromConfig", lambda c, b: None)
+        monkeypatch.setattr(imuBridge, "createImuStateBridgeFromConfig", lambda c, b: None)
+        return calls
+
+    def _host(self, tmp_path: Path, *, replayActive: bool | None) -> SimpleNamespace:
+        config = _config(gateEnabled=False, statesDir=str(tmp_path / "states"))
+        if replayActive is not None:
+            config["pi"]["replay"] = {"active": replayActive}
+        return SimpleNamespace(
+            _config=config, _database=_db(tmp_path, "lifecycle.db"), _driveDetector=None,
+        )
+
+    def test_replayActive_startsTheFeederInsteadOfTheReaders(
+        self, tmp_path: Path, stubs: dict
+    ) -> None:
+        """
+        Given: pi.replay.active true
+        When: the production EDR start path runs
+        Then: the replay feeder is built and started in the readers' place, the
+            hardware readers are never built, and the EDR subscriber still runs
+        """
+        host = self._host(tmp_path, replayActive=True)
+        LifecycleMixin._startEdrSensorPath(host, SampleBus())  # type: ignore[arg-type]
+
+        assert stubs["readers"] == 0
+        assert stubs["feeder"] == 1
+        assert stubs["feederObj"].started is True
+        assert host._sensorReaders == [stubs["feederObj"]]
+        assert host._edrPersistenceSubscriber is not None
+        host._edrPersistenceSubscriber.stop()
+
+    @pytest.mark.parametrize("replayActive", [False, None])
+    def test_replayInactive_pathUnchanged_readersStart(
+        self, tmp_path: Path, stubs: dict, replayActive: bool | None
+    ) -> None:
+        """With pi.replay.active false or absent the readers start as before."""
+        host = self._host(tmp_path, replayActive=replayActive)
+        LifecycleMixin._startEdrSensorPath(host, SampleBus())  # type: ignore[arg-type]
+
+        assert stubs["feeder"] == 0
+        assert stubs["readers"] == 1
+        assert host._sensorReaders == [stubs["reader"]]
+        host._edrPersistenceSubscriber.stop()
+
+    def test_replayActive_noSensorToReplay_shipsDark(
+        self, tmp_path: Path, stubs: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No feeder (nothing enabled to replay) -> nothing built, as with no readers."""
+        import pi.sensors.replay_feeder as replayFeeder
+
+        monkeypatch.setattr(replayFeeder, "createSensorReplayFeederFromConfig", lambda c, b: None)
+        host = self._host(tmp_path, replayActive=True)
+        LifecycleMixin._startEdrSensorPath(host, SampleBus())  # type: ignore[arg-type]
+
+        assert stubs["readers"] == 0
+        assert getattr(host, "_edrPersistenceSubscriber", None) is None

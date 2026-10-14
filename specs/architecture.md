@@ -7362,6 +7362,34 @@ Only realtime_data is replay-tagged. `drive_summary` and the drive-detector
 the replay database is isolated by US-901-a and retagging them is outside
 US-857.
 
+### Sensor Replay Feeder (US-900, F-162)
+
+With `pi.replay.active` true, `LifecycleMixin._startEdrSensorPath` builds
+`SensorReplayFeeder` (`src/pi/sensors/replay_feeder.py`) in place of the IMU and
+light hardware readers. It has the readers' `start()` / `stop()` lifecycle, so
+the EDR persistence subscriber, `LightStateBridge` and `ImuStateBridge` are
+built, started and stopped exactly as on a live run and consume its samples
+unchanged. With `pi.replay.active` false the readers are built as before.
+
+| Rule | Behaviour |
+|------|-----------|
+| Source | `edr_imu_sample` and `edr_light_sample` from `pi.replay.sourcePath`, opened read-only. A sensor is replayed only when its `pi.sensors.{imu,light}.enabled` is set, as a disabled reader is not built. |
+| Window | The replayed drive's first to last `realtime_data` row, the same rows `ReplayValueSource` serves, so offset 0 is the same instant on both feeds. Sensor rows outside it are not replayed. |
+| Topics | IMU: `raw.imu.accel`, `raw.imu.gyro`, `raw.imu.mag` under one seq per recorded row. Light: `raw.light.lux`, `raw.light.raw` under one seq per row. Readers' sources, units and value shapes. Every sample carries `dataSource = 'replay'`. |
+| Timing | `ts_utc` is whole seconds, so a row's offset is the first in-window row's `ts_utc` plus its `ts_capture` distance from that row; a backwards `ts_capture` (a reboot inside the window) re-anchors on that row's `ts_utc`. Time zero is the feeder's `start()`. |
+| Stamps | `tsUtc` is the wall clock at publish and `tsCapture` the monotonic clock, as the live readers stamp theirs (and as the OBD replay stamps its rows), so the bridges' freshness checks see a live feed. |
+| Not read | A NULL lux publishes `None` (saturated, as live). A NULL IMU vector or raw-count triple is not published at all. Never 0. |
+| No rows | A window with no sensor rows, a source without the EDR tables, or a drive with no `realtime_data` rows publishes nothing; the bridges keep their existing no-data state. |
+
+The OBD logger keeps publishing `raw.obd.SPEED` from the replayed rows, so
+`ImuStateBridge`'s speed input is the recording's; the feeder never publishes
+it.
+
+**UPS is not replayed (CIO R36, 2026-10-13).** No drive window holds a recorded
+UPS reading, so no substitute UPS monitor exists: the UPS path is unchanged in
+replay, the battery card keeps reading the live gauge, and the REPLAY marker
+(US-901-b) covers the mixed screen.
+
 ### Built-in Scenarios
 
 Located in `src/obd/simulator/scenarios/`:
