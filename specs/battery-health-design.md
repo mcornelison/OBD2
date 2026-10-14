@@ -17,12 +17,12 @@ drains (`production`, ≥ 60 s, ending ≤ 3.50 V) were produced only by the pow
 
 ## 2. CIO rulings (2026-10-02) this design rests on
 1. The at-home shutdown sync runs **to completion**. Stops: delivered · stalled 60 s · reserve floor. **No absolute time cap.**
-2. WiFi-rejoin wait bounded at **120 s**.
+2. WiFi-rejoin wait bounded at **120 s**. *(CIO 2026-10-12: now **30 s**, `pi.homeNetwork.joinWaitSec`; ARCH-068.)*
 3. Monthly test: **11 min** (skip 60 s, measure 600 s), **once a month**, at an at-home key-off.
 4. Reserve floor = **10 minutes** of runtime left, on the calibration curve.
 5. **The 2026-09-27 drain counts as epoch 3's first monthly test.** Next due ~2026-10-27.
 6. Approach **A** (the Pi computes the verdict). Option B (server-side) filed to backlog via Marcus.
-7. Short away key-off within ~3 min of leaving home may wait up to 120 s (stale scan cache): **accepted, leave as is.**
+7. Short away key-off within ~3 min of leaving home may wait up to 120 s (stale scan cache): **accepted, leave as is.** *(Now up to 30 s; same ruling.)*
 
 ## 3. Definitions
 - **J, job time:** confirm wait (`smoothingSec`, 7 s) + shutdown-sync duration + graceful shutdown (~4 s), **averaged over the last 10
@@ -49,10 +49,11 @@ Not captured, deliberately: per-second watts (CPU cost; the monthly test runs th
 - **Stops at the FIRST of:** (1) backlog 0 → `DELIVERED`; (2) no batch accepted for **60 s**, clock starting **at WiFi association**
   → `STALLED` (new outcome); (3) VCELL below the **reserve floor** for **≥ 5 consecutive 1 Hz reads** (threshold + dwell:
   `design-patterns.md` §1; the cutover step must not trip it) → `RESERVE_FLOOR` (new outcome).
-- **AT_HOME_JOINING** waits up to **120 s** for association (one rejoin measured: ~49 s, drive 96, n = 1); else `AT_HOME_JOINING_TIMEOUT`.
+- **AT_HOME_JOINING** waits up to **`joinWaitSec` (30 s)** for association (join after a forced sweep MEASURED 3.4 s on arrival, 4 of 6;
+  the earlier ~49 s, drive 96, n = 1, was the whole arrival); else `AT_HOME_JOINING_TIMEOUT`.
 - Every ending writes its reason and the sync start/end times. All end in the graceful poweroff.
 - Known edge (§2.7): the JOINING read uses NetworkManager's CACHED scan list (`nmcli … --rescan no`). Entries age out after roughly 3 min
-  (RECALLED). A key-off within ~3 min of leaving home can wait ≤ 120 s; the 2 s re-read ends the wait when the entry expires.
+  (RECALLED). A key-off within ~3 min of leaving home can wait ≤ `joinWaitSec` (30 s); the 2 s re-read ends the wait when the entry expires.
 - The reserve floor IS the existing `pi.powerWatch.drainFloorVolts` (3.6 V today) with the dwell (§15.3). Calibration (§7) re-sets its value.
 
 ## 6. Monthly test (11 min)
@@ -108,7 +109,7 @@ Compare like with like when the threshold is set.
   `tablesFailed > 0` ⇒ every at-home sync ends `AT_HOME_SERVER_DOWN`), and the `startup_log` SNAPSHOT path drops the new columns
   silently and forever. Gate: v0035 applied AND its columns probed on the server, then the Pi.
 - UI: the reason-text table (§8) and the tile detail (T, J).
-- Config (powerwatch behaviour only, §15.9): `pi.batteryHealth.monthlyIntervalDays 30`, `pi.homeNetwork.joinWaitSec 120`,
+- Config (powerwatch behaviour only, §15.9): `pi.batteryHealth.monthlyIntervalDays 30`, `pi.homeNetwork.joinWaitSec 30`,
   `pi.homeNetwork.stallSec 60`, `pi.powerWatch.drainFloorDwellReads 5`. The test timings (60 / 600 / 660 s) live ONLY in
   `src/pi/power/battery_capacity.py` (§16.1); verdict constants in `battery_health_verdict.py`.
 - Specs: `architecture.md` §Battery Health card (~:5978) and §Battery Health Log (~:1432) become POINTERS to this file;
@@ -131,7 +132,8 @@ Server-side verdict (option B, backlog) · watts logging · SOC-based health · 
 ## 13. Cannot show / open
 - Whether ageing compresses the curve proportionally (§8 assumption).
 - This pack's cutoff and knee (until §7).
-- The 120 s rejoin bound rests on one measurement (n = 1).
+- The 30 s join bound rests on 4 arrival joins (3.4 s) and 5 wall-power live cycles; an arrival slower than 30 s after the sweep
+  has seen home has not been observed, but 7 of 13 arrivals were cut off by the key-off poweroff before WiFi returned.
 
 ## 14. Suggested story split (sizing is Marcus's)
 (1) capture: columns, `cut_step_mv`, sync times, migration · (2) sync-to-completion stops in `SyncWithServerTask` · (3) monthly hold in
