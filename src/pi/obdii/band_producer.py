@@ -17,6 +17,8 @@
 # ================================================================================
 # 2026-10-14    | Rex (US-875) | Initial -- coolant dwell, battery engine gate,
 #                                RPM cues and scale.
+# 2026-10-14    | Rex (US-881-b) | Public engineRunningAt(ts) wrapper (no logic
+#                                change) for the fuel-economy producer.
 # ================================================================================
 ################################################################################
 
@@ -386,6 +388,21 @@ class BandProducer:
             self._classifyBattery()
 
     # ------------------------------------------------------------- battery
+
+    def engineRunningAt(self, ts: datetime) -> bool:
+        """Public read of the engine-running gate at event time ``ts`` (US-881-b).
+
+        A wrapper with no logic of its own: the fuel-economy producer asks the
+        same question the battery band asks, through ``ObdLiveTracker``, which
+        holds this producer behind its lock.
+
+        Args:
+            ts: Aware UTC event time.
+
+        Returns:
+            True when the engine was running at ``ts``.
+        """
+        return self._engineRunningAt(ts)
 
     def _engineRunningAt(self, ts: datetime) -> bool:
         """The engine-running gate (Spool, measured 2026-10-13) at event time ``ts``."""

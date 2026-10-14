@@ -37,6 +37,9 @@
 # 2026-10-14    | Rex (US-880-a) | _handleReading feeds SPEED to the trip speed
 #               |              | integrator (observeTripSpeed); _handleDriveStart
 #               |              | resets it (_resetTripDistance).
+# 2026-10-14    | Rex (US-881-b) | _handleReading feeds MAF/FUEL_SYSTEM_STATUS to
+#               |              | the fuel integrator (observeFuelReading);
+#               |              | _handleDriveStart resets it (_resetFuelEconomy).
 # ================================================================================
 ################################################################################
 
@@ -129,6 +132,12 @@ class EventRouterMixin:
     # the trip distance would silently never integrate or reset).
     observeTripSpeed: Callable[..., None]
     _resetTripDistance: Callable[[Any], None]
+
+    # US-881-b: provided by CardStateEmitterMixin -- ANNOTATIONS for the same
+    # MRO reason as observeGearInput above (a stub here would shadow them and
+    # the fuel would silently never integrate or reset).
+    observeFuelReading: Callable[..., None]
+    _resetFuelEconomy: Callable[[], None]
 
     def registerCallbacks(
         self,
@@ -237,6 +246,13 @@ class EventRouterMixin:
             self._resetTripDistance(getattr(session, 'startTime', None))
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.debug(f"Trip distance reset failed: {e}")
+
+        # US-881-b: this drive's fuel starts at 0 beside its distance, so MPG
+        # has one window. Exception-isolated like the reset above.
+        try:
+            self._resetFuelEconomy()
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.debug(f"Fuel economy reset failed: {e}")
 
         # Update display if available
         if self._displayManager is not None and hasattr(self._displayManager, 'showDriveStatus'):
@@ -480,6 +496,15 @@ class EventRouterMixin:
                 )
             except Exception as e:  # noqa: BLE001 -- must never crash the poll
                 logger.debug(f"Trip speed integration failed: {e}")
+
+        # US-881-b: MAF and FUEL_SYSTEM_STATUS into the fuel integrator behind
+        # states/fuel-economy. Every other parameter returns at once; the
+        # reading goes whole because its capture time is the MAF event ts.
+        if paramName is not None:
+            try:
+                self.observeFuelReading(paramName, value, reading)
+            except Exception as e:  # noqa: BLE001 -- must never crash the poll
+                logger.debug(f"Fuel integration failed: {e}")
 
         # US-874: every PID's latest value, unit and EVENT time for
         # states/obd-live. The reading object is handed over whole because its

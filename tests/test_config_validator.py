@@ -28,6 +28,7 @@
 # 2026-10-14    | Rex (US-882-b) | pi.display.gradeHistory.{intervalSec,windowSec}.
 # 2026-10-14    | Rex (US-880-a) | pi.trip.gapSec default 300 + positivity.
 # 2026-10-14    | Rex (US-882-c) | pi.display.stale.imuSec default 2.0 + positivity.
+# 2026-10-14    | Rex (US-881-b) | pi.fuel.* defaults (Spool, sourced) + range checks.
 # ================================================================================
 ################################################################################
 
@@ -1396,6 +1397,57 @@ def test_validate_staleImuSec_positiveFloat_accepted():
     cfg = _baseCfg()
     cfg["pi"] = {"display": {"stale": {"imuSec": 3.5}}}
     assert ConfigValidator().validate(cfg)["pi"]["display"]["stale"]["imuSec"] == 3.5
+
+
+def test_validate_fuelKeys_defaultsAreSpoolsSourcedValues():
+    """US-881-b: E0 stoich 14.7 and density 740 g/L (Spool 2026-10-14, CIO: the
+    car's 93 is ethanol-free), MAF trusted, and the three honesty thresholds."""
+    fuel = ConfigValidator().validate(_baseCfg())["pi"]["fuel"]
+    assert fuel == {
+        "stoichAfr": 14.7,
+        "densityGPerL": 740,
+        "mafTrusted": True,
+        "minMiles": 1.0,
+        "maxExcludedPct": 10,
+        "approximateOpenLoopPct": 10,
+    }
+
+
+@pytest.mark.parametrize("key", ["stoichAfr", "densityGPerL", "minMiles"])
+@pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "14.7", True])
+def test_validate_fuelPositiveKeys_nonPositiveOrNonFinite_rejected(key, bad):
+    """US-881-b: stoich, density and the minimum distance are finite numbers > 0."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"fuel": {key: bad}}
+    with pytest.raises(ConfigValidationError, match=f"pi.fuel.{key}"):
+        ConfigValidator().validate(cfg)
+
+
+@pytest.mark.parametrize("key", ["maxExcludedPct", "approximateOpenLoopPct"])
+@pytest.mark.parametrize("bad", [-1, 100.5, float("inf"), float("nan"), "10", True])
+def test_validate_fuelPercentKeys_outsideZeroToHundred_rejected(key, bad):
+    """US-881-b: the two percentage thresholds lie in [0, 100]."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"fuel": {key: bad}}
+    with pytest.raises(ConfigValidationError, match=f"pi.fuel.{key}"):
+        ConfigValidator().validate(cfg)
+
+
+@pytest.mark.parametrize("bad", [0, 1, "false"])
+def test_validate_fuelMafTrusted_nonBool_rejected(bad):
+    """US-881-b: mafTrusted is a real boolean (flipped false at a speed-density
+    install), never a truthy stand-in."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"fuel": {"mafTrusted": bad}}
+    with pytest.raises(ConfigValidationError, match="pi.fuel.mafTrusted"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_fuelKeys_validOverrides_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"fuel": {"stoichAfr": 14.1, "mafTrusted": False, "maxExcludedPct": 0}}
+    fuel = ConfigValidator().validate(cfg)["pi"]["fuel"]
+    assert (fuel["stoichAfr"], fuel["mafTrusted"], fuel["maxExcludedPct"]) == (14.1, False, 0)
 
 
 def test_validate_gradeHistory_windowShorterThanInterval_rejected():

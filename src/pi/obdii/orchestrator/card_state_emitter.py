@@ -72,6 +72,9 @@
 # 2026-10-14    | Rex (US-880-a)| observeTripSpeed: SPEED while recording feeds
 #               |              | the ONE speed integrator; drive start resets it;
 #               |              | system-status drive.distanceKm/distanceSinceTs.
+# 2026-10-14    | Rex (US-881-b)| observeFuelReading: MAF/FUEL_SYSTEM_STATUS while
+#               |              | recording feed the fuel integrator; the card tick
+#               |              | publishes states/fuel-economy beside obd-live.
 # ================================================================================
 ################################################################################
 
@@ -300,6 +303,14 @@ class CardStateEmitterMixin:
     # Injectable monotonic clock for the integrator's dt; same reason as
     # _gearClock. Never wall time: an NTP step must not add or erase distance.
     _tripClock: Any = None
+    # US-881-b: the states/fuel-economy producer. CLASS defaults for the same
+    # reason as the gear pair above. The integrator is written on the reading
+    # callback and read by the card tick, so both sides take _fuelLock.
+    _fuelIntegrator: Any = None
+    _fuelSettings: Any = None
+    _fuelEconomyEmitter: Any = None
+    _fuelLock: Any = None
+    _fuelStaleSec: float | None = None
 
     # ------------------------------------------------------------------ setup
 
@@ -331,6 +342,7 @@ class CardStateEmitterMixin:
         self._initializeCaptureHealthProducer(statesDir)
         self._initializeObdLiveProducer(statesDir)
         self._initializeTripDistance()
+        self._initializeFuelEconomyProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -1040,6 +1052,11 @@ class CardStateEmitterMixin:
             self._emitObdLiveState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("obd-live card emit failed: %s", e)
+        try:
+            # US-881-b: beside obd-live; MAF staleness is decided here too.
+            self._emitFuelEconomyState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("fuel-economy card emit failed: %s", e)
         return True
 
     # -------------------------------------------------------- trip distance
@@ -1141,6 +1158,112 @@ class CardStateEmitterMixin:
             return (None, None)
         with self._tripLock:
             return (self._tripDistanceKm, self._tripDistanceSinceTs)
+
+    # -------------------------------------------------------- fuel economy
+    #
+    # US-881-b. MAF and FUEL_SYSTEM_STATUS on the reading seam, while a drive is
+    # recording, feed the fuel integrator; the card tick publishes this drive's
+    # fuel and MPG against the trip distance above -- never a second integrator.
+
+    def _initializeFuelEconomyProducer(self, statesDir: str) -> None:
+        """Build the fuel integrator + its emitter in their own try/except."""
+        try:
+            import threading
+
+            from pi.obdii.fuel_economy_emitter import (
+                FuelIntegrator,
+                FuelSettings,
+                makeFuelEconomyEmitter,
+            )
+            from pi.obdii.obd_live_emitter import DEFAULT_OBD_LIVE_STALE_S
+
+            settings = FuelSettings.fromConfig(self._config)
+            staleCfg = self._config.get("pi", {}).get("display", {}).get("stale", {})
+            self._fuelStaleSec = float(
+                staleCfg.get("obdLiveSec", DEFAULT_OBD_LIVE_STALE_S)
+            )
+            self._fuelSettings = settings
+            self._fuelIntegrator = FuelIntegrator(settings.gapSec)
+            self._fuelLock = threading.Lock()
+            self._fuelEconomyEmitter = makeFuelEconomyEmitter(statesDir)
+            logger.info(
+                "fuel-economy wired (stoich=%.2f density=%.0f maf_trusted=%s)",
+                settings.stoichAfr, settings.densityGPerL, settings.mafTrusted,
+            )
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("fuel-economy producer init skipped: %s", e)
+            self._fuelIntegrator = None
+            self._fuelEconomyEmitter = None
+            self._fuelLock = None
+
+    def observeFuelReading(
+        self, paramName: str, value: Any, reading: Any = None
+    ) -> None:
+        """Route one realtime reading into the fuel integrator.
+
+        Called from the orchestrator's reading callback for every parameter;
+        returns at once for anything but MAF and FUEL_SYSTEM_STATUS, and
+        ignores readings while no drive is recording (the recording fact is
+        :meth:`_gatherDriveState`'s).
+
+        The engine gate is asked through the obd-live tracker BEFORE the fuel
+        lock is taken, so the two locks are never held together.
+
+        Args:
+            paramName: The realtime parameter's name.
+            value: MAF in g/s, or the FUEL_SYSTEM_STATUS numeric code.
+            reading: The reading itself; its capture time is the MAF event ts.
+        """
+        integrator = self._fuelIntegrator
+        if integrator is None or paramName not in ("MAF", "FUEL_SYSTEM_STATUS"):
+            return
+        if self._gatherDriveState()[0] != "recording":
+            return
+        if paramName == "FUEL_SYSTEM_STATUS":
+            with self._fuelLock:
+                integrator.observeFuelStatus(value)
+            return
+        timestamp = getattr(reading, "timestamp", None)
+        if value is None or not isinstance(timestamp, datetime):
+            # Not a reading of anything: no value, or no event time to stamp.
+            return
+        from common.time.helper import resolveLocalZone
+
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=resolveLocalZone(self._config))
+        eventUtc = timestamp.astimezone(UTC)
+        tracker = self._obdLiveTracker
+        engineRunning = None if tracker is None else tracker.engineRunningAt(reading)
+        tS = self._tripNowS()
+        with self._fuelLock:
+            integrator.observeMaf(float(value), tS, eventUtc, engineRunning)
+
+    def _resetFuelEconomy(self) -> None:
+        """Open this drive's fuel window at drive start (same clock as distance)."""
+        integrator = self._fuelIntegrator
+        if integrator is None:
+            return
+        tS = self._tripNowS()
+        with self._fuelLock:
+            integrator.reset(tS)
+
+    def _emitFuelEconomyState(self) -> None:
+        """Publish states/fuel-economy: fuel and distance read at one publish."""
+        integrator = self._fuelIntegrator
+        emitter = self._fuelEconomyEmitter
+        if integrator is None or emitter is None or self._fuelStaleSec is None:
+            return
+        with self._fuelLock:
+            snap = integrator.snapshot()
+        distanceKm, distanceSinceTs = self._gatherTripDistance()
+        emitter(
+            snap,
+            self._fuelSettings,
+            distanceKm=distanceKm,
+            distanceSinceTs=distanceSinceTs,
+            nowUtc=self._obdLiveNowUtc(),
+            staleSec=self._fuelStaleSec,
+        )
 
     # -------------------------------------------------------- system-status
 

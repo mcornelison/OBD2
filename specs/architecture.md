@@ -5922,6 +5922,67 @@ the server's `GAP_DETECTION_THRESHOLD_SECONDS`, which
 `tests/server/test_trip_gap_crosses_tiers.py` pins the two defaults equal and feeds the
 same SPEED series through both integrals.
 
+#### `states/fuel-economy` -- this drive's fuel and MPG (US-881-b)
+
+```json
+{"thisDrive": {"fuelL": 1.82, "mpg": 24.6, "sinceTs": "2026-10-20T14:58:02Z",
+               "approximate": false, "openLoopAirPct": 8.7},
+ "sinceReset": null, "ts": "2026-10-20T15:02:11Z"}
+```
+
+- **`thisDrive`** is `null` until this process has seen a drive start or a first MAF
+  reading during a recording drive. It carries NO distance: the distance is
+  `system-status.drive.distanceKm` (Atlas gap 1). Values are unrounded; the page formats.
+- **`fuelL`** is fuel integrated from MAF; `mpg = (km / 1.609344) / (fuelL / 3.785411784)`,
+  with `km` read from the US-880-a speed integrator at the same publish (never a second
+  integrator). The US gallon and the mile are exact module constants (NIST Handbook 44
+  App. C), not config.
+- **`sinceTs`** is the integrator's `distanceSinceTs`, so fuel and distance share one
+  MPG window. Top-level **`ts`** is the newest integrated MAF reading's event time
+  (`null` when none).
+- **`openLoopAirPct`** = open-loop air grams / all air grams x 100 (`null` with no air);
+  **`approximate`** is true when it is >= `pi.fuel.approximateOpenLoopPct` (10).
+- **`sinceReset`** is `null` until US-881-c.
+
+**Stoich, no trims (Spool 2026-10-14).** Per interval between consecutive MAF readings,
+air = trapezoid `(m0 + m1) / 2 * dt`; fuel grams = air / `pi.fuel.stoichAfr` (14.7, E0:
+the CIO's 93 is ethanol-free); litres = grams / `pi.fuel.densityGPerL` (740). Fuel trims
+are NOT applied. Open loop uses the same math and is never skipped: FUEL_SYSTEM_STATUS
+codes 2 and 5 are closed loop; 1, 3, 4 and 0/unknown are open loop
+(`decoders._FUEL_STATUS_ENUM`). An interval with `dt <= 0` or `dt > pi.trip.gapSec` adds
+no fuel and its time counts as excluded (the speed integrator's gap rule).
+
+**`mpg` null reasons.** When `mpg` is `null`, exactly ONE `mpgNullReason` is present
+(absent otherwise), by precedence (Atlas G2):
+
+| Reason | When |
+|---|---|
+| `maf_untrusted` | `pi.fuel.mafTrusted` is false (set at a speed-density install) |
+| `maf_stale` | no MAF reading within `pi.display.stale.obdLiveSec` of the publish |
+| `maf_zero_running` | the newest MAF is <= 0 while the engine-running gate is true |
+| `gaps` | excluded time > `pi.fuel.maxExcludedPct` (10) % of the window's time |
+| `too_short` | distance < `pi.fuel.minMiles` (1.0), or no distance read |
+| `no_fuel` | integrated `fuelL` is 0 (the ratio is undefined) |
+
+The window's time is monotonic seconds from the window start to the newest MAF reading.
+
+**Producer.** `CardStateEmitterMixin.observeFuelReading(paramName, value, reading)`,
+called from `event_router._handleReading` beside `observeTripSpeed` (an annotation
+there, for the MRO reason). MAF and FUEL_SYSTEM_STATUS only, only while
+`_gatherDriveState` says recording; `dt` from the same `_tripClock` seam as the distance.
+`_handleDriveStart` resets it (`_resetFuelEconomy`); drive end keeps it. The integrator
+(`FuelIntegrator`, `src/pi/obdii/fuel_economy_emitter.py`) lives under ONE lock
+(`_fuelLock`) shared by the reading callback and the publish. The card tick writes the
+file beside `obd-live` through the same `writeStateAtomic`.
+
+**Engine gate (Atlas G1).** `maf_zero_running` asks `ObdLiveTracker.engineRunningAt(reading)`,
+which takes the tracker's lock, converts the capture time exactly as `observeReading`
+does, and calls `BandProducer.engineRunningAt(ts)` (a public wrapper over US-875's
+`_engineRunningAt`). The band producer is never exposed. No tracker -> the gate is
+unknown, and `maf_zero_running` never fires. Fixture:
+`tests/ui/fixtures/states/fuel-economy.json` (`driving`, `too-short`, `maf-untrusted`),
+rebuilt by the producer in `tests/pi/obdii/test_fuel_economy_emitter.py`.
+
 #### `window.DISPLAY_STALE` -- the page's stale windows, injected per request (US-882-c)
 
 `eclipse-states-http` injects three config blocks into `dashboard.html` through the

@@ -141,6 +141,9 @@
 # 2026-10-14    | Rex (US-882-c) | pi.display.stale.imuSec: 2.0 (IMU card stale
 #                                window, injected as window.DISPLAY_STALE);
 #                                finite, > 0.
+# 2026-10-14    | Rex (US-881-b) | pi.fuel.{stoichAfr 14.7, densityGPerL 740,
+#                                mafTrusted, minMiles 1.0, maxExcludedPct 10,
+#                                approximateOpenLoopPct 10} (Spool, sourced).
 # ================================================================================
 ################################################################################
 
@@ -820,6 +823,24 @@ DEFAULTS: dict[str, Any] = {
     # a 5-16 s bus stall mid-drive is still travel. Pinned equal by
     # tests/server/test_trip_gap_crosses_tiers.py.
     'pi.trip.gapSec': 300,
+    # US-881-b (F-159): states/fuel-economy (src/pi/obdii/fuel_economy_emitter.py).
+    # Fuel = MAF / stoich of the FUEL, no trims, open loop included (Spool
+    # pm/inbox/2026-10-14-from-spool-US-881-fuel-economy-constants-SOURCED-stoich-
+    # of-the-FUEL-no-trims-code-3-is-mostly-DECEL-speed-dense-enough.md and
+    # 2026-10-14-from-spool-US-881-E0-density-740-gL-pm20-EPA-stoich-14.7-ack-
+    # gapSec-300-plus-fill-up-calibration.md).
+    # E0 stoich: CIO 2026-10-14, the car's 93 is ethanol-free (E10 would be 14.1).
+    'pi.fuel.stoichAfr': 14.7,
+    # E0 g/L at 60 F: EPA EPAct exhibit H market-gasoline midpoint, +/-20.
+    'pi.fuel.densityGPerL': 740,
+    # False after a speed-density install (MAF unverified there): mpg null.
+    'pi.fuel.mafTrusted': True,
+    # MPG below this distance is null: the ratio blows up on a short drive.
+    'pi.fuel.minMiles': 1.0,
+    # MPG null when gap-excluded time exceeds this % of the drive's time.
+    'pi.fuel.maxExcludedPct': 10,
+    # approximate:true at/above this open-loop share of air (corpus 9.1 %).
+    'pi.fuel.approximateOpenLoopPct': 10,
     # US-882-b (F-159): states/grade-history, written by the IMU bridge -- one
     # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
     'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
@@ -997,6 +1018,7 @@ class ConfigValidator:
         self._validateGradeHistory(config)
         self._validateTripGap(config)
         self._validateStaleImu(config)
+        self._validateFuel(config)
         self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
@@ -1826,6 +1848,57 @@ class ConfigValidator:
         ):
             raise ConfigValidationError(
                 f"{key} must be a finite number > 0 (got {val!r})",
+                missingFields=[key],
+            )
+
+    def _validateFuel(self, config: dict[str, Any]) -> None:
+        """Validate the pi.fuel.* keys (US-881-b).
+
+        stoichAfr, densityGPerL and minMiles are finite numbers > 0; the two
+        percentages are finite numbers in [0, 100]; mafTrusted is a real bool.
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If any present key is out of its range.
+        """
+        for name in ('stoichAfr', 'densityGPerL', 'minMiles'):
+            key = f'pi.fuel.{name}'
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not math.isfinite(val)
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a finite number > 0 (got {val!r})",
+                    missingFields=[key],
+                )
+        for name in ('maxExcludedPct', 'approximateOpenLoopPct'):
+            key = f'pi.fuel.{name}'
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not math.isfinite(val)
+                or not 0 <= val <= 100
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a finite number in [0, 100] (got {val!r})",
+                    missingFields=[key],
+                )
+        key = 'pi.fuel.mafTrusted'
+        val = self._getNestedValue(config, key)
+        if val is not None and not isinstance(val, bool):
+            raise ConfigValidationError(
+                f"{key} must be true or false (got {val!r})",
                 missingFields=[key],
             )
 
