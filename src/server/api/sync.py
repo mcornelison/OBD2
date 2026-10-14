@@ -89,6 +89,8 @@
 #               |              | storedCount + maxStoredSourceId, read back
 #               |              | AFTER the commit (readStoredAck).  Existing
 #               |              | response keys unchanged.
+# 2026-10-14    | Rex (US-902) | CIO R28: SyncRequest rejects (422) any batch
+#               |              | carrying a replay / physics_sim row.
 # ================================================================================
 ################################################################################
 
@@ -311,6 +313,12 @@ _PRESERVE_ON_UPDATE = frozenset({
     "ecu_removal_timestamp_utc", "notes", "ecu_active_marker",
 })
 
+# data_source tags refused at ingest (US-902, CIO R28): a second belt behind
+# the Pi-side push refusal (US-901-a / R37), so a replayed or simulated row can
+# never land in obd2db.  Every other tag -- and an absent one, coerced to
+# 'real' by runSyncUpsert -- is accepted exactly as before.
+INGEST_REJECTED_DATA_SOURCES: tuple[str, ...] = ("replay", "physics_sim")
+
 
 # ==============================================================================
 # Pydantic request / response models
@@ -426,6 +434,35 @@ class SyncRequest(BaseModel):
                 f"Unknown table name(s): {sorted(unknown)}. "
                 f"Accepted: {sorted(accepted)}.",
             )
+        return value
+
+    @field_validator("tables")
+    @classmethod
+    def _rowsMustNotBeNonLive(
+        cls, value: dict[str, TableData],
+    ) -> dict[str, TableData]:
+        """Reject a batch carrying any replay / physics_sim row (US-902, R28).
+
+        Runs on the raw row dicts of EVERY table, before any builder drops
+        columns (dtc_freeze_frame's server model has no data_source). A
+        ValueError here is a 422 -- terminal on the Pi -- never a 500 the Pi
+        would retry forever.
+        """
+        offending = {
+            tableName: count
+            for tableName, tableData in value.items()
+            if (count := sum(
+                1 for row in tableData.rows
+                if row.get("data_source") in INGEST_REJECTED_DATA_SOURCES
+            ))
+        }
+        if offending:
+            rejected = ", ".join(INGEST_REJECTED_DATA_SOURCES)
+            raise ValueError("; ".join(
+                f"{tableName}: {count} row(s) with data_source in "
+                f"({rejected}) rejected"
+                for tableName, count in sorted(offending.items())
+            ))
         return value
 
 

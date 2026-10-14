@@ -935,6 +935,25 @@ US-391 quarantine. `tests/integration/test_pi_to_server_stored_ack_e2e.py`
 pushes every `DELTA_SYNC_TABLES` member through the real server app and
 asserts each mark lands on its stored maximum.
 
+##### US-902: the server refuses replay / physics_sim rows at ingest (CIO R28)
+
+`POST /api/v1/sync` answers **422** to any batch carrying a row whose
+`data_source` is `replay` or `physics_sim`
+(`src/server/api/sync.py::INGEST_REJECTED_DATA_SOURCES`). The check is the
+`SyncRequest._rowsMustNotBeNonLive` validator beside `_tablesMustBeAccepted`,
+so it runs on the raw row dicts of **every** table in the batch (including
+`dtc_freeze_frame`, whose builder later drops the column) before any DB work,
+and the `detail` names each offending table and its count, e.g.
+`realtime_data: 1 row(s) with data_source in (replay, physics_sim) rejected`.
+No row of that batch is written, and no `sync_history` row either. Every other
+tag (`real`, `fixture`, `foreign`, or absent and coerced to `real`) is accepted
+exactly as before. A 422 is terminal on the Pi (`_isRetryableHttpStatus`
+retries only 429 / 5xx), so the push fails and counts toward the US-391
+quarantine; it never advances `last_synced_id`, so **one such row blocks that
+table until it is removed** from the Pi. This is the second belt: R37
+(US-901-a) closes it at the source, where `SyncClient` refuses every push from
+a replay or `--simulate` run.
+
 ##### US-226: Sync trigger semantics + recovery playbook
 
 The transport configuration (`pi.companionService.*`) defines HOW sync
@@ -1208,6 +1227,8 @@ Every row written into a capture table carries a `data_source` column identifyin
 **Default** — `'real'` at the DB level is a **narrow safety net for the single live-OBD collector path**, NOT a catchall for dev writers. Writers outside the live-OBD path MUST pass `data_source` explicitly at the call site. The live-OBD writer (:class:`src.pi.obdii.data.logger.ObdDataLogger` + :func:`src.pi.obdii.data.helpers.logReading`) honors this contract by auto-deriving the tag from `connection.isSimulated`: real connections produce `'real'`, :class:`SimulatedObdConnection` produces `'physics_sim'`. An explicit `dataSource=` override wins in both constructors so fixture harnesses can tag correctly.
 
 **Replay tag + the simulation flag (US-901-a, CIO R37).** The `replay` tag is now produced: with `pi.replay.active` true (validator default `false`) and no explicit override, `ObdDataLogger` tags every row `'replay'`, checked before `connection.isSimulated` because the replay source rides the simulated-connection seam. `DATA_SOURCE_VALUES` is unchanged. The simulation flag that keeps synthetic rows off the server covers **both** a replay run and a `--simulate` run: `SyncClient` refuses every push at its two POST sites (`_postBatchWithRetry`, `_postDriveCounterWithRetry`), which all five public push methods (`pushDelta`, `pushAllDeltas`, `forcePush`, `pushDriveCounter`, `pushSnapshot`) pass through. The refused result is the typed `PushStatus.REFUSED` -- distinct from `DISABLED` (companion off) and `FAILED` (a request was attempted) -- and it writes nothing to `sync_log` (no failed status, no quarantine count, mark untouched). The orchestrator hands its own `--simulate` flag to the client (`SyncClient(config, simulate=...)`); a replay reads `pi.replay.active` from the run's config. The two read-only GETs stay allowed and send no rows: the update check (`GET /api/v1/release/current`) and the home detector (`GET /api/v1/health`). Before anything opens, `src/pi/main.py::checkReplayStartGuard` exits 2 when a replay or `--simulate` run's `pi.database.path` resolves (working-directory relative, as the database opens it) to the production database -- `data/obd.db` under the repo root -- or its `pi.splash.statesDir` is the production `/run/eclipse-obd/states`. The guard reads the keys as configured; a config that omits them is not refused. The call-site discipline is enforced by `tests/pi/data/test_data_source_hygiene.py`, an AST audit that fails the suite if any seed script INSERT into a capture table omits the `data_source` column (US-212 closed the ~352K-row hygiene bug surfaced by US-205).
+
+**Ingest reject (US-902, CIO R28).** Behind the Pi-side refusal, the server is a second belt: `POST /api/v1/sync` returns 422 for a batch carrying any `replay` or `physics_sim` row, on every table, naming the table and the count, and writes no row of it (see "US-902" under the sync API, §5). Consequence: a rejected batch never advances `last_synced_id`, so one such row blocks that table's sync until it is removed; R37 (US-901-a) closes it at the source. `real`, `fixture`, `foreign` and an absent tag (coerced to `real`) are accepted as before, so a `replay` / `physics_sim` row can never land in obd2db.
 
 **Filter rule** — server-side analytics, AI prompt inputs, and baseline calibrations MUST filter `WHERE data_source = 'real'` unless the caller is running a synthetic test. Pre-US-195 rows with `data_source IS NULL` are treated as `'real'` for backward compatibility.
 
@@ -1953,6 +1974,10 @@ Chi-Srv-01's `/api/v1/sync` endpoint.  Validator (`src.common.config.validator`)
 rejects non-positive `syncTimeoutSeconds`, `batchSize < 1`, non-list
 `retryBackoffSeconds`, or negative `retryMaxAttempts` with
 `ConfigValidationError` so a corrupt surface never reaches the client.
+The endpoint answers 422 (terminal, not retried) to any batch carrying a
+`replay` or `physics_sim` row (US-902, CIO R28); the batch's `last_synced_id`
+never advances, so one such row blocks that table until removed. R37
+(US-901-a) keeps those rows from being pushed at all.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
