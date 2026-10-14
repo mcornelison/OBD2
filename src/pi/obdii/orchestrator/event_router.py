@@ -34,6 +34,9 @@
 #               |              | drive-end sync push.  Ignition-on unchanged.
 # 2026-10-13    | Rex (US-874) | _handleReading hands every reading to the
 #               |              | states/obd-live tracker (observeObdLiveReading).
+# 2026-10-14    | Rex (US-880-a) | _handleReading feeds SPEED to the trip speed
+#               |              | integrator (observeTripSpeed); _handleDriveStart
+#               |              | resets it (_resetTripDistance).
 # ================================================================================
 ################################################################################
 
@@ -120,6 +123,12 @@ class EventRouterMixin:
     # US-874: provided by CardStateEmitterMixin -- an ANNOTATION for the same
     # MRO reason as observeGearInput above.
     observeObdLiveReading: Callable[[Any], None]
+
+    # US-880-a: provided by CardStateEmitterMixin -- ANNOTATIONS for the same
+    # MRO reason as observeGearInput above (a stub here would shadow them and
+    # the trip distance would silently never integrate or reset).
+    observeTripSpeed: Callable[..., None]
+    _resetTripDistance: Callable[[Any], None]
 
     def registerCallbacks(
         self,
@@ -221,6 +230,13 @@ class EventRouterMixin:
                 controller.onDriveStart()
             except Exception as e:  # noqa: BLE001 -- defensive
                 logger.debug(f"SyncCadenceController.onDriveStart failed: {e}")
+
+        # US-880-a: this drive's distance starts at 0 from the drive start's
+        # event ts. Exception-isolated like the controller above.
+        try:
+            self._resetTripDistance(getattr(session, 'startTime', None))
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.debug(f"Trip distance reset failed: {e}")
 
         # Update display if available
         if self._displayManager is not None and hasattr(self._displayManager, 'showDriveStatus'):
@@ -453,6 +469,17 @@ class EventRouterMixin:
                 self.observeGearInput(paramName, value)
             except Exception as e:  # noqa: BLE001 -- must never crash the poll
                 logger.debug(f"Gear derivation failed: {e}")
+
+        # US-880-a: SPEED into the ONE speed integrator behind system-status
+        # drive.distanceKm. Every other parameter returns at once; the reading's
+        # capture time labels a partial distance after a mid-drive restart.
+        if paramName is not None:
+            try:
+                self.observeTripSpeed(
+                    paramName, value, getattr(reading, 'timestamp', None)
+                )
+            except Exception as e:  # noqa: BLE001 -- must never crash the poll
+                logger.debug(f"Trip speed integration failed: {e}")
 
         # US-874: every PID's latest value, unit and EVENT time for
         # states/obd-live. The reading object is handed over whole because its

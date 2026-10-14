@@ -26,6 +26,7 @@
 # 2026-10-13    | Atlas (ARCH-068) | joinWaitSec default 120 -> 30 (CIO 2026-10-12).
 # 2026-10-14    | Rex (US-882-a) | pi.imu.peaks.smoothingSec default + positivity.
 # 2026-10-14    | Rex (US-882-b) | pi.display.gradeHistory.{intervalSec,windowSec}.
+# 2026-10-14    | Rex (US-880-a) | pi.trip.gapSec default 300 + positivity.
 # ================================================================================
 ################################################################################
 
@@ -1350,6 +1351,28 @@ def test_validate_gradeHistory_nonPositiveOrNonFinite_rejected(key, bad):
     cfg["pi"] = {"display": {"gradeHistory": {key: bad}}}
     with pytest.raises(ConfigValidationError, match=f"pi.display.gradeHistory.{key}"):
         ConfigValidator().validate(cfg)
+
+
+def test_validate_tripGapSec_defaultsTo300():
+    """US-880-a: the speed integrator's gap rule defaults to 300 s (Atlas: one
+    gap definition across tiers)."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["trip"]["gapSec"] == 300
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "300", True])
+def test_validate_tripGapSec_nonPositiveOrNonFinite_rejected(bad):
+    """US-880-a: pi.trip.gapSec must be a finite number > 0."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"trip": {"gapSec": bad}}
+    with pytest.raises(ConfigValidationError, match="pi.trip.gapSec"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_tripGapSec_positiveFloat_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"trip": {"gapSec": 120.5}}
+    assert ConfigValidator().validate(cfg)["pi"]["trip"]["gapSec"] == 120.5
 
 
 def test_validate_gradeHistory_windowShorterThanInterval_rejected():

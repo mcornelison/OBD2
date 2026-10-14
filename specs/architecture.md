@@ -5886,6 +5886,42 @@ dashboard reads both, and either one is enough to mark the panel.
   replayed data. It is hidden with `visibility` and keeps its box, so no other
   `#topbar` child moves.
 
+#### `system-status.drive.distanceKm` / `distanceSinceTs` -- this drive's distance (US-880-a)
+
+The `drive` block of `states/system-status` carries two always-present keys:
+
+```json
+"drive": {"state": "recording", "driveId": 118, "lastDrive": {...},
+          "distanceKm": 12.38, "distanceSinceTs": "2026-10-20T14:58:02Z"}
+```
+
+- **`distanceKm`** is this drive's distance from the ONE speed integrator,
+  `SpeedIntegrator` in `src/pi/obdii/speed_integrator.py`. It is unrounded; the page
+  formats it. It is `null` when nothing has been integrated in this process. Trip distance
+  and MPG (US-881) both read this integrator, so they cannot disagree (Atlas gaps 1-2).
+- **`distanceSinceTs`** is the event time the distance counts from. After a drive start
+  it is the drive start's event ts. After a process start in the middle of a drive it is
+  the event ts of the first SPEED reading integrated, so a partial distance says so.
+  `null` when nothing is integrated and no drive has started in this process.
+
+**Producer.** `CardStateEmitterMixin.observeTripSpeed`, called from
+`event_router._handleReading` beside `observeGearInput`. It takes SPEED only, and only
+while `_gatherDriveState` says a drive is recording; readings while idle are ignored.
+`dt` comes from the emitter's injectable monotonic clock (`_tripClock`), never wall time.
+`_handleDriveStart` resets the integrator. On drive end the value is kept (with
+`drive.state` `idle`) until the next drive starts. A process restart mid-drive starts at 0.
+
+**Method and gap rule (the server's).** Trapezoid between consecutive readings:
+`distance += (v0 + v1) / 2 * dt / 3600`. An interval with `dt <= 0` or
+`dt > pi.trip.gapSec` adds nothing, and the new reading becomes the next interval's
+start. A `null` speed is ignored entirely. `pi.trip.gapSec` defaults to 300, equal to
+the server's `GAP_DETECTION_THRESHOLD_SECONDS`, which
+`src/server/analytics/derived_signals_compute.py` uses to exclude gaps from
+`estimated_distance_km`: one gap definition across tiers (Atlas 2026-10-14). It is not
+`obdLiveSec`, because a 5-16 s bus stall mid-drive is still travel.
+`tests/server/test_trip_gap_crosses_tiers.py` pins the two defaults equal and feeds the
+same SPEED series through both integrals.
+
 #### `states/light` -- lux plus the raw counts, gain and saturation of one reader burst (US-878-a)
 
 **Producer:** `src/pi/sensors/light_state_bridge.py` (`LightStateBridge`, bus consumer;
@@ -6619,6 +6655,9 @@ reusing the boot-state primitives). Schema (spec §7):
   "drive": {"state":"recording","driveId":27},
   "ts":"…" }
 ```
+
+(US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`; see
+"`system-status.drive.distanceKm`" in section 11.)
 
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
 `linked` (green) / `reconnecting` (amber, with `retries` + `lastSeenS`) / `down`

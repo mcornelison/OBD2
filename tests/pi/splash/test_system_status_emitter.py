@@ -18,6 +18,8 @@
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-400 system-status card)
 # 2026-10-14    | Rex (US-901-b)| runMode: the replay > simulate > live precedence,
 #               |              | the emit forwarding, and the orchestrator gather.
+# 2026-10-14    | Rex (US-880-a)| the two exact drive pins gain distanceKm /
+#               |              | distanceSinceTs (null when not supplied).
 # ================================================================================
 ################################################################################
 
@@ -78,7 +80,11 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         "power": {"source": "external", "reasons": {}},
         # US-505 `lastDrive` is ALWAYS a key (null when unknown) -- see the
         # always-present catalog below for why absence is the dangerous shape.
-        "drive": {"state": "recording", "driveId": 27, "lastDrive": None},
+        "drive": {
+            "state": "recording", "driveId": 27, "lastDrive": None,
+            # US-880-a: always keys; null when nothing integrated this process.
+            "distanceKm": None, "distanceSinceTs": None,
+        },
         # US-480-a idle-SSOT (b): recording -> never idle (a drive is active).
         "idle": False,
         # US-728: `priorShutdown` is ALWAYS a key (null when not read).
@@ -401,6 +407,9 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
         "state": "recording",
         "driveId": 27,
         "lastDrive": None,  # US-505: always a key, even when the caller omits it
+        # US-880-a: always keys, null when the caller omits them.
+        "distanceKm": None,
+        "distanceSinceTs": None,
     }
     assert written["ts"] == _NOW
 

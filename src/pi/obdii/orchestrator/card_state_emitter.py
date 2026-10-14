@@ -69,6 +69,9 @@
 #               |              | latest value/unit/event time and decides stale.
 # 2026-10-14    | Rex (US-901-b)| system-status runMode from pi.replay.active and
 #               |              | the orchestrator's --simulate flag.
+# 2026-10-14    | Rex (US-880-a)| observeTripSpeed: SPEED while recording feeds
+#               |              | the ONE speed integrator; drive start resets it;
+#               |              | system-status drive.distanceKm/distanceSinceTs.
 # ================================================================================
 ################################################################################
 
@@ -285,6 +288,18 @@ class CardStateEmitterMixin:
     # the whole substance of the derivation, and a test that had to sleep 2 s to
     # exercise them would be a test nobody runs.
     _gearClock: Any = None
+    # US-880-a: the ONE speed integrator behind system-status drive.distanceKm.
+    # CLASS defaults for the same reason as the gear pair above; a composer
+    # without one integrates nothing and publishes null. The (km, sinceTs) pair
+    # is read on the run loop and written on the reading callback, so it moves
+    # under one lock, built with the integrator.
+    _speedIntegrator: Any = None
+    _tripLock: Any = None
+    _tripDistanceKm: float | None = None
+    _tripDistanceSinceTs: str | None = None
+    # Injectable monotonic clock for the integrator's dt; same reason as
+    # _gearClock. Never wall time: an NTP step must not add or erase distance.
+    _tripClock: Any = None
 
     # ------------------------------------------------------------------ setup
 
@@ -315,6 +330,7 @@ class CardStateEmitterMixin:
         self._initializeLtftTrendProducer(statesDir)
         self._initializeCaptureHealthProducer(statesDir)
         self._initializeObdLiveProducer(statesDir)
+        self._initializeTripDistance()
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -1026,6 +1042,106 @@ class CardStateEmitterMixin:
             logger.debug("obd-live card emit failed: %s", e)
         return True
 
+    # -------------------------------------------------------- trip distance
+    #
+    # US-880-a. Trip distance and MPG need ONE distance source (Atlas gaps 1-2):
+    # SPEED readings on the reading seam, while a drive is recording, feed the
+    # speed integrator; system-status drive.distanceKm publishes its total.
+
+    def _initializeTripDistance(self) -> None:
+        """Build the speed integrator from pi.trip.gapSec in its own try/except."""
+        try:
+            import threading
+
+            from common.config.validator import DEFAULTS
+            from pi.obdii.speed_integrator import SpeedIntegrator
+
+            tripCfg = self._config.get("pi", {}).get("trip", {})
+            gapSec = float(tripCfg.get("gapSec", DEFAULTS["pi.trip.gapSec"]))
+            self._speedIntegrator = SpeedIntegrator(gapSec)
+            self._tripLock = threading.Lock()
+            logger.info("trip distance wired (gap_sec=%.1f)", gapSec)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("trip distance init skipped: %s", e)
+            self._speedIntegrator = None
+            self._tripLock = None
+
+    def _tripNowS(self) -> float:
+        """Monotonic seconds for the speed integrator's dt."""
+        clock = self._tripClock
+        if clock is not None:
+            return float(clock())
+        import time
+
+        return time.monotonic()
+
+    def _tripEventTs(self, eventTime: Any) -> str | None:
+        """Canonical UTC for a reading/drive event time, or None if unusable.
+
+        The logger and the drive detector stamp NAIVE local datetimes; the
+        declared zone converts them. No zone, no timestamp -- never a guess.
+        """
+        if not isinstance(eventTime, datetime):
+            return None
+        try:
+            from common.time.helper import localNaiveToCanonicalIso
+
+            return localNaiveToCanonicalIso(eventTime, self._config)
+        except Exception as e:  # noqa: BLE001 -- an unlabelled ts is None, not a crash
+            logger.debug("trip distance event ts unavailable: %s", e)
+            return None
+
+    def observeTripSpeed(
+        self, paramName: str, value: Any, eventTime: Any = None
+    ) -> None:
+        """Route one realtime reading into the speed integrator.
+
+        Called from the orchestrator's reading callback for every parameter;
+        returns at once for anything but SPEED, and ignores readings while no
+        drive is recording (the recording fact is :meth:`_gatherDriveState`'s,
+        never a second source).
+
+        Args:
+            paramName: The realtime parameter's name.
+            value: Its value in km/h; None is ignored entirely.
+            eventTime: The reading's capture time (labels a partial distance
+                after a mid-drive process start).
+        """
+        integrator = self._speedIntegrator
+        if integrator is None or paramName != "SPEED" or value is None:
+            return
+        if self._gatherDriveState()[0] != "recording":
+            return
+        tS = self._tripNowS()
+        with self._tripLock:
+            km = integrator.update(float(value), tS)
+            if self._tripDistanceKm is None and self._tripDistanceSinceTs is None:
+                # No drive start seen this process (restart mid-drive): the
+                # partial distance counts from THIS reading, and says so.
+                self._tripDistanceSinceTs = self._tripEventTs(eventTime)
+            self._tripDistanceKm = km
+
+    def _resetTripDistance(self, driveStartTime: Any) -> None:
+        """Zero the integrator at drive start; label the distance from it.
+
+        Args:
+            driveStartTime: The drive session's start time (its event ts).
+        """
+        integrator = self._speedIntegrator
+        if integrator is None:
+            return
+        with self._tripLock:
+            integrator.reset()
+            self._tripDistanceKm = None
+            self._tripDistanceSinceTs = self._tripEventTs(driveStartTime)
+
+    def _gatherTripDistance(self) -> tuple[float | None, str | None]:
+        """Return (distanceKm, distanceSinceTs); (None, None) when not wired."""
+        if self._speedIntegrator is None:
+            return (None, None)
+        with self._tripLock:
+            return (self._tripDistanceKm, self._tripDistanceSinceTs)
+
     # -------------------------------------------------------- system-status
 
     def _emitSystemStatusState(self) -> None:
@@ -1037,6 +1153,7 @@ class CardStateEmitterMixin:
         obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
         powerSource, powerSourceReason = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
+        distanceKm, distanceSinceTs = self._gatherTripDistance()
         emitter(
             obdLinkState=obdLinkState,
             obdRetries=obdRetries,
@@ -1062,6 +1179,8 @@ class CardStateEmitterMixin:
             driveState=driveState,
             driveId=driveId,
             lastDrive=self._gatherLastDriveSummary(),
+            distanceKm=distanceKm,
+            distanceSinceTs=distanceSinceTs,
             # US-744: the US-728 verdict was computed on every boot and then
             # discarded. The emitter has taken this parameter since US-728, but
             # nothing ever passed it -- so the car published

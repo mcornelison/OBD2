@@ -135,6 +135,9 @@
 #                                driveId that is not a positive integer.
 # 2026-10-14    | Rex (US-882-b) | pi.display.gradeHistory.{intervalSec 10,
 #                                windowSec 900}; finite, > 0, window >= interval.
+# 2026-10-14    | Rex (US-880-a) | pi.trip.gapSec: 300 (speed-integrator gap rule,
+#                                == server GAP_DETECTION_THRESHOLD_SECONDS);
+#                                finite, > 0.
 # ================================================================================
 ################################################################################
 
@@ -799,6 +802,15 @@ DEFAULTS: dict[str, Any] = {
     # p99 3 s for RPM, SPEED, COOLANT_TEMP and BATTERY_V; 5 s = 1.7x that p99.
     # Mirrored by src/pi/obdii/obd_live_emitter.py DEFAULT_OBD_LIVE_STALE_S.
     'pi.display.stale.obdLiveSec': 5,
+    # US-880-a (F-159): the speed integrator's gap rule (src/pi/obdii/
+    # speed_integrator.py) -- an interval between SPEED readings wider than this
+    # is not continuous travel and adds no distance. ONE gap definition across
+    # tiers (Atlas 2026-10-14): the server's distance integral excludes
+    # dt > GAP_DETECTION_THRESHOLD_SECONDS (derived_signals_compute.py :53-57),
+    # importing the drive_summary constant on purpose (:75-78). Not obdLiveSec:
+    # a 5-16 s bus stall mid-drive is still travel. Pinned equal by
+    # tests/server/test_trip_gap_crosses_tiers.py.
+    'pi.trip.gapSec': 300,
     # US-882-b (F-159): states/grade-history, written by the IMU bridge -- one
     # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
     'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
@@ -974,6 +986,7 @@ class ConfigValidator:
         self._validateReplay(config)
         self._validateImuStateBridge(config)
         self._validateGradeHistory(config)
+        self._validateTripGap(config)
         self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
@@ -1750,6 +1763,33 @@ class ConfigValidator:
                 "pi.display.gradeHistory.windowSec must be >= intervalSec "
                 f"(got windowSec={values['windowSec']!r}, intervalSec={values['intervalSec']!r})",
                 missingFields=['pi.display.gradeHistory.windowSec'],
+            )
+
+    def _validateTripGap(self, config: dict[str, Any]) -> None:
+        """Validate pi.trip.gapSec (US-880-a): a finite number > 0.
+
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the key is non-numeric, non-finite or
+                non-positive.
+        """
+        key = 'pi.trip.gapSec'
+        val = self._getNestedValue(config, key)
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or val <= 0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number > 0 (got {val!r})",
+                missingFields=[key],
             )
 
     def _validateImuEnums(self, config: dict[str, Any]) -> None:
