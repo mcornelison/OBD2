@@ -46,6 +46,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-27    | Ralph (Rex)  | Initial implementation (US-492 obdctl SSOT).
+# 2026-10-13    | Ralph (Rex)  | US-884: KIOSK_UNIT, the one source of the kiosk
+#               |              | unit name for the shed, watchdogs and splash.
 # ================================================================================
 ################################################################################
 
@@ -57,6 +59,13 @@ from dataclasses import dataclass, field
 
 # The safe-shutdown guard (D-7 / F-7). Named here so no consumer has to spell it.
 SAFE_SHUTDOWN_GUARD = "eclipse-powerwatch.service"
+
+# US-884: the RUNNING kiosk unit -- the one the power-loss shed stops, the two
+# display watchdogs observe, and the splash OnSuccess= starts. Named here so the
+# Python consumers derive it; every non-Python copy is pinned to it by
+# tests/pi/ops/test_kiosk_unit_single_source.py. Renaming the kiosk (Sprint 99)
+# changes this line and the files that test names, and the shed follows.
+KIOSK_UNIT = "eclipse-dashboard.service"
 
 # Suffix every unit in this project carries. Accepted-but-optional when typing.
 UNIT_SUFFIX = ".service"
@@ -166,7 +175,7 @@ UNIT_MANIFEST: tuple[UnitSpec, ...] = (
         inactiveIsNormal=True,
     ),
     UnitSpec(
-        unit="eclipse-dashboard.service",
+        unit=KIOSK_UNIT,
         aliases=("dashboard", "dash", "kiosk"),
         description="Chromium carousel dashboard kiosk",
         kioskVerbs=frozenset({"stop", "restart"}),

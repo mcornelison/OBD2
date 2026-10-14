@@ -2675,6 +2675,12 @@ fires on the first `shutdown-state` write and the kiosk renders the countdown.
 - **The sequencer stays decoupled.** It never names a splash unit (F-103: it writes
   state, consumers react). Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`,
   which fails if either splash unit is added back to either list.
+- **The shed kiosk's name comes from `unit_manifest.KIOSK_UNIT` (US-884, Sprint 98).**
+  `DEFAULT_SHED_UNITS` is derived from it (`KIOSK_UNIT` minus `.service`, the bare form
+  the shed has always used), so whichever kiosk runs is the one shed at power loss.
+  `load_shed` imports it as `src.pi.ops.unit_manifest` (powerwatch's prefix); the manifest
+  is stdlib-only, so powerwatch cannot pull in the display chain. Default value unchanged:
+  `('eclipse-dashboard',)`.
 
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
@@ -3025,7 +3031,7 @@ the sync backlog. "Nothing to send" makes the **drain** shorter. It does not rem
 
 | # | Step | Owner | Mandatory at an empty backlog |
 |---|---|---|---|
-| 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
+| 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped; the kiosk name comes from `unit_manifest.KIOSK_UNIT` (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
 | 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops (at home or `UNKNOWN`; a positive `AWAY` skips it, US-776-c) |
 | 3 | **Drain close** — the US-526 primary close (§10.6.2) | `buildDrainCloseHook` via `prePowerOffFn` | yes; a no-op close when no row is open |
 | 4 | **Custody** — the record states its verdict (§10.6.3) | `makeSyncCustodyHook` via `prePowerOffFn` | yes; `DELIVERED` |
@@ -5350,6 +5356,16 @@ the canonical files are what ships).
 |------|------|-----------------|-------|
 | Pi (chi-eclipse-01) | `eclipse-obd.service` | `deploy/eclipse-obd.service` | US-210 (Sprint 16) |
 | Server (chi-srv-01) | `obd-server.service` | `deploy/obd-server.service` | US-231 (Sprint 18) |
+
+**The kiosk unit name has one source: `src/pi/ops/unit_manifest.py` `KIOSK_UNIT`
+(US-884, Sprint 98).** The power-loss shed (`load_shed.DEFAULT_SHED_UNITS`), the kiosk
+watchdog (`kiosk_watchdog.DEFAULT_UNIT`) and the panel-liveness observer
+(`panel_liveness.DEFAULT_UNIT`) derive their defaults from it. The files that cannot
+import it -- the two watchdog units' `--unit`, the 51- polkit rule, the splash
+`OnSuccess=` (x11 + wayland), the dashboard `install.sh` / `uninstall.sh`, `carousel.js`
+and `tools/imu/drive_console.py` -- are pinned to it by
+`tests/pi/ops/test_kiosk_unit_single_source.py`, which names every file still holding
+an old name after a rename.
 
 Shared invariants across both units:
 

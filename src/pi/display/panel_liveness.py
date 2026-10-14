@@ -118,6 +118,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Rex          | Initial implementation (Sprint 78 US-654)
+# 2026-10-13    | Rex          | US-884: DEFAULT_UNIT from unit_manifest.KIOSK_UNIT
 # ================================================================================
 ################################################################################
 
@@ -135,6 +136,9 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+# pi. prefix: this unit runs as `python -m pi.display.panel_liveness`.
+from pi.ops.unit_manifest import KIOSK_UNIT
+
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------
@@ -142,7 +146,8 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------
 
 #: The kiosk unit whose rendering is observed.  Never started, never restarted.
-DEFAULT_UNIT = "eclipse-dashboard.service"
+#: US-884: derived from the manifest, the one source of the kiosk unit name.
+DEFAULT_UNIT = KIOSK_UNIT
 
 #: Where the emitters publish.  Their mtimes are the "is there anything to
 #: render" half of the signal -- this module never reads their CONTENTS, only
