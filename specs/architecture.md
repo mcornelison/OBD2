@@ -2252,6 +2252,19 @@ Evaluators in `src/pi/alert/tiered_thresholds.py` return an `AlertSeverity`;
 `src/pi/display/theme.py::advancedTierSeverityToColor` maps severity to
 color. No config duplication.
 
+**Live bands for the V0.30 pages (US-875)**: the band of every live value on the
+HTML pages comes from ONE provider, the band producer
+(`src/pi/obdii/band_producer.py`), and reaches the page through `states/obd-live`
+(section 11). The page maps `band -> token` and holds no threshold, band or curve:
+`src/pi/ui/` contains no number. The producer covers coolant (threshold + dwell +
+clear hysteresis), battery (RED/GREEN only, gated on the engine running) and the
+RPM bar cues; every other PID has no live band. The numbers, and why they are what
+they are, live in `specs/grounded-knowledge.md` (Coolant Temp, RPM and Battery
+Voltage rows, and "Battery Voltage via ELM_VOLTAGE"); the config keys are
+`pi.bands.*`, with defaults and sources in `src/common/config/validator.py`.
+`pi.tieredThresholds`, `AlertManager` and the evaluators above are a separate,
+unchanged path.
+
 **Min/max markers**: sourced from `src/pi/data/recent_stats.py::queryRecentMinMax`,
 which reduces the last N rows of the `statistics` table per parameter
 (N configurable, default 5).
@@ -5723,6 +5736,7 @@ holds. When `pi.dashboard.stateEmitEnabled` is false, the producer is not built 
 no file.
 
 **Shape:** `{params: {<PID name>: {value, unit, ts, stale, band, last}}, dataSource, ts}`.
+A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
 
 - **`ts` per PID is the reading's event time.** `reading.timestamp` is a naive local
   datetime. It is converted with `localNaiveToCanonicalIso(reading.timestamp, config)`,
@@ -5734,11 +5748,35 @@ no file.
   three shapes:
   - fresh: `{value: X, ts, stale: false, band, last: null}`
   - stale: `{value: null, ts (of the last reading), stale: true, band: null,
-    last: {value: X, band: <band at the last fresh reading>}}`
-  - not read: `{value: null, ts: null, stale: false, band: null, last: null}`. This
+    noBandReason: 'stale', last: {value: X, band: <band at the last fresh reading>}}`
+  - not read: `{value: null, ts: null, stale: false, band: null,
+    noBandReason: 'not_read', last: null}`. This
     shape is defined but not emitted in Sprint 98. A PID that has not been read in
     this process is left out of `params`.
-- **`band`** is null for every PID until the band producer (US-875) fills it.
+- **`band`** (US-875) is `{band, since, reason}` or null. `band` is one of
+  `green | amber | red`; `since` is the canonical UTC event time the PID entered that
+  band; `reason` is prose. The tracker feeds every reading, with its full-precision
+  event time, to the band producer (`src/pi/obdii/band_producer.py`; section 10
+  Display Tiers). `band` is null whenever `value` is null, so a stale band never
+  outlives its value. While a PID is stale no band is evaluated: `last.band` is the
+  band frozen at its last fresh reading.
+- **`noBandReason`** is present beside every null `band` and ABSENT beside a non-null
+  one (Atlas ruling 2026-10-13 on Iris S-5). It is a machine code, one of:
+  - `not_read`: the value is null without being stale.
+  - `stale`: the PID is stale.
+  - `no_band_defined`: the PID has no live band (intake air, trims, timing, load,
+    speed and every other PID except coolant, battery and RPM).
+  - `engine_not_running`: BATTERY_V is banded only while the engine runs. Engine-off
+    means RPM stops reporting; a last-known RPM is not "running".
+  - `amber_not_shipped`: a running battery value between the red and green edges
+    (CIO R38: no battery amber in Sprint 98).
+- **`params.RPM.scale`** is `{amberFrom, redFrom}`, read from the same
+  `pi.bands.rpm.amberRpm` / `redRpm` keys as the RPM band, so the bar draws its zones
+  from data (Atlas ruling 2026-10-13 on Iris S-6). It is published fresh or stale.
+- **Dwell** is consecutive readings on event time. A stale gap (more than
+  `pi.display.stale.obdLiveSec` between readings) or a null reading resets it. The
+  producer keeps its own dwell clocks and a few seconds of RPM history for the
+  battery gate; it reads no SQLite either.
 - **`dataSource`** is a single file-level value: the `data_source` tag of the rows these
   values came from. It is read from `ObdDataLogger.dataSource`, which
   `_resolveDataSource` sets, so it is not derived a second time. It is not
@@ -5746,8 +5784,10 @@ no file.
   resolved a tag.
 - **No page reads `obd-live` in Sprint 98.** The contract fixture is
   `tests/ui/fixtures/states/obd-live.json`, which holds complete named payloads (`fresh`,
-  `stale`, `pid-absent`, `replay`). `tests/pi/obdii/test_obd_live_emitter.py` rebuilds
-  every case through `buildObdLiveState` and asserts equality.
+  `stale`, `pid-absent`, `replay`, and from US-875 `engine-off-battery`,
+  `coolant-amber`, `coolant-red`). `tests/pi/obdii/test_obd_live_emitter.py` feeds
+  every case, with the history its dwell needs, through a real `ObdLiveTracker` and
+  `buildObdLiveState` and asserts equality.
 
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 

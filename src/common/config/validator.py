@@ -122,6 +122,9 @@
 #                                option A: matches config.json).
 # 2026-10-13    | Rex (US-874) | pi.display.stale.obdLiveSec: 5 (states/obd-live
 #                                stale window, Atlas 2026-10-13 measured basis).
+# 2026-10-14    | Rex (US-875) | pi.bands.{coolant,battery,rpm}.* band producer
+#                                keys; _validateBands rejects a non-positive or
+#                                mis-ordered band edge.
 # ================================================================================
 ################################################################################
 
@@ -770,6 +773,40 @@ DEFAULTS: dict[str, Any] = {
     # p99 3 s for RPM, SPEED, COOLANT_TEMP and BATTERY_V; 5 s = 1.7x that p99.
     # Mirrored by src/pi/obdii/obd_live_emitter.py DEFAULT_OBD_LIVE_STALE_S.
     'pi.display.stale.obdLiveSec': 5,
+    # US-875 (F-159): the band producer (src/pi/obdii/band_producer.py) that
+    # colours states/obd-live. Pages hold no number; these are the only copies.
+    # Coolant (degrees C): threshold + dwell + clear hysteresis. Source for all
+    # six: specs/grounded-knowledge.md Coolant Temp row (:75) and Spool
+    # 2026-10-13. A dwell is consecutive readings on event ts; a stale gap
+    # (pi.display.stale.obdLiveSec) resets it.
+    'pi.bands.coolant.amberC': 104,  # grounded-knowledge :75, Spool 2026-10-13
+    'pi.bands.coolant.amberDwellSec': 30,  # grounded-knowledge :75, Spool 2026-10-13
+    'pi.bands.coolant.redC': 110,  # grounded-knowledge :75, Spool 2026-10-13
+    'pi.bands.coolant.redDwellSec': 120,  # grounded-knowledge :75, Spool 2026-10-13
+    'pi.bands.coolant.clearBelowC': 102,  # grounded-knowledge :75, Spool 2026-10-13
+    'pi.bands.coolant.clearHoldSec': 10,  # grounded-knowledge :75, Spool 2026-10-13
+    # Battery (BATTERY_V via ELM_VOLTAGE): banded only while the engine runs.
+    # Spool 2026-10-13: of 32,241 RPM samples the idle floor is >= 572; the 11
+    # samples at 113-548 are all start/stall transients, and 500 sits in the gap.
+    'pi.bands.battery.runningRpmMin': 500,
+    # The gear staleness rule: RPM and BATTERY_V both poll at ~0.45 Hz (~2.2 s
+    # spacing), so an RPM older than 3.0 s at the battery reading is not current.
+    'pi.bands.battery.rpmMaxAgeSec': 3.0,
+    # measured N=1 (drive 87 restart 2026-09-26, 11.0 V @ RPM 208 -> 14.0 V @ RPM
+    # 1516 two s later) + margin, not proven.
+    'pi.bands.battery.crankGuardSec': 3,
+    # Edges: specs/grounded-knowledge.md section Battery Voltage via ELM_VOLTAGE
+    # (:368-374, CIO-ratified TUNER-008 2026-09-28). Green owns both edges. RED
+    # and GREEN only this sprint (CIO R38 2026-10-13): no amber key exists.
+    'pi.bands.battery.greenMinV': 13.5,  # grounded-knowledge :368-374
+    'pi.bands.battery.greenMaxV': 14.5,  # grounded-knowledge :368-374
+    'pi.bands.battery.redBelowV': 12.0,  # grounded-knowledge :368-374
+    'pi.bands.battery.redAboveV': 15.0,  # grounded-knowledge :368-374
+    # RPM bar cues; params.RPM.scale {amberFrom, redFrom} is read from these same
+    # two keys. amberRpm is the CIO's display cue 2026-10-13; redRpm is the 97-99
+    # 2G redline, specs/grounded-knowledge.md RPM row (:84).
+    'pi.bands.rpm.amberRpm': 5500,
+    'pi.bands.rpm.redRpm': 7000,
     # US-290 / TD-007: generateTimeoutSeconds closes the lone holdout from
     # US-OLL-002 (which made apiTimeoutSeconds + healthTimeoutSeconds
     # configurable but left the 120 s model-inference timeout hardcoded in
@@ -894,6 +931,7 @@ class ConfigValidator:
         self._validateBatteryHealth(config)
         self._validateCellEpoch(config)
         self._validateDisplayAutoDim(config)
+        self._validateBands(config)
         self._validateImuStateBridge(config)
         self._validateLocalZone(config)
 
@@ -1343,6 +1381,55 @@ class ConfigValidator:
                 f"{key} must be one of {list(CELL_EPOCH_VALUES)} (got {value!r})",
                 missingFields=[key],
             )
+
+    def _validateBands(self, config: dict[str, Any]) -> None:
+        """Validate pi.bands.* (US-875 band producer).
+
+        Called after defaults are applied. Every key must be a positive number,
+        and the edges must be ordered so each band is reachable:
+        clearBelowC < amberC <= redC, amberDwellSec < redDwellSec,
+        redBelowV < greenMinV <= greenMaxV < redAboveV, amberRpm < redRpm.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If a band key is not a positive number or the
+                edges are out of order.
+        """
+        keys = [key for key in DEFAULTS if key.startswith('pi.bands.')]
+        values: dict[str, float] = {}
+        for key in keys:
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or val <= 0:
+                raise ConfigValidationError(
+                    f"{key} must be a positive number (got {val!r})",
+                    missingFields=[key],
+                )
+            values[key] = float(val)
+
+        ordered = [
+            ('pi.bands.coolant.clearBelowC', 'pi.bands.coolant.amberC', False),
+            ('pi.bands.coolant.amberC', 'pi.bands.coolant.redC', True),
+            ('pi.bands.coolant.amberDwellSec', 'pi.bands.coolant.redDwellSec', False),
+            ('pi.bands.battery.redBelowV', 'pi.bands.battery.greenMinV', False),
+            ('pi.bands.battery.greenMinV', 'pi.bands.battery.greenMaxV', True),
+            ('pi.bands.battery.greenMaxV', 'pi.bands.battery.redAboveV', False),
+            ('pi.bands.rpm.amberRpm', 'pi.bands.rpm.redRpm', False),
+        ]
+        for low, high, allowEqual in ordered:
+            if low not in values or high not in values:
+                continue
+            ok = values[low] <= values[high] if allowEqual else values[low] < values[high]
+            if not ok:
+                relation = '<=' if allowEqual else '<'
+                raise ConfigValidationError(
+                    f"{low} ({values[low]!r}) must be {relation} {high} "
+                    f"({values[high]!r})",
+                    missingFields=[low, high],
+                )
 
     def _validateDisplayAutoDim(self, config: dict[str, Any]) -> None:
         """Validate pi.display.autoDim.* (US-483-b carousel auto-dim curve).

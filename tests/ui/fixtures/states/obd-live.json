@@ -1,35 +1,58 @@
 {
   "fresh": {
     "params": {
-      "RPM": {"value": 812, "unit": "rpm", "ts": "2026-10-13T12:05:01Z", "stale": false, "band": null, "last": null},
-      "SPEED": {"value": 0, "unit": "km/h", "ts": "2026-10-13T12:05:02Z", "stale": false, "band": null, "last": null},
-      "COOLANT_TEMP": {"value": 88, "unit": "C", "ts": "2026-10-13T12:05:00Z", "stale": false, "band": null, "last": null},
-      "INTAKE_TEMP": {"value": 31, "unit": "C", "ts": "2026-10-13T12:04:59Z", "stale": false, "band": null, "last": null}
+      "RPM": {"value": 812, "unit": "rpm", "ts": "2026-10-13T12:05:01Z", "stale": false, "band": {"band": "green", "since": "2026-10-13T12:05:01Z", "reason": "rpm below 5500"}, "last": null, "scale": {"amberFrom": 5500, "redFrom": 7000}},
+      "SPEED": {"value": 0, "unit": "km/h", "ts": "2026-10-13T12:05:02Z", "stale": false, "band": null, "noBandReason": "no_band_defined", "last": null},
+      "COOLANT_TEMP": {"value": 88, "unit": "C", "ts": "2026-10-13T12:05:00Z", "stale": false, "band": {"band": "green", "since": "2026-10-13T12:05:00Z", "reason": "coolant has not held >= 104 C for 30 s"}, "last": null},
+      "INTAKE_TEMP": {"value": 31, "unit": "C", "ts": "2026-10-13T12:04:59Z", "stale": false, "band": null, "noBandReason": "no_band_defined", "last": null}
     },
     "dataSource": "real",
     "ts": "2026-10-13T12:05:03Z"
   },
   "stale": {
     "params": {
-      "RPM": {"value": 812, "unit": "rpm", "ts": "2026-10-13T12:05:01Z", "stale": false, "band": null, "last": null},
-      "COOLANT_TEMP": {"value": null, "unit": "C", "ts": "2026-10-13T12:04:55Z", "stale": true, "band": null, "last": {"value": 88, "band": null}}
+      "RPM": {"value": 812, "unit": "rpm", "ts": "2026-10-13T12:05:01Z", "stale": false, "band": {"band": "green", "since": "2026-10-13T12:05:01Z", "reason": "rpm below 5500"}, "last": null, "scale": {"amberFrom": 5500, "redFrom": 7000}},
+      "COOLANT_TEMP": {"value": null, "unit": "C", "ts": "2026-10-13T12:04:55Z", "stale": true, "band": null, "noBandReason": "stale", "last": {"value": 88, "band": {"band": "green", "since": "2026-10-13T12:04:55Z", "reason": "coolant has not held >= 104 C for 30 s"}}}
     },
     "dataSource": "real",
     "ts": "2026-10-13T12:05:03Z"
   },
   "pid-absent": {
     "params": {
-      "BATTERY_V": {"value": 12.6, "unit": "V", "ts": "2026-10-13T12:00:20Z", "stale": false, "band": null, "last": null}
+      "BATTERY_V": {"value": 12.6, "unit": "V", "ts": "2026-10-13T12:00:20Z", "stale": false, "band": null, "noBandReason": "engine_not_running", "last": null}
     },
     "dataSource": "real",
     "ts": "2026-10-13T12:00:22Z"
   },
   "replay": {
     "params": {
-      "RPM": {"value": 2450, "unit": "rpm", "ts": "2026-10-13T12:10:04Z", "stale": false, "band": null, "last": null},
-      "SPEED": {"value": 64, "unit": "km/h", "ts": "2026-10-13T12:10:05Z", "stale": false, "band": null, "last": null}
+      "RPM": {"value": 2450, "unit": "rpm", "ts": "2026-10-13T12:10:04Z", "stale": false, "band": {"band": "green", "since": "2026-10-13T12:10:04Z", "reason": "rpm below 5500"}, "last": null, "scale": {"amberFrom": 5500, "redFrom": 7000}},
+      "SPEED": {"value": 64, "unit": "km/h", "ts": "2026-10-13T12:10:05Z", "stale": false, "band": null, "noBandReason": "no_band_defined", "last": null}
     },
     "dataSource": "replay",
     "ts": "2026-10-13T12:10:06Z"
+  },
+  "engine-off-battery": {
+    "params": {
+      "RPM": {"value": null, "unit": "rpm", "ts": "2026-10-13T12:20:00Z", "stale": true, "band": null, "noBandReason": "stale", "last": {"value": 734, "band": {"band": "green", "since": "2026-10-13T12:20:00Z", "reason": "rpm below 5500"}}, "scale": {"amberFrom": 5500, "redFrom": 7000}},
+      "BATTERY_V": {"value": 11.9, "unit": "V", "ts": "2026-10-13T12:21:00Z", "stale": false, "band": null, "noBandReason": "engine_not_running", "last": null}
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:21:01Z"
+  },
+  "coolant-amber": {
+    "params": {
+      "COOLANT_TEMP": {"value": 105, "unit": "C", "ts": "2026-10-13T12:10:30Z", "stale": false, "band": {"band": "amber", "since": "2026-10-13T12:10:30Z", "reason": "coolant >= 104 C for 30 s"}, "last": null}
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:10:31Z"
+  },
+  "coolant-red": {
+    "params": {
+      "RPM": {"value": 3200, "unit": "rpm", "ts": "2026-10-13T12:15:00Z", "stale": false, "band": {"band": "green", "since": "2026-10-13T12:15:00Z", "reason": "rpm below 5500"}, "last": null, "scale": {"amberFrom": 5500, "redFrom": 7000}},
+      "COOLANT_TEMP": {"value": 110, "unit": "C", "ts": "2026-10-13T12:15:01Z", "stale": false, "band": {"band": "red", "since": "2026-10-13T12:15:01Z", "reason": "coolant >= 110 C"}, "last": null}
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:15:02Z"
   }
 }

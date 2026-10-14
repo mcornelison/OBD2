@@ -15,6 +15,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-13    | Rex (US-874) | Initial -- obd-live producer and fixture.
+# 2026-10-14    | Rex (US-875) | Bands: noBandReason beside a null band, RPM
+#                                scale, fixture cases rebuilt through the tracker.
 # ================================================================================
 ################################################################################
 
@@ -36,6 +38,7 @@ from pi.obdii.orchestrator.event_router import EventRouterMixin
 
 _ZONE_CONFIG = {"pi": {"time": {"localZone": "America/Chicago"}}}
 _PID_KEYS = {"value", "unit", "ts", "stale", "band", "last"}
+_OPTIONAL_PID_KEYS = {"noBandReason", "scale"}
 _TOP_LEVEL_KEYS = {"params", "dataSource", "ts"}
 
 _FIXTURE_PATH = (
@@ -82,12 +85,13 @@ class TestBuildObdLiveState:
 
     def test_freshReading_publishesValueUnitTsAndNullBand(self) -> None:
         """
-        Given: RPM 812 read at 12:05:01Z
+        Given: SPEED 40 read at 12:05:01Z (no band rule)
         When: the state is built at 12:05:03Z with a 5 s window
-        Then: the fresh shape -- value 812, stale false, band null, last null
+        Then: the fresh shape -- value 40, stale false, band null with
+              noBandReason no_band_defined, last null
         """
         state = ole.buildObdLiveState(
-            {"RPM": _obs(812, "rpm", "2026-10-13T12:05:01Z")},
+            {"SPEED": _obs(40, "km/h", "2026-10-13T12:05:01Z")},
             nowUtc=_utc("2026-10-13T12:05:03Z"),
             staleSec=5.0,
             dataSource="real",
@@ -95,9 +99,10 @@ class TestBuildObdLiveState:
 
         assert state == {
             "params": {
-                "RPM": {
-                    "value": 812, "unit": "rpm", "ts": "2026-10-13T12:05:01Z",
-                    "stale": False, "band": None, "last": None,
+                "SPEED": {
+                    "value": 40, "unit": "km/h", "ts": "2026-10-13T12:05:01Z",
+                    "stale": False, "band": None, "noBandReason": "no_band_defined",
+                    "last": None,
                 }
             },
             "dataSource": "real",
@@ -108,11 +113,12 @@ class TestBuildObdLiveState:
         """
         Given: COOLANT_TEMP 88 read at 12:04:55Z
         When: built at 12:05:03Z (8 s later, window 5 s)
-        Then: value null, ts of the last reading, stale true, band null,
-              last {value: 88, band: null}
+        Then: value null, ts of the last reading, stale true, band null with
+              noBandReason stale, last {value: 88, band: <the frozen band>}
         """
+        green = {"band": "green", "since": "2026-10-13T12:04:55Z", "reason": "r"}
         state = ole.buildObdLiveState(
-            {"COOLANT_TEMP": _obs(88, "C", "2026-10-13T12:04:55Z")},
+            {"COOLANT_TEMP": ole.ObdLiveObservation(88, "C", "2026-10-13T12:04:55Z", green)},
             nowUtc=_utc("2026-10-13T12:05:03Z"),
             staleSec=5.0,
             dataSource="real",
@@ -120,7 +126,8 @@ class TestBuildObdLiveState:
 
         assert state["params"]["COOLANT_TEMP"] == {
             "value": None, "unit": "C", "ts": "2026-10-13T12:04:55Z",
-            "stale": True, "band": None, "last": {"value": 88, "band": None},
+            "stale": True, "band": None, "noBandReason": "stale",
+            "last": {"value": 88, "band": green},
         }
 
     def test_ageExactlyAtTheWindow_isStillFresh(self) -> None:
@@ -166,25 +173,64 @@ class TestBuildObdLiveState:
 
         assert state == {"params": {}, "dataSource": None, "ts": "2026-10-13T12:00:00Z"}
 
-    def test_bandIsNullForEveryPid(self) -> None:
+    def test_noBandReason_presentExactlyWhenBandIsNull(self) -> None:
         """
-        Given: several PIDs, fresh and stale
+        Given: one banded fresh PID, one unbanded fresh PID, one banded stale PID
         When: built
-        Then: band is null on every one (US-875 fills it)
+        Then: noBandReason is ABSENT beside a band and present beside every null
+              band; a stale band never outlives its value
         """
+        green = {"band": "green", "since": "2026-10-13T12:00:09Z", "reason": "r"}
         state = ole.buildObdLiveState(
             {
-                "RPM": _obs(812, "rpm", "2026-10-13T12:00:09Z"),
-                "SPEED": _obs(0, "km/h", "2026-10-13T12:00:00Z"),
+                "RPM": ole.ObdLiveObservation(812, "rpm", "2026-10-13T12:00:09Z", green),
+                "SPEED": _obs(0, "km/h", "2026-10-13T12:00:09Z"),
+                "COOLANT_TEMP": ole.ObdLiveObservation(88, "C", "2026-10-13T12:00:00Z", green),
             },
             nowUtc=_utc("2026-10-13T12:00:10Z"),
             staleSec=5.0,
             dataSource="real",
         )
 
-        for pid in state["params"].values():
-            assert pid["band"] is None
-            assert set(pid) == _PID_KEYS
+        params = state["params"]
+        assert params["RPM"]["band"] == green
+        assert "noBandReason" not in params["RPM"]
+        assert params["SPEED"]["noBandReason"] == "no_band_defined"
+        assert params["COOLANT_TEMP"]["band"] is None
+        assert params["COOLANT_TEMP"]["noBandReason"] == "stale"
+
+    def test_bandIsNullWheneverValueIsNull(self) -> None:
+        """
+        Given: an observation carrying a band but a null value
+        When: built fresh
+        Then: band null, noBandReason not_read -- a band never outlives its value
+        """
+        green = {"band": "green", "since": "2026-10-13T12:00:09Z", "reason": "r"}
+        state = ole.buildObdLiveState(
+            {"RPM": ole.ObdLiveObservation(None, "rpm", "2026-10-13T12:00:09Z", green)},
+            nowUtc=_utc("2026-10-13T12:00:10Z"),
+            staleSec=5.0,
+            dataSource="real",
+        )
+
+        assert state["params"]["RPM"]["band"] is None
+        assert state["params"]["RPM"]["noBandReason"] == "not_read"
+
+    def test_scale_isPublishedEvenWhenStale(self) -> None:
+        """
+        Given: an RPM observation carrying a scale, stale
+        When: built
+        Then: scale is still published -- the bar zones do not depend on a reading
+        """
+        scale = {"amberFrom": 5500.0, "redFrom": 7000.0}
+        state = ole.buildObdLiveState(
+            {"RPM": ole.ObdLiveObservation(812, "rpm", "2026-10-13T12:00:00Z", scale=scale)},
+            nowUtc=_utc("2026-10-13T12:00:10Z"),
+            staleSec=5.0,
+            dataSource="real",
+        )
+
+        assert state["params"]["RPM"]["scale"] == scale
 
 
 # ===================================================================== tracker
@@ -203,7 +249,8 @@ class TestObdLiveTracker:
 
         tracker.observeReading(_Reading("RPM", 812.0, datetime(2026, 10, 13, 12, 0, 0), "rpm"))
 
-        assert tracker.snapshot()["RPM"] == _obs(812.0, "rpm", "2026-10-13T17:00:00Z")
+        obs = tracker.snapshot()["RPM"]
+        assert (obs.value, obs.unit, obs.ts) == (812.0, "rpm", "2026-10-13T17:00:00Z")
 
     def test_observeReading_keepsOnlyTheLatestPerPid(self) -> None:
         """
@@ -220,7 +267,66 @@ class TestObdLiveTracker:
 
         snap = tracker.snapshot()
         assert set(snap) == {"RPM", "SPEED"}
-        assert snap["RPM"] == _obs(900.0, "rpm", "2026-10-13T17:00:02Z")
+        assert (snap["RPM"].value, snap["RPM"].ts) == (900.0, "2026-10-13T17:00:02Z")
+
+    def test_snapshot_carriesTheBandProducersResult(self) -> None:
+        """
+        Given: RPM 812, SPEED 0 and BATTERY_V 12.4 at the same instant
+        When: snapshotted
+        Then: RPM green with scale; SPEED no_band_defined without scale;
+              BATTERY_V engine_not_running (inside the first RPM's crank guard)
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+        t = datetime(2026, 10, 13, 12, 0, 0)
+
+        tracker.observeReading(_Reading("RPM", 812.0, t, "rpm"))
+        tracker.observeReading(_Reading("SPEED", 0.0, t, "km/h"))
+        tracker.observeReading(_Reading("BATTERY_V", 12.4, t, "V"))
+
+        snap = tracker.snapshot()
+        assert snap["RPM"].band == {
+            "band": "green", "since": "2026-10-13T17:00:00Z", "reason": "rpm below 5500",
+        }
+        assert snap["RPM"].scale == {"amberFrom": 5500.0, "redFrom": 7000.0}
+        assert snap["SPEED"].band is None
+        assert snap["SPEED"].noBandReason == "no_band_defined"
+        assert snap["SPEED"].scale is None
+        assert snap["BATTERY_V"].noBandReason == "engine_not_running"
+
+    def test_scale_followsTheRpmKeys(self) -> None:
+        """
+        Given: pi.bands.rpm.amberRpm 4000 and redRpm 6000
+        When: an RPM is snapshotted
+        Then: params.RPM.scale is {4000, 6000} -- read from config, not literals
+        """
+        config = {"pi": {
+            "time": {"localZone": "America/Chicago"},
+            "bands": {"rpm": {"amberRpm": 4000, "redRpm": 6000}},
+        }}
+        tracker = ole.ObdLiveTracker(config)
+
+        tracker.observeReading(_Reading("RPM", 812.0, datetime(2026, 10, 13, 12), "rpm"))
+
+        assert tracker.snapshot()["RPM"].scale == {"amberFrom": 4000.0, "redFrom": 6000.0}
+
+    def test_nullReading_resetsTheDwellButIsNotRecorded(self) -> None:
+        """
+        Given: coolant 105 C for 20 s, a null reading, then 105 C for 20 s more
+        When: snapshotted
+        Then: the null is not recorded as a value, and the band is still green
+              (the null gap reset the dwell)
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+        t = datetime(2026, 10, 13, 12, 0, 0)
+        for i in range(21):
+            tracker.observeReading(_Reading("COOLANT_TEMP", 105.0, t + timedelta(seconds=i), "C"))
+        tracker.observeReading(_Reading("COOLANT_TEMP", None, t + timedelta(seconds=21), "C"))
+        for i in range(22, 43):
+            tracker.observeReading(_Reading("COOLANT_TEMP", 105.0, t + timedelta(seconds=i), "C"))
+
+        obs = tracker.snapshot()["COOLANT_TEMP"]
+        assert obs.value == 105.0
+        assert obs.band is not None and obs.band["band"] == "green"
 
     def test_readingWithoutTimestamp_isNotObserved(self) -> None:
         """
@@ -381,7 +487,7 @@ class TestThroughTheReadingSeam:
         """
         Given: RPM read at t and SPEED at t+1 through _handleReading
         When: the card tick emits
-        Then: params.RPM.ts = t, params.SPEED.ts = t+1, band null
+        Then: params.RPM.ts = t, params.SPEED.ts = t+1; RPM banded, SPEED not
         """
         statesDir = str(tmp_path / "states")
         orch = _Orch(statesDir, _UtcClock(_T_UTC + timedelta(seconds=2)))
@@ -393,14 +499,17 @@ class TestThroughTheReadingSeam:
         params = _readObdLive(statesDir)["params"]
         assert params["RPM"]["ts"] == "2026-10-13T17:00:00Z"
         assert params["SPEED"]["ts"] == "2026-10-13T17:00:01Z"
-        assert params["RPM"]["band"] is None
+        assert params["RPM"]["band"]["band"] == "green"
+        assert params["RPM"]["scale"] == {"amberFrom": 5500, "redFrom": 7000}
         assert params["SPEED"]["band"] is None
+        assert params["SPEED"]["noBandReason"] == "no_band_defined"
 
     def test_aReadingSixSecondsOld_isPublishedStale(self, tmp_path) -> None:
         """
         Given: COOLANT_TEMP 85 at t, default window
         When: emitted at t+6 s with no further reading
-        Then: {value: null, ts: t, stale: true, band: null, last: {value: 85, band: null}}
+        Then: {value: null, ts: t, stale: true, band: null, noBandReason: stale,
+              last: {value: 85, band: <green, frozen at t>}}
         """
         statesDir = str(tmp_path / "states")
         clock = _UtcClock(_T_UTC)
@@ -412,7 +521,11 @@ class TestThroughTheReadingSeam:
 
         assert _readObdLive(statesDir)["params"]["COOLANT_TEMP"] == {
             "value": None, "unit": "C", "ts": "2026-10-13T17:00:00Z",
-            "stale": True, "band": None, "last": {"value": 85.0, "band": None},
+            "stale": True, "band": None, "noBandReason": "stale",
+            "last": {"value": 85.0, "band": {
+                "band": "green", "since": "2026-10-13T17:00:00Z",
+                "reason": "coolant has not held >= 104 C for 30 s",
+            }},
         }
 
     def test_staleWindow_isReadFromConfig(self, tmp_path) -> None:
@@ -501,7 +614,18 @@ class TestThroughTheReadingSeam:
 class TestTheContractFixture:
     """tests/ui/fixtures/states/obd-live.json: named, complete payloads (Iris S-7)."""
 
-    _CASES = ("fresh", "stale", "pid-absent", "replay")
+    _CASES = (
+        "fresh", "stale", "pid-absent", "replay",
+        "engine-off-battery", "coolant-amber", "coolant-red",
+    )
+
+    # Readings fed BEFORE each case's own (published) readings -- the history a
+    # dwell needs. Case -> [(PID, value, unit, canonical ts)].
+    _HISTORY: dict[str, list[tuple[str, float, str, str]]] = {
+        "coolant-amber": [
+            ("COOLANT_TEMP", 105, "C", f"2026-10-13T12:10:{s:02d}Z") for s in range(30)
+        ],
+    }
 
     @staticmethod
     def _load() -> dict[str, Any]:
@@ -528,24 +652,62 @@ class TestTheContractFixture:
     def test_fixture_everyCaseIsWhatTheBuilderEmits(self, case: str) -> None:
         """
         Given: one named case, a complete obd-live payload
-        When: its readings (fresh value or last.value, unit, ts) are rebuilt
-              at the case's ts with the default window
-        Then: the builder's output equals the case exactly
+        When: its history and its readings (fresh value or last.value, unit, ts)
+              are fed in event order through a real ObdLiveTracker (default
+              bands) and built at the case's ts with the default window
+        Then: the builder's output -- bands included -- equals the case exactly
         """
         payload = self._load()[case]
         assert set(payload) == _TOP_LEVEL_KEYS
 
-        observations = {}
+        readings = list(self._HISTORY.get(case, []))
         for name, pid in payload["params"].items():
-            assert set(pid) == _PID_KEYS
+            assert _PID_KEYS <= set(pid) <= _PID_KEYS | _OPTIONAL_PID_KEYS
             value = pid["last"]["value"] if pid["stale"] else pid["value"]
-            observations[name] = _obs(value, pid["unit"], pid["ts"])
+            readings.append((name, value, pid["unit"], pid["ts"]))
+
+        tracker = ole.ObdLiveTracker({})
+        for name, value, unit, ts in sorted(readings, key=lambda r: r[3]):
+            tracker.observeReading(_Reading(name, value, _utc(ts), unit))
 
         built = ole.buildObdLiveState(
-            observations,
+            tracker.snapshot(),
             nowUtc=_utc(payload["ts"]),
             staleSec=ole.DEFAULT_OBD_LIVE_STALE_S,
             dataSource=payload["dataSource"],
         )
 
         assert built == payload
+
+    def test_engineOffBatteryCase_isUnbandedEngineNotRunning(self) -> None:
+        """
+        Given: the engine-off-battery case (RPM stopped reporting, then 11.9 V)
+        When: read
+        Then: BATTERY_V band null with engine_not_running -- not red
+        """
+        battery = self._load()["engine-off-battery"]["params"]["BATTERY_V"]
+        assert battery["band"] is None
+        assert battery["noBandReason"] == "engine_not_running"
+
+    def test_coolantAmberCase_isAmberAfterTheDwell(self) -> None:
+        """
+        Given: the coolant-amber case (105 C held 30 s)
+        When: read
+        Then: band amber with its since and reason
+        """
+        coolant = self._load()["coolant-amber"]["params"]["COOLANT_TEMP"]
+        assert coolant["band"] == {
+            "band": "amber",
+            "since": "2026-10-13T12:10:30Z",
+            "reason": "coolant >= 104 C for 30 s",
+        }
+
+    def test_coolantRedCase_isRedOnASingleSample(self) -> None:
+        """
+        Given: the coolant-red case (one 110 C reading)
+        When: read
+        Then: band red, no noBandReason
+        """
+        coolant = self._load()["coolant-red"]["params"]["COOLANT_TEMP"]
+        assert coolant["band"]["band"] == "red"
+        assert "noBandReason" not in coolant

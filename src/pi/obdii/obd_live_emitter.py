@@ -15,6 +15,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-13    | Rex (US-874) | Initial -- tracker, pure builder, emit callable.
+# 2026-10-14    | Rex (US-875) | The tracker feeds the band producer; every PID
+#                                carries band or noBandReason; params.RPM.scale.
 # ================================================================================
 ################################################################################
 
@@ -34,6 +36,10 @@ Three facts are load-bearing:
   is decided at each emit against ``pi.display.stale.obdLiveSec``; a stale PID
   publishes ``value: null`` and carries its old reading under ``last``.
 * **A PID never read this process is absent** from ``params`` -- not 0, not null.
+
+The band of each PID comes from ``pi.obdii.band_producer`` (US-875), fed every
+reading with its full-precision event time. ``band`` is null whenever ``value``
+is, and a null band always carries a ``noBandReason`` code.
 """
 
 from __future__ import annotations
@@ -42,9 +48,18 @@ import logging
 import os
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Any
+
+from pi.obdii.band_producer import (
+    NO_BAND_NO_BAND_DEFINED,
+    NO_BAND_NOT_READ,
+    NO_BAND_STALE,
+    PID_RPM,
+    BandProducer,
+    BandSettings,
+)
 
 __all__ = [
     "DEFAULT_OBD_LIVE_STALE_S",
@@ -76,13 +91,17 @@ class ObdLiveObservation:
         value: The reading's value, as realtime_data stores it.
         unit: Its unit, as the reading carried it.
         ts: Canonical UTC event time of the reading.
-        band: The band at this reading; None until US-875 classifies it.
+        band: ``{band, since, reason}`` at this reading, or None.
+        noBandReason: The band producer's code when ``band`` is None.
+        scale: ``{amberFrom, redFrom}`` for RPM's bar zones, else None.
     """
 
     value: Any
     unit: str | None
     ts: str
-    band: Any = None
+    band: dict[str, str] | None = None
+    noBandReason: str | None = None
+    scale: dict[str, float] | None = None
 
 
 class ObdLiveTracker:
@@ -96,18 +115,21 @@ class ObdLiveTracker:
         """
         Args:
             config: Validated config; supplies ``pi.time.localZone`` for the
-                naive-local -> canonical-UTC conversion.
+                naive-local -> canonical-UTC conversion and the ``pi.bands.*``
+                numbers for the band producer.
         """
         self._config = config
         self._latest: dict[str, ObdLiveObservation] = {}
+        self._bands = BandProducer(BandSettings.fromConfig(config))
         self._lock = threading.Lock()
 
     def observeReading(self, reading: Any) -> None:
         """Record one reading as its PID's latest.
 
         A reading with no name, no value or no capture timestamp is not a
-        reading of anything and is ignored -- the write time is never
-        substituted for a missing event time.
+        reading of anything and is not recorded -- the write time is never
+        substituted for a missing event time. A null value still reaches the
+        band producer, because a null gap resets a dwell.
 
         Args:
             reading: A ``LoggedReading`` (parameterName, value, unit, timestamp).
@@ -116,25 +138,39 @@ class ObdLiveTracker:
             ValueError: If no usable local zone is declared (the converter
                 refuses rather than guess the host zone).
         """
-        from common.time.helper import localNaiveToCanonicalIso
+        from common.time.helper import resolveLocalZone, toCanonicalIso
 
         name = getattr(reading, "parameterName", None)
         value = getattr(reading, "value", None)
         timestamp = getattr(reading, "timestamp", None)
-        if name is None or value is None or not isinstance(timestamp, datetime):
+        if name is None or not isinstance(timestamp, datetime):
             return
-        observation = ObdLiveObservation(
-            value=value,
-            unit=getattr(reading, "unit", None),
-            ts=localNaiveToCanonicalIso(timestamp, self._config),
-        )
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=resolveLocalZone(self._config))
+        eventUtc = timestamp.astimezone(UTC)
         with self._lock:
-            self._latest[name] = observation
+            self._bands.observe(name, value, eventUtc)
+            if value is None:
+                return
+            self._latest[name] = ObdLiveObservation(
+                value=value,
+                unit=getattr(reading, "unit", None),
+                ts=toCanonicalIso(eventUtc),
+            )
 
     def snapshot(self) -> dict[str, ObdLiveObservation]:
-        """A copy of the latest observation per PID."""
+        """A copy of the latest observation per PID, with its band."""
         with self._lock:
-            return dict(self._latest)
+            snap: dict[str, ObdLiveObservation] = {}
+            for name, obs in self._latest.items():
+                result = self._bands.resultFor(name)
+                snap[name] = replace(
+                    obs,
+                    band=None if result.band is None else dict(result.band),
+                    noBandReason=result.noBandReason,
+                    scale=self._bands.rpmScale if name == PID_RPM else None,
+                )
+            return snap
 
 
 def _isStale(ts: str, nowUtc: datetime, staleSec: float) -> bool:
@@ -161,27 +197,40 @@ def buildObdLiveState(
 
     Returns:
         ``{params: {<PID>: {value, unit, ts, stale, band, last}}, dataSource, ts}``.
+        A null band adds ``noBandReason``; RPM adds ``scale``. While stale no
+        band is evaluated: ``last.band`` is the band frozen at the last reading.
     """
     params: dict[str, Any] = {}
     for name, obs in observations.items():
+        entry: dict[str, Any]
         if _isStale(obs.ts, nowUtc, staleSec):
-            params[name] = {
+            entry = {
                 "value": None,
                 "unit": obs.unit,
                 "ts": obs.ts,
                 "stale": True,
                 "band": None,
+                "noBandReason": NO_BAND_STALE,
                 "last": {"value": obs.value, "band": obs.band},
             }
         else:
-            params[name] = {
+            band = None if obs.value is None else obs.band
+            entry = {
                 "value": obs.value,
                 "unit": obs.unit,
                 "ts": obs.ts,
                 "stale": False,
-                "band": obs.band,
+                "band": band,
                 "last": None,
             }
+            if band is None:
+                if obs.value is None:
+                    entry["noBandReason"] = NO_BAND_NOT_READ
+                else:
+                    entry["noBandReason"] = obs.noBandReason or NO_BAND_NO_BAND_DEFINED
+        if obs.scale is not None:
+            entry["scale"] = dict(obs.scale)
+        params[name] = entry
     return {
         "params": params,
         "dataSource": dataSource,
