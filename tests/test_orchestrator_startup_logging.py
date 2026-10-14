@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-04-11    | Ralph Agent  | Initial implementation for US-OSC-002
 # 2026-04-13    | Ralph Agent  | Sweep 2a task 5 — add tieredThresholds to test config; RPM 7000 from tiered
+# 2026-10-13    | Rex (US-860-a)| start() arms the boot's kernel_start milestone.
 # ================================================================================
 ################################################################################
 
@@ -398,3 +399,50 @@ class TestStartupFailureLogging:
             # Error should identify what failed
             assert "connection" in str(excInfo.value).lower() or \
                    "Failed" in str(excInfo.value)
+
+
+# ================================================================================
+# US-860-a: the orchestrator start arms the boot's kernel_start milestone
+# ================================================================================
+
+
+@pytest.mark.integration
+class TestStartupBootMilestone:
+    """orchestrator.start() writes kernel_start into the boot_milestone table."""
+
+    def test_start_writesKernelStart_wallMinusUptime(
+        self, startupConfig: dict[str, Any], tempDb: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """
+        Given: a readable boot id and /proc/uptime of 20 s
+        When: Orchestrator starts
+        Then: one kernel_start row for that boot, 20 s before now, uptime 0
+        """
+        import sqlite3
+        from datetime import UTC, datetime, timedelta
+
+        from pi.obdii.orchestrator import ApplicationOrchestrator
+        from src.pi.diagnostics import boot_milestone as bm
+
+        now = datetime(2026, 10, 13, 12, 0, 20, tzinfo=UTC)
+        monkeypatch.setattr(bm, "readBootId", lambda: "boot-start")
+        monkeypatch.setattr(bm, "_bootIdSurfacePresent", lambda: True)
+        monkeypatch.setattr(bm, "readSystemUptimeSeconds", lambda: 20.0)
+        monkeypatch.setattr(bm, "_utcNow", lambda: now)
+
+        orchestrator = ApplicationOrchestrator(config=startupConfig, simulate=True)
+        try:
+            orchestrator.start()
+        finally:
+            orchestrator.stop()
+
+        conn = sqlite3.connect(tempDb)
+        try:
+            rows = conn.execute(
+                "SELECT boot_id, milestone, ts_utc, uptime_s FROM boot_milestone"
+            ).fetchall()
+        finally:
+            conn.close()
+        expected = (now - timedelta(seconds=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        assert rows == [("boot-start", "kernel_start", expected, 0.0)]

@@ -10,6 +10,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-034
+# 2026-10-14    | Rex (US-857) | createSimulatedConnectionFromConfig builds with
+#                               ReplayValueSource when pi.replay.active.
 # ================================================================================
 ################################################################################
 
@@ -42,12 +44,14 @@ Usage:
 """
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from ..obd_connection import ConnectionState, ConnectionStatus
+from .replay_source import ReplaySourceError, ReplayValueSource
 from .sensor_simulator import SensorSimulator
 from .vehicle_profile import VehicleProfile
 
@@ -267,7 +271,7 @@ class SimulatedObdConnection:
     def __init__(
         self,
         profile: VehicleProfile | None = None,
-        simulator: SensorSimulator | None = None,
+        simulator: SensorSimulator | ReplayValueSource | None = None,
         connectionDelaySeconds: float = DEFAULT_CONNECTION_DELAY_SECONDS,
         config: dict[str, Any] | None = None,
         database: Any | None = None
@@ -277,14 +281,15 @@ class SimulatedObdConnection:
 
         Args:
             profile: Vehicle profile for simulator (uses default if None)
-            simulator: Existing SensorSimulator (creates new if None)
+            simulator: Value source -- a SensorSimulator or, for a replay
+                (US-857), a ReplayValueSource (creates a SensorSimulator if None)
             connectionDelaySeconds: Simulated delay for connect() in seconds
             config: Optional configuration dictionary (for compatibility)
             database: Optional database instance (for compatibility, not used)
         """
         # Set up simulator
         if simulator is not None:
-            self.simulator = simulator
+            self.simulator: SensorSimulator | ReplayValueSource = simulator
         elif profile is not None:
             self.simulator = SensorSimulator(profile=profile)
         else:
@@ -456,12 +461,20 @@ def createSimulatedConnectionFromConfig(
     """
     Create a SimulatedObdConnection from configuration.
 
+    With ``pi.replay.active`` true (US-857) the value source is a
+    :class:`ReplayValueSource` reading drive ``pi.replay.driveId`` from
+    ``pi.replay.sourcePath``; otherwise it is today's SensorSimulator.
+
     Args:
         config: Configuration dictionary, may contain 'simulator' section
         database: Optional database instance (for compatibility)
 
     Returns:
         Configured SimulatedObdConnection instance
+
+    Raises:
+        ReplaySourceError: If a replay's source is missing or unreadable, holds
+            no rows for the drive, or is the run's own pi.database.path.
 
     Example:
         config = {
@@ -486,11 +499,52 @@ def createSimulatedConnectionFromConfig(
     if profileData:
         profile = VehicleProfile.fromDict(profileData)
 
+    replaySource = _createReplaySourceFromConfig(config, profile)
+
     return SimulatedObdConnection(
         profile=profile,
+        simulator=replaySource,
         connectionDelaySeconds=connectionDelay,
         config=config,
         database=database
+    )
+
+
+def _createReplaySourceFromConfig(
+    config: dict[str, Any],
+    profile: VehicleProfile | None,
+) -> ReplayValueSource | None:
+    """Build the replay value source when pi.replay.active, else None (US-857).
+
+    Raises:
+        ReplaySourceError: If sourcePath or driveId is absent, or sourcePath is
+            the run's own pi.database.path (a replay cannot read and write one
+            file), or the source cannot be loaded.
+    """
+    piConfig = config.get("pi", {}) or {}
+    replayConfig = piConfig.get("replay", {}) or {}
+    if not replayConfig.get("active", False):
+        return None
+
+    sourcePath = replayConfig.get("sourcePath")
+    driveId = replayConfig.get("driveId")
+    if not sourcePath or driveId is None:
+        raise ReplaySourceError(
+            "pi.replay.active needs pi.replay.sourcePath and pi.replay.driveId"
+        )
+    dbPath = (piConfig.get("database", {}) or {}).get("path")
+    if dbPath and dbPath != ":memory:" and _isSameFile(sourcePath, dbPath):
+        raise ReplaySourceError(
+            f"pi.replay.sourcePath {sourcePath!r} is the run's own "
+            "pi.database.path; a replay cannot read and write one file"
+        )
+    return ReplayValueSource(sourcePath, int(driveId), profile=profile)
+
+
+def _isSameFile(first: str, second: str) -> bool:
+    """True when both paths resolve to the same file (symlinks, '..', case)."""
+    return os.path.normcase(os.path.realpath(first)) == os.path.normcase(
+        os.path.realpath(second)
     )
 
 

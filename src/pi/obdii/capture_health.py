@@ -20,6 +20,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-08    | Rex (US-688) | Initial -- capture-health decision + emitter.
+# 2026-10-13    | Rex (US-873) | `feeds` block: per-feed state, first sample this
+#               |              | process and last sample age for obd/imu/light/ups,
+#               |              | built by the new pure buildCaptureFeedsState.
 # ================================================================================
 ################################################################################
 
@@ -61,14 +64,20 @@ bounded rather than free.
 from __future__ import annotations
 
 import logging
+import math
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 __all__ = [
     "CAPTURE_HEALTH_FILENAME",
     "DEFAULT_STALL_SECONDS",
+    "FEED_IMU",
+    "FEED_LIGHT",
+    "FEED_NAMES",
+    "FEED_OBD",
+    "FEED_UPS",
     "REASON_LOGGER_ABSENT",
     "REASON_NEVER_WRITTEN",
     "REASON_STALLED",
@@ -77,6 +86,7 @@ __all__ = [
     "STATE_OK",
     "STATE_STALLED",
     "STATE_UNKNOWN",
+    "buildCaptureFeedsState",
     "buildCaptureHealthState",
     "makeCaptureHealthEmitter",
 ]
@@ -143,6 +153,24 @@ _RESOLVED_POWER_SOURCES = frozenset({_POWER_EXTERNAL, _POWER_BATTERY})
 # alarm, which is permanent (an alert that has cried wolf is off forever).
 # 60 s is therefore biased toward the recoverable error.
 DEFAULT_STALL_SECONDS = 60.0
+
+# ------------------------------------------------------------------ the feeds
+#
+# US-873. The verdict above watches OBD rows only, so nothing said when the IMU,
+# the light sensor or the UPS gauge first produced data this boot. The `feeds`
+# block names each one. It is the single producer the boot record (US-860-a),
+# the System page and the Warnings DATA source all read.
+
+#: Capture rows the data logger wrote in THIS process.
+FEED_OBD = "obd"
+#: Samples drained by imu_state_bridge (the live, ungated reader output).
+FEED_IMU = "imu"
+#: Samples drained by light_state_bridge (the live, ungated reader output).
+FEED_LIGHT = "light"
+#: Valid synchronous MAX17048 VCELL reads taken by the battery-health tick.
+FEED_UPS = "ups"
+#: Exactly the keys of the published `feeds` object, in display order.
+FEED_NAMES: tuple[str, ...] = (FEED_OBD, FEED_IMU, FEED_LIGHT, FEED_UPS)
 
 
 def buildCaptureHealthState(
@@ -240,6 +268,72 @@ def _decide(
     return (STATE_OK, None)
 
 
+def _coerceAge(value: Any) -> float | None:
+    """A finite, non-negative age in seconds, else None.
+
+    A negative age is a broken clock and a non-finite one is no reading; neither
+    is ever clamped to ``0`` -- "sampled just now" is the most reassuring value
+    this field can take.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        ageS = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(ageS) or ageS < 0:
+        return None
+    return ageS
+
+
+def buildCaptureFeedsState(
+    *,
+    feedSamples: Mapping[str, tuple[str | None, float | None]],
+    powerSource: str,
+    stallSeconds: float,
+) -> dict[str, dict[str, Any]]:
+    """Build the ``feeds`` block of ``states/capture-health`` (pure, US-873).
+
+    Each feed is judged by the SAME decider as the top-level verdict, so the
+    power-source gate and the stall window mean one thing everywhere: power
+    unresolved -> ``unknown``, key off -> ``idle``, then the age against the
+    window. A feed with no sample this process is ``unknown`` -- not ``stalled``
+    -- because "has not produced yet" on a cold key-on is the expected state for
+    an ECU that is still waking, and the top-level verdict already owns the
+    OBD ``never_written`` alarm.
+
+    Args:
+        feedSamples: Feed name -> ``(firstSampleTs, lastSampleSecondsAgo)`` for
+            THIS process. A missing feed is a feed that has produced nothing.
+            Names outside :data:`FEED_NAMES` are ignored.
+        powerSource: ``external`` / ``battery`` / ``unknown`` -- the same value
+            the top-level verdict was judged against.
+        stallSeconds: The stall window (the same window as the top level).
+
+    Returns:
+        ``{feed: {"state", "firstSampleTs", "lastSampleSecondsAgo"}}`` with
+        exactly the keys of :data:`FEED_NAMES`. A feed that has produced
+        nothing publishes both values ``None`` -- never ``0``.
+    """
+    feeds: dict[str, dict[str, Any]] = {}
+    for name in FEED_NAMES:
+        firstTs, lastAge = feedSamples.get(name, (None, None))
+        firstSampleTs = firstTs if isinstance(firstTs, str) and firstTs else None
+        ageS = _coerceAge(lastAge)
+        state, _reason = _decide(
+            lastRowSecondsAgo=ageS,
+            freshnessReason=None,
+            powerSource=powerSource,
+            stallSeconds=stallSeconds,
+        )
+        feeds[name] = {
+            "state": state,
+            "firstSampleTs": firstSampleTs,
+            "lastSampleSecondsAgo": ageS,
+        }
+    return feeds
+
+
 def makeCaptureHealthEmitter(
     statesDir: str,
     *,
@@ -252,7 +346,9 @@ def makeCaptureHealthEmitter(
         nowIsoFn: Injected clock for ``ts`` (default UTC now, second resolution).
 
     Returns:
-        The emit callable. Best-effort by contract: a write failure is logged
+        The emit callable. Its optional ``feedSamples`` adds the US-873
+        ``feeds`` block (see :func:`buildCaptureFeedsState`). Best-effort by
+        contract: a write failure is logged
         but NEVER raised, so the dashboard hook can never block the
         orchestrator's poll loop.
     """
@@ -267,6 +363,7 @@ def makeCaptureHealthEmitter(
         freshnessReason: str | None,
         powerSource: str,
         stallSeconds: float,
+        feedSamples: Mapping[str, tuple[str | None, float | None]] | None = None,
     ) -> None:
         try:
             payload = buildCaptureHealthState(
@@ -276,6 +373,14 @@ def makeCaptureHealthEmitter(
                 stallSeconds=stallSeconds,
                 nowIso=nowFn(),
             )
+            # US-873: ADDITIVE. The top-level fields above keep their names and
+            # meanings; a caller with no feed facts writes the pre-US-873 shape.
+            if feedSamples is not None:
+                payload["feeds"] = buildCaptureFeedsState(
+                    feedSamples=feedSamples,
+                    powerSource=powerSource,
+                    stallSeconds=stallSeconds,
+                )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
         except Exception as exc:  # noqa: BLE001 -- best-effort, never block

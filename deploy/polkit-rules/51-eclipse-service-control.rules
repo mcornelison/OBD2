@@ -17,8 +17,13 @@
 // Allow-list (mirrors src/pi/splash/service_control.py SERVICE_ALLOWLIST):
 //   eclipse-obd.service        -> start / stop / restart   (data capture)
 //   eclipse-sync.service       -> start / stop / restart   (server upload)
-//   eclipse-dashboard.service  -> stop / restart           (A-8 Exit = stop kiosk)
+//   eclipse-dashboard.service  -> start / stop / restart   (A-8 Exit = stop kiosk)
 //   eclipse-powerwatch.service -> restart ONLY             (D-7 safe-shutdown guard)
+//
+// The kiosk's polkit grant is start / stop / restart (the clause below), wider
+// than the kiosk UI's stop / restart. Its unit name is unit_manifest.KIOSK_UNIT
+// (US-884); tests/pi/ops/test_kiosk_unit_single_source.py pins both spellings
+// here to it, so a kiosk rename that misses this file fails the suite.
 //
 // SAFETY (D-7 / F-7, the load-bearing reason this rule keys on the VERB too):
 // eclipse-powerwatch is the safe-shutdown guard. A stop/kill is DENIED HERE, at
@@ -59,7 +64,7 @@ polkit.addRule(function(action, subject) {
     // Data services + the dashboard kiosk: start / stop / restart.
     if (unit == "eclipse-obd.service" ||
         unit == "eclipse-sync.service" ||
-        unit == "eclipse-dashboard.service") {
+        unit == "eclipse-dashboard.service") {  // kiosk = unit_manifest.KIOSK_UNIT
         if (verb == "start" || verb == "stop" || verb == "restart") {
             return polkit.Result.YES;
         }

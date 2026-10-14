@@ -32,6 +32,11 @@
 # 2026-09-21    | Rex (US-777) | logReading(capturedDriveId=...): the bus path
 #                               writes the drive_id stamped at CAPTURE; the
 #                               inline path still resolves at write.
+# 2026-10-13    | Rex (US-873) | firstRowTs: the canonical timestamp of the first
+#                               realtime_data row this process committed (set
+#                               once; capture-health feeds.obd reads it).
+# 2026-10-14    | Rex (US-901-a)| pi.replay.active tags rows 'replay' when no
+#                               explicit dataSource is given.
 # ================================================================================
 ################################################################################
 """
@@ -91,14 +96,17 @@ except ImportError:
 def _resolveDataSource(
     connection: Any,
     explicit: str | None,
+    config: dict[str, Any] | None = None,
 ) -> str:
     """Return the data_source tag rows from ``connection`` should carry.
 
-    Explicit caller overrides win.  Otherwise, a connection that
-    self-identifies as simulated (``isSimulated=True``) yields
-    ``'physics_sim'``; every other shape -- including real OBD,
-    mocks without the attribute, and None -- falls back to
-    :data:`DATA_SOURCE_DEFAULT`.
+    Explicit caller overrides win.  Otherwise a replay run
+    (``pi.replay.active``, US-901-a) yields ``'replay'`` -- checked before
+    the connection shape, because the replay source rides the simulated
+    connection seam.  A connection that self-identifies as simulated
+    (``isSimulated=True``) yields ``'physics_sim'``; every other shape --
+    including real OBD, mocks without the attribute, and None -- falls back
+    to :data:`DATA_SOURCE_DEFAULT`.
     """
     if explicit is not None:
         if explicit not in DATA_SOURCE_VALUES:
@@ -107,6 +115,9 @@ def _resolveDataSource(
                 f"must be one of {DATA_SOURCE_VALUES}"
             )
         return explicit
+    replayConfig = ((config or {}).get("pi") or {}).get("replay") or {}
+    if replayConfig.get("active", False):
+        return "replay"
     if getattr(connection, "isSimulated", False):
         return "physics_sim"
     return DATA_SOURCE_DEFAULT
@@ -181,13 +192,19 @@ class ObdDataLogger:
         self.database = database
         self.config = config
         self.profileId = profileId
-        self.dataSource = _resolveDataSource(connection, dataSource)
+        self.dataSource = _resolveDataSource(connection, dataSource, config)
 
         # Statistics tracking
         self._totalReadings = 0
         self._totalLogged = 0
         self._lastReadingTime: datetime | None = None
         self._readErrors = 0
+        # US-873 (Atlas option A): the canonical UTC ``timestamp`` of the first
+        # realtime_data row this instance committed. One instance writes every
+        # live row for the whole process (the bus PersistenceSubscriber reuses
+        # it; a reconnect pauses it, never replaces it), so this IS "the first
+        # row this process" -- exactly, and with no SQL. Set once, never reset.
+        self.firstRowTs: str | None = None
 
         # US-206: most-recent-per-parameter cache for drive-start
         # metadata capture (SummaryRecorder reads this on _startDrive).
@@ -415,6 +432,9 @@ class ObdDataLogger:
                     and isDriveForeign(driveId)
                 ):
                     effectiveDataSource = 'foreign'
+                # US-873: computed ONCE so firstRowTs is byte-identical to the
+                # value the row's timestamp column received.
+                rowTs = localNaiveToCanonicalIso(reading.timestamp, self.config)
                 cursor.execute(
                     """
                     INSERT INTO realtime_data
@@ -423,7 +443,7 @@ class ObdDataLogger:
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        localNaiveToCanonicalIso(reading.timestamp, self.config),
+                        rowTs,
                         reading.parameterName,
                         reading.value,
                         reading.unit,
@@ -434,6 +454,10 @@ class ObdDataLogger:
                 )
 
             self._totalLogged += 1
+            # US-873: only AFTER the connect block exits -- the row is
+            # committed. A failed INSERT raised above and never reaches here.
+            if self.firstRowTs is None:
+                self.firstRowTs = rowTs
 
             logger.debug(
                 f"Logged reading | parameter={reading.parameterName} | "

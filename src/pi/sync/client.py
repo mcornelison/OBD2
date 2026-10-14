@@ -81,6 +81,10 @@
 #                               storedCount == rows sent AND maxStoredSourceId
 #                               == max sent.  A 2xx without a matching ack is
 #                               FAILED with the mark held; no bare-2xx fallback.
+# 2026-10-14    | Rex (US-901-a)| CIO R37: pi.replay.active or a --simulate run
+#                               refuses every push at the two POST sites
+#                               (PushStatus.REFUSED); no request, nothing
+#                               written to sync_log.
 # ================================================================================
 ################################################################################
 
@@ -187,6 +191,11 @@ class PushStatus(StrEnum):
     # the push entirely -- no network call.  Distinct from FAILED (which DID
     # attempt + fail).  Cleared by the next successful push or a forcePush.
     QUARANTINED = "quarantined"
+    # US-901-a (CIO R37): a replay or --simulate run reached a POST site and
+    # was refused -- no request was made and nothing was written to sync_log.
+    # Distinct from DISABLED (the companion service is off) and from FAILED
+    # (a request was attempted): this run must never reach the server.
+    REFUSED = "refused"
 
 
 @dataclass(slots=True)
@@ -213,6 +222,9 @@ class PushSummary:
             push was attempted.
         elapsed: Wall-clock seconds across the entire forcePush call,
             measured by the caller.
+        tablesRefused: Count of REFUSED (a replay / --simulate run; no
+            request made, US-901-a).
+        refused: ``True`` when any result came back REFUSED.
     """
 
     results: list[PushResult]
@@ -223,6 +235,8 @@ class PushSummary:
     tablesSkipped: int
     disabled: bool
     elapsed: float
+    tablesRefused: int = 0
+    refused: bool = False
 
 
 @dataclass(slots=True)
@@ -401,6 +415,7 @@ class SyncClient:
         httpOpener: Any | None = None,
         sleep: Any | None = None,
         clock: Any | None = None,
+        simulate: bool = False,
     ) -> None:
         """Construct a SyncClient from a validated Pi config dict.
 
@@ -419,6 +434,10 @@ class SyncClient:
             clock: Zero-arg callable returning an aware UTC ``datetime``;
                 injected in tests so the US-391 quarantine throttle window is
                 deterministic.  Defaults to ``datetime.now(UTC)``.
+            simulate: True when this client belongs to a ``--simulate`` run
+                (US-901-a, CIO R37).  Like ``pi.replay.active``, it makes
+                every push REFUSED at the POST sites.  The run's own flag,
+                handed in by the orchestrator that holds it -- not a global.
 
         Raises:
             ConfigurationError: If ``companionService.enabled`` is True but
@@ -443,6 +462,9 @@ class SyncClient:
         self._httpOpener = httpOpener or urllib.request.urlopen
         self._sleep = sleep or time.sleep
         self._clock = clock or (lambda: datetime.now(UTC))
+        replayConfig: dict[str, Any] = piConfig.get("replay", {}) or {}
+        self._replayActive: bool = bool(replayConfig.get("active", False))
+        self._simulate: bool = bool(simulate)
 
         self._apiKey: str | None = None
         if self.isEnabled:
@@ -463,6 +485,21 @@ class SyncClient:
     def isEnabled(self) -> bool:
         """True when ``pi.companionService.enabled`` is truthy."""
         return bool(self._companion.get("enabled", False))
+
+    @property
+    def refusalReason(self) -> str | None:
+        """Why this run may not push (US-901-a), or ``None`` when it may.
+
+        ``'replay mode'`` when ``pi.replay.active`` is true, ``'--simulate
+        run'`` when the client was built for a ``--simulate`` run.  Read at
+        the two POST sites; the read-only GETs (update check, home detector)
+        do not pass through this client and stay allowed.
+        """
+        if self._replayActive:
+            return "replay mode"
+        if self._simulate:
+            return "--simulate run"
+        return None
 
     @property
     def baseUrl(self) -> str:
@@ -763,6 +800,17 @@ class SyncClient:
                 replyBody = self._postBatchWithRetry(
                     tableName, batchId, payloadRows, lastId, residual=residual,
                 )
+            except _PushRefused as refusal:
+                # US-901-a: no request was made -- no failed status, no
+                # quarantine count, the mark untouched.
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.REFUSED,
+                    reason=str(refusal),
+                )
             except _PushFailure as failure:
                 # On failure, record status='failed' + last_batch_id +
                 # last_synced_at WITHOUT advancing last_synced_id (US-149
@@ -983,6 +1031,16 @@ class SyncClient:
                 self._postBatchWithRetry(
                     tableName, batchId, rows, 0, residual=self._measureResidual(),
                 )
+            except _PushRefused as refusal:
+                # US-901-a: no request made; the cursor is not touched.
+                return PushResult(
+                    tableName=tableName,
+                    rowsPushed=0,
+                    batchId="",
+                    elapsed=time.monotonic() - start,
+                    status=PushStatus.REFUSED,
+                    reason=str(refusal),
+                )
             except _PushFailure as failure:
                 # Do NOT advance the cursor on failure -- rows stay re-sendable.
                 return PushResult(
@@ -1107,6 +1165,7 @@ class SyncClient:
         tablesEmpty = 0
         tablesFailed = 0
         tablesSkipped = 0
+        tablesRefused = 0
         disabled = False
         for result in results:
             if result.status == PushStatus.OK:
@@ -1120,13 +1179,15 @@ class SyncClient:
                 tablesSkipped += 1
             elif result.status == PushStatus.DISABLED:
                 disabled = True
+            elif result.status == PushStatus.REFUSED:
+                tablesRefused += 1
 
         elapsed = time.monotonic() - start
         logger.info(
             "forcePush complete: rows=%d ok=%d empty=%d failed=%d "
-            "skipped=%d disabled=%s elapsed=%.2fs",
+            "skipped=%d refused=%d disabled=%s elapsed=%.2fs",
             rowsPushed, tablesOk, tablesEmpty, tablesFailed,
-            tablesSkipped, disabled, elapsed,
+            tablesSkipped, tablesRefused, disabled, elapsed,
         )
         return PushSummary(
             results=results,
@@ -1137,6 +1198,8 @@ class SyncClient:
             tablesSkipped=tablesSkipped,
             disabled=disabled,
             elapsed=elapsed,
+            tablesRefused=tablesRefused,
+            refused=tablesRefused > 0,
         )
 
     def pushDriveCounter(self, *, force: bool = False) -> PushResult:
@@ -1233,6 +1296,16 @@ class SyncClient:
             self._postDriveCounterWithRetry(
                 batchId, lastDriveId, residual=self._measureResidual(),
             )
+        except _PushRefused as refusal:
+            # US-901-a: no request made; the idle-gate mark is not advanced.
+            return PushResult(
+                tableName=DRIVE_COUNTER_TABLE,
+                rowsPushed=0,
+                batchId="",
+                elapsed=time.monotonic() - start,
+                status=PushStatus.REFUSED,
+                reason=str(refusal),
+            )
         except _PushFailure as failure:
             # Do NOT advance the idle-gate high-water mark on failure -- the
             # value must stay re-sendable on the next tick (US-418).
@@ -1280,6 +1353,17 @@ class SyncClient:
             logger.warning("sync residual not measured (omitted): %s", exc)
             return None
 
+    def _refuseIfReplayOrSimulate(self) -> None:
+        """US-901-a: raise before a POST when this run may not reach the server.
+
+        Called first in BOTH POST sites, which every public push method passes
+        through, so a future push method is refused by construction.
+        """
+        reason = self.refusalReason
+        if reason is not None:
+            logger.info("sync refused: %s", reason)
+            raise _PushRefused(f"sync refused: {reason}")
+
     def _postBatchWithRetry(
         self,
         tableName: str,
@@ -1294,7 +1378,11 @@ class SyncClient:
         Returns:
             The 2xx reply parsed as a JSON object, or ``None`` when the body is
             not one.  It carries the server's stored ack (US-776-i).
+
+        Raises:
+            _PushRefused: In a replay or --simulate run, before any request.
         """
+        self._refuseIfReplayOrSimulate()
         payload: dict[str, Any] = {
             "deviceId": self._deviceId,
             "batchId": batchId,
@@ -1370,7 +1458,11 @@ class SyncClient:
         ``tables`` map plus the new top-level ``driveCounter`` field.
         Reuses the same retry classifier so transient server-side
         errors don't lose the singleton update.
+
+        Raises:
+            _PushRefused: In a replay or --simulate run, before any request.
         """
+        self._refuseIfReplayOrSimulate()
         payload = {
             "deviceId": self._deviceId,
             "batchId": batchId,
@@ -1442,3 +1534,14 @@ class _PushFailure(Exception):
     def __init__(self, reason: str, *, serverRejected: bool = False) -> None:
         super().__init__(reason)
         self.serverRejected = serverRejected
+
+
+class _PushRefused(Exception):
+    """Raised at a POST site in a replay or --simulate run (US-901-a).
+
+    Deliberately NOT a :class:`_PushFailure`: a refusal is not a failure, so
+    it must never reach the failure bookkeeping (failed status, quarantine
+    counter) in sync_log.  Each push method converts it into
+    ``PushResult(status=REFUSED)``; a future push method that forgets to
+    catch it still sends nothing.
+    """

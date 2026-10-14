@@ -28,6 +28,7 @@
 # ================================================================================
 # 2026-09-08    | Rex (US-688) | Initial -- the emit-tick join, driven through
 #               |              | a real provider and a real data logger.
+# 2026-10-13    | Rex (US-873) | The feeds join: OBD first row, UPS read, bridges.
 # ================================================================================
 ################################################################################
 
@@ -409,3 +410,316 @@ class TestItStaysDarkWhenDisabled:
         orch._maybeEmitCardStates()
 
         assert not (tmp_path / "states" / "capture-health").exists()
+
+
+# ------------------------------------------------------------ US-873: the feeds
+
+
+class _FakeWriter:
+    """The inner ObdDataLogger's US-873 marker: ``firstRowTs``, None until set."""
+
+    def __init__(self, firstRowTs=None):
+        self.firstRowTs = firstRowTs
+
+
+class _FakeUps:
+    """The three gauge reads `_emitBatteryHealthState` makes, scripted.
+
+    ``onPercentage`` runs inside the SECOND read, so a test can observe what the
+    producer had already recorded the instant the VCELL read returned.
+    """
+
+    def __init__(self, vcell, onPercentage=None):
+        self._vcell = vcell
+        self._onPercentage = onPercentage
+
+    def getBatteryVoltage(self):
+        if isinstance(self._vcell, Exception):
+            raise self._vcell
+        return self._vcell
+
+    def getBatteryPercentage(self):
+        if self._onPercentage is not None:
+            self._onPercentage()
+        return 80
+
+    def getChargeRatePercentPerHour(self):
+        return None
+
+
+def _feedOrch(tmp_path, *, lastRow=None, database=_UNSET, external=True):
+    """A wired orchestrator, initialised but not yet ticked.
+
+    Its data logger carries a ``dataLogger`` writer, as RealtimeDataLogger does.
+    """
+    if database is _UNSET:
+        database = _EmptyCaptureDb(tmp_path / "capture.db")
+    dataLogger = _FakeDataLogger(lastRow)
+    dataLogger.dataLogger = _FakeWriter()
+    orch = _Orch(
+        str(tmp_path / "states"),
+        powerProvider=_FakePowerSourceProvider(available=True, external=external),
+        dataLogger=dataLogger,
+        database=database,
+    )
+    orch._initializeCardStateEmitters()
+    return orch
+
+
+def _tickFeeds(orch, tmp_path):
+    orch._lastCardStateEmitTime = None
+    orch._maybeEmitCardStates()
+    return json.loads((tmp_path / "states" / "capture-health").read_text())["feeds"]
+
+
+class TestTheFeedsAreGathered:
+    """US-873: the tick publishes a feeds block from the owners of each fact."""
+
+    def test_tick_publishesExactlyTheFourFeeds(self, tmp_path) -> None:
+        """
+        Given: a wired orchestrator with nothing produced yet
+        When: one emit tick runs
+        Then: feeds has obd/imu/light/ups, every value null, never 0
+        """
+        feeds = _tickFeeds(_feedOrch(tmp_path), tmp_path)
+
+        assert set(feeds) == {"obd", "imu", "light", "ups"}
+        for entry in feeds.values():
+            assert entry["firstSampleTs"] is None
+            assert entry["lastSampleSecondsAgo"] is None
+            assert entry["state"] == STATE_UNKNOWN
+
+    def test_obdFirstSample_isTheWritersFirstRowTs(self, tmp_path) -> None:
+        """
+        Given: a writer that has committed nothing, then its first row
+        When: ticks run before and after that row
+        Then: obd.firstSampleTs is the writer's firstRowTs, with the in-process
+              row age beside it
+        """
+        orch = _feedOrch(tmp_path)
+
+        before = _tickFeeds(orch, tmp_path)
+        orch._dataLogger.dataLogger.firstRowTs = "2026-10-13T12:01:05Z"
+        orch._dataLogger.lastRowWrittenSecondsAgo = 0.5
+        first = _tickFeeds(orch, tmp_path)
+
+        assert before["obd"]["firstSampleTs"] is None
+        assert first["obd"] == {
+            "state": STATE_OK,
+            "firstSampleTs": "2026-10-13T12:01:05Z",
+            "lastSampleSecondsAgo": 0.5,
+        }
+
+    def test_obdFirstSample_isNoneSafeWithoutAWriter(self, tmp_path) -> None:
+        """
+        Given: no data logger at all (bench), or one with no inner writer
+        When: a tick runs
+        Then: obd.firstSampleTs is null -- the tick does not raise
+        """
+        bare = _feedOrch(tmp_path / "a")
+        bare._dataLogger = None
+        noWriter = _feedOrch(tmp_path / "b")
+        del noWriter._dataLogger.dataLogger
+
+        assert _tickFeeds(bare, tmp_path / "a")["obd"]["firstSampleTs"] is None
+        assert _tickFeeds(noWriter, tmp_path / "b")["obd"]["firstSampleTs"] is None
+
+    def test_obdFirstSample_comesFromTheRealWriter(self, tmp_path) -> None:
+        """
+        Given: a REAL ObdDataLogger that commits one row
+        When: a tick runs
+        Then: obd.firstSampleTs is byte-identical to that row's timestamp
+        """
+        from datetime import datetime
+
+        from pi.obdii.data.logger import ObdDataLogger
+        from pi.obdii.data.types import LoggedReading
+        from pi.obdii.database import ObdDatabase
+
+        db = ObdDatabase(str(tmp_path / "real.db"), walMode=False)
+        db.initialize()
+        writer = ObdDataLogger(
+            None, db, config={"pi": {"time": {"localZone": "America/Chicago"}}}
+        )
+        writer.logReading(LoggedReading(
+            parameterName="RPM", value=800.0, unit="rpm",
+            timestamp=datetime(2026, 10, 13, 7, 1, 5),
+        ))
+        orch = _feedOrch(tmp_path)
+        orch._dataLogger.dataLogger = writer
+        with db.connect() as conn:
+            stored = conn.execute("SELECT timestamp FROM realtime_data").fetchone()[0]
+
+        assert _tickFeeds(orch, tmp_path)["obd"]["firstSampleTs"] == stored
+
+    def test_obdRowsOnly_theOtherFeedsAreNullNotZero(self, tmp_path) -> None:
+        """
+        Given: OBD rows written and no IMU/light/UPS samples (validation 1)
+        When: a tick runs
+        Then: obd has a firstSampleTs; imu/light/ups are null and unknown
+        """
+        orch = _feedOrch(tmp_path)
+        orch._dataLogger.dataLogger.firstRowTs = "2026-10-13T12:01:05Z"
+        orch._dataLogger.lastRowWrittenSecondsAgo = 1.0
+
+        feeds = _tickFeeds(orch, tmp_path)
+
+        assert feeds["obd"]["firstSampleTs"] == "2026-10-13T12:01:05Z"
+        for name in ("imu", "light", "ups"):
+            assert feeds[name] == {
+                "state": STATE_UNKNOWN,
+                "firstSampleTs": None,
+                "lastSampleSecondsAgo": None,
+            }
+
+    def test_obdFeed_neverPublishesAPreviousProcessRow(self, tmp_path) -> None:
+        """
+        Given: a restart -- the table holds an old row, this process wrote none
+        When: a tick runs
+        Then: the verdict may carry the durable age, but feeds.obd stays null
+        """
+        db = _EmptyCaptureDb(tmp_path / "capture.db")
+        with sqlite3.connect(db.dbPath) as conn:
+            conn.execute("INSERT INTO realtime_data (timestamp) VALUES (?)",
+                         ("2026-10-13T11:59:00Z",))
+        orch = _feedOrch(tmp_path, database=db)
+
+        orch._maybeEmitCardStates()
+        state = json.loads((tmp_path / "states" / "capture-health").read_text())
+
+        assert state["lastRowSecondsAgo"] is not None
+        assert state["feeds"]["obd"]["firstSampleTs"] is None
+        assert state["feeds"]["obd"]["lastSampleSecondsAgo"] is None
+
+
+class TestTheUpsFeed:
+    """Validation 3: raise, then 0xFFFF, then 12.6 V."""
+
+    def _emitWith(self, orch, ups):
+        from types import SimpleNamespace
+
+        orch._hardwareManager = SimpleNamespace(upsMonitor=ups)
+        orch._emitBatteryHealthState()
+
+    def test_raiseThenSentinelThenARealRead(self, tmp_path, monkeypatch) -> None:
+        """
+        Given: a gauge read that raises, then returns 0xFFFF, then 12.6 V
+        When: the battery-health tick runs after each
+        Then: ups.firstSampleTs stays null through the first two and is set
+              by the third -- before the next gauge read is even made
+        """
+        import common.time.helper as helper
+
+        monkeypatch.setattr(helper, "utcIsoNow", lambda: "2026-10-13T12:00:20Z")
+        orch = _feedOrch(tmp_path)
+        seenAtNextRead = []
+
+        self._emitWith(orch, _FakeUps(OSError("i2c nack")))
+        afterRaise = orch._upsFirstSampleTs
+        self._emitWith(orch, _FakeUps(0xFFFF))
+        afterRawSentinel = orch._upsFirstSampleTs
+        self._emitWith(orch, _FakeUps(0xFFFF * 78.125e-6))
+        afterScaledSentinel = orch._upsFirstSampleTs
+        self._emitWith(orch, _FakeUps(
+            12.6, onPercentage=lambda: seenAtNextRead.append(orch._upsFirstSampleTs)
+        ))
+
+        assert afterRaise is None
+        assert afterRawSentinel is None
+        assert afterScaledSentinel is None
+        assert seenAtNextRead == ["2026-10-13T12:00:20Z"]
+        assert orch._upsFirstSampleTs == "2026-10-13T12:00:20Z"
+
+    def test_upsAge_comesFromTheValidReadOnly(self, tmp_path) -> None:
+        """
+        Given: a valid read at t=100, then a sentinel read, and the tick at t=103
+        When: the capture-health tick runs
+        Then: ups.lastSampleSecondsAgo is 3.0 -- the sentinel did not refresh it
+        """
+        orch = _feedOrch(tmp_path)
+        clock = [100.0]
+        orch._feedClock = lambda: clock[0]
+        self._emitWith(orch, _FakeUps(4.1))
+        clock[0] = 102.0
+        self._emitWith(orch, _FakeUps(0xFFFF))
+        clock[0] = 103.0
+
+        orch._emitCaptureHealthState()
+        feeds = json.loads((tmp_path / "states" / "capture-health").read_text())["feeds"]
+
+        assert feeds["ups"]["lastSampleSecondsAgo"] == 3.0
+        assert feeds["ups"]["state"] == STATE_OK
+
+    def test_aRestartReArmsTheFirstSample(self, tmp_path) -> None:
+        """
+        Given: a process that sampled the UPS, then a new process (a restart)
+        When: the new process ticks before its first read
+        Then: its ups.firstSampleTs is null -- never the old process's time
+        """
+        first = _feedOrch(tmp_path / "a")
+        self._emitWith(first, _FakeUps(4.1))
+        restarted = _feedOrch(tmp_path / "b")
+
+        assert first._upsFirstSampleTs is not None
+        assert _tickFeeds(restarted, tmp_path / "b")["ups"]["firstSampleTs"] is None
+
+
+class TestTheBridgeFeeds:
+    """IMU and light come from the live bridges, never a gated database row."""
+
+    def _sample(self, topic, tsUtc, tsCapture, value=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(topic=topic, tsUtc=tsUtc, tsCapture=tsCapture,
+                               value=value, unit="")
+
+    def test_lightBridge_firstAndNewestSampleReachTheFeed(self, tmp_path) -> None:
+        """
+        Given: the real light bridge drains two lux samples (one saturated)
+        When: the tick runs with the clock 5 s past the newest capture
+        Then: feeds.light names the FIRST sample's ts and a 5 s age
+        """
+        from pi.sensors.light_state_bridge import TOPIC_LIGHT_LUX, LightStateBridge
+
+        bridge = LightStateBridge(None, str(tmp_path / "states"))
+        bridge.handleSample(self._sample(TOPIC_LIGHT_LUX, "2026-10-13T12:00:21Z", 50.0, 12.0))
+        bridge.handleSample(self._sample(TOPIC_LIGHT_LUX, "2026-10-13T12:00:22Z", 51.0, None))
+        orch = _feedOrch(tmp_path)
+        orch._lightStateBridge = bridge
+        orch._feedClock = lambda: 56.0
+
+        light = _tickFeeds(orch, tmp_path)["light"]
+
+        assert light == {
+            "state": STATE_OK,
+            "firstSampleTs": "2026-10-13T12:00:21Z",
+            "lastSampleSecondsAgo": 5.0,
+        }
+
+    def test_imuBridge_countsRawChannelsNotStates(self, tmp_path) -> None:
+        """
+        Given: the real IMU bridge drains a presence STATE, then a gyro sample
+        When: the tick runs
+        Then: feeds.imu's first sample is the gyro's -- a state is not a sample
+        """
+        from pi.sensors.imu_state_bridge import (
+            STATE_IMU_PRESENCE,
+            TOPIC_IMU_GYRO,
+            ImuStateBridge,
+        )
+
+        bridge = ImuStateBridge(None, str(tmp_path / "states"))
+        bridge.handleSample(self._sample(STATE_IMU_PRESENCE, "2026-10-13T12:00:19Z", 9.0, 1.0))
+        assert bridge.firstSampleTs is None
+        bridge.handleSample(
+            self._sample(TOPIC_IMU_GYRO, "2026-10-13T12:00:21Z", 10.0, (0.0, 0.0, 0.0))
+        )
+        orch = _feedOrch(tmp_path)
+        orch._imuStateBridge = bridge
+        orch._feedClock = lambda: 10.25
+
+        imu = _tickFeeds(orch, tmp_path)["imu"]
+
+        assert imu["firstSampleTs"] == "2026-10-13T12:00:21Z"
+        assert imu["lastSampleSecondsAgo"] == 0.25
+        assert imu["state"] == STATE_OK

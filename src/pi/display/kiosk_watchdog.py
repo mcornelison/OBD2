@@ -143,6 +143,7 @@
 #               |              | cap=100 against ~30,000/window every count the
 #               |              | watchdog ever printed during a freeze WAS the
 #               |              | cap. Such counts now render "at least N".
+# 2026-10-13    | Rex          | US-884: DEFAULT_UNIT from unit_manifest.KIOSK_UNIT
 # ================================================================================
 ################################################################################
 
@@ -161,6 +162,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+# pi. prefix: this unit runs as `python -m pi.display.kiosk_watchdog`.
+from pi.ops.unit_manifest import KIOSK_UNIT
+
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------
@@ -170,7 +174,8 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------
 
 #: The kiosk unit this watchdog guards.  Not started, only restarted.
-DEFAULT_UNIT = "eclipse-dashboard.service"
+#: US-884: derived from the manifest, the one source of the kiosk unit name.
+DEFAULT_UNIT = KIOSK_UNIT
 
 #: The journal marker that IS the freeze (chromium's fatal command-buffer
 #: allocation, retried sub-millisecond apart with no crash).

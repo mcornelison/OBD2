@@ -326,6 +326,14 @@
   </div><!-- #stage -->
   </div><!-- #screen -->
 
+  <!-- US-901-b (F-162): the not-live marker. REPLAY / SIM / NOT LIVE over the
+       top bar's centre slot whenever system-status.runMode or obd-live.dataSource
+       says the glass is not showing the live car; carousel.js hides the clock
+       under it. A DIRECT CHILD OF BODY on purpose: #topbar is a z-index 10
+       stacking context, so a child of it could never paint above the overlays.
+       Ships hidden -- it appears only on a non-live read. -->
+  <div id="not-live-marker" hidden></div>
+
   <script>
     // Token injected by the state server at serve time (token SSOT). Previewed
     // from file:// the placeholder stays and the polls fail closed to

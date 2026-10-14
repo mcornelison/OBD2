@@ -129,6 +129,8 @@
 # 2026-10-04    | Atlas        | US-819: GyroOffsetSeedStore -- persist the AHRS's
 #               | (ARCH-066)   | ZARU gyro offset (at most once a minute) and
 #               |              | seed the next boot's engine with it.
+# 2026-10-13    | Rex (US-873) | Record the first raw IMU sample ts and the newest
+#               |              | sample capture for capture-health feeds.imu.
 # ================================================================================
 ################################################################################
 
@@ -1209,6 +1211,36 @@ class ImuStateBridge:
         self._magRotLastCapture: float | None = None
         # US-564: raw channel topic -> the gate reason currently refusing it.
         self._gatedChannels: dict[str, str] = {}
+        # US-873: the IMU feed's capture-health facts for THIS process. Held on
+        # the instance, so a restart re-arms them; None until a sample lands.
+        self._firstSampleTs: str | None = None
+        self._lastSampleCapture: float | None = None
+
+    # -- capture-health feed (US-873) -----------------------------------------
+    @property
+    def firstSampleTs(self) -> str | None:
+        """The ``tsUtc`` of the first raw IMU sample drained in this process."""
+        return self._firstSampleTs
+
+    @property
+    def lastSampleCapture(self) -> float | None:
+        """The monotonic ``tsCapture`` of the newest raw IMU sample, or None."""
+        return self._lastSampleCapture
+
+    def _recordFeedSample(self, sample: Any) -> None:
+        """Note one raw accel/gyro/mag sample for ``feeds.imu``.
+
+        Only the reader's raw channels count. Presence and gate STATES are facts
+        about the sensor, not samples from it, and the OBD speed this bridge
+        also drains belongs to another feed. The first timestamp is
+        first-write-wins and never substituted by the clock.
+        """
+        tsUtc = getattr(sample, "tsUtc", "")
+        if self._firstSampleTs is None and isinstance(tsUtc, str) and tsUtc:
+            self._firstSampleTs = tsUtc
+        capture = getattr(sample, "tsCapture", None)
+        if isinstance(capture, (int, float)) and not isinstance(capture, bool):
+            self._lastSampleCapture = float(capture)
 
     # -- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -1249,6 +1281,8 @@ class ImuStateBridge:
         STATE); False for anything else, which is ignored without a write.
         """
         topic = getattr(sample, "topic", None)
+        if topic in (TOPIC_IMU_ACCEL, TOPIC_IMU_GYRO, TOPIC_IMU_MAG):
+            self._recordFeedSample(sample)
         if topic == STATE_IMU_PRESENCE:
             self._handlePresence(sample)
             return True

@@ -29,6 +29,7 @@
 # ================================================================================
 # 2026-09-08    | Rex (US-688) | Initial -- the capture tile, its level ranking,
 #               |              | and its route into summary + drill-down.
+# 2026-10-13    | Rex (US-873) | The System card ignores the additive feeds block.
 # ================================================================================
 ################################################################################
 
@@ -407,3 +408,35 @@ class TestTheGridRendersIt:
             "the capture tile reaches the summary but is never painted in the "
             "grid -- the card would read 'SYSTEM · 1 ISSUE' over four green tiles"
         )
+
+
+# ------------------------------------------------- US-873: the additive feeds
+
+_FEEDS_FIXTURE = os.path.join(
+    os.path.dirname(__file__), "fixtures", "states", "capture-health-feeds.json"
+)
+
+
+def _feedCases() -> dict:
+    with open(_FEEDS_FIXTURE, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+class TestTheFeedsBlockIsAdditive:
+    """US-873 (Iris S-8): the System card ignores the new `feeds` block."""
+
+    @pytest.mark.parametrize("case", sorted(_feedCases()))
+    def test_systemStatusView_sameOutputWithAndWithoutFeeds(self, case: str) -> None:
+        """
+        Given: a fixture capture-health payload, and the same payload with
+               its `feeds` block removed (the pre-US-873 shape)
+        When: the System card view and the capture tile are built from each
+        Then: the rendered output is identical
+        """
+        withFeeds = _feedCases()[case]["payload"]
+        preChange = {k: v for k, v in withFeeds.items() if k != "feeds"}
+
+        assert _view("systemStatusView", _sys(), withFeeds) == _view(
+            "systemStatusView", _sys(), preChange
+        )
+        assert _view("captureTile", withFeeds) == _view("captureTile", preChange)

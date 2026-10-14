@@ -58,6 +58,17 @@
 #               |              | resolveCellEpoch(config) and its provisional floor
 #               |              | is config pi.powerWatch.drainFloorVolts, both passed
 #               |              | in (one owner each; no row-derived pack).
+# 2026-10-13    | Rex (US-873) | Capture-health `feeds`: gather each feed's first
+#               |              | sample this process and last sample age (OBD
+#               |              | rows, IMU/light bridges, the UPS VCELL read).
+# 2026-10-13    | Rex (US-860-a)| Boot milestones: the orchestrator start arms
+#               |              | kernel_start; the capture-health emit writes each
+#               |              | feed's first_sample_* rung from its feeds block.
+# 2026-10-13    | Rex (US-874) | states/obd-live: observeObdLiveReading on the
+#               |              | reading seam; the card tick publishes each PID's
+#               |              | latest value/unit/event time and decides stale.
+# 2026-10-14    | Rex (US-901-b)| system-status runMode from pi.replay.active and
+#               |              | the orchestrator's --simulate flag.
 # ================================================================================
 ################################################################################
 
@@ -249,6 +260,26 @@ class CardStateEmitterMixin:
     # simply publishes no capture verdict.
     _captureHealthEmitter: Any = None
     _captureStallSeconds: float = 0.0
+    # US-873: the capture-health `feeds` facts for THIS process. CLASS defaults
+    # so a restart (a new instance) re-arms every one of them, and so existing
+    # composers keep working. OBD's first sample is held by its writer
+    # (ObdDataLogger.firstRowTs), not here.
+    _upsFirstSampleTs: str | None = None
+    _upsLastSampleMonotonic: float | None = None
+    # Injectable monotonic clock for the feed ages; same reason as _gearClock.
+    _feedClock: Any = None
+    # US-860-a: the first_sample_* boot milestones this process has landed, so
+    # the emit tick stops re-writing them. An immutable CLASS default, replaced
+    # (never mutated) per instance, for the same reason as the defaults above.
+    _bootMilestonesWritten: frozenset[str] = frozenset()
+    # US-874: the states/obd-live producer. CLASS defaults for the same reason
+    # as the gear pair above; a composer without one observes nothing.
+    _obdLiveTracker: Any = None
+    _obdLiveEmitter: Any = None
+    _obdLiveStaleSec: float | None = None
+    # Injectable aware-UTC wall clock: staleness compares against reading event
+    # times, which are wall-clock instants, not monotonic ones.
+    _obdLiveClock: Any = None
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -265,6 +296,9 @@ class CardStateEmitterMixin:
         effort: a construction failure logs + leaves the emitters None so the
         orchestrator boots regardless (the dashboard hook never blocks boot).
         """
+        # US-860-a: the boot record is not a dashboard card, so it is armed
+        # whether or not the cards are enabled.
+        self._recordKernelStartMilestone()
         if not self._cardStateEmitEnabled:
             logger.info(
                 "Card-state emitters disabled (pi.dashboard.stateEmitEnabled=false)"
@@ -280,6 +314,7 @@ class CardStateEmitterMixin:
         self._initializeGearProducer(statesDir)
         self._initializeLtftTrendProducer(statesDir)
         self._initializeCaptureHealthProducer(statesDir)
+        self._initializeObdLiveProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -394,11 +429,245 @@ class CardStateEmitterMixin:
         # `_checkConnectionStatus` pattern used in health_monitor.py itself.
         lastRowS, freshnessReason = self._readDataLoggerRowFreshness()  # type: ignore[attr-defined]
         powerSource, _powerReason = self._gatherPowerSource()
+        feedSamples = self._gatherCaptureFeedSamples()
         emitter(
             lastRowSecondsAgo=lastRowS,
             freshnessReason=freshnessReason,
             powerSource=powerSource,
             stallSeconds=self._captureStallSeconds,
+            feedSamples=feedSamples,
+        )
+        self._recordFirstSampleMilestones(feedSamples)
+
+    # ------------------------------------------------------ boot milestones
+    #
+    # US-860-a. The forward boot record. Both writers hand the database to
+    # boot_milestone, which does the SQL: this module opens no connection.
+
+    def _recordKernelStartMilestone(self) -> None:
+        """Arm this boot's kernel_start rung at the orchestrator start."""
+        database = getattr(self, "_database", None)
+        if database is None:
+            return
+        try:
+            from src.pi.diagnostics.boot_milestone import recordKernelStart
+
+            recordKernelStart(database)
+        except Exception as e:  # noqa: BLE001 -- a boot record never fails boot
+            logger.warning("kernel_start milestone skipped: %s", e)
+
+    def _recordFirstSampleMilestones(
+        self, feedSamples: dict[str, tuple[str | None, float | None]]
+    ) -> None:
+        """Write each feed's first_sample_* rung from the ts the feeds block published.
+
+        No second detector: the time is the ``firstSampleTs`` just handed to the
+        capture-health emitter. A feed with no first sample has no rung.
+        """
+        database = getattr(self, "_database", None)
+        if database is None:
+            return
+        try:
+            from pi.obdii.capture_health import FEED_IMU, FEED_LIGHT, FEED_OBD, FEED_UPS
+            from src.pi.diagnostics.boot_milestone import (
+                FIRST_SAMPLE_IMU,
+                FIRST_SAMPLE_LIGHT,
+                FIRST_SAMPLE_OBD,
+                FIRST_SAMPLE_UPS,
+                recordMilestone,
+            )
+
+            for feed, milestone in (
+                (FEED_OBD, FIRST_SAMPLE_OBD),
+                (FEED_IMU, FIRST_SAMPLE_IMU),
+                (FEED_LIGHT, FIRST_SAMPLE_LIGHT),
+                (FEED_UPS, FIRST_SAMPLE_UPS),
+            ):
+                if milestone in self._bootMilestonesWritten:
+                    continue
+                firstTs = feedSamples.get(feed, (None, None))[0]
+                if firstTs is None:
+                    continue
+                if recordMilestone(database, milestone, firstTs):
+                    self._bootMilestonesWritten = self._bootMilestonesWritten | {milestone}
+        except Exception as e:  # noqa: BLE001 -- must not fail the emit tick
+            logger.warning("first-sample milestones skipped: %s", e)
+
+    # ------------------------------------------------ capture-health feeds
+
+    def _feedNowS(self) -> float:
+        """Monotonic seconds for the feed ages (the bridges' tsCapture clock)."""
+        clock = self._feedClock
+        if clock is not None:
+            return float(clock())
+        import time
+
+        return time.monotonic()
+
+    def _gatherCaptureFeedSamples(self) -> dict[str, tuple[str | None, float | None]]:
+        """Each feed's ``(firstSampleTs, lastSampleSecondsAgo)`` this process.
+
+        US-873. Every fact is read from the component that already owns it --
+        the logger's in-process row marker, the two bus bridges, and the UPS
+        read the battery-health tick already took -- so this opens no device
+        and no connection. A feed that has produced nothing reports
+        ``(None, None)``; nothing from a previous process is ever consulted.
+        """
+        from pi.obdii.capture_health import FEED_IMU, FEED_LIGHT, FEED_OBD, FEED_UPS
+
+        nowS = self._feedNowS()
+        upsAge = (
+            None
+            if self._upsLastSampleMonotonic is None
+            else nowS - self._upsLastSampleMonotonic
+        )
+        return {
+            FEED_OBD: self._gatherObdFeedSample(),
+            FEED_IMU: self._bridgeFeedSample(getattr(self, "_imuStateBridge", None), nowS),
+            FEED_LIGHT: self._bridgeFeedSample(
+                getattr(self, "_lightStateBridge", None), nowS
+            ),
+            FEED_UPS: (self._upsFirstSampleTs, upsAge),
+        }
+
+    @staticmethod
+    def _bridgeFeedSample(bridge: Any, nowS: float) -> tuple[str | None, float | None]:
+        """A bus bridge's first sample ts and newest sample age, or absence."""
+        if bridge is None:
+            return (None, None)
+        firstTs = getattr(bridge, "firstSampleTs", None)
+        lastCapture = getattr(bridge, "lastSampleCapture", None)
+        if not isinstance(lastCapture, (int, float)) or isinstance(lastCapture, bool):
+            return (firstTs if isinstance(firstTs, str) else None, None)
+        return (firstTs if isinstance(firstTs, str) else None, nowS - float(lastCapture))
+
+    def _inProcessRowAge(self) -> float | None:
+        """The logger's IN-PROCESS row age -- never the durable fallback.
+
+        ``_readDataLoggerRowFreshness`` falls back to the table's newest row on
+        a restart, which is a time from a PREVIOUS process; the feed must not
+        publish that. Non-numeric stand-ins read as no sample.
+        """
+        dataLogger = getattr(self, "_dataLogger", None)
+        if dataLogger is None:
+            return None
+        try:
+            value = getattr(dataLogger, "lastRowWrittenSecondsAgo", None)
+        except Exception:  # noqa: BLE001 -- an unreadable marker is no sample
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    def _gatherObdFeedSample(self) -> tuple[str | None, float | None]:
+        """OBD's first row event time this process, and its in-process row age.
+
+        ``firstSampleTs`` is ``ObdDataLogger.firstRowTs`` (Atlas option A): the
+        one writer of every live realtime_data row sets it once, after its first
+        committed INSERT, to the value that row's ``timestamp`` received. Read
+        None-safe -- no logger (bench, before init) is no sample. No lock: one
+        writer sets one reference once.
+        """
+        realtime = getattr(self, "_dataLogger", None)
+        writer = getattr(realtime, "dataLogger", None) if realtime is not None else None
+        firstRowTs = getattr(writer, "firstRowTs", None) if writer is not None else None
+        firstTs = firstRowTs if isinstance(firstRowTs, str) and firstRowTs else None
+        return (firstTs, self._inProcessRowAge())
+
+    def _recordUpsSample(self, vcellV: float) -> None:
+        """Note one VCELL read for ``feeds.ups`` -- unless it is the sentinel.
+
+        Called IMMEDIATELY after the synchronous ``getBatteryVoltage()`` read,
+        so ``utcIsoNow()`` here IS the sample time (Atlas G6). The MAX17048's
+        unbacked-register word ``0xFFFF`` is no reading, whether it arrives raw
+        or already scaled to volts, and sets nothing.
+        """
+        from common.time.helper import utcIsoNow
+        from pi.hardware.ups_monitor import (
+            MAX17048_VCELL_LSB_V,
+            SOC_UNBACKED_SENTINEL,
+        )
+
+        sentinelVolts = SOC_UNBACKED_SENTINEL * MAX17048_VCELL_LSB_V
+        if vcellV == SOC_UNBACKED_SENTINEL or abs(vcellV - sentinelVolts) < (
+            MAX17048_VCELL_LSB_V / 2
+        ):
+            return
+        sampleTs = utcIsoNow()
+        if self._upsFirstSampleTs is None:
+            self._upsFirstSampleTs = sampleTs
+        self._upsLastSampleMonotonic = self._feedNowS()
+
+    # ------------------------------------------------------------ obd-live
+    #
+    # US-874. Every PID's latest value, unit and event time. Readings are
+    # observed at the _handleReading seam (the logger's getLatestReadings holds
+    # values only, no per-PID time); the card tick publishes them and decides
+    # staleness against a moving clock, so a quiet feed goes stale on the panel.
+
+    def _initializeObdLiveProducer(self, statesDir: str) -> None:
+        """Build the obd-live tracker + emitter in their own try/except."""
+        try:
+            from pi.obdii.obd_live_emitter import (
+                DEFAULT_OBD_LIVE_STALE_S,
+                ObdLiveTracker,
+                makeObdLiveEmitter,
+            )
+
+            staleCfg = self._config.get("pi", {}).get("display", {}).get("stale", {})
+            self._obdLiveStaleSec = float(
+                staleCfg.get("obdLiveSec", DEFAULT_OBD_LIVE_STALE_S)
+            )
+            self._obdLiveTracker = ObdLiveTracker(self._config)
+            self._obdLiveEmitter = makeObdLiveEmitter(statesDir)
+            logger.info("obd-live wired (stale_sec=%.1f)", self._obdLiveStaleSec)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("obd-live producer init skipped: %s", e)
+            self._obdLiveTracker = None
+            self._obdLiveEmitter = None
+
+    def observeObdLiveReading(self, reading: Any) -> None:
+        """Record one realtime reading for states/obd-live (the reading seam)."""
+        tracker = self._obdLiveTracker
+        if tracker is None:
+            return
+        tracker.observeReading(reading)
+
+    def _obdLiveNowUtc(self) -> datetime:
+        """Aware UTC now for the obd-live staleness decision."""
+        clock = self._obdLiveClock
+        if clock is not None:
+            now: datetime = clock()
+            return now
+        return datetime.now(UTC)
+
+    def _gatherObdLiveDataSource(self) -> str | None:
+        """The data_source tag the logger resolved for its rows, or None.
+
+        Read from ``ObdDataLogger.dataSource`` -- the value
+        ``_resolveDataSource`` set when the writer was built -- so obd-live
+        carries the same tag as the rows, never a second derivation (and never
+        system-status.runMode, which is a different fact). Only a tag in the
+        legal vocabulary is published.
+        """
+        from pi.obdii.data_source import DATA_SOURCE_VALUES
+
+        realtime = getattr(self, "_dataLogger", None)
+        writer = getattr(realtime, "dataLogger", None) if realtime is not None else None
+        tag = getattr(writer, "dataSource", None) if writer is not None else None
+        return tag if isinstance(tag, str) and tag in DATA_SOURCE_VALUES else None
+
+    def _emitObdLiveState(self) -> None:
+        """Publish states/obd-live from the tracker's latest readings."""
+        tracker = self._obdLiveTracker
+        emitter = self._obdLiveEmitter
+        if tracker is None or emitter is None or self._obdLiveStaleSec is None:
+            return
+        emitter(
+            tracker.snapshot(),
+            nowUtc=self._obdLiveNowUtc(),
+            staleSec=self._obdLiveStaleSec,
+            dataSource=self._gatherObdLiveDataSource(),
         )
 
     # -------------------------------------------------------- derived gear
@@ -750,6 +1019,11 @@ class CardStateEmitterMixin:
             self._emitCaptureHealthState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("capture-health card emit failed: %s", e)
+        try:
+            # US-874: staleness is decided here, against a moving clock.
+            self._emitObdLiveState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("obd-live card emit failed: %s", e)
         return True
 
     # -------------------------------------------------------- system-status
@@ -796,6 +1070,22 @@ class CardStateEmitterMixin:
             priorShutdown=self._gatherPriorShutdown(),
             obdAvailable=obdAvailable,
             obdUnavailableReason=obdReason,
+            runMode=self._gatherRunMode(),
+        )
+
+    def _gatherRunMode(self) -> str:
+        """Resolve the US-901-b runMode from pi.replay.active and --simulate.
+
+        ``_simulate`` is read through ``getattr`` because it lives on the
+        orchestrator core, and the standalone composers of this mixin never
+        set it; they are not simulate runs.
+        """
+        from pi.splash.system_status_emitter import deriveRunMode
+
+        replayConfig = ((self._config or {}).get("pi") or {}).get("replay") or {}
+        return deriveRunMode(
+            replayActive=bool(replayConfig.get("active", False)),
+            simulate=bool(getattr(self, "_simulate", False)),
         )
 
     def _gatherPriorShutdown(self) -> dict | None:
@@ -1059,6 +1349,9 @@ class CardStateEmitterMixin:
             return
         try:
             vcellV = float(ups.getBatteryVoltage())
+            # US-873: straight after the synchronous read -- that instant IS
+            # the UPS feed's sample time. A raise above never reaches here.
+            self._recordUpsSample(vcellV)
             soc = int(ups.getBatteryPercentage())
             crate = ups.getChargeRatePercentPerHour()
         except Exception:  # noqa: BLE001 -- gauge unreadable -> typed NA

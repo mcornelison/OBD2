@@ -816,7 +816,7 @@ mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 
 ## 5. Database Architecture
 
-### Schema Overview (13 Tables)
+### Schema Overview (14 Tables)
 
 | Table | Purpose | FK to profiles? | On Delete |
 |-------|---------|----------------|-----------|
@@ -831,6 +831,7 @@ mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
 | `power_log` | Power **events**, never polls — contents, writers, row kinds and retention are defined ONCE in the `src/pi/power/power_db.py` module docstring (US-798); read that, not a paraphrase. Pi-authoritative; delta-synced to server since US-412 / F-101 | No FK | — |
 | `startup_log` | Boot-progress / RTC boot markers (Pi-authoritative; natural-key snapshot-synced since US-417 / F-101) | No FK | — |
+| `boot_milestone` | The FORWARD boot record (US-860-a / F-157): one first-write-wins row per (`boot_id`, `milestone`) for kernel_start, obd_connected, first_sample_obd/imu/light/ups and drive_start. `ts_utc` is the event's time; `uptime_s` is that time minus kernel_start's (`kernel_start` = wall − `/proc/uptime`, 0). A rung never reached has no row; an `unknown` boot id writes nothing. All writers in eclipse-obd, via `src/pi/diagnostics/boot_milestone.py`. **Local-only until US-860-b** (schema_diff lists it under `tablesOnlyInPi`, report-only) | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
 
@@ -933,6 +934,25 @@ order). A mismatch is not a server rejection and does not count toward the
 US-391 quarantine. `tests/integration/test_pi_to_server_stored_ack_e2e.py`
 pushes every `DELTA_SYNC_TABLES` member through the real server app and
 asserts each mark lands on its stored maximum.
+
+##### US-902: the server refuses replay / physics_sim rows at ingest (CIO R28)
+
+`POST /api/v1/sync` answers **422** to any batch carrying a row whose
+`data_source` is `replay` or `physics_sim`
+(`src/server/api/sync.py::INGEST_REJECTED_DATA_SOURCES`). The check is the
+`SyncRequest._rowsMustNotBeNonLive` validator beside `_tablesMustBeAccepted`,
+so it runs on the raw row dicts of **every** table in the batch (including
+`dtc_freeze_frame`, whose builder later drops the column) before any DB work,
+and the `detail` names each offending table and its count, e.g.
+`realtime_data: 1 row(s) with data_source in (replay, physics_sim) rejected`.
+No row of that batch is written, and no `sync_history` row either. Every other
+tag (`real`, `fixture`, `foreign`, or absent and coerced to `real`) is accepted
+exactly as before. A 422 is terminal on the Pi (`_isRetryableHttpStatus`
+retries only 429 / 5xx), so the push fails and counts toward the US-391
+quarantine; it never advances `last_synced_id`, so **one such row blocks that
+table until it is removed** from the Pi. This is the second belt: R37
+(US-901-a) closes it at the source, where `SyncClient` refuses every push from
+a replay or `--simulate` run.
 
 ##### US-226: Sync trigger semantics + recovery playbook
 
@@ -1191,7 +1211,7 @@ Every row written into a capture table carries a `data_source` column identifyin
 | Value | Owner | Used By |
 |-------|-------|---------|
 | `real` | Live OBD path | Pi collector, DB-level DEFAULT |
-| `replay` | Flat-file replay harness (US-191, B-045) | Deterministic SQLite fixtures seeded ahead of a sync test |
+| `replay` | Flat-file replay harness (US-191, B-045); a replay run (US-901-a, `pi.replay.active`) | Deterministic SQLite fixtures seeded ahead of a sync test; **produced** by the live-OBD writer for every row a replay run writes |
 | `physics_sim` | Physics simulator (SensorSimulator / scenario runner) | Simulator-driven captures + `scripts/seed_scenarios.py` output |
 | `fixture` | Regression fixture seeder | `scripts/seed_pi_fixture.py` rows + hand-rolled test fixtures |
 | `foreign` | Foreign-vehicle contamination marker (US-424 / F-116) | Rows captured from a vehicle that is **not** the Eclipse (the Ford Explorer, drive 33). Set by the Pi ingest guard's retro-tag + the writer latch — real captures of the wrong vehicle, preserved as evidence, NOT synthetic test data |
@@ -1204,7 +1224,11 @@ Every row written into a capture table carries a `data_source` column identifyin
 
 **Ingest guard (US-424 / F-116; ships DARK behind `pi.foreignGuard.enabled=false`).** The discriminator is protocol speed, not identity: a dongle-MAC allowlist can't tell the two cars apart (same dongle) and Mode-09 VIN is silent on the Eclipse's ECU. The 1998 Eclipse GST speaks ISO 9141-2 over the K-line with a sustained PID-response ceiling of ~6.3/s; one `realtime_data` row is written per response, so a **sustained** row rate above ~7/s (`pi.foreignGuard.busRateThresholdHz`) over a rolling window means a faster-protocol (non-Eclipse) vehicle is connected. `src/pi/obdii/foreign_guard.py::ForeignVehicleGuard` is the SSOT for the "is this drive foreign?" fact — the poll loop feeds it samples (`observeSample`) and the writer consults it (`isDriveForeign`); neither classifies on its own. "Sustained" is structural (rate held above the bar for the full `sustainedSeconds` window), so a legit start-of-drive Eclipse burst never false-trips. On trip the guard (a) retro-tags the open drive's already-written `'real'` rows `'foreign'` and (b) latches the drive so the writer stamps subsequent rows `'foreign'`. The rows still sync, but land tagged `'foreign'` so the server's `WHERE data_source='real'` filter excludes them — tagging **is** the exclusion.
 
-**Default** — `'real'` at the DB level is a **narrow safety net for the single live-OBD collector path**, NOT a catchall for dev writers. Writers outside the live-OBD path MUST pass `data_source` explicitly at the call site. The live-OBD writer (:class:`src.pi.obdii.data.logger.ObdDataLogger` + :func:`src.pi.obdii.data.helpers.logReading`) honors this contract by auto-deriving the tag from `connection.isSimulated`: real connections produce `'real'`, :class:`SimulatedObdConnection` produces `'physics_sim'`. An explicit `dataSource=` override wins in both constructors so fixture harnesses can tag correctly. The call-site discipline is enforced by `tests/pi/data/test_data_source_hygiene.py`, an AST audit that fails the suite if any seed script INSERT into a capture table omits the `data_source` column (US-212 closed the ~352K-row hygiene bug surfaced by US-205).
+**Default** — `'real'` at the DB level is a **narrow safety net for the single live-OBD collector path**, NOT a catchall for dev writers. Writers outside the live-OBD path MUST pass `data_source` explicitly at the call site. The live-OBD writer (:class:`src.pi.obdii.data.logger.ObdDataLogger` + :func:`src.pi.obdii.data.helpers.logReading`) honors this contract by auto-deriving the tag from `connection.isSimulated`: real connections produce `'real'`, :class:`SimulatedObdConnection` produces `'physics_sim'`. An explicit `dataSource=` override wins in both constructors so fixture harnesses can tag correctly.
+
+**Replay tag + the simulation flag (US-901-a, CIO R37).** The `replay` tag is now produced: with `pi.replay.active` true (validator default `false`) and no explicit override, `ObdDataLogger` tags every row `'replay'`, checked before `connection.isSimulated` because the replay source rides the simulated-connection seam. `DATA_SOURCE_VALUES` is unchanged. The simulation flag that keeps synthetic rows off the server covers **both** a replay run and a `--simulate` run: `SyncClient` refuses every push at its two POST sites (`_postBatchWithRetry`, `_postDriveCounterWithRetry`), which all five public push methods (`pushDelta`, `pushAllDeltas`, `forcePush`, `pushDriveCounter`, `pushSnapshot`) pass through. The refused result is the typed `PushStatus.REFUSED` -- distinct from `DISABLED` (companion off) and `FAILED` (a request was attempted) -- and it writes nothing to `sync_log` (no failed status, no quarantine count, mark untouched). The orchestrator hands its own `--simulate` flag to the client (`SyncClient(config, simulate=...)`); a replay reads `pi.replay.active` from the run's config. The two read-only GETs stay allowed and send no rows: the update check (`GET /api/v1/release/current`) and the home detector (`GET /api/v1/health`). Before anything opens, `src/pi/main.py::checkReplayStartGuard` exits 2 when a replay or `--simulate` run's `pi.database.path` resolves (working-directory relative, as the database opens it) to the production database -- `data/obd.db` under the repo root -- or its `pi.splash.statesDir` is the production `/run/eclipse-obd/states`. The guard reads the keys as configured; a config that omits them is not refused. The call-site discipline is enforced by `tests/pi/data/test_data_source_hygiene.py`, an AST audit that fails the suite if any seed script INSERT into a capture table omits the `data_source` column (US-212 closed the ~352K-row hygiene bug surfaced by US-205).
+
+**Ingest reject (US-902, CIO R28).** Behind the Pi-side refusal, the server is a second belt: `POST /api/v1/sync` returns 422 for a batch carrying any `replay` or `physics_sim` row, on every table, naming the table and the count, and writes no row of it (see "US-902" under the sync API, §5). Consequence: a rejected batch never advances `last_synced_id`, so one such row blocks that table's sync until it is removed; R37 (US-901-a) closes it at the source. `real`, `fixture`, `foreign` and an absent tag (coerced to `real`) are accepted as before, so a `replay` / `physics_sim` row can never land in obd2db.
 
 **Filter rule** — server-side analytics, AI prompt inputs, and baseline calibrations MUST filter `WHERE data_source = 'real'` unless the caller is running a synthetic test. Pre-US-195 rows with `data_source IS NULL` are treated as `'real'` for backward compatibility.
 
@@ -1950,6 +1974,10 @@ Chi-Srv-01's `/api/v1/sync` endpoint.  Validator (`src.common.config.validator`)
 rejects non-positive `syncTimeoutSeconds`, `batchSize < 1`, non-list
 `retryBackoffSeconds`, or negative `retryMaxAttempts` with
 `ConfigValidationError` so a corrupt surface never reaches the client.
+The endpoint answers 422 (terminal, not retried) to any batch carrying a
+`replay` or `physics_sim` row (US-902, CIO R28); the batch's `last_synced_id`
+never advances, so one such row blocks that table until removed. R37
+(US-901-a) keeps those rows from being pushed at all.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
@@ -2250,6 +2278,19 @@ white/yellow/red palette — both tiers co-exist without regression.
 Evaluators in `src/pi/alert/tiered_thresholds.py` return an `AlertSeverity`;
 `src/pi/display/theme.py::advancedTierSeverityToColor` maps severity to
 color. No config duplication.
+
+**Live bands for the V0.30 pages (US-875)**: the band of every live value on the
+HTML pages comes from ONE provider, the band producer
+(`src/pi/obdii/band_producer.py`), and reaches the page through `states/obd-live`
+(section 11). The page maps `band -> token` and holds no threshold, band or curve:
+`src/pi/ui/` contains no number. The producer covers coolant (threshold + dwell +
+clear hysteresis), battery (RED/GREEN only, gated on the engine running) and the
+RPM bar cues; every other PID has no live band. The numbers, and why they are what
+they are, live in `specs/grounded-knowledge.md` (Coolant Temp, RPM and Battery
+Voltage rows, and "Battery Voltage via ELM_VOLTAGE"); the config keys are
+`pi.bands.*`, with defaults and sources in `src/common/config/validator.py`.
+`pi.tieredThresholds`, `AlertManager` and the evaluators above are a separate,
+unchanged path.
 
 **Min/max markers**: sourced from `src/pi/data/recent_stats.py::queryRecentMinMax`,
 which reduces the last N rows of the `statistics` table per parameter
@@ -2675,6 +2716,12 @@ fires on the first `shutdown-state` write and the kiosk renders the countdown.
 - **The sequencer stays decoupled.** It never names a splash unit (F-103: it writes
   state, consumers react). Pinned by `tests/pi/power/power_watch/test_load_shed_splash.py`,
   which fails if either splash unit is added back to either list.
+- **The shed kiosk's name comes from `unit_manifest.KIOSK_UNIT` (US-884, Sprint 98).**
+  `DEFAULT_SHED_UNITS` is derived from it (`KIOSK_UNIT` minus `.service`, the bare form
+  the shed has always used), so whichever kiosk runs is the one shed at power loss.
+  `load_shed` imports it as `src.pi.ops.unit_manifest` (powerwatch's prefix); the manifest
+  is stdlib-only, so powerwatch cannot pull in the display chain. Default value unchanged:
+  `('eclipse-dashboard',)`.
 
 ### 10.6.2 US-526 pre-poweroff hook — the PRIMARY drain-event close (Sprint 70 / V0.29.25)
 
@@ -3025,7 +3072,7 @@ the sync backlog. "Nothing to send" makes the **drain** shorter. It does not rem
 
 | # | Step | Owner | Mandatory at an empty backlog |
 |---|---|---|---|
-| 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
+| 1 | **Shed** — `DEFAULT_SHED_UNITS` stopped; the kiosk name comes from `unit_manifest.KIOSK_UNIT` (§10.6.1) | `LoadShedder` via `powerLossObservedFn` | yes |
 | 2 | **Drain** — at least one `forcePush` pass (§10.6.3) | `SyncWithServerTask` → `_buildRunSync` | yes; one pass that finds 0 and stops (at home or `UNKNOWN`; a positive `AWAY` skips it, US-776-c) |
 | 3 | **Drain close** — the US-526 primary close (§10.6.2) | `buildDrainCloseHook` via `prePowerOffFn` | yes; a no-op close when no row is open |
 | 4 | **Custody** — the record states its verdict (§10.6.3) | `makeSyncCustodyHook` via `prePowerOffFn` | yes; `DELIVERED` |
@@ -5351,6 +5398,16 @@ the canonical files are what ships).
 | Pi (chi-eclipse-01) | `eclipse-obd.service` | `deploy/eclipse-obd.service` | US-210 (Sprint 16) |
 | Server (chi-srv-01) | `obd-server.service` | `deploy/obd-server.service` | US-231 (Sprint 18) |
 
+**The kiosk unit name has one source: `src/pi/ops/unit_manifest.py` `KIOSK_UNIT`
+(US-884, Sprint 98).** The power-loss shed (`load_shed.DEFAULT_SHED_UNITS`), the kiosk
+watchdog (`kiosk_watchdog.DEFAULT_UNIT`) and the panel-liveness observer
+(`panel_liveness.DEFAULT_UNIT`) derive their defaults from it. The files that cannot
+import it -- the two watchdog units' `--unit`, the 51- polkit rule, the splash
+`OnSuccess=` (x11 + wayland), the dashboard `install.sh` / `uninstall.sh`, `carousel.js`
+and `tools/imu/drive_console.py` -- are pinned to it by
+`tests/pi/ops/test_kiosk_unit_single_source.py`, which names every file still holding
+an old name after a rename.
+
 Shared invariants across both units:
 
 - **`Restart=always`** + **`RestartSec=5`** -- backstop for unexpected process death.
@@ -5650,6 +5707,158 @@ so the splash renders at the **next boot** (`WantedBy=graphical.target`) — the
 not thrash the live screen mid-deploy. Coverage: `tests/deploy/test_kiosk_install.py`
 (V-3 substitution + fail-loud + step assertions) and the `deploy-pi.sh` `--dry-run`
 smoke test.
+
+#### `states/capture-health` -- the capture verdict and the per-feed `feeds` block (US-688, US-873)
+
+**Producer:** `src/pi/obdii/capture_health.py`, written by the eclipse-obd process on
+every card-state tick from `CardStateEmitterMixin._emitCaptureHealthState`
+(`src/pi/obdii/orchestrator/card_state_emitter.py`). It opens no device and no
+connection, and it does not write a file at all when `pi.captureHealth.enabled` is false.
+
+**Top level (US-688, unchanged by US-873):** `{state, lastRowSecondsAgo, stallSeconds,
+reason, ts}`. `state` is one of `ok | stalled | idle | unknown`. The verdict is gated on
+the GPIO6 power source, never on an OBD-derived fact: unresolved power gives `unknown`,
+battery gives `idle`, and otherwise the data logger's row age is judged against
+`pi.captureHealth.stallSeconds`. `lastRowSecondsAgo` falls back to the table's newest
+row after a restart (US-727). `buildCaptureHealthState` and `_decide` keep their
+parameter lists; two fence tests pin them.
+
+**`feeds` (US-873, additive):** an object with exactly the keys `obd`, `imu`, `light`,
+`ups`. Each value is `{state, firstSampleTs, lastSampleSecondsAgo}`, built by the pure
+`buildCaptureFeedsState`. This block is the single source that the boot record
+(US-860-a), the System page and the Warnings DATA source read.
+
+| Feed | `firstSampleTs` (first sample in THIS process) | `lastSampleSecondsAgo` |
+|------|------------------------------------------------|------------------------|
+| `obd` | `ObdDataLogger.firstRowTs` (Atlas option A): set ONCE, after the first `realtime_data` INSERT commits in this process, to the same canonical UTC string that row's `timestamp` received. One writer instance serves the process (the bus `PersistenceSubscriber` reuses it; a reconnect pauses it, never replaces it). Read None-safe; no SQL in the emitter | the logger's in-process row marker only, never the durable fallback |
+| `imu` | `tsUtc` of the first raw accel/gyro/mag sample drained by `imu_state_bridge` (the live reader output, not an `edr_*` row behind `EdrLogGate`) | monotonic now minus that bridge's newest `tsCapture` |
+| `light` | `tsUtc` of the first `raw.light.lux` sample drained by `light_state_bridge` (a saturated read counts) | same, from the light bridge |
+| `ups` | `utcIsoNow()` taken straight after a valid synchronous `getBatteryVoltage()` inside `_emitBatteryHealthState`. A raise or the `0xFFFF` sentinel sets nothing (Atlas G6) | monotonic now minus that read |
+
+- **Per process.** Every first-sample value lives on a process-lifetime object, so an
+  eclipse-obd restart re-arms it. `boot_milestone`'s first-write-wins keeps the boot's
+  first (US-860-a).
+- **Honest absence.** A feed that has produced nothing in this process publishes
+  `firstSampleTs: null` and `lastSampleSecondsAgo: null`. It never publishes `0` or a
+  time from a previous process. A negative or non-finite age is also `null`.
+- **Per-feed state** reuses `_decide` with no freshness reason, under the same power gate
+  and the same stall window as the verdict. Unresolved power gives `unknown`, battery
+  gives `idle`, no sample gives `unknown`, an age over the window gives `stalled`, and
+  anything else gives `ok`.
+- **No page renders `feeds` in Sprint 98.** The System card output is identical with or
+  without it (`tests/ui/test_carousel_capture_health.py`). The contract fixture is
+  `tests/ui/fixtures/states/capture-health-feeds.json`, which holds five named cases
+  (`cold-boot-obd-null`, `all-ok`, `one-feed-stalled`, `restart-rearmed`, `ups-sentinel`).
+  `tests/pi/obdii/test_capture_health.py` asserts that the builder's output matches every case.
+
+#### `states/obd-live` -- every live PID with value, unit, own event time and band (US-874)
+
+**Producer:** `src/pi/obdii/obd_live_emitter.py`, run inside the eclipse-obd process.
+`EventRouterMixin._handleReading` passes every reading to
+`CardStateEmitterMixin.observeObdLiveReading`. This is the same seam that `observeGearInput`
+uses. An `ObdLiveTracker` keeps the newest reading per PID. `_emitObdLiveState` publishes
+that reading on every card-state tick. The producer reads no SQLite and opens no OBD
+connection: the A-17 guard in `tests/pi/orchestrator/test_card_state_emitters.py` still
+holds. When `pi.dashboard.stateEmitEnabled` is false, the producer is not built and writes
+no file.
+
+**Shape:** `{params: {<PID name>: {value, unit, ts, stale, band, last}}, dataSource, ts}`.
+A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
+
+- **`ts` per PID is the reading's event time.** `reading.timestamp` is a naive local
+  datetime. It is converted with `localNaiveToCanonicalIso(reading.timestamp, config)`,
+  the same converter the bus and the row writer use. The write time is never
+  substituted: a reading with no timestamp, or with a null value, is not recorded.
+- **Stale** (Atlas ruling 2026-10-13 on Iris B-3): at each emit, a PID is stale when
+  `utcNow - ts > pi.display.stale.obdLiveSec`. The validator default is 5 s, which is
+  1.7x the measured per-PID p99 gap. `value` always means CURRENT. A PID has one of
+  three shapes:
+  - fresh: `{value: X, ts, stale: false, band, last: null}`
+  - stale: `{value: null, ts (of the last reading), stale: true, band: null,
+    noBandReason: 'stale', last: {value: X, band: <band at the last fresh reading>}}`
+  - not read: `{value: null, ts: null, stale: false, band: null,
+    noBandReason: 'not_read', last: null}`. This
+    shape is defined but not emitted in Sprint 98. A PID that has not been read in
+    this process is left out of `params`.
+- **`band`** (US-875) is `{band, since, reason}` or null. `band` is one of
+  `green | amber | red`; `since` is the canonical UTC event time the PID entered that
+  band; `reason` is prose. The tracker feeds every reading, with its full-precision
+  event time, to the band producer (`src/pi/obdii/band_producer.py`; section 10
+  Display Tiers). `band` is null whenever `value` is null, so a stale band never
+  outlives its value. While a PID is stale no band is evaluated: `last.band` is the
+  band frozen at its last fresh reading.
+- **`noBandReason`** is present beside every null `band` and ABSENT beside a non-null
+  one (Atlas ruling 2026-10-13 on Iris S-5). It is a machine code, one of:
+  - `not_read`: the value is null without being stale.
+  - `stale`: the PID is stale.
+  - `no_band_defined`: the PID has no live band (intake air, trims, timing, load,
+    speed and every other PID except coolant, battery and RPM).
+  - `engine_not_running`: BATTERY_V is banded only while the engine runs. Engine-off
+    means RPM stops reporting; a last-known RPM is not "running".
+  - `amber_not_shipped`: a running battery value between the red and green edges
+    (CIO R38: no battery amber in Sprint 98).
+- **`params.RPM.scale`** is `{amberFrom, redFrom}`, read from the same
+  `pi.bands.rpm.amberRpm` / `redRpm` keys as the RPM band, so the bar draws its zones
+  from data (Atlas ruling 2026-10-13 on Iris S-6). It is published fresh or stale.
+- **Dwell** is consecutive readings on event time. A stale gap (more than
+  `pi.display.stale.obdLiveSec` between readings) or a null reading resets it. The
+  producer keeps its own dwell clocks and a few seconds of RPM history for the
+  battery gate; it reads no SQLite either.
+- **`dataSource`** is a single file-level value: the `data_source` tag of the rows these
+  values came from. It is read from `ObdDataLogger.dataSource`, which
+  `_resolveDataSource` sets, so it is not derived a second time. It is not
+  `system-status.runMode`, and it is not repeated per PID. It is null when no logger has
+  resolved a tag.
+- **Only the not-live marker reads `obd-live` in Sprint 98**, and it reads only
+  `dataSource` (US-901-b, below). No page renders the PID values. The contract fixture is
+  `tests/ui/fixtures/states/obd-live.json`, which holds complete named payloads (`fresh`,
+  `stale`, `pid-absent`, `replay`, and from US-875 `engine-off-battery`,
+  `coolant-amber`, `coolant-red`). `tests/pi/obdii/test_obd_live_emitter.py` feeds
+  every case, with the history its dwell needs, through a real `ObdLiveTracker` and
+  `buildObdLiveState` and asserts equality.
+
+#### `system-status.runMode` and the not-live marker (US-901-b)
+
+**`runMode`** is an always-present key in `states/system-status`. It answers one
+question: is the glass showing the live car? It has three values:
+
+| Value | When |
+|---|---|
+| `replay` | `pi.replay.active` is true |
+| `simulate` | the orchestrator was started with `--simulate` |
+| `live` | neither |
+
+Replay wins over simulate, because a replay (US-857) runs through the `--simulate` seam
+and usually has both flags set (Atlas ruling 2026-10-13 on Iris S-2). The rule is
+`deriveRunMode` in `src/pi/splash/system_status_emitter.py`. The orchestrator resolves
+it in `CardStateEmitterMixin._gatherRunMode`, from `pi.replay.active` and its own
+`_simulate` flag. The key is `runMode`, not `mode`: `mode` collides with
+`pi.power.mode`, and US-668 removed a `mode` field from this payload once already.
+With every flag at its default the value is `live`.
+
+**`runMode` beside `obd-live.dataSource`.** They are two different facts. `runMode`
+describes the process. `dataSource` describes the rows the values came from. The
+dashboard reads both, and either one is enough to mark the panel.
+
+**The marker** (`carousel.js notLiveMarker`; design SSOT
+`specs/v030-frame-and-style-design.md` s3.1):
+
+- It shows when `runMode` is present and not `live`, OR `dataSource` is present and not
+  `real`. If the two disagree, that is a fault, and the panel still marks itself
+  (Atlas S-3). A `null` value is "not read". It counts as absent, because obd-live
+  publishes `dataSource: null` before any logger has resolved a tag.
+- Its text is `REPLAY` when either input says replay. Otherwise it is `SIM` when
+  `runMode` is `simulate` or `dataSource` is `physics_sim`. Any other non-live value
+  shows `NOT LIVE`, at `--fs-meta` so it fits the box `REPLAY` fits at `--fs-label`.
+- `#not-live-marker` is a direct child of `body`, fixed over the top bar's centre slot,
+  with a z-index above every other z-index in `dashboard.css`. `#topbar` is a z-index
+  10 stacking context, so a child of it could never paint above the overlays.
+  `tests/ui/test_carousel_replay_marker.py` collects every declared z-index, so an
+  overlay declared above the marker fails the suite. The marker has
+  `pointer-events: none`.
+- `#topbar-clock` is hidden while the marker shows, because the wall clock is wrong for
+  replayed data. It is hidden with `visibility` and keeps its box, so no other
+  `#topbar` child moves.
 
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 
@@ -7168,6 +7377,7 @@ The simulator subsystem provides hardware-free testing capabilities, enabling de
 |-----------|---------|
 | `SimulatedObdConnection` | Drop-in replacement for ObdConnection, same interface |
 | `SensorSimulator` | Physics-based sensor value generation with noise |
+| `ReplayValueSource` | Replays a recorded drive's `realtime_data` rows on the drive's own timing (US-857, F-162) |
 | `VehicleProfile` | Vehicle characteristics (RPM limits, temperatures, etc.) |
 | `DriveScenario` | Predefined sequences of drive phases |
 | `DriveScenarioRunner` | Executes scenarios with smooth transitions |
@@ -7177,9 +7387,77 @@ The simulator subsystem provides hardware-free testing capabilities, enabling de
 
 ### Activation
 
-Simulator mode is enabled via:
-1. CLI flag: `python src/main.py --simulate`
-2. Config: `simulator.enabled: true` in obd_config.json
+The simulation flag is the CLI flag `python src/pi/main.py --simulate`. It is
+not a config key: it lives only on the orchestrator's `_simulate`, and
+`LifecycleMixin._initializeConnection` is its one reader -- with it set the
+connection is `createSimulatedConnectionFromConfig(config, database)`, otherwise
+the real `ObdConnection`. A `--simulate` run never pushes to the server and
+refuses the production database and states dir (US-901-a, CIO R37; see Data
+Source Tagging).
+
+`createSimulatedConnectionFromConfig` picks the connection's value source:
+`ReplayValueSource` when `pi.replay.active` is true, otherwise today's
+`SensorSimulator`. Everything after the connection -- orchestrator, logger,
+gear, card emitters, state files -- runs unchanged on either.
+
+### Replay Value Source (US-857, F-162)
+
+UI work should not need the car running. A replay runs a recorded drive back
+through the real capture path:
+
+```json
+"pi": {"replay": {"active": true, "sourcePath": "/tmp/obd-copy.db", "driveId": 117}}
+```
+
+started with `--simulate`. `ReplayValueSource`
+(`src/pi/obdii/simulator/replay_source.py`) provides the five members
+`SimulatedObdConnection` uses -- `profile`, `startEngine`, `stopEngine`,
+`update`, `getValue` -- and loads
+`realtime_data WHERE drive_id = pi.replay.driveId ORDER BY timestamp` from
+`pi.replay.sourcePath`, opened read-only.
+
+| Rule | Behaviour |
+|------|-----------|
+| Timing | `getValue(name)` returns the PID's most recent row at or before `firstTimestamp + (now - startEngine time)`, on a monotonic clock. A drive recorded at ~0.45 Hz per PID replays at the same rate. |
+| Not yet read | Before the PID's first row, for a PID the drive never recorded, before `startEngine` and after `stopEngine`: `None`, never 0. |
+| `update()` | No-op: nothing in the orchestrator calls it, so timing comes from wall time. |
+| Reconnect | `stopEngine` + `startEngine` resumes on the first start's timeline; the drive is not rewound. |
+| End | Once the drive's last row (`ORDER BY timestamp, id`) has been served, `getValue` returns `None` for every PID. |
+| Tagging | Rows written during a replay carry `data_source = 'replay'` (`ObdDataLogger`, from `pi.replay.active`). |
+| Refusals | `pi.replay.sourcePath` equal to the run's own `pi.database.path` is refused by the validator and by the factory (a replay cannot read and write one file); a missing source, or one with no rows for the drive, fails construction (`ReplaySourceError`), which fails orchestrator start fast. |
+
+Only realtime_data is replay-tagged. `drive_summary` and the drive-detector
+`connection_log` rows written during a replay take the schema default `'real'`;
+the replay database is isolated by US-901-a and retagging them is outside
+US-857.
+
+### Sensor Replay Feeder (US-900, F-162)
+
+With `pi.replay.active` true, `LifecycleMixin._startEdrSensorPath` builds
+`SensorReplayFeeder` (`src/pi/sensors/replay_feeder.py`) in place of the IMU and
+light hardware readers. It has the readers' `start()` / `stop()` lifecycle, so
+the EDR persistence subscriber, `LightStateBridge` and `ImuStateBridge` are
+built, started and stopped exactly as on a live run and consume its samples
+unchanged. With `pi.replay.active` false the readers are built as before.
+
+| Rule | Behaviour |
+|------|-----------|
+| Source | `edr_imu_sample` and `edr_light_sample` from `pi.replay.sourcePath`, opened read-only. A sensor is replayed only when its `pi.sensors.{imu,light}.enabled` is set, as a disabled reader is not built. |
+| Window | The replayed drive's first to last `realtime_data` row, the same rows `ReplayValueSource` serves, so offset 0 is the same instant on both feeds. Sensor rows outside it are not replayed. |
+| Topics | IMU: `raw.imu.accel`, `raw.imu.gyro`, `raw.imu.mag` under one seq per recorded row. Light: `raw.light.lux`, `raw.light.raw` under one seq per row. Readers' sources, units and value shapes. Every sample carries `dataSource = 'replay'`. |
+| Timing | `ts_utc` is whole seconds, so a row's offset is the first in-window row's `ts_utc` plus its `ts_capture` distance from that row; a backwards `ts_capture` (a reboot inside the window) re-anchors on that row's `ts_utc`. Time zero is the feeder's `start()`. |
+| Stamps | `tsUtc` is the wall clock at publish and `tsCapture` the monotonic clock, as the live readers stamp theirs (and as the OBD replay stamps its rows), so the bridges' freshness checks see a live feed. |
+| Not read | A NULL lux publishes `None` (saturated, as live). A NULL IMU vector or raw-count triple is not published at all. Never 0. |
+| No rows | A window with no sensor rows, a source without the EDR tables, or a drive with no `realtime_data` rows publishes nothing; the bridges keep their existing no-data state. |
+
+The OBD logger keeps publishing `raw.obd.SPEED` from the replayed rows, so
+`ImuStateBridge`'s speed input is the recording's; the feeder never publishes
+it.
+
+**UPS is not replayed (CIO R36, 2026-10-13).** No drive window holds a recorded
+UPS reading, so no substitute UPS monitor exists: the UPS path is unchanged in
+replay, the battery card keeps reading the live gauge, and the REPLAY marker
+(US-901-b) covers the mixed screen.
 
 ### Built-in Scenarios
 

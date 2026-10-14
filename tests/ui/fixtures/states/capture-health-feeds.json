@@ -1,0 +1,129 @@
+{
+  "cold-boot-obd-null": {
+    "note": "Cold key-on on car power, ECU not answering yet: the sensors and the UPS gauge are live, OBD has written no row this process.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "imu": ["2026-10-13T12:00:21Z", 0.1],
+        "light": ["2026-10-13T12:00:21Z", 0.6],
+        "ups": ["2026-10-13T12:00:20Z", 1.5]
+      }
+    },
+    "payload": {
+      "state": "stalled",
+      "lastRowSecondsAgo": null,
+      "stallSeconds": 60.0,
+      "reason": "never_written",
+      "ts": "2026-10-13T12:00:22Z",
+      "feeds": {
+        "obd": {"state": "unknown", "firstSampleTs": null, "lastSampleSecondsAgo": null},
+        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
+      }
+    }
+  },
+  "all-ok": {
+    "note": "Mid-drive: every feed has produced this process and its newest sample is inside the stall window.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": ["2026-10-13T12:01:05Z", 0.8],
+        "imu": ["2026-10-13T12:00:21Z", 0.1],
+        "light": ["2026-10-13T12:00:21Z", 0.6],
+        "ups": ["2026-10-13T12:00:20Z", 1.5]
+      }
+    },
+    "payload": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.8,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-13T12:10:00Z",
+      "feeds": {
+        "obd": {"state": "ok", "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
+      }
+    }
+  },
+  "one-feed-stalled": {
+    "note": "The light sensor produced earlier this process and has been silent past the stall window; the other feeds are fine.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": ["2026-10-13T12:01:05Z", 0.8],
+        "imu": ["2026-10-13T12:00:21Z", 0.1],
+        "light": ["2026-10-13T12:00:21Z", 95.0],
+        "ups": ["2026-10-13T12:00:20Z", 1.5]
+      }
+    },
+    "payload": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.8,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-13T12:10:00Z",
+      "feeds": {
+        "obd": {"state": "ok", "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "stalled", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 95.0},
+        "ups": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:20Z", "lastSampleSecondsAgo": 1.5}
+      }
+    }
+  },
+  "restart-rearmed": {
+    "note": "eclipse-obd restarted mid-drive: the top-level age comes from the durable table, but every feed re-armed with the new process and OBD has not written its first row yet.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "imu": ["2026-10-13T12:20:03Z", 0.1],
+        "light": ["2026-10-13T12:20:03Z", 0.6],
+        "ups": ["2026-10-13T12:20:02Z", 1.5]
+      }
+    },
+    "payload": {
+      "state": "ok",
+      "lastRowSecondsAgo": 12.0,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-13T12:20:04Z",
+      "feeds": {
+        "obd": {"state": "unknown", "firstSampleTs": null, "lastSampleSecondsAgo": null},
+        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:20:03Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "firstSampleTs": "2026-10-13T12:20:03Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "ok", "firstSampleTs": "2026-10-13T12:20:02Z", "lastSampleSecondsAgo": 1.5}
+      }
+    }
+  },
+  "ups-sentinel": {
+    "note": "The MAX17048 has answered only with the 0xFFFF sentinel (or raised): no UPS sample this process, so null and unknown, never 0.",
+    "input": {
+      "powerSource": "external",
+      "stallSeconds": 60.0,
+      "feedSamples": {
+        "obd": ["2026-10-13T12:01:05Z", 0.8],
+        "imu": ["2026-10-13T12:00:21Z", 0.1],
+        "light": ["2026-10-13T12:00:21Z", 0.6]
+      }
+    },
+    "payload": {
+      "state": "ok",
+      "lastRowSecondsAgo": 0.8,
+      "stallSeconds": 60.0,
+      "reason": null,
+      "ts": "2026-10-13T12:10:00Z",
+      "feeds": {
+        "obd": {"state": "ok", "firstSampleTs": "2026-10-13T12:01:05Z", "lastSampleSecondsAgo": 0.8},
+        "imu": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.1},
+        "light": {"state": "ok", "firstSampleTs": "2026-10-13T12:00:21Z", "lastSampleSecondsAgo": 0.6},
+        "ups": {"state": "unknown", "firstSampleTs": null, "lastSampleSecondsAgo": null}
+      }
+    }
+  }
+}

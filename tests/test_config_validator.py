@@ -1011,6 +1011,158 @@ def test_powerWatch_defaults_applied():
     assert pw["poweroffTimeoutSec"] == 30
 
 
+def test_display_staleObdLiveSec_defaultsToFive():
+    """US-874: the states/obd-live stale window is a validated key, default 5 s
+    (Atlas 2026-10-13: 1.7x the measured per-PID p99 gap), and it matches the
+    producer's mirror constant."""
+    from pi.obdii.obd_live_emitter import DEFAULT_OBD_LIVE_STALE_S
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["stale"]["obdLiveSec"] == 5
+    assert DEFAULT_OBD_LIVE_STALE_S == 5
+
+
+def test_bands_defaults_areSpoolsAndTheCiosNumbers():
+    """US-875: every pi.bands.* default, as the story and its sources name them."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    bands = cfg["pi"]["bands"]
+    assert bands["coolant"] == {
+        "amberC": 104, "amberDwellSec": 30, "redC": 110,
+        "redDwellSec": 120, "clearBelowC": 102, "clearHoldSec": 10,
+    }
+    assert bands["battery"] == {
+        "rpmMaxAgeSec": 3.0, "runningRpmMin": 500, "crankGuardSec": 3,
+        "greenMinV": 13.5, "greenMaxV": 14.5, "redBelowV": 12.0, "redAboveV": 15.0,
+    }
+    assert bands["rpm"] == {"amberRpm": 5500, "redRpm": 7000}
+
+
+def test_bands_noBatteryAmberKey():
+    """US-875 / CIO R38: RED and GREEN only this sprint -- no amber key exists."""
+    from common.config.validator import DEFAULTS
+
+    assert not [k for k in DEFAULTS if k.startswith("pi.bands.battery.") and "amber" in k]
+
+
+def test_bands_eachDefaultCitesItsSource():
+    """US-875: each band default carries a comment with its source."""
+    import inspect
+
+    import common.config.validator as v
+
+    source = inspect.getsource(v)
+    for needle in (
+        "grounded-knowledge :75, Spool 2026-10-13",
+        "grounded-knowledge :368-374",
+        "32,241 RPM samples",
+        "gear staleness rule",
+        "measured N=1 (drive 87 restart 2026-09-26",
+        "not proven",
+        "RPM row (:84)",
+    ):
+        assert needle in source, needle
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "badValue"),
+    [
+        ("coolant", "amberC", 0),
+        ("coolant", "amberDwellSec", -1),
+        ("battery", "rpmMaxAgeSec", "3"),
+        ("battery", "crankGuardSec", True),
+        ("rpm", "redRpm", -7000),
+    ],
+)
+def test_bands_rejectsANonPositiveOrNonNumericValue(section, key, badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"bands": {section: {key: badValue}}}
+    with pytest.raises(ConfigValidationError, match=f"pi.bands.{section}.{key}"):
+        ConfigValidator().validate(bad)
+
+
+@pytest.mark.parametrize(
+    ("section", "overrides"),
+    [
+        ("coolant", {"clearBelowC": 104}),
+        ("coolant", {"redC": 103}),
+        ("coolant", {"redDwellSec": 30}),
+        ("battery", {"redBelowV": 13.5}),
+        ("battery", {"greenMinV": 14.6}),
+        ("battery", {"redAboveV": 14.5}),
+        ("rpm", {"amberRpm": 7000}),
+    ],
+)
+def test_bands_rejectsMisorderedEdges(section, overrides):
+    bad = _baseCfg()
+    bad["pi"] = {"bands": {section: overrides}}
+    with pytest.raises(ConfigValidationError, match="must be"):
+        ConfigValidator().validate(bad)
+
+
+def test_replay_active_defaultsToFalse_andAnExplicitTrueIsKept():
+    """US-901-a: pi.replay.active exists with validator default false (production
+    unchanged), and a replay config's true survives validation."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["replay"]["active"] is False
+
+    replay = _baseCfg()
+    replay["pi"] = {"replay": {"active": True}}
+    assert ConfigValidator().validate(replay)["pi"]["replay"]["active"] is True
+
+
+def test_replay_sourcePathIsTheRunDatabase_refused(tmp_path):
+    """US-857: a replay cannot read and write one file -- pi.replay.sourcePath equal
+    to pi.database.path (also through a '..' spelling) fails validation."""
+    dbPath = tmp_path / "obd.db"
+    for sourcePath in (str(dbPath), str(tmp_path / "sub" / ".." / "obd.db")):
+        bad = _baseCfg()
+        bad["pi"] = {
+            "database": {"path": str(dbPath)},
+            "replay": {"active": True, "sourcePath": sourcePath, "driveId": 117},
+        }
+        with pytest.raises(ConfigValidationError, match="pi.replay.sourcePath"):
+            ConfigValidator().validate(bad)
+
+
+def test_replay_sourcePathDistinctFromTheRunDatabase_validates(tmp_path):
+    ok = _baseCfg()
+    ok["pi"] = {
+        "database": {"path": str(tmp_path / "run.db")},
+        "replay": {
+            "active": True,
+            "sourcePath": str(tmp_path / "copy.db"),
+            "driveId": 117,
+        },
+    }
+    assert ConfigValidator().validate(ok)["pi"]["replay"]["driveId"] == 117
+
+
+def test_replay_inactive_sameSourcePathIsNotChecked(tmp_path):
+    """Production behaviour with replay off is unchanged: a leftover sourcePath is
+    not read and not refused."""
+    dbPath = str(tmp_path / "obd.db")
+    cfg = _baseCfg()
+    cfg["pi"] = {
+        "database": {"path": dbPath},
+        "replay": {"active": False, "sourcePath": dbPath},
+    }
+    ConfigValidator().validate(cfg)
+
+
+@pytest.mark.parametrize("badDriveId", [0, -1, "117", True, 1.5])
+def test_replay_active_rejectsANonPositiveIntegerDriveId(tmp_path, badDriveId):
+    bad = _baseCfg()
+    bad["pi"] = {
+        "replay": {
+            "active": True,
+            "sourcePath": str(tmp_path / "copy.db"),
+            "driveId": badDriveId,
+        },
+    }
+    with pytest.raises(ConfigValidationError, match="pi.replay.driveId"):
+        ConfigValidator().validate(bad)
+
+
 def test_powerWatch_rejectsNonPositiveTimeout():
     cfg = _baseCfg()
     cfg["pi"] = {"powerWatch": {"perTaskTimeoutSec": 0}}

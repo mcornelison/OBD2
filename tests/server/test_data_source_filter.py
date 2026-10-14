@@ -11,6 +11,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-19    | Rex          | Initial implementation for US-195 (CR #4)
+# 2026-10-14    | Rex (US-902) | CIO R28: 'replay' is now rejected at ingest;
+#               |              | the explicit-tag persist case uses 'fixture'.
 # ================================================================================
 ################################################################################
 
@@ -122,7 +124,17 @@ def _buildSyncTables(rows: list[dict]) -> dict:
 
 
 def test_sync_persistsExplicitDataSource(engine):
-    """A row arriving with data_source='replay' is persisted as 'replay'."""
+    """'replay' is rejected at ingest (CIO R28, 2026-10-12); 'fixture' persists.
+
+    Until US-902 this asserted a 'replay' row was persisted as 'replay'. R28
+    reverses that on purpose: the SyncRequest validator refuses the batch
+    with a 422, so a replay row never reaches runSyncUpsert. An accepted
+    explicit tag still lands exactly as sent.
+    """
+    from pydantic import ValidationError
+
+    from src.server.api.sync import SyncRequest
+
     rows = [{
         'id': 1,
         'timestamp': '2026-04-19T12:00:00',
@@ -132,7 +144,14 @@ def test_sync_persistsExplicitDataSource(engine):
         'profile_id': 'daily',
         'data_source': 'replay',
     }]
+    with pytest.raises(ValidationError, match='realtime_data: 1 row'):
+        SyncRequest.model_validate({
+            'deviceId': 'chi-eclipse-01',
+            'batchId': 'batch-1',
+            'tables': _buildSyncTables(rows),
+        })
 
+    rows[0]['data_source'] = 'fixture'
     with Session(engine) as session:
         runSyncUpsert(
             session=session,
@@ -146,7 +165,7 @@ def test_sync_persistsExplicitDataSource(engine):
         fetched = session.execute(
             select(RealtimeData).where(RealtimeData.source_id == 1)
         ).scalar_one()
-        assert fetched.data_source == 'replay'
+        assert fetched.data_source == 'fixture'
 
 
 def test_sync_coercesMissingDataSourceToReal(engine):

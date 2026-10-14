@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial TDD tests for US-CMP-004 — delta sync
+# 2026-10-14    | Rex (US-902) | 422 reject of replay / physics_sim rows (R28)
 # ================================================================================
 ################################################################################
 
@@ -586,6 +587,100 @@ class TestSyncInvalidBody:
         assert response.status_code == 422
 
 
+def _buildMixedSourceRequest(badSource: str = "replay") -> dict:
+    """The US-902 validation case: 2 real realtime_data rows + 1 ``badSource``."""
+    payload = _buildValidRequest()
+    payload["tables"]["realtime_data"]["rows"] = [
+        {
+            "id": i,
+            "timestamp": "2026-04-16T08:00:00",
+            "parameter_name": "RPM",
+            "value": 2500.0,
+            "unit": "rpm",
+            "profile_id": "daily",
+            "data_source": source,
+        }
+        for i, source in enumerate(["real", "real", badSource], start=1)
+    ]
+    return payload
+
+
+class TestSyncRejectsNonLiveDataSource:
+    """US-902 / CIO R28: replay and physics_sim rows are refused at ingest."""
+
+    @pytest.mark.parametrize("badSource", ["replay", "physics_sim"])
+    def test_nonLiveRow_rejectedNamingTableAndCount(self, badSource):
+        from pydantic import ValidationError
+
+        from src.server.api.sync import SyncRequest
+
+        with pytest.raises(ValidationError) as excInfo:
+            SyncRequest.model_validate(_buildMixedSourceRequest(badSource))
+
+        assert (
+            "realtime_data: 1 row(s) with data_source in (replay, physics_sim) "
+            "rejected"
+        ) in str(excInfo.value)
+
+    def test_countsEveryOffendingRowPerTable(self):
+        from pydantic import ValidationError
+
+        from src.server.api.sync import SyncRequest
+
+        payload = _buildMixedSourceRequest("replay")
+        payload["tables"]["realtime_data"]["rows"][0]["data_source"] = "physics_sim"
+        payload["tables"]["connection_log"]["rows"][1]["data_source"] = "replay"
+        with pytest.raises(ValidationError) as excInfo:
+            SyncRequest.model_validate(payload)
+
+        message = str(excInfo.value)
+        assert "realtime_data: 2 row(s)" in message
+        assert "connection_log: 1 row(s)" in message
+
+    def test_dtcFreezeFrameRow_checkedBeforeItsBuilderDropsTheColumn(self):
+        """The server model has no data_source, but the raw row still does."""
+        from pydantic import ValidationError
+
+        from src.server.api.sync import SyncRequest
+
+        payload = _buildValidRequest()
+        payload["tables"] = {
+            "dtc_freeze_frame": {
+                "lastSyncedId": 0,
+                "rows": [{"id": 1, "data_source": "replay"}],
+            },
+        }
+        with pytest.raises(ValidationError, match="dtc_freeze_frame: 1 row"):
+            SyncRequest.model_validate(payload)
+
+    @pytest.mark.parametrize("source", ["real", "fixture", "foreign", None, "absent"])
+    def test_acceptedSource_parsesAsToday(self, source):
+        from src.server.api.sync import SyncRequest
+
+        payload = _buildValidRequest()
+        row = payload["tables"]["realtime_data"]["rows"][0]
+        if source != "absent":
+            row["data_source"] = source
+
+        model = SyncRequest.model_validate(payload)
+
+        assert model.tables["realtime_data"].rows == [row]
+
+    def test_route_returns422_withTableAndCountInDetail(self):
+        from fastapi.testclient import TestClient
+
+        app = _buildAppForRouteTests()
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/sync",
+                json=_buildMixedSourceRequest("replay"),
+                headers={"X-API-Key": "valid-key"},
+            )
+
+        assert response.status_code == 422
+        assert "realtime_data: 1 row(s)" in response.json()["detail"]
+
+
 # ==============================================================================
 # 5) Full route + DB integration — requires aiosqlite
 # ==============================================================================
@@ -735,6 +830,40 @@ class TestSyncHappyPath:
         assert rt[0].parameter_name == "RPM"
         assert len(cl) == 2
         assert {r.event_type for r in cl} == {"drive_start", "drive_end"}
+
+
+@_skipNoAsyncDb
+class TestSyncNonLiveBatchWritesNothing:
+    """US-902: a refused batch leaves obd2db untouched -- not even sync_history."""
+
+    @pytest.mark.asyncio
+    async def test_twoRealOneReplay_returns422_andZeroRowsWritten(
+        self, asyncAppAndEngine,
+    ):
+        import httpx
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        app, engine = asyncAppAndEngine
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/v1/sync",
+                json=_buildMixedSourceRequest("replay"),
+                headers={"X-API-Key": "valid-key"},
+            )
+
+        assert response.status_code == 422
+        assert "realtime_data: 1 row(s)" in response.json()["detail"]
+        async with AsyncSession(engine) as session:
+            rt = (await session.execute(select(RealtimeData))).scalars().all()
+            cl = (await session.execute(select(ConnectionLog))).scalars().all()
+            hist = (await session.execute(select(SyncHistory))).scalars().all()
+
+        assert rt == []
+        assert cl == []
+        assert hist == []
 
 
 @_skipNoAsyncDb

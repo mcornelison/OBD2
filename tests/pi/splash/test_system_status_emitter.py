@@ -16,6 +16,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-400 system-status card)
+# 2026-10-14    | Rex (US-901-b)| runMode: the replay > simulate > live precedence,
+#               |              | the emit forwarding, and the orchestrator gather.
 # ================================================================================
 ################################################################################
 
@@ -24,12 +26,19 @@
 import json
 import os
 
+import pytest
+
+from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
 from pi.splash.system_status_emitter import (
     OBD_DOWN,
     OBD_LINKED,
     OBD_RECONNECTING,
+    RUN_MODE_LIVE,
+    RUN_MODE_REPLAY,
+    RUN_MODE_SIMULATE,
     SYSTEM_STATUS_FILENAME,
     buildSystemStatusState,
+    deriveRunMode,
     isSyncStaleWhileDriving,
     makeSystemStatusEmitter,
 )
@@ -74,6 +83,9 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         "idle": False,
         # US-728: `priorShutdown` is ALWAYS a key (null when not read).
         "priorShutdown": None,
+        # US-901-b: `runMode` is ALWAYS a key; a caller that does not say
+        # otherwise is the production orchestrator, which runs live.
+        "runMode": "live",
         # ARCH-007: `wifi` joins the A-3 schema per the Atlas contract ruling
         # of 2026-08-20. It defaults to UNAVAILABLE, never to a fabricated link:
         # a caller that has not wired the provider must not publish one.
@@ -454,3 +466,146 @@ def test_emitter_neverRaises_onWriteFailure(tmp_path):
         driveId=None,
     )
     assert not os.path.exists(statesDir)
+
+
+# ---------------------------------------------------------------------------
+# US-901-b `runMode` -- is the panel showing the live car?
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("replayActive", "simulate", "expected"),
+    [
+        (False, False, RUN_MODE_LIVE),
+        (False, True, RUN_MODE_SIMULATE),
+        (True, False, RUN_MODE_REPLAY),
+        # Replay rides the --simulate seam (US-857), so both are set during a
+        # replay and replay must win (Atlas ruling 2026-10-13 on Iris S-2).
+        (True, True, RUN_MODE_REPLAY),
+    ],
+)
+def test_deriveRunMode_precedence_replayThenSimulateThenLive(
+    replayActive, simulate, expected
+):
+    """Given the replay flag and the --simulate flag,
+    When deriveRunMode resolves them,
+    Then replay wins over simulate, and live is only the both-off case."""
+    assert deriveRunMode(replayActive=replayActive, simulate=simulate) == expected
+
+
+def test_buildSystemStatusState_runMode_isCarriedVerbatim():
+    """Given a non-live runMode,
+    When the payload is built,
+    Then `runMode` carries it -- and `power` holds no `mode` key, the name
+    US-668 retired and pi.power.mode still owns."""
+    state = buildSystemStatusState(
+        obdLinkState=OBD_LINKED,
+        obdRetries=0,
+        obdLastSeenS=1,
+        syncLastOkTs=_SYNC_OK,
+        syncRows=1,
+        syncPending=0,
+        syncStale=False,
+        powerSource="external",
+        driveState="recording",
+        driveId=3,
+        nowIso=_NOW,
+        runMode=RUN_MODE_REPLAY,
+    )
+    assert state["runMode"] == "replay"
+    assert "mode" not in state
+    assert "mode" not in state["power"]
+
+
+def test_emitter_forwardsRunMode_throughTheJsonRoundTrip(tmp_path):
+    """Given a caller that supplies runMode='simulate',
+    When the emit callable fires,
+    Then the written file carries it. The builder's own default would supply
+    the KEY even if emit dropped the value, so only a non-default value seen
+    on the far side of the write pins the forwarding."""
+    statesDir = str(tmp_path / "states")
+    emit = makeSystemStatusEmitter(
+        statesDir, syncStaleThresholdS=60, nowIsoFn=lambda: _NOW
+    )
+
+    emit(
+        obdLinkState=OBD_LINKED,
+        obdRetries=0,
+        obdLastSeenS=1,
+        syncLastOkTs=_SYNC_OK,
+        syncRows=1,
+        syncPending=0,
+        powerSource="external",
+        driveState="idle",
+        driveId=None,
+        runMode=RUN_MODE_SIMULATE,
+    )
+
+    written = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )
+    assert written["runMode"] == "simulate"
+
+
+class _StubComposer(CardStateEmitterMixin):
+    """The mixin with every OTHER gather stubbed, so only runMode is live."""
+
+    def __init__(self, config: dict, simulate: bool) -> None:
+        self._config = config
+        self._simulate = simulate
+        self._lastSyncOkTsIso = None
+        self._lastSyncRows = 0
+        self.calls: list[dict] = []
+        self._systemStatusEmitter = lambda **kw: self.calls.append(kw)
+
+    def _gatherObdLinkState(self):
+        return OBD_LINKED, 0, True, None
+
+    def _gatherPowerState(self):
+        return "external", None
+
+    def _gatherDriveState(self):
+        return "idle", None
+
+    def _gatherLastDriveSummary(self):
+        return None
+
+    def _gatherPriorShutdown(self):
+        return None
+
+
+@pytest.mark.parametrize(
+    ("config", "simulate", "expected"),
+    [
+        ({}, False, "live"),
+        ({"pi": {"replay": {"active": False}}}, False, "live"),
+        ({}, True, "simulate"),
+        ({"pi": {"replay": {"active": True}}}, True, "replay"),
+        ({"pi": {"replay": {"active": True}}}, False, "replay"),
+    ],
+)
+def test_orchestratorEmit_passesRunMode_fromReplayConfigAndSimulateFlag(
+    config, simulate, expected
+):
+    """Given the orchestrator's config and its --simulate flag,
+    When the system-status tick fires,
+    Then the emitter receives the runMode those two facts resolve to."""
+    composer = _StubComposer(config, simulate)
+
+    composer._emitSystemStatusState()
+
+    assert len(composer.calls) == 1
+    assert composer.calls[0]["runMode"] == expected
+
+
+def test_orchestratorEmit_noSimulateAttribute_isLive():
+    """Given a composer that never set `_simulate` (the standalone composers),
+    When the tick fires,
+    Then runMode is live -- the attribute is read through getattr, so an
+    older composer keeps emitting instead of raising AttributeError."""
+    composer = _StubComposer({}, False)
+    del composer._simulate
+
+    composer._emitSystemStatusState()
+
+    assert composer.calls[0]["runMode"] == "live"

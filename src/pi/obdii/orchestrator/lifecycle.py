@@ -283,6 +283,10 @@
 #               |              | the rest.
 # 2026-10-03    | Atlas (ARCH-065a) | DrainEventWriter built with cellEpoch from pi.power.cellEpoch.
 #                               ARCH-065 T5: via resolveCellEpoch (one resolver).
+# 2026-10-14    | Rex (US-901-a)| SyncClient built with simulate=self._simulate so
+#                               a --simulate run refuses every push (CIO R37).
+# 2026-10-14    | Rex (US-900) | _startEdrSensorPath starts the sensor replay
+#                               feeder in the readers' place when pi.replay.active.
 # ================================================================================
 ################################################################################
 
@@ -1741,8 +1745,21 @@ class LifecycleMixin:
         path or disturb the OBD capture path.
         """
         try:
-            from pi.sensors.sensor_reader import createSensorReadersFromConfig
-            readers = createSensorReadersFromConfig(self._config, bus)
+            replayActive = bool(
+                (self._config.get('pi', {}).get('replay', {}) or {}).get('active', False)
+            )
+            if replayActive:
+                # US-900: a replay publishes the recorded drive's IMU/light rows
+                # in the readers' place, so the subscriber and bridges below
+                # consume them unchanged. UPS is not replayed (R36).
+                from pi.sensors.replay_feeder import (
+                    createSensorReplayFeederFromConfig,
+                )
+                feeder = createSensorReplayFeederFromConfig(self._config, bus)
+                readers = [feeder] if feeder is not None else []
+            else:
+                from pi.sensors.sensor_reader import createSensorReadersFromConfig
+                readers = createSensorReadersFromConfig(self._config, bus)
             if not readers:
                 return  # no sensor enabled -> ships dark
             from pi.bus.edr_log_gate import (
@@ -2045,7 +2062,9 @@ class LifecycleMixin:
             return
         try:
             from pi.sync.client import SyncClient
-            self._syncClient = SyncClient(self._config)
+            # US-901-a (CIO R37): a --simulate run must never reach the
+            # server, so the client is told which run it belongs to.
+            self._syncClient = SyncClient(self._config, simulate=self._simulate)
             if not self._syncClient.isEnabled:
                 logger.info(
                     "SyncClient constructed but companion service disabled "

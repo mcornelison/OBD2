@@ -115,6 +115,8 @@
 # 2026-10-03    | Atlas (ARCH-065a) | startup_log gains prior_boot_sync_started_at /
 #                               _sync_ended_at / _vcell_before_cut_v.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: startup_log gains prior_boot_loss_at.
+# 2026-10-13    | Rex (US-860-a)| Added SCHEMA_BOOT_MILESTONE -- the forward boot
+#               |              | record, one first-write-wins row per rung.
 # ================================================================================
 ################################################################################
 
@@ -799,6 +801,35 @@ CREATE TABLE IF NOT EXISTS startup_log (
 );
 """
 
+# Boot milestone ladder: the FORWARD boot record (US-860-a, F-157).  startup_log
+# describes the PREVIOUS boot's shutdown; this table records when THIS boot
+# reached each rung, kernel start -> drive start.  One row per (boot, rung),
+# first-write-wins: the writer in src/pi/diagnostics/boot_milestone.py uses
+# INSERT OR IGNORE on the composite PK, so a second connect or a second drive
+# in the same boot never moves a recorded rung.  A rung the boot never reached
+# has NO row.  ``ts_utc`` is the EVENT's canonical ISO-8601 UTC time;
+# ``uptime_s`` is that event minus kernel_start's ts_utc (kernel_start itself
+# is 0).  The rung vocabulary is enforced by the writer, not a CHECK, so a
+# later rung reaches a populated table without a rebuild.  Pi-local until
+# US-860-b syncs it.
+SCHEMA_BOOT_MILESTONE = """
+CREATE TABLE IF NOT EXISTS boot_milestone (
+    -- Boot id as startup_log carries it (boot_progress.readBootId).
+    boot_id TEXT NOT NULL,
+
+    -- One of boot_milestone.MILESTONES.
+    milestone TEXT NOT NULL,
+
+    -- When the event happened (canonical ISO-8601 UTC), not when it was written.
+    ts_utc TEXT NOT NULL,
+
+    -- Seconds from kernel_start's ts_utc to this event's ts_utc.
+    uptime_s REAL NOT NULL,
+
+    PRIMARY KEY (boot_id, milestone)
+);
+"""
+
 #: US-776-f (+ ARCH-065): the eight columns :func:`ensureStartupLogPriorBootSyncColumns`
 #: brings to an existing startup_log, in SCHEMA_STARTUP_LOG order.
 STARTUP_LOG_PRIOR_BOOT_SYNC_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -1095,6 +1126,9 @@ ALL_SCHEMAS = [
     ('power_log', SCHEMA_POWER_LOG),
     ('drive_counter', SCHEMA_DRIVE_COUNTER),
     ('startup_log', SCHEMA_STARTUP_LOG),
+    # US-860-a: CREATE IF NOT EXISTS, so an existing Pi DB gains it on the next
+    # initialize() with nothing else touched.
+    ('boot_milestone', SCHEMA_BOOT_MILESTONE),
     # ``drive_statistics`` retired V0.27.17 per US-351 / B-104 Step 1b
     # (CIO 2026-05-21 ratification).  ensureDriveStatisticsRetired() drops
     # the table on first boot; server-side compute is sole writer now.

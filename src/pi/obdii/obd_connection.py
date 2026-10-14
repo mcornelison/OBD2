@@ -112,6 +112,9 @@
 #                |              | query and generation bump, outside _ioLock);
 #                |              | steady state writes none.  getStatus() and
 #                |              | toDict() unchanged.
+# 2026-10-13    | Rex (US-860-a)| connect_success writes the boot's obd_connected
+#                |              | milestone at the connect's own time; the first
+#                |              | connect of the boot wins.
 # ================================================================================
 ################################################################################
 
@@ -145,7 +148,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -1156,6 +1159,9 @@ class ObdConnection:
 
                     # Check if connection was successful
                     if self._isConnected():
+                        # US-860-a: the connect's EVENT time, taken before the
+                        # PID probe below can delay it.
+                        connectedAtUtc = datetime.now(UTC)
                         self._status.state = ConnectionState.CONNECTED
                         self._status.connected = True
                         self._status.lastConnectTime = datetime.now()
@@ -1182,6 +1188,7 @@ class ObdConnection:
                         )
                         # US-793-c: a new generation has not been read yet.
                         self._logReachabilityTransition()
+                        self._recordObdConnectedMilestone(connectedAtUtc)
 
                         logger.info(f"Connected to OBD-II dongle | mac={self.macAddress} | attempts={attempt + 1}")
                         return True
@@ -1678,6 +1685,19 @@ class ObdConnection:
 
         self.resetTransport()
         return self.connectOnce()
+
+    def _recordObdConnectedMilestone(self, connectedAtUtc: datetime) -> None:
+        """US-860-a: write the boot's obd_connected rung at the connect's time.
+
+        First-write-wins in the table, so a reconnect later in the boot leaves
+        the first connect's row alone. Best-effort: the writer logs its own
+        failures and never fails the connect.
+        """
+        if self.database is None:
+            return
+        from src.pi.diagnostics.boot_milestone import OBD_CONNECTED, recordMilestone
+
+        recordMilestone(self.database, OBD_CONNECTED, connectedAtUtc)
 
     def _logConnectionEvent(
         self,

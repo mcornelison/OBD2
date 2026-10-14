@@ -36,6 +36,7 @@
 # ================================================================================
 # 2026-09-08    | Rex (US-688) | Initial -- the capture-health decision, its
 #               |              | off-transport gate, and the four states.
+# 2026-10-13    | Rex (US-873) | The feeds block and its fixture contract pin.
 # ================================================================================
 ################################################################################
 
@@ -432,3 +433,187 @@ class TestThePayload:
         default. Same rule `sysLevelRank` applies in the renderer.
         """
         assert _build(powerSource="solar")["state"] == ch.STATE_UNKNOWN
+
+
+# ------------------------------------------------------------ US-873: the feeds
+
+_FIXTURE = (
+    __import__("pathlib").Path(__file__).resolve().parents[2]
+    / "ui" / "fixtures" / "states" / "capture-health-feeds.json"
+)
+
+_FEED_KEYS = {"state", "firstSampleTs", "lastSampleSecondsAgo"}
+_TOP_LEVEL_KEYS = {"state", "lastRowSecondsAgo", "stallSeconds", "reason", "ts"}
+
+
+def _feeds(feedSamples, *, powerSource="external", stallSeconds=_STALL_S):
+    return ch.buildCaptureFeedsState(
+        feedSamples=feedSamples, powerSource=powerSource, stallSeconds=stallSeconds
+    )
+
+
+class TestTheFeedsBlock:
+    """US-873: each feed's state, first sample this process and last sample age."""
+
+    def test_buildCaptureFeedsState_hasExactlyTheFourFeeds(self) -> None:
+        """
+        Given: feed facts for all four feeds plus one the producer does not know
+        When: the feeds block is built
+        Then: exactly obd/imu/light/ups, each {state, firstSampleTs, lastSampleSecondsAgo}
+        """
+        feeds = _feeds({
+            "obd": ("2026-10-13T12:01:05Z", 1.0),
+            "imu": ("2026-10-13T12:00:21Z", 0.1),
+            "light": ("2026-10-13T12:00:21Z", 0.5),
+            "ups": ("2026-10-13T12:00:20Z", 1.5),
+            "gps": ("2026-10-13T12:00:20Z", 1.0),
+        })
+
+        assert set(feeds) == {"obd", "imu", "light", "ups"}
+        for entry in feeds.values():
+            assert set(entry) == _FEED_KEYS
+            assert entry["state"] in {"ok", "stalled", "idle", "unknown"}
+
+    def test_buildCaptureFeedsState_obdRowsOnly_othersNullNeverZero(self) -> None:
+        """
+        Given: OBD rows written and no IMU/light/UPS samples (validation 1)
+        When: the feeds block is built
+        Then: obd carries its first sample; the other three are null and unknown
+        """
+        feeds = _feeds({"obd": ("2026-10-13T12:01:05Z", 2.0)})
+
+        assert feeds["obd"] == {
+            "state": ch.STATE_OK,
+            "firstSampleTs": "2026-10-13T12:01:05Z",
+            "lastSampleSecondsAgo": 2.0,
+        }
+        for name in ("imu", "light", "ups"):
+            assert feeds[name]["firstSampleTs"] is None
+            assert feeds[name]["lastSampleSecondsAgo"] is None
+            assert feeds[name]["state"] in {ch.STATE_UNKNOWN, ch.STATE_IDLE}
+
+    def test_buildCaptureFeedsState_noSampleOnBattery_isIdle(self) -> None:
+        """
+        Given: the key is off and a feed has produced nothing
+        When: the feeds block is built
+        Then: idle with null values -- the same power gate as the verdict
+        """
+        feeds = _feeds({}, powerSource="battery")
+
+        assert {e["state"] for e in feeds.values()} == {ch.STATE_IDLE}
+        assert all(e["lastSampleSecondsAgo"] is None for e in feeds.values())
+
+    def test_buildCaptureFeedsState_ageOutsideTheWindow_isStalled(self) -> None:
+        """
+        Given: a feed whose newest sample is older than the stall window
+        When: the feeds block is built
+        Then: that feed alone is stalled, judged against the window passed in
+        """
+        feeds = _feeds({
+            "light": ("2026-10-13T12:00:21Z", _STALL_S + 0.1),
+            "imu": ("2026-10-13T12:00:21Z", _STALL_S),
+        })
+
+        assert feeds["light"]["state"] == ch.STATE_STALLED
+        assert feeds["imu"]["state"] == ch.STATE_OK
+
+    def test_buildCaptureFeedsState_powerUnresolved_isUnknown(self) -> None:
+        """
+        Given: a fresh sample but an unresolved power source
+        When: the feeds block is built
+        Then: unknown -- an unreadable gate yields neither alarm nor all-clear
+        """
+        feeds = _feeds({"imu": ("2026-10-13T12:00:21Z", 0.1)}, powerSource="unknown")
+
+        assert feeds["imu"]["state"] == ch.STATE_UNKNOWN
+        assert feeds["imu"]["lastSampleSecondsAgo"] == 0.1
+
+    @pytest.mark.parametrize("badAge", [-1.0, float("nan"), float("inf"), "soon", True])
+    def test_buildCaptureFeedsState_unusableAge_isNullNeverClamped(self, badAge) -> None:
+        """
+        Given: an age that is negative, non-finite or not a number
+        When: the feeds block is built
+        Then: null, never 0 -- a broken clock is not a fresh sample
+        """
+        feeds = _feeds({"ups": ("2026-10-13T12:00:20Z", badAge)})
+
+        assert feeds["ups"]["lastSampleSecondsAgo"] is None
+        assert feeds["ups"]["state"] == ch.STATE_UNKNOWN
+
+    def test_feedsBlock_isAdditive_topLevelUnchanged(self, tmp_path) -> None:
+        """
+        Given: the real emitter, called with and without feed facts
+        When: each writes states/capture-health
+        Then: the five top-level fields are identical; only `feeds` is added
+        """
+        import json
+
+        emit = ch.makeCaptureHealthEmitter(str(tmp_path), nowIsoFn=lambda: _NOW)
+        args = {
+            "lastRowSecondsAgo": 1.0,
+            "freshnessReason": None,
+            "powerSource": "external",
+            "stallSeconds": _STALL_S,
+        }
+        emit(**args)
+        before = json.loads((tmp_path / ch.CAPTURE_HEALTH_FILENAME).read_text())
+        emit(**args, feedSamples={"obd": ("2026-10-13T12:01:05Z", 1.0)})
+        after = json.loads((tmp_path / ch.CAPTURE_HEALTH_FILENAME).read_text())
+
+        assert set(before) == _TOP_LEVEL_KEYS
+        assert set(after) == _TOP_LEVEL_KEYS | {"feeds"}
+        assert {k: after[k] for k in _TOP_LEVEL_KEYS} == before
+
+    def test_buildCaptureHealthState_signatureUnchangedByTheFeeds(self) -> None:
+        """
+        Given: the US-873 feeds block
+        When: the verdict's own builder is inspected
+        Then: it gained no parameter -- the feeds are a separate pure function
+        """
+        import inspect
+
+        params = list(inspect.signature(ch.buildCaptureHealthState).parameters)
+
+        assert params == [
+            "lastRowSecondsAgo", "freshnessReason", "powerSource", "stallSeconds", "nowIso",
+        ]
+
+
+class TestTheFixtureContract:
+    """R29 contract pin: the page-side fixture matches what the builder emits."""
+
+    _CASES = (
+        "cold-boot-obd-null", "all-ok", "one-feed-stalled", "restart-rearmed", "ups-sentinel",
+    )
+
+    def _load(self) -> dict:
+        import json
+
+        return json.loads(_FIXTURE.read_text(encoding="utf-8"))
+
+    def test_fixture_namesEveryRequiredCase(self) -> None:
+        """
+        Given: tests/ui/fixtures/states/capture-health-feeds.json
+        When: it is loaded
+        Then: it is an object holding exactly the five named cases
+        """
+        assert set(self._load()) == set(self._CASES)
+
+    @pytest.mark.parametrize("case", _CASES)
+    def test_fixture_everyCaseIsWhatTheBuilderEmits(self, case: str) -> None:
+        """
+        Given: one named fixture case
+        When: its input is fed to buildCaptureFeedsState
+        Then: the output equals the case's feeds, and the payload has the
+              published top-level shape
+        """
+        entry = self._load()[case]
+        given = entry["input"]
+        samples = {k: tuple(v) for k, v in given["feedSamples"].items()}
+
+        built = _feeds(
+            samples, powerSource=given["powerSource"], stallSeconds=given["stallSeconds"]
+        )
+
+        assert built == entry["payload"]["feeds"]
+        assert set(entry["payload"]) == _TOP_LEVEL_KEYS | {"feeds"}

@@ -2368,6 +2368,38 @@
     return isObj(systemStatusData) && systemStatusData.idle === true;
   }
 
+  // US-901-b (F-162; SSOT specs/v030-frame-and-style-design.md s3.1) -- is the
+  // glass showing the live car? Two producers answer: system-status.runMode
+  // (live / simulate / replay) and obd-live.dataSource (US-874). EITHER saying
+  // "not live" raises the marker: if the two disagree that is a fault, and the
+  // panel still marks itself (Atlas S-3). Replay wins over SIM, because a replay
+  // rides the --simulate seam (US-857). A value this page does not recognise is
+  // NOT LIVE -- never blank, never hidden, because hiding it would present
+  // unknown data as live.
+  //
+  // null is NOT READ (sprint constraint), so it makes no claim either way, the
+  // same as an absent key. obd-live publishes dataSource null before any logger
+  // has resolved a tag, which a live boot does -- marking it would flag the car.
+  //
+  // Returns null (no marker) or {text, tier}; tier names the font-size token,
+  // and NOT LIVE takes the meta tier so it fits REPLAY's box.
+  function notLiveMarker(systemStatusData, obdLiveData) {
+    var runMode = isObj(systemStatusData) ? systemStatusData.runMode : undefined;
+    var dataSource = isObj(obdLiveData) ? obdLiveData.dataSource : undefined;
+    var runModeNotLive =
+      runMode !== undefined && runMode !== null && runMode !== "live";
+    var sourceNotLive =
+      dataSource !== undefined && dataSource !== null && dataSource !== "real";
+    if (!runModeNotLive && !sourceNotLive) return null;
+    if (runMode === "replay" || dataSource === "replay") {
+      return { text: "REPLAY", tier: "label" };
+    }
+    if (runMode === "simulate" || dataSource === "physics_sim") {
+      return { text: "SIM", tier: "label" };
+    }
+    return { text: "NOT LIVE", tier: "meta" };
+  }
+
   // Last-drive summary fact (US-505). `drive.lastDrive` is the most recent
   // COMPLETED drive, produced Pi-locally from drive_summary -- a DIFFERENT fact
   // from `drive.driveId`, which is the ACTIVE drive and is null whenever nothing
@@ -4066,6 +4098,7 @@
     fmtClock: fmtClock,
     fmtStamp: fmtStamp,
     carouselIdle: carouselIdle,
+    notLiveMarker: notLiveMarker,
     agoText: agoText,
     idleLastDriveFact: idleLastDriveFact,
     idleBatteryFact: idleBatteryFact,
@@ -4891,6 +4924,25 @@
       if (text === lastClockText) return;
       lastClockText = text;
       clockEl.textContent = text;
+    }
+
+    // US-901-b: paint the not-live marker and hide the clock under it. Block
+    // scope, beside the clock, for the same reason the clock lives here: the
+    // 4 Hz tick calls it from inside `startAvailabilityPoll`. Writes only on a
+    // change, like the clock.
+    var markerEl = null;
+    var lastMarkerKey = null;
+    function renderNotLiveMarker(marker) {
+      if (!markerEl) markerEl = document.getElementById("not-live-marker");
+      if (!clockEl) clockEl = document.getElementById("topbar-clock");
+      if (!markerEl) return;
+      var key = marker ? marker.text + "|" + marker.tier : "";
+      if (key === lastMarkerKey) return;
+      lastMarkerKey = key;
+      markerEl.textContent = marker ? marker.text : "";
+      markerEl.setAttribute("data-tier", marker ? marker.tier : "label");
+      markerEl.hidden = !marker;
+      if (clockEl) clockEl.classList.toggle("masked", !!marker);
     }
 
     var setup = function () {
@@ -6223,6 +6275,11 @@
         // just read. An unavailable system-status leaves sysData null here, which
         // fails closed to hidden -- no vehicle card without a vehicle.
         applyVehicleGate(sysData);
+        // US-901-b: the not-live marker, from the SAME system-status every
+        // other surface on this tick read (cached) plus states/obd-live.
+        renderNotLiveMarker(
+          notLiveMarker(await stateOnce("system-status"), await stateOnce("obd-live"))
+        );
         // US-405/US-406: drive the takeover + persistent ribbon from the same
         // `dtc` state the Alerts card rendered (one fetch per tick).
         updateDtcSurfaces(dtcData);

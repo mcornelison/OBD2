@@ -76,6 +76,10 @@ import logging
 import subprocess
 from collections.abc import Callable, Iterable
 
+# src.pi. prefix: powerwatch runs as `python -m src.pi.power.power_watch`.
+# unit_manifest is stdlib-only, so this cannot pull in the display chain.
+from src.pi.ops.unit_manifest import KIOSK_UNIT, UNIT_SUFFIX
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["DEFAULT_SHED_UNITS", "LoadShedder", "TRIGGERED_UNITS", "systemctlRunner"]
@@ -86,7 +90,9 @@ __all__ = ["DEFAULT_SHED_UNITS", "LoadShedder", "TRIGGERED_UNITS", "systemctlRun
 #: unit, never "stop everything". The grace splash is deliberately absent: it is
 #: the shutdown animation the CIO kept (US-796).
 #: ``install.sh`` installs the .wayland/.x11 variant under this one runtime name.
-DEFAULT_SHED_UNITS: tuple[str, ...] = ("eclipse-dashboard",)
+#: US-884: derived from ``unit_manifest.KIOSK_UNIT`` -- whichever kiosk runs is
+#: the one shed. Kept in the bare (no ``.service``) form it has always had.
+DEFAULT_SHED_UNITS: tuple[str, ...] = (KIOSK_UNIT.removesuffix(UNIT_SUFFIX),)
 
 #: Units started by a trigger, never by the shedder. Stopped on shed, never
 #: started on restore -- restoring the trigger is what restores them. Empty by
