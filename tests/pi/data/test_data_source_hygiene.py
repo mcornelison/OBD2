@@ -18,6 +18,8 @@
 #                               when its connection is SimulatedObdConnection
 #                               and helpers.logReading accepts a dataSource
 #                               keyword.
+# 2026-10-14    | Rex (US-857) | A replay (pi.replay.active) through the real
+#                               simulated connection writes 'replay' rows.
 # ================================================================================
 ################################################################################
 
@@ -55,6 +57,7 @@ string literal).
 from __future__ import annotations
 
 import ast
+import sqlite3
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -67,6 +70,9 @@ from src.pi.obdii.data.logger import ObdDataLogger
 from src.pi.obdii.data.types import LoggedReading
 from src.pi.obdii.data_source import CAPTURE_TABLES, DATA_SOURCE_VALUES
 from src.pi.obdii.database import ObdDatabase
+from src.pi.obdii.simulator.simulated_connection import (
+    createSimulatedConnectionFromConfig,
+)
 
 # ================================================================================
 # Fixtures
@@ -313,6 +319,54 @@ class TestObdDataLoggerDataSourceDerivation:
             freshDb, "SELECT data_source FROM realtime_data"
         )
         assert row[0] == "real"
+
+
+class TestReplayRowsTaggedReplay:
+    """US-857: rows logged during a replay carry data_source 'replay'."""
+
+    def test_replayThroughSimulatedConnection_writesReplayRows(
+        self, freshDb, tmp_path: Path
+    ) -> None:
+        """
+        Given: a recorded drive in a source db and pi.replay.active
+        When: the real simulated connection (replay source) feeds ObdDataLogger
+        Then: the row carries the recorded value and data_source 'replay'
+        """
+        sourcePath = tmp_path / "source.db"
+        src = sqlite3.connect(str(sourcePath))
+        try:
+            src.execute(
+                "CREATE TABLE realtime_data (id INTEGER PRIMARY KEY, "
+                "timestamp TEXT, parameter_name TEXT, value REAL, drive_id INTEGER)"
+            )
+            src.execute(
+                "INSERT INTO realtime_data (timestamp, parameter_name, value, "
+                "drive_id) VALUES ('2026-10-01T12:00:00Z', 'RPM', 812.0, 117)"
+            )
+            src.commit()
+        finally:
+            src.close()
+        config = {
+            "pi": {
+                "time": {"localZone": "America/Chicago"},
+                "simulator": {"connectionDelaySeconds": 0},
+                "replay": {
+                    "active": True,
+                    "sourcePath": str(sourcePath),
+                    "driveId": 117,
+                },
+            }
+        }
+        conn = createSimulatedConnectionFromConfig(config, freshDb)
+        conn.connect()
+        logger = ObdDataLogger(conn, freshDb, profileId=None, config=config)
+
+        assert logger.dataSource == "replay"
+        logger.queryAndLogParameter("RPM")
+        row = _fetchOneRow(
+            freshDb, "SELECT value, data_source FROM realtime_data"
+        )
+        assert tuple(row) == (812.0, "replay")
 
 
 # ================================================================================

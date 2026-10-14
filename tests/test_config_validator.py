@@ -1109,6 +1109,59 @@ def test_replay_active_defaultsToFalse_andAnExplicitTrueIsKept():
     assert ConfigValidator().validate(replay)["pi"]["replay"]["active"] is True
 
 
+def test_replay_sourcePathIsTheRunDatabase_refused(tmp_path):
+    """US-857: a replay cannot read and write one file -- pi.replay.sourcePath equal
+    to pi.database.path (also through a '..' spelling) fails validation."""
+    dbPath = tmp_path / "obd.db"
+    for sourcePath in (str(dbPath), str(tmp_path / "sub" / ".." / "obd.db")):
+        bad = _baseCfg()
+        bad["pi"] = {
+            "database": {"path": str(dbPath)},
+            "replay": {"active": True, "sourcePath": sourcePath, "driveId": 117},
+        }
+        with pytest.raises(ConfigValidationError, match="pi.replay.sourcePath"):
+            ConfigValidator().validate(bad)
+
+
+def test_replay_sourcePathDistinctFromTheRunDatabase_validates(tmp_path):
+    ok = _baseCfg()
+    ok["pi"] = {
+        "database": {"path": str(tmp_path / "run.db")},
+        "replay": {
+            "active": True,
+            "sourcePath": str(tmp_path / "copy.db"),
+            "driveId": 117,
+        },
+    }
+    assert ConfigValidator().validate(ok)["pi"]["replay"]["driveId"] == 117
+
+
+def test_replay_inactive_sameSourcePathIsNotChecked(tmp_path):
+    """Production behaviour with replay off is unchanged: a leftover sourcePath is
+    not read and not refused."""
+    dbPath = str(tmp_path / "obd.db")
+    cfg = _baseCfg()
+    cfg["pi"] = {
+        "database": {"path": dbPath},
+        "replay": {"active": False, "sourcePath": dbPath},
+    }
+    ConfigValidator().validate(cfg)
+
+
+@pytest.mark.parametrize("badDriveId", [0, -1, "117", True, 1.5])
+def test_replay_active_rejectsANonPositiveIntegerDriveId(tmp_path, badDriveId):
+    bad = _baseCfg()
+    bad["pi"] = {
+        "replay": {
+            "active": True,
+            "sourcePath": str(tmp_path / "copy.db"),
+            "driveId": badDriveId,
+        },
+    }
+    with pytest.raises(ConfigValidationError, match="pi.replay.driveId"):
+        ConfigValidator().validate(bad)
+
+
 def test_powerWatch_rejectsNonPositiveTimeout():
     cfg = _baseCfg()
     cfg["pi"] = {"powerWatch": {"perTaskTimeoutSec": 0}}

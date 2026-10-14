@@ -7308,6 +7308,7 @@ The simulator subsystem provides hardware-free testing capabilities, enabling de
 |-----------|---------|
 | `SimulatedObdConnection` | Drop-in replacement for ObdConnection, same interface |
 | `SensorSimulator` | Physics-based sensor value generation with noise |
+| `ReplayValueSource` | Replays a recorded drive's `realtime_data` rows on the drive's own timing (US-857, F-162) |
 | `VehicleProfile` | Vehicle characteristics (RPM limits, temperatures, etc.) |
 | `DriveScenario` | Predefined sequences of drive phases |
 | `DriveScenarioRunner` | Executes scenarios with smooth transitions |
@@ -7317,9 +7318,49 @@ The simulator subsystem provides hardware-free testing capabilities, enabling de
 
 ### Activation
 
-Simulator mode is enabled via:
-1. CLI flag: `python src/main.py --simulate`
-2. Config: `simulator.enabled: true` in obd_config.json
+The simulation flag is the CLI flag `python src/pi/main.py --simulate`. It is
+not a config key: it lives only on the orchestrator's `_simulate`, and
+`LifecycleMixin._initializeConnection` is its one reader -- with it set the
+connection is `createSimulatedConnectionFromConfig(config, database)`, otherwise
+the real `ObdConnection`. A `--simulate` run never pushes to the server and
+refuses the production database and states dir (US-901-a, CIO R37; see Data
+Source Tagging).
+
+`createSimulatedConnectionFromConfig` picks the connection's value source:
+`ReplayValueSource` when `pi.replay.active` is true, otherwise today's
+`SensorSimulator`. Everything after the connection -- orchestrator, logger,
+gear, card emitters, state files -- runs unchanged on either.
+
+### Replay Value Source (US-857, F-162)
+
+UI work should not need the car running. A replay runs a recorded drive back
+through the real capture path:
+
+```json
+"pi": {"replay": {"active": true, "sourcePath": "/tmp/obd-copy.db", "driveId": 117}}
+```
+
+started with `--simulate`. `ReplayValueSource`
+(`src/pi/obdii/simulator/replay_source.py`) provides the five members
+`SimulatedObdConnection` uses -- `profile`, `startEngine`, `stopEngine`,
+`update`, `getValue` -- and loads
+`realtime_data WHERE drive_id = pi.replay.driveId ORDER BY timestamp` from
+`pi.replay.sourcePath`, opened read-only.
+
+| Rule | Behaviour |
+|------|-----------|
+| Timing | `getValue(name)` returns the PID's most recent row at or before `firstTimestamp + (now - startEngine time)`, on a monotonic clock. A drive recorded at ~0.45 Hz per PID replays at the same rate. |
+| Not yet read | Before the PID's first row, for a PID the drive never recorded, before `startEngine` and after `stopEngine`: `None`, never 0. |
+| `update()` | No-op: nothing in the orchestrator calls it, so timing comes from wall time. |
+| Reconnect | `stopEngine` + `startEngine` resumes on the first start's timeline; the drive is not rewound. |
+| End | Once the drive's last row (`ORDER BY timestamp, id`) has been served, `getValue` returns `None` for every PID. |
+| Tagging | Rows written during a replay carry `data_source = 'replay'` (`ObdDataLogger`, from `pi.replay.active`). |
+| Refusals | `pi.replay.sourcePath` equal to the run's own `pi.database.path` is refused by the validator and by the factory (a replay cannot read and write one file); a missing source, or one with no rows for the drive, fails construction (`ReplaySourceError`), which fails orchestrator start fast. |
+
+Only realtime_data is replay-tagged. `drive_summary` and the drive-detector
+`connection_log` rows written during a replay take the schema default `'real'`;
+the replay database is isolated by US-901-a and retagging them is outside
+US-857.
 
 ### Built-in Scenarios
 

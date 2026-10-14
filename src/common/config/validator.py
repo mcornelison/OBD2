@@ -127,6 +127,9 @@
 #                                mis-ordered band edge.
 # 2026-10-14    | Rex (US-901-a)| pi.replay.active: False (replay never reaches
 #                                the server or the production database).
+# 2026-10-14    | Rex (US-857) | _validateReplay: an active replay refuses a
+#                                sourcePath that is pi.database.path and a
+#                                driveId that is not a positive integer.
 # ================================================================================
 ################################################################################
 
@@ -149,6 +152,7 @@ Usage:
 import ipaddress
 import logging
 import math
+import os
 import zoneinfo
 from typing import Any
 
@@ -813,6 +817,10 @@ DEFAULTS: dict[str, Any] = {
     # (REFUSED, nothing written to sync_log), main.py refuse the production
     # database and states dir, and rows carry data_source 'replay'. Off in
     # production: with it false sync and start-up are unchanged.
+    # US-857: an active replay also reads pi.replay.sourcePath (a COPY of a
+    # database holding the drive) and pi.replay.driveId. Neither has a default:
+    # they name a recording, and _validateReplay refuses a sourcePath that is
+    # the run's own pi.database.path.
     'pi.replay.active': False,
     # US-290 / TD-007: generateTimeoutSeconds closes the lone holdout from
     # US-OLL-002 (which made apiTimeoutSeconds + healthTimeoutSeconds
@@ -939,6 +947,7 @@ class ConfigValidator:
         self._validateCellEpoch(config)
         self._validateDisplayAutoDim(config)
         self._validateBands(config)
+        self._validateReplay(config)
         self._validateImuStateBridge(config)
         self._validateLocalZone(config)
 
@@ -1437,6 +1446,46 @@ class ConfigValidator:
                     f"({values[high]!r})",
                     missingFields=[low, high],
                 )
+
+    def _validateReplay(self, config: dict[str, Any]) -> None:
+        """Validate pi.replay.* for an active replay (US-857).
+
+        Only an active replay is checked; with ``pi.replay.active`` false the
+        other keys are never read. A present ``driveId`` must be a positive
+        integer, and ``sourcePath`` may not resolve to the run's own
+        ``pi.database.path`` -- the replay cannot read and write one file.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If driveId is not a positive integer or the
+                source is the run's database.
+        """
+        if not self._getNestedValue(config, 'pi.replay.active'):
+            return
+
+        driveId = self._getNestedValue(config, 'pi.replay.driveId')
+        if driveId is not None and (
+            isinstance(driveId, bool) or not isinstance(driveId, int) or driveId <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.replay.driveId must be a positive integer (got {driveId!r})",
+                missingFields=['pi.replay.driveId'],
+            )
+
+        sourcePath = self._getNestedValue(config, 'pi.replay.sourcePath')
+        dbPath = self._getNestedValue(config, 'pi.database.path')
+        if not sourcePath or not dbPath or dbPath == ':memory:':
+            return
+        if os.path.normcase(os.path.realpath(sourcePath)) == os.path.normcase(
+            os.path.realpath(dbPath)
+        ):
+            raise ConfigValidationError(
+                f"pi.replay.sourcePath ({sourcePath!r}) is the run's own "
+                f"pi.database.path; a replay cannot read and write one file",
+                missingFields=['pi.replay.sourcePath', 'pi.database.path'],
+            )
 
     def _validateDisplayAutoDim(self, config: dict[str, Any]) -> None:
         """Validate pi.display.autoDim.* (US-483-b carousel auto-dim curve).
