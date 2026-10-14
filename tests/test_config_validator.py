@@ -27,6 +27,7 @@
 # 2026-10-14    | Rex (US-882-a) | pi.imu.peaks.smoothingSec default + positivity.
 # 2026-10-14    | Rex (US-882-b) | pi.display.gradeHistory.{intervalSec,windowSec}.
 # 2026-10-14    | Rex (US-880-a) | pi.trip.gapSec default 300 + positivity.
+# 2026-10-14    | Rex (US-882-c) | pi.display.stale.imuSec default 2.0 + positivity.
 # ================================================================================
 ################################################################################
 
@@ -1373,6 +1374,28 @@ def test_validate_tripGapSec_positiveFloat_accepted():
     cfg = _baseCfg()
     cfg["pi"] = {"trip": {"gapSec": 120.5}}
     assert ConfigValidator().validate(cfg)["pi"]["trip"]["gapSec"] == 120.5
+
+
+def test_validate_staleImuSec_defaultsToTodaysCarouselLiteral():
+    """US-882-c: pi.display.stale.imuSec defaults to 2.0 s -- carousel.js's
+    former IMU_STALE_SEC literal, so nothing on screen changes."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["stale"]["imuSec"] == 2.0
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "2.0", True])
+def test_validate_staleImuSec_nonPositiveOrNonFinite_rejected(bad):
+    """US-882-c: pi.display.stale.imuSec must be a finite number > 0."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"stale": {"imuSec": bad}}}
+    with pytest.raises(ConfigValidationError, match="pi.display.stale.imuSec"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_staleImuSec_positiveFloat_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"stale": {"imuSec": 3.5}}}
+    assert ConfigValidator().validate(cfg)["pi"]["display"]["stale"]["imuSec"] == 3.5
 
 
 def test_validate_gradeHistory_windowShorterThanInterval_rejected():

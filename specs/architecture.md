@@ -5922,6 +5922,35 @@ the server's `GAP_DETECTION_THRESHOLD_SECONDS`, which
 `tests/server/test_trip_gap_crosses_tiers.py` pins the two defaults equal and feeds the
 same SPEED series through both integrals.
 
+#### `window.DISPLAY_STALE` -- the page's stale windows, injected per request (US-882-c)
+
+`eclipse-states-http` injects three config blocks into `dashboard.html` through the
+quoted-placeholder seam in `_injectHtml`: `window.DISPLAY_AUTODIM` (the auto-dim curve),
+`window.DISPLAY_CAROUSEL` (US-533 B1) and `window.DISPLAY_STALE` (Atlas gap 6):
+
+```js
+window.DISPLAY_STALE = {"imuSec": 2.0};
+```
+
+- **`imuSec`** is `pi.display.stale.imuSec` (validator default 2.0, finite, > 0, beside
+  `pi.display.stale.obdLiveSec`). It replaces carousel.js's former `IMU_STALE_SEC`
+  literal and equals it, so nothing on screen changes; at `stateHz` 1 it is two write
+  intervals.
+- **Resolved per request** by `loadDisplayStaleConfig` (`_DISPLAY_STALE_PLACEHOLDER`)
+  through `overlay.readEffectiveValue`, never cached at construction, so a config.json
+  change reaches the kiosk on its next reload with no unit restart. A value that is not
+  a finite number > 0, an absent key or an unreadable config serves the validator default.
+- **imuSec / autoDim are config.json keys, read per request (882-c) / on mtime change
+  (878-b) through overlay.resolveEffectiveConfig; not operator-overridable.** They are
+  not in `OVERRIDABLE_KEYS` (Atlas ruled B, 2026-10-14), so a value in config.local.json
+  is ignored and nothing is added to `/settings`.
+- **Page side.** `imuView` compares the reading's age against
+  `resolveImuStaleSec(window.DISPLAY_STALE)`. When the injection is absent (a `file://`
+  preview leaves the placeholder string) or not a finite positive number it uses
+  `DEFAULT_IMU_STALE_SEC`, a mirror of the validator default;
+  `tests/ui/test_carousel_imu_stale_config.py` pins the mirror to `DEFAULTS`, and
+  `tests/pi/splash/test_states_http_stale_inject.py` pins the per-request injection.
+
 #### `states/light` -- lux plus the raw counts, gain and saturation of one reader burst (US-878-a)
 
 **Producer:** `src/pi/sensors/light_state_bridge.py` (`LightStateBridge`, bus consumer;
@@ -6435,7 +6464,7 @@ property that shapes the whole card. A gray "NA" reads as dead at a glance, but 
 g-dot frozen at 0.4 g reads exactly like a car holding a steady corner -- a
 fabricated measurement, not a visible gap. So the freshness gate blanks the
 **instrument** rather than graying a label: an explicit `available: false`, an
-undated payload, or a reading older than `IMU_STALE_SEC` renders the calm gray
+undated payload, or a reading older than the IMU stale window (`window.DISPLAY_STALE.imuSec`, US-882-c) renders the calm gray
 MOTION body and *no geometry at all* (US-497 AC-3). Within a live reading,
 absence is still per field -- a dead magnetometer grays HEADING alone (and hides
 the needle: a needle frozen at its last bearing is worse than an absent one),
@@ -6465,7 +6494,7 @@ distinguishable from *"the producer is refusing to guess right now"*.
 
 | Constant | Value | Grounding |
 |---|---|---|
-| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `IMU_STALE_SEC` (now `pi.display.stale.imuSec`, injected as `window.DISPLAY_STALE.imuSec`, US-882-c) | 2.0 s | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
 | `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
 | `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
 | `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |

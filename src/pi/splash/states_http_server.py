@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 import mimetypes
 from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -56,6 +57,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from common.config import overlay
+from common.config.validator import DEFAULTS
 from pi.splash import dtc_clear, dtc_clear_channel, service_control
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
@@ -89,6 +91,16 @@ _DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 # asking for it: the toggle writes the overlay, the UI reloads itself, and the
 # reload picks the new value up.
 _DISPLAY_CAROUSEL_PLACEHOLDER = '"__DISPLAY_CAROUSEL__"'
+
+# US-882-c (F-159, Atlas gap 6): the same quoted-placeholder seam for the page's
+# stale windows -- today only the IMU card's (pi.display.stale.imuSec), which
+# was a carousel.js literal. Resolved PER REQUEST like the carousel section, so a
+# tuned window reaches the kiosk on its next reload with no unit restart.
+_DISPLAY_STALE_PLACEHOLDER = '"__DISPLAY_STALE__"'
+
+# The validator-owned key the injected imuSec resolves, and its default (the
+# value served whenever the key is absent, unreadable or not a finite number > 0).
+_STALE_IMU_SEC_KEY = "pi.display.stale.imuSec"
 
 # US-532 (F-126): the same quoted-placeholder seam for the 5 Slice-1 operator
 # settings at their CURRENT EFFECTIVE values, keyed by the overlay's own flat
@@ -535,10 +547,13 @@ def makeStatesHandler(
                 if configPath is None
                 else loadDisplayCarouselConfig(configPath)
             )
+            # US-882-c: the stale windows, per request for the same reason.
+            staleJson = json.dumps(loadDisplayStaleConfig(configPath))
             return (
                 html.replace(_TOKEN_PLACEHOLDER, token)
                 .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)
                 .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselJson)
+                .replace(_DISPLAY_STALE_PLACEHOLDER, staleJson)
                 .replace(_DISPLAY_SETTINGS_PLACEHOLDER, settingsJson)
                 .replace(_DEPLOY_VERSION_PLACEHOLDER, version)
             )
@@ -671,6 +686,38 @@ def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
     rejects malformed values.
     """
     return _loadDisplaySection(configPath, "carousel")
+
+
+def loadDisplayStaleConfig(configPath: str | None) -> dict[str, float]:
+    """Resolve the page's stale windows at their effective values (US-882-c).
+
+    ``imuSec`` is ``pi.display.stale.imuSec`` from the effective config
+    (config.json resolved through the shared overlay seam). Anything that is not
+    a finite number > 0 -- absent key, no config wired, unreadable file, or a
+    value the validator would refuse -- serves the validator default, so the page
+    always receives the window production runs with, never a fabricated one.
+    The key is a config.json engineering key, deliberately NOT in the overlay
+    allow-list (Atlas ruled B), so a config.local.json value is ignored.
+
+    Args:
+        configPath: Path to config.json, or ``None`` when this server has no
+            config wired.
+
+    Returns:
+        ``{"imuSec": <seconds>}``.
+    """
+    imuSec = DEFAULTS[_STALE_IMU_SEC_KEY]
+    if configPath is not None:
+        found, value = overlay.readEffectiveValue(configPath, _STALE_IMU_SEC_KEY)
+        if (
+            found
+            and not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            and value > 0
+        ):
+            imuSec = value
+    return {"imuSec": imuSec}
 
 
 def loadEffectiveSettings(configPath: str | None) -> dict[str, Any] | None:

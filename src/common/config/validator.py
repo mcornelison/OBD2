@@ -138,6 +138,9 @@
 # 2026-10-14    | Rex (US-880-a) | pi.trip.gapSec: 300 (speed-integrator gap rule,
 #                                == server GAP_DETECTION_THRESHOLD_SECONDS);
 #                                finite, > 0.
+# 2026-10-14    | Rex (US-882-c) | pi.display.stale.imuSec: 2.0 (IMU card stale
+#                                window, injected as window.DISPLAY_STALE);
+#                                finite, > 0.
 # ================================================================================
 ################################################################################
 
@@ -802,6 +805,12 @@ DEFAULTS: dict[str, Any] = {
     # p99 3 s for RPM, SPEED, COOLANT_TEMP and BATTERY_V; 5 s = 1.7x that p99.
     # Mirrored by src/pi/obdii/obd_live_emitter.py DEFAULT_OBD_LIVE_STALE_S.
     'pi.display.stale.obdLiveSec': 5,
+    # US-882-c (F-159): the IMU card's stale window, injected per request as
+    # window.DISPLAY_STALE.imuSec (Atlas gap 6). Equal to today's carousel.js
+    # literal (the former IMU_STALE_SEC) so nothing on screen changes; at stateHz
+    # 1 it is two write intervals. Mirrored by carousel.js DEFAULT_IMU_STALE_SEC
+    # (pinned by tests/ui/test_carousel_imu_stale_config.py).
+    'pi.display.stale.imuSec': 2.0,
     # US-880-a (F-159): the speed integrator's gap rule (src/pi/obdii/
     # speed_integrator.py) -- an interval between SPEED readings wider than this
     # is not continuous travel and adds no distance. ONE gap definition across
@@ -987,6 +996,7 @@ class ConfigValidator:
         self._validateImuStateBridge(config)
         self._validateGradeHistory(config)
         self._validateTripGap(config)
+        self._validateStaleImu(config)
         self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
@@ -1778,6 +1788,33 @@ class ConfigValidator:
                 non-positive.
         """
         key = 'pi.trip.gapSec'
+        val = self._getNestedValue(config, key)
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or val <= 0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number > 0 (got {val!r})",
+                missingFields=[key],
+            )
+
+    def _validateStaleImu(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.stale.imuSec (US-882-c): a finite number > 0.
+
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the key is non-numeric, non-finite or
+                non-positive.
+        """
+        key = 'pi.display.stale.imuSec'
         val = self._getNestedValue(config, key)
         if val is None:
             return
