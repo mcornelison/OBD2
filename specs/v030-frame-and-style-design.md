@@ -27,7 +27,7 @@
 ## 2. Navigation (CIO)
 - **Unchanged from today: swipe + page dots.** *(Correction: my working note that swipe had been removed by US-746 was stale; the CIO confirms swipe works on the car today.)*
 - **No automatic return** to the Driving page. The screen stays where you left it.
-- The only automatic page change is the **STOP jump to Warnings, once per new STOP** (Warnings spec §4.4).
+- **No timer or event changes the page.** An active STOP does not jump to Warnings: it raises the **R31 full-screen takeover** over whatever page is showing (Warnings spec §4.4). When the takeover closes, the page underneath is the one the driver left. *(Corrected 2026-10-14: this line said "STOP jump to Warnings, once per new STOP", which R31 superseded on 2026-10-13.)*
 - Auto-rotate remains a Settings option (`autoRotateS`, default off).
 
 ## 3. Top bar (every page; height `--bar-h` 34)
@@ -99,7 +99,7 @@ Period-correct for a 1998 Eclipse GST cluster: **matte black, warm-white wide-se
 
 ## 5. Acceptance criteria (draft, frame-wide)
 1. Top bar identical on all nine pages; right slot shows the page name; no page renders its own title row.
-2. Swipe and dots both navigate; no timer changes the page except the STOP jump.
+2. Swipe and dots both navigate; no timer or event changes the page (auto-rotate off by default). The R31 takeover is an overlay, not a page change.
 3. Grep gate: no literal colour/px in any page CSS; every colour resolves to a §4.2 token.
 4. No element uses a state colour for unbanded data (fixture review per page).
 5. Readings render in the fixed-width face (computed `font-family`) and keep their width across updates.
