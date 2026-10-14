@@ -624,7 +624,7 @@
       "subnet": "10.27.27.0/24",
       "pingTimeoutSeconds": 3,
       "serverPingPath": "/api/v1/health",
-      "joinWaitSec": 120,
+      "joinWaitSec": 30,
       "stallSec": 60,
       "sweepTimeoutSec": 6
     },

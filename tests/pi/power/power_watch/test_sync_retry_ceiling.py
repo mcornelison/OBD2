@@ -18,6 +18,7 @@
 #               |              | AT_HOME_SERVER_DOWN; success writes a record too.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: ceilingSec retired -> joinWaitSec +
 #               |              | stallSec; the ceiling tests are now stall tests.
+# 2026-10-13    | Atlas (ARCH-068) | shipped joinWaitSec 120 -> 30 (CIO 2026-10-12).
 # ================================================================================
 ################################################################################
 """US-776-g / ARCH-065: at home the drain retries with backoff until delivered or stalled."""
@@ -325,11 +326,11 @@ class TestAwayUnchanged:
 
 class TestStallConfig:
 
-    def test_shippedConfig_joinWait120_stall60(self) -> None:
-        """CIO ruling 2026-10-02: join wait 120 s, stall 60 s, no ceiling."""
+    def test_shippedConfig_joinWait30_stall60(self) -> None:
+        """CIO rulings 2026-10-02 (stall 60 s, no ceiling) and 2026-10-12 (join wait 30 s)."""
         config = json.loads((_REPO_ROOT / "config.json").read_text(encoding="utf-8"))
 
-        assert config["pi"]["homeNetwork"]["joinWaitSec"] == 120
+        assert config["pi"]["homeNetwork"]["joinWaitSec"] == 30
         assert config["pi"]["homeNetwork"]["stallSec"] == 60
         assert "shutdownSyncCeilingSec" not in config["pi"]["homeNetwork"]
 
@@ -338,5 +339,5 @@ class TestStallConfig:
 
         result = ConfigValidator(requiredKeys=[]).validate(config)
 
-        assert result["pi"]["homeNetwork"]["joinWaitSec"] == 120
+        assert result["pi"]["homeNetwork"]["joinWaitSec"] == 30
         assert result["pi"]["homeNetwork"]["stallSec"] == 60

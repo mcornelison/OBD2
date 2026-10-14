@@ -120,6 +120,9 @@
 #                                sweep bound), refused unless < smoothingSec;
 #                                smoothingSec default 5 -> 7 (CIO 2026-10-12,
 #                                option A: matches config.json).
+# 2026-10-13    | Atlas (ARCH-068)| pi.homeNetwork.joinWaitSec 120 -> 30 (CIO
+#                                2026-10-12: join measured 3.4 s after a sweep,
+#                                full arrival max 19.3 s); pinned == config.json.
 # ================================================================================
 ################################################################################
 
@@ -404,7 +407,7 @@ DEFAULTS: dict[str, Any] = {
     'pi.homeNetwork.serverPingPath': '/api/v1/health',
     # ARCH-065: the at-home shutdown sync runs to completion. joinWaitSec bounds
     # the WiFi-join wait; stallSec ends a drain whose backlog stopped falling.
-    'pi.homeNetwork.joinWaitSec': 120,
+    'pi.homeNetwork.joinWaitSec': 30,
     'pi.homeNetwork.stallSec': 60,
     # US-776-j1: the key-off's forced WiFi sweep is bounded by this; it must
     # be < pi.powerWatch.smoothingSec (checked in _validateHomeNetwork).

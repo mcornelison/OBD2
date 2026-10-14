@@ -21,6 +21,9 @@
 # 2026-10-11    | Rex          | US-776-k2: an AWAY poll inside the wait no longer
 #               |              | ends it; key-off rigs prove the three exits with
 #               |              | custody (config.json waits).
+# 2026-10-13    | Atlas (ARCH-068) | joinWaitSec 120 -> 30: the Sprint 97 "stays 120"
+#               |              | pin becomes DEFAULTS == config.json, so the two
+#               |              | copies cannot drift.
 # ================================================================================
 ################################################################################
 """US-776-e: at home, the shutdown waits for the WiFi rejoin within the ceiling."""
@@ -36,6 +39,7 @@ from typing import Any
 import pytest
 
 import src.pi.power.power_watch.__main__ as m
+from src.common.config.validator import DEFAULTS
 from src.pi.network.home_detector import HomeNetworkDetector, HomeNetworkState, SweepResult
 from src.pi.power.power_watch.contract import OutcomeKind
 from src.pi.power.power_watch.controller import ShutdownSequencer
@@ -578,9 +582,9 @@ class TestUS776k2AwayPollInsideTheWait:
 
 class TestUS776k2JoinWaitFromConfig:
 
-    def test_configJoinWait_is120(self) -> None:
-        """Sprint 97 constraint: joinWaitSec stays 120 (config.json)."""
-        assert float(_homeNetworkConfig()["joinWaitSec"]) == 120.0
+    def test_configJoinWait_matchesValidatorDefault(self) -> None:
+        """The validator default and config.json carry ONE joinWaitSec (ARCH-068)."""
+        assert _homeNetworkConfig()["joinWaitSec"] == DEFAULTS["pi.homeNetwork.joinWaitSec"]
 
     def test_keyOff_neverAssociates_endsAtJoinWaitSec_custodyOutstanding(
         self, tmp_path: Path,
@@ -590,7 +594,7 @@ class TestUS776k2JoinWaitFromConfig:
             flickers home in and out (some polls read AWAY) and wlan0 that
             never associates
         When: the sequencer runs the key-off
-        Then: the wait ends at config.json's joinWaitSec (120 s) with
+        Then: the wait ends at config.json's joinWaitSec with
             AT_HOME_JOINING_TIMEOUT, no sync attempt, and the Pi powers down
             once with custody OUTSTANDING (every row still owed)
         """

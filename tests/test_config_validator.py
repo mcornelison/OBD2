@@ -23,6 +23,7 @@
 #                                 definition, not a second literal.
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: joinWaitSec/stallSec defaults + validation replace shutdownSyncCeilingSec.
 # 2026-10-03    | Atlas (ARCH-065a) | Ruling 19 (M8): drainFloorDwellReads must be an integer >= 1.
+# 2026-10-13    | Atlas (ARCH-068) | joinWaitSec default 120 -> 30 (CIO 2026-10-12).
 # ================================================================================
 ################################################################################
 
@@ -886,12 +887,12 @@ class TestHomeNetworkConfig:
         assert 'pi.homeNetwork.serverPingPath' in excInfo.value.missingFields
 
     def test_homeNetwork_syncWaits_defaults(self):
-        """ARCH-065: join wait 120 s, stall 60 s; the retired ceiling is gone."""
+        """ARCH-065: join wait 30 s (CIO 2026-10-12), stall 60 s; the retired ceiling is gone."""
         validator = ConfigValidator(requiredKeys=[])
 
         result = validator.validate(self._minimalTierConfig())
 
-        assert result['pi']['homeNetwork']['joinWaitSec'] == 120
+        assert result['pi']['homeNetwork']['joinWaitSec'] == 30
         assert result['pi']['homeNetwork']['stallSec'] == 60
         assert 'shutdownSyncCeilingSec' not in result['pi']['homeNetwork']
 
