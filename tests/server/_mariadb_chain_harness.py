@@ -41,6 +41,7 @@
 #               |              | TABLE, 2026-10-06, minus exactly what v0028/v0032/
 #               |              | v0034/v0035 add), so v0028-v0035 really RUN in CI.
 #               |              | Reset also drops the tables the chain itself creates.
+# 2026-10-14    | Rex (US-860-c) | CHAIN_CREATED_TABLES gains boot_milestone (v0037).
 # ================================================================================
 ################################################################################
 
@@ -510,12 +511,14 @@ POST_V0027_SEEDED_TABLES: tuple[str, ...] = (
 )
 
 # Tables the chain itself CREATES (v0026 edr raw, v0027 edr_imu_derived, v0033
-# drain_vcell_trajectory). Not seeded; dropped by the reset so each test starts clean.
+# drain_vcell_trajectory, v0037 boot_milestone). Not seeded; dropped by the reset
+# so each test starts clean.
 CHAIN_CREATED_TABLES: tuple[str, ...] = (
     'edr_imu_sample',
     'edr_light_sample',
     'edr_imu_derived',
     'drain_vcell_trajectory',
+    'boot_milestone',
 )
 
 

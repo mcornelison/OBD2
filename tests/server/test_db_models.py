@@ -11,6 +11,7 @@
 # ================================================================================
 # 2026-04-16    | Ralph Agent  | Initial TDD tests for US-CMP-003 — MariaDB
 #               |              | schema models, connection, and setup script
+# 2026-10-14    | Rex (US-860-c) | BootMilestone model; table count 34 -> 35.
 # ================================================================================
 ################################################################################
 
@@ -426,6 +427,44 @@ class TestAnomalyLogColumns:
         assert AnomalyLog.__tablename__ == "anomaly_log"
 
 
+# ---- BootMilestone (US-860-c) -------------------------------------------------
+
+
+class TestBootMilestoneModel:
+    """boot_milestone is a delta-path table keyed (source_device, source_id)."""
+
+    def test_tableName(self):
+        from src.server.db.models import BootMilestone
+
+        assert BootMilestone.__tablename__ == "boot_milestone"
+
+    def test_carriesTheSyncColumnsAndThePiColumns(self):
+        from src.server.db.models import BootMilestone
+
+        assert _getColumnNames(BootMilestone) == [
+            "id", "source_device", "source_id", "synced_at", "sync_batch_id",
+            "boot_id", "milestone", "ts_utc", "uptime_s",
+        ]
+
+    def test_dedupsOnSourceDeviceAndSourceId_asDrainVcellTrajectory(self):
+        from src.server.db.models import BootMilestone, DrainVcellTrajectory
+
+        assert _getUniqueConstraintColumns(BootMilestone) == [
+            ("source_device", "source_id"),
+        ]
+        assert _getUniqueConstraintColumns(DrainVcellTrajectory) == [
+            ("source_device", "source_id"),
+        ]
+
+    def test_piColumnsAreNotNull_asOnThePi(self):
+        """SCHEMA_BOOT_MILESTONE declares all four NOT NULL."""
+        from src.server.db.models import BootMilestone
+
+        for name in ("source_device", "source_id", "boot_id", "milestone",
+                     "ts_utc", "uptime_s"):
+            assert not _getColumn(BootMilestone, name).nullable, name
+
+
 # ---- Table Count Test ---------------------------------------------------------
 
 
@@ -449,9 +488,13 @@ class TestTableCount:
         from src.server.db.models import Base
 
         tableNames = list(Base.metadata.tables.keys())
-        assert len(tableNames) == 34, (
-            f"Expected 34 tables, got {len(tableNames)}: {tableNames}"
+        assert len(tableNames) == 35, (
+            f"Expected 35 tables, got {len(tableNames)}: {tableNames}"
         )
+        # US-860-c (F-157): 34 -> 35.  boot_milestone is each boot's milestone
+        # ladder mirrored from the Pi (migration v0037).  Named so a bare +1
+        # from any other table does not pass this.
+        assert 'boot_milestone' in tableNames
         # US-790 (F-138): 33 -> 34.  drain_vcell_trajectory is the shutdown
         # drain's per-poll VCELL series (migration v0033).  Named so a bare
         # +1 from any other table does not pass this.

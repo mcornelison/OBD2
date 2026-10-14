@@ -100,6 +100,8 @@
 # 2026-10-03    | Atlas (ARCH-065a) | Registered v0035 (ARCH-065 battery capacity
 #               |              | columns on battery_health_log + startup_log).
 #               |              | Forward-only.
+# 2026-10-14    | Rex (US-860-c) | Registered v0037 (boot_milestone table).
+#               |              | Forward-only.
 # ================================================================================
 ################################################################################
 
@@ -237,6 +239,9 @@ from src.server.migrations.versions.v0035_arch065_battery_capacity_columns impor
 from src.server.migrations.versions.v0036_us795a_sync_history_residual_groups import (
     MIGRATION as _V0036,
 )
+from src.server.migrations.versions.v0037_us860c_boot_milestone import (
+    MIGRATION as _V0037,
+)
 
 # ================================================================================
 # Registry -- append new migrations to the end, in ascending version order
@@ -279,6 +284,7 @@ ALL_MIGRATIONS: tuple[Migration, ...] = (
     _V0034,
     _V0035,
     _V0036,
+    _V0037,
 )
 
 

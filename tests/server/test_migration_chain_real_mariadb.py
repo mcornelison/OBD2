@@ -34,6 +34,9 @@
 #               |              | battery_health_log / startup_log pre-migration and
 #               |              | require EVERY pending migration to apply, then read
 #               |              | v0028-v0035's columns back (+ anti-theatre guards).
+# 2026-10-14    | Rex (US-860-c) | v0037 boot_milestone: hermetic create/no-op/
+#               |              | failure cases; live chain reads the table and its
+#               |              | UNIQUE(source_device, source_id) back, re-runs v0037.
 # ================================================================================
 ################################################################################
 
@@ -80,7 +83,11 @@ from src.server.migrations.versions import (  # noqa: E402
 from src.server.migrations.versions import (  # noqa: E402
     v0036_us795a_sync_history_residual_groups as v0036,
 )
+from src.server.migrations.versions import (  # noqa: E402
+    v0037_us860c_boot_milestone as v0037,
+)
 from tests.server._mariadb_chain_harness import (  # noqa: E402
+    CHAIN_CREATED_TABLES,
     DATA_SOURCE_CHECK_TABLES,
     LEDGER_PROMISED_COLUMNS,
     MARIADB_MAJOR,
@@ -389,6 +396,90 @@ class TestPostV0027SeedsGiveTheMigrationsRealWork:
         assert v0032.CHECK_CONSTRAINT_NAME not in battery
 
 
+def _scriptedRunner(
+    tableAnswers: list[bool], *, createFails: bool = False,
+) -> tuple[Any, list[str]]:
+    """A ctx.runner whose table-exists probes answer from ``tableAnswers`` in order
+    (the last one repeats); returns the runner and the SQL it was sent."""
+    calls: list[str] = []
+    probes = {"n": 0}
+
+    def runner(argv: Any, *, input: str | None = None, timeout: float | None = None) -> Any:  # noqa: A002
+        sql = input or ""
+        calls.append(sql)
+        if createFails and "CREATE TABLE" in sql:
+            return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+        if "information_schema.TABLES" in sql:
+            index = min(probes["n"], len(tableAnswers) - 1)
+            probes["n"] += 1
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="1\n" if tableAnswers[index] else "0\n", stderr="",
+            )
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    return runner, calls
+
+
+def _v0037Ctx(runner: Any) -> Any:
+    from scripts import apply_server_migrations as asm
+    from src.server.migrations.runner import RunnerContext
+
+    return RunnerContext(
+        addrs=asm.HostAddresses(serverHost="10.27.27.10", serverUser="mcornelison"),
+        creds=asm.ServerCreds(dbUser="obd2", dbPassword="secret", dbName="obd2db"),
+        runner=runner,
+    )
+
+
+class TestV0037BootMilestone:
+    """US-860-c: v0037 creates boot_milestone once, probe-guarded (v0033 pattern)."""
+
+    def test_isRegistered_directlyAfterV0036(self):
+        versions = [m.version for m in ALL_MIGRATIONS]
+        assert v0037.MIGRATION in ALL_MIGRATIONS
+        assert versions.index("0037") == versions.index("0036") + 1
+
+    def test_isAChainCreatedTable(self):
+        assert v0037.TABLE_NAME == "boot_milestone"
+        assert v0037.TABLE_NAME in CHAIN_CREATED_TABLES
+
+    def test_emptyServer_createsTheTableOnce_thenVerifies(self):
+        runner, calls = _scriptedRunner([False, True])
+
+        v0037.apply(_v0037Ctx(runner))
+
+        assert [sql for sql in calls if "CREATE TABLE" in sql] == [v0037.CREATE_TABLE_DDL]
+        assert sum("information_schema.TABLES" in sql for sql in calls) == 2
+
+    def test_secondRun_onAnExistingTable_isANoOp(self):
+        runner, calls = _scriptedRunner([True])
+
+        v0037.apply(_v0037Ctx(runner))
+
+        assert [sql for sql in calls if "CREATE TABLE" in sql] == []
+
+    def test_aCreateThatFails_raises(self):
+        runner, _ = _scriptedRunner([False], createFails=True)
+        with pytest.raises(MigrationError, match="boot_milestone"):
+            v0037.apply(_v0037Ctx(runner))
+
+    def test_aCreateThatLeavesNoTable_raises(self):
+        from scripts.apply_server_migrations import SchemaProbeError
+
+        runner, _ = _scriptedRunner([False, False])
+        with pytest.raises(SchemaProbeError, match="boot_milestone"):
+            v0037.apply(_v0037Ctx(runner))
+
+    def test_ddlIsCreateIfNotExists_withEveryModelColumn_andTheSourceUniqueKey(self):
+        from src.server.db.models import BootMilestone
+
+        ddl = v0037.CREATE_TABLE_DDL
+        assert ddl.startswith("CREATE TABLE IF NOT EXISTS boot_milestone (")
+        for column in BootMilestone.__table__.columns.keys():
+            assert f" {column} " in ddl, column
+        assert "UNIQUE KEY uq_boot_milestone_source (source_device, source_id)" in ddl
+
+
 class TestTd055LineageDocumented:
     """Pin the TD-055 lineage + version pin so the gap stays visible (AC)."""
 
@@ -518,7 +609,7 @@ def _assertV0024Landed(connection: Any, dbName: str) -> None:
 
 
 def _assertPostV0027Landed(connection: Any, dbName: str) -> None:
-    """US-795-b: v0028-v0035 really changed the real schema (read back, not assumed)."""
+    """US-795-b: v0028-v0037 really changed the real schema (read back, not assumed)."""
     cursor = connection.cursor()
     try:
         cursor.execute(
@@ -534,9 +625,20 @@ def _assertPostV0027Landed(connection: Any, dbName: str) -> None:
         cursor.execute(
             "SELECT COUNT(*) FROM information_schema.TABLES "
             f"WHERE TABLE_SCHEMA='{dbName}' AND TABLE_NAME IN "
-            "('drain_vcell_trajectory','edr_imu_derived','edr_imu_sample','edr_light_sample')",
+            "('boot_milestone','drain_vcell_trajectory','edr_imu_derived','edr_imu_sample',"
+            "'edr_light_sample')",
         )
-        assert cursor.fetchone()[0] == 4, "a chain-created table is missing"
+        assert cursor.fetchone()[0] == 5, "a chain-created table is missing"
+        # US-860-c: v0037's dedup key is UNIQUE(source_device, source_id), in order.
+        cursor.execute(
+            "SELECT COLUMN_NAME FROM information_schema.STATISTICS "
+            f"WHERE TABLE_SCHEMA='{dbName}' AND TABLE_NAME='boot_milestone' "
+            "AND INDEX_NAME='uq_boot_milestone_source' AND NON_UNIQUE=0 "
+            "ORDER BY SEQ_IN_INDEX",
+        )
+        assert [row[0] for row in cursor.fetchall()] == ["source_device", "source_id"], (
+            "boot_milestone is missing UNIQUE(source_device, source_id)"
+        )
         cursor.execute(
             "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS "
             f"WHERE CONSTRAINT_SCHEMA='{dbName}' "
@@ -660,6 +762,9 @@ class TestMigrationChainRealMariaDb:
         assert v0022._fkNameReferencing(ctx, "drive_statistics", "drives") is not None
         # US-568: and v0024's three schema truths really landed.
         _assertV0024Landed(connection, dbName)
+        # US-860-c: v0037 again on the migrated schema is a no-op, not an error.
+        v0037.apply(ctx)
+        _assertPostV0027Landed(connection, dbName)
 
     def test_v0024_is_idempotent_on_an_already_migrated_schema(self, liveDb):
         """A second v0024 pass is a clean no-op, not a duplicate-CHECK error.

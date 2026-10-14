@@ -1055,6 +1055,20 @@ The Pi sweep (`pushAllDeltas`) runs the registered snapshot tables after the
 delta tables and guards a registered-but-not-yet-created table (fresh/partial
 DB) as EMPTY rather than crashing.
 
+##### US-860-c (F-157): the server `boot_milestone` table (migration v0037)
+
+`boot_milestone` (each boot's milestone ladder, Pi row in §5) syncs on the
+**delta path**, not the snapshot path `startup_log` uses (Atlas RULED
+2026-10-14): US-860-b gave the Pi table an integer `id`, which lands in
+`source_id`. Server model `BootMilestone` (`src/server/db/models.py`): `id`,
+`source_device`, `source_id`, `synced_at`, `sync_batch_id`, then the Pi columns
+`boot_id`, `milestone`, `ts_utc` (DATETIME, event time), `uptime_s` (DOUBLE,
+the Pi's 8-byte REAL); `UNIQUE(source_device, source_id)`, as
+`drain_vcell_trajectory`. Migration **v0037** creates it (`CREATE TABLE IF NOT
+EXISTS` behind an `INFORMATION_SCHEMA` probe, verified after; a re-run is a
+no-op). The table exists before any Pi pushes it: `/sync` does not accept it
+until US-860-d registers it on both tiers. **Deploy the server first.**
+
 ##### US-419 (F-080): boot clock-quality flag on power_log / startup_log
 
 Post-reboot the Pi's RTC can read a stale/epoch time before
