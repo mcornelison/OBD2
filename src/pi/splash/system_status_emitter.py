@@ -27,6 +27,8 @@
 #               |              | a claim about the CAR filled in for it.
 # 2026-09-13    | Ralph (Rex)  | US-728: add the always-present `priorShutdown`
 #               |              | block (startup_log verdict, transported verbatim).
+# 2026-10-14    | Rex (US-901-b)| add the always-present `runMode` (live /
+#               |              | simulate / replay) and its deriveRunMode rule.
 # ================================================================================
 ################################################################################
 
@@ -63,6 +65,16 @@ OBD_LINKED = "linked"
 OBD_RECONNECTING = "reconnecting"
 OBD_DOWN = "down"
 
+# US-901-b run modes: is the panel showing the live car? Published as
+# `runMode`, NOT `mode` -- `mode` collides with pi.power.mode, and US-668
+# removed a `mode` field from this payload once already.
+#   live     = the real car (production).
+#   simulate = the run was started with --simulate.
+#   replay   = pi.replay.active: a recorded drive is being replayed.
+RUN_MODE_LIVE = "live"
+RUN_MODE_SIMULATE = "simulate"
+RUN_MODE_REPLAY = "replay"
+
 # The ISO-8601 instant format the F-103 emitters stamp (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -70,11 +82,36 @@ __all__ = [
     "OBD_DOWN",
     "OBD_LINKED",
     "OBD_RECONNECTING",
+    "RUN_MODE_LIVE",
+    "RUN_MODE_REPLAY",
+    "RUN_MODE_SIMULATE",
     "SYSTEM_STATUS_FILENAME",
     "buildSystemStatusState",
+    "deriveRunMode",
     "isSyncStaleWhileDriving",
     "makeSystemStatusEmitter",
 ]
+
+
+def deriveRunMode(*, replayActive: bool, simulate: bool) -> str:
+    """Resolve the US-901-b run mode from the replay and --simulate flags.
+
+    Replay wins: US-857 replays through the --simulate seam, so a replay run
+    usually has both flags set, and it must still read as a replay (Atlas
+    ruling 2026-10-13 on Iris S-2).
+
+    Args:
+        replayActive: ``pi.replay.active`` as configured.
+        simulate: Whether the orchestrator was started with --simulate.
+
+    Returns:
+        ``RUN_MODE_REPLAY``, else ``RUN_MODE_SIMULATE``, else ``RUN_MODE_LIVE``.
+    """
+    if replayActive:
+        return RUN_MODE_REPLAY
+    if simulate:
+        return RUN_MODE_SIMULATE
+    return RUN_MODE_LIVE
 
 
 # ARCH-007 -- WiFi band thresholds. Defaults MIRROR pi.network.wifi.* in
@@ -150,6 +187,7 @@ def buildSystemStatusState(
     wifiWeakRssiDbm: int = DEFAULT_WEAK_RSSI_DBM,
     wifiDownRssiDbm: int = DEFAULT_DOWN_RSSI_DBM,
     priorShutdown: dict | None = None,
+    runMode: str = RUN_MODE_LIVE,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -197,6 +235,9 @@ def buildSystemStatusState(
         priorShutdown: The US-728 prior-shutdown block from
             :meth:`pi.diagnostics.prior_shutdown_summary.PriorShutdownSummary.toStatePayload`,
             or None when ``startup_log`` could not be read. Transported verbatim.
+        runMode: The US-901-b run mode from :func:`deriveRunMode`. Defaults to
+            ``RUN_MODE_LIVE``, which is what the production orchestrator
+            resolves to with every replay/simulate flag at its default.
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -278,6 +319,9 @@ def buildSystemStatusState(
         # US-728: always a key (null = not read), same reason as `lastDrive`.
         # A different fact from NO RECORD, which arrives as a block.
         "priorShutdown": priorShutdown,
+        # US-901-b: always a key. The dashboard raises its not-live marker on
+        # any value other than `live`.
+        "runMode": runMode,
         "source": {
             # US-672: NO car-off fallback. This used to read
             # `obdUnavailableReason or REASON_OBD_OFF`, so a caller that
@@ -374,6 +418,7 @@ def makeSystemStatusEmitter(
         obdUnavailableReason: str | None = None,
         lastDrive: dict | None = None,
         priorShutdown: dict | None = None,
+        runMode: str = RUN_MODE_LIVE,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -397,6 +442,7 @@ def makeSystemStatusEmitter(
                 obdUnavailableReason=obdUnavailableReason,
                 lastDrive=lastDrive,
                 priorShutdown=priorShutdown,
+                runMode=runMode,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

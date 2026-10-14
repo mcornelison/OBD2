@@ -5784,12 +5784,56 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
   `_resolveDataSource` sets, so it is not derived a second time. It is not
   `system-status.runMode`, and it is not repeated per PID. It is null when no logger has
   resolved a tag.
-- **No page reads `obd-live` in Sprint 98.** The contract fixture is
+- **Only the not-live marker reads `obd-live` in Sprint 98**, and it reads only
+  `dataSource` (US-901-b, below). No page renders the PID values. The contract fixture is
   `tests/ui/fixtures/states/obd-live.json`, which holds complete named payloads (`fresh`,
   `stale`, `pid-absent`, `replay`, and from US-875 `engine-off-battery`,
   `coolant-amber`, `coolant-red`). `tests/pi/obdii/test_obd_live_emitter.py` feeds
   every case, with the history its dwell needs, through a real `ObdLiveTracker` and
   `buildObdLiveState` and asserts equality.
+
+#### `system-status.runMode` and the not-live marker (US-901-b)
+
+**`runMode`** is an always-present key in `states/system-status`. It answers one
+question: is the glass showing the live car? It has three values:
+
+| Value | When |
+|---|---|
+| `replay` | `pi.replay.active` is true |
+| `simulate` | the orchestrator was started with `--simulate` |
+| `live` | neither |
+
+Replay wins over simulate, because a replay (US-857) runs through the `--simulate` seam
+and usually has both flags set (Atlas ruling 2026-10-13 on Iris S-2). The rule is
+`deriveRunMode` in `src/pi/splash/system_status_emitter.py`. The orchestrator resolves
+it in `CardStateEmitterMixin._gatherRunMode`, from `pi.replay.active` and its own
+`_simulate` flag. The key is `runMode`, not `mode`: `mode` collides with
+`pi.power.mode`, and US-668 removed a `mode` field from this payload once already.
+With every flag at its default the value is `live`.
+
+**`runMode` beside `obd-live.dataSource`.** They are two different facts. `runMode`
+describes the process. `dataSource` describes the rows the values came from. The
+dashboard reads both, and either one is enough to mark the panel.
+
+**The marker** (`carousel.js notLiveMarker`; design SSOT
+`specs/v030-frame-and-style-design.md` s3.1):
+
+- It shows when `runMode` is present and not `live`, OR `dataSource` is present and not
+  `real`. If the two disagree, that is a fault, and the panel still marks itself
+  (Atlas S-3). A `null` value is "not read". It counts as absent, because obd-live
+  publishes `dataSource: null` before any logger has resolved a tag.
+- Its text is `REPLAY` when either input says replay. Otherwise it is `SIM` when
+  `runMode` is `simulate` or `dataSource` is `physics_sim`. Any other non-live value
+  shows `NOT LIVE`, at `--fs-meta` so it fits the box `REPLAY` fits at `--fs-label`.
+- `#not-live-marker` is a direct child of `body`, fixed over the top bar's centre slot,
+  with a z-index above every other z-index in `dashboard.css`. `#topbar` is a z-index
+  10 stacking context, so a child of it could never paint above the overlays.
+  `tests/ui/test_carousel_replay_marker.py` collects every declared z-index, so an
+  overlay declared above the marker fails the suite. The marker has
+  `pointer-events: none`.
+- `#topbar-clock` is hidden while the marker shows, because the wall clock is wrong for
+  replayed data. It is hidden with `visibility` and keeps its box, so no other
+  `#topbar` child moves.
 
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 

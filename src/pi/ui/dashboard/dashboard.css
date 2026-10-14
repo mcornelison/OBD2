@@ -276,6 +276,32 @@ html, body {
   font-size: var(--fs-label); color: var(--text-primary);
   letter-spacing: 0.04em;
 }
+/* US-901-b: the clock is hidden while the not-live marker shows (a wall clock
+   is wrong for replayed data). VISIBILITY, never display: the bar is a
+   three-track grid, and a clock with no box would let the right cluster fall
+   into the centre track -- moving a #topbar child is exactly what the story
+   forbids. */
+#topbar-clock.masked { visibility: hidden; }
+/* US-901-b (F-162; SSOT specs/v030-frame-and-style-design.md s3.1): the
+   not-live marker. A direct child of body, fixed over the bar's centre slot,
+   because #topbar is a z-index 10 stacking context and a child of it can never
+   rise above the overlays (40-60). Its z-index must stay ABOVE EVERY OTHER
+   z-index in this sheet -- tests/ui/test_carousel_replay_marker.py collects
+   them all, so an overlay declared above it fails the suite. A mode, not a
+   severity: no state colour, no --accent. pointer-events: none so it never
+   steals a tap from the bar beneath. */
+#not-live-marker {
+  position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+  height: var(--bar-h); box-sizing: border-box; padding: 0 8px;
+  display: flex; align-items: center;
+  background: var(--bg); color: var(--text-primary);
+  font-family: var(--font-display); font-weight: 600; font-size: var(--fs-label);
+  z-index: 70;
+  pointer-events: none;
+}
+/* NOT LIVE is two characters longer than REPLAY, so it drops to the meta tier
+   to fit the same box. */
+#not-live-marker[data-tier="meta"] { font-size: var(--fs-meta); }
 /* US-555: `margin-left: auto` is GONE, not zeroed -- the right TRACK packs the
    chip against the bar's edge now (`justify-content: flex-end` on the cluster),
    and an auto margin here would be exactly the drift mechanism the note above

@@ -452,13 +452,17 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     """"Wordmark + card titles ONLY" is a two-sided claim, so assert the SET:
     a missing binding leaves a brand moment generic, and an extra one puts a
     display face on a DATA readout -- which is the tabular honesty Iris kept
-    ui-monospace for in the first place."""
+    ui-monospace for in the first place.
+
+    The not-live marker is the third brand moment (Iris
+    specs/v030-frame-and-style-design.md s3.1, US-901-b): a mode label, not a
+    data readout."""
     bound = {
         selector
         for selector, body in _surfaceRules()
         if "var(--font-display)" in body
     }
-    assert bound == {".idle-wordmark", ".card-title"}, bound
+    assert bound == {".idle-wordmark", ".card-title", "#not-live-marker"}, bound
 
 
 def test_dataAndValueSurfacesStayMonospace():

@@ -67,6 +67,8 @@
 # 2026-10-13    | Rex (US-874) | states/obd-live: observeObdLiveReading on the
 #               |              | reading seam; the card tick publishes each PID's
 #               |              | latest value/unit/event time and decides stale.
+# 2026-10-14    | Rex (US-901-b)| system-status runMode from pi.replay.active and
+#               |              | the orchestrator's --simulate flag.
 # ================================================================================
 ################################################################################
 
@@ -1068,6 +1070,22 @@ class CardStateEmitterMixin:
             priorShutdown=self._gatherPriorShutdown(),
             obdAvailable=obdAvailable,
             obdUnavailableReason=obdReason,
+            runMode=self._gatherRunMode(),
+        )
+
+    def _gatherRunMode(self) -> str:
+        """Resolve the US-901-b runMode from pi.replay.active and --simulate.
+
+        ``_simulate`` is read through ``getattr`` because it lives on the
+        orchestrator core, and the standalone composers of this mixin never
+        set it; they are not simulate runs.
+        """
+        from pi.splash.system_status_emitter import deriveRunMode
+
+        replayConfig = ((self._config or {}).get("pi") or {}).get("replay") or {}
+        return deriveRunMode(
+            replayActive=bool(replayConfig.get("active", False)),
+            simulate=bool(getattr(self, "_simulate", False)),
         )
 
     def _gatherPriorShutdown(self) -> dict | None:
