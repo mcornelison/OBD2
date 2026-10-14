@@ -14,6 +14,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-14    | Rex (US-881-b) | Initial.
+# 2026-10-14    | Rex (US-881-c) | sinceReset payload rules, open-loop seconds,
+#                                the after-reset fixture case.
 # ================================================================================
 ################################################################################
 
@@ -535,8 +537,8 @@ def test_fromConfig_defaultsAreTheValidatorDefaults():
     s = fee.FuelSettings.fromConfig({})
 
     assert (s.stoichAfr, s.densityGPerL, s.mafTrusted, s.minMiles,
-            s.maxExcludedPct, s.approximateOpenLoopPct, s.gapSec) == (
-        14.7, 740.0, True, 1.0, 10.0, 10.0, 300.0)
+            s.maxExcludedPct, s.approximateOpenLoopPct, s.gapSec, s.persistSec) == (
+        14.7, 740.0, True, 1.0, 10.0, 10.0, 300.0, 60.0)
 
 
 def test_unitConstants_areNistExact():
@@ -614,6 +616,79 @@ def test_integrator_resetForgetsTheFuelStatus():
     assert integ.snapshot().openLoopAirG == pytest.approx(20.0)
 
 
+def test_integrator_openLoopSeconds_countIncludedOpenLoopIntervalsOnly():
+    """US-881-c: open_loop_s is the included interval time outside closed loop."""
+    integ = fee.FuelIntegrator(300.0)
+    integ.reset(0.0)
+    t = datetime(2026, 10, 20, 15, 0, 0, tzinfo=UTC)
+    integ.observeFuelStatus(3.0)
+    integ.observeMaf(10.0, 0.0, t, None)
+    integ.observeMaf(10.0, 4.0, t, None)
+    integ.observeFuelStatus(2.0)
+    integ.observeMaf(10.0, 6.0, t, None)
+    integ.observeFuelStatus(1.0)
+    integ.observeMaf(10.0, 506.0, t, None)  # a gap: excluded, not open loop
+
+    assert integ.snapshot().openLoopS == pytest.approx(4.0)
+
+
+def _row(**over: Any) -> dict[str, Any]:
+    base = {
+        "id": 1, "fuel_l": 0.6618863761720906, "distance_km": 12.0,
+        "open_loop_s": 0.0, "reset_at_ts": "2026-10-01T09:00:00Z",
+        "updated_at": "2026-10-20T15:02:11Z",
+    }
+    return {**base, **over}
+
+
+def test_sinceReset_fromTheRow_mpgOverTheTotals():
+    since = fee.buildFuelEconomyState(
+        _snap(), _settings(), distanceKm=6.0, distanceSinceTs=_T0_TS,
+        nowUtc=_NOW, staleSec=5.0, sinceReset=_row(),
+    )["sinceReset"]
+
+    assert set(since) == {"fuelL", "distanceKm", "mpg", "resetAtTs"}
+    assert (since["fuelL"], since["distanceKm"]) == (0.6618863761720906, 12.0)
+    assert since["mpg"] == pytest.approx((12 / 1.609344) / (0.6618863761720906 / 3.785411784))
+    assert since["resetAtTs"] == "2026-10-01T09:00:00Z"
+
+
+@pytest.mark.parametrize(
+    "rowOver, settingsOver",
+    [
+        ({}, {"mafTrusted": False}),                       # maf_untrusted
+        ({"distance_km": 1.0}, {}),                        # too_short (< 1 mile)
+        ({"fuel_l": 0.0}, {}),                             # no fuel: undefined
+        ({"fuel_l": 0.0, "distance_km": 0.0}, {}),         # straight after a reset
+    ],
+)
+def test_sinceReset_mpgNull_underTheRules(rowOver, settingsOver):
+    since = fee.buildFuelEconomyState(
+        _snap(), _settings(**settingsOver), distanceKm=6.0, distanceSinceTs=_T0_TS,
+        nowUtc=_NOW, staleSec=5.0, sinceReset=_row(**rowOver),
+    )["sinceReset"]
+
+    assert since["mpg"] is None
+
+
+def test_sinceReset_publishedWithNoDriveWindow():
+    """A parked, fresh process still publishes the persisted totals."""
+    state = fee.buildFuelEconomyState(
+        _snap(started=False), _settings(), distanceKm=None, distanceSinceTs=None,
+        nowUtc=_NOW, staleSec=5.0, sinceReset=_row(),
+    )
+
+    assert state["thisDrive"] is None
+    assert state["sinceReset"]["distanceKm"] == 12.0
+
+
+def test_sinceReset_noRow_null():
+    assert fee.buildFuelEconomyState(
+        _snap(), _settings(), distanceKm=6.0, distanceSinceTs=_T0_TS,
+        nowUtc=_NOW, staleSec=5.0,
+    )["sinceReset"] is None
+
+
 def test_emitter_writeFailure_isSwallowed(tmp_path, monkeypatch):
     from pi.splash import boot_state_emitter
 
@@ -634,6 +709,16 @@ _CASES: dict[str, tuple[dict[str, Any], float]] = {
     "driving": ({}, 360.0),
     "too-short": ({}, 48.0),
     "maf-untrusted": ({"mafTrusted": False}, 360.0),
+    "after-reset": ({}, 360.0),
+}
+
+# US-881-c: the fuel_since_reset row each case publishes as sinceReset (absent =
+# no row yet). after-reset: parked after a drive, the totals just zeroed.
+_SINCE_RESET_ROWS: dict[str, dict[str, Any]] = {
+    "after-reset": {
+        "id": 1, "fuel_l": 0.0, "distance_km": 0.0, "open_loop_s": 0.0,
+        "reset_at_ts": "2026-10-20T15:10:00Z", "updated_at": "2026-10-20T15:10:00Z",
+    },
 }
 
 
@@ -654,6 +739,7 @@ def _buildCase(name: str) -> dict[str, Any]:
         integ.snapshot(), settings,
         distanceKm=distanceKm, distanceSinceTs=_T0_TS,
         nowUtc=start + timedelta(seconds=seconds + 1), staleSec=5.0,
+        sinceReset=_SINCE_RESET_ROWS.get(name),
     )
 
 
@@ -678,3 +764,6 @@ def test_fixture_cases_carryTheirReasons():
     assert fixture["driving"]["thisDrive"]["mpg"] == pytest.approx(42.65, abs=0.01)
     assert fixture["too-short"]["thisDrive"]["mpgNullReason"] == "too_short"
     assert fixture["maf-untrusted"]["thisDrive"]["mpgNullReason"] == "maf_untrusted"
+    assert fixture["after-reset"]["sinceReset"] == {
+        "fuelL": 0.0, "distanceKm": 0.0, "mpg": None, "resetAtTs": "2026-10-20T15:10:00Z",
+    }

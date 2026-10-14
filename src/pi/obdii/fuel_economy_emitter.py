@@ -16,6 +16,8 @@
 # ================================================================================
 # 2026-10-14    | Rex (US-881-b) | Initial -- fuel integrator, null precedence,
 #                                thisDrive payload, emit callable.
+# 2026-10-14    | Rex (US-881-c) | Open-loop seconds, pi.fuel.persistSec, and
+#                                sinceReset built from the fuel_since_reset row.
 # ================================================================================
 ################################################################################
 
@@ -41,7 +43,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -104,6 +106,8 @@ class FuelSettings:
         maxExcludedPct: MPG is null when gap-excluded time exceeds this %.
         approximateOpenLoopPct: ``approximate`` at/above this open-loop air %.
         gapSec: ``pi.trip.gapSec`` -- the speed integrator's gap rule.
+        persistSec: ``pi.fuel.persistSec`` -- the since-reset persist cadence
+            while driving (US-881-c).
     """
 
     stoichAfr: float
@@ -113,6 +117,11 @@ class FuelSettings:
     maxExcludedPct: float
     approximateOpenLoopPct: float
     gapSec: float
+    persistSec: float
+
+    def litresFromAirG(self, airG: float) -> float:
+        """Fuel litres for ``airG`` grams of air: air / stoich / density."""
+        return airG / self.stoichAfr / self.densityGPerL
 
     @classmethod
     def fromConfig(cls, config: dict[str, Any]) -> FuelSettings:
@@ -140,6 +149,7 @@ class FuelSettings:
             maxExcludedPct=_num("maxExcludedPct"),
             approximateOpenLoopPct=_num("approximateOpenLoopPct"),
             gapSec=float(pi.get("trip", {}).get("gapSec", DEFAULTS["pi.trip.gapSec"])),
+            persistSec=_num("persistSec"),
         )
 
 
@@ -157,6 +167,8 @@ class FuelSnapshot:
         lastMafGPerS: The newest MAF value, or None.
         lastMafEventUtc: Its aware UTC event time, or None.
         lastMafEngineRunning: The engine gate at that reading (None = unknown).
+        openLoopS: Seconds of included intervals while not in closed loop
+            (US-881-c: the since-reset open_loop_s).
     """
 
     started: bool
@@ -167,6 +179,7 @@ class FuelSnapshot:
     lastMafGPerS: float | None
     lastMafEventUtc: datetime | None
     lastMafEngineRunning: bool | None
+    openLoopS: float = 0.0
 
 
 class FuelIntegrator:
@@ -190,6 +203,7 @@ class FuelIntegrator:
         self._windowStartS = startS
         self._airG = 0.0
         self._openLoopAirG = 0.0
+        self._openLoopS = 0.0
         self._excludedS = 0.0
         self._lastMafGPerS: float | None = None
         self._lastMafS: float | None = None
@@ -236,6 +250,7 @@ class FuelIntegrator:
                 self._airG += airG
                 if self._fuelStatusCode not in CLOSED_LOOP_FUEL_STATUS_CODES:
                     self._openLoopAirG += airG
+                    self._openLoopS += dt
             elif dt > 0.0:
                 self._excludedS += dt
         self._lastMafGPerS = value
@@ -257,6 +272,7 @@ class FuelIntegrator:
             lastMafGPerS=self._lastMafGPerS,
             lastMafEventUtc=self._lastMafEventUtc,
             lastMafEngineRunning=self._lastMafEngineRunning,
+            openLoopS=self._openLoopS,
         )
 
 
@@ -293,6 +309,33 @@ def _mpgNullReason(
     return None
 
 
+def _sinceResetPayload(
+    row: Mapping[str, Any] | None, settings: FuelSettings
+) -> dict[str, Any] | None:
+    """The ``sinceReset`` block from the fuel_since_reset row (US-881-c).
+
+    Its ``mpg`` follows the ``maf_untrusted`` and ``too_short`` rules, and is
+    null with no fuel (the ratio is undefined). None before any row.
+    """
+    if row is None:
+        return None
+    fuelL = float(row["fuel_l"] or 0.0)
+    distanceKm = float(row["distance_km"] or 0.0)
+    mpg = None
+    if (
+        settings.mafTrusted
+        and distanceKm / KM_PER_MILE >= settings.minMiles
+        and fuelL > 0
+    ):
+        mpg = (distanceKm / KM_PER_MILE) / (fuelL / LITERS_PER_US_GALLON)
+    return {
+        "fuelL": fuelL,
+        "distanceKm": distanceKm,
+        "mpg": mpg,
+        "resetAtTs": row["reset_at_ts"],
+    }
+
+
 def buildFuelEconomyState(
     snap: FuelSnapshot,
     settings: FuelSettings,
@@ -301,6 +344,7 @@ def buildFuelEconomyState(
     distanceSinceTs: str | None,
     nowUtc: datetime,
     staleSec: float,
+    sinceReset: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the states/fuel-economy payload.
 
@@ -311,18 +355,21 @@ def buildFuelEconomyState(
         distanceSinceTs: Its window label; MPG's one window (Atlas G2).
         nowUtc: Aware UTC instant of this publish (judges MAF staleness).
         staleSec: ``pi.display.stale.obdLiveSec``.
+        sinceReset: The fuel_since_reset row (``fuel_since_reset.read``), or
+            None before any row / without a database.
 
     Returns:
         ``{thisDrive, sinceReset, ts}``. ``thisDrive`` is null until a window
         opens; ``mpgNullReason`` is present only when ``mpg`` is null.
-        ``sinceReset`` is null (US-881-c). ``ts`` is the newest MAF reading's
-        event time, null when none was integrated.
+        ``sinceReset`` is ``{fuelL, distanceKm, mpg, resetAtTs}`` or null.
+        ``ts`` is the newest MAF reading's event time, null when none was
+        integrated.
     """
     from common.time.helper import toCanonicalIso
 
     thisDrive: dict[str, Any] | None = None
     if snap.started:
-        fuelL = snap.airG / settings.stoichAfr / settings.densityGPerL
+        fuelL = settings.litresFromAirG(snap.airG)
         openLoopAirPct = (
             None if snap.airG <= 0 else snap.openLoopAirG / snap.airG * _PERCENT
         )
@@ -351,7 +398,7 @@ def buildFuelEconomyState(
             thisDrive["mpgNullReason"] = reason
     return {
         "thisDrive": thisDrive,
-        "sinceReset": None,
+        "sinceReset": _sinceResetPayload(sinceReset, settings),
         "ts": (
             None if snap.lastMafEventUtc is None else toCanonicalIso(snap.lastMafEventUtc)
         ),
@@ -366,7 +413,7 @@ def makeFuelEconomyEmitter(statesDir: str) -> Callable[..., None]:
 
     Returns:
         ``emit(snap, settings, *, distanceKm, distanceSinceTs, nowUtc,
-        staleSec)`` writing the payload atomically. Best-effort by contract:
+        staleSec, sinceReset=None)`` writing the payload atomically. Best-effort by contract:
         write failures are logged, never raised.
     """
     from pi.splash import boot_state_emitter
@@ -381,6 +428,7 @@ def makeFuelEconomyEmitter(statesDir: str) -> Callable[..., None]:
         distanceSinceTs: str | None,
         nowUtc: datetime,
         staleSec: float,
+        sinceReset: Mapping[str, Any] | None = None,
     ) -> None:
         try:
             boot_state_emitter.ensureStatesDir(statesDir)
@@ -393,6 +441,7 @@ def makeFuelEconomyEmitter(statesDir: str) -> Callable[..., None]:
                     distanceSinceTs=distanceSinceTs,
                     nowUtc=nowUtc,
                     staleSec=staleSec,
+                    sinceReset=sinceReset,
                 ),
             )
         except Exception as e:  # noqa: BLE001 -- never crash the run loop

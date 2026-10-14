@@ -29,6 +29,7 @@
 # 2026-10-14    | Rex (US-880-a) | pi.trip.gapSec default 300 + positivity.
 # 2026-10-14    | Rex (US-882-c) | pi.display.stale.imuSec default 2.0 + positivity.
 # 2026-10-14    | Rex (US-881-b) | pi.fuel.* defaults (Spool, sourced) + range checks.
+# 2026-10-14    | Rex (US-881-c) | pi.fuel.persistSec default 60 + positivity.
 # ================================================================================
 ################################################################################
 
@@ -1410,13 +1411,15 @@ def test_validate_fuelKeys_defaultsAreSpoolsSourcedValues():
         "minMiles": 1.0,
         "maxExcludedPct": 10,
         "approximateOpenLoopPct": 10,
+        "persistSec": 60,
     }
 
 
-@pytest.mark.parametrize("key", ["stoichAfr", "densityGPerL", "minMiles"])
+@pytest.mark.parametrize("key", ["stoichAfr", "densityGPerL", "minMiles", "persistSec"])
 @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "14.7", True])
 def test_validate_fuelPositiveKeys_nonPositiveOrNonFinite_rejected(key, bad):
-    """US-881-b: stoich, density and the minimum distance are finite numbers > 0."""
+    """US-881-b: stoich, density and the minimum distance are finite numbers > 0;
+    US-881-c: so is the since-reset persist cadence."""
     cfg = _baseCfg()
     cfg["pi"] = {"fuel": {key: bad}}
     with pytest.raises(ConfigValidationError, match=f"pi.fuel.{key}"):

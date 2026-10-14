@@ -5942,7 +5942,10 @@ same SPEED series through both integrals.
   (`null` when none).
 - **`openLoopAirPct`** = open-loop air grams / all air grams x 100 (`null` with no air);
   **`approximate`** is true when it is >= `pi.fuel.approximateOpenLoopPct` (10).
-- **`sinceReset`** is `null` until US-881-c.
+- **`sinceReset`** is `{fuelL, distanceKm, mpg, resetAtTs}` read from the Pi-local
+  `fuel_since_reset` row (US-881-c), `null` before any row or without a database. Its
+  `mpg` is null when `pi.fuel.mafTrusted` is false, below `pi.fuel.minMiles`, or with no
+  fuel (no reason key; the four keys are the contract).
 
 **Stoich, no trims (Spool 2026-10-14).** Per interval between consecutive MAF readings,
 air = trapezoid `(m0 + m1) / 2 * dt`; fuel grams = air / `pi.fuel.stoichAfr` (14.7, E0:
@@ -5980,8 +5983,28 @@ which takes the tracker's lock, converts the capture time exactly as `observeRea
 does, and calls `BandProducer.engineRunningAt(ts)` (a public wrapper over US-875's
 `_engineRunningAt`). The band producer is never exposed. No tracker -> the gate is
 unknown, and `maf_zero_running` never fires. Fixture:
-`tests/ui/fixtures/states/fuel-economy.json` (`driving`, `too-short`, `maf-untrusted`),
-rebuilt by the producer in `tests/pi/obdii/test_fuel_economy_emitter.py`.
+`tests/ui/fixtures/states/fuel-economy.json` (`driving`, `too-short`, `maf-untrusted`,
+`after-reset`), rebuilt by the producer in `tests/pi/obdii/test_fuel_economy_emitter.py`.
+
+**Since-reset totals (US-881-c, Atlas gap 3 / G3).** One Pi-LOCAL row,
+`fuel_since_reset (id INTEGER PRIMARY KEY CHECK (id = 1), fuel_l REAL, distance_km REAL,
+open_loop_s REAL, reset_at_ts TEXT, updated_at TEXT)`, created by
+`ensureFuelSinceResetTable` (a `sqlite_master` probe, called from
+`ObdDatabase.initialize`; an existing table is never touched). It is in NO sync registry
+(not `PK_COLUMN`, `IN_SCOPE_TABLES` or `SNAPSHOT_SYNC`): every fact behind it already
+syncs in `realtime_data`. Accessors: `src/pi/obdii/fuel_since_reset.py` (`read`,
+`accumulate`, `reset` on a connection; `...From(database)` wrappers for the card
+emitter, which may not open a connection). The card tick persists from the run loop at
+drive end (the recording -> not-recording edge) and at most once per
+`pi.fuel.persistSec` (60) while recording, writing ONLY the change since its watermark
+(this drive's `fuelL`, km and open-loop seconds already written), so a drive is counted
+once however many persists it spans and a crash loses at most `persistSec`. A drive start
+zeroes the watermark under `_fuelLock` with the integrator (a drive whose end no tick saw
+loses only its unpersisted remainder, as a crash would); a failed write leaves the
+watermark, so the next persist retries it. `open_loop_s` is the included interval time
+outside closed loop (`FuelSnapshot.openLoopS`). `resetSinceReset(resetAtTs)` zeroes the
+row, the cached `sinceReset` and the watermark together (the US-881-d entry point). No
+database handle -> `sinceReset` null and one WARN.
 
 #### `window.DISPLAY_STALE` -- the page's stale windows, injected per request (US-882-c)
 

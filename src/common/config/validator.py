@@ -144,6 +144,8 @@
 # 2026-10-14    | Rex (US-881-b) | pi.fuel.{stoichAfr 14.7, densityGPerL 740,
 #                                mafTrusted, minMiles 1.0, maxExcludedPct 10,
 #                                approximateOpenLoopPct 10} (Spool, sourced).
+# 2026-10-14    | Rex (US-881-c) | pi.fuel.persistSec: 60 (since-reset persist
+#                                cadence, Atlas G3), finite > 0.
 # ================================================================================
 ################################################################################
 
@@ -841,6 +843,10 @@ DEFAULTS: dict[str, Any] = {
     'pi.fuel.maxExcludedPct': 10,
     # approximate:true at/above this open-loop share of air (corpus 9.1 %).
     'pi.fuel.approximateOpenLoopPct': 10,
+    # US-881-c (Atlas G3): while driving, the since-reset totals persist to the
+    # Pi-local fuel_since_reset row at most once per this many seconds (and at
+    # drive end); a crash loses at most this much accumulation.
+    'pi.fuel.persistSec': 60,
     # US-882-b (F-159): states/grade-history, written by the IMU bridge -- one
     # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
     'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
@@ -1854,7 +1860,8 @@ class ConfigValidator:
     def _validateFuel(self, config: dict[str, Any]) -> None:
         """Validate the pi.fuel.* keys (US-881-b).
 
-        stoichAfr, densityGPerL and minMiles are finite numbers > 0; the two
+        stoichAfr, densityGPerL, minMiles and persistSec (US-881-c) are finite
+        numbers > 0; the two
         percentages are finite numbers in [0, 100]; mafTrusted is a real bool.
         An absent key is skipped (a custom defaults set may not supply it).
 
@@ -1864,7 +1871,7 @@ class ConfigValidator:
         Raises:
             ConfigValidationError: If any present key is out of its range.
         """
-        for name in ('stoichAfr', 'densityGPerL', 'minMiles'):
+        for name in ('stoichAfr', 'densityGPerL', 'minMiles', 'persistSec'):
             key = f'pi.fuel.{name}'
             val = self._getNestedValue(config, key)
             if val is None:

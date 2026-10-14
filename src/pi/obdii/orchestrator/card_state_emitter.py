@@ -75,6 +75,10 @@
 # 2026-10-14    | Rex (US-881-b)| observeFuelReading: MAF/FUEL_SYSTEM_STATUS while
 #               |              | recording feed the fuel integrator; the card tick
 #               |              | publishes states/fuel-economy beside obd-live.
+# 2026-10-14    | Rex (US-881-c)| Since-reset fuel totals: the card tick persists
+#               |              | this drive's change since its watermark to the
+#               |              | Pi-local fuel_since_reset row (drive end + every
+#               |              | pi.fuel.persistSec) and publishes sinceReset.
 # ================================================================================
 ################################################################################
 
@@ -311,6 +315,19 @@ class CardStateEmitterMixin:
     _fuelEconomyEmitter: Any = None
     _fuelLock: Any = None
     _fuelStaleSec: float | None = None
+    # US-881-c: since-reset persistence. The watermark is the (fuelL, km,
+    # openLoopS) of THIS drive already written to fuel_since_reset, so a drive
+    # is counted once however many persists it spans. It, the generation (bumped
+    # at every drive start) and the last persist time move under _fuelLock with
+    # the integrator. The cached row and the was-recording edge are the card
+    # tick's alone.
+    _fuelWatermark: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    _fuelGeneration: int = 0
+    _fuelLastPersistS: float | None = None
+    _fuelWasRecording: bool = False
+    _fuelSinceReset: dict[str, Any] | None = None
+    _fuelSinceResetLoaded: bool = False
+    _fuelNoDatabaseWarned: bool = False
 
     # ------------------------------------------------------------------ setup
 
@@ -1246,6 +1263,10 @@ class CardStateEmitterMixin:
         tS = self._tripNowS()
         with self._fuelLock:
             integrator.reset(tS)
+            # A new drive has written nothing yet; its persist clock starts now.
+            self._fuelWatermark = (0.0, 0.0, 0.0)
+            self._fuelGeneration += 1
+            self._fuelLastPersistS = tS
 
     def _emitFuelEconomyState(self) -> None:
         """Publish states/fuel-economy: fuel and distance read at one publish."""
@@ -1255,15 +1276,136 @@ class CardStateEmitterMixin:
             return
         with self._fuelLock:
             snap = integrator.snapshot()
+            watermark = self._fuelWatermark
+            generation = self._fuelGeneration
+            lastPersistS = self._fuelLastPersistS
         distanceKm, distanceSinceTs = self._gatherTripDistance()
+        nowUtc = self._obdLiveNowUtc()
+        self._maybePersistFuelSinceReset(
+            snap, distanceKm, nowUtc, watermark, generation, lastPersistS
+        )
         emitter(
             snap,
             self._fuelSettings,
             distanceKm=distanceKm,
             distanceSinceTs=distanceSinceTs,
-            nowUtc=self._obdLiveNowUtc(),
+            nowUtc=nowUtc,
             staleSec=self._fuelStaleSec,
+            sinceReset=self._fuelSinceReset,
         )
+
+    def _fuelTotals(
+        self, snap: Any, distanceKm: float | None
+    ) -> tuple[float, float, float]:
+        """This drive's (fuelL, km, openLoopS) -- what the watermark tracks."""
+        return (
+            self._fuelSettings.litresFromAirG(snap.airG),
+            0.0 if distanceKm is None else float(distanceKm),
+            snap.openLoopS,
+        )
+
+    def _maybePersistFuelSinceReset(
+        self,
+        snap: Any,
+        distanceKm: float | None,
+        nowUtc: datetime,
+        watermark: tuple[float, float, float],
+        generation: int,
+        lastPersistS: float | None,
+    ) -> None:
+        """Add this drive's change since the watermark to fuel_since_reset.
+
+        Runs on the card tick (the run loop): at drive end, and at most once
+        per ``pi.fuel.persistSec`` while recording (Atlas G3). Only the change
+        since the last persist is written, so a crash loses at most persistSec
+        and never doubles. The cached row it leaves is what ``sinceReset``
+        publishes. No database -> one WARN and a null ``sinceReset``.
+        """
+        database = getattr(self, "_database", None)
+        if database is None:
+            if not self._fuelNoDatabaseWarned:
+                self._fuelNoDatabaseWarned = True
+                logger.warning("fuel_since_reset: no database -- sinceReset stays null")
+            return
+        from common.time.helper import toCanonicalIso
+        from pi.obdii import fuel_since_reset
+
+        if not self._fuelSinceResetLoaded:
+            self._fuelSinceResetLoaded = True
+            try:
+                self._fuelSinceReset = fuel_since_reset.readFrom(database)
+            except Exception as e:  # noqa: BLE001 -- the publish must go on
+                logger.warning("fuel_since_reset read failed: %s", e)
+        recording = self._gatherDriveState()[0] == "recording"
+        driveEnded = self._fuelWasRecording and not recording
+        self._fuelWasRecording = recording
+        nowS = self._tripNowS()
+        if recording and lastPersistS is None:
+            # Mid-drive process start: no drive start seen, so the persist
+            # clock starts at the first recording tick.
+            with self._fuelLock:
+                if generation == self._fuelGeneration:
+                    self._fuelLastPersistS = nowS
+            return
+        due = driveEnded or (
+            recording
+            and lastPersistS is not None
+            and nowS - lastPersistS >= self._fuelSettings.persistSec
+        )
+        if not due:
+            return
+        current = self._fuelTotals(snap, distanceKm)
+        # Clamped: a total below its watermark means a drive start this
+        # snapshot has not seen yet -- never subtract from the row.
+        deltas = tuple(max(0.0, c - w) for c, w in zip(current, watermark, strict=True))
+        if any(d > 0 for d in deltas):
+            try:
+                self._fuelSinceReset = fuel_since_reset.accumulateAndReadFrom(
+                    database, *deltas, toCanonicalIso(nowUtc)
+                )
+            except Exception as e:  # noqa: BLE001 -- retried at the next persist
+                logger.warning("fuel_since_reset persist failed: %s", e)
+                return
+        with self._fuelLock:
+            # A drive start since the snapshot owns the watermark now.
+            if generation == self._fuelGeneration:
+                self._fuelWatermark = current
+                self._fuelLastPersistS = nowS
+
+    def resetSinceReset(self, resetAtTs: str) -> dict[str, Any] | None:
+        """Zero fuel_since_reset, the cached sinceReset AND the watermark together.
+
+        Everything this drive integrated before the reset is behind it, so the
+        watermark moves to the integrator's current totals (Atlas G4).
+
+        Args:
+            resetAtTs: Canonical UTC of the reset.
+
+        Returns:
+            The row after the reset, or None when the fuel producer or the
+            database is absent.
+
+        Raises:
+            DatabaseConnectionError: When the reset cannot be written.
+        """
+        integrator = self._fuelIntegrator
+        database = getattr(self, "_database", None)
+        if integrator is None or database is None:
+            return None
+        from pi.obdii import fuel_since_reset
+
+        with self._fuelLock:
+            snap = integrator.snapshot()
+            generation = self._fuelGeneration
+        distanceKm, _ = self._gatherTripDistance()
+        current = self._fuelTotals(snap, distanceKm)
+        row = fuel_since_reset.resetAndReadFrom(database, resetAtTs)
+        self._fuelSinceReset = row
+        self._fuelSinceResetLoaded = True
+        with self._fuelLock:
+            if generation == self._fuelGeneration:
+                self._fuelWatermark = current
+        return row
 
     # -------------------------------------------------------- system-status
 

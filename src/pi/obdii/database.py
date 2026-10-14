@@ -35,6 +35,7 @@
 # 2026-09-30    | Rex (US-776-f) | Wired ensureStartupLogPriorBootSyncColumns.
 # 2026-10-03    | Atlas (ARCH-065a) | Wired ensureBatteryHealthLogCapacityColumns.
 # 2026-10-14    | Rex (US-860-b) | Wired ensureBootMilestoneIntegerId.
+# 2026-10-14    | Rex (US-881-c) | Wired ensureFuelSinceResetTable.
 # ================================================================================
 ################################################################################
 
@@ -98,6 +99,7 @@ from .database_schema import (
     ensureBootMilestoneIntegerId,
     ensureDrainVcellTrajectoryTable,
     ensureDriveStatisticsRetired,
+    ensureFuelSinceResetTable,
     ensureStartupLogPriorBootSyncColumns,
 )
 from .drive_id import ensureAllDriveIdColumns, ensureDriveCounter
@@ -443,6 +445,13 @@ class ObdDatabase:
                 # partner is server v0033.
                 if ensureDrainVcellTrajectoryTable(conn):
                     logger.info("Created drain_vcell_trajectory table (US-790)")
+
+                # US-881-c replay-safe schema step: fuel_since_reset, the one
+                # Pi-local row of since-reset fuel totals.  A sqlite_master
+                # probe decides; an existing table is never touched.  It never
+                # syncs, so it has no server partner.
+                if ensureFuelSinceResetTable(conn):
+                    logger.info("Created fuel_since_reset table (US-881-c)")
 
                 # US-776-f replay-safe schema step: the four prior_boot_*
                 # shutdown-sync columns on startup_log.  PRAGMA-guarded ADD
