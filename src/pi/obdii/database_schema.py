@@ -117,6 +117,9 @@
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T6 fix: startup_log gains prior_boot_loss_at.
 # 2026-10-13    | Rex (US-860-a)| Added SCHEMA_BOOT_MILESTONE -- the forward boot
 #               |              | record, one first-write-wins row per rung.
+# 2026-10-14    | Rex (US-860-b)| boot_milestone gains id INTEGER PRIMARY KEY
+#               |              | AUTOINCREMENT + UNIQUE(boot_id, milestone);
+#               |              | ensureBootMilestoneIntegerId rebuilds Sprint 98 DBs.
 # ================================================================================
 ################################################################################
 
@@ -805,15 +808,21 @@ CREATE TABLE IF NOT EXISTS startup_log (
 # describes the PREVIOUS boot's shutdown; this table records when THIS boot
 # reached each rung, kernel start -> drive start.  One row per (boot, rung),
 # first-write-wins: the writer in src/pi/diagnostics/boot_milestone.py uses
-# INSERT OR IGNORE on the composite PK, so a second connect or a second drive
-# in the same boot never moves a recorded rung.  A rung the boot never reached
-# has NO row.  ``ts_utc`` is the EVENT's canonical ISO-8601 UTC time;
-# ``uptime_s`` is that event minus kernel_start's ts_utc (kernel_start itself
-# is 0).  The rung vocabulary is enforced by the writer, not a CHECK, so a
-# later rung reaches a populated table without a rebuild.  Pi-local until
-# US-860-b syncs it.
+# INSERT OR IGNORE against UNIQUE(boot_id, milestone), so a second connect or a
+# second drive in the same boot never moves a recorded rung and allocates no
+# row (the AUTOINCREMENT counter still advances, so ids may gap).  A rung the boot never reached has NO row.  ``ts_utc`` is the EVENT's
+# canonical ISO-8601 UTC time; ``uptime_s`` is that event minus kernel_start's
+# ts_utc (kernel_start itself is 0).  The rung vocabulary is enforced by the
+# writer, not a CHECK, so a later rung reaches a populated table without a
+# rebuild.  US-860-b: ``id`` is the integer key the delta sync's id cursor
+# needs (Atlas RULED 2026-10-14); a Sprint 98 table keyed (boot_id, milestone)
+# gains it through :func:`ensureBootMilestoneIntegerId`.  Pi-local until
+# US-860-d registers it for sync.
 SCHEMA_BOOT_MILESTONE = """
 CREATE TABLE IF NOT EXISTS boot_milestone (
+    -- US-860-b: the delta-sync id cursor.  AUTOINCREMENT: never reused.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
     -- Boot id as startup_log carries it (boot_progress.readBootId).
     boot_id TEXT NOT NULL,
 
@@ -826,9 +835,72 @@ CREATE TABLE IF NOT EXISTS boot_milestone (
     -- Seconds from kernel_start's ts_utc to this event's ts_utc.
     uptime_s REAL NOT NULL,
 
-    PRIMARY KEY (boot_id, milestone)
+    UNIQUE (boot_id, milestone)
 );
 """
+
+#: The scratch name :func:`ensureBootMilestoneIntegerId` builds the new table
+#: under before renaming it over the old one.
+_BOOT_MILESTONE_REBUILD_TABLE = 'boot_milestone_new'
+
+
+def ensureBootMilestoneIntegerId(conn: sqlite3.Connection) -> bool:
+    """Rebuild a Sprint 98 boot_milestone (PK (boot_id, milestone)) with ``id``.
+
+    US-860-b.  Replay-safe per specs/design-patterns.md #10: runs on every boot
+    from :meth:`ObdDatabase.initialize`.  A PRAGMA probe decides -- a table that
+    already has ``id`` (any database created from :data:`SCHEMA_BOOT_MILESTONE`
+    since US-860-b, or one this function already rebuilt) is never touched, and
+    a missing table is a no-op.
+
+    The rebuild is ONE transaction (a SAVEPOINT, so it nests inside the
+    caller's open transaction or opens its own): create the new shape under a
+    scratch name, copy every row ordered by ``ts_utc`` then ``milestone`` (so
+    ids 1..n follow the event order), drop the old table, rename.  Any failure
+    rolls the whole step back and re-raises, leaving the old table and every
+    row as they were.
+
+    Args:
+        conn: An open sqlite3 Connection to the Pi-side obd database.
+
+    Returns:
+        ``True`` iff the table was rebuilt; ``False`` when it was already in
+        the new shape or does not exist.
+
+    Raises:
+        sqlite3.Error: The rebuild failed; nothing was changed.
+    """
+    columns = [r[1] for r in conn.execute("PRAGMA table_info(boot_milestone)")]
+    if not columns or 'id' in columns:
+        return False
+
+    newDdl = SCHEMA_BOOT_MILESTONE.replace(
+        'CREATE TABLE IF NOT EXISTS boot_milestone (',
+        f'CREATE TABLE {_BOOT_MILESTONE_REBUILD_TABLE} (',
+        1,
+    )
+    if _BOOT_MILESTONE_REBUILD_TABLE not in newDdl:
+        raise RuntimeError("boot_milestone DDL header changed; rebuild cannot rename it")
+
+    conn.execute('SAVEPOINT boot_milestone_integer_id')
+    try:
+        conn.execute(newDdl)
+        conn.execute(
+            f"INSERT INTO {_BOOT_MILESTONE_REBUILD_TABLE} "
+            "(boot_id, milestone, ts_utc, uptime_s) "
+            "SELECT boot_id, milestone, ts_utc, uptime_s FROM boot_milestone "
+            "ORDER BY ts_utc, milestone"
+        )
+        conn.execute('DROP TABLE boot_milestone')
+        conn.execute(
+            f"ALTER TABLE {_BOOT_MILESTONE_REBUILD_TABLE} RENAME TO boot_milestone"
+        )
+    except BaseException:
+        conn.execute('ROLLBACK TO SAVEPOINT boot_milestone_integer_id')
+        conn.execute('RELEASE SAVEPOINT boot_milestone_integer_id')
+        raise
+    conn.execute('RELEASE SAVEPOINT boot_milestone_integer_id')
+    return True
 
 #: US-776-f (+ ARCH-065): the eight columns :func:`ensureStartupLogPriorBootSyncColumns`
 #: brings to an existing startup_log, in SCHEMA_STARTUP_LOG order.

@@ -16,6 +16,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-13    | Rex (US-860-a)| Initial.
+# 2026-10-14    | Rex (US-860-b)| Key is UNIQUE(boot_id, milestone) beside id.
 ################################################################################
 """Boot milestone ladder writer (US-860-a).
 
@@ -24,8 +25,11 @@ orchestrator start arms ``kernel_start``, ``ObdConnection``'s connect_success
 path writes ``obd_connected``, ``DriveDetector._startDrive`` writes
 ``drive_start``, and the capture-health emit writes the four
 ``first_sample_*`` rungs from the ``firstSampleTs`` its feeds block publishes.
-SQLite's INSERT OR IGNORE on the (boot_id, milestone) key is the whole of the
-first-write-wins rule, so no lock is needed.
+SQLite's INSERT OR IGNORE against UNIQUE(boot_id, milestone) is the whole of
+the first-write-wins rule, so no lock is needed; an ignored write allocates no
+row (US-860-b).  ``id`` is the integer key the delta sync's cursor reads;
+SQLite's AUTOINCREMENT counter still advances on an ignored write, so ids may
+gap but never repeat or fall.
 
 EVENT TIME IS THE RECORD. A rung's ``uptime_s`` is its event's ``ts_utc`` minus
 ``kernel_start``'s ``ts_utc`` -- never ``/proc/uptime`` at write time, which
@@ -109,7 +113,7 @@ def _bootIdSurfacePresent() -> bool:
 def _resolveBootId(bootId: str | None) -> str | None:
     """The boot id to key on, or None (logged) when it cannot be known.
 
-    Under PK (boot_id, milestone) an 'unknown' id would merge every boot that
+    Under UNIQUE(boot_id, milestone) an 'unknown' id would merge every boot that
     failed to read it into one ladder, so such a boot writes nothing.
 
     With no boot-id surface at all (off-Linux: a desk simulator run) readBootId
