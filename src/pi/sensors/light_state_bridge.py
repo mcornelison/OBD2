@@ -30,6 +30,8 @@
 # 2026-07-22    | Rex (US-483-a)| Initial -- bus raw.light.lux -> states/light
 #               |              | bridge, atomic write, honest null/stale, config
 #               |              | factory (ships dark behind bus + light gates).
+# 2026-10-13    | Rex (US-873) | Record the first sample ts and the newest
+#               |              | sample capture for capture-health feeds.light.
 # ================================================================================
 ################################################################################
 
@@ -146,6 +148,35 @@ class LightStateBridge:
         self._nowIsoFn = nowIsoFn if nowIsoFn is not None else utcIsoNow
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # US-873: the light feed's capture-health facts for THIS process. Held
+        # on the instance, so a restart re-arms them; None until a sample lands.
+        self._firstSampleTs: str | None = None
+        self._lastSampleCapture: float | None = None
+
+    # -- capture-health feed (US-873) -----------------------------------------
+    @property
+    def firstSampleTs(self) -> str | None:
+        """The ``tsUtc`` of the first lux sample drained in this process."""
+        return self._firstSampleTs
+
+    @property
+    def lastSampleCapture(self) -> float | None:
+        """The monotonic ``tsCapture`` of the newest lux sample, or None."""
+        return self._lastSampleCapture
+
+    def _recordFeedSample(self, sample: Any) -> None:
+        """Note one live sample for the capture-health ``feeds.light`` entry.
+
+        A saturated read (``lux`` None) still counts: the sensor answered. The
+        first timestamp is first-write-wins and is never substituted by the
+        clock -- a sample with no ``tsUtc`` leaves it unset.
+        """
+        tsUtc = getattr(sample, "tsUtc", "")
+        if self._firstSampleTs is None and isinstance(tsUtc, str) and tsUtc:
+            self._firstSampleTs = tsUtc
+        capture = getattr(sample, "tsCapture", None)
+        if isinstance(capture, (int, float)) and not isinstance(capture, bool):
+            self._lastSampleCapture = float(capture)
 
     # -- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -188,6 +219,7 @@ class LightStateBridge:
         """
         if getattr(sample, "topic", None) != TOPIC_LIGHT_LUX:
             return False
+        self._recordFeedSample(sample)
         # US-809-c: carry the absence rather than substituting the clock. A
         # fabricated ts is always fresh, so the US-483-b luxStaleSec check
         # would still be there and would have stopped being able to fire.

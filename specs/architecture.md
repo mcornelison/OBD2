@@ -5667,6 +5667,49 @@ not thrash the live screen mid-deploy. Coverage: `tests/deploy/test_kiosk_instal
 (V-3 substitution + fail-loud + step assertions) and the `deploy-pi.sh` `--dry-run`
 smoke test.
 
+#### `states/capture-health` -- the capture verdict and the per-feed `feeds` block (US-688, US-873)
+
+**Producer:** `src/pi/obdii/capture_health.py`, written by the eclipse-obd process on
+every card-state tick from `CardStateEmitterMixin._emitCaptureHealthState`
+(`src/pi/obdii/orchestrator/card_state_emitter.py`). It opens no device and no
+connection, and it does not write a file at all when `pi.captureHealth.enabled` is false.
+
+**Top level (US-688, unchanged by US-873):** `{state, lastRowSecondsAgo, stallSeconds,
+reason, ts}`. `state` is one of `ok | stalled | idle | unknown`. The verdict is gated on
+the GPIO6 power source, never on an OBD-derived fact: unresolved power gives `unknown`,
+battery gives `idle`, and otherwise the data logger's row age is judged against
+`pi.captureHealth.stallSeconds`. `lastRowSecondsAgo` falls back to the table's newest
+row after a restart (US-727). `buildCaptureHealthState` and `_decide` keep their
+parameter lists; two fence tests pin them.
+
+**`feeds` (US-873, additive):** an object with exactly the keys `obd`, `imu`, `light`,
+`ups`. Each value is `{state, firstSampleTs, lastSampleSecondsAgo}`, built by the pure
+`buildCaptureFeedsState`. This block is the single source that the boot record
+(US-860-a), the System page and the Warnings DATA source read.
+
+| Feed | `firstSampleTs` (first sample in THIS process) | `lastSampleSecondsAgo` |
+|------|------------------------------------------------|------------------------|
+| `obd` | `ObdDataLogger.firstRowTs` (Atlas option A): set ONCE, after the first `realtime_data` INSERT commits in this process, to the same canonical UTC string that row's `timestamp` received. One writer instance serves the process (the bus `PersistenceSubscriber` reuses it; a reconnect pauses it, never replaces it). Read None-safe; no SQL in the emitter | the logger's in-process row marker only, never the durable fallback |
+| `imu` | `tsUtc` of the first raw accel/gyro/mag sample drained by `imu_state_bridge` (the live reader output, not an `edr_*` row behind `EdrLogGate`) | monotonic now minus that bridge's newest `tsCapture` |
+| `light` | `tsUtc` of the first `raw.light.lux` sample drained by `light_state_bridge` (a saturated read counts) | same, from the light bridge |
+| `ups` | `utcIsoNow()` taken straight after a valid synchronous `getBatteryVoltage()` inside `_emitBatteryHealthState`. A raise or the `0xFFFF` sentinel sets nothing (Atlas G6) | monotonic now minus that read |
+
+- **Per process.** Every first-sample value lives on a process-lifetime object, so an
+  eclipse-obd restart re-arms it. `boot_milestone`'s first-write-wins keeps the boot's
+  first (US-860-a).
+- **Honest absence.** A feed that has produced nothing in this process publishes
+  `firstSampleTs: null` and `lastSampleSecondsAgo: null`. It never publishes `0` or a
+  time from a previous process. A negative or non-finite age is also `null`.
+- **Per-feed state** reuses `_decide` with no freshness reason, under the same power gate
+  and the same stall window as the verdict. Unresolved power gives `unknown`, battery
+  gives `idle`, no sample gives `unknown`, an age over the window gives `stalled`, and
+  anything else gives `ok`.
+- **No page renders `feeds` in Sprint 98.** The System card output is identical with or
+  without it (`tests/ui/test_carousel_capture_health.py`). The contract fixture is
+  `tests/ui/fixtures/states/capture-health-feeds.json`, which holds five named cases
+  (`cold-boot-obd-null`, `all-ok`, `one-feed-stalled`, `restart-rearmed`, `ups-sentinel`).
+  `tests/pi/obdii/test_capture_health.py` asserts that the builder's output matches every case.
+
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 
 The post-boot touch dashboard reuses the F-103 splash seam wholesale: it is a

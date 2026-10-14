@@ -58,6 +58,9 @@
 #               |              | resolveCellEpoch(config) and its provisional floor
 #               |              | is config pi.powerWatch.drainFloorVolts, both passed
 #               |              | in (one owner each; no row-derived pack).
+# 2026-10-13    | Rex (US-873) | Capture-health `feeds`: gather each feed's first
+#               |              | sample this process and last sample age (OBD
+#               |              | rows, IMU/light bridges, the UPS VCELL read).
 # ================================================================================
 ################################################################################
 
@@ -249,6 +252,14 @@ class CardStateEmitterMixin:
     # simply publishes no capture verdict.
     _captureHealthEmitter: Any = None
     _captureStallSeconds: float = 0.0
+    # US-873: the capture-health `feeds` facts for THIS process. CLASS defaults
+    # so a restart (a new instance) re-arms every one of them, and so existing
+    # composers keep working. OBD's first sample is held by its writer
+    # (ObdDataLogger.firstRowTs), not here.
+    _upsFirstSampleTs: str | None = None
+    _upsLastSampleMonotonic: float | None = None
+    # Injectable monotonic clock for the feed ages; same reason as _gearClock.
+    _feedClock: Any = None
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -399,7 +410,113 @@ class CardStateEmitterMixin:
             freshnessReason=freshnessReason,
             powerSource=powerSource,
             stallSeconds=self._captureStallSeconds,
+            feedSamples=self._gatherCaptureFeedSamples(),
         )
+
+    # ------------------------------------------------ capture-health feeds
+
+    def _feedNowS(self) -> float:
+        """Monotonic seconds for the feed ages (the bridges' tsCapture clock)."""
+        clock = self._feedClock
+        if clock is not None:
+            return float(clock())
+        import time
+
+        return time.monotonic()
+
+    def _gatherCaptureFeedSamples(self) -> dict[str, tuple[str | None, float | None]]:
+        """Each feed's ``(firstSampleTs, lastSampleSecondsAgo)`` this process.
+
+        US-873. Every fact is read from the component that already owns it --
+        the logger's in-process row marker, the two bus bridges, and the UPS
+        read the battery-health tick already took -- so this opens no device
+        and no connection. A feed that has produced nothing reports
+        ``(None, None)``; nothing from a previous process is ever consulted.
+        """
+        from pi.obdii.capture_health import FEED_IMU, FEED_LIGHT, FEED_OBD, FEED_UPS
+
+        nowS = self._feedNowS()
+        upsAge = (
+            None
+            if self._upsLastSampleMonotonic is None
+            else nowS - self._upsLastSampleMonotonic
+        )
+        return {
+            FEED_OBD: self._gatherObdFeedSample(),
+            FEED_IMU: self._bridgeFeedSample(getattr(self, "_imuStateBridge", None), nowS),
+            FEED_LIGHT: self._bridgeFeedSample(
+                getattr(self, "_lightStateBridge", None), nowS
+            ),
+            FEED_UPS: (self._upsFirstSampleTs, upsAge),
+        }
+
+    @staticmethod
+    def _bridgeFeedSample(bridge: Any, nowS: float) -> tuple[str | None, float | None]:
+        """A bus bridge's first sample ts and newest sample age, or absence."""
+        if bridge is None:
+            return (None, None)
+        firstTs = getattr(bridge, "firstSampleTs", None)
+        lastCapture = getattr(bridge, "lastSampleCapture", None)
+        if not isinstance(lastCapture, (int, float)) or isinstance(lastCapture, bool):
+            return (firstTs if isinstance(firstTs, str) else None, None)
+        return (firstTs if isinstance(firstTs, str) else None, nowS - float(lastCapture))
+
+    def _inProcessRowAge(self) -> float | None:
+        """The logger's IN-PROCESS row age -- never the durable fallback.
+
+        ``_readDataLoggerRowFreshness`` falls back to the table's newest row on
+        a restart, which is a time from a PREVIOUS process; the feed must not
+        publish that. Non-numeric stand-ins read as no sample.
+        """
+        dataLogger = getattr(self, "_dataLogger", None)
+        if dataLogger is None:
+            return None
+        try:
+            value = getattr(dataLogger, "lastRowWrittenSecondsAgo", None)
+        except Exception:  # noqa: BLE001 -- an unreadable marker is no sample
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    def _gatherObdFeedSample(self) -> tuple[str | None, float | None]:
+        """OBD's first row event time this process, and its in-process row age.
+
+        ``firstSampleTs`` is ``ObdDataLogger.firstRowTs`` (Atlas option A): the
+        one writer of every live realtime_data row sets it once, after its first
+        committed INSERT, to the value that row's ``timestamp`` received. Read
+        None-safe -- no logger (bench, before init) is no sample. No lock: one
+        writer sets one reference once.
+        """
+        realtime = getattr(self, "_dataLogger", None)
+        writer = getattr(realtime, "dataLogger", None) if realtime is not None else None
+        firstRowTs = getattr(writer, "firstRowTs", None) if writer is not None else None
+        firstTs = firstRowTs if isinstance(firstRowTs, str) and firstRowTs else None
+        return (firstTs, self._inProcessRowAge())
+
+    def _recordUpsSample(self, vcellV: float) -> None:
+        """Note one VCELL read for ``feeds.ups`` -- unless it is the sentinel.
+
+        Called IMMEDIATELY after the synchronous ``getBatteryVoltage()`` read,
+        so ``utcIsoNow()`` here IS the sample time (Atlas G6). The MAX17048's
+        unbacked-register word ``0xFFFF`` is no reading, whether it arrives raw
+        or already scaled to volts, and sets nothing.
+        """
+        from common.time.helper import utcIsoNow
+        from pi.hardware.ups_monitor import (
+            MAX17048_VCELL_LSB_V,
+            SOC_UNBACKED_SENTINEL,
+        )
+
+        sentinelVolts = SOC_UNBACKED_SENTINEL * MAX17048_VCELL_LSB_V
+        if vcellV == SOC_UNBACKED_SENTINEL or abs(vcellV - sentinelVolts) < (
+            MAX17048_VCELL_LSB_V / 2
+        ):
+            return
+        sampleTs = utcIsoNow()
+        if self._upsFirstSampleTs is None:
+            self._upsFirstSampleTs = sampleTs
+        self._upsLastSampleMonotonic = self._feedNowS()
 
     # -------------------------------------------------------- derived gear
     #
@@ -1059,6 +1176,9 @@ class CardStateEmitterMixin:
             return
         try:
             vcellV = float(ups.getBatteryVoltage())
+            # US-873: straight after the synchronous read -- that instant IS
+            # the UPS feed's sample time. A raise above never reaches here.
+            self._recordUpsSample(vcellV)
             soc = int(ups.getBatteryPercentage())
             crate = ups.getChargeRatePercentPerHour()
         except Exception:  # noqa: BLE001 -- gauge unreadable -> typed NA
