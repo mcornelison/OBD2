@@ -2,12 +2,13 @@
 
 **Author:** Iris (UI/UX) · **Date:** 2026-10-13 · **Status:** all designs CIO-approved (2026-10-12/13)
 **What this is:** the one list of every V0.30 mockup, its spec, and the layout the CIO chose. The links are **private claude.ai artifacts owned by the CIO's account**: teammates can open them only if the CIO shares them. The HTML source of each is in `offices/uideveloper/proposals/` on the share (filenames below), so nothing depends on the link alone.
-**Note:** page mockups were drawn in the pre-V0.30 grey style; the chosen **90s Mitsubishi OEM** style (frame-and-style spec) is applied when they are re-skinned after Atlas rules on the tokens.
+**Note:** page mockups were drawn in the pre-V0.30 grey style; the chosen **90s Mitsubishi OEM** style (frame-and-style spec, tokens approved by Atlas 2026-10-13) is applied as each page is re-skinned. **Re-skinned so far: Driving (row 1-OEM, 2026-10-14, drawn to Sprint 103 scope).**
 
 | # | Surface | Chosen | Spec (`specs/`) | Mockup | Source (share `proposals/`) |
 |---|---|---|---|---|---|
 | — | DoD review | — | — | — | `pm/inbox/2026-10-12-from-iris-REVIEW-V0.30-DoD-…` |
 | 1 | Driving | B · Side columns | `v030-driving-page-design.md` | https://claude.ai/artifact/NGQYx33xXbfcCeUecgscfW | `2026-10-12-v030-driving-page.html` |
+| 1-OEM | Driving, **OEM skin, S103 scope** (build from this one) | B | `v030-driving-page-design.md` | https://claude.ai/artifact/KiysfKSp3eadAa5Mju6X5g | `2026-10-14-v030-driving-page-oem.html` |
 | 2 | Navigation | A · Tape on top | `v030-navigation-page-design.md` | https://claude.ai/artifact/ETqqi2sYC7fkV2cDqJt9A7 | `2026-10-12-v030-navigation-page.html` |
 | 3 | Engine | B · Vertical bars | `v030-engine-page-design.md` | https://claude.ai/artifact/RiqWXfdDVJiLS5TGrodKgA | `2026-10-13-v030-engine-page.html` |
 | 4 | Fuel | A · Airflow on top | `v030-fuel-page-design.md` | https://claude.ai/artifact/GVEYon8ST2TREiq3veQBfF | `2026-10-12-v030-fuel-page.html` |
