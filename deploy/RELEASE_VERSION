@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.0",
-  "theme": "Sprint 98: V0.30 instruments first",
-  "description": "Sprint 98 (10 stories): states/obd-live with stale/last and bands (coolant, battery, RPM); capture-health feeds; boot_milestone ladder (Pi-local); replay of a recorded drive (OBD, IMU, light) that never pushes or touches the prod DB; NOT LIVE marker; server rejects replay/physics_sim rows; kiosk shedding follows the running kiosk."
+  "version": "V0.30.1",
+  "theme": "Sprint 99: V0.30 data feeds",
+  "description": "Sprint 99 (6 stories): states/light raw counts, gain, integration time, saturation (replay publishes range every row); states/imu peaks; states/grade-history; ltft-trend inMedian; boot_milestone integer id (Pi table rebuild); server boot_milestone table via migration v0037. US-860-d (sync registration) follows in Sprint 100."
 }
