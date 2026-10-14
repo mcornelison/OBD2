@@ -110,6 +110,6 @@
 Fuel level (PID unsupported on this ECU) · AFR / wideband (no sensor) · boost inference (steady-state only, ±2 psi; not on a live page) · O2 voltage as AFR (narrowband is not AFR).
 
 ## 9. Open items
-- **Spool:** MAF capture confirmation; instant-MPG honesty ruling.
-- **Atlas:** accumulator provider + persistence; reset write path; trend-state location; shared stale key.
+- ~~Spool: MAF capture confirmation~~ (Atlas MEASURED: 33,269 rows, 0–158.69 g/s) · **Spool:** instant-MPG honesty ruling.
+- ~~Atlas~~ (ruled 2026-10-13): NEW `states/fuel-economy` on ONE speed integrator shared with US-704; `sinceReset` persists in obd.db; reset via token-gated `POST /fuel-reset`; trend is `states/ltft-trend` + `inMedian` per point; stale key `pi.display.stale.obdLiveSec`.
 - **Marcus:** a producer story (MPG accumulators + reset) is new V0.30 work, a DoD admission question.

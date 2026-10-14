@@ -75,7 +75,7 @@ Period-correct for a 1998 Eclipse GST cluster: **matte black, warm-white wide-se
 ### 4.4 Colour rules
 1. **State colours mean state, only.** Green OK · amber WATCH · red STOP, identical on every page and in every style.
 2. **Green → yellow → red appears ONLY on scales with real bands** from Spool's spec (CIO: "more colour for the graphed data"):
-   - RPM bar: green → **yellow from Spool's number (asked)** → red from 7,000.
+   - RPM bar: green → **yellow from 5,500** (the CIO's display cue, not a shift light; R35) → red from 7,000.
    - History lines (coolant, battery…): coloured **only along the stretches where the provider's band fired** (dwell rules included).
    - Engine numbers on the Driving page: provider band → token.
 3. **Unbanded data uses `--accent` orange, never a state colour:** load, throttle, airflow bars, the Navigation hairline, the active page dot, pointers. (Load is never banded on its own, per Spool.)
@@ -92,6 +92,6 @@ Period-correct for a 1998 Eclipse GST cluster: **matte black, warm-white wide-se
 7. **DoD (R15): CIO judgement in the car, day and night.**
 
 ## 6. Open items
-- **Spool:** RPM yellow-zone start.
-- **Atlas:** token additions/changes (§4.2); Michroma embedding; whether Oswald retires.
+- ~~Spool: RPM yellow-zone start~~ (5,500, ruled 2026-10-13).
+- ~~Atlas: tokens, Michroma, Oswald~~ (ruled 2026-10-13: tokens APPROVED under Rule-10; Michroma as an embedded data: URI subset; Oswald retires if no selector uses it, total embedded-font bytes no larger than today).
 - **Iris (next):** boot/shutdown sequence (US-785, US-869, US-870) + the Settings visual mock; re-skin the nine page mockups to §4 once tokens are ratified.
