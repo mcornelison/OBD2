@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-04-23    | Rex (US-229) | Initial -- ECU-silence drive_end unit tests.
+# 2026-10-13    | Rex (US-860-a)| _startDrive writes the drive_start milestone.
 # ================================================================================
 ################################################################################
 
@@ -34,7 +35,7 @@ the check forward but do NOT reset the timer.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -344,3 +345,58 @@ class TestRpmBasedDriveEndStillWorks:
 
         assert detector._driveState == DriveState.STOPPED
         assert detector._currentSession is None
+
+
+# ================================================================================
+# US-860-a: _startDrive writes the boot's drive_start milestone
+# ================================================================================
+
+
+class TestDriveStartMilestone:
+    """DRIVE STARTED writes boot_milestone drive_start at the drive's start time."""
+
+    def _detector(self, database: Any) -> DriveDetector:
+        detector = DriveDetector(config=_baseConfig(), database=database)
+        detector.start()
+        detector._openDriveId = lambda: None  # type: ignore[method-assign]
+        detector._logDriveEvent = lambda *a, **kw: None  # type: ignore[method-assign]
+        detector._captureDriveStartSummary = lambda: None  # type: ignore[method-assign]
+        detector._armDriveSummaryBackfill = lambda _t: None  # type: ignore[method-assign]
+        detector._triggerAnalysis = lambda: None  # type: ignore[method-assign]
+        return detector
+
+    def test_startDrive_writesDriveStart_atStartTime_firstDriveWins(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.pi.diagnostics import boot_milestone as bm
+        from src.pi.obdii.database import ObdDatabase
+
+        monkeypatch.setattr(bm, "readBootId", lambda: "boot-1")
+        monkeypatch.setattr(bm, "_bootIdSurfacePresent", lambda: True)
+        database = ObdDatabase(str(tmp_path / "obd.db"), walMode=False)
+        database.initialize()
+        kernelUp = datetime(2026, 10, 13, 12, 0, 0, tzinfo=UTC)
+        bm.recordKernelStart(
+            database, now=kernelUp + timedelta(seconds=5), uptimeReader=lambda: 5.0
+        )
+        detector = self._detector(database)
+
+        # The debounce began 76 s after kernel start; local naive, like prod.
+        startTime = (kernelUp + timedelta(seconds=76)).astimezone().replace(tzinfo=None)
+        detector._startDrive(startTime)
+        detector._endDrive()
+        detector._startDrive(startTime + timedelta(minutes=10))
+
+        with database.connect() as conn:
+            rows = [
+                tuple(r) for r in conn.execute(
+                    "SELECT ts_utc, uptime_s FROM boot_milestone "
+                    "WHERE boot_id = 'boot-1' AND milestone = 'drive_start'"
+                )
+            ]
+        assert rows == [("2026-10-13T12:01:16Z", 76.0)]
+
+    def test_startDrive_noDatabase_writesNothing_andStillStarts(self) -> None:
+        detector = self._detector(None)
+        detector._startDrive(datetime.now())
+        assert detector._driveState == DriveState.RUNNING

@@ -112,6 +112,8 @@
 #                               the context in stop()/reset().  All internal
 #                               reads move to getRawCurrentDriveId (owner view)
 #                               so drive_end still stamps its own id.
+# 2026-10-13    | Rex (US-860-a) | _startDrive writes the boot's drive_start
+#                               milestone at the drive's start time.
 # ================================================================================
 ################################################################################
 """
@@ -380,6 +382,19 @@ class DriveDetector:
             engine: StatisticsEngine instance
         """
         self._statisticsEngine = engine
+
+    def _recordDriveStartMilestone(self, startTime: datetime) -> None:
+        """US-860-a: write the boot's drive_start rung at the drive's start time.
+
+        ``startTime`` is the event (a naive local ``datetime.now()``), not the
+        moment the debounce let this method run. The table keeps the FIRST
+        drive of the boot; the writer is best-effort and never raises.
+        """
+        if not self._database:
+            return
+        from src.pi.diagnostics.boot_milestone import DRIVE_START, recordMilestone
+
+        recordMilestone(self._database, DRIVE_START, startTime)
 
     def setDatabase(self, database: Any) -> None:
         """
@@ -995,6 +1010,7 @@ class DriveDetector:
 
         # Log to database
         self._logDriveEvent('drive_start', startTime)
+        self._recordDriveStartMilestone(startTime)
 
         # US-236 (Option a defer-INSERT, replaces Sprint 18 US-228's
         # INSERT-immediately + backfill-UPDATE).  No drive_summary row

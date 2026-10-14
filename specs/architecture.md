@@ -816,7 +816,7 @@ mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 
 ## 5. Database Architecture
 
-### Schema Overview (13 Tables)
+### Schema Overview (14 Tables)
 
 | Table | Purpose | FK to profiles? | On Delete |
 |-------|---------|----------------|-----------|
@@ -831,6 +831,7 @@ mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
 | `power_log` | Power **events**, never polls — contents, writers, row kinds and retention are defined ONCE in the `src/pi/power/power_db.py` module docstring (US-798); read that, not a paraphrase. Pi-authoritative; delta-synced to server since US-412 / F-101 | No FK | — |
 | `startup_log` | Boot-progress / RTC boot markers (Pi-authoritative; natural-key snapshot-synced since US-417 / F-101) | No FK | — |
+| `boot_milestone` | The FORWARD boot record (US-860-a / F-157): one first-write-wins row per (`boot_id`, `milestone`) for kernel_start, obd_connected, first_sample_obd/imu/light/ups and drive_start. `ts_utc` is the event's time; `uptime_s` is that time minus kernel_start's (`kernel_start` = wall − `/proc/uptime`, 0). A rung never reached has no row; an `unknown` boot id writes nothing. All writers in eclipse-obd, via `src/pi/diagnostics/boot_milestone.py`. **Local-only until US-860-b** (schema_diff lists it under `tablesOnlyInPi`, report-only) | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
 
