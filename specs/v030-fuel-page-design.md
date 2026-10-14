@@ -72,7 +72,7 @@
 ### 4.4 Fuel-trim trend
 - Source: the **US-661 trend contract** (epoch baseline, qualifying drives, 5-drive median).
 - Dots = per-drive LTFT for **exactly the drives the headline median uses** (**closes US-730 by rule**: no chart may show a different window than its headline).
-- Dashed line = epoch baseline. Solid line = rolling 5-drive median.
+- Dashed line = epoch baseline. Solid line = **the current 5-drive median, drawn flat across the drives it uses** (`ltft-trend` publishes one `median`, not a per-drive series; corrected 2026-10-14 from "rolling median", which nothing provides).
 - **Colour only from the provider's verdict** of Spool's rule (amber/red); dots never colour. Neutral otherwise.
 - LTFT **exactly 0.00 % flat** ⇒ the provider reports *adaptive memory reset*; the page shows `ECU relearning` instead of a trend point (spec: 0.00 % flat = power history, not fuel).
 
