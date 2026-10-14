@@ -64,6 +64,9 @@
 # 2026-10-13    | Rex (US-860-a)| Boot milestones: the orchestrator start arms
 #               |              | kernel_start; the capture-health emit writes each
 #               |              | feed's first_sample_* rung from its feeds block.
+# 2026-10-13    | Rex (US-874) | states/obd-live: observeObdLiveReading on the
+#               |              | reading seam; the card tick publishes each PID's
+#               |              | latest value/unit/event time and decides stale.
 # ================================================================================
 ################################################################################
 
@@ -267,6 +270,14 @@ class CardStateEmitterMixin:
     # the emit tick stops re-writing them. An immutable CLASS default, replaced
     # (never mutated) per instance, for the same reason as the defaults above.
     _bootMilestonesWritten: frozenset[str] = frozenset()
+    # US-874: the states/obd-live producer. CLASS defaults for the same reason
+    # as the gear pair above; a composer without one observes nothing.
+    _obdLiveTracker: Any = None
+    _obdLiveEmitter: Any = None
+    _obdLiveStaleSec: float | None = None
+    # Injectable aware-UTC wall clock: staleness compares against reading event
+    # times, which are wall-clock instants, not monotonic ones.
+    _obdLiveClock: Any = None
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -301,6 +312,7 @@ class CardStateEmitterMixin:
         self._initializeGearProducer(statesDir)
         self._initializeLtftTrendProducer(statesDir)
         self._initializeCaptureHealthProducer(statesDir)
+        self._initializeObdLiveProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -583,6 +595,78 @@ class CardStateEmitterMixin:
         if self._upsFirstSampleTs is None:
             self._upsFirstSampleTs = sampleTs
         self._upsLastSampleMonotonic = self._feedNowS()
+
+    # ------------------------------------------------------------ obd-live
+    #
+    # US-874. Every PID's latest value, unit and event time. Readings are
+    # observed at the _handleReading seam (the logger's getLatestReadings holds
+    # values only, no per-PID time); the card tick publishes them and decides
+    # staleness against a moving clock, so a quiet feed goes stale on the panel.
+
+    def _initializeObdLiveProducer(self, statesDir: str) -> None:
+        """Build the obd-live tracker + emitter in their own try/except."""
+        try:
+            from pi.obdii.obd_live_emitter import (
+                DEFAULT_OBD_LIVE_STALE_S,
+                ObdLiveTracker,
+                makeObdLiveEmitter,
+            )
+
+            staleCfg = self._config.get("pi", {}).get("display", {}).get("stale", {})
+            self._obdLiveStaleSec = float(
+                staleCfg.get("obdLiveSec", DEFAULT_OBD_LIVE_STALE_S)
+            )
+            self._obdLiveTracker = ObdLiveTracker(self._config)
+            self._obdLiveEmitter = makeObdLiveEmitter(statesDir)
+            logger.info("obd-live wired (stale_sec=%.1f)", self._obdLiveStaleSec)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("obd-live producer init skipped: %s", e)
+            self._obdLiveTracker = None
+            self._obdLiveEmitter = None
+
+    def observeObdLiveReading(self, reading: Any) -> None:
+        """Record one realtime reading for states/obd-live (the reading seam)."""
+        tracker = self._obdLiveTracker
+        if tracker is None:
+            return
+        tracker.observeReading(reading)
+
+    def _obdLiveNowUtc(self) -> datetime:
+        """Aware UTC now for the obd-live staleness decision."""
+        clock = self._obdLiveClock
+        if clock is not None:
+            now: datetime = clock()
+            return now
+        return datetime.now(UTC)
+
+    def _gatherObdLiveDataSource(self) -> str | None:
+        """The data_source tag the logger resolved for its rows, or None.
+
+        Read from ``ObdDataLogger.dataSource`` -- the value
+        ``_resolveDataSource`` set when the writer was built -- so obd-live
+        carries the same tag as the rows, never a second derivation (and never
+        system-status.runMode, which is a different fact). Only a tag in the
+        legal vocabulary is published.
+        """
+        from pi.obdii.data_source import DATA_SOURCE_VALUES
+
+        realtime = getattr(self, "_dataLogger", None)
+        writer = getattr(realtime, "dataLogger", None) if realtime is not None else None
+        tag = getattr(writer, "dataSource", None) if writer is not None else None
+        return tag if isinstance(tag, str) and tag in DATA_SOURCE_VALUES else None
+
+    def _emitObdLiveState(self) -> None:
+        """Publish states/obd-live from the tracker's latest readings."""
+        tracker = self._obdLiveTracker
+        emitter = self._obdLiveEmitter
+        if tracker is None or emitter is None or self._obdLiveStaleSec is None:
+            return
+        emitter(
+            tracker.snapshot(),
+            nowUtc=self._obdLiveNowUtc(),
+            staleSec=self._obdLiveStaleSec,
+            dataSource=self._gatherObdLiveDataSource(),
+        )
 
     # -------------------------------------------------------- derived gear
     #
@@ -933,6 +1017,11 @@ class CardStateEmitterMixin:
             self._emitCaptureHealthState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("capture-health card emit failed: %s", e)
+        try:
+            # US-874: staleness is decided here, against a moving clock.
+            self._emitObdLiveState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("obd-live card emit failed: %s", e)
         return True
 
     # -------------------------------------------------------- system-status

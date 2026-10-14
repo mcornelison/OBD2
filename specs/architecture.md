@@ -5711,6 +5711,44 @@ parameter lists; two fence tests pin them.
   (`cold-boot-obd-null`, `all-ok`, `one-feed-stalled`, `restart-rearmed`, `ups-sentinel`).
   `tests/pi/obdii/test_capture_health.py` asserts that the builder's output matches every case.
 
+#### `states/obd-live` -- every live PID with value, unit, own event time and band (US-874)
+
+**Producer:** `src/pi/obdii/obd_live_emitter.py`, run inside the eclipse-obd process.
+`EventRouterMixin._handleReading` passes every reading to
+`CardStateEmitterMixin.observeObdLiveReading`. This is the same seam that `observeGearInput`
+uses. An `ObdLiveTracker` keeps the newest reading per PID. `_emitObdLiveState` publishes
+that reading on every card-state tick. The producer reads no SQLite and opens no OBD
+connection: the A-17 guard in `tests/pi/orchestrator/test_card_state_emitters.py` still
+holds. When `pi.dashboard.stateEmitEnabled` is false, the producer is not built and writes
+no file.
+
+**Shape:** `{params: {<PID name>: {value, unit, ts, stale, band, last}}, dataSource, ts}`.
+
+- **`ts` per PID is the reading's event time.** `reading.timestamp` is a naive local
+  datetime. It is converted with `localNaiveToCanonicalIso(reading.timestamp, config)`,
+  the same converter the bus and the row writer use. The write time is never
+  substituted: a reading with no timestamp, or with a null value, is not recorded.
+- **Stale** (Atlas ruling 2026-10-13 on Iris B-3): at each emit, a PID is stale when
+  `utcNow - ts > pi.display.stale.obdLiveSec`. The validator default is 5 s, which is
+  1.7x the measured per-PID p99 gap. `value` always means CURRENT. A PID has one of
+  three shapes:
+  - fresh: `{value: X, ts, stale: false, band, last: null}`
+  - stale: `{value: null, ts (of the last reading), stale: true, band: null,
+    last: {value: X, band: <band at the last fresh reading>}}`
+  - not read: `{value: null, ts: null, stale: false, band: null, last: null}`. This
+    shape is defined but not emitted in Sprint 98. A PID that has not been read in
+    this process is left out of `params`.
+- **`band`** is null for every PID until the band producer (US-875) fills it.
+- **`dataSource`** is a single file-level value: the `data_source` tag of the rows these
+  values came from. It is read from `ObdDataLogger.dataSource`, which
+  `_resolveDataSource` sets, so it is not derived a second time. It is not
+  `system-status.runMode`, and it is not repeated per PID. It is null when no logger has
+  resolved a tag.
+- **No page reads `obd-live` in Sprint 98.** The contract fixture is
+  `tests/ui/fixtures/states/obd-live.json`, which holds complete named payloads (`fresh`,
+  `stale`, `pid-absent`, `replay`). `tests/pi/obdii/test_obd_live_emitter.py` rebuilds
+  every case through `buildObdLiveState` and asserts equality.
+
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 
 The post-boot touch dashboard reuses the F-103 splash seam wholesale: it is a

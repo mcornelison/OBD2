@@ -1010,6 +1010,17 @@ def test_powerWatch_defaults_applied():
     assert pw["poweroffTimeoutSec"] == 30
 
 
+def test_display_staleObdLiveSec_defaultsToFive():
+    """US-874: the states/obd-live stale window is a validated key, default 5 s
+    (Atlas 2026-10-13: 1.7x the measured per-PID p99 gap), and it matches the
+    producer's mirror constant."""
+    from pi.obdii.obd_live_emitter import DEFAULT_OBD_LIVE_STALE_S
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["stale"]["obdLiveSec"] == 5
+    assert DEFAULT_OBD_LIVE_STALE_S == 5
+
+
 def test_powerWatch_rejectsNonPositiveTimeout():
     cfg = _baseCfg()
     cfg["pi"] = {"powerWatch": {"perTaskTimeoutSec": 0}}

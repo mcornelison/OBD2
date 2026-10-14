@@ -32,6 +32,8 @@
 #               |              | drive-end Mode 07 read (logs 'drive-end DTC
 #               |              | skipped: ecu_unpowered_at_stop') and the
 #               |              | drive-end sync push.  Ignition-on unchanged.
+# 2026-10-13    | Rex (US-874) | _handleReading hands every reading to the
+#               |              | states/obd-live tracker (observeObdLiveReading).
 # ================================================================================
 ################################################################################
 
@@ -114,6 +116,10 @@ class EventRouterMixin:
     # test_gear_state_emitter.py, which is why that test drives the real
     # callback rather than calling observeGearInput directly.
     observeGearInput: Callable[[str, Any], None]
+
+    # US-874: provided by CardStateEmitterMixin -- an ANNOTATION for the same
+    # MRO reason as observeGearInput above.
+    observeObdLiveReading: Callable[[Any], None]
 
     def registerCallbacks(
         self,
@@ -447,6 +453,15 @@ class EventRouterMixin:
                 self.observeGearInput(paramName, value)
             except Exception as e:  # noqa: BLE001 -- must never crash the poll
                 logger.debug(f"Gear derivation failed: {e}")
+
+        # US-874: every PID's latest value, unit and EVENT time for
+        # states/obd-live. The reading object is handed over whole because its
+        # capture timestamp is the record; the emit tick publishes it.
+        if paramName is not None:
+            try:
+                self.observeObdLiveReading(reading)
+            except Exception as e:  # noqa: BLE001 -- must never crash the poll
+                logger.debug(f"obd-live observe failed: {e}")
 
         # Pass reading to drive detector for state machine processing
         if self._driveDetector is not None:

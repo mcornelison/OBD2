@@ -120,6 +120,8 @@
 #                                sweep bound), refused unless < smoothingSec;
 #                                smoothingSec default 5 -> 7 (CIO 2026-10-12,
 #                                option A: matches config.json).
+# 2026-10-13    | Rex (US-874) | pi.display.stale.obdLiveSec: 5 (states/obd-live
+#                                stale window, Atlas 2026-10-13 measured basis).
 # ================================================================================
 ################################################################################
 
@@ -761,6 +763,13 @@ DEFAULTS: dict[str, Any] = {
     # ignored by both tiers (guarded by tests/test_alarm_floor_level_retired.py).
     'pi.display.autoDim.luxStaleSec': 10,
     'pi.display.autoDim.curve': 'logarithmic',
+    # US-874 (F-159): states/obd-live publishes a PID as STALE (value null, the
+    # old reading under `last`) once utcNow - its event ts exceeds this. Basis
+    # (Atlas 2026-10-13, MEASURED on obd2db): across 57 drives since 09-01, 44 of
+    # 14,592 RPM gaps exceed 5 s (0.3 %, max 16 s, real stalls); drives 115-117
+    # p99 3 s for RPM, SPEED, COOLANT_TEMP and BATTERY_V; 5 s = 1.7x that p99.
+    # Mirrored by src/pi/obdii/obd_live_emitter.py DEFAULT_OBD_LIVE_STALE_S.
+    'pi.display.stale.obdLiveSec': 5,
     # US-290 / TD-007: generateTimeoutSeconds closes the lone holdout from
     # US-OLL-002 (which made apiTimeoutSeconds + healthTimeoutSeconds
     # configurable but left the 120 s model-inference timeout hardcoded in

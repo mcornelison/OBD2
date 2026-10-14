@@ -1,0 +1,35 @@
+{
+  "fresh": {
+    "params": {
+      "RPM": {"value": 812, "unit": "rpm", "ts": "2026-10-13T12:05:01Z", "stale": false, "band": null, "last": null},
+      "SPEED": {"value": 0, "unit": "km/h", "ts": "2026-10-13T12:05:02Z", "stale": false, "band": null, "last": null},
+      "COOLANT_TEMP": {"value": 88, "unit": "C", "ts": "2026-10-13T12:05:00Z", "stale": false, "band": null, "last": null},
+      "INTAKE_TEMP": {"value": 31, "unit": "C", "ts": "2026-10-13T12:04:59Z", "stale": false, "band": null, "last": null}
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:05:03Z"
+  },
+  "stale": {
+    "params": {
+      "RPM": {"value": 812, "unit": "rpm", "ts": "2026-10-13T12:05:01Z", "stale": false, "band": null, "last": null},
+      "COOLANT_TEMP": {"value": null, "unit": "C", "ts": "2026-10-13T12:04:55Z", "stale": true, "band": null, "last": {"value": 88, "band": null}}
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:05:03Z"
+  },
+  "pid-absent": {
+    "params": {
+      "BATTERY_V": {"value": 12.6, "unit": "V", "ts": "2026-10-13T12:00:20Z", "stale": false, "band": null, "last": null}
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:00:22Z"
+  },
+  "replay": {
+    "params": {
+      "RPM": {"value": 2450, "unit": "rpm", "ts": "2026-10-13T12:10:04Z", "stale": false, "band": null, "last": null},
+      "SPEED": {"value": 64, "unit": "km/h", "ts": "2026-10-13T12:10:05Z", "stale": false, "band": null, "last": null}
+    },
+    "dataSource": "replay",
+    "ts": "2026-10-13T12:10:06Z"
+  }
+}
