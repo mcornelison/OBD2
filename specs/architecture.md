@@ -831,7 +831,7 @@ mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
 | `power_log` | Power **events**, never polls — contents, writers, row kinds and retention are defined ONCE in the `src/pi/power/power_db.py` module docstring (US-798); read that, not a paraphrase. Pi-authoritative; delta-synced to server since US-412 / F-101 | No FK | — |
 | `startup_log` | Boot-progress / RTC boot markers (Pi-authoritative; natural-key snapshot-synced since US-417 / F-101) | No FK | — |
-| `boot_milestone` | The FORWARD boot record (US-860-a / F-157): one first-write-wins row per (`boot_id`, `milestone`) for kernel_start, obd_connected, first_sample_obd/imu/light/ups and drive_start. `ts_utc` is the event's time; `uptime_s` is that time minus kernel_start's (`kernel_start` = wall − `/proc/uptime`, 0). A rung never reached has no row; an `unknown` boot id writes nothing. All writers in eclipse-obd, via `src/pi/diagnostics/boot_milestone.py`. **Local-only until US-860-b** (schema_diff lists it under `tablesOnlyInPi`, report-only) | No FK | — |
+| `boot_milestone` | The FORWARD boot record (US-860-a / F-157): `id INTEGER PRIMARY KEY AUTOINCREMENT` (US-860-b, the delta-sync id cursor), `UNIQUE(boot_id, milestone)`; one first-write-wins row per (`boot_id`, `milestone`) (`INSERT OR IGNORE` against the UNIQUE: a repeat adds no row, though the AUTOINCREMENT counter advances so ids may gap) for kernel_start, obd_connected, first_sample_obd/imu/light/ups and drive_start. `ts_utc` is the event's time; `uptime_s` is that time minus kernel_start's (`kernel_start` = wall − `/proc/uptime`, 0). A rung never reached has no row; an `unknown` boot id writes nothing. All writers in eclipse-obd, via `src/pi/diagnostics/boot_milestone.py`. A Sprint 98 table (PK (`boot_id`, `milestone`), no `id`) is rebuilt by `ensureBootMilestoneIntegerId` from `ObdDatabase.initialize` in ONE savepoint (create, copy ordered by `ts_utc` then `milestone`, drop, rename), every row kept; a table with `id` is never touched. **Local-only until US-860-b** (schema_diff lists it under `tablesOnlyInPi`, report-only) | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
 
@@ -1054,6 +1054,20 @@ health-telemetry tables, using two distinct transports chosen by PK shape:
 The Pi sweep (`pushAllDeltas`) runs the registered snapshot tables after the
 delta tables and guards a registered-but-not-yet-created table (fresh/partial
 DB) as EMPTY rather than crashing.
+
+##### US-860-c (F-157): the server `boot_milestone` table (migration v0037)
+
+`boot_milestone` (each boot's milestone ladder, Pi row in §5) syncs on the
+**delta path**, not the snapshot path `startup_log` uses (Atlas RULED
+2026-10-14): US-860-b gave the Pi table an integer `id`, which lands in
+`source_id`. Server model `BootMilestone` (`src/server/db/models.py`): `id`,
+`source_device`, `source_id`, `synced_at`, `sync_batch_id`, then the Pi columns
+`boot_id`, `milestone`, `ts_utc` (DATETIME, event time), `uptime_s` (DOUBLE,
+the Pi's 8-byte REAL); `UNIQUE(source_device, source_id)`, as
+`drain_vcell_trajectory`. Migration **v0037** creates it (`CREATE TABLE IF NOT
+EXISTS` behind an `INFORMATION_SCHEMA` probe, verified after; a re-run is a
+no-op). The table exists before any Pi pushes it: `/sync` does not accept it
+until US-860-d registers it on both tiers. **Deploy the server first.**
 
 ##### US-419 (F-080): boot clock-quality flag on power_log / startup_log
 
@@ -4091,7 +4105,8 @@ carousel display auto-dim consumer (US-483-b) is a **pure consumer of a
 reader-owned state file** (Atlas DELTA-2) — it never touches the TSL2591. A
 dedicated bridge (`src/pi/sensors/light_state_bridge.py`, `LightStateBridge`)
 subscribes to the additive `raw.light.lux` channel (LOSSY — a display needs only
-the freshest reading) and mirrors it into `states/light` (`{lux, ts}`, written
+the freshest reading) and mirrors it into `states/light` (`{lux, ts}`; since US-878-a
+the whole lux/raw/range burst, see `states/light` in the F-103 section; written
 atomically via the shared `boot_state_emitter` primitives and served by
 `eclipse-states-http` alongside the US-480-a card states). The bridge opens **no
 I²C device and no OBD connection** — it is orchestrator-invoked as a bus
@@ -4156,7 +4171,8 @@ also admit braking.*
 
 *Contract (Atlas Q-A, 2026-07-30; `pitchDeg` added by US-521; `stopCount` /
 `biasRad` by US-708).* `{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg,
-gradePct, altitude, stopCount, biasRad, reasons}`:
+gradePct, altitude, stopCount, biasRad, reasons}`. Since US-882-a the bridge's writes also
+carry `peaks` (see `states/imu` `peaks` in the F-103 section):
 
 | Field | Meaning | Notes |
 |---|---|---|
@@ -5859,6 +5875,130 @@ dashboard reads both, and either one is enough to mark the panel.
 - `#topbar-clock` is hidden while the marker shows, because the wall clock is wrong for
   replayed data. It is hidden with `visibility` and keeps its box, so no other
   `#topbar` child moves.
+
+#### `states/light` -- lux plus the raw counts, gain and saturation of one reader burst (US-878-a)
+
+**Producer:** `src/pi/sensors/light_state_bridge.py` (`LightStateBridge`, bus consumer;
+see "Bus → `states/light` bridge" above). It subscribes LOSSY to `raw.light.lux`,
+`raw.light.raw` and `raw.light.range`, importing the three topics from
+`sensor_reader` (the producer-side SSOT). The reader publishes the three in that order
+under ONE `Sample.seq`, and a failed read publishes nothing. The bridge pairs them by
+seq and writes once per burst, when that burst's range sample arrives. If a sample of
+another seq arrives first, the lossy queue dropped part of the pending burst: it is
+written with its missing fields null. Another burst's counts are never reused
+(Atlas G3).
+
+**Shape:** `{lux, visibleCount, irCount, fullCount, gain, integrationMs, channelAtLimit, ts}`
+(Atlas L-A 2026-10-13). Fixture: `tests/ui/fixtures/states/light.json`.
+
+| Key | Source |
+|-----|--------|
+| `lux` | `raw.light.lux`, coerced as before (`null` on saturation, never inf/nan). Also `null` whenever `channelAtLimit` is true. |
+| `visibleCount` | `raw.light.raw[0]`, which the reader computes as full - infrared. A negative value (a failed read; `facts/light-sensor.md`) is `null`. |
+| `irCount` | `raw.light.raw[1]`, as read. |
+| `fullCount` | `raw.light.raw[2]`, as read. |
+| `gain` | `sensor_reader.tslGainLabel(raw.light.range[0])`: `low`/`med`/`high`/`max` for the AGAIN codes 0x00/0x10/0x20/0x30, else `null`. A register code is never published. |
+| `integrationMs` | `raw.light.range[1]`, as read. |
+| `channelAtLimit` | `true` when `fullCount` or `irCount` >= `sensor_reader.saturationCeilingForIntegrationMs(integrationMs)`, `false` when both are below it, `null` when the ceiling is unknown, or when a count is missing and the other is below it. |
+| `ts` | The lux sample's event time (else the burst's first sample's). Empty gives `null`, never a clock reading (US-809-c). |
+
+`lux` and `ts` keep their meaning, so the brightness consumer and its stale fallback
+(US-483-b) are unchanged.
+
+**Replay:** `src/pi/sensors/replay_feeder.py` publishes the same burst for every
+replayed `edr_light_sample` row: lux, raw, then `raw.light.range` LAST on every row,
+never skipped, as `(sensor_reader.tslGainCodeForLabel(gain), integration_ms)` with
+`None` for an unrecorded value (Atlas RULED 2026-10-14). Every replayed row is written;
+a row with no recorded gain is written with `gain` null.
+
+#### `states/imu` `peaks` -- accel, brake and cornering g since the bridge started (US-882-a)
+
+**Producer:** `src/pi/sensors/imu_state_bridge.py` (`ImuStateBridge`, see "Bus → `states/imu`
+DERIVED bridge" above). `states/imu` gains one key, `peaks`; every other key, its value and
+the write cadence are unchanged.
+
+**Shape:** `peaks: {accelG, brakeG, leftG, rightG, sinceTs}` (Atlas M-B 2026-10-13). Fixture:
+`tests/ui/fixtures/states/imu.json` (`fresh-boot`, `driving`).
+
+| Key | Source |
+|-----|--------|
+| `accelG` | max of the moving-mean `gLon` over means > 0. |
+| `brakeG` | max of `-gLon` over moving means < 0. |
+| `rightG` | max of the moving-mean `gLat` over means > 0 (`gLat` + = RIGHT). |
+| `leftG` | max of `-gLat` over moving means < 0. |
+| `sinceTs` | event ts of the first sample folded since the bridge was constructed. |
+
+All four g values are non-negative magnitudes. A value with no qualifying sample yet is
+`null`, never 0.
+
+- **Per sample, not per write (Atlas G1).** `GPeakTracker` folds in `_handleAccel` on every
+  accel sample (50 Hz), before the `_shouldWrite` check. `states/imu` is written at
+  `stateHz` 1, so folding per write would see 1 sample in 50. It uses `computeHorizontalG`,
+  the same function the write uses, so there is no second sign or axis derivation.
+- **Smoothing.** Each peak is the max of a moving mean over `pi.imu.peaks.smoothingSec`
+  (validator default 0.5 s; design default, unvalidated until the LIVE FEEDS drive), so a
+  pothole spike does not count as braking. A mean is taken only once the window has spanned
+  `smoothingSec` of contiguous samples. A gap as long as the window, a capture step
+  backwards, a sensor-absent write or an accel gate refusal restarts the window but keeps
+  the peaks.
+- **Qualifying sample.** A sample folds only when horizontal g resolves: not
+  `tilt_unresolved`, accel not gated, `ts` not null.
+- **Lifetime.** `peaks` appears in every `states/imu` write, including the sensor-absent and
+  gate-refusal writes, unchanged. Peaks reset only when the bridge is constructed, which
+  happens once per eclipse-obd process. A kiosk restart does not touch them.
+
+#### `states/grade-history` -- a grade point per 10 s over 15 min (US-882-b)
+
+**Producer:** `src/pi/sensors/imu_state_bridge.py` (`ImuStateBridge` + `GradeHistory`, see
+"Bus → `states/imu` DERIVED bridge" above). A second state file from the IMU bridge, written
+atomically by the same `writeStateAtomic` path as `states/imu`. `states/imu` and the bridge's
+drain cadence are unchanged. No page reads it yet.
+
+**Shape:** `{points: [{ts, gradePct}], windowS, intervalS, ts}` (Atlas M-C 2026-10-13).
+Fixture: `tests/ui/fixtures/states/grade-history.json` (`empty`, `full-window`, `with-gap`).
+
+| Key | Source |
+|-----|--------|
+| `points[].ts` | the bucket's END, ISO UTC; buckets are aligned to the epoch grid (`floor(ts / intervalS)`). |
+| `points[].gradePct` | mean of the bucket's non-null `gradePct` (same 0.1 % precision); `null` when it had none, never 0 and never the previous value. |
+| `windowS` | `pi.display.gradeHistory.windowSec` (validator default 900). |
+| `intervalS` | `pi.display.gradeHistory.intervalSec` (validator default 10). |
+| `ts` | event ts of the `states/imu` write that last changed `points`; `null` before the first. |
+
+- **Input (Atlas G2).** The `gradePct` of each `states/imu` WRITE (stateHz 1, the value the
+  page shows), bucketed on that write's `ts`. Grade is not computed per sample and not
+  recomputed from pitch. Every write path feeds it: live, sensor-absent and gate-refusal. A
+  write whose `gradePct` is null counts as null. A write whose `ts` is null is skipped. The
+  write still counts when the `states/imu` file write itself failed.
+- **Closing.** A bucket closes when the first write with `ts` >= its end arrives; any empty
+  buckets between are appended as null points. The file is written when a bucket closes.
+- **Window.** `points` holds only the newest `floor(windowSec / intervalSec)` points (90 at
+  defaults), oldest first. The validator requires both keys finite and > 0 and
+  `windowSec >= intervalSec`.
+- **Clock steps.** A write whose `ts` is earlier than the open bucket's start resets the
+  history (`points` [], one WARNING) and the empty history is written. A forward gap appends
+  at most `floor(windowSec / intervalSec)` null points (the newest), so the loop is bounded.
+- **Lifetime.** The history resets when the bridge is constructed (once per eclipse-obd
+  process). A kiosk restart does not touch it. A dead bridge writes nothing, so the file
+  freezes: the page (a later sprint) judges it stale when
+  `now - ts > intervalS + pi.display.stale.imuSec`.
+
+#### `states/ltft-trend` `points[].inMedian` -- which drives the headline median used (US-881-a)
+
+**Producer:** `src/pi/splash/ltft_trend_emitter.py` (`buildLtftTrendState`, see "`ltft-trend`
+emitter" in the LTFT trend card section). Every entry of `points` gains `inMedian: bool`
+(Atlas A-3 2026-10-13), so the LTFT card draws exactly the drives the median used (US-730)
+without re-selecting them. `median`, `baseline`, `level`, `current` and every other field are
+unchanged; `current` does not carry `inMedian`.
+
+| Key | Source |
+|-----|--------|
+| `points[].inMedian` | `true` exactly for the points among the newest `medianWindow` epoch points (the headline is `rollingMedian(values, medianWindow)[-1]`, i.e. `values[-medianWindow:]`); `false` for every other point, and for every point when no median is published (`reason` warming, insufficient history, epoch clipped). |
+
+- **Matched by `driveId`.** `points` is cut to the newest `displayPoints` (default
+  `DEFAULT_TREND_DRIVES` 20) while the median uses the whole epoch's newest `medianWindow`
+  points, so a published point is matched to the median set by `driveId`, never by its list
+  position. A drive that never cleared the gate is not a point, and so is never in the set.
 
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 

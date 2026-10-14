@@ -61,8 +61,16 @@ def _imuRow(tsUtc: str, tsCapture: float, accelZ: float, mag: Any = (1.0, 2.0, 3
             "gyro": (0.01, 0.02, 0.03), "mag": mag}
 
 
-def _lightRow(tsUtc: str, tsCapture: float, lux: float | None) -> dict:
-    return {"ts_utc": tsUtc, "ts_capture": tsCapture, "lux": lux, "raw": (100, 20, 120)}
+def _lightRow(
+    tsUtc: str,
+    tsCapture: float,
+    lux: float | None,
+    *,
+    gain: str | None = None,
+    integrationMs: int | None = None,
+) -> dict:
+    return {"ts_utc": tsUtc, "ts_capture": tsCapture, "lux": lux, "raw": (100, 20, 120),
+            "gain": gain, "integration_ms": integrationMs}
 
 
 def _makeSourceDb(
@@ -99,8 +107,10 @@ def _makeSourceDb(
         for seq, row in enumerate(light or []):
             conn.execute(
                 "INSERT INTO edr_light_sample (ts_utc, ts_capture, seq, lux, visible,"
-                " infrared, full_spectrum) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (row["ts_utc"], row["ts_capture"], seq, row["lux"], *row["raw"]),
+                " infrared, full_spectrum, gain, integration_ms)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (row["ts_utc"], row["ts_capture"], seq, row["lux"], *row["raw"],
+                 row["gain"], row["integration_ms"]),
             )
         conn.commit()
     finally:
@@ -174,8 +184,10 @@ class TestReplayWindow:
         for step in range(0, 6):
             clock.now = 500.0 + step
             feeder.publishDue()
-            for sample in _drain(bridge._sub):  # noqa: SLF001 -- drain by hand
+            drained = _drain(bridge._sub)  # noqa: SLF001 -- drain by hand
+            for sample in drained:
                 bridge.handleSample(sample)
+            if drained:
                 payload = json.loads((statesDir / "light").read_text(encoding="utf-8"))
                 luxSeen.append(payload["lux"])
             published.extend(_drain(tap))
@@ -257,7 +269,7 @@ class TestReplayWindow:
         byTopic = {s.topic: s for s in _drain(tap)}
         assert set(byTopic) == {
             sr.TOPIC_IMU_ACCEL, sr.TOPIC_IMU_GYRO, sr.TOPIC_IMU_MAG,
-            sr.TOPIC_LIGHT_LUX, sr.TOPIC_LIGHT_RAW,
+            sr.TOPIC_LIGHT_LUX, sr.TOPIC_LIGHT_RAW, sr.TOPIC_LIGHT_RANGE,
         }
         assert byTopic[sr.TOPIC_IMU_ACCEL].unit == sr.UNIT_ACCEL
         assert byTopic[sr.TOPIC_IMU_GYRO].unit == sr.UNIT_GYRO
@@ -295,6 +307,104 @@ class TestReplayWindow:
         assert "raw.imu.mag" not in byTopic
         assert "raw.imu.accel" in byTopic
         assert byTopic["raw.light.lux"].value is None
+
+
+class TestLightRangeBurst:
+    """US-878-a: every replayed light row publishes range LAST, so it is written."""
+
+    def test_rangeIsPublishedLast_withTheStoredGainAsItsCode(self, tmp_path: Path) -> None:
+        """
+        Given: one light row stored with gain 'med' and integration_ms 100
+        When: it is replayed
+        Then: lux, raw, range publish in that order under one seq, and range
+            carries (0x10, 100) -- the register code the live reader publishes
+        """
+        from pi.sensors import sensor_reader as sr
+
+        source = _makeSourceDb(
+            tmp_path / "src.db",
+            light=[_lightRow(_DRIVE_START, 1.0, 7.5, gain="med", integrationMs=100)],
+        )
+        bus = SampleBus()
+        tap = bus.subscribe(["raw.light.*"], QoS.LOSSLESS, "tap")
+        feeder = SensorReplayFeeder(bus, source, _DRIVE_ID, clock=_FakeClock())
+        feeder.begin()
+        feeder.publishDue()
+
+        samples = _drain(tap)
+        assert [s.topic for s in samples] == [
+            sr.TOPIC_LIGHT_LUX, sr.TOPIC_LIGHT_RAW, sr.TOPIC_LIGHT_RANGE,
+        ]
+        assert len({s.seq for s in samples}) == 1
+        assert samples[-1].value == (sr.TSL_GAIN_MED, 100)
+        assert samples[-1].unit == sr.UNIT_RANGE
+
+    def test_threeRows_writeStatesLightThreeTimes_lastRowWritten(self, tmp_path: Path) -> None:
+        """
+        Given: three light rows inside the window
+        When: all three are replayed in one step through the real bridge
+        Then: states/light is written three times, and the file holds the last row
+        """
+        source = _makeSourceDb(
+            tmp_path / "src.db",
+            light=[
+                _lightRow("2026-10-01T12:00:10Z", 100.0, 11.0, gain="low", integrationMs=100),
+                _lightRow("2026-10-01T12:00:11Z", 101.0, 22.0, gain="low", integrationMs=100),
+                _lightRow("2026-10-01T12:00:12Z", 102.0, 33.0, gain="high", integrationMs=200),
+            ],
+        )
+        statesDir = tmp_path / "states"
+        bus = SampleBus()
+        bridge = createLightStateBridgeFromConfig(_config(source, str(statesDir)), bus)
+        assert bridge is not None
+        writes: list[dict] = []
+        realWrite = bridge._writeState  # noqa: SLF001 -- count the real writes
+
+        def _recordingWrite(payload: dict) -> None:
+            writes.append(payload)
+            realWrite(payload)
+
+        bridge._writeState = _recordingWrite  # type: ignore[method-assign]  # noqa: SLF001
+        clock = _FakeClock()
+        feeder = SensorReplayFeeder(bus, source, _DRIVE_ID, clock=clock)
+        feeder.begin()
+        clock.now += 10.0
+        assert feeder.publishDue() == 3
+        for sample in _drain(bridge._sub):  # noqa: SLF001 -- drain by hand
+            bridge.handleSample(sample)
+
+        assert [w["lux"] for w in writes] == [11.0, 22.0, 33.0]
+        payload = json.loads((statesDir / "light").read_text(encoding="utf-8"))
+        assert payload["lux"] == 33.0
+        assert payload["gain"] == "high"
+        assert payload["integrationMs"] == 200
+
+    def test_nullGainRow_isStillWritten_withGainNull(self, tmp_path: Path) -> None:
+        """
+        Given: a light row whose gain and integration_ms were never recorded
+        When: it is replayed through the real bridge
+        Then: range still publishes (gain None), so states/light is written,
+            with gain and integrationMs null -- as live does for an unread gain
+        """
+        source = _makeSourceDb(
+            tmp_path / "src.db",
+            light=[_lightRow(_DRIVE_START, 1.0, 7.5)],
+        )
+        statesDir = tmp_path / "states"
+        bus = SampleBus()
+        bridge = createLightStateBridgeFromConfig(_config(source, str(statesDir)), bus)
+        assert bridge is not None
+        feeder = SensorReplayFeeder(bus, source, _DRIVE_ID, clock=_FakeClock())
+        feeder.begin()
+        feeder.publishDue()
+        for sample in _drain(bridge._sub):  # noqa: SLF001 -- drain by hand
+            bridge.handleSample(sample)
+
+        payload = json.loads((statesDir / "light").read_text(encoding="utf-8"))
+        assert payload["lux"] == 7.5
+        assert payload["gain"] is None
+        assert payload["integrationMs"] is None
+        assert payload["fullCount"] == 120
 
 
 class TestNoSensorRows:
@@ -378,7 +488,9 @@ class TestSensorSelection:
         )
         feeder.begin()
         feeder.publishDue()
-        assert {s.topic for s in _drain(tap)} == {"raw.light.lux", "raw.light.raw"}
+        assert {s.topic for s in _drain(tap)} == {
+            "raw.light.lux", "raw.light.raw", "raw.light.range",
+        }
 
 
 class TestThread:

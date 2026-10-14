@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-13    | Rex (US-860-a)| Initial.
+# 2026-10-14    | Rex (US-860-b)| Integer id + UNIQUE rung; Sprint 98 DB rebuild.
 ################################################################################
 """US-860-a: each boot records its milestone ladder, kernel start to drive start."""
 
@@ -112,13 +113,32 @@ def _connection(database: ObdDatabase) -> ObdConnection:
 # ================================================================================
 
 
+def _uniqueIndexColumns(conn: sqlite3.Connection, table: str) -> list[list[str]]:
+    """The column lists of every UNIQUE index on ``table``."""
+    out = []
+    for idx in conn.execute(f"PRAGMA index_list({table})").fetchall():
+        if idx[2]:  # unique
+            out.append([r[2] for r in conn.execute(f"PRAGMA index_info('{idx[1]}')")])
+    return out
+
+
 class TestTable:
-    def test_initialize_createsBootMilestoneWithCompositeKey(self, db: ObdDatabase) -> None:
+    def test_initialize_createsBootMilestoneWithIntegerIdAndUniqueRung(
+        self, db: ObdDatabase
+    ) -> None:
+        """US-860-b: id INTEGER PRIMARY KEY AUTOINCREMENT, UNIQUE(boot_id, milestone)."""
         with db.connect() as conn:
             info = conn.execute("PRAGMA table_info(boot_milestone)").fetchall()
-        columns = {r[1]: r[5] for r in info}  # name -> pk position
-        assert set(columns) == {"boot_id", "milestone", "ts_utc", "uptime_s"}
-        assert columns["boot_id"] == 1 and columns["milestone"] == 2
+            ddl = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='boot_milestone'"
+            ).fetchone()[0]
+            unique = _uniqueIndexColumns(conn, "boot_milestone")
+        columns = {r[1]: (r[2], r[5]) for r in info}  # name -> (type, pk position)
+        assert [r[1] for r in info] == ["id", "boot_id", "milestone", "ts_utc", "uptime_s"]
+        assert columns["id"] == ("INTEGER", 1)
+        assert all(pk == 0 for name, (_, pk) in columns.items() if name != "id")
+        assert "AUTOINCREMENT" in ddl.upper()
+        assert ["boot_id", "milestone"] in unique
 
     def test_initialize_existingDatabase_gainsTableWithoutDataLoss(self, tmp_path: Any) -> None:
         path = str(tmp_path / "legacy.db")
@@ -145,6 +165,199 @@ class TestTable:
             "first_sample_ups",
             "drive_start",
         )
+
+
+# ================================================================================
+# US-860-b: the Sprint 98 table gains an integer id
+# ================================================================================
+
+# The table exactly as Sprint 98 (US-860-a) shipped it: composite PK, no id.
+_SPRINT98_DDL = """
+CREATE TABLE boot_milestone (
+    boot_id TEXT NOT NULL,
+    milestone TEXT NOT NULL,
+    ts_utc TEXT NOT NULL,
+    uptime_s REAL NOT NULL,
+    PRIMARY KEY (boot_id, milestone)
+)
+"""
+
+# Inserted out of ts_utc order, so the copy's ordering is what assigns the ids.
+_SPRINT98_ROWS = [
+    (BOOT, "drive_start", "2026-10-13T12:01:16Z", 76.0),
+    (BOOT, "kernel_start", "2026-10-13T12:00:00Z", 0.0),
+    (BOOT, "obd_connected", "2026-10-13T12:01:02Z", 62.0),
+]
+
+
+def _sprint98Database(path: str) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute(_SPRINT98_DDL)
+    conn.executemany("INSERT INTO boot_milestone VALUES (?, ?, ?, ?)", _SPRINT98_ROWS)
+    conn.commit()
+    conn.close()
+
+
+def _allRows(conn: sqlite3.Connection) -> list[tuple[Any, ...]]:
+    return [
+        tuple(r)
+        for r in conn.execute(
+            "SELECT id, boot_id, milestone, ts_utc, uptime_s FROM boot_milestone ORDER BY id"
+        )
+    ]
+
+
+def _traced(conn: sqlite3.Connection) -> list[str]:
+    """Record every statement ``conn`` executes from now on."""
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    return statements
+
+
+_WRITE_VERBS = ("CREATE", "INSERT", "DROP", "ALTER", "DELETE", "UPDATE")
+
+
+class TestIntegerIdUpgrade:
+    def test_sprint98Database_rebuilt_idsInTsOrder_valuesUnchanged(self, tmp_path: Any) -> None:
+        from src.pi.obdii.database_schema import ensureBootMilestoneIntegerId
+
+        path = str(tmp_path / "s98.db")
+        _sprint98Database(path)
+        conn = sqlite3.connect(path)
+        try:
+            assert ensureBootMilestoneIntegerId(conn) is True
+            conn.commit()
+            assert _allRows(conn) == [
+                (1, BOOT, "kernel_start", "2026-10-13T12:00:00Z", 0.0),
+                (2, BOOT, "obd_connected", "2026-10-13T12:01:02Z", 62.0),
+                (3, BOOT, "drive_start", "2026-10-13T12:01:16Z", 76.0),
+            ]
+            assert ["boot_id", "milestone"] in _uniqueIndexColumns(conn, "boot_milestone")
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+            assert "boot_milestone_new" not in tables
+        finally:
+            conn.close()
+
+    def test_sameTsUtc_tieBrokenByMilestone(self, tmp_path: Any) -> None:
+        from src.pi.obdii.database_schema import ensureBootMilestoneIntegerId
+
+        path = str(tmp_path / "s98.db")
+        conn = sqlite3.connect(path)
+        conn.execute(_SPRINT98_DDL)
+        conn.executemany(
+            "INSERT INTO boot_milestone VALUES (?, ?, ?, ?)",
+            [
+                (BOOT, "obd_connected", "2026-10-13T12:01:02Z", 62.0),
+                (BOOT, "first_sample_obd", "2026-10-13T12:01:02Z", 62.0),
+            ],
+        )
+        conn.commit()
+        try:
+            ensureBootMilestoneIntegerId(conn)
+            assert [r[2] for r in _allRows(conn)] == ["first_sample_obd", "obd_connected"]
+        finally:
+            conn.close()
+
+    def test_secondRun_isNoOp_executesNoWrite(self, tmp_path: Any) -> None:
+        from src.pi.obdii.database_schema import ensureBootMilestoneIntegerId
+
+        path = str(tmp_path / "s98.db")
+        _sprint98Database(path)
+        conn = sqlite3.connect(path)
+        try:
+            ensureBootMilestoneIntegerId(conn)
+            conn.commit()
+            before = _allRows(conn)
+            statements = _traced(conn)
+            assert ensureBootMilestoneIntegerId(conn) is False
+            conn.set_trace_callback(None)
+            assert not [s for s in statements if s.lstrip().upper().startswith(_WRITE_VERBS)]
+            assert _allRows(conn) == before
+        finally:
+            conn.close()
+
+    def test_newShapeDatabase_isUntouched(self, db: ObdDatabase) -> None:
+        from src.pi.obdii.database_schema import ensureBootMilestoneIntegerId
+
+        _arm(db)
+        with db.connect() as conn:
+            statements = _traced(conn)
+            assert ensureBootMilestoneIntegerId(conn) is False
+            conn.set_trace_callback(None)
+        assert not [s for s in statements if s.lstrip().upper().startswith(_WRITE_VERBS)]
+        assert _rows(db) == {"kernel_start": ("2026-10-13T12:00:00Z", 0.0)}
+
+    def test_noTable_isNoOp(self, tmp_path: Any) -> None:
+        from src.pi.obdii.database_schema import ensureBootMilestoneIntegerId
+
+        conn = sqlite3.connect(str(tmp_path / "empty.db"))
+        try:
+            assert ensureBootMilestoneIntegerId(conn) is False
+            assert conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+    def test_failureMidRebuild_rollsBackWhole_oldTableAndRowsKept(self, tmp_path: Any) -> None:
+        """ONE transaction: a failure after the copy leaves the Sprint 98 table as it was."""
+        from src.pi.obdii.database_schema import ensureBootMilestoneIntegerId
+
+        path = str(tmp_path / "s98.db")
+        _sprint98Database(path)
+        conn = sqlite3.connect(path)
+
+        def _denyDrop(action: int, *args: Any) -> int:
+            return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_DROP_TABLE else sqlite3.SQLITE_OK
+
+        try:
+            conn.set_authorizer(_denyDrop)
+            with pytest.raises(sqlite3.Error):
+                ensureBootMilestoneIntegerId(conn)
+            conn.set_authorizer(None)
+            conn.commit()
+            names = [r[1] for r in conn.execute("PRAGMA table_info(boot_milestone)")]
+            assert names == ["boot_id", "milestone", "ts_utc", "uptime_s"]
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+            assert "boot_milestone_new" not in tables
+            rows = conn.execute("SELECT * FROM boot_milestone ORDER BY ts_utc").fetchall()
+            assert rows == sorted(_SPRINT98_ROWS, key=lambda r: r[2])
+        finally:
+            conn.close()
+
+    def test_initialize_upgradesSprint98Database_twice(self, tmp_path: Any) -> None:
+        """Wired in ObdDatabase.initialize: every boot runs it; the second is a no-op."""
+        path = str(tmp_path / "s98.db")
+        _sprint98Database(path)
+
+        database = ObdDatabase(path, walMode=False)
+        database.initialize()
+        with database.connect() as conn:
+            first = _allRows(conn)
+        database.initialize()
+        with database.connect() as conn:
+            second = _allRows(conn)
+            names = [r[1] for r in conn.execute("PRAGMA table_info(boot_milestone)")]
+
+        assert names == ["id", "boot_id", "milestone", "ts_utc", "uptime_s"]
+        assert [r[0] for r in first] == [1, 2, 3]
+        assert [r[2] for r in first] == ["kernel_start", "obd_connected", "drive_start"]
+        assert second == first
+
+    def test_upgradedDatabase_nextWriteContinuesIds_andStillFirstWriteWins(
+        self, tmp_path: Any
+    ) -> None:
+        path = str(tmp_path / "s98.db")
+        _sprint98Database(path)
+        database = ObdDatabase(path, walMode=False)
+        database.initialize()
+
+        bm.recordMilestone(database, bm.FIRST_SAMPLE_IMU, _at(70), bootId=BOOT)
+        bm.recordMilestone(database, bm.OBD_CONNECTED, _at(300), bootId=BOOT)
+
+        with database.connect() as conn:
+            rows = _allRows(conn)
+        assert rows[-1] == (4, BOOT, "first_sample_imu", "2026-10-13T12:01:10Z", 70.0)
+        assert len(rows) == 4
+        assert _rows(database)["obd_connected"] == ("2026-10-13T12:01:02Z", 62.0)
 
 
 # ================================================================================
@@ -187,6 +400,35 @@ class TestMilestone:
         bm.recordMilestone(db, bm.OBD_CONNECTED, _at(62), bootId=BOOT)
         bm.recordMilestone(db, bm.OBD_CONNECTED, _at(300), bootId=BOOT)
         assert _rows(db)["obd_connected"] == ("2026-10-13T12:01:02Z", 62.0)
+
+    def test_secondWriteOfARung_allocatesNoRow_maxIdUnchanged(self, db: ObdDatabase) -> None:
+        """US-860-b: the ignored write adds no row and leaves max(id) alone.
+
+        SQLite's AUTOINCREMENT counter still advances on an ignored INSERT, so
+        the next rung's id may skip one; the id cursor (``id > last``) only
+        needs ids to rise, which this pins.
+        """
+        _arm(db)
+        bm.recordMilestone(db, bm.OBD_CONNECTED, _at(62), bootId=BOOT)
+        with db.connect() as conn:
+            maxBefore = conn.execute("SELECT MAX(id) FROM boot_milestone").fetchone()[0]
+
+        bm.recordMilestone(db, bm.OBD_CONNECTED, _at(300), bootId=BOOT)
+
+        with db.connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM boot_milestone WHERE milestone = 'obd_connected'"
+            ).fetchone()[0]
+            maxAfter = conn.execute("SELECT MAX(id) FROM boot_milestone").fetchone()[0]
+        assert count == 1
+        assert maxAfter == maxBefore
+        assert _rows(db)["obd_connected"] == ("2026-10-13T12:01:02Z", 62.0)
+        bm.recordMilestone(db, bm.DRIVE_START, _at(76), bootId=BOOT)
+        with db.connect() as conn:
+            nextId = conn.execute(
+                "SELECT id FROM boot_milestone WHERE milestone = 'drive_start'"
+            ).fetchone()[0]
+        assert nextId > maxBefore
 
     def test_naiveLocalDatetime_isReadAsLocalTime(self, db: ObdDatabase) -> None:
         """DriveDetector hands a naive datetime.now(); it is local wall time."""

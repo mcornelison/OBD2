@@ -667,11 +667,11 @@ class TestTheUpsFeed:
 class TestTheBridgeFeeds:
     """IMU and light come from the live bridges, never a gated database row."""
 
-    def _sample(self, topic, tsUtc, tsCapture, value=None):
+    def _sample(self, topic, tsUtc, tsCapture, value=None, seq=1):
         from types import SimpleNamespace
 
         return SimpleNamespace(topic=topic, tsUtc=tsUtc, tsCapture=tsCapture,
-                               value=value, unit="")
+                               value=value, unit="", seq=seq)
 
     def test_lightBridge_firstAndNewestSampleReachTheFeed(self, tmp_path) -> None:
         """
@@ -679,11 +679,16 @@ class TestTheBridgeFeeds:
         When: the tick runs with the clock 5 s past the newest capture
         Then: feeds.light names the FIRST sample's ts and a 5 s age
         """
-        from pi.sensors.light_state_bridge import TOPIC_LIGHT_LUX, LightStateBridge
+        from pi.sensors.light_state_bridge import LightStateBridge
+        from pi.sensors.sensor_reader import TOPIC_LIGHT_LUX
 
         bridge = LightStateBridge(None, str(tmp_path / "states"))
-        bridge.handleSample(self._sample(TOPIC_LIGHT_LUX, "2026-10-13T12:00:21Z", 50.0, 12.0))
-        bridge.handleSample(self._sample(TOPIC_LIGHT_LUX, "2026-10-13T12:00:22Z", 51.0, None))
+        bridge.handleSample(
+            self._sample(TOPIC_LIGHT_LUX, "2026-10-13T12:00:21Z", 50.0, 12.0, seq=1)
+        )
+        bridge.handleSample(
+            self._sample(TOPIC_LIGHT_LUX, "2026-10-13T12:00:22Z", 51.0, None, seq=2)
+        )
         orch = _feedOrch(tmp_path)
         orch._lightStateBridge = bridge
         orch._feedClock = lambda: 56.0

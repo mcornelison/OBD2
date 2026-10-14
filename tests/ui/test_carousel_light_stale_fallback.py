@@ -41,6 +41,8 @@
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-641 recorded pass: frozen-feed
 #               |              | staleness, end to end from the real bridge to
 #               |              | the rendered panel + the CSS var that consumes it.
+# 2026-10-14    | Rex (US-878-a)| _producedLightState feeds the full reader burst
+#               |              | (the bridge writes on range); no assertion change.
 # ================================================================================
 ################################################################################
 
@@ -151,7 +153,25 @@ def _producedLightState(tmpPath: Path, sample: Sample) -> dict[str, Any]:
     producer change that stops publishing a usable `ts` fails HERE rather than
     being masked by a hand-written fixture that always had one.
     """
-    LightStateBridge(None, str(tmpPath)).handleSample(sample)
+    # US-878-a: the bridge writes once per reader burst (lux, raw, range under
+    # one seq), on the range sample -- so feed the whole burst the reader sends.
+    bridge = LightStateBridge(None, str(tmpPath))
+    bridge.handleSample(sample)
+    for topic, value, unit in (
+        ("raw.light.raw", (900, 300, 1200), "count"),
+        ("raw.light.range", (0x10, 100), "gain/ms"),
+    ):
+        bridge.handleSample(Sample(
+            topic=topic,
+            source=sample.source,
+            value=value,
+            unit=unit,
+            tsUtc=sample.tsUtc,
+            tsCapture=sample.tsCapture,
+            driveId=sample.driveId,
+            dataSource=sample.dataSource,
+            seq=sample.seq,
+        ))
     return json.loads(
         (tmpPath / LIGHT_STATE_FILENAME).read_text(encoding="utf-8")
     )

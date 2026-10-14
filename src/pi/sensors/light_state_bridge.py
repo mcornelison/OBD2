@@ -6,7 +6,8 @@
 #   latest reading into the dashboard states/light file -- the SSOT state file the
 #   US-483-b display-brightness consumer reads (Atlas DELTA-2: the display never
 #   touches the sensor, only this reader-owned state file). The file shape mirrors
-#   the US-480-a states/ writers: {lux, ts}, written atomically via the shared
+#   the US-480-a states/ writers ({lux, ts}, plus the US-878-a raw counts, gain,
+#   integration ms and channelAtLimit), written atomically via the shared
 #   boot_state_emitter primitives, and served as-is by eclipse-states-http.
 #
 #   Honest-instrument (carries the sensor_reader contract through the seam): a
@@ -32,10 +33,16 @@
 #               |              | factory (ships dark behind bus + light gates).
 # 2026-10-13    | Rex (US-873) | Record the first sample ts and the newest
 #               |              | sample capture for capture-health feeds.light.
+# 2026-10-14    | Rex (US-878-a)| states/light carries the raw counts, gain label,
+#               |              | integration ms and channelAtLimit. The bridge
+#               |              | drains lux + raw + range, pairs them by Sample.seq
+#               |              | and writes once per burst (on range, or when a
+#               |              | newer seq shows the burst lost a sample). Topic
+#               |              | copy deleted: imported from sensor_reader.
 # ================================================================================
 ################################################################################
 
-"""Light-state bridge: mirror the bus raw.light.lux channel into states/light."""
+"""Light-state bridge: mirror one reader burst (lux, raw, range) into states/light."""
 
 from __future__ import annotations
 
@@ -48,6 +55,16 @@ from typing import Any
 
 from common.time.helper import utcIsoNow
 
+# The producer-side SSOT for the topics, the ceilings and the gain codes
+# (US-878-a): the bridge copies none of them.
+from pi.sensors.sensor_reader import (
+    TOPIC_LIGHT_LUX,
+    TOPIC_LIGHT_RANGE,
+    TOPIC_LIGHT_RAW,
+    saturationCeilingForIntegrationMs,
+    tslGainLabel,
+)
+
 # Reuse the boot-state primitives (one provisioning + atomic-write impl, no dup).
 from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 
@@ -55,7 +72,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "LIGHT_STATE_FILENAME",
-    "TOPIC_LIGHT_LUX",
     "LightStateBridge",
     "buildLightState",
     "createLightStateBridgeFromConfig",
@@ -64,9 +80,8 @@ __all__ = [
 # The single states/ slot the carousel brightness consumer polls (US-483-b).
 LIGHT_STATE_FILENAME = "light"
 
-# The bus channel this bridge consumes (exact topic -- never raw.light.raw). Kept
-# in sync with sensor_reader.TOPIC_LIGHT_LUX (the producer-side SSOT).
-TOPIC_LIGHT_LUX = "raw.light.lux"
+# The three channels of one reader burst, published in this order under one seq.
+_LIGHT_TOPICS = (TOPIC_LIGHT_LUX, TOPIC_LIGHT_RAW, TOPIC_LIGHT_RANGE)
 
 # Default tmpfs states dir (matches boot_state_emitter + the states-http unit).
 _DEFAULT_STATES_DIR = "/run/eclipse-obd/states"
@@ -97,32 +112,118 @@ def _coerceLux(value: Any) -> float | None:
     return luxF
 
 
-def buildLightState(*, lux: float | None, tsUtc: str) -> dict:
-    """Assemble the states/light payload (pure).
+def _coerceCount(value: Any) -> int | None:
+    """A raw channel count as an int, else None (never a bool, never a float)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _tupleField(value: Any, index: int) -> Any:
+    """``value[index]`` of a bus tuple, or None when the tuple is absent or short."""
+    if not isinstance(value, (tuple, list)) or len(value) <= index:
+        return None
+    return value[index]
+
+
+def _channelAtLimit(fullCount: int | None, irCount: int | None, ceiling: int | None) -> bool | None:
+    """True when a channel reached the ceiling, False when both are below it.
+
+    None when the ceiling is unknown, or when the only channel read is below it
+    (the unread one could be at the limit, so "not at limit" is not known).
+    """
+    if ceiling is None:
+        return None
+    known = [c for c in (fullCount, irCount) if c is not None]
+    if any(c >= ceiling for c in known):
+        return True
+    if len(known) < 2:
+        return None
+    return False
+
+
+def buildLightState(
+    *,
+    lux: float | None,
+    tsUtc: str,
+    rawCounts: Any = None,
+    rangeContext: Any = None,
+) -> dict:
+    """Assemble the states/light payload from one reader burst (pure).
 
     Args:
-        lux: The latest lux reading, or None when saturated/unreadable. A
+        lux: The burst's lux reading, or None when saturated/unreadable. A
             non-finite value is coerced to None (never inf/nan in the file).
         tsUtc: The reading's ISO-8601 EVENT instant (the freshness marker
             the US-483-b consumer compares against ``luxStaleSec``). Empty
             yields ``ts: null`` rather than a substituted clock reading,
             which would be permanently fresh (US-809-c).
+        rawCounts: The raw.light.raw value ``(visible, infrared, full)``, or
+            None when the burst lost it. ``visible`` is computed by the reader
+            as full - infrared and goes negative on a failed read: a negative
+            visible count is published as null.
+        rangeContext: The raw.light.range value ``(gainCode, integrationMs)``,
+            or None when the burst lost it.
 
     Returns:
-        ``{"lux": <float|None>, "ts": <tsUtc>}`` -- the exact shape mirroring the
-        US-480-a states/ writers.
+        ``{lux, visibleCount, irCount, fullCount, gain, integrationMs,
+        channelAtLimit, ts}``. ``gain`` is a label, never a register code;
+        ``channelAtLimit`` is null when the saturation ceiling for the
+        integration time is unknown; when it is true, ``lux`` is null.
     """
-    return {"lux": _coerceLux(lux), "ts": tsUtc or None}
+    visibleCount = _coerceCount(_tupleField(rawCounts, 0))
+    if visibleCount is not None and visibleCount < 0:
+        visibleCount = None
+    irCount = _coerceCount(_tupleField(rawCounts, 1))
+    fullCount = _coerceCount(_tupleField(rawCounts, 2))
+    integrationMs = _coerceCount(_tupleField(rangeContext, 1))
+    channelAtLimit = _channelAtLimit(
+        fullCount, irCount, saturationCeilingForIntegrationMs(integrationMs)
+    )
+    return {
+        "lux": None if channelAtLimit is True else _coerceLux(lux),
+        "visibleCount": visibleCount,
+        "irCount": irCount,
+        "fullCount": fullCount,
+        "gain": tslGainLabel(_tupleField(rangeContext, 0)),
+        "integrationMs": integrationMs,
+        "channelAtLimit": channelAtLimit,
+        "ts": tsUtc or None,
+    }
+
+
+class _PendingBurst:
+    """The samples of one reader burst seen so far, keyed by its Sample.seq."""
+
+    def __init__(self, seq: int) -> None:
+        self.seq = seq
+        self.byTopic: dict[str, Any] = {}
+
+    def tsUtc(self) -> str:
+        """The lux sample's event ts; else the first sample's (never the clock)."""
+        lux = self.byTopic.get(TOPIC_LIGHT_LUX)
+        if lux is not None:
+            return getattr(lux, "tsUtc", "")
+        first = next(iter(self.byTopic.values()), None)
+        return getattr(first, "tsUtc", "") if first is not None else ""
+
+    def value(self, topic: str) -> Any:
+        sample = self.byTopic.get(topic)
+        return None if sample is None else sample.value
 
 
 class LightStateBridge:
-    """Drains raw.light.lux off the bus and mirrors it into states/light.
+    """Drains one reader burst at a time off the bus into states/light.
 
     A pure bus consumer (Atlas DELTA-2): it opens no I2C device and starts no OBD
-    connection. Each ``raw.light.lux`` sample is written to the states/light file
-    atomically as ``{lux, ts}`` (``lux`` may be None on saturation -> JSON null).
-    The drain runs on its own daemon thread, mirroring the EdrPersistenceSubscriber
-    lifecycle; a write fault is isolated (logged, never crashes the loop).
+    connection. The reader publishes lux, raw and range in that order under ONE
+    ``Sample.seq`` (a failed read publishes nothing), so the bridge pairs the
+    three by seq and writes once per burst, when the burst's range sample lands.
+    A sample of a different seq arriving first means the lossy queue dropped part
+    of the pending burst: that burst is written with its missing fields null --
+    another burst's counts are never borrowed (Atlas G3). The drain runs on its
+    own daemon thread, mirroring the EdrPersistenceSubscriber lifecycle; a write
+    fault is isolated (logged, never crashes the loop).
     """
 
     def __init__(
@@ -152,6 +253,7 @@ class LightStateBridge:
         # on the instance, so a restart re-arms them; None until a sample lands.
         self._firstSampleTs: str | None = None
         self._lastSampleCapture: float | None = None
+        self._pending: _PendingBurst | None = None
 
     # -- capture-health feed (US-873) -----------------------------------------
     @property
@@ -212,20 +314,45 @@ class LightStateBridge:
 
     # -- ingest ----------------------------------------------------------------
     def handleSample(self, sample: Any) -> bool:
-        """Mirror one raw.light.lux sample into states/light.
+        """Fold one light sample into its burst; write states/light when complete.
 
-        Returns True if the sample was a lux reading and was written; False when
-        it is any other topic (raw.light.raw / raw.obd.*), which is ignored.
+        Returns True when the sample is one of the burst's three topics (lux,
+        raw, range); False for any other topic, which is ignored.
         """
-        if getattr(sample, "topic", None) != TOPIC_LIGHT_LUX:
+        topic = getattr(sample, "topic", None)
+        if topic not in _LIGHT_TOPICS:
             return False
-        self._recordFeedSample(sample)
+        if topic == TOPIC_LIGHT_LUX:
+            self._recordFeedSample(sample)
+        seq = sample.seq
+        if self._pending is not None and self._pending.seq != seq:
+            # A newer burst began before this one's range arrived: the queue
+            # dropped a sample. Write what this burst has; never mix bursts.
+            self._flushPending()
+        if self._pending is None:
+            self._pending = _PendingBurst(seq)
+        self._pending.byTopic[topic] = sample
+        if topic == TOPIC_LIGHT_RANGE:
+            self._flushPending()
+        return True
+
+    def _flushPending(self) -> None:
+        """Write the pending burst to states/light and clear it."""
+        burst = self._pending
+        self._pending = None
+        if burst is None:
+            return
         # US-809-c: carry the absence rather than substituting the clock. A
         # fabricated ts is always fresh, so the US-483-b luxStaleSec check
         # would still be there and would have stopped being able to fire.
-        tsUtc = getattr(sample, "tsUtc", "")
-        self._writeState(buildLightState(lux=sample.value, tsUtc=tsUtc))
-        return True
+        self._writeState(
+            buildLightState(
+                lux=burst.value(TOPIC_LIGHT_LUX),
+                tsUtc=burst.tsUtc(),
+                rawCounts=burst.value(TOPIC_LIGHT_RAW),
+                rangeContext=burst.value(TOPIC_LIGHT_RANGE),
+            )
+        )
 
     def _writeState(self, payload: dict) -> None:
         """Write the states/light payload atomically (best-effort, never raises).
@@ -253,8 +380,9 @@ def createLightStateBridgeFromConfig(
 
     Args:
         config: Validated tier-aware config (reads the ``pi`` section).
-        bus: The SampleBus to subscribe to (LOSSY on raw.light.lux -- a display
-            only needs the freshest reading, drop-oldest on overflow).
+        bus: The SampleBus to subscribe to (LOSSY on raw.light.lux, .raw and
+            .range -- a display only needs the freshest reading, drop-oldest on
+            overflow; a burst that loses a sample is written with it null).
         nowIsoFn: Optional fallback clock for ``ts`` (see LightStateBridge).
 
     Returns:
@@ -272,5 +400,5 @@ def createLightStateBridgeFromConfig(
         return None
 
     statesDir = pi.get("splash", {}).get("statesDir", _DEFAULT_STATES_DIR)
-    subscription = bus.subscribe([TOPIC_LIGHT_LUX], QoS.LOSSY, _SUB_NAME)
+    subscription = bus.subscribe(list(_LIGHT_TOPICS), QoS.LOSSY, _SUB_NAME)
     return LightStateBridge(subscription, statesDir, nowIsoFn=nowIsoFn)

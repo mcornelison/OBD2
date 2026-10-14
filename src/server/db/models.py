@@ -61,6 +61,9 @@
 #               |              | CHECK.  Created by migration v0033.
 # 2026-09-30    | Rex (US-776-f) | StartupLog gains the four prior_boot_* shutdown-
 #               |              | sync columns.  Added by migration v0034.
+# 2026-10-14    | Rex (US-860-c) | BootMilestone: each boot's milestone ladder,
+#               |              | delta-path (source_device, source_id).  Created
+#               |              | by migration v0037.
 # ================================================================================
 ################################################################################
 
@@ -1064,6 +1067,42 @@ class DrainVcellTrajectory(Base):
     vcell_v: Mapped[float | None] = mapped_column(Float)
     termination_reason: Mapped[str | None] = mapped_column(String(32))
     cell_epoch: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class BootMilestone(Base):
+    """Each boot's milestone ladder, mirrored from the Pi (US-860-c / F-157).
+
+    One row per (boot, milestone): kernel_start, obd_connected, the first
+    sample of each sensor, drive_start.  First-write-wins and INSERT-only on
+    the Pi, where US-860-b gave the table an integer ``id`` so it rides the
+    ``id`` -> ``source_id`` delta path like drain_vcell_trajectory -- NOT the
+    natural-key snapshot path startup_log uses (Atlas RULED 2026-10-14).  The
+    Pi's own UNIQUE(boot_id, milestone) is enforced there; the server dedups
+    on UNIQUE(source_device, source_id).  Created by migration v0037; accepted
+    at /sync by US-860-d.  Pi DDL:
+    ``src/pi/obdii/database_schema.py::SCHEMA_BOOT_MILESTONE``.
+    """
+
+    __tablename__ = "boot_milestone"
+    __table_args__ = (
+        UniqueConstraint("source_device", "source_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_device: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(),
+    )
+    sync_batch_id: Mapped[int | None] = mapped_column(Integer)
+
+    # Pi-native columns (mirror SCHEMA_BOOT_MILESTONE).  boot_id is sized as
+    # startup_log.boot_id.  uptime_s is DOUBLE: the Pi stores a REAL (8-byte),
+    # and a 4-byte FLOAT drops the sub-second digits after a long uptime.
+    boot_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    milestone: Mapped[str] = mapped_column(String(32), nullable=False)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    uptime_s: Mapped[float] = mapped_column(Float(precision=53), nullable=False)
 
 
 class StartupLog(Base):
@@ -2357,6 +2396,7 @@ __all__ = [
     "DtcLog",
     "DtcFreezeFrame",
     "StartupLog",
+    "BootMilestone",
     "PiState",
     "VEHICLE_INFO_APPEND_ONLY_COMMENT",
     # Server-only

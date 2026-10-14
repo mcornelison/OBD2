@@ -31,9 +31,13 @@ from pi.sensors.sensor_reader import (
     TOPIC_LIGHT_RAW,
     ImuReader,
     LightReader,
+    _integrationMs,
     _luxFromCounts,
     createSensorReadersFromConfig,
     makeMagKeepAlive,
+    saturationCeilingForIntegrationMs,
+    tslGainCodeForLabel,
+    tslGainLabel,
 )
 
 
@@ -442,3 +446,41 @@ def test_factory_defaultsOff_buildsNothing():
     """Empty/absent sensors config -> dark (default false)."""
     bus = SampleBus()
     assert createSensorReadersFromConfig({"pi": {"bus": {"enabled": True}}}, bus) == []
+
+
+# --- US-878-a: the public range helpers the states/light bridge calls ---------
+def test_saturationCeiling_isTheInverseOfTheIndexToMsMapping():
+    """Every integration index's ms maps back to that index's max count."""
+    from pi.sensors.sensor_reader import _TSL_MAX_COUNT
+
+    for index, ceiling in _TSL_MAX_COUNT.items():
+        assert saturationCeilingForIntegrationMs(_integrationMs(index)) == ceiling
+    assert saturationCeilingForIntegrationMs(100) == 36863
+    assert saturationCeilingForIntegrationMs(600) == 65535
+
+
+def test_saturationCeiling_unknownMs_isNone():
+    """An integration time no index maps to has no ceiling -- never a guess."""
+    for ms in (150, 0, 700, None, True, "100", 100.0):
+        assert saturationCeilingForIntegrationMs(ms) is None
+
+
+def test_tslGainLabel_mapsEachRegisterCode_unknownIsNone():
+    """The AGAIN register codes publish as labels; anything else is None."""
+    assert [tslGainLabel(c) for c in (0x00, 0x10, 0x20, 0x30)] == ["low", "med", "high", "max"]
+    for code in (0x40, 0x01, None, False, "0x10"):
+        assert tslGainLabel(code) is None
+
+
+def test_tslGainCodeForLabel_roundTripsAllFourCodes():
+    """label <-> code round trip for every AGAIN code (replay feeder, US-878-a)."""
+    for code in (0x00, 0x10, 0x20, 0x30):
+        assert tslGainCodeForLabel(tslGainLabel(code)) == code
+    for label in ("low", "med", "high", "max"):
+        assert tslGainLabel(tslGainCodeForLabel(label)) == label
+
+
+def test_tslGainCodeForLabel_unknownOrNullLabel_isNone():
+    """A NULL or unrecognised stored gain is no register code -- never a guess."""
+    for label in (None, "", "medium", "LOW", 0x10):
+        assert tslGainCodeForLabel(label) is None

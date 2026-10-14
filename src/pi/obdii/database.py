@@ -34,6 +34,7 @@
 # 2026-09-25    | Rex (US-790) | Wired ensureDrainVcellTrajectoryTable.
 # 2026-09-30    | Rex (US-776-f) | Wired ensureStartupLogPriorBootSyncColumns.
 # 2026-10-03    | Atlas (ARCH-065a) | Wired ensureBatteryHealthLogCapacityColumns.
+# 2026-10-14    | Rex (US-860-b) | Wired ensureBootMilestoneIntegerId.
 # ================================================================================
 ################################################################################
 
@@ -94,6 +95,7 @@ from .database_schema import (
     ALL_INDEXES,
     ALL_SCHEMAS,
     ensureBatteryLogRetired,
+    ensureBootMilestoneIntegerId,
     ensureDrainVcellTrajectoryTable,
     ensureDriveStatisticsRetired,
     ensureStartupLogPriorBootSyncColumns,
@@ -452,6 +454,16 @@ class ObdDatabase:
                         "Added prior-boot sync columns to startup_log "
                         "(US-776-f): %s",
                         ', '.join(addedPriorBootSync),
+                    )
+
+                # US-860-b replay-safe schema step: a Sprint 98 boot_milestone
+                # (PK (boot_id, milestone)) is rebuilt with id INTEGER PRIMARY
+                # KEY AUTOINCREMENT + UNIQUE(boot_id, milestone) in ONE
+                # savepoint, every row kept.  A PRAGMA probe decides; a table
+                # that already has id is never touched.
+                if ensureBootMilestoneIntegerId(conn):
+                    logger.info(
+                        "Rebuilt boot_milestone with an integer id (US-860-b)"
                     )
 
                 # US-351 retirement migration: drop the legacy Pi-side

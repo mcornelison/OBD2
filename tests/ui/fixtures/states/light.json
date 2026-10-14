@@ -1,0 +1,42 @@
+{
+  "normal": {
+    "lux": 120.5,
+    "visibleCount": 900,
+    "irCount": 300,
+    "fullCount": 1200,
+    "gain": "med",
+    "integrationMs": 100,
+    "channelAtLimit": false,
+    "ts": "2026-10-20T15:02:11.3Z"
+  },
+  "saturated": {
+    "lux": null,
+    "visibleCount": 2100,
+    "irCount": 34763,
+    "fullCount": 36863,
+    "gain": "low",
+    "integrationMs": 100,
+    "channelAtLimit": true,
+    "ts": "2026-10-20T15:02:11.3Z"
+  },
+  "dark-failed-read": {
+    "lux": null,
+    "visibleCount": null,
+    "irCount": 5,
+    "fullCount": 4,
+    "gain": "med",
+    "integrationMs": 100,
+    "channelAtLimit": false,
+    "ts": "2026-10-20T03:40:02.9Z"
+  },
+  "partial-burst": {
+    "lux": 120.5,
+    "visibleCount": null,
+    "irCount": null,
+    "fullCount": null,
+    "gain": "med",
+    "integrationMs": 100,
+    "channelAtLimit": null,
+    "ts": "2026-10-20T15:02:12.3Z"
+  }
+}
