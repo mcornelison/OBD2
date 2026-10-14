@@ -127,7 +127,7 @@ def lifecycleSubscriber(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import pi.sensors.sensor_reader as sensorReader
 
     monkeypatch.setattr(sensorReader, "createSensorReadersFromConfig", lambda c, b: [_Reader()])
-    monkeypatch.setattr(lightBridge, "createLightStateBridgeFromConfig", lambda c, b: None)
+    monkeypatch.setattr(lightBridge, "createLightStateBridgeFromConfig", lambda c, b, **kw: None)
     monkeypatch.setattr(imuBridge, "createImuStateBridgeFromConfig", lambda c, b: None)
 
     host = SimpleNamespace(
@@ -252,7 +252,7 @@ class TestReplayFeederWiring:
 
         monkeypatch.setattr(sensorReader, "createSensorReadersFromConfig", _readers)
         monkeypatch.setattr(replayFeeder, "createSensorReplayFeederFromConfig", _feeder)
-        monkeypatch.setattr(lightBridge, "createLightStateBridgeFromConfig", lambda c, b: None)
+        monkeypatch.setattr(lightBridge, "createLightStateBridgeFromConfig", lambda c, b, **kw: None)
         monkeypatch.setattr(imuBridge, "createImuStateBridgeFromConfig", lambda c, b: None)
         return calls
 

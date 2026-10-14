@@ -9,6 +9,9 @@
 #     stale. Gated behind pi.bus.enabled + pi.sensors.light.enabled (ships dark).
 #     US-878-a: the bridge pairs lux, raw and range by Sample.seq and writes
 #     the raw counts, gain label, integration ms and channelAtLimit.
+#     US-878-b: states/light gains brightnessLevel / brightnessMode; the
+#     exact-payload pins below gain the two keys, and the autoDim re-read on a
+#     config.json / config.local.json mtime change is tested on a fake clock.
 # Author: Rex (US-483-a)
 # Creation Date: 2026-07-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -18,8 +21,10 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,6 +33,7 @@ from pi.bus.sample import QoS, Sample
 from pi.sensors.light_state_bridge import (
     LIGHT_STATE_FILENAME,
     LightStateBridge,
+    brightnessLevel,
     buildLightState,
     createLightStateBridgeFromConfig,
 )
@@ -47,8 +53,13 @@ _T = "2026-10-20T15:02:11.3Z"
 
 _STATE_KEYS = {
     "lux", "visibleCount", "irCount", "fullCount", "gain", "integrationMs",
-    "channelAtLimit", "ts",
+    "channelAtLimit", "brightnessLevel", "brightnessMode", "ts",
 }
+
+# Validator-default levels for the lux values the exact pins below use (the
+# curve itself is pinned by tests/pi/sensors/test_brightness_golden.py).
+_LEVEL_120_5 = 0.635728449174043
+_LEVEL_80 = brightnessLevel(80.0, None)
 
 
 def _sample(topic: str, value, seq: int, *, ts: str = _T) -> Sample:
@@ -265,7 +276,8 @@ def test_handleSample_oneBurst_writesOnceOnTheRangeSample():
 
     assert bridge.writes == [{
         "lux": 120.5, "visibleCount": 900, "irCount": 300, "fullCount": 1200,
-        "gain": "med", "integrationMs": 100, "channelAtLimit": False, "ts": _T,
+        "gain": "med", "integrationMs": 100, "channelAtLimit": False,
+        "brightnessLevel": _LEVEL_120_5, "brightnessMode": "auto", "ts": _T,
     }]
 
 
@@ -299,7 +311,8 @@ def test_handleSample_rangeDropped_burstWrittenWhenNewerSeqArrives_neverBorrowed
     assert len(bridge.writes) == 2
     assert bridge.writes[1] == {
         "lux": 80.0, "visibleCount": 600, "irCount": 200, "fullCount": 800,
-        "gain": None, "integrationMs": None, "channelAtLimit": None, "ts": seq8,
+        "gain": None, "integrationMs": None, "channelAtLimit": None,
+        "brightnessLevel": _LEVEL_80, "brightnessMode": "auto", "ts": seq8,
     }
 
 
@@ -457,3 +470,222 @@ def test_bridgeHoldsNoTopicCopy():
 
     assert '"raw.light.' not in source
     assert "TOPIC_LIGHT_LUX" not in bridgeModule.__all__
+
+
+# -------------------------------------------- autoDim re-read (US-878-b, Atlas B)
+
+# A lux inside the curve, so luxFull changes the level.
+_PROBE_LUX = 100.0
+
+
+class _Clock:
+    """A fake monotonic clock the test advances by hand."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _writeJson(path: Path, payload: dict, *, mtimeNs: int) -> None:
+    """Write ``payload`` and pin the file's mtime (no clock-tick flakiness)."""
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    os.utime(path, ns=(mtimeNs, mtimeNs))
+
+
+def _autoDimConfig(luxFull: float) -> dict:
+    return {"pi": {"display": {"autoDim": {"luxFull": luxFull}}}}
+
+
+def _levelFor(luxFull: float) -> float:
+    return brightnessLevel(_PROBE_LUX, {"luxFull": luxFull})
+
+
+def _burstLevel(bridge: _RecordingBridge, seq: int) -> float:
+    for sample in _burst(seq, _PROBE_LUX, (900, 300, 1200), (TSL_GAIN_MED, 100)):
+        bridge.handleSample(sample)
+    return bridge.writes[-1]["brightnessLevel"]
+
+
+class _ConfiguredBridge(_RecordingBridge):
+    """The real bridge bound to a config path and a fake clock."""
+
+    def __init__(self, configPath: str | None, clock: _Clock, autoDim: dict) -> None:
+        LightStateBridge.__init__(
+            self, None, "unused", autoDim=autoDim, configPath=configPath, monotonicFn=clock,
+        )
+        self.writes = []
+
+
+def test_configJsonLuxFullChange_reReadAfterOneSecond_notAtHalf(tmp_path: Path):
+    """
+    Given: a bridge started on luxFull 1000 with config.json at that value
+    When: config.json is rewritten with luxFull 500 and a burst is fed at
+        +0.5 s, then at +1.1 s on the fake clock
+    Then: the 0.5 s burst still uses 1000; the 1.1 s burst uses 500
+    """
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, _autoDimConfig(1000.0), mtimeNs=1_000_000_000)
+    clock = _Clock()
+    bridge = _ConfiguredBridge(str(configPath), clock, {"luxFull": 1000.0})
+
+    _writeJson(configPath, _autoDimConfig(500.0), mtimeNs=2_000_000_000)
+    clock.now = 0.5
+    atHalf = _burstLevel(bridge, 1)
+    clock.now = 1.1
+    atOnePointOne = _burstLevel(bridge, 2)
+
+    assert atHalf == _levelFor(1000.0)
+    assert atOnePointOne == _levelFor(500.0)
+    assert _levelFor(500.0) != _levelFor(1000.0)
+
+
+def test_luxFullInConfigLocalJsonOnly_isIgnored(tmp_path: Path):
+    """
+    Given: config.json carries luxFull 1000
+    When: config.local.json alone sets pi.display.autoDim.luxFull 500 and the
+        mtime check runs
+    Then: IGNORED -- the bridge keeps the config.json value (autoDim is not
+        in the overlay allow-list; Atlas ruled B)
+    """
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, _autoDimConfig(1000.0), mtimeNs=1_000_000_000)
+    clock = _Clock()
+    bridge = _ConfiguredBridge(str(configPath), clock, {"luxFull": 1000.0})
+
+    _writeJson(
+        tmp_path / "config.local.json",
+        {"pi.display.autoDim.luxFull": 500.0},
+        mtimeNs=2_000_000_000,
+    )
+    clock.now = 1.1
+
+    assert _burstLevel(bridge, 1) == _levelFor(1000.0)
+    assert bridge.autoDim["luxFull"] == 1000.0
+
+
+def test_noConfigPath_startConfigStands(tmp_path: Path):
+    """configPath None -> no re-read: a later config.json change is not seen."""
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, _autoDimConfig(1000.0), mtimeNs=1_000_000_000)
+    clock = _Clock()
+    bridge = _ConfiguredBridge(None, clock, {"luxFull": 1000.0})
+
+    _writeJson(configPath, _autoDimConfig(500.0), mtimeNs=2_000_000_000)
+    clock.now = 5.0
+
+    assert _burstLevel(bridge, 1) == _levelFor(1000.0)
+
+
+def test_malformedConfigJson_keepsCurrent_retriesOnTheNextCheck(tmp_path: Path):
+    """
+    Given: config.json is caught half-written (malformed JSON)
+    When: the check runs, then the file is completed and the next check runs
+    Then: the first keeps the current autoDim; the second picks up the value
+    """
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, _autoDimConfig(1000.0), mtimeNs=1_000_000_000)
+    clock = _Clock()
+    bridge = _ConfiguredBridge(str(configPath), clock, {"luxFull": 1000.0})
+
+    configPath.write_text('{"pi": {"display"', encoding="utf-8")
+    os.utime(configPath, ns=(2_000_000_000, 2_000_000_000))
+    clock.now = 1.1
+    assert _burstLevel(bridge, 1) == _levelFor(1000.0)
+
+    # Same mtime as the failed read: a retry must not depend on a new mtime.
+    configPath.write_text(json.dumps(_autoDimConfig(500.0)), encoding="utf-8")
+    os.utime(configPath, ns=(2_000_000_000, 2_000_000_000))
+    clock.now = 2.2
+    assert _burstLevel(bridge, 2) == _levelFor(500.0)
+
+
+def test_factory_startAutoDim_isTheConfigSection():
+    """The factory hands the bridge the config's pi.display.autoDim."""
+    cfg = _config(busEnabled=True, lightEnabled=True)
+    cfg["pi"]["display"] = {"autoDim": {"luxFull": 500.0, "curve": "linear"}}
+
+    bridge = createLightStateBridgeFromConfig(cfg, SampleBus())
+
+    assert bridge is not None
+    assert bridge.autoDim["luxFull"] == 500.0
+    assert bridge.autoDim["curve"] == "linear"
+    assert bridge.autoDim["minLevel"] == 0.15
+
+
+class _StubStartable:
+    def start(self) -> None:
+        pass
+
+    def stop(self, *args: object) -> None:
+        pass
+
+
+def test_lifecycleWiring_realFactory_picksUpConfigLocalJsonChangeAfterOneSecond(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Given: the bridge built by the REAL lifecycle._startEdrSensorPath through
+        the real factory, with the host's _configPath
+    When: config.json's luxFull is changed with its mtime held (so only a
+        config.local.json change can reveal it), then config.local.json is
+        written and the fake clock passes 1 s
+    Then: the factory received the host's config path, and the bridge
+        re-reads on the config.local.json change: luxFull 500 is used after
+        1 s, not before
+    """
+    import pi.bus.edr_persistence_subscriber as edrSub
+    import pi.sensors.imu_state_bridge as imuBridge
+    import pi.sensors.light_state_bridge as lightBridge
+    import pi.sensors.sensor_reader as sensorReader
+    from pi.obdii.orchestrator.lifecycle import LifecycleMixin
+
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, _autoDimConfig(1000.0), mtimeNs=1_000_000_000)
+    clock = _Clock()
+    realFactory = lightBridge.createLightStateBridgeFromConfig
+    seen: dict = {}
+
+    def _factory(config, bus, **kwargs):
+        seen.update(kwargs)
+        return realFactory(config, bus, monotonicFn=clock, **kwargs)
+
+    monkeypatch.setattr(sensorReader, "createSensorReadersFromConfig", lambda c, b: [_StubStartable()])
+    monkeypatch.setattr(
+        edrSub, "createEdrPersistenceSubscriberFromConfig", lambda *a, **k: _StubStartable()
+    )
+    monkeypatch.setattr(imuBridge, "createImuStateBridgeFromConfig", lambda c, b: None)
+    monkeypatch.setattr(lightBridge, "createLightStateBridgeFromConfig", _factory)
+
+    cfg = _config(busEnabled=True, lightEnabled=True)
+    cfg["pi"]["splash"]["statesDir"] = str(tmp_path / "states")
+    cfg["pi"]["display"] = {"autoDim": {"luxFull": 1000.0}}
+    host = SimpleNamespace(
+        _config=cfg, _database=None, _driveDetector=None, _configPath=str(configPath),
+    )
+    LifecycleMixin._startEdrSensorPath(host, SampleBus())  # type: ignore[arg-type]
+    bridge = host._lightStateBridge
+    assert isinstance(bridge, LightStateBridge)
+    try:
+        assert seen["configPath"] == str(configPath)
+        _writeJson(configPath, _autoDimConfig(500.0), mtimeNs=1_000_000_000)
+        _writeJson(
+            tmp_path / "config.local.json",
+            {"pi.calibration.mode": True},
+            mtimeNs=2_000_000_000,
+        )
+
+        recorder = []
+        monkeypatch.setattr(bridge, "_writeState", recorder.append)
+        clock.now = 0.5
+        for sample in _burst(1, _PROBE_LUX, (900, 300, 1200), (TSL_GAIN_MED, 100)):
+            bridge.handleSample(sample)
+        clock.now = 1.1
+        for sample in _burst(2, _PROBE_LUX, (900, 300, 1200), (TSL_GAIN_MED, 100)):
+            bridge.handleSample(sample)
+
+        assert recorder[0]["brightnessLevel"] == _levelFor(1000.0)
+        assert recorder[1]["brightnessLevel"] == _levelFor(500.0)
+    finally:
+        bridge.stop()

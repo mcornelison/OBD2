@@ -7,6 +7,8 @@
     "gain": "med",
     "integrationMs": 100,
     "channelAtLimit": false,
+    "brightnessLevel": 0.635728449174043,
+    "brightnessMode": "auto",
     "ts": "2026-10-20T15:02:11.3Z"
   },
   "saturated": {
@@ -17,6 +19,8 @@
     "gain": "low",
     "integrationMs": 100,
     "channelAtLimit": true,
+    "brightnessLevel": 0.7,
+    "brightnessMode": "auto",
     "ts": "2026-10-20T15:02:11.3Z"
   },
   "dark-failed-read": {
@@ -27,6 +31,8 @@
     "gain": "med",
     "integrationMs": 100,
     "channelAtLimit": false,
+    "brightnessLevel": 0.7,
+    "brightnessMode": "auto",
     "ts": "2026-10-20T03:40:02.9Z"
   },
   "partial-burst": {
@@ -37,6 +43,8 @@
     "gain": "med",
     "integrationMs": 100,
     "channelAtLimit": null,
+    "brightnessLevel": 0.635728449174043,
+    "brightnessMode": "auto",
     "ts": "2026-10-20T15:02:12.3Z"
   }
 }

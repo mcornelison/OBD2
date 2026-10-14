@@ -32,6 +32,9 @@
 #                                is enforced at config time, never at runtime
 #                                (AC-4), so these tests keep a future clamp from
 #                                silently retiring that loud failure.
+# 2026-10-14    | Rex (US-878-b)| The page still matches the frozen golden table
+#                                the light bridge is pinned to, so the Pi's
+#                                published level and the panel cannot drift.
 # ================================================================================
 ################################################################################
 
@@ -330,6 +333,54 @@ def test_brightnessLevel_curveBranch_isStillClampedToMinLevel():
     light = {"lux": 1.0, "ts": _TS}
 
     assert _probe("brightnessLevel", light, cfg, _fresh(), False) == 0.75
+
+
+# ---------------------------------------------------------------------------
+# US-878-b -- the page against the frozen golden table. The light bridge ports
+# this curve and is pinned to tests/pi/sensors/test_brightness_golden.py; this
+# runs TODAY's page through the same rows, so a change to either side alone
+# goes red instead of the published level and the panel quietly disagreeing.
+# NaN and inf cannot cross the JSON probe, so those two rows are the freeze's.
+# ---------------------------------------------------------------------------
+
+
+@nodeless
+@pytest.mark.parametrize("curve", ["logarithmic", "linear"])
+def test_brightnessLevel_pageMatchesTheFrozenGoldenTable(curve):
+    import math
+
+    from tests.pi.sensors.test_brightness_golden import _GOLDEN, _defaultsAutoDim
+
+    rows = [r for r in _GOLDEN if r[1] is None or math.isfinite(r[1])]
+    cfg = _defaultsAutoDim(curve)
+    argLists = [[{"lux": lux, "ts": _TS}, cfg, _fresh(), False] for _, lux, _, _ in rows]
+
+    proc = subprocess.run(
+        [_NODE, _PROBE, "--map", "brightnessLevel"],
+        input=json.dumps(argLists),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert proc.returncode == 0, proc.stderr
+    levels = json.loads(proc.stdout)
+
+    for (name, _, logLevel, linLevel), level in zip(rows, levels, strict=True):
+        expected = logLevel if curve == "logarithmic" else linLevel
+        assert abs(level - expected) <= 1e-9, (name, curve, level)
+
+
+@nodeless
+def test_brightnessLevel_pageMatchesTheFrozenDegenerateRow():
+    from tests.pi.sensors.test_brightness_golden import _DEGENERATE, _defaultsAutoDim
+
+    cfg = dict(
+        _defaultsAutoDim("logarithmic"),
+        luxMin=_DEGENERATE["luxMin"], luxFull=_DEGENERATE["luxFull"],
+    )
+    light = {"lux": _DEGENERATE["lux"], "ts": _TS}
+
+    assert _probe("brightnessLevel", light, cfg, _fresh(), False) == _DEGENERATE["expected"]
 
 
 def test_js_brightnessLevel_documentsTheUnclampedFallback():

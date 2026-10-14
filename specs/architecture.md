@@ -5963,8 +5963,9 @@ another seq arrives first, the lossy queue dropped part of the pending burst: it
 written with its missing fields null. Another burst's counts are never reused
 (Atlas G3).
 
-**Shape:** `{lux, visibleCount, irCount, fullCount, gain, integrationMs, channelAtLimit, ts}`
-(Atlas L-A 2026-10-13). Fixture: `tests/ui/fixtures/states/light.json`.
+**Shape:** `{lux, visibleCount, irCount, fullCount, gain, integrationMs, channelAtLimit,
+brightnessLevel, brightnessMode, ts}` (Atlas L-A 2026-10-13; the two brightness keys
+US-878-b). Fixture: `tests/ui/fixtures/states/light.json`.
 
 | Key | Source |
 |-----|--------|
@@ -5975,10 +5976,25 @@ written with its missing fields null. Another burst's counts are never reused
 | `gain` | `sensor_reader.tslGainLabel(raw.light.range[0])`: `low`/`med`/`high`/`max` for the AGAIN codes 0x00/0x10/0x20/0x30, else `null`. A register code is never published. |
 | `integrationMs` | `raw.light.range[1]`, as read. |
 | `channelAtLimit` | `true` when `fullCount` or `irCount` >= `sensor_reader.saturationCeilingForIntegrationMs(integrationMs)`, `false` when both are below it, `null` when the ceiling is unknown, or when a count is missing and the other is below it. |
+| `brightnessLevel` | The 0.0-1.0 auto-dim level for the published `lux`, computed by the bridge (`light_state_bridge.brightnessLevel`): carousel.js `brightnessCurve` / `brightnessLevel` ported unchanged, WITHOUT the STOP override (that stays page-side). A null or negative `lux` gives `defaultLevel` UNCLAMPED to `minLevel` (US-627); a curved value is clamped to [`minLevel`, 1.0]. Staleness is the reader's concern. |
+| `brightnessMode` | `auto`, the only mode this sprint (`fixed` arrives with US-878-c's `overrideLevel`). |
 | `ts` | The lux sample's event time (else the burst's first sample's). Empty gives `null`, never a clock reading (US-809-c). |
 
 `lux` and `ts` keep their meaning, so the brightness consumer and its stale fallback
 (US-483-b) are unchanged.
+
+**Brightness (US-878-b).** NOTHING consumes `brightnessLevel` / `brightnessMode` yet: the
+page applies its own curve until the post-S101 screen story. The frozen golden table in
+`tests/pi/sensors/test_brightness_golden.py` (expected values produced by running
+carousel.js in node, config = the validator `DEFAULTS` autoDim) is the single reference
+for the curve; the bridge matches it to 1e-9, and `tests/ui/test_carousel_brightness.py`
+runs today's page through the same rows, so the two cannot drift apart unnoticed. The
+bridge reads `pi.display.autoDim` from its start config, then (given the `configPath`
+lifecycle passes, Atlas G5) re-reads it through `overlay.resolveEffectiveConfig` when
+config.json or config.local.json changes mtime, checked at most once per second on a
+monotonic clock. It never uses the HTTP server's start-time cache (Atlas gap 5).
+autoDim is not in `OVERRIDABLE_KEYS`, so a config.local.json value is ignored; an
+unreadable config.json keeps the current autoDim and is retried on the next check.
 
 **Replay:** `src/pi/sensors/replay_feeder.py` publishes the same burst for every
 replayed `edr_light_sample` row: lux, raw, then `raw.light.range` LAST on every row,
