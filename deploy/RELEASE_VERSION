@@ -1,5 +1,5 @@
 {
-  "version": "V0.29.82",
-  "theme": "US-487b BT pair check pipefail fix",
-  "description": "US-487b: verify_bt_pair.sh false-FAILed 'rfcomm-bind.service installed' because grep -q under set -o pipefail lets systemctl die of SIGPIPE (18/20 false-FAIL live). Both checks now use grep >/dev/null; a new test pins it. Pi tier, scripts only."
+  "version": "V0.30.0",
+  "theme": "Sprint 98: V0.30 instruments first",
+  "description": "Sprint 98 (10 stories): states/obd-live with stale/last and bands (coolant, battery, RPM); capture-health feeds; boot_milestone ladder (Pi-local); replay of a recorded drive (OBD, IMU, light) that never pushes or touches the prod DB; NOT LIVE marker; server rejects replay/physics_sim rows; kiosk shedding follows the running kiosk."
 }
