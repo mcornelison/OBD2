@@ -12,6 +12,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-14    | Rex (US-900) | Initial implementation (F-162 sensor replay)
+# 2026-10-14    | Rex (US-878-a)| Publish raw.light.range on every light row,
+#               |              | last in the burst (Atlas RULED 2026-10-14).
 # ================================================================================
 ################################################################################
 
@@ -23,7 +25,8 @@ module does the same for the two EDR sensors: :class:`SensorReplayFeeder` reads
 the drive's ``edr_imu_sample`` and ``edr_light_sample`` rows from the replay
 SOURCE database and publishes them as the live readers would --
 ``raw.imu.accel`` / ``raw.imu.gyro`` / ``raw.imu.mag`` under one seq per burst,
-``raw.light.lux`` / ``raw.light.raw`` under one seq per poll -- each stamped
+``raw.light.lux`` / ``raw.light.raw`` / ``raw.light.range`` under one seq per
+poll (range on every row, last, as live) -- each stamped
 ``dataSource='replay'``. The real light and IMU bridges and the EDR subscriber
 consume them unchanged.
 
@@ -69,12 +72,15 @@ from pi.sensors.sensor_reader import (
     TOPIC_IMU_GYRO,
     TOPIC_IMU_MAG,
     TOPIC_LIGHT_LUX,
+    TOPIC_LIGHT_RANGE,
     TOPIC_LIGHT_RAW,
     UNIT_ACCEL,
     UNIT_COUNT,
     UNIT_GYRO,
     UNIT_LUX,
     UNIT_MAG,
+    UNIT_RANGE,
+    tslGainCodeForLabel,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,8 +117,8 @@ _IMU_SQL = (
 )
 
 _LIGHT_SQL = (
-    "SELECT ts_utc, ts_capture, lux, visible, infrared, full_spectrum"
-    " FROM edr_light_sample"
+    "SELECT ts_utc, ts_capture, lux, visible, infrared, full_spectrum, gain,"
+    " integration_ms FROM edr_light_sample"
     " WHERE ts_utc >= ? AND ts_utc <= ? ORDER BY ts_utc, ts_capture, id"
 )
 
@@ -246,10 +252,21 @@ class SensorReplayFeeder:
                 for offset, row in zip(_offsets(rows, windowStart), rows, strict=True):
                     lux = None if row[2] is None else float(row[2])
                     rawCounts = row[3:6]
-                    readings = ((TOPIC_LIGHT_LUX, lux, UNIT_LUX),) + (
-                        ()
-                        if any(v is None for v in rawCounts)
-                        else ((TOPIC_LIGHT_RAW, tuple(int(v) for v in rawCounts), UNIT_COUNT),)
+                    # US-878-a: range on EVERY row, LAST (live order lux, raw,
+                    # range): the light bridge writes on it. An unrecorded gain
+                    # or integration time publishes None, as live does.
+                    rangeContext = (
+                        tslGainCodeForLabel(row[6]),
+                        None if row[7] is None else int(row[7]),
+                    )
+                    readings = (
+                        ((TOPIC_LIGHT_LUX, lux, UNIT_LUX),)
+                        + (
+                            ()
+                            if any(v is None for v in rawCounts)
+                            else ((TOPIC_LIGHT_RAW, tuple(int(v) for v in rawCounts), UNIT_COUNT),)
+                        )
+                        + ((TOPIC_LIGHT_RANGE, rangeContext, UNIT_RANGE),)
                     )
                     bursts.append(_Burst(offset, _SOURCE_LIGHT, readings))
         finally:

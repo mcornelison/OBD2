@@ -59,6 +59,10 @@
 #               |              | lux computed from the raw counts with the DATASHEET
 #               |              | gains (24.5x, not the library's 25x; CIO). Still
 #               |              | four sensor reads per sample (CIO).
+# 2026-10-14    | Rex (US-878-a)| Public tslGainLabel + saturationCeilingFor-
+#               |              | IntegrationMs for the states/light bridge (wraps
+#               |              | the existing tables; no copy, no new numbers),
+#               |              | and tslGainCodeForLabel for the replay feeder.
 # ================================================================================
 ################################################################################
 
@@ -139,6 +143,9 @@ __all__ = [
     "TOPIC_LIGHT_LUX",
     "TOPIC_LIGHT_RANGE",
     "TOPIC_LIGHT_RAW",
+    "saturationCeilingForIntegrationMs",
+    "tslGainCodeForLabel",
+    "tslGainLabel",
 ]
 
 # --- Bus topics (additive -- never touch raw.obd.*) -- ADR section 1.1 --------
@@ -248,6 +255,11 @@ _TSL_GAIN_X: dict[int, float] = {TSL_GAIN_LOW: 1.0, TSL_GAIN_MED: 24.5, TSL_GAIN
 #: Max ADC count by ATIME index (p.7 and the CONTROL register table): 100 ms -> 36,863,
 #: 200-600 ms -> 65,535. A channel AT the max is saturated: not a reading.
 _TSL_MAX_COUNT: dict[int, int] = {0: 36863, 1: 65535, 2: 65535, 3: 65535, 4: 65535, 5: 65535}
+#: US-878-a: the AGAIN register code as the word a page shows. The same four
+#: labels edr_light_sample.gain stores (sensor_schema.py).
+_TSL_GAIN_LABELS: dict[int, str] = {
+    TSL_GAIN_LOW: "low", TSL_GAIN_MED: "med", TSL_GAIN_HIGH: "high", TSL_GAIN_MAX: "max",
+}
 #: The lux equation is NOT in the ams datasheet. It is Adafruit's (adafruit_tsl2591
 #: 1.4.8, ported from their Arduino library) and the library notes it is "not
 #: calibrated". Kept as-is; only its GAIN input changes (US-731, CIO).
@@ -949,6 +961,46 @@ def _integrationMs(index: Any) -> int | None:
         return None
     if 0 <= index <= 5:
         return (index + 1) * 100
+    return None
+
+
+def saturationCeilingForIntegrationMs(ms: Any) -> int | None:
+    """US-878-a: the max ADC count at an integration time in MILLISECONDS.
+
+    The inverse of ``_integrationMs`` over ``_TSL_MAX_COUNT``: the bus carries
+    milliseconds (raw.light.range), the ceilings are keyed by the driver's index.
+    A channel at or above the ceiling is saturated. An integration time no index
+    maps to is None -- an unknown ceiling, never a guessed one.
+    """
+    if not isinstance(ms, int) or isinstance(ms, bool):
+        return None
+    for index, ceiling in _TSL_MAX_COUNT.items():
+        if _integrationMs(index) == ms:
+            return ceiling
+    return None
+
+
+def tslGainLabel(gainCode: Any) -> str | None:
+    """US-878-a: a TSL2591 AGAIN register code -> 'low'|'med'|'high'|'max', or None.
+
+    A register code is never published as a gain. An unrecognised code is None:
+    it is not evidence of any gain setting.
+    """
+    if not isinstance(gainCode, int) or isinstance(gainCode, bool):
+        return None
+    return _TSL_GAIN_LABELS.get(gainCode)
+
+
+def tslGainCodeForLabel(label: Any) -> int | None:
+    """US-878-a: a gain label -> its TSL2591 AGAIN register code, or None.
+
+    The inverse of :func:`tslGainLabel`, over the same table, for the replay
+    feeder: edr_light_sample stores the label, raw.light.range carries the code.
+    A NULL or unrecognised label is None.
+    """
+    for code, known in _TSL_GAIN_LABELS.items():
+        if label == known:
+            return code
     return None
 
 

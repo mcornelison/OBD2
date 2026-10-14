@@ -4091,7 +4091,8 @@ carousel display auto-dim consumer (US-483-b) is a **pure consumer of a
 reader-owned state file** (Atlas DELTA-2) — it never touches the TSL2591. A
 dedicated bridge (`src/pi/sensors/light_state_bridge.py`, `LightStateBridge`)
 subscribes to the additive `raw.light.lux` channel (LOSSY — a display needs only
-the freshest reading) and mirrors it into `states/light` (`{lux, ts}`, written
+the freshest reading) and mirrors it into `states/light` (`{lux, ts}`; since US-878-a
+the whole lux/raw/range burst, see `states/light` in the F-103 section; written
 atomically via the shared `boot_state_emitter` primitives and served by
 `eclipse-states-http` alongside the US-480-a card states). The bridge opens **no
 I²C device and no OBD connection** — it is orchestrator-invoked as a bus
@@ -5859,6 +5860,41 @@ dashboard reads both, and either one is enough to mark the panel.
 - `#topbar-clock` is hidden while the marker shows, because the wall clock is wrong for
   replayed data. It is hidden with `visibility` and keeps its box, so no other
   `#topbar` child moves.
+
+#### `states/light` -- lux plus the raw counts, gain and saturation of one reader burst (US-878-a)
+
+**Producer:** `src/pi/sensors/light_state_bridge.py` (`LightStateBridge`, bus consumer;
+see "Bus → `states/light` bridge" above). It subscribes LOSSY to `raw.light.lux`,
+`raw.light.raw` and `raw.light.range`, importing the three topics from
+`sensor_reader` (the producer-side SSOT). The reader publishes the three in that order
+under ONE `Sample.seq`, and a failed read publishes nothing. The bridge pairs them by
+seq and writes once per burst, when that burst's range sample arrives. If a sample of
+another seq arrives first, the lossy queue dropped part of the pending burst: it is
+written with its missing fields null. Another burst's counts are never reused
+(Atlas G3).
+
+**Shape:** `{lux, visibleCount, irCount, fullCount, gain, integrationMs, channelAtLimit, ts}`
+(Atlas L-A 2026-10-13). Fixture: `tests/ui/fixtures/states/light.json`.
+
+| Key | Source |
+|-----|--------|
+| `lux` | `raw.light.lux`, coerced as before (`null` on saturation, never inf/nan). Also `null` whenever `channelAtLimit` is true. |
+| `visibleCount` | `raw.light.raw[0]`, which the reader computes as full - infrared. A negative value (a failed read; `facts/light-sensor.md`) is `null`. |
+| `irCount` | `raw.light.raw[1]`, as read. |
+| `fullCount` | `raw.light.raw[2]`, as read. |
+| `gain` | `sensor_reader.tslGainLabel(raw.light.range[0])`: `low`/`med`/`high`/`max` for the AGAIN codes 0x00/0x10/0x20/0x30, else `null`. A register code is never published. |
+| `integrationMs` | `raw.light.range[1]`, as read. |
+| `channelAtLimit` | `true` when `fullCount` or `irCount` >= `sensor_reader.saturationCeilingForIntegrationMs(integrationMs)`, `false` when both are below it, `null` when the ceiling is unknown, or when a count is missing and the other is below it. |
+| `ts` | The lux sample's event time (else the burst's first sample's). Empty gives `null`, never a clock reading (US-809-c). |
+
+`lux` and `ts` keep their meaning, so the brightness consumer and its stale fallback
+(US-483-b) are unchanged.
+
+**Replay:** `src/pi/sensors/replay_feeder.py` publishes the same burst for every
+replayed `edr_light_sample` row: lux, raw, then `raw.light.range` LAST on every row,
+never skipped, as `(sensor_reader.tslGainCodeForLabel(gain), integration_ms)` with
+`None` for an unrecorded value (Atlas RULED 2026-10-14). Every replayed row is written;
+a row with no recorded gain is written with `gain` null.
 
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 
