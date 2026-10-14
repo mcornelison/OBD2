@@ -146,6 +146,8 @@
 #                                approximateOpenLoopPct 10} (Spool, sourced).
 # 2026-10-14    | Rex (US-881-c) | pi.fuel.persistSec: 60 (since-reset persist
 #                                cadence, Atlas G3), finite > 0.
+# 2026-10-14    | Rex (US-881-d) | pi.fuel.resetTimeoutSec: 5 (POST /fuel-reset
+#                                outcome wait), finite > 0.
 # ================================================================================
 ################################################################################
 
@@ -847,6 +849,10 @@ DEFAULTS: dict[str, Any] = {
     # Pi-local fuel_since_reset row at most once per this many seconds (and at
     # drive end); a crash loses at most this much accumulation.
     'pi.fuel.persistSec': 60,
+    # US-881-d: POST /fuel-reset waits at most this long for eclipse-obd's
+    # outcome. eclipse-states-http is single-threaded, so the wait blocks every
+    # GET the kiosk makes -- keep it short.
+    'pi.fuel.resetTimeoutSec': 5,
     # US-882-b (F-159): states/grade-history, written by the IMU bridge -- one
     # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
     'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
@@ -1860,8 +1866,8 @@ class ConfigValidator:
     def _validateFuel(self, config: dict[str, Any]) -> None:
         """Validate the pi.fuel.* keys (US-881-b).
 
-        stoichAfr, densityGPerL, minMiles and persistSec (US-881-c) are finite
-        numbers > 0; the two
+        stoichAfr, densityGPerL, minMiles, persistSec (US-881-c) and
+        resetTimeoutSec (US-881-d) are finite numbers > 0; the two
         percentages are finite numbers in [0, 100]; mafTrusted is a real bool.
         An absent key is skipped (a custom defaults set may not supply it).
 
@@ -1871,7 +1877,9 @@ class ConfigValidator:
         Raises:
             ConfigValidationError: If any present key is out of its range.
         """
-        for name in ('stoichAfr', 'densityGPerL', 'minMiles', 'persistSec'):
+        for name in (
+            'stoichAfr', 'densityGPerL', 'minMiles', 'persistSec', 'resetTimeoutSec'
+        ):
             key = f'pi.fuel.{name}'
             val = self._getNestedValue(config, key)
             if val is None:

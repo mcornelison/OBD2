@@ -543,7 +543,7 @@ def test_get_settingsPath_stillReadOnly_404(server):
 
 def test_unknownPostPath_still404(server):
     """
-    Given: the server now has THREE write routes and no more
+    Given: the server now has FOUR write routes (US-881-d /fuel-reset) and no more
     When: an unrelated path is POSTed
     Then: 404 -- adding /settings did not open a catch-all writer
     """

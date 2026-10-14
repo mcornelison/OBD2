@@ -6006,6 +6006,27 @@ outside closed loop (`FuelSnapshot.openLoopS`). `resetSinceReset(resetAtTs)` zer
 row, the cached `sinceReset` and the watermark together (the US-881-d entry point). No
 database handle -> `sinceReset` null and one WARN.
 
+**`POST /fuel-reset` (US-881-d, Atlas gap 4).** `eclipse-states-http` has exactly FOUR
+explicit, token-gated (`_tokenOk`) write routes: `/service-control`, `/dtc-clear`,
+`/settings` and `/fuel-reset`; any other POST path (e.g. `/fuel-resetx`) is 404, never a
+catch-all. The HTTP process holds no database, so the route calls the injected
+`fuelResetRunner` -- `src/pi/splash/fuel_reset_channel.py`, the `dtc_clear_channel`
+pattern in its own module (the DTC channel is untouched): it writes
+`fuel-reset-request.json {requestId}` into the states dir and waits up to
+`pi.fuel.resetTimeoutSec` (validator default 5, finite > 0; resolved at start by
+`loadFuelResetTimeoutSec`; short because the server is single-threaded and the wait
+blocks every GET) for `fuel-reset-outcome.json` carrying the SAME `requestId`.
+eclipse-obd services it from `runLoop` in `_maybeServiceFuelResetRequest`, right after
+`_maybeServiceDtcClearRequest`: the request is consumed first; while `_gatherDriveState`
+says `recording` it writes `{ok: false, reason: "driving"}` and changes nothing;
+otherwise it calls `resetSinceReset(resetAtTs = now, canonical UTC)` (never
+`fuel_since_reset.reset` directly) and writes `{ok: true, resetAtTs}` (`reason
+"unavailable"` with no fuel producer or database). Status mapping, copied from
+`/dtc-clear`: 401 bad token (no request file written), 503 no states channel (no runner,
+or the request cannot be written), 409 refused (`reason` in the body), 504 no outcome in
+time (`ok: null`; the request is withdrawn), 200 `{ok: true, resetAtTs}`. The next
+`states/fuel-economy` then carries `sinceReset` totals 0 and that `resetAtTs`.
+
 #### `window.DISPLAY_STALE` -- the page's stale windows, injected per request (US-882-c)
 
 `eclipse-states-http` injects three config blocks into `dashboard.html` through the
