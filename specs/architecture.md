@@ -5933,6 +5933,42 @@ All four g values are non-negative magnitudes. A value with no qualifying sample
   gate-refusal writes, unchanged. Peaks reset only when the bridge is constructed, which
   happens once per eclipse-obd process. A kiosk restart does not touch them.
 
+#### `states/grade-history` -- a grade point per 10 s over 15 min (US-882-b)
+
+**Producer:** `src/pi/sensors/imu_state_bridge.py` (`ImuStateBridge` + `GradeHistory`, see
+"Bus → `states/imu` DERIVED bridge" above). A second state file from the IMU bridge, written
+atomically by the same `writeStateAtomic` path as `states/imu`. `states/imu` and the bridge's
+drain cadence are unchanged. No page reads it yet.
+
+**Shape:** `{points: [{ts, gradePct}], windowS, intervalS, ts}` (Atlas M-C 2026-10-13).
+Fixture: `tests/ui/fixtures/states/grade-history.json` (`empty`, `full-window`, `with-gap`).
+
+| Key | Source |
+|-----|--------|
+| `points[].ts` | the bucket's END, ISO UTC; buckets are aligned to the epoch grid (`floor(ts / intervalS)`). |
+| `points[].gradePct` | mean of the bucket's non-null `gradePct` (same 0.1 % precision); `null` when it had none, never 0 and never the previous value. |
+| `windowS` | `pi.display.gradeHistory.windowSec` (validator default 900). |
+| `intervalS` | `pi.display.gradeHistory.intervalSec` (validator default 10). |
+| `ts` | event ts of the `states/imu` write that last changed `points`; `null` before the first. |
+
+- **Input (Atlas G2).** The `gradePct` of each `states/imu` WRITE (stateHz 1, the value the
+  page shows), bucketed on that write's `ts`. Grade is not computed per sample and not
+  recomputed from pitch. Every write path feeds it: live, sensor-absent and gate-refusal. A
+  write whose `gradePct` is null counts as null. A write whose `ts` is null is skipped. The
+  write still counts when the `states/imu` file write itself failed.
+- **Closing.** A bucket closes when the first write with `ts` >= its end arrives; any empty
+  buckets between are appended as null points. The file is written when a bucket closes.
+- **Window.** `points` holds only the newest `floor(windowSec / intervalSec)` points (90 at
+  defaults), oldest first. The validator requires both keys finite and > 0 and
+  `windowSec >= intervalSec`.
+- **Clock steps.** A write whose `ts` is earlier than the open bucket's start resets the
+  history (`points` [], one WARNING) and the empty history is written. A forward gap appends
+  at most `floor(windowSec / intervalSec)` null points (the newest), so the loop is bounded.
+- **Lifetime.** The history resets when the bridge is constructed (once per eclipse-obd
+  process). A kiosk restart does not touch it. A dead bridge writes nothing, so the file
+  freezes: the page (a later sprint) judges it stale when
+  `now - ts > intervalS + pi.display.stale.imuSec`.
+
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 
 The post-boot touch dashboard reuses the F-103 splash seam wholesale: it is a

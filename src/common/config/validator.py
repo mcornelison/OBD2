@@ -133,6 +133,8 @@
 # 2026-10-14    | Rex (US-857) | _validateReplay: an active replay refuses a
 #                                sourcePath that is pi.database.path and a
 #                                driveId that is not a positive integer.
+# 2026-10-14    | Rex (US-882-b) | pi.display.gradeHistory.{intervalSec 10,
+#                                windowSec 900}; finite, > 0, window >= interval.
 # ================================================================================
 ################################################################################
 
@@ -208,6 +210,12 @@ DEFAULT_IMU_STATE_HZ = 1
 # maximum of -- so a pothole spike is not braking (Atlas M-B).
 # Design default, UNVALIDATED: checked on the LIVE FEEDS drive against the IMU rows.
 DEFAULT_IMU_PEAKS_SMOOTHING_SEC = 0.5
+
+# US-882-b: states/grade-history buckets the gradePct of each states/imu write
+# into intervalSec buckets and keeps the newest windowSec of them -- a point per
+# 10 s over 15 min (Atlas M-C 2026-10-13), so 90 points at the defaults.
+DEFAULT_GRADE_HISTORY_INTERVAL_SEC = 10
+DEFAULT_GRADE_HISTORY_WINDOW_SEC = 900
 
 # US-776-j1: bound on the ONE forced WiFi scan (nmcli --rescan yes) a key-off
 # runs to decide home. MEASURED on the Pi (Atlas): a forced scan takes
@@ -791,6 +799,10 @@ DEFAULTS: dict[str, Any] = {
     # p99 3 s for RPM, SPEED, COOLANT_TEMP and BATTERY_V; 5 s = 1.7x that p99.
     # Mirrored by src/pi/obdii/obd_live_emitter.py DEFAULT_OBD_LIVE_STALE_S.
     'pi.display.stale.obdLiveSec': 5,
+    # US-882-b (F-159): states/grade-history, written by the IMU bridge -- one
+    # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
+    'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
+    'pi.display.gradeHistory.windowSec': DEFAULT_GRADE_HISTORY_WINDOW_SEC,
     # US-875 (F-159): the band producer (src/pi/obdii/band_producer.py) that
     # colours states/obd-live. Pages hold no number; these are the only copies.
     # Coolant (degrees C): threshold + dwell + clear hysteresis. Source for all
@@ -961,6 +973,7 @@ class ConfigValidator:
         self._validateBands(config)
         self._validateReplay(config)
         self._validateImuStateBridge(config)
+        self._validateGradeHistory(config)
         self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
@@ -1699,6 +1712,45 @@ class ConfigValidator:
         self._validateImuMagCalibration(config)
         self._validateGyroRecovery(config)
         self._warnImuRatesAboveSource(config)
+
+    def _validateGradeHistory(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.gradeHistory.{intervalSec,windowSec} (US-882-b).
+
+        Each must be a finite number > 0, and the window must hold at least one
+        bucket (``windowSec >= intervalSec``): a shorter window keeps floor(w/i)
+        = 0 points, so the history would publish nothing, forever. An absent key
+        is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If a key is non-numeric, non-finite or
+                non-positive, or the window is shorter than the interval.
+        """
+        values: dict[str, float] = {}
+        for name in ('intervalSec', 'windowSec'):
+            key = f'pi.display.gradeHistory.{name}'
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not math.isfinite(val)
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a finite number > 0 (got {val!r})",
+                    missingFields=[key],
+                )
+            values[name] = float(val)
+        if len(values) == 2 and values['windowSec'] < values['intervalSec']:
+            raise ConfigValidationError(
+                "pi.display.gradeHistory.windowSec must be >= intervalSec "
+                f"(got windowSec={values['windowSec']!r}, intervalSec={values['intervalSec']!r})",
+                missingFields=['pi.display.gradeHistory.windowSec'],
+            )
 
     def _validateImuEnums(self, config: dict[str, Any]) -> None:
         """Reject a ``magMode`` or ``fusionEngine`` outside its allowed set (ARCH-064).

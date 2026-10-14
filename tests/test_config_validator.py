@@ -25,6 +25,7 @@
 # 2026-10-03    | Atlas (ARCH-065a) | Ruling 19 (M8): drainFloorDwellReads must be an integer >= 1.
 # 2026-10-13    | Atlas (ARCH-068) | joinWaitSec default 120 -> 30 (CIO 2026-10-12).
 # 2026-10-14    | Rex (US-882-a) | pi.imu.peaks.smoothingSec default + positivity.
+# 2026-10-14    | Rex (US-882-b) | pi.display.gradeHistory.{intervalSec,windowSec}.
 # ================================================================================
 ################################################################################
 
@@ -45,6 +46,8 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from common.config.validator import (
+    DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
+    DEFAULT_GRADE_HISTORY_WINDOW_SEC,
     DEFAULT_IMU_PEAKS_SMOOTHING_SEC,
     DEFAULT_IMU_PERSIST_HZ,
     DEFAULT_IMU_SAMPLE_HZ,
@@ -1327,3 +1330,38 @@ def test_validate_imuPeaksSmoothingSec_nonPositive_rejected(bad):
     cfg["pi"] = {"imu": {"peaks": {"smoothingSec": bad}}}
     with pytest.raises(ConfigValidationError, match="pi.imu.peaks.smoothingSec"):
         ConfigValidator().validate(cfg)
+
+
+def test_validate_gradeHistory_defaultsToTheSingleDefinitions():
+    """US-882-b: states/grade-history buckets 10 s over a 900 s window by default."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    gradeHistory = cfg["pi"]["display"]["gradeHistory"]
+    assert gradeHistory["intervalSec"] == DEFAULT_GRADE_HISTORY_INTERVAL_SEC
+    assert gradeHistory["windowSec"] == DEFAULT_GRADE_HISTORY_WINDOW_SEC
+    assert DEFAULT_GRADE_HISTORY_INTERVAL_SEC == 10
+    assert DEFAULT_GRADE_HISTORY_WINDOW_SEC == 900
+
+
+@pytest.mark.parametrize("key", ["intervalSec", "windowSec"])
+@pytest.mark.parametrize("bad", [0, -10, float("inf"), float("nan"), "10", True])
+def test_validate_gradeHistory_nonPositiveOrNonFinite_rejected(key, bad):
+    """US-882-b: each grade-history key must be a finite number > 0."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"gradeHistory": {key: bad}}}
+    with pytest.raises(ConfigValidationError, match=f"pi.display.gradeHistory.{key}"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_gradeHistory_windowShorterThanInterval_rejected():
+    """US-882-b: a window that cannot hold one bucket is refused."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"gradeHistory": {"intervalSec": 30, "windowSec": 20}}}
+    with pytest.raises(ConfigValidationError, match="pi.display.gradeHistory.windowSec"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_gradeHistory_windowEqualToInterval_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"gradeHistory": {"intervalSec": 30, "windowSec": 30}}}
+    result = ConfigValidator().validate(cfg)
+    assert result["pi"]["display"]["gradeHistory"]["windowSec"] == 30

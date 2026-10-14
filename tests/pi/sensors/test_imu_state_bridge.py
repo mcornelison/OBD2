@@ -19,25 +19,35 @@
 #     the default engine is now the imufusion AHRS.
 # 2026-10-14 Rex (US-882-a): states/imu peaks (accel/brake/left/right g since
 #     the bridge started) -- per-sample fold, moving-mean smoothing, fixture R29.
+# 2026-10-14 Rex (US-882-b): states/grade-history -- each states/imu write's
+#     gradePct bucketed on its ts; clock steps, gaps, window cap, fixture R29.
 ################################################################################
 """Unit tests for the IMU-state bridge (bus raw.imu.* -> states/imu)."""
 
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from common.config.validator import DEFAULT_IMU_PEAKS_SMOOTHING_SEC, DEFAULT_IMU_PERSIST_HZ
+from common.config.validator import (
+    DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
+    DEFAULT_GRADE_HISTORY_WINDOW_SEC,
+    DEFAULT_IMU_PEAKS_SMOOTHING_SEC,
+    DEFAULT_IMU_PERSIST_HZ,
+)
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS, Sample
 from pi.sensors.imu_state_bridge import (
     DEFAULT_IMU_SAMPLE_HZ,
     DEFAULT_STATE_HZ,
+    GRADE_HISTORY_STATE_FILENAME,
     IMU_BODY_FRAME,
     IMU_STATE_FILENAME,
     MAX_GRADE_PITCH_DEG,
@@ -52,6 +62,7 @@ from pi.sensors.imu_state_bridge import (
     TOPIC_IMU_GYRO,
     TOPIC_OBD_SPEED,
     GPeakTracker,
+    GradeHistory,
     ImuStateBridge,
     buildImuState,
     computeHeadingDeg,
@@ -1588,4 +1599,368 @@ def test_imuFixture_caseIsExactlyWhatTheProducerBuilds(name: str):
     """
     fixture = json.loads(_FIXTURE_IMU.read_text(encoding="utf-8"))
     built = json.loads(json.dumps(buildImuState(**_IMU_FIXTURE_INPUTS[name]())))
+    assert built == fixture[name]
+
+
+# =================================================================== US-882-b
+# states/grade-history: the gradePct of each states/imu WRITE, bucketed on that
+# write's ts into intervalSec buckets, the newest windowSec of them kept.
+
+_FIXTURE_GRADE_HISTORY = (
+    Path(__file__).resolve().parents[2] / "ui" / "fixtures" / "states" / "grade-history.json"
+)
+
+# t: a bucket boundary at the default 10 s interval.
+_T0 = datetime(2026, 10, 20, 15, 0, 0, tzinfo=UTC)
+
+
+def _isoAt(seconds: float) -> str:
+    """The event ts ``seconds`` after _T0, in the bridge's ISO shape."""
+    return (_T0 + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _pointTs(seconds: int) -> str:
+    """A point's ts: a whole-second bucket end, canonical ISO."""
+    return (_T0 + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _readGradeHistory(statesDir: Path) -> dict:
+    return json.loads((statesDir / GRADE_HISTORY_STATE_FILENAME).read_text(encoding="utf-8"))
+
+
+class TestGradeHistory:
+    """The pure bucketing, fed (ts, gradePct) exactly as states/imu publishes them."""
+
+    def test_freshHistory_isEmpty_withTheWindowAndInterval(self):
+        history = GradeHistory(10, 900)
+        assert history.snapshot() == {"points": [], "windowS": 900, "intervalS": 10, "ts": None}
+        assert history.maxPoints == 90
+
+    def test_twoWritesInABucket_closeAsTheirMean_whenTheNextBucketStarts(self):
+        """
+        Given: gradePct 2.0 at t+1 s and 4.0 at t+6 s (bucket [t, t+10))
+        When: a write at t+11 s arrives
+        Then: one point {ts t+10, gradePct 3.0}, and observe says write the file
+        """
+        history = GradeHistory(10, 900)
+        assert history.observe(_isoAt(1), 2.0) is False
+        assert history.observe(_isoAt(6), 4.0) is False
+        assert history.observe(_isoAt(11), 1.0) is True
+        snap = history.snapshot()
+        assert snap["points"] == [{"ts": _pointTs(10), "gradePct": 3.0}]
+        assert snap["ts"] == _isoAt(11)
+
+    def test_bucketClosesOnTheFirstWriteAtItsEnd_notAfter(self):
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(9.999), 2.0)
+        assert history.observe(_isoAt(10), 5.0) is True
+        assert history.snapshot()["points"] == [{"ts": _pointTs(10), "gradePct": 2.0}]
+
+    def test_nullGradeWritesAreIgnoredInTheMean(self):
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(1), None)
+        history.observe(_isoAt(2), 6.0)
+        history.observe(_isoAt(3), None)
+        history.observe(_isoAt(12), None)
+        assert history.snapshot()["points"] == [{"ts": _pointTs(10), "gradePct": 6.0}]
+
+    def test_aBucketOfOnlyNullGrades_isNull_neverZeroNorThePreviousValue(self):
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(1), 4.0)
+        history.observe(_isoAt(11), None)
+        history.observe(_isoAt(15), None)
+        history.observe(_isoAt(21), 1.0)
+        assert history.snapshot()["points"] == [
+            {"ts": _pointTs(10), "gradePct": 4.0},
+            {"ts": _pointTs(20), "gradePct": None},
+        ]
+
+    def test_emptyBucketsBetween_areAppendedAsNullPoints(self):
+        """
+        Given: writes at t+1 s then t+35 s
+        Then: points end t+10, t+20, t+30; the last two are null
+        """
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(1), 2.5)
+        assert history.observe(_isoAt(35), 1.0) is True
+        assert history.snapshot()["points"] == [
+            {"ts": _pointTs(10), "gradePct": 2.5},
+            {"ts": _pointTs(20), "gradePct": None},
+            {"ts": _pointTs(30), "gradePct": None},
+        ]
+
+    def test_aHundredClosedBuckets_keepTheNewestNinety_oldestFirst(self):
+        history = GradeHistory(10, 900)
+        for k in range(101):
+            history.observe(_isoAt(k * 10 + 1), float(k))
+        points = history.snapshot()["points"]
+        assert len(points) == 90
+        assert points[0] == {"ts": _pointTs(110), "gradePct": 10.0}
+        assert points[-1] == {"ts": _pointTs(1000), "gradePct": 99.0}
+
+    def test_clockStepBack_resetsTheHistory_loggedOnce(self, caplog):
+        """
+        Given: 3 closed buckets
+        When: a write 60 s earlier than the open bucket arrives
+        Then: points [] and exactly one log line; observe says write the file
+        """
+        history = GradeHistory(10, 900)
+        for k in range(4):
+            history.observe(_isoAt(k * 10 + 1), 1.0)
+        assert len(history.snapshot()["points"]) == 3
+        with caplog.at_level(logging.WARNING, logger="pi.sensors.imu_state_bridge"):
+            assert history.observe(_isoAt(31 - 60), 2.0) is True
+        assert history.snapshot()["points"] == []
+        assert len([r for r in caplog.records if "grade-history" in r.getMessage()]) == 1
+
+    def test_afterAReset_theStepBackWriteOpensTheNewBucket(self):
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(101), 1.0)
+        history.observe(_isoAt(1), 2.0)
+        history.observe(_isoAt(11), 3.0)
+        assert history.snapshot()["points"] == [{"ts": _pointTs(10), "gradePct": 2.0}]
+
+    def test_aWriteEarlierInsideTheOpenBucket_isNotAStep(self):
+        """Only a ts before the open bucket's START resets the history."""
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(1), 1.0)
+        history.observe(_isoAt(11), 2.0)
+        assert history.observe(_isoAt(10.5), 4.0) is False
+        history.observe(_isoAt(21), 0.0)
+        assert history.snapshot()["points"][-1] == {"ts": _pointTs(20), "gradePct": 3.0}
+
+    def test_hugeForwardGap_appendsAtMostAWindowOfNullPoints(self):
+        """
+        Given: a write at t+1 s, then one at t+100000 s (defaults)
+        Then: at most 90 points, ending at the new open bucket's start
+        """
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(1), 2.0)
+        history.observe(_isoAt(100000), 1.0)
+        points = history.snapshot()["points"]
+        assert len(points) == 90
+        assert all(p["gradePct"] is None for p in points)
+        assert points[-1]["ts"] == _pointTs(100000)
+        assert points[0]["ts"] == _pointTs(100000 - 890)
+
+    def test_hugeForwardGap_loopIsBounded(self, monkeypatch):
+        """The null-point loop runs at most maxPoints times, not once per bucket."""
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(1), 2.0)
+        appended: list[Any] = []
+        realDeque = history._points  # noqa: SLF001
+
+        class _Counting:
+            def append(self, item):
+                appended.append(item)
+                realDeque.append(item)
+
+        monkeypatch.setattr(history, "_points", _Counting())
+        history.observe(_isoAt(10_000_000), 1.0)
+        assert len(appended) <= 91  # the closed bucket + at most 90 null points
+
+    def test_nullTs_isSkipped_noPointNoReset(self):
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(1), 2.0)
+        history.observe(_isoAt(11), 2.0)
+        before = history.snapshot()
+        assert history.observe(None, 5.0) is False
+        assert history.observe("", 5.0) is False
+        assert history.observe("not-a-time", 5.0) is False
+        assert history.snapshot() == before
+
+    def test_fractionalInterval_pointTsCarriesMilliseconds(self):
+        history = GradeHistory(2.5, 10)
+        history.observe(_isoAt(0.1), 1.0)
+        history.observe(_isoAt(2.6), 1.0)
+        assert history.snapshot()["points"] == [
+            {"ts": "2026-10-20T15:00:02.500Z", "gradePct": 1.0}
+        ]
+        assert history.maxPoints == 4
+
+    def test_snapshotIsACopy(self):
+        history = GradeHistory(10, 900)
+        history.observe(_isoAt(1), 2.0)
+        history.observe(_isoAt(11), 2.0)
+        history.snapshot()["points"][0]["gradePct"] = 99.0
+        assert history.snapshot()["points"][0]["gradePct"] == 2.0
+
+
+def _gradeBridge(tmp_path: Path, **kwargs: Any) -> ImuStateBridge:
+    return ImuStateBridge(None, str(tmp_path), stateHz=1, **kwargs)
+
+
+class TestBridgeGradeHistory:
+    """The bridge buckets the gradePct of every states/imu WRITE it makes."""
+
+    def test_bucketInputIsEachStatesImuWrite(self, tmp_path: Path):
+        """
+        Given: a bridge whose states/imu writes carry gradePct 2.0 then 4.0
+        When: a write in the next bucket lands
+        Then: states/grade-history holds their mean at the bucket end
+        """
+        bridge = _gradeBridge(tmp_path)
+        bridge._writeState({"ts": _isoAt(1), "gradePct": 2.0})  # noqa: SLF001
+        bridge._writeState({"ts": _isoAt(6), "gradePct": 4.0})  # noqa: SLF001
+        assert not (tmp_path / GRADE_HISTORY_STATE_FILENAME).exists()
+        bridge._writeState({"ts": _isoAt(11), "gradePct": None})  # noqa: SLF001
+        assert _readGradeHistory(tmp_path) == {
+            "points": [{"ts": _pointTs(10), "gradePct": 3.0}],
+            "windowS": 900,
+            "intervalS": 10,
+            "ts": _isoAt(11),
+        }
+
+    def test_liveWrites_feedThePublishedGrade(self, tmp_path: Path, monkeypatch):
+        """
+        Given: a bridge driven by real accel samples (states/imu at stateHz 1)
+        When: 25 s of samples are fed
+        Then: the first point is the mean of the gradePct the first ten
+              states/imu writes PUBLISHED
+        """
+        import pi.sensors.imu_state_bridge as bridgeModule
+
+        published: list[tuple[str, Any]] = []
+        realWrite = bridgeModule.writeStateAtomic
+
+        def _spy(path: str, payload: dict) -> None:
+            if path.endswith(IMU_STATE_FILENAME):
+                published.append((payload["ts"], payload["gradePct"]))
+            realWrite(path, payload)
+
+        monkeypatch.setattr(bridgeModule, "writeStateAtomic", _spy)
+        bridge = _gradeBridge(tmp_path)
+        for i in range(0, 50 * 25):
+            bridge.handleSample(_accelAt(_pitched(3.0), i / 50.0, _isoAt(i / 50.0)))
+        points = _readGradeHistory(tmp_path)["points"]
+        assert [p["ts"] for p in points] == [_pointTs(10), _pointTs(20)]
+        firstBucket = [g for ts, g in published if ts < _isoAt(10) and g is not None]
+        assert len([ts for ts, _ in published if ts < _isoAt(10)]) == 10
+        expected = round(sum(firstBucket) / len(firstBucket), 1) if firstBucket else None
+        assert points[0]["gradePct"] == expected
+
+    def test_sensorAbsentWrite_countsAsNull(self, tmp_path: Path):
+        bridge = _gradeBridge(tmp_path)
+        bridge._writeState({"ts": _isoAt(1), "gradePct": None})  # noqa: SLF001
+        bridge.handleSample(
+            Sample(
+                topic="state.sensor.imu", source="imu", value=0.0, unit="",
+                tsUtc=_isoAt(4), tsCapture=4.0, driveId=None, dataSource="real", seq=1,
+            )
+        )
+        bridge._writeState({"ts": _isoAt(12), "gradePct": 1.0})  # noqa: SLF001
+        assert _readGradeHistory(tmp_path)["points"] == [{"ts": _pointTs(10), "gradePct": None}]
+
+    def test_aStatesImuWriteFailure_stillFeedsTheHistory(self, tmp_path: Path, monkeypatch):
+        """The two files are independent: a failed imu write is still a published value."""
+        import pi.sensors.imu_state_bridge as bridgeModule
+
+        realWrite = bridgeModule.writeStateAtomic
+
+        def _imuFails(path: str, payload: dict) -> None:
+            if path.endswith(IMU_STATE_FILENAME):
+                raise OSError("states/imu write refused")
+            realWrite(path, payload)
+
+        monkeypatch.setattr(bridgeModule, "writeStateAtomic", _imuFails)
+        bridge = _gradeBridge(tmp_path)
+        bridge._writeState({"ts": _isoAt(1), "gradePct": 2.0})  # noqa: SLF001
+        assert bridge._gradeHistory.snapshot()["points"] == []  # noqa: SLF001
+        bridge._writeState({"ts": _isoAt(11), "gradePct": 2.0})  # noqa: SLF001
+        assert bridge._gradeHistory.snapshot()["points"] == [  # noqa: SLF001
+            {"ts": _pointTs(10), "gradePct": 2.0}
+        ]
+
+    def test_gradeHistoryWriteFault_isIsolated(self, tmp_path: Path):
+        bridge = _gradeBridge(tmp_path)
+
+        def boom(*_a: Any, **_k: Any) -> None:
+            raise OSError("disk full")
+
+        bridge._ensureDir = boom  # type: ignore[method-assign]
+        bridge._writeState({"ts": _isoAt(1), "gradePct": 2.0})  # noqa: SLF001
+        bridge._writeState({"ts": _isoAt(11), "gradePct": 2.0})  # noqa: SLF001 -- no raise
+
+    def test_clockStepBack_writesTheEmptyHistory(self, tmp_path: Path):
+        bridge = _gradeBridge(tmp_path)
+        for k in range(4):
+            bridge._writeState({"ts": _isoAt(k * 10 + 1), "gradePct": 1.0})  # noqa: SLF001
+        assert len(_readGradeHistory(tmp_path)["points"]) == 3
+        bridge._writeState({"ts": _isoAt(-29), "gradePct": 1.0})  # noqa: SLF001
+        assert _readGradeHistory(tmp_path)["points"] == []
+
+    def test_newBridge_startsAnEmptyHistory(self, tmp_path: Path):
+        bridge = _gradeBridge(tmp_path)
+        bridge._writeState({"ts": _isoAt(1), "gradePct": 1.0})  # noqa: SLF001
+        bridge._writeState({"ts": _isoAt(11), "gradePct": 1.0})  # noqa: SLF001
+        restarted = _gradeBridge(tmp_path)
+        assert restarted._gradeHistory.snapshot()["points"] == []  # noqa: SLF001
+
+    def test_bridgeTakesTheConfiguredIntervalAndWindow(self, tmp_path: Path):
+        bridge = _gradeBridge(tmp_path, gradeHistoryIntervalSec=5, gradeHistoryWindowSec=20)
+        snap = bridge._gradeHistory.snapshot()  # noqa: SLF001
+        assert (snap["intervalS"], snap["windowS"]) == (5, 20)
+
+
+def test_factory_readsGradeHistoryKeys(tmp_path: Path):
+    config = _config(statesDir=str(tmp_path))
+    config["pi"]["display"] = {"gradeHistory": {"intervalSec": 5, "windowSec": 60}}
+    bridge = createImuStateBridgeFromConfig(config, SampleBus())
+    assert bridge is not None
+    snap = bridge._gradeHistory.snapshot()  # noqa: SLF001
+    assert (snap["intervalS"], snap["windowS"]) == (5, 60)
+
+
+def test_factory_gradeHistoryKeysAbsent_useTheValidatorDefaults(tmp_path: Path):
+    bridge = createImuStateBridgeFromConfig(_config(statesDir=str(tmp_path)), SampleBus())
+    assert bridge is not None
+    snap = bridge._gradeHistory.snapshot()  # noqa: SLF001
+    assert snap["intervalS"] == DEFAULT_GRADE_HISTORY_INTERVAL_SEC
+    assert snap["windowS"] == DEFAULT_GRADE_HISTORY_WINDOW_SEC
+
+
+# ------------------------------------------------------ fixture conformance (R29)
+
+def _fullWindowHistory() -> GradeHistory:
+    history = GradeHistory(10, 900)
+    for k in range(91):
+        history.observe(_isoAt(k * 10 + 1), round(-3.0 + k * 0.1, 1))
+    return history
+
+
+def _withGapHistory() -> GradeHistory:
+    history = GradeHistory(10, 900)
+    history.observe(_isoAt(1), 3.1)
+    history.observe(_isoAt(6), 3.1)
+    history.observe(_isoAt(11), None)
+    history.observe(_isoAt(41), 2.4)
+    history.observe(_isoAt(51), 2.0)
+    return history
+
+
+# The producer inputs behind every named case of tests/ui/fixtures/states/grade-history.json.
+_GRADE_HISTORY_FIXTURE_INPUTS: dict[str, Any] = {
+    "empty": lambda: GradeHistory(10, 900),
+    "full-window": _fullWindowHistory,
+    "with-gap": _withGapHistory,
+}
+
+
+def test_gradeHistoryFixture_namesEveryRequiredCase():
+    fixture = json.loads(_FIXTURE_GRADE_HISTORY.read_text(encoding="utf-8"))
+    assert set(fixture) == set(_GRADE_HISTORY_FIXTURE_INPUTS)
+    assert fixture["empty"]["points"] == []
+    assert len(fixture["full-window"]["points"]) == 90
+    assert any(p["gradePct"] is None for p in fixture["with-gap"]["points"])
+
+
+@pytest.mark.parametrize("name", sorted(_GRADE_HISTORY_FIXTURE_INPUTS))
+def test_gradeHistoryFixture_caseIsExactlyWhatTheProducerBuilds(name: str):
+    """
+    Given: a named fixture case and the producer inputs behind it
+    When: GradeHistory builds the payload
+    Then: it equals the fixture case key for key (R29)
+    """
+    fixture = json.loads(_FIXTURE_GRADE_HISTORY.read_text(encoding="utf-8"))
+    built = json.loads(json.dumps(_GRADE_HISTORY_FIXTURE_INPUTS[name]().snapshot()))
     assert built == fixture[name]
