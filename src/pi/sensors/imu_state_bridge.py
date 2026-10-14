@@ -131,6 +131,10 @@
 #               |              | seed the next boot's engine with it.
 # 2026-10-13    | Rex (US-873) | Record the first raw IMU sample ts and the newest
 #               |              | sample capture for capture-health feeds.imu.
+# 2026-10-14    | Rex (US-882-a) | states/imu gains peaks {accelG, brakeG, leftG,
+#               |              | rightG, sinceTs}: GPeakTracker folds every accel
+#               |              | sample's computeHorizontalG into a moving mean
+#               |              | (pi.imu.peaks.smoothingSec) and keeps its max.
 # ================================================================================
 ################################################################################
 
@@ -143,13 +147,14 @@ import logging
 import math
 import os
 import threading
+from collections import deque
 from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 # US-801: the IMU sample and state rates are DEFINED once, in the validator,
 # and imported under this module's historical names (tests monkeypatch them).
-from common.config.validator import DEFAULT_IMU_SAMPLE_HZ
+from common.config.validator import DEFAULT_IMU_PEAKS_SMOOTHING_SEC, DEFAULT_IMU_SAMPLE_HZ
 from common.config.validator import DEFAULT_IMU_STATE_HZ as DEFAULT_STATE_HZ
 from common.time.helper import utcIsoNow
 
@@ -237,6 +242,7 @@ __all__ = [
     "GYRO_OFFSET_SEED_PATH",
     "SEED_PERSIST_MIN_INTERVAL_S",
     "GyroOffsetSeedStore",
+    "GPeakTracker",
     "ImuStateBridge",
     "buildImuState",
     "computeHeadingDeg",
@@ -630,6 +636,9 @@ _DERIVED_FIELDS = (
     "altitude",
 )
 
+# US-882-a: the peak magnitudes in states/imu ``peaks``, beside ``sinceTs``.
+_PEAK_FIELDS = ("accelG", "brakeG", "leftG", "rightG")
+
 # =============================== US-708: THE MOUNTING ========================
 # (fwd, left, up) expressed in the board's RAW sensor axes. ONE declaration,
 # applied ONCE where a raw vector enters this module -- never re-spelled inside
@@ -892,6 +901,7 @@ def buildImuState(
     headingDegOverride: Any = _NO_HEADING_OVERRIDE,
     headingCalibrated: bool | None = None,
     fusionEngine: str | None = None,
+    peaks: dict[str, Any] | None = None,
 ) -> dict:
     """Assemble the states/imu payload (pure -- the Atlas Q-A contract).
 
@@ -945,10 +955,14 @@ def buildImuState(
         fusionEngine: ARCH-064 diagnostic -- the engine ACTUALLY running,
             published only when given. Like stopCount it describes the
             estimator, so it is outside _DERIVED_FIELDS and never gated.
+        peaks: US-882-a -- ``GPeakTracker.snapshot()``, published only when
+            given (the bridge gives it on every write). Not a reading of THIS
+            burst, so it is outside _DERIVED_FIELDS and survives the
+            sensor-absent and gate-refusal writes unchanged.
 
     Returns:
         ``{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg, gradePct,
-        altitude, stopCount, biasRad, reasons}``. ``altitude`` is ALWAYS null
+        altitude, stopCount, biasRad, reasons}`` (+ ``peaks`` when given). ``altitude`` is ALWAYS null
         with reason
         ``"no_source"``: the ICM-20948 has no barometer, and a zeroed altitude
         would render as sea level -- a confident lie (US-519 derives it from
@@ -989,6 +1003,8 @@ def buildImuState(
         state["fusionEngine"] = fusionEngine
     if headingCalibrated is not None:
         state["headingCalibrated"] = bool(headingCalibrated)
+    if peaks is not None:
+        state["peaks"] = dict(peaks)
 
     blanketReason = unavailableReason
     if blanketReason is None and (gravity is None or _norm(gravity) < _MIN_GRAVITY_MS2):
@@ -1091,6 +1107,105 @@ def _vec3(value: Any) -> tuple[float, float, float] | None:
     return out
 
 
+class GPeakTracker:
+    """The accel / brake / left / right g peaks since the bridge started (US-882-a).
+
+    Each peak is the MAXIMUM of a moving mean over ``smoothingSec`` (Atlas M-B),
+    not of raw samples: a 20 ms pothole spike of 1.2 g is not a 1.2 g stop. A mean
+    is only taken once the window has spanned ``smoothingSec`` of contiguous
+    samples, so the first sample after a start or a gap -- a mean over ONE
+    sample -- can never stand in for one.
+
+    Magnitudes are non-negative and follow the published sign contract
+    (gLon + = accelerating, gLat + = RIGHT): accelG/brakeG from a positive /
+    negative mean gLon, rightG/leftG from a positive / negative mean gLat. A
+    direction never measured is None, never 0.0 -- "no hard stop yet" and "a
+    0.0 g stop" are different facts.
+
+    Lifetime is the bridge's: built once per eclipse-obd process, so a kiosk
+    restart (a browser reload) never touches it. ``breakRun`` restarts only the
+    moving window (sensor absent, accel gated); the peaks survive it.
+    """
+
+    def __init__(self, smoothingSec: float = DEFAULT_IMU_PEAKS_SMOOTHING_SEC) -> None:
+        """Bind the moving-mean window.
+
+        Args:
+            smoothingSec: The moving-mean window, seconds. A non-positive value
+                falls back to the shipped DEFAULT_IMU_PEAKS_SMOOTHING_SEC.
+        """
+        self._windowS = (
+            float(smoothingSec)
+            if smoothingSec and smoothingSec > 0
+            else float(DEFAULT_IMU_PEAKS_SMOOTHING_SEC)
+        )
+        # (capture, gLon, gLat) for the samples inside the window, oldest first.
+        self._window: deque[tuple[float, float, float]] = deque()
+        self._runStart: float | None = None
+        self._peaks: dict[str, float | None] = dict.fromkeys(_PEAK_FIELDS)
+        self._sinceTs: str | None = None
+
+    @property
+    def smoothingSec(self) -> float:
+        """The moving-mean window in force, seconds."""
+        return self._windowS
+
+    def breakRun(self) -> None:
+        """Restart the moving window; the peaks and sinceTs are kept."""
+        self._window.clear()
+        self._runStart = None
+
+    def fold(self, gLon: float, gLat: float, capture: float, tsUtc: str) -> None:
+        """Fold one QUALIFYING sample (horizontal g resolved, event ts present).
+
+        Args:
+            gLon: Longitudinal g of this sample (computeHorizontalG).
+            gLat: Lateral g of this sample (computeHorizontalG).
+            capture: The sample's monotonic tsCapture, seconds.
+            tsUtc: The sample's event time; the first one folded is sinceTs.
+        """
+        if self._sinceTs is None:
+            self._sinceTs = tsUtc
+        if self._window:
+            last = self._window[-1][0]
+            # A step back in capture time, or a hole as long as the window, is
+            # not one run: a mean across it would average two different events.
+            if capture < last or capture - last >= self._windowS:
+                self.breakRun()
+        if self._runStart is None:
+            self._runStart = capture
+        self._window.append((capture, gLon, gLat))
+        horizon = capture - self._windowS
+        while self._window[0][0] <= horizon:
+            self._window.popleft()
+        if capture - self._runStart < self._windowS:
+            return
+        n = len(self._window)
+        meanLon = math.fsum(s[1] for s in self._window) / n
+        meanLat = math.fsum(s[2] for s in self._window) / n
+        if meanLon > 0.0:
+            self._raise("accelG", meanLon)
+        elif meanLon < 0.0:
+            self._raise("brakeG", -meanLon)
+        if meanLat > 0.0:
+            self._raise("rightG", meanLat)
+        elif meanLat < 0.0:
+            self._raise("leftG", -meanLat)
+
+    def _raise(self, field: str, magnitude: float) -> None:
+        """Keep the larger of the held peak and ``magnitude`` (display-rounded)."""
+        value = round(magnitude, _G_DECIMALS)
+        held = self._peaks[field]
+        if held is None or value > held:
+            self._peaks[field] = value
+
+    def snapshot(self) -> dict[str, Any]:
+        """The ``peaks`` object for states/imu (a fresh dict every call)."""
+        out: dict[str, Any] = dict(self._peaks)
+        out["sinceTs"] = self._sinceTs
+        return out
+
+
 class ImuStateBridge:
     """Drains the bus IMU burst and mirrors the derived view into states/imu.
 
@@ -1116,6 +1231,7 @@ class ImuStateBridge:
         nowIsoFn: Callable[[], str] | None = None,
         gyroSeedStore: GyroOffsetSeedStore | None = None,
         gyroSeedAsync: bool = False,
+        peaksSmoothingSec: float = DEFAULT_IMU_PEAKS_SMOOTHING_SEC,
     ) -> None:
         """Bind the bridge to its source subscription + states dir.
 
@@ -1145,6 +1261,8 @@ class ImuStateBridge:
                 persisted for the next boot. None (tests, legacy) persists nothing.
             gyroSeedAsync: Write the seed on a short-lived thread (production)
                 so an SD-card fsync never stalls this drain; False writes inline.
+            peaksSmoothingSec: US-882-a moving-mean window for the states/imu
+                peaks (pi.imu.peaks.smoothingSec).
         """
         self._gyroSeedStore = gyroSeedStore
         self._gyroSeedAsync = gyroSeedAsync
@@ -1215,6 +1333,9 @@ class ImuStateBridge:
         # the instance, so a restart re-arms them; None until a sample lands.
         self._firstSampleTs: str | None = None
         self._lastSampleCapture: float | None = None
+        # US-882-a: built HERE and nowhere else, so the peaks reset exactly when
+        # the bridge does -- once per eclipse-obd process, never on a kiosk restart.
+        self._peaks = GPeakTracker(peaksSmoothingSec)
 
     # -- capture-health feed (US-873) -----------------------------------------
     @property
@@ -1349,6 +1470,7 @@ class ImuStateBridge:
         # US-809-c: carry the absence; buildImuState types it. Substituting
         # the clock here publishes a fabricated freshness marker.
         tsUtc = getattr(sample, "tsUtc", "")
+        self._peaks.breakRun()
         self._writeState(
             buildImuState(
                 tsUtc=tsUtc,
@@ -1397,6 +1519,7 @@ class ImuStateBridge:
         self._gyro = None
         self._gyroCapture = None
         self._pitchFusion.reset()
+        self._peaks.breakRun()
         # US-809-c: carry the absence; buildImuState types it. Substituting
         # the clock here publishes a fabricated freshness marker.
         tsUtc = getattr(sample, "tsUtc", "")
@@ -1540,6 +1663,9 @@ class ImuStateBridge:
         }
         if self._engineHasHeading:
             diagnostics["headingCalibrated"] = self._pitchFusion.headingCalibrated
+        # US-882-a: every write path spreads this dict into buildImuState, so
+        # peaks ride the live, sensor-absent and gate-refusal writes alike.
+        diagnostics["peaks"] = self._peaks.snapshot()
         return diagnostics
 
     def _recordDerived(self, sample: Any, capture: float) -> None:
@@ -1676,14 +1802,17 @@ class ImuStateBridge:
         # ARCH-056: runs at SENSOR rate, not display rate -- the yaw integral
         # needs every burst, and decimating it to 1 Hz would lose most of a turn.
         self._updateMagRotation(capture)
-        if not self._shouldWrite(capture):
-            return
         gravity = self._gravity
         assert gravity is not None  # set by _updateGravity
         linear = (accel[0] - gravity[0], accel[1] - gravity[1], accel[2] - gravity[2])
         # US-809-c: carry the absence; buildImuState types it. Substituting
         # the clock here publishes a fabricated freshness marker.
         tsUtc = getattr(sample, "tsUtc", "")
+        # US-882-a (Atlas G1): BEFORE the write gate -- states/imu writes at
+        # stateHz 1, so folding per write would see 1 sample in 50.
+        self._foldPeaks(linear, gravity, capture, tsUtc)
+        if not self._shouldWrite(capture):
+            return
         # ARCH-064: with the AHRS the heading is the ENGINE's; omitted, the
         # legacy computeHeadingDeg path runs exactly as before.
         engineHeading: dict[str, Any] = {}
@@ -1704,6 +1833,33 @@ class ImuStateBridge:
             )
         )
         self._lastWriteCapture = capture
+
+    def _foldPeaks(
+        self,
+        linear: tuple[float, float, float],
+        gravity: tuple[float, float, float],
+        capture: float,
+        tsUtc: Any,
+    ) -> None:
+        """Fold this accel sample into the peaks when its horizontal g resolves.
+
+        Qualifying means exactly what makes buildImuState publish gLat/gLon: a
+        usable gravity reference, a level frame (computeHorizontalG -- the SAME
+        function, so there is no second sign or axis derivation), the accel
+        channel not gated, and an event ts. Anything else is skipped, never
+        folded as a zero.
+        """
+        if TOPIC_IMU_ACCEL in self._gatedChannels:
+            return
+        if not tsUtc or not isinstance(tsUtc, str):
+            return
+        if _norm(gravity) < _MIN_GRAVITY_MS2:
+            return
+        horizontal = computeHorizontalG(linear, gravity)
+        if horizontal is None:
+            return
+        gLon, gLat = horizontal
+        self._peaks.fold(gLon, gLat, capture, tsUtc)
 
     def _updateGravity(self, accel: tuple[float, float, float], capture: float) -> None:
         """Fold one accel reading into the low-pass gravity estimate.
@@ -1857,6 +2013,9 @@ def createImuStateBridgeFromConfig(
         nowIsoFn=nowIsoFn,
         gyroSeedStore=seedStore,
         gyroSeedAsync=True,
+        peaksSmoothingSec=pi.get("imu", {})
+        .get("peaks", {})
+        .get("smoothingSec", DEFAULT_IMU_PEAKS_SMOOTHING_SEC),
     )
 
 

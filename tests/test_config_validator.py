@@ -24,6 +24,7 @@
 # 2026-10-03    | Atlas (ARCH-065a) | ARCH-065 T3: joinWaitSec/stallSec defaults + validation replace shutdownSyncCeilingSec.
 # 2026-10-03    | Atlas (ARCH-065a) | Ruling 19 (M8): drainFloorDwellReads must be an integer >= 1.
 # 2026-10-13    | Atlas (ARCH-068) | joinWaitSec default 120 -> 30 (CIO 2026-10-12).
+# 2026-10-14    | Rex (US-882-a) | pi.imu.peaks.smoothingSec default + positivity.
 # ================================================================================
 ################################################################################
 
@@ -44,6 +45,7 @@ srcPath = Path(__file__).parent.parent / 'src'
 sys.path.insert(0, str(srcPath))
 
 from common.config.validator import (
+    DEFAULT_IMU_PEAKS_SMOOTHING_SEC,
     DEFAULT_IMU_PERSIST_HZ,
     DEFAULT_IMU_SAMPLE_HZ,
     ConfigValidationError,
@@ -1307,3 +1309,21 @@ def test_validate_sensorPersistenceKeys_defaults():
     assert sensors["imu"]["persistHz"] == DEFAULT_IMU_PERSIST_HZ
     assert sensors["retentionDays"] == 7
 
+
+
+def test_validate_imuPeaksSmoothingSec_defaultsToTheSingleDefinition():
+    """US-882-a: states/imu peaks smooth over pi.imu.peaks.smoothingSec, 0.5 s
+    by default (design default, unvalidated until the LIVE FEEDS drive)."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["imu"]["peaks"]["smoothingSec"] == DEFAULT_IMU_PEAKS_SMOOTHING_SEC
+    assert DEFAULT_IMU_PEAKS_SMOOTHING_SEC == 0.5
+
+
+@pytest.mark.parametrize("bad", [0, -0.5, "0.5", True])
+def test_validate_imuPeaksSmoothingSec_nonPositive_rejected(bad):
+    """US-882-a: a zero window is no smoothing at all -- a pothole spike would
+    publish as a braking peak -- so a non-positive or non-numeric value fails."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"imu": {"peaks": {"smoothingSec": bad}}}
+    with pytest.raises(ConfigValidationError, match="pi.imu.peaks.smoothingSec"):
+        ConfigValidator().validate(cfg)

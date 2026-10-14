@@ -1,0 +1,54 @@
+{
+  "fresh-boot": {
+    "available": true,
+    "ts": "2026-10-20T14:58:02.1Z",
+    "gLat": -0.0,
+    "gLon": 0.0,
+    "gMag": 0.0,
+    "headingDeg": 0.0,
+    "pitchDeg": null,
+    "gradePct": null,
+    "altitude": null,
+    "stopCount": 0,
+    "biasRad": 0.0,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source",
+      "pitchDeg": "pitch_unseeded",
+      "gradePct": "pitch_unseeded"
+    },
+    "fusionEngine": "legacy",
+    "peaks": {
+      "accelG": null,
+      "brakeG": null,
+      "leftG": null,
+      "rightG": null,
+      "sinceTs": null
+    }
+  },
+  "driving": {
+    "available": true,
+    "ts": "2026-10-20T15:02:11.3Z",
+    "gLat": -0.1,
+    "gLon": -0.25,
+    "gMag": 0.269,
+    "headingDeg": 90.0,
+    "pitchDeg": 2.0,
+    "gradePct": 3.5,
+    "altitude": null,
+    "stopCount": 3,
+    "biasRad": 0.0021,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source"
+    },
+    "fusionEngine": "legacy",
+    "peaks": {
+      "accelG": 0.31,
+      "brakeG": 0.62,
+      "leftG": 0.44,
+      "rightG": 0.47,
+      "sinceTs": "2026-10-20T14:58:02.1Z"
+    }
+  }
+}

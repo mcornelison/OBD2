@@ -204,6 +204,11 @@ DEFAULT_IMU_SAMPLE_HZ = 50
 DEFAULT_IMU_PERSIST_HZ = 2
 DEFAULT_IMU_STATE_HZ = 1
 
+# US-882-a: the moving-mean window, seconds, each states/imu peak g is the
+# maximum of -- so a pothole spike is not braking (Atlas M-B).
+# Design default, UNVALIDATED: checked on the LIVE FEEDS drive against the IMU rows.
+DEFAULT_IMU_PEAKS_SMOOTHING_SEC = 0.5
+
 # US-776-j1: bound on the ONE forced WiFi scan (nmcli --rescan yes) a key-off
 # runs to decide home. MEASURED on the Pi (Atlas): a forced scan takes
 # 4.07-4.10 s. Must stay below pi.powerWatch.smoothingSec so an away key-off's
@@ -480,6 +485,10 @@ DEFAULTS: dict[str, Any] = {
     # with the measurement that established it in the comment.  A stale mount
     # block left in config.json is inert -- nothing reads it.
     'pi.sensors.imu.stateHz': DEFAULT_IMU_STATE_HZ,
+    # US-882-a: states/imu peaks are the max of a moving mean over this many
+    # seconds. Design default, UNVALIDATED: checked on the LIVE FEEDS drive
+    # against the IMU rows.
+    'pi.imu.peaks.smoothingSec': DEFAULT_IMU_PEAKS_SMOOTHING_SEC,
     'pi.sensors.imu.gravityTauSec': 5.0,
     # US-521 (F-125) gyro-fused pitch + ZUPT.  An accelerometer cannot
     # distinguish grade from acceleration, so a 0.3 g pull reads as a
@@ -1636,6 +1645,9 @@ class ConfigValidator:
         'pi.sensors.imu.gyroRecoverySettleSec',
         # US-803-b: a zero window never pairs a mag, so heading goes NA forever.
         'pi.sensors.imu.magMaxAgeSec',
+        # US-882-a: a zero window is no smoothing -- a pothole spike becomes a
+        # braking peak.
+        'pi.imu.peaks.smoothingSec',
         # US-767-b: a zero pre-roll keeps nothing from before the link, and a
         # zero hold closes the gate on the first dropped read.
         'pi.sensors.logGate.preRollSec',

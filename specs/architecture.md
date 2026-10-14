@@ -4157,7 +4157,8 @@ also admit braking.*
 
 *Contract (Atlas Q-A, 2026-07-30; `pitchDeg` added by US-521; `stopCount` /
 `biasRad` by US-708).* `{available, ts, gLat, gLon, gMag, headingDeg, pitchDeg,
-gradePct, altitude, stopCount, biasRad, reasons}`:
+gradePct, altitude, stopCount, biasRad, reasons}`. Since US-882-a the bridge's writes also
+carry `peaks` (see `states/imu` `peaks` in the F-103 section):
 
 | Field | Meaning | Notes |
 |---|---|---|
@@ -5895,6 +5896,42 @@ replayed `edr_light_sample` row: lux, raw, then `raw.light.range` LAST on every 
 never skipped, as `(sensor_reader.tslGainCodeForLabel(gain), integration_ms)` with
 `None` for an unrecorded value (Atlas RULED 2026-10-14). Every replayed row is written;
 a row with no recorded gain is written with `gain` null.
+
+#### `states/imu` `peaks` -- accel, brake and cornering g since the bridge started (US-882-a)
+
+**Producer:** `src/pi/sensors/imu_state_bridge.py` (`ImuStateBridge`, see "Bus → `states/imu`
+DERIVED bridge" above). `states/imu` gains one key, `peaks`; every other key, its value and
+the write cadence are unchanged.
+
+**Shape:** `peaks: {accelG, brakeG, leftG, rightG, sinceTs}` (Atlas M-B 2026-10-13). Fixture:
+`tests/ui/fixtures/states/imu.json` (`fresh-boot`, `driving`).
+
+| Key | Source |
+|-----|--------|
+| `accelG` | max of the moving-mean `gLon` over means > 0. |
+| `brakeG` | max of `-gLon` over moving means < 0. |
+| `rightG` | max of the moving-mean `gLat` over means > 0 (`gLat` + = RIGHT). |
+| `leftG` | max of `-gLat` over moving means < 0. |
+| `sinceTs` | event ts of the first sample folded since the bridge was constructed. |
+
+All four g values are non-negative magnitudes. A value with no qualifying sample yet is
+`null`, never 0.
+
+- **Per sample, not per write (Atlas G1).** `GPeakTracker` folds in `_handleAccel` on every
+  accel sample (50 Hz), before the `_shouldWrite` check. `states/imu` is written at
+  `stateHz` 1, so folding per write would see 1 sample in 50. It uses `computeHorizontalG`,
+  the same function the write uses, so there is no second sign or axis derivation.
+- **Smoothing.** Each peak is the max of a moving mean over `pi.imu.peaks.smoothingSec`
+  (validator default 0.5 s; design default, unvalidated until the LIVE FEEDS drive), so a
+  pothole spike does not count as braking. A mean is taken only once the window has spanned
+  `smoothingSec` of contiguous samples. A gap as long as the window, a capture step
+  backwards, a sensor-absent write or an accel gate refusal restarts the window but keeps
+  the peaks.
+- **Qualifying sample.** A sample folds only when horizontal g resolves: not
+  `tilt_unresolved`, accel not gated, `ts` not null.
+- **Lifetime.** `peaks` appears in every `states/imu` write, including the sensor-absent and
+  gate-refusal writes, unchanged. Peaks reset only when the bridge is constructed, which
+  happens once per eclipse-obd process. A kiosk restart does not touch them.
 
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 

@@ -17,6 +17,8 @@
 # 2026-09-28 Atlas (ARCH-064): the pitch/ZUPT factory pin selects
 #     fusionEngine "legacy" explicitly -- those knobs belong to PitchFusion, and
 #     the default engine is now the imufusion AHRS.
+# 2026-10-14 Rex (US-882-a): states/imu peaks (accel/brake/left/right g since
+#     the bridge started) -- per-sample fold, moving-mean smoothing, fixture R29.
 ################################################################################
 """Unit tests for the IMU-state bridge (bus raw.imu.* -> states/imu)."""
 
@@ -28,7 +30,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from common.config.validator import DEFAULT_IMU_PERSIST_HZ
+import pytest
+
+from common.config.validator import DEFAULT_IMU_PEAKS_SMOOTHING_SEC, DEFAULT_IMU_PERSIST_HZ
 from pi.bus.bus import SampleBus
 from pi.bus.sample import QoS, Sample
 from pi.sensors.imu_state_bridge import (
@@ -44,8 +48,10 @@ from pi.sensors.imu_state_bridge import (
     REASON_SENSOR_ABSENT,
     REASON_TILT_UNRESOLVED,
     STANDARD_GRAVITY_MS2,
+    TOPIC_IMU_ACCEL,
     TOPIC_IMU_GYRO,
     TOPIC_OBD_SPEED,
+    GPeakTracker,
     ImuStateBridge,
     buildImuState,
     computeHeadingDeg,
@@ -1198,3 +1204,388 @@ class TestDerivedSnapshot:
         """A row that cannot say WHICH algorithm produced it defeats the split."""
         assert isinstance(FUSION_VERSION, int)
         assert FUSION_VERSION >= 1
+
+
+# =================================================================== US-882-a
+# states/imu peaks: accel/brake/left/right g since the bridge started, the max
+# of a moving mean over pi.imu.peaks.smoothingSec, folded PER ACCEL SAMPLE.
+
+_FIXTURE_IMU = (
+    Path(__file__).resolve().parents[2] / "ui" / "fixtures" / "states" / "imu.json"
+)
+
+_PEAK_KEYS = {"accelG", "brakeG", "leftG", "rightG", "sinceTs"}
+
+_NO_PEAKS = {"accelG": None, "brakeG": None, "leftG": None, "rightG": None, "sinceTs": None}
+
+
+def _tsAt(i: int) -> str:
+    """A distinct event ts per 50 Hz sample, so sinceTs can be pinned to one."""
+    return f"2026-10-20T14:58:{i // 50:02d}.{(i % 50) * 2:02d}Z"
+
+
+def _accelAt(vehicle, capture: float, tsUtc: str = "2026-10-20T14:58:00Z") -> Sample:
+    """One raw.imu.accel sample (VEHICLE-frame input) with its own event ts."""
+    return Sample(
+        topic=TOPIC_IMU_ACCEL,
+        source="imu",
+        value=_asRawAxes(vehicle),
+        unit="m/s^2",
+        tsUtc=tsUtc,
+        tsCapture=capture,
+        driveId=None,
+        dataSource="real",
+        seq=1,
+    )
+
+
+def _gate(topic: str, reason: str) -> Sample:
+    """The retained per-channel gate STATE refusing ``topic``."""
+    from pi.sensors.plausibility_gate import channelStateTopic
+
+    return Sample(
+        topic=channelStateTopic(topic),
+        source="imu",
+        value=0.0,
+        unit=reason,
+        tsUtc="2026-10-20T15:00:00Z",
+        tsCapture=0.0,
+        driveId=None,
+        dataSource="real",
+        seq=1,
+    )
+
+
+def _settledBridge(tmp_path: Path, *, seconds: float = 30.0) -> tuple[ImuStateBridge, int]:
+    """A legacy-engine bridge whose gravity filter has locked onto a level board.
+
+    Returns the bridge and the next sample index (capture = index / 50).
+    """
+    bridge = ImuStateBridge(None, str(tmp_path), stateHz=1)
+    n = int(seconds * 50)
+    for i in range(n):
+        bridge.handleSample(_accelAt(_level(), i / 50.0, _tsAt(i)))
+    return bridge, n
+
+
+class TestGPeakTracker:
+    """The pure smoothing + peak arithmetic, fed exact g values."""
+
+    def test_freshTracker_everyPeakNull_sinceTsNull(self):
+        assert GPeakTracker(0.5).snapshot() == _NO_PEAKS
+
+    def test_oneSpikeInASecond_isSmoothedNotPublishedAsBraking(self):
+        """
+        Given: 50 samples (1 s at 50 Hz), one 20 ms sample at gLon -1.2 and the
+               rest at -0.1
+        When: they are folded with the 0.5 s default window
+        Then: brakeG is about 0.1-0.15 (the mean), never the 1.2 pothole spike
+        """
+        tracker = GPeakTracker(DEFAULT_IMU_PEAKS_SMOOTHING_SEC)
+        for i in range(50):
+            tracker.fold(-1.2 if i == 20 else -0.1, 0.0, i / 50.0, _tsAt(i))
+        brake = tracker.snapshot()["brakeG"]
+        assert brake is not None
+        assert 0.1 <= brake <= 0.15
+
+    def test_sustainedBrakingLongerThanTheWindow_readsItsFullValue(self):
+        """0.6 s of a steady -0.6 g is real braking: brakeG 0.6."""
+        tracker = GPeakTracker(0.5)
+        for i in range(30):
+            tracker.fold(-0.6, 0.0, i / 50.0, _tsAt(i))
+        assert tracker.snapshot()["brakeG"] == 0.6
+
+    def test_eventShorterThanTheWindow_publishesNothingYet(self):
+        """Until the window has spanned smoothingSec, no mean exists to publish."""
+        tracker = GPeakTracker(0.5)
+        for i in range(20):
+            tracker.fold(-0.6, 0.0, i / 50.0, _tsAt(i))
+        assert tracker.snapshot()["brakeG"] is None
+        assert tracker.snapshot()["sinceTs"] == _tsAt(0)
+
+    def test_signContract_eachDirectionLandsInItsOwnPeak(self):
+        """
+        Given: the published sign contract (gLon + = accelerating, gLat + = RIGHT)
+        When: a stretch of each direction is folded
+        Then: each lands in its own non-negative magnitude; nothing crosses over
+        """
+        tracker = GPeakTracker(0.5)
+        legs = [(0.3, 0.0), (-0.5, 0.0), (0.0, 0.4), (0.0, -0.2)]
+        i = 0
+        for gLon, gLat in legs:
+            for _ in range(50):
+                tracker.fold(gLon, gLat, i / 50.0, _tsAt(i))
+                i += 1
+        snap = tracker.snapshot()
+        assert snap["accelG"] == 0.3
+        assert snap["brakeG"] == 0.5
+        assert snap["rightG"] == 0.4
+        assert snap["leftG"] == 0.2
+
+    def test_aDirectionNeverSeen_staysNullNeverZero(self):
+        """Only braking: accel/left/right were never measured, so they are null."""
+        tracker = GPeakTracker(0.5)
+        for i in range(50):
+            tracker.fold(-0.2, 0.0, i / 50.0, _tsAt(i))
+        snap = tracker.snapshot()
+        assert snap["brakeG"] == 0.2
+        assert snap["accelG"] is None
+        assert snap["leftG"] is None
+        assert snap["rightG"] is None
+
+    def test_sinceTs_isTheFirstFoldedSamplesEventTs(self):
+        tracker = GPeakTracker(0.5)
+        tracker.fold(0.0, 0.0, 10.0, "2026-10-20T14:58:02.1Z")
+        tracker.fold(0.0, 0.0, 10.02, "2026-10-20T14:58:02.12Z")
+        assert tracker.snapshot()["sinceTs"] == "2026-10-20T14:58:02.1Z"
+
+    def test_gapLongerThanTheWindow_restartsTheMean_soOneSampleIsNotAPeak(self):
+        """
+        Given: a run, then a gap longer than the window, then ONE hard sample
+        When: the sample after the gap is folded
+        Then: it does not publish on its own -- a mean over one sample is the
+              spike the window exists to reject
+        """
+        tracker = GPeakTracker(0.5)
+        for i in range(50):
+            tracker.fold(-0.1, 0.0, i / 50.0, _tsAt(i))
+        tracker.fold(-1.5, 0.0, 5.0, _tsAt(250))
+        assert tracker.snapshot()["brakeG"] == 0.1
+
+    def test_captureGoingBackwards_restartsTheMean(self):
+        tracker = GPeakTracker(0.5)
+        for i in range(50):
+            tracker.fold(-0.1, 0.0, i / 50.0, _tsAt(i))
+        tracker.fold(-1.5, 0.0, 0.5, _tsAt(50))
+        assert tracker.snapshot()["brakeG"] == 0.1
+
+    def test_breakRun_keepsPeaks_butRestartsTheWindow(self):
+        tracker = GPeakTracker(0.5)
+        for i in range(50):
+            tracker.fold(-0.4, 0.0, i / 50.0, _tsAt(i))
+        tracker.breakRun()
+        tracker.fold(-1.5, 0.0, 1.0, _tsAt(50))
+        snap = tracker.snapshot()
+        assert snap["brakeG"] == 0.4
+        assert snap["sinceTs"] == _tsAt(0)
+
+    def test_snapshotIsACopy(self):
+        tracker = GPeakTracker(0.5)
+        tracker.snapshot()["brakeG"] = 9.9
+        assert tracker.snapshot()["brakeG"] is None
+
+    def test_nonPositiveWindow_fallsBackToTheShippedDefault(self):
+        assert GPeakTracker(0).smoothingSec == DEFAULT_IMU_PEAKS_SMOOTHING_SEC
+        assert GPeakTracker(-1.0).smoothingSec == DEFAULT_IMU_PEAKS_SMOOTHING_SEC
+
+
+class TestBridgePeaks:
+    """The bridge folds peaks per accel sample and publishes them on every write."""
+
+    def test_brakingBetweenTwoWrites_landsInTheNextWrite(self, tmp_path: Path):
+        """
+        Given: a settled bridge writing states/imu at stateHz 1
+        When: 0.6 s of -0.6 g braking is fed BETWEEN two writes
+        Then: the next write's brakeG is about 0.6 -- the fold runs per sample
+              (50 Hz), not per write (Atlas G1)
+        """
+        bridge, i = _settledBridge(tmp_path)
+        brake = (-0.6 * G, 0.0, G)
+        # i / 50 == 30.0 is a write; brake from 30.02 to 30.6, then level to 31.0.
+        bridge.handleSample(_accelAt(_level(), i / 50.0, _tsAt(i)))
+        before = _readState(tmp_path)["peaks"]["brakeG"]
+        for k in range(1, 31):
+            bridge.handleSample(_accelAt(brake, (i + k) / 50.0, _tsAt(i + k)))
+        mid = _readState(tmp_path)["peaks"]["brakeG"]
+        for k in range(31, 51):
+            bridge.handleSample(_accelAt(_level(), (i + k) / 50.0, _tsAt(i + k)))
+        after = _readState(tmp_path)["peaks"]["brakeG"]
+        assert before is None
+        assert mid is None  # no write between the two
+        assert after is not None
+        assert 0.5 <= after <= 0.65
+
+    def test_steadyRightTurn_isRightG_fromTheSameHorizontalG(self, tmp_path: Path):
+        """A right turn reads rightG (gLat + = RIGHT); leftG stays null."""
+        bridge, i = _settledBridge(tmp_path, seconds=2.0)
+        turn = (0.0, -0.3 * G, G)  # centripetal toward the RIGHT flank
+        for k in range(50):
+            bridge.handleSample(_accelAt(turn, (i + k) / 50.0, _tsAt(i + k)))
+        snap = bridge._peaks.snapshot()  # noqa: SLF001
+        assert snap["rightG"] is not None
+        assert 0.25 <= snap["rightG"] <= 0.3
+        assert snap["leftG"] is None
+        # Pinned against the write path's own function: the newest sample's
+        # gLat (the filter only erodes the residual) bounds the mean from below.
+        gravity = bridge._gravity  # noqa: SLF001
+        linear = tuple(a - g for a, g in zip(turn, gravity, strict=True))
+        _, gLatNow = computeHorizontalG(linear, gravity)
+        assert gLatNow <= snap["rightG"]
+
+    def test_onlyTiltUnresolvedSamples_peaksAllNull(self, tmp_path: Path):
+        """No usable gravity reference: nothing folds, so every peak and sinceTs is null."""
+        bridge = ImuStateBridge(None, str(tmp_path), stateHz=1)
+        for i in range(50):
+            bridge.handleSample(_accelAt((0.0, 0.0, 0.0), i / 50.0, _tsAt(i)))
+        state = _readState(tmp_path)
+        assert state["reasons"]["gLat"] == REASON_TILT_UNRESOLVED
+        assert state["peaks"] == _NO_PEAKS
+
+    def test_samplesWithNoTs_doNotFold(self, tmp_path: Path):
+        """An absent event time is not a qualifying sample (and never the clock)."""
+        bridge = ImuStateBridge(None, str(tmp_path), stateHz=1)
+        for i in range(50):
+            bridge.handleSample(_accelAt((-0.4 * G, 0.0, G), i / 50.0, ""))
+        assert bridge._peaks.snapshot() == _NO_PEAKS  # noqa: SLF001
+        assert _readState(tmp_path)["peaks"] == _NO_PEAKS
+
+    def test_sinceTs_isTheFirstFoldedSample_notTheFirstSample(self, tmp_path: Path):
+        bridge = ImuStateBridge(None, str(tmp_path), stateHz=1)
+        bridge.handleSample(_accelAt(_level(), 0.0, ""))  # no event ts: not folded
+        bridge.handleSample(_accelAt(_level(), 0.02, _tsAt(1)))
+        bridge.handleSample(_accelAt(_level(), 0.04, _tsAt(2)))
+        assert bridge._peaks.snapshot()["sinceTs"] == _tsAt(1)  # noqa: SLF001
+
+    def test_sensorAbsentWrite_carriesThePeaksUnchanged(self, tmp_path: Path):
+        """
+        Given: peaks already set
+        When: the sensor-absent write fires
+        Then: peaks are present in that write and unchanged
+        """
+        bridge, i = _settledBridge(tmp_path, seconds=2.0)
+        for k in range(50):
+            bridge.handleSample(_accelAt((-0.4 * G, 0.0, G), (i + k) / 50.0, _tsAt(i + k)))
+        held = bridge._peaks.snapshot()  # noqa: SLF001
+        assert held["brakeG"] is not None
+        bridge.handleSample(_presence(False, capture=(i + 50) / 50.0))
+        state = _readState(tmp_path)
+        assert state["available"] is False
+        assert state["reasons"]["gLat"] == REASON_SENSOR_ABSENT
+        assert state["peaks"] == held
+
+    def test_accelGateWrite_carriesThePeaks_andGatedSamplesDoNotFold(self, tmp_path: Path):
+        bridge, i = _settledBridge(tmp_path, seconds=2.0)
+        for k in range(50):
+            bridge.handleSample(_accelAt((-0.4 * G, 0.0, G), (i + k) / 50.0, _tsAt(i + k)))
+        held = bridge._peaks.snapshot()  # noqa: SLF001
+        bridge.handleSample(_gate(TOPIC_IMU_ACCEL, "sensor_stale"))
+        assert _readState(tmp_path)["peaks"] == held
+        # A burst that still arrives while accel is refused is not a reading.
+        for k in range(50, 100):
+            bridge.handleSample(_accelAt((-0.9 * G, 0.0, G), (i + k) / 50.0, _tsAt(i + k)))
+        assert bridge._peaks.snapshot() == held  # noqa: SLF001
+
+    def test_peaksSurviveAReplug_andResetOnlyWithANewBridge(self, tmp_path: Path):
+        bridge, i = _settledBridge(tmp_path, seconds=2.0)
+        for k in range(50):
+            bridge.handleSample(_accelAt((-0.4 * G, 0.0, G), (i + k) / 50.0, _tsAt(i + k)))
+        held = bridge._peaks.snapshot()  # noqa: SLF001
+        bridge.handleSample(_presence(False, capture=(i + 50) / 50.0))
+        bridge.handleSample(_presence(True, capture=(i + 51) / 50.0))
+        bridge.handleSample(_accelAt(_level(), (i + 52) / 50.0, _tsAt(i + 52)))
+        assert bridge._peaks.snapshot() == held  # noqa: SLF001
+        assert _readState(tmp_path)["peaks"] == held
+
+        restarted = ImuStateBridge(None, str(tmp_path), stateHz=1)
+        restarted.handleSample(_presence(False, capture=0.0))
+        assert _readState(tmp_path)["peaks"] == _NO_PEAKS
+
+    def test_everyWrite_carriesPeaks(self, tmp_path: Path):
+        bridge = ImuStateBridge(None, str(tmp_path), stateHz=1)
+        bridge.handleSample(_accelAt(_level(), 0.0, _tsAt(0)))
+        assert set(_readState(tmp_path)["peaks"]) == _PEAK_KEYS
+
+    def test_peaksDoNotChangeAnyExistingKey(self, tmp_path: Path):
+        """The write's other keys are exactly what buildImuState builds without peaks."""
+        bridge = ImuStateBridge(None, str(tmp_path), stateHz=1)
+        bridge.handleSample(_accelAt(_level(), 0.0, _tsAt(0)))
+        state = _readState(tmp_path)
+        state.pop("peaks")
+        expected = buildImuState(
+            tsUtc=_tsAt(0), gravity=_level(), linear=(0.0, 0.0, 0.0),
+            pitchRad=bridge._pitchFusion.pitchRad,  # noqa: SLF001
+            stopCount=0, biasRad=0.0, fusionEngine="legacy",
+        )
+        assert state == json.loads(json.dumps(expected))
+
+
+def test_buildImuState_withoutPeaks_keySetUnchanged_withPeaks_carriesACopy():
+    plain = buildImuState(tsUtc="t", gravity=_level(), linear=(0.0, 0.0, 0.0))
+    assert set(plain) == _EXPECTED_KEYS
+    peaks = dict(_NO_PEAKS)
+    withPeaks = buildImuState(tsUtc="t", gravity=_level(), linear=(0.0, 0.0, 0.0), peaks=peaks)
+    assert set(withPeaks) == _EXPECTED_KEYS | {"peaks"}
+    assert withPeaks["peaks"] == peaks
+    assert withPeaks["peaks"] is not peaks
+
+
+def test_factory_readsPeaksSmoothingSec(tmp_path: Path):
+    config = _config(statesDir=str(tmp_path))
+    config["pi"]["imu"] = {"peaks": {"smoothingSec": 1.5}}
+    bridge = createImuStateBridgeFromConfig(config, SampleBus())
+    assert bridge is not None
+    assert bridge._peaks.smoothingSec == 1.5  # noqa: SLF001
+
+
+def test_factory_peaksSmoothingSecAbsent_usesTheValidatorDefault(tmp_path: Path):
+    bridge = createImuStateBridgeFromConfig(_config(statesDir=str(tmp_path)), SampleBus())
+    assert bridge is not None
+    assert bridge._peaks.smoothingSec == DEFAULT_IMU_PEAKS_SMOOTHING_SEC  # noqa: SLF001
+
+
+# ------------------------------------------------------ fixture conformance (R29)
+
+def _drivingPeaks() -> dict:
+    """Peaks after a drive that accelerated, braked and turned both ways."""
+    tracker = GPeakTracker(0.5)
+    legs = [(0.31, 0.0), (-0.62, 0.0), (0.0, -0.44), (0.0, 0.47)]
+    i = 0
+    for gLon, gLat in legs:
+        for _ in range(50):
+            tracker.fold(gLon, gLat, i / 50.0, "2026-10-20T14:58:02.1Z" if i == 0 else _tsAt(i))
+            i += 1
+    return tracker.snapshot()
+
+
+# The producer inputs behind every named case of tests/ui/fixtures/states/imu.json.
+_IMU_FIXTURE_INPUTS: dict[str, Any] = {
+    "fresh-boot": lambda: {
+        "tsUtc": "2026-10-20T14:58:02.1Z",
+        "gravity": (0.0, 0.0, G),
+        "linear": (0.0, 0.0, 0.0),
+        "mag": (20.0, 0.0, 0.0),
+        "pitchRad": None,
+        "fusionEngine": "legacy",
+        "peaks": GPeakTracker(0.5).snapshot(),
+    },
+    "driving": lambda: {
+        "tsUtc": "2026-10-20T15:02:11.3Z",
+        "gravity": (0.0, 0.0, G),
+        "linear": (-0.25 * G, 0.1 * G, 0.0),
+        "mag": (0.0, 20.0, 0.0),
+        "pitchRad": math.radians(2.0),
+        "stopCount": 3,
+        "biasRad": 0.0021,
+        "fusionEngine": "legacy",
+        "peaks": _drivingPeaks(),
+    },
+}
+
+
+def test_imuFixture_namesEveryRequiredCase():
+    fixture = json.loads(_FIXTURE_IMU.read_text(encoding="utf-8"))
+    assert set(fixture) == set(_IMU_FIXTURE_INPUTS)
+    assert fixture["fresh-boot"]["peaks"] == _NO_PEAKS
+    assert all(fixture["driving"]["peaks"][k] is not None for k in _PEAK_KEYS)
+
+
+@pytest.mark.parametrize("name", sorted(_IMU_FIXTURE_INPUTS))
+def test_imuFixture_caseIsExactlyWhatTheProducerBuilds(name: str):
+    """
+    Given: a named fixture case and the producer inputs behind it
+    When: buildImuState builds the payload
+    Then: it equals the fixture case key for key (R29)
+    """
+    fixture = json.loads(_FIXTURE_IMU.read_text(encoding="utf-8"))
+    built = json.loads(json.dumps(buildImuState(**_IMU_FIXTURE_INPUTS[name]())))
+    assert built == fixture[name]
