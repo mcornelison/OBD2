@@ -5969,6 +5969,23 @@ Fixture: `tests/ui/fixtures/states/grade-history.json` (`empty`, `full-window`, 
   freezes: the page (a later sprint) judges it stale when
   `now - ts > intervalS + pi.display.stale.imuSec`.
 
+#### `states/ltft-trend` `points[].inMedian` -- which drives the headline median used (US-881-a)
+
+**Producer:** `src/pi/splash/ltft_trend_emitter.py` (`buildLtftTrendState`, see "`ltft-trend`
+emitter" in the LTFT trend card section). Every entry of `points` gains `inMedian: bool`
+(Atlas A-3 2026-10-13), so the LTFT card draws exactly the drives the median used (US-730)
+without re-selecting them. `median`, `baseline`, `level`, `current` and every other field are
+unchanged; `current` does not carry `inMedian`.
+
+| Key | Source |
+|-----|--------|
+| `points[].inMedian` | `true` exactly for the points among the newest `medianWindow` epoch points (the headline is `rollingMedian(values, medianWindow)[-1]`, i.e. `values[-medianWindow:]`); `false` for every other point, and for every point when no median is published (`reason` warming, insufficient history, epoch clipped). |
+
+- **Matched by `driveId`.** `points` is cut to the newest `displayPoints` (default
+  `DEFAULT_TREND_DRIVES` 20) while the median uses the whole epoch's newest `medianWindow`
+  points, so a published point is matched to the median set by `driveId`, never by its list
+  position. A drive that never cleared the gate is not a point, and so is never in the set.
+
 ### F-092 Carousel Dashboard Subsystem -- shell + splash hand-off + full-runtime state server (US-399, Sprint 49 / V0.29.3) [Atlas A-1/A-2/A-5]
 
 The post-boot touch dashboard reuses the F-103 splash seam wholesale: it is a

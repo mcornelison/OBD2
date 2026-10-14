@@ -75,6 +75,9 @@
 #               |              | each) stays the newest DEFAULT_TREND_DRIVES. Live
 #               |              | V0.29.72: the epoch (drive 37 on) outran 20, so the
 #               |              | card published "epoch clipped" and stayed blank.
+# 2026-10-14    | Ralph (Rex)  | US-881-a -- every `points` entry carries inMedian:
+#               |              | true exactly for the drives the headline median
+#               |              | used (matched by driveId); false with no median.
 # ================================================================================
 ################################################################################
 
@@ -569,7 +572,10 @@ def buildLtftTrendState(
         "trend": None,
         "current": None,
         # US-420: the bars are the newest window; every number below is the epoch's.
-        "points": points[-max(1, int(displayPoints)):],
+        # US-881-a: each bar carries inMedian, false until a median is published.
+        "points": [
+            {**point, "inMedian": False} for point in points[-max(1, int(displayPoints)):]
+        ],
         "driveCount": len(points),
         "minDrives": medianWindow,
         "epochBreak": epochBreak,
@@ -615,6 +621,12 @@ def buildLtftTrendState(
     baseline = float(statistics.fmean(values))
     median = medians[-1]
     deviation = median - baseline
+    # US-881-a: the headline is the median of values[-medianWindow:], i.e. of the
+    # newest medianWindow POINTS. The published bars are cut to displayPoints, so a
+    # bar is matched to that set by driveId, never by its position in the cut list.
+    medianDriveIds = {point["driveId"] for point in points[-medianWindow:]}
+    for point in state["points"]:
+        point["inMedian"] = point["driveId"] in medianDriveIds
 
     if abs(median) >= LTFT_FAULT_ABS:
         level = LEVEL_DOWN
