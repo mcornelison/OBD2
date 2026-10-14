@@ -93,6 +93,8 @@
 #                               precedent (the server has no such columns).
 # 2026-09-25    | Rex (US-790) | Registered drain_vcell_trajectory (PK 'id') --
 #                               delta-synced, never an UPDATE table.
+# 2026-10-14    | Rex (US-860-d)| Registered boot_milestone (PK 'id') --
+#                               delta-synced, never an UPDATE table.
 # ================================================================================
 ################################################################################
 
@@ -265,6 +267,12 @@ PK_COLUMN: dict[str, str] = {
     # written after the last push remain (custody names them, US-789 shape).
     # NOT an EDR table either, so the shutdown drain CARRIES it.
     'drain_vcell_trajectory': 'id',
+    # US-860-d (F-157): each boot's milestone ladder.  US-860-b gave it the
+    # integer 'id' this cursor needs (Atlas RULED 2026-10-14: delta, not
+    # snapshot).  NOT in SYNC_UPDATE_TABLES_PK: first-write-wins, a row never
+    # changes after insert.  Ids may gap (an ignored repeat still advances
+    # AUTOINCREMENT); the id > last cursor does not care.
+    'boot_milestone':       'id',
 }
 
 # Append-only (event-stream) tables eligible for delta-by-PK sync.
