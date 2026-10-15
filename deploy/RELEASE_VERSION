@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.1",
-  "theme": "Sprint 99: V0.30 data feeds",
-  "description": "Sprint 99 (6 stories): states/light raw counts, gain, integration time, saturation (replay publishes range every row); states/imu peaks; states/grade-history; ltft-trend inMedian; boot_milestone integer id (Pi table rebuild); server boot_milestone table via migration v0037. US-860-d (sync registration) follows in Sprint 100."
+  "version": "V0.30.2",
+  "theme": "Sprint 100: V0.30 data feeds 2",
+  "description": "Sprint 100 (7 stories): boot_milestone rows sync Pi to server on the id cursor (US-860-d); one speed integrator publishes this drive's distance in system-status; IMU stale window is a config.json key served per request; the light bridge computes the brightness level; states/fuel-economy publishes this drive's fuel and MPG; since-reset fuel totals persist Pi-locally; POST /fuel-reset zeroes them when parked. Also on dev: ADR ARCH-016 section 11 (labwc kiosk) and UIDEV-001 specs (docs only)."
 }
