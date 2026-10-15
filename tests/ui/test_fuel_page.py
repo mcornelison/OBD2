@@ -33,6 +33,13 @@
 #                                .scale.max (section 8). PIN CHANGE: the two
 #                                upper-row tests no longer expect AIRFLOW to be
 #                                "not published" (UNPUBLISHED_SLOTS).
+# 2026-10-15    | Rex (US-890-c) | LOOP chip + TOTAL TRIM from obd-live.fuel
+#                                (section 9). PIN CHANGES: UNPUBLISHED_SLOTS
+#                                drops loop and total-trim; with no obd-live
+#                                file both now say "no source" (as AIRFLOW);
+#                                the builder-equality test also covers this
+#                                story's fixtures and feeds a status label
+#                                ('CL') as itself.
 # ================================================================================
 ################################################################################
 
@@ -59,7 +66,15 @@ from tests.ui.test_carousel_kebab_always_visible import (  # noqa: E402
     _parked,
 )
 from tests.ui.test_dashboard_fidelity_pass import _stripJsComments  # noqa: E402
-from tests.ui.test_engine_page import _classes, _ms, _textOf  # noqa: E402
+from tests.ui.test_engine_page import (  # noqa: E402
+    _bodyWidthPx,
+    _classes,
+    _decl,
+    _monoWidth,
+    _ms,
+    _px,
+    _textOf,
+)
 
 _HTML = os.path.join(rh.DASHBOARD_DIR, "dashboard.html")
 _JS = os.path.join(rh.DASHBOARD_DIR, "carousel.js")
@@ -92,8 +107,10 @@ UPPER_SLOTS = [
     ("mpg-this-drive", "THIS DRIVE"),
     ("mpg-since-reset", "SINCE RESET"),
 ]
-# US-890-b: AIRFLOW is published now; the rest still wait on their stories.
-UNPUBLISHED_SLOTS = [(s, lbl) for s, lbl in UPPER_SLOTS if s != "airflow"]
+# US-890-b: AIRFLOW is published now; US-890-c: LOOP and TOTAL TRIM too. The
+# MPG row still waits on its story.
+_OBD_LIVE_SLOTS = ("airflow", "loop", "total-trim")
+UNPUBLISHED_SLOTS = [(s, lbl) for s, lbl in UPPER_SLOTS if s not in _OBD_LIVE_SLOTS]
 NOT_PUBLISHED = "not published"
 RELEARNING = "ECU relearning"
 TREND_LABEL = "FUEL TRIM TREND"
@@ -265,8 +282,11 @@ def test_upperRows_stayDashDashUnderEveryTrendState(trend: str | None, system: s
     surface = _boot(trend=payload, system=sysPayload)
     assert _fuelText(surface, "fuel-label")[: len(UPPER_SLOTS)] == [lbl for _s, lbl in UPPER_SLOTS]
     assert _fuelText(surface, "fuel-value") == ["--"] * len(UPPER_SLOTS)
-    # US-890-b: no obd-live file -> AIRFLOW says why ("no source"), never blank.
-    assert _fuelText(surface, "fuel-note") == ["no source"] + [NOT_PUBLISHED] * len(UNPUBLISHED_SLOTS)
+    # US-890-b/c: no obd-live file -> AIRFLOW, LOOP and TOTAL TRIM say why
+    # ("no source"), never blank.
+    assert _fuelText(surface, "fuel-note") == (
+        ["no source"] * len(_OBD_LIVE_SLOTS) + [NOT_PUBLISHED] * len(UNPUBLISHED_SLOTS)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -606,14 +626,20 @@ def test_wotNearMax_isTheCorpusMaxAgainstTheRealDefault():
     assert maf["scale"] == {"max": float(DEFAULTS["pi.display.scale.mafMaxGs"])}
 
 
-@pytest.mark.parametrize("name", AIRFLOW_FIXTURES)
+# US-890-c's fixtures (section 9), declared here so the builder-equality test
+# below covers them too.
+LOOP_TRIM_FIXTURES = ["closed-loop-trim", "open-loop-trim", "loop-unknown", "trim-stale"]
+
+
+@pytest.mark.parametrize("name", AIRFLOW_FIXTURES + LOOP_TRIM_FIXTURES)
 def test_airflowFixture_obdLiveIsWhatTheBuilderEmits(name: str):
     """
     Given: a fixture's obd-live payload
     When: its readings are fed through a real ObdLiveTracker (its MAF scale max
           as pi.display.scale.mafMaxGs) and built at the payload's ts
     Then: the builder's output equals the payload -- the page is tested against
-          the provider's real shape, scale included
+          the provider's real shape, scale and fuel block included. A status
+          label with no python-obd unit name ('CL', 'OL-drive') is fed as itself.
     """
     from pi.obdii import obd_live_emitter as ole
     from pi.obdii import units
@@ -628,7 +654,8 @@ def test_airflowFixture_obdLiveIsWhatTheBuilderEmits(name: str):
     for pid, param in payload["params"].items():
         value = param["last"]["value"] if param["stale"] else param["value"]
         tracker.observeReading(
-            _Reading(pid, value, _naiveUtc(param["ts"]), pythonObdName[param["unit"]])
+            _Reading(pid, value, _naiveUtc(param["ts"]),
+                     pythonObdName.get(param["unit"], param["unit"]))
         )
     built = ole.buildObdLiveState(
         tracker.snapshot(),
@@ -862,3 +889,286 @@ def test_architectureMd_recordsParamsMafScale():
     assert "synthetic-scale-150" in section
     # The obd-live contract names the field too.
     assert "**`params.MAF.scale`** (US-890-b" in arch
+
+
+# ---------------------------------------------------------------------------
+# 9. US-890-c -- LOOP chip + TOTAL TRIM from states/obd-live `fuel` only.
+#    specs/v030-fuel-page-design.md s4.2 (Atlas S104 total-trim ruling (b)):
+#    the chip reads fuel.loop (CLOSED LOOP / OPEN LOOP / "--"), outlined and
+#    never coloured; TOTAL TRIM reads fuel.totalTrimNow, signed, one decimal,
+#    "%", unbanded and neutral; a null shows "--" + its reason's text, and
+#    only open_loop dims the "--".
+# ---------------------------------------------------------------------------
+
+OPEN_LOOP_TEXT = "not applied in open loop"
+
+# Fixture -> (chip text, chip note, trim text, trim note, trim dimmed).
+_SIDE_EXPECTED: dict[str, tuple[str, str, str, str, bool]] = {
+    "closed-loop-trim": ("CLOSED LOOP", "", "+1.5 %", "", False),
+    "open-loop-trim": ("OPEN LOOP", "", "--", OPEN_LOOP_TEXT, True),
+    "loop-unknown": ("--", "loop unknown", "--", "loop unknown", False),
+    "trim-stale": ("CLOSED LOOP", "", "--", "stale", False),
+    # An airflow fixture: no status and no trims read.
+    "cruise-closed": ("--", "loop unknown", "--", "not read", False),
+}
+
+
+def _loopView(obdLive: Any) -> dict[str, Any]:
+    return _probe("fuelLoopView", obdLive)
+
+
+def _trimView(obdLive: Any) -> dict[str, Any]:
+    return _probe("fuelTotalTrimView", obdLive)
+
+
+def _withTrim(**trim: Any) -> dict[str, Any]:
+    block = {"value": None, "unit": "%", "ts": "2026-10-20T15:12:28Z", "reason": None}
+    block.update(trim)
+    return {"params": {}, "fuel": {"loop": "closed", "totalTrimNow": block},
+            "dataSource": "real", "ts": "2026-10-20T15:12:30Z"}
+
+
+def _sidePath(surface: rh.Surface, slotCls: str, cls: str) -> list[dict[str, Any]]:
+    paths = [p for p in _fuelPaths(surface, cls) if any(slotCls in _classes(n) for n in p)]
+    assert len(paths) == 1, (slotCls, cls, len(paths))
+    return paths[0]
+
+
+def test_loopTrimFixturesArePresent_andDescribed():
+    for name in LOOP_TRIM_FIXTURES:
+        fx = _fixture(name)
+        assert fx["description"], name
+        assert isinstance(fx["obd-live"]["fuel"], dict), name
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", sorted(_SIDE_EXPECTED))
+def test_loopAndTrimViews_perFixture(name: str):
+    chip, chipNote, trim, trimNote, dimmed = _SIDE_EXPECTED[name]
+    obdLive = _fixture(name)["obd-live"]
+    loop = _loopView(obdLive)
+    total = _trimView(obdLive)
+    assert (loop["text"], loop["note"]) == (chip, chipNote)
+    assert (total["text"], total["note"], total["dimmed"]) == (trim, trimNote, dimmed)
+    assert loop["dimmed"] is False
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [(1.5000000000000002, "+1.5 %"), (1.5, "+1.5 %"), (-1.64, "−1.6 %"),
+     (12.0, "+12.0 %"), (0, "+0.0 %"), (-0.04, "+0.0 %"), (-25.0, "−25.0 %")],
+)
+def test_totalTrim_isSignedOneDecimalPercent(value: float, text: str):
+    """toFixed(1), never String(float): 1.5000000000000002 reads '+1.5 %'."""
+    assert _trimView(_withTrim(value=value))["text"] == text
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("trim", "note"),
+    [({"reason": "open_loop"}, OPEN_LOOP_TEXT), ({"reason": "not_read"}, "not read"),
+     ({"reason": "loop_unknown"}, "loop unknown"), ({"reason": "stale"}, "stale"),
+     ({"reason": "brand_new_code"}, "brand_new_code"), ({"reason": None}, "not read"),
+     ({"reason": "stale", "value": 1.5}, "stale")],
+    ids=["open-loop", "not-read", "loop-unknown", "stale", "unknown-code-raw",
+         "null-value-no-reason", "reason-wins-over-a-value"],
+)
+def test_totalTrim_null_isDashDashPlusTheReasonText(trim: dict[str, Any], note: str):
+    view = _trimView(_withTrim(**trim))
+    assert (view["text"], view["note"], view["noteKind"]) == ("--", note, "reason")
+    assert view["dimmed"] == (trim["reason"] == "open_loop")
+
+
+@_NODE_ONLY
+def test_totalTrim_stale_hasNoAgeAndNoLastValue():
+    view = _trimView(_withTrim(reason="stale", value=None))
+    assert (view["text"], view["note"]) == ("--", "stale")
+    assert set(view) == {"text", "note", "noteKind", "dimmed"}
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("obdLive", "note"),
+    [(None, "no source"),
+     ({"params": {}, "dataSource": "real", "ts": "2026-10-20T15:12:30Z"}, "not published")],
+    ids=["no-obd-live", "provider-without-fuel-block"],
+)
+def test_noFuelBlock_bothSlotsSayWhy(obdLive: Any, note: str):
+    for view in (_loopView(obdLive), _trimView(obdLive)):
+        assert (view["text"], view["note"]) == ("--", note)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("loop", [None, "half-open", 2, True])
+def test_chip_unknownLoopValue_isDashDash_neverAGuess(loop: Any):
+    obdLive = _withTrim()
+    obdLive["fuel"]["loop"] = loop
+    view = _loopView(obdLive)
+    assert (view["text"], view["note"]) == ("--", "loop unknown")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", LOOP_TRIM_FIXTURES)
+def test_dom_loopAndTrimPaintTheViews(name: str):
+    chip, chipNote, trim, trimNote, dimmed = _SIDE_EXPECTED[name]
+    fx = _fixture(name)
+    surface = _boot(system=_driving(), nowIso=fx["now"], obdLive=fx["obd-live"])
+    assert _textOf(_sidePath(surface, "fuel-loop", "fuel-value")[-1]) == chip
+    assert _textOf(_sidePath(surface, "fuel-total-trim", "fuel-value")[-1]) == trim
+    for slotCls, note in (("fuel-loop", chipNote), ("fuel-total-trim", trimNote)):
+        notePath = _sidePath(surface, slotCls, "fuel-note")
+        assert _textOf(notePath[-1]) == note, (name, slotCls)
+        assert surface.rendered(notePath) == bool(note), (name, slotCls)
+    slot = _sidePath(surface, "fuel-total-trim", "fuel-value")[-2]
+    assert slot["attrs"].get("data-dimmed") == ("true" if dimmed else "false")
+
+
+@_NODE_ONLY
+def test_dom_openLoop_dimsTheTrimDashDash_closedAndStaleDoNot():
+    def opacity(name: str) -> Any:
+        fx = _fixture(name)
+        surface = _boot(system=_driving(), nowIso=fx["now"], obdLive=fx["obd-live"])
+        return surface.winningDeclaration(
+            _sidePath(surface, "fuel-total-trim", "fuel-value"), "opacity"
+        )
+
+    assert opacity("open-loop-trim") is not None
+    assert opacity("closed-loop-trim") is None
+    assert opacity("trim-stale") is None
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", ["open-loop-trim", "closed-loop-trim"])
+def test_dom_chipAndTrim_neverColoured(name: str):
+    fx = _fixture(name)
+    surface = _boot(system=_driving(), nowIso=fx["now"], obdLive=fx["obd-live"])
+    for slotCls in ("fuel-loop", "fuel-total-trim"):
+        for cls in ("fuel-value", "fuel-note", "fuel-label"):
+            path = _sidePath(surface, slotCls, cls)
+            for prop in ("color", "background-color", "border-color"):
+                won = surface.winningDeclaration(path, prop)
+                if won is not None:
+                    assert not any(tok in won[0] for tok in _WARN_TOKENS), (name, cls, won)
+                    assert "--accent" not in won[0], (name, cls, won)
+
+
+def test_css_chipIsOutlinedAtFsLabel_noColourRule():
+    body = _rule("#fuel-card .fuel-chip")
+    assert _decl(body, "font-size") == "var(--fs-label)"
+    assert _decl(body, "border-style") == "solid"
+    assert _decl(body, "white-space") == "nowrap"
+    for selector, ruleBody in _fuelRules():
+        if any(k in selector for k in ("fuel-chip", "fuel-loop", "fuel-total-trim")):
+            assert "data-loop" not in selector, selector
+            assert not any(tok in ruleBody for tok in _WARN_TOKENS), (selector, ruleBody)
+
+
+def test_css_totalTrimIsFsPrimary_andOnlyOpenLoopDims():
+    assert _decl(_rule("#fuel-card .fuel-value"), "font-size") == "var(--fs-primary)"
+    for selector, body in _fuelRules():
+        if "fuel-total-trim" in selector:
+            assert _decl(body, "font-size") is None, selector
+            if _decl(body, "opacity") is not None:
+                assert selector == '#fuel-card .fuel-total-trim[data-dimmed="true"] .fuel-value'
+
+
+# The fit rule: "not applied in open loop" (24 chars) fits its tile. The harness
+# resolves the cascade, not layout, so the width is modelled from the sheet:
+# the side column is as wide as its widest line (the notes never wrap), and it
+# must fit beside the airflow reading's widest line inside the card body.
+def _fuelPx(value: str) -> float:
+    var = re.fullmatch(r"var\((--fuel-[\w-]+)\)", value.strip())
+    if var:
+        scoped = dict(re.findall(r"(--fuel-[\w-]+)\s*:\s*([^;]+);", _rule("#fuel-card")))
+        return _fuelPx(scoped[var.group(1)].strip())
+    return _px(value)
+
+
+def _sideColumnWidth(trimNote: str, trimText: str = "−25.0 %") -> float:
+    chipBody = _rule("#fuel-card .fuel-chip")
+    chip = (
+        _monoWidth("CLOSED LOOP", "var(--fs-label)")
+        + 2 * _fuelPx("var(--fuel-chip-pad-x)")
+        + 2 * _fuelPx(_decl(chipBody, "border-width") or "")
+    )
+    return max(
+        chip,
+        _monoWidth("TOTAL TRIM", "var(--fs-meta)"),
+        _monoWidth(trimText, "var(--fs-primary)"),
+        _monoWidth(trimNote, "var(--fs-meta)"),
+        _monoWidth("loop unknown", "var(--fs-meta)"),
+    )
+
+
+def _airflowWidth() -> float:
+    return max(
+        _monoWidth("AIRFLOW", "var(--fs-meta)"),
+        _monoWidth("158.7", "var(--fs-hero)") + _fuelPx("var(--fuel-unit-gap)")
+        + _monoWidth("g/s", "var(--fs-label)"),
+        _monoWidth("no source", "var(--fs-meta)"),
+    )
+
+
+def _sideFits(trimNote: str) -> bool:
+    available = _bodyWidthPx() - _fuelPx("var(--fuel-col-gap)") - _airflowWidth()
+    return _sideColumnWidth(trimNote) <= available
+
+
+def test_openLoopText_is24Chars_andFitsItsTile():
+    assert len(OPEN_LOOP_TEXT) == 24
+    assert _sideFits(OPEN_LOOP_TEXT)
+
+
+def test_sideFitModel_failsAPlantedOverflow():
+    assert not _sideFits(OPEN_LOOP_TEXT * 3)
+
+
+def test_css_sideNotesNeverWrap():
+    for selector in ("#fuel-card .fuel-loop .fuel-note", "#fuel-card .fuel-total-trim .fuel-note"):
+        assert _decl(_rule(selector), "white-space") == "nowrap", selector
+
+
+# The grep gate (Atlas ruling AC 3/4): the page reads only obd-live.fuel -- no
+# trim PID, no status PID, no trim addition, never ltft-trend.totalTrim.
+_FORBIDDEN_NAMES = re.compile(
+    r"\b(?:LONG_FUEL_TRIM_1|SHORT_FUEL_TRIM_1|FUEL_SYSTEM_STATUS)\b|\btotalTrim\b(?!Now)"
+)
+_TRIM_ADDITION = re.compile(
+    r"\b(?:ltft|stft)\w*(?:\.\w+)*\s*\+(?!\+)|(?<!\+)\+\s*[\w.]*\b(?:ltft|stft)\w*", re.I
+)
+
+
+def _fuelSourceHits(source: str) -> list[str]:
+    code = _stripJsComments(source)
+    return _FORBIDDEN_NAMES.findall(code) + _TRIM_ADDITION.findall(code)
+
+
+def test_carouselJs_readsOnlyTheFuelBlock():
+    assert _fuelSourceHits(_read(_JS)) == []
+
+
+@pytest.mark.parametrize(
+    "planted",
+    ["var s = p.LONG_FUEL_TRIM_1.value;", "if (code === p.FUEL_SYSTEM_STATUS) {}",
+     "var t = trend.totalTrim;", "var sum = ltft.value + stft.value;", "var x = a + stftValue;"],
+)
+def test_fuelSourceGate_catchesAPlantedRead(planted: str):
+    assert _fuelSourceHits(_read(_JS) + "\n" + planted + "\n") != []
+
+
+def test_theLoopAndTrimRenderReadsTheTicksObdLive():
+    js = _read(_JS)
+    assert re.search(r"fuelLoopView\(\s*await stateOnce\(\"obd-live\"\)\s*\)", js)
+    assert re.search(r"fuelTotalTrimView\(\s*await stateOnce\(\"obd-live\"\)\s*\)", js)
+
+
+def test_architectureMd_recordsTheFuelBlockAndTheSharedCodeSet():
+    arch = _read(_ARCH)
+    heading = "#### V0.30 Fuel card LOOP + TOTAL TRIM from obd-live.fuel (US-890-c"
+    assert heading in arch
+    section = arch[arch.index(heading):][:3500]
+    for needle in ("totalTrimNow", "CLOSED_LOOP_FUEL_STATUS_CODES", "pi/obdii/fuel_status.py",
+                   "not applied in open loop", "loop_unknown"):
+        assert needle in section, needle
+    assert "**`fuel`** (US-890-c" in arch

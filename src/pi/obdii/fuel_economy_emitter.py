@@ -18,6 +18,8 @@
 #                                thisDrive payload, emit callable.
 # 2026-10-14    | Rex (US-881-c) | Open-loop seconds, pi.fuel.persistSec, and
 #                                sinceReset built from the fuel_since_reset row.
+# 2026-10-15    | Rex (US-890-c) | CLOSED_LOOP_FUEL_STATUS_CODES moved to
+#                                pi.obdii.fuel_status and imported (one copy).
 # ================================================================================
 ################################################################################
 
@@ -48,6 +50,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+# US-890-c: the ONE closed-loop code set, shared with states/obd-live's fuel block.
+from pi.obdii.fuel_status import CLOSED_LOOP_FUEL_STATUS_CODES
+
 __all__ = [
     "FUEL_ECONOMY_STATE_FILENAME",
     "KM_PER_MILE",
@@ -69,10 +74,6 @@ FUEL_ECONOMY_STATE_FILENAME = "fuel-economy"
 # US gallon = 231 in^3 x (2.54 cm)^3; international mile = 1609.344 m.
 LITERS_PER_US_GALLON = 3.785411784
 KM_PER_MILE = 1.609344
-
-# decoders._FUEL_STATUS_ENUM: 2 = CL and 5 = CL-fault are closed loop. 1 OL,
-# 3 OL-drive (decel AND enrichment), 4 OL-fault and 0/unknown are open loop.
-CLOSED_LOOP_FUEL_STATUS_CODES = frozenset({2, 5})
 
 # The mpgNullReason vocabulary, in PRECEDENCE order (Atlas G2): when several
 # hold, the first one listed is the one published.

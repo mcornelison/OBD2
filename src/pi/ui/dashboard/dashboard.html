@@ -260,7 +260,10 @@
            US-890-b: AIRFLOW is states/obd-live params.MAF (`fuelAirflowView`)
            over a bar from 0 to params.MAF.scale.max -- the provider's max, no
            ceiling mark, no limit label (spec s4.1). The skeleton ships "--" +
-           "not read": nothing has been read before the first poll. -->
+           "not read": nothing has been read before the first poll.
+           US-890-c: the LOOP chip and TOTAL TRIM read ONLY states/obd-live
+           `fuel` (`fuelLoopView` / `fuelTotalTrimView`): the provider maps
+           the status code and sums the trims. Skeleton "--" + "not read". -->
       <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
                aria-label="Fuel" data-page-name="FUEL">
         <div class="card-body">
@@ -272,15 +275,15 @@
               <span class="fuel-bar" data-stale="false" aria-hidden="true"><span class="fuel-bar-fill"></span></span>
             </div>
             <div class="fuel-side">
-              <div class="fuel-reading" data-slot="loop" data-note="unpublished">
+              <div class="fuel-reading fuel-loop" data-slot="loop" data-note="reason" data-dimmed="false">
                 <span class="fuel-label">LOOP</span>
-                <span class="fuel-value">--</span>
-                <span class="fuel-note">not published</span>
+                <span class="fuel-value fuel-chip">--</span>
+                <span class="fuel-note">not read</span>
               </div>
-              <div class="fuel-reading" data-slot="total-trim" data-note="unpublished">
+              <div class="fuel-reading fuel-total-trim" data-slot="total-trim" data-note="reason" data-dimmed="false">
                 <span class="fuel-label">TOTAL TRIM</span>
                 <span class="fuel-value">--</span>
-                <span class="fuel-note">not published</span>
+                <span class="fuel-note">not read</span>
               </div>
             </div>
           </div>

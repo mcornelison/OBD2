@@ -5934,6 +5934,19 @@ US-890-b, below).
   `pi.display.scale.mafMaxGs` (validator default 160 g/s, Spool 2026-10-14; a finite
   number above 0) by `ObdLiveTracker`, published fresh or stale. The Fuel card's airflow bar runs
   0..max. RPM's scale is unchanged and no other PID carries one.
+- **`fuel`** (US-890-c, Atlas S104 total-trim ruling (b), 2026-10-15) is a top-level
+  block `{loop, totalTrimNow}`, built by `buildObdLiveState` from the SAME observations
+  as `params` (it is always present; `params` entries are unchanged).
+  - `loop` is `"closed"` / `"open"` from `FUEL_SYSTEM_STATUS`'s numeric code through
+    the ONE `CLOSED_LOOP_FUEL_STATUS_CODES = {2, 5}` (`src/pi/obdii/fuel_status.py`,
+    moved there from `fuel_economy_emitter.py`, which imports it). It is null when the
+    status was never read, is stale (same `_isStale`, same `pi.display.stale.obdLiveSec`)
+    or is not a code.
+  - `totalTrimNow` is `{value, unit "%", ts, reason}`: `value` =
+    `LONG_FUEL_TRIM_1 + SHORT_FUEL_TRIM_1`, unrounded; `ts` = the OLDER input's ts
+    (null while either trim is unread). `reason` is the first that applies, with
+    `value` null: `not_read` > `stale` > `loop_unknown` > `open_loop`. Unbanded (no
+    band, no `noBandReason`). It is NOT `ltft-trend.totalTrim`, a per-drive mean.
 - **Dwell** is consecutive readings on event time. A stale gap (more than
   `pi.display.stale.obdLiveSec` between readings) or a null reading resets it. The
   producer keeps its own dwell clocks and a few seconds of RPM history for the
@@ -7925,6 +7938,33 @@ Fuel spec §4.1 (Atlas S104 ruling 2, 2026-10-14):
   wot-near-max, synthetic-scale-150, maf-null, stale}.json`, each equal to what
   the real tracker + builder emit. `synthetic-scale-150` is a SYNTHETIC max that
   only proves pinning; it is not this car's clip.
+
+#### V0.30 Fuel card LOOP + TOTAL TRIM from obd-live.fuel (US-890-c, Sprint 104 / V0.30.6)
+
+Fuel spec §4.2 (Atlas S104 total-trim ruling (b), 2026-10-15):
+
+- **Provider.** `states/obd-live` `fuel = {loop, totalTrimNow}` (section "obd-live"
+  above). Which FUEL_SYSTEM_STATUS codes mean closed loop is decided ONCE, in
+  `CLOSED_LOOP_FUEL_STATUS_CODES` in `src/pi/obdii/fuel_status.py`, imported by both
+  `fuel_economy_emitter` and `obd_live_emitter`; an AST gate in
+  `tests/pi/obdii/test_fuel_status.py` allows no second `{2, 5}` literal in src/pi.
+  `ltft_trend_emitter.FUEL_SYSTEM_CLOSED_LOOP` (Spool's code-2-only trend gate) is a
+  different rule and is not touched.
+- **Render rule** (`fuelLoopView(obdLive)` / `fuelTotalTrimView(obdLive)`, pure). The
+  chip reads `fuel.loop` only: `CLOSED LOOP` / `OPEN LOOP`, else `--` + `loop unknown`;
+  outlined at `--fs-label`, never coloured. TOTAL TRIM reads `fuel.totalTrimNow` only:
+  signed, one decimal, ` %` from `toFixed(1)` (never `String(float)`, never
+  `displayUnits`) at `--fs-primary`, neutral. A null shows `--` + its reason's text:
+  `open_loop` -> `not applied in open loop` with the `--` dimmed (`data-dimmed`),
+  `not_read` -> `not read`, `loop_unknown` -> `loop unknown`, `stale` -> `stale` (no
+  age and no last value: a stale sum of two samples is not a reading, Iris G-7); any
+  other code shows raw. No obd-live file -> both `--` + `no source`; an obd-live with
+  no `fuel` block -> `not published`. The side notes never wrap, and the 24-character
+  open-loop text fits beside AIRFLOW (width model in `tests/ui/test_fuel_page.py`).
+  carousel.js names no trim or status PID, adds no trims and never reads
+  `ltft-trend.totalTrim` (grep gate).
+- Fixtures: `tests/ui/fixtures/states/fuel/{closed-loop-trim, open-loop-trim,
+  loop-unknown, trim-stale}.json`, each equal to what the real tracker + builder emit.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

@@ -1,0 +1,49 @@
+{
+  "description": "FUEL_SYSTEM_STATUS last read 8 s ago (stale past pi.display.stale.obdLiveSec 5 s), both trims fresh. fuel.loop null, totalTrimNow reason loop_unknown: chip '--' + 'loop unknown', TOTAL TRIM '--' + 'loop unknown'.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "FUEL_SYSTEM_STATUS": {
+        "value": null,
+        "unit": "CL",
+        "ts": "2026-10-20T15:12:22Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 2.0,
+          "band": null
+        }
+      },
+      "LONG_FUEL_TRIM_1": {
+        "value": -1.6,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:28Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "SHORT_FUEL_TRIM_1": {
+        "value": 3.1,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      }
+    },
+    "fuel": {
+      "loop": null,
+      "totalTrimNow": {
+        "value": null,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:28Z",
+        "reason": "loop_unknown"
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

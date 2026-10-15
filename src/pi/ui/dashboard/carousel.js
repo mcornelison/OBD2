@@ -3863,6 +3863,70 @@
     return { reading: reading, bar: { fill: fill, stale: fill !== null && reading.stale } };
   }
 
+  // --- US-890-c Fuel card, loop chip + total trim (F-127) -------------------
+  //
+  // specs/v030-fuel-page-design.md s4.2 (Atlas S104 total-trim ruling (b)): both
+  // read ONLY states/obd-live `fuel` -- the provider decides which status codes
+  // are closed loop and sums the trims, so the page holds no code set and does
+  // no trim arithmetic. The chip is outlined and never coloured (open loop is
+  // normal at cold start and full throttle); TOTAL TRIM is unbanded and neutral.
+  var FUEL_LOOP_TEXT = { closed: "CLOSED LOOP", open: "OPEN LOOP" };
+  var FUEL_LOOP_UNKNOWN = "loop unknown";
+  // totalTrimNow.reason -> its text. open_loop keeps Iris's wording; stale has
+  // no age and no last value (Iris G-7: a stale sum of two samples is not a
+  // reading). Any other code shows raw, never blank.
+  var FUEL_TRIM_REASON_TEXT = {
+    not_read: "not read",
+    stale: "stale",
+    loop_unknown: FUEL_LOOP_UNKNOWN,
+    open_loop: "not applied in open loop",
+  };
+  // The one reason whose "--" is dimmed: trims exist but are not being applied.
+  var FUEL_TRIM_DIMMED_REASON = "open_loop";
+
+  function fuelSideNote(text, note) {
+    return { text: text, note: note, noteKind: note ? "reason" : "", dimmed: false };
+  }
+
+  // obd-live -> its `fuel` block, or a reason it has none.
+  function fuelBlockOf(obdLiveData) {
+    if (!isObj(obdLiveData)) return { fuel: null, missing: "no source" };
+    if (!isObj(obdLiveData.fuel)) return { fuel: null, missing: "not published" };
+    return { fuel: obdLiveData.fuel, missing: "" };
+  }
+
+  // The loop chip: CLOSED LOOP / OPEN LOOP, else "--" + why.
+  function fuelLoopView(obdLiveData) {
+    var block = fuelBlockOf(obdLiveData);
+    if (!block.fuel) return fuelSideNote("--", block.missing);
+    var text = Object.prototype.hasOwnProperty.call(FUEL_LOOP_TEXT, block.fuel.loop)
+      ? FUEL_LOOP_TEXT[block.fuel.loop] : null;
+    return text ? fuelSideNote(text, "") : fuelSideNote("--", FUEL_LOOP_UNKNOWN);
+  }
+
+  // Signed, ONE decimal, "%" (spec s3), from toFixed(1) -- never String(float),
+  // never displayUnits. The sign follows the ROUNDED figure, so -0.04 reads
+  // "+0.0 %", not "−0.0 %".
+  function fmtTotalTrim(value) {
+    var shown = Math.abs(value).toFixed(1);
+    return (value < 0 && Number(shown) !== 0 ? "−" : "+") + shown + " %";
+  }
+
+  // TOTAL TRIM: the provider's totalTrimNow, else "--" + its reason's text.
+  function fuelTotalTrimView(obdLiveData) {
+    var block = fuelBlockOf(obdLiveData);
+    var trim = block.fuel && isObj(block.fuel.totalTrimNow) ? block.fuel.totalTrimNow : null;
+    if (!trim) return fuelSideNote("--", block.missing || "not published");
+    if (trim.reason === null && typeof trim.value === "number" && isFinite(trim.value)) {
+      return fuelSideNote(fmtTotalTrim(trim.value), "");
+    }
+    var reason = typeof trim.reason === "string" && trim.reason ? trim.reason : "not_read";
+    var view = fuelSideNote("--", Object.prototype.hasOwnProperty.call(FUEL_TRIM_REASON_TEXT, reason)
+      ? FUEL_TRIM_REASON_TEXT[reason] : reason);
+    view.dimmed = reason === FUEL_TRIM_DIMMED_REASON;
+    return view;
+  }
+
   // --- US-889-c Engine card, the scroll half (F-127) -------------------------
   //
   // specs/v030-engine-page-design.md s3-s4, ACs 5-11: this drive's coolant,
@@ -4644,6 +4708,8 @@
     ltftTrendView: ltftTrendView,
     fuelTrendView: fuelTrendView,
     fuelAirflowView: fuelAirflowView,
+    fuelLoopView: fuelLoopView,
+    fuelTotalTrimView: fuelTotalTrimView,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -5184,6 +5250,29 @@
       if (bar) bar.setAttribute("data-stale", view.bar.stale ? "true" : "false");
       var fill = slot.querySelector(".fuel-bar-fill");
       if (fill) fill.style.setProperty("width", (view.bar.fill === null ? 0 : view.bar.fill) + "%");
+    }
+
+    // US-890-c: paint `fuelLoopView` / `fuelTotalTrimView` into the LOOP and
+    // TOTAL TRIM slots (dashboard.html skeleton). Text and state attributes
+    // only; data-dimmed is the sheet's one hook for the open-loop "--".
+    function renderFuelSideSlot(card, slotClass, view) {
+      var slot = card.querySelector(slotClass);
+      if (!slot) return;
+      slot.setAttribute("data-note", view.noteKind || "none");
+      slot.setAttribute("data-dimmed", view.dimmed ? "true" : "false");
+      var valueEl = slot.querySelector(".fuel-value");
+      if (valueEl) valueEl.textContent = view.text;
+      var noteEl = slot.querySelector(".fuel-note");
+      if (noteEl) {
+        noteEl.textContent = view.note;
+        noteEl.hidden = !view.note;
+      }
+    }
+
+    function renderFuelLoopAndTrim(card, loopView, trimView) {
+      if (!card || !loopView || !trimView) return;
+      renderFuelSideSlot(card, ".fuel-loop", loopView);
+      renderFuelSideSlot(card, ".fuel-total-trim", trimView);
     }
 
     // US-889-c: one history chart. The spans go in first so the neutral line
@@ -7170,6 +7259,13 @@
           engineStatusView(await stateOnce("obd-live"), engineParked.parked, nowMs)
         );
         renderFuelAirflow(fuelCard, fuelAirflowView(await stateOnce("obd-live"), nowMs));
+        // US-890-c: the loop chip and TOTAL TRIM from the same cached obd-live's
+        // `fuel` block -- never from the raw status code or the trims.
+        renderFuelLoopAndTrim(
+          fuelCard,
+          fuelLoopView(await stateOnce("obd-live")),
+          fuelTotalTrimView(await stateOnce("obd-live"))
+        );
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint

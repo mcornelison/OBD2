@@ -1934,6 +1934,9 @@ html, body {
   --fuel-bar-h: 10px;         /* the airflow bar, 0..params.MAF.scale.max */
   --fuel-unit-gap: 4px;       /* number -> unit */
   --fuel-stale-opacity: 0.4;  /* stale = dimmed (shared rule) */
+  /* US-890-c, the loop chip (spec s3: outlined, no colour). */
+  --fuel-chip-pad-y: 2px;
+  --fuel-chip-pad-x: 8px;
 }
 #fuel-card .card-body {
   display: flex; flex-direction: column; gap: var(--fuel-gap);
@@ -2004,6 +2007,28 @@ html, body {
 #fuel-card .fuel-bar-fill {
   position: absolute; left: 0; top: 0; bottom: 0;
   background-color: var(--accent);
+}
+/* US-890-c LOOP + TOTAL TRIM (spec s4.2), from states/obd-live `fuel` only.
+   The chip is outlined at --fs-label and NEVER coloured: open loop is normal
+   at cold start and full throttle, a mode not a fault. TOTAL TRIM is unbanded
+   (the .fuel-value default, --fs-primary, neutral); its "--" is dimmed ONLY
+   for open_loop (data-dimmed), the reason that says the trims are not being
+   applied. Side notes never wrap: "not applied in open loop" is one line. */
+#fuel-card .fuel-chip {
+  align-self: flex-end;
+  font-size: var(--fs-label); white-space: nowrap;
+  padding: var(--fuel-chip-pad-y) var(--fuel-chip-pad-x);
+  border-width: var(--fuel-rule); border-style: solid; border-color: var(--text-secondary);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+}
+#fuel-card .fuel-loop .fuel-note,
+#fuel-card .fuel-total-trim .fuel-note,
+#fuel-card .fuel-total-trim .fuel-value {
+  white-space: nowrap;
+}
+#fuel-card .fuel-total-trim[data-dimmed="true"] .fuel-value {
+  opacity: var(--fuel-stale-opacity);
 }
 /* The trend row. The source card paints this slot only (gate, loading and
    no-data tiles included), so the rows above never wait on it. */

@@ -16,6 +16,15 @@
         }
       }
     },
+    "fuel": {
+      "loop": null,
+      "totalTrimNow": {
+        "value": null,
+        "unit": "%",
+        "ts": null,
+        "reason": "not_read"
+      }
+    },
     "dataSource": "real",
     "ts": "2026-10-20T15:12:30Z"
   }

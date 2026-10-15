@@ -1,0 +1,46 @@
+{
+  "description": "Closed loop (FUEL_SYSTEM_STATUS 2, 'CL'): LTFT -1.6 % at 15:12:28 + STFT 3.1 % at 15:12:29. The provider publishes the UNROUNDED float sum at the OLDER ts; the page shows chip 'CLOSED LOOP' and TOTAL TRIM '+1.5 %' (toFixed(1)), neutral.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "LONG_FUEL_TRIM_1": {
+        "value": -1.6,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:28Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "FUEL_SYSTEM_STATUS": {
+        "value": 2.0,
+        "unit": "CL",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "SHORT_FUEL_TRIM_1": {
+        "value": 3.1,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      }
+    },
+    "fuel": {
+      "loop": "closed",
+      "totalTrimNow": {
+        "value": 1.5,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:28Z",
+        "reason": null
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

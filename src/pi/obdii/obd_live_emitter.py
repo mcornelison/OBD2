@@ -26,6 +26,8 @@
 #                                resetEngineHistory / engineHistoryIfChanged.
 # 2026-10-15    | Rex (US-890-b) | params.MAF.scale {max} from
 #                                pi.display.scale.mafMaxGs (Atlas S104 ruling 2).
+# 2026-10-15    | Rex (US-890-c) | Top-level fuel {loop, totalTrimNow} through the
+#                                shared closed-loop code set (Atlas S104 (b)).
 # ================================================================================
 ################################################################################
 
@@ -54,6 +56,7 @@ is, and a null band always carries a ``noBandReason`` code.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 from collections.abc import Callable, Mapping
@@ -70,6 +73,7 @@ from pi.obdii.band_producer import (
     BandSettings,
 )
 from pi.obdii.engine_history import EngineHistory, EngineHistorySettings
+from pi.obdii.fuel_status import FUEL_LOOP_OPEN, fuelLoopState
 from pi.obdii.units import canonicalUnit
 
 __all__ = [
@@ -96,6 +100,18 @@ _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 # US-890-b: the PID whose airflow bar runs 0..pi.display.scale.mafMaxGs.
 PID_MAF = "MAF"
 _MAF_MAX_KEY = "pi.display.scale.mafMaxGs"
+
+# US-890-c (Atlas S104 total-trim ruling (b)): the inputs of the fuel block.
+PID_FUEL_SYSTEM_STATUS = "FUEL_SYSTEM_STATUS"
+PID_LTFT = "LONG_FUEL_TRIM_1"
+PID_STFT = "SHORT_FUEL_TRIM_1"
+TOTAL_TRIM_UNIT = "%"
+
+# totalTrimNow.reason, in PRECEDENCE order: the first that applies is published.
+TRIM_NOT_READ = "not_read"
+TRIM_STALE = "stale"
+TRIM_LOOP_UNKNOWN = "loop_unknown"
+TRIM_OPEN_LOOP = "open_loop"
 
 
 def _mafScale(config: dict[str, Any]) -> dict[str, float]:
@@ -279,8 +295,68 @@ class ObdLiveTracker:
 
 def _isStale(ts: str, nowUtc: datetime, staleSec: float) -> bool:
     """True when the reading at ``ts`` is more than ``staleSec`` old at ``nowUtc``."""
-    readAt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    return (nowUtc - readAt).total_seconds() > staleSec
+    return (nowUtc - _parseTs(ts)).total_seconds() > staleSec
+
+
+def _parseTs(ts: str) -> datetime:
+    """A canonical ``...Z`` timestamp as an aware datetime."""
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def _isTrimValue(value: Any) -> bool:
+    """True for a finite number a trim can be summed from (a bool is not one)."""
+    return (
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    )
+
+
+def _buildFuelBlock(
+    observations: Mapping[str, ObdLiveObservation], nowUtc: datetime, staleSec: float
+) -> dict[str, Any]:
+    """The ``fuel`` block: ``{loop, totalTrimNow}`` (US-890-c).
+
+    ``loop`` maps FUEL_SYSTEM_STATUS through the ONE closed-loop code set
+    (``pi.obdii.fuel_status``); it is null when the status was never read, is
+    stale (the params window), or is not a code. ``totalTrimNow`` is LTFT + STFT,
+    unrounded and unbanded, at the OLDER input's ts -- null with the first
+    reason that applies: not_read > stale > loop_unknown > open_loop.
+
+    Args:
+        observations: The SAME latest-per-PID observations as ``params``.
+        nowUtc: Aware UTC instant of this emit.
+        staleSec: ``pi.display.stale.obdLiveSec``.
+
+    Returns:
+        ``{"loop": "closed"|"open"|None, "totalTrimNow": {value, unit, ts, reason}}``.
+    """
+    status = observations.get(PID_FUEL_SYSTEM_STATUS)
+    loop = None
+    if status is not None and not _isStale(status.ts, nowUtc, staleSec):
+        loop = fuelLoopState(status.value)
+
+    ltft = observations.get(PID_LTFT)
+    stft = observations.get(PID_STFT)
+    ts: str | None = None
+    reason: str | None
+    if ltft is None or stft is None or not (_isTrimValue(ltft.value) and _isTrimValue(stft.value)):
+        reason = TRIM_NOT_READ
+    else:
+        ts = min(ltft.ts, stft.ts, key=_parseTs)
+        if _isStale(ltft.ts, nowUtc, staleSec) or _isStale(stft.ts, nowUtc, staleSec):
+            reason = TRIM_STALE
+        elif loop is None:
+            reason = TRIM_LOOP_UNKNOWN
+        elif loop == FUEL_LOOP_OPEN:
+            reason = TRIM_OPEN_LOOP
+        else:
+            reason = None
+    value = None
+    if reason is None and ltft is not None and stft is not None:
+        value = ltft.value + stft.value
+    return {
+        "loop": loop,
+        "totalTrimNow": {"value": value, "unit": TOTAL_TRIM_UNIT, "ts": ts, "reason": reason},
+    }
 
 
 def buildObdLiveState(
@@ -300,9 +376,11 @@ def buildObdLiveState(
             None when no logger has resolved one.
 
     Returns:
-        ``{params: {<PID>: {value, unit, ts, stale, band, last}}, dataSource, ts}``.
-        A null band adds ``noBandReason``; RPM and MAF add ``scale``. While stale no
-        band is evaluated: ``last.band`` is the band frozen at the last reading.
+        ``{params: {<PID>: {value, unit, ts, stale, band, last}}, fuel, dataSource,
+        ts}``. A null band adds ``noBandReason``; RPM and MAF add ``scale``. While
+        stale no band is evaluated: ``last.band`` is the band frozen at the last
+        reading. ``fuel`` is ``{loop, totalTrimNow}`` from the same observations
+        (US-890-c, :func:`_buildFuelBlock`).
     """
     params: dict[str, Any] = {}
     for name, obs in observations.items():
@@ -337,6 +415,7 @@ def buildObdLiveState(
         params[name] = entry
     return {
         "params": params,
+        "fuel": _buildFuelBlock(observations, nowUtc, staleSec),
         "dataSource": dataSource,
         "ts": nowUtc.strftime(_ISO_FMT),
     }
