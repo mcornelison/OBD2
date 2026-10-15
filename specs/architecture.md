@@ -5879,7 +5879,8 @@ holds. When `pi.dashboard.stateEmitEnabled` is false, the producer is not built 
 no file.
 
 **Shape:** `{params: {<PID name>: {value, unit, ts, stale, band, last}}, dataSource, ts}`.
-A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
+A null `band` adds `noBandReason`; `params.RPM` and `params.MAF` add `scale` (US-875,
+US-890-b, below).
 
 - **`ts` per PID is the reading's event time.** `reading.timestamp` is a naive local
   datetime. It is converted with `localNaiveToCanonicalIso(reading.timestamp, config)`,
@@ -5929,6 +5930,10 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
 - **`params.RPM.scale`** is `{amberFrom, redFrom}`, read from the same
   `pi.bands.rpm.amberRpm` / `redRpm` keys as the RPM band, so the bar draws its zones
   from data (Atlas ruling 2026-10-13 on Iris S-6). It is published fresh or stale.
+- **`params.MAF.scale`** (US-890-b, Atlas S104 ruling 2) is `{max}`, read from
+  `pi.display.scale.mafMaxGs` (validator default 160 g/s, Spool 2026-10-14; a finite
+  number above 0) by `ObdLiveTracker`, published fresh or stale. The Fuel card's airflow bar runs
+  0..max. RPM's scale is unchanged and no other PID carries one.
 - **Dwell** is consecutive readings on event time. A stale gap (more than
   `pi.display.stale.obdLiveSec` between readings) or a null reading resets it. The
   producer keeps its own dwell clocks and a few seconds of RPM history for the
@@ -7873,10 +7878,10 @@ Fuel spec §3-§4.4 (`specs/v030-fuel-page-design.md`, layout A), CIO E-2 order:
   data`), the US-700 loading tile and the silent-feed NA all survive -- but the
   entry's new `slot: ".fuel-trend"` confines every one of them to the trend
   row. `renderSourceCard` paints a source with a `slot` into that element only.
-- **Upper rows: markup, never blank.** AIRFLOW, LOOP, TOTAL TRIM, LAST 30 S,
+- **Upper rows: markup, never blank.** LOOP, TOTAL TRIM, LAST 30 S,
   THIS DRIVE and SINCE RESET ship `--` + `not published` in the skeleton and
-  stay so under every trend state until their providers land (airflow
-  US-890-b, loop + total trim US-890-c, MPG US-890-d).
+  stay so under every trend state until their providers land (loop + total
+  trim US-890-c, MPG US-890-d). AIRFLOW is live since US-890-b (below).
 - **Trend render rule** (`fuelTrendView(ltftTrend)`, pure; `ltftTrendView`'s
   sufficiency rule carries over). Dots = EXACTLY the points with `inMedian`
   true -- the headline's own drive set, so a 7-drive payload draws its newest
@@ -7895,6 +7900,31 @@ Fuel spec §3-§4.4 (`specs/v030-fuel-page-design.md`, layout A), CIO E-2 order:
   ltft-reset-zero-flat, trend-seven-drives}.json` (built by
   `buildLtftTrendState`; the reset fixture sets `isReset` on its point by hand,
   because the provider marks a reset on its drive records, not its points).
+
+#### V0.30 Fuel card AIRFLOW against params.MAF.scale (US-890-b, Sprint 104 / V0.30.6)
+
+Fuel spec §4.1 (Atlas S104 ruling 2, 2026-10-14):
+
+- **Provider.** `states/obd-live` `params.MAF.scale = {max}`, `max` =
+  `pi.display.scale.mafMaxGs` (validator default **160**, Spool 2026-10-14: the
+  smallest round number above the corpus max 158.69 g/s; finite and > 0). It is
+  read once by `ObdLiveTracker` and published fresh or stale, on the same path as
+  `params.RPM.scale` (section "obd-live" above). A display scale, not the
+  sensor's clip: MAF stays unbanded (`no_band_defined`).
+- **Render rule** (`fuelAirflowView(obdLive, nowMs)`, pure). The value is
+  `params.MAF.value` at `--fs-hero`, one decimal through `displayUnits` (`g/s`),
+  stepping per reading (no transition). Stale -> `last.value` dimmed with its
+  age; absent -> `--` + `not read`; no obd-live file -> `--` + `no source`. The
+  bar runs 0..`scale.max` with an `--accent` fill; above the max it is exactly
+  full while the number prints UNCLAMPED. No ceiling mark, no `sensor limit`
+  text, nothing on the airflow element amber or red (the stale age included).
+  No usable scale (absent, non-finite, <= 0) or a unit other than `g/s` -> no
+  bar, number kept. No MAF max literal appears in carousel.js (grep gate in
+  `tests/ui/test_fuel_page.py`).
+- Fixtures: `tests/ui/fixtures/states/fuel/{idle-closed, cruise-closed,
+  wot-near-max, synthetic-scale-150, maf-null, stale}.json`, each equal to what
+  the real tracker + builder emit. `synthetic-scale-150` is a SYNTHETIC max that
+  only proves pinning; it is not this car's clip.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

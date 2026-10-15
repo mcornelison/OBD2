@@ -255,16 +255,21 @@
            a bench with no car reads "no engine data", never a stale trim. The
            gate reaches the trend row ONLY (`.fuel-trend`, the source card's
            slot) -- the rows above it are markup and ship "--" + "not
-           published" until their providers land (airflow US-890-b, loop and
-           total trim US-890-c, MPG US-890-d): never blank. -->
+           published" until their providers land (loop and total trim
+           US-890-c, MPG US-890-d): never blank.
+           US-890-b: AIRFLOW is states/obd-live params.MAF (`fuelAirflowView`)
+           over a bar from 0 to params.MAF.scale.max -- the provider's max, no
+           ceiling mark, no limit label (spec s4.1). The skeleton ships "--" +
+           "not read": nothing has been read before the first poll. -->
       <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
                aria-label="Fuel" data-page-name="FUEL">
         <div class="card-body">
           <div class="fuel-top">
-            <div class="fuel-reading fuel-airflow" data-slot="airflow" data-note="unpublished">
+            <div class="fuel-reading fuel-airflow" data-slot="airflow" data-stale="false" data-note="reason">
               <span class="fuel-label">AIRFLOW</span>
-              <span class="fuel-value">--</span>
-              <span class="fuel-note">not published</span>
+              <span class="fuel-line"><span class="fuel-value">--</span><span class="fuel-unit"></span></span>
+              <span class="fuel-note">not read</span>
+              <span class="fuel-bar" data-stale="false" aria-hidden="true"><span class="fuel-bar-fill"></span></span>
             </div>
             <div class="fuel-side">
               <div class="fuel-reading" data-slot="loop" data-note="unpublished">

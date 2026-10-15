@@ -21,6 +21,8 @@
 #                                C/km/h/V/rpm out. PIN CHANGE: the fixture
 #                                builder-equality test now feeds each fixture
 #                                unit as its python-obd name (inverse map).
+# 2026-10-15    | Rex (US-890-b) | params.MAF.scale {max} from
+#                                pi.display.scale.mafMaxGs (default 160).
 # ================================================================================
 ################################################################################
 
@@ -368,6 +370,82 @@ class TestObdLiveTracker:
         tracker.observeReading(_Reading("RPM", 812.0, datetime(2026, 10, 13, 12), "rpm"))
 
         assert tracker.snapshot()["RPM"].scale == {"amberFrom": 4000.0, "redFrom": 6000.0}
+
+    def test_mafScale_defaultsToTheValidatorDefault(self) -> None:
+        """
+        Given: no pi.display.scale key (US-890-b)
+        When: a MAF reading is snapshotted
+        Then: params.MAF.scale is {max: 160.0} -- the validator DEFAULT (Spool)
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        tracker.observeReading(_Reading("MAF", 16.24, datetime(2026, 10, 13, 12), "gps"))
+
+        assert tracker.snapshot()["MAF"].scale == {"max": 160.0}
+
+    def test_mafScale_followsTheConfigKey(self) -> None:
+        """
+        Given: pi.display.scale.mafMaxGs 150
+        When: a MAF reading is snapshotted
+        Then: params.MAF.scale is {max: 150.0} -- read from config, not a literal
+        """
+        config = {"pi": {
+            "time": {"localZone": "America/Chicago"},
+            "display": {"scale": {"mafMaxGs": 150}},
+        }}
+        tracker = ole.ObdLiveTracker(config)
+
+        tracker.observeReading(_Reading("MAF", 158.69, datetime(2026, 10, 13, 12), "gps"))
+
+        assert tracker.snapshot()["MAF"].scale == {"max": 150.0}
+
+    def test_mafScale_leavesRpmAndEveryOtherPidAlone(self) -> None:
+        """
+        Given: RPM, MAF and SPEED read, pi.display.scale.mafMaxGs 150
+        When: snapshotted
+        Then: RPM keeps its {amberFrom, redFrom}; SPEED carries no scale
+        """
+        config = {"pi": {
+            "time": {"localZone": "America/Chicago"},
+            "display": {"scale": {"mafMaxGs": 150}},
+        }}
+        tracker = ole.ObdLiveTracker(config)
+        t = datetime(2026, 10, 13, 12)
+
+        tracker.observeReading(_Reading("RPM", 812.0, t, "rpm"))
+        tracker.observeReading(_Reading("MAF", 4.1, t, "gps"))
+        tracker.observeReading(_Reading("SPEED", 0.0, t, "km/h"))
+
+        snap = tracker.snapshot()
+        assert snap["RPM"].scale == {"amberFrom": 5500.0, "redFrom": 7000.0}
+        assert snap["MAF"].scale == {"max": 150.0}
+        assert snap["SPEED"].scale is None
+
+    def test_mafScale_isPublished_freshAndStale(self) -> None:
+        """
+        Given: a MAF reading at 12:00:00 local (17:00:00Z)
+        When: built 1 s later (fresh) and 6 s later (stale)
+        Then: params.MAF carries scale {max: 160.0} both times, beside the
+              unclamped value or last.value -- the scale never depends on a reading
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+        tracker.observeReading(_Reading("MAF", 158.69, datetime(2026, 10, 13, 12), "gps"))
+        snap = tracker.snapshot()
+
+        fresh = ole.buildObdLiveState(
+            snap, nowUtc=_utc("2026-10-13T17:00:01Z"), staleSec=5.0, dataSource="real"
+        )["params"]["MAF"]
+        stale = ole.buildObdLiveState(
+            snap, nowUtc=_utc("2026-10-13T17:00:06Z"), staleSec=5.0, dataSource="real"
+        )["params"]["MAF"]
+
+        assert fresh["value"] == 158.69
+        assert fresh["unit"] == "g/s"
+        assert fresh["scale"] == {"max": 160.0}
+        assert stale["value"] is None
+        assert stale["last"]["value"] == 158.69
+        assert stale["scale"] == {"max": 160.0}
+        assert set(fresh) <= _PID_KEYS | _OPTIONAL_PID_KEYS
 
     def test_nullReading_resetsTheDwellButIsNotRecorded(self) -> None:
         """

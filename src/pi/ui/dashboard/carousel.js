@@ -3827,6 +3827,42 @@
     return { readings: readings, bars: bars };
   }
 
+  // --- US-890-b Fuel card, airflow (F-127) -----------------------------------
+  //
+  // specs/v030-fuel-page-design.md s4.1 (Atlas S104 ruling 2): params.MAF at
+  // --fs-hero, one decimal (displayUnits 'g/s'), over a bar from 0 to
+  // params.MAF.scale.max -- the PROVIDER's max (pi.display.scale.mafMaxGs); the
+  // page holds no number. Above the max the bar pins exactly full and the
+  // digits stay unclamped: a full bar says "at least the scale max", never "the
+  // sensor hit its limit" (nobody knows where it clips). Unbanded, so nothing
+  // on the airflow element is ever amber or red. Fresh / stale / not read follow
+  // engineReading: the bar draws the SAME sample as the digits.
+  var FUEL_AIRFLOW_PID = "MAF";
+  // The unit the scale max is published in; a reading in any other unit is not
+  // on that scale and lights no bar.
+  var FUEL_AIRFLOW_UNIT = "g/s";
+  var FUEL_BAR_FULL_PCT = 100;
+
+  // The bar's fill in % of its width, or null (no usable scale: nothing lit).
+  function fuelAirflowFill(reading, param) {
+    var max = isObj(param.scale) ? param.scale.max : null;
+    if (reading.value === null || param.unit !== FUEL_AIRFLOW_UNIT ||
+        typeof max !== "number" || !isFinite(max) || max <= 0) {
+      return null;
+    }
+    return Math.max(0, Math.min(FUEL_BAR_FULL_PCT, reading.value / max * FUEL_BAR_FULL_PCT));
+  }
+
+  // The Fuel card's airflow view from states/obd-live alone.
+  function fuelAirflowView(obdLiveData, nowMs) {
+    var params = isObj(obdLiveData) && isObj(obdLiveData.params) ? obdLiveData.params : null;
+    if (!params) return { reading: engineNotRead("no source"), bar: { fill: null, stale: false } };
+    var param = params[FUEL_AIRFLOW_PID];
+    var reading = engineReading(param, nowMs, displayUnits);
+    var fill = isObj(param) ? fuelAirflowFill(reading, param) : null;
+    return { reading: reading, bar: { fill: fill, stale: fill !== null && reading.stale } };
+  }
+
   // --- US-889-c Engine card, the scroll half (F-127) -------------------------
   //
   // specs/v030-engine-page-design.md s3-s4, ACs 5-11: this drive's coolant,
@@ -4607,6 +4643,7 @@
     fmtLtftPct: fmtLtftPct,
     ltftTrendView: ltftTrendView,
     fuelTrendView: fuelTrendView,
+    fuelAirflowView: fuelAirflowView,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -5122,6 +5159,31 @@
         var fill = cols[c].querySelector(".eng-bar-fill");
         if (fill) fill.style.setProperty("height", (bar.fill === null ? 0 : bar.fill) + "%");
       }
+    }
+
+    // US-890-b: paint `fuelAirflowView` into the Fuel card's AIRFLOW slot
+    // (dashboard.html skeleton). Text, state attributes and the fill's width
+    // only; the width has no transition, so the bar steps per reading.
+    function renderFuelAirflow(card, view) {
+      if (!card || !view) return;
+      var slot = card.querySelector(".fuel-airflow");
+      if (!slot) return;
+      var reading = view.reading;
+      slot.setAttribute("data-stale", reading.stale ? "true" : "false");
+      slot.setAttribute("data-note", reading.noteKind || "none");
+      var valueEl = slot.querySelector(".fuel-value");
+      if (valueEl) valueEl.textContent = reading.text;
+      var unitEl = slot.querySelector(".fuel-unit");
+      if (unitEl) unitEl.textContent = reading.unit;
+      var noteEl = slot.querySelector(".fuel-note");
+      if (noteEl) {
+        noteEl.textContent = reading.note;
+        noteEl.hidden = !reading.note;
+      }
+      var bar = slot.querySelector(".fuel-bar");
+      if (bar) bar.setAttribute("data-stale", view.bar.stale ? "true" : "false");
+      var fill = slot.querySelector(".fuel-bar-fill");
+      if (fill) fill.style.setProperty("width", (view.bar.fill === null ? 0 : view.bar.fill) + "%");
     }
 
     // US-889-c: one history chart. The spans go in first so the neutral line
@@ -6318,6 +6380,9 @@
       // US-889-b: the Engine card, right after Driving; filled from the same
       // cached states/obd-live on the same tick.
       var engineCard = document.getElementById("engine-card");
+      // US-890-b: the Fuel card's AIRFLOW row, from the same cached
+      // states/obd-live on the same tick (the trend row is the source card's).
+      var fuelCard = document.getElementById("fuel-card");
       // US-889-c: the CHECK ENGINE count line is a PARKED-ONLY tap to the
       // Alerts card. `engineParked` is the US-511 debounce (parkedNext, its
       // first consumer since TD-us659), advanced once per tick from the same
@@ -7104,6 +7169,7 @@
           engineHistoryView(await stateOnce("engine-history")),
           engineStatusView(await stateOnce("obd-live"), engineParked.parked, nowMs)
         );
+        renderFuelAirflow(fuelCard, fuelAirflowView(await stateOnce("obd-live"), nowMs));
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint

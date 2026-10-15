@@ -32,6 +32,7 @@
 # 2026-10-14    | Rex (US-881-c) | pi.fuel.persistSec default 60 + positivity.
 # 2026-10-14    | Rex (US-881-d) | pi.fuel.resetTimeoutSec default 5 + positivity.
 # 2026-10-15    | Rex (US-889-a) | pi.display.engineHistory.{intervalSec,maxPoints}.
+# 2026-10-15    | Rex (US-890-b) | pi.display.scale.mafMaxGs default 160 + positivity.
 # ================================================================================
 ################################################################################
 
@@ -1373,6 +1374,30 @@ def test_validate_engineHistory_nonPositiveOrNonFinite_rejected(key, bad):
     cfg = _baseCfg()
     cfg["pi"] = {"display": {"engineHistory": {key: bad}}}
     with pytest.raises(ConfigValidationError, match=f"pi.display.engineHistory.{key}"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_mafMaxGs_defaultsTo160():
+    """US-890-b: params.MAF.scale.max defaults to 160 g/s (Spool 2026-10-14: the
+    smallest round number above the corpus max 158.69 g/s)."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["scale"]["mafMaxGs"] == 160
+
+
+def test_validate_mafMaxGs_acceptsAPositiveNumber():
+    """US-890-b: a positive finite override passes unchanged."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"scale": {"mafMaxGs": 150.5}}}
+    assert ConfigValidator().validate(cfg)["pi"]["display"]["scale"]["mafMaxGs"] == 150.5
+
+
+@pytest.mark.parametrize("bad", [0, -160, float("inf"), float("nan"), "160", True])
+def test_validate_mafMaxGs_nonPositiveOrNonFinite_rejected(bad):
+    """US-890-b: pi.display.scale.mafMaxGs must be a finite number > 0; the error
+    names the key."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"scale": {"mafMaxGs": bad}}}
+    with pytest.raises(ConfigValidationError, match="pi.display.scale.mafMaxGs"):
         ConfigValidator().validate(cfg)
 
 

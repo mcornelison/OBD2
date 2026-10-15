@@ -29,6 +29,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Ralph (Rex)  | Initial -- US-890-a Fuel card + trend row.
+# 2026-10-15    | Rex (US-890-b) | AIRFLOW from params.MAF against params.MAF
+#                                .scale.max (section 8). PIN CHANGE: the two
+#                                upper-row tests no longer expect AIRFLOW to be
+#                                "not published" (UNPUBLISHED_SLOTS).
 # ================================================================================
 ################################################################################
 
@@ -88,6 +92,8 @@ UPPER_SLOTS = [
     ("mpg-this-drive", "THIS DRIVE"),
     ("mpg-since-reset", "SINCE RESET"),
 ]
+# US-890-b: AIRFLOW is published now; the rest still wait on their stories.
+UNPUBLISHED_SLOTS = [(s, lbl) for s, lbl in UPPER_SLOTS if s != "airflow"]
 NOT_PUBLISHED = "not published"
 RELEARNING = "ECU relearning"
 TREND_LABEL = "FUEL TRIM TREND"
@@ -142,12 +148,19 @@ def _fuelText(surface: rh.Surface, cls: str) -> list[str]:
     return [_textOf(p[-1]) for p in _fuelPaths(surface, cls) if surface.rendered(p)]
 
 
-def _boot(trend: Any = None, system: Any = None, nowIso: str = "2026-10-20T15:12:30Z") -> rh.Surface:
+def _boot(
+    trend: Any = None,
+    system: Any = None,
+    nowIso: str = "2026-10-20T15:12:30Z",
+    obdLive: Any = None,
+) -> rh.Surface:
     routes: dict[str, Any] = {}
     if trend is not None:
         routes["/ltft-trend"] = trend
     if system is not None:
         routes["/system-status"] = system
+    if obdLive is not None:
+        routes["/obd-live"] = obdLive
     dom = rh.runDashboard(routes=routes, nowMs=_ms(nowIso), steps=[{"flush": 4}])
     return rh.dashboardSurface(dom["tree"])
 
@@ -224,7 +237,7 @@ def test_thisStorysFixturesArePresent():
 
 def test_upperRows_shipDashDashAndNotPublished_inTheMarkup():
     markup = _fuelMarkup()
-    for slot, label in UPPER_SLOTS:
+    for slot, label in UNPUBLISHED_SLOTS:
         match = re.search(
             rf'<div class="fuel-reading[^"]*" data-slot="{slot}"[^>]*>(.*?)</div>', markup, re.S
         )
@@ -252,7 +265,8 @@ def test_upperRows_stayDashDashUnderEveryTrendState(trend: str | None, system: s
     surface = _boot(trend=payload, system=sysPayload)
     assert _fuelText(surface, "fuel-label")[: len(UPPER_SLOTS)] == [lbl for _s, lbl in UPPER_SLOTS]
     assert _fuelText(surface, "fuel-value") == ["--"] * len(UPPER_SLOTS)
-    assert _fuelText(surface, "fuel-note") == [NOT_PUBLISHED] * len(UPPER_SLOTS)
+    # US-890-b: no obd-live file -> AIRFLOW says why ("no source"), never blank.
+    assert _fuelText(surface, "fuel-note") == ["no source"] + [NOT_PUBLISHED] * len(UNPUBLISHED_SLOTS)
 
 
 # ---------------------------------------------------------------------------
@@ -514,3 +528,337 @@ def test_dom_fuelCard_paintsNoLegacyBarsAndNoTiles_whenLive():
     assert _fuelPaths(surface, "tile") == []
     for path in _fuelPaths(surface, "fuel-reading"):
         assert "tile" not in _classes(path[-1])
+
+
+# ---------------------------------------------------------------------------
+# 8. US-890-b -- AIRFLOW from params.MAF against params.MAF.scale.max.
+#    specs/v030-fuel-page-design.md s4.1 (Atlas S104 ruling 2): one decimal at
+#    --fs-hero, a bar 0..max; above max the bar is exactly full, the number
+#    unclamped, no "sensor limit", nothing amber or red.
+# ---------------------------------------------------------------------------
+
+AIRFLOW_FIXTURES = [
+    "idle-closed", "cruise-closed", "wot-near-max", "synthetic-scale-150", "maf-null", "stale",
+]
+
+# Fixture -> (text, unit, fill %, stale, note). The fill is value / scale.max.
+_AIRFLOW_EXPECTED: dict[str, tuple[str, str, float | None, bool, str]] = {
+    "idle-closed": ("3.6", "g/s", 3.57 / 160 * 100, False, ""),
+    "cruise-closed": ("16.2", "g/s", 16.24 / 160 * 100, False, ""),
+    "wot-near-max": ("158.7", "g/s", 158.69 / 160 * 100, False, ""),
+    "synthetic-scale-150": ("158.7", "g/s", 100, False, ""),
+    "maf-null": ("--", "", None, False, "not read"),
+    "stale": ("16.2", "g/s", 16.24 / 160 * 100, True, "12 s"),
+}
+
+
+def _airflowView(obdLive: Any, nowIso: str = "2026-10-20T15:12:30Z") -> dict[str, Any]:
+    return _probe("fuelAirflowView", obdLive, _ms(nowIso))
+
+
+def _airflowFixtureView(name: str) -> dict[str, Any]:
+    fx = _fixture(name)
+    return _airflowView(fx["obd-live"], fx["now"])
+
+
+def _maf(value: Any, **extra: Any) -> dict[str, Any]:
+    param = {
+        "value": value, "unit": "g/s", "ts": "2026-10-20T15:12:29Z", "stale": False,
+        "band": None, "last": None, "noBandReason": "no_band_defined", "scale": {"max": 160.0},
+    }
+    param.update(extra)
+    return {"params": {"MAF": param}, "dataSource": "real", "ts": "2026-10-20T15:12:30Z"}
+
+
+def _inAirflow(path: list[dict[str, Any]]) -> bool:
+    return any("fuel-airflow" in _classes(n) for n in path)
+
+
+def _airflowPaths(surface: rh.Surface, cls: str) -> list[list[dict[str, Any]]]:
+    return [p for p in _fuelPaths(surface, cls) if _inAirflow(p)]
+
+
+def _bootAirflow(name: str) -> rh.Surface:
+    fx = _fixture(name)
+    return _boot(system=_driving(), nowIso=fx["now"], obdLive=fx["obd-live"])
+
+
+def test_airflowFixturesArePresent_andDescribed():
+    for name in AIRFLOW_FIXTURES:
+        fx = _fixture(name)
+        assert fx["description"], name
+        assert isinstance(fx["obd-live"], dict), name
+
+
+def test_syntheticScaleFixture_saysItIsSynthetic():
+    """The 150 is made up to prove pinning; it must never read as this car's clip."""
+    fx = _fixture("synthetic-scale-150")
+    assert fx["obd-live"]["params"]["MAF"]["scale"] == {"max": 150.0}
+    assert "SYNTHETIC" in fx["description"]
+    assert "not this car's clip" in fx["description"].lower()
+
+
+def test_wotNearMax_isTheCorpusMaxAgainstTheRealDefault():
+    from common.config.validator import DEFAULTS
+
+    maf = _fixture("wot-near-max")["obd-live"]["params"]["MAF"]
+    assert maf["value"] == 158.69
+    assert maf["scale"] == {"max": float(DEFAULTS["pi.display.scale.mafMaxGs"])}
+
+
+@pytest.mark.parametrize("name", AIRFLOW_FIXTURES)
+def test_airflowFixture_obdLiveIsWhatTheBuilderEmits(name: str):
+    """
+    Given: a fixture's obd-live payload
+    When: its readings are fed through a real ObdLiveTracker (its MAF scale max
+          as pi.display.scale.mafMaxGs) and built at the payload's ts
+    Then: the builder's output equals the payload -- the page is tested against
+          the provider's real shape, scale included
+    """
+    from pi.obdii import obd_live_emitter as ole
+    from pi.obdii import units
+
+    payload = _fixture(name)["obd-live"]
+    config: dict[str, Any] = {"pi": {"time": {"localZone": "UTC"}}}
+    maf = payload["params"].get("MAF")
+    if maf is not None:
+        config["pi"]["display"] = {"scale": {"mafMaxGs": maf["scale"]["max"]}}
+    pythonObdName = {canonical: raw for raw, canonical in units.CANONICAL_UNITS.items()}
+    tracker = ole.ObdLiveTracker(config)
+    for pid, param in payload["params"].items():
+        value = param["last"]["value"] if param["stale"] else param["value"]
+        tracker.observeReading(
+            _Reading(pid, value, _naiveUtc(param["ts"]), pythonObdName[param["unit"]])
+        )
+    built = ole.buildObdLiveState(
+        tracker.snapshot(),
+        nowUtc=_awareUtc(payload["ts"]),
+        staleSec=ole.DEFAULT_OBD_LIVE_STALE_S,
+        dataSource=payload["dataSource"],
+    )
+    assert built == payload
+
+
+class _Reading:
+    def __init__(self, parameterName: str, value: Any, timestamp: Any, unit: str) -> None:
+        self.parameterName = parameterName
+        self.value = value
+        self.timestamp = timestamp
+        self.unit = unit
+
+
+def _awareUtc(iso: str) -> Any:
+    from datetime import datetime
+
+    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
+def _naiveUtc(iso: str) -> Any:
+    return _awareUtc(iso).replace(tzinfo=None)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", AIRFLOW_FIXTURES)
+def test_airflowView_perFixture(name: str):
+    text, unit, fill, stale, note = _AIRFLOW_EXPECTED[name]
+    view = _airflowFixtureView(name)
+    r = view["reading"]
+    assert (r["text"], r["unit"], r["stale"], r["note"]) == (text, unit, stale, note)
+    if fill is None:
+        assert view["bar"]["fill"] is None
+    else:
+        assert view["bar"]["fill"] == pytest.approx(fill)
+    assert view["bar"]["stale"] == (stale and fill is not None)
+
+
+@_NODE_ONLY
+def test_validation_maf16_24_onMax160_reads16_2_andTheBarIsAboutTenPercent():
+    view = _airflowView(_maf(16.24))
+    assert (view["reading"]["text"], view["reading"]["unit"]) == ("16.2", "g/s")
+    assert view["bar"]["fill"] == pytest.approx(10.15)
+
+
+@_NODE_ONLY
+def test_validation_aboveTheMax_barIsExactlyFull_numberUnclamped():
+    view = _airflowFixtureView("synthetic-scale-150")
+    assert view["bar"]["fill"] == 100
+    assert view["reading"]["text"] == "158.7"
+    assert view["reading"]["note"] == ""
+
+
+@_NODE_ONLY
+def test_airflow_stepsPerReading_noSmoothing():
+    """Two consecutive readings -> two views, each exactly its own sample."""
+    a = _airflowView(_maf(16.24))
+    b = _airflowView(_maf(42.0))
+    assert a["reading"]["text"] == "16.2" and b["reading"]["text"] == "42.0"
+    assert b["bar"]["fill"] == pytest.approx(42.0 / 160 * 100)
+
+
+@_NODE_ONLY
+def test_airflow_scaleIsTheProvidersMax_notALiteral():
+    """The same reading against two published maxes -> two fills."""
+    at160 = _airflowView(_maf(80.0))["bar"]["fill"]
+    at200 = _airflowView(_maf(80.0, scale={"max": 200.0}))["bar"]["fill"]
+    assert at160 == pytest.approx(50.0)
+    assert at200 == pytest.approx(40.0)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    "scale", [None, {}, {"max": 0}, {"max": -160}, {"max": "160"}, {"max": None}],
+    ids=["absent", "no-max", "zero", "negative", "string", "null"],
+)
+def test_airflow_unusableScale_drawsNoBar_butKeepsTheNumber(scale: Any):
+    maf = _maf(16.24)
+    if scale is None:
+        del maf["params"]["MAF"]["scale"]
+    else:
+        maf["params"]["MAF"]["scale"] = scale
+    view = _airflowView(maf)
+    assert view["reading"]["text"] == "16.2"
+    assert view["bar"]["fill"] is None
+
+
+@_NODE_ONLY
+def test_airflow_unitNotGramsPerSecond_drawsNoBar():
+    """The max is in g/s: a reading in any other unit is not on that scale."""
+    view = _airflowView(_maf(16.24, unit="lb/min"))
+    assert view["bar"]["fill"] is None
+
+
+@_NODE_ONLY
+def test_airflow_zero_isAnEmptyBar_notNull():
+    view = _airflowView(_maf(0.0))
+    assert view["reading"]["text"] == "0.0"
+    assert view["bar"]["fill"] == 0
+
+
+@_NODE_ONLY
+def test_airflow_noObdLive_isDashDashNoSource():
+    view = _airflowView(None)
+    assert (view["reading"]["text"], view["reading"]["note"]) == ("--", "no source")
+    assert view["bar"]["fill"] is None
+
+
+@_NODE_ONLY
+def test_airflow_staleWithNoLastValue_isDashDashWithTheReason():
+    maf = _maf(None, stale=True, noBandReason="stale", last=None)
+    r = _airflowView(maf)["reading"]
+    assert (r["text"], r["note"], r["noteKind"]) == ("--", "stale", "reason")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", AIRFLOW_FIXTURES)
+def test_dom_airflowPaintsTheView(name: str):
+    view = _airflowFixtureView(name)
+    r = view["reading"]
+    surface = _bootAirflow(name)
+    slot = _fuelPaths(surface, "fuel-airflow")
+    assert len(slot) == 1
+    attrs = slot[0][-1]["attrs"]
+    assert attrs.get("data-stale") == ("true" if r["stale"] else "false"), name
+    assert attrs.get("data-note") == (r["noteKind"] or "none"), name
+    assert _fuelText(surface, "fuel-value")[0] == r["text"], name
+    assert [_textOf(p[-1]) for p in _airflowPaths(surface, "fuel-unit")] == [r["unit"]], name
+    note = _airflowPaths(surface, "fuel-note")
+    assert len(note) == 1
+    assert _textOf(note[0][-1]) == r["note"], name
+    assert surface.rendered(note[0]) == bool(r["note"]), name
+    fill = _airflowPaths(surface, "fuel-bar-fill")
+    assert len(fill) == 1
+    width = ((fill[0][-1].get("style") or {}).get("width") or "").strip()
+    expected = view["bar"]["fill"]
+    assert width == f"{expected if expected is not None else 0}%", (name, width)
+    bar = _airflowPaths(surface, "fuel-bar")
+    assert bar[0][-1]["attrs"].get("data-stale") == ("true" if view["bar"]["stale"] else "false")
+
+
+@_NODE_ONLY
+def test_dom_aboveTheMax_noSensorLimitText_andTheBarIsFull():
+    surface = _bootAirflow("synthetic-scale-150")
+    text = _textOf(_fuelPaths(surface, "fuel-airflow")[0][-1]).lower()
+    assert "sensor limit" not in text
+    assert "limit" not in text
+    fill = _airflowPaths(surface, "fuel-bar-fill")[0][-1]
+    assert (fill.get("style") or {}).get("width") == "100%"
+    assert _fuelText(surface, "fuel-value")[0] == "158.7"
+
+
+_WARN_TOKENS = ("--amber-warn", "--red", "--red-light", "--red-dark", "--alarm")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("name", ["synthetic-scale-150", "wot-near-max", "stale"])
+def test_dom_nothingOnTheAirflowElementIsAmberOrRed(name: str):
+    surface = _bootAirflow(name)
+    for cls in ("fuel-airflow", "fuel-label", "fuel-value", "fuel-unit", "fuel-note",
+                "fuel-bar", "fuel-bar-fill"):
+        paths = _airflowPaths(surface, cls) if cls != "fuel-airflow" else _fuelPaths(surface, cls)
+        assert paths, cls
+        for path in paths:
+            for prop in ("color", "background-color", "border-color"):
+                won = surface.winningDeclaration(path, prop)
+                if won is not None:
+                    assert not any(tok in won[0] for tok in _WARN_TOKENS), (name, cls, prop, won)
+
+
+def test_css_noAirflowRuleNamesAWarnColour():
+    for selector, body in _fuelRules():
+        if any(k in selector for k in ("fuel-airflow", "fuel-bar", "fuel-unit", "fuel-line")):
+            assert not any(tok in body for tok in _WARN_TOKENS), (selector, body)
+
+
+def test_css_airflowValueIsFsHero_andTheBarHasNoTransition():
+    assert "var(--fs-hero)" in _rule("#fuel-card .fuel-airflow .fuel-value")
+    for selector, body in _fuelRules():
+        if "fuel-bar" in selector:
+            assert "transition" not in body and "animation" not in body, selector
+
+
+def test_css_staleAirflow_isDimmed():
+    assert "opacity" in _rule('#fuel-card .fuel-airflow[data-stale="true"] .fuel-line')
+    assert "opacity" in _rule('#fuel-card .fuel-bar[data-stale="true"]')
+
+
+@_NODE_ONLY
+def test_dom_staleAirflow_isDimmed_freshIsNot():
+    stale = _bootAirflow("stale")
+    line = _airflowPaths(stale, "fuel-line")
+    assert stale.winningDeclaration(line[0], "opacity") is not None
+    fresh = _bootAirflow("cruise-closed")
+    assert fresh.winningDeclaration(_airflowPaths(fresh, "fuel-line")[0], "opacity") is None
+
+
+def test_theFuelAirflowRenderReadsTheTicksObdLive():
+    js = _read(_JS)
+    assert re.search(r"renderFuelAirflow\(\s*fuelCard,\s*fuelAirflowView\(\s*await stateOnce\(\"obd-live\"\)", js)
+    assert 'document.getElementById("fuel-card")' in js
+
+
+# The grep gate: no MAF max literal in carousel.js (the scale is the provider's).
+_MAF_MAX_LITERAL = re.compile(r"(?<![\w.])(?:160|150|158\.69)(?:\.0+)?(?![\w.])")
+
+
+def _mafMaxHits(source: str) -> list[str]:
+    return _MAF_MAX_LITERAL.findall(_stripJsComments(source))
+
+
+def test_carouselJs_holdsNoMafMaxLiteral():
+    assert _mafMaxHits(_read(_JS)) == []
+
+
+@pytest.mark.parametrize("planted", ["var MAF_MAX = 160;", "fill = v / 160.0 * 100;"])
+def test_mafMaxGate_catchesAPlantedLiteral(planted: str):
+    assert _mafMaxHits(_read(_JS) + "\n" + planted + "\n") != []
+
+
+def test_architectureMd_recordsParamsMafScale():
+    arch = _read(_ARCH)
+    heading = "#### V0.30 Fuel card AIRFLOW against params.MAF.scale (US-890-b"
+    assert heading in arch
+    section = arch[arch.index(heading):][:3000]
+    assert "pi.display.scale.mafMaxGs" in section
+    assert "synthetic-scale-150" in section
+    # The obd-live contract names the field too.
+    assert "**`params.MAF.scale`** (US-890-b" in arch

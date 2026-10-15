@@ -1,0 +1,25 @@
+{
+  "description": "ECU silent: MAF stale for 12 s (last 16.24 g/s). Airflow shows last.value '16.2' dimmed with its age '12 s', never '--'; the bar holds the last reading, dimmed; the age stays neutral (nothing on the airflow element is amber).",
+  "now": "2026-10-20T15:12:41Z",
+  "obd-live": {
+    "params": {
+      "MAF": {
+        "value": null,
+        "unit": "g/s",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 16.24,
+          "band": null
+        },
+        "scale": {
+          "max": 160.0
+        }
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:41Z"
+  }
+}

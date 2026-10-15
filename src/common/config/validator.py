@@ -150,6 +150,8 @@
 #                                outcome wait), finite > 0.
 # 2026-10-15    | Rex (US-889-a) | pi.display.engineHistory.{intervalSec 30,
 #                                maxPoints 240} (Atlas S104 ruling 1); finite, > 0.
+# 2026-10-15    | Rex (US-890-b) | pi.display.scale.mafMaxGs: 160 (Spool, params.MAF
+#                                .scale.max); finite, > 0.
 # ================================================================================
 ################################################################################
 
@@ -864,6 +866,12 @@ DEFAULTS: dict[str, Any] = {
     # (2 h) (Atlas S104 ruling 1, 2026-10-14).
     'pi.display.engineHistory.intervalSec': 30,
     'pi.display.engineHistory.maxPoints': 240,
+    # US-890-b (F-127): states/obd-live publishes params.MAF.scale = {max: this}
+    # and the Fuel card's airflow bar runs 0..max (Atlas S104 ruling 2). Spool
+    # 2026-10-14 (pm/inbox/2026-10-14-from-spool-S104-Fuel-page-MAF-scale-0-160-
+    # gs-NO-bands-...md s1): the smallest round number above the corpus max
+    # 158.69 g/s. A display scale, not the sensor's clip -- nothing bands on it.
+    'pi.display.scale.mafMaxGs': 160,
     # US-875 (F-159): the band producer (src/pi/obdii/band_producer.py) that
     # colours states/obd-live. Pages hold no number; these are the only copies.
     # Coolant (degrees C): threshold + dwell + clear hysteresis. Source for all
@@ -1036,6 +1044,7 @@ class ConfigValidator:
         self._validateImuStateBridge(config)
         self._validateGradeHistory(config)
         self._validateEngineHistory(config)
+        self._validateMafScale(config)
         self._validateTripGap(config)
         self._validateStaleImu(config)
         self._validateFuel(config)
@@ -1845,6 +1854,34 @@ class ConfigValidator:
                     f"{key} must be a finite number > 0 (got {val!r})",
                     missingFields=[key],
                 )
+
+    def _validateMafScale(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.scale.mafMaxGs (US-890-b): a finite number > 0.
+
+        A zero or negative max would make the airflow bar's 0..max range empty.
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the key is non-numeric, non-finite or
+                non-positive.
+        """
+        key = 'pi.display.scale.mafMaxGs'
+        val = self._getNestedValue(config, key)
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or val <= 0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number > 0 (got {val!r})",
+                missingFields=[key],
+            )
 
     def _validateTripGap(self, config: dict[str, Any]) -> None:
         """Validate pi.trip.gapSec (US-880-a): a finite number > 0.

@@ -1930,6 +1930,10 @@ html, body {
   --fuel-stroke: 2px;         /* median + baseline lines */
   --fuel-dash: 4px;           /* baseline dash and gap */
   --fuel-dot: 8px;            /* one drive's dot (a round-capped stroke) */
+  /* US-890-b, the airflow row (spec s3). */
+  --fuel-bar-h: 10px;         /* the airflow bar, 0..params.MAF.scale.max */
+  --fuel-unit-gap: 4px;       /* number -> unit */
+  --fuel-stale-opacity: 0.4;  /* stale = dimmed (shared rule) */
 }
 #fuel-card .card-body {
   display: flex; flex-direction: column; gap: var(--fuel-gap);
@@ -1968,6 +1972,38 @@ html, body {
 }
 #fuel-card .fuel-reading[data-note="unpublished"] .fuel-value {
   color: var(--text-tertiary);
+}
+/* US-890-b AIRFLOW (spec s4.1): value + unit on one baseline, the note (reason
+   or age, never dimmed), then the bar. Unbanded: the fill is --accent (the unbanded rule, as the Engine bars),
+   and nothing here is ever --amber-warn or a red -- not even a stale age,
+   because above the scale max is a reading, not a warning. The width is set
+   per reading by carousel.js with no transition: the bar steps, never sweeps. */
+#fuel-card .fuel-airflow {
+  flex: 1;
+}
+#fuel-card .fuel-line {
+  display: flex; align-items: baseline; gap: var(--fuel-unit-gap);
+  line-height: var(--fuel-line);
+}
+#fuel-card .fuel-unit {
+  font-family: var(--font-mono); font-size: var(--fs-label);
+  color: var(--text-secondary);
+}
+#fuel-card .fuel-airflow[data-stale="true"] .fuel-line {
+  opacity: var(--fuel-stale-opacity);
+}
+#fuel-card .fuel-bar {
+  display: block; position: relative;
+  height: var(--fuel-bar-h);
+  background-color: var(--line); border-radius: var(--radius);
+  overflow: hidden;
+}
+#fuel-card .fuel-bar[data-stale="true"] {
+  opacity: var(--fuel-stale-opacity);
+}
+#fuel-card .fuel-bar-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background-color: var(--accent);
 }
 /* The trend row. The source card paints this slot only (gate, loading and
    no-data tiles included), so the rows above never wait on it. */

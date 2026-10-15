@@ -24,6 +24,8 @@
 # 2026-10-15    | Rex (US-889-a) | The tracker owns the EngineHistory: each fresh
 #                                reading feeds it with the band at that reading;
 #                                resetEngineHistory / engineHistoryIfChanged.
+# 2026-10-15    | Rex (US-890-b) | params.MAF.scale {max} from
+#                                pi.display.scale.mafMaxGs (Atlas S104 ruling 2).
 # ================================================================================
 ################################################################################
 
@@ -91,6 +93,29 @@ DEFAULT_OBD_LIVE_STALE_S = 5.0
 # Matches the other card emitters' `ts` format (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
+# US-890-b: the PID whose airflow bar runs 0..pi.display.scale.mafMaxGs.
+PID_MAF = "MAF"
+_MAF_MAX_KEY = "pi.display.scale.mafMaxGs"
+
+
+def _mafScale(config: dict[str, Any]) -> dict[str, float]:
+    """``{max}`` for params.MAF.scale, from config or the validator default.
+
+    Args:
+        config: Configuration mapping (validated or raw).
+
+    Returns:
+        ``{"max": pi.display.scale.mafMaxGs}`` as a float.
+    """
+    from common.config.validator import DEFAULTS
+
+    node: Any = config
+    for part in _MAF_MAX_KEY.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return {"max": float(DEFAULTS[_MAF_MAX_KEY])}
+        node = node[part]
+    return {"max": float(DEFAULTS[_MAF_MAX_KEY] if node is None else node)}
+
 
 @dataclass(frozen=True)
 class ObdLiveObservation:
@@ -103,7 +128,8 @@ class ObdLiveObservation:
         ts: Canonical UTC event time of the reading.
         band: ``{band, since, reason}`` at this reading, or None.
         noBandReason: The band producer's code when ``band`` is None.
-        scale: ``{amberFrom, redFrom}`` for RPM's bar zones, else None.
+        scale: ``{amberFrom, redFrom}`` for RPM's bar zones, ``{max}`` for
+            MAF's airflow bar (US-890-b), else None.
     """
 
     value: Any
@@ -125,13 +151,14 @@ class ObdLiveTracker:
         """
         Args:
             config: Validated config; supplies ``pi.time.localZone`` for the
-                naive-local -> canonical-UTC conversion and the ``pi.bands.*``
-                numbers for the band producer.
+                naive-local -> canonical-UTC conversion, the ``pi.bands.*``
+                numbers for the band producer and ``pi.display.scale.mafMaxGs``.
         """
         self._config = config
         self._latest: dict[str, ObdLiveObservation] = {}
         self._bands = BandProducer(BandSettings.fromConfig(config))
         self._engineHistory = EngineHistory(EngineHistorySettings.fromConfig(config))
+        self._mafScale = _mafScale(config)
         self._lock = threading.Lock()
 
     def observeReading(self, reading: Any) -> None:
@@ -237,9 +264,17 @@ class ObdLiveTracker:
                     obs,
                     band=None if result.band is None else dict(result.band),
                     noBandReason=result.noBandReason,
-                    scale=self._bands.rpmScale if name == PID_RPM else None,
+                    scale=self._scaleFor(name),
                 )
             return snap
+
+    def _scaleFor(self, name: str) -> dict[str, float] | None:
+        """RPM's bar zones, MAF's bar max (US-890-b), else None."""
+        if name == PID_RPM:
+            return self._bands.rpmScale
+        if name == PID_MAF:
+            return dict(self._mafScale)
+        return None
 
 
 def _isStale(ts: str, nowUtc: datetime, staleSec: float) -> bool:
@@ -266,7 +301,7 @@ def buildObdLiveState(
 
     Returns:
         ``{params: {<PID>: {value, unit, ts, stale, band, last}}, dataSource, ts}``.
-        A null band adds ``noBandReason``; RPM adds ``scale``. While stale no
+        A null band adds ``noBandReason``; RPM and MAF add ``scale``. While stale no
         band is evaluated: ``last.band`` is the band frozen at the last reading.
     """
     params: dict[str, Any] = {}

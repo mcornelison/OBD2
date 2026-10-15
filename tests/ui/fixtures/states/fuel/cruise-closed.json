@@ -1,0 +1,22 @@
+{
+  "description": "Steady cruise: MAF 16.24 g/s (the US-890-b story example) against params.MAF.scale.max 160. Airflow reads '16.2' g/s; the bar is ~10 % full, neutral.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "MAF": {
+        "value": 16.24,
+        "unit": "g/s",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined",
+        "scale": {
+          "max": 160.0
+        }
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

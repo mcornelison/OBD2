@@ -1,0 +1,19 @@
+{
+  "description": "MAF never read this process: obd-live is publishing (SPEED 0 km/h) but params has no MAF -- absent, not 0. Airflow reads '--' + 'not read'; the bar is empty.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "SPEED": {
+        "value": 0.0,
+        "unit": "km/h",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}
