@@ -4967,6 +4967,8 @@
 
       var track = document.getElementById("track");
       var dotsNav = document.getElementById("dots");
+      // US-887-c: the top bar names the current page (frame spec s3.2).
+      var pageNameEl = document.getElementById("page-name");
       var cards = Array.prototype.slice.call(document.querySelectorAll(".card"));
       var count = cards.length;
       var current = 0;
@@ -5016,6 +5018,13 @@
           // dead affordance as the card behind it.
           dots[d].hidden = flags[d];
           dots[d].classList.toggle("active", d === current);
+        }
+        // US-887-c: the bar's page name follows the SAME `current` the track
+        // and the active dot read, so the three can never name different
+        // pages. Read off the card's own `data-page-name` -- one registry, the
+        // `.card` query, exactly as the dots are built from it.
+        if (pageNameEl && cards[current]) {
+          pageNameEl.textContent = cards[current].getAttribute("data-page-name") || "";
         }
       }
 
@@ -6245,14 +6254,12 @@
             var nd = noDataView(name);
             if (body && cardLoading) {
               // The instrument's own name where one exists, else the card's
-              // painted title -- read off the DOM rather than a second table,
-              // so the label on the tile cannot disagree with the heading
-              // above it.
-              var titleEl = card.querySelector(".card-title");
+              // page name -- read off the DOM rather than a second table, so
+              // the label on the tile cannot disagree with the name in the bar
+              // (US-887-c: the card title row it used to read is retired).
               renderLoadingBody(
                 body,
-                nd ? nd.label
-                   : (titleEl ? String(titleEl.textContent).toUpperCase() : "")
+                nd ? nd.label : (card.getAttribute("data-page-name") || "")
               );
             } else if (body && nd) renderNaBody(body, nd.label, nd.reason);
             else if (body) body.textContent = "unavailable";

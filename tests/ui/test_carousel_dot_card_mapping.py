@@ -443,7 +443,9 @@ class TestOneCardRegistry:
         count, or a second list of cards kept alongside the query, breaks one
         half or the other here while leaving both halves' own tests green.
         """
-        original = '<section class="card" data-state="battery-health" aria-label="Battery">'
+        # US-887-c: no closing `>` -- the shipped tag goes on to carry its
+        # `data-page-name`, which the replacement leaves in place on Battery.
+        original = '<section class="card" data-state="battery-health" aria-label="Battery"'
         html = _shippedMarkup()
         assert original in html, "the Battery card markup moved"
         html = html.replace(
@@ -455,7 +457,7 @@ class TestOneCardRegistry:
             '<h2 class="card-title">Spare</h2>'
             '<div class="card-body">unavailable</div></section>'
             '<section class="card" data-vehicle-gated data-state="battery-health"'
-            ' aria-label="Battery">',
+            ' aria-label="Battery"',
             1,
         )
         markup = _writeMarkup(html)

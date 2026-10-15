@@ -146,13 +146,16 @@ def _tokenValue(css: str, name: str) -> str:
 def _brandStrings() -> list:
     """Every string the brand face actually renders, AS RENDERED.
 
-    Card titles are `text-transform: uppercase`, so the glyphs REQUESTED are the
-    uppercase ones -- which is the whole reason an uppercase-only subset is a
-    legitimate cut here. Compare what the panel asks for, not what the DOM holds.
+    Brand strings are uppercase, so the glyphs REQUESTED are the uppercase ones
+    -- which is the whole reason an uppercase-only subset is a legitimate cut
+    here. Compare what the panel asks for, not what the DOM holds.
+
+    MOVED PIN (US-887-c): the card titles are gone; the brand face now paints
+    the top-bar PAGE NAMES, which each card carries as `data-page-name`.
     """
-    titles = re.findall(r'class="card-title"[^>]*>([^<]+)', _read(_HTML))
+    titles = re.findall(r'data-page-name="([^"]+)"', _read(_HTML))
     wordmark = re.findall(r'wordmark:\s*"([^"]+)"', _read(_JS))
-    assert titles, "no card titles found -- the selector moved"
+    assert titles, "no page names found -- the attribute moved"
     assert wordmark, "the wordmark literal moved out of carousel.js"
     return [text.strip().upper() for text in titles + wordmark]
 

@@ -462,13 +462,16 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
 
     The not-live marker is the third brand moment (Iris
     specs/v030-frame-and-style-design.md s3.1, US-901-b): a mode label, not a
-    data readout."""
+    data readout.
+
+    MOVED PIN (US-887-c): `.card-title` retired with the title rows; the
+    top-bar page name `#page-name` (frame spec s3.2) is its successor."""
     bound = {
         selector
         for selector, body in _surfaceRules()
         if "var(--font-display)" in body
     }
-    assert bound == {".idle-wordmark", ".card-title", "#not-live-marker"}, bound
+    assert bound == {".idle-wordmark", "#page-name", "#not-live-marker"}, bound
 
 
 def test_dataAndValueSurfacesStayMonospace():

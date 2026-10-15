@@ -35,6 +35,8 @@
 # 2026-08-21    | Ralph (Rex)  | Initial -- US-555 top-bar three-column grid.
 # 2026-09-10    | Ralph (Rex)  | US-720 -- measured-advance width model; left
 #               |              | guard restored; planted-glyph subject controls.
+# 2026-10-15    | Ralph (Rex)  | US-887-c -- right cluster models the Michroma
+#               |              | page name (chip moved to #sys-detail).
 # ================================================================================
 ################################################################################
 
@@ -42,6 +44,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -92,9 +95,58 @@ _MEASURED_IN_FACE = frozenset(map(chr, range(0x20, 0x7F))) | frozenset("⇅•")
 # meridiem, so "12:45 PM" (8 chars) is the maximum, never "9:05 AM".
 LONGEST_CLOCK_TEXT = "12:45 PM"
 
-# The version chip as it reads on a real deploy. "V?.?.?" (the honest unreadable
-# sentinel) is SHORTER, so the deployed string is the binding case.
-LONGEST_VERSION_TEXT = "V0.29.29"
+# US-887-c (F-127): the version chip LEFT the bar for #sys-detail (frame spec
+# s3), and the right cluster now carries the PAGE NAME beside the kebab. The name
+# is set in Michroma, not the mono face, so it is charged Iris's per-glyph
+# Michroma advances (hmtx / unitsPerEm, specs/assets/fonts/michroma/) -- the same
+# measured-not-guessed rule US-720 applied to the mono glyphs.
+_MICHROMA_ADVANCES = os.path.join(
+    os.path.dirname(__file__), "..", "..", "specs", "assets", "fonts", "michroma",
+    "michroma-advances.json",
+)
+
+# Iris's rule (frame spec s3.2): 168.6 px side track - 8 px gap - 34 px kebab -
+# 4 px margin. Every bar name in use must fit it.
+PAGE_NAME_MAX_PX = 122
+
+
+def michromaWidthPx(text: str, fontSizePx: float, letterSpacingEm: float = 0.0) -> float:
+    """Rendered width of a run in Michroma 400, from Iris's advance table.
+
+    `width_px = sum(advanceEm) x size + letter_spacing x size x (len - 1)`, the
+    formula the table itself records. No kerning: the subset strips layout
+    features, so there is none to apply.
+
+    Args:
+        text: the run as the bar paints it.
+        fontSizePx: the run's font size.
+        letterSpacingEm: the run's letter-spacing, em.
+
+    Returns:
+        The width in CSS px.
+
+    Raises:
+        AssertionError: a character has no measured advance (the subset is
+            uppercase-only, so a lowercase name would paint in a FALLBACK face).
+    """
+    with open(_MICHROMA_ADVANCES, encoding="utf-8") as fh:
+        advances = json.load(fh)["advanceEm"]
+    missing = sorted({char for char in text if char not in advances})
+    assert not missing, f"{text!r} carries {missing} with no Michroma advance"
+    spacing = letterSpacingEm * fontSizePx * max(0, len(text) - 1)
+    return sum(advances[char] for char in text) * fontSizePx + spacing
+
+
+def shippedPageNames(html: str | None = None) -> list[str]:
+    """Every bar name the shipped cards carry (`data-page-name`), comments out."""
+    markup = _stripComments(_readHtml() if html is None else html)
+    names = re.findall(r'<section class="card"[^>]*?data-page-name="([^"]*)"', markup, re.DOTALL)
+    assert names, "no data-page-name read from the cards -- markup or regex moved"
+    return names
+
+
+def _longestPageName() -> str:
+    return max(shippedPageNames(), key=lambda name: michromaWidthPx(name, 1.0))
 
 
 def _readHtml() -> str:
@@ -223,7 +275,9 @@ class _BarModel:
         self.gap = _shorthandPx(bar, "gap", 0)
         self.glyphSize = _cssVarPx(css, "--fs-secondary")
         self.clockSize = _cssVarPx(css, "--fs-label")
-        self.chipSize = _cssVarPx(css, "--fs-meta")
+        # US-887-c: the page name's size is read through its own declaration,
+        # so a tier change on #page-name moves the model.
+        self.nameSize = _cssVarPx(css, "--" + _declaredVarName(css, "#page-name", "font-size"))
         # MOVED PIN (US-556). This read `--tap-min`, because the kebab's PAINTED
         # box was `min-height/min-width: var(--tap-min)`. US-556 split the visual
         # box from the hit box: the button now paints at `--bar-h` and reaches
@@ -238,7 +292,7 @@ class _BarModel:
         leftCluster = ruleBlock(css, "#topbar .topbar-left")
         self.leftGap = _shorthandPx(leftCluster, "gap", 0)
         self.glyphSpacing = 0.04  # #topbar .glyph letter-spacing, em
-        self.chipSpacing = 0.06  # #version-chip letter-spacing, em
+        self.nameSpacing = 0.0  # #page-name letter-spacing (Iris rule: 0)
         self.clockSpacing = 0.04  # #topbar-clock letter-spacing, em
 
     @property
@@ -255,9 +309,13 @@ class _BarModel:
     def centreWidth(self, text: str = LONGEST_CLOCK_TEXT) -> float:
         return _textWidthPx(text, self.clockSize, self.clockSpacing)
 
-    def rightClusterWidth(self, version: str = LONGEST_VERSION_TEXT) -> float:
-        chip = _textWidthPx(version, self.chipSize, self.chipSpacing)
-        return chip + self.clusterGap + self.kebabWidth
+    def rightClusterWidth(self, pageName: str | None = None) -> float:
+        """MOVED PIN (US-887-c): page name + gap + kebab. This modelled the
+        version chip + kebab, and would have stayed green while a real bar
+        carrying a page name beside the chip overflowed."""
+        name = _longestPageName() if pageName is None else pageName
+        width = michromaWidthPx(name, self.nameSize, self.nameSpacing)
+        return width + self.clusterGap + self.kebabWidth
 
     def sideTrackShare(self, text: str = LONGEST_CLOCK_TEXT) -> float:
         """Free space each `1fr` side track is guaranteed.
@@ -349,9 +407,12 @@ def test_topbar_hasExactlyThreeGridChildren_clockInTheMiddle():
     assert 'class="topbar-right"' in children[2]
 
 
-def test_glyphsSitLeft_versionAndKebabSitRight():
+def test_glyphsSitLeft_pageNameAndKebabSitRight():
     """The clusters hold what the design says they hold. Reads the markup, so a
-    glyph left behind as a bare grid child fails here as well as above."""
+    glyph left behind as a bare grid child fails here as well as above.
+
+    MOVED PIN (US-887-c): the right cluster held the version chip; it now holds
+    the page name, and the chip is in #sys-detail (frame spec s3)."""
     inner = _topbarMarkup(_readHtml())
     left = re.search(r'<div class="topbar-left">(.*?)</div>', inner, re.DOTALL)
     right = re.search(r'<div class="topbar-right">(.*?)</div>', inner, re.DOTALL)
@@ -361,7 +422,8 @@ def test_glyphsSitLeft_versionAndKebabSitRight():
     for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi"):
         assert f'id="{glyph}"' in left.group(1), f"{glyph} is not in the left cluster"
         assert f'id="{glyph}"' not in right.group(1)
-    assert 'id="version-chip"' in right.group(1)
+    assert 'id="page-name"' in right.group(1)
+    assert 'id="version-chip"' not in inner, "the version chip is back in the bar"
     assert 'id="menu-btn"' in right.group(1)
 
 
@@ -474,6 +536,9 @@ def test_rightClusterFitsItsGuaranteedTrackShare():
     US-696 split this from the left cluster when the left side appeared not to
     fit. US-720 measured that it does, and restored the left guard beside this
     one. A real render put the right cluster at 121.45px, equal to this model.
+
+    US-887-c: the cluster is now the LONGEST shipped page name + gap + kebab,
+    so this is the "fits; clock stays centred" half of the story's bar check.
     """
     model = _BarModel(readCss(_CSS_PATH))
     share = model.sideTrackShare()
@@ -578,16 +643,21 @@ def test_noFourthGlyphOfAnyWidthDropsIn_theHeadroomIsNarrowerThanOneCharacter():
 
 
 @pytest.mark.parametrize(
-    "version",
-    ["V0.29.29.29.29.29", "V0.29.29-rc.1+build.20260821"],
+    "pageName",
+    ["NAVIGATION", "SYSTEM STATUS"],
 )
-def test_theWidthModelCanFail_negativeControl(version: str):
+def test_theWidthModelCanFail_negativeControl(pageName: str):
     """A budget check that has never been seen to go red is not known to be a
-    budget check. An absurdly long version string MUST break the bound -- which
-    also states the real limit of AC-2: the clock is centred up to a version
-    length, not unconditionally."""
+    budget check. A too-long page name MUST break the bound -- which also states
+    the real limit of AC-2: the clock is centred up to a name length, not
+    unconditionally.
+
+    MOVED PIN (US-887-c): the subjects were over-long VERSION strings; the chip
+    left the bar, so the subjects are the two names Iris measured over budget --
+    NAVIGATION (135 px, the planted-135 control) and today's card label SYSTEM
+    STATUS (190 px)."""
     model = _BarModel(readCss(_CSS_PATH))
-    assert model.rightClusterWidth(version) > model.sideTrackShare()
+    assert model.rightClusterWidth(pageName) > model.sideTrackShare()
 
 
 # ---------------------------------------------------------------------------

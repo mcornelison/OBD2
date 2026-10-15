@@ -7597,6 +7597,38 @@ The OEM style's brand/label face is **Michroma** (OFL 1.1, spec §4.3). It
   and `src/pi/ui/assets/fonts/OFL.txt` (source of record) are both Michroma's
   `OFL-michroma.txt`; Oswald's licence left with Oswald.
 
+#### V0.30 top bar names the page; cards lose their title rows (US-887-c, Sprint 103 / V0.30.1)
+
+Frame spec §3 / §3.2 (`specs/v030-frame-and-style-design.md`):
+
+- **The bar's right slot is the page name.** `#page-name` sits INSIDE
+  `.topbar-right`, before the kebab, so the US-555 grid still has exactly three
+  children. Michroma 400 at `--fs-meta`, letter-spacing 0, `font-synthesis:
+  none`. It ships empty; `carousel.js render()` writes the current card's name
+  from the same `current` index the track and the active dot read.
+- **The name lives on the card.** Each `.card` carries `data-page-name` — the
+  one registry is still the `.card` query. Bar names (Iris, measured): Home/IMU
+  `MOTION`, Alerts `ALERTS`, System Status `SYSTEM`, Battery `BATTERY`, Fuel
+  Trim `FUEL TRIM`, Light `LIGHT` (Driving `DRIVING` lands with US-888-a). The
+  `aria-label` kit labels are a separate string and keep their values.
+- **Fit rule: every bar name ≤ 122 px**, computed from
+  `specs/assets/fonts/michroma/michroma-advances.json` at `--fs-meta` (168.6 px
+  side track − 8 gap − 34 kebab − 4 margin). `_BarModel.rightClusterWidth` in
+  `tests/ui/test_topbar_three_column_grid.py` models page name + gap + kebab;
+  `NAVIGATION` (135 px) is the negative control. A name that does not fit gets a
+  short form, never a smaller size.
+- **No title rows.** Every `<h2 class="card-title">` and the `.card-title` rule
+  are gone; the card body grows by the title band (224 → 254 px,
+  `test_card_band_budget.py`). The loading tile's fallback label reads
+  `data-page-name`. `--font-display` now binds `.idle-wordmark`, `#page-name`
+  and `#not-live-marker`.
+- **The version chip moved** from the bar into `#sys-detail` (under the issue
+  rows), markup unchanged (`<span id="version-chip">__DEPLOY_VERSION__</span>`),
+  so the serve-time substitution and its tests are untouched.
+- **The active page dot is `--accent`** (frame §4.4 rule 3) — the first selector
+  to bind it. No timer changes the page: `pi.display.carousel.autoRotateS`
+  stays 0.
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

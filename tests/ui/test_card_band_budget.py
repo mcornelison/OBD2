@@ -31,6 +31,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-21    | Ralph (Rex)  | Initial -- US-557 band budget + tokenization.
+# 2026-10-15    | Ralph (Rex)  | US-887-c -- card title row retired; body 254px.
 # ================================================================================
 ################################################################################
 
@@ -238,24 +239,17 @@ class _BandBudget:
         self.dotsH = _tokenPx(css, "dots-h")
         self.cardPadY = _tokenPx(css, "card-pad-y")
         scale = scaleValues(css)
-        self.titleSize = scale[_declaredVar(css, ".card-title", "font-size")]
-        self.titleMargin = self._titleMarginBottom()
+        # MOVED PIN (US-887-c): the card TITLE row is gone (frame spec s3 -- the
+        # page name lives in the top bar), so it no longer spends stage height.
+        # Kept as an attribute, zero on the shipped sheet, so the pre-US-557
+        # comparison below can still charge the title band that existed then.
+        self.titleBand = 0.0
         self.tilePadY = self._tilePaddingY()
         self.tileBorder = self._tileBorderPx()
         self.labelSize = scale[_declaredVar(css, ".tile-label", "font-size")]
         self.valueSize = scale[_declaredVar(css, ".tile-value", "font-size")]
         self.detailSize = scale[_declaredVar(css, ".tile-detail", "font-size")]
         self.footerSize = scale["fs-meta"]
-
-    def _titleMarginBottom(self) -> float:
-        block = ruleBlock(self.css, ".card-title")
-        match = re.search(r"(?<![-\w])margin:\s*([^;]+)", block)
-        assert match is not None, ".card-title declares no margin"
-        parts = re.findall(r"([0-9.]+)px|(\b0\b)", match.group(1))
-        # `margin: 0 0 6px 0` -- the bottom component is index 2.
-        values = [float(px) if px else 0.0 for px, _ in parts]
-        assert len(values) >= 3, ".card-title margin is not a 3+ value shorthand"
-        return values[2]
 
     def _tilePaddingY(self) -> float:
         block = ruleBlock(self.css, ".tile")
@@ -279,8 +273,7 @@ class _BandBudget:
             self.barH
             + self.dotsH
             + 2 * self.cardPadY
-            + self._line(self.titleSize)
-            + self.titleMargin
+            + self.titleBand
         )
 
     @property
@@ -328,9 +321,11 @@ def test_chromeReclaim_landsTheBodyAtTheBudgetedHeight():
     body is exactly the failure F-127's budget already had."""
     model = _BandBudget(readCss(DASHBOARD_CSS))
     assert model.stage == STAGE_HEIGHT_FALLBACK
-    assert model.body == pytest.approx(224.0, abs=0.5), (
-        f"chrome={model.chrome} body={model.body} -- P-3 budgets 224px of card "
-        f"body (bar 34 + dots 16 + card pad 16 + title 30 = 96 of 320)"
+    # MOVED PIN (US-887-c): 224 -> 254. The body grows by exactly the US-557
+    # title band (--fs-label 20 x 1.2 + 6px margin = 30px) the title row spent.
+    assert model.body == pytest.approx(254.0, abs=0.5), (
+        f"chrome={model.chrome} body={model.body} -- the frame budgets 254px of "
+        f"card body (bar 34 + dots 16 + card pad 16 = 66 of 320; no title row)"
     )
 
 
@@ -342,9 +337,11 @@ def test_theBudgetImprovedRatherThanJustMoved():
     model = _BandBudget(css)
     before = _BandBudget(css)
     before.barH, before.dotsH, before.cardPadY = 28.0, 24.0, 14.0
-    before.titleSize, before.titleMargin = scaleValues(css)["fs-secondary"], 8.0
+    before.titleBand = scaleValues(css)["fs-secondary"] * LINE_HEIGHT_NORMAL + 8.0
     assert before.body == pytest.approx(201.0, abs=0.5), before.body
-    assert model.body - before.body == pytest.approx(23.0, abs=1.0)
+    # MOVED PIN (US-887-c): +23 (US-557 chrome reclaim) +30 (the title row
+    # retired) = +53.
+    assert model.body - before.body == pytest.approx(53.0, abs=1.0)
 
 
 @pytest.mark.parametrize("token,inflated", [("bar-h", 60), ("dots-h", 48), ("card-pad-y", 24)])
@@ -357,8 +354,9 @@ def test_theBudgetCheckGoesRedWhenABandIsWrong(token, inflated):
     broken = re.sub(rf"(--{token}:\s*)[0-9.]+px", rf"\g<1>{inflated}px", css)
     assert broken != css, f"the substitution did not fire for --{token}"
     model = _BandBudget(broken)
-    assert model.body < 224.0, (
-        f"--{token}: {inflated}px must NOT still leave a 224px body; if it does, "
+    # MOVED PIN (US-887-c): the shipped body is 254px now (title row retired).
+    assert model.body < 254.0, (
+        f"--{token}: {inflated}px must NOT still leave a 254px body; if it does, "
         f"the model is not reading this token"
     )
 
@@ -406,21 +404,33 @@ def test_theShippedThreeLineRow_doesNotFitThreeTimes_evenInTheNewBudget():
     )
 
 
-def test_theShippedThreeLineRow_overflowsAtAnyPlausibleLineHeight():
-    """The overflow above must not be an artefact of LINE_HEIGHT_NORMAL. A line
-    box can never be shorter than its font size, so re-running the model at
-    line-height 1.0 is the most generous case physically available -- and three
-    shipped rows still do not fit. The finding is therefore robust to the one
-    assumption in the model."""
-    model = _BandBudget(readCss(DASHBOARD_CSS), lineHeight=LINE_HEIGHT_FLOOR)
-    assert model.content(rows=3, withDetail=True, footer=False) > model.body
+def test_theShippedThreeLineRow_overflowNowDependsOnLineHeight():
+    """MOVED PIN (US-887-c). This was `..._overflowsAtAnyPlausibleLineHeight`:
+    at line-height 1.0 -- the most generous case physically available -- three
+    shipped rows still overflowed the 224px body, so the finding was robust to
+    the model's one assumption.
+
+    Retiring the title row returned 30px (body 254px), and that robustness is
+    GONE: at line-height 1.0 three three-line rows take 233px and FIT, while at
+    LINE_HEIGHT_NORMAL they still overflow (above). Stated as the new fact, not
+    deleted, because the three-tile verdict now turns on the real line box --
+    which only the on-glass render (validation, eclipse-capture-panel) can
+    settle."""
+    floor = _BandBudget(readCss(DASHBOARD_CSS), lineHeight=LINE_HEIGHT_FLOOR)
+    normal = _BandBudget(readCss(DASHBOARD_CSS))
+    assert floor.content(rows=3, withDetail=True, footer=False) <= floor.body
+    assert normal.content(rows=3, withDetail=True, footer=False) > normal.body
 
 
 def test_everyDriverReadTierSurvived():
     """AC-3. The reclaim is CHROME only. `.tile-value` is the driver-read
     number and must still bind --fs-primary; the five scale values must be
-    untouched. `.card-title` dropping to --fs-label is the one deliberate
-    demotion and is allowed precisely because a title is a LABEL, not a value."""
+    untouched. `.card-title` dropping to --fs-label was the one deliberate
+    demotion and was allowed precisely because a title is a LABEL, not a value.
+
+    MOVED PIN (US-887-c): `.card-title` is GONE (the page name moved to the
+    top bar), so the title's tier is no longer a fact to pin; its successor's
+    tier is pinned in tests/ui/test_topbar_page_name.py."""
     css = readCss(DASHBOARD_CSS)
     assert _declaredVar(css, ".tile-value", "font-size") == "fs-primary"
     assert scaleValues(css) == {
@@ -431,7 +441,6 @@ def test_everyDriverReadTierSurvived():
         "fs-label": 20,
         "fs-meta": 15,
     }
-    assert _declaredVar(css, ".card-title", "font-size") == "fs-label"
 
 
 # ---------------------------------------------------------------------------

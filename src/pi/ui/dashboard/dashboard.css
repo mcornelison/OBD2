@@ -314,10 +314,23 @@ html, body {
 /* NOT LIVE is two characters longer than REPLAY, so it drops to the meta tier
    to fit the same box. */
 #not-live-marker[data-tier="meta"] { font-size: var(--fs-meta); }
-/* US-555: `margin-left: auto` is GONE, not zeroed -- the right TRACK packs the
-   chip against the bar's edge now (`justify-content: flex-end` on the cluster),
-   and an auto margin here would be exactly the drift mechanism the note above
-   rejects. */
+/* US-887-c (F-127; specs/v030-frame-and-style-design.md s3.2): the current page
+   name, in the right cluster beside the kebab. It replaces every card's title
+   row. Michroma 400 at --fs-meta with letter-spacing 0 is Iris's measured rule:
+   at those values every bar name in use is <= 122 px, the right track's budget
+   (168.6 side track - 8 gap - 34 kebab - 4 margin); --fs-meta is the floor
+   tier, so a name that does not fit gets a short form, never a smaller size.
+   Single weight, so no synthesised bold (the Oswald 600-only lesson). Like the
+   chip before it, no auto margin: the right TRACK packs it against the edge. */
+#page-name {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0;
+  color: var(--text-secondary); white-space: nowrap;
+}
+/* US-887-c: the version chip LEFT the bar for #sys-detail (frame spec s3), so
+   the page name fits the right track. Its look is unchanged.
+   US-555: `margin-left: auto` is GONE, not zeroed -- an auto margin here would
+   be exactly the drift mechanism the note above rejects. */
 #version-chip {
   color: var(--text-tertiary);
   font-size: var(--fs-meta); letter-spacing: 0.06em;
@@ -454,22 +467,10 @@ html, body {
   box-sizing: border-box; padding: var(--card-pad-y) 16px;
   display: flex; flex-direction: column;
 }
-/* US-510 A-3: a card TITLE is a brand moment, so it takes --font-display. The
-   card BODY is untouched and stays mono -- the title labels the instrument, the
-   body IS the instrument, and only the label gets the brand face. */
-/* US-557 (F-132): the title drops --fs-secondary -> --fs-label and 8px -> 6px of
-   margin, +9px back to the card body. THIS IS NOT A VALUE SHRINKING and the
-   distinction is the whole of AC-3: a card title NAMES the instrument you
-   deliberately swiped to, so it is a LABEL. Every value under it keeps its
-   F-127 tier -- .tile-value is still --fs-primary, and Iris's floor rule
-   ("anything the driver must read to act is >= 34px; anything < 26px must be
-   non-critical") puts a title squarely in the non-critical half. If this ever
-   looks like it must take a VALUE down with it, cut a FACT instead. */
-.card-title {
-  margin: 0 0 6px 0; font-size: var(--fs-label); font-weight: 400;
-  color: var(--text-secondary); text-transform: uppercase;
-  letter-spacing: 0.08em; font-family: var(--font-display); font-synthesis: none;
-}
+/* US-887-c (F-127): the per-card TITLE row is retired. The page name lives in
+   the top bar (#page-name), so every card body gets the title band back (the
+   US-557 --fs-label line + 6px margin, ~30px). The card BODY is untouched and
+   stays mono. */
 /* --- US-557 NO-SILENT-CLIP GUARD (F-132) ------------------------------------
    The defect F-127's budget produced was not merely that cards overflowed -- it
    was that the overflow was INVISIBLE TO EVERYONE BUT THE CIO'S EYE. The card
@@ -856,7 +857,9 @@ html, body {
   content: ""; width: 8px; height: 8px; border-radius: 50%;
   background: var(--text-tertiary); transition: background 0.2s;
 }
-.dot.active::before { background: var(--text-primary); }
+/* US-887-c (frame spec s4.4 rule 3, Iris G-6): the active page dot is unbanded
+   chrome, so it takes --accent -- never a state colour. */
+.dot.active::before { background: var(--accent); }
 
 /* --- US-506 auto-rotate progress bar (F-124) --------------------------------- */
 /* The calm THIN time-to-next readout for the hands-off carousel. Deliberately
@@ -1401,6 +1404,8 @@ html, body {
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
 #sys-detail[hidden] { display: none; }
+/* US-887-c: the version chip's new home, under the issue rows. */
+#sys-detail #version-chip { padding-top: var(--detail-gap); }
 #sys-detail-back {
   min-width: var(--tap-min); min-height: var(--tap-min);
   padding: 0 12px; box-sizing: border-box;
