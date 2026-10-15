@@ -21,6 +21,9 @@
 #                                engine gate, under the lock, same time domain.
 # 2026-10-15    | Rex (US-888-b) | observeReading stores the canonical short unit
 #                                (pi.obdii.units); obd.db keeps the captured one.
+# 2026-10-15    | Rex (US-889-a) | The tracker owns the EngineHistory: each fresh
+#                                reading feeds it with the band at that reading;
+#                                resetEngineHistory / engineHistoryIfChanged.
 # ================================================================================
 ################################################################################
 
@@ -64,6 +67,7 @@ from pi.obdii.band_producer import (
     BandProducer,
     BandSettings,
 )
+from pi.obdii.engine_history import EngineHistory, EngineHistorySettings
 from pi.obdii.units import canonicalUnit
 
 __all__ = [
@@ -127,6 +131,7 @@ class ObdLiveTracker:
         self._config = config
         self._latest: dict[str, ObdLiveObservation] = {}
         self._bands = BandProducer(BandSettings.fromConfig(config))
+        self._engineHistory = EngineHistory(EngineHistorySettings.fromConfig(config))
         self._lock = threading.Lock()
 
     def observeReading(self, reading: Any) -> None:
@@ -156,11 +161,38 @@ class ObdLiveTracker:
             self._bands.observe(name, value, eventUtc)
             if value is None:
                 return
+            unit = canonicalUnit(getattr(reading, "unit", None))
+            # US-889-a (Atlas G2): the history copies the band AT this reading.
+            band = self._bands.resultFor(name).band
+            self._engineHistory.observe(
+                name, value, eventUtc, None if band is None else band["band"], unit
+            )
             self._latest[name] = ObdLiveObservation(
                 value=value,
-                unit=canonicalUnit(getattr(reading, "unit", None)),
+                unit=unit,
                 ts=toCanonicalIso(eventUtc),
             )
+
+    def resetEngineHistory(self, driveId: int | None, driveStart: Any) -> None:
+        """Open a new drive's engine-history window (US-889-a).
+
+        Args:
+            driveId: The new drive's id.
+            driveStart: The drive start's capture time (naive means the
+                declared zone, as for a reading); not a datetime -> unknown.
+
+        Raises:
+            ValueError: If no usable local zone is declared.
+        """
+        startUtc = self._eventUtc(driveStart) if isinstance(driveStart, datetime) else None
+        with self._lock:
+            self._engineHistory.reset(driveId, startUtc)
+
+    def engineHistoryIfChanged(self) -> dict[str, Any] | None:
+        """The engine-history snapshot when a bucket closed or it was reset."""
+        with self._lock:
+            history: dict[str, Any] | None = self._engineHistory.snapshotIfChanged()
+        return history
 
     def _eventUtc(self, timestamp: datetime) -> datetime:
         """A reading's capture time as aware UTC (naive means the declared zone)."""

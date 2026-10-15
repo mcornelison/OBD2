@@ -79,6 +79,9 @@
 #               |              | this drive's change since its watermark to the
 #               |              | Pi-local fuel_since_reset row (drive end + every
 #               |              | pi.fuel.persistSec) and publishes sinceReset.
+# 2026-10-15    | Rex (US-889-a)| states/engine-history: written at the obd-live
+#               |              | tick when a bucket closed; _resetEngineHistory
+#               |              | opens the window at drive start.
 # ================================================================================
 ################################################################################
 
@@ -290,6 +293,9 @@ class CardStateEmitterMixin:
     # Injectable aware-UTC wall clock: staleness compares against reading event
     # times, which are wall-clock instants, not monotonic ones.
     _obdLiveClock: Any = None
+    # US-889-a: the states/engine-history writer; the history itself lives in
+    # the obd-live tracker. CLASS default for the same reason as above.
+    _engineHistoryEmitter: Any = None
     # Injectable monotonic clock for the gear freshness/debounce windows. A
     # seam rather than an ambient time.monotonic() because those two windows are
     # the whole substance of the derivation, and a test that had to sleep 2 s to
@@ -670,6 +676,13 @@ class CardStateEmitterMixin:
             logger.warning("obd-live producer init skipped: %s", e)
             self._obdLiveTracker = None
             self._obdLiveEmitter = None
+        try:
+            from pi.obdii.engine_history import makeEngineHistoryEmitter
+
+            self._engineHistoryEmitter = makeEngineHistoryEmitter(statesDir)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("engine-history emitter init skipped: %s", e)
+            self._engineHistoryEmitter = None
 
     def observeObdLiveReading(self, reading: Any) -> None:
         """Record one realtime reading for states/obd-live (the reading seam)."""
@@ -708,12 +721,35 @@ class CardStateEmitterMixin:
         emitter = self._obdLiveEmitter
         if tracker is None or emitter is None or self._obdLiveStaleSec is None:
             return
+        nowUtc = self._obdLiveNowUtc()
         emitter(
             tracker.snapshot(),
-            nowUtc=self._obdLiveNowUtc(),
+            nowUtc=nowUtc,
             staleSec=self._obdLiveStaleSec,
             dataSource=self._gatherObdLiveDataSource(),
         )
+        # US-889-a: the history is fed at the reading seam, never from this
+        # snapshot; the tick only writes it when a bucket closed (or a reset).
+        historyEmitter = self._engineHistoryEmitter
+        if historyEmitter is None:
+            return
+        history = tracker.engineHistoryIfChanged()
+        if history is not None:
+            historyEmitter(history, nowUtc=nowUtc)
+
+    def _resetEngineHistory(self, driveStartTime: Any) -> None:
+        """Open this drive's engine-history window at drive start (US-889-a).
+
+        Args:
+            driveStartTime: The drive session's start time (its event ts).
+        """
+        tracker = self._obdLiveTracker
+        if tracker is None:
+            return
+        from pi.obdii.drive_id import getCurrentDriveId
+
+        # The detector has already published the new drive_id on the context.
+        tracker.resetEngineHistory(getCurrentDriveId(), driveStartTime)
 
     # -------------------------------------------------------- derived gear
     #

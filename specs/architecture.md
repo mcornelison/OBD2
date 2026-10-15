@@ -5949,6 +5949,60 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
   (the inverse of `CANONICAL_UNITS`), so the fixture is what the car's readings
   produce, not a copy of the target vocabulary (US-888-b).
 
+#### `states/engine-history` -- this drive's worst-band buckets (US-889-a)
+
+```json
+{"ts": "2026-10-20T15:12:30Z", "driveId": 118, "sinceTs": "2026-10-20T15:00:00Z",
+ "partial": false, "intervalSec": 30,
+ "series": {"COOLANT_TEMP": [{"ts": "2026-10-20T15:00:30Z", "value": 88.0, "band": "green"}],
+            "INTAKE_TEMP": [{"ts": "2026-10-20T15:00:30Z", "value": 31.0, "band": null}],
+            "BATTERY_V": []},
+ "unit": {"COOLANT_TEMP": "C", "INTAKE_TEMP": "C", "BATTERY_V": "V"}}
+```
+
+The history the Engine page draws (Atlas S104 ruling 1; G2, G3). `EngineHistory` in
+`src/pi/obdii/engine_history.py`. The obd-live tracker owns it, so it shares the band
+producer and lock.
+
+- **The reading seam.** `ObdLiveTracker.observeReading` feeds every fresh reading to
+  `EngineHistory.observe(pid, value, ts, band, unit)` right after `BandProducer.observe`.
+  `band` is `resultFor(pid).band` at that reading. The history copies it and never
+  re-judges it, so dwell stays the band producer's alone. The card snapshot never feeds
+  the history. A null or non-finite reading is not a fresh sample.
+- **Buckets** use the epoch grid `floor(ts / intervalSec)`, as `GradeHistory` does. A
+  point's `ts` is its bucket's END. A bucket closes on its PID's next fresh sample past
+  it, and only closed buckets are published.
+  - `value` is the bucket's LAST fresh sample. The page never averages or smooths it.
+  - `band` is the WORST band held in the bucket (red > amber > green > null), so
+    bucketing never hides a fired span.
+  - A bucket with no fresh sample is OMITTED. There is no null point.
+  - `INTAKE_TEMP` has no band rule, so its band is always null.
+- **`unit`** holds the canonical unit the tracker stored (`C`, `V`; US-888-b) for each
+  PID seen this process. It is never converted; the page converts by it.
+- **Window = this drive.** `event_router._handleDriveStart` calls `_resetEngineHistory`
+  beside `_resetFuelEconomy`. That clears every series and sets `driveId` (the new id on
+  the drive context), `sinceTs` (the drive start's event ts) and `partial: false`.
+- **`partial`** is true when the series does not cover the whole drive:
+  - An orchestrator restart mid-drive, where no drive start was seen. The history
+    starts empty with `driveId` null, and `sinceTs` is the first folded bucket's start.
+  - Buckets trimmed past `maxPoints`. Each series keeps the newest `maxPoints` buckets.
+    When one drops, `sinceTs` moves to the start of the oldest bucket kept.
+  - A clock step back: a sample before its PID's open bucket. Every series restarts
+    there with a WARN.
+- **Write.** The 2 s card tick (`_emitObdLiveState`) writes the file atomically only
+  when a bucket closed or the window reset. The first tick of a process always writes,
+  so it replaces a previous process's file with the empty, partial state. A kiosk restart
+  changes nothing, because the history lives in orchestrator memory and the state file.
+- **Config.** `pi.display.engineHistory.intervalSec` (30) and `.maxPoints` (240 = 2 h)
+  are validator DEFAULTS. `_validateEngineHistory` rejects a value that is not finite
+  or is <= 0.
+- **Fixture.** `tests/ui/fixtures/states/engine-history.json` has the cases
+  `cold-start-history`, `fan-cycle-history`, `coolant-dwell-fired`, `bucket-worst-band`,
+  `history-gap`, `history-trimmed-2h`, `history-restart-mid-drive` and
+  `history-empty-after-restart`. `tests/pi/obdii/test_engine_history.py` builds each one
+  from a scripted reading sequence through a real `ObdLiveTracker` and
+  `buildEngineHistoryState`, and asserts equality.
+
 #### `system-status.runMode` and the not-live marker (US-901-b)
 
 **`runMode`** is an always-present key in `states/system-status`. It answers one

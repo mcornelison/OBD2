@@ -31,6 +31,7 @@
 # 2026-10-14    | Rex (US-881-b) | pi.fuel.* defaults (Spool, sourced) + range checks.
 # 2026-10-14    | Rex (US-881-c) | pi.fuel.persistSec default 60 + positivity.
 # 2026-10-14    | Rex (US-881-d) | pi.fuel.resetTimeoutSec default 5 + positivity.
+# 2026-10-15    | Rex (US-889-a) | pi.display.engineHistory.{intervalSec,maxPoints}.
 # ================================================================================
 ################################################################################
 
@@ -1354,6 +1355,24 @@ def test_validate_gradeHistory_nonPositiveOrNonFinite_rejected(key, bad):
     cfg = _baseCfg()
     cfg["pi"] = {"display": {"gradeHistory": {key: bad}}}
     with pytest.raises(ConfigValidationError, match=f"pi.display.gradeHistory.{key}"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_engineHistory_defaultsTo30sAnd240Points():
+    """US-889-a: states/engine-history buckets 30 s, 240 points per PID (2 h)
+    by default (Atlas S104 ruling 1)."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["engineHistory"] == {"intervalSec": 30, "maxPoints": 240}
+
+
+@pytest.mark.parametrize("key", ["intervalSec", "maxPoints"])
+@pytest.mark.parametrize("bad", [0, -30, float("inf"), float("nan"), "30", True])
+def test_validate_engineHistory_nonPositiveOrNonFinite_rejected(key, bad):
+    """US-889-a: each engine-history key must be a finite number > 0; the error
+    names the key."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"engineHistory": {key: bad}}}
+    with pytest.raises(ConfigValidationError, match=f"pi.display.engineHistory.{key}"):
         ConfigValidator().validate(cfg)
 
 

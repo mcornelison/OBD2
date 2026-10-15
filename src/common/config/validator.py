@@ -148,6 +148,8 @@
 #                                cadence, Atlas G3), finite > 0.
 # 2026-10-14    | Rex (US-881-d) | pi.fuel.resetTimeoutSec: 5 (POST /fuel-reset
 #                                outcome wait), finite > 0.
+# 2026-10-15    | Rex (US-889-a) | pi.display.engineHistory.{intervalSec 30,
+#                                maxPoints 240} (Atlas S104 ruling 1); finite, > 0.
 # ================================================================================
 ################################################################################
 
@@ -857,6 +859,11 @@ DEFAULTS: dict[str, Any] = {
     # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
     'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
     'pi.display.gradeHistory.windowSec': DEFAULT_GRADE_HISTORY_WINDOW_SEC,
+    # US-889-a (F-127): states/engine-history, this drive's worst-band buckets
+    # from the obd-live tracker -- a point per 30 s, the newest 240 per PID
+    # (2 h) (Atlas S104 ruling 1, 2026-10-14).
+    'pi.display.engineHistory.intervalSec': 30,
+    'pi.display.engineHistory.maxPoints': 240,
     # US-875 (F-159): the band producer (src/pi/obdii/band_producer.py) that
     # colours states/obd-live. Pages hold no number; these are the only copies.
     # Coolant (degrees C): threshold + dwell + clear hysteresis. Source for all
@@ -1028,6 +1035,7 @@ class ConfigValidator:
         self._validateReplay(config)
         self._validateImuStateBridge(config)
         self._validateGradeHistory(config)
+        self._validateEngineHistory(config)
         self._validateTripGap(config)
         self._validateStaleImu(config)
         self._validateFuel(config)
@@ -1808,6 +1816,35 @@ class ConfigValidator:
                 f"(got windowSec={values['windowSec']!r}, intervalSec={values['intervalSec']!r})",
                 missingFields=['pi.display.gradeHistory.windowSec'],
             )
+
+    def _validateEngineHistory(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.engineHistory.{intervalSec,maxPoints} (US-889-a).
+
+        Each must be a finite number > 0 (Atlas S104 ruling 1). An absent key is
+        skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If a key is non-numeric, non-finite or
+                non-positive.
+        """
+        for name in ('intervalSec', 'maxPoints'):
+            key = f'pi.display.engineHistory.{name}'
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not math.isfinite(val)
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a finite number > 0 (got {val!r})",
+                    missingFields=[key],
+                )
 
     def _validateTripGap(self, config: dict[str, Any]) -> None:
         """Validate pi.trip.gapSec (US-880-a): a finite number > 0.
