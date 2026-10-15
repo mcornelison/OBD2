@@ -7750,6 +7750,52 @@ Tests: `tests/deploy/test_os_trim.py` runs against a fake systemctl recorder via
 the `SYSTEMCTL_BIN`, `OS_TRIM_MANIFEST`, `OS_TRIM_STATE_DIR` and `OS_TRIM_ROOT`
 seams. The deploy wiring is tested in `tests/deploy/test_deploy_pi.py`.
 
+### Counting cold key-ons — the boot ladder report (US-861, Sprint 101 / V0.30.0) [Atlas Rule 10]
+
+An OS change is accepted only on **n >= 5 counted cold key-ons before and after
+it** (CIO DoD, Atlas C5). `scripts/boot_ladder_report.py` does the counting. It
+reads FILES only and never uses ssh:
+
+- `--db`: a copy of `obd.db`, opened read-only. It reads `boot_milestone` and
+  `startup_log` by column name, so both the Sprint 98 and the id-keyed
+  (US-860-b) `boot_milestone` shapes work.
+- `--journal-dir`: one `journalctl -o short-monotonic` export per boot, named
+  `<boot_id>.<ext>`.
+- `--deploy-at ISO` (repeatable), `--change-at ISO`, `--min-off-s` (default 60).
+
+**The counting rule** (Atlas, `pm/inbox/2026-10-14-from-atlas-RULED-US-861-boot-classification-columns-cold-car-power-deploy.md`
+and the S101 review G1/G2). A boot is COUNTED only if no reason below applies.
+Otherwise it is EXCLUDED with every reason that applies, printed in this order:
+
+| reason | when |
+|---|---|
+| `no_startup_log` | no `startup_log` row for the boot_id. A pre-ARCH-065 copy (no `prior_boot_loss_at`) gives this for every boot, with one WARN |
+| `warm_reboot` | `prior_boot_loss_at` is NULL, or neither `prior_boot_last_stage = 'CLEAN_COMPLETE'` nor `prior_boot_clean = 0` |
+| `short_off` | `kernel_start.ts_utc - prior_boot_loss_at < --min-off-s`. The rule uses kernel_start, never `recorded_at` |
+| `no_obd` | `obd_connected` or `first_sample_obd` is missing. The OBD rungs report only as this reason |
+| `missing_milestone:<name>` | `kernel_start` or `first_sample_imu/light/ups` is missing. `drive_start` is not required |
+| `first_after_deploy` | the first boot whose kernel_start follows a `--deploy-at` |
+| `deploy_mid_boot` | a `--deploy-at` falls in `[kernel_start.ts_utc, lastWall]`, where lastWall = kernel_start + the export's last monotonic seconds |
+| `obd_restarted` | the export does not contain exactly one `Started eclipse-obd.service` line. A boot with no export counts 0 |
+
+- **Car power is an inference.** The Pi's supply is not instrumented; power_log
+  cannot tell car from wall. The report header says
+  `car power inferred from OBD connect; supply not instrumented`.
+- **`--change-at` is a deploy.** If it is not also a `--deploy-at`, the tool adds
+  it and prints one WARN. Boots whose kernel_start is after it are AFTER, all
+  others BEFORE.
+- **Output.** One line per boot (boot_id, kernel_start, side, COUNTED or
+  EXCLUDED(reasons)). Then n, median, min, max and spread per milestone for
+  BEFORE and AFTER, from COUNTED boots only. The journal adds `graphical.target`
+  (reached) and `eclipse-dashboard` (started), because `boot_milestone` has no
+  kiosk rung. A VERDICT line of median deltas prints only when both sides have
+  n >= 5. Otherwise it prints `NO VERDICT: n before X, after Y`.
+
+Tests: `tests/scripts/test_boot_ladder_report.py`, against the fixtures in
+`tests/scripts/fixtures/boot_ladder/`. These are one COUNTED boot, one boot per
+exclusion reason, and Atlas's boot 7c6aafaa, which gives
+EXCLUDED(no_obd, deploy_mid_boot, obd_restarted).
+
 ---
 
 ## 12. Simulator Architecture
