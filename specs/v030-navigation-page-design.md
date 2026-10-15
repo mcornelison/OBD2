@@ -88,8 +88,10 @@ Reason-code → text mapping lives in one table in `carousel.js` (it already has
 - `gradePct` null ⇒ `--` + its reason text in `--fs-label`, **on the glass** (the US-852 rule: a reason that exists only in the DOM tells nobody anything).
 
 ### 4.4 Trip (this drive)
-- Resets at key-on. Before the car moves: `0.0 mi · 0:00`.
-- Distance: **US-704** producer. Until it exists, the slot shows `-- mi` with `not measured yet`. Never a fabricated zero mid-drive.
+- Resets at drive start (provider). Before the car moves the provider itself publishes `0.0` and `elapsedSec` 0, so `0.0 mi · 0:00` renders with **no page-side special case** (S105 review B-1c).
+- Distance: `drive.distanceKm` (US-704 / US-880-a, the ONE speed integrator) ÷ 1.609344, one decimal. `distanceKm` null ⇒ `-- mi` + `not measured`. Never a fabricated zero.
+- **Label, from the PROVIDER** (Atlas 2026-10-15, B-1(b) ruling; build US-896-b): `drive.distancePartial` `false` ⇒ `THIS DRIVE`; `true` (orchestrator restarted mid-drive, so the window starts at the first SPEED reading) ⇒ `SINCE h:mm` (local time of `distanceSinceTs`), same distance and elapsed values; `null` ⇒ the not-measured rule. Same name and polarity as `states/engine-history.partial`. **The page never compares timestamps to decide this.** 🔴 **Font split:** the Michroma subset has no `:` (A-Z 0-9 space hyphen only), so `SINCE` is Michroma and the time is a READING in `--font-mono` (frame §: changing readings use the fixed-width face). Measured at 15 px: `SINCE ` 70.0 + `14:49` 45.1 = **115.2 px**, inside the 118.0 px `THIS DRIVE` already takes. All-Michroma would drop the colon to a fallback glyph.
+- ⏸ **Parked label waits on the CIO (Q1):** whether the held distance reads `LAST DRIVE` once `drive.state` is no longer `recording`.
 - Elapsed: **`drive.elapsedSec`, from the PROVIDER** (Atlas 2026-10-15, S105 rulings Q2; build US-896-b). Same origin as the distance (`distanceSinceTs`), so `12.4 mi over 0:23` is one window. **Frozen at drive end** (drive-end ts − sinceTs), counting while recording, null when sinceTs is null. The page formats `h:mm` and does **no time arithmetic** (a page-side `now − sinceTs` would count parked time as drive time, because the trip resets only at drive start). A stale system-status gets the stale treatment; the page never extrapolates.
 - Miles, one decimal.
 
@@ -128,7 +130,7 @@ Heading and grade stay live: parked, the IMU heading is **correct**, not unavail
 
 ## 7. Fixtures (static state files; no replay rig, per R20)
 
-`trusted-247` · `uncalibrated` · `legacy-engine-no-flag` · `boundary-022.5` · `boundary-337.5` · `stale-2.5s` (live, no badge) · `stale-3.5s` (`NO UPDATE 3 s`) · `trip-ended-frozen` (elapsedSec 1800 at T+40 min) · `unseeded` · `dead-mag` · `stale-imu` · `wrap-350-to-010` (two consecutive files) · `parked-engine-off` · `grade-null`.
+`trusted-247` · `uncalibrated` · `legacy-engine-no-flag` · `boundary-022.5` · `boundary-337.5` · `stale-2.5s` (live, no badge) · `stale-3.5s` (`NO UPDATE 3 s`) · `trip-ended-frozen` (elapsedSec 1800 at T+40 min) · `trip-mid-drive` (`THIS DRIVE`) · `trip-partial-after-restart` (`distancePartial` true, sinceTs 14:49 local ⇒ `SINCE 14:49`, `12.4 mi`, `0:23`) · `trip-not-measured` · `unseeded` · `dead-mag` · `stale-imu` · `wrap-350-to-010` (two consecutive files) · `parked-engine-off` · `grade-null`.
 
 ## 8. Out of scope
 
@@ -138,5 +140,5 @@ Speed (driving page) · altitude (no source: no baro, GPS on hold) · position/r
 
 - **US-704 admission** to V0.30: Marcus, at the DoD.
 - ~~Stale-threshold config key~~ **RESOLVED 2026-10-15: `pi.display.stale.imuSec`** (§5).
-- **Trip (§4.4) is OPEN, S105 review B-1:** (a) elapsed needs an END: `distanceKm`/`distanceSinceTs` hold after the drive ends, so `now − sinceTs` would keep counting while parked; (b) `distanceSinceTs` is the drive start OR the first SPEED reading after a mid-drive restart, so `THIS DRIVE` needs a provider flag; (c) no page-side zero: at drive start the provider publishes 0.0. **(a) RULED 2026-10-15:** `drive.elapsedSec`, frozen at drive end (§4.4). **(b) not yet ruled:** after a mid-drive restart both distance and elapsed count from the first SPEED reading (one window, honest), but the label `THIS DRIVE` then overstates; a `coversDriveStart`-style flag is still asked of Atlas. **CIO** rules Q1 (does a parked trip slot read `LAST DRIVE`?). The §4.4 labels are rewritten once Q1 lands.
+- **Trip (§4.4) is OPEN, S105 review B-1:** (a) elapsed needs an END: `distanceKm`/`distanceSinceTs` hold after the drive ends, so `now − sinceTs` would keep counting while parked; (b) `distanceSinceTs` is the drive start OR the first SPEED reading after a mid-drive restart, so `THIS DRIVE` needs a provider flag; (c) no page-side zero: at drive start the provider publishes 0.0. **(a) RULED 2026-10-15:** `drive.elapsedSec`, frozen at drive end (§4.4). **(b) RULED 2026-10-15:** `drive.distancePartial` ⇒ `SINCE h:mm` (§4.4). **(c)** folded: no page-side zero. **CIO** rules Q1 (does a parked trip slot read `LAST DRIVE`?). The §4.4 labels are rewritten once Q1 lands.
 - **DoD 10 pass numbers** (90 % vs 95 %): already raised in my DoD review.

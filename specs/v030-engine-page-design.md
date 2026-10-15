@@ -63,7 +63,7 @@
   - **A bucket with no fresh sample is omitted by the provider. The page breaks the line there: a gap is a gap, never a flat line or a bridge.**
   - **INTAKE_TEMP has no band** (`no_band_defined`), so its line is always neutral with no spans.
   - **Window = this drive.** The provider resets on drive start (driveId change). Above `pi.display.engineHistory.maxPoints` (240 = 2 h) the oldest bucket drops and `sinceTs` moves with it.
-  - **The window label comes from the PROVIDER, never from the page's idea of key-on** (S104 review B-2). The provider publishes whether the history covers the drive from its start (`coversDriveStart: bool`, field name Atlas's): `true` ⇒ `THIS DRIVE`; `false` (orchestrator restarted mid-drive, or the 2 h trim dropped the first bucket) ⇒ `SINCE h:mm` from `sinceTs`. **The page never compares `sinceTs` with another provider's timestamp:** `sinceTs` is a bucket start on the 30 s grid and can sit before the drive start. A kiosk restart keeps the history (orchestrator memory + state file).
+  - **The window label comes from the PROVIDER, never from the page's idea of key-on** (S104 review B-2). The provider publishes `states/engine-history.partial: bool` (Atlas S104 G3; the SAME name and polarity as NAV's `drive.distancePartial`, so every page reads one convention): `false` ⇒ `THIS DRIVE`; `true` (the history doesn't cover the drive from its start, e.g. orchestrator restarted mid-drive) ⇒ `SINCE h:mm` from `sinceTs`. `SINCE` is Michroma and the time is `--font-mono`: the Michroma subset has no `:` (same split as NAV §4.4). **The page never compares `sinceTs` with another provider's timestamp:** `sinceTs` is a bucket start on the 30 s grid and can sit before the drive start. A kiosk restart keeps the history (orchestrator memory + state file).
   - **Empty history** (no points yet, or just after an orchestrator restart) is a typed absence: `History not recorded yet. It starts with this drive's first readings.` Never an empty chart.
 - **Units:** °F, mph (CIO). Bands judged in °C by the provider. History points carry the reading's own unit (`unit` map: C, V); the page converts by `unit` through the S103 G1 helper, display-only.
 - **Check-engine lamp** (`MIL_ON`) + code count (`DTC_COUNT`) link to Warnings (parked tap); codes are not repeated here.
@@ -89,7 +89,7 @@
 5. MIL + count link to Warnings, parked tap only; codes are not repeated here.
 6. History colour comes **only** from each point's `band`. A coolant line crossing 104 °C with no amber/red `band` in its points shows no colour. A bucket whose `band` is amber shows an amber span even when its plotted `value` (the last sample) is below the number. Grep gate: no coolant/battery threshold in `carousel.js`.
 7. An omitted bucket breaks the line; no segment is drawn across a gap.
-8. Empty history is the typed absence text, not an empty or flat chart. `coversDriveStart` false labels the window `SINCE h:mm` from `sinceTs`; true labels it `THIS DRIVE`. No page-side timestamp comparison.
+8. Empty history is the typed absence text, not an empty or flat chart. `partial` true labels the window `SINCE h:mm` from `sinceTs`; false labels it `THIS DRIVE`. No page-side timestamp comparison.
 9. IAT history is neutral in every fixture.
 10. Scroll cue + scrollbar visible; no clipped element (DOM: every tile `scrollWidth <= clientWidth` and `scrollHeight <= clientHeight`), including the status row at a 2-digit and a 3-digit code count. No O2 tile in the DOM until US-891.
 11. °F display-only, converted by the point's `unit` (bands judged in °C by the provider).
@@ -98,12 +98,13 @@
 14. Timing: a negative-advance fixture renders `|n|° ATDC`, never `−n° BTDC`.
 
 ## 7. Fixtures
-`idle-warm` · `wot-pull-load-100` · `cold-start-history` · `fan-cycle-history` (101 °C peaks, no colour) · `coolant-dwell-fired` · `bucket-worst-band` (amber `band`, last sample below the number) · `history-gap` (omitted buckets) · `history-trimmed-2h` (`sinceTs` moved) · `history-empty-after-restart` · `mil-on-two-codes` · `mil-on-twelve-codes` · `mil-on-zero-codes` · `not-read-with-reason` · `stale` · `history-restarted-mid-drive` (`coversDriveStart` false) · `timing-negative` (−4 ⇒ `4° ATDC`).
+`idle-warm` · `wot-pull-load-100` · `cold-start-history` · `fan-cycle-history` (101 °C peaks, no colour) · `coolant-dwell-fired` · `bucket-worst-band` (amber `band`, last sample below the number) · `history-gap` (omitted buckets) · `history-trimmed-2h` (`sinceTs` moved) · `history-empty-after-restart` · `mil-on-two-codes` · `mil-on-twelve-codes` · `mil-on-zero-codes` · `not-read-with-reason` · `stale` · `history-restarted-mid-drive` (`partial` true) · `timing-negative` (−4 ⇒ `4° ATDC`).
 
 ## 8. Out of scope
 Boost (no source) · knock (no source) · AFR (no wideband) · MAF (Fuel page) · O2 (O2 page).
 
 ## 9. Open items
 - ~~Atlas: the this-drive history provider~~ **RULED 2026-10-14 (ruling 1); CIO picked option (a) 2026-10-15: `states/engine-history`, §4 + §5.**
-- **Open (2026-10-15):** Atlas names the `coversDriveStart` field (cc'd with the S104 shape-check); Spool confirms the timing sign convention.
+- ~~Atlas names the covers-drive-start field~~ **RULED: `partial: bool`** (Atlas S104 G3, same convention as `drive.distancePartial`, 2026-10-15).
+- **Open (2026-10-15):** Spool confirms the timing sign convention.
 - **Engine OEM mockup** (`proposals/2026-10-14-v030-engine-page-oem.html`) still uses the `1fr 1.3fr 1fr` status grid and the one-line `ON · n codes ›`; it is corrected to §3 at the same URL.

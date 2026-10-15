@@ -152,3 +152,4 @@ Fuel level (PID unsupported on this ECU) · AFR / wideband (no sensor) · boost 
 - **Marcus:** is the MPG last-30 s provider story in S104? If not, LAST 30 S ships as `--` + `not published`.
 - ~~Atlas~~ (ruled 2026-10-13): NEW `states/fuel-economy` on ONE speed integrator shared with US-704; `sinceReset` persists in obd.db; reset via token-gated `POST /fuel-reset`; trend is `states/ltft-trend` + `inMedian` per point; stale key `pi.display.stale.obdLiveSec`.
 - ~~Marcus: a producer story (MPG accumulators + reset)~~ **built: US-881-b/c/d on dev.**
+- **Later, not S105 (Atlas flag, 2026-10-15):** THIS DRIVE MPG counts from the same since-point as the NAV trip (`fuel_economy_emitter.py:390`), so it has the same mid-drive-restart case. Same remedy when scheduled: carry a `partial` flag into `thisDrive` and label `SINCE h:mm` when true.
