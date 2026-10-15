@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.2",
-  "theme": "Sprint 100: V0.30 data feeds 2",
-  "description": "Sprint 100 (7 stories): boot_milestone syncs Pi to server on the id cursor; speed integrator publishes drive distance; IMU stale window is a config.json key; light bridge computes brightness; states/fuel-economy publishes drive fuel and MPG; since-reset fuel totals persist Pi-locally; POST /fuel-reset zeroes them when parked. Also: ADR ARCH-016 s11 + UIDEV-001 specs (docs)."
+  "version": "V0.30.3",
+  "theme": "Sprint 101: V0.30 OS trim",
+  "description": "Sprint 101 (4 stories): aiosqlite declared in requirements-dev; bluetoothctl reads drop the fixed 5 s wait; reversible OS-trim manifest masks/disables services a car never uses, re-applied every deploy, undone by --os-trim-revert (pre-state in /var/lib/eclipse-obd/os-trim.state); desk tool reports the boot ladder from counted cold key-ons."
 }
