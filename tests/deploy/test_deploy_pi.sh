@@ -144,6 +144,9 @@ cp "$SCRIPT" "$TMP/deploy/deploy-pi.sh"
 # deploy-pi.sh sources ../deploy/addresses.sh (B-044 canonical bash-side
 # mirror); the isolated tmp copy needs it too.
 cp "$REPO_ROOT/deploy/addresses.sh" "$TMP/deploy/addresses.sh"
+# US-866: step_os_trim refuses to run without its manifest (fail loud, even in
+# --dry-run), so the isolated copy carries it too. Test 9 removes it.
+cp "$REPO_ROOT/deploy/os-trim.manifest" "$TMP/deploy/os-trim.manifest"
 cat > "$TMP/deploy/deploy.conf" <<EOF
 PI_HOST=192.0.2.1
 PI_USER=nobody
@@ -212,6 +215,19 @@ ALT_OUT=$(bash "$TMP/deploy/deploy-pi.sh" --dry-run 2>&1)
 assert_contains   "alt PI_HOST applied"      "10.99.99.99"        "$ALT_OUT"
 assert_contains   "alt PI_USER applied"      "alt-user"           "$ALT_OUT"
 assert_contains   "alt PI_PATH applied"      "/srv/alt"           "$ALT_OUT"
+
+# ---- test 9: a missing OS-trim manifest fails the deploy loudly (US-866) ----
+
+echo ""
+echo "test 9: missing deploy/os-trim.manifest fails loud"
+rm -f "$TMP/deploy/os-trim.manifest"
+NOTRIM_OUT=$(bash "$TMP/deploy/deploy-pi.sh" --dry-run 2>&1)
+NOTRIM_RC=$?
+assert_exit       "missing manifest exits 11" "11"                "$NOTRIM_RC"
+assert_contains   "ERROR names the missing manifest path" \
+                  "ERROR: OS-trim manifest not found: $TMP/deploy/os-trim.manifest" "$NOTRIM_OUT"
+assert_not_contains "nothing after the os-trim step ran" \
+                  "Installing eclipse-obd systemd unit" "$NOTRIM_OUT"
 
 # ---- summary ----
 

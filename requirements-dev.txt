@@ -97,3 +97,18 @@ tzdata>=2024.1; sys_platform == "win32"
 # Wheels exist for win_amd64 and manylinux aarch64 at cp313; numpy is already
 # declared above.
 imufusion>=1.3.3
+
+# -----------------------------------------------------------------------------
+# Async SQLite driver for the server's async DB tests (US-846 / F-150)
+# -----------------------------------------------------------------------------
+# The server's async DB tests run SQLAlchemy's async engine against
+# `sqlite+aiosqlite://`. requirements-server.txt already declares the async test
+# plumbing (pytest-asyncio); aiosqlite is the driver that was missing. It was
+# declared NOWHERE, so on a fresh bench or CI runner every async DB test SKIPPED
+# -- and the PM hand-installed it on every bench from Sprint 97 on.
+#
+# Dev/CI only: production talks to MariaDB, never SQLite through aiosqlite, so
+# this is NOT a Pi or server runtime dependency and stays out of requirements.txt,
+# requirements-pi.txt and requirements-server.txt. Version floor: 0.22.1 is what
+# benches have run since Sprint 97 (hand-installed).
+aiosqlite>=0.22  # US-846: async SQLite driver for the server's async DB tests (dev/CI only)

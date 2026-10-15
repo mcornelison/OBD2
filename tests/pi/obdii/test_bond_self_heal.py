@@ -39,7 +39,9 @@ that is the production mode a forced runner can never reach.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1042,3 +1044,141 @@ class TestRealInvocationPath:
         repoRoot = Path(__file__).resolve().parents[3]
 
         assert (repoRoot / 'deploy' / OBD_SERVICE_UNIT).is_file()
+
+
+# ================================================================================
+# US-858 -- the READS pay no fixed `bluetoothctl --timeout` wait
+# ================================================================================
+
+
+class _RecordingRunner:
+    """Wraps a FakeBtStack runner, recording kwargs; optionally wedges reads.
+
+    ``wedgeReads`` makes `bluetoothctl show` / `bluetoothctl info` raise
+    ``subprocess.TimeoutExpired`` -- what the real subprocess.run does when a
+    wedged bluez outlives ``timeout=``.
+    """
+
+    def __init__(self, stack: FakeBtStack, wedgeReads: bool = False) -> None:
+        self.stack = stack
+        self.wedgeReads = wedgeReads
+        self.calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def __call__(self, cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        self.calls.append((list(cmd), dict(kwargs)))
+        if self.wedgeReads and cmd[0] == 'bluetoothctl' and (
+            'show' in cmd or 'info' in cmd
+        ):
+            raise subprocess.TimeoutExpired(cmd, kwargs.get('timeout', 0))
+        return self.stack.runner(cmd, **kwargs)
+
+
+class TestReadTimeout:
+    def test_readAdapterPowered_argvHasNoTimeoutFlag_andPassesSubprocessTimeout(
+        self,
+    ) -> None:
+        """
+        Given: a recording runner
+        When: readAdapterPowered runs
+        Then: argv == ['bluetoothctl', 'show'] and the runner gets timeout=5
+
+        Atlas measured `bluetoothctl --timeout 5 show` at 5.011 s vs 0.0095 s
+        without the flag: --timeout is a fixed wait, not a cap.
+        """
+        runner = _RecordingRunner(FakeBtStack())
+        healer = BondSelfHealer(
+            DEFAULT_MAC, subprocessRunner=runner, sleepFn=lambda _s: None
+        )
+
+        powered = healer.readAdapterPowered()
+
+        assert runner.calls == [(['bluetoothctl', 'show'], {'timeout': 5})]
+        assert powered is True
+
+    def test_assess_readsCarryNoTimeoutFlag(self) -> None:
+        """
+        Given: a durable bond
+        When: assessed
+        Then: both reads (show, info) drop --timeout and pass timeout=5
+        """
+        runner = _RecordingRunner(FakeBtStack())
+        healer = BondSelfHealer(
+            DEFAULT_MAC, subprocessRunner=runner, sleepFn=lambda _s: None
+        )
+
+        verdict, _state = healer.assess()
+
+        assert verdict is BondVerdict.DURABLE
+        assert runner.calls == [
+            (['bluetoothctl', 'show'], {'timeout': 5}),
+            (['bluetoothctl', 'info', DEFAULT_MAC], {'timeout': 5}),
+        ]
+
+    def test_readAdapterPowered_timeoutExpired_returnsNone(self) -> None:
+        """
+        Given: a wedged bluez (the runner raises TimeoutExpired)
+        When: readAdapterPowered runs
+        Then: None -- unreadable, never a raise
+        """
+        runner = _RecordingRunner(FakeBtStack(), wedgeReads=True)
+        healer = BondSelfHealer(
+            DEFAULT_MAC, subprocessRunner=runner, sleepFn=lambda _s: None
+        )
+
+        assert healer.readAdapterPowered() is None
+
+    def test_selfHeal_wedgedReads_skipsWithNoWriteCommand(
+        self, lostBondStack: FakeBtStack
+    ) -> None:
+        """
+        Given: a cleared bond AND a wedged bluez (both reads time out)
+        When: selfHeal runs
+        Then: SKIPPED_UNKNOWN; no write command (power, scan, trust, pair,
+              systemctl) was issued -- a blind reading never acts
+        """
+        runner = _RecordingRunner(lostBondStack, wedgeReads=True)
+        healer = BondSelfHealer(
+            DEFAULT_MAC, subprocessRunner=runner, sleepFn=lambda _s: None
+        )
+
+        report = healer.selfHeal()
+
+        assert report.outcome is SelfHealOutcome.SKIPPED_UNKNOWN
+        assert report.verdict is BondVerdict.UNKNOWN
+        assert report.bondState.known is False
+        assert [cmd for cmd, _kw in runner.calls] == [
+            ['bluetoothctl', 'show'],
+            ['bluetoothctl', 'info', DEFAULT_MAC],
+        ]
+        assert lostBondStack.pairScriptRuns() == 0
+
+    def test_repairPath_writeArgvsUnchanged(self, lostBondStack: FakeBtStack) -> None:
+        """
+        Given: a cleared bond (the re-pair path)
+        When: selfHeal runs
+        Then: the power / scan WRITE argvs are byte-identical to before US-858
+        """
+        _healer(lostBondStack).selfHeal()
+
+        writes = [
+            cmd for cmd in lostBondStack.commands
+            if cmd[0] == 'bluetoothctl' and ('power' in cmd or 'scan' in cmd)
+        ]
+        assert writes == [
+            ['bluetoothctl', '--timeout', '5', 'power', 'off'],
+            ['bluetoothctl', '--timeout', '5', 'power', 'on'],
+            ['bluetoothctl', '--timeout', '20', 'scan', 'on'],
+        ]
+
+    def test_trustMissing_trustArgvUnchanged(self) -> None:
+        """
+        Given: a bond that lost only Trusted
+        When: selfHeal runs
+        Then: the trust WRITE argv is byte-identical to before US-858
+        """
+        stack = FakeBtStack(trusted=False)
+
+        _healer(stack).selfHeal()
+
+        trusts = [cmd for cmd in stack.commands if 'trust' in cmd]
+        assert trusts == [['bluetoothctl', '--timeout', '5', 'trust', DEFAULT_MAC]]
