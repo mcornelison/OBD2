@@ -2258,6 +2258,38 @@ loop inherits the obligation, and the reason this is written down is that the
 invariant is precisely the kind of fact that gets silently re-broken by someone
 tidying an async body.
 
+### Kiosk Display Stack: X11 or Wayland (US-649-a, F-139, Sprint 102)
+
+**`/etc/eclipse/display-mode` is the SSOT for which kiosk stack the car runs.** It
+holds exactly `x11` or `wayland`; an ABSENT file means `x11`. Nothing chooses by
+detecting the running session any more: the deploy used to pick the `.x11` /
+`.wayland` kiosk units from the active seat0 session, so a deploy run while X11
+was up re-installed X11 over a Wayland choice (Atlas, measured trap).
+
+| Reader | What it does with the file |
+|--------|----------------------------|
+| `deploy-pi.sh` `step_install_ui_kiosk_units` | `kiosk_mode_resolver` reads it and forces that type into both kit installers via `{SPLASH,DASHBOARD}_FORCE_SESSION`. Any other content -> one WARN, kiosk install skipped (A-9). A running seat0 session that disagrees -> one WARN; it never chooses. |
+| `src/pi/ui/{splash,dashboard}/install.sh` (V-2) | Unforced, they read it (absent -> x11, other -> abort). A forced `_FORCE_SESSION` still wins. Their own session detection only WARNs. |
+| `eclipse-display-mode status` | Reports file mode, enabled display manager and installed dashboard variant; non-zero on any mismatch. |
+
+**The one command:** `sudo eclipse-display-mode x11|wayland|status [--no-reboot]`
+(`deploy/eclipse-display-mode.sh`, installed by deploy-pi.sh as a wrapper at
+`/usr/local/sbin/eclipse-display-mode` that runs the deployed tree's copy, so it
+works offline). `x11|wayland` writes the file, runs both kit installers forced to
+that mode, swaps the display manager (wayland: disable `lightdm`, enable
+`eclipse-compositor`; x11: the reverse -- the outgoing one first, since both claim
+`display-manager.service`), runs `daemon-reload`, then reboots unless
+`--no-reboot`. An unknown mode exits non-zero and changes nothing. The X11 revert
+is this one command + its reboot; SSH is the recovery path (CIO 2026-10-14).
+
+- **lightdm is disabled, never masked or purged**, and this command is its only
+  owner. The deploy installs the command but enables nothing for Wayland: the car
+  stays on X11 until the CIO runs `eclipse-display-mode wayland`.
+- `KIOSK_UNIT` stays `eclipse-dashboard.service` in both modes.
+- **Name clash, not the same thing:** `deploy/set-display-mode.sh` and its
+  `$ECLIPSE_DISPLAY_MODE` (US-552) pin the HDMI *resolution* in `cmdline.txt`.
+  The mode file and `eclipse-display-mode` never read or set that variable.
+
 ### Display Layout (480x320)
 
 ```

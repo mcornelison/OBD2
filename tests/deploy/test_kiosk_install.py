@@ -8,8 +8,9 @@
 #                            ExecStart, like they substitute User= (V-1). No
 #                            /usr/bin/chromium-browser symlink shim.
 #                        (2) deploy-pi.sh step_install_ui_kiosk_units is exercised,
-#                            session-detects seat0, and WARN-not-BLOCKs an absent
-#                            kit (A-9).
+#                            forces the /etc/eclipse/display-mode session
+#                            (US-649-a; seat0 detection WARN-only), and
+#                            WARN-not-BLOCKs an absent kit (A-9).
 #                      Runs fully off-Pi: the installers' FORCE_* overrides
 #                      short-circuit every hardware probe, so --dry-run renders the
 #                      resolved ExecStart on a plain workstation (no root, no Pi).
@@ -24,6 +25,10 @@
 # 2026-07-02    | Rex (US-428) | Initial implementation (Sprint 52 V0.29.6):
 #               |              | V-3 chromium-binary substitution + kiosk-step
 #               |              | deploy-smoke assertions.
+# 2026-10-15    | Rex (US-649-a) | INTENDED ASSERTION CHANGE: the seat0
+#               |              | detection-forces-type test now pins
+#               |              | mode-file-forces-type (detection WARN-only);
+#               |              | the dry-run test reaches the mode-file line.
 # ================================================================================
 ################################################################################
 
@@ -37,9 +42,9 @@ Split into three groups:
 * Installer V-3 behaviour -- each kit ``install.sh`` --dry-run renders the
   resolved ExecStart with the detected/forced chromium path, and fails loudly
   when no chromium binary is found.
-* deploy-pi.sh ``step_install_ui_kiosk_units`` -- no symlink shim, still
-  session-detects seat0, WARN-not-BLOCKs an absent kit, and is wired into the
-  main flow.
+* deploy-pi.sh ``step_install_ui_kiosk_units`` -- no symlink shim, forces the
+  display-mode file's session (seat0 detection only WARNs; US-649-a),
+  WARN-not-BLOCKs an absent kit, and is wired into the main flow.
 """
 
 from __future__ import annotations
@@ -230,14 +235,22 @@ def test_deployStep_noChromiumSymlinkShim():
     )
 
 
-def test_deployStep_sessionDetectsSeat0():
-    """The step must still detect the ACTIVE graphical seat0 session (an SSH
-    session reads as 'tty'; guessing X11-vs-Wayland is the D-3 black-screen bug).
+def test_deployStep_forcesTheModeFileSession_detectionOnlyWarns():
+    """US-649-a (intended assertion change; was test_deployStep_sessionDetectsSeat0,
+    which pinned detection-forces-type): the step reads /etc/eclipse/display-mode
+    and forces THAT type into the kit installers. Detecting the running session
+    chose the variant, so a deploy run under X11 re-installed X11 over a Wayland
+    choice (Atlas). The seat0 detection survives only as a WARN on disagreement.
     """
-    body = _stepBody(DEPLOY_SCRIPT.read_text(encoding="utf-8"), "step_install_ui_kiosk_units")
-    assert "seat0" in body, "step_install_ui_kiosk_units must session-detect from seat0"
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    body = _stepBody(text, "step_install_ui_kiosk_units")
+    resolver = _stepBody(text, "kiosk_mode_resolver")
+    assert "kiosk_mode_resolver" in body, "the step must resolve the session from the mode file"
+    assert "/etc/eclipse/display-mode" in resolver, "the mode file is the ONLY authority"
+    assert "seat0" in resolver, "the running-session detection survives (as a WARN)"
+    assert "WARN" in resolver, "a disagreeing running session must WARN, never choose"
     assert "FORCE_SESSION" in body, (
-        "the detected session type must be forced into the kit installers "
+        "the mode file's session type must be forced into the kit installers "
         "(SPLASH/DASHBOARD _FORCE_SESSION)"
     )
 
@@ -264,11 +277,12 @@ def test_deployStep_wiredIntoMainFlow():
 
 
 @pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
-def test_deployDryRun_kioskStepDetectsSeat0():
+def test_deployDryRun_kioskStepResolvesTheModeFile():
     """`deploy-pi.sh --dry-run` from the repo root (kits present on disk) must
-    exercise the kiosk-install step, reach the seat0 session-detection line
+    exercise the kiosk-install step, reach the mode-file resolution line
     (past the absent-kit guard), announce the V-3 no-symlink substitution, and
     exit 0 -- fully offline (every remote() is a DRY-RUN print, no SSH).
+    US-649-a: the line it reaches is the display-mode resolution, not seat0.
     """
     result = subprocess.run(
         ["bash", str(DEPLOY_SCRIPT), "--dry-run"],
@@ -281,8 +295,8 @@ def test_deployDryRun_kioskStepDetectsSeat0():
     out = result.stdout + result.stderr
     assert result.returncode == 0, f"repo-root dry-run must exit 0; out=\n{out}"
     assert "chromium kiosk units" in out, "the kiosk-install step banner must appear"
-    assert "seat0 session" in out, (
-        "with kits present the step must reach the seat0 session-detection line "
+    assert "display-mode" in out and "_FORCE_SESSION=" in out, (
+        "with kits present the step must reach the mode-file resolution line "
         "(not the absent-kit guard)"
     )
     assert "V-3" in out and "no symlink shim" in out, (

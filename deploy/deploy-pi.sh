@@ -2028,6 +2028,53 @@ step_install_dashboard_assets() {
     "
 }
 
+kiosk_mode_resolver() {
+    # US-649-a: print the shell that sets SESS from /etc/eclipse/display-mode --
+    # the ONLY authority for x11 vs wayland (absent => x11).  Anything else leaves
+    # SESS empty after one WARN, so the caller skips rather than guesses (A-9).
+    # The running seat0 session is still detected, but only to WARN when it
+    # disagrees; it never chooses.  ONE definition, run on the Pi by
+    # step_install_ui_kiosk_units and locally by its --dry-run preview, where
+    # KIOSK_MODE_FILE / KIOSK_DETECTED_SESSION stand in for the Pi's state.
+    # NAME CLASH: unrelated to set-display-mode.sh, which pins the HDMI resolution.
+    cat <<'KIOSK_MODE_RESOLVER'
+        MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
+        if [ -f "$MODE_FILE" ]; then
+            SESS=$(tr -d '[:space:]' < "$MODE_FILE")
+        else
+            SESS=x11
+        fi
+        case "$SESS" in
+            x11|wayland) ;;
+            *)
+                echo "WARN: $MODE_FILE holds '$SESS', not x11|wayland -- skipping kiosk-unit install; set it with: sudo eclipse-display-mode x11|wayland" >&2
+                SESS=''
+                ;;
+        esac
+        if [ -n "${KIOSK_DETECTED_SESSION+x}" ]; then
+            RUNNING="$KIOSK_DETECTED_SESSION"
+        else
+            RUNNING=''
+            for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+                seat=$(loginctl show-session "$s" -p Seat --value 2>/dev/null || true)
+                typ=$(loginctl show-session "$s" -p Type --value 2>/dev/null || true)
+                act=$(loginctl show-session "$s" -p Active --value 2>/dev/null || true)
+                if [ "$seat" = 'seat0' ] && [ "$act" = 'yes' ] && { [ "$typ" = 'x11' ] || [ "$typ" = 'wayland' ]; }; then
+                    RUNNING="$typ"; break
+                fi
+            done
+            if [ -z "$RUNNING" ]; then
+                if pgrep -x Xorg >/dev/null 2>&1; then RUNNING=x11
+                elif ls /run/user/*/wayland-0 >/dev/null 2>&1; then RUNNING=wayland
+                fi
+            fi
+        fi
+        if [ -n "$SESS" ] && [ -n "$RUNNING" ] && [ "$RUNNING" != "$SESS" ]; then
+            echo "WARN: the running seat0 session is $RUNNING but $MODE_FILE says $SESS -- installing $SESS (the mode file decides; detection never chooses)." >&2
+        fi
+KIOSK_MODE_RESOLVER
+}
+
 step_install_ui_kiosk_units() {
     # BUG-FIX (Atlas 2026-07-01; finding
     # offices/architect/findings/2026-07-01-pi-display-blank-deploy-contract-gaps.md).
@@ -2040,12 +2087,11 @@ step_install_ui_kiosk_units() {
     #   src/pi/ui/dashboard/install.sh  -> eclipse-dashboard unit
     #
     # Two things the first on-hardware run proved necessary (do NOT drop them):
-    #  (1) SESSION DETECTION over SSH.  The installers' own V-2 check reads the
-    #      CALLING session's type; over SSH that is 'tty', so the installer aborts
-    #      ("cannot determine session type") rather than guess X11-vs-Wayland -- a
-    #      wrong guess is the D-3 black-screen bug.  We detect the type from the Pi's
-    #      ACTIVE graphical seat0 session and pass it via {SPLASH,DASHBOARD}_FORCE_SESSION.
-    #      If it genuinely can't be determined we WARN + skip -- we never guess.
+    #  (1) THE SESSION IS FORCED.  The step passes the session type to the
+    #      installers via {SPLASH,DASHBOARD}_FORCE_SESSION -- a wrong X11-vs-Wayland
+    #      choice is the D-3 black-screen bug.  Since US-649-a that type comes from
+    #      /etc/eclipse/display-mode (kiosk_mode_resolver), not from the Pi's active
+    #      seat0 session; a mode file holding anything but x11|wayland WARNs + skips.
     #  (2) chromium BINARY name (US-428 -- Bug 2 proper fix).  The unit templates
     #      parameterize the browser as ExecStart=__CHROMIUM_BIN__; the kit installers'
     #      V-3 check detects the real path (chromium-browser OR chromium -- Trixie
@@ -2073,6 +2119,12 @@ step_install_ui_kiosk_units() {
     # ENABLES the units; the splash renders at the NEXT boot (WantedBy=graphical.target),
     # so the step does not thrash the live screen mid-deploy.  Runs AFTER the asset +
     # state-server steps so the served assets + backend are already in place.
+    #
+    # US-649-a: /etc/eclipse/display-mode is the ONLY authority for the session
+    # forced into the installers (kiosk_mode_resolver; absent => x11).  Detecting
+    # the running session used to CHOOSE it, so a deploy run under X11 re-installed
+    # X11 over a Wayland choice (Atlas, measured trap).  The seat0 detection
+    # survives only as a WARN when the running session disagrees with the file.
     echo "--- Step: Installing F-103/F-092 chromium kiosk units (splash + dashboard) ---"
     local splashKit="src/pi/ui/splash/install.sh"
     local dashKit="src/pi/ui/dashboard/install.sh"
@@ -2081,33 +2133,30 @@ step_install_ui_kiosk_units() {
         return 0
     fi
     if $DRY_RUN; then
-        echo "DRY-RUN would: detect the Pi's ACTIVE graphical seat0 session type (x11|wayland)"
+        # Run the SAME resolver locally as a preview (KIOSK_MODE_FILE and
+        # KIOSK_DETECTED_SESSION stand in for the Pi's file and seat0 session).
+        # Unset, the stand-in session is EMPTY: probing this workstation's own
+        # seat0 would WARN about the wrong machine.
+        local resolved
+        resolved="$(KIOSK_DETECTED_SESSION="${KIOSK_DETECTED_SESSION-}" bash -c "$(kiosk_mode_resolver)
+printf '%s' \"\$SESS\"")"
+        echo "DRY-RUN would: read the session from ${KIOSK_MODE_FILE:-/etc/eclipse/display-mode} (absent => x11; local preview) -- a disagreeing seat0 session never chooses"
+        if [ -z "$resolved" ]; then
+            echo "DRY-RUN would: skip the kiosk-unit install (the display-mode file is not x11|wayland)"
+            return 0
+        fi
         echo "DRY-RUN would: (kit installers' V-3 check substitutes the real chromium path into ExecStart -- no symlink shim; US-428)"
-        echo "DRY-RUN would: sudo {SPLASH,DASHBOARD}_FORCE_SESSION=<type> _FORCE_USER=${PI_USER} bash ${PI_PATH}/{${splashKit},${dashKit}}"
+        echo "DRY-RUN would: sudo {SPLASH,DASHBOARD}_FORCE_SESSION=${resolved} _FORCE_USER=${PI_USER} bash ${PI_PATH}/{${splashKit},${dashKit}}"
         return 0
     fi
     remote "
-        # (1) Detect the graphical session type from the ACTIVE seat0 session (an
-        #     SSH session reads as 'tty' and would make the installer abort).
-        SESS=''
-        for s in \$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print \$1}'); do
-            seat=\$(loginctl show-session \"\$s\" -p Seat --value 2>/dev/null || true)
-            typ=\$(loginctl show-session \"\$s\" -p Type --value 2>/dev/null || true)
-            act=\$(loginctl show-session \"\$s\" -p Active --value 2>/dev/null || true)
-            if [ \"\$seat\" = 'seat0' ] && [ \"\$act\" = 'yes' ] && { [ \"\$typ\" = 'x11' ] || [ \"\$typ\" = 'wayland' ]; }; then
-                SESS=\"\$typ\"; break
-            fi
-        done
+        # (1) The session type comes from the display-mode file (US-649-a); a
+        #     disagreeing running seat0 session only WARNs.
+        $(kiosk_mode_resolver)
         if [ -z \"\$SESS\" ]; then
-            if pgrep -x Xorg >/dev/null 2>&1; then SESS=x11
-            elif ls /run/user/*/wayland-0 >/dev/null 2>&1; then SESS=wayland
-            fi
-        fi
-        if [ -z \"\$SESS\" ]; then
-            echo 'WARN: could not determine the Pi graphical session type (no active x11/wayland seat0 session) -- skipping kiosk-unit install; NOT guessing (D-3 black-screen risk). Re-run deploy from a booted graphical session.' >&2
             exit 0
         fi
-        echo \"graphical session type: \$SESS\"
+        echo \"kiosk session type: \$SESS (from \$MODE_FILE)\"
 
         # (2) chromium binary (US-428 -- Bug 2 proper fix): NO symlink shim here.
         #     The kit installers' V-3 check detects the real chromium path
@@ -2140,7 +2189,7 @@ step_install_ui_kiosk_units() {
             echo 'note: could not apply xset live (no active X session?) -- the xorg drop-in covers the next boot.'
         fi
 
-        # (3) Run the kit's session-aware installers, forcing the detected session +
+        # (3) Run the kit's session-aware installers, forcing the mode-file session +
         #     the deploy user (env set INSIDE the root shell so sudo does not strip it).
         SPK='${PI_PATH}/${splashKit}'
         DSK='${PI_PATH}/${dashKit}'
@@ -2159,6 +2208,49 @@ step_install_ui_kiosk_units() {
             echo 'WARN: dashboard-pi/install.sh absent on Pi -- skipped (A-9).' >&2
         fi
         echo 'Kiosk units in place; the splash renders at the next boot (WantedBy=graphical.target).'
+    "
+}
+
+step_install_display_mode_command() {
+    # US-649-a (F-139): put `eclipse-display-mode x11|wayland|status` on root's
+    # PATH.  It is the ONLY thing that writes /etc/eclipse/display-mode or swaps
+    # the display manager -- this step installs the command and changes no mode,
+    # so the car stays on whatever the file says (absent => x11).
+    #
+    # A wrapper, not a copy, at /usr/local/sbin (like obdctl): the command runs
+    # deploy/eclipse-display-mode.sh from the deployed tree, so it finds both kit
+    # installers beside it and works offline.  The wrapper bakes in the deploy
+    # user so the installers it runs get the same _FORCE_USER the deploy passes.
+    echo "--- Step: Installing eclipse-display-mode (US-649-a, F-139) ---"
+    local targetPath="/usr/local/sbin/eclipse-display-mode"
+    local entryPoint="${PI_PATH}/deploy/eclipse-display-mode.sh"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install wrapper -> ${targetPath} (mode 755)"
+        echo "DRY-RUN would point it at /bin/bash ${entryPoint} (KIOSK_USER=${PI_USER})"
+        return 0
+    fi
+
+    remote "
+        set -e
+        TMP_WRAPPER=\$(mktemp)
+        cat > \"\$TMP_WRAPPER\" <<'DISPLAY_MODE_WRAPPER'
+#!/bin/sh
+# US-649-a eclipse-display-mode launcher (installed by deploy-pi.sh -- do not edit by hand).
+KIOSK_USER='${PI_USER}'
+export KIOSK_USER
+exec /bin/bash ${entryPoint} \"\$@\"
+DISPLAY_MODE_WRAPPER
+        if sudo test -f '${targetPath}' && sudo cmp -s \"\$TMP_WRAPPER\" '${targetPath}'; then
+            echo 'eclipse-display-mode already current at ${targetPath} (no change).'
+        else
+            sudo install -m 755 \"\$TMP_WRAPPER\" '${targetPath}'
+            echo 'eclipse-display-mode installed: ${targetPath}'
+        fi
+        rm -f \"\$TMP_WRAPPER\"
+        if [ ! -f '${entryPoint}' ]; then
+            echo 'WARN: ${entryPoint} missing -- eclipse-display-mode will not run until the tree syncs.' >&2
+        fi
     "
 }
 
@@ -2701,6 +2793,8 @@ step_install_state_server_units
 # this the kiosk is never installed and the 3.5" screen stays blank (pygame sunset).
 # Runs after the state server is up so the served surface + backend are in place.
 step_install_ui_kiosk_units
+# US-649-a: the one command that switches x11 <-> wayland (installs it only).
+step_install_display_mode_command
 # US-523 (F-124): the kiosk WATCHDOG -- restarts eclipse-dashboard when
 # chromium's renderer wedges.  Installed AFTER the kiosk units it guards so the
 # unit it restarts already exists on the box when the timer's first tick lands.

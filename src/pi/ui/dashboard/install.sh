@@ -9,9 +9,11 @@
 #   V-1  detect the real Pi user (single non-root /home/* owner) and
 #        substitute it into the unit template; fail loudly if it can't be
 #        determined -- the kit never hardcodes User=pi.
-#   V-2  detect the session manager (Wayland vs X11) and pick the matching
-#        unit variant; fail loudly if unknown -- guessing wrong gives the
-#        D-3 class of bug (X11 env on a Wayland session => black screen).
+#   V-2  take the session type (Wayland vs X11) from /etc/eclipse/display-mode
+#        (US-649-a: the ONLY authority; absent => x11) and pick the matching
+#        unit variant; fail loudly on any other value -- guessing wrong gives
+#        the D-3 class of bug (X11 env on a Wayland session => black screen).
+#        The running session is still detected, but only WARNs on disagreement.
 #   V-3  detect the chromium binary path (chromium-browser OR chromium --
 #        Raspberry Pi OS Trixie ships /usr/bin/chromium) and substitute it into
 #        the unit ExecStart, like V-1 substitutes User=; fail loudly if neither
@@ -39,7 +41,8 @@
 # Detection is overridable for off-Pi CI/testing:
 #   DASHBOARD_FORCE_USER       force the Pi user (empty => simulate "can't tell")
 #   DASHBOARD_FORCE_UID        force the numeric uid (empty => simulate "can't tell")
-#   DASHBOARD_FORCE_SESSION    force wayland|x11 (other => simulate "unknown")
+#   DASHBOARD_FORCE_SESSION    force wayland|x11, bypassing the file (other => abort)
+#   KIOSK_MODE_FILE            override the /etc/eclipse/display-mode path
 #   DASHBOARD_FORCE_CHROMIUM   force the chromium path (empty => simulate "none")
 #   DASHBOARD_USER_HOME_GLOB   override the /home/* probe glob
 # ============================================================
@@ -49,6 +52,7 @@ shopt -s nullglob
 SYSTEMD_DIR="/etc/systemd/system"
 INSTALL_DIR="/opt/dashboard"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+MODE_FILE="${KIOSK_MODE_FILE:-/etc/eclipse/display-mode}"
 
 DRY_RUN=0
 
@@ -98,13 +102,32 @@ detect_pi_uid() {
   id -u "$pi_user" 2>/dev/null || true
 }
 
-# --- V-2: detect the session type (wayland|x11) -------------------------------
-detect_session_type() {
-  local pi_user="$1"
+# --- V-2: the session type comes from the display-mode file (US-649-a) --------
+# /etc/eclipse/display-mode is the ONLY authority for x11 vs wayland. Detecting
+# the running session used to CHOOSE the variant, so an install run while X11 was
+# up re-installed X11 over a Wayland choice (Atlas, measured trap). A forced
+# DASHBOARD_FORCE_SESSION (deploy-pi.sh / eclipse-display-mode pass the file's
+# value) still wins; otherwise the file decides, absent => x11.
+read_display_mode() {
+  if [[ -f "$MODE_FILE" ]]; then
+    tr -d '[:space:]' < "$MODE_FILE"   # raw: a garbage value must reach the abort
+  else
+    printf 'x11'
+  fi
+}
+
+resolve_session_type() {
   if [[ -n "${DASHBOARD_FORCE_SESSION+x}" ]]; then
     printf '%s' "$DASHBOARD_FORCE_SESSION"   # forced (may be unknown => abort)
     return 0
   fi
+  read_display_mode
+}
+
+# The RUNNING session (loginctl, then the wayland-0 socket). Never chooses: it
+# only feeds the WARN when it disagrees with the mode file.
+detect_running_session() {
+  local pi_user="$1"
   local t=""
   if command -v loginctl >/dev/null 2>&1 && [[ -n "${XDG_SESSION_ID:-}" ]]; then
     t="$(loginctl show-session "$XDG_SESSION_ID" -p Type --value 2>/dev/null || true)"
@@ -144,16 +167,27 @@ if [[ -z "$PI_USER" ]]; then
   exit 1
 fi
 
-SESSION_TYPE="$(detect_session_type "$PI_USER")"
+SESSION_TYPE="$(resolve_session_type)"
 case "$SESSION_TYPE" in
   wayland|x11) ;;
   *)
-    echo "ERROR: cannot determine session type (no active loginctl session," >&2
-    echo "       no wayland-0 socket; got '${SESSION_TYPE:-<empty>}'). Aborting" >&2
-    echo "       dashboard install -- guessing X11 vs Wayland gives the D-3 bug." >&2
+    if [[ -n "${DASHBOARD_FORCE_SESSION+x}" ]]; then
+      echo "ERROR: forced session type '${SESSION_TYPE:-<empty>}' is not x11|wayland." >&2
+    else
+      echo "ERROR: $MODE_FILE holds '${SESSION_TYPE:-<empty>}', not x11|wayland." >&2
+      echo "       Set it with: sudo eclipse-display-mode x11|wayland" >&2
+    fi
+    echo "       Aborting dashboard install -- guessing the session type gives the D-3 bug." >&2
     exit 1
     ;;
 esac
+if [[ -z "${DASHBOARD_FORCE_SESSION+x}" ]]; then
+  RUNNING_SESSION="$(detect_running_session "$PI_USER")"
+  if [[ -n "$RUNNING_SESSION" && "$RUNNING_SESSION" != "$SESSION_TYPE" ]]; then
+    echo "WARN: the running session is $RUNNING_SESSION but $MODE_FILE says $SESSION_TYPE --" >&2
+    echo "      installing the $SESSION_TYPE variant (the mode file decides; detection never chooses)." >&2
+  fi
+fi
 
 CHROMIUM_BIN="$(detect_chromium_bin)"
 if [[ -z "$CHROMIUM_BIN" ]]; then
@@ -194,7 +228,7 @@ render_unit() {
 echo "==> US-399 carousel dashboard kit"
 echo "    Detected Pi user:      $PI_USER"
 echo "    Resolved user UID:     $PI_UID  (V-4 -> XDG_RUNTIME_DIR; I-044)"
-echo "    Detected session type: $SESSION_TYPE"
+echo "    Kiosk session type:    $SESSION_TYPE  (V-2 <- display-mode file or forced)"
 echo "    Chromium binary:       $CHROMIUM_BIN  (V-3 -> ExecStart)"
 echo "    Dashboard variant:     $DASH_VARIANT -> $SYSTEMD_DIR/eclipse-dashboard.service"
 
