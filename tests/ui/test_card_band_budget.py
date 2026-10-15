@@ -424,6 +424,7 @@ def test_everyDriverReadTierSurvived():
     css = readCss(DASHBOARD_CSS)
     assert _declaredVar(css, ".tile-value", "font-size") == "fs-primary"
     assert scaleValues(css) == {
+        "fs-giant": 120,
         "fs-hero": 44,
         "fs-primary": 34,
         "fs-secondary": 26,

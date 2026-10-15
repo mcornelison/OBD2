@@ -7537,6 +7537,39 @@ fill, not palette entries. Naming them means inventing `--on-amber`/`--on-critic
 (Iris's design call + an Atlas token addition) — routed as **TD-071**, which also
 carries SSOT promotion of the three `--*-deep` edge tokens.
 
+#### V0.30 OEM token set (US-887-a, Sprint 103 / V0.30.1) [Atlas Rule-10 2026-10-13]
+
+The "90s Mitsubishi OEM" style (`specs/v030-frame-and-style-design.md` §4.2)
+**changes token values in the SSOT and its mirror together**; no consumer rule
+changed, so every surface restyles through the existing bindings:
+
+| Token | Was | Now | Role |
+|---|---|---|---|
+| `--bg` | `#000000` | `#0A0A0A` | matte black field |
+| `--surface` | `#111111` | `#141414` | panels, top bar, empty bar segments |
+| `--line` *(new)* | — | `#262626` | rules, panel edges |
+| `--text-primary` | `#DDDDDD` | `#F5F1E8` | warm white, readings |
+| `--text-secondary` | `#888888` | `#A8A296` | labels, units |
+| `--text-tertiary` | `#666666` | `#5F5A52` | furniture, inactive dots |
+| `--accent` *(new)* | — | `#FF6A2B` | pointers + accents ONLY (§4.4) |
+| `--radius` *(new)* | — | `10px` | panel corners |
+| `--fs-giant` *(new)* | — | `120px` | the Driving gear alone (`v030-driving-page-design.md` D-10) |
+
+- **State colours did not move.** `--green-ok` / `--amber-warn` /
+  `--critical-red`, the destructive pair and the brand reds are unchanged:
+  state means state, identical in every style. `--accent` is for **unbanded**
+  data and pointers; it is never a state and never a reading.
+- **`--bg` stays a STOP-safe near-black.** `#0A0A0A` is inside the takeover's
+  near-black set `{#000, #000000, #0A0A0A}` (`test_dashboard_stop_tier_safety.py`),
+  so the restyle cannot weaken the STOP contrast channel.
+- **The type scale is now six tiers, `--fs-giant` on top.** It is declared in both
+  sheets, joins `SCALE_TOKENS` in `tests/ui/css_type_scale.py` (the ONE list every
+  scale guard reads), and the scale stays strictly descending; no existing tier
+  changed value. A seventh `--fs-*` remains drift.
+- **Declared ahead of its consumers.** US-887-a lands values only; no selector
+  binds `--fs-giant`, `--line`, `--accent` or `--radius` yet (US-887-c and
+  US-888-a do), so later stories consume tokens rather than literals.
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

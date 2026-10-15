@@ -99,10 +99,16 @@
      it: the STOP takeover directive is hero and outranks the base directive
      (primary), and the DTC detail directive (primary) outranks its base copy
      (secondary). Pinned by tests/ui/test_dashboard_type_scale.py, which also
-     compares these five values across BOTH files (the dist sheet MIRRORS this
+     compares these values across BOTH files (the dist sheet MIRRORS this
      block by hand -- dashboard.html links only that one sheet, and no rule may
      pull a second stylesheet in: the kiosk is offline in the car, so the fetch
-     would fail in the one place that matters. See dashboard.css:54). */
+     would fail in the one place that matters. See dashboard.css:54).
+
+     --fs-giant (US-887-a, V0.30, Atlas Rule-10 G-1 2026-10-13) is a SIXTH tier
+     ABOVE hero, and exactly one glyph earns it: the Driving page's gear
+     (specs/v030-driving-page-design.md D-10). It joins the TOP of the
+     descending scale and moved no existing tier. */
+  --fs-giant:       120px;     /* Driving gear (specs/v030-driving-page-design.md s3) */
   --fs-hero:        44px;
   --fs-primary:     34px;
   --fs-secondary:   26px;
@@ -150,20 +156,30 @@
 
   /* --- Base surfaces ------------------------------------------------------ */
   /* Atlas Rule-10 ruling 2026-07-31 (US-510/TD-065): PROMOTED from the
-     dashboard.css:27-28 literals. Pure consolidation -- the values ARE the
-     shipped ones, so the promotion is zero-visual-change by construction. */
-  --bg:             #000000;   /* base background (splash + dashboard field)  */
-  --surface:        #111111;   /* raised chrome: top bar, rules, seams        */
+     dashboard.css:27-28 literals at their shipped values (#000000 / #111111).
+     US-887-a (V0.30 "90s Mitsubishi OEM", specs/v030-frame-and-style-design.md
+     s4.2, Atlas Rule-10 2026-10-13) moves them to the OEM matte-black pair and
+     adds --line, --accent and --radius. --bg stays inside the STOP takeover's
+     near-black set {#000, #000000, #0A0A0A} (test_dashboard_stop_tier_safety). */
+  --bg:             #0A0A0A;   /* matte black field (splash + dashboard)      */
+  --surface:        #141414;   /* panels, top bar, empty bar segments         */
+  --line:           #262626;   /* rules, panel edges                          */
 
   /* --- Neutral text ------------------------------------------------------- */
-  --text-primary:   #DDDDDD;   /* primary / high-emphasis dashboard text.
-                                  Atlas gate (Rule-10, 2026-07-25, US-484/BL-024):
-                                  value grounded by Iris's CIO-locked Pi dashboard
-                                  design (9da4af5) + ~15:1 contrast on the dark
-                                  panel (WCAG AAA); brightest of the text tier,
-                                  above --text-secondary.                       */
-  --text-secondary: #888888;   /* wordmark; secondary readable label          */
-  --text-tertiary:  #666666;   /* version chip; de-emphasized meta           */
+  --text-primary:   #F5F1E8;   /* warm white: readings + high-emphasis text.
+                                  Atlas gate (Rule-10, 2026-07-25, US-484/BL-024)
+                                  tokenized it; US-887-a set the OEM warm white
+                                  (frame spec s4.2, Atlas Rule-10 2026-10-13).
+                                  Brightest of the text tier, above
+                                  --text-secondary.                            */
+  --text-secondary: #A8A296;   /* labels, units; secondary readable label     */
+  --text-tertiary:  #5F5A52;   /* furniture, inactive dots, de-emphasized meta */
+
+  /* --- Accent + shape (US-887-a, frame spec s4.2/s4.4) ------------------- */
+  --accent:         #FF6A2B;   /* POINTERS + ACCENTS ONLY: unbanded data, the
+                                  active page dot. Never a state, never a
+                                  reading (readings are warm white, s4.4).     */
+  --radius:         10px;      /* panel corners (gauge-bezel feel)            */
 
   /* --- Warn (project-wide) ------------------------------------------------ */
   --amber-warn:     #FFC400;   /* WATCH tier / degraded escalation; tuning

@@ -77,10 +77,13 @@ _LOCKED_FOOTER = "swipe for details · hold or ⋮ for setup"
 _DRIFTED_FOOTER = "monitoring resumes on engine start"
 
 # Atlas Rule-10 ruling 2026-07-31 (design-gate PASS + rulings). Values, not
-# Rex-derived: --bg/--surface are the EXISTING dashboard.css:27-28 literals
-# being promoted; the destructive pair is Atlas's new definition.
-_ATLAS_BG = "#000000"
-_ATLAS_SURFACE = "#111111"
+# Rex-derived: the destructive pair is Atlas's definition. --bg/--surface were
+# promoted at their shipped #000000/#111111 and US-887-a moved them to the V0.30
+# OEM values (specs/v030-frame-and-style-design.md s4.2, Atlas Rule-10
+# 2026-10-13). --bg is written lower-case so the re-fork scan below, which
+# lower-cases each rule body, still matches it.
+_ATLAS_BG = "#0a0a0a"
+_ATLAS_SURFACE = "#141414"
 _ATLAS_DESTRUCTIVE = "#C62828"
 _ATLAS_DESTRUCTIVE_BORDER = "#7F1D1D"
 
@@ -294,8 +297,8 @@ def test_bgAndSurface_arePromotedIntoTheSsot():
 
 def test_bgAndSurfacePromotion_isZeroVisualChange():
     """Atlas made this the DoD gate in so many words: the promoted values ARE
-    the current ones, so a diff that changes a rendered pixel FAILS. The dist
-    mirror and the SSOT must agree, and both must equal the pre-story literal."""
+    the ruled ones. The dist mirror and the SSOT must agree, and both must equal
+    the frame spec s4.2 value (US-887-a)."""
     css, tokens = _read(_CSS), _read(_TOKENS)
     for name, expected in (("bg", _ATLAS_BG), ("surface", _ATLAS_SURFACE)):
         assert _tokenValue(css, name) == _tokenValue(tokens, name), name
@@ -304,7 +307,7 @@ def test_bgAndSurfacePromotion_isZeroVisualChange():
 
 def test_theBackgroundLiteralIsNeverReForkedIntoASurface():
     """The cheap way to "pass" a tokenization sweep is to inline the value again
-    somewhere else. #000000 is now --bg's job; the long form must appear only in
+    somewhere else. The background is --bg's job; its literal must appear only in
     the two :root blocks. (The SHORT #000 is the contrast-pair deferral below --
     a different fact, and deliberately not conflated with the background.)"""
     for selector, body in _surfaceRules():

@@ -97,7 +97,10 @@
      non-critical copy only. These MUST equal tokens.css, and they are NOT final
      until read in the car with the output mode confirmed panel-native (US-552 --
      a 1080p->480x320 downsample softens every glyph and raises the floor).
-     Pinned by tests/ui/test_dashboard_type_scale_values.py. */
+     Pinned by tests/ui/test_dashboard_type_scale_values.py.
+     US-887-a: --fs-giant is the sixth tier, ABOVE hero, for the Driving gear
+     alone (Atlas Rule-10 G-1); no existing tier moved. */
+  --fs-giant:       120px;     /* SSOT --fs-giant -- Driving gear (specs/v030-driving-page-design.md s3) */
   --fs-hero:        44px;      /* SSOT --fs-hero */
   --fs-primary:     34px;      /* SSOT --fs-primary */
   --fs-secondary:   26px;      /* SSOT --fs-secondary */
@@ -118,13 +121,17 @@
   --dots-h:         16px;      /* SSOT --dots-h */
   --card-pad-y:      8px;      /* SSOT --card-pad-y */
   /* --- Base surfaces -- promoted into the SSOT by US-510 (Atlas Rule-10
-     2026-07-31). These two were dist-only literals; the values are UNCHANGED,
-     so the promotion moved no pixels (that was Atlas's explicit DoD gate). */
-  --bg:             #000000;   /* SSOT --bg */
-  --surface:        #111111;   /* SSOT --surface */
-  --text-primary:   #DDDDDD;   /* SSOT --text-primary (Atlas Rule-10 2026-07-25) */
-  --text-secondary: #888888;   /* SSOT --text-secondary */
-  --text-tertiary:  #666666;   /* SSOT --text-tertiary */
+     2026-07-31) at their shipped values. US-887-a moved the base + text tier
+     to the V0.30 OEM set (frame spec s4.2, Atlas Rule-10 2026-10-13) and added
+     --line / --accent / --radius. These MUST equal tokens.css. */
+  --bg:             #0A0A0A;   /* SSOT --bg -- matte black field */
+  --surface:        #141414;   /* SSOT --surface -- panels, top bar */
+  --line:           #262626;   /* SSOT --line -- rules, panel edges */
+  --text-primary:   #F5F1E8;   /* SSOT --text-primary -- warm white (Atlas Rule-10 2026-10-13) */
+  --text-secondary: #A8A296;   /* SSOT --text-secondary -- labels, units */
+  --text-tertiary:  #5F5A52;   /* SSOT --text-tertiary -- furniture, inactive dots */
+  --accent:         #FF6A2B;   /* SSOT --accent -- pointers + accents ONLY */
+  --radius:         10px;      /* SSOT --radius -- panel corners */
   --amber-warn:     #FFC400;   /* SSOT --amber-warn -- WATCH / degraded */
   /* The two DEEP gradient edges of the DTC takeover. US-510 relocated these
      from inline literals in the takeover rules; the VALUES ARE UNCHANGED, so

@@ -18,6 +18,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-11    | Ralph (Rex)  | Initial -- US-539 type-scale token resolver.
+# 2026-10-15    | Ralph (Rex)  | US-887-a -- fs-giant joins the top of SCALE_TOKENS.
 # ================================================================================
 ################################################################################
 
@@ -35,8 +36,9 @@ DASHBOARD_CSS = os.path.join(_UI, "dashboard", "dashboard.css")
 # The whole scale, largest first. The ORDER is load-bearing: two safety
 # hierarchies (see the module docstring) are expressed as "a higher tier than",
 # and `test_dashboard_type_scale.py` asserts the declared values descend in
-# exactly this sequence.
-SCALE_TOKENS = ("fs-hero", "fs-primary", "fs-secondary", "fs-label", "fs-meta")
+# exactly this sequence. `fs-giant` (US-887-a) is the V0.30 Driving gear tier and
+# sits ABOVE hero, so it leads the tuple; no existing tier moved.
+SCALE_TOKENS = ("fs-giant", "fs-hero", "fs-primary", "fs-secondary", "fs-label", "fs-meta")
 
 # A bare px magnitude on a `font-size` -- the drift US-539 exists to remove.
 # `(?<![-\w])` keeps a custom-property declaration (`--fs-hero: 40px`) from
