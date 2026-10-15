@@ -96,7 +96,8 @@ Clamped to 1..5. **A hint never becomes solid**; only gear derivation makes a so
   - Battery: banded **only while the engine runs** (Spool's engine-running gate); engine off ⇒ neutral `--text-primary` with no band.
 - Temperatures display in **°F**, converted from °C **for display only**. Bands are always judged in °C by the provider, so a rounding edge can't flip a colour.
 - Absent value ⇒ `--` + reason **on the glass** (US-852 rule).
-- **Active live red ⇒ the full-screen takeover** (R31; Warnings spec §4.4) covers this page with `PULL OVER` + value + unit. The tile underneath still goes red, so the page is correct the moment the takeover closes.
+- **Live coolant red ⇒ the full-screen takeover** (R31, scope ruled 2026-10-14; Warnings spec §4.4) covers this page with `PULL OVER` + value + unit. The tile underneath still goes red, so the page is correct the moment the takeover closes.
+- **Battery red and RPM red never take over** (CIO 2026-10-14). The tile goes red from its band, and the top-bar icon shows WATCH (Warnings §4.4a). A red tile with an amber icon is correct: the band and the alert tier are different facts.
 
 ### 4.4 Staleness
 - After **5 s** without a new reading (**`pi.display.stale.obdLiveSec` = 5**, Atlas 2026-10-13; 0.3 % of RPM gaps over 57 drives exceed it, and those are real stalls), a value **dims** (opacity ≈ 0.4) and shows its age in `--amber-warn` `--fs-meta` (`12 s`). Applies to RPM, speed, coolant, intake air, battery and gear.
@@ -129,7 +130,7 @@ Clamped to 1..5. **A hint never becomes solid**; only gear derivation makes a so
 8. Stale fixture (`stale: true`, `last.value` set): every value shows **`last.value`**, dimmed, with age; never `--`. Not-read fixture (`value: null`, no `stale`): `--` + reason.
 8a. RPM zones: fixtures at 5,499 / 5,500 / 6,999 / 7,000 light green / yellow / yellow / red segments; zone edges come from the provider (grep gate: no `5500` or `7000` in `carousel.js`).
 8b. Gear hint fixtures render exactly the provider's `hintGear` + `hintDirection`; with the hint null, `--`.
-8c. Live-red fixture: the takeover covers this page with `PULL OVER` + value + unit (Warnings AC 3).
+8c. Live-coolant-red fixture: the takeover covers this page with `PULL OVER` + value + unit (Warnings AC 3). Battery-red and redline fixtures: red tile / red segments, **no takeover**. *(Takeover ACs land with the Warnings stories; out of Sprint 103.)*
 9. No literal colour or px in this page's CSS.
 10. **DoD (R15): the CIO, in the car, reads gear, RPM and speed at a glance with no touch.**
 

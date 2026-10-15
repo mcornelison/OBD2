@@ -27,7 +27,7 @@
 ## 2. Navigation (CIO)
 - **Unchanged from today: swipe + page dots.** *(Correction: my working note that swipe had been removed by US-746 was stale; the CIO confirms swipe works on the car today.)*
 - **No automatic return** to the Driving page. The screen stays where you left it.
-- The only automatic page change is the **STOP jump to Warnings, once per new STOP** (Warnings spec §4.4).
+- **No timer or event changes the page.** An active STOP does not jump to Warnings: it raises the **R31 full-screen takeover** over whatever page is showing (Warnings spec §4.4). Only a live coolant red is a STOP (CIO 2026-10-14). When the takeover closes, the page underneath is the one the driver left. *(Corrected 2026-10-14: this line said "STOP jump to Warnings, once per new STOP", which R31 superseded on 2026-10-13.)*
 - Auto-rotate remains a Settings option (`autoRotateS`, default off).
 
 ## 3. Top bar (every page; height `--bar-h` 34)
@@ -56,6 +56,23 @@ When the numbers on the glass are not the car's live data, the clock's slot says
 - **Never blank and never hidden:** a non-live value that the page doesn't recognise still raises a marker (`NOT LIVE`). Hiding it would present unknown data as live.
 - Look: the same for all three. `--text-primary` on `--bg`, `--font-display` at `--fs-label`, **no state colour and no `--accent`**, because it shows a mode, not a severity. `pointer-events: none`.
 - Layering (Marcus's fold): a direct child of `body`, fixed over the centre slot of `--bar-h`, with a z-index above every other declared z-index (so it stays above the R31 takeover).
+
+### 3.2 Page names in the bar (measured 2026-10-14; short names CIO 2026-10-14)
+Michroma 400 at `--fs-meta`, letter-spacing 0, inside `.topbar-right` beside the kebab. **Rule: every bar name is ≤ 122 px**, measured from `specs/assets/fonts/michroma/michroma-advances.json`. The budget is 168.6 px of side track, minus an 8 px gap, minus the 34 px kebab, minus a 4 px margin. Never shrink below 15 px: a name that doesn't fit gets a short form.
+
+| Page | Bar name | px |
+|---|---|---|
+| Driving | `DRIVING` | 88 |
+| Navigation | **`NAV`** (CIO) | 48 |
+| Engine | `ENGINE` | 80 |
+| Fuel | `FUEL` | 53 |
+| O2 | `O2` | 30 |
+| Motion | `MOTION` | 87 |
+| Light | `LIGHT` | 62 |
+| System | `SYSTEM` | 95 |
+| Warnings | **`ALERTS`** (CIO) | 86 |
+
+The short forms appear **in the bar only**. Each page keeps its full name in specs and stories. Interim V0.29 cards in Sprint 103 use `BATTERY` (104) and `FUEL TRIM` (112), and the Home/IMU card uses `MOTION`.
 
 ## 4. Visual style — "90s Mitsubishi OEM" (CIO)
 
@@ -99,7 +116,7 @@ Period-correct for a 1998 Eclipse GST cluster: **matte black, warm-white wide-se
 
 ## 5. Acceptance criteria (draft, frame-wide)
 1. Top bar identical on all nine pages; right slot shows the page name; no page renders its own title row.
-2. Swipe and dots both navigate; no timer changes the page except the STOP jump.
+2. Swipe and dots both navigate; no timer or event changes the page (auto-rotate off by default). The R31 takeover is an overlay, not a page change.
 3. Grep gate: no literal colour/px in any page CSS; every colour resolves to a §4.2 token.
 4. No element uses a state colour for unbanded data (fixture review per page).
 5. Readings render in the fixed-width face (computed `font-family`) and keep their width across updates.

@@ -51,6 +51,8 @@ The bearing tape is the focal element. Everything else on the page is secondary.
 | Band | Content | Type tokens | Height |
 |---|---|---|---|
 | Title row | `NAVIGATION` left, state badge right | `--fs-label` both | 22 |
+
+> **Superseded 2026-10-14 (title row):** the frame spec (§3) removes every page's title row, and the page name moves into the top bar. **This page's bar name is `NAV`** (CIO 2026-10-14; `NAVIGATION` at 135 px doesn't fit the 122 px slot, frame §3.2). The calibration badge still needs a home. My proposal is the right end of the tape band, decided at this page's re-skin. That frees the 22 px back to the tape or the slack. The layout above is kept as drawn until that pass.
 | Tape | Full width (456 px). 90° window. Ticks every 5° (fine), 15° (minor), 45° (major + compass letter). `N` in `--text-primary`, others `--text-secondary`. Centre **hairline** 2 px `--text-primary` | letters `--fs-secondary` | 70 |
 | Heading readout | `247°` (zero-padded 3 digits) + 8-point compass letter, centred under the hairline | `--fs-hero` / `--fs-primary` | 46 |
 | Bottom row | **GRADE**: slope glyph + `+4.1 %` · **THIS DRIVE**: `12.4 mi` over `0:23 elapsed` | `--fs-primary` values, `--fs-meta` labels, `--fs-label` elapsed | ~79 |

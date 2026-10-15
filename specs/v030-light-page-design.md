@@ -30,7 +30,7 @@
 ```
 ┌──────────────────────────────────────────────┐
 │ ☀ DAY                  ┊         ╭──────────── │
-│                        ┊      ╭──╯     ●       │ ~110  curve 210×104, log lux
+│                        ┊      ╭──╯     ●       │ ~110  curve 200×104, log lux
 │ AMBIENT                ┊ ─────╯        ┊       │
 │ 1,400 lux              3            300 lx     │
 ├──────────────────────────────────────────────┤
@@ -46,7 +46,7 @@
 | Glyph | 34 × 34 SVG, `--text-primary` stroke | sun / dusk / moon by the word |
 | Word | `--fs-hero`, `--font-display`, **neutral colour always** | |
 | Ambient | `--fs-primary` | <10 lux one decimal; ≥10 integer with thousands separator |
-| Curve | 210 × 104 SVG | log-lux x axis (0.3 … 30 000), brightness y; dashed verticals at the two curve ends; live dot. **One scale for line, dot and labels** |
+| Curve | **200** × 104 SVG (was 210: `NIGHT` in Michroma at 44 px is 197 px, so word + glyph + gap need ~241 px; measured 2026-10-14) | log-lux x axis (0.3 … 30 000), brightness y with labels at `minLevel` and 100 %; dashed verticals at the two curve ends; live dot. **One scale for line, dot and labels** |
 | Raw cells | `--fs-label` values, `--fs-meta` labels | parked-read |
 | Status | `--fs-label` | amber when overridden |
 | Shortcut | ≥ 32 px tall hit target, outlined | **parked only** (R5) |
