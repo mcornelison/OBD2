@@ -362,7 +362,8 @@ def test_html_alertsIsTheSecondCard():
                        _read(_HTML), re.S)
     # MOVED PIN (US-888-a): the Driving card is the new index 0 (the landing
     # card, R5), so the US-541 order Home . Alerts . System Status now follows it.
-    assert cards[:4] == ["Driving", "Home", "Alerts", "System Status"]
+    # MOVED PIN (US-889-b): the Engine card sits between Driving and Home (E-2).
+    assert cards[:5] == ["Driving", "Engine", "Home", "Alerts", "System Status"]
 
 
 # ---------------------------------------------------------------------------

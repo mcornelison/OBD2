@@ -3561,6 +3561,13 @@
     // The RPM label already names the unit; "rpm" beside four digits would
     // not fit the 120 px column.
     rpm: { unit: "", decimals: 0, convert: null },
+    // US-889-b: ONLY canonical keys (Atlas G1) -- what obd-live publishes after
+    // US-888-b. The OBD library's unit names never reach this table (grep gate,
+    // tests/ui/test_engine_page.py). Degrees print the glyph, never letters.
+    "%": { unit: "%", decimals: 0, convert: null },
+    deg: { unit: "°", decimals: 0, convert: null },
+    "g/s": { unit: "g/s", decimals: 1, convert: null },
+    count: { unit: "", decimals: 0, convert: null },
   };
 
   function displayUnits(value, unit) {
@@ -3652,6 +3659,81 @@
       // US-888-b: the stepped bar, from the same params.RPM as the number.
       rpmBar: rpmBarView(params ? params.RPM : null),
     };
+  }
+
+  // --- US-889-b Engine card, above the fold (F-127) -------------------------
+  //
+  // specs/v030-engine-page-design.md s3-s4: load, throttle and timing from
+  // states/obd-live, each stepping at its own sample. The page judges nothing:
+  // no value here carries a band (load at 100 % is expected on this turbo
+  // engine and stays neutral -- a compound danger belongs to a provider).
+  var ENGINE_PIDS = ["ENGINE_LOAD", "THROTTLE_POS", "TIMING_ADVANCE"];
+  // The two vertical bars and their scale: 0-100 % of the bar's height. A
+  // geometry bound, not a threshold -- it paints no colour.
+  var ENGINE_BAR_PIDS = ["ENGINE_LOAD", "THROTTLE_POS"];
+  var ENGINE_BAR_MAX_PCT = 100;
+
+  function engineNotRead(reason) {
+    return {
+      value: null, text: DRIVING_NOT_READ, unit: "", stale: false,
+      note: reason, noteKind: "reason",
+    };
+  }
+
+  // SAE J1979 PID 0x0E is degrees relative to TDC, negative = retarded (Iris
+  // G-2): >= 0 reads "n° BTDC", < 0 reads "|n|° ATDC" -- never "-4° BTDC". Only
+  // a 'deg' reading may claim a crank position; any other unit renders raw.
+  function engineTimingText(value, unit) {
+    if (unit !== "deg") return displayUnits(value, unit);
+    var shown = displayUnits(Math.abs(value), unit);
+    return { text: shown.text, unit: shown.unit + (value < 0 ? " ATDC" : " BTDC") };
+  }
+
+  // One obd-live param -> its slot, the drivingReading rules without a band:
+  // fresh -> the value; stale -> last.value with its age (dimmed by the sheet);
+  // not read / absent -> "--" + the provider's reason. `value` is the number
+  // shown, so the bar is drawn from the SAME sample as the digits.
+  function engineReading(param, nowMs, format) {
+    if (!isObj(param)) return engineNotRead("not read");
+    var stale = param.stale === true;
+    var source = stale ? (isObj(param.last) ? param.last.value : null) : param.value;
+    if (typeof source !== "number" || !isFinite(source)) {
+      return engineNotRead(drivingReasonText(param.noBandReason));
+    }
+    var shown = format(source, param.unit);
+    return {
+      value: source, text: shown.text, unit: shown.unit, stale: stale,
+      note: stale ? drivingAgeText(param.ts, nowMs) : "",
+      noteKind: stale ? "age" : "",
+    };
+  }
+
+  // A bar's fill in % of its height, or null (nothing lit). Only a '%' reading
+  // can fill a 0-100 % bar; clamped so a value past the scale pins the bar
+  // rather than overflowing the card.
+  function engineBar(reading, unit) {
+    var fill = reading.value === null || unit !== "%" ? null
+      : Math.max(0, Math.min(ENGINE_BAR_MAX_PCT, reading.value));
+    return { fill: fill, stale: fill !== null && reading.stale };
+  }
+
+  // The Engine card's above-the-fold view from states/obd-live alone.
+  function engineView(obdLiveData, nowMs) {
+    var params = isObj(obdLiveData) && isObj(obdLiveData.params) ? obdLiveData.params : null;
+    var readings = {};
+    for (var i = 0; i < ENGINE_PIDS.length; i++) {
+      var pid = ENGINE_PIDS[i];
+      var format = pid === "TIMING_ADVANCE" ? engineTimingText : displayUnits;
+      readings[pid] = params ? engineReading(params[pid], nowMs, format)
+        : engineNotRead("no source");
+    }
+    var bars = {};
+    for (var b = 0; b < ENGINE_BAR_PIDS.length; b++) {
+      var barPid = ENGINE_BAR_PIDS[b];
+      var param = params && isObj(params[barPid]) ? params[barPid] : null;
+      bars[barPid] = engineBar(readings[barPid], param ? param.unit : null);
+    }
+    return { readings: readings, bars: bars };
   }
 
   // --- US-888-b the RPM bar (spec s4.1, R30, R35) ----------------------------
@@ -4223,6 +4305,7 @@
     gearReasonText: gearReasonText,
     displayUnits: displayUnits,
     drivingView: drivingView,
+    engineView: engineView,
     rpmBarView: rpmBarView,
     gLevel: gLevel,
     pushGradeTrend: pushGradeTrend,
@@ -4743,6 +4826,39 @@
           noteEl.textContent = reading.note;
           noteEl.hidden = !reading.note;
         }
+      }
+    }
+
+    // US-889-b: paint `engineView` into the Engine card's FIXED skeleton
+    // (dashboard.html). Text, state attributes and the bars' fill height only:
+    // the stylesheet maps data-stale / data-note to tokens. The fill is a plain
+    // height with no transition, so a bar steps from one sample to the next.
+    function renderEngineCard(card, view) {
+      if (!card || !view) return;
+      var slots = card.querySelectorAll(".eng-reading");
+      for (var s = 0; s < slots.length; s++) {
+        var slot = slots[s];
+        var reading = view.readings[slot.getAttribute("data-pid")];
+        if (!reading) continue;
+        slot.setAttribute("data-stale", reading.stale ? "true" : "false");
+        slot.setAttribute("data-note", reading.noteKind || "none");
+        var valueEl = slot.querySelector(".eng-value");
+        if (valueEl) valueEl.textContent = reading.text;
+        var unitEl = slot.querySelector(".eng-unit");
+        if (unitEl) unitEl.textContent = reading.unit;
+        var noteEl = slot.querySelector(".eng-note");
+        if (noteEl) {
+          noteEl.textContent = reading.note;
+          noteEl.hidden = !reading.note;
+        }
+      }
+      var cols = card.querySelectorAll(".eng-bar-col");
+      for (var c = 0; c < cols.length; c++) {
+        var bar = view.bars[cols[c].getAttribute("data-pid")];
+        if (!bar) continue;
+        cols[c].setAttribute("data-stale", bar.stale ? "true" : "false");
+        var fill = cols[c].querySelector(".eng-bar-fill");
+        if (fill) fill.style.setProperty("height", (bar.fill === null ? 0 : bar.fill) + "%");
       }
     }
 
@@ -5823,6 +5939,9 @@
       // edge firing on the first tick (lastIdle starts null) is what makes the
       // landing card the card the panel opens on.
       var drivingCard = document.getElementById("driving-card");
+      // US-889-b: the Engine card, right after Driving; filled from the same
+      // cached states/obd-live on the same tick.
+      var engineCard = document.getElementById("engine-card");
       var landingIndex = -1;
       var lastIdle = null;
       // US-497 g-trail + US-508 grade trend: accumulated across polls from the
@@ -6587,6 +6706,7 @@
         renderDrivingCard(
           drivingCard, drivingView(await stateOnce("obd-live"), lastGear, nowMs)
         );
+        renderEngineCard(engineCard, engineView(await stateOnce("obd-live"), nowMs));
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint

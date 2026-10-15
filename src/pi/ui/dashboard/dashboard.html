@@ -180,6 +180,51 @@
           </div>
         </div>
       </section>
+      <!-- US-889-b (F-127; specs/v030-engine-page-design.md, layout B): the
+           ENGINE card, right after Driving (CIO E-2 order). Above the fold:
+           load and throttle as two vertical bars (0-100 %) with load, throttle
+           and timing beside them, every value from states/obd-live
+           (`engineView`). No `data-state`: the generic availability poll never
+           grays it -- each value carries its own stale / not-read story. The
+           skeleton ships "--" because nothing has been read before the first
+           poll. TIMING_ADVANCE is base timing, not knock (no knock source
+           without ECMLink), so the caption is markup and always on the glass.
+           The cue points at the scroll half (history + status, US-889-c). -->
+      <section class="card" id="engine-card" aria-label="Engine" data-page-name="ENGINE">
+        <div class="card-body">
+          <div class="eng-main">
+            <div class="eng-bars" aria-hidden="true">
+              <div class="eng-bar-col" data-pid="ENGINE_LOAD" data-stale="false">
+                <div class="eng-bar"><div class="eng-bar-fill"></div></div>
+                <span class="eng-label">LOAD</span>
+              </div>
+              <div class="eng-bar-col" data-pid="THROTTLE_POS" data-stale="false">
+                <div class="eng-bar"><div class="eng-bar-fill"></div></div>
+                <span class="eng-label">THR</span>
+              </div>
+            </div>
+            <div class="eng-readings">
+              <div class="eng-reading eng-load" data-pid="ENGINE_LOAD" data-stale="false" data-note="none">
+                <span class="eng-label">LOAD</span>
+                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <span class="eng-note" hidden></span>
+              </div>
+              <div class="eng-reading" data-pid="THROTTLE_POS" data-stale="false" data-note="none">
+                <span class="eng-label">THROTTLE</span>
+                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <span class="eng-note" hidden></span>
+              </div>
+              <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
+                <span class="eng-label">TIMING</span>
+                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <span class="eng-note" hidden></span>
+              </div>
+              <span class="eng-basis">base timing · not knock</span>
+            </div>
+          </div>
+          <span class="eng-cue">↓ history and status below</span>
+        </div>
+      </section>
       <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
            card sitting beside an always-present fallback card would poll and
            paint the same feed twice and put two rules in charge of the slot.

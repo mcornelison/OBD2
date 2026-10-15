@@ -7768,6 +7768,44 @@ Driving spec §4.1-§4.2, R30, R35:
   `@media (prefers-reduced-motion: no-preference)` on data-attribute-qualified
   selectors, so reduced motion keeps every colour and loses only the movement.
 
+#### V0.30 Engine card, layout B above the fold (US-889-b, Sprint 104 / V0.30.6)
+
+Engine spec §3-§4 (`specs/v030-engine-page-design.md`), CIO E-2 order:
+
+- **A new card at index 1, right after Driving.** `#engine-card`
+  (`aria-label="Engine"`, `data-page-name="ENGINE"`); card order is Driving,
+  Engine, Home, Alerts, System Status, Battery, Fuel Trim, Light. No
+  `data-state` (the generic availability poll never grays it), not the landing
+  card, not vehicle-gated.
+- **States it reads -- and nothing else.** `states/obd-live`
+  `params.<PID>.{value, unit, ts, stale, noBandReason, last}` for
+  `ENGINE_LOAD`, `THROTTLE_POS` and `TIMING_ADVANCE`, from the tick's
+  `stateOnce` cache (no extra fetch). `engineView(obdLive, nowMs)` is the pure
+  view; `renderEngineCard` writes text, `data-stale` / `data-note`, and each
+  bar's fill height into a fixed skeleton.
+- **The page computes no value and paints no state colour.** Load at 100 % is
+  expected on this turbo engine and stays neutral; the two vertical bars
+  (26 x 120 px, 0-100 %) are `--accent`, filled from the SAME sample as the
+  number, clamped to the bar, and empty for a non-`%` unit. Each value steps at
+  its own sample; no transition. Stale shows `last.value` dimmed with its age;
+  not read / PID absent is `--` + the provider's reason; no obd-live at all is
+  `--` + `no source`.
+- **Timing.** Always captioned `base timing · not knock` (TIMING_ADVANCE is not
+  knock). SAE J1979 PID 0x0E is degrees relative to TDC, negative = retarded: a
+  `deg` value >= 0 reads `n° BTDC`, < 0 reads `|n|° ATDC`, never `-4° BTDC`; any
+  other unit renders raw with no TDC claim.
+- **Units.** `displayUnits` gained ONLY canonical keys (Atlas G1): `%` (0 dp),
+  `deg` (0 dp, the `°` glyph), `g/s` (1 dp), `count` (no unit text). carousel.js
+  names no OBD-library unit (grep gate in `tests/ui/test_engine_page.py`).
+- **Type and tokens.** Load `--fs-hero`, throttle and timing `--fs-primary`;
+  values, units and captions in `--font-mono` (it carries `°`), labels in
+  Michroma at `--fs-meta` (`--font-display` now also binds
+  `#engine-card .eng-label`). Geometry is scoped custom properties on
+  `#engine-card`; the CSS gate allows literal px only there. The cue
+  `↓ history and status below` points at the scroll half (US-889-c). Fixtures:
+  `tests/ui/fixtures/states/engine/{idle-warm, wot-pull-load-100,
+  not-read-with-reason, stale}.json`.
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

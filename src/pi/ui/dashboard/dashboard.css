@@ -1713,3 +1713,113 @@ html, body {
 @keyframes drv-gear-glide-b {
   from { opacity: 0; transform: translateY(var(--drv-glide-rise)); }
 }
+
+/* --- US-889-b Engine card, layout B above the fold (F-127) ------------------ */
+/* specs/v030-engine-page-design.md s3/s4. Tokens only; the layout's geometry
+   (26 x 120 px bars, the gaps) has no token, so -- as on #driving-card (S103
+   G-4) -- it is declared ONCE here as properties scoped to the card and every
+   rule below consumes them. This block is the only place in the Engine rules
+   that may hold a literal px (tests/ui/test_engine_page.py, the CSS gate).
+   No value is ever coloured by state: load at 100 % is expected on this turbo
+   engine (spec s4) and the bars are --accent (the unbanded rule). No motion:
+   a bar steps from one sample to the next and never sweeps between them. */
+#engine-card {
+  --eng-bar-w: 26px;          /* vertical bar width (spec s3) */
+  --eng-bar-h: 120px;         /* vertical bar height, 0-100 % (spec s3) */
+  --eng-col-gap: 16px;        /* bars -> readings */
+  --eng-bars-gap: 12px;       /* between the two bars */
+  --eng-gap: 6px;             /* between stacked rows */
+  --eng-inline-gap: 8px;      /* label -> value -> note on one row */
+  --eng-unit-gap: 4px;        /* number -> unit */
+  --eng-line: 1.2;            /* every line box */
+  --eng-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
+}
+/* The body keeps the shared .card-body guard (overflow-y auto + the scroll
+   cue): the scroll half (US-889-c) lives below the fold. */
+#engine-card .card-body {
+  display: flex; flex-direction: column; gap: var(--eng-gap);
+}
+#engine-card .eng-main {
+  flex: none;
+  display: flex; align-items: flex-start; gap: var(--eng-col-gap);
+}
+#engine-card .eng-bars {
+  flex: none;
+  display: flex; gap: var(--eng-bars-gap);
+}
+#engine-card .eng-bar-col {
+  display: flex; flex-direction: column; align-items: center; gap: var(--eng-gap);
+}
+#engine-card .eng-bar-col[data-stale="true"] {
+  opacity: var(--eng-stale-opacity);
+}
+#engine-card .eng-bar {
+  position: relative;
+  width: var(--eng-bar-w); height: var(--eng-bar-h);
+  background-color: var(--line); border-radius: var(--radius);
+  overflow: hidden;
+}
+/* carousel.js sets the fill's height (0-100 %) from the latest sample. */
+#engine-card .eng-bar-fill {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background-color: var(--accent);
+}
+#engine-card .eng-readings {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: var(--eng-gap);
+}
+/* One row: label, value + unit, note -- on a shared baseline. LOAD wraps its
+   label onto its own line above the hero number (spec s3). */
+#engine-card .eng-reading {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--eng-inline-gap);
+}
+#engine-card .eng-load .eng-label {
+  flex-basis: 100%;
+}
+/* Labels: Michroma (frame spec s4.3), letter-spacing 0. */
+#engine-card .eng-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--eng-line);
+  color: var(--text-secondary);
+}
+/* Values and units in the fixed-width face: it carries the degree glyph, the
+   Michroma subset does not. Warm white always -- no state colour here. */
+#engine-card .eng-line {
+  line-height: var(--eng-line);
+}
+#engine-card .eng-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); color: var(--text-primary);
+}
+#engine-card .eng-load .eng-value {
+  font-size: var(--fs-hero);
+}
+#engine-card .eng-unit {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); color: var(--text-secondary);
+  margin-inline-start: var(--eng-unit-gap);
+}
+/* "22° BTDC": the degree glyph sits on the number. */
+#engine-card .eng-timing .eng-unit {
+  margin-inline-start: 0;
+}
+/* Stale: last.value dimmed, with its age in amber; a reason stays secondary. */
+#engine-card .eng-reading[data-stale="true"] .eng-line {
+  opacity: var(--eng-stale-opacity);
+}
+#engine-card .eng-note {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-secondary);
+}
+#engine-card .eng-reading[data-note="age"] .eng-note {
+  color: var(--amber-warn);
+}
+#engine-card .eng-basis {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-secondary);
+}
+#engine-card .eng-cue {
+  flex: none;
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-secondary);
+}

@@ -67,6 +67,8 @@ _NODE_ONLY = pytest.mark.skipif(
 # the landing card from US-888-a; a name only has to be here to be allowed.
 BAR_NAMES = {
     "Driving": "DRIVING",
+    # MOVED PIN (US-889-b): the Engine card (Iris, 80 px).
+    "Engine": "ENGINE",
     "Home": "MOTION",
     "Alerts": "ALERTS",
     "System Status": "SYSTEM",
@@ -79,6 +81,7 @@ BAR_NAMES = {
 # published. The model must reproduce them, or it is not her model.
 IRIS_MEASURED_PX = {
     "DRIVING": 88,
+    "ENGINE": 80,
     "MOTION": 87,
     "ALERTS": 86,
     "SYSTEM": 95,

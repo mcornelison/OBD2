@@ -73,7 +73,10 @@ _NODE_ONLY = pytest.mark.skipif(
 
 # The CIO/Iris-locked card set for the legibility scale, in carousel order.
 # MOVED PIN (US-888-a): the Driving card is the new index 0 (the landing card).
-_CARD_SET = ["Driving", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"]
+# MOVED PIN (US-889-b): the Engine card is index 1, right after Driving (E-2).
+_CARD_SET = [
+    "Driving", "Engine", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"
+]
 
 # The AC's capacity ceiling: ~3 facts, 4 in a 2x2. Pinned against the RENDERED
 # tile count, which is what an operator actually has to read.

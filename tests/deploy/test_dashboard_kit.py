@@ -96,10 +96,13 @@ def test_dashboardHtml_hasBothCardSlots_s1():
     html = _read(KIT_DIR, "dashboard.html")
     # MOVED PIN (US-888-a): the Driving card lands FIRST (R5, the landing card)
     # and Home moves to index 1 unchanged -- 6 -> 7 cards.
-    assert html.count('class="card"') == 7
+    # MOVED PIN (US-889-b): the Engine card lands right after Driving (CIO E-2
+    # order) and every other card keeps its relative order -- 7 -> 8 cards.
+    assert html.count('class="card"') == 8
     labels = re.findall(r'<section class="card"[^>]*?aria-label="([^"]+)"', html, re.S)
     assert labels == [
-        "Driving", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"
+        "Driving", "Engine", "Home", "Alerts", "System Status", "Battery", "Fuel Trim",
+        "Light",
     ]
     assert 'data-state="system-status"' in html
     assert 'data-state="dtc"' in html
