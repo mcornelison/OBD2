@@ -37,7 +37,7 @@ The bearing tape is the focal element. Everything else on the page is secondary.
 
 ```
 ┌──────────────────────────────────────────────┐  top bar (V0.30 page-set design, not this spec)
-│ NAVIGATION                    [NOT CALIBRATED]│  22   title --fs-label · badge --fs-label
+│                               [NOT CALIBRATED]│  22   BADGE ROW: state badge only, --fs-label
 │   SW  ·  ·  |  ·  ·  W  ·  ·  |  ·  ·  NW     │
 │   ┃     ╷     ╷     ┃     ╷     ╷     ┃       │  70   TAPE (hero) · hairline at centre
 │                    247° SW                    │  46   --fs-hero digits · --fs-primary point
@@ -50,11 +50,11 @@ The bearing tape is the focal element. Everything else on the page is secondary.
 
 | Band | Content | Type tokens | Height |
 |---|---|---|---|
-| Title row | `NAVIGATION` left, state badge right | `--fs-label` both | 22 |
+| Badge row | State badge, right-aligned (`--amber-warn` fill). Empty when trusted; height kept | `--fs-label` | 22 |
 
-> **Superseded 2026-10-14 (title row):** the frame spec (§3) removes every page's title row, and the page name moves into the top bar. **This page's bar name is `NAV`** (CIO 2026-10-14; `NAVIGATION` at 135 px doesn't fit the 122 px slot, frame §3.2). The calibration badge still needs a home. My proposal is the right end of the tape band, decided at this page's re-skin. That frees the 22 px back to the tape or the slack. The layout above is kept as drawn until that pass.
+> **Superseded 2026-10-14 (title row):** the frame spec (§3) removes every page's title row, and the page name moves into the top bar. **This page's bar name is `NAV`** (CIO 2026-10-14; `NAVIGATION` at 135 px doesn't fit the 122 px slot, frame §3.2). **Badge home DECIDED 2026-10-15 (S105 review G-1): the 22 px row stays, as a BADGE ROW above the tape, badge right-aligned.** Measured in `--font-body` at 20 px: `NOT CALIBRATED` 175.3 px, `NO UPDATE 12 s` 166.3, `STARTING UP` 134.0. On the tape band's right end the badge would cover ~37° of the 90° window, including the W/NW letters: it would hide the hero to label it. The row keeps its height when empty (trusted), so the tape never jumps when a badge appears or clears. Budget unchanged (223 / 258).
 | Tape | Full width (456 px). 90° window. Ticks every 5° (fine), 15° (minor), 45° (major + compass letter). `N` in `--text-primary`, others `--text-secondary`. Centre **hairline** 2 px `--text-primary` | letters `--fs-secondary` | 70 |
-| Heading readout | `247°` (zero-padded 3 digits) + 8-point compass letter, centred under the hairline | `--fs-hero` / `--fs-primary` | 46 |
+| Heading readout | `247°` (zero-padded 3 digits) + 8-point compass letter, centred under the hairline. **8-point rounding:** sector = round(deg / 45) mod 8, half up: `22.5` ⇒ `NE`, `337.5` ⇒ `N` (wraps 8 → 0). A NEW 8-point function; the interim card's 16-point `headingCardinal` retires with that card | `--fs-hero` / `--fs-primary` | 46 |
 | Bottom row | **GRADE**: slope glyph + `+4.1 %` · **THIS DRIVE**: `12.4 mi` over `0:23 elapsed` | `--fs-primary` values, `--fs-meta` labels, `--fs-label` elapsed | ~79 |
 
 **Total ≈ 223 / 258.** The slack is deliberate: F-132's clip came from a budget spent to the pixel.
@@ -76,9 +76,9 @@ The bearing tape is the focal element. Everything else on the page is secondary.
 | State | Detected from | Tape | Digits | Badge |
 |---|---|---|---|---|
 | **Sensor dead** | `headingDeg` null **and** reason ≠ `heading_unseeded` | **not drawn**: `NO HEADING` + reason text in its place | `---°` | none (the block is the message) |
-| **Stale** | `states/imu.ts` older than **3 missed readings** (config, see §5) | **frozen** at last reading, no glide | last value | `NO UPDATE n s` (counts up) |
+| **Stale** | `states/imu.ts` age **> `pi.display.stale.imuSec`** (strict; the ONE IMU stale key, shared with Motion, see §5) | **frozen** at last reading, no glide | last value | `NO UPDATE n s` (counts up) |
 | **Starting up** | `headingDeg` null **and** reason = `heading_unseeded` | **frozen/blank** until the first reading, then normal | `---°` until first reading | `STARTING UP` |
-| **Not calibrated** | `headingCalibrated == false` | **normal** (N-5) | normal | `NOT CALIBRATED` |
+| **Not calibrated** | `headingCalibrated == false`, **or the key ABSENT** (legacy engine, Atlas 2026-10-14 s5) | **normal** (N-5) | normal | `NOT CALIBRATED` (false) · `--` + reason (absent); never `not calib.` |
 | **Trusted** | otherwise | normal | normal | none |
 
 Reason-code → text mapping lives in one table in `carousel.js` (it already has `imuReason()`); `heading_unseeded` gets text here, **which closes US-821**.
@@ -104,7 +104,7 @@ Heading and grade stay live: parked, the IMU heading is **correct**, not unavail
 | Calibration flag | `states/imu.headingCalibrated` (`imu_state_bridge.py:989`) | exists | — |
 | Startup / dead reasons | `states/imu` reasons map, `heading_unseeded` (`imu_state_bridge.py:505`) | exists | — |
 | Grade | `states/imu.gradePct` + reason | exists | — |
-| Staleness | `states/imu.ts` age; threshold **"3 missed readings" in config, not code** | page-side | **Atlas: gate the config key** |
+| Staleness | `states/imu.ts` age vs `pi.display.stale.imuSec` (2.0 s), injected as `window.DISPLAY_STALE.imuSec` | **exists** (US-882-c) | — **reused 2026-10-15** (Iris/Marcus, S105 Q3). My earlier "3 missed readings" was intent, not a number. One provider ⇒ one key: two keys would let NAV freeze while Motion shows live on the same fact. At a 1 Hz publish 2.0 s is 2 missed readings; if it nuisance-flashes in the car, the fix is config |
 | Trip distance | US-704 producer | **not built** | **Marcus: admit to V0.30** |
 | Drive start time | a drive-state field | **unconfirmed** | **Atlas: name it** |
 
@@ -118,15 +118,17 @@ Heading and grade stay live: parked, the IMU heading is **correct**, not unavail
 2. No element clips: every tile/band `scrollHeight <= clientHeight` (DOM check, all fixtures).
 3. Computed font-size of heading digits, grade value and trip distance ≥ 34 px.
 4. Glide (fake clock, JS unit): reaches the target within 1000 ms; 350→10 moves +20°; a mid-glide reading starts from the current drawn bearing; reduced-motion steps.
-5. Stale: with `ts` held, after 3 reading periods the tape stops moving and `NO UPDATE n s` appears and counts.
+5. Stale: with `ts` held, once its age exceeds `imuSec` (strict `>`) the tape stops moving and `NO UPDATE n s` appears and counts.
 6. A dead sensor draws **no** tape element at all, not a hidden or zero-opacity one.
 7. Every null value shows its reason text on the glass (no reason only in the DOM).
 8. **No literal colour or px** in the page's CSS (grep gate, extends US-539/US-557).
 9. **DoD (R15): the CIO, in the car, reads the bearing at a glance with no touch.**
+10. Compass point: `22.5` ⇒ `NE`, `337.5` ⇒ `N`, `247` ⇒ `SW` (8-point, R25).
+11. The badge sits in its own row above the tape; no badge overlaps any tape element (DOM rect check).
 
 ## 7. Fixtures (static state files; no replay rig, per R20)
 
-`trusted-247` · `uncalibrated` · `unseeded` · `dead-mag` · `stale-imu` · `wrap-350-to-010` (two consecutive files) · `parked-engine-off` · `grade-null`.
+`trusted-247` · `uncalibrated` · `legacy-engine-no-flag` · `boundary-022.5` · `boundary-337.5` · `unseeded` · `dead-mag` · `stale-imu` · `wrap-350-to-010` (two consecutive files) · `parked-engine-off` · `grade-null`.
 
 ## 8. Out of scope
 
@@ -135,5 +137,6 @@ Speed (driving page) · altitude (no source: no baro, GPS on hold) · position/r
 ## 9. Open items
 
 - **US-704 admission** to V0.30: Marcus, at the DoD.
-- **Drive-start field name + stale-threshold config key**: Atlas.
+- ~~Stale-threshold config key~~ **RESOLVED 2026-10-15: `pi.display.stale.imuSec`** (§5).
+- **Trip (§4.4) is OPEN, S105 review B-1:** (a) elapsed needs an END: `distanceKm`/`distanceSinceTs` hold after the drive ends, so `now − sinceTs` would keep counting while parked; (b) `distanceSinceTs` is the drive start OR the first SPEED reading after a mid-drive restart, so `THIS DRIVE` needs a provider flag; (c) no page-side zero: at drive start the provider publishes 0.0. **Atlas** names the fields; **CIO** rules Q1 (does a parked trip slot read `LAST DRIVE`?). §4.4 is rewritten once both land.
 - **DoD 10 pass numbers** (90 % vs 95 %): already raised in my DoD review.

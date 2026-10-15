@@ -37,17 +37,17 @@
 │ COOLANT · THIS DRIVE   ╱‾‾‾╲╱‾‾   214°F       │
 │ INTAKE AIR · THIS DRIVE  ~~~~~~   88°F        │
 │ BATTERY · THIS DRIVE   ‾‾‾‾‾‾‾‾   14.1V       │
-│ RUN TIME     CHECK ENGINE       O2 SENSORS    │
-│ 0:23         ON                 O2 page ›     │
+│ RUN TIME     CHECK ENGINE                     │
+│ 0:23         ON                               │
 │              12 codes ›                       │
 └──────────────────────────────────────────────┘
 ```
 
 - Two vertical bars (26 × 120 px) for load and throttle, 0–100 %; numbers beside: load `--fs-hero`, throttle and timing `--fs-primary`.
 - `↓ history and status below` cue + visible scrollbar (no silent clip). **Nothing needed while driving is below the fold** (R5).
-- **Status row fit (measured 2026-10-15).** Labels are Michroma 15 px, measured from the advances JSON: `RUN TIME` 104.0, `CHECK ENGINE` 160.0, `O2 SENSORS` 142.4 px.
-  - Columns are sized to their content: `max-content` for RUN TIME and O2 SENSORS, `1fr` for CHECK ENGINE, 8 px gaps. That needs 104.0 + 160.0 + 142.4 + 16 = **422.4 px** of the 448 px inner width.
-  - The earlier `1fr 1.3fr 1fr` grid clips `O2 SENSORS` (142.4 px in a ~131 px column).
+- **Status row fit (measured 2026-10-15; O2 tile dropped 2026-10-15, S104 review G-3).** Labels are Michroma 15 px, measured from the advances JSON: `RUN TIME` 104.0, `CHECK ENGINE` 160.0 px.
+  - **Two columns:** `max-content` for RUN TIME, `1fr` for CHECK ENGINE, 8 px gap = 104.0 + 160.0 + 8 = **272 px** of the 448 px inner width.
+  - **No O2 tile until the O2 page exists (US-891).** A `-- not built yet` tile describes our backlog, not the car. When US-891 lands, the tile returns as a third `max-content` column (`O2 SENSORS` 142.4 px; three columns need 422.4 px, which fits).
   - CHECK ENGINE value is **two lines**: `ON` (lamp state), then `n codes ›`. A 2-digit count on one line, `ON · 12 codes ›`, is 15 mono characters ≈ 181 px (DejaVu Sans Mono 0.602 em at 20 px) and overflows. Two lines make the widest value `12 codes ›` ≈ 120 px. A 3-digit count still fits (≈ 132 px).
   - `OFF` when the lamp is off; no count line. Lamp on with count 0 (a pending code): `ON` / `0 codes ›`, which is true and still links to Warnings.
 
@@ -55,6 +55,7 @@
 - **Each value steps at its own polling cadence** (load, timing every cycle; throttle ~every 3rd; IAT, run time ~every 10th). No interpolation.
 - **Load is never coloured on its own:** 100 % at full throttle is expected on this turbo engine (spec *Engine Load* row; danger only as a compound condition, which belongs to the provider).
 - **Timing** always carries `base timing · not knock` (TIMING_ADVANCE ≠ knock; no knock source without ECMLink).
+- **Timing sign (S104 review G-2):** value ≥ 0 ⇒ `n° BTDC`; value < 0 ⇒ `|n|° ATDC`. A negative advance is AFTER top dead centre, so `−4° BTDC` would state the opposite of the truth. ⚠️ **Spool to confirm** the PID's sign convention on this ECU; until he does, this rule assumes the SAE J1979 convention (positive = before TDC).
 - **History graphs** come from `states/engine-history` (Atlas S104 ruling 1, 2026-10-14; CIO pick (a) via Marcus 2026-10-15). Neutral lines, this drive, end value labelled.
   - **One point per bucket:** `{ts, value, band}`, buckets on the epoch grid `floor(ts / intervalSec)` (`pi.display.engineHistory.intervalSec`, 30 s).
   - **`value` = the LAST fresh sample in the bucket.** The line steps from point to point; the page never averages or smooths it.
@@ -62,11 +63,11 @@
   - **A bucket with no fresh sample is omitted by the provider. The page breaks the line there: a gap is a gap, never a flat line or a bridge.**
   - **INTAKE_TEMP has no band** (`no_band_defined`), so its line is always neutral with no spans.
   - **Window = this drive.** The provider resets on drive start (driveId change). Above `pi.display.engineHistory.maxPoints` (240 = 2 h) the oldest bucket drops and `sinceTs` moves with it.
-  - **The window label comes from `sinceTs`, never from the page's idea of key-on.** If `sinceTs` is later than the drive start (orchestrator restarted mid-drive, or the 2 h trim), the label reads `SINCE h:mm` instead of `THIS DRIVE`. A kiosk restart keeps the history (orchestrator memory + state file).
+  - **The window label comes from the PROVIDER, never from the page's idea of key-on** (S104 review B-2). The provider publishes whether the history covers the drive from its start (`coversDriveStart: bool`, field name Atlas's): `true` ⇒ `THIS DRIVE`; `false` (orchestrator restarted mid-drive, or the 2 h trim dropped the first bucket) ⇒ `SINCE h:mm` from `sinceTs`. **The page never compares `sinceTs` with another provider's timestamp:** `sinceTs` is a bucket start on the 30 s grid and can sit before the drive start. A kiosk restart keeps the history (orchestrator memory + state file).
   - **Empty history** (no points yet, or just after an orchestrator restart) is a typed absence: `History not recorded yet. It starts with this drive's first readings.` Never an empty chart.
 - **Units:** °F, mph (CIO). Bands judged in °C by the provider. History points carry the reading's own unit (`unit` map: C, V); the page converts by `unit` through the S103 G1 helper, display-only.
 - **Check-engine lamp** (`MIL_ON`) + code count (`DTC_COUNT`) link to Warnings (parked tap); codes are not repeated here.
-- **O2 SENSORS ›** opens the O2 page.
+- **No O2 link on this page until US-891** (see §3 status row).
 - Stale / null: dim + age / `--` + reason (shared rule).
 
 ## 5. Data contract
@@ -88,19 +89,21 @@
 5. MIL + count link to Warnings, parked tap only; codes are not repeated here.
 6. History colour comes **only** from each point's `band`. A coolant line crossing 104 °C with no amber/red `band` in its points shows no colour. A bucket whose `band` is amber shows an amber span even when its plotted `value` (the last sample) is below the number. Grep gate: no coolant/battery threshold in `carousel.js`.
 7. An omitted bucket breaks the line; no segment is drawn across a gap.
-8. Empty history is the typed absence text, not an empty or flat chart. A `sinceTs` later than the drive start labels the window `SINCE h:mm`.
+8. Empty history is the typed absence text, not an empty or flat chart. `coversDriveStart` false labels the window `SINCE h:mm` from `sinceTs`; true labels it `THIS DRIVE`. No page-side timestamp comparison.
 9. IAT history is neutral in every fixture.
-10. Scroll cue + scrollbar visible; no clipped element (DOM: every tile `scrollWidth <= clientWidth` and `scrollHeight <= clientHeight`), including the status row at a 2-digit and a 3-digit code count.
+10. Scroll cue + scrollbar visible; no clipped element (DOM: every tile `scrollWidth <= clientWidth` and `scrollHeight <= clientHeight`), including the status row at a 2-digit and a 3-digit code count. No O2 tile in the DOM until US-891.
 11. °F display-only, converted by the point's `unit` (bands judged in °C by the provider).
 12. New CSS tokens-only; geometry as scoped custom properties on `#engine-card` (S103 G-4 rule).
 13. **DoD (R15): CIO judgement in the car.**
+14. Timing: a negative-advance fixture renders `|n|° ATDC`, never `−n° BTDC`.
 
 ## 7. Fixtures
-`idle-warm` · `wot-pull-load-100` · `cold-start-history` · `fan-cycle-history` (101 °C peaks, no colour) · `coolant-dwell-fired` · `bucket-worst-band` (amber `band`, last sample below the number) · `history-gap` (omitted buckets) · `history-trimmed-2h` (`sinceTs` moved) · `history-empty-after-restart` · `mil-on-two-codes` · `mil-on-twelve-codes` · `mil-on-zero-codes` · `not-read-with-reason` · `stale`.
+`idle-warm` · `wot-pull-load-100` · `cold-start-history` · `fan-cycle-history` (101 °C peaks, no colour) · `coolant-dwell-fired` · `bucket-worst-band` (amber `band`, last sample below the number) · `history-gap` (omitted buckets) · `history-trimmed-2h` (`sinceTs` moved) · `history-empty-after-restart` · `mil-on-two-codes` · `mil-on-twelve-codes` · `mil-on-zero-codes` · `not-read-with-reason` · `stale` · `history-restarted-mid-drive` (`coversDriveStart` false) · `timing-negative` (−4 ⇒ `4° ATDC`).
 
 ## 8. Out of scope
 Boost (no source) · knock (no source) · AFR (no wideband) · MAF (Fuel page) · O2 (O2 page).
 
 ## 9. Open items
 - ~~Atlas: the this-drive history provider~~ **RULED 2026-10-14 (ruling 1); CIO picked option (a) 2026-10-15: `states/engine-history`, §4 + §5.**
+- **Open (2026-10-15):** Atlas names the `coversDriveStart` field (cc'd with the S104 shape-check); Spool confirms the timing sign convention.
 - **Engine OEM mockup** (`proposals/2026-10-14-v030-engine-page-oem.html`) still uses the `1fr 1.3fr 1fr` status grid and the one-line `ON · n codes ›`; it is corrected to §3 at the same URL.

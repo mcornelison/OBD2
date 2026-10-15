@@ -24,11 +24,11 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 | M-8 | Layout | **A · Pitch and trend first** |
 | M-9 | Trend window | **15 minutes** |
 
-## 3. Layout (480 × 320; body 258; ≈ 216 used)
+## 3. Layout (480 × 320; body 258; ≈ 246 used)
 
 ```
 ┌──────────────────────────────────────────────┐
-│ PITCH        GRADE · LAST 15 MIN              │
+│ PITCH        GRADE  LAST 15 MIN               │
 │ +3.1°        ╭──╮      ╭──●  +5.0%           │ ~76
 │ nose up   ─ ─│─ ─╰─ ─ ─╯─ ─ ─ ─ (zero)       │
 ├──────────────────────────────────────────────┤
@@ -36,9 +36,10 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 │ 0.31 g                  0.22 g                │ ~75
 │ peak ▲0.31 ▼0.38        peak L0.27 R0.31      │
 ├──────────────────────────────────────────────┤
-│ UPDATED   COMPASS     TILT FIX       GYRO     │
-│ 0 s ago   calibrated  −0.45°         plausible│ ~54
-│                       from 14 stops           │
+│ UPDATED                 COMPASS               │
+│ 0 s ago                 calibrated            │ ~84
+│ TILT FIX                GYRO                  │
+│ −0.45° from 14 stops    plausible             │
 └──────────────────────────────────────────────┘
 ```
 
@@ -48,19 +49,21 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 | Grade graph | 300 × 58 SVG | dashed zero line, end dot + end value `--fs-meta`; same scale for line, dot and label |
 | ACCEL/BRAKE, CORNER | `--fs-primary` | 2 decimals, `g`; peak line `--fs-label` |
 | Health values | `--fs-label` | parked-read; status colour `--green-ok` / `--amber-warn` |
+| Health block | **2 × 2 grid**, label over value, columns **`1fr max-content`**, 8 px gap. Left column UPDATED / TILT FIX, right column COMPASS / GYRO | **Re-laid 2026-10-15 (S105 review B-2).** One row of 4 `max-content` cells needs 105.5 (`UPDATED`) + 139.5 (`not calibrated`) + 138.9 (`from 14 stops`) + 114.8 (`implausible`) = **498.7 px** in 448, before gaps. **Not equal columns:** at ~220 px each, `−0.45° from 114 stops` (229.4 px) clips. With `max-content` the right column is 139.5 px (`not calibrated`), so the left gets 300.5 px. That fits the worst case, `−10.00° from 9999 stops` = 254.9 px (DejaVu Sans 20 px, measured). +30 px height ⇒ 246 / 258 |
+| Grade label | Michroma `--fs-meta` | `GRADE  LAST 15 MIN` (229 px). **No `·`**: the Michroma subset is A-Z 0-9 space hyphen only, so a middle dot would fall back to another font mid-label |
 
 ## 4. Behaviour
 - **Step at the IMU's 1 Hz publish rate**; no interpolation (these are measurements, not a sweeping heading).
-- **ACCEL/BRAKE:** word from the sign of the longitudinal g (**sign convention to confirm, §5**). Peak line `▲accel ▼brake`.
+- **ACCEL/BRAKE:** `ACCEL` for `gLon > 0`, `BRAKE` for `< 0` (+ = accelerating, the `imu_state_bridge` contract). Peak line `▲accel ▼brake`; `▲ ▼` are `--font-body` glyphs (DejaVu carries them), never Michroma.
 - **CORNER L/R:** word from the sign of the lateral g. Peak line `L… R…`.
-- **Peaks reset at key-on.**
+- **Peaks reset at drive start, in the PROVIDER** (Atlas ruling 4, 2026-10-14; US-892-a): `states/imu.peaks` all null and `peaks.sinceTs` = the drive-start event time. A null peak shows `--`. No numbers are coloured (no g band exists).
 - **Gyro implausible ⇒ pitch `--` + `gyro not plausible`** (amber). Pitch rides the gyro-fused path, so it cannot be trusted then.
 - **Health block:**
   - `UPDATED`: seconds since `states/imu.ts`.
-  - `COMPASS`: `calibrated` / `not calib.` from `headingCalibrated`.
+  - `COMPASS`: `calibrated` / `not calibrated` from `headingCalibrated`; the key ABSENT (legacy engine) ⇒ `--` + reason (Atlas 2026-10-14 s5). No abbreviations: the 2 × 2 grid (§3) has the room.
   - `TILT FIX`: `biasRad` in degrees + `from N stops` (`stopCount`). **0 stops ⇒ `--` + `no stops yet`**, because 0.0 means not measured (`imu_state_bridge.py:911-916`).
   - `GYRO`: `plausible` / `implausible` from the gyro reason.
-- **Stale** (shared timeout key): all motion values dim + age.
+- **Stale** (`pi.display.stale.imuSec`, the one IMU key shared with Navigation; strict `age > imuSec`): all motion values dim + age.
 - **Absent:** `--` + reason on the glass.
 
 ## 5. Data contract
@@ -69,9 +72,10 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 |---|---|---|---|
 | pitch, gLon, gLat, gradePct | `states/imu` | exist | — |
 | headingCalibrated, biasRad, stopCount, gyro reason, ts | `states/imu` | exist | — |
-| **gLon sign** (+ = accelerating?) | convention | **confirm** | Atlas |
-| **Peaks this drive** | **provider** (survives kiosk restart; providers derive, Atlas 08-20) | **new** | Atlas |
-| **15-min grade history** | today held client-side by the live card ⇒ lost on kiosk restart | **decide: provider or page** | Atlas |
+| **gLon sign** | + = accelerating (`imu_state_bridge` contract) | **confirmed** | — |
+| **Peaks this drive** | `states/imu.peaks{accelG, brakeG, leftG, rightG, sinceTs}`, reset on drive start | **ruled** (Atlas 4, 2026-10-14); build US-892-a | Ralph (S105) |
+| **15-min grade history** | `states/grade-history` (10 s points, 900 s window, null = gap) | **exists** (US-882-b) | — |
+| Stale key | `pi.display.stale.imuSec` (2.0 s) | **exists** (US-882-c) | — |
 
 ## 6. Acceptance criteria (draft)
 1. Fixtures render per §4 at 480×320 (screenshot).
@@ -83,12 +87,14 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 7. Grade graph: line, end dot and end label use one scale; the label value equals the last history point.
 8. No literal colour or px in this page's CSS.
 9. **DoD (R15): CIO judgement in the car.**
+10. Health block: no cell clips with the widest texts together (`not calibrated`, `−10.00° from 9999 stops`, `implausible`, `999 s ago`); `headingCalibrated` absent ⇒ COMPASS `--` + reason.
+11. Right after a drive start, every peak reads `--` (peaks null).
 
 ## 7. Fixtures
-`climb-accel` · `descent-brake` · `corner-left` · `corner-right` · `gyro-implausible` · `compass-uncalibrated` · `no-stops-yet` · `stale-imu` · `history-empty-after-restart`.
+`climb-accel` · `descent-brake` · `corner-left` · `corner-right` · `gyro-implausible` · `compass-uncalibrated` · `no-stops-yet` · `stale-imu` · `history-empty-after-restart` · `compass-legacy-engine` · `peaks-null-after-drive-start`.
 
 ## 8. Out of scope
 Roll and yaw rate (not published) · altitude (no source) · g meter/dot/trail (US-733) · heading and grade number (Navigation page) · light (Light page).
 
-## 9. Open items (Atlas)
-gLon sign · peaks provider · grade-history ownership · shared stale key.
+## 9. Open items
+~~gLon sign · peaks provider · grade-history ownership · shared stale key~~ **all RESOLVED 2026-10-15** (§5). None open.
