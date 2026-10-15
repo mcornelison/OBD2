@@ -406,12 +406,16 @@ class BondSelfHealer:
         return classifyBond(state, adapterPresent=adapterPowered is not None), state
 
     def readAdapterPowered(self) -> bool | None:
-        """``bluetoothctl show`` -> Powered flag, or None when unreadable."""
-        result = self._run([
-            bluetooth_helper.BLUETOOTHCTL_CMD,
-            '--timeout', str(bluetooth_helper.BLUETOOTHCTL_TIMEOUT_S),
-            'show',
-        ])
+        """``bluetoothctl show`` -> Powered flag, or None when unreadable.
+
+        US-858: no ``--timeout`` flag (a fixed 5 s wait, not a cap); the wedge
+        guard is the subprocess timeout, and ``_run`` maps TimeoutExpired to
+        None -> UNKNOWN -> SKIPPED.
+        """
+        result = self._run(
+            [bluetooth_helper.BLUETOOTHCTL_CMD, 'show'],
+            timeout=bluetooth_helper.BLUETOOTHCTL_TIMEOUT_S,
+        )
         if result is None or result.returncode != 0:
             return None
         return parseAdapterPowered(result.stdout or '')

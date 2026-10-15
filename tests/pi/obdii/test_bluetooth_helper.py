@@ -53,9 +53,11 @@ class FakeRunner:
     def __init__(self, responses: list[tuple[int, str, str]] | None = None):
         self.responses = list(responses or [])
         self.calls: list[list[str]] = []
+        self.kwargs: list[dict[str, Any]] = []
 
-    def __call__(self, cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+    def __call__(self, cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         self.calls.append(list(cmd))
+        self.kwargs.append(dict(kwargs))
         if not self.responses:
             raise AssertionError(f"FakeRunner out of responses for cmd={cmd}")
         rc, out, err = self.responses.pop(0)
@@ -370,3 +372,81 @@ class TestIsRfcommReachable:
 
         bh.isRfcommReachable(pathExists=trackingExists)
         assert observed == ["/dev/rfcomm0"]
+
+
+# ================================================================================
+# US-858: the bond read pays no fixed `bluetoothctl --timeout` wait
+# ================================================================================
+
+_MAC = "00:04:3E:85:0D:FB"
+
+_DURABLE_INFO = (
+    f"Device {_MAC} (public)\n"
+    "\tPaired: yes\n\tBonded: yes\n\tTrusted: yes\n"
+)
+
+
+class TestReadBondStateTimeout:
+    """`bluetoothctl --timeout 5` is a FIXED 5 s wait, not a cap (Atlas,
+    boot 7c6aafaa: `info` 5.013 s with it, 0.0079 s without).  The read drops
+    the flag and the wedge guard moves to the subprocess timeout."""
+
+    def test_readBondState_argv_hasNoTimeoutFlag(self) -> None:
+        """
+        Given: a recording runner
+        When: readBondState runs
+        Then: argv is exactly ['bluetoothctl', 'info', MAC]
+        """
+        runner = FakeRunner([(0, _DURABLE_INFO, "")])
+
+        state = bh.readBondState(_MAC, subprocessRunner=runner)
+
+        assert runner.calls == [["bluetoothctl", "info", _MAC]]
+        assert state.known is True
+
+    def test_readBondState_passesSubprocessTimeout(self) -> None:
+        """
+        Given: a recording runner
+        When: readBondState runs
+        Then: the runner receives timeout=BLUETOOTHCTL_TIMEOUT_S (5)
+        """
+        runner = FakeRunner([(0, _DURABLE_INFO, "")])
+
+        bh.readBondState(_MAC, subprocessRunner=runner)
+
+        assert bh.BLUETOOTHCTL_TIMEOUT_S == 5
+        assert runner.kwargs == [{"timeout": 5}]
+
+    def test_readBondState_timeoutExpired_returnsUnknown(self) -> None:
+        """
+        Given: a wedged bluez -- the runner raises subprocess.TimeoutExpired
+        When: readBondState runs
+        Then: known=False, never a raise
+        """
+        def wedged(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 0))
+
+        state = bh.readBondState(_MAC, subprocessRunner=wedged)
+
+        assert state.known is False
+
+    def test_ensureTrusted_trustArgv_unchanged(self) -> None:
+        """
+        Given: a bond that lost only Trusted
+        When: ensureTrusted repairs it
+        Then: the WRITE argv still carries --timeout, byte-identical to before
+        """
+        untrusted = (
+            f"Device {_MAC} (public)\n"
+            "\tPaired: yes\n\tBonded: yes\n\tTrusted: no\n"
+        )
+        runner = FakeRunner([
+            (0, untrusted, ""),
+            (0, "Changing trust succeeded\n", ""),
+            (0, _DURABLE_INFO, ""),
+        ])
+
+        bh.ensureTrusted(_MAC, subprocessRunner=runner)
+
+        assert runner.calls[1] == ["bluetoothctl", "--timeout", "5", "trust", _MAC]
+        assert runner.kwargs[1] == {}

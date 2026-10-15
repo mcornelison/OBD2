@@ -75,9 +75,13 @@ RFCOMM_CMD = "rfcomm"
 # $PATH reason as RFCOMM_CMD.
 BLUETOOTHCTL_CMD = "bluetoothctl"
 
-# US-512: `bluetoothctl` is an interactive REPL by default; with a command in
-# argv it runs once and exits, but the --timeout guard means a wedged bluez
-# (bluetoothd restarting, D-Bus stalled) can never park a connect attempt.
+# US-512/US-858: `bluetoothctl` is an interactive REPL by default; with a
+# command in argv it runs once and exits.  This is the SUBPROCESS timeout the
+# READS (`info`, `show`) pass to the runner, so a wedged bluez (bluetoothd
+# restarting, D-Bus stalled) can never park a connect attempt.  It is NOT
+# passed as `bluetoothctl --timeout`: that flag is a FIXED wait, not a cap
+# (Atlas, boot 7c6aafaa: `info` 5.013 s with it, 0.0079 s without, complete
+# output either way).  The WRITE commands still carry `--timeout` unchanged.
 BLUETOOTHCTL_TIMEOUT_S = 5
 
 
@@ -394,12 +398,11 @@ def readBondState(
         The parsed :class:`BondState`; ``known=False`` when nothing was read.
     """
     runner = subprocessRunner or _defaultRunner
-    cmd = [
-        BLUETOOTHCTL_CMD, '--timeout', str(BLUETOOTHCTL_TIMEOUT_S),
-        'info', macAddress,
-    ]
+    # US-858: no `--timeout` flag (a fixed 5 s wait); a wedge surfaces as
+    # subprocess.TimeoutExpired, caught below as "unknown".
+    cmd = [BLUETOOTHCTL_CMD, 'info', macAddress]
     try:
-        result = runner(cmd)
+        result = runner(cmd, timeout=BLUETOOTHCTL_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 -- a bond probe must never raise
         logger.debug("bond-state read failed (%s): %s", _formatCommand(cmd), exc)
         return BondState()
