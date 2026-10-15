@@ -68,7 +68,7 @@
 
 ### 4.3 MPG (all three carry `≈`)
 - **Every MPG figure comes from `states/fuel-economy`. The page never divides speed by MAF** (Atlas S104 ruling 2).
-- Estimate = distance ÷ fuel, fuel from MAF at the stoichiometric ratio (`pi.fuel.stoichAfr`, `pi.fuel.densityGPerL`). ⚠ **Assumes stoichiometric burn.** Open loop on this car covers BOTH enrichment (overstates MPG) and decel fuel-cut (understates it; Spool: coasting reads LOW). So the provider's `approximate` flag shows **`open loop`** beside the `≈` (which already says "estimate"), never "rich, overstated", which is only half true. 9 characters, inside the 16-character MPG-row fit rule.
+- Estimate = distance ÷ fuel, fuel from MAF at the stoichiometric ratio (`pi.fuel.stoichAfr`, `pi.fuel.densityGPerL`). ⚠ **Assumes stoichiometric burn.** Open loop on this car covers BOTH enrichment (overstates MPG) and decel fuel-cut (understates it; Spool: coasting reads LOW). So the provider's `approximate` flag shows **`open loop`** on its own line directly under the THIS DRIVE figure (the note slot, empty whenever a figure shows), never "rich, overstated", which is only half true. **Not beside the `≈`** (corrected 2026-10-15, US-890-d as built): `≈26.3` + gap + `open loop` is 163.5 px in a 141.3 px column. 9 characters, inside the 16-character MPG-row fit rule. Shown only with a figure; a `--` already carries its reason.
 - **LAST 30 S** (was MPG NOW; Spool 2026-10-14):
   - **The label is `LAST 30 S`, never "instant".** SPEED and MAF are sampled ~2.2 s apart, so a per-sample ratio is two points and swings wildly.
   - The provider computes miles ÷ gallons summed over a rolling 30 s window. It never averages per-sample MPGs.
@@ -86,7 +86,8 @@
 - Source: the **US-661 trend contract** (epoch baseline, qualifying drives, 5-drive median).
 - Dots = per-drive LTFT for **exactly the drives the headline median uses** (**closes US-730 by rule**: no chart may show a different window than its headline).
 - Dashed line = epoch baseline. Solid line = **the current 5-drive median, drawn flat across the drives it uses** (`ltft-trend` publishes one `median`, not a per-drive series; corrected 2026-10-14 from "rolling median", which nothing provides).
-- **Colour only from the provider's verdict** of Spool's rule (amber/red); dots never colour. Neutral otherwise.
+- **Colour only from the provider's verdict** of Spool's rule; dots never colour. Neutral otherwise. Both coloured verdicts (`amber` and `down`) paint **`--amber-warn`**, never red (Spool per-surface ruling #4; TD-067: a degraded trend is WATCH, red is reserved for the STOP tier). *"amber/red" here earlier meant the provider's two verdicts, not two colours; US-890-a built it right.*
+- **Labels, as built (US-890-a):** `AIRFLOW`, `TOTAL TRIM`, `FUEL TRIM TREND` are `--font-mono`; the frame rule wants Michroma (100.4 / 130.3 / 191.7 px at 15 px, all fit). Fidelity, not honesty: a later Fuel story widens `test_dashboard_fidelity_pass.py`'s `--font-display` pin. The MPG row labels are already Michroma (US-890-d); `SINCE RESET` is 141.3 px in a 141.33 px `1fr` column, and since `1fr` never shrinks below the nowrap label's min-content, a future overrun widens the column instead of clipping.
 - LTFT **exactly 0.00 % flat** ⇒ the provider reports *adaptive memory reset*; the page shows `ECU relearning` instead of a trend point (spec: 0.00 % flat = power history, not fuel).
 
 ### 4.5 Absent / stale
@@ -130,7 +131,7 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 2. Airflow is `--fs-hero`, steps with each reading, no interpolation. Above `params.MAF.scale.max`: the bar is exactly full, the number shows the unclamped reading, no `sensor limit` text, and nothing on the airflow element is amber or red. Grep gate: no MAF max literal in `carousel.js`.
 3. Loop chip outlined, no state colour. Open loop: total trim `--` dimmed + `not applied in open loop`.
 4. Total trim is the live LTFT + STFT sum, unbanded and neutral. It is never read from `ltft-trend.totalTrim`.
-5. All MPG carry `≈`. The `approximate` flag shows `open loop` (`--amber-warn`, `--fs-meta`). The text `rich, overstated` appears nowhere.
+5. All MPG carry `≈`. The `approximate` flag shows `open loop` (`--amber-warn`, `--fs-meta`) on its own line under the THIS DRIVE figure. The text `rich, overstated` appears nowhere.
 6. LAST 30 S: label `LAST 30 S`, never `instant`; integer; `99+` at ≥ 99; `--` + reason for every null. While the provider field is absent: `--` + `not published`. Grep gate: `carousel.js` never divides by a MAF value.
 7. THIS DRIVE / SINCE RESET: every null shows `--` + the §4.6 text for the provider's code. An unknown code shows the raw code. Nothing is ever blank.
 8. Reset: hint + long-press are parked only and absent while moving. Confirm, then `POST /fuel-reset`, then the shown value is the **re-read** stored value. `resetting…` from `Yes`. On `driving` / `unavailable` / failure / 504 / confirm timeout: the LATEST provider value + the §4.6 text, never a page-cached value. VC: a 504, then a read with `sinceReset.resetAtTs` = T and `mpg` null ⇒ `--` + `too short yet`, not the pre-reset MPG.
