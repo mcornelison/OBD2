@@ -2,6 +2,9 @@
 
 - **Status:** ACCEPTED (CIO, 2026-08-30) -- design accepted, migration not yet built
 - **Amended:** 2026-08-30 (ARCH-017) -- §1a/1b/1c correct a false corroboration and re-order the slices
+- **Amended:** 2026-10-14 (ARCH-016, CIO-ratified) -- **§3 cannot be built: this chromium has no DRM Ozone platform.** The
+  destination is now a **labwc Wayland kiosk** (the §4 fallback rung). Gate 2 is replaced, and the revert is one command + reboot.
+  **Read §11 first; it supersedes §3, §4 (cage row), §6 gate 2, §7 and §9 S2-S5 wherever they disagree.**
 - **Author:** Atlas (Architect)
 - **Date:** 2026-08-30
 - **Supersedes:** the `--disable-gpu` remedy documented in `dashboard.service.x11` (US-522)
@@ -268,3 +271,88 @@ are reversible, and S1b corrects a file that currently lies.
 never added?** The comment block reads as though it shipped. If it was deliberately removed,
 that decision is currently invisible and the comment actively misleads the next reader. Either
 way S1b resolves it -- but which repair applies depends on the answer.
+
+---
+
+## 11. AMENDMENT 2026-10-14 -- the destination is a labwc Wayland kiosk, because §3 cannot be built
+
+### 11.1 What was measured (read-only, `chi-eclipse-01`, 2026-10-14)
+
+| fact | measurement |
+|---|---|
+| OS | Debian 13 **trixie**, kernel 6.18.39+rpt-rpi-2712 (this ADR and the June `.wayland` units say Bookworm) |
+| chromium | 151.0.7922.137, RPi build |
+| Ozone platforms compiled in | source paths `ui/ozone/platform/wayland/*` (70) and `headless/*` (2); X11 strings present (**the control: X11 works today**); **zero `platform/drm`, zero `drm_window`** |
+| compositors | **labwc 0.9.8 (RPi build) installed**; cage NOT installed; seatd not installed (libseat1 is) |
+| capture | grim 1.4.0 installed; scrot installed; xdotool and wmctrl not installed |
+| panel | `card1-HDMI-A-2` (§2 recorded HDMI-A-1) |
+| hand-off | lightdm is `After=` + `Conflicts=plymouth-quit.service` |
+
+⚠️ **The DRM Ozone platform is not in this chromium.** It is a ChromeOS platform; this desktop build ships X11, Wayland and headless.
+So §3 (`--ozone-platform=drm`, no compositor) **cannot be built as written**. This is strong evidence, not a run. The only run that would prove it
+takes DRM master away from Xorg, and it was not worth a session to confirm a binary that carries no DRM platform code.
+
+### 11.2 Decision (CIO-ratified 2026-10-14)
+
+**A labwc Wayland kiosk, with no lightdm, no Xorg and no desktop**, chosen by an explicit mode file and switched by one command.
+
+- **Why labwc, not cage (the §4 fallback named cage).** The kiosk is THREE chromium processes:
+  - `splash-boot` hands off by EXITING (`OnSuccess=eclipse-dashboard`);
+  - the dashboard;
+  - `splash-grace` on top at key-off.
+
+  cage runs one application and exits when it does (RECALLED), so the splash's designed exit would take the display down. labwc is a
+  multi-client compositor, installed and maintained by RPi on this OS.
+- **The §3 rationale still holds.** The GPU stays on (US-536 disposition B). The X server and the display manager leave the boot path. One
+  minimal compositor replaces them, and it owns the panel directly through KMS.
+- **The destination is unchanged in intent; the rung is one step less aggressive.** Every §6 gate still applies except gate 2 (below).
+  §8 still applies, word for word.
+
+### 11.3 Shape (S102: US-649-a, US-649-b, US-650; US-651 + the US-885 hand-off folded into US-649-b)
+
+- `eclipse-compositor.service` runs `labwc -C /etc/eclipse/labwc` in a logind session (`PAMName=login`, `TTYPath=/dev/tty7`).
+  - It holds the **`display-manager.service` slot** (`Alias=`) that lightdm holds today, so `default.target` stays `graphical.target` in
+    both modes.
+  - A socket-wait `ExecStartPost` makes it fail loud rather than let chromium start against a missing socket.
+- **Plymouth hand-off:** `Conflicts=` + `After=plymouth-quit.service`, copied from lightdm, PLUS `ExecStartPre=-plymouth quit --retain-splash`,
+  because labwc, unlike lightdm, does not quit Plymouth itself.
+- The three chromium `.wayland` units bind to the compositor (`BindsTo=` + `After=`) and **drop `After=graphical.target`**, which held the
+  kiosk behind multi-user (18.73 s on boot 7c6aafaa).
+- `KIOSK_UNIT` stays `eclipse-dashboard.service` in both modes. Shed, watchdog, panel liveness and polkit are unchanged.
+- **The mode is a file, never a detection.** `/etc/eclipse/display-mode` = `x11` | `wayland` is the only authority. Detecting the running
+  session (the old installer behaviour) re-installs X11 over a Wayland choice whenever a deploy runs while X11 is up.
+- **§5's capture replacement:** `eclipse-capture-panel` uses grim (Wayland) or scrot (X11), by the mode file.
+
+### 11.4 Gates -- §6 amended
+
+- **Gate 2 (VT switching) is REPLACED (CIO 2026-10-14):** "SSH works with the kiosk up." SSH is the recovery path. No keyboard console is
+  required at the car.
+- **Added:** the one-command revert is proven once, before the first Wayland drive.
+- **Added:** the shutdown splash shows on top at key-off, and the panel is still lit after 15 min idle.
+- **Added:** dashboard draw is at or below the US-886 X11 baseline.
+- Gates 1, 3, 4, 5 and 6 stand. Gate 4 is counted with `scripts/boot_ladder_report.py` (US-861): n >= 5 cold car-power key-ons, measured
+  against the S101 after-ladder.
+- All gates are measured on production power (CIO 2026-10-12).
+
+### 11.5 Reversibility -- §7 amended (CIO 2026-10-14)
+
+**`sudo eclipse-display-mode x11`: one command, then a reboot.**
+- It writes the mode file, re-installs the X11 units from the deployed tree (it works offline in the car), re-enables lightdm and disables the
+  compositor.
+- lightdm is DISABLED in Wayland mode, never masked or purged.
+- The reboot is deliberate: the result is exactly what a cold key-on boots, so the revert lands in a proven state rather than a live-switched
+  one that no key-on produces.
+
+### 11.6 Cut-over -- §9 S5 amended
+
+- The S102 deploy is boot-neutral: an absent mode file means X11.
+- The CIO flips the car with `sudo eclipse-display-mode wayland` to run the gates, and only after the S101 after-ladder has n >= 5 counted
+  boots. That after-ladder is this migration's before-ladder.
+- **US-652**, the code default flip (absent file -> wayland) and this ADR's status -> cut over, is filed only after every gate in §11.4 passes.
+
+### 11.7 What this amendment does NOT change
+
+- It does not claim a fix for the ARCH-014 loop-death class (§8).
+- It does not claim that removing Xorg removes the `AllocateRingBuffer` markers. That is still gate 3's hypothesis. Under a compositor there is
+  still one buffer hop that DRM-direct would not have had; if the markers persist, look at the compositor before the chromium flags.
+- It does not inherit the X11 stopgap `--disable-gpu-rasterization` (US-647 fence).
