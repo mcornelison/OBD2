@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.3",
-  "theme": "Sprint 101: V0.30 OS trim",
-  "description": "Sprint 101 (4 stories): aiosqlite declared in requirements-dev; bluetoothctl reads drop the fixed 5 s wait; reversible OS-trim manifest masks/disables services a car never uses, re-applied every deploy, undone by --os-trim-revert (pre-state in /var/lib/eclipse-obd/os-trim.state); desk tool reports the boot ladder from counted cold key-ons."
+  "version": "V0.30.4",
+  "theme": "Sprint 102: V0.30 labwc Wayland kiosk",
+  "description": "Sprint 102 (3 stories): /etc/eclipse/display-mode is the only display-mode authority and eclipse-display-mode x11|wayland|status switches it offline; eclipse-compositor.service hosts labwc for the Wayland kiosk and splashes; eclipse-capture-panel screenshots either mode. Boot-neutral: no mode file = X11. Also carries V0.30.3 (Sprint 101 OS trim)."
 }
