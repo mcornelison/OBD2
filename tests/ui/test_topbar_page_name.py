@@ -69,11 +69,12 @@ BAR_NAMES = {
     "Driving": "DRIVING",
     # MOVED PIN (US-889-b): the Engine card (Iris, 80 px).
     "Engine": "ENGINE",
+    # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim (Iris, 53.5 px).
+    "Fuel": "FUEL",
     "Home": "MOTION",
     "Alerts": "ALERTS",
     "System Status": "SYSTEM",
     "Battery": "BATTERY",
-    "Fuel Trim": "FUEL TRIM",
     "Light": "LIGHT",
 }
 
@@ -86,7 +87,7 @@ IRIS_MEASURED_PX = {
     "ALERTS": 86,
     "SYSTEM": 95,
     "BATTERY": 104,
-    "FUEL TRIM": 112,
+    "FUEL": 53.5,
     "LIGHT": 62,
     "NAVIGATION": 135,
 }

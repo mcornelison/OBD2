@@ -1692,6 +1692,94 @@
     };
   }
 
+  // --- US-890-a Fuel card, the trend row (F-127) -----------------------------
+  //
+  // specs/v030-fuel-page-design.md s4.4. The Fuel card takes the Fuel Trim
+  // card's slot and keeps its source: states/ltft-trend through the same
+  // vehicle-gated source-card route, with `ltftTrendView`'s sufficiency rule.
+  // What changes is the drawing:
+  //   dots      EXACTLY the points the headline median uses (inMedian true).
+  //             Closes US-730 by rule: no chart shows a window its headline
+  //             does not use, so a 7-drive payload draws its newest 5;
+  //   median    one flat solid line across those dots (the provider publishes
+  //             ONE median, not a per-drive series);
+  //   baseline  the epoch baseline, dashed;
+  //   colour    the provider's `level` alone -- the dots never colour, and
+  //             nothing here compares a trim with a number;
+  //   relearn   a point with isReset (0.00 % flat = adaptive memory reset, not
+  //             fuel) is never drawn; the row says "ECU relearning" instead.
+  // Insufficient -> the provider's reason and no chart. The y range is the
+  // drawn values' own extent: geometry, not a scale.
+  var FUEL_TREND_LABEL = "FUEL TRIM TREND";
+  var FUEL_TREND_RELEARNING = "ECU relearning";
+  var FUEL_TREND_W = 100;
+  var FUEL_TREND_H = 30;
+  var FUEL_TREND_INSET = 4;
+
+  function finiteNumber(n) {
+    return typeof n === "number" && isFinite(n);
+  }
+
+  function fuelTrendChart(dots, median, baseline) {
+    var lo = median;
+    var hi = median;
+    for (var i = 0; i < dots.length; i++) {
+      lo = Math.min(lo, dots[i].value);
+      hi = Math.max(hi, dots[i].value);
+    }
+    if (baseline !== null) {
+      lo = Math.min(lo, baseline);
+      hi = Math.max(hi, baseline);
+    }
+    var span = FUEL_TREND_H - 2 * FUEL_TREND_INSET;
+    var yOf = function (v) {
+      return engineHistoryCoord(hi === lo ? FUEL_TREND_H / 2
+        : FUEL_TREND_INSET + (hi - v) / (hi - lo) * span);
+    };
+    var out = [];
+    for (var j = 0; j < dots.length; j++) {
+      out.push({
+        driveId: dots[j].driveId,
+        x: engineHistoryCoord((j + 0.5) / dots.length * FUEL_TREND_W),
+        y: yOf(dots[j].value),
+      });
+    }
+    return {
+      dots: out,
+      median: { x1: out[0].x, x2: out[out.length - 1].x, y: yOf(median) },
+      baseline: baseline === null ? null : { y: yOf(baseline) },
+    };
+  }
+
+  function fuelTrendView(data) {
+    var base = ltftTrendView(data);
+    if (!base) return null;
+    var pts = Array.isArray(data.points) ? data.points.filter(isObj) : [];
+    var relearning = false;
+    var dots = [];
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i];
+      if (p.isReset === true) {
+        relearning = true;
+        continue;
+      }
+      if (base.sufficient && p.inMedian === true && finiteNumber(p.ltftAvg)) {
+        dots.push({ driveId: typeof p.driveId === "number" ? p.driveId : null, value: p.ltftAvg });
+      }
+    }
+    return {
+      label: FUEL_TREND_LABEL,
+      sufficient: base.sufficient,
+      level: base.headline.level,
+      value: base.sufficient ? base.headline.value : null,
+      reason: base.sufficient ? null : base.headline.detail,
+      relearning: relearning ? FUEL_TREND_RELEARNING : null,
+      chart: dots.length
+        ? fuelTrendChart(dots, data.median, finiteNumber(data.baseline) ? data.baseline : null)
+        : null,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // US-540-b SOURCE CARDS (F-127) -- Battery, Fuel Trim and Light, one card
   // each. These three were standalone cards, were merged into the US-507
@@ -1743,10 +1831,13 @@
       key: "light", title: "Light",
       noData: { label: "AMBIENT", reason: "no data -- light feed absent" },
     },
+    // US-890-a: the Fuel card. Its source is still ltft-trend, but it paints
+    // only the card's trend row (`slot`): the airflow / loop / trim / MPG rows
+    // above it are the card's own markup and never wait on this gate.
     {
-      key: "ltft-trend", title: "Fuel Trim",
+      key: "ltft-trend", title: "Fuel", slot: ".fuel-trend",
       vehicleGated: true,
-      noData: { label: "FUEL TRIM", reason: "no data -- trend not computed" },
+      noData: { label: FUEL_TREND_LABEL, reason: "no data -- trend not computed" },
     },
   ];
 
@@ -1768,7 +1859,7 @@
     if (cardAvailability(data) !== "available") return null;
     if (key === "battery-health") return batteryHealthView(data);
     if (key === "light") return lightView(data, cfg, nowMs);
-    if (key === "ltft-trend") return ltftTrendView(data);
+    if (key === "ltft-trend") return fuelTrendView(data);
     return null;
   }
 
@@ -4515,6 +4606,7 @@
     batteryHealthView: batteryHealthView,
     fmtLtftPct: fmtLtftPct,
     ltftTrendView: ltftTrendView,
+    fuelTrendView: fuelTrendView,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -5468,40 +5560,50 @@
       if (idleView) renderIdleBody(body, idleView);
     }
 
-    // --- US-420 LTFT Trend DOM render (browser only) ------------------------
+    // --- US-890-a Fuel card trend row DOM render (browser only) -------------
 
-    // Render the multi-drive bar row: one bar per drive, coloured by its own
-    // drift level ([data-level] -> CSS), so a drive beyond +/-10% is visibly
-    // not-green. Built with textContent (no innerHTML) -- verbatim, never markup.
-    function appendLtftBars(parent, points) {
-      var bars = document.createElement("div");
-      bars.className = "ltft-bars";
-      for (var i = 0; i < points.length; i++) {
-        var p = points[i];
-        var bar = document.createElement("div");
-        bar.className = "ltft-bar";
-        bar.setAttribute("data-level", p.level);
-        var value = document.createElement("span");
-        value.className = "ltft-bar-value";
-        value.textContent = p.value;
-        var drive = document.createElement("span");
-        drive.className = "ltft-bar-drive";
-        drive.textContent = p.driveId == null ? "—" : "#" + p.driveId;
-        bar.appendChild(value);
-        bar.appendChild(drive);
-        bars.appendChild(bar);
+    // The chart: dashed baseline, the flat median line, then the dots on top.
+    // Every stroke is non-scaling (CSS), so the stretched viewBox keeps a dot
+    // round: each dot is a zero-length line drawn by its round cap.
+    function buildFuelTrendChart(chart) {
+      var svg = svgEl("svg", {
+        class: "fuel-trend-chart", viewBox: "0 0 " + FUEL_TREND_W + " " + FUEL_TREND_H,
+        preserveAspectRatio: "none", "aria-hidden": "true",
+      });
+      if (chart.baseline) {
+        svg.appendChild(svgEl("line", {
+          class: "fuel-trend-baseline", x1: 0, x2: FUEL_TREND_W,
+          y1: chart.baseline.y, y2: chart.baseline.y,
+        }));
       }
-      parent.appendChild(bars);
+      svg.appendChild(svgEl("line", {
+        class: "fuel-trend-median", x1: chart.median.x1, x2: chart.median.x2,
+        y1: chart.median.y, y2: chart.median.y,
+      }));
+      for (var i = 0; i < chart.dots.length; i++) {
+        var dot = chart.dots[i];
+        svg.appendChild(svgEl("line", {
+          class: "fuel-trend-dot", "data-drive": dot.driveId === null ? "" : dot.driveId,
+          x1: dot.x, x2: dot.x, y1: dot.y, y2: dot.y,
+        }));
+      }
+      return svg;
     }
 
-    function renderLtftTrendBody(body, view) {
+    // `fuelTrendView` into the card's `.fuel-trend` slot. data-level is the
+    // only colour input (the stylesheet maps it); textContent only.
+    function renderFuelTrendBody(body, view) {
       if (!body || !view) return;
       body.textContent = "";
-      // The headline tile carries the verdict level (insufficient -> not green).
-      appendTile(body, view.headline);
-      // The per-drive bars render whenever any real point exists (0-1 points is
-      // still shown honestly under an insufficient headline, never fabricated).
-      if (view.points.length > 0) appendLtftBars(body, view.points);
+      var row = document.createElement("div");
+      row.className = "fuel-trend-row";
+      row.setAttribute("data-level", view.level);
+      row.appendChild(engineTextEl("span", "fuel-label", view.label));
+      if (view.sufficient) row.appendChild(engineTextEl("span", "fuel-trend-value", view.value));
+      else row.appendChild(engineTextEl("span", "fuel-trend-reason", view.reason));
+      if (view.chart) row.appendChild(buildFuelTrendChart(view.chart));
+      if (view.relearning) row.appendChild(engineTextEl("span", "fuel-trend-relearn", view.relearning));
+      body.appendChild(row);
     }
 
     // --- US-540-b source card DOM render (browser only) ---------------------
@@ -5515,7 +5617,10 @@
     // says "gated" after the engine started is a stale claim about the vehicle.
     function renderSourceCard(card, view) {
       if (!card || !view) return;
-      var body = card.querySelector(".card-body");
+      // US-890-a: a source with a `slot` paints only that part of its card
+      // (the Fuel card's trend row); every other source owns the whole body.
+      var spec = sourceCardSpec(view.key);
+      var body = card.querySelector(spec && spec.slot ? spec.slot : ".card-body");
       if (!body) return;
       card.setAttribute("data-gated", view.gated ? "true" : "false");
       // The typed NA is the card's whole body here, so the shipped
@@ -5534,7 +5639,7 @@
       }
       if (view.key === "battery-health") renderBatteryHealthBody(body, view.view);
       else if (view.key === "light") renderLightBody(body, view.view);
-      else if (view.key === "ltft-trend") renderLtftTrendBody(body, view.view);
+      else if (view.key === "ltft-trend") renderFuelTrendBody(body, view.view);
     }
 
     // US-482 letterbox: uniformly scale the fixed 480x320 #stage design box to

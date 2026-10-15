@@ -247,6 +247,58 @@
           </div>
         </div>
       </section>
+      <!-- US-890-a (F-127; specs/v030-fuel-page-design.md, layout A): the FUEL
+           card takes the Fuel Trim card's slot and moves to right after Engine
+           (CIO E-2 order). Its source is still states/ltft-trend, and the
+           trend row keeps the Fuel Trim card's VEHICLE GATE and speaking
+           vocabulary: data-gated="true" fails CLOSED before the first poll, and
+           a bench with no car reads "no engine data", never a stale trim. The
+           gate reaches the trend row ONLY (`.fuel-trend`, the source card's
+           slot) -- the rows above it are markup and ship "--" + "not
+           published" until their providers land (airflow US-890-b, loop and
+           total trim US-890-c, MPG US-890-d): never blank. -->
+      <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
+               aria-label="Fuel" data-page-name="FUEL">
+        <div class="card-body">
+          <div class="fuel-top">
+            <div class="fuel-reading fuel-airflow" data-slot="airflow" data-note="unpublished">
+              <span class="fuel-label">AIRFLOW</span>
+              <span class="fuel-value">--</span>
+              <span class="fuel-note">not published</span>
+            </div>
+            <div class="fuel-side">
+              <div class="fuel-reading" data-slot="loop" data-note="unpublished">
+                <span class="fuel-label">LOOP</span>
+                <span class="fuel-value">--</span>
+                <span class="fuel-note">not published</span>
+              </div>
+              <div class="fuel-reading" data-slot="total-trim" data-note="unpublished">
+                <span class="fuel-label">TOTAL TRIM</span>
+                <span class="fuel-value">--</span>
+                <span class="fuel-note">not published</span>
+              </div>
+            </div>
+          </div>
+          <div class="fuel-mpg">
+            <div class="fuel-reading" data-slot="mpg-last30" data-note="unpublished">
+              <span class="fuel-label">LAST 30 S</span>
+              <span class="fuel-value">--</span>
+              <span class="fuel-note">not published</span>
+            </div>
+            <div class="fuel-reading" data-slot="mpg-this-drive" data-note="unpublished">
+              <span class="fuel-label">THIS DRIVE</span>
+              <span class="fuel-value">--</span>
+              <span class="fuel-note">not published</span>
+            </div>
+            <div class="fuel-reading" data-slot="mpg-since-reset" data-note="unpublished">
+              <span class="fuel-label">SINCE RESET</span>
+              <span class="fuel-value">--</span>
+              <span class="fuel-note">not published</span>
+            </div>
+          </div>
+          <div class="fuel-trend">unavailable</div>
+        </div>
+      </section>
       <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
            card sitting beside an always-present fallback card would poll and
            paint the same feed twice and put two rules in charge of the slot.
@@ -304,25 +356,6 @@
            US-508: the standalone Motion card stays gone -- the US-497 live
            instrument is a FACE of the home slot, not a screen of its own. -->
       <section class="card" data-state="battery-health" aria-label="Battery" data-page-name="BATTERY">
-        <div class="card-body">unavailable</div>
-      </section>
-      <!-- Fuel Trim (formerly "LTFT Trend"; plain English, Spool's LTFT
-           semantics unchanged) stays VEHICLE-GATED, and keeps the SPEAKING
-           vocabulary US-507 gave it rather than reverting to the pre-US-507
-           hide. Two reasons, and neither is inertia: this story locks SIX
-           cards, and a card that vanishes on a bench breaks the set in exactly
-           the place the CIO reads the panel most days; and "does not apply
-           right now" is a fact worth stating on a screen the operator swiped
-           to deliberately. So the card renders the honest "no engine data" --
-           never a fabricated 0%.
-
-           Ships data-gated="true" so the pre-first-poll window -- when nothing
-           has been read and "is a car connected?" is genuinely unknown -- fails
-           CLOSED to the gate. The body still reads `unavailable` until the
-           first poll: no read has happened yet, which is a different fact from
-           the gate itself. -->
-      <section class="card" data-state="ltft-trend" data-gated="true"
-               aria-label="Fuel Trim" data-page-name="FUEL TRIM">
         <div class="card-body">unavailable</div>
       </section>
       <section class="card" data-state="light" aria-label="Light" data-page-name="LIGHT">

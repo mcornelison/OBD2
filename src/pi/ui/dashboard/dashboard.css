@@ -1910,3 +1910,104 @@ html, body {
 #engine-card .eng-codes[data-tap="false"] {
   color: var(--text-secondary);
 }
+
+/* --- US-890-a Fuel card, layout A (F-127) ---------------------------------- */
+/* specs/v030-fuel-page-design.md s3/s4. Tokens only; the geometry with no token
+   is declared ONCE here as properties scoped to the card (S103 G-4), and this
+   block is the only Fuel rule that may hold a literal px. The upper rows ship
+   "--" + "not published" (markup) until their providers land. The trend row's
+   colour comes ONLY from the provider's level (data-level on .fuel-trend-row):
+   amber and down both map to --amber-warn -- a fuel-trim drift is WATCH, not
+   "pull over" (Spool per-surface ruling #4, the rule the Fuel Trim bars kept).
+   The dots, the baseline and an ok median stay neutral. */
+#fuel-card {
+  --fuel-gap: 6px;            /* between stacked rows */
+  --fuel-inline-gap: 8px;     /* label -> value -> note on one row */
+  --fuel-col-gap: 12px;       /* between side-by-side readings */
+  --fuel-line: 1.2;           /* every line box */
+  --fuel-rule: 1px;           /* the line above the MPG row and the trend */
+  --fuel-trend-h: 30px;       /* the trend chart's height (viewBox 0 0 100 30) */
+  --fuel-stroke: 2px;         /* median + baseline lines */
+  --fuel-dash: 4px;           /* baseline dash and gap */
+  --fuel-dot: 8px;            /* one drive's dot (a round-capped stroke) */
+}
+#fuel-card .card-body {
+  display: flex; flex-direction: column; gap: var(--fuel-gap);
+}
+#fuel-card .fuel-top {
+  flex: none;
+  display: flex; justify-content: space-between; gap: var(--fuel-col-gap);
+}
+#fuel-card .fuel-side {
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--fuel-gap);
+}
+#fuel-card .fuel-mpg {
+  flex: none;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--fuel-col-gap);
+  border-top-width: var(--fuel-rule); border-top-style: solid; border-top-color: var(--line);
+  padding-top: var(--fuel-gap);
+}
+#fuel-card .fuel-reading {
+  display: flex; flex-direction: column; min-width: 0;
+}
+#fuel-card .fuel-label {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--text-secondary); white-space: nowrap;
+}
+#fuel-card .fuel-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); line-height: var(--fuel-line); color: var(--text-primary);
+}
+#fuel-card .fuel-airflow .fuel-value {
+  font-size: var(--fs-hero);
+}
+/* "not published": a reason, never a reading -- the value it explains is "--". */
+#fuel-card .fuel-note {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--text-secondary);
+}
+#fuel-card .fuel-reading[data-note="unpublished"] .fuel-value {
+  color: var(--text-tertiary);
+}
+/* The trend row. The source card paints this slot only (gate, loading and
+   no-data tiles included), so the rows above never wait on it. */
+#fuel-card .fuel-trend {
+  flex: none;
+  border-top-width: var(--fuel-rule); border-top-style: solid; border-top-color: var(--line);
+  padding-top: var(--fuel-gap);
+}
+#fuel-card .fuel-trend-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--fuel-inline-gap);
+}
+#fuel-card .fuel-trend-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-secondary); line-height: var(--fuel-line); color: var(--text-primary);
+}
+#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-value,
+#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-value {
+  color: var(--amber-warn);
+}
+#fuel-card .fuel-trend-reason,
+#fuel-card .fuel-trend-relearn {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--text-secondary);
+}
+#fuel-card .fuel-trend-chart {
+  display: block; flex: 1; min-width: 0; height: var(--fuel-trend-h);
+}
+#fuel-card .fuel-trend-baseline {
+  stroke: var(--text-tertiary); stroke-width: var(--fuel-stroke);
+  stroke-dasharray: var(--fuel-dash); vector-effect: non-scaling-stroke;
+}
+#fuel-card .fuel-trend-median {
+  stroke: var(--text-primary); stroke-width: var(--fuel-stroke);
+  vector-effect: non-scaling-stroke;
+}
+#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-median,
+#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-median {
+  stroke: var(--amber-warn);
+}
+#fuel-card .fuel-trend-dot {
+  stroke: var(--text-secondary); stroke-width: var(--fuel-dot);
+  stroke-linecap: round; vector-effect: non-scaling-stroke;
+}

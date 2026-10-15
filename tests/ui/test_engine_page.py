@@ -76,8 +76,9 @@ _NODE_ONLY = pytest.mark.skipif(
 )
 
 # The card order (US-889-b validation row "Card order"), by kit label.
+# MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after Engine.
 CARD_ORDER = [
-    "Driving", "Engine", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"
+    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
 ]
 
 ENGINE_PIDS = ["ENGINE_LOAD", "THROTTLE_POS", "TIMING_ADVANCE"]

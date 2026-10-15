@@ -1,0 +1,109 @@
+{
+  "description": "Ten drives 106-115 (built by buildLtftTrendState): the median of the newest five sits more than the noise floor off the epoch baseline, so the provider's level is amber. The headline is amber; the five dots stay neutral.",
+  "now": "2026-10-20T15:12:30Z",
+  "ltft-trend": {
+    "pid": "LONG_FUEL_TRIM_1",
+    "sufficient": true,
+    "level": "amber",
+    "reason": null,
+    "median": 3.2,
+    "medianWindow": 5,
+    "baseline": -0.9,
+    "deviationPp": 4.1,
+    "sustained": false,
+    "totalTrim": 4.0,
+    "trend": "improving",
+    "current": {
+      "driveId": 115,
+      "ts": "2026-10-10T14:00:00Z",
+      "ltftAvg": 3.6,
+      "sampleCount": 120
+    },
+    "points": [
+      {
+        "driveId": 106,
+        "ts": "2026-10-10T14:00:00Z",
+        "ltftAvg": -5.0,
+        "sampleCount": 120,
+        "inMedian": false
+      },
+      {
+        "driveId": 107,
+        "ts": "2026-10-11T14:00:00Z",
+        "ltftAvg": -5.0,
+        "sampleCount": 120,
+        "inMedian": false
+      },
+      {
+        "driveId": 108,
+        "ts": "2026-10-12T14:00:00Z",
+        "ltftAvg": -5.0,
+        "sampleCount": 120,
+        "inMedian": false
+      },
+      {
+        "driveId": 109,
+        "ts": "2026-10-13T14:00:00Z",
+        "ltftAvg": -5.0,
+        "sampleCount": 120,
+        "inMedian": false
+      },
+      {
+        "driveId": 110,
+        "ts": "2026-10-14T14:00:00Z",
+        "ltftAvg": -5.0,
+        "sampleCount": 120,
+        "inMedian": false
+      },
+      {
+        "driveId": 111,
+        "ts": "2026-10-15T14:00:00Z",
+        "ltftAvg": 2.8,
+        "sampleCount": 120,
+        "inMedian": true
+      },
+      {
+        "driveId": 112,
+        "ts": "2026-10-16T14:00:00Z",
+        "ltftAvg": 3.0,
+        "sampleCount": 120,
+        "inMedian": true
+      },
+      {
+        "driveId": 113,
+        "ts": "2026-10-17T14:00:00Z",
+        "ltftAvg": 3.2,
+        "sampleCount": 120,
+        "inMedian": true
+      },
+      {
+        "driveId": 114,
+        "ts": "2026-10-18T14:00:00Z",
+        "ltftAvg": 3.4,
+        "sampleCount": 120,
+        "inMedian": true
+      },
+      {
+        "driveId": 115,
+        "ts": "2026-10-10T14:00:00Z",
+        "ltftAvg": 3.6,
+        "sampleCount": 120,
+        "inMedian": true
+      }
+    ],
+    "driveCount": 10,
+    "minDrives": 5,
+    "epochBreak": false,
+    "epochStartDriveId": 106,
+    "epochClipped": false,
+    "epochDriveCount": 10,
+    "noiseFloorPp": 4.0,
+    "faultAbs": 10.0,
+    "gate": {
+      "coolantMinC": 85.0,
+      "closedLoopCode": 2,
+      "minQualifyingSamples": 20
+    },
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

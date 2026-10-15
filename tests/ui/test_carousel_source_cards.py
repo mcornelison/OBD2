@@ -46,6 +46,10 @@
 # 2026-08-11    | Ralph (Rex)  | US-540-b: Health retires; renamed from
 #               |              | test_carousel_health_card.py and retargeted
 #               |              | onto sourceCardView (one card per source).
+# 2026-10-15    | Ralph (Rex)  | US-890-a: the Fuel card replaces Fuel Trim.
+#               |              | RETIRED the six Fuel Trim view/title cases
+#               |              | (the trend row is pinned by test_fuel_page.py);
+#               |              | the gate cases stay -- the gate survives.
 # ================================================================================
 ################################################################################
 
@@ -266,23 +270,11 @@ def test_sourceCardSpec_resolvesAStateNameAndRejectsAnUnknownOne():
     state, every remaining card (System Status, Alerts) would be dragged onto
     the source-card path and render a typed NA instead of its own body.
     """
-    assert _view("sourceCardSpec", "ltft-trend")["title"] == "Fuel Trim"  # type: ignore[index]
+    assert _view("sourceCardSpec", "ltft-trend")["title"] == "Fuel"  # type: ignore[index]
     assert _view("sourceCardSpec", "system-status") is None
     assert _view("sourceCardSpec", "dtc") is None
 
 
-def test_sourceCardView_fuelTrimSectionIsPlainEnglish_notJargon():
-    """
-    Given: the fuel-trim source card
-    Then: it is titled "Fuel Trim", never "LTFT Trend"
-
-    A LABEL change only (US-507 AC-2). The jargon leaves the title; Spool's
-    LTFT semantics stay exactly where they were (proved by the sufficiency +
-    drift tests below, which are the original card's rules unchanged).
-    """
-    sec = _section(_cards(), "ltft-trend")
-    assert sec["title"] == "Fuel Trim"
-    assert "LTFT Trend" not in sec["title"]
 
 
 def test_sourceCardView_sectionTitlesNameTheirInstrument():
@@ -354,26 +346,8 @@ def test_sourceCardView_lightSection_nullLuxGraysWithinTheSection():
     assert sec["view"]["band"]["value"] == "NA"
 
 
-def test_sourceCardView_fuelTrimSection_insufficientIsNeverGreen():
-    """The insufficient-window guard is Spool's, and it survives the retitle: too
-    little data can never paint a confident healthy verdict."""
-    ltft = _ltft(sufficient=False, points=[], current=None)
-    sec = _section(_cards(ltft=ltft), "ltft-trend")
-    assert sec["view"]["headline"]["level"] == "insufficient"
-    assert sec["view"]["headline"]["value"] == "insufficient data"
 
 
-def test_sourceCardView_fuelTrimSection_driftRendersItsOwnLevel():
-    """A drive beyond +/-10% keeps its own non-green level -- the semantics the
-    emitter classifies, which this view only maps."""
-    ltft = _ltft(
-        level="down",
-        median=12.5,
-        points=[{"driveId": 32, "ltftAvg": 12.5, "level": "down"}],
-    )
-    sec = _section(_cards(ltft=ltft), "ltft-trend")
-    assert sec["view"]["headline"]["level"] == "down"
-    assert sec["view"]["points"][0]["value"] == "+12.50%"
 
 
 # ---------------------------------------------------------------------------
@@ -442,40 +416,6 @@ def test_sourceCardView_benchNoVehicle_fuelTrimReadsNoEngineData():
     assert sec["na"]["reason"] == "no engine data"
 
 
-def test_sourceCardView_fuelTrimHeadlineIsTheMedian_notTheNewestDrive():
-    """
-    Given: a payload whose 5-drive MEDIAN is -2.50 % while the NEWEST drive sits
-        at +9.90 % -- a single-drive excursion of the size Spool measured as
-        pure noise (up to 3.72 pp between drives on the same day)
-    Then: the headline reads the MEDIAN, and the newest drive's value appears
-        NOWHERE in the headline.
-
-    THIS ASSERTION IS DELIBERATELY MADE ON THE HEADLINE OBJECT, NOT ON THE
-    CARD'S TEXT, and that is the whole reason it exists. A mutation restoring
-    US-420's `current.ltftAvg` headline SURVIVED a rendered-text check, because
-    the per-drive BARS print their own values too -- and with an odd-width
-    window the median is ALWAYS one of them, so "the median appears on the card"
-    is true no matter which element painted it. A text sweep physically cannot
-    separate the headline from the bars here; only the structured view can.
-    """
-    ltft = _ltft(
-        median=-2.5,
-        current={"ltftAvg": 9.9},
-        points=[
-            {"driveId": 30, "ltftAvg": -6.25, "level": "ok"},
-            {"driveId": 31, "ltftAvg": -2.5, "level": "ok"},
-            {"driveId": 32, "ltftAvg": 9.9, "level": "ok"},
-        ],
-    )
-    sec = _section(_cards(obdAvailable=True, ltft=ltft), "ltft-trend")
-
-    headline = sec["view"]["headline"]
-    assert headline["value"] == "-2.50%", headline
-    assert "9.90" not in headline["value"], headline
-    assert "median" in headline["label"], headline
-    # The control: the excursion IS still visible as its own bar, so this test
-    # cannot be satisfied by suppressing the newest drive altogether.
-    assert any(p["value"] == "+9.90%" for p in sec["view"]["points"]), sec["view"]
 
 
 def test_sourceCardView_benchNoVehicle_fuelTrimLeaksNoValueEvenWithAState():
@@ -494,12 +434,6 @@ def test_sourceCardView_benchNoVehicle_fuelTrimLeaksNoValueEvenWithAState():
     assert "-2.50%" not in json.dumps(sec)
 
 
-def test_sourceCardView_vehicleConnected_fuelTrimRendersTheRealTrend():
-    """The inverse -- without it "always gate" would pass. A connected vehicle
-    reveals the real trend, which is the whole point of keeping the section."""
-    sec = _section(_cards(obdAvailable=True), "ltft-trend")
-    assert sec["gated"] is False
-    assert sec["view"]["headline"]["value"] == "-2.50%"
 
 
 def test_sourceCardView_absentSystemStatus_failsClosedToGated():
@@ -548,7 +482,7 @@ def test_dashboardHtml_shipsOneCardPerSource():
     for label, state in (
         ("Battery", "battery-health"),
         ("Light", "light"),
-        ("Fuel Trim", "ltft-trend"),
+        ("Fuel", "ltft-trend"),
     ):
         match = re.search(r'<section[^>]*aria-label="' + label + r'"[^>]*>', html, re.S)
         assert match is not None, f"no {label} card in the markup"
@@ -567,15 +501,6 @@ def test_dashboardHtml_shipsNoMergedHealthCard():
     assert "health-section" not in html
 
 
-def test_dashboardHtml_fuelTrimShipsGatedClosed():
-    """The pre-first-poll window -- nothing read yet, "is a car connected?"
-    genuinely unknown -- must fail CLOSED to the gate. Shipping `data-gated`
-    absent would leave that window looking ungated, which is a claim about the
-    vehicle made before anything was read."""
-    html = _read(_HTML)
-    match = re.search(r'<section[^>]*aria-label="Fuel Trim"[^>]*>', html, re.S)
-    assert match is not None
-    assert 'data-gated="true"' in match.group(0)
 
 
 def test_carouselJs_tickRendersTheSourceCards():
@@ -619,7 +544,7 @@ def test_carouselJs_sourceCardsReuseTheTokenizedTile():
     src/pi/ui/tokens.css. A bespoke per-card palette is exactly the drift the
     SSOT rule exists to prevent."""
     render = _fnBody(_read(_JS), "renderSourceCard")
-    for body in ("renderBatteryHealthBody", "renderLightBody", "renderLtftTrendBody"):
+    for body in ("renderBatteryHealthBody", "renderLightBody", "renderFuelTrendBody"):
         assert body in render, f"{body} is not reachable from the card renderer"
     assert "renderNaBody" in render
 
@@ -666,7 +591,7 @@ def test_stripJsComments_keepsCodeAndCommentLookalikeStrings():
     """
     src = _stripJsComments(_read(_JS))
     assert "function renderSourceCard(" in src
-    assert "function renderLtftTrendBody(" in src
+    assert "function renderFuelTrendBody(" in src
     assert "http://www.w3.org/2000/svg" in src
     # ...and prose genuinely goes (this sentence exists only in a comment).
     assert "A branch no card can reach is not harmless" not in src

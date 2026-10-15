@@ -7855,6 +7855,47 @@ each: this drive's history, then the status row.
   mil-on-twelve-codes, mil-on-zero-codes}.json` (history payloads copied from
   US-889-a's `engine-history.json` cases).
 
+#### V0.30 Fuel card replaces Fuel Trim; the trend row (US-890-a, Sprint 104 / V0.30.6)
+
+Fuel spec §3-§4.4 (`specs/v030-fuel-page-design.md`, layout A), CIO E-2 order:
+
+- **The Fuel card REPLACES the Fuel Trim card and moves to index 2, after
+  Engine.** `#fuel-card` (`aria-label="Fuel"`, `data-page-name="FUEL"`); card
+  order is Driving, Engine, Fuel, Home, Alerts, System Status, Battery, Light.
+  The Fuel Trim card, its per-drive bar row (`renderLtftTrendBody` /
+  `.ltft-bars`, each bar coloured by its own drive) and its title are gone.
+- **States it reads.** `states/ltft-trend` only, for the trend row:
+  `sufficient`, `level`, `reason`, `median`, `baseline`, `minDrives`,
+  `points[].{driveId, ltftAvg, inMedian, isReset}`. The card keeps
+  `data-state="ltft-trend"` and the Fuel Trim card's source-card route
+  (`SOURCE_CARDS` entry `ltft-trend`, title `Fuel`): the **vehicle gate**
+  (`data-gated="true"` ships closed; no car -> `FUEL TRIM TREND · no engine
+  data`), the US-700 loading tile and the silent-feed NA all survive -- but the
+  entry's new `slot: ".fuel-trend"` confines every one of them to the trend
+  row. `renderSourceCard` paints a source with a `slot` into that element only.
+- **Upper rows: markup, never blank.** AIRFLOW, LOOP, TOTAL TRIM, LAST 30 S,
+  THIS DRIVE and SINCE RESET ship `--` + `not published` in the skeleton and
+  stay so under every trend state until their providers land (airflow
+  US-890-b, loop + total trim US-890-c, MPG US-890-d).
+- **Trend render rule** (`fuelTrendView(ltftTrend)`, pure; `ltftTrendView`'s
+  sufficiency rule carries over). Dots = EXACTLY the points with `inMedian`
+  true -- the headline's own drive set, so a 7-drive payload draws its newest
+  5 (closes US-730 by rule). Solid line = the ONE published `median`, flat
+  across those dots (the provider publishes no per-drive median series).
+  Dashed line = the epoch `baseline`. The headline (`--fs-secondary`) is the
+  median. Colour comes ONLY from `level` on `.fuel-trend-row[data-level]`:
+  `amber` and `down` -> `--amber-warn` on the headline and median line (WATCH,
+  Spool per-surface ruling #4), `ok` neutral; the dots never colour. A point
+  with `isReset` true (LTFT 0.00 % flat = adaptive memory reset) is never drawn
+  and the row says `ECU relearning`. Insufficient -> the provider's `reason`
+  (else `need N+ drives (n captured)`) and no chart. The y range is the drawn
+  values' own extent; no trim threshold appears in carousel.js (grep gate in
+  `tests/ui/test_fuel_page.py`). Fixtures:
+  `tests/ui/fixtures/states/fuel/{trend-healthy, trend-amber,
+  ltft-reset-zero-flat, trend-seven-drives}.json` (built by
+  `buildLtftTrendState`; the reset fixture sets `isReset` on its point by hand,
+  because the provider marks a reset on its drive records, not its points).
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

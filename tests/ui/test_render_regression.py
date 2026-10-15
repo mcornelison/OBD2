@@ -348,7 +348,8 @@ class TestVehicleGateRender:
         for path in surface.pathsByClass("card"):
             if not surface.rendered(path):
                 continue
-            if path[-1]["attrs"].get("aria-label") == "Fuel Trim":
+            # MOVED PIN (US-890-a): the Fuel card carries the gate now.
+            if path[-1]["attrs"].get("aria-label") == "Fuel":
                 return path[-1]["attrs"].get("data-gated")
         return None
 
@@ -385,8 +386,9 @@ class TestVehicleGateRender:
         """
         dom = rh.runDashboard(routes=_cleanRoutes(obdAvailable=False))
         surface = rh.dashboardSurface(dom["tree"])
-        assert "Fuel Trim" in self._visibleCards(surface), (
-            "the Fuel Trim card did not paint"
+        # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim.
+        assert "Fuel" in self._visibleCards(surface), (
+            "the Fuel card did not paint"
         )
         assert self._gatedFlag(surface) == "true", (
             "a bench with no vehicle must paint the fuel-trim GATE, not a trim"
