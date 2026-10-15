@@ -351,6 +351,10 @@
     // un-substituted it stays a valid JS string, which carousel.js ignores in
     // favour of its built-in grounded defaults.
     window.DISPLAY_CAROUSEL = "__DISPLAY_CAROUSEL__";
+    // US-882-c: the page's stale windows ({imuSec}, pi.display.stale.*), resolved
+    // PER REQUEST by the state server. Same quoted-placeholder trick: left
+    // un-substituted it is a string, and carousel.js uses its mirrored default.
+    window.DISPLAY_STALE = "__DISPLAY_STALE__";
     // US-532: the Slice-1 operator settings at their EFFECTIVE values (the
     // US-530 shared resolver), keyed by the overlay's own flat dot-paths -- the
     // same keys POST /settings takes. Same quoted-placeholder trick; resolved

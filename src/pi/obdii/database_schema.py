@@ -120,6 +120,8 @@
 # 2026-10-14    | Rex (US-860-b)| boot_milestone gains id INTEGER PRIMARY KEY
 #               |              | AUTOINCREMENT + UNIQUE(boot_id, milestone);
 #               |              | ensureBootMilestoneIntegerId rebuilds Sprint 98 DBs.
+# 2026-10-14    | Rex (US-881-c)| Added SCHEMA_FUEL_SINCE_RESET + replay-safe
+#               |              | ensureFuelSinceResetTable (Pi-local, never synced).
 # ================================================================================
 ################################################################################
 
@@ -700,6 +702,49 @@ def ensureDrainVcellTrajectoryTable(conn: sqlite3.Connection) -> bool:
     if present is not None:
         return False
     conn.execute(SCHEMA_DRAIN_VCELL_TRAJECTORY)
+    return True
+
+
+# US-881-c (F-159, Atlas gap 3): the since-reset fuel totals behind
+# states/fuel-economy sinceReset, so they survive a reboot.  ONE row
+# (CHECK id = 1, the drive_counter / pi_state shape).  Pi-LOCAL: it is in no
+# sync registry -- every fact behind it already syncs in realtime_data.
+# Accessors: src/pi/obdii/fuel_since_reset.py.  No IF NOT EXISTS:
+# ensureFuelSinceResetTable probes sqlite_master first.
+FUEL_SINCE_RESET_TABLE = 'fuel_since_reset'
+
+SCHEMA_FUEL_SINCE_RESET = f"""
+CREATE TABLE {FUEL_SINCE_RESET_TABLE} (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    fuel_l REAL,
+    distance_km REAL,
+    open_loop_s REAL,
+    reset_at_ts TEXT,
+    updated_at TEXT
+);
+"""
+
+
+def ensureFuelSinceResetTable(conn: sqlite3.Connection) -> bool:
+    """Create ``fuel_since_reset`` when it is absent (US-881-c).
+
+    Replay-safe the same way as :func:`ensureDrainVcellTrajectoryTable`: a
+    ``sqlite_master`` lookup decides, and an existing table (and its row) is
+    never touched.
+
+    Args:
+        conn: Open sqlite3 connection; the caller owns commit semantics.
+
+    Returns:
+        True iff the table was created on this call.
+    """
+    present = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (FUEL_SINCE_RESET_TABLE,),
+    ).fetchone()
+    if present is not None:
+        return False
+    conn.execute(SCHEMA_FUEL_SINCE_RESET)
     return True
 
 # ================================================================================

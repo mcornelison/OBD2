@@ -831,7 +831,7 @@ mid-attempt; 12 h asleep stays at one attempt per ceiling cycle).
 | `connection_log` | OBD connection events (drive_start/end) | No FK | — |
 | `power_log` | Power **events**, never polls — contents, writers, row kinds and retention are defined ONCE in the `src/pi/power/power_db.py` module docstring (US-798); read that, not a paraphrase. Pi-authoritative; delta-synced to server since US-412 / F-101 | No FK | — |
 | `startup_log` | Boot-progress / RTC boot markers (Pi-authoritative; natural-key snapshot-synced since US-417 / F-101) | No FK | — |
-| `boot_milestone` | The FORWARD boot record (US-860-a / F-157): `id INTEGER PRIMARY KEY AUTOINCREMENT` (US-860-b, the delta-sync id cursor), `UNIQUE(boot_id, milestone)`; one first-write-wins row per (`boot_id`, `milestone`) (`INSERT OR IGNORE` against the UNIQUE: a repeat adds no row, though the AUTOINCREMENT counter advances so ids may gap) for kernel_start, obd_connected, first_sample_obd/imu/light/ups and drive_start. `ts_utc` is the event's time; `uptime_s` is that time minus kernel_start's (`kernel_start` = wall − `/proc/uptime`, 0). A rung never reached has no row; an `unknown` boot id writes nothing. All writers in eclipse-obd, via `src/pi/diagnostics/boot_milestone.py`. A Sprint 98 table (PK (`boot_id`, `milestone`), no `id`) is rebuilt by `ensureBootMilestoneIntegerId` from `ObdDatabase.initialize` in ONE savepoint (create, copy ordered by `ts_utc` then `milestone`, drop, rename), every row kept; a table with `id` is never touched. **Local-only until US-860-b** (schema_diff lists it under `tablesOnlyInPi`, report-only) | No FK | — |
+| `boot_milestone` | The FORWARD boot record (US-860-a / F-157): `id INTEGER PRIMARY KEY AUTOINCREMENT` (US-860-b, the delta-sync id cursor), `UNIQUE(boot_id, milestone)`; one first-write-wins row per (`boot_id`, `milestone`) (`INSERT OR IGNORE` against the UNIQUE: a repeat adds no row, though the AUTOINCREMENT counter advances so ids may gap) for kernel_start, obd_connected, first_sample_obd/imu/light/ups and drive_start. `ts_utc` is the event's time; `uptime_s` is that time minus kernel_start's (`kernel_start` = wall − `/proc/uptime`, 0). A rung never reached has no row; an `unknown` boot id writes nothing. All writers in eclipse-obd, via `src/pi/diagnostics/boot_milestone.py`. A Sprint 98 table (PK (`boot_id`, `milestone`), no `id`) is rebuilt by `ensureBootMilestoneIntegerId` from `ObdDatabase.initialize` in ONE savepoint (create, copy ordered by `ts_utc` then `milestone`, drop, rename), every row kept; a table with `id` is never touched. **Delta-syncs on `id`** (US-860-d: `sync_log.PK_COLUMN`, the id cursor only, NOT `SYNC_UPDATE_TABLES_PK` since rows never mutate) to the server `boot_milestone` (US-860-c, v0037), so schema_diff no longer lists it under `tablesOnlyInPi` | No FK | — |
 | `sync_log` | Per-table high-water mark for Pi -> server delta sync | No FK | — |
 | `sqlite_sequence` | SQLite internal autoincrement tracking | — | — |
 
@@ -1069,6 +1069,14 @@ EXISTS` behind an `INFORMATION_SCHEMA` probe, verified after; a re-run is a
 no-op). The table exists before any Pi pushes it: `/sync` does not accept it
 until US-860-d registers it on both tiers. **Deploy the server first.**
 
+US-860-d registers it: Pi `sync_log.PK_COLUMN['boot_milestone'] = 'id'` (id
+cursor only; never an UPDATE table) and server `_TABLE_REGISTRY` ->
+`BootMilestone`, no rename, so `ACCEPTED_TABLES` includes it.
+`tests/server/test_boot_milestone_crosses_tiers.py` pins the Pi column set
+(minus `id`) EQUAL to the model's synced columns (minus `id`, `source_device`,
+`source_id`, `synced_at`, `sync_batch_id`) and pushes a ladder through the real
+client and app.
+
 ##### US-419 (F-080): boot clock-quality flag on power_log / startup_log
 
 Post-reboot the Pi's RTC can read a stale/epoch time before
@@ -1243,6 +1251,8 @@ Every row written into a capture table carries a `data_source` column identifyin
 **Replay tag + the simulation flag (US-901-a, CIO R37).** The `replay` tag is now produced: with `pi.replay.active` true (validator default `false`) and no explicit override, `ObdDataLogger` tags every row `'replay'`, checked before `connection.isSimulated` because the replay source rides the simulated-connection seam. `DATA_SOURCE_VALUES` is unchanged. The simulation flag that keeps synthetic rows off the server covers **both** a replay run and a `--simulate` run: `SyncClient` refuses every push at its two POST sites (`_postBatchWithRetry`, `_postDriveCounterWithRetry`), which all five public push methods (`pushDelta`, `pushAllDeltas`, `forcePush`, `pushDriveCounter`, `pushSnapshot`) pass through. The refused result is the typed `PushStatus.REFUSED` -- distinct from `DISABLED` (companion off) and `FAILED` (a request was attempted) -- and it writes nothing to `sync_log` (no failed status, no quarantine count, mark untouched). The orchestrator hands its own `--simulate` flag to the client (`SyncClient(config, simulate=...)`); a replay reads `pi.replay.active` from the run's config. The two read-only GETs stay allowed and send no rows: the update check (`GET /api/v1/release/current`) and the home detector (`GET /api/v1/health`). Before anything opens, `src/pi/main.py::checkReplayStartGuard` exits 2 when a replay or `--simulate` run's `pi.database.path` resolves (working-directory relative, as the database opens it) to the production database -- `data/obd.db` under the repo root -- or its `pi.splash.statesDir` is the production `/run/eclipse-obd/states`. The guard reads the keys as configured; a config that omits them is not refused. The call-site discipline is enforced by `tests/pi/data/test_data_source_hygiene.py`, an AST audit that fails the suite if any seed script INSERT into a capture table omits the `data_source` column (US-212 closed the ~352K-row hygiene bug surfaced by US-205).
 
 **Ingest reject (US-902, CIO R28).** Behind the Pi-side refusal, the server is a second belt: `POST /api/v1/sync` returns 422 for a batch carrying any `replay` or `physics_sim` row, on every table, naming the table and the count, and writes no row of it (see "US-902" under the sync API, §5). Consequence: a rejected batch never advances `last_synced_id`, so one such row blocks that table's sync until it is removed; R37 (US-901-a) closes it at the source. `real`, `fixture`, `foreign` and an absent tag (coerced to `real`) are accepted as before, so a `replay` / `physics_sim` row can never land in obd2db.
+
+In a replay or --simulate database, drive_summary and connection_log rows read 'real' (schema default); the database copy is isolated and never pushed.
 
 **Filter rule** — server-side analytics, AI prompt inputs, and baseline calibrations MUST filter `WHERE data_source = 'real'` unless the caller is running a synthetic test. Pre-US-195 rows with `data_source IS NULL` are treated as `'real'` for backward compatibility.
 
@@ -5876,6 +5886,176 @@ dashboard reads both, and either one is enough to mark the panel.
   replayed data. It is hidden with `visibility` and keeps its box, so no other
   `#topbar` child moves.
 
+#### `system-status.drive.distanceKm` / `distanceSinceTs` -- this drive's distance (US-880-a)
+
+The `drive` block of `states/system-status` carries two always-present keys:
+
+```json
+"drive": {"state": "recording", "driveId": 118, "lastDrive": {...},
+          "distanceKm": 12.38, "distanceSinceTs": "2026-10-20T14:58:02Z"}
+```
+
+- **`distanceKm`** is this drive's distance from the ONE speed integrator,
+  `SpeedIntegrator` in `src/pi/obdii/speed_integrator.py`. It is unrounded; the page
+  formats it. It is `null` when nothing has been integrated in this process. Trip distance
+  and MPG (US-881) both read this integrator, so they cannot disagree (Atlas gaps 1-2).
+- **`distanceSinceTs`** is the event time the distance counts from. After a drive start
+  it is the drive start's event ts. After a process start in the middle of a drive it is
+  the event ts of the first SPEED reading integrated, so a partial distance says so.
+  `null` when nothing is integrated and no drive has started in this process.
+
+**Producer.** `CardStateEmitterMixin.observeTripSpeed`, called from
+`event_router._handleReading` beside `observeGearInput`. It takes SPEED only, and only
+while `_gatherDriveState` says a drive is recording; readings while idle are ignored.
+`dt` comes from the emitter's injectable monotonic clock (`_tripClock`), never wall time.
+`_handleDriveStart` resets the integrator. On drive end the value is kept (with
+`drive.state` `idle`) until the next drive starts. A process restart mid-drive starts at 0.
+
+**Method and gap rule (the server's).** Trapezoid between consecutive readings:
+`distance += (v0 + v1) / 2 * dt / 3600`. An interval with `dt <= 0` or
+`dt > pi.trip.gapSec` adds nothing, and the new reading becomes the next interval's
+start. A `null` speed is ignored entirely. `pi.trip.gapSec` defaults to 300, equal to
+the server's `GAP_DETECTION_THRESHOLD_SECONDS`, which
+`src/server/analytics/derived_signals_compute.py` uses to exclude gaps from
+`estimated_distance_km`: one gap definition across tiers (Atlas 2026-10-14). It is not
+`obdLiveSec`, because a 5-16 s bus stall mid-drive is still travel.
+`tests/server/test_trip_gap_crosses_tiers.py` pins the two defaults equal and feeds the
+same SPEED series through both integrals.
+
+#### `states/fuel-economy` -- this drive's fuel and MPG (US-881-b)
+
+```json
+{"thisDrive": {"fuelL": 1.82, "mpg": 24.6, "sinceTs": "2026-10-20T14:58:02Z",
+               "approximate": false, "openLoopAirPct": 8.7},
+ "sinceReset": null, "ts": "2026-10-20T15:02:11Z"}
+```
+
+- **`thisDrive`** is `null` until this process has seen a drive start or a first MAF
+  reading during a recording drive. It carries NO distance: the distance is
+  `system-status.drive.distanceKm` (Atlas gap 1). Values are unrounded; the page formats.
+- **`fuelL`** is fuel integrated from MAF; `mpg = (km / 1.609344) / (fuelL / 3.785411784)`,
+  with `km` read from the US-880-a speed integrator at the same publish (never a second
+  integrator). The US gallon and the mile are exact module constants (NIST Handbook 44
+  App. C), not config.
+- **`sinceTs`** is the integrator's `distanceSinceTs`, so fuel and distance share one
+  MPG window. Top-level **`ts`** is the newest integrated MAF reading's event time
+  (`null` when none).
+- **`openLoopAirPct`** = open-loop air grams / all air grams x 100 (`null` with no air);
+  **`approximate`** is true when it is >= `pi.fuel.approximateOpenLoopPct` (10).
+- **`sinceReset`** is `{fuelL, distanceKm, mpg, resetAtTs}` read from the Pi-local
+  `fuel_since_reset` row (US-881-c), `null` before any row or without a database. Its
+  `mpg` is null when `pi.fuel.mafTrusted` is false, below `pi.fuel.minMiles`, or with no
+  fuel (no reason key; the four keys are the contract).
+
+**Stoich, no trims (Spool 2026-10-14).** Per interval between consecutive MAF readings,
+air = trapezoid `(m0 + m1) / 2 * dt`; fuel grams = air / `pi.fuel.stoichAfr` (14.7, E0:
+the CIO's 93 is ethanol-free); litres = grams / `pi.fuel.densityGPerL` (740). Fuel trims
+are NOT applied. Open loop uses the same math and is never skipped: FUEL_SYSTEM_STATUS
+codes 2 and 5 are closed loop; 1, 3, 4 and 0/unknown are open loop
+(`decoders._FUEL_STATUS_ENUM`). An interval with `dt <= 0` or `dt > pi.trip.gapSec` adds
+no fuel and its time counts as excluded (the speed integrator's gap rule).
+
+**`mpg` null reasons.** When `mpg` is `null`, exactly ONE `mpgNullReason` is present
+(absent otherwise), by precedence (Atlas G2):
+
+| Reason | When |
+|---|---|
+| `maf_untrusted` | `pi.fuel.mafTrusted` is false (set at a speed-density install) |
+| `maf_stale` | no MAF reading within `pi.display.stale.obdLiveSec` of the publish |
+| `maf_zero_running` | the newest MAF is <= 0 while the engine-running gate is true |
+| `gaps` | excluded time > `pi.fuel.maxExcludedPct` (10) % of the window's time |
+| `too_short` | distance < `pi.fuel.minMiles` (1.0), or no distance read |
+| `no_fuel` | integrated `fuelL` is 0 (the ratio is undefined) |
+
+The window's time is monotonic seconds from the window start to the newest MAF reading.
+
+**Producer.** `CardStateEmitterMixin.observeFuelReading(paramName, value, reading)`,
+called from `event_router._handleReading` beside `observeTripSpeed` (an annotation
+there, for the MRO reason). MAF and FUEL_SYSTEM_STATUS only, only while
+`_gatherDriveState` says recording; `dt` from the same `_tripClock` seam as the distance.
+`_handleDriveStart` resets it (`_resetFuelEconomy`); drive end keeps it. The integrator
+(`FuelIntegrator`, `src/pi/obdii/fuel_economy_emitter.py`) lives under ONE lock
+(`_fuelLock`) shared by the reading callback and the publish. The card tick writes the
+file beside `obd-live` through the same `writeStateAtomic`.
+
+**Engine gate (Atlas G1).** `maf_zero_running` asks `ObdLiveTracker.engineRunningAt(reading)`,
+which takes the tracker's lock, converts the capture time exactly as `observeReading`
+does, and calls `BandProducer.engineRunningAt(ts)` (a public wrapper over US-875's
+`_engineRunningAt`). The band producer is never exposed. No tracker -> the gate is
+unknown, and `maf_zero_running` never fires. Fixture:
+`tests/ui/fixtures/states/fuel-economy.json` (`driving`, `too-short`, `maf-untrusted`,
+`after-reset`), rebuilt by the producer in `tests/pi/obdii/test_fuel_economy_emitter.py`.
+
+**Since-reset totals (US-881-c, Atlas gap 3 / G3).** One Pi-LOCAL row,
+`fuel_since_reset (id INTEGER PRIMARY KEY CHECK (id = 1), fuel_l REAL, distance_km REAL,
+open_loop_s REAL, reset_at_ts TEXT, updated_at TEXT)`, created by
+`ensureFuelSinceResetTable` (a `sqlite_master` probe, called from
+`ObdDatabase.initialize`; an existing table is never touched). It is in NO sync registry
+(not `PK_COLUMN`, `IN_SCOPE_TABLES` or `SNAPSHOT_SYNC`): every fact behind it already
+syncs in `realtime_data`. Accessors: `src/pi/obdii/fuel_since_reset.py` (`read`,
+`accumulate`, `reset` on a connection; `...From(database)` wrappers for the card
+emitter, which may not open a connection). The card tick persists from the run loop at
+drive end (the recording -> not-recording edge) and at most once per
+`pi.fuel.persistSec` (60) while recording, writing ONLY the change since its watermark
+(this drive's `fuelL`, km and open-loop seconds already written), so a drive is counted
+once however many persists it spans and a crash loses at most `persistSec`. A drive start
+zeroes the watermark under `_fuelLock` with the integrator (a drive whose end no tick saw
+loses only its unpersisted remainder, as a crash would); a failed write leaves the
+watermark, so the next persist retries it. `open_loop_s` is the included interval time
+outside closed loop (`FuelSnapshot.openLoopS`). `resetSinceReset(resetAtTs)` zeroes the
+row, the cached `sinceReset` and the watermark together (the US-881-d entry point). No
+database handle -> `sinceReset` null and one WARN.
+
+**`POST /fuel-reset` (US-881-d, Atlas gap 4).** `eclipse-states-http` has exactly FOUR
+explicit, token-gated (`_tokenOk`) write routes: `/service-control`, `/dtc-clear`,
+`/settings` and `/fuel-reset`; any other POST path (e.g. `/fuel-resetx`) is 404, never a
+catch-all. The HTTP process holds no database, so the route calls the injected
+`fuelResetRunner` -- `src/pi/splash/fuel_reset_channel.py`, the `dtc_clear_channel`
+pattern in its own module (the DTC channel is untouched): it writes
+`fuel-reset-request.json {requestId}` into the states dir and waits up to
+`pi.fuel.resetTimeoutSec` (validator default 5, finite > 0; resolved at start by
+`loadFuelResetTimeoutSec`; short because the server is single-threaded and the wait
+blocks every GET) for `fuel-reset-outcome.json` carrying the SAME `requestId`.
+eclipse-obd services it from `runLoop` in `_maybeServiceFuelResetRequest`, right after
+`_maybeServiceDtcClearRequest`: the request is consumed first; while `_gatherDriveState`
+says `recording` it writes `{ok: false, reason: "driving"}` and changes nothing;
+otherwise it calls `resetSinceReset(resetAtTs = now, canonical UTC)` (never
+`fuel_since_reset.reset` directly) and writes `{ok: true, resetAtTs}` (`reason
+"unavailable"` with no fuel producer or database). Status mapping, copied from
+`/dtc-clear`: 401 bad token (no request file written), 503 no states channel (no runner,
+or the request cannot be written), 409 refused (`reason` in the body), 504 no outcome in
+time (`ok: null`; the request is withdrawn), 200 `{ok: true, resetAtTs}`. The next
+`states/fuel-economy` then carries `sinceReset` totals 0 and that `resetAtTs`.
+
+#### `window.DISPLAY_STALE` -- the page's stale windows, injected per request (US-882-c)
+
+`eclipse-states-http` injects three config blocks into `dashboard.html` through the
+quoted-placeholder seam in `_injectHtml`: `window.DISPLAY_AUTODIM` (the auto-dim curve),
+`window.DISPLAY_CAROUSEL` (US-533 B1) and `window.DISPLAY_STALE` (Atlas gap 6):
+
+```js
+window.DISPLAY_STALE = {"imuSec": 2.0};
+```
+
+- **`imuSec`** is `pi.display.stale.imuSec` (validator default 2.0, finite, > 0, beside
+  `pi.display.stale.obdLiveSec`). It replaces carousel.js's former `IMU_STALE_SEC`
+  literal and equals it, so nothing on screen changes; at `stateHz` 1 it is two write
+  intervals.
+- **Resolved per request** by `loadDisplayStaleConfig` (`_DISPLAY_STALE_PLACEHOLDER`)
+  through `overlay.readEffectiveValue`, never cached at construction, so a config.json
+  change reaches the kiosk on its next reload with no unit restart. A value that is not
+  a finite number > 0, an absent key or an unreadable config serves the validator default.
+- **imuSec / autoDim are config.json keys, read per request (882-c) / on mtime change
+  (878-b) through overlay.resolveEffectiveConfig; not operator-overridable.** They are
+  not in `OVERRIDABLE_KEYS` (Atlas ruled B, 2026-10-14), so a value in config.local.json
+  is ignored and nothing is added to `/settings`.
+- **Page side.** `imuView` compares the reading's age against
+  `resolveImuStaleSec(window.DISPLAY_STALE)`. When the injection is absent (a `file://`
+  preview leaves the placeholder string) or not a finite positive number it uses
+  `DEFAULT_IMU_STALE_SEC`, a mirror of the validator default;
+  `tests/ui/test_carousel_imu_stale_config.py` pins the mirror to `DEFAULTS`, and
+  `tests/pi/splash/test_states_http_stale_inject.py` pins the per-request injection.
+
 #### `states/light` -- lux plus the raw counts, gain and saturation of one reader burst (US-878-a)
 
 **Producer:** `src/pi/sensors/light_state_bridge.py` (`LightStateBridge`, bus consumer;
@@ -5888,8 +6068,9 @@ another seq arrives first, the lossy queue dropped part of the pending burst: it
 written with its missing fields null. Another burst's counts are never reused
 (Atlas G3).
 
-**Shape:** `{lux, visibleCount, irCount, fullCount, gain, integrationMs, channelAtLimit, ts}`
-(Atlas L-A 2026-10-13). Fixture: `tests/ui/fixtures/states/light.json`.
+**Shape:** `{lux, visibleCount, irCount, fullCount, gain, integrationMs, channelAtLimit,
+brightnessLevel, brightnessMode, ts}` (Atlas L-A 2026-10-13; the two brightness keys
+US-878-b). Fixture: `tests/ui/fixtures/states/light.json`.
 
 | Key | Source |
 |-----|--------|
@@ -5900,10 +6081,25 @@ written with its missing fields null. Another burst's counts are never reused
 | `gain` | `sensor_reader.tslGainLabel(raw.light.range[0])`: `low`/`med`/`high`/`max` for the AGAIN codes 0x00/0x10/0x20/0x30, else `null`. A register code is never published. |
 | `integrationMs` | `raw.light.range[1]`, as read. |
 | `channelAtLimit` | `true` when `fullCount` or `irCount` >= `sensor_reader.saturationCeilingForIntegrationMs(integrationMs)`, `false` when both are below it, `null` when the ceiling is unknown, or when a count is missing and the other is below it. |
+| `brightnessLevel` | The 0.0-1.0 auto-dim level for the published `lux`, computed by the bridge (`light_state_bridge.brightnessLevel`): carousel.js `brightnessCurve` / `brightnessLevel` ported unchanged, WITHOUT the STOP override (that stays page-side). A null or negative `lux` gives `defaultLevel` UNCLAMPED to `minLevel` (US-627); a curved value is clamped to [`minLevel`, 1.0]. Staleness is the reader's concern. |
+| `brightnessMode` | `auto`, the only mode this sprint (`fixed` arrives with US-878-c's `overrideLevel`). |
 | `ts` | The lux sample's event time (else the burst's first sample's). Empty gives `null`, never a clock reading (US-809-c). |
 
 `lux` and `ts` keep their meaning, so the brightness consumer and its stale fallback
 (US-483-b) are unchanged.
+
+**Brightness (US-878-b).** NOTHING consumes `brightnessLevel` / `brightnessMode` yet: the
+page applies its own curve until the post-S101 screen story. The frozen golden table in
+`tests/pi/sensors/test_brightness_golden.py` (expected values produced by running
+carousel.js in node, config = the validator `DEFAULTS` autoDim) is the single reference
+for the curve; the bridge matches it to 1e-9, and `tests/ui/test_carousel_brightness.py`
+runs today's page through the same rows, so the two cannot drift apart unnoticed. The
+bridge reads `pi.display.autoDim` from its start config, then (given the `configPath`
+lifecycle passes, Atlas G5) re-reads it through `overlay.resolveEffectiveConfig` when
+config.json or config.local.json changes mtime, checked at most once per second on a
+monotonic clock. It never uses the HTTP server's start-time cache (Atlas gap 5).
+autoDim is not in `OVERRIDABLE_KEYS`, so a config.local.json value is ignored; an
+unreadable config.json keeps the current autoDim and is retried on the next check.
 
 **Replay:** `src/pi/sensors/replay_feeder.py` publishes the same burst for every
 replayed `edr_light_sample` row: lux, raw, then `raw.light.range` LAST on every row,
@@ -6389,7 +6585,7 @@ property that shapes the whole card. A gray "NA" reads as dead at a glance, but 
 g-dot frozen at 0.4 g reads exactly like a car holding a steady corner -- a
 fabricated measurement, not a visible gap. So the freshness gate blanks the
 **instrument** rather than graying a label: an explicit `available: false`, an
-undated payload, or a reading older than `IMU_STALE_SEC` renders the calm gray
+undated payload, or a reading older than the IMU stale window (`window.DISPLAY_STALE.imuSec`, US-882-c) renders the calm gray
 MOTION body and *no geometry at all* (US-497 AC-3). Within a live reading,
 absence is still per field -- a dead magnetometer grays HEADING alone (and hides
 the needle: a needle frozen at its last bearing is worse than an absent one),
@@ -6419,7 +6615,7 @@ distinguishable from *"the producer is refusing to guess right now"*.
 
 | Constant | Value | Grounding |
 |---|---|---|
-| `IMU_STALE_SEC` | 2.0 s | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `IMU_STALE_SEC` (now `pi.display.stale.imuSec`, injected as `window.DISPLAY_STALE.imuSec`, US-882-c) | 2.0 s | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
 | `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
 | `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
 | `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |
@@ -6609,6 +6805,9 @@ reusing the boot-state primitives). Schema (spec §7):
   "drive": {"state":"recording","driveId":27},
   "ts":"…" }
 ```
+
+(US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`; see
+"`system-status.drive.distanceKm`" in section 11.)
 
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
 `linked` (green) / `reconnecting` (amber, with `retries` + `lastSeenS`) / `down`

@@ -39,6 +39,13 @@
 #               |              | and writes once per burst (on range, or when a
 #               |              | newer seq shows the burst lost a sample). Topic
 #               |              | copy deleted: imported from sensor_reader.
+# 2026-10-14    | Rex (US-878-b)| states/light gains brightnessLevel and
+#               |              | brightnessMode: carousel.js's auto-dim curve
+#               |              | ported unchanged (golden table in
+#               |              | tests/pi/sensors/test_brightness_golden.py).
+#               |              | pi.display.autoDim is re-read through the
+#               |              | overlay seam when config.json or
+#               |              | config.local.json mtime changes.
 # ================================================================================
 ################################################################################
 
@@ -46,13 +53,22 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
+from common.config.overlay import (
+    getDotPath,
+    loadOverlay,
+    overlayPathFor,
+    resolveEffectiveConfig,
+)
+from common.config.validator import DEFAULTS
 from common.time.helper import utcIsoNow
 
 # The producer-side SSOT for the topics, the ceilings and the gain codes
@@ -71,10 +87,14 @@ from pi.splash.boot_state_emitter import ensureStatesDir, writeStateAtomic
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "BRIGHTNESS_MODE_AUTO",
     "LIGHT_STATE_FILENAME",
     "LightStateBridge",
+    "brightnessCurve",
+    "brightnessLevel",
     "buildLightState",
     "createLightStateBridgeFromConfig",
+    "resolveAutoDim",
 ]
 
 # The single states/ slot the carousel brightness consumer polls (US-483-b).
@@ -91,6 +111,116 @@ _SUB_NAME = "light-state"
 
 # How long the drain loop blocks waiting for a sample before re-checking _stop.
 _DRAIN_TIMEOUT_S = 0.5
+
+# US-878-b: the only brightness mode this sprint. 'fixed' arrives with US-878-c.
+BRIGHTNESS_MODE_AUTO = "auto"
+
+# The auto-dim section. Its keys and fallback values come from the validator
+# DEFAULTS, the same values carousel.js mirrors in BRIGHTNESS_DEFAULTS.
+_AUTODIM_KEY = "pi.display.autoDim"
+_AUTODIM_PREFIX = _AUTODIM_KEY + "."
+_AUTODIM_DEFAULTS: dict[str, Any] = {
+    key[len(_AUTODIM_PREFIX):]: value
+    for key, value in DEFAULTS.items()
+    if key.startswith(_AUTODIM_PREFIX)
+}
+
+# The curve value the page treats as linear; any other string is logarithmic.
+_CURVE_LINEAR = "linear"
+
+# US-878-b (Atlas ruled B): config.json and config.local.json mtimes are
+# checked at most once per second while bursts arrive.
+_CONFIG_RECHECK_S = 1.0
+
+
+def resolveAutoDim(section: Any) -> dict[str, Any]:
+    """Resolve an autoDim section over the validator defaults (pure).
+
+    The port of carousel.js ``resolveAutoDimConfig``: each key starts at its
+    default and only a well-typed value wins -- a finite number (never a bool)
+    for the numeric keys, a string for ``curve``. Anything else, including a
+    non-dict section, leaves the default in place.
+
+    Args:
+        section: The ``pi.display.autoDim`` mapping, or None.
+
+    Returns:
+        A complete autoDim dict.
+    """
+    out = dict(_AUTODIM_DEFAULTS)
+    if not isinstance(section, dict):
+        return out
+    for key in _AUTODIM_DEFAULTS:
+        if key not in section:
+            continue
+        value = section[key]
+        if key == "curve":
+            if isinstance(value, str):
+                out[key] = value
+        elif (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        ):
+            out[key] = value
+    return out
+
+
+def brightnessCurve(lux: float, luxMin: float, luxFull: float, curve: str) -> float:
+    """The perceptual lux -> 0..1 mapping, ported unchanged from carousel.js.
+
+    0 at/below luxMin, 1 at/above luxFull. A degenerate range (luxFull <=
+    luxMin) is full, and a non-positive luxMin or lux under the log curve falls
+    back to linear, so it can never divide by zero or take a log of <= 0.
+
+    Args:
+        lux: A finite lux reading.
+        luxMin: Lux at and below which the curve is 0.
+        luxFull: Lux at and above which the curve is 1.
+        curve: ``'linear'``, else logarithmic (as the page reads it).
+
+    Returns:
+        The curve value in [0, 1].
+    """
+    if not math.isfinite(lux):
+        return 0.0
+    if not luxFull > luxMin:
+        return 1.0
+    if lux <= luxMin:
+        return 0.0
+    if lux >= luxFull:
+        return 1.0
+    if curve != _CURVE_LINEAR and luxMin > 0 and lux > 0:
+        return (math.log(lux) - math.log(luxMin)) / (math.log(luxFull) - math.log(luxMin))
+    return (lux - luxMin) / (luxFull - luxMin)
+
+
+def brightnessLevel(lux: Any, autoDim: dict[str, Any] | None) -> float:
+    """The 0..1 panel level for one lux reading, as the page computes it today.
+
+    The port of carousel.js ``brightnessLevel`` WITHOUT the STOP override, which
+    stays page-side. A null lux (absent, saturated, failed, negative or
+    non-finite) gives defaultLevel UNCLAMPED to minLevel (US-627: the floor is
+    enforced by validate_config, never hidden here); a curved value is clamped
+    to [minLevel, 1.0]. Both are then bounded to [0, 1], as the page does.
+    Staleness is the reader's concern: this is the level for the reading at its
+    own event time.
+
+    Args:
+        lux: The published lux (float or None).
+        autoDim: The autoDim section; resolved over the validator defaults.
+
+    Returns:
+        The brightness level in [0, 1].
+    """
+    cfg = resolveAutoDim(autoDim)
+    luxF = _coerceLux(lux)
+    if luxF is None or luxF < 0:
+        level = cfg["defaultLevel"]
+    else:
+        curved = brightnessCurve(luxF, cfg["luxMin"], cfg["luxFull"], cfg["curve"])
+        level = min(max(curved, cfg["minLevel"]), 1.0)
+    return float(min(max(level, 0.0), 1.0))
 
 
 def _coerceLux(value: Any) -> float | None:
@@ -148,6 +278,7 @@ def buildLightState(
     tsUtc: str,
     rawCounts: Any = None,
     rangeContext: Any = None,
+    autoDim: dict[str, Any] | None = None,
 ) -> dict:
     """Assemble the states/light payload from one reader burst (pure).
 
@@ -164,12 +295,16 @@ def buildLightState(
             visible count is published as null.
         rangeContext: The raw.light.range value ``(gainCode, integrationMs)``,
             or None when the burst lost it.
+        autoDim: The ``pi.display.autoDim`` section the brightness level is
+            computed under; None uses the validator defaults.
 
     Returns:
         ``{lux, visibleCount, irCount, fullCount, gain, integrationMs,
-        channelAtLimit, ts}``. ``gain`` is a label, never a register code;
-        ``channelAtLimit`` is null when the saturation ceiling for the
-        integration time is unknown; when it is true, ``lux`` is null.
+        channelAtLimit, brightnessLevel, brightnessMode, ts}``. ``gain`` is a
+        label, never a register code; ``channelAtLimit`` is null when the
+        saturation ceiling for the integration time is unknown; when it is
+        true, ``lux`` is null. ``brightnessLevel`` is computed from the
+        published ``lux`` (US-878-b).
     """
     visibleCount = _coerceCount(_tupleField(rawCounts, 0))
     if visibleCount is not None and visibleCount < 0:
@@ -180,14 +315,17 @@ def buildLightState(
     channelAtLimit = _channelAtLimit(
         fullCount, irCount, saturationCeilingForIntegrationMs(integrationMs)
     )
+    publishedLux = None if channelAtLimit is True else _coerceLux(lux)
     return {
-        "lux": None if channelAtLimit is True else _coerceLux(lux),
+        "lux": publishedLux,
         "visibleCount": visibleCount,
         "irCount": irCount,
         "fullCount": fullCount,
         "gain": tslGainLabel(_tupleField(rangeContext, 0)),
         "integrationMs": integrationMs,
         "channelAtLimit": channelAtLimit,
+        "brightnessLevel": brightnessLevel(publishedLux, autoDim),
+        "brightnessMode": BRIGHTNESS_MODE_AUTO,
         "ts": tsUtc or None,
     }
 
@@ -232,6 +370,9 @@ class LightStateBridge:
         statesDir: str,
         *,
         nowIsoFn: Callable[[], str] | None = None,
+        autoDim: dict[str, Any] | None = None,
+        configPath: str | None = None,
+        monotonicFn: Callable[[], float] | None = None,
     ) -> None:
         """Bind the bridge to its source subscription + states dir.
 
@@ -242,11 +383,27 @@ class LightStateBridge:
             nowIsoFn: Fallback clock for ``ts`` when a sample carries no tsUtc
                 (default UTC now, canonical ISO). The sample's own tsUtc is used
                 whenever present (honest read-time freshness).
+            autoDim: The start ``pi.display.autoDim`` section (None -> the
+                validator defaults).
+            configPath: config.json path. When set, autoDim is re-read through
+                the overlay seam once config.json or config.local.json changes
+                mtime; None keeps the start config for the process lifetime.
+            monotonicFn: Monotonic clock (seconds) pacing the mtime check
+                (default ``time.monotonic``).
         """
         self._sub = subscription
         self._statesDir = statesDir
         self._target = os.path.join(statesDir, LIGHT_STATE_FILENAME)
         self._nowIsoFn = nowIsoFn if nowIsoFn is not None else utcIsoNow
+        # US-878-b: the bridge's own autoDim -- never the HTTP server's
+        # start-time cache (Atlas gap 5).
+        self._autoDim = resolveAutoDim(autoDim)
+        self._configPath = configPath
+        self._monotonicFn = monotonicFn if monotonicFn is not None else time.monotonic
+        self._lastConfigCheck = self._monotonicFn()
+        self._configMtimes = (
+            self._readConfigMtimes(configPath) if configPath is not None else None
+        )
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         # US-873: the light feed's capture-health facts for THIS process. Held
@@ -279,6 +436,63 @@ class LightStateBridge:
         capture = getattr(sample, "tsCapture", None)
         if isinstance(capture, (int, float)) and not isinstance(capture, bool):
             self._lastSampleCapture = float(capture)
+
+    # -- autoDim config (US-878-b) ---------------------------------------------
+    @property
+    def autoDim(self) -> dict[str, Any]:
+        """The autoDim section the next brightnessLevel is computed under."""
+        return dict(self._autoDim)
+
+    @staticmethod
+    def _readConfigMtimes(configPath: str) -> tuple[int | None, int | None]:
+        """``st_mtime_ns`` of config.json and config.local.json; None if absent."""
+        mtimes: list[int | None] = []
+        for path in (configPath, overlayPathFor(configPath)):
+            try:
+                mtimes.append(os.stat(path).st_mtime_ns)
+            except OSError:
+                mtimes.append(None)
+        return mtimes[0], mtimes[1]
+
+    def _currentAutoDim(self) -> dict[str, Any]:
+        """The autoDim to compute under, re-read when either file changed.
+
+        The mtimes are checked at most once per ``_CONFIG_RECHECK_S`` of the
+        monotonic clock. Without a configPath the start config stands.
+        """
+        configPath = self._configPath
+        if configPath is None:
+            return self._autoDim
+        now = self._monotonicFn()
+        if now - self._lastConfigCheck < _CONFIG_RECHECK_S:
+            return self._autoDim
+        self._lastConfigCheck = now
+        mtimes = self._readConfigMtimes(configPath)
+        if mtimes != self._configMtimes and self._reloadAutoDim(configPath):
+            self._configMtimes = mtimes
+        return self._autoDim
+
+    def _reloadAutoDim(self, configPath: str) -> bool:
+        """Re-read autoDim from config.json through the overlay seam.
+
+        config.local.json is applied by ``resolveEffectiveConfig``, whose
+        allow-list does not hold autoDim, so an overlay value is ignored (Atlas
+        ruled B). An unreadable or malformed config.json keeps the current
+        autoDim and returns False, so the next check retries it.
+        """
+        try:
+            with open(configPath, encoding="utf-8") as fh:
+                base = json.load(fh)
+        except (OSError, ValueError) as e:
+            logger.warning("light-state autoDim re-read failed (%s) -- kept", e)
+            return False
+        if not isinstance(base, dict):
+            logger.warning("light-state autoDim re-read: config is not an object -- kept")
+            return False
+        effective = resolveEffectiveConfig(base, loadOverlay(overlayPathFor(configPath)))
+        _, section = getDotPath(effective, _AUTODIM_KEY)
+        self._autoDim = resolveAutoDim(section)
+        return True
 
     # -- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -351,6 +565,7 @@ class LightStateBridge:
                 tsUtc=burst.tsUtc(),
                 rawCounts=burst.value(TOPIC_LIGHT_RAW),
                 rangeContext=burst.value(TOPIC_LIGHT_RANGE),
+                autoDim=self._currentAutoDim(),
             )
         )
 
@@ -372,6 +587,8 @@ def createLightStateBridgeFromConfig(
     bus: Any,
     *,
     nowIsoFn: Callable[[], str] | None = None,
+    configPath: str | None = None,
+    monotonicFn: Callable[[], float] | None = None,
 ) -> LightStateBridge | None:
     """Build the light-state bridge from validated config, or None when dark.
 
@@ -379,11 +596,15 @@ def createLightStateBridgeFromConfig(
     both set -- so with the default flags off nothing is built (ships dark).
 
     Args:
-        config: Validated tier-aware config (reads the ``pi`` section).
+        config: Validated tier-aware config (reads the ``pi`` section). Its
+            ``pi.display.autoDim`` is the bridge's start config.
         bus: The SampleBus to subscribe to (LOSSY on raw.light.lux, .raw and
             .range -- a display only needs the freshest reading, drop-oldest on
             overflow; a burst that loses a sample is written with it null).
         nowIsoFn: Optional fallback clock for ``ts`` (see LightStateBridge).
+        configPath: config.json path for the autoDim re-read (Atlas G5);
+            None keeps the start config.
+        monotonicFn: Optional monotonic clock pacing that re-read.
 
     Returns:
         A ready-to-start LightStateBridge, or None when disabled.
@@ -401,4 +622,12 @@ def createLightStateBridgeFromConfig(
 
     statesDir = pi.get("splash", {}).get("statesDir", _DEFAULT_STATES_DIR)
     subscription = bus.subscribe(list(_LIGHT_TOPICS), QoS.LOSSY, _SUB_NAME)
-    return LightStateBridge(subscription, statesDir, nowIsoFn=nowIsoFn)
+    _, autoDim = getDotPath(config, _AUTODIM_KEY)
+    return LightStateBridge(
+        subscription,
+        statesDir,
+        nowIsoFn=nowIsoFn,
+        autoDim=autoDim,
+        configPath=configPath,
+        monotonicFn=monotonicFn,
+    )

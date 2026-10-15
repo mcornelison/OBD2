@@ -69,6 +69,16 @@
 #               |              | latest value/unit/event time and decides stale.
 # 2026-10-14    | Rex (US-901-b)| system-status runMode from pi.replay.active and
 #               |              | the orchestrator's --simulate flag.
+# 2026-10-14    | Rex (US-880-a)| observeTripSpeed: SPEED while recording feeds
+#               |              | the ONE speed integrator; drive start resets it;
+#               |              | system-status drive.distanceKm/distanceSinceTs.
+# 2026-10-14    | Rex (US-881-b)| observeFuelReading: MAF/FUEL_SYSTEM_STATUS while
+#               |              | recording feed the fuel integrator; the card tick
+#               |              | publishes states/fuel-economy beside obd-live.
+# 2026-10-14    | Rex (US-881-c)| Since-reset fuel totals: the card tick persists
+#               |              | this drive's change since its watermark to the
+#               |              | Pi-local fuel_since_reset row (drive end + every
+#               |              | pi.fuel.persistSec) and publishes sinceReset.
 # ================================================================================
 ################################################################################
 
@@ -285,6 +295,39 @@ class CardStateEmitterMixin:
     # the whole substance of the derivation, and a test that had to sleep 2 s to
     # exercise them would be a test nobody runs.
     _gearClock: Any = None
+    # US-880-a: the ONE speed integrator behind system-status drive.distanceKm.
+    # CLASS defaults for the same reason as the gear pair above; a composer
+    # without one integrates nothing and publishes null. The (km, sinceTs) pair
+    # is read on the run loop and written on the reading callback, so it moves
+    # under one lock, built with the integrator.
+    _speedIntegrator: Any = None
+    _tripLock: Any = None
+    _tripDistanceKm: float | None = None
+    _tripDistanceSinceTs: str | None = None
+    # Injectable monotonic clock for the integrator's dt; same reason as
+    # _gearClock. Never wall time: an NTP step must not add or erase distance.
+    _tripClock: Any = None
+    # US-881-b: the states/fuel-economy producer. CLASS defaults for the same
+    # reason as the gear pair above. The integrator is written on the reading
+    # callback and read by the card tick, so both sides take _fuelLock.
+    _fuelIntegrator: Any = None
+    _fuelSettings: Any = None
+    _fuelEconomyEmitter: Any = None
+    _fuelLock: Any = None
+    _fuelStaleSec: float | None = None
+    # US-881-c: since-reset persistence. The watermark is the (fuelL, km,
+    # openLoopS) of THIS drive already written to fuel_since_reset, so a drive
+    # is counted once however many persists it spans. It, the generation (bumped
+    # at every drive start) and the last persist time move under _fuelLock with
+    # the integrator. The cached row and the was-recording edge are the card
+    # tick's alone.
+    _fuelWatermark: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    _fuelGeneration: int = 0
+    _fuelLastPersistS: float | None = None
+    _fuelWasRecording: bool = False
+    _fuelSinceReset: dict[str, Any] | None = None
+    _fuelSinceResetLoaded: bool = False
+    _fuelNoDatabaseWarned: bool = False
 
     # ------------------------------------------------------------------ setup
 
@@ -315,6 +358,8 @@ class CardStateEmitterMixin:
         self._initializeLtftTrendProducer(statesDir)
         self._initializeCaptureHealthProducer(statesDir)
         self._initializeObdLiveProducer(statesDir)
+        self._initializeTripDistance()
+        self._initializeFuelEconomyProducer(statesDir)
         severityTablePath = dtcConfig.get(
             "severityTablePath", _DEFAULT_SEVERITY_TABLE_PATH
         )
@@ -1024,7 +1069,343 @@ class CardStateEmitterMixin:
             self._emitObdLiveState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("obd-live card emit failed: %s", e)
+        try:
+            # US-881-b: beside obd-live; MAF staleness is decided here too.
+            self._emitFuelEconomyState()
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("fuel-economy card emit failed: %s", e)
         return True
+
+    # -------------------------------------------------------- trip distance
+    #
+    # US-880-a. Trip distance and MPG need ONE distance source (Atlas gaps 1-2):
+    # SPEED readings on the reading seam, while a drive is recording, feed the
+    # speed integrator; system-status drive.distanceKm publishes its total.
+
+    def _initializeTripDistance(self) -> None:
+        """Build the speed integrator from pi.trip.gapSec in its own try/except."""
+        try:
+            import threading
+
+            from common.config.validator import DEFAULTS
+            from pi.obdii.speed_integrator import SpeedIntegrator
+
+            tripCfg = self._config.get("pi", {}).get("trip", {})
+            gapSec = float(tripCfg.get("gapSec", DEFAULTS["pi.trip.gapSec"]))
+            self._speedIntegrator = SpeedIntegrator(gapSec)
+            self._tripLock = threading.Lock()
+            logger.info("trip distance wired (gap_sec=%.1f)", gapSec)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("trip distance init skipped: %s", e)
+            self._speedIntegrator = None
+            self._tripLock = None
+
+    def _tripNowS(self) -> float:
+        """Monotonic seconds for the speed integrator's dt."""
+        clock = self._tripClock
+        if clock is not None:
+            return float(clock())
+        import time
+
+        return time.monotonic()
+
+    def _tripEventTs(self, eventTime: Any) -> str | None:
+        """Canonical UTC for a reading/drive event time, or None if unusable.
+
+        The logger and the drive detector stamp NAIVE local datetimes; the
+        declared zone converts them. No zone, no timestamp -- never a guess.
+        """
+        if not isinstance(eventTime, datetime):
+            return None
+        try:
+            from common.time.helper import localNaiveToCanonicalIso
+
+            return localNaiveToCanonicalIso(eventTime, self._config)
+        except Exception as e:  # noqa: BLE001 -- an unlabelled ts is None, not a crash
+            logger.debug("trip distance event ts unavailable: %s", e)
+            return None
+
+    def observeTripSpeed(
+        self, paramName: str, value: Any, eventTime: Any = None
+    ) -> None:
+        """Route one realtime reading into the speed integrator.
+
+        Called from the orchestrator's reading callback for every parameter;
+        returns at once for anything but SPEED, and ignores readings while no
+        drive is recording (the recording fact is :meth:`_gatherDriveState`'s,
+        never a second source).
+
+        Args:
+            paramName: The realtime parameter's name.
+            value: Its value in km/h; None is ignored entirely.
+            eventTime: The reading's capture time (labels a partial distance
+                after a mid-drive process start).
+        """
+        integrator = self._speedIntegrator
+        if integrator is None or paramName != "SPEED" or value is None:
+            return
+        if self._gatherDriveState()[0] != "recording":
+            return
+        tS = self._tripNowS()
+        with self._tripLock:
+            km = integrator.update(float(value), tS)
+            if self._tripDistanceKm is None and self._tripDistanceSinceTs is None:
+                # No drive start seen this process (restart mid-drive): the
+                # partial distance counts from THIS reading, and says so.
+                self._tripDistanceSinceTs = self._tripEventTs(eventTime)
+            self._tripDistanceKm = km
+
+    def _resetTripDistance(self, driveStartTime: Any) -> None:
+        """Zero the integrator at drive start; label the distance from it.
+
+        Args:
+            driveStartTime: The drive session's start time (its event ts).
+        """
+        integrator = self._speedIntegrator
+        if integrator is None:
+            return
+        with self._tripLock:
+            integrator.reset()
+            self._tripDistanceKm = None
+            self._tripDistanceSinceTs = self._tripEventTs(driveStartTime)
+
+    def _gatherTripDistance(self) -> tuple[float | None, str | None]:
+        """Return (distanceKm, distanceSinceTs); (None, None) when not wired."""
+        if self._speedIntegrator is None:
+            return (None, None)
+        with self._tripLock:
+            return (self._tripDistanceKm, self._tripDistanceSinceTs)
+
+    # -------------------------------------------------------- fuel economy
+    #
+    # US-881-b. MAF and FUEL_SYSTEM_STATUS on the reading seam, while a drive is
+    # recording, feed the fuel integrator; the card tick publishes this drive's
+    # fuel and MPG against the trip distance above -- never a second integrator.
+
+    def _initializeFuelEconomyProducer(self, statesDir: str) -> None:
+        """Build the fuel integrator + its emitter in their own try/except."""
+        try:
+            import threading
+
+            from pi.obdii.fuel_economy_emitter import (
+                FuelIntegrator,
+                FuelSettings,
+                makeFuelEconomyEmitter,
+            )
+            from pi.obdii.obd_live_emitter import DEFAULT_OBD_LIVE_STALE_S
+
+            settings = FuelSettings.fromConfig(self._config)
+            staleCfg = self._config.get("pi", {}).get("display", {}).get("stale", {})
+            self._fuelStaleSec = float(
+                staleCfg.get("obdLiveSec", DEFAULT_OBD_LIVE_STALE_S)
+            )
+            self._fuelSettings = settings
+            self._fuelIntegrator = FuelIntegrator(settings.gapSec)
+            self._fuelLock = threading.Lock()
+            self._fuelEconomyEmitter = makeFuelEconomyEmitter(statesDir)
+            logger.info(
+                "fuel-economy wired (stoich=%.2f density=%.0f maf_trusted=%s)",
+                settings.stoichAfr, settings.densityGPerL, settings.mafTrusted,
+            )
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("fuel-economy producer init skipped: %s", e)
+            self._fuelIntegrator = None
+            self._fuelEconomyEmitter = None
+            self._fuelLock = None
+
+    def observeFuelReading(
+        self, paramName: str, value: Any, reading: Any = None
+    ) -> None:
+        """Route one realtime reading into the fuel integrator.
+
+        Called from the orchestrator's reading callback for every parameter;
+        returns at once for anything but MAF and FUEL_SYSTEM_STATUS, and
+        ignores readings while no drive is recording (the recording fact is
+        :meth:`_gatherDriveState`'s).
+
+        The engine gate is asked through the obd-live tracker BEFORE the fuel
+        lock is taken, so the two locks are never held together.
+
+        Args:
+            paramName: The realtime parameter's name.
+            value: MAF in g/s, or the FUEL_SYSTEM_STATUS numeric code.
+            reading: The reading itself; its capture time is the MAF event ts.
+        """
+        integrator = self._fuelIntegrator
+        if integrator is None or paramName not in ("MAF", "FUEL_SYSTEM_STATUS"):
+            return
+        if self._gatherDriveState()[0] != "recording":
+            return
+        if paramName == "FUEL_SYSTEM_STATUS":
+            with self._fuelLock:
+                integrator.observeFuelStatus(value)
+            return
+        timestamp = getattr(reading, "timestamp", None)
+        if value is None or not isinstance(timestamp, datetime):
+            # Not a reading of anything: no value, or no event time to stamp.
+            return
+        from common.time.helper import resolveLocalZone
+
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=resolveLocalZone(self._config))
+        eventUtc = timestamp.astimezone(UTC)
+        tracker = self._obdLiveTracker
+        engineRunning = None if tracker is None else tracker.engineRunningAt(reading)
+        tS = self._tripNowS()
+        with self._fuelLock:
+            integrator.observeMaf(float(value), tS, eventUtc, engineRunning)
+
+    def _resetFuelEconomy(self) -> None:
+        """Open this drive's fuel window at drive start (same clock as distance)."""
+        integrator = self._fuelIntegrator
+        if integrator is None:
+            return
+        tS = self._tripNowS()
+        with self._fuelLock:
+            integrator.reset(tS)
+            # A new drive has written nothing yet; its persist clock starts now.
+            self._fuelWatermark = (0.0, 0.0, 0.0)
+            self._fuelGeneration += 1
+            self._fuelLastPersistS = tS
+
+    def _emitFuelEconomyState(self) -> None:
+        """Publish states/fuel-economy: fuel and distance read at one publish."""
+        integrator = self._fuelIntegrator
+        emitter = self._fuelEconomyEmitter
+        if integrator is None or emitter is None or self._fuelStaleSec is None:
+            return
+        with self._fuelLock:
+            snap = integrator.snapshot()
+            watermark = self._fuelWatermark
+            generation = self._fuelGeneration
+            lastPersistS = self._fuelLastPersistS
+        distanceKm, distanceSinceTs = self._gatherTripDistance()
+        nowUtc = self._obdLiveNowUtc()
+        self._maybePersistFuelSinceReset(
+            snap, distanceKm, nowUtc, watermark, generation, lastPersistS
+        )
+        emitter(
+            snap,
+            self._fuelSettings,
+            distanceKm=distanceKm,
+            distanceSinceTs=distanceSinceTs,
+            nowUtc=nowUtc,
+            staleSec=self._fuelStaleSec,
+            sinceReset=self._fuelSinceReset,
+        )
+
+    def _fuelTotals(
+        self, snap: Any, distanceKm: float | None
+    ) -> tuple[float, float, float]:
+        """This drive's (fuelL, km, openLoopS) -- what the watermark tracks."""
+        return (
+            self._fuelSettings.litresFromAirG(snap.airG),
+            0.0 if distanceKm is None else float(distanceKm),
+            snap.openLoopS,
+        )
+
+    def _maybePersistFuelSinceReset(
+        self,
+        snap: Any,
+        distanceKm: float | None,
+        nowUtc: datetime,
+        watermark: tuple[float, float, float],
+        generation: int,
+        lastPersistS: float | None,
+    ) -> None:
+        """Add this drive's change since the watermark to fuel_since_reset.
+
+        Runs on the card tick (the run loop): at drive end, and at most once
+        per ``pi.fuel.persistSec`` while recording (Atlas G3). Only the change
+        since the last persist is written, so a crash loses at most persistSec
+        and never doubles. The cached row it leaves is what ``sinceReset``
+        publishes. No database -> one WARN and a null ``sinceReset``.
+        """
+        database = getattr(self, "_database", None)
+        if database is None:
+            if not self._fuelNoDatabaseWarned:
+                self._fuelNoDatabaseWarned = True
+                logger.warning("fuel_since_reset: no database -- sinceReset stays null")
+            return
+        from common.time.helper import toCanonicalIso
+        from pi.obdii import fuel_since_reset
+
+        if not self._fuelSinceResetLoaded:
+            self._fuelSinceResetLoaded = True
+            try:
+                self._fuelSinceReset = fuel_since_reset.readFrom(database)
+            except Exception as e:  # noqa: BLE001 -- the publish must go on
+                logger.warning("fuel_since_reset read failed: %s", e)
+        recording = self._gatherDriveState()[0] == "recording"
+        driveEnded = self._fuelWasRecording and not recording
+        self._fuelWasRecording = recording
+        nowS = self._tripNowS()
+        if recording and lastPersistS is None:
+            # Mid-drive process start: no drive start seen, so the persist
+            # clock starts at the first recording tick.
+            with self._fuelLock:
+                if generation == self._fuelGeneration:
+                    self._fuelLastPersistS = nowS
+            return
+        due = driveEnded or (
+            recording
+            and lastPersistS is not None
+            and nowS - lastPersistS >= self._fuelSettings.persistSec
+        )
+        if not due:
+            return
+        current = self._fuelTotals(snap, distanceKm)
+        # Clamped: a total below its watermark means a drive start this
+        # snapshot has not seen yet -- never subtract from the row.
+        deltas = tuple(max(0.0, c - w) for c, w in zip(current, watermark, strict=True))
+        if any(d > 0 for d in deltas):
+            try:
+                self._fuelSinceReset = fuel_since_reset.accumulateAndReadFrom(
+                    database, *deltas, toCanonicalIso(nowUtc)
+                )
+            except Exception as e:  # noqa: BLE001 -- retried at the next persist
+                logger.warning("fuel_since_reset persist failed: %s", e)
+                return
+        with self._fuelLock:
+            # A drive start since the snapshot owns the watermark now.
+            if generation == self._fuelGeneration:
+                self._fuelWatermark = current
+                self._fuelLastPersistS = nowS
+
+    def resetSinceReset(self, resetAtTs: str) -> dict[str, Any] | None:
+        """Zero fuel_since_reset, the cached sinceReset AND the watermark together.
+
+        Everything this drive integrated before the reset is behind it, so the
+        watermark moves to the integrator's current totals (Atlas G4).
+
+        Args:
+            resetAtTs: Canonical UTC of the reset.
+
+        Returns:
+            The row after the reset, or None when the fuel producer or the
+            database is absent.
+
+        Raises:
+            DatabaseConnectionError: When the reset cannot be written.
+        """
+        integrator = self._fuelIntegrator
+        database = getattr(self, "_database", None)
+        if integrator is None or database is None:
+            return None
+        from pi.obdii import fuel_since_reset
+
+        with self._fuelLock:
+            snap = integrator.snapshot()
+            generation = self._fuelGeneration
+        distanceKm, _ = self._gatherTripDistance()
+        current = self._fuelTotals(snap, distanceKm)
+        row = fuel_since_reset.resetAndReadFrom(database, resetAtTs)
+        self._fuelSinceReset = row
+        self._fuelSinceResetLoaded = True
+        with self._fuelLock:
+            if generation == self._fuelGeneration:
+                self._fuelWatermark = current
+        return row
 
     # -------------------------------------------------------- system-status
 
@@ -1037,6 +1418,7 @@ class CardStateEmitterMixin:
         obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
         powerSource, powerSourceReason = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
+        distanceKm, distanceSinceTs = self._gatherTripDistance()
         emitter(
             obdLinkState=obdLinkState,
             obdRetries=obdRetries,
@@ -1062,6 +1444,8 @@ class CardStateEmitterMixin:
             driveState=driveState,
             driveId=driveId,
             lastDrive=self._gatherLastDriveSummary(),
+            distanceKm=distanceKm,
+            distanceSinceTs=distanceSinceTs,
             # US-744: the US-728 verdict was computed on every boot and then
             # discarded. The emitter has taken this parameter since US-728, but
             # nothing ever passed it -- so the car published

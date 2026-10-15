@@ -3262,7 +3262,20 @@
   // live one, and still MUCH tighter than the light card's 10 s (a 10 s old lux
   // is roughly true; a 10 s old g-vector is meaningless). Rex-derived; flagged
   // for Atlas/Spool against a real drive, same status as the bridge's tau.
-  var IMU_STALE_SEC = 2.0;
+  //
+  // US-882-c: the window is now pi.display.stale.imuSec, injected per request as
+  // window.DISPLAY_STALE.imuSec. This constant is only the MIRROR of the
+  // validator default, used when the injection is absent or not a finite
+  // positive number; tests/ui/test_carousel_imu_stale_config.py pins it equal to
+  // the validator DEFAULTS value, so drift fails a test.
+  var DEFAULT_IMU_STALE_SEC = 2.0;
+
+  // Read at CALL time (the currentDebugLevel pattern): the injected value can
+  // then be checked by a node probe that sets the global before calling.
+  function resolveImuStaleSec(injected) {
+    var v = isObj(injected) ? injected.imuSec : null;
+    return typeof v === "number" && isFinite(v) && v > 0 ? v : DEFAULT_IMU_STALE_SEC;
+  }
 
   // Spool's advisory g threshold (Iris live-instrument spec, quoted verbatim in
   // the US-508 acceptance criteria). This is a DIFFERENT FACT from the ring's
@@ -3844,7 +3857,7 @@
     }
     var age = readAgeSec(data, nowMs);
     if (age === null) return { idle: true, reason: "no read time" };
-    if (age > IMU_STALE_SEC) {
+    if (age > resolveImuStaleSec(global && global.DISPLAY_STALE)) {
       return { idle: true, reason: "stale -- last read " + fmtAgeSec(age) + " ago" };
     }
     return {
@@ -4025,6 +4038,7 @@
     headingCardinal: headingCardinal,
     pushGTrail: pushGTrail,
     imuView: imuView,
+    resolveImuStaleSec: resolveImuStaleSec,
     compassTape: compassTape,
     gearView: gearView,
     gearReasonText: gearReasonText,

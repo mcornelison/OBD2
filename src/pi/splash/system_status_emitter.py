@@ -29,6 +29,8 @@
 #               |              | block (startup_log verdict, transported verbatim).
 # 2026-10-14    | Rex (US-901-b)| add the always-present `runMode` (live /
 #               |              | simulate / replay) and its deriveRunMode rule.
+# 2026-10-14    | Rex (US-880-a)| drive block gains the always-present
+#               |              | distanceKm / distanceSinceTs (speed integrator).
 # ================================================================================
 ################################################################################
 
@@ -188,6 +190,8 @@ def buildSystemStatusState(
     wifiDownRssiDbm: int = DEFAULT_DOWN_RSSI_DBM,
     priorShutdown: dict | None = None,
     runMode: str = RUN_MODE_LIVE,
+    distanceKm: float | None = None,
+    distanceSinceTs: str | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -238,6 +242,12 @@ def buildSystemStatusState(
         runMode: The US-901-b run mode from :func:`deriveRunMode`. Defaults to
             ``RUN_MODE_LIVE``, which is what the production orchestrator
             resolves to with every replay/simulate flag at its default.
+        distanceKm: US-880-a: this drive's distance from the ONE speed
+            integrator, unrounded (the page formats), or None when nothing was
+            integrated this process. Transported verbatim.
+        distanceSinceTs: US-880-a: the event ts the distance counts from -- the
+            drive start's, or the first integrated SPEED reading's after a
+            mid-drive process start -- or None. Transported verbatim.
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -314,6 +324,10 @@ def buildSystemStatusState(
             "state": driveState,
             "driveId": driveId,
             "lastDrive": lastDrive,
+            # US-880-a: always keys (null = nothing integrated this process),
+            # for the same reason as `lastDrive`.
+            "distanceKm": distanceKm,
+            "distanceSinceTs": distanceSinceTs,
         },
         "idle": idle,
         # US-728: always a key (null = not read), same reason as `lastDrive`.
@@ -419,6 +433,8 @@ def makeSystemStatusEmitter(
         lastDrive: dict | None = None,
         priorShutdown: dict | None = None,
         runMode: str = RUN_MODE_LIVE,
+        distanceKm: float | None = None,
+        distanceSinceTs: str | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -443,6 +459,8 @@ def makeSystemStatusEmitter(
                 lastDrive=lastDrive,
                 priorShutdown=priorShutdown,
                 runMode=runMode,
+                distanceKm=distanceKm,
+                distanceSinceTs=distanceSinceTs,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

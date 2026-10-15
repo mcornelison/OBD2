@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-11    | Rex (US-776-i)| Initial -- real client, real app, every table
+# 2026-10-14    | Rex (US-860-d)| Seeds boot_milestone.
 # ================================================================================
 ################################################################################
 
@@ -113,6 +114,13 @@ _SEED_INSERTS: dict[str, str] = {
     "drain_vcell_trajectory": (
         "INSERT INTO drain_vcell_trajectory (ts_utc, ts_capture, seq, vcell_v, cell_epoch) "
         "VALUES ('2026-10-11T13:20:00Z', 2000.0, 0, 3.9, 'unknown')"
+    ),
+    # UNIQUE(boot_id, milestone): each pass is its own boot, or the second
+    # INSERT would collide with the first.
+    "boot_milestone": (
+        "INSERT INTO boot_milestone (boot_id, milestone, ts_utc, uptime_s) "
+        "VALUES ('b' || (SELECT COUNT(*) + 1 FROM boot_milestone), 'kernel_start', "
+        "'2026-10-11T13:14:00Z', 0.0)"
     ),
 }
 

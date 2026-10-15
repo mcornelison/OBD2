@@ -1,0 +1,53 @@
+{
+  "driving": {
+    "thisDrive": {
+      "fuelL": 0.3309431880860453,
+      "mpg": 42.64440395833332,
+      "sinceTs": "2026-10-20T14:58:02Z",
+      "approximate": false,
+      "openLoopAirPct": 0.0
+    },
+    "sinceReset": null,
+    "ts": "2026-10-20T15:04:02Z"
+  },
+  "too-short": {
+    "thisDrive": {
+      "fuelL": 0.0441257584114727,
+      "mpg": null,
+      "sinceTs": "2026-10-20T14:58:02Z",
+      "approximate": false,
+      "openLoopAirPct": 0.0,
+      "mpgNullReason": "too_short"
+    },
+    "sinceReset": null,
+    "ts": "2026-10-20T14:58:50Z"
+  },
+  "maf-untrusted": {
+    "thisDrive": {
+      "fuelL": 0.3309431880860453,
+      "mpg": null,
+      "sinceTs": "2026-10-20T14:58:02Z",
+      "approximate": false,
+      "openLoopAirPct": 0.0,
+      "mpgNullReason": "maf_untrusted"
+    },
+    "sinceReset": null,
+    "ts": "2026-10-20T15:04:02Z"
+  },
+  "after-reset": {
+    "thisDrive": {
+      "fuelL": 0.3309431880860453,
+      "mpg": 42.64440395833332,
+      "sinceTs": "2026-10-20T14:58:02Z",
+      "approximate": false,
+      "openLoopAirPct": 0.0
+    },
+    "sinceReset": {
+      "fuelL": 0.0,
+      "distanceKm": 0.0,
+      "mpg": null,
+      "resetAtTs": "2026-10-20T15:10:00Z"
+    },
+    "ts": "2026-10-20T15:04:02Z"
+  }
+}

@@ -29,14 +29,18 @@
 #               |              | /settings -- persists the US-530 Pi-local config
 #               |              | overlay (the kiosk is sandboxed JS and cannot
 #               |              | write files). Gate delegated to the overlay SSOT.
+# 2026-10-14    | Rex (US-881-d) | FOURTH token-gated POST route /fuel-reset --
+#               |              | asks eclipse-obd to zero fuel_since_reset over
+#               |              | fuel_reset_channel; /dtc-clear's status mapping.
 # ================================================================================
 ################################################################################
 
-"""Localhost-only, token-gated state server (read-only GET + three write routes).
+"""Localhost-only, token-gated state server (read-only GET + four write routes).
 
 GET is read-only (states + same-origin assets). Writes are an explicit, closed
-set of POST routes -- US-403 ``/service-control``, US-407 ``/dtc-clear`` and
-US-531 ``/settings`` -- each token-gated by the same ``_tokenOk``, each a thin
+set of POST routes -- US-403 ``/service-control``, US-407 ``/dtc-clear``,
+US-531 ``/settings`` and US-881-d ``/fuel-reset`` -- each token-gated by the
+same ``_tokenOk``, each a thin
 transport that delegates its gate to a SSOT module rather than carrying its own
 copy of an allow-list. For ``/service-control`` that SSOT is ``service_control``
 (the real privilege is the 51- polkit rule; the kiosk never runs as root); for
@@ -48,6 +52,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 import mimetypes
 from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -56,7 +61,8 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from common.config import overlay
-from pi.splash import dtc_clear, dtc_clear_channel, service_control
+from common.config.validator import DEFAULTS
+from pi.splash import dtc_clear, dtc_clear_channel, fuel_reset_channel, service_control
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
 _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
@@ -89,6 +95,16 @@ _DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 # asking for it: the toggle writes the overlay, the UI reloads itself, and the
 # reload picks the new value up.
 _DISPLAY_CAROUSEL_PLACEHOLDER = '"__DISPLAY_CAROUSEL__"'
+
+# US-882-c (F-159, Atlas gap 6): the same quoted-placeholder seam for the page's
+# stale windows -- today only the IMU card's (pi.display.stale.imuSec), which
+# was a carousel.js literal. Resolved PER REQUEST like the carousel section, so a
+# tuned window reaches the kiosk on its next reload with no unit restart.
+_DISPLAY_STALE_PLACEHOLDER = '"__DISPLAY_STALE__"'
+
+# The validator-owned key the injected imuSec resolves, and its default (the
+# value served whenever the key is absent, unreadable or not a finite number > 0).
+_STALE_IMU_SEC_KEY = "pi.display.stale.imuSec"
 
 # US-532 (F-126): the same quoted-placeholder seam for the 5 Slice-1 operator
 # settings at their CURRENT EFFECTIVE values, keyed by the overlay's own flat
@@ -136,6 +152,14 @@ _CLEAR_PATH = "/dtc-clear"
 # effective values already reach the dashboard through the injected config, so
 # adding a read surface here would create a second source for the same fact.
 _SETTINGS_PATH = "/settings"
+
+# US-881-d [F-159]: zero the since-reset fuel totals. This process holds no
+# database; the injected runner asks eclipse-obd (the row's owner) over
+# fuel_reset_channel, and eclipse-obd refuses while a drive is recording.
+_FUEL_RESET_PATH = "/fuel-reset"
+
+# The outcome wait budget (validator default; config.json may override).
+_FUEL_RESET_TIMEOUT_KEY = "pi.fuel.resetTimeoutSec"
 
 # The `dtc` state file the clear gate re-check reads (matches dtc_emitter).
 _DTC_STATE_FILENAME = "dtc"
@@ -185,6 +209,7 @@ def makeStatesHandler(
     carouselConfig: dict[str, Any] | None = None,
     deployVersionPath: str | None = None,
     configPath: str | None = None,
+    fuelResetRunner: Callable[[], dict[str, Any]] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to one states dir + token + assets.
 
@@ -219,6 +244,10 @@ def makeStatesHandler(
     /settings route writes. ``None`` -> that route returns an honest 503 (this
     server has no config to overlay) rather than reporting a save that no reader
     would ever see -- the same posture as ``clearRunner``.
+
+    ``fuelResetRunner`` (US-881-d) is the ``fuel_reset_channel`` bridge runner
+    that asks eclipse-obd to zero the since-reset fuel totals. ``None`` -> POST
+    /fuel-reset returns an honest 503 (no states channel to ask over).
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
     # Serialize once: the JSON object literal substituted for the quoted
@@ -306,9 +335,10 @@ def makeStatesHandler(
                 length = 0
             rawBody = self.rfile.read(length) if 0 < length <= _MAX_ACTION_BODY else b""
 
-            # Exactly three write routes (US-403 service-control, US-407
-            # dtc-clear, US-531 settings). Everything else is 404 -- the server
-            # is otherwise read-only and must not grow a catch-all writer.
+            # Exactly four write routes (US-403 service-control, US-407
+            # dtc-clear, US-531 settings, US-881-d fuel-reset). Everything else
+            # is 404 -- the server is otherwise read-only and must not grow a
+            # catch-all writer.
             rawPath = unquote(urlsplit(self.path).path)
             if rawPath == _ACTION_PATH:
                 self._handleServiceControl(rawBody)
@@ -318,6 +348,9 @@ def makeStatesHandler(
                 return
             if rawPath == _SETTINGS_PATH:
                 self._handleSettingsWrite(rawBody)
+                return
+            if rawPath == _FUEL_RESET_PATH:
+                self._handleFuelReset()
                 return
             self._send(404, b'{"error":"not found"}', "application/json")
 
@@ -437,6 +470,46 @@ def makeStatesHandler(
                 return
             self._send(200, body, "application/json")
 
+        def _handleFuelReset(self) -> None:
+            # US-881-d: the status mapping is /dtc-clear's. The token is checked
+            # BEFORE the runner, so a bad token never writes a request file.
+            if not self._tokenOk():
+                self._send(401, b'{"error":"unauthorized"}', "application/json")
+                return
+            if fuelResetRunner is None:
+                self._send(
+                    503,
+                    b'{"ok":false,"error":"no states channel on this server"}',
+                    "application/json",
+                )
+                return
+            try:
+                outcome = fuelResetRunner()
+            except fuel_reset_channel.ResetBridgeTimeout as exc:
+                # 504: we do not know whether eclipse-obd reset the totals; the
+                # next states/fuel-economy is what settles it.
+                self._send(
+                    504,
+                    json.dumps({"ok": None, "error": str(exc)}).encode("utf-8"),
+                    "application/json",
+                )
+                return
+            except fuel_reset_channel.ResetBridgeError as exc:
+                self._send(
+                    503,
+                    json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"),
+                    "application/json",
+                )
+                return
+            if not outcome.get("ok"):
+                # 409: eclipse-obd refused (``driving`` while a drive records);
+                # nothing changed.
+                body = {"ok": False, "reason": outcome.get("reason")}
+                self._send(409, json.dumps(body).encode("utf-8"), "application/json")
+                return
+            body = {"ok": True, "resetAtTs": outcome.get("resetAtTs")}
+            self._send(200, json.dumps(body).encode("utf-8"), "application/json")
+
         def _handleSettingsWrite(self, rawBody: bytes) -> None:
             # US-531: persist ONE operator setting into the US-530 Pi-local
             # overlay. The kiosk cannot write files, so this process does it.
@@ -535,10 +608,13 @@ def makeStatesHandler(
                 if configPath is None
                 else loadDisplayCarouselConfig(configPath)
             )
+            # US-882-c: the stale windows, per request for the same reason.
+            staleJson = json.dumps(loadDisplayStaleConfig(configPath))
             return (
                 html.replace(_TOKEN_PLACEHOLDER, token)
                 .replace(_DISPLAY_AUTODIM_PLACEHOLDER, displayConfigJson)
                 .replace(_DISPLAY_CAROUSEL_PLACEHOLDER, carouselJson)
+                .replace(_DISPLAY_STALE_PLACEHOLDER, staleJson)
                 .replace(_DISPLAY_SETTINGS_PLACEHOLDER, settingsJson)
                 .replace(_DEPLOY_VERSION_PLACEHOLDER, version)
             )
@@ -588,6 +664,7 @@ class StatesHttpServer:
         carouselConfig: dict[str, Any] | None = None,
         deployVersionPath: str | None = None,
         configPath: str | None = None,
+        fuelResetRunner: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
@@ -600,6 +677,7 @@ class StatesHttpServer:
             carouselConfig,
             deployVersionPath,
             configPath,
+            fuelResetRunner,
         )
         # Bind eagerly so a port conflict fails loudly at construction (the unit
         # then exits non-zero -> the kiosk's fetch errors -> splash DEGRADED;
@@ -671,6 +749,65 @@ def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
     rejects malformed values.
     """
     return _loadDisplaySection(configPath, "carousel")
+
+
+def loadDisplayStaleConfig(configPath: str | None) -> dict[str, float]:
+    """Resolve the page's stale windows at their effective values (US-882-c).
+
+    ``imuSec`` is ``pi.display.stale.imuSec`` from the effective config
+    (config.json resolved through the shared overlay seam). Anything that is not
+    a finite number > 0 -- absent key, no config wired, unreadable file, or a
+    value the validator would refuse -- serves the validator default, so the page
+    always receives the window production runs with, never a fabricated one.
+    The key is a config.json engineering key, deliberately NOT in the overlay
+    allow-list (Atlas ruled B), so a config.local.json value is ignored.
+
+    Args:
+        configPath: Path to config.json, or ``None`` when this server has no
+            config wired.
+
+    Returns:
+        ``{"imuSec": <seconds>}``.
+    """
+    imuSec = DEFAULTS[_STALE_IMU_SEC_KEY]
+    if configPath is not None:
+        found, value = overlay.readEffectiveValue(configPath, _STALE_IMU_SEC_KEY)
+        if (
+            found
+            and not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            and value > 0
+        ):
+            imuSec = value
+    return {"imuSec": imuSec}
+
+
+def loadFuelResetTimeoutSec(configPath: str | None) -> float:
+    """Resolve ``pi.fuel.resetTimeoutSec``, the POST /fuel-reset wait (US-881-d).
+
+    Read from config.json through the shared overlay seam. Anything that is not
+    a finite number > 0 -- absent key, no config wired, unreadable file -- is the
+    validator default, never a fabricated budget.
+
+    Args:
+        configPath: Path to config.json, or ``None`` when none is wired.
+
+    Returns:
+        Seconds to wait for eclipse-obd's outcome.
+    """
+    timeoutSec = DEFAULTS[_FUEL_RESET_TIMEOUT_KEY]
+    if configPath is not None:
+        found, value = overlay.readEffectiveValue(configPath, _FUEL_RESET_TIMEOUT_KEY)
+        if (
+            found
+            and not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            and value > 0
+        ):
+            timeoutSec = value
+    return float(timeoutSec)
 
 
 def loadEffectiveSettings(configPath: str | None) -> dict[str, Any] | None:
@@ -803,6 +940,12 @@ def main(argv: list[str] | None = None) -> int:
         # already owns it, and raises rather than inventing a readback when it
         # cannot get a real answer.
         clearRunner=dtc_clear_channel.makeBridgeClearRunner(args.states_dir),
+        # US-881-d: the since-reset fuel reset crosses the same process
+        # boundary for the same reason -- eclipse-obd owns the row.
+        fuelResetRunner=fuel_reset_channel.makeBridgeResetRunner(
+            args.states_dir,
+            timeoutSeconds=loadFuelResetTimeoutSec(args.config),
+        ),
     )
     server.serveForever()
     return 0

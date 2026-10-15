@@ -66,6 +66,9 @@
 # 2026-09-30    | Rex (US-674) | stop() marks _stopBegun on entry, so a capture
 #               |              | error raised mid-stop is expected and no longer
 #               |              | escalates to force-exit before the drive closes.
+# 2026-10-14    | Rex (US-881-d) | _maybeServiceFuelResetRequest beside the DTC
+#               |              | clear hook: services POST /fuel-reset, refused
+#               |              | while a drive is recording.
 # ================================================================================
 ################################################################################
 
@@ -873,6 +876,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                     # answers it.  Cheap fast-path -- one stat on tmpfs, and the
                     # usual answer is "no request".
                     self._maybeServiceDtcClearRequest()
+                    # US-881-d: service a pending POST /fuel-reset the same way
+                    # -- this process owns fuel_since_reset. Same fast-path.
+                    self._maybeServiceFuelResetRequest()
 
                     # US-226: interval-based Pi->server sync trigger.
                     # Cheap to call every loop pass -- the method is its
@@ -1022,6 +1028,67 @@ class ApplicationOrchestrator(  # type: ignore[misc]
             self._publishDtcClearOutcome(
                 statesDir, requestId, ok=False, stored=[], pending=[], mil=False,
                 error=str(exc),
+            )
+        return True
+
+    def _maybeServiceFuelResetRequest(self) -> bool:
+        """Service a pending POST /fuel-reset request (US-881-d, Atlas gap 4).
+
+        Called once per :meth:`runLoop` pass beside
+        :meth:`_maybeServiceDtcClearRequest`, for the same reason: the HTTP
+        process holds no database, and the row, the provider's cached
+        ``sinceReset`` and its persist watermark all live HERE. A reset is
+        therefore always ``resetSinceReset`` (all three together), never
+        ``fuel_since_reset.reset`` on the table alone -- that would leave the
+        watermark behind and the next persist would write pre-reset fuel back.
+
+        While a drive is recording (``_gatherDriveState``) the request is
+        refused with reason ``driving`` and nothing changes. Every outcome is
+        published, refusals included, and the request is always consumed.
+
+        Returns:
+            True when a request was found and answered (either way), else False.
+        """
+        from common.time.helper import toCanonicalIso
+        from pi.splash import fuel_reset_channel
+
+        statesDir = (
+            (self._config.get("pi", {}) or {}).get("splash", {}) or {}
+        ).get("statesDir", "/run/eclipse-obd/states")
+
+        request = fuel_reset_channel.readRequest(statesDir)
+        if request is None:
+            return False
+        requestId = str(request.get("requestId") or "")
+        # Consume FIRST: a request must never survive to be serviced twice.
+        fuel_reset_channel.consumeRequest(statesDir)
+
+        ok = False
+        reason: str | None
+        resetAtTs: str | None = None
+        if self._gatherDriveState()[0] == "recording":
+            reason = "driving"
+        else:
+            try:
+                # The card emitter's aware-UTC clock seam (datetime.now(UTC)).
+                stamp = toCanonicalIso(self._obdLiveNowUtc())
+                if self.resetSinceReset(stamp) is None:
+                    reason = "unavailable"
+                else:
+                    ok, reason, resetAtTs = True, None, stamp
+            except Exception as exc:  # noqa: BLE001 -- must not crash the loop
+                logger.error("US-881-d fuel reset failed for %s: %s", requestId, exc)
+                reason = f"reset failed: {exc}"
+
+        try:
+            fuel_reset_channel.writeOutcome(
+                statesDir, requestId=requestId, ok=ok, reason=reason,
+                resetAtTs=resetAtTs,
+            )
+        except OSError as exc:
+            logger.error(
+                "US-881-d fuel reset outcome could not be published for %s: %s",
+                requestId, exc,
             )
         return True
 

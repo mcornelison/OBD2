@@ -91,6 +91,7 @@
 #               |              | response keys unchanged.
 # 2026-10-14    | Rex (US-902) | CIO R28: SyncRequest rejects (422) any batch
 #               |              | carrying a replay / physics_sim row.
+# 2026-10-14    | Rex (US-860-d)| Registered boot_milestone (no rename).
 # ================================================================================
 ################################################################################
 
@@ -154,6 +155,7 @@ from src.server.db.models import (
     AiRecommendation,
     AlertLog,
     BatteryHealthLog,
+    BootMilestone,
     CalibrationSession,
     ConnectionLog,
     DrainVcellTrajectory,
@@ -238,6 +240,10 @@ _TABLE_REGISTRY: dict[str, tuple[type, tuple[tuple[str, str], ...]]] = {
     # POLL, which is exactly why it is not power_log.  Integer 'id' PK ->
     # source_id, no rename.  INSERT-only on the Pi.
     "drain_vcell_trajectory": (DrainVcellTrajectory, ()),
+    # US-860-d (F-157): each boot's milestone ladder (model + v0037 from
+    # US-860-c).  Integer 'id' PK -> source_id, no rename.  INSERT-only on the
+    # Pi (first-write-wins); the Pi's UNIQUE(boot_id, milestone) stays there.
+    "boot_milestone": (BootMilestone, ()),
     # US-453 (D-7 / F-082): pi_state operational-state singleton.  Integer 'id'
     # PK (pinned to 1 on the Pi) -> mapped to source_id; the generic upsert on
     # (source_device, source_id) applies the Pi's no_new_drives flips (the Pi

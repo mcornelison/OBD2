@@ -17,6 +17,8 @@
 # 2026-10-13    | Rex (US-874) | Initial -- tracker, pure builder, emit callable.
 # 2026-10-14    | Rex (US-875) | The tracker feeds the band producer; every PID
 #                                carries band or noBandReason; params.RPM.scale.
+# 2026-10-14    | Rex (US-881-b) | engineRunningAt(reading): the band producer's
+#                                engine gate, under the lock, same time domain.
 # ================================================================================
 ################################################################################
 
@@ -138,16 +140,14 @@ class ObdLiveTracker:
             ValueError: If no usable local zone is declared (the converter
                 refuses rather than guess the host zone).
         """
-        from common.time.helper import resolveLocalZone, toCanonicalIso
+        from common.time.helper import toCanonicalIso
 
         name = getattr(reading, "parameterName", None)
         value = getattr(reading, "value", None)
         timestamp = getattr(reading, "timestamp", None)
         if name is None or not isinstance(timestamp, datetime):
             return
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=resolveLocalZone(self._config))
-        eventUtc = timestamp.astimezone(UTC)
+        eventUtc = self._eventUtc(timestamp)
         with self._lock:
             self._bands.observe(name, value, eventUtc)
             if value is None:
@@ -157,6 +157,39 @@ class ObdLiveTracker:
                 unit=getattr(reading, "unit", None),
                 ts=toCanonicalIso(eventUtc),
             )
+
+    def _eventUtc(self, timestamp: datetime) -> datetime:
+        """A reading's capture time as aware UTC (naive means the declared zone)."""
+        from common.time.helper import resolveLocalZone
+
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=resolveLocalZone(self._config))
+        return timestamp.astimezone(UTC)
+
+    def engineRunningAt(self, reading: Any) -> bool | None:
+        """Was the engine running at this reading's capture time? (US-881-b)
+
+        Asks the band producer's engine-running gate under this tracker's lock
+        -- the polling thread appends RPM samples while the run loop reads --
+        with the time converted exactly as :meth:`observeReading` converts it,
+        so both answers are taken in one time domain.
+
+        Args:
+            reading: Any reading with a capture ``timestamp``.
+
+        Returns:
+            The gate's answer, or None when the reading has no capture time.
+
+        Raises:
+            ValueError: If no usable local zone is declared.
+        """
+        timestamp = getattr(reading, "timestamp", None)
+        if not isinstance(timestamp, datetime):
+            return None
+        eventUtc = self._eventUtc(timestamp)
+        with self._lock:
+            running: bool = self._bands.engineRunningAt(eventUtc)
+        return running
 
     def snapshot(self) -> dict[str, ObdLiveObservation]:
         """A copy of the latest observation per PID, with its band."""

@@ -135,6 +135,19 @@
 #                                driveId that is not a positive integer.
 # 2026-10-14    | Rex (US-882-b) | pi.display.gradeHistory.{intervalSec 10,
 #                                windowSec 900}; finite, > 0, window >= interval.
+# 2026-10-14    | Rex (US-880-a) | pi.trip.gapSec: 300 (speed-integrator gap rule,
+#                                == server GAP_DETECTION_THRESHOLD_SECONDS);
+#                                finite, > 0.
+# 2026-10-14    | Rex (US-882-c) | pi.display.stale.imuSec: 2.0 (IMU card stale
+#                                window, injected as window.DISPLAY_STALE);
+#                                finite, > 0.
+# 2026-10-14    | Rex (US-881-b) | pi.fuel.{stoichAfr 14.7, densityGPerL 740,
+#                                mafTrusted, minMiles 1.0, maxExcludedPct 10,
+#                                approximateOpenLoopPct 10} (Spool, sourced).
+# 2026-10-14    | Rex (US-881-c) | pi.fuel.persistSec: 60 (since-reset persist
+#                                cadence, Atlas G3), finite > 0.
+# 2026-10-14    | Rex (US-881-d) | pi.fuel.resetTimeoutSec: 5 (POST /fuel-reset
+#                                outcome wait), finite > 0.
 # ================================================================================
 ################################################################################
 
@@ -799,6 +812,47 @@ DEFAULTS: dict[str, Any] = {
     # p99 3 s for RPM, SPEED, COOLANT_TEMP and BATTERY_V; 5 s = 1.7x that p99.
     # Mirrored by src/pi/obdii/obd_live_emitter.py DEFAULT_OBD_LIVE_STALE_S.
     'pi.display.stale.obdLiveSec': 5,
+    # US-882-c (F-159): the IMU card's stale window, injected per request as
+    # window.DISPLAY_STALE.imuSec (Atlas gap 6). Equal to today's carousel.js
+    # literal (the former IMU_STALE_SEC) so nothing on screen changes; at stateHz
+    # 1 it is two write intervals. Mirrored by carousel.js DEFAULT_IMU_STALE_SEC
+    # (pinned by tests/ui/test_carousel_imu_stale_config.py).
+    'pi.display.stale.imuSec': 2.0,
+    # US-880-a (F-159): the speed integrator's gap rule (src/pi/obdii/
+    # speed_integrator.py) -- an interval between SPEED readings wider than this
+    # is not continuous travel and adds no distance. ONE gap definition across
+    # tiers (Atlas 2026-10-14): the server's distance integral excludes
+    # dt > GAP_DETECTION_THRESHOLD_SECONDS (derived_signals_compute.py :53-57),
+    # importing the drive_summary constant on purpose (:75-78). Not obdLiveSec:
+    # a 5-16 s bus stall mid-drive is still travel. Pinned equal by
+    # tests/server/test_trip_gap_crosses_tiers.py.
+    'pi.trip.gapSec': 300,
+    # US-881-b (F-159): states/fuel-economy (src/pi/obdii/fuel_economy_emitter.py).
+    # Fuel = MAF / stoich of the FUEL, no trims, open loop included (Spool
+    # pm/inbox/2026-10-14-from-spool-US-881-fuel-economy-constants-SOURCED-stoich-
+    # of-the-FUEL-no-trims-code-3-is-mostly-DECEL-speed-dense-enough.md and
+    # 2026-10-14-from-spool-US-881-E0-density-740-gL-pm20-EPA-stoich-14.7-ack-
+    # gapSec-300-plus-fill-up-calibration.md).
+    # E0 stoich: CIO 2026-10-14, the car's 93 is ethanol-free (E10 would be 14.1).
+    'pi.fuel.stoichAfr': 14.7,
+    # E0 g/L at 60 F: EPA EPAct exhibit H market-gasoline midpoint, +/-20.
+    'pi.fuel.densityGPerL': 740,
+    # False after a speed-density install (MAF unverified there): mpg null.
+    'pi.fuel.mafTrusted': True,
+    # MPG below this distance is null: the ratio blows up on a short drive.
+    'pi.fuel.minMiles': 1.0,
+    # MPG null when gap-excluded time exceeds this % of the drive's time.
+    'pi.fuel.maxExcludedPct': 10,
+    # approximate:true at/above this open-loop share of air (corpus 9.1 %).
+    'pi.fuel.approximateOpenLoopPct': 10,
+    # US-881-c (Atlas G3): while driving, the since-reset totals persist to the
+    # Pi-local fuel_since_reset row at most once per this many seconds (and at
+    # drive end); a crash loses at most this much accumulation.
+    'pi.fuel.persistSec': 60,
+    # US-881-d: POST /fuel-reset waits at most this long for eclipse-obd's
+    # outcome. eclipse-states-http is single-threaded, so the wait blocks every
+    # GET the kiosk makes -- keep it short.
+    'pi.fuel.resetTimeoutSec': 5,
     # US-882-b (F-159): states/grade-history, written by the IMU bridge -- one
     # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
     'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
@@ -974,6 +1028,9 @@ class ConfigValidator:
         self._validateReplay(config)
         self._validateImuStateBridge(config)
         self._validateGradeHistory(config)
+        self._validateTripGap(config)
+        self._validateStaleImu(config)
+        self._validateFuel(config)
         self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
@@ -1750,6 +1807,114 @@ class ConfigValidator:
                 "pi.display.gradeHistory.windowSec must be >= intervalSec "
                 f"(got windowSec={values['windowSec']!r}, intervalSec={values['intervalSec']!r})",
                 missingFields=['pi.display.gradeHistory.windowSec'],
+            )
+
+    def _validateTripGap(self, config: dict[str, Any]) -> None:
+        """Validate pi.trip.gapSec (US-880-a): a finite number > 0.
+
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the key is non-numeric, non-finite or
+                non-positive.
+        """
+        key = 'pi.trip.gapSec'
+        val = self._getNestedValue(config, key)
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or val <= 0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number > 0 (got {val!r})",
+                missingFields=[key],
+            )
+
+    def _validateStaleImu(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.stale.imuSec (US-882-c): a finite number > 0.
+
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the key is non-numeric, non-finite or
+                non-positive.
+        """
+        key = 'pi.display.stale.imuSec'
+        val = self._getNestedValue(config, key)
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or val <= 0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number > 0 (got {val!r})",
+                missingFields=[key],
+            )
+
+    def _validateFuel(self, config: dict[str, Any]) -> None:
+        """Validate the pi.fuel.* keys (US-881-b).
+
+        stoichAfr, densityGPerL, minMiles, persistSec (US-881-c) and
+        resetTimeoutSec (US-881-d) are finite numbers > 0; the two
+        percentages are finite numbers in [0, 100]; mafTrusted is a real bool.
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If any present key is out of its range.
+        """
+        for name in (
+            'stoichAfr', 'densityGPerL', 'minMiles', 'persistSec', 'resetTimeoutSec'
+        ):
+            key = f'pi.fuel.{name}'
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not math.isfinite(val)
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a finite number > 0 (got {val!r})",
+                    missingFields=[key],
+                )
+        for name in ('maxExcludedPct', 'approximateOpenLoopPct'):
+            key = f'pi.fuel.{name}'
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not math.isfinite(val)
+                or not 0 <= val <= 100
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a finite number in [0, 100] (got {val!r})",
+                    missingFields=[key],
+                )
+        key = 'pi.fuel.mafTrusted'
+        val = self._getNestedValue(config, key)
+        if val is not None and not isinstance(val, bool):
+            raise ConfigValidationError(
+                f"{key} must be true or false (got {val!r})",
+                missingFields=[key],
             )
 
     def _validateImuEnums(self, config: dict[str, Any]) -> None:

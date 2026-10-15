@@ -1811,10 +1811,14 @@ class LifecycleMixin:
             # second-connection race.  Subscribe + start its drain BEFORE the
             # readers publish so no early lux sample is missed (STREAM has no
             # history).  Built only when pi.sensors.light.enabled (else None).
+            # US-878-b (Atlas G5): the config path lets the bridge re-read
+            # pi.display.autoDim when config.json / config.local.json change.
             from pi.sensors.light_state_bridge import (
                 createLightStateBridgeFromConfig,
             )
-            lightBridge = createLightStateBridgeFromConfig(self._config, bus)
+            lightBridge = createLightStateBridgeFromConfig(
+                self._config, bus, configPath=getattr(self, '_configPath', None)
+            )
             if lightBridge is not None:
                 lightBridge.start()
             self._lightStateBridge = lightBridge
