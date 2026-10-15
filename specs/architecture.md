@@ -2334,6 +2334,20 @@ runs **labwc** (0.9.8) in the display-manager slot lightdm holds in x11 mode
 - **ADR ARCH-016** is amended for the compositor by Atlas; the ADR itself is not
   edited by Ralph.
 
+#### Panel capture: `eclipse-capture-panel` (US-650)
+
+`eclipse-capture-panel` (`deploy/eclipse-capture-panel.sh`, installed by
+deploy-pi.sh `step_install_capture_panel_command` as a wrapper at
+`/usr/local/bin/eclipse-capture-panel` with the deploy user baked in) is the one
+way to screenshot the running panel in either mode. It reads the same mode file
+(absent -> x11) and runs, as the kiosk user: wayland -> `grim` with
+`XDG_RUNTIME_DIR=/run/user/<uid>` + `WAYLAND_DISPLAY=wayland-0` (labwc's
+wlr-screencopy; scrot cannot see a Wayland panel); x11 -> `scrot` with
+`DISPLAY=:0`. It writes `/tmp/eclipse-panel-<utc>.png`, prints that path, and is
+read-only. A failure exits non-zero with one named reason on stderr:
+`no_mode_tool` (mode not x11|wayland, or its tool not installed), `no_socket`
+(wayland, no `wayland-0`), `capture_failed` (the tool failed or left no image).
+
 ### Display Layout (480x320)
 
 ```

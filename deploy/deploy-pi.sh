@@ -2328,6 +2328,47 @@ DISPLAY_MODE_WRAPPER
     "
 }
 
+step_install_capture_panel_command() {
+    # US-650 (F-139): put `eclipse-capture-panel` on every user's PATH.  It
+    # screenshots the running panel with grim (wayland) or scrot (x11), chosen by
+    # /etc/eclipse/display-mode, and is read-only -- installing it changes nothing.
+    #
+    # A wrapper, not a copy, at /usr/local/bin (no root needed to look): it runs
+    # deploy/eclipse-capture-panel.sh from the deployed tree with the deploy user
+    # baked in as the kiosk user the capture tool runs as.
+    echo "--- Step: Installing eclipse-capture-panel (US-650, F-139) ---"
+    local targetPath="/usr/local/bin/eclipse-capture-panel"
+    local entryPoint="${PI_PATH}/deploy/eclipse-capture-panel.sh"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install wrapper -> ${targetPath} (mode 755)"
+        echo "DRY-RUN would point it at /bin/bash ${entryPoint} (KIOSK_USER=${PI_USER})"
+        return 0
+    fi
+
+    remote "
+        set -e
+        TMP_WRAPPER=\$(mktemp)
+        cat > \"\$TMP_WRAPPER\" <<'CAPTURE_PANEL_WRAPPER'
+#!/bin/sh
+# US-650 eclipse-capture-panel launcher (installed by deploy-pi.sh -- do not edit by hand).
+KIOSK_USER='${PI_USER}'
+export KIOSK_USER
+exec /bin/bash ${entryPoint} \"\$@\"
+CAPTURE_PANEL_WRAPPER
+        if sudo test -f '${targetPath}' && sudo cmp -s \"\$TMP_WRAPPER\" '${targetPath}'; then
+            echo 'eclipse-capture-panel already current at ${targetPath} (no change).'
+        else
+            sudo install -m 755 \"\$TMP_WRAPPER\" '${targetPath}'
+            echo 'eclipse-capture-panel installed: ${targetPath}'
+        fi
+        rm -f \"\$TMP_WRAPPER\"
+        if [ ! -f '${entryPoint}' ]; then
+            echo 'WARN: ${entryPoint} missing -- eclipse-capture-panel will not run until the tree syncs.' >&2
+        fi
+    "
+}
+
 step_install_state_server_units() {
     # US-395 (F-103, AC#1): idempotent sync-if-changed install of the two F-103
     # state-server units -- eclipse-boot-state.service (the [A-1] boot-state
@@ -2873,6 +2914,8 @@ step_install_compositor_unit
 step_install_ui_kiosk_units
 # US-649-a: the one command that switches x11 <-> wayland (installs it only).
 step_install_display_mode_command
+# US-650: the read-only panel screenshot command (grim or scrot, by the mode file).
+step_install_capture_panel_command
 # US-523 (F-124): the kiosk WATCHDOG -- restarts eclipse-dashboard when
 # chromium's renderer wedges.  Installed AFTER the kiosk units it guards so the
 # unit it restarts already exists on the box when the timer's first tick lands.
