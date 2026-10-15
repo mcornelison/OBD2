@@ -44,7 +44,7 @@
 | Element | Type tier | Note |
 |---|---|---|
 | Airflow value | `--fs-hero` (44) | g/s, one decimal |
-| Airflow bar | 10 px | 0–160 g/s, fixed mark at the **sensor ceiling** (number from the spec) |
+| Airflow bar | 10 px | 0 to the scale max from `params.MAF.scale` (about 160 g/s). **No ceiling mark** (Atlas S104 ruling 2, 2026-10-14) |
 | Loop label | `--fs-label`, outlined chip, **no colour** | `CLOSED LOOP` / `OPEN LOOP` |
 | Total trim | `--fs-primary` (34) | signed, one decimal, % |
 | MPG NOW | `--fs-primary` (34) | driver-read |
@@ -55,7 +55,8 @@
 
 ### 4.1 Airflow
 - Steps with each reading; no interpolation.
-- At or above the sensor ceiling: `sensor limit` in `--amber-warn` `--fs-meta`. **A measurement limit, never styled as a fault** (spec MAF row).
+- **Above the scale max: the bar pins full, the number stays unclamped, and both stay neutral.** No `sensor limit` label and no amber (Atlas S104 ruling 2, 2026-10-14). Spool doesn't know where the sensor clips, so the page can't say the reading has hit a limit. A full bar means "at least the scale max", and the number keeps the true reading.
+- *Superseded:* the earlier `sensor limit` label in `--amber-warn` at a fixed ceiling mark.
 
 ### 4.2 Loop + total trim
 - Loop label from `FUEL_SYSTEM_STATUS`. Never coloured: open loop is normal at cold start and full throttle.
@@ -96,7 +97,7 @@
 1. Fixtures (§7) render per §4 at 480×320, verified by screenshot.
 2. No clipping; MPG NOW and total trim ≥ 34 px; airflow = `--fs-hero`.
 3. Open-loop fixture: total trim renders `--` + reason; loop chip has no severity colour.
-4. MAF at or above the ceiling shows `sensor limit`, and no red anywhere on the page.
+4. MAF above the scale max: the bar is exactly full, the number shows the unclamped reading, there is no `sensor limit` text and no amber or red on the airflow element, and there is no red anywhere on the page.
 5. The trend's dots are exactly the headline median's drives (fixture with > 5 drives proves the window).
 6. Trend colour changes **only** with the provider verdict field; grep gate: no trim threshold in `carousel.js`.
 7. Reset: unavailable while moving; parked long-press → confirm → value shown is the **re-read** stored value.
@@ -104,7 +105,7 @@
 9. **DoD (R15): CIO judgement in the car.**
 
 ## 7. Fixtures
-`idle-closed` · `cruise-closed` · `wot-open-at-ceiling` · `stopped` · `trend-healthy` · `trend-amber` · `ltft-reset-zero-flat` · `maf-null` · `parked-reset-available` · `stale`.
+`idle-closed` · `cruise-closed` · `wot-open-above-scale-max` · `stopped` · `trend-healthy` · `trend-amber` · `ltft-reset-zero-flat` · `maf-null` · `parked-reset-available` · `stale`.
 
 ## 8. Out of scope
 Fuel level (PID unsupported on this ECU) · AFR / wideband (no sensor) · boost inference (steady-state only, ±2 psi; not on a live page) · O2 voltage as AFR (narrowband is not AFR).
