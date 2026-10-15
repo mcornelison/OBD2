@@ -485,27 +485,30 @@ def test_theDetailOverrunHoldsAtAnyPlausibleAdvance(column, advance):
     )
 
 
-def test_recordTheMeasurement_theColumnCannotEvenReserveTheWrappedHeight(column):
+def test_recordTheMeasurement_theColumnNowReservesTheWrappedHeight(column):
     """Given: the story's sanctioned alternative -- "a min-height that cannot
         reflow" -- which kills the bounce without needing the string to fit.
 
     When: the worst-case wrapped height is measured against the room the column
         has left after its meter, label and value.
-    Then: it does not fit either.
+    Then: it FITS now.
 
-    This is why US-631 ships NO CSS. Both of the story's two offered mechanisms
-    ("nowrap plus a width that fits" / "a min-height that cannot reflow") are out
-    of room in a 108px column, so there is no in-surface fix left that does not
-    shrink type below the F-127 floor.
+    RE-RECORDED 2026-10-15 (US-887-c). This was
+    `..._theColumnCannotEvenReserveTheWrappedHeight`, and it was why US-631
+    shipped NO CSS: both offered mechanisms were out of room. Retiring the card
+    title row returned 30px to every card body (224 -> 254px), and the worst
+    case now reserves cleanly -- exactly the condition this record's message
+    said re-opens US-631 with an in-surface min-height fix. That re-open is a PM
+    call (offices/pm/inbox, 2026-10-15 US-887-c note), not this story's; the
+    record is restated so it goes red again if the room is ever lost.
     """
     widest = _widestDetail()
     lines = _wrapLines(widest, column.width, column.detailPx, ADVANCE_OBSERVED)
     needed = lines * column.detailPx * LINE_HEIGHT_NORMAL
     available = column.detailHeightAvailable()
-    assert needed > available, (
-        f"the worst case now RESERVES cleanly ({lines} lines = {needed:.1f}px "
-        f"in {available:.1f}px available) -- a min-height fix is back on the "
-        f"table and US-631 can be closed in-surface. Re-open it."
+    assert needed <= available, (
+        f"the worst case no longer reserves ({lines} lines = {needed:.1f}px in "
+        f"{available:.1f}px available) -- the room US-887-c returned is gone"
     )
     # RE-RECORDED 2026-09-01 (US-645): four lines became THREE when the label
     # vocabulary narrowed, and three still does not fit the two the column has

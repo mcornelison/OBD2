@@ -1,0 +1,71 @@
+{
+  "description": "Engine off: battery 12.4 V engine_not_running renders neutral.",
+  "now": "2026-10-13T12:30:10Z",
+  "obd-live": {
+    "params": {
+      "RPM": {
+        "value": 0,
+        "unit": "rpm",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": {
+          "band": "green",
+          "since": "2026-10-13T12:30:08Z",
+          "reason": "rpm below 5500"
+        },
+        "last": null,
+        "scale": {
+          "amberFrom": 5500,
+          "redFrom": 7000
+        }
+      },
+      "SPEED": {
+        "value": 0,
+        "unit": "km/h",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "COOLANT_TEMP": {
+        "value": 61,
+        "unit": "C",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": {
+          "band": "green",
+          "since": "2026-10-13T12:30:08Z",
+          "reason": "coolant has not held >= 104 C for 30 s"
+        },
+        "last": null
+      },
+      "INTAKE_TEMP": {
+        "value": 24,
+        "unit": "C",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "BATTERY_V": {
+        "value": 12.4,
+        "unit": "V",
+        "ts": "2026-10-13T12:30:08Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "engine_not_running"
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:30:10Z"
+  },
+  "gear": {
+    "available": true,
+    "gear": "N",
+    "reason": "stopped",
+    "ts": "2026-10-13T12:30:10Z"
+  }
+}

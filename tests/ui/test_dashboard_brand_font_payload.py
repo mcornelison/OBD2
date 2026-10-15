@@ -18,9 +18,11 @@
 #               would leave the kiosk on a fallback face while every token test
 #               stayed green. The face ships TWICE, and the two copies must be
 #               byte-identical, like every other token in this kit.
-#     WEIGHT    The subset carries weight 600 ONLY. Any brand rule asking for
-#               700 gets a SYNTHESISED bold -- a smeared condensed face, which
-#               reads as a rendering fault rather than a style choice.
+#     WEIGHT    The subset carries ONE weight (Oswald was 600; Michroma, since
+#               US-887-b, is 400). Any brand rule asking for more gets a
+#               SYNTHESISED bold -- a smear that reads as a rendering fault
+#               rather than a style choice -- so face users also set
+#               font-synthesis: none.
 #     SUBSET    A-Z / 0-9 / space / hyphen. A brand string reaching outside that
 #               falls back PER GLYPH, so one stray "·" splits a title across two
 #               faces mid-word.
@@ -35,12 +37,19 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-01    | Ralph (Rex)  | Initial -- BL-027 Oswald payload drop.
+# 2026-10-15    | Ralph (Rex)  | US-887-b: Michroma 400 replaces Oswald 600 (V0.30
+#               |              | OEM style). Pins the md5 of the copied asset, the
+#               |              | 2,896 B byte ceiling, font-synthesis: none, both
+#               |              | licence copies, and derives the subset from
+#               |              | Iris's michroma-advances.json.
 # ================================================================================
 ################################################################################
 
-"""BL-027 tests: the inlined Oswald brand face (payload, mirror, weight, subset)."""
+"""US-887-b tests: the inlined Michroma brand face (payload, mirror, weight, subset)."""
 
 import base64
+import hashlib
+import json
 import os
 import re
 
@@ -53,25 +62,34 @@ _CSS = os.path.join(_DIST, "dashboard.css")
 _JS = os.path.join(_DIST, "carousel.js")
 _HTML = os.path.join(_DIST, "dashboard.html")
 _KIT_OFL = os.path.join(_DIST, "OFL.txt")
+_FONTS = os.path.join(_UI, "assets", "fonts")
+_ASSET_OFL = os.path.join(_FONTS, "OFL.txt")
 _DEPLOY_PI = os.path.join(_ROOT, "deploy", "deploy-pi.sh")
 
-# The source-of-record brand face (originally delivered by Iris, Marcus
-# dispatch 2026-08-01-from-marcus-us510-oswald-font-drop-close-bl027.md, and
-# promoted out of offices/ into the product tree during the offices decouple).
-# The .woff2 is the ORIGINAL; the CSS carries its base64. Keeping the binary in
-# the repo is what makes the payload verifiable rather than a 3,864-character
-# string nobody can check.
-_SOURCE_WOFF2 = os.path.join(
-    _ROOT, "src", "pi", "ui", "assets", "fonts", "oswald-brand.woff2"
-)
+# The source-of-record brand face. Iris cut it on a bench whose surface is
+# specs/** (specs/assets/fonts/michroma/PROVENANCE.md), and US-887-b COPIED it
+# into the product tree. The .woff2 is the ORIGINAL; the CSS carries its base64.
+# Keeping the binary in the repo is what makes the payload verifiable rather
+# than an opaque string nobody can check.
+_SOURCE_WOFF2 = os.path.join(_FONTS, "michroma-brand.woff2")
+_KIT_DIR = os.path.join(_ROOT, "specs", "assets", "fonts", "michroma")
 
-# Grounded in the same dispatch: "subset: A-Z / 0-9 / space / hyphen, weight 600".
-# NOT measured from the binary (that needs a Brotli woff2 decompressor); this is
-# the CUT Iris states she made, and the assertion below is that the brand copy
-# stays inside it.
-_SUBSET = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -")
-_SUBSET_WEIGHT = "600"
-_FAMILY = "Oswald"
+# PROVENANCE.md: "2,464 B, md5 b495a16b2b5cf974f15e52d62e914d14", reproducible
+# under a fixed SOURCE_DATE_EPOCH. The md5 is the check that the copy out of
+# Iris's kit is the file she measured, not a re-cut or a truncated paste.
+_SOURCE_MD5 = "b495a16b2b5cf974f15e52d62e914d14"
+# Atlas's rule (spec s4.3 / s6): total embedded-font bytes no larger than the
+# Oswald embed it replaces (oswald-brand.woff2, 2,896 B).
+_EMBED_BYTE_CEILING = 2896
+
+# The glyph set Iris cut, read from her per-glyph advance table rather than
+# retyped here: every key of michroma-advances.json is a glyph in the subset
+# (38: A-Z / 0-9 / space / hyphen). A brand string outside it falls back.
+with open(os.path.join(_KIT_DIR, "michroma-advances.json"), encoding="utf-8") as _fh:
+    _SUBSET = set(json.load(_fh)["advanceEm"])
+# Michroma has ONE weight (PROVENANCE.md: "400 only ... never synthesise bold").
+_SUBSET_WEIGHT = "400"
+_FAMILY = "Michroma"
 
 
 def _read(path: str) -> str:
@@ -128,13 +146,16 @@ def _tokenValue(css: str, name: str) -> str:
 def _brandStrings() -> list:
     """Every string the brand face actually renders, AS RENDERED.
 
-    Card titles are `text-transform: uppercase`, so the glyphs REQUESTED are the
-    uppercase ones -- which is the whole reason an uppercase-only subset is a
-    legitimate cut here. Compare what the panel asks for, not what the DOM holds.
+    Brand strings are uppercase, so the glyphs REQUESTED are the uppercase ones
+    -- which is the whole reason an uppercase-only subset is a legitimate cut
+    here. Compare what the panel asks for, not what the DOM holds.
+
+    MOVED PIN (US-887-c): the card titles are gone; the brand face now paints
+    the top-bar PAGE NAMES, which each card carries as `data-page-name`.
     """
-    titles = re.findall(r'class="card-title"[^>]*>([^<]+)', _read(_HTML))
+    titles = re.findall(r'data-page-name="([^"]+)"', _read(_HTML))
     wordmark = re.findall(r'wordmark:\s*"([^"]+)"', _read(_JS))
-    assert titles, "no card titles found -- the selector moved"
+    assert titles, "no page names found -- the attribute moved"
     assert wordmark, "the wordmark literal moved out of carousel.js"
     return [text.strip().upper() for text in titles + wordmark]
 
@@ -165,7 +186,35 @@ def test_theEmbeddedPayloadDecodesToIrisDeliveredWoff2():
     assert delivered[:4] == b"wOF2", "the source asset is not a WOFF2"
     for path in (_TOKENS, _CSS):
         decoded = base64.b64decode(_payload(_fontFaceBlocks(_read(path))[0]))
-        assert decoded == delivered, f"{path}: embedded payload != oswald-brand.woff2"
+        assert decoded == delivered, f"{path}: embedded payload != michroma-brand.woff2"
+
+
+def test_theCopiedAssetIsTheFileIrisMeasured():
+    """The md5 Iris published with the cut. A copy that drifted from her kit --
+    a re-cut without the fixed epoch, a re-encode -- would still decode and
+    still render, so only the hash shows it is not the file she measured."""
+    delivered = open(_SOURCE_WOFF2, "rb").read()
+    assert hashlib.md5(delivered).hexdigest() == _SOURCE_MD5
+
+
+def test_totalEmbeddedFontBytesStayUnderTheOswaldCeiling():
+    """Atlas's byte rule: the new face may not make the sheet heavier than the
+    Oswald embed it replaces. Michroma alone fits; Michroma plus Oswald (5,364 B,
+    Iris measured) does not, so this is also the check that Oswald LEFT."""
+    for path in (_TOKENS, _CSS):
+        total = sum(
+            len(base64.b64decode(_payload(block)))
+            for block in _fontFaceBlocks(_read(path))
+        )
+        assert total <= _EMBED_BYTE_CEILING, f"{path}: {total} B of embedded fonts"
+
+
+def test_theRetiredFaceIsGoneFromBothSheetsAndTheAssets():
+    """Oswald retires with this swap (spec s4.3): no sheet names it, even in a
+    stack tail, and its binary is not left behind as an unreferenced asset."""
+    for path in (_TOKENS, _CSS):
+        assert "oswald" not in _stripComments(_read(path)).lower(), path
+    assert not os.path.exists(os.path.join(_FONTS, "oswald-brand.woff2"))
 
 
 def test_theKitMirrorCarriesTheExactSsotPayload():
@@ -209,18 +258,20 @@ def test_theEmbeddedFamilyLeadsTheDisplayStack():
 
 
 def test_theFaceDeclaresTheWeightTheSubsetActuallyHas():
-    """Iris cut weight 600 only. Declaring the @font-face as 400 makes the
-    browser SYNTHESISE the 600 -- a faux-bold smear on a condensed face."""
+    """Michroma has weight 400 only. Declaring the @font-face as anything else
+    misdescribes the file, and the browser then picks or SYNTHESISES against
+    the wrong number."""
     for path in (_TOKENS, _CSS):
         block = _fontFaceBlocks(_read(path))[0]
         assert _descriptor(block, "font-weight") == _SUBSET_WEIGHT
 
 
 def test_everyBrandMomentAsksForTheWeightTheSubsetActuallyHas():
-    """Marcus's step 3. The wordmark shipped at 700 against a 600-only subset,
-    so the ONE place the product says its own name would have rendered
-    synth-bolded. Asserted over the SET of bound rules, so a future brand
-    surface cannot reintroduce a 700 quietly."""
+    """Marcus's step 3. The wordmark shipped at 700 against a 600-only Oswald
+    subset, so the ONE place the product says its own name would have rendered
+    synth-bolded. Michroma is 400-only, so every bound rule asks for 400.
+    Asserted over the SET of bound rules, so a future brand surface cannot
+    reintroduce a heavier weight quietly."""
     css = _stripComments(_read(_CSS))
     bound = re.findall(r"([^{}]+)\{([^{}]*var\(--font-display\)[^{}]*)\}", css)
     assert bound, "no rule binds --font-display any more"
@@ -231,6 +282,19 @@ def test_everyBrandMomentAsksForTheWeightTheSubsetActuallyHas():
             f"{selector.strip()} asks for {weight.group(1).strip()} from a "
             f"{_SUBSET_WEIGHT}-only subset -> synthesised bold"
         )
+
+
+def test_everyBrandMomentForbidsSynthesis():
+    """Belt to the weight check's braces: `font-synthesis: none` on every rule
+    that uses the face, so even an inherited or future heavier weight renders
+    the real 400 outlines instead of a smeared faux bold (PROVENANCE.md)."""
+    css = _stripComments(_read(_CSS))
+    bound = re.findall(r"([^{}]+)\{([^{}]*var\(--font-display\)[^{}]*)\}", css)
+    assert bound, "no rule binds --font-display any more"
+    for selector, body in bound:
+        synthesis = re.search(r"font-synthesis:\s*([^;]+)", body)
+        assert synthesis is not None, f"{selector.strip()} binds the face but allows synthesis"
+        assert synthesis.group(1).strip() == "none", selector.strip()
 
 
 def test_theFaceSwapsRatherThanBlockingTheFirstPaint():
@@ -247,7 +311,7 @@ def test_theFaceSwapsRatherThanBlockingTheFirstPaint():
 
 
 def test_everyBrandStringStaysInsideTheSubset():
-    """A 2,896-byte subset is only safe while the brand copy stays inside it.
+    """A 2,464-byte subset is only safe while the brand copy stays inside it.
     Miss by one glyph and the browser falls back FOR THAT GLYPH ONLY, so a
     single "·" splits a title across two faces mid-word -- which reads as a
     corrupted render, not a missing character."""
@@ -271,11 +335,19 @@ def test_theWordmarkIsStillTheLockedString():
 def test_theOflLicenseShipsInsideTheKit():
     """SIL OFL 1.1 requires the licence to travel with the font, and the font
     now travels INSIDE dashboard.css -- so the kit that carries the sheet must
-    carry the licence."""
-    assert os.path.exists(_KIT_OFL), "OFL.txt is missing from the dashboard kit"
-    text = _read(_KIT_OFL)
-    assert "SIL OPEN FONT LICENSE" in text.upper()
-    assert "Version 1.1" in text
+    carry the licence. BOTH copies (the deployed kit's and the source-of-record
+    beside the binary) must be MICHROMA's: Oswald's licence left with Oswald,
+    and a correct-looking OFL naming the wrong font is no licence for this one.
+    """
+    kitText = _read(os.path.join(_KIT_DIR, "OFL-michroma.txt"))
+    for path in (_KIT_OFL, _ASSET_OFL):
+        assert os.path.exists(path), f"{path} is missing"
+        text = _read(path)
+        assert "SIL OPEN FONT LICENSE" in text.upper()
+        assert "Version 1.1" in text
+        assert "Michroma Project Authors" in text, path
+        assert "Oswald" not in text, path
+        assert text == kitText, f"{path} is not Iris's OFL-michroma.txt"
 
 
 def test_theLicenceIsVouchedForDeploymentNotSilentlyPruned():
@@ -296,13 +368,13 @@ def test_theLicenceIsVouchedForDeploymentNotSilentlyPruned():
 
 
 def test_bothSheetsCreditTheFaceAndItsLicence():
-    """The @font-face is 3,864 characters of opaque base64; without a credit
+    """The @font-face is ~3,300 characters of opaque base64; without a credit
     comment the next reader has no way to learn what face it is or that it
     carries obligations."""
     for path in (_TOKENS, _CSS):
         text = _read(path)
         comments = " ".join(re.findall(r"/\*.*?\*/", text, flags=re.DOTALL))
-        assert "Oswald" in comments, path
+        assert "Michroma" in comments, path
         assert "OFL" in comments, path
 
 

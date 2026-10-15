@@ -23,32 +23,35 @@
  *          Enforced by tests/ui/test_dashboard_alarm_tier_sweep.py.
  * ==========================================================================*/
 
-/* --- Brand face (BL-027, the US-510 A-3 payload) -----------------------------
-   Oswald SemiBold 600, subset to A-Z / 0-9 / space / hyphen (2,896 B) -- cut by
-   Iris 2026-08-01 and INLINED as a data: URI. The kiosk is offline in the car
-   and CSP-fenced, so a font CDN would fail in the ONE place that matters and
-   nowhere else; there is no external font reference anywhere in this kit.
+/* --- Brand face (US-887-b, V0.30 OEM style; spec s4.3) ----------------------
+   Michroma Regular 400, subset to A-Z / 0-9 / space / hyphen (38 glyphs,
+   2,464 B) -- cut by Iris 2026-10-14 (specs/assets/fonts/michroma/PROVENANCE.md,
+   md5 b495a16b2b5cf974f15e52d62e914d14) and copied to
+   src/pi/ui/assets/fonts/michroma-brand.woff2, then INLINED as a data: URI. The
+   kiosk is offline in the car and CSP-fenced, so a font CDN would fail in the
+   ONE place that matters and nowhere else; there is no external font
+   reference anywhere in this kit.
 
-   Licence: SIL Open Font License 1.1 -- src/pi/ui/dashboard/OFL.txt,
-   which ships with the kit (the face travels INSIDE the stylesheet, so the
-   licence has to travel with the stylesheet). Oswald carries no Reserved Font
-   Name, so the family name "Oswald" is compliant (Iris, confirmed 2026-08-01).
+   Licence: SIL Open Font License 1.1 -- src/pi/ui/dashboard/OFL.txt, which
+   ships with the kit (the face travels INSIDE the stylesheet, so the licence
+   has to travel with the stylesheet). Michroma carries no Reserved Font Name,
+   so the family name "Michroma" is kept for this subset (PROVENANCE.md).
 
-   Why this arrives as a fast-follow: US-510 shipped the token + the bindings
-   and left the payload open because the previously-locked face (Bahnschrift)
-   is Microsoft-proprietary, absent from Pi OS and not redistributable -- so
-   naming it never put it on the panel. Oswald is the open-licence replacement.
+   It REPLACES the BL-027 Oswald 600 subset (2,896 B), which retired in the
+   same story: Atlas's byte rule caps total embedded-font bytes at the Oswald
+   figure, and the two faces together (5,364 B) would break it.
 
-   The weight is 600 and ONLY 600: every rule that binds --font-display asks
-   for 600, because a request for 700 against a single-weight subset gets a
-   SYNTHESISED bold, which on a condensed face reads as a rendering fault.
-   Pinned by tests/ui/test_dashboard_brand_font_payload.py. */
+   The weight is 400 and ONLY 400 (Michroma has one weight): every rule that
+   binds --font-display asks for 400 and sets font-synthesis: none, because a
+   heavier request against a single-weight subset gets a SYNTHESISED bold,
+   which reads as a rendering fault. Pinned by
+   tests/ui/test_dashboard_brand_font_payload.py. */
 @font-face {
-  font-family: "Oswald";
+  font-family: "Michroma";
   font-style: normal;
-  font-weight: 600;
+  font-weight: 400;
   font-display: swap;
-  src: url(data:font/woff2;base64,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) format("woff2");
+  src: url(data:font/woff2;base64,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) format("woff2");
 }
 
 :root {
@@ -58,9 +61,10 @@
      exact SSOT fork this palette exists to prevent. Both faces are tokens now.
      --font-display is BRAND MOMENTS ONLY (wordmark + card titles); anything
      carrying a READING stays mono, which Iris deliberately did not change.
-     BL-027 CLOSED (2026-08-01): the brand face is the Oswald subset embedded
-     at the top of THIS file. It is declared here as well as in the SSOT
-     because dashboard.html links ONLY this sheet -- an SSOT-only drop would
+     The brand face is the Michroma subset embedded at the top of THIS file
+     (US-887-b; it replaced the BL-027 Oswald embed). It is declared here as
+     well as in the SSOT because dashboard.html links ONLY this sheet -- an
+     SSOT-only drop would
      leave the panel on a fallback face with a fully green suite. NEVER a font
      CDN: the kiosk is offline in the car. */
   /* NOTE ON THE SSOT REFERENCES BELOW: they name the TOKEN, not a line number.
@@ -70,7 +74,7 @@
      name is the durable address, and tests/ui/test_dashboard_token_ssot.py
      compares the VALUES, which is the part that actually has to agree. */
   --font-mono:      ui-monospace, Menlo, Consolas, monospace;  /* SSOT --font-mono */
-  --font-display:   "Oswald", "Arial Narrow", system-ui, sans-serif;
+  --font-display:   "Michroma", "Arial Narrow", system-ui, sans-serif;
                                              /* SSOT --font-display */
   /* --- Type scale -- US-539 (F-127). SSOT block: tokens.css "Type scale".
      Before this story every size on this surface was a bare px: 82 of them
@@ -97,7 +101,10 @@
      non-critical copy only. These MUST equal tokens.css, and they are NOT final
      until read in the car with the output mode confirmed panel-native (US-552 --
      a 1080p->480x320 downsample softens every glyph and raises the floor).
-     Pinned by tests/ui/test_dashboard_type_scale_values.py. */
+     Pinned by tests/ui/test_dashboard_type_scale_values.py.
+     US-887-a: --fs-giant is the sixth tier, ABOVE hero, for the Driving gear
+     alone (Atlas Rule-10 G-1); no existing tier moved. */
+  --fs-giant:       120px;     /* SSOT --fs-giant -- Driving gear (specs/v030-driving-page-design.md s3) */
   --fs-hero:        44px;      /* SSOT --fs-hero */
   --fs-primary:     34px;      /* SSOT --fs-primary */
   --fs-secondary:   26px;      /* SSOT --fs-secondary */
@@ -118,13 +125,17 @@
   --dots-h:         16px;      /* SSOT --dots-h */
   --card-pad-y:      8px;      /* SSOT --card-pad-y */
   /* --- Base surfaces -- promoted into the SSOT by US-510 (Atlas Rule-10
-     2026-07-31). These two were dist-only literals; the values are UNCHANGED,
-     so the promotion moved no pixels (that was Atlas's explicit DoD gate). */
-  --bg:             #000000;   /* SSOT --bg */
-  --surface:        #111111;   /* SSOT --surface */
-  --text-primary:   #DDDDDD;   /* SSOT --text-primary (Atlas Rule-10 2026-07-25) */
-  --text-secondary: #888888;   /* SSOT --text-secondary */
-  --text-tertiary:  #666666;   /* SSOT --text-tertiary */
+     2026-07-31) at their shipped values. US-887-a moved the base + text tier
+     to the V0.30 OEM set (frame spec s4.2, Atlas Rule-10 2026-10-13) and added
+     --line / --accent / --radius. These MUST equal tokens.css. */
+  --bg:             #0A0A0A;   /* SSOT --bg -- matte black field */
+  --surface:        #141414;   /* SSOT --surface -- panels, top bar */
+  --line:           #262626;   /* SSOT --line -- rules, panel edges */
+  --text-primary:   #F5F1E8;   /* SSOT --text-primary -- warm white (Atlas Rule-10 2026-10-13) */
+  --text-secondary: #A8A296;   /* SSOT --text-secondary -- labels, units */
+  --text-tertiary:  #5F5A52;   /* SSOT --text-tertiary -- furniture, inactive dots */
+  --accent:         #FF6A2B;   /* SSOT --accent -- pointers + accents ONLY */
+  --radius:         10px;      /* SSOT --radius -- panel corners */
   --amber-warn:     #FFC400;   /* SSOT --amber-warn -- WATCH / degraded */
   /* The two DEEP gradient edges of the DTC takeover. US-510 relocated these
      from inline literals in the takeover rules; the VALUES ARE UNCHANGED, so
@@ -295,17 +306,31 @@ html, body {
   height: var(--bar-h); box-sizing: border-box; padding: 0 8px;
   display: flex; align-items: center;
   background: var(--bg); color: var(--text-primary);
-  font-family: var(--font-display); font-weight: 600; font-size: var(--fs-label);
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label);
   z-index: 70;
   pointer-events: none;
 }
 /* NOT LIVE is two characters longer than REPLAY, so it drops to the meta tier
    to fit the same box. */
 #not-live-marker[data-tier="meta"] { font-size: var(--fs-meta); }
-/* US-555: `margin-left: auto` is GONE, not zeroed -- the right TRACK packs the
-   chip against the bar's edge now (`justify-content: flex-end` on the cluster),
-   and an auto margin here would be exactly the drift mechanism the note above
-   rejects. */
+/* US-887-c (F-127; specs/v030-frame-and-style-design.md s3.2): the current page
+   name, in the right cluster beside the kebab. It replaces every card's title
+   row. Michroma 400 at --fs-meta with letter-spacing 0 is Iris's measured rule:
+   at those values every bar name in use is <= 122 px, the right track's budget
+   (168.6 side track - 8 gap - 34 kebab - 4 margin); --fs-meta is the floor
+   tier, so a name that does not fit gets a short form, never a smaller size.
+   Single weight, so no synthesised bold (the Oswald 600-only lesson). Like the
+   chip before it, no auto margin: the right TRACK packs it against the edge. */
+#page-name {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0;
+  color: var(--text-secondary); white-space: nowrap;
+}
+/* US-887-c: the version chip LEFT the bar for #sys-detail (frame spec s3), so
+   the page name fits the right track. Its look is unchanged.
+   US-555: `margin-left: auto` is GONE, not zeroed -- an auto margin here would
+   be exactly the drift mechanism the note above rejects. */
 #version-chip {
   color: var(--text-tertiary);
   font-size: var(--fs-meta); letter-spacing: 0.06em;
@@ -442,22 +467,10 @@ html, body {
   box-sizing: border-box; padding: var(--card-pad-y) 16px;
   display: flex; flex-direction: column;
 }
-/* US-510 A-3: a card TITLE is a brand moment, so it takes --font-display. The
-   card BODY is untouched and stays mono -- the title labels the instrument, the
-   body IS the instrument, and only the label gets the brand face. */
-/* US-557 (F-132): the title drops --fs-secondary -> --fs-label and 8px -> 6px of
-   margin, +9px back to the card body. THIS IS NOT A VALUE SHRINKING and the
-   distinction is the whole of AC-3: a card title NAMES the instrument you
-   deliberately swiped to, so it is a LABEL. Every value under it keeps its
-   F-127 tier -- .tile-value is still --fs-primary, and Iris's floor rule
-   ("anything the driver must read to act is >= 34px; anything < 26px must be
-   non-critical") puts a title squarely in the non-critical half. If this ever
-   looks like it must take a VALUE down with it, cut a FACT instead. */
-.card-title {
-  margin: 0 0 6px 0; font-size: var(--fs-label); font-weight: 600;
-  color: var(--text-secondary); text-transform: uppercase;
-  letter-spacing: 0.08em; font-family: var(--font-display);
-}
+/* US-887-c (F-127): the per-card TITLE row is retired. The page name lives in
+   the top bar (#page-name), so every card body gets the title band back (the
+   US-557 --fs-label line + 6px margin, ~30px). The card BODY is untouched and
+   stays mono. */
 /* --- US-557 NO-SILENT-CLIP GUARD (F-132) ------------------------------------
    The defect F-127's budget produced was not merely that cards overflowed -- it
    was that the overflow was INVISIBLE TO EVERYONE BUT THE CIO'S EYE. The card
@@ -545,9 +558,12 @@ html, body {
    BL-027 weight tidy: 700 -> 600. The embedded Oswald subset carries ONE
    weight (600), so a 700 request does not pick a bolder face -- it makes the
    browser SYNTHESISE one by smearing the 600, which on a condensed face looks
-   like a rendering fault on precisely the string that must look deliberate. */
+   like a rendering fault on precisely the string that must look deliberate.
+   US-887-b: 600 -> 400 + font-synthesis: none. Michroma, which replaced
+   Oswald, has ONE weight (400); same lesson, new number. */
 .idle-wordmark {
-  font-weight: 600; letter-spacing: 0.14em; font-family: var(--font-display);
+  font-weight: 400; letter-spacing: 0.14em; font-family: var(--font-display);
+  font-synthesis: none;
 }
 /* US-542: `.idle-clock` / `.idle-date` are GONE. The clock is `#topbar-clock`
    above; the date is not relocated (see the carousel.js note at fmtDate's
@@ -841,7 +857,9 @@ html, body {
   content: ""; width: 8px; height: 8px; border-radius: 50%;
   background: var(--text-tertiary); transition: background 0.2s;
 }
-.dot.active::before { background: var(--text-primary); }
+/* US-887-c (frame spec s4.4 rule 3, Iris G-6): the active page dot is unbanded
+   chrome, so it takes --accent -- never a state colour. */
+.dot.active::before { background: var(--accent); }
 
 /* --- US-506 auto-rotate progress bar (F-124) --------------------------------- */
 /* The calm THIN time-to-next readout for the hands-off carousel. Deliberately
@@ -1386,6 +1404,8 @@ html, body {
   padding: 4px 12px 10px; box-sizing: border-box; overflow-y: auto;
 }
 #sys-detail[hidden] { display: none; }
+/* US-887-c: the version chip's new home, under the issue rows. */
+#sys-detail #version-chip { padding-top: var(--detail-gap); }
 #sys-detail-back {
   min-width: var(--tap-min); min-height: var(--tap-min);
   padding: 0 12px; box-sizing: border-box;
@@ -1524,4 +1544,172 @@ html, body {
   width: 480px; height: 320px;   /* the fixed design box (matches STAGE_W/H) */
   transform: scale(var(--scale, 1));
   transform-origin: center center;
+}
+
+/* --- US-888-a Driving card, layout B (F-140) -------------------------------- */
+/* specs/v030-driving-page-design.md s3/s4. Tokens only: every colour is a s4.2
+   token and every size a scale tier. Layout B's geometry has no token (a 120 px
+   side column, the 22 px RPM bar row), and :root is pinned identical across the
+   two sheets by US-887-a, so the geometry is declared ONCE here as properties
+   scoped to the card (Iris G-4) and every rule below consumes them. This block
+   is the only place in the Driving rules that may hold a literal px
+   (tests/ui/test_driving_page.py, the scoped CSS gate). */
+#driving-card {
+  --drv-col: 120px;           /* side column width (spec s3) */
+  --drv-rpm-h: 22px;          /* RPM bar row (spec s3) */
+  --drv-seg-gap: 3px;         /* between the 16 RPM segments (US-888-b) */
+  --drv-flash-s: 0.5s;        /* redline flash period, 2 steps (spec s4.1, D-5) */
+  --drv-glide-s: 0.35s;       /* gear glide on a change (spec s4.2) */
+  --drv-glide-rise: 14px;     /* gear glide rise (spec s4.2) */
+  --drv-gap: 6px;             /* between bands and stacked readings */
+  --drv-unit-gap: 4px;        /* number -> unit */
+  --drv-box-pad: 8px;         /* speed box inline padding */
+  --drv-edge: 1px;            /* speed box border */
+  --drv-label-line: 1.2;      /* label + note line box (labels may wrap) */
+  --drv-value-line: 1.2;      /* reading line box */
+  --drv-gear-line: 1;         /* the gear glyph's box is exactly its size */
+  --drv-stale-opacity: 0.4;   /* stale = dimmed (spec s4.4) */
+}
+/* The body keeps the shared .card-body guard (overflow-y auto + the scroll
+   cue): if layout B ever outgrows the band it says so instead of clipping. */
+#driving-card .card-body {
+  display: flex; flex-direction: column; gap: var(--drv-gap);
+}
+/* US-888-b: the RPM bar -- 16 segments carousel.js builds once, each zoned by
+   its lower edge against params.RPM.scale (data-zone) and lit by the latest
+   real sample (data-lit). NO transition anywhere on the bar: it steps from one
+   sample to the next and never sweeps through values the ECU did not send
+   (spec s4.1). A segment with no zone (no provider scale) lights neutral. */
+#driving-card .drv-rpm-bar {
+  flex: none; height: var(--drv-rpm-h);
+  display: flex; gap: var(--drv-seg-gap);
+}
+#driving-card .drv-rpm-bar[data-stale="true"] {
+  opacity: var(--drv-stale-opacity);
+}
+#driving-card .drv-seg {
+  flex: 1; background-color: var(--line);
+}
+#driving-card .drv-seg[data-lit="true"] {
+  background-color: var(--text-secondary);
+}
+#driving-card .drv-seg[data-lit="true"][data-zone="green"] {
+  background-color: var(--green-ok);
+}
+#driving-card .drv-seg[data-lit="true"][data-zone="amber"] {
+  background-color: var(--amber-warn);
+}
+#driving-card .drv-seg[data-lit="true"][data-zone="red"] {
+  background-color: var(--critical-red);
+}
+#driving-card .drv-main {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: var(--drv-col) 1fr var(--drv-col);
+}
+#driving-card .drv-col {
+  display: flex; flex-direction: column; justify-content: space-around;
+  gap: var(--drv-gap); min-width: 0;
+}
+#driving-card .drv-right {
+  text-align: right;
+}
+#driving-card .drv-centre {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--drv-gap); text-align: center;
+}
+/* Labels: Michroma (spec s4.3: labels + gear only), letter-spacing 0, allowed
+   to wrap to two lines -- INTAKE AIR is 119 px in a 120 px column (Iris). */
+#driving-card .drv-label {
+  display: block;
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--drv-label-line);
+  color: var(--text-secondary);
+}
+/* Readings: the fixed-width face with tabular figures, so a changing number
+   keeps its width (frame spec s4.3 AC 5). Warm white unless a band says
+   otherwise (style rule 4). */
+#driving-card .drv-line {
+  line-height: var(--drv-value-line);
+}
+#driving-card .drv-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); color: var(--text-primary);
+}
+#driving-card .drv-unit {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); color: var(--text-secondary);
+  margin-inline-start: var(--drv-unit-gap);
+}
+/* Band colour comes ONLY from the provider's band field (spec s4.3): the page
+   maps band -> token and judges nothing. `.drv-banded` marks the three engine
+   numbers; RPM's number is warm white until params.RPM.band is red (amber
+   stays white -- style rule 4) and speed has no band. data-band="none"
+   (unbanded, e.g. IAT no_band_defined or battery amber_not_shipped) matches no
+   rule below and stays neutral. */
+#driving-card .drv-banded[data-band="green"] .drv-value {
+  color: var(--green-ok);
+}
+#driving-card .drv-banded[data-band="amber"] .drv-value {
+  color: var(--amber-warn);
+}
+#driving-card .drv-banded[data-band="red"] .drv-value {
+  color: var(--critical-red);
+}
+#driving-card .drv-reading[data-pid="RPM"][data-band="red"] .drv-value {
+  color: var(--critical-red);
+}
+/* Stale: last.value, dimmed, with its age in amber (spec s4.4). */
+#driving-card .drv-reading[data-stale="true"] .drv-line {
+  opacity: var(--drv-stale-opacity);
+}
+#driving-card .drv-note {
+  display: block;
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--drv-label-line); color: var(--text-secondary);
+}
+#driving-card .drv-reading[data-note="age"] .drv-note {
+  color: var(--amber-warn);
+}
+#driving-card .drv-box {
+  border-width: var(--drv-edge); border-style: solid; border-color: var(--line);
+  border-radius: var(--radius); padding-inline: var(--drv-box-pad);
+}
+/* The gear: Michroma 400 at --fs-giant, never synthesised (the subset carries
+   1-5, N, P and '-'). Measured gear is warm white; '--' (between gears, no
+   source) is secondary so it never reads as a gear. */
+#driving-card .drv-gear {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-giant); line-height: var(--drv-gear-line);
+  color: var(--text-primary);
+}
+#driving-card .drv-gear[data-measured="false"] {
+  color: var(--text-secondary);
+}
+/* US-888-b motion, OPT-IN: declared only when the user has not asked for
+   reduced motion, so reduced motion keeps every colour above and loses only
+   the movement (spec s4.1/s4.2). Every selector is state-qualified
+   (test_dashboard_animation_gating):
+     - redline: the lit red segments flash 0.5 s in 2 steps (lit / unlit) while
+       carousel.js holds data-redline="true" (a FRESH sample >= scale.redFrom);
+     - glide: 0.35 s fade + 14 px rise when carousel.js flips data-glide on a
+       measured gear CHANGE; a/b alternate so each change restarts it. */
+@media (prefers-reduced-motion: no-preference) {
+  #driving-card .drv-rpm-bar[data-redline="true"] .drv-seg[data-lit="true"][data-zone="red"] {
+    animation: drv-redline-flash var(--drv-flash-s) steps(2, jump-none) infinite;
+  }
+  #driving-card .drv-gear[data-glide="a"] {
+    animation: drv-gear-glide-a var(--drv-glide-s) ease-out;
+  }
+  #driving-card .drv-gear[data-glide="b"] {
+    animation: drv-gear-glide-b var(--drv-glide-s) ease-out;
+  }
+}
+@keyframes drv-redline-flash {
+  to { background-color: var(--line); }
+}
+@keyframes drv-gear-glide-a {
+  from { opacity: 0; transform: translateY(var(--drv-glide-rise)); }
+}
+@keyframes drv-gear-glide-b {
+  from { opacity: 0; transform: translateY(var(--drv-glide-rise)); }
 }

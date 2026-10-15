@@ -26,7 +26,7 @@
        outer scale fills the panel. Black bars read as bezel, not a gap. -->
   <div id="screen">
   <div id="stage">
-  <!-- Persistent top bar (D-3): BT / sync / power glyphs + version chip + menu
+  <!-- Persistent top bar (D-3): BT / sync / power glyphs + page name + menu
        affordance. Glyph STATE (amber on BT drop, etc.) is bound by US-400 from
        system-status; the shell renders them in a neutral state. The ⋮ button is
        the System Setup menu affordance -- US-403 wires its behaviour. -->
@@ -65,14 +65,15 @@
          is always visible. carousel.js fills it from `fmtClock` (US-503). -->
     <span id="topbar-clock"></span>
     <div class="topbar-right">
-      <!-- US-501: the state server substitutes __DEPLOY_VERSION__ from
-           .deploy-version at serve time (the same _injectHtml seam as
-           __SPLASH_TOKEN__ below), re-read on EVERY serve because the deploy
-           stamps the version after restarting the server. An unreadable stamp
-           becomes the honest 'V?.?.?' sentinel -- never a stale build number.
-           The chip previously shipped that sentinel as a hard literal, so every
-           build on the panel looked identical. -->
-      <span id="version-chip">__DEPLOY_VERSION__</span>
+      <!-- US-887-c (F-127; specs/v030-frame-and-style-design.md s3, s3.2): the
+           CURRENT PAGE NAME, which replaces every card's own title row. Each
+           card carries its bar name as `data-page-name` (Iris's measured short
+           forms, each <= 122 px in Michroma at --fs-meta); carousel.js copies
+           the current card's into this span on every move. Ships EMPTY, like
+           the clock: a literal name before the first paint would name a page
+           the carousel has not decided yet. The version chip that sat here
+           moved to #sys-detail so the name fits the right track. -->
+      <span id="page-name"></span>
       <!-- US-659 (CIO ruling, punch-list H6): ships VISIBLE, in every state.
            This used to carry `hidden`, and US-490's poll revealed it only while
            the vehicle read parked -- so the glyph implied the menu was
@@ -130,6 +131,55 @@
 
   <main id="carousel" aria-roledescription="carousel">
     <div id="track">
+      <!-- US-888-a (F-140; specs/v030-driving-page-design.md, layout B): the
+           DRIVING card, the LANDING card (R5) -- `data-landing` is where the
+           carousel opens and where the engine-state edge returns it. It is NOT
+           the home slot: no `data-idle-home`, no `data-face` (the idle/live
+           swap stays with the Home card at index 1), and no `data-state`, so
+           the generic availability poll never grays it. carousel.js fills it
+           from states/obd-live + states/gear (`drivingView`); the skeleton
+           ships "--" because nothing has been read before the first poll.
+           Readings are not `.tile`s: the 4-fact ceiling counts tiles, and
+           layout B is not a tile grid. US-888-b fills the RPM bar. -->
+      <section class="card" id="driving-card" data-landing
+               aria-label="Driving" data-page-name="DRIVING">
+        <div class="card-body">
+          <div class="drv-rpm-bar" aria-hidden="true"></div>
+          <div class="drv-main">
+            <div class="drv-col drv-left">
+              <div class="drv-reading drv-banded" data-pid="COOLANT_TEMP" data-band="none" data-stale="false">
+                <span class="drv-label">COOLANT</span>
+                <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+              <div class="drv-reading drv-banded" data-pid="INTAKE_TEMP" data-band="none" data-stale="false">
+                <span class="drv-label">INTAKE AIR</span>
+                <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+            </div>
+            <div class="drv-centre">
+              <span class="drv-gear" data-measured="false">--</span>
+              <div class="drv-reading drv-speed" data-pid="SPEED" data-band="none" data-stale="false">
+                <div class="drv-line drv-box"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+            </div>
+            <div class="drv-col drv-right">
+              <div class="drv-reading" data-pid="RPM" data-band="none" data-stale="false">
+                <span class="drv-label">RPM</span>
+                <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+              <div class="drv-reading drv-banded" data-pid="BATTERY_V" data-band="none" data-stale="false">
+                <span class="drv-label">BATTERY</span>
+                <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
       <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
            card sitting beside an always-present fallback card would poll and
            paint the same feed twice and put two rules in charge of the slot.
@@ -152,7 +202,7 @@
            -- an absent/stale states/imu falls back to the fallback face (AC-3),
            never a frozen or zeroed motion display. -->
       <section class="card" data-idle-home data-face="idle" id="home-card"
-               aria-label="Home">
+               aria-label="Home" data-page-name="MOTION">
         <div class="card-body"><span class="idle-boot">standby …</span></div>
       </section>
       <!-- US-406 Alerts card (F-111): hero (worst code + directive) + a
@@ -163,12 +213,11 @@
            the Alerts index dynamically (`dtcCardIndex`), so the ribbon tap,
            the takeover "View detail" and the drill-down all keep working
            without a nav change. -->
-      <section class="card" data-state="dtc" aria-label="Alerts">
-        <h2 class="card-title">Alerts</h2>
+      <section class="card" data-state="dtc" aria-label="Alerts" data-page-name="ALERTS">
         <div class="card-body">unavailable</div>
       </section>
-      <section class="card" data-state="system-status" aria-label="System Status">
-        <h2 class="card-title">System Status</h2>
+      <section class="card" data-state="system-status" aria-label="System Status"
+               data-page-name="SYSTEM">
         <div class="card-body">unavailable</div>
       </section>
       <!-- US-540-b (F-127): the US-507 merged "Health" card RETIRES and its
@@ -187,8 +236,7 @@
 
            US-508: the standalone Motion card stays gone -- the US-497 live
            instrument is a FACE of the home slot, not a screen of its own. -->
-      <section class="card" data-state="battery-health" aria-label="Battery">
-        <h2 class="card-title">Battery</h2>
+      <section class="card" data-state="battery-health" aria-label="Battery" data-page-name="BATTERY">
         <div class="card-body">unavailable</div>
       </section>
       <!-- Fuel Trim (formerly "LTFT Trend"; plain English, Spool's LTFT
@@ -207,12 +255,10 @@
            first poll: no read has happened yet, which is a different fact from
            the gate itself. -->
       <section class="card" data-state="ltft-trend" data-gated="true"
-               aria-label="Fuel Trim">
-        <h2 class="card-title">Fuel Trim</h2>
+               aria-label="Fuel Trim" data-page-name="FUEL TRIM">
         <div class="card-body">unavailable</div>
       </section>
-      <section class="card" data-state="light" aria-label="Light">
-        <h2 class="card-title">Light</h2>
+      <section class="card" data-state="light" aria-label="Light" data-page-name="LIGHT">
         <div class="card-body">unavailable</div>
       </section>
     </div>
@@ -251,6 +297,17 @@
       <span id="sys-detail-head" class="detail-code-head"></span>
     </header>
     <div id="sys-detail-body" class="detail-body"><!-- JS fills the rows --></div>
+    <!-- US-887-c: the version chip, moved here from the top bar (frame spec s3:
+         "the version string moves to the System detail") so the page name fits
+         the bar. Markup UNCHANGED, because the serve-time seam keys on it.
+         US-501: the state server substitutes __DEPLOY_VERSION__ from
+         .deploy-version at serve time (the same _injectHtml seam as
+         __SPLASH_TOKEN__ below), re-read on EVERY serve because the deploy
+         stamps the version after restarting the server. An unreadable stamp
+         becomes the honest 'V?.?.?' sentinel -- never a stale build number.
+         The chip previously shipped that sentinel as a hard literal, so every
+         build on the panel looked identical. -->
+    <span id="version-chip">__DEPLOY_VERSION__</span>
   </div>
 
   <!-- US-407 hard-confirm modal (design §6.2): the clear wipes EVERY code, erases

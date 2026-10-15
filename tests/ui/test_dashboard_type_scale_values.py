@@ -34,7 +34,6 @@
 
 from tests.ui.css_type_scale import (
     DASHBOARD_CSS,
-    SCALE_TOKENS,
     TOKENS_CSS,
     readCss,
     resolveFontPx,
@@ -46,6 +45,7 @@ from tests.ui.css_type_scale import (
 
 # Iris's scale for the 480x320 panel, read seated at arm's length (US-540-a AC1).
 LEGIBILITY_SCALE = {
+    "fs-giant": 120,  # US-887-a: Driving gear (specs/v030-driving-page-design.md s3)
     "fs-hero": 44,
     "fs-primary": 34,
     "fs-secondary": 26,
@@ -126,7 +126,8 @@ def test_everyTier_grewOrHeldAgainstThePreF127Scale():
     """
     preF127 = {"fs-hero": 40, "fs-primary": 20, "fs-secondary": 14, "fs-label": 12, "fs-meta": 10}
     values = scaleValues(readCss(TOKENS_CSS))
-    shrank = {name: values[name] for name in SCALE_TOKENS if values[name] < preF127[name]}
+    # Iterates the pre-F-127 tiers: --fs-giant (US-887-a) did not exist then.
+    shrank = {name: values[name] for name in preF127 if values[name] < preF127[name]}
     assert shrank == {}, f"tiers moved DOWN against the pre-F-127 scale: {shrank}"
 
 

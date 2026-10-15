@@ -5926,7 +5926,8 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
   `system-status.runMode`, and it is not repeated per PID. It is null when no logger has
   resolved a tag.
 - **Only the not-live marker reads `obd-live` in Sprint 98**, and it reads only
-  `dataSource` (US-901-b, below). No page renders the PID values. The contract fixture is
+  `dataSource` (US-901-b, below). No page renders the PID values. *(Sprint 103:
+  the Driving card renders them -- US-888-a, UI section.)* The contract fixture is
   `tests/ui/fixtures/states/obd-live.json`, which holds complete named payloads (`fresh`,
   `stale`, `pid-absent`, `replay`, and from US-875 `engine-off-battery`,
   `coolant-amber`, `coolant-red`). `tests/pi/obdii/test_obd_live_emitter.py` feeds
@@ -7500,7 +7501,9 @@ keeping:
 **BL-027 CLOSED (fast-follow, 2026-08-01) — the brand face is an EMBEDDED
 asset, and the mirror rule extends to it.** The face is an OFL-licensed
 **Oswald** subset (A–Z / 0–9 / space / hyphen, weight 600, 2,896 B) inlined as a
-CSP-safe `@font-face` **base64 data-URI**. Four decisions worth keeping:
+CSP-safe `@font-face` **base64 data-URI**. *(The face itself was superseded by
+Michroma 400 in US-887-b, below; the four decisions still hold.)* Four
+decisions worth keeping:
 
 - **The mirror is load-bearing for the face, not just for values.** The
   `@font-face` is declared in **both** `tokens.css` and `dashboard.css`, because
@@ -7536,6 +7539,165 @@ a tiered chip/ribbon/takeover are **contrast pairs** chosen against that tier's
 fill, not palette entries. Naming them means inventing `--on-amber`/`--on-critical`
 (Iris's design call + an Atlas token addition) — routed as **TD-071**, which also
 carries SSOT promotion of the three `--*-deep` edge tokens.
+
+#### V0.30 OEM token set (US-887-a, Sprint 103 / V0.30.1) [Atlas Rule-10 2026-10-13]
+
+The "90s Mitsubishi OEM" style (`specs/v030-frame-and-style-design.md` §4.2)
+**changes token values in the SSOT and its mirror together**; no consumer rule
+changed, so every surface restyles through the existing bindings:
+
+| Token | Was | Now | Role |
+|---|---|---|---|
+| `--bg` | `#000000` | `#0A0A0A` | matte black field |
+| `--surface` | `#111111` | `#141414` | panels, top bar, empty bar segments |
+| `--line` *(new)* | — | `#262626` | rules, panel edges |
+| `--text-primary` | `#DDDDDD` | `#F5F1E8` | warm white, readings |
+| `--text-secondary` | `#888888` | `#A8A296` | labels, units |
+| `--text-tertiary` | `#666666` | `#5F5A52` | furniture, inactive dots |
+| `--accent` *(new)* | — | `#FF6A2B` | pointers + accents ONLY (§4.4) |
+| `--radius` *(new)* | — | `10px` | panel corners |
+| `--fs-giant` *(new)* | — | `120px` | the Driving gear alone (`v030-driving-page-design.md` D-10) |
+
+- **State colours did not move.** `--green-ok` / `--amber-warn` /
+  `--critical-red`, the destructive pair and the brand reds are unchanged:
+  state means state, identical in every style. `--accent` is for **unbanded**
+  data and pointers; it is never a state and never a reading.
+- **`--bg` stays a STOP-safe near-black.** `#0A0A0A` is inside the takeover's
+  near-black set `{#000, #000000, #0A0A0A}` (`test_dashboard_stop_tier_safety.py`),
+  so the restyle cannot weaken the STOP contrast channel.
+- **The type scale is now six tiers, `--fs-giant` on top.** It is declared in both
+  sheets, joins `SCALE_TOKENS` in `tests/ui/css_type_scale.py` (the ONE list every
+  scale guard reads), and the scale stays strictly descending; no existing tier
+  changed value. A seventh `--fs-*` remains drift.
+- **Declared ahead of its consumers.** US-887-a lands values only; no selector
+  binds `--fs-giant`, `--line`, `--accent` or `--radius` yet (US-887-c and
+  US-888-a do), so later stories consume tokens rather than literals.
+
+#### V0.30 embedded face: Michroma replaces Oswald (US-887-b, Sprint 103 / V0.30.1)
+
+The OEM style's brand/label face is **Michroma** (OFL 1.1, spec §4.3). It
+**replaces** the BL-027 Oswald embed above, under the same rules (data-URI
+`@font-face` mirrored in both sheets, no CDN, licence vouched for deploy):
+
+- **The one embedded face.** Both sheets carry exactly ONE `@font-face`:
+  Michroma Regular **400**, a 38-glyph subset (A–Z / 0–9 / space / hyphen,
+  **2,464 B**) cut by Iris (`specs/assets/fonts/michroma/PROVENANCE.md`) and
+  copied byte-for-byte to `src/pi/ui/assets/fonts/michroma-brand.woff2`. The
+  payload test decodes the base64 against that file, and a second test pins its
+  md5 `b495a16b2b5cf974f15e52d62e914d14` to Iris's cut. `oswald-brand.woff2`
+  is deleted; the stack is `"Michroma", "Arial Narrow", system-ui, sans-serif`.
+- **Byte ceiling: total embedded-font bytes ≤ 2,896 B** (the retired Oswald
+  embed, Atlas). Michroma alone fits; Michroma + Oswald (5,364 B) would not —
+  which is why the swap is one story. Pinned by
+  `test_totalEmbeddedFontBytesStayUnderTheOswaldCeiling`.
+- **Single weight, no synthesis.** Every rule binding `--font-display`
+  (`.idle-wordmark`, `.card-title`, `#not-live-marker`) asks for **400** and sets
+  `font-synthesis: none`. The brand glyph check reads its subset from
+  `michroma-advances.json`, so it covers exactly what was cut.
+- **The licence went with the face.** `src/pi/ui/dashboard/OFL.txt` (deployed)
+  and `src/pi/ui/assets/fonts/OFL.txt` (source of record) are both Michroma's
+  `OFL-michroma.txt`; Oswald's licence left with Oswald.
+
+#### V0.30 top bar names the page; cards lose their title rows (US-887-c, Sprint 103 / V0.30.1)
+
+Frame spec §3 / §3.2 (`specs/v030-frame-and-style-design.md`):
+
+- **The bar's right slot is the page name.** `#page-name` sits INSIDE
+  `.topbar-right`, before the kebab, so the US-555 grid still has exactly three
+  children. Michroma 400 at `--fs-meta`, letter-spacing 0, `font-synthesis:
+  none`. It ships empty; `carousel.js render()` writes the current card's name
+  from the same `current` index the track and the active dot read.
+- **The name lives on the card.** Each `.card` carries `data-page-name` — the
+  one registry is still the `.card` query. Bar names (Iris, measured): Home/IMU
+  `MOTION`, Alerts `ALERTS`, System Status `SYSTEM`, Battery `BATTERY`, Fuel
+  Trim `FUEL TRIM`, Light `LIGHT` (Driving `DRIVING` lands with US-888-a). The
+  `aria-label` kit labels are a separate string and keep their values.
+- **Fit rule: every bar name ≤ 122 px**, computed from
+  `specs/assets/fonts/michroma/michroma-advances.json` at `--fs-meta` (168.6 px
+  side track − 8 gap − 34 kebab − 4 margin). `_BarModel.rightClusterWidth` in
+  `tests/ui/test_topbar_three_column_grid.py` models page name + gap + kebab;
+  `NAVIGATION` (135 px) is the negative control. A name that does not fit gets a
+  short form, never a smaller size.
+- **No title rows.** Every `<h2 class="card-title">` and the `.card-title` rule
+  are gone; the card body grows by the title band (224 → 254 px,
+  `test_card_band_budget.py`). The loading tile's fallback label reads
+  `data-page-name`. `--font-display` now binds `.idle-wordmark`, `#page-name`
+  and `#not-live-marker`.
+- **The version chip moved** from the bar into `#sys-detail` (under the issue
+  rows), markup unchanged (`<span id="version-chip">__DEPLOY_VERSION__</span>`),
+  so the serve-time substitution and its tests are untouched.
+- **The active page dot is `--accent`** (frame §4.4 rule 3) — the first selector
+  to bind it. No timer changes the page: `pi.display.carousel.autoRotateS`
+  stays 0.
+
+#### V0.30 Driving card, layout B -- the landing card (US-888-a, Sprint 103 / V0.30.1)
+
+Driving spec §3-§5 (`specs/v030-driving-page-design.md`), Iris Q1 (card slot):
+
+- **A new card at index 0, and the landing card (R5).** `#driving-card` carries
+  `data-landing`; card order is Driving, Home, Alerts, System Status, Battery,
+  Fuel Trim, Light. The Home/IMU card moved to index 1 with its markup
+  unchanged and KEEPS the idle/live swap (`data-idle-home`, `data-face`,
+  `homeFace`). The engine-state edge `updateHomeNav` (still keyed on
+  `carouselIdle`) now goes to the landing card, so the first tick opens the
+  panel on Driving and an engine start/stop returns it there.
+- **States it reads -- and nothing else.** `states/obd-live`
+  `params.<PID>.{value, unit, ts, stale, band, noBandReason, last}` for `RPM`,
+  `SPEED`, `COOLANT_TEMP`, `INTAKE_TEMP` and `BATTERY_V`, plus `states/gear`
+  through the ONE existing gear fetch (`lastGear`). Both come from the tick's
+  `stateOnce` cache, so the card adds no fetch. It has no `data-state`, so the
+  generic availability poll never grays it. `drivingView(obdLive, gear, nowMs)`
+  is the pure view; `renderDrivingCard` writes text and `data-band` /
+  `data-stale` / `data-note` / `data-measured` into a fixed skeleton.
+- **The page computes no value and no band.** Colour is `band -> token` for the
+  three engine numbers (`.drv-banded`); an unbanded value (IAT
+  `no_band_defined`, battery `amber_not_shipped` / `engine_not_running`) is
+  neutral with no reason text. Stale shows `last.value` dimmed, coloured by
+  `last.band`, with its age (now − `ts`). `value: null` without `stale` is `--`
+  + the provider's reason. Between gears is `--` with no hint (US-904 later).
+  The RPM number stays warm white unless its band is red (US-888-b, below).
+- **ONE display-units helper (`displayUnits`, Atlas G1).** Converts by the
+  provider's `unit`: `C` -> °F, `km/h` -> mph; `F` / `mph` pass through; any
+  other unit renders raw with its own unit string. Display only -- bands are
+  never re-judged on the converted number.
+- **Type.** Gear `--fs-giant` (120 px) in Michroma 400, `font-synthesis: none`.
+  Readings `--fs-primary` in `--font-mono` with `tabular-nums`. Side labels
+  Michroma at `--fs-meta`, letter-spacing 0, allowed to wrap. `--font-display`
+  now also binds `#driving-card .drv-label` and `#driving-card .drv-gear`.
+- **Tokens only, geometry scoped.** Layout B's 120 px column and 22 px bar row
+  are custom properties on `#driving-card` (not `:root`, which US-887-a pins
+  identical in both sheets). The scoped CSS gate in
+  `tests/ui/test_driving_page.py` allows literal px only in that block and no
+  literal colour in any Driving rule. Fixtures:
+  `tests/ui/fixtures/states/driving/*.json` (Iris's list; no hint or takeover).
+
+#### V0.30 Driving RPM bar contract (US-888-b, Sprint 103 / V0.30.1)
+
+Driving spec §4.1-§4.2, R30, R35:
+
+- **Stepped, never swept.** `rpmBarView(params.RPM)` (pure, exported; carried
+  on `drivingView(...).rpmBar`) maps ONE sample to 16 segments x 500 rpm.
+  Segment *i* is lit once the sample reaches its lower edge *i* x 500, so
+  2000 -> 4000 is two paints with nothing between. No `transition` on the bar.
+  `renderRpmBar` builds the segments once and then moves only `data-lit` /
+  `data-zone` on each, plus `data-stale` / `data-redline` on `.drv-rpm-bar`.
+- **Zones from the provider only.** Each segment is zoned by its lower edge
+  against `params.RPM.scale {amberFrom, redFrom}` (`band_producer.rpmScale`,
+  the same `pi.bands.rpm.*` keys as the RPM band): green < amberFrom <= amber
+  < redFrom <= red. No usable scale -> no zone (neutral lit segments) and no
+  flash. carousel.js holds no zone literal (`tests/ui/test_driving_rpm_bar.py`
+  grep gate).
+- **Stale / not read.** Stale paints `last.value`, dimmed, with the age on the
+  RPM slot's note; it never flashes. Not read lights nothing.
+- **Redline.** A fresh sample >= `scale.redFrom` sets `data-redline`: the lit
+  red segments flash 0.5 s in 2 steps. The RPM number is `--critical-red` only
+  when `params.RPM.band` is red; amber stays warm white.
+- **Gear glide.** 0.35 s fade + 14 px rise when the MEASURED gear changes (also
+  through a `--` between two gears); never on the first gear, a repeat, or `--`.
+  `data-glide` alternates a/b so each change restarts it.
+- **Motion is opt-in.** The flash and the glide are declared only inside
+  `@media (prefers-reduced-motion: no-preference)` on data-attribute-qualified
+  selectors, so reduced motion keeps every colour and loses only the movement.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

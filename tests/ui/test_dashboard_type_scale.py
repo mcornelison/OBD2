@@ -87,9 +87,11 @@ def test_everyFontSizeDeclaration_bindsTheScaleOrInheritsDeliberately():
     assert values.count("inherit") == 1
 
 
-def test_dashboardCss_declaresNoTypeTokensBeyondTheFive():
-    """The point of a scale is that it is SMALL. A sixth `--fs-*` is the sprawl
-    coming back one token at a time, which is how 15 sizes happened."""
+def test_dashboardCss_declaresNoTypeTokensBeyondTheSix():
+    """The point of a scale is that it is SMALL. US-887-a admitted exactly one
+    sixth tier, `--fs-giant` (Atlas Rule-10 G-1, the Driving gear); a seventh
+    `--fs-*` is the sprawl coming back one token at a time, which is how 15
+    sizes happened."""
     declared = set(re.findall(r"^\s*--(fs-[a-zA-Z0-9-]+):", readCss(DASHBOARD_CSS), re.M))
     assert declared == set(SCALE_TOKENS)
 

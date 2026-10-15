@@ -98,11 +98,12 @@ def test_carouselJs_minorTakeoverTier_bindsSsotGreenVar():
 
 def test_dashboardCss_textPrimary_matchesSsot():
     """`--text-primary` is no longer a dist invention -- it is now in the SSOT
-    and the two declarations must agree on #DDDDDD."""
+    and the two declarations must agree on the frame spec s4.2 warm white
+    #F5F1E8 (US-887-a; #DDDDDD before V0.30)."""
     assert _tokenValue(_read(_CSS), "text-primary") == _tokenValue(
         _read(_TOKENS), "text-primary"
     )
-    assert _tokenValue(_read(_CSS), "text-primary") == "#DDDDDD"
+    assert _tokenValue(_read(_CSS), "text-primary") == "#F5F1E8"
 
 
 def test_dashboardCss_neutralTextTier_matchesSsot():
@@ -135,9 +136,9 @@ def test_dashboardCss_greenAlphaTint_isTheSsotGreen():
 
 
 def test_dashboardCss_textPrimaryLiteral_appearsOnceInRoot():
-    """#DDDDDD is declared exactly once (the :root token) -- every consumer
+    """#F5F1E8 is declared exactly once (the :root token) -- every consumer
     goes through var(--text-primary)."""
-    assert len(re.findall(r"#DDDDDD", _read(_CSS), re.IGNORECASE)) == 1
+    assert len(re.findall(r"#F5F1E8", _read(_CSS), re.IGNORECASE)) == 1
 
 
 # ---------------------------------------------------------------------------
