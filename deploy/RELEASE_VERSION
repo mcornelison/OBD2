@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.4",
-  "theme": "Sprint 102: V0.30 labwc Wayland kiosk",
-  "description": "Sprint 102 (3 stories): /etc/eclipse/display-mode is the only display-mode authority and eclipse-display-mode x11|wayland|status switches it offline; eclipse-compositor.service hosts labwc for the Wayland kiosk and splashes; eclipse-capture-panel screenshots either mode. Boot-neutral: no mode file = X11. Also carries V0.30.3 (Sprint 101 OS trim)."
+  "version": "V0.30.5",
+  "theme": "Sprint 103: V0.30 OEM style + Driving card",
+  "description": "Sprint 103 (5 stories): OEM token set in tokens.css incl. giant size; Michroma replaces Oswald as the embedded display face; the top bar names the page and cards lose their title rows; a Driving card lands first with gear, speed and engine values; its RPM bar steps on real samples with provider zones. Also carries V0.30.3 (S101 OS trim) and V0.30.4 (S102 labwc kiosk)."
 }
