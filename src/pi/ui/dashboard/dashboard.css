@@ -1545,3 +1545,111 @@ html, body {
   transform: scale(var(--scale, 1));
   transform-origin: center center;
 }
+
+/* --- US-888-a Driving card, layout B (F-140) -------------------------------- */
+/* specs/v030-driving-page-design.md s3/s4. Tokens only: every colour is a s4.2
+   token and every size a scale tier. Layout B's geometry has no token (a 120 px
+   side column, the 22 px RPM bar row), and :root is pinned identical across the
+   two sheets by US-887-a, so the geometry is declared ONCE here as properties
+   scoped to the card (Iris G-4) and every rule below consumes them. This block
+   is the only place in the Driving rules that may hold a literal px
+   (tests/ui/test_driving_page.py, the scoped CSS gate). */
+#driving-card {
+  --drv-col: 120px;           /* side column width (spec s3) */
+  --drv-rpm-h: 22px;          /* RPM bar row (spec s3); segments are US-888-b */
+  --drv-gap: 6px;             /* between bands and stacked readings */
+  --drv-unit-gap: 4px;        /* number -> unit */
+  --drv-box-pad: 8px;         /* speed box inline padding */
+  --drv-edge: 1px;            /* speed box border */
+  --drv-label-line: 1.2;      /* label + note line box (labels may wrap) */
+  --drv-value-line: 1.2;      /* reading line box */
+  --drv-gear-line: 1;         /* the gear glyph's box is exactly its size */
+  --drv-stale-opacity: 0.4;   /* stale = dimmed (spec s4.4) */
+}
+/* The body keeps the shared .card-body guard (overflow-y auto + the scroll
+   cue): if layout B ever outgrows the band it says so instead of clipping. */
+#driving-card .card-body {
+  display: flex; flex-direction: column; gap: var(--drv-gap);
+}
+#driving-card .drv-rpm-bar {
+  flex: none; height: var(--drv-rpm-h);
+}
+#driving-card .drv-main {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: var(--drv-col) 1fr var(--drv-col);
+}
+#driving-card .drv-col {
+  display: flex; flex-direction: column; justify-content: space-around;
+  gap: var(--drv-gap); min-width: 0;
+}
+#driving-card .drv-right {
+  text-align: right;
+}
+#driving-card .drv-centre {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--drv-gap); text-align: center;
+}
+/* Labels: Michroma (spec s4.3: labels + gear only), letter-spacing 0, allowed
+   to wrap to two lines -- INTAKE AIR is 119 px in a 120 px column (Iris). */
+#driving-card .drv-label {
+  display: block;
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--drv-label-line);
+  color: var(--text-secondary);
+}
+/* Readings: the fixed-width face with tabular figures, so a changing number
+   keeps its width (frame spec s4.3 AC 5). Warm white unless a band says
+   otherwise (style rule 4). */
+#driving-card .drv-line {
+  line-height: var(--drv-value-line);
+}
+#driving-card .drv-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); color: var(--text-primary);
+}
+#driving-card .drv-unit {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); color: var(--text-secondary);
+  margin-inline-start: var(--drv-unit-gap);
+}
+/* Band colour comes ONLY from the provider's band field (spec s4.3): the page
+   maps band -> token and judges nothing. `.drv-banded` marks the three engine
+   numbers; RPM's number stays warm white (its red is US-888-b) and speed has
+   no band. data-band="none" (unbanded, e.g. IAT no_band_defined or battery
+   amber_not_shipped) matches no rule below and stays neutral. */
+#driving-card .drv-banded[data-band="green"] .drv-value {
+  color: var(--green-ok);
+}
+#driving-card .drv-banded[data-band="amber"] .drv-value {
+  color: var(--amber-warn);
+}
+#driving-card .drv-banded[data-band="red"] .drv-value {
+  color: var(--critical-red);
+}
+/* Stale: last.value, dimmed, with its age in amber (spec s4.4). */
+#driving-card .drv-reading[data-stale="true"] .drv-line {
+  opacity: var(--drv-stale-opacity);
+}
+#driving-card .drv-note {
+  display: block;
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--drv-label-line); color: var(--text-secondary);
+}
+#driving-card .drv-reading[data-note="age"] .drv-note {
+  color: var(--amber-warn);
+}
+#driving-card .drv-box {
+  border-width: var(--drv-edge); border-style: solid; border-color: var(--line);
+  border-radius: var(--radius); padding-inline: var(--drv-box-pad);
+}
+/* The gear: Michroma 400 at --fs-giant, never synthesised (the subset carries
+   1-5, N, P and '-'). Measured gear is warm white; '--' (between gears, no
+   source) is secondary so it never reads as a gear. No glide yet (US-888-b). */
+#driving-card .drv-gear {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-giant); line-height: var(--drv-gear-line);
+  color: var(--text-primary);
+}
+#driving-card .drv-gear[data-measured="false"] {
+  color: var(--text-secondary);
+}

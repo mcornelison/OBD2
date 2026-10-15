@@ -131,6 +131,55 @@
 
   <main id="carousel" aria-roledescription="carousel">
     <div id="track">
+      <!-- US-888-a (F-140; specs/v030-driving-page-design.md, layout B): the
+           DRIVING card, the LANDING card (R5) -- `data-landing` is where the
+           carousel opens and where the engine-state edge returns it. It is NOT
+           the home slot: no `data-idle-home`, no `data-face` (the idle/live
+           swap stays with the Home card at index 1), and no `data-state`, so
+           the generic availability poll never grays it. carousel.js fills it
+           from states/obd-live + states/gear (`drivingView`); the skeleton
+           ships "--" because nothing has been read before the first poll.
+           Readings are not `.tile`s: the 4-fact ceiling counts tiles, and
+           layout B is not a tile grid. US-888-b fills the RPM bar. -->
+      <section class="card" id="driving-card" data-landing
+               aria-label="Driving" data-page-name="DRIVING">
+        <div class="card-body">
+          <div class="drv-rpm-bar" aria-hidden="true"></div>
+          <div class="drv-main">
+            <div class="drv-col drv-left">
+              <div class="drv-reading drv-banded" data-pid="COOLANT_TEMP" data-band="none" data-stale="false">
+                <span class="drv-label">COOLANT</span>
+                <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+              <div class="drv-reading drv-banded" data-pid="INTAKE_TEMP" data-band="none" data-stale="false">
+                <span class="drv-label">INTAKE AIR</span>
+                <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+            </div>
+            <div class="drv-centre">
+              <span class="drv-gear" data-measured="false">--</span>
+              <div class="drv-reading drv-speed" data-pid="SPEED" data-band="none" data-stale="false">
+                <div class="drv-line drv-box"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+            </div>
+            <div class="drv-col drv-right">
+              <div class="drv-reading" data-pid="RPM" data-band="none" data-stale="false">
+                <span class="drv-label">RPM</span>
+                <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+              <div class="drv-reading drv-banded" data-pid="BATTERY_V" data-band="none" data-stale="false">
+                <span class="drv-label">BATTERY</span>
+                <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
+                <span class="drv-note" hidden></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
       <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
            card sitting beside an always-present fallback card would poll and
            paint the same feed twice and put two rules in charge of the slot.

@@ -3540,6 +3540,115 @@
     };
   }
 
+  // --- US-888-a Driving card (F-140; specs/v030-driving-page-design.md) -----
+  //
+  // THE display-units helper -- the one place this page converts anything
+  // (Atlas G1). It converts by the unit the PROVIDER published, never by an
+  // assumption about the PID: 'C' -> deg F and 'km/h' -> mph (D-3, D-13); a
+  // value already in the target unit passes through; an unknown or missing unit
+  // renders the raw value with its own unit string. Assuming "temps are C" would
+  // silently double-convert the day a provider or a replay emits 'F'. Display
+  // only: bands are judged by the provider in the source unit and are never
+  // re-judged here, so a rounding edge cannot flip a colour.
+  var KM_PER_MILE = 1.609344;
+  var DISPLAY_UNITS = {
+    C: { unit: "°F", decimals: 0, convert: function (c) { return c * 9 / 5 + 32; } },
+    F: { unit: "°F", decimals: 0, convert: null },
+    "km/h": { unit: "mph", decimals: 0, convert: function (kmh) { return kmh / KM_PER_MILE; } },
+    mph: { unit: "mph", decimals: 0, convert: null },
+    // Volts keep one decimal so 14.0 -> 14.1 does not change the width.
+    V: { unit: "V", decimals: 1, convert: null },
+    // The RPM label already names the unit; "rpm" beside four digits would
+    // not fit the 120 px column.
+    rpm: { unit: "", decimals: 0, convert: null },
+  };
+
+  function displayUnits(value, unit) {
+    var rule = typeof unit === "string" &&
+      Object.prototype.hasOwnProperty.call(DISPLAY_UNITS, unit) ? DISPLAY_UNITS[unit] : null;
+    if (!rule) {
+      return { text: String(value), unit: typeof unit === "string" ? unit : "" };
+    }
+    var shown = rule.convert ? rule.convert(value) : value;
+    return { text: shown.toFixed(rule.decimals), unit: rule.unit };
+  }
+
+  // The readings layout B shows, by obd-live PID (spec s5; Atlas verified every
+  // key on dev). Where each one sits is markup (`data-pid`), not this list.
+  var DRIVING_PIDS = ["COOLANT_TEMP", "INTAKE_TEMP", "SPEED", "RPM", "BATTERY_V"];
+  // Not read: the same glyph the gear uses, so "--" means one thing on the page.
+  var DRIVING_NOT_READ = GEAR_UNKNOWN;
+
+  // The provider's band name, or null. Only the three state names exist; any
+  // other value is not a band this page may paint.
+  function drivingBand(band) {
+    if (!isObj(band)) return null;
+    return band.band === "green" || band.band === "amber" || band.band === "red"
+      ? band.band : null;
+  }
+
+  // A provider reason code as the glass prints it ("not_read" -> "not read").
+  function drivingReasonText(code) {
+    return typeof code === "string" && code ? code.replace(/_/g, " ") : "not read";
+  }
+
+  // "<n> s" since the reading's own ts -- clock arithmetic, not a threshold:
+  // the PROVIDER decided it is stale (pi.display.stale.obdLiveSec).
+  function drivingAgeText(ts, nowMs) {
+    var t = typeof ts === "string" ? Date.parse(ts) : NaN;
+    if (isNaN(t)) return "stale";
+    return Math.max(0, Math.round((nowMs - t) / 1000)) + " s";
+  }
+
+  function drivingNotRead(reason) {
+    return { text: DRIVING_NOT_READ, unit: "", band: null, stale: false, note: reason, noteKind: "reason" };
+  }
+
+  // One obd-live param -> what its slot paints (spec s4.3/s4.4):
+  //   fresh value  -> converted value, provider band, no note (an unbanded value
+  //                   is neutral with NO reason text -- no_band_defined and
+  //                   amber_not_shipped are by design, not faults; Iris G-1/G-2);
+  //   stale        -> last.value converted the same way, coloured by last.band,
+  //                   dimmed, with its age -- never "--" while a number exists;
+  //   not read     -> "--" + the provider's reason. Never 0, never a stale value.
+  function drivingReading(param, nowMs) {
+    if (!isObj(param)) return drivingNotRead("not read");
+    if (param.stale === true) {
+      var last = isObj(param.last) ? param.last : null;
+      if (!last || typeof last.value !== "number" || !isFinite(last.value)) {
+        return drivingNotRead(drivingReasonText(param.noBandReason));
+      }
+      var old = displayUnits(last.value, param.unit);
+      return {
+        text: old.text, unit: old.unit, band: drivingBand(last.band), stale: true,
+        note: drivingAgeText(param.ts, nowMs), noteKind: "age",
+      };
+    }
+    if (typeof param.value !== "number" || !isFinite(param.value)) {
+      return drivingNotRead(drivingReasonText(param.noBandReason));
+    }
+    var shown = displayUnits(param.value, param.unit);
+    return {
+      text: shown.text, unit: shown.unit, band: drivingBand(param.band), stale: false,
+      note: "", noteKind: "",
+    };
+  }
+
+  // The Driving card's whole view from the two states it reads: states/obd-live
+  // and states/gear (the ONE gear fetch the tick already makes). The page
+  // computes no value and no band. The gear is gearView's glyph; between gears
+  // it is "--" with no hint and no reason line (spec s4.2; the hint is US-904).
+  function drivingView(obdLiveData, gearData, nowMs) {
+    var params = isObj(obdLiveData) && isObj(obdLiveData.params) ? obdLiveData.params : null;
+    var readings = {};
+    for (var i = 0; i < DRIVING_PIDS.length; i++) {
+      var pid = DRIVING_PIDS[i];
+      readings[pid] = params ? drivingReading(params[pid], nowMs) : drivingNotRead("no source");
+    }
+    var gear = gearView(gearData);
+    return { gear: { text: gear.value, measured: gear.available }, readings: readings };
+  }
+
   // Spool's advisory band on the g magnitude. Neutral for an unreadable value:
   // an absent measurement must never paint a warning colour, which would be a
   // fabricated event manufactured out of a dead sensor.
@@ -4042,6 +4151,8 @@
     compassTape: compassTape,
     gearView: gearView,
     gearReasonText: gearReasonText,
+    displayUnits: displayUnits,
+    drivingView: drivingView,
     gLevel: gLevel,
     pushGradeTrend: pushGradeTrend,
     gradeTrendPoints: gradeTrendPoints,
@@ -4515,6 +4626,38 @@
     function renderLoadingBody(body, label) {
       body.textContent = "";
       appendTile(body, loadingTile(label));
+    }
+
+    // US-888-a: paint `drivingView` into the Driving card's FIXED skeleton
+    // (dashboard.html). Text and state attributes only -- the stylesheet maps
+    // data-band / data-stale / data-note to tokens, so the colour on the glass
+    // is decided by the provider's band and nothing in this function. A note
+    // with nothing to say takes its box down with it.
+    function renderDrivingCard(card, view) {
+      if (!card || !view) return;
+      var gearEl = card.querySelector(".drv-gear");
+      if (gearEl) {
+        gearEl.textContent = view.gear.text;
+        gearEl.setAttribute("data-measured", view.gear.measured ? "true" : "false");
+      }
+      var slots = card.querySelectorAll(".drv-reading");
+      for (var s = 0; s < slots.length; s++) {
+        var slot = slots[s];
+        var reading = view.readings[slot.getAttribute("data-pid")];
+        if (!reading) continue;
+        slot.setAttribute("data-band", reading.band || "none");
+        slot.setAttribute("data-stale", reading.stale ? "true" : "false");
+        slot.setAttribute("data-note", reading.noteKind || "none");
+        var valueEl = slot.querySelector(".drv-value");
+        if (valueEl) valueEl.textContent = reading.text;
+        var unitEl = slot.querySelector(".drv-unit");
+        if (unitEl) unitEl.textContent = reading.unit;
+        var noteEl = slot.querySelector(".drv-note");
+        if (noteEl) {
+          noteEl.textContent = reading.note;
+          noteEl.hidden = !reading.note;
+        }
+      }
     }
 
     // US-507: the three merged renderers take a BODY element, not a card. They
@@ -5564,7 +5707,13 @@
       // the navigation so it fires only on a state CHANGE -- it never fights a
       // manual swipe while a state holds.
       var homeCard = document.getElementById("home-card");
-      var homeIndex = -1;
+      // US-888-a: the Driving card is the LANDING card (R5, `data-landing`).
+      // The engine-state edge below returns the carousel HERE, not to the home
+      // slot: the home slot's idle/live swap stays with the Home card, and the
+      // edge firing on the first tick (lastIdle starts null) is what makes the
+      // landing card the card the panel opens on.
+      var drivingCard = document.getElementById("driving-card");
+      var landingIndex = -1;
       var lastIdle = null;
       // US-497 g-trail + US-508 grade trend: accumulated across polls from the
       // states/imu values (Atlas Q-B -- animate from the polled feed). They live
@@ -5601,7 +5750,7 @@
       for (var ci = 0; ci < cards.length; ci++) {
         var st = cards[ci].getAttribute("data-state");
         if (st === "dtc") dtcCardIndex = ci;
-        if (cards[ci].getAttribute("data-idle-home") !== null) homeIndex = ci;
+        if (cards[ci].getAttribute("data-landing") !== null) landingIndex = ci;
         if (cards[ci].getAttribute("data-vehicle-gated") !== null) {
           gatedCards.push(cards[ci]);
         }
@@ -6163,10 +6312,14 @@
       // been useless. The home slot now BECOMES the live instrument, so
       // navigating away from it on engine start is exactly backwards -- both
       // edges now land on home, which is where the change is visible.
+      // US-888-a RETARGETS it again, to the LANDING card (Driving, R5): an
+      // engine start or stop is exactly when the driver's page is the one to
+      // read, and the first tick's edge is what opens the panel there. The
+      // name and the parked SSOT (carouselIdle) are unchanged.
       function updateHomeNav(sysData) {
         var idle = carouselIdle(sysData);
         if (idle === lastIdle) return; // edge-trigger only -- never trap a swipe
-        if (homeIndex >= 0) goTo(homeIndex);
+        if (landingIndex >= 0) goTo(landingIndex);
         lastIdle = idle;
       }
 
@@ -6318,6 +6471,12 @@
         // already renders as the honest "-- / no source": the tile falls back to
         // exactly the state it held before this story, never to a stale gear.
         lastGear = await stateOnce("gear");
+        // US-888-a: the Driving card reads the SAME gear payload (one fetch,
+        // test_carousel_gear_derived) and states/obd-live, already fetched for
+        // the not-live marker above (cached), on this tick's one clock.
+        renderDrivingCard(
+          drivingCard, drivingView(await stateOnce("obd-live"), lastGear, nowMs)
+        );
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint

@@ -360,7 +360,9 @@ def test_html_alertsIsTheSecondCard():
     """
     cards = re.findall(r'<section class="card"[^>]*aria-label="([^"]+)"',
                        _read(_HTML), re.S)
-    assert cards[:3] == ["Home", "Alerts", "System Status"]
+    # MOVED PIN (US-888-a): the Driving card is the new index 0 (the landing
+    # card, R5), so the US-541 order Home . Alerts . System Status now follows it.
+    assert cards[:4] == ["Driving", "Home", "Alerts", "System Status"]
 
 
 # ---------------------------------------------------------------------------

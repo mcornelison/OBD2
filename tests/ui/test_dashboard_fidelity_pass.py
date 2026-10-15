@@ -465,13 +465,24 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     data readout.
 
     MOVED PIN (US-887-c): `.card-title` retired with the title rows; the
-    top-bar page name `#page-name` (frame spec s3.2) is its successor."""
+    top-bar page name `#page-name` (frame spec s3.2) is its successor.
+
+    MOVED PIN (US-888-a): the Driving card's side LABELS and its GEAR glyph
+    (frame spec s4.3: "labels, page names, titles, the gear glyph" are
+    Michroma; driving spec AC). Neither is a changing reading -- the readings
+    stay --font-mono, pinned in tests/ui/test_driving_page.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
         if "var(--font-display)" in body
     }
-    assert bound == {".idle-wordmark", "#page-name", "#not-live-marker"}, bound
+    assert bound == {
+        ".idle-wordmark",
+        "#page-name",
+        "#not-live-marker",
+        "#driving-card .drv-label",
+        "#driving-card .drv-gear",
+    }, bound
 
 
 def test_dataAndValueSurfacesStayMonospace():

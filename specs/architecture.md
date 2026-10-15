@@ -5926,7 +5926,8 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
   `system-status.runMode`, and it is not repeated per PID. It is null when no logger has
   resolved a tag.
 - **Only the not-live marker reads `obd-live` in Sprint 98**, and it reads only
-  `dataSource` (US-901-b, below). No page renders the PID values. The contract fixture is
+  `dataSource` (US-901-b, below). No page renders the PID values. *(Sprint 103:
+  the Driving card renders them -- US-888-a, UI section.)* The contract fixture is
   `tests/ui/fixtures/states/obd-live.json`, which holds complete named payloads (`fresh`,
   `stale`, `pid-absent`, `replay`, and from US-875 `engine-off-battery`,
   `coolant-amber`, `coolant-red`). `tests/pi/obdii/test_obd_live_emitter.py` feeds
@@ -7628,6 +7629,47 @@ Frame spec §3 / §3.2 (`specs/v030-frame-and-style-design.md`):
 - **The active page dot is `--accent`** (frame §4.4 rule 3) — the first selector
   to bind it. No timer changes the page: `pi.display.carousel.autoRotateS`
   stays 0.
+
+#### V0.30 Driving card, layout B -- the landing card (US-888-a, Sprint 103 / V0.30.1)
+
+Driving spec §3-§5 (`specs/v030-driving-page-design.md`), Iris Q1 (card slot):
+
+- **A new card at index 0, and the landing card (R5).** `#driving-card` carries
+  `data-landing`; card order is Driving, Home, Alerts, System Status, Battery,
+  Fuel Trim, Light. The Home/IMU card moved to index 1 with its markup
+  unchanged and KEEPS the idle/live swap (`data-idle-home`, `data-face`,
+  `homeFace`). The engine-state edge `updateHomeNav` (still keyed on
+  `carouselIdle`) now goes to the landing card, so the first tick opens the
+  panel on Driving and an engine start/stop returns it there.
+- **States it reads -- and nothing else.** `states/obd-live`
+  `params.<PID>.{value, unit, ts, stale, band, noBandReason, last}` for `RPM`,
+  `SPEED`, `COOLANT_TEMP`, `INTAKE_TEMP` and `BATTERY_V`, plus `states/gear`
+  through the ONE existing gear fetch (`lastGear`). Both come from the tick's
+  `stateOnce` cache, so the card adds no fetch. It has no `data-state`, so the
+  generic availability poll never grays it. `drivingView(obdLive, gear, nowMs)`
+  is the pure view; `renderDrivingCard` writes text and `data-band` /
+  `data-stale` / `data-note` / `data-measured` into a fixed skeleton.
+- **The page computes no value and no band.** Colour is `band -> token` for the
+  three engine numbers (`.drv-banded`); an unbanded value (IAT
+  `no_band_defined`, battery `amber_not_shipped` / `engine_not_running`) is
+  neutral with no reason text. Stale shows `last.value` dimmed, coloured by
+  `last.band`, with its age (now − `ts`). `value: null` without `stale` is `--`
+  + the provider's reason. Between gears is `--` with no hint (US-904 later).
+  The RPM number stays warm white; its red and the bar are US-888-b.
+- **ONE display-units helper (`displayUnits`, Atlas G1).** Converts by the
+  provider's `unit`: `C` -> °F, `km/h` -> mph; `F` / `mph` pass through; any
+  other unit renders raw with its own unit string. Display only -- bands are
+  never re-judged on the converted number.
+- **Type.** Gear `--fs-giant` (120 px) in Michroma 400, `font-synthesis: none`.
+  Readings `--fs-primary` in `--font-mono` with `tabular-nums`. Side labels
+  Michroma at `--fs-meta`, letter-spacing 0, allowed to wrap. `--font-display`
+  now also binds `#driving-card .drv-label` and `#driving-card .drv-gear`.
+- **Tokens only, geometry scoped.** Layout B's 120 px column and 22 px bar row
+  are custom properties on `#driving-card` (not `:root`, which US-887-a pins
+  identical in both sheets). The scoped CSS gate in
+  `tests/ui/test_driving_page.py` allows literal px only in that block and no
+  literal colour in any Driving rule. Fixtures:
+  `tests/ui/fixtures/states/driving/*.json` (Iris's list; no hint or takeover).
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

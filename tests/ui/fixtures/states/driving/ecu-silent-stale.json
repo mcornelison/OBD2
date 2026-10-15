@@ -1,0 +1,92 @@
+{
+  "description": "Bluetooth up, ECU silent (ARCH-061): every PID stale with last.*; shows last values dimmed with age, never '--'.",
+  "now": "2026-10-13T12:30:10Z",
+  "obd-live": {
+    "params": {
+      "RPM": {
+        "value": null,
+        "unit": "rpm",
+        "ts": "2026-10-13T12:29:58Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 2450,
+          "band": {
+            "band": "green",
+            "since": "2026-10-13T12:30:08Z",
+            "reason": "rpm below 5500"
+          }
+        },
+        "scale": {
+          "amberFrom": 5500,
+          "redFrom": 7000
+        }
+      },
+      "SPEED": {
+        "value": null,
+        "unit": "km/h",
+        "ts": "2026-10-13T12:29:58Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 64,
+          "band": null
+        }
+      },
+      "COOLANT_TEMP": {
+        "value": null,
+        "unit": "C",
+        "ts": "2026-10-13T12:29:58Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 88,
+          "band": {
+            "band": "green",
+            "since": "2026-10-13T12:30:08Z",
+            "reason": "coolant has not held >= 104 C for 30 s"
+          }
+        }
+      },
+      "INTAKE_TEMP": {
+        "value": null,
+        "unit": "C",
+        "ts": "2026-10-13T12:29:58Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 31,
+          "band": null
+        }
+      },
+      "BATTERY_V": {
+        "value": null,
+        "unit": "V",
+        "ts": "2026-10-13T12:29:58Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 14.1,
+          "band": {
+            "band": "green",
+            "since": "2026-10-13T12:30:08Z",
+            "reason": "battery in its green range with the engine running"
+          }
+        }
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-13T12:30:10Z"
+  },
+  "gear": {
+    "available": true,
+    "gear": 3,
+    "reason": "matched",
+    "ts": "2026-10-13T12:30:10Z"
+  }
+}

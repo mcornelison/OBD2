@@ -76,7 +76,8 @@ _NODE_ONLY = pytest.mark.skipif(
 
 # The CIO/Iris-locked card set (US-540-b), in carousel order. Named here so a
 # mapping assertion can say WHICH card it expected, not just an index.
-_CARD_SET = ["Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"]
+# MOVED PIN (US-888-a): the Driving card is the new index 0 (the landing card).
+_CARD_SET = ["Driving", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"]
 
 # carousel.js labels each dot by its ABSOLUTE card index, 1-based.
 def _dotLabel(cardIndex: int) -> str:
@@ -318,11 +319,12 @@ class TestGatedCardOwnsNoDot:
         surface = _boot(markupPath=_gatedMarkup("Light"))
         assert _visibleCards(surface) == _CARD_SET[:-1]
         assert _visibleDots(surface) == [_dotLabel(i) for i in range(len(_CARD_SET) - 1)]
-        assert _dotLabel(5) not in _visibleDots(surface)
+        # US-888-a: Light is absolute index 6 now (Driving at 0).
+        assert _dotLabel(6) not in _visibleDots(surface)
 
     def test_midRowGatedCard_contributesNoDot(self):
         """
-        Given: the Battery card (index 3, MID-ROW) gated off, and no vehicle
+        Given: the Battery card (index 4, MID-ROW) gated off, and no vehicle
         Then: exactly its dot is gone; the dots on either side survive
 
         Mid-row is the case that separates a real mapping from a coincidence: a
@@ -330,12 +332,19 @@ class TestGatedCardOwnsNoDot:
         satisfied by "drop the last dot".
         """
         surface = _boot(markupPath=_gatedMarkup("Battery"))
-        assert _visibleCards(surface) == ["Home", "Alerts", "System Status", "Fuel Trim", "Light"]
-        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 4, 5)]
+        # US-888-a: every absolute index moved +1 behind the Driving card.
+        assert _visibleCards(surface) == [
+            "Driving", "Home", "Alerts", "System Status", "Fuel Trim", "Light"
+        ]
+        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 5, 6)]
 
     @pytest.mark.parametrize(
         "index,card",
-        [(0, "Home"), (1, "Alerts"), (2, "System Status"), (4, "Fuel Trim"), (5, "Light")],
+        # US-888-a: absolute indices +1 behind the Driving card.
+        [
+            (0, "Driving"), (1, "Home"), (2, "Alerts"), (3, "System Status"),
+            (5, "Fuel Trim"), (6, "Light"),
+        ],
     )
     def test_midRowGate_everySurvivingDotStillLandsOnItsOwnCard(self, index: int, card: str):
         """
@@ -364,8 +373,10 @@ class TestGatedCardOwnsNoDot:
         keyboard, the auto-rotate and the DTC jump all call `goTo` too.
         """
         before = _boot(markupPath=_gatedMarkup("Battery"))
-        after = _boot(markupPath=_gatedMarkup("Battery"), steps=_clickDot(3))
-        assert _landedCard(after) == _landedCard(before) == "Home"
+        # US-888-a: Battery's dot is absolute index 4, and the carousel rests on
+        # the landing card (Driving), not the home slot.
+        after = _boot(markupPath=_gatedMarkup("Battery"), steps=_clickDot(4))
+        assert _landedCard(after) == _landedCard(before) == "Driving"
         assert _activeDot(after) == _dotLabel(0)
 
     def test_absentSystemStatus_failsClosed_soTheGatedCardOwnsNoDot(self):
@@ -382,7 +393,7 @@ class TestGatedCardOwnsNoDot:
         del routes["/system-status"]
         surface = _boot(markupPath=_gatedMarkup("Battery"), routes=routes)
         assert "Battery" not in _visibleCards(surface)
-        assert _dotLabel(3) not in _visibleDots(surface)
+        assert _dotLabel(4) not in _visibleDots(surface)  # US-888-a: index +1
 
     def test_aCardRevealedAtRuntimeGetsItsDotBack(self):
         """
@@ -415,10 +426,11 @@ class TestGatedCardOwnsNoDot:
 
         tapped = _boot(
             markupPath=_gatedMarkup("Battery"),
-            steps=[*reveal, {"clickNth": {"selector": ".dot", "index": 3}}],
+            steps=[*reveal, {"clickNth": {"selector": ".dot", "index": 4}}],
         )
+        # US-888-a: Battery is absolute index 4 behind the Driving card.
         assert _landedCard(tapped) == "Battery"
-        assert _activeDot(tapped) == _dotLabel(3)
+        assert _activeDot(tapped) == _dotLabel(4)
 
 
 # ---------------------------------------------------------------------------
@@ -432,9 +444,9 @@ class TestOneCardRegistry:
 
     def test_anAddedCardBringsItsOwnDot_whileAGatedOneStillHasNone(self):
         """
-        Given: a SEVEN-card markup whose fourth card is behind the vehicle gate,
-               and no vehicle
-        Then: six cards paint, six dots paint, and each dot reaches its own card
+        Given: an EIGHT-card markup whose sixth card is behind the vehicle gate,
+               and no vehicle (US-888-a: was seven/fourth before Driving)
+        Then: seven cards paint, seven dots paint, and each dot reaches its card
 
         The story's SSOT is "the carousel card registry in carousel.js", and the
         registry is the `.card` query itself -- there is no second list. This is
@@ -461,15 +473,17 @@ class TestOneCardRegistry:
             1,
         )
         markup = _writeMarkup(html)
-        expected = ["Home", "Alerts", "System Status", "Spare", "Fuel Trim", "Light"]
+        # US-888-a: the shipped set is seven with Driving at 0, so this markup is
+        # EIGHT cards and every absolute index past Driving moved +1.
+        expected = ["Driving", "Home", "Alerts", "System Status", "Spare", "Fuel Trim", "Light"]
 
         surface = _boot(markupPath=markup)
         assert _visibleCards(surface) == expected
-        # Seven cards, so seven dots exist; the gated one (absolute index 4) is
+        # Eight cards, so eight dots exist; the gated one (absolute index 5) is
         # the only one absent.
-        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 5, 6)]
+        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 6, 7)]
 
-        for index, card in zip((0, 1, 2, 3, 5, 6), expected, strict=True):
+        for index, card in zip((0, 1, 2, 3, 4, 6, 7), expected, strict=True):
             surface = _boot(markupPath=markup, steps=_clickDot(index))
             assert _landedCard(surface) == card, f"dot {index} did not reach {card}"
             assert _activeDot(surface) == _dotLabel(index)

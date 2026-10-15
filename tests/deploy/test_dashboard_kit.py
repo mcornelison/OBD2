@@ -94,9 +94,13 @@ def test_dashboardHtml_hasBothCardSlots_s1():
     Light.
     """
     html = _read(KIT_DIR, "dashboard.html")
-    assert html.count('class="card"') == 6
+    # MOVED PIN (US-888-a): the Driving card lands FIRST (R5, the landing card)
+    # and Home moves to index 1 unchanged -- 6 -> 7 cards.
+    assert html.count('class="card"') == 7
     labels = re.findall(r'<section class="card"[^>]*?aria-label="([^"]+)"', html, re.S)
-    assert labels == ["Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"]
+    assert labels == [
+        "Driving", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"
+    ]
     assert 'data-state="system-status"' in html
     assert 'data-state="dtc"' in html
     # The live instrument is a FACE of the home slot, not a slot of its own.
