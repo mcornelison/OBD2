@@ -7655,7 +7655,7 @@ Driving spec §3-§5 (`specs/v030-driving-page-design.md`), Iris Q1 (card slot):
   neutral with no reason text. Stale shows `last.value` dimmed, coloured by
   `last.band`, with its age (now − `ts`). `value: null` without `stale` is `--`
   + the provider's reason. Between gears is `--` with no hint (US-904 later).
-  The RPM number stays warm white; its red and the bar are US-888-b.
+  The RPM number stays warm white unless its band is red (US-888-b, below).
 - **ONE display-units helper (`displayUnits`, Atlas G1).** Converts by the
   provider's `unit`: `C` -> °F, `km/h` -> mph; `F` / `mph` pass through; any
   other unit renders raw with its own unit string. Display only -- bands are
@@ -7670,6 +7670,34 @@ Driving spec §3-§5 (`specs/v030-driving-page-design.md`), Iris Q1 (card slot):
   `tests/ui/test_driving_page.py` allows literal px only in that block and no
   literal colour in any Driving rule. Fixtures:
   `tests/ui/fixtures/states/driving/*.json` (Iris's list; no hint or takeover).
+
+#### V0.30 Driving RPM bar contract (US-888-b, Sprint 103 / V0.30.1)
+
+Driving spec §4.1-§4.2, R30, R35:
+
+- **Stepped, never swept.** `rpmBarView(params.RPM)` (pure, exported; carried
+  on `drivingView(...).rpmBar`) maps ONE sample to 16 segments x 500 rpm.
+  Segment *i* is lit once the sample reaches its lower edge *i* x 500, so
+  2000 -> 4000 is two paints with nothing between. No `transition` on the bar.
+  `renderRpmBar` builds the segments once and then moves only `data-lit` /
+  `data-zone` on each, plus `data-stale` / `data-redline` on `.drv-rpm-bar`.
+- **Zones from the provider only.** Each segment is zoned by its lower edge
+  against `params.RPM.scale {amberFrom, redFrom}` (`band_producer.rpmScale`,
+  the same `pi.bands.rpm.*` keys as the RPM band): green < amberFrom <= amber
+  < redFrom <= red. No usable scale -> no zone (neutral lit segments) and no
+  flash. carousel.js holds no zone literal (`tests/ui/test_driving_rpm_bar.py`
+  grep gate).
+- **Stale / not read.** Stale paints `last.value`, dimmed, with the age on the
+  RPM slot's note; it never flashes. Not read lights nothing.
+- **Redline.** A fresh sample >= `scale.redFrom` sets `data-redline`: the lit
+  red segments flash 0.5 s in 2 steps. The RPM number is `--critical-red` only
+  when `params.RPM.band` is red; amber stays warm white.
+- **Gear glide.** 0.35 s fade + 14 px rise when the MEASURED gear changes (also
+  through a `--` between two gears); never on the first gear, a repeat, or `--`.
+  `data-glide` alternates a/b so each change restarts it.
+- **Motion is opt-in.** The flash and the glide are declared only inside
+  `@media (prefers-reduced-motion: no-preference)` on data-attribute-qualified
+  selectors, so reduced motion keeps every colour and loses only the movement.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

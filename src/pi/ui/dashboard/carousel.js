@@ -3646,7 +3646,77 @@
       readings[pid] = params ? drivingReading(params[pid], nowMs) : drivingNotRead("no source");
     }
     var gear = gearView(gearData);
-    return { gear: { text: gear.value, measured: gear.available }, readings: readings };
+    return {
+      gear: { text: gear.value, measured: gear.available },
+      readings: readings,
+      // US-888-b: the stepped bar, from the same params.RPM as the number.
+      rpmBar: rpmBarView(params ? params.RPM : null),
+    };
+  }
+
+  // --- US-888-b the RPM bar (spec s4.1, R30, R35) ----------------------------
+  //
+  // Geometry from the spec: 16 segments x 500 rpm. That is the bar's SCALE, not
+  // a threshold -- where amber and red start is the provider's
+  // params.RPM.scale {amberFrom, redFrom} (band_producer.rpmScale, the same
+  // pi.bands.rpm keys the RPM band uses), so this file never names an edge.
+  var RPM_BAR_SEGMENTS = 16;
+  var RPM_BAR_SEGMENT_RPM = 500;
+
+  // The provider's zone edges, or null. Both must be real numbers: half a
+  // scale is no scale, and a bar with no scale paints no zone at all rather
+  // than one this page made up.
+  function rpmBarScale(scale) {
+    if (!isObj(scale)) return null;
+    var a = scale.amberFrom;
+    var r = scale.redFrom;
+    if (typeof a !== "number" || !isFinite(a) || typeof r !== "number" || !isFinite(r)) {
+      return null;
+    }
+    return { amberFrom: a, redFrom: r };
+  }
+
+  // One params.RPM -> the bar. A pure map from ONE sample: the bar steps on
+  // each real reading and paints nothing in between (no sweep, no
+  // interpolation -- Spool 08-07: it fabricates values the ECU never sent).
+  //   segment i      covers [i x 500, (i+1) x 500) and is ZONED by its lower
+  //                  edge (R35): green below amberFrom, amber below redFrom,
+  //                  red from redFrom;
+  //   lit            once the sample reaches the segment's lower edge, so the
+  //                  leading segment's zone is the sample's zone;
+  //   stale          last.value, dimmed by the stylesheet; never a flash, which
+  //                  would claim "over the redline NOW" from an old sample;
+  //   not read       nothing lit.
+  // `redline` (sample >= redFrom) arms the flash; the NUMBER's red is the
+  // provider band (drivingView), never this comparison.
+  function rpmBarView(param) {
+    var p = isObj(param) ? param : null;
+    var stale = !!p && p.stale === true;
+    var source = stale ? (isObj(p.last) ? p.last.value : null) : (p ? p.value : null);
+    var value = typeof source === "number" && isFinite(source) ? source : null;
+    var scale = p ? rpmBarScale(p.scale) : null;
+    var segments = [];
+    var lit = 0;
+    var zone = null;
+    for (var i = 0; i < RPM_BAR_SEGMENTS; i++) {
+      var lower = i * RPM_BAR_SEGMENT_RPM;
+      var segZone = !scale ? "none"
+        : lower >= scale.redFrom ? "red"
+        : lower >= scale.amberFrom ? "amber" : "green";
+      var on = value !== null && value >= lower;
+      if (on) {
+        lit++;
+        zone = scale ? segZone : null;
+      }
+      segments.push({ zone: segZone, lit: on });
+    }
+    return {
+      segments: segments,
+      lit: lit,
+      zone: zone,
+      stale: value !== null && stale,
+      redline: !stale && !!scale && value !== null && value >= scale.redFrom,
+    };
   }
 
   // Spool's advisory band on the g magnitude. Neutral for an unreadable value:
@@ -4153,6 +4223,7 @@
     gearReasonText: gearReasonText,
     displayUnits: displayUnits,
     drivingView: drivingView,
+    rpmBarView: rpmBarView,
     gLevel: gLevel,
     pushGradeTrend: pushGradeTrend,
     gradeTrendPoints: gradeTrendPoints,
@@ -4633,13 +4704,28 @@
     // data-band / data-stale / data-note to tokens, so the colour on the glass
     // is decided by the provider's band and nothing in this function. A note
     // with nothing to say takes its box down with it.
+    // US-888-b: the last MEASURED gear painted, so the glide fires on a real
+    // change (3 -> 4, also through a "--" between them) and never on the first
+    // gear, a repeat of the same gear, or "--".
+    var drivingLastGear = null;
     function renderDrivingCard(card, view) {
       if (!card || !view) return;
       var gearEl = card.querySelector(".drv-gear");
       if (gearEl) {
         gearEl.textContent = view.gear.text;
         gearEl.setAttribute("data-measured", view.gear.measured ? "true" : "false");
+        if (view.gear.measured) {
+          if (drivingLastGear !== null && drivingLastGear !== view.gear.text) {
+            // Alternate a/b: a NEW animation-name restarts the glide without a
+            // forced reflow, so two quick shifts each get their own.
+            gearEl.setAttribute(
+              "data-glide", gearEl.getAttribute("data-glide") === "a" ? "b" : "a"
+            );
+          }
+          drivingLastGear = view.gear.text;
+        }
       }
+      if (view.rpmBar) renderRpmBar(card.querySelector(".drv-rpm-bar"), view.rpmBar);
       var slots = card.querySelectorAll(".drv-reading");
       for (var s = 0; s < slots.length; s++) {
         var slot = slots[s];
@@ -4658,6 +4744,30 @@
           noteEl.hidden = !reading.note;
         }
       }
+    }
+
+    // US-888-b: paint `rpmBarView` into `.drv-rpm-bar`. The segments are built
+    // ONCE and then only their state attributes move, so a new sample is one
+    // paint: the stylesheet maps data-lit / data-zone to tokens, data-stale to
+    // the dim and data-redline (state-qualified, motion opt-in) to the flash.
+    function renderRpmBar(bar, view) {
+      if (!bar) return;
+      var segs = bar.querySelectorAll(".drv-seg");
+      if (segs.length !== view.segments.length) {
+        bar.textContent = "";
+        for (var n = 0; n < view.segments.length; n++) {
+          var seg = document.createElement("span");
+          seg.className = "drv-seg";
+          bar.appendChild(seg);
+        }
+        segs = bar.querySelectorAll(".drv-seg");
+      }
+      for (var i = 0; i < segs.length; i++) {
+        segs[i].setAttribute("data-zone", view.segments[i].zone);
+        segs[i].setAttribute("data-lit", view.segments[i].lit ? "true" : "false");
+      }
+      bar.setAttribute("data-stale", view.stale ? "true" : "false");
+      bar.setAttribute("data-redline", view.redline ? "true" : "false");
     }
 
     // US-507: the three merged renderers take a BODY element, not a card. They

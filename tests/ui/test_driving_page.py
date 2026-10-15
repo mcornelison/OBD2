@@ -17,7 +17,7 @@
 #        Michroma at --fs-meta with letter-spacing 0;
 #     5. the CSS GATE -- tokens only: no literal colour anywhere in the
 #        Driving rules, literal px only inside the ONE `#driving-card`
-#        custom-property block (Iris G-4), no animation;
+#        custom-property block (Iris G-4), motion only when state-qualified;
 #     6. the FIT -- a height/width model of layout B at 480x320 built from
 #        the shipped values, with negative controls.
 #   NOT GUARDED, stated rather than implied: the render harness resolves the
@@ -33,6 +33,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Ralph (Rex)  | Initial -- US-888-a Driving card.
+# 2026-10-15    | Ralph (Rex)  | US-888-b: CSS gate admits state-qualified motion
+#               |              | only (+ planted bare-animation control).
 # ================================================================================
 ################################################################################
 
@@ -606,8 +608,12 @@ def _gateViolations(rules: list[tuple[str, str]]) -> list[str]:
                     bad.append(f"{selector}: {decl} is not a scoped --drv- property")
         elif _PX_LITERAL.search(body):
             bad.append(f"{selector}: literal px outside the #driving-card block")
-        if re.search(r"\b(?:animation|transition)\s*:", body):
-            bad.append(f"{selector}: animation is US-888-b's and must be state-qualified")
+        # US-888-b: motion is allowed only on a data-attribute-qualified
+        # selector (redline flash, gear glide); a bare rule would run always.
+        if re.search(r"\b(?:animation|transition)\s*:", body) and not re.search(
+            r"\[data-[\w-]+=\"[^\"]+\"\]", selector
+        ):
+            bad.append(f"{selector}: animation must be state-qualified")
     return bad
 
 
@@ -618,8 +624,11 @@ def test_cssGate_tokensOnly_pxOnlyInTheScopedBlock():
 
 
 def test_cssGate_catchesAPlantedLiteral():
-    planted = _drivingRules() + [("#driving-card .drv-value", "margin-top: 4px; color: #fff")]
-    assert len(_gateViolations(planted)) == 2
+    planted = _drivingRules() + [
+        ("#driving-card .drv-value", "margin-top: 4px; color: #fff"),
+        ("#driving-card .drv-gear", "animation: drv-gear-glide-a var(--drv-glide-s)"),
+    ]
+    assert len(_gateViolations(planted)) == 3
 
 
 def test_everyScopedPropertyIsConsumed():
