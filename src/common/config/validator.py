@@ -155,6 +155,8 @@
 # 2026-10-15    | Rex (US-890-e) | pi.fuel.{recentWindowSec 30, recentMinMiles 0.1,
 #                                recentMinMafSamples 10} (Spool 2026-10-14);
 #                                finite, > 0.
+# 2026-10-15    | Rex (US-907)   | pi.obdii.connectDebug: false (absent = off);
+#                                a real bool.  Not an overlay key.
 # ================================================================================
 ################################################################################
 
@@ -739,6 +741,10 @@ DEFAULTS: dict[str, Any] = {
     # runLoop tolerates a not-yet-connected state, US-226 interval sync
     # fires regardless, and the existing US-211 reconnect path takes over.
     'pi.obdii.orchestrator.initialConnectTimeoutSec': 30,
+    # US-907 (Atlas 2026-10-15): python-OBD at DEBUG for the process's first
+    # connect attempt.  A deploy diagnostic set in config.json, deliberately
+    # NOT an overlay key; absent = off.
+    'pi.obdii.connectDebug': False,
     # Pi self-update (B-047 US-C / US-247).  Update-check policy lives here;
     # the transport (server URL + API key) is reused from
     # pi.companionService.  intervalMinutes is the runLoop-side cadence;
@@ -1059,6 +1065,7 @@ class ConfigValidator:
         self._validateTripGap(config)
         self._validateStaleImu(config)
         self._validateFuel(config)
+        self._validateObdiiConnectDebug(config)
         self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
@@ -1997,6 +2004,25 @@ class ConfigValidator:
                     missingFields=[key],
                 )
         key = 'pi.fuel.mafTrusted'
+        val = self._getNestedValue(config, key)
+        if val is not None and not isinstance(val, bool):
+            raise ConfigValidationError(
+                f"{key} must be true or false (got {val!r})",
+                missingFields=[key],
+            )
+
+    def _validateObdiiConnectDebug(self, config: dict[str, Any]) -> None:
+        """Reject a non-bool ``pi.obdii.connectDebug`` (US-907).
+
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the value is present and not a real bool.
+        """
+        key = 'pi.obdii.connectDebug'
         val = self._getNestedValue(config, key)
         if val is not None and not isinstance(val, bool):
             raise ConfigValidationError(

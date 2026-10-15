@@ -1502,6 +1502,27 @@ def test_validate_fuelMafTrusted_nonBool_rejected(bad):
         ConfigValidator().validate(cfg)
 
 
+def test_validate_obdiiConnectDebug_absent_defaultsFalse():
+    """US-907: absent = off; the diagnostic window is opt-in per deploy."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["obdii"]["connectDebug"] is False
+
+
+@pytest.mark.parametrize("bad", ["yes", 1, 0, "true"])
+def test_validate_obdiiConnectDebug_nonBool_rejected(bad):
+    """US-907: connectDebug is a real boolean, never a truthy stand-in."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"obdii": {"connectDebug": bad}}
+    with pytest.raises(ConfigValidationError, match="pi.obdii.connectDebug"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_obdiiConnectDebug_true_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"obdii": {"connectDebug": True}}
+    assert ConfigValidator().validate(cfg)["pi"]["obdii"]["connectDebug"] is True
+
+
 def test_validate_fuelKeys_validOverrides_accepted():
     cfg = _baseCfg()
     cfg["pi"] = {"fuel": {"stoichAfr": 14.1, "mafTrusted": False, "maxExcludedPct": 0}}

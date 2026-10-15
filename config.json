@@ -230,6 +230,7 @@
       ]
     },
     "obdii": {
+      "connectDebug": true,
       "orchestrator": {
         "engineOnVoltageThreshold": 13.8,
         "engineOnSampleCount": 3,
