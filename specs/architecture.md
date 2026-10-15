@@ -7806,6 +7806,55 @@ Engine spec §3-§4 (`specs/v030-engine-page-design.md`), CIO E-2 order:
   `tests/ui/fixtures/states/engine/{idle-warm, wot-pull-load-100,
   not-read-with-reason, stale}.json`.
 
+#### V0.30 Engine card, the scroll half: history + status (US-889-c, Sprint 104 / V0.30.6)
+
+Engine spec §3-§4, ACs 5-11. Below the fold of `#engine-card`, under one rule
+each: this drive's history, then the status row.
+
+- **History render rule: the band comes from the provider ONLY.**
+  `engineHistoryView(engineHistory)` is the pure view of `states/engine-history`
+  (US-889-a) and takes NOTHING else. Each of COOLANT (`COOLANT_TEMP`), INTAKE
+  AIR (`INTAKE_TEMP`) and BATTERY (`BATTERY_V`) is a neutral stepped line
+  (`--text-primary`): one flat run per bucket at its `value` (the last fresh
+  sample), a riser at the boundary, no interpolation or smoothing. A span is
+  painted ONLY where a point's `band` is `amber` or `red`
+  (`.eng-hist-span[data-band]` -> `--amber-warn` / `--critical-red`); the page
+  never compares a value with a number, so a line crossing 104 °C with a green
+  band shows no colour, and an amber bucket whose plotted value is below the
+  number is still amber. `green`, null or any other band paints nothing. No
+  coolant or battery threshold appears in carousel.js (grep gate).
+- **Gaps.** A point's `ts` is its bucket's END; buckets that touch join into one
+  polyline, and an omitted bucket starts a new one -- a gap is a gap, never a
+  bridge. The three charts share one time axis (the extent of the buckets) and
+  each series' own value range; the end value is the last point through
+  `displayUnits` by the series' `unit` entry (no unit -> raw, never assumed °C).
+- **Window label from engine-history alone (Atlas G3).** `partial: false` ->
+  `THIS DRIVE`; `partial: true` -> `SINCE h:mm` from `sinceTs` (local time, the
+  shared 12-hour rule, meridiem dropped); an unreadable `sinceTs` reads
+  `SINCE --`. The page reads no other provider's clock or drive id.
+- **Absence.** No series holding a point (or no / malformed history, or a
+  non-positive `intervalSec`) is the typed absence `History not recorded yet.
+  It starts with this drive's first readings.` with NO chart element; a single
+  series with no points (e.g. after the 2 h trim) shows the same text in its
+  slot, never an empty chart. Charts are built by carousel.js into
+  `.eng-history` and rebuilt only when the view changes.
+- **Status row** (`engineStatusView(obdLive, parked, nowMs)`), grid `max-content
+  1fr`, 8 px gap (`--eng-stat-gap`). RUN TIME is `params.RUNTIME_SEC` as h:mm --
+  the ECU's engine run time, NEVER derived from drive time (Atlas G4); absent
+  -> `--` + `not read`. CHECK ENGINE is `params.MIL_ON` read by VALUE (1 `ON`,
+  0 `OFF`, anything else `--` + `not read`), never by its unit label; while ON,
+  a second line `n codes ›` from `params.DTC_COUNT` (`0 codes ›` for a pending
+  code, `-- codes ›` if the count is not read). That line is a tap to the
+  Alerts card ONLY while parked: `data-tap="true"` + `role="button"` from the
+  US-511 `parkedNext` debounce (its first consumer since TD-us659), advanced
+  once per tick from the same system-status; moving, it carries no tap target.
+  No O2 SENSORS tile until US-891 (Iris G-3). Fixtures:
+  `tests/ui/fixtures/states/engine/{cold-start-history, fan-cycle-history,
+  coolant-dwell-fired, bucket-worst-band, history-gap, history-trimmed-2h,
+  history-restart-mid-drive, history-empty-after-restart, mil-on-two-codes,
+  mil-on-twelve-codes, mil-on-zero-codes}.json` (history payloads copied from
+  US-889-a's `engine-history.json` cases).
+
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
 Pre-US-241 every deploy was anonymous: a `git pull` + service restart with no

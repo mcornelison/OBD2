@@ -223,6 +223,28 @@
             </div>
           </div>
           <span class="eng-cue">↓ history and status below</span>
+          <!-- US-889-c, the scroll half (spec s3-s4, ACs 5-11). The history
+               charts are BUILT by carousel.js from states/engine-history
+               (`engineHistoryView`) -- a chart exists only when there is a
+               point to draw; an empty history is the typed absence and no
+               chart. The status row reads states/obd-live: RUN TIME is the
+               ECU's RUNTIME_SEC (never the drive's duration), CHECK ENGINE is
+               MIL_ON by value, and its count line is a tap to the Alerts card
+               ONLY while parked (data-tap). No O2 SENSORS tile until US-891. -->
+          <div class="eng-history"></div>
+          <div class="eng-status">
+            <div class="eng-stat" data-pid="RUNTIME_SEC" data-stale="false" data-note="none">
+              <span class="eng-label eng-stat-label">RUN TIME</span>
+              <span class="eng-stat-value">--</span>
+              <span class="eng-note" hidden></span>
+            </div>
+            <div class="eng-stat" data-pid="MIL_ON" data-stale="false" data-note="none">
+              <span class="eng-label eng-stat-label">CHECK ENGINE</span>
+              <span class="eng-stat-value">--</span>
+              <span class="eng-codes" id="engine-codes" data-tap="false" hidden></span>
+              <span class="eng-note" hidden></span>
+            </div>
+          </div>
         </div>
       </section>
       <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live

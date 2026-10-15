@@ -1,0 +1,37 @@
+{
+  "description": "Check-engine lamp ON (MIL_ON value 1, read by value) with DTC_COUNT 2. Engine run time 1380 s -> RUN TIME 0:23. The count line is a tap to the Alerts card only while parked.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "RUNTIME_SEC": {
+        "value": 1380.0,
+        "unit": "second",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "noBandReason": "no_band_defined",
+        "last": null
+      },
+      "MIL_ON": {
+        "value": 1.0,
+        "unit": "mil",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "noBandReason": "no_band_defined",
+        "last": null
+      },
+      "DTC_COUNT": {
+        "value": 2.0,
+        "unit": "count",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "noBandReason": "no_band_defined",
+        "last": null
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

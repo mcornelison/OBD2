@@ -1,0 +1,17 @@
+{
+  "description": "Just after an orchestrator restart: no series holds a point. The typed absence text, no chart element.",
+  "now": "2026-10-20T15:00:02Z",
+  "engine-history": {
+    "ts": "2026-10-20T15:00:02Z",
+    "driveId": null,
+    "sinceTs": null,
+    "partial": true,
+    "intervalSec": 30.0,
+    "series": {
+      "COOLANT_TEMP": [],
+      "INTAKE_TEMP": [],
+      "BATTERY_V": []
+    },
+    "unit": {}
+  }
+}

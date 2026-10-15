@@ -2125,9 +2125,9 @@
   // on any write to the button's `hidden` flag, and on the rendered cascade.
   //
   // `carouselIdle`, `parkedInit` and `parkedNext` all survive below: carouselIdle
-  // still drives the idle home face, and the US-511 debounce is left intact but
-  // is now UNWIRED (TD-us659 -- retire it or find its next consumer; that is a
-  // design call, not a side effect of this deletion).
+  // still drives the idle home face, and the US-511 debounce was left intact
+  // but UNWIRED (TD-us659). US-889-c is its next consumer: the Engine card's
+  // CHECK ENGINE count line is a tap to the Alerts card only while parked.
 
   // -------------------------------------------------------------------------
   // US-511 (F-124) -- the DEBOUNCED `parked` signal behind the ⋮ affordance.
@@ -3736,6 +3736,174 @@
     return { readings: readings, bars: bars };
   }
 
+  // --- US-889-c Engine card, the scroll half (F-127) -------------------------
+  //
+  // specs/v030-engine-page-design.md s3-s4, ACs 5-11: this drive's coolant,
+  // intake-air and battery history from states/engine-history, then the RUN
+  // TIME / CHECK ENGINE status row from states/obd-live. The history is the
+  // provider's: one point per bucket {ts (the bucket's END), value (its last
+  // fresh sample), band (the WORST band it held)}. The page plots the value as
+  // a neutral stepped line and paints a span ONLY where a point's band is amber
+  // or red -- it never compares a value with a number, so a line crossing an
+  // edge with no band shows nothing (dwell-as-render-rule, Spool 08-21).
+  var ENGINE_HISTORY_SERIES = [
+    { pid: "COOLANT_TEMP", label: "COOLANT" },
+    { pid: "INTAKE_TEMP", label: "INTAKE AIR" },
+    { pid: "BATTERY_V", label: "BATTERY" },
+  ];
+  var ENGINE_HISTORY_ABSENT =
+    "History not recorded yet. It starts with this drive's first readings.";
+  // The chart's own coordinate box (viewBox 0 0 100 46) and the 4-unit inset
+  // that keeps the line off the top and bottom edges -- the OEM mockup's graph
+  // (proposals/2026-10-14-v030-engine-page-oem.html, h 46, inset 4). Geometry,
+  // not a scale: the y range is the series' own extent.
+  var ENGINE_HISTORY_W = 100;
+  var ENGINE_HISTORY_H = 46;
+  var ENGINE_HISTORY_INSET = 4;
+  var ENGINE_SPAN_BANDS = { amber: true, red: true };
+
+  function engineHistoryPoints(raw) {
+    var out = [];
+    if (!Array.isArray(raw)) return out;
+    for (var i = 0; i < raw.length; i++) {
+      var p = raw[i];
+      var endMs = isObj(p) && typeof p.ts === "string" ? Date.parse(p.ts) : NaN;
+      if (isNaN(endMs) || typeof p.value !== "number" || !isFinite(p.value)) continue;
+      out.push({ endMs: endMs, value: p.value, band: ENGINE_SPAN_BANDS[p.band] ? p.band : null });
+    }
+    return out;
+  }
+
+  // The window label from engine-history ALONE (Atlas G3): partial false is
+  // the whole drive; partial true names where coverage begins, in the panel's
+  // local h:mm. The page compares no other provider's clock, so it never
+  // decides for itself when the drive started.
+  function engineHistoryWindow(data) {
+    if (data.partial === false) return "THIS DRIVE";
+    var since = typeof data.sinceTs === "string" && ISO_INSTANT.test(data.sinceTs)
+      ? new Date(Date.parse(data.sinceTs)) : null;
+    return "SINCE " + (since ? fmtTimeOfDay(since, false).split(" ")[0] : DRIVING_NOT_READ);
+  }
+
+  function engineHistoryCoord(n) {
+    return Math.round(n * 10) / 10;
+  }
+
+  // One series -> its chart. Buckets that touch (this end == the next start)
+  // join into one run; an omitted bucket opens a new run, so a gap is a gap and
+  // never a bridge. Each run is a stepped line: flat across its bucket, a riser
+  // at the boundary, no interpolation.
+  function engineHistorySeries(entry, points, unit, x0, x1, intervalMs) {
+    if (!points.length) {
+      return { pid: entry.pid, label: entry.label, empty: true, segments: [], spans: [], end: null };
+    }
+    var lo = points[0].value;
+    var hi = lo;
+    for (var i = 1; i < points.length; i++) {
+      lo = Math.min(lo, points[i].value);
+      hi = Math.max(hi, points[i].value);
+    }
+    var span = ENGINE_HISTORY_H - 2 * ENGINE_HISTORY_INSET;
+    var xOf = function (ms) {
+      return engineHistoryCoord((ms - x0) / (x1 - x0) * ENGINE_HISTORY_W);
+    };
+    var yOf = function (v) {
+      return engineHistoryCoord(hi === lo ? ENGINE_HISTORY_H / 2
+        : ENGINE_HISTORY_INSET + (hi - v) / (hi - lo) * span);
+    };
+    var segments = [];
+    var spans = [];
+    var run = [];
+    for (var j = 0; j < points.length; j++) {
+      var p = points[j];
+      var startMs = p.endMs - intervalMs;
+      if (j > 0 && startMs !== points[j - 1].endMs) {
+        segments.push(run.join(" "));
+        run = [];
+      }
+      var y = yOf(p.value);
+      run.push(xOf(startMs) + "," + y, xOf(p.endMs) + "," + y);
+      if (p.band) {
+        spans.push({ x: xOf(startMs), width: engineHistoryCoord(xOf(p.endMs) - xOf(startMs)), band: p.band });
+      }
+    }
+    segments.push(run.join(" "));
+    var last = displayUnits(points[points.length - 1].value, unit);
+    return {
+      pid: entry.pid, label: entry.label, empty: false, segments: segments, spans: spans,
+      end: { text: last.text, unit: last.unit },
+    };
+  }
+
+  // The scroll half's history from states/engine-history alone. `empty` means
+  // no series holds a point (or there is no readable history): the card shows
+  // the typed absence and NO chart. All three charts share one time axis, the
+  // extent of the buckets themselves, so the graphs line up.
+  function engineHistoryView(data) {
+    var intervalSec = isObj(data) ? data.intervalSec : null;
+    var empty = { empty: true, absence: ENGINE_HISTORY_ABSENT, window: "", series: [] };
+    if (!isObj(data) || !isObj(data.series) || typeof intervalSec !== "number" ||
+        !isFinite(intervalSec) || intervalSec <= 0) {
+      return empty;
+    }
+    var intervalMs = intervalSec * 1000;
+    var units = isObj(data.unit) ? data.unit : {};
+    var bySeries = [];
+    var x0 = Infinity;
+    var x1 = -Infinity;
+    for (var i = 0; i < ENGINE_HISTORY_SERIES.length; i++) {
+      var pts = engineHistoryPoints(data.series[ENGINE_HISTORY_SERIES[i].pid]);
+      bySeries.push(pts);
+      if (pts.length) {
+        x0 = Math.min(x0, pts[0].endMs - intervalMs);
+        x1 = Math.max(x1, pts[pts.length - 1].endMs);
+      }
+    }
+    if (x1 === -Infinity) return empty;
+    var series = [];
+    for (var k = 0; k < ENGINE_HISTORY_SERIES.length; k++) {
+      var entry = ENGINE_HISTORY_SERIES[k];
+      series.push(engineHistorySeries(entry, bySeries[k], units[entry.pid], x0, x1, intervalMs));
+    }
+    return { empty: false, absence: ENGINE_HISTORY_ABSENT, window: engineHistoryWindow(data), series: series };
+  }
+
+  // RUN TIME as h:mm from params.RUNTIME_SEC -- the ECU's engine run time,
+  // NEVER the drive's duration (Atlas G4: two different facts).
+  function engineRunTimeText(seconds) {
+    var minutes = Math.floor(Math.max(0, seconds) / 60);
+    return { text: Math.floor(minutes / 60) + ":" + two(minutes % 60), unit: "" };
+  }
+
+  // params.MIL_ON is read by VALUE (1 on, 0 off), never by its unit label.
+  var ENGINE_MIL_TEXT = { 0: "OFF", 1: "ON" };
+
+  function engineMilText(value) {
+    return { text: ENGINE_MIL_TEXT[value], unit: "" };
+  }
+
+  // The status row from states/obd-live. CHECK ENGINE's count line ("n codes
+  // ›", "0 codes ›" for a pending code) exists only while the lamp is ON; it
+  // is a tap to the Alerts card ONLY while parked (`parked`, the debounced
+  // parkedNext signal) -- moving, the line carries no tap target.
+  function engineStatusView(obdLiveData, parked, nowMs) {
+    var params = isObj(obdLiveData) && isObj(obdLiveData.params) ? obdLiveData.params : null;
+    var runTime = params ? engineReading(params.RUNTIME_SEC, nowMs, engineRunTimeText)
+      : engineNotRead("no source");
+    var mil = params ? engineReading(params.MIL_ON, nowMs, engineMilText)
+      : engineNotRead("no source");
+    if (mil.value !== null && !Object.prototype.hasOwnProperty.call(ENGINE_MIL_TEXT, mil.value)) {
+      mil = engineNotRead("not read");
+    }
+    var codes = null;
+    if (mil.value === 1) {
+      var count = engineReading(params.DTC_COUNT, nowMs, displayUnits);
+      var n = count.value === null ? DRIVING_NOT_READ : String(Math.round(count.value));
+      codes = { text: n + " codes ›", tap: parked === true };
+    }
+    return { runTime: runTime, mil: mil, codes: codes };
+  }
+
   // --- US-888-b the RPM bar (spec s4.1, R30, R35) ----------------------------
   //
   // Geometry from the spec: 16 segments x 500 rpm. That is the bar's SCALE, not
@@ -4306,6 +4474,8 @@
     displayUnits: displayUnits,
     drivingView: drivingView,
     engineView: engineView,
+    engineHistoryView: engineHistoryView,
+    engineStatusView: engineStatusView,
     rpmBarView: rpmBarView,
     gLevel: gLevel,
     pushGradeTrend: pushGradeTrend,
@@ -4859,6 +5029,107 @@
         cols[c].setAttribute("data-stale", bar.stale ? "true" : "false");
         var fill = cols[c].querySelector(".eng-bar-fill");
         if (fill) fill.style.setProperty("height", (bar.fill === null ? 0 : bar.fill) + "%");
+      }
+    }
+
+    // US-889-c: one history chart. The spans go in first so the neutral line
+    // draws over them; one polyline per run, so an omitted bucket leaves a
+    // real break in the line.
+    function buildEngineHistoryChart(series) {
+      var svg = svgEl("svg", {
+        class: "eng-hist-chart", viewBox: "0 0 " + ENGINE_HISTORY_W + " " + ENGINE_HISTORY_H,
+        preserveAspectRatio: "none", "aria-hidden": "true",
+      });
+      for (var s = 0; s < series.spans.length; s++) {
+        var span = series.spans[s];
+        svg.appendChild(svgEl("rect", {
+          class: "eng-hist-span", "data-band": span.band,
+          x: span.x, y: 0, width: span.width, height: ENGINE_HISTORY_H,
+        }));
+      }
+      for (var g = 0; g < series.segments.length; g++) {
+        svg.appendChild(svgEl("polyline", { class: "eng-hist-line", points: series.segments[g] }));
+      }
+      return svg;
+    }
+
+    function engineTextEl(tag, cls, text) {
+      var el = document.createElement(tag);
+      el.className = cls;
+      el.textContent = text;
+      return el;
+    }
+
+    function buildEngineHistorySeries(series, windowText) {
+      var box = document.createElement("div");
+      box.className = "eng-hist";
+      box.setAttribute("data-pid", series.pid);
+      var head = document.createElement("div");
+      head.className = "eng-hist-head";
+      head.appendChild(engineTextEl("span", "eng-label", series.label));
+      head.appendChild(engineTextEl("span", "eng-hist-window", "· " + windowText));
+      box.appendChild(head);
+      if (series.empty) {
+        box.appendChild(engineTextEl("p", "eng-absence", ENGINE_HISTORY_ABSENT));
+        return box;
+      }
+      var row = document.createElement("div");
+      row.className = "eng-hist-row";
+      row.appendChild(buildEngineHistoryChart(series));
+      var end = document.createElement("span");
+      end.className = "eng-hist-end";
+      end.appendChild(engineTextEl("span", "eng-hist-value", series.end.text));
+      end.appendChild(engineTextEl("span", "eng-hist-unit", series.end.unit));
+      row.appendChild(end);
+      box.appendChild(row);
+      return box;
+    }
+
+    // US-889-c: paint the scroll half. The history changes at most once per
+    // bucket (30 s) while the tick runs at 4 Hz, so the charts are rebuilt
+    // only when the view itself changed; the status row is text and state
+    // attributes on the fixed skeleton, like the readings above the fold.
+    var engineHistoryKey = null;
+
+    function renderEngineScroll(card, historyView, statusView) {
+      if (!card) return;
+      var host = card.querySelector(".eng-history");
+      var key = JSON.stringify(historyView);
+      if (host && key !== engineHistoryKey) {
+        engineHistoryKey = key;
+        host.textContent = "";
+        if (historyView.empty) {
+          host.appendChild(engineTextEl("p", "eng-absence", historyView.absence));
+        } else {
+          for (var i = 0; i < historyView.series.length; i++) {
+            host.appendChild(buildEngineHistorySeries(historyView.series[i], historyView.window));
+          }
+        }
+      }
+      var tiles = card.querySelectorAll(".eng-stat");
+      for (var t = 0; t < tiles.length; t++) {
+        var pid = tiles[t].getAttribute("data-pid");
+        var reading = pid === "RUNTIME_SEC" ? statusView.runTime
+          : pid === "MIL_ON" ? statusView.mil : null;
+        if (!reading) continue;
+        tiles[t].setAttribute("data-stale", reading.stale ? "true" : "false");
+        tiles[t].setAttribute("data-note", reading.noteKind || "none");
+        var valueEl = tiles[t].querySelector(".eng-stat-value");
+        if (valueEl) valueEl.textContent = reading.text;
+        var noteEl = tiles[t].querySelector(".eng-note");
+        if (noteEl) {
+          noteEl.textContent = reading.note;
+          noteEl.hidden = !reading.note;
+        }
+      }
+      var codesEl = card.querySelector(".eng-codes");
+      if (codesEl) {
+        var codes = statusView.codes;
+        codesEl.hidden = !codes;
+        codesEl.textContent = codes ? codes.text : "";
+        codesEl.setAttribute("data-tap", codes && codes.tap ? "true" : "false");
+        if (codes && codes.tap) codesEl.setAttribute("role", "button");
+        else codesEl.removeAttribute("role");
       }
     }
 
@@ -5942,6 +6213,18 @@
       // US-889-b: the Engine card, right after Driving; filled from the same
       // cached states/obd-live on the same tick.
       var engineCard = document.getElementById("engine-card");
+      // US-889-c: the CHECK ENGINE count line is a PARKED-ONLY tap to the
+      // Alerts card. `engineParked` is the US-511 debounce (parkedNext, its
+      // first consumer since TD-us659), advanced once per tick from the same
+      // system-status every other surface reads; the render sets data-tap from
+      // it, and the handler honours only what is on the glass right now.
+      var engineParked = parkedInit();
+      var engineCodes = document.getElementById("engine-codes");
+      if (engineCodes) {
+        engineCodes.addEventListener("click", function () {
+          if (engineCodes.getAttribute("data-tap") === "true") openAlertsCard();
+        });
+      }
       var landingIndex = -1;
       var lastIdle = null;
       // US-497 g-trail + US-508 grade trend: accumulated across polls from the
@@ -6707,6 +6990,15 @@
           drivingCard, drivingView(await stateOnce("obd-live"), lastGear, nowMs)
         );
         renderEngineCard(engineCard, engineView(await stateOnce("obd-live"), nowMs));
+        // US-889-c: the scroll half -- this drive's history from
+        // states/engine-history alone, and the status row from the same cached
+        // obd-live, its codes tap gated on the debounced parked signal.
+        engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);
+        renderEngineScroll(
+          engineCard,
+          engineHistoryView(await stateOnce("engine-history")),
+          engineStatusView(await stateOnce("obd-live"), engineParked.parked, nowMs)
+        );
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint

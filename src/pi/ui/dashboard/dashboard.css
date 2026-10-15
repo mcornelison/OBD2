@@ -1733,6 +1733,14 @@ html, body {
   --eng-unit-gap: 4px;        /* number -> unit */
   --eng-line: 1.2;            /* every line box */
   --eng-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
+  /* US-889-c, the scroll half (OEM mockup 2026-10-14; spec s3 status fit). */
+  --eng-section-gap: 8px;     /* between history graphs; rule -> content */
+  --eng-rule: 1px;            /* the line above the history and the status */
+  --eng-graph-h: 46px;        /* one history chart's height */
+  --eng-graph-stroke: 2px;    /* the neutral history line */
+  --eng-span-amber: 0.26;     /* amber span fill strength under the line */
+  --eng-span-red: 0.32;       /* red span fill strength under the line */
+  --eng-stat-gap: 8px;        /* status grid gap (spec s3: 104.0 + 160.0 + 8) */
 }
 /* The body keeps the shared .card-body guard (overflow-y auto + the scroll
    cue): the scroll half (US-889-c) lives below the fold. */
@@ -1822,4 +1830,83 @@ html, body {
   flex: none;
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--eng-line); color: var(--text-secondary);
+}
+/* --- US-889-c the scroll half: history + status (spec s3-s4, ACs 5-11) ---- */
+/* The history line is neutral warm white. A span's colour comes ONLY from the
+   provider's per-bucket band (data-band, set by carousel.js from the point):
+   this sheet maps band -> token and judges nothing. No motion: the line steps
+   bucket to bucket and never animates between them. */
+#engine-card .eng-history {
+  flex: none;
+  display: flex; flex-direction: column; gap: var(--eng-section-gap);
+  border-top-width: var(--eng-rule); border-top-style: solid; border-top-color: var(--line);
+  padding-top: var(--eng-section-gap);
+}
+#engine-card .eng-hist {
+  display: flex; flex-direction: column;
+}
+#engine-card .eng-hist-head {
+  display: flex; align-items: baseline; gap: var(--eng-inline-gap);
+}
+#engine-card .eng-hist-window {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-secondary); white-space: nowrap;
+}
+#engine-card .eng-hist-row {
+  display: flex; align-items: center; gap: var(--eng-inline-gap);
+}
+#engine-card .eng-hist-chart {
+  display: block; flex: 1; min-width: 0; height: var(--eng-graph-h);
+}
+#engine-card .eng-hist-line {
+  fill: none; stroke: var(--text-primary); stroke-width: var(--eng-graph-stroke);
+  vector-effect: non-scaling-stroke;
+}
+#engine-card .eng-hist-span[data-band="amber"] {
+  fill: var(--amber-warn); fill-opacity: var(--eng-span-amber);
+}
+#engine-card .eng-hist-span[data-band="red"] {
+  fill: var(--critical-red); fill-opacity: var(--eng-span-red);
+}
+#engine-card .eng-hist-end {
+  flex: none; white-space: nowrap;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-meta); line-height: var(--eng-line); color: var(--text-primary);
+}
+#engine-card .eng-hist-unit {
+  color: var(--text-secondary);
+}
+#engine-card .eng-absence {
+  margin: 0;
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-tertiary);
+}
+/* Status grid (spec s3, measured 2026-10-15): RUN TIME sized to its content,
+   CHECK ENGINE takes the rest; values in the fixed-width face at --fs-label,
+   CHECK ENGINE on two lines (ON, then the count) so a 3-digit count fits. */
+#engine-card .eng-status {
+  flex: none;
+  display: grid; grid-template-columns: max-content 1fr; gap: var(--eng-stat-gap);
+  border-top-width: var(--eng-rule); border-top-style: solid; border-top-color: var(--line);
+  padding-top: var(--eng-section-gap);
+}
+#engine-card .eng-stat {
+  display: flex; flex-direction: column; min-width: 0;
+}
+#engine-card .eng-stat-value,
+#engine-card .eng-codes {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); line-height: var(--eng-line); white-space: nowrap;
+  color: var(--text-primary);
+}
+#engine-card .eng-stat[data-stale="true"] .eng-stat-value,
+#engine-card .eng-stat[data-stale="true"] .eng-codes {
+  opacity: var(--eng-stale-opacity);
+}
+#engine-card .eng-stat[data-note="age"] .eng-note {
+  color: var(--amber-warn);
+}
+/* Moving, the count is information, not a link: secondary, no tap target. */
+#engine-card .eng-codes[data-tap="false"] {
+  color: var(--text-secondary);
 }

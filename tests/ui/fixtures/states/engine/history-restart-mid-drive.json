@@ -1,0 +1,114 @@
+{
+  "description": "Orchestrator restarted mid-drive (no drive start seen): partial true, sinceTs 15:12:00Z, driveId null.",
+  "now": "2026-10-20T15:15:19Z",
+  "engine-history": {
+    "ts": "2026-10-20T15:15:19Z",
+    "driveId": null,
+    "sinceTs": "2026-10-20T15:12:00Z",
+    "partial": true,
+    "intervalSec": 30.0,
+    "series": {
+      "COOLANT_TEMP": [
+        {
+          "ts": "2026-10-20T15:12:30Z",
+          "value": 89.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:13:00Z",
+          "value": 89.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:13:30Z",
+          "value": 89.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:14:00Z",
+          "value": 89.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:14:30Z",
+          "value": 89.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:15:00Z",
+          "value": 89.0,
+          "band": "green"
+        }
+      ],
+      "INTAKE_TEMP": [
+        {
+          "ts": "2026-10-20T15:12:30Z",
+          "value": 28.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:13:00Z",
+          "value": 28.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:13:30Z",
+          "value": 28.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:14:00Z",
+          "value": 28.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:14:30Z",
+          "value": 28.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:15:00Z",
+          "value": 28.0,
+          "band": null
+        }
+      ],
+      "BATTERY_V": [
+        {
+          "ts": "2026-10-20T15:12:30Z",
+          "value": 14.1,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:13:00Z",
+          "value": 14.1,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:13:30Z",
+          "value": 14.1,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:14:00Z",
+          "value": 14.1,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:14:30Z",
+          "value": 14.1,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:15:00Z",
+          "value": 14.1,
+          "band": "green"
+        }
+      ]
+    },
+    "unit": {
+      "COOLANT_TEMP": "C",
+      "INTAKE_TEMP": "C",
+      "BATTERY_V": "V"
+    }
+  }
+}
