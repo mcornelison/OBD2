@@ -40,6 +40,11 @@
 #                                the builder-equality test also covers this
 #                                story's fixtures and feeds a status label
 #                                ('CL') as itself.
+# 2026-10-15    | Rex (US-890-d) | THIS DRIVE + SINCE RESET from states/fuel-
+#                                economy with the s4.6 reasons (section 10).
+#                                PIN CHANGES: UNPUBLISHED_SLOTS drops both (only
+#                                LAST 30 S stays "not published"); with no
+#                                fuel-economy file both say "no source".
 # ================================================================================
 ################################################################################
 
@@ -107,10 +112,14 @@ UPPER_SLOTS = [
     ("mpg-this-drive", "THIS DRIVE"),
     ("mpg-since-reset", "SINCE RESET"),
 ]
-# US-890-b: AIRFLOW is published now; US-890-c: LOOP and TOTAL TRIM too. The
-# MPG row still waits on its story.
+# US-890-b: AIRFLOW is published now; US-890-c: LOOP and TOTAL TRIM too;
+# US-890-d: THIS DRIVE and SINCE RESET (states/fuel-economy). LAST 30 S still
+# waits on its provider field (US-890-e).
 _OBD_LIVE_SLOTS = ("airflow", "loop", "total-trim")
-UNPUBLISHED_SLOTS = [(s, lbl) for s, lbl in UPPER_SLOTS if s not in _OBD_LIVE_SLOTS]
+_FUEL_ECONOMY_SLOTS = ("mpg-this-drive", "mpg-since-reset")
+UNPUBLISHED_SLOTS = [
+    (s, lbl) for s, lbl in UPPER_SLOTS if s not in _OBD_LIVE_SLOTS + _FUEL_ECONOMY_SLOTS
+]
 NOT_PUBLISHED = "not published"
 RELEARNING = "ECU relearning"
 TREND_LABEL = "FUEL TRIM TREND"
@@ -170,6 +179,7 @@ def _boot(
     system: Any = None,
     nowIso: str = "2026-10-20T15:12:30Z",
     obdLive: Any = None,
+    fuelEconomy: Any = None,
 ) -> rh.Surface:
     routes: dict[str, Any] = {}
     if trend is not None:
@@ -178,6 +188,8 @@ def _boot(
         routes["/system-status"] = system
     if obdLive is not None:
         routes["/obd-live"] = obdLive
+    if fuelEconomy is not None:
+        routes["/fuel-economy"] = fuelEconomy
     dom = rh.runDashboard(routes=routes, nowMs=_ms(nowIso), steps=[{"flush": 4}])
     return rh.dashboardSurface(dom["tree"])
 
@@ -282,11 +294,12 @@ def test_upperRows_stayDashDashUnderEveryTrendState(trend: str | None, system: s
     surface = _boot(trend=payload, system=sysPayload)
     assert _fuelText(surface, "fuel-label")[: len(UPPER_SLOTS)] == [lbl for _s, lbl in UPPER_SLOTS]
     assert _fuelText(surface, "fuel-value") == ["--"] * len(UPPER_SLOTS)
-    # US-890-b/c: no obd-live file -> AIRFLOW, LOOP and TOTAL TRIM say why
-    # ("no source"), never blank.
-    assert _fuelText(surface, "fuel-note") == (
-        ["no source"] * len(_OBD_LIVE_SLOTS) + [NOT_PUBLISHED] * len(UNPUBLISHED_SLOTS)
-    )
+    # US-890-b/c/d: no obd-live and no fuel-economy file -> AIRFLOW, LOOP,
+    # TOTAL TRIM, THIS DRIVE and SINCE RESET say why ("no source"), never
+    # blank; LAST 30 S is still "not published".
+    assert _fuelText(surface, "fuel-note") == [
+        NOT_PUBLISHED if (s, lbl) in UNPUBLISHED_SLOTS else "no source" for s, lbl in UPPER_SLOTS
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1172,3 +1185,371 @@ def test_architectureMd_recordsTheFuelBlockAndTheSharedCodeSet():
                    "not applied in open loop", "loop_unknown"):
         assert needle in section, needle
     assert "**`fuel`** (US-890-c" in arch
+
+
+# ---------------------------------------------------------------------------
+# 10. US-890-d -- the MPG row: THIS DRIVE and SINCE RESET from states/fuel-
+#     economy, every null with its s4.6 reason. specs/v030-fuel-page-design.md
+#     s4.3/s4.6: every figure carries the approximately sign, one decimal; the
+#     approximate flag reads "open loop" (--amber-warn, --fs-meta); LAST 30 S
+#     is "--" + "not published" until its provider field lands (US-890-e).
+# ---------------------------------------------------------------------------
+
+MPG_FIXTURES = ["mpg-null-reasons", "sinceReset-never", "last30-not-published"]
+
+# s4.6, the code -> text table (the spec's, verbatim).
+MPG_REASON_TEXT = {
+    "maf_untrusted": "MAF not fitted",
+    "maf_stale": "no MAF reading",
+    "maf_zero_running": "MAF reads zero",
+    "gaps": "too many gaps",
+    "too_short": "too short yet",
+    "no_fuel": "no fuel counted",
+}
+OPEN_LOOP_FLAG = "open loop"
+# Every other text the row can show (s4.3 + this story's never-blank fallbacks).
+MPG_OTHER_TEXTS = ["not started", "never reset", "no source", NOT_PUBLISHED, "no reason sent"]
+MPG_ROW_FIT_CHARS = 16
+
+
+def _mpgView(payload: Any) -> dict[str, Any]:
+    return _probe("fuelMpgView", payload)
+
+
+def _slot(view: dict[str, Any], key: str) -> tuple[str, str]:
+    return (view[key]["text"], view[key]["note"])
+
+
+def _fuelEconomy(thisDrive: Any = None, sinceReset: Any = None) -> dict[str, Any]:
+    return {"thisDrive": thisDrive, "sinceReset": sinceReset, "ts": "2026-10-20T15:03:09Z"}
+
+
+def _drive(**fields: Any) -> dict[str, Any]:
+    block = {"fuelL": 1.9, "mpg": None, "sinceTs": "2026-10-20T15:00:00Z",
+             "approximate": False, "openLoopAirPct": 4.1, "mpgNullReason": "too_short"}
+    block.update(fields)
+    return block
+
+
+def _resetRow(mpg: Any) -> dict[str, Any]:
+    return {"fuelL": 39.39, "distanceKm": 412.0, "mpg": mpg, "resetAtTs": "2026-10-01T12:00:00Z"}
+
+
+def _mpgCases() -> list[tuple[str, dict[str, Any]]]:
+    """Every (case id, case) across this story's fixtures."""
+    out = []
+    for name in MPG_FIXTURES:
+        fx = _fixture(name)
+        if "cases" in fx:
+            out += [(f"{name}:{code}", case) for code, case in fx["cases"].items()]
+        else:
+            out.append((name, fx))
+    return out
+
+
+def _buildFuelEconomy(inputs: dict[str, Any], nowIso: str) -> dict[str, Any]:
+    from dataclasses import replace
+
+    from common.config.validator import DEFAULTS
+    from pi.obdii import fuel_economy_emitter as fee
+
+    settings = replace(fee.FuelSettings.fromConfig({}), mafTrusted=inputs["mafTrusted"])
+    snapIn = inputs["snap"]
+    if snapIn is None:
+        snap = fee.FuelSnapshot(started=False, airG=0.0, openLoopAirG=0.0, excludedS=0.0,
+                                windowS=0.0, lastMafGPerS=None, lastMafEventUtc=None,
+                                lastMafEngineRunning=None)
+    else:
+        event = snapIn["lastMafEventUtc"]
+        snap = fee.FuelSnapshot(**{**snapIn, "lastMafEventUtc": _awareUtc(event) if event else None})
+    return fee.buildFuelEconomyState(
+        snap, settings, distanceKm=inputs["distanceKm"],
+        distanceSinceTs=inputs["distanceSinceTs"], nowUtc=_awareUtc(nowIso),
+        staleSec=float(DEFAULTS["pi.display.stale.obdLiveSec"]), sinceReset=inputs["sinceReset"],
+    )
+
+
+def _mpgSlotPath(surface: rh.Surface, slotCls: str, cls: str) -> list[dict[str, Any]]:
+    paths = [p for p in _fuelPaths(surface, cls) if any(slotCls in _classes(n) for n in p)]
+    assert len(paths) == 1, (slotCls, cls, len(paths))
+    return paths[0]
+
+
+def _mpgColumnWidth() -> float:
+    """One of the row's three equal grid columns (repeat(3, 1fr))."""
+    assert _decl(_rule("#fuel-card .fuel-mpg"), "grid-template-columns") == "repeat(3, 1fr)"
+    return (_bodyWidthPx() - 2 * _fuelPx("var(--fuel-col-gap)")) / 3
+
+
+def _mpgTextFits(text: str) -> bool:
+    return _monoWidth(text, "var(--fs-meta)") <= _mpgColumnWidth()
+
+
+def test_mpgFixturesArePresent_andDescribed():
+    for name in MPG_FIXTURES:
+        assert _fixture(name)["description"], name
+
+
+def test_mpgNullReasons_hasOneCasePerProviderCode():
+    from pi.obdii.fuel_economy_emitter import MPG_NULL_REASONS
+
+    cases = _fixture("mpg-null-reasons")["cases"]
+    assert sorted(cases) == sorted(MPG_NULL_REASONS) == sorted(MPG_REASON_TEXT)
+    for code, case in cases.items():
+        assert case["fuel-economy"]["thisDrive"]["mpgNullReason"] == code
+
+
+@pytest.mark.parametrize("caseId", [cid for cid, _c in _mpgCases()])
+def test_mpgFixture_isWhatTheBuilderEmits(caseId: str):
+    """
+    Given: a fixture case's recorded inputs (snapshot, distance, since-reset row)
+    When: they are built by the real buildFuelEconomyState at the fixture's now
+    Then: the output equals the stored payload -- the page is tested against the
+          provider's real shape and reason codes, not a hand-typed one.
+    """
+    case = dict(_mpgCases())[caseId]
+    now = _fixture(caseId.split(":")[0])["now"]
+    assert _buildFuelEconomy(case["inputs"], now) == case["fuel-economy"]
+
+
+def test_last30Fixture_hasNoRecentField_andRealFigures():
+    payload = _fixture("last30-not-published")["fuel-economy"]
+    assert "recent" not in payload
+    assert payload["thisDrive"]["mpg"] is not None and payload["sinceReset"]["mpg"] is not None
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("code", sorted(MPG_REASON_TEXT))
+def test_thisDrive_nullMpg_showsTheS46Text(code: str):
+    view = _mpgView(_fixture("mpg-null-reasons")["cases"][code]["fuel-economy"])
+    assert _slot(view, "thisDrive") == ("--", MPG_REASON_TEXT[code])
+    assert view["thisDrive"]["noteKind"] == "reason"
+    assert _slot(view, "sinceReset") == ("--", "never reset")
+
+
+@_NODE_ONLY
+def test_validation_tooShort_isDashDashTooShortYet():
+    view = _mpgView(_fuelEconomy(thisDrive=_drive(mpgNullReason="too_short")))
+    assert _slot(view, "thisDrive") == ("--", "too short yet")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("code", ["zzz_new", "a_much_longer_future_code"])
+def test_validation_unknownCode_showsTheRawCode_neverBlank(code: str):
+    view = _mpgView(_fuelEconomy(thisDrive=_drive(mpgNullReason=code)))
+    assert _slot(view, "thisDrive") == ("--", code)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("code", [None, "", "absent"], ids=["null-code", "empty-code", "no-code-key"])
+def test_thisDrive_nullMpgWithNoCode_stillSaysWhy(code: Any):
+    drive = _drive(mpgNullReason=code)
+    if code == "absent":
+        del drive["mpgNullReason"]
+    view = _mpgView(_fuelEconomy(thisDrive=drive))
+    assert _slot(view, "thisDrive") == ("--", "no reason sent")
+
+
+@_NODE_ONLY
+def test_example_tooShortDrive_andNeverReset():
+    """The story's example payload, then the sinceReset-never fixture."""
+    view = _mpgView(_fuelEconomy(thisDrive=_drive(), sinceReset=None))
+    assert _slot(view, "thisDrive") == ("--", "too short yet")
+    assert _slot(view, "sinceReset") == ("--", "never reset")
+    never = _mpgView(_fixture("sinceReset-never")["fuel-economy"])
+    assert _slot(never, "thisDrive") == ("--", "not started")
+    assert _slot(never, "sinceReset") == ("--", "never reset")
+
+
+@_NODE_ONLY
+def test_sinceReset_nullMpg_isTooShortYet_withNoGuessAtTheCause():
+    view = _mpgView(_fuelEconomy(sinceReset=_resetRow(None)))
+    assert _slot(view, "sinceReset") == ("--", "too short yet")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("mpg", "text"),
+    [(26.301, "≈26.3"), (24.6, "≈24.6"), (42.64440395833332, "≈42.6"), (99.96, "≈100.0"),
+     (7, "≈7.0"), (0.04, "≈0.0")],
+)
+def test_figures_carryTheApproxSign_withOneDecimal(mpg: float, text: str):
+    view = _mpgView(_fuelEconomy(thisDrive=_drive(mpg=mpg), sinceReset=_resetRow(mpg)))
+    assert _slot(view, "thisDrive") == (text, "")
+    assert _slot(view, "sinceReset") == (text, "")
+    assert view["thisDrive"]["noteKind"] == view["sinceReset"]["noteKind"] == "none"
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("mpg", ["26.3", True, [26.3], {"v": 1}])
+def test_aNonNumberMpg_isNeverShownAsAFigure(mpg: Any):
+    view = _mpgView(_fuelEconomy(thisDrive=_drive(mpg=mpg), sinceReset=_resetRow(mpg)))
+    assert view["thisDrive"]["text"] == view["sinceReset"]["text"] == "--"
+    assert view["thisDrive"]["note"] and view["sinceReset"]["note"]
+
+
+@_NODE_ONLY
+def test_lastThirty_fixture_rendersFiguresAndNotPublished():
+    view = _mpgView(_fixture("last30-not-published")["fuel-economy"])
+    assert _slot(view, "last30") == ("--", NOT_PUBLISHED)
+    assert _slot(view, "thisDrive") == ("≈26.3", "")
+    assert _slot(view, "sinceReset") == ("≈24.6", "")
+    assert view["thisDrive"]["flag"] == ""
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    ("payload", "thisDrive", "sinceReset"),
+    [(None, "no source", "no source"), ([], "no source", "no source"),
+     ({"ts": None}, NOT_PUBLISHED, NOT_PUBLISHED),
+     (_fuelEconomy(thisDrive=5, sinceReset="x"), NOT_PUBLISHED, NOT_PUBLISHED)],
+    ids=["no-file", "not-an-object", "blocks-absent", "blocks-malformed"],
+)
+def test_noOrBrokenPayload_saysWhy_andLast30StaysNotPublished(
+    payload: Any, thisDrive: str, sinceReset: str
+):
+    view = _mpgView(payload)
+    assert _slot(view, "last30") == ("--", NOT_PUBLISHED)
+    assert _slot(view, "thisDrive") == ("--", thisDrive)
+    assert _slot(view, "sinceReset") == ("--", sinceReset)
+
+
+@_NODE_ONLY
+def test_validation_approximate_flagsOpenLoopBesideTheFigure():
+    view = _mpgView(_fuelEconomy(thisDrive=_drive(mpg=31.2, approximate=True)))
+    assert view["thisDrive"]["text"] == "≈31.2"
+    assert view["thisDrive"]["flag"] == OPEN_LOOP_FLAG
+    assert view["sinceReset"]["flag"] == view["last30"]["flag"] == ""
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    "drive", [_drive(mpg=31.2, approximate=False), _drive(mpg=31.2, approximate="yes"),
+              _drive(mpg=None, approximate=True)],
+    ids=["closed-loop", "truthy-not-true", "no-figure"],
+)
+def test_noFlag_unlessApproximateIsTrueAndAFigureShows(drive: dict[str, Any]):
+    assert _mpgView(_fuelEconomy(thisDrive=drive))["thisDrive"]["flag"] == ""
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("caseId", [cid for cid, _c in _mpgCases()])
+def test_dom_mpgRowPaintsTheView(caseId: str):
+    payload = dict(_mpgCases())[caseId]["fuel-economy"]
+    view = _mpgView(payload)
+    surface = _boot(system=_driving(), fuelEconomy=payload)
+    for slotCls, key in (("fuel-mpg-last30", "last30"), ("fuel-mpg-this-drive", "thisDrive"),
+                         ("fuel-mpg-since-reset", "sinceReset")):
+        assert _textOf(_mpgSlotPath(surface, slotCls, "fuel-value")[-1]) == view[key]["text"]
+        notePath = _mpgSlotPath(surface, slotCls, "fuel-note")
+        assert _textOf(notePath[-1]) == view[key]["note"], slotCls
+        assert surface.rendered(notePath) == bool(view[key]["note"]), slotCls
+    assert not surface.rendered(_mpgSlotPath(surface, "fuel-mpg-this-drive", "fuel-flag"))
+
+
+@_NODE_ONLY
+def test_dom_approximate_paintsAnAmberMetaOpenLoopFlag():
+    payload = _fuelEconomy(thisDrive=_drive(mpg=31.2, approximate=True))
+    surface = _boot(system=_driving(), fuelEconomy=payload)
+    flag = _mpgSlotPath(surface, "fuel-mpg-this-drive", "fuel-flag")
+    assert surface.rendered(flag)
+    assert _textOf(flag[-1]) == OPEN_LOOP_FLAG
+    assert surface.winningDeclaration(flag, "color")[0] == "var(--amber-warn)"
+    assert surface.winningDeclaration(flag, "font-size")[0] == "var(--fs-meta)"
+    assert _textOf(_mpgSlotPath(surface, "fuel-mpg-this-drive", "fuel-value")[-1]) == "≈31.2"
+    assert not surface.rendered(_mpgSlotPath(surface, "fuel-mpg-this-drive", "fuel-note"))
+
+
+@_NODE_ONLY
+def test_dom_valueTiers_last30Primary_driveAndResetSecondary():
+    surface = _boot(system=_driving(), fuelEconomy=_fixture("last30-not-published")["fuel-economy"])
+    for slotCls, tier in (("fuel-mpg-last30", "--fs-primary"),
+                          ("fuel-mpg-this-drive", "--fs-secondary"),
+                          ("fuel-mpg-since-reset", "--fs-secondary")):
+        won = surface.winningDeclaration(_mpgSlotPath(surface, slotCls, "fuel-value"), "font-size")
+        assert won[0] == f"var({tier})", slotCls
+    assert _px("var(--fs-primary)") >= 34
+
+
+def test_css_mpgLabels_areMichromaAtFsMeta_letterSpacingZero():
+    body = _rule("#fuel-card .fuel-mpg .fuel-label")
+    assert _decl(body, "font-family") == "var(--font-display)"
+    assert _decl(body, "font-weight") == "400"
+    assert _decl(body, "font-synthesis") == "none"
+    assert _decl(body, "letter-spacing") == "0"
+    assert _decl(body, "font-size") is None
+    assert _decl(_rule("#fuel-card .fuel-label"), "font-size") == "var(--fs-meta)"
+
+
+def test_css_openLoopFlag_isAmberWarnAtFsMeta_andTheOnlyAmberInTheMpgRow():
+    body = _rule("#fuel-card .fuel-flag")
+    assert _decl(body, "color") == "var(--amber-warn)"
+    assert _decl(body, "font-size") == "var(--fs-meta)"
+    for selector, ruleBody in _fuelRules():
+        if "fuel-mpg" in selector:
+            assert not any(tok in ruleBody for tok in _WARN_TOKENS), (selector, ruleBody)
+
+
+def test_css_mpgNotes_wrapRatherThanOverflow():
+    assert _decl(_rule("#fuel-card .fuel-mpg .fuel-note"), "overflow-wrap") == "anywhere"
+
+
+# The fit rule (acceptance 5: no reason text is wider than its MPG column). The
+# harness resolves the cascade, not layout, so scrollWidth <= clientWidth is
+# modelled from the sheet: a third of the card body less the two column gaps,
+# against each text's width in the fixed-width face at --fs-meta.
+@pytest.mark.parametrize(
+    "text", list(MPG_REASON_TEXT.values()) + MPG_OTHER_TEXTS + [OPEN_LOOP_FLAG]
+)
+def test_everyMpgRowText_isAtMost16Chars_andFitsItsColumn(text: str):
+    assert len(text) <= MPG_ROW_FIT_CHARS, text
+    assert _mpgTextFits(text), (text, _monoWidth(text, "var(--fs-meta)"), _mpgColumnWidth())
+
+
+def test_mpgFitModel_failsAPlantedOverflow():
+    assert not _mpgTextFits("x" * (MPG_ROW_FIT_CHARS + 1))
+
+
+def test_mpgLabels_andTheWidestFigure_fitTheirColumn():
+    from tests.ui.test_topbar_three_column_grid import michromaWidthPx
+
+    for label in ("LAST 30 S", "THIS DRIVE", "SINCE RESET"):
+        assert michromaWidthPx(label, _px("var(--fs-meta)")) <= _mpgColumnWidth(), label
+    assert _monoWidth("≈999.9", "var(--fs-secondary)") <= _mpgColumnWidth()
+
+
+def test_mpgReasonTable_livesOnceInCarouselJs():
+    code = _stripJsComments(_read(_JS))
+    for codeName, text in MPG_REASON_TEXT.items():
+        assert code.count(f'"{text}"') == 1, text
+        assert f"{codeName}: \"{text}\"" in code, codeName
+
+
+def test_richOverstated_appearsNowhere():
+    for path in (_JS, _HTML, _CSS):
+        assert "rich, overstated" not in _read(path).lower(), path
+
+
+# The grep gate (spec s4.3, Atlas S104 ruling 2): the page never divides by a
+# MAF value -- MPG is the provider's.
+_MAF_DIVIDE = re.compile(r"/\s*\(?\s*[\w.\[\]\"']*maf", re.I)
+
+
+def _mafDivideHits(source: str) -> list[str]:
+    return _MAF_DIVIDE.findall(_stripJsComments(source))
+
+
+def test_carouselJs_neverDividesByMaf():
+    assert _mafDivideHits(_read(_JS)) == []
+
+
+@pytest.mark.parametrize(
+    "planted",
+    ["var m = miles / mafGs;", "var m = d / (params.MAF.value * k);", 'var m = d / p["MAF"].value;'],
+)
+def test_mafDivideGate_catchesAPlantedDivision(planted: str):
+    assert _mafDivideHits(_read(_JS) + "\n" + planted + "\n") != []
+
+
+def test_theMpgRenderReadsTheTicksFuelEconomy():
+    assert re.search(r"fuelMpgView\(\s*await stateOnce\(\"fuel-economy\"\)\s*\)", _read(_JS))

@@ -2030,6 +2030,30 @@ html, body {
 #fuel-card .fuel-total-trim[data-dimmed="true"] .fuel-value {
   opacity: var(--fuel-stale-opacity);
 }
+/* US-890-d MPG row (spec s4.3/s4.6). Labels are Michroma at --fs-meta (Iris
+   B-1); the value tiers sit below them: LAST 30 S keeps the .fuel-value
+   default (--fs-primary, driver-read), THIS DRIVE / SINCE RESET are
+   --fs-secondary (parked-read). The open loop flag is --amber-warn at
+   --fs-meta, on its own line under the figure: a one-decimal figure beside
+   "open loop" is wider than a third of the body. A reason never shrinks: a raw code longer
+   than its column wraps (overflow-wrap) rather than overflowing it. */
+#fuel-card .fuel-mpg .fuel-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  letter-spacing: 0;
+}
+#fuel-card .fuel-mpg-this-drive .fuel-value {
+  font-size: var(--fs-secondary);
+}
+#fuel-card .fuel-mpg-since-reset .fuel-value {
+  font-size: var(--fs-secondary);
+}
+#fuel-card .fuel-flag {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--amber-warn); white-space: nowrap;
+}
+#fuel-card .fuel-mpg .fuel-note {
+  overflow-wrap: anywhere;
+}
 /* The trend row. The source card paints this slot only (gate, loading and
    no-data tiles included), so the rows above never wait on it. */
 #fuel-card .fuel-trend {

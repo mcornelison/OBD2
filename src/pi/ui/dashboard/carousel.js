@@ -3927,6 +3927,87 @@
     return view;
   }
 
+  // --- US-890-d Fuel card, the MPG row (F-127) -------------------------------
+  //
+  // specs/v030-fuel-page-design.md s4.3/s4.6: THIS DRIVE and SINCE RESET read
+  // states/fuel-economy ONLY -- the provider integrates distance and fuel and
+  // divides; the page never touches MAF or speed. Every figure carries the
+  // approximately sign (the estimate assumes stoichiometric burn); THIS DRIVE
+  // and SINCE RESET show ONE decimal (spec s3 mockup). LAST 30 S has no
+  // provider field yet (US-890-e), so it says "not published" and reads nothing.
+  var FUEL_MPG_APPROX = "≈";
+  // s4.6: the ONE code -> text table for the MPG row. Every text is <= 16
+  // characters (the row's fit rule); a code not in it shows raw, never blank.
+  var FUEL_MPG_REASON_TEXT = {
+    maf_untrusted: "MAF not fitted",
+    maf_stale: "no MAF reading",
+    maf_zero_running: "MAF reads zero",
+    gaps: "too many gaps",
+    too_short: "too short yet",
+    no_fuel: "no fuel counted",
+  };
+  var FUEL_MPG_NOT_STARTED = "not started";
+  var FUEL_MPG_NEVER_RESET = "never reset";
+  // sinceReset carries no reason field: a null mpg there is "too short yet",
+  // and the page does not guess between the provider's other causes (s4.3).
+  var FUEL_MPG_SINCE_RESET_NULL = "too_short";
+  // thisDrive.mpg null with no code at all -- still a reason, never blank.
+  var FUEL_MPG_NO_CODE = "no reason sent";
+  // thisDrive.approximate (open-loop air over the provider's threshold). Open
+  // loop is BOTH enrichment and decel fuel-cut, so the flag says only that --
+  // never which way the estimate leans.
+  var FUEL_MPG_OPEN_LOOP_FLAG = "open loop";
+
+  function fuelMpgSlot(text, note, noteKind) {
+    return { text: text, note: note, noteKind: noteKind, flag: "" };
+  }
+
+  function fuelMpgReasonText(code) {
+    if (typeof code !== "string" || !code) return FUEL_MPG_NO_CODE;
+    return Object.prototype.hasOwnProperty.call(FUEL_MPG_REASON_TEXT, code)
+      ? FUEL_MPG_REASON_TEXT[code] : code;
+  }
+
+  // One decimal from toFixed(1), never String(float); null when not a figure.
+  function fmtFuelMpg(mpg) {
+    if (typeof mpg !== "number" || !isFinite(mpg)) return null;
+    return FUEL_MPG_APPROX + mpg.toFixed(1);
+  }
+
+  // One MPG block (thisDrive / sinceReset) -> its slot. `absentNote` is what a
+  // null block means; `nullCode` is the reason code for a null mpg.
+  function fuelMpgBlockSlot(block, absentNote, nullCode) {
+    if (block === null) return fuelMpgSlot("--", absentNote, "reason");
+    if (!isObj(block)) return fuelMpgSlot("--", "not published", "unpublished");
+    var figure = fmtFuelMpg(block.mpg);
+    if (figure !== null) return fuelMpgSlot(figure, "", "none");
+    return fuelMpgSlot("--", fuelMpgReasonText(nullCode), "reason");
+  }
+
+  // The MPG row's view from states/fuel-economy alone.
+  function fuelMpgView(fuelEconomyData) {
+    var last30 = fuelMpgSlot("--", "not published", "unpublished");
+    if (!isObj(fuelEconomyData)) {
+      return {
+        last30: last30,
+        thisDrive: fuelMpgSlot("--", "no source", "reason"),
+        sinceReset: fuelMpgSlot("--", "no source", "reason"),
+      };
+    }
+    var drive = fuelEconomyData.thisDrive;
+    var thisDrive = fuelMpgBlockSlot(
+      drive, FUEL_MPG_NOT_STARTED, isObj(drive) ? drive.mpgNullReason : null
+    );
+    // The flag sits with a figure: a "--" already says why there is none.
+    if (thisDrive.noteKind === "none" && drive.approximate === true) {
+      thisDrive.flag = FUEL_MPG_OPEN_LOOP_FLAG;
+    }
+    var sinceReset = fuelMpgBlockSlot(
+      fuelEconomyData.sinceReset, FUEL_MPG_NEVER_RESET, FUEL_MPG_SINCE_RESET_NULL
+    );
+    return { last30: last30, thisDrive: thisDrive, sinceReset: sinceReset };
+  }
+
   // --- US-889-c Engine card, the scroll half (F-127) -------------------------
   //
   // specs/v030-engine-page-design.md s3-s4, ACs 5-11: this drive's coolant,
@@ -4710,6 +4791,7 @@
     fuelAirflowView: fuelAirflowView,
     fuelLoopView: fuelLoopView,
     fuelTotalTrimView: fuelTotalTrimView,
+    fuelMpgView: fuelMpgView,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -5273,6 +5355,35 @@
       if (!card || !loopView || !trimView) return;
       renderFuelSideSlot(card, ".fuel-loop", loopView);
       renderFuelSideSlot(card, ".fuel-total-trim", trimView);
+    }
+
+    // US-890-d: paint `fuelMpgView` into the three MPG slots (dashboard.html
+    // skeleton), selected by class. The flag shows only when the view sets one.
+    function renderFuelMpg(card, view) {
+      if (!card || !view) return;
+      var slots = [
+        [".fuel-mpg-last30", view.last30],
+        [".fuel-mpg-this-drive", view.thisDrive],
+        [".fuel-mpg-since-reset", view.sinceReset],
+      ];
+      for (var i = 0; i < slots.length; i++) {
+        var slot = card.querySelector(slots[i][0]);
+        var slotView = slots[i][1];
+        if (!slot || !slotView) continue;
+        slot.setAttribute("data-note", slotView.noteKind || "none");
+        var valueEl = slot.querySelector(".fuel-value");
+        if (valueEl) valueEl.textContent = slotView.text;
+        var flagEl = slot.querySelector(".fuel-flag");
+        if (flagEl) {
+          flagEl.textContent = slotView.flag;
+          flagEl.hidden = !slotView.flag;
+        }
+        var noteEl = slot.querySelector(".fuel-note");
+        if (noteEl) {
+          noteEl.textContent = slotView.note;
+          noteEl.hidden = !slotView.note;
+        }
+      }
     }
 
     // US-889-c: one history chart. The spans go in first so the neutral line
@@ -7266,6 +7377,8 @@
           fuelLoopView(await stateOnce("obd-live")),
           fuelTotalTrimView(await stateOnce("obd-live"))
         );
+        // US-890-d: the MPG row from states/fuel-economy alone.
+        renderFuelMpg(fuelCard, fuelMpgView(await stateOnce("fuel-economy")));
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint

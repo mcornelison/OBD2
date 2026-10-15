@@ -263,7 +263,12 @@
            "not read": nothing has been read before the first poll.
            US-890-c: the LOOP chip and TOTAL TRIM read ONLY states/obd-live
            `fuel` (`fuelLoopView` / `fuelTotalTrimView`): the provider maps
-           the status code and sums the trims. Skeleton "--" + "not read". -->
+           the status code and sums the trims. Skeleton "--" + "not read".
+           US-890-d: THIS DRIVE and SINCE RESET read ONLY states/fuel-economy
+           (`fuelMpgView`), each null with its spec s4.6 reason; the open loop
+           flag (`.fuel-flag`) shows only beside a THIS DRIVE figure. LAST 30 S
+           stays "--" + "not published" until its provider field lands
+           (US-890-e). Skeleton "--" + "not read". -->
       <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
                aria-label="Fuel" data-page-name="FUEL">
         <div class="card-body">
@@ -288,20 +293,21 @@
             </div>
           </div>
           <div class="fuel-mpg">
-            <div class="fuel-reading" data-slot="mpg-last30" data-note="unpublished">
+            <div class="fuel-reading fuel-mpg-last30" data-slot="mpg-last30" data-note="unpublished">
               <span class="fuel-label">LAST 30 S</span>
               <span class="fuel-value">--</span>
               <span class="fuel-note">not published</span>
             </div>
-            <div class="fuel-reading" data-slot="mpg-this-drive" data-note="unpublished">
+            <div class="fuel-reading fuel-mpg-this-drive" data-slot="mpg-this-drive" data-note="reason">
               <span class="fuel-label">THIS DRIVE</span>
               <span class="fuel-value">--</span>
-              <span class="fuel-note">not published</span>
+              <span class="fuel-flag" hidden></span>
+              <span class="fuel-note">not read</span>
             </div>
-            <div class="fuel-reading" data-slot="mpg-since-reset" data-note="unpublished">
+            <div class="fuel-reading fuel-mpg-since-reset" data-slot="mpg-since-reset" data-note="reason">
               <span class="fuel-label">SINCE RESET</span>
               <span class="fuel-value">--</span>
-              <span class="fuel-note">not published</span>
+              <span class="fuel-note">not read</span>
             </div>
           </div>
           <div class="fuel-trend">unavailable</div>

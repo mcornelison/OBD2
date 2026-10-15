@@ -1,0 +1,16 @@
+{
+  "description": "No drive window open and no fuel_since_reset row yet (a fresh install before the first drive): thisDrive null -> THIS DRIVE '--' + 'not started'; sinceReset null -> SINCE RESET '--' + 'never reset'. Built by the REAL buildFuelEconomyState.",
+  "now": "2026-10-20T15:03:10Z",
+  "inputs": {
+    "mafTrusted": true,
+    "snap": null,
+    "distanceKm": 3.0,
+    "distanceSinceTs": null,
+    "sinceReset": null
+  },
+  "fuel-economy": {
+    "thisDrive": null,
+    "sinceReset": null,
+    "ts": null
+  }
+}
