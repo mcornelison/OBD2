@@ -95,7 +95,13 @@
 
 [Unit]
 Description=Eclipse OBD carousel dashboard kiosk (Wayland)
-After=graphical.target eclipse-states-http.service
+# US-649-b: the display server is eclipse-compositor.service (labwc; chromium on
+# the Pi has no DRM platform of its own). BindsTo= stops this kiosk with it and
+# keeps it from starting without it; After= waits for its wayland-0 readiness
+# check. The old ordering after graphical.target is gone: it queued the kiosk
+# behind multi-user (18.73 s on boot 7c6aafaa) for nothing a Wayland client needs.
+BindsTo=eclipse-compositor.service
+After=eclipse-compositor.service eclipse-states-http.service
 Wants=eclipse-states-http.service
 
 [Service]

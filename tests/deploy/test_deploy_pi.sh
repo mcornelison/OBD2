@@ -147,6 +147,9 @@ cp "$REPO_ROOT/deploy/addresses.sh" "$TMP/deploy/addresses.sh"
 # US-866: step_os_trim refuses to run without its manifest (fail loud, even in
 # --dry-run), so the isolated copy carries it too. Test 9 removes it.
 cp "$REPO_ROOT/deploy/os-trim.manifest" "$TMP/deploy/os-trim.manifest"
+# US-649-b: step_install_compositor_unit refuses to run without deploy/labwc/rc.xml
+# (fail loud, even in --dry-run), so the isolated copy carries deploy/labwc too.
+cp -r "$REPO_ROOT/deploy/labwc" "$TMP/deploy/labwc"
 cat > "$TMP/deploy/deploy.conf" <<EOF
 PI_HOST=192.0.2.1
 PI_USER=nobody

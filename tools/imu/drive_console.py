@@ -14,6 +14,8 @@
 # ================================================================================
 # 2026-09-27    | Atlas          | Initial -- controller + Pi glue + server.
 #               | (ARCH-058)     |
+# 2026-10-15    | Rex (US-649-b) | takeKiosk() follows /etc/eclipse/display-mode:
+#               |                | wayland argv/env via kioskLaunch(); x11 unchanged.
 # ================================================================================
 ################################################################################
 """Run bypass -> master -> bypass from a button, with the PRODUCTION collector.
@@ -52,7 +54,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -62,7 +64,14 @@ from typing import Any
 from tools.imu.drive_phases import MECH_KEEPALIVE, MECH_ORIGINAL
 from tools.imu.mechanism_apply import ApplyResult, applyMechanism
 
-__all__ = ["CIO_2026_09_27_STEPS", "DriveConsole", "Step", "judgeAttach"]
+__all__ = [
+    "CIO_2026_09_27_STEPS",
+    "DriveConsole",
+    "Step",
+    "judgeAttach",
+    "kioskLaunch",
+    "readDisplayMode",
+]
 
 @dataclass(frozen=True)
 class Step:
@@ -304,6 +313,12 @@ COLLECTOR = "eclipse-obd"
 DASHBOARD = "eclipse-dashboard"
 WATCHDOG_TIMER = "eclipse-kiosk-watchdog.timer"
 PORT = int(os.environ.get("ARCH058_PORT", "9901"))
+#: US-649-b: the display-mode SSOT (absent => x11), shared with the deploy.
+DISPLAY_MODE_FILE = Path("/etc/eclipse/display-mode")
+DISPLAY_MODES = ("x11", "wayland")
+CHROMIUM = "/usr/bin/chromium-browser"
+#: The kiosk user's runtime dir (uid 1000); holds the wayland-0 socket.
+KIOSK_RUNTIME_DIR = "/run/user/1000"
 
 #: Seconds of ``states/imu`` sampled per verify -- EVIDENCE, not a gate.
 VERIFY_WINDOW_S = 20.0
@@ -375,6 +390,62 @@ def _stateAgeS(state: dict) -> float | None:  # pragma: no cover
     return (datetime.now(UTC) - ts).total_seconds()
 
 
+def readDisplayMode(path: Path = DISPLAY_MODE_FILE) -> str:
+    """The kiosk display mode from /etc/eclipse/display-mode (US-649-b).
+
+    The same SSOT the deploy and eclipse-display-mode use: an absent file is
+    ``x11``; anything but ``x11``/``wayland`` raises rather than guessing.
+
+    Args:
+        path: The mode file.
+
+    Returns:
+        ``"x11"`` or ``"wayland"``.
+
+    Raises:
+        ValueError: The file holds anything else.
+    """
+    if not path.exists():
+        return "x11"
+    mode = "".join(path.read_text(encoding="utf-8").split())
+    if mode not in DISPLAY_MODES:
+        raise ValueError(f"{path} holds {mode!r}, not x11|wayland -- refusing to guess")
+    return mode
+
+
+def kioskLaunch(mode: str, baseEnv: Mapping[str, str]) -> tuple[list[str], dict[str, str]]:
+    """The console's own chromium argv + env for a display mode (US-649-b).
+
+    x11 is the argv this console has always used, unchanged -- including the
+    X11-only ``--disable-gpu-rasterization`` stopgap (US-647). wayland draws on
+    the labwc compositor's socket instead and does NOT inherit that stopgap.
+
+    Args:
+        mode: ``"x11"`` or ``"wayland"``.
+        baseEnv: The environment to extend (normally ``os.environ``).
+
+    Returns:
+        ``(argv, env)`` for ``subprocess.Popen``.
+
+    Raises:
+        ValueError: ``mode`` is not x11|wayland.
+    """
+    tail = ["--noerrdialogs", "--disable-infobars", "--hide-scrollbars",
+            "--check-for-update-interval=31536000", "--password-store=basic",
+            "--user-data-dir=/tmp/arch058-chromium", f"http://127.0.0.1:{PORT}/"]
+    if mode == "x11":
+        argv = [CHROMIUM, "--kiosk", "--touch-events=enabled",
+                "--disable-gpu-rasterization", *tail]
+        return argv, dict(baseEnv, DISPLAY=":0", XDG_RUNTIME_DIR=KIOSK_RUNTIME_DIR)
+    if mode == "wayland":
+        argv = [CHROMIUM, "--kiosk", "--ozone-platform=wayland",
+                "--touch-events=enabled", *tail]
+        env = dict(baseEnv, WAYLAND_DISPLAY="wayland-0", XDG_RUNTIME_DIR=KIOSK_RUNTIME_DIR)
+        env.pop("DISPLAY", None)
+        return argv, env
+    raise ValueError(f"unknown display mode {mode!r}, not x11|wayland")
+
+
 class PiRig:  # pragma: no cover -- hardware glue
     """The real set / restart / verify, plus kiosk takeover and restore."""
 
@@ -430,16 +501,13 @@ class PiRig:  # pragma: no cover -- hardware glue
 
     # -- session ----------------------------------------------------------------
     def takeKiosk(self) -> None:
+        # Resolve the mode FIRST: a bad mode file must raise while the dashboard
+        # is still up, never after it has been stopped.
+        argv, env = kioskLaunch(readDisplayMode(), os.environ)
         _systemctl("stop", WATCHDOG_TIMER)
         _systemctl("stop", DASHBOARD)
-        env = dict(os.environ, DISPLAY=":0", XDG_RUNTIME_DIR="/run/user/1000")
         self._chromium = subprocess.Popen(
-            ["/usr/bin/chromium-browser", "--kiosk", "--touch-events=enabled",
-             "--disable-gpu-rasterization", "--noerrdialogs", "--disable-infobars",
-             "--hide-scrollbars", "--check-for-update-interval=31536000",
-             "--password-store=basic", "--user-data-dir=/tmp/arch058-chromium",
-             f"http://127.0.0.1:{PORT}/"],
-            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True)
         self._log({"event": "kiosk_taken", "utc": _utcNow(),
                    "chromiumPid": self._chromium.pid})
