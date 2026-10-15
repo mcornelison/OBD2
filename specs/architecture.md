@@ -7500,7 +7500,9 @@ keeping:
 **BL-027 CLOSED (fast-follow, 2026-08-01) — the brand face is an EMBEDDED
 asset, and the mirror rule extends to it.** The face is an OFL-licensed
 **Oswald** subset (A–Z / 0–9 / space / hyphen, weight 600, 2,896 B) inlined as a
-CSP-safe `@font-face` **base64 data-URI**. Four decisions worth keeping:
+CSP-safe `@font-face` **base64 data-URI**. *(The face itself was superseded by
+Michroma 400 in US-887-b, below; the four decisions still hold.)* Four
+decisions worth keeping:
 
 - **The mirror is load-bearing for the face, not just for values.** The
   `@font-face` is declared in **both** `tokens.css` and `dashboard.css`, because
@@ -7569,6 +7571,31 @@ changed, so every surface restyles through the existing bindings:
 - **Declared ahead of its consumers.** US-887-a lands values only; no selector
   binds `--fs-giant`, `--line`, `--accent` or `--radius` yet (US-887-c and
   US-888-a do), so later stories consume tokens rather than literals.
+
+#### V0.30 embedded face: Michroma replaces Oswald (US-887-b, Sprint 103 / V0.30.1)
+
+The OEM style's brand/label face is **Michroma** (OFL 1.1, spec §4.3). It
+**replaces** the BL-027 Oswald embed above, under the same rules (data-URI
+`@font-face` mirrored in both sheets, no CDN, licence vouched for deploy):
+
+- **The one embedded face.** Both sheets carry exactly ONE `@font-face`:
+  Michroma Regular **400**, a 38-glyph subset (A–Z / 0–9 / space / hyphen,
+  **2,464 B**) cut by Iris (`specs/assets/fonts/michroma/PROVENANCE.md`) and
+  copied byte-for-byte to `src/pi/ui/assets/fonts/michroma-brand.woff2`. The
+  payload test decodes the base64 against that file, and a second test pins its
+  md5 `b495a16b2b5cf974f15e52d62e914d14` to Iris's cut. `oswald-brand.woff2`
+  is deleted; the stack is `"Michroma", "Arial Narrow", system-ui, sans-serif`.
+- **Byte ceiling: total embedded-font bytes ≤ 2,896 B** (the retired Oswald
+  embed, Atlas). Michroma alone fits; Michroma + Oswald (5,364 B) would not —
+  which is why the swap is one story. Pinned by
+  `test_totalEmbeddedFontBytesStayUnderTheOswaldCeiling`.
+- **Single weight, no synthesis.** Every rule binding `--font-display`
+  (`.idle-wordmark`, `.card-title`, `#not-live-marker`) asks for **400** and sets
+  `font-synthesis: none`. The brand glyph check reads its subset from
+  `michroma-advances.json`, so it covers exactly what was cut.
+- **The licence went with the face.** `src/pi/ui/dashboard/OFL.txt` (deployed)
+  and `src/pi/ui/assets/fonts/OFL.txt` (source of record) are both Michroma's
+  `OFL-michroma.txt`; Oswald's licence left with Oswald.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

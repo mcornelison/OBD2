@@ -445,10 +445,13 @@ def test_fontDisplayIsTheLockedBrandStack_notAGenericSans():
     checks the stack lead against the EMBEDDED family rather than a hardcoded
     name -- so the next face swap cannot leave the stack and the payload
     disagreeing.
+
+    RE-AIMED again by US-887-b (2026-10-15): the V0.30 OEM style replaces
+    Oswald with the OFL Michroma subset (spec s4.3). Same invariant.
     """
     value = _tokenValue(_read(_TOKENS), "font-display")
-    assert "OSWALD" in value
-    assert value.index("OSWALD") < value.index("SANS-SERIF")
+    assert "MICHROMA" in value
+    assert value.index("MICHROMA") < value.index("SANS-SERIF")
 
 
 def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
