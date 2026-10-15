@@ -2290,6 +2290,50 @@ is this one command + its reboot; SSH is the recovery path (CIO 2026-10-14).
   `$ECLIPSE_DISPLAY_MODE` (US-552) pin the HDMI *resolution* in `cmdline.txt`.
   The mode file and `eclipse-display-mode` never read or set that variable.
 
+#### The Wayland compositor: `eclipse-compositor.service` (US-649-b)
+
+Chromium on the Pi has **no DRM Ozone platform** (Atlas measured chromium
+151.0.7922.137: 70 `ozone/platform/wayland` paths, zero `platform/drm`), so the
+Wayland kiosk cannot draw on the panel by itself. `deploy/eclipse-compositor.service`
+runs **labwc** (0.9.8) in the display-manager slot lightdm holds in x11 mode
+(`[Install] Alias=display-manager.service`).
+
+- **Session:** `User=mcornelison`, `PAMName=login` on `/dev/tty7` (TTYReset,
+  TTYVHangup, `StandardInput=tty-fail`, `UtmpIdentifier=tty7`) -- a real logind
+  seat0 session, which creates `/run/user/1000`. User and uid are LITERAL, like
+  every `deploy/*.service` (deploy-pi.sh substitutes no placeholders there).
+- **Ordering:** `After=systemd-user-sessions.service plymouth-start.service
+  plymouth-quit.service`; `Wants=` + `After=` `dev-dri-card0.device
+  dev-dri-renderD128.device`.
+- **Plymouth hand-off** (lightdm's shape): `Conflicts=plymouth-quit.service` and
+  `ExecStartPre=-/usr/bin/plymouth quit --retain-splash`, so the last boot-splash
+  frame stays on screen until labwc draws.
+- **Readiness:** an `ExecStartPost` polls for `/run/user/1000/wayland-0` for up to
+  5 s and exits non-zero if it never appears -- the unit fails LOUD rather than
+  letting chromium start against a missing socket.
+- **Isolated config:** `ExecStart=/usr/bin/labwc -C /etc/eclipse/labwc` reads only
+  `deploy/labwc/` as installed there -- `rc.xml` (no root menu, no window keybinds,
+  no decorations; one inert keybind and one Client-context mousebind exist only
+  because labwc loads its stock bindings when either list is empty) and an EMPTY
+  `autostart`. Never `/etc/xdg/labwc` or `~/.config/labwc`.
+- **Chromium binds to it:** the three `.wayland` units (dashboard, splash-boot,
+  splash-grace) carry `BindsTo=` + `After=eclipse-compositor.service` and no
+  longer order after `graphical.target` (that queued the kiosk behind multi-user,
+  18.73 s on boot 7c6aafaa). splash-boot keeps `WantedBy=graphical.target` only as
+  its pull-in. The `.x11` units are unchanged.
+- **Deploy:** `step_install_compositor_unit` (before the kiosk-unit step) installs
+  the unit and `/etc/eclipse/labwc/` sync-if-changed and **enables nothing** --
+  `eclipse-display-mode wayland` is the only thing that enables it. It FAILS the
+  deploy (exit 12, ERROR naming the path) if `deploy/labwc/rc.xml` is absent. Both
+  sync paths ship the directory: rsync `--include=deploy/labwc/` +
+  `--include=deploy/labwc/***` (a lone directory include ships it empty), tar
+  `./deploy/labwc`.
+- `tools/imu/drive_console.py` `takeKiosk()` follows the same mode file: wayland ->
+  `WAYLAND_DISPLAY=wayland-0` + `--ozone-platform=wayland`, without the X11-only
+  GPU-raster stopgap; x11 -> its argv unchanged.
+- **ADR ARCH-016** is amended for the compositor by Atlas; the ADR itself is not
+  edited by Ralph.
+
 ### Display Layout (480x320)
 
 ```

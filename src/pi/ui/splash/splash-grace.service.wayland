@@ -63,7 +63,11 @@
 
 [Unit]
 Description=Grace-period shutdown splash (Wayland)
-After=eclipse-states-http.service
+# US-649-b: the display server is eclipse-compositor.service (labwc). BindsTo= +
+# After= it: with no compositor there is nothing to draw on, and starting chromium
+# against a missing wayland-0 socket only produces a crash in the journal.
+BindsTo=eclipse-compositor.service
+After=eclipse-compositor.service eclipse-states-http.service
 Wants=eclipse-states-http.service
 
 [Service]

@@ -2,7 +2,8 @@
 # File:    splash-boot.service.wayland  (one of two variants; install.sh picks)
 # Purpose: F-103 status-aware boot splash, Bookworm/Wayland. Chromium kiosk that
 #          renders the boot splash + polls the localhost state server. D-3 fix:
-#          ordered AFTER the display server (After=graphical.target, not Before),
+#          ordered AFTER the display server (since US-649-b that is
+#          eclipse-compositor.service, not graphical.target; never Before),
 #          Wayland-native (--ozone-platform=wayland), JS-driven exit (no pkill).
 # Author:  Ralph Agent (Rex)  (D-3 corrected unit per spec §7)
 # Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
@@ -49,8 +50,14 @@
 
 [Unit]
 Description=Animated boot splash (status-aware, Wayland)
-After=graphical.target eclipse-states-http.service eclipse-boot-state.service
-Wants=graphical.target eclipse-states-http.service eclipse-boot-state.service
+# US-649-b: the display server is eclipse-compositor.service (labwc). BindsTo= +
+# After= it, which waits for its wayland-0 readiness check. The old ordering after
+# graphical.target is gone (it queued the splash behind multi-user, 18.73 s on
+# boot 7c6aafaa).
+# graphical.target stays ONLY as the pull-in, via WantedBy= below.
+BindsTo=eclipse-compositor.service
+After=eclipse-compositor.service eclipse-states-http.service eclipse-boot-state.service
+Wants=eclipse-states-http.service eclipse-boot-state.service
 # A-1 hand-off (US-399): at HEALTHY_YIELD the splash JS calls window.close(),
 # this Type=simple unit exits 0, and systemd starts the carousel dashboard. A
 # DEGRADED boot keeps the splash up (no window.close) -> no dashboard hand-off.

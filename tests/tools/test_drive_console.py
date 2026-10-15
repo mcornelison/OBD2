@@ -15,6 +15,8 @@
 # 2026-09-27    | Atlas          | Reworked to the CIO's own 24-step sequence:
 #               | (ARCH-058)     | BEGIN / START+STOP A / START+STOP B; marker
 #               |                | presses are instant, switch presses verify.
+# 2026-10-15    | Rex (US-649-b) | Kiosk takeover follows /etc/eclipse/display-mode
+#               |                | (x11 argv frozen; wayland argv/env pinned).
 # ================================================================================
 ################################################################################
 """What the driver's buttons must guarantee, tested before the code.
@@ -331,3 +333,73 @@ def test_mainRestoresTheCar_onAnyException() -> None:
     assert "finally:" in src and "console.end()" in src.split("finally:")[-1], (
         "main() must call console.end() in a finally -- a crash after the kiosk "
         "takeover otherwise leaves the dashboard and watchdog stopped")
+
+
+# ============ KIOSK TAKEOVER FOLLOWS THE DISPLAY MODE (US-649-b) ==============
+#
+# takeKiosk() launches its own chromium. Under the labwc compositor an X11 argv
+# has no display to draw on, so it follows /etc/eclipse/display-mode exactly as
+# the deploy does: absent -> x11, x11 -> today's argv byte-for-byte, wayland ->
+# the Wayland socket + ozone and NOT the X11-only GPU-raster stopgap.
+
+from tools.imu.drive_console import PORT, kioskLaunch, readDisplayMode  # noqa: E402
+
+#: takeKiosk()'s X11 argv as it stood before US-649-b. Frozen: x11 must not move.
+_X11_ARGV_TODAY = [
+    "/usr/bin/chromium-browser", "--kiosk", "--touch-events=enabled",
+    "--disable-gpu-rasterization", "--noerrdialogs", "--disable-infobars",
+    "--hide-scrollbars", "--check-for-update-interval=31536000",
+    "--password-store=basic", "--user-data-dir=/tmp/arch058-chromium",
+    f"http://127.0.0.1:{PORT}/",
+]
+
+
+def test_kioskLaunch_x11_isTodaysArgvAndEnvUnchanged() -> None:
+    argv, env = kioskLaunch("x11", {"HOME": "/home/mcornelison"})
+    assert argv == _X11_ARGV_TODAY
+    assert env == {"HOME": "/home/mcornelison", "DISPLAY": ":0",
+                   "XDG_RUNTIME_DIR": "/run/user/1000"}
+
+
+def test_kioskLaunch_wayland_usesTheSocketAndOzone_notTheX11Stopgap() -> None:
+    argv, env = kioskLaunch("wayland", {"HOME": "/home/mcornelison", "DISPLAY": ":0"})
+    assert "--ozone-platform=wayland" in argv
+    assert "--disable-gpu-rasterization" not in argv
+    assert env["WAYLAND_DISPLAY"] == "wayland-0"
+    assert env["XDG_RUNTIME_DIR"] == "/run/user/1000"
+    assert "DISPLAY" not in env, "an inherited X DISPLAY must not reach a Wayland kiosk"
+    # Everything else is the x11 argv: only the stopgap goes, only ozone comes.
+    assert [a for a in argv if a != "--ozone-platform=wayland"] == [
+        a for a in _X11_ARGV_TODAY if a != "--disable-gpu-rasterization"]
+
+
+def test_kioskLaunch_anUnknownMode_raises() -> None:
+    with pytest.raises(ValueError):
+        kioskLaunch("drm", {})
+
+
+def test_readDisplayMode_absentFile_isX11(tmp_path) -> None:
+    assert readDisplayMode(tmp_path / "display-mode") == "x11"
+
+
+@pytest.mark.parametrize("content, mode", [("x11\n", "x11"), ("wayland\n", "wayland"),
+                                           ("  wayland  ", "wayland")])
+def test_readDisplayMode_readsTheFile(tmp_path, content: str, mode: str) -> None:
+    f = tmp_path / "display-mode"
+    f.write_text(content, encoding="utf-8")
+    assert readDisplayMode(f) == mode
+
+
+def test_readDisplayMode_garbage_raises_ratherThanDefaulting(tmp_path) -> None:
+    f = tmp_path / "display-mode"
+    f.write_text("wayland-please\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="wayland-please"):
+        readDisplayMode(f)
+
+
+def test_takeKiosk_resolvesTheModeBeforeStoppingAnything() -> None:
+    """A bad mode file must raise BEFORE the dashboard is stopped, or the car
+    is left with no kiosk at all."""
+    src = inspect.getsource(_dc.PiRig.takeKiosk)
+    assert "kioskLaunch(readDisplayMode()" in src
+    assert src.index("kioskLaunch(") < src.index("_systemctl(")

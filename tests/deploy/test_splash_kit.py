@@ -21,6 +21,9 @@
 # 2026-08-29    | Rex (US-604) | Keyring guards: the four splash kiosk units must
 #               |              | pin --password-store=basic like the dashboard
 #               |              | units, without losing the US-549 stderr flag.
+# 2026-10-15    | Rex (US-649-b) | INTENDED ASSERTION CHANGE: the .wayland boot
+#               |              | variant orders After=eclipse-compositor.service,
+#               |              | not graphical.target; .x11 unchanged.
 # ================================================================================
 ################################################################################
 
@@ -155,11 +158,21 @@ def test_waylandVariants_referenceWayland_s3():
 
 
 def test_bootVariants_orderAfterGraphical_d3():
-    """D-3: variants defer until the display server is up (After=, not Before=)."""
-    for variant in ("splash-boot.service.wayland", "splash-boot.service.x11"):
-        unit = _read(variant)
-        assert "After=graphical.target" in unit
-        assert "Before=graphical.target" not in unit
+    """D-3: variants defer until the display server is up (After=, not Before=).
+
+    US-649-b INTENDED ASSERTION CHANGE (.wayland only): the display server is
+    eclipse-compositor.service, so the wayland variant orders After= IT and no
+    longer After=graphical.target (that queued the kiosk behind multi-user,
+    18.73 s on boot 7c6aafaa). The .x11 assertion is unchanged.
+    """
+    wayland = _read("splash-boot.service.wayland")
+    assert "After=eclipse-compositor.service" in wayland
+    assert "After=graphical.target" not in wayland
+    assert "Before=graphical.target" not in wayland
+
+    x11 = _read("splash-boot.service.x11")
+    assert "After=graphical.target" in x11
+    assert "Before=graphical.target" not in x11
 
 
 # ---------------------------------------------------------------------------

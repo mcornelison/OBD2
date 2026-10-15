@@ -227,6 +227,8 @@ sync_tree() {
             --include=deploy/os-trim.manifest \
             --include=deploy/polkit-rules/ \
             --include=deploy/polkit-rules/*.rules \
+            --include=deploy/labwc/ \
+            --include=deploy/labwc/*** \
             --exclude=deploy/obd-server.service \
             --exclude=deploy/obd2-server.service \
             --exclude=deploy/server-analytics-batch.* \
@@ -249,6 +251,8 @@ sync_tree() {
         # US-866: ./deploy already carries os-trim.manifest; it is ALSO named
         # explicitly so narrowing ./deploy can never silently drop it (os-trim.sh
         # fails the deploy without it). The duplicate archive entry is harmless.
+        # US-649-b: ./deploy/labwc is named for the same reason -- shipped empty or
+        # not at all, labwc would run its default root menu and keybinds.
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude="__pycache__" \
             --exclude="*.pyc" \
@@ -263,7 +267,7 @@ sync_tree() {
             -f - \
             ./config.json ./requirements.txt ./requirements-pi.txt ./.deploy-version \
             ./src/__init__.py ./src/pi ./src/common ./scripts \
-            ./deploy/os-trim.manifest ./deploy ) | \
+            ./deploy/os-trim.manifest ./deploy/labwc ./deploy ) | \
           ssh -p "${PI_PORT}" "${PI_USER}@${PI_HOST}" "
             set -e
             mkdir -p '${PI_PATH}'
@@ -2028,6 +2032,76 @@ step_install_dashboard_assets() {
     "
 }
 
+step_install_compositor_unit() {
+    # US-649-b (F-139): install eclipse-compositor.service (labwc in the
+    # display-manager slot -- chromium on the Pi has no DRM platform, so the
+    # Wayland kiosk needs a compositor) and its isolated labwc config
+    # deploy/labwc/ -> /etc/eclipse/labwc/ (the unit runs `labwc -C` on it).
+    #
+    # INSTALLS, NEVER ENABLES.  `eclipse-display-mode wayland` is the only thing
+    # that enables the compositor (it pre-flights `systemctl cat` on it, so this
+    # step must run before anyone can switch).  The car stays on whatever the mode
+    # file says; a changed unit or config takes effect at the next compositor
+    # start, so nothing is restarted under a live kiosk.  Same sync-if-changed
+    # posture as the other unit installers: cmp -s, daemon-reload only on change.
+    #
+    # FAIL LOUD (Atlas G2) on a missing deploy/labwc/rc.xml, here on the
+    # workstation AND on the Pi after the sync: without it labwc runs its stock
+    # root menu and keybinds over the kiosk.  Never "nothing to install".
+    echo "--- Step: Installing eclipse-compositor unit + labwc config (US-649-b, F-139) ---"
+    local rcXml="${REPO_ROOT}/deploy/labwc/rc.xml"
+    if [ ! -f "$rcXml" ]; then
+        echo "ERROR: labwc config not found: ${rcXml} -- refusing to deploy without it (labwc would run its default root menu and keybinds)." >&2
+        exit 12
+    fi
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo install -d -m 0755 /etc/eclipse/labwc"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/labwc/{rc.xml,autostart} /etc/eclipse/labwc/ || install -m 0644"
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-compositor.service /etc/systemd/system/eclipse-compositor.service || (install + daemon-reload)"
+        echo "DRY-RUN note: the compositor is NOT enabled here -- only 'sudo eclipse-display-mode wayland' enables it"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC_DIR='${PI_PATH}/deploy/labwc'
+        DST_DIR='/etc/eclipse/labwc'
+        SRC_SVC='${PI_PATH}/deploy/eclipse-compositor.service'
+        DST_SVC='/etc/systemd/system/eclipse-compositor.service'
+
+        if [ ! -f \"\$SRC_DIR/rc.xml\" ]; then
+            echo \"ERROR: labwc config not found on the Pi: \$SRC_DIR/rc.xml -- the sync did not ship deploy/labwc.\" >&2
+            exit 12
+        fi
+        if [ ! -f \"\$SRC_SVC\" ]; then
+            echo \"ERROR: compositor unit not found on the Pi: \$SRC_SVC\" >&2
+            exit 12
+        fi
+
+        sudo install -d -m 0755 \"\$DST_DIR\"
+        for f in rc.xml autostart; do
+            if [ ! -f \"\$SRC_DIR/\$f\" ]; then
+                echo \"ERROR: labwc config not found on the Pi: \$SRC_DIR/\$f\" >&2
+                exit 12
+            fi
+            if sudo test -f \"\$DST_DIR/\$f\" && sudo cmp -s \"\$SRC_DIR/\$f\" \"\$DST_DIR/\$f\"; then
+                echo \"labwc \$f already current.\"
+            else
+                sudo install -m 0644 \"\$SRC_DIR/\$f\" \"\$DST_DIR/\$f\"
+                echo \"labwc \$f installed -> \$DST_DIR/\$f\"
+            fi
+        done
+
+        if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
+            echo 'eclipse-compositor.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC_SVC\" \"\$DST_SVC\"
+            sudo systemctl daemon-reload
+            echo 'eclipse-compositor.service installed (daemon-reload complete).'
+        fi
+        echo \"eclipse-compositor: installed, enabled=\$(systemctl is-enabled eclipse-compositor.service 2>/dev/null || true) -- only 'sudo eclipse-display-mode wayland' enables it.\"
+    "
+}
+
 kiosk_mode_resolver() {
     # US-649-a: print the shell that sets SESS from /etc/eclipse/display-mode --
     # the ONLY authority for x11 vs wayland (absent => x11).  Anything else leaves
@@ -2788,6 +2862,10 @@ step_install_splash_assets
 # serves at /dashboard.html. The kiosk UNIT is installed by the kit's install.sh.
 step_install_dashboard_assets
 step_install_state_server_units
+# US-649-b: the labwc compositor unit + its config (installed, NEVER enabled --
+# only eclipse-display-mode wayland enables it). Before the kiosk units: their
+# .wayland variants BindsTo= it. Fails the deploy on a missing deploy/labwc/rc.xml.
+step_install_compositor_unit
 # Atlas 2026-07-01 BUG-FIX: install the chromium KIOSK UNITS (splash + dashboard).
 # The asset + backend steps above only install what the state server SERVES; without
 # this the kiosk is never installed and the 3.5" screen stays blank (pygame sunset).

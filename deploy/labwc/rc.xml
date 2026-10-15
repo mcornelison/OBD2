@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  File:    deploy/labwc/rc.xml
+  Purpose: US-649-b (F-139): labwc config for the kiosk compositor
+           (eclipse-compositor.service). Installed to /etc/eclipse/labwc/ by
+           deploy-pi.sh; `labwc -C /etc/eclipse/labwc` reads only that dir.
+  Author:  Rex (Ralph Agent)
+  Created: 2026-10-15 - Sprint 102 US-649-b
+
+  A car kiosk: no root menu, no window keybinds, no decorations.
+
+  WHY THERE IS ONE KEYBIND AND ONE MOUSEBIND. labwc loads its DEFAULT keybinds
+  (window switching, close, a terminal launcher) when rc.xml defines NO keybind,
+  and its DEFAULT mouse binds (the right-click root menu on the desktop) when it
+  defines NO mousebind. An empty section is therefore the opposite of "none".
+  - The keybind runs /bin/true: it does nothing, and there is no keyboard in the
+    car, but it stops the defaults loading.
+  - The mousebind focuses + raises the window a click or tap lands on. Nothing
+    is bound on the desktop (Root context), so there is no root menu to open.
+  Never add <default/> under keyboard or mouse: it loads the stock bindings.
+-->
+<labwc_config>
+  <core>
+    <!-- Prefer client-side decorations; chromium in kiosk draws none. -->
+    <decoration>client</decoration>
+    <gap>0</gap>
+  </core>
+
+  <windowRules>
+    <!-- No server-side title bar or border on any window. -->
+    <windowRule identifier="*" serverDecoration="no" />
+  </windowRules>
+
+  <keyboard>
+    <keybind key="W-F12">
+      <action name="Execute" command="true" />
+    </keybind>
+  </keyboard>
+
+  <mouse>
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus" />
+        <action name="Raise" />
+      </mousebind>
+    </context>
+  </mouse>
+</labwc_config>

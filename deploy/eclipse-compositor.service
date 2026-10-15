@@ -1,0 +1,73 @@
+# ==============================================================================
+# File:    eclipse-compositor.service
+# Purpose: US-649-b (F-139) -- the labwc Wayland compositor that hosts the
+#          chromium kiosk and both splashes in wayland display mode. It sits in
+#          the display-manager slot lightdm holds in x11 mode.
+# Author:  Rex (Ralph Agent)
+# Created: 2026-10-15 -- Sprint 102 US-649-b
+#
+# Why a compositor at all
+# -----------------------
+# Chromium on the Pi has NO DRM Ozone platform (Atlas measured: chromium
+# 151.0.7922.137 embeds ozone/platform/wayland, 70 paths, and ZERO platform/drm),
+# so it cannot draw on the panel by itself. labwc 0.9.8 is installed; this unit
+# runs it as the kiosk user's login session on tty7 and the three chromium
+# .wayland units BindsTo= + After= it. Atlas ruling:
+# pm/inbox/2026-10-14-from-atlas-RULED-S102-DRM-is-a-labwc-kiosk-chromium-has-no-drm-ozone-9-asks-answered.md
+#
+# NOT ENABLED BY THE DEPLOY. deploy-pi.sh installs this file and the labwc config
+# and enables nothing. `eclipse-display-mode wayland` is the only thing that
+# enables it (disabling lightdm first -- both claim display-manager.service via
+# Alias=); `eclipse-display-mode x11` reverses it. The car stays on X11 until then.
+#
+# Plymouth hand-off -- the same shape as lightdm's (Atlas measured: lightdm is
+#   After=plymouth-quit + Conflicts=plymouth-quit). Starting this unit stops
+#   plymouth-quit, and ExecStartPre tells plymouth to quit KEEPING the last
+#   splash frame on screen until labwc draws, so there is no black flash or
+#   text console between the boot splash and the kiosk. The leading `-` keeps a
+#   plymouth that is absent or already gone from failing the compositor.
+#
+# Login session -- PAMName=login + the TTY lines make this a real logind seat0
+#   session on tty7, which is what creates /run/user/1000 (XDG_RUNTIME_DIR) and
+#   grants the DRM/input device access labwc needs. The two dev-dri device
+#   units are wanted and ordered so labwc never starts before the GPU nodes.
+#
+# Literal user and uid (Atlas G1) -- like every deploy/*.service, User= and the
+#   /run/user/1000 path are LITERAL. deploy-pi.sh substitutes no placeholders in
+#   deploy/ units, so a placeholder token here would reach systemd verbatim.
+#
+# Readiness -- ExecStartPost polls for the wayland-0 socket for up to 5 s
+#   (50 x 0.1 s) and exits non-zero if it never appears. Until it succeeds the
+#   unit is not active, so the chromium units ordered After= it wait; if it
+#   fails the unit fails LOUD and BindsTo= keeps chromium from ever starting
+#   against a missing socket. `$$` is systemd's escape for a literal `$`.
+#
+# Isolated config -- `labwc -C /etc/eclipse/labwc` reads ONLY that directory
+#   (deploy/labwc/: rc.xml with no root menu, no window keybinds, no
+#   decorations, and an EMPTY autostart), never /etc/xdg/labwc or ~/.config/labwc.
+# ==============================================================================
+
+[Unit]
+Description=Eclipse kiosk Wayland compositor (labwc)
+After=systemd-user-sessions.service plymouth-start.service plymouth-quit.service
+Conflicts=plymouth-quit.service
+Wants=dev-dri-card0.device dev-dri-renderD128.device
+After=dev-dri-card0.device dev-dri-renderD128.device
+
+[Service]
+Type=simple
+User=mcornelison
+PAMName=login
+TTYPath=/dev/tty7
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty-fail
+UtmpIdentifier=tty7
+Environment=XDG_SESSION_TYPE=wayland
+ExecStartPre=-/usr/bin/plymouth quit --retain-splash
+ExecStart=/usr/bin/labwc -C /etc/eclipse/labwc
+ExecStartPost=/bin/sh -c 'i=0; while [ "$$i" -lt 50 ]; do [ -S /run/user/1000/wayland-0 ] && exit 0; sleep 0.1; i=$$((i+1)); done; echo "eclipse-compositor: /run/user/1000/wayland-0 never appeared within 5 s" >&2; exit 1'
+Restart=on-failure
+
+[Install]
+Alias=display-manager.service
