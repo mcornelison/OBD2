@@ -19,6 +19,8 @@
 #                                carries band or noBandReason; params.RPM.scale.
 # 2026-10-14    | Rex (US-881-b) | engineRunningAt(reading): the band producer's
 #                                engine gate, under the lock, same time domain.
+# 2026-10-15    | Rex (US-888-b) | observeReading stores the canonical short unit
+#                                (pi.obdii.units); obd.db keeps the captured one.
 # ================================================================================
 ################################################################################
 
@@ -62,6 +64,7 @@ from pi.obdii.band_producer import (
     BandProducer,
     BandSettings,
 )
+from pi.obdii.units import canonicalUnit
 
 __all__ = [
     "DEFAULT_OBD_LIVE_STALE_S",
@@ -91,7 +94,8 @@ class ObdLiveObservation:
 
     Attributes:
         value: The reading's value, as realtime_data stores it.
-        unit: Its unit, as the reading carried it.
+        unit: Its canonical short unit (``pi.obdii.units``, US-888-b); a
+            string with no canonical form is kept as the reading carried it.
         ts: Canonical UTC event time of the reading.
         band: ``{band, since, reason}`` at this reading, or None.
         noBandReason: The band producer's code when ``band`` is None.
@@ -154,7 +158,7 @@ class ObdLiveTracker:
                 return
             self._latest[name] = ObdLiveObservation(
                 value=value,
-                unit=getattr(reading, "unit", None),
+                unit=canonicalUnit(getattr(reading, "unit", None)),
                 ts=toCanonicalIso(eventUtc),
             )
 

@@ -5885,6 +5885,19 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
   datetime. It is converted with `localNaiveToCanonicalIso(reading.timestamp, config)`,
   the same converter the bus and the row writer use. The write time is never
   substituted: a reading with no timestamp, or with a null value, is not recorded.
+- **`unit` is the canonical short unit** (US-888-b, Atlas units ruling (a) 2026-10-15).
+  python-obd reports pint names (`degree_Celsius`, `kilometer_per_hour`, `volt`,
+  `revolutions_per_minute`, `percent`, `degree`, `gps`, `count`, MEASURED on obd2db).
+  `ObdLiveTracker.observeReading` maps them ONCE, through
+  `src/pi/obdii/units.py` `CANONICAL_UNITS`, to `C`, `km/h`, `V`, `rpm`, `%`, `deg`,
+  `g/s`, `count` before the observation is stored. Every `states/` consumer of the
+  tracker therefore reads canonical units, and no page carries an alias list. A string
+  with no canonical form passes through UNCHANGED and logs one WARN per distinct
+  string. The status PIDs carry a label there (FUEL_SYSTEM_STATUS `CL`/`OL-drive`,
+  MIL_ON `ON`/`OFF`); they are read by value, never by unit. **The database keeps the
+  captured units:** `obd.db` `realtime_data`, and the server's copy of it, store what
+  python-obd returned. `states/` is the display contract; stored history does not
+  change vocabulary mid-stream.
 - **Stale** (Atlas ruling 2026-10-13 on Iris B-3): at each emit, a PID is stale when
   `utcNow - ts > pi.display.stale.obdLiveSec`. The validator default is 5 s, which is
   1.7x the measured per-PID p99 gap. `value` always means CURRENT. A PID has one of
@@ -5932,7 +5945,9 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
   `stale`, `pid-absent`, `replay`, and from US-875 `engine-off-battery`,
   `coolant-amber`, `coolant-red`). `tests/pi/obdii/test_obd_live_emitter.py` feeds
   every case, with the history its dwell needs, through a real `ObdLiveTracker` and
-  `buildObdLiveState` and asserts equality.
+  `buildObdLiveState` and asserts equality. Each unit is fed as its python-obd name
+  (the inverse of `CANONICAL_UNITS`), so the fixture is what the car's readings
+  produce, not a copy of the target vocabulary (US-888-b).
 
 #### `system-status.runMode` and the not-live marker (US-901-b)
 

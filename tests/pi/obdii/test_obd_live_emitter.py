@@ -17,6 +17,10 @@
 # 2026-10-13    | Rex (US-874) | Initial -- obd-live producer and fixture.
 # 2026-10-14    | Rex (US-875) | Bands: noBandReason beside a null band, RPM
 #                                scale, fixture cases rebuilt through the tracker.
+# 2026-10-15    | Rex (US-888-b) | Canonical units: measured python-obd names in,
+#                                C/km/h/V/rpm out. PIN CHANGE: the fixture
+#                                builder-equality test now feeds each fixture
+#                                unit as its python-obd name (inverse map).
 # ================================================================================
 ################################################################################
 
@@ -25,6 +29,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,8 +38,10 @@ from typing import Any
 import pytest
 
 from pi.obdii import obd_live_emitter as ole
+from pi.obdii import units
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
 from pi.obdii.orchestrator.event_router import EventRouterMixin
+from tests.pi.obdii.test_units import MEASURED_TO_CANONICAL
 
 _ZONE_CONFIG = {"pi": {"time": {"localZone": "America/Chicago"}}}
 _PID_KEYS = {"value", "unit", "ts", "stale", "band", "last"}
@@ -251,6 +258,59 @@ class TestObdLiveTracker:
 
         obs = tracker.snapshot()["RPM"]
         assert (obs.value, obs.unit, obs.ts) == (812.0, "rpm", "2026-10-13T17:00:00Z")
+
+    def test_observeReading_coolantInDegreeCelsius_publishesC(self, tmp_path) -> None:
+        """
+        Given: COOLANT_TEMP 88 carrying python-obd's MEASURED 'degree_Celsius'
+        When: observed and built
+        Then: params.COOLANT_TEMP.unit is 'C' (US-888-b)
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        tracker.observeReading(
+            _Reading("COOLANT_TEMP", 88, datetime(2026, 10, 13, 12, 0, 0), "degree_Celsius")
+        )
+        built = ole.buildObdLiveState(
+            tracker.snapshot(),
+            nowUtc=_utc("2026-10-13T17:00:01Z"),
+            staleSec=ole.DEFAULT_OBD_LIVE_STALE_S,
+            dataSource="real",
+        )
+
+        assert built["params"]["COOLANT_TEMP"]["unit"] == "C"
+
+    @pytest.mark.parametrize(("raw", "canonical"), MEASURED_TO_CANONICAL)
+    def test_observeReading_measuredUnit_isStoredCanonical(self, raw: str, canonical: str) -> None:
+        """
+        Given: a reading carrying a MEASURED python-obd unit name
+        When: observed
+        Then: the stored observation holds the canonical short unit
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        tracker.observeReading(_Reading("PID", 1.0, datetime(2026, 10, 13, 12, 0, 0), raw))
+
+        assert tracker.snapshot()["PID"].unit == canonical
+
+    def test_observeReading_statusLabels_unchanged_andWarnOncePerString(self, caplog) -> None:
+        """
+        Given: FUEL_SYSTEM_STATUS 'OL-drive' and MIL_ON 'ON', each read three times
+        When: observed
+        Then: units unchanged; one WARN per distinct string, not per reading
+        """
+        units._warnedUnits.clear()
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        with caplog.at_level(logging.WARNING, logger=units.logger.name):
+            for second in range(3):
+                at = datetime(2026, 10, 13, 12, 0, second)
+                tracker.observeReading(_Reading("FUEL_SYSTEM_STATUS", 4, at, "OL-drive"))
+                tracker.observeReading(_Reading("MIL_ON", 1, at, "ON"))
+
+        snap = tracker.snapshot()
+        assert (snap["FUEL_SYSTEM_STATUS"].unit, snap["MIL_ON"].unit) == ("OL-drive", "ON")
+        warned = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warned) == 2
 
     def test_observeReading_keepsOnlyTheLatestPerPid(self) -> None:
         """
@@ -654,8 +714,10 @@ class TestTheContractFixture:
         Given: one named case, a complete obd-live payload
         When: its history and its readings (fresh value or last.value, unit, ts)
               are fed in event order through a real ObdLiveTracker (default
-              bands) and built at the case's ts with the default window
-        Then: the builder's output -- bands included -- equals the case exactly
+              bands) and built at the case's ts with the default window -- each
+              unit fed as the python-obd name the car reports (US-888-b)
+        Then: the builder's output -- bands and canonical units included --
+              equals the case exactly
         """
         payload = self._load()[case]
         assert set(payload) == _TOP_LEVEL_KEYS
@@ -666,9 +728,12 @@ class TestTheContractFixture:
             value = pid["last"]["value"] if pid["stale"] else pid["value"]
             readings.append((name, value, pid["unit"], pid["ts"]))
 
+        # US-888-b: feed what python-obd returns, not the target vocabulary.
+        pythonObdName = {canonical: raw for raw, canonical in units.CANONICAL_UNITS.items()}
         tracker = ole.ObdLiveTracker({})
         for name, value, unit, ts in sorted(readings, key=lambda r: r[3]):
-            tracker.observeReading(_Reading(name, value, _utc(ts), unit))
+            assert unit in pythonObdName, f"fixture unit {unit!r} has no python-obd name"
+            tracker.observeReading(_Reading(name, value, _utc(ts), pythonObdName[unit]))
 
         built = ole.buildObdLiveState(
             tracker.snapshot(),

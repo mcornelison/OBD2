@@ -121,6 +121,8 @@ FIXTURE_NAMES = [
     "ecu-silent-stale",
     "coolant-stale-last-red",
     "value-null-with-reason",
+    # US-888-b (Iris G-1): the builder's output for python-obd's measured units.
+    "driving-published-units",
 ]
 
 
