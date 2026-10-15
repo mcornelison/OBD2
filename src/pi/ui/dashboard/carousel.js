@@ -3933,8 +3933,8 @@
   // states/fuel-economy ONLY -- the provider integrates distance and fuel and
   // divides; the page never touches MAF or speed. Every figure carries the
   // approximately sign (the estimate assumes stoichiometric burn); THIS DRIVE
-  // and SINCE RESET show ONE decimal (spec s3 mockup). LAST 30 S has no
-  // provider field yet (US-890-e), so it says "not published" and reads nothing.
+  // and SINCE RESET show ONE decimal (spec s3 mockup). LAST 30 S (US-890-e)
+  // reads fuel-economy.recent, the provider's ratio of sums over its window.
   var FUEL_MPG_APPROX = "≈";
   // s4.6: the ONE code -> text table for the MPG row. Every text is <= 16
   // characters (the row's fit rule); a code not in it shows raw, never blank.
@@ -3945,6 +3945,7 @@
     gaps: "too many gaps",
     too_short: "too short yet",
     no_fuel: "no fuel counted",
+    too_few_samples: "too few samples",
   };
   var FUEL_MPG_NOT_STARTED = "not started";
   var FUEL_MPG_NEVER_RESET = "never reset";
@@ -3957,6 +3958,12 @@
   // loop is BOTH enrichment and decel fuel-cut, so the flag says only that --
   // never which way the estimate leans.
   var FUEL_MPG_OPEN_LOOP_FLAG = "open loop";
+  // LAST 30 S is an integer and reads "99+" at >= 99 -- Spool's display rule
+  // (pm/inbox 2026-10-14-from-spool-S104-...-MPG-last-30s-ratio-of-sums-null-
+  // rules.md s2): decel coasts give big numbers, true direction, false
+  // precision. No approximately sign: the label already says "last 30 s".
+  var FUEL_MPG_LAST30_CAP = 99;
+  var FUEL_MPG_LAST30_CAP_TEXT = "99+";
 
   function fuelMpgSlot(text, note, noteKind) {
     return { text: text, note: note, noteKind: noteKind, flag: "" };
@@ -3984,16 +3991,34 @@
     return fuelMpgSlot("--", fuelMpgReasonText(nullCode), "reason");
   }
 
+  // LAST 30 S from fuel-economy.recent: absent -> a provider without the
+  // field; null -> no drive window yet (Iris G-5); a null mpg -> its reason.
+  function fuelMpgLast30Slot(fuelEconomyData) {
+    if (!Object.prototype.hasOwnProperty.call(fuelEconomyData, "recent")) {
+      return fuelMpgSlot("--", "not published", "unpublished");
+    }
+    var recent = fuelEconomyData.recent;
+    if (recent === null) return fuelMpgSlot("--", FUEL_MPG_NOT_STARTED, "reason");
+    if (!isObj(recent)) return fuelMpgSlot("--", "not published", "unpublished");
+    var mpg = recent.mpg;
+    if (typeof mpg === "number" && isFinite(mpg)) {
+      var text = mpg >= FUEL_MPG_LAST30_CAP
+        ? FUEL_MPG_LAST30_CAP_TEXT : String(Math.round(mpg));
+      return fuelMpgSlot(text, "", "none");
+    }
+    return fuelMpgSlot("--", fuelMpgReasonText(recent.mpgNullReason), "reason");
+  }
+
   // The MPG row's view from states/fuel-economy alone.
   function fuelMpgView(fuelEconomyData) {
-    var last30 = fuelMpgSlot("--", "not published", "unpublished");
     if (!isObj(fuelEconomyData)) {
       return {
-        last30: last30,
+        last30: fuelMpgSlot("--", "not published", "unpublished"),
         thisDrive: fuelMpgSlot("--", "no source", "reason"),
         sinceReset: fuelMpgSlot("--", "no source", "reason"),
       };
     }
+    var last30 = fuelMpgLast30Slot(fuelEconomyData);
     var drive = fuelEconomyData.thisDrive;
     var thisDrive = fuelMpgBlockSlot(
       drive, FUEL_MPG_NOT_STARTED, isObj(drive) ? drive.mpgNullReason : null

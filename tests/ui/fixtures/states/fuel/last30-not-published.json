@@ -1,5 +1,5 @@
 {
-  "description": "A cruising drive as the provider publishes it today: no 'recent' field (the LAST 30 S provider is US-890-e), so LAST 30 S reads '--' + 'not published' while THIS DRIVE reads its figure (one decimal, with the approximately sign) and SINCE RESET the stored one. Closed loop (4 % open-loop air), so no open loop flag. Built by the REAL buildFuelEconomyState.",
+  "description": "A cruising drive as a provider from BEFORE US-890-e publishes it: no 'recent' field (inputs.recentPublished false), so LAST 30 S reads '--' + 'not published' while THIS DRIVE reads its figure (one decimal, with the approximately sign) and SINCE RESET the stored one. Closed loop (4 % open-loop air), so no open loop flag. Built by the REAL buildFuelEconomyState.",
   "now": "2026-10-20T15:03:10Z",
   "inputs": {
     "mafTrusted": true,
@@ -20,7 +20,8 @@
       "fuel_l": 39.39,
       "distance_km": 412.0,
       "reset_at_ts": "2026-10-01T12:00:00Z"
-    }
+    },
+    "recentPublished": false
   },
   "fuel-economy": {
     "thisDrive": {

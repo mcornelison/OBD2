@@ -6105,7 +6105,8 @@ same SPEED series through both integrals.
 ```json
 {"thisDrive": {"fuelL": 1.82, "mpg": 24.6, "sinceTs": "2026-10-20T14:58:02Z",
                "approximate": false, "openLoopAirPct": 8.7},
- "sinceReset": null, "ts": "2026-10-20T15:02:11Z"}
+ "sinceReset": null, "ts": "2026-10-20T15:02:11Z",
+ "recent": {"mpg": 27.0, "windowSec": 30, "mafSamples": 13}}
 ```
 
 - **`thisDrive`** is `null` until this process has seen a drive start or a first MAF
@@ -6147,6 +6148,40 @@ no fuel and its time counts as excluded (the speed integrator's gap rule).
 
 The window's time is monotonic seconds from the window start to the newest MAF reading.
 
+**`recent` -- MPG over the last `pi.fuel.recentWindowSec` (US-890-e, Spool 2026-10-14
+section 2; Atlas split C).** `{mpg, windowSec, mafSamples}` plus `mpgNullReason` only when
+`mpg` is null; `recent` itself is `null` until a drive window opens (with `thisDrive`).
+`mpg = miles_in_window / gallons_in_window`, a **ratio of sums** over the newest
+`recentWindowSec` (30) -- never a mean of per-sample MPGs, which is two points per sample,
+swings wildly and is undefined at idle. Spool measured 30 s on the corpus (p50 27.5,
+p95 50.7 MPG). The sums come from a pure `RecentWindow` in `fuel_economy_emitter.py`
+holding `(tS, airG, km, isMafSample)` increments; an increment is in the window while
+`tS > newest - windowSec`, and older ones are dropped. Air is the SAME trapezoid the
+`FuelIntegrator` just added (`observeMaf` returns it, so the gap rule is shared); km is the
+US-880-a speed integrator's delta for that SPEED reading (never a second distance
+integral); `stoichAfr`, `densityGPerL` and the NIST constants are thisDrive's.
+`mafSamples` counts the MAF readings in the window. Null reasons, by precedence:
+
+| Reason | When |
+|---|---|
+| `maf_untrusted`, `maf_stale`, `maf_zero_running` | the drive-level rules above, same order |
+| `too_few_samples` | fewer than `pi.fuel.recentMinMafSamples` (10) MAF readings in the window |
+| `too_short` | window distance < `pi.fuel.recentMinMiles` (0.1 mi, an average under 12 mph) |
+| `no_fuel` | no air in the window (the ratio is undefined; the thisDrive rule) |
+
+The three keys are validator defaults citing Spool, each finite and > 0. **Locks (Atlas
+G2):** `card_state_emitter` feeds the window under `_fuelLock` ONLY.
+`observeFuelReading` adds the MAF air inside the lock it already takes;
+`observeTripSpeed` computes the km delta under `_tripLock`, releases it, and only then
+takes `_fuelLock` (`_feedRecentDistance`), so the two locks are never held together. The
+window resets with the integrator at drive start (`_resetFuelEconomy`), and the publish
+snapshots it in the same `_fuelLock` block as the integrator. **Page (LAST 30 S):**
+`recent.mpg` as an integer (`Math.round`), `99+` at >= 99 (Spool's display rule: decel
+coasts give big numbers, true direction, false precision), no approximately sign;
+`recent` absent -> `--` + `not published` (a provider from before US-890-e); `recent`
+null -> `--` + `not started` (Iris G-5); a null `mpg` -> `--` + its text from the ONE
+s4.6 table, which gains `too_few_samples` -> `too few samples`.
+
 **Producer.** `CardStateEmitterMixin.observeFuelReading(paramName, value, reading)`,
 called from `event_router._handleReading` beside `observeTripSpeed` (an annotation
 there, for the MRO reason). MAF and FUEL_SYSTEM_STATUS only, only while
@@ -6162,7 +6197,8 @@ does, and calls `BandProducer.engineRunningAt(ts)` (a public wrapper over US-875
 `_engineRunningAt`). The band producer is never exposed. No tracker -> the gate is
 unknown, and `maf_zero_running` never fires. Fixture:
 `tests/ui/fixtures/states/fuel-economy.json` (`driving`, `too-short`, `maf-untrusted`,
-`after-reset`), rebuilt by the producer in `tests/pi/obdii/test_fuel_economy_emitter.py`.
+`after-reset`, `recent-crawl`), rebuilt by the producer in
+`tests/pi/obdii/test_fuel_economy_emitter.py`.
 
 **Since-reset totals (US-881-c, Atlas gap 3 / G3).** One Pi-LOCAL row,
 `fuel_since_reset (id INTEGER PRIMARY KEY CHECK (id = 1), fuel_l REAL, distance_km REAL,

@@ -33,6 +33,7 @@
 # 2026-10-14    | Rex (US-881-d) | pi.fuel.resetTimeoutSec default 5 + positivity.
 # 2026-10-15    | Rex (US-889-a) | pi.display.engineHistory.{intervalSec,maxPoints}.
 # 2026-10-15    | Rex (US-890-b) | pi.display.scale.mafMaxGs default 160 + positivity.
+# 2026-10-15    | Rex (US-890-e) | pi.fuel.recent* defaults (Spool) + positivity.
 # ================================================================================
 ################################################################################
 
@@ -1458,17 +1459,23 @@ def test_validate_fuelKeys_defaultsAreSpoolsSourcedValues():
         "approximateOpenLoopPct": 10,
         "persistSec": 60,
         "resetTimeoutSec": 5,
+        # US-890-e named pin change: Spool 2026-10-14's last-30 s rules.
+        "recentWindowSec": 30,
+        "recentMinMiles": 0.1,
+        "recentMinMafSamples": 10,
     }
 
 
 @pytest.mark.parametrize(
-    "key", ["stoichAfr", "densityGPerL", "minMiles", "persistSec", "resetTimeoutSec"]
+    "key",
+    ["stoichAfr", "densityGPerL", "minMiles", "persistSec", "resetTimeoutSec",
+     "recentWindowSec", "recentMinMiles", "recentMinMafSamples"],
 )
 @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "14.7", True])
 def test_validate_fuelPositiveKeys_nonPositiveOrNonFinite_rejected(key, bad):
     """US-881-b: stoich, density and the minimum distance are finite numbers > 0;
     US-881-c: so is the since-reset persist cadence; US-881-d: and the POST
-    /fuel-reset outcome wait."""
+    /fuel-reset outcome wait; US-890-e: and the three last-30 s rules."""
     cfg = _baseCfg()
     cfg["pi"] = {"fuel": {key: bad}}
     with pytest.raises(ConfigValidationError, match=f"pi.fuel.{key}"):
@@ -1500,6 +1507,14 @@ def test_validate_fuelKeys_validOverrides_accepted():
     cfg["pi"] = {"fuel": {"stoichAfr": 14.1, "mafTrusted": False, "maxExcludedPct": 0}}
     fuel = ConfigValidator().validate(cfg)["pi"]["fuel"]
     assert (fuel["stoichAfr"], fuel["mafTrusted"], fuel["maxExcludedPct"]) == (14.1, False, 0)
+
+
+def test_validate_fuelRecentKeys_validOverrides_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"fuel": {"recentWindowSec": 60, "recentMinMiles": 0.2, "recentMinMafSamples": 8}}
+    fuel = ConfigValidator().validate(cfg)["pi"]["fuel"]
+    assert (fuel["recentWindowSec"], fuel["recentMinMiles"], fuel["recentMinMafSamples"]) == (
+        60, 0.2, 8)
 
 
 def test_validate_gradeHistory_windowShorterThanInterval_rejected():

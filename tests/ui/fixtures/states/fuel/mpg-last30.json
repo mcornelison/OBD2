@@ -1,0 +1,290 @@
+{
+  "description": "US-890-e: LAST 30 S from states/fuel-economy.recent, one case per state, each built by the REAL buildFuelEconomyState from recorded RecentWindow sums (pi.fuel defaults; staleSec = pi.display.stale.obdLiveSec). An integer, '99+' at >= 99 (Spool 2026-10-14); recent null -> 'not started'; a null mpg -> '--' + its s4.6 text.",
+  "now": "2026-10-20T15:03:10Z",
+  "cases": {
+    "cruise": {
+      "description": "30 s at ~50 km/h on 395 g of air: an integer figure.",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": {
+          "started": true,
+          "airG": 19457.0,
+          "openLoopAirG": 778.3,
+          "excludedS": 0.0,
+          "windowS": 190.0,
+          "lastMafGPerS": 6.2,
+          "lastMafEventUtc": "2026-10-20T15:03:09Z",
+          "lastMafEngineRunning": true,
+          "openLoopS": 8.0
+        },
+        "distanceKm": 20.0,
+        "distanceSinceTs": "2026-10-20T15:00:00Z",
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "recent": {
+          "airG": 395.0,
+          "km": 0.4167,
+          "mafSamples": 13
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": {
+          "fuelL": 1.7886560029417173,
+          "mpg": 26.300706558051083,
+          "sinceTs": "2026-10-20T15:00:00Z",
+          "approximate": false,
+          "openLoopAirPct": 4.000102790769389
+        },
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": 26.992288297879746,
+          "windowSec": 30.0,
+          "mafSamples": 13
+        }
+      }
+    },
+    "coast-99plus": {
+      "description": "A decel coast: 0.5 km on 120 g of air reads over 99 -> '99+'.",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": {
+          "started": true,
+          "airG": 19457.0,
+          "openLoopAirG": 778.3,
+          "excludedS": 0.0,
+          "windowS": 190.0,
+          "lastMafGPerS": 6.2,
+          "lastMafEventUtc": "2026-10-20T15:03:09Z",
+          "lastMafEngineRunning": true,
+          "openLoopS": 8.0
+        },
+        "distanceKm": 20.0,
+        "distanceSinceTs": "2026-10-20T15:00:00Z",
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "recent": {
+          "airG": 120.0,
+          "km": 0.5,
+          "mafSamples": 13
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": {
+          "fuelL": 1.7886560029417173,
+          "mpg": 26.300706558051083,
+          "sinceTs": "2026-10-20T15:00:00Z",
+          "approximate": false,
+          "openLoopAirPct": 4.000102790769389
+        },
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": 106.61100989583332,
+          "windowSec": 30.0,
+          "mafSamples": 13
+        }
+      }
+    },
+    "not-started": {
+      "description": "No drive window yet: recent null -> '--' + 'not started'.",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 20.0,
+        "distanceSinceTs": "2026-10-20T15:00:00Z",
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "recent": {
+          "airG": 0.0,
+          "km": 0.0,
+          "mafSamples": 0
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": null,
+        "recent": null
+      }
+    },
+    "too_few_samples": {
+      "description": "8 MAF readings in the window (< pi.fuel.recentMinMafSamples 10).",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": {
+          "started": true,
+          "airG": 19457.0,
+          "openLoopAirG": 778.3,
+          "excludedS": 0.0,
+          "windowS": 190.0,
+          "lastMafGPerS": 6.2,
+          "lastMafEventUtc": "2026-10-20T15:03:09Z",
+          "lastMafEngineRunning": true,
+          "openLoopS": 8.0
+        },
+        "distanceKm": 20.0,
+        "distanceSinceTs": "2026-10-20T15:00:00Z",
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "recent": {
+          "airG": 300.0,
+          "km": 0.4,
+          "mafSamples": 8
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": {
+          "fuelL": 1.7886560029417173,
+          "mpg": 26.300706558051083,
+          "sinceTs": "2026-10-20T15:00:00Z",
+          "approximate": false,
+          "openLoopAirPct": 4.000102790769389
+        },
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 8,
+          "mpgNullReason": "too_few_samples"
+        }
+      }
+    },
+    "too_short": {
+      "description": "Idle: 0 km in the window (< pi.fuel.recentMinMiles 0.1).",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": {
+          "started": true,
+          "airG": 19457.0,
+          "openLoopAirG": 778.3,
+          "excludedS": 0.0,
+          "windowS": 190.0,
+          "lastMafGPerS": 6.2,
+          "lastMafEventUtc": "2026-10-20T15:03:09Z",
+          "lastMafEngineRunning": true,
+          "openLoopS": 8.0
+        },
+        "distanceKm": 20.0,
+        "distanceSinceTs": "2026-10-20T15:00:00Z",
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "recent": {
+          "airG": 96.0,
+          "km": 0.0,
+          "mafSamples": 13
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": {
+          "fuelL": 1.7886560029417173,
+          "mpg": 26.300706558051083,
+          "sinceTs": "2026-10-20T15:00:00Z",
+          "approximate": false,
+          "openLoopAirPct": 4.000102790769389
+        },
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 13,
+          "mpgNullReason": "too_short"
+        }
+      }
+    },
+    "maf_stale": {
+      "description": "No MAF reading within obdLiveSec: the drive-level rule wins.",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": {
+          "started": true,
+          "airG": 19457.0,
+          "openLoopAirG": 778.3,
+          "excludedS": 0.0,
+          "windowS": 190.0,
+          "lastMafGPerS": 6.2,
+          "lastMafEventUtc": "2026-10-20T15:02:10Z",
+          "lastMafEngineRunning": true,
+          "openLoopS": 8.0
+        },
+        "distanceKm": 20.0,
+        "distanceSinceTs": "2026-10-20T15:00:00Z",
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        },
+        "recent": {
+          "airG": 395.0,
+          "km": 0.4167,
+          "mafSamples": 13
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": {
+          "fuelL": 1.7886560029417173,
+          "mpg": null,
+          "sinceTs": "2026-10-20T15:00:00Z",
+          "approximate": false,
+          "openLoopAirPct": 4.000102790769389,
+          "mpgNullReason": "maf_stale"
+        },
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": "2026-10-20T15:02:10Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 13,
+          "mpgNullReason": "maf_stale"
+        }
+      }
+    }
+  }
+}

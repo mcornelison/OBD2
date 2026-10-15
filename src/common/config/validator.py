@@ -152,6 +152,9 @@
 #                                maxPoints 240} (Atlas S104 ruling 1); finite, > 0.
 # 2026-10-15    | Rex (US-890-b) | pi.display.scale.mafMaxGs: 160 (Spool, params.MAF
 #                                .scale.max); finite, > 0.
+# 2026-10-15    | Rex (US-890-e) | pi.fuel.{recentWindowSec 30, recentMinMiles 0.1,
+#                                recentMinMafSamples 10} (Spool 2026-10-14);
+#                                finite, > 0.
 # ================================================================================
 ################################################################################
 
@@ -857,6 +860,14 @@ DEFAULTS: dict[str, Any] = {
     # outcome. eclipse-states-http is single-threaded, so the wait blocks every
     # GET the kiosk makes -- keep it short.
     'pi.fuel.resetTimeoutSec': 5,
+    # US-890-e: states/fuel-economy recent -- MPG over the newest windowSec as a
+    # ratio of sums (Spool 2026-10-14, pm/inbox 2026-10-14-from-spool-S104-Fuel-
+    # page-...-MPG-last-30s-ratio-of-sums-null-rules.md section 2). 30 s measured
+    # on the corpus (p50 27.5, p95 50.7 MPG); null under 0.1 mi (an average under
+    # 12 mph) or under 10 MAF readings (normal ~13).
+    'pi.fuel.recentWindowSec': 30,
+    'pi.fuel.recentMinMiles': 0.1,
+    'pi.fuel.recentMinMafSamples': 10,
     # US-882-b (F-159): states/grade-history, written by the IMU bridge -- one
     # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
     'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
@@ -1940,8 +1951,9 @@ class ConfigValidator:
     def _validateFuel(self, config: dict[str, Any]) -> None:
         """Validate the pi.fuel.* keys (US-881-b).
 
-        stoichAfr, densityGPerL, minMiles, persistSec (US-881-c) and
-        resetTimeoutSec (US-881-d) are finite numbers > 0; the two
+        stoichAfr, densityGPerL, minMiles, persistSec (US-881-c),
+        resetTimeoutSec (US-881-d) and the three recent* keys (US-890-e) are
+        finite numbers > 0; the two
         percentages are finite numbers in [0, 100]; mafTrusted is a real bool.
         An absent key is skipped (a custom defaults set may not supply it).
 
@@ -1952,7 +1964,8 @@ class ConfigValidator:
             ConfigValidationError: If any present key is out of its range.
         """
         for name in (
-            'stoichAfr', 'densityGPerL', 'minMiles', 'persistSec', 'resetTimeoutSec'
+            'stoichAfr', 'densityGPerL', 'minMiles', 'persistSec', 'resetTimeoutSec',
+            'recentWindowSec', 'recentMinMiles', 'recentMinMafSamples',
         ):
             key = f'pi.fuel.{name}'
             val = self._getNestedValue(config, key)

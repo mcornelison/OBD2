@@ -82,6 +82,9 @@
 # 2026-10-15    | Rex (US-889-a)| states/engine-history: written at the obd-live
 #               |              | tick when a bucket closed; _resetEngineHistory
 #               |              | opens the window at drive start.
+# 2026-10-15    | Rex (US-890-e)| fuel-economy recent: a RecentWindow under
+#               |              | _fuelLock fed MAF air + the SPEED km delta (taken
+#               |              | after the trip lock is released; Atlas G2).
 # ================================================================================
 ################################################################################
 
@@ -321,6 +324,8 @@ class CardStateEmitterMixin:
     _fuelEconomyEmitter: Any = None
     _fuelLock: Any = None
     _fuelStaleSec: float | None = None
+    # US-890-e: the last-30 s window, guarded by _fuelLock like the integrator.
+    _fuelRecentWindow: Any = None
     # US-881-c: since-reset persistence. The watermark is the (fuelL, km,
     # openLoopS) of THIS drive already written to fuel_since_reset, so a drive
     # is counted once however many persists it spans. It, the generation (bumped
@@ -1184,12 +1189,25 @@ class CardStateEmitterMixin:
             return
         tS = self._tripNowS()
         with self._tripLock:
+            previousKm = self._tripDistanceKm
             km = integrator.update(float(value), tS)
             if self._tripDistanceKm is None and self._tripDistanceSinceTs is None:
                 # No drive start seen this process (restart mid-drive): the
                 # partial distance counts from THIS reading, and says so.
                 self._tripDistanceSinceTs = self._tripEventTs(eventTime)
             self._tripDistanceKm = km
+        # US-890-e: the window gets this reading's km delta under the FUEL lock,
+        # taken only now the trip lock is released (Atlas G2).
+        self._feedRecentDistance(tS, km - (previousKm or 0.0))
+
+    def _feedRecentDistance(self, tS: float, kmDelta: float) -> None:
+        """Add one SPEED interval's distance to the last-30 s fuel window."""
+        window = self._fuelRecentWindow
+        if window is None or self._fuelLock is None:
+            return
+        with self._fuelLock:
+            # Clamped: a drive start between the two locks zeroed the distance.
+            window.add(tS, km=max(0.0, kmDelta))
 
     def _resetTripDistance(self, driveStartTime: Any) -> None:
         """Zero the integrator at drive start; label the distance from it.
@@ -1226,6 +1244,7 @@ class CardStateEmitterMixin:
             from pi.obdii.fuel_economy_emitter import (
                 FuelIntegrator,
                 FuelSettings,
+                RecentWindow,
                 makeFuelEconomyEmitter,
             )
             from pi.obdii.obd_live_emitter import DEFAULT_OBD_LIVE_STALE_S
@@ -1237,6 +1256,7 @@ class CardStateEmitterMixin:
             )
             self._fuelSettings = settings
             self._fuelIntegrator = FuelIntegrator(settings.gapSec)
+            self._fuelRecentWindow = RecentWindow(settings.recentWindowSec)
             self._fuelLock = threading.Lock()
             self._fuelEconomyEmitter = makeFuelEconomyEmitter(statesDir)
             logger.info(
@@ -1246,6 +1266,7 @@ class CardStateEmitterMixin:
         except Exception as e:  # noqa: BLE001 -- must not fail boot
             logger.warning("fuel-economy producer init skipped: %s", e)
             self._fuelIntegrator = None
+            self._fuelRecentWindow = None
             self._fuelEconomyEmitter = None
             self._fuelLock = None
 
@@ -1289,7 +1310,11 @@ class CardStateEmitterMixin:
         engineRunning = None if tracker is None else tracker.engineRunningAt(reading)
         tS = self._tripNowS()
         with self._fuelLock:
-            integrator.observeMaf(float(value), tS, eventUtc, engineRunning)
+            airG = integrator.observeMaf(float(value), tS, eventUtc, engineRunning)
+            window = self._fuelRecentWindow
+            if window is not None:
+                # US-890-e: the SAME trapezoid air, never a second integral.
+                window.add(tS, airG=airG, isMafSample=True)
 
     def _resetFuelEconomy(self) -> None:
         """Open this drive's fuel window at drive start (same clock as distance)."""
@@ -1299,6 +1324,8 @@ class CardStateEmitterMixin:
         tS = self._tripNowS()
         with self._fuelLock:
             integrator.reset(tS)
+            if self._fuelRecentWindow is not None:
+                self._fuelRecentWindow.reset()
             # A new drive has written nothing yet; its persist clock starts now.
             self._fuelWatermark = (0.0, 0.0, 0.0)
             self._fuelGeneration += 1
@@ -1312,6 +1339,8 @@ class CardStateEmitterMixin:
             return
         with self._fuelLock:
             snap = integrator.snapshot()
+            window = self._fuelRecentWindow
+            recent = None if window is None else window.snapshot()
             watermark = self._fuelWatermark
             generation = self._fuelGeneration
             lastPersistS = self._fuelLastPersistS
@@ -1328,6 +1357,7 @@ class CardStateEmitterMixin:
             nowUtc=nowUtc,
             staleSec=self._fuelStaleSec,
             sinceReset=self._fuelSinceReset,
+            recent=recent,
         )
 
     def _fuelTotals(

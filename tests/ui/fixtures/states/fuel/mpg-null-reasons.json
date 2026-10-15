@@ -1,5 +1,5 @@
 {
-  "description": "One states/fuel-economy payload per spec s4.6 mpgNullReason code, each built by the REAL buildFuelEconomyState from its recorded inputs (pi.fuel defaults; staleSec = pi.display.stale.obdLiveSec). THIS DRIVE reads '--' + the code's s4.6 text; sinceReset is null in every case, so SINCE RESET reads '--' + 'never reset'.",
+  "description": "One states/fuel-economy payload per spec s4.6 mpgNullReason code, each built by the REAL buildFuelEconomyState from its recorded inputs (pi.fuel defaults; staleSec = pi.display.stale.obdLiveSec). THIS DRIVE reads '--' + the code's s4.6 text; sinceReset is null in every case, so SINCE RESET reads '--' + 'never reset'. US-890-e: no window sums are recorded, so each 'recent' is the builder's EMPTY window -- the drive-level MAF reason where one holds, else too_few_samples.",
   "now": "2026-10-20T15:03:10Z",
   "cases": {
     "maf_untrusted": {
@@ -30,7 +30,13 @@
           "mpgNullReason": "maf_untrusted"
         },
         "sinceReset": null,
-        "ts": "2026-10-20T15:03:09Z"
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 0,
+          "mpgNullReason": "maf_untrusted"
+        }
       }
     },
     "maf_stale": {
@@ -61,7 +67,13 @@
           "mpgNullReason": "maf_stale"
         },
         "sinceReset": null,
-        "ts": "2026-10-20T15:02:10Z"
+        "ts": "2026-10-20T15:02:10Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 0,
+          "mpgNullReason": "maf_stale"
+        }
       }
     },
     "maf_zero_running": {
@@ -92,7 +104,13 @@
           "mpgNullReason": "maf_zero_running"
         },
         "sinceReset": null,
-        "ts": "2026-10-20T15:03:09Z"
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 0,
+          "mpgNullReason": "maf_zero_running"
+        }
       }
     },
     "gaps": {
@@ -123,7 +141,13 @@
           "mpgNullReason": "gaps"
         },
         "sinceReset": null,
-        "ts": "2026-10-20T15:03:09Z"
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 0,
+          "mpgNullReason": "too_few_samples"
+        }
       }
     },
     "too_short": {
@@ -154,7 +178,13 @@
           "mpgNullReason": "too_short"
         },
         "sinceReset": null,
-        "ts": "2026-10-20T15:03:09Z"
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 0,
+          "mpgNullReason": "too_few_samples"
+        }
       }
     },
     "no_fuel": {
@@ -185,7 +215,13 @@
           "mpgNullReason": "no_fuel"
         },
         "sinceReset": null,
-        "ts": "2026-10-20T15:03:09Z"
+        "ts": "2026-10-20T15:03:09Z",
+        "recent": {
+          "mpg": null,
+          "windowSec": 30.0,
+          "mafSamples": 0,
+          "mpgNullReason": "too_few_samples"
+        }
       }
     }
   }
