@@ -90,7 +90,7 @@ Reason-code → text mapping lives in one table in `carousel.js` (it already has
 ### 4.4 Trip (this drive)
 - Resets at key-on. Before the car moves: `0.0 mi · 0:00`.
 - Distance: **US-704** producer. Until it exists, the slot shows `-- mi` with `not measured yet`. Never a fabricated zero mid-drive.
-- Elapsed: from the drive-start time (field named by Atlas, §5). Format `h:mm`.
+- Elapsed: **`drive.elapsedSec`, from the PROVIDER** (Atlas 2026-10-15, S105 rulings Q2; build US-896-b). Same origin as the distance (`distanceSinceTs`), so `12.4 mi over 0:23` is one window. **Frozen at drive end** (drive-end ts − sinceTs), counting while recording, null when sinceTs is null. The page formats `h:mm` and does **no time arithmetic** (a page-side `now − sinceTs` would count parked time as drive time, because the trip resets only at drive start). A stale system-status gets the stale treatment; the page never extrapolates.
 - Miles, one decimal.
 
 ### 4.5 Parked
@@ -104,7 +104,7 @@ Heading and grade stay live: parked, the IMU heading is **correct**, not unavail
 | Calibration flag | `states/imu.headingCalibrated` (`imu_state_bridge.py:989`) | exists | — |
 | Startup / dead reasons | `states/imu` reasons map, `heading_unseeded` (`imu_state_bridge.py:505`) | exists | — |
 | Grade | `states/imu.gradePct` + reason | exists | — |
-| Staleness | `states/imu.ts` age vs `pi.display.stale.imuSec` (2.0 s), injected as `window.DISPLAY_STALE.imuSec` | **exists** (US-882-c) | — **reused 2026-10-15** (Iris/Marcus, S105 Q3). My earlier "3 missed readings" was intent, not a number. One provider ⇒ one key: two keys would let NAV freeze while Motion shows live on the same fact. At a 1 Hz publish 2.0 s is 2 missed readings; if it nuisance-flashes in the car, the fix is config |
+| Staleness | `states/imu.ts` age vs `pi.display.stale.imuSec`, injected as `window.DISPLAY_STALE.imuSec` | **exists** (US-882-c); **default 2.0 → 3.0 s** (Atlas 2026-10-15, S105 rulings Q3; build US-896-a) | — **reused 2026-10-15** (S105 Q3). One provider ⇒ one key: two keys would let NAV freeze while Motion shows live on the same fact. **Why 3.0, MEASURED by Atlas on the Pi:** `states/imu` writes every 1.00–1.02 s, but its `ts` is whole seconds and the kiosk polls every 100 ms, so a healthy file reads up to 1.94 s old. 2.0 s left ~0.06 s margin and would flash `NO UPDATE` on a healthy feed. 3.0 s = 3 missed readings at 1 Hz. Measured parked on wall power; jitter under drive load is not yet measured |
 | Trip distance | US-704 producer | **not built** | **Marcus: admit to V0.30** |
 | Drive start time | a drive-state field | **unconfirmed** | **Atlas: name it** |
 
@@ -128,7 +128,7 @@ Heading and grade stay live: parked, the IMU heading is **correct**, not unavail
 
 ## 7. Fixtures (static state files; no replay rig, per R20)
 
-`trusted-247` · `uncalibrated` · `legacy-engine-no-flag` · `boundary-022.5` · `boundary-337.5` · `unseeded` · `dead-mag` · `stale-imu` · `wrap-350-to-010` (two consecutive files) · `parked-engine-off` · `grade-null`.
+`trusted-247` · `uncalibrated` · `legacy-engine-no-flag` · `boundary-022.5` · `boundary-337.5` · `stale-2.5s` (live, no badge) · `stale-3.5s` (`NO UPDATE 3 s`) · `trip-ended-frozen` (elapsedSec 1800 at T+40 min) · `unseeded` · `dead-mag` · `stale-imu` · `wrap-350-to-010` (two consecutive files) · `parked-engine-off` · `grade-null`.
 
 ## 8. Out of scope
 
@@ -138,5 +138,5 @@ Speed (driving page) · altitude (no source: no baro, GPS on hold) · position/r
 
 - **US-704 admission** to V0.30: Marcus, at the DoD.
 - ~~Stale-threshold config key~~ **RESOLVED 2026-10-15: `pi.display.stale.imuSec`** (§5).
-- **Trip (§4.4) is OPEN, S105 review B-1:** (a) elapsed needs an END: `distanceKm`/`distanceSinceTs` hold after the drive ends, so `now − sinceTs` would keep counting while parked; (b) `distanceSinceTs` is the drive start OR the first SPEED reading after a mid-drive restart, so `THIS DRIVE` needs a provider flag; (c) no page-side zero: at drive start the provider publishes 0.0. **Atlas** names the fields; **CIO** rules Q1 (does a parked trip slot read `LAST DRIVE`?). §4.4 is rewritten once both land.
+- **Trip (§4.4) is OPEN, S105 review B-1:** (a) elapsed needs an END: `distanceKm`/`distanceSinceTs` hold after the drive ends, so `now − sinceTs` would keep counting while parked; (b) `distanceSinceTs` is the drive start OR the first SPEED reading after a mid-drive restart, so `THIS DRIVE` needs a provider flag; (c) no page-side zero: at drive start the provider publishes 0.0. **(a) RULED 2026-10-15:** `drive.elapsedSec`, frozen at drive end (§4.4). **(b) not yet ruled:** after a mid-drive restart both distance and elapsed count from the first SPEED reading (one window, honest), but the label `THIS DRIVE` then overstates; a `coversDriveStart`-style flag is still asked of Atlas. **CIO** rules Q1 (does a parked trip slot read `LAST DRIVE`?). The §4.4 labels are rewritten once Q1 lands.
 - **DoD 10 pass numbers** (90 % vs 95 %): already raised in my DoD review.

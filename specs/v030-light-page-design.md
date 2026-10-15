@@ -53,7 +53,7 @@
 
 ## 4. Behaviour
 - **Word:** `NIGHT` below the curve's low end, `DAY` at/above its top end, `DUSK` between. **Derived by the provider** (`states/light.lightBand`, `night`/`dusk`/`day`/null, Atlas ruling 3, 2026-10-14; US-893-a) from the same autoDim read as the brightness level, so dimming and the word cannot disagree after a re-tune. `lightBand` null ⇒ `--` + reason.
-- **Curve:** drawn from **provider curve data, never page maths** (Atlas ruling 3(b) deletes the page's curve copy). ⚠️ **Shape OPEN (Atlas S105 Q5).** Iris ask, 2026-10-15: `states/light.curve {luxMin, luxFull, minLevel, points:[{lux, level}]}`, points computed BY the bridge's `brightnessLevel()`, knees always included. The log curve clamped at `minLevel` is exactly 4 straight segments on a log-lux axis (knee = luxMin·(luxFull/luxMin)^minLevel = 94.9 lux on this car), plus log-spaced fill (~0.05 decade) for the `linear` type. The page draws straight log-space segments, axis = first..last point (no page-side axis constant); dashed verticals and their `3` / `300 lx` labels come from `luxMin`/`luxFull`. The dot sits at (current lux, `brightnessLevel`), so it lies on the line by construction. lux null ⇒ no dot. **Override ⇒** (once F-126 is built) a dashed amber horizontal line at the forced level, and the dot moves onto it.
+- **Curve:** drawn from **provider curve data, never page maths** (Atlas ruling 3(b) deletes the page's curve copy). **RULED (Atlas 2026-10-15, S105 rulings Q5; build US-893-a/b):** `states/light.curve {points: [[lux, level], ...], luxMin, luxFull, minLevel}`. Points are computed BY the bridge's own `brightnessLevel()`: 10 log-spaced per decade over 0.3–30 000 lux, UNION the exact breakpoints `luxMin`, the clamp knee and `luxFull`, sorted, de-duplicated. The log curve is piecewise-linear on a log-lux axis, so with the breakpoints it is drawn EXACTLY; a `linear` type is approximated at 10/decade. The page draws a polyline through the points (no `Math.log` on lux, no curve maths); dashed verticals and their `3` / `300 lx` labels come from `curve.luxMin` / `curve.luxFull`. ⚠️ **Fact the CIO should know before the in-car check:** as shipped (`luxMin` 3, `luxFull` 300, `minLevel` 0.75) the line is FLAT at 75 % up to the knee at ≈ 94.9 lux, so **NIGHT and DUSK both dim to 75 %**. The graph shows that honestly; whether it is the wanted behaviour is an auto-dim tuning question, not a page defect. The dot sits at (current lux, `brightnessLevel`), so it lies on the line by construction. lux null ⇒ no dot. **Override ⇒** (once F-126 is built) a dashed amber horizontal line at the forced level, and the dot moves onto it.
 - **Status:** shows the level the kiosk **APPLIED**, never only the provider's `brightnessLevel`. A forced brightness is never invisible. Measured in `--font-body` 20 px, all within the 448 px row:
   - auto: `BRIGHTNESS AUTO nn %`.
   - no reading (`brightnessMode` `default`): `BRIGHTNESS nn % (default, no reading)` (412.1 px). **Never `AUTO`:** with no reading the level is not auto. (`BRIGHTNESS AUTO 100 % (default, no reading)` is 474.7 px and false.)
@@ -74,7 +74,7 @@
 | **channel-at-limit flag** | `states/light.channelAtLimit` | **exists** | — |
 | **word** (DAY/DUSK/NIGHT) | `states/light.lightBand` | **ruled** (Atlas 3, 2026-10-14); build US-893-a | Ralph (S105) |
 | **brightness level + mode** | `states/light.brightnessLevel` + `brightnessMode` (`auto` / `default`; `fixed` with F-126). The bridge is the ONE applier; the kiosk applies it | level exists; `default` mode **ruled** (US-893-a) | Ralph (S105) |
-| Curve data for the graph | `states/light.curve` (shape in §4) | **OPEN: Atlas S105 Q5** | Atlas |
+| Curve data for the graph | `states/light.curve {points, luxMin, luxFull, minLevel}` (§4) | **ruled** (Atlas 2026-10-15, S105 rulings Q5); build US-893-a | Ralph (S105) |
 | Override setting | **F-126** settings (new key) | **new** (F-126 now IN) | **Atlas: key + write path; Iris: F-126 band design** |
 | Deep link to the brightness row | F-126 overlay | **new** | Atlas / Ralph |
 
@@ -86,7 +86,7 @@
 5. Override fixture: amber status + dashed line + dot on the line; auto fixture: neither.
 6. Shortcut absent while moving, present when parked, and opens F-126 at the brightness row.
 7. Channel-at-limit fixture shows `at limit`, never the clipped count.
-8. Curve line, dot and labels share one scale (dot sits on the line in auto mode). The page draws only provider points: grep gate, no `luxMin`/`luxFull`/`minLevel` literal or curve maths in `carousel.js`.
+8. Curve line, dot and labels share one scale (dot sits on the line in auto mode). The page draws only provider points (dot within 1 px of the polyline in every fixture): grep gate, no `Math.log` on lux, no `luxMin`/`luxFull`/`minLevel` literal or curve maths in `carousel.js`.
 9. No literal colour or px in this page's CSS.
 10. **DoD (R15): CIO judgement in the car, day and night.**
 11. Status text: no-reading fixture ⇒ `BRIGHTNESS 100 % (default, no reading)`, never `AUTO`; STOP-forced fixture ⇒ `BRIGHTNESS 100 % (alert)`. No status variant clips.
@@ -98,5 +98,5 @@
 Editing the curve on this page (F-126 holds settings) · colour temperature / night-mode palette (not requested) · auto-dim re-tuning itself (a separate measurement task this page enables).
 
 ## 9. Open items
-- ~~Atlas: the `states/light` fields in §5~~ **raw fields exist; lightBand + mode ruled 2026-10-14.** **Still open: Atlas S105 Q5, the curve data shape (§4).** F-126 override key + write path + deep link: with F-126.
+- ~~Atlas: the `states/light` fields in §5~~ **raw fields exist; lightBand + mode ruled 2026-10-14.** ~~Atlas S105 Q5, the curve data shape~~ **RULED 2026-10-15 (§4).** F-126 override key + write path + deep link: with F-126.
 - **Iris (next):** the F-126 settings band design inside the System pages, which now holds the override.

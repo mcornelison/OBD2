@@ -78,7 +78,9 @@
   - `stopped` at 0 mph comes from the provider's reason, not from the page reading speed.
 - **THIS DRIVE:** `thisDrive.mpg`. `thisDrive` is null until the window opens, which shows `--` + `not started`. A null `mpg` shows `--` + the §4.6 text for `thisDrive.mpgNullReason`. The distance floor is `pi.fuel.minMiles` (1.0 mi on dev), so `too short yet` shows for the first mile.
 - **SINCE RESET:** `sinceReset.mpg`, accumulated across drives until reset. `sinceReset` null (no row yet) shows `--` + `never reset`. The block carries **no reason field**, so a null `mpg` shows `--` + `too short yet`; the page does not guess between the provider's other causes.
-- **Reset:** long-press ~2 s, **parked only** (R5), then an in-page confirm `Reset average MPG?`, then `POST /fuel-reset`, then show the **re-read** stored value (F-126 honest write; never optimistic success). Hint `hold to reset` appears **only when parked**. A refused or failed reset keeps the old value and shows the outcome's §4.6 text.
+- **Reset:** long-press ~2 s, **parked only** (R5), then an in-page confirm `Reset average MPG?`, then `POST /fuel-reset`, then show the **re-read** stored value (F-126 honest write; never optimistic success). Hint `hold to reset` appears **only when parked**.
+  - **`resetting…` shows from `Yes`, not from the 200** (Atlas 2026-10-15, S105 rulings Q4 UX note): the POST can take up to `pi.fuel.resetTimeoutSec` (5 s), and the single-threaded states server stalls the page's reads meanwhile. The confirm clock (`pi.display.stale.fuelResetConfirmSec`, default 6 s) starts at the 200.
+  - **The page never holds a cached "old value".** It always renders the LATEST `states/fuel-economy` read, plus the outcome text; the only time it masks the provider is `resetting…`, bounded by the confirm window. 409 `driving` ⇒ provider value + `park to reset`; 503 / `unavailable` / `reset failed: …` ⇒ provider value + `couldn't reset`; **504 ⇒ `couldn't confirm`** (the server doesn't know whether the reset landed, and the next read settles it, so if it did land the page shows the new total); confirm timeout ⇒ provider value + `couldn't confirm`.
 
 ### 4.4 Fuel-trim trend
 - Source: the **US-661 trend contract** (epoch baseline, qualifying drives, 5-drive median).
@@ -104,6 +106,7 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 | reset `driving` | `orchestrator/core.py`, fuel-reset outcome | `park to reset` |
 | reset `unavailable` | same | `couldn't reset` |
 | reset `reset failed: …` | same (free text) | `couldn't reset` (the raw text goes to the log; it doesn't fit) |
+| reset HTTP 504, or no confirming read within `fuelResetConfirmSec` | `states_http_server.py:487-495` (outcome unknown) | `couldn't confirm` (16 chars), beside the LATEST provider value |
 | any code not in this table | — | the raw code string, never blank (US-852 rule) |
 
 **Fit rule:** every text here is ≤ 16 characters (longest `no fuel counted`, 15). A new code needs a text that fits, or its row wraps to two lines. It never shrinks (same rule as INTAKE AIR on Driving).
@@ -130,7 +133,7 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 5. All MPG carry `≈`. The `approximate` flag shows `open loop` (`--amber-warn`, `--fs-meta`). The text `rich, overstated` appears nowhere.
 6. LAST 30 S: label `LAST 30 S`, never `instant`; integer; `99+` at ≥ 99; `--` + reason for every null. While the provider field is absent: `--` + `not published`. Grep gate: `carousel.js` never divides by a MAF value.
 7. THIS DRIVE / SINCE RESET: every null shows `--` + the §4.6 text for the provider's code. An unknown code shows the raw code. Nothing is ever blank.
-8. Reset: hint + long-press are parked only and absent while moving. Confirm, then `POST /fuel-reset`, then the shown value is the **re-read** stored value. On `driving` / `unavailable` / failure: the old value stays + the §4.6 text.
+8. Reset: hint + long-press are parked only and absent while moving. Confirm, then `POST /fuel-reset`, then the shown value is the **re-read** stored value. `resetting…` from `Yes`. On `driving` / `unavailable` / failure / 504 / confirm timeout: the LATEST provider value + the §4.6 text, never a page-cached value. VC: a 504, then a read with `sinceReset.resetAtTs` = T and `mpg` null ⇒ `--` + `too short yet`, not the pre-reset MPG.
 9. Trend dots are exactly the `inMedian` points (a > 5-drive fixture proves the window). Colour only from `level`. A relearn shows `ECU relearning`, not a point. Grep gate: no trim threshold in `carousel.js`.
 10. LAST 30 S and total trim ≥ 34 px; THIS DRIVE / SINCE RESET `--fs-secondary` (parked-read). No reason text wider than its MPG column (§4.6 fit rule).
 11. Tokens-only CSS; geometry as scoped custom properties on the card (S103 G-4 rule).

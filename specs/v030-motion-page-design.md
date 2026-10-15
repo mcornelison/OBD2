@@ -75,7 +75,7 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 | **gLon sign** | + = accelerating (`imu_state_bridge` contract) | **confirmed** | — |
 | **Peaks this drive** | `states/imu.peaks{accelG, brakeG, leftG, rightG, sinceTs}`, reset on drive start | **ruled** (Atlas 4, 2026-10-14); build US-892-a | Ralph (S105) |
 | **15-min grade history** | `states/grade-history` (10 s points, 900 s window, null = gap) | **exists** (US-882-b) | — |
-| Stale key | `pi.display.stale.imuSec` (2.0 s) | **exists** (US-882-c) | — |
+| Stale key | `pi.display.stale.imuSec`, default **3.0 s** (was 2.0; Atlas 2026-10-15, S105 rulings Q3, MEASURED: whole-second `ts` + 100 ms poll make a healthy file read up to 1.94 s old) | **exists** (US-882-c); default change in US-896-a | — |
 
 ## 6. Acceptance criteria (draft)
 1. Fixtures render per §4 at 480×320 (screenshot).
