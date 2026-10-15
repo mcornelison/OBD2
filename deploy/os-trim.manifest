@@ -1,0 +1,37 @@
+################################################################################
+# os-trim.manifest — services a car never uses, masked/disabled reversibly
+# (US-866 / US-859 / F-157)
+#
+# Read by deploy/os-trim.sh (apply | revert [--dry-run]), which deploy-pi.sh
+# runs on every deploy (step_os_trim) and undoes with --os-trim-revert.
+#
+# Format: one entry per line, four '|'-separated fields:
+#   unit | action | reason | evidence
+# action is one of:
+#   mask               systemctl mask <unit>        revert: unmask
+#   disable            systemctl disable <unit>     revert: enable
+#   flagfile <path>    create <path>                revert: delete <path>
+# Blank lines and lines starting with '#' are ignored. Anything else that does
+# not parse is a hard ERROR -- never "nothing to trim".
+#
+# MASK OR DISABLE, NEVER PURGE: the car has no network at key-on, so a removed
+# package cannot be reinstalled there, while every entry here is undone offline
+# from this same file. Entries are Atlas's list exactly
+# (pm/inbox/2026-10-14-from-atlas-RULED-S101-OS-designs-...); evidence is the
+# systemd-analyze blame of boot 7c6aafaa unless marked. Add or drop an entry
+# only with an Atlas ruling. The NEVER list lives in os-trim.sh.
+################################################################################
+
+cloud-init | flagfile /etc/cloud/cloud-init.disabled | no cloud provisioning in a car; the WiFi profile is netplan /etc/netplan/90-NM-*.yaml, not cloud-init; the flag file is cloud-init's documented off switch | on the boot critical chain: main 1.023 + local 0.213 + network 0.062 s before sysinit.target (Atlas, boot 7c6aafaa)
+cups.service | mask | no printer in a car | cups family 1.4 s at boot 2026-10-12 (Atlas, recalled from the 10-12 report)
+cups.socket | mask | no printer in a car; the socket would re-activate cups.service | cups family 1.4 s at boot 2026-10-12 (Atlas, recalled from the 10-12 report)
+cups.path | mask | no printer in a car; the path unit would re-activate cups.service | cups family 1.4 s at boot 2026-10-12 (Atlas, recalled from the 10-12 report)
+cups-browsed.service | mask | no printer in a car; cups-browsed wants network-online | cups family 1.4 s at boot 2026-10-12 (Atlas, recalled from the 10-12 report)
+NetworkManager-wait-online.service | disable | nothing in the car needs to wait for network-online (US-859) | 5.97 s, parallel (Atlas, boot 7c6aafaa)
+nfs-client.target | disable | no NFS in /etc/fstab; pulls rpc-statd-notify -> network-online | pulls network-online (Atlas, boot 7c6aafaa)
+apt-daily.timer | mask | no automatic apt on the car (CIO 2026-10-14) | 0.90 s when it fires at boot (Atlas, boot 7c6aafaa)
+apt-daily-upgrade.timer | mask | no automatic apt on the car (CIO 2026-10-14) | 0.89 s when it fires at boot (Atlas, boot 7c6aafaa)
+dpkg-db-backup.timer | mask | no automatic apt on the car (CIO 2026-10-14) | 0.45 s when it fires at boot (Atlas, boot 7c6aafaa)
+udisks2.service | mask | no removable-media service needed; no reference in repo deploy/ or src/pi | 0.72 s (Atlas, boot 7c6aafaa)
+ModemManager.service | mask | no modem in the car | 0.37 s (Atlas, boot 7c6aafaa)
+e2scrub_reap.service | mask | plain ext4 partitions, no LVM to scrub | 0.94 s (Atlas, boot 7c6aafaa)

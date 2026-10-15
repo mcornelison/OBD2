@@ -7677,6 +7677,79 @@ Code-side this section guarantees the EEPROM setting lands correctly on
 every deploy; whether the wake actually fires in the car is the IRL drill's
 question, not this document's.
 
+### OS trim — a reversible mask/disable manifest (US-866 / US-859, Sprint 101 / V0.30.0) [Atlas Rule 10]
+
+The Pi runs a full desktop image. Several of its services cost boot time and do
+nothing in a car. `deploy/os-trim.manifest` lists them, and `deploy/os-trim.sh`
+applies them. The entries are exactly Atlas's ruling
+(`pm/inbox/2026-10-14-from-atlas-RULED-S101-OS-designs-...`). The evidence column
+is the `systemd-analyze blame` of boot 7c6aafaa unless marked otherwise.
+
+| entry | action | why (evidence) |
+|---|---|---|
+| cloud-init | flagfile `/etc/cloud/cloud-init.disabled` | on the boot critical chain: main 1.023 + local 0.213 + network 0.062 s; the WiFi profile is netplan, not cloud-init |
+| cups.service, cups.socket, cups.path, cups-browsed.service | mask | no printer; 1.4 s on 2026-10-12 |
+| NetworkManager-wait-online.service | disable | 5.97 s, parallel (US-859, folded in) |
+| nfs-client.target | disable | no NFS; pulls rpc-statd-notify -> network-online |
+| apt-daily.timer, apt-daily-upgrade.timer, dpkg-db-backup.timer | mask | no automatic apt on the car (CIO 2026-10-14) |
+| udisks2.service, ModemManager.service, e2scrub_reap.service | mask | 0.72 / 0.37 / 0.94 s; no removable media, no modem, no LVM |
+
+**Mask or disable, never purge.** The car has no network at key-on, so a purged
+package could not be reinstalled there. Every entry is undone offline from the
+same manifest. The manifest format is one line per entry:
+`unit | action | reason | evidence`, where the action is `mask`, `disable` or
+`flagfile <abs path>`.
+
+**The NEVER list** is `NEVER_UNITS` in `os-trim.sh`. The script refuses any
+manifest that names one of these, so the manifest and the list can never share
+an entry:
+
+- bluetooth, NetworkManager, dbus
+- polkit (deploy/polkit-rules depends on it)
+- lightdm and accounts-daemon (the X11 kiosk autologin)
+- avahi-daemon (its mDNS use is unverified)
+- rpi-eeprom-update, netplan, systemd-timesyncd, plymouth (US-885), systemd-journald
+
+The desk test also checks that no manifest unit appears in the
+`Wants=`/`Requires=`/`After=`/`BindsTo=` lines of any `deploy/*.service`.
+
+**Apply (every deploy).** `step_os_trim` runs `sudo bash deploy/os-trim.sh apply`.
+It runs after `sync_tree`, which ships the script and the manifest; both rsync
+and the tar fallback name `deploy/os-trim.manifest`. It also runs after
+`step_install_persistent_state_dir` (US-667). Apply is idempotent, and nothing
+is stopped mid-deploy: the trim takes effect at the next boot. The pre-state rules
+are Atlas G3:
+
+- The **first** apply records each entry's pre-state in
+  `/var/lib/eclipse-obd/os-trim.state`: the `systemctl is-enabled` output, or
+  whether the flag file is present or absent.
+- That file is written to a temp file and renamed into place. It is root-owned.
+- Later applies **never** overwrite it. A pre-state recorded after the first trim
+  would capture the trimmed state, and a revert from it would restore nothing.
+
+**Revert.** `bash deploy/deploy-pi.sh --os-trim-revert` runs only
+`os-trim.sh revert` on the Pi and exits. It does not sync or restart anything.
+
+- With a state file, revert restores each entry's recorded pre-state, then
+  deletes the file. A unit that was already disabled before the first trim stays
+  disabled.
+- With no state file, revert applies the fixed inverse (unmask, enable, delete the
+  flag file) and prints one WARN.
+- The next routine deploy applies the trim again. To keep a service back for
+  good, take it out of the manifest.
+
+**Fail loud.** Each of these exits non-zero with one ERROR line that names the
+path, before any systemctl call:
+
+- A missing or unparseable manifest, in `os-trim.sh`, and also locally in
+  `step_os_trim`. A missing manifest is never treated as "nothing to trim".
+- An absent `/var/lib/eclipse-obd`. The deploy owns that directory, and os-trim
+  never creates it.
+
+Tests: `tests/deploy/test_os_trim.py` runs against a fake systemctl recorder via
+the `SYSTEMCTL_BIN`, `OS_TRIM_MANIFEST`, `OS_TRIM_STATE_DIR` and `OS_TRIM_ROOT`
+seams. The deploy wiring is tested in `tests/deploy/test_deploy_pi.py`.
+
 ---
 
 ## 12. Simulator Architecture

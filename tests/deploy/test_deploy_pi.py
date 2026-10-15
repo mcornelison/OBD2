@@ -119,6 +119,7 @@ def test_deployPiSh_helpFlagExitsCleanly():
     assert "--init" in result.stdout
     assert "--restart" in result.stdout
     assert "--dry-run" in result.stdout
+    assert "--os-trim-revert" in result.stdout
 
 
 @pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
@@ -816,3 +817,133 @@ def test_us480b_architectureDocumentsRunModelAndDeployInstall():
         "the doc must state the deploy-install (eclipse-obd enabled for "
         "boot-persistence -- US-480-b)"
     )
+
+
+# ----------------------------------------------------------------------------
+# US-866: the reversible OS-trim manifest -- step_os_trim + --os-trim-revert.
+#
+# deploy/os-trim.sh applies deploy/os-trim.manifest on the Pi (tests in
+# test_os_trim.py). These pin the deploy half: the step is defined AND called
+# after sync_tree (the script and manifest must already be on the Pi) and after
+# the persistent state dir is provisioned (os-trim refuses to create it); the
+# manifest actually ships on BOTH sync paths; --os-trim-revert runs only the
+# revert and exits.
+# ----------------------------------------------------------------------------
+
+OS_TRIM_STEP = "step_os_trim"
+OS_TRIM_REVERT_STEP = "step_os_trim_revert"
+
+
+def _codeLines(text: str) -> list[str]:
+    """Stripped non-blank, non-comment lines (a comment must never satisfy a guard)."""
+    return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+
+
+def _runDeploy(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(DEPLOY_SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=90,
+    )
+
+
+def test_us866_osTrimStep_definedAndCalledOnce():
+    """step_os_trim is defined exactly once and called exactly once."""
+    lines = _codeLines(_scriptText())
+    assert len([ln for ln in lines if ln.startswith(f"{OS_TRIM_STEP}()")]) == 1
+    assert len([ln for ln in lines if ln == OS_TRIM_STEP]) == 1
+
+
+def test_us866_osTrimStep_runsAfterSyncTreeAndStateDir():
+    """The call comes after sync_tree AND after step_install_persistent_state_dir.
+
+    os-trim.sh lives in ${PI_PATH}/deploy/ (shipped by sync_tree) and FAILS LOUD
+    when /var/lib/eclipse-obd is absent -- it never creates it. On a fresh Pi,
+    calling it before the deploy provisions that dir would fail every first deploy.
+    """
+    lines = _codeLines(_scriptText())
+    callIdx = lines.index(OS_TRIM_STEP)
+    assert lines.index("sync_tree") < callIdx
+    assert lines.index("step_install_persistent_state_dir") < callIdx
+
+
+def test_us866_osTrimStep_dryRunGuardPrecedesRemote():
+    """The DRY_RUN branch returns before the remote call; the remote runs os-trim.sh apply under sudo."""
+    body = _stepBody(_scriptText(), OS_TRIM_STEP)
+    dryIdx = body.index("$DRY_RUN")
+    remoteIdx = body.index("remote ")
+    assert dryIdx < remoteIdx
+    assert "return 0" in body[dryIdx:remoteIdx]
+    assert "sudo bash" in body[remoteIdx:] and "os-trim.sh' apply" in body[remoteIdx:]
+
+
+def test_us866_osTrimStep_failsLoudOnMissingLocalManifest():
+    """A missing manifest is an ERROR naming the path and a non-zero exit -- never 'nothing to trim'."""
+    body = _stepBody(_scriptText(), OS_TRIM_STEP)
+    checkIdx = body.index("os-trim.manifest")
+    dryIdx = body.index("$DRY_RUN")
+    assert checkIdx < dryIdx, "the manifest check must run in --dry-run too"
+    assert "ERROR" in body[checkIdx:dryIdx]
+    assert any(f"exit {n}" in body[checkIdx:dryIdx] for n in range(1, 256))
+
+
+def test_us866_revertStep_runsOsTrimRevert():
+    """step_os_trim_revert runs os-trim.sh revert under sudo, with a DRY_RUN branch first."""
+    body = _stepBody(_scriptText(), OS_TRIM_REVERT_STEP)
+    dryIdx = body.index("$DRY_RUN")
+    remoteIdx = body.index("remote ")
+    assert dryIdx < remoteIdx
+    assert "os-trim.sh' revert" in body[remoteIdx:]
+
+
+def test_us866_manifestShipsOnBothSyncPaths():
+    """The rsync whitelist AND the tar file list carry deploy/os-trim.manifest; nothing excludes it."""
+    lines = _codeLines(_scriptText())
+    assert "--include=deploy/os-trim.manifest \\" in lines
+    tarLists = [ln for ln in lines if ln.startswith("./config.json ")]
+    assert len(tarLists) == 1, tarLists
+    tarFiles = [ln for ln in lines if "./deploy/os-trim.manifest" in ln]
+    assert tarFiles and not any("--exclude" in ln for ln in tarFiles), tarFiles
+    assert not [ln for ln in lines if "--exclude" in ln and "os-trim" in ln]
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+def test_us866_defaultDryRun_printsTheOsTrimStep():
+    """deploy-pi.sh --dry-run prints the os-trim apply step."""
+    result = _runDeploy("--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "os-trim.sh apply" in result.stdout
+    assert "os-trim.sh revert" not in result.stdout
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+def test_us866_osTrimRevertDryRun_printsOnlyTheRevert():
+    """--os-trim-revert --dry-run prints the revert and nothing of the default deploy."""
+    result = _runDeploy("--os-trim-revert", "--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "os-trim.sh revert" in result.stdout
+    assert "os-trim.sh apply" not in result.stdout
+    assert "Syncing tree" not in result.stdout
+    assert "--- Step:" in result.stdout
+    steps = [ln for ln in result.stdout.splitlines() if ln.startswith("--- ")]
+    assert len(steps) == 1 and "revert" in steps[0].lower(), steps
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+@pytest.mark.parametrize("other", ["--init", "--restart"])
+def test_us866_osTrimRevert_isExclusiveWithOtherModes(other: str):
+    """--os-trim-revert with --init or --restart is a usage error (exit 2)."""
+    result = _runDeploy("--os-trim-revert", other, "--dry-run")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "--os-trim-revert" in result.stderr
+
+
+def test_us866_architectureDocumentsTheTrim():
+    """Rule 10: specs/architecture.md records the manifest, the never list and the revert path."""
+    archText = (REPO_ROOT / "specs" / "architecture.md").read_text(encoding="utf-8")
+    assert "deploy/os-trim.manifest" in archText
+    assert "--os-trim-revert" in archText
+    assert "/var/lib/eclipse-obd/os-trim.state" in archText
+    assert "NEVER" in archText and "systemd-timesyncd" in archText

@@ -9,6 +9,7 @@
 #                                           #   create dirs, fresh venv, system deps, hostname
 #   bash deploy/deploy-pi.sh --restart      # Just restart the systemd service (no code/deps)
 #   bash deploy/deploy-pi.sh --dry-run      # Print what would be done, do nothing on Pi
+#   bash deploy/deploy-pi.sh --os-trim-revert  # Only undo the OS trim (US-866), then exit
 #   bash deploy/deploy-pi.sh --help         # Show this usage
 #
 # Configuration (deploy/deploy.conf overrides defaults — gitignored, copy from .example):
@@ -93,6 +94,10 @@ Modes (mutually exclusive):
               system deps (apt), hostname rename to \$PI_HOSTNAME, then default body
   --restart   Just restart the eclipse-obd systemd service (no code/deps changes)
   --dry-run   Print what would be done; perform no changes on the Pi
+  --os-trim-revert
+              Only revert the OS trim (US-866): restore every deploy/os-trim.manifest
+              entry to its recorded pre-state, then exit. No sync, no restart.
+              The next routine deploy re-applies the trim.
   --help, -h  Show this help and exit
 
 Configuration (deploy/deploy.conf overrides defaults from deploy/addresses.sh):
@@ -107,18 +112,21 @@ Examples:
   bash deploy/deploy-pi.sh --init            # first-time Pi setup
   bash deploy/deploy-pi.sh                   # routine re-deploy
   bash deploy/deploy-pi.sh --restart         # bounce the service after a config edit
+  bash deploy/deploy-pi.sh --os-trim-revert  # put every trimmed service back
 EOF
 }
 
 INIT=false
 RESTART_ONLY=false
 DRY_RUN=false
+OS_TRIM_REVERT=false
 
 for arg in "$@"; do
     case $arg in
         --init)     INIT=true ;;
         --restart)  RESTART_ONLY=true ;;
         --dry-run)  DRY_RUN=true ;;
+        --os-trim-revert) OS_TRIM_REVERT=true ;;
         --help|-h)
             show_help
             exit 0
@@ -133,6 +141,11 @@ done
 
 if $INIT && $RESTART_ONLY; then
     echo "ERROR: --init and --restart are mutually exclusive." >&2
+    exit 2
+fi
+
+if $OS_TRIM_REVERT && { $INIT || $RESTART_ONLY; }; then
+    echo "ERROR: --os-trim-revert runs only the revert; it cannot be combined with --init or --restart." >&2
     exit 2
 fi
 
@@ -211,6 +224,7 @@ sync_tree() {
             --include=deploy/journald-persistent.conf \
             --include=deploy/nm-disable-wifi-powersave.conf \
             --include=deploy/RELEASE_VERSION \
+            --include=deploy/os-trim.manifest \
             --include=deploy/polkit-rules/ \
             --include=deploy/polkit-rules/*.rules \
             --exclude=deploy/obd-server.service \
@@ -232,6 +246,9 @@ sync_tree() {
         # tar path: an explicit FILE LIST, mirroring the rsync whitelist above.
         # Both paths must ship the SAME tree -- if they diverge, which one ran
         # (rsync present or not) silently changes what is on the car.
+        # US-866: ./deploy already carries os-trim.manifest; it is ALSO named
+        # explicitly so narrowing ./deploy can never silently drop it (os-trim.sh
+        # fails the deploy without it). The duplicate archive entry is harmless.
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude="__pycache__" \
             --exclude="*.pyc" \
@@ -245,7 +262,8 @@ sync_tree() {
             --exclude="./deploy/sudoers.d" \
             -f - \
             ./config.json ./requirements.txt ./requirements-pi.txt ./.deploy-version \
-            ./src/__init__.py ./src/pi ./src/common ./scripts ./deploy ) | \
+            ./src/__init__.py ./src/pi ./src/common ./scripts \
+            ./deploy/os-trim.manifest ./deploy ) | \
           ssh -p "${PI_PORT}" "${PI_USER}@${PI_HOST}" "
             set -e
             mkdir -p '${PI_PATH}'
@@ -1289,6 +1307,57 @@ step_install_persistent_state_dir() {
             fi
         done
     "
+}
+
+step_os_trim() {
+    # US-866 / US-859 / F-157: mask/disable the services a car never uses --
+    # cloud-init on the boot critical chain, cups, wait-online, the apt timers,
+    # udisks2, ModemManager, e2scrub (Atlas, boot 7c6aafaa) -- from
+    # deploy/os-trim.manifest, via the standalone deploy/os-trim.sh.
+    #
+    # Same posture as step_set_gpu_cma: an idempotent standalone script, run with
+    # sudo, re-asserted on EVERY deploy so an OS update that re-enables a unit
+    # self-heals. MASK OR DISABLE, NEVER PURGE: the car has no network to
+    # reinstall a package, and every entry is undone offline from the same
+    # manifest by --os-trim-revert.
+    #
+    # The FIRST apply records each entry's pre-state in
+    # /var/lib/eclipse-obd/os-trim.state and later applies never overwrite it,
+    # so a revert restores what was there before the trim, not the trim itself
+    # (Atlas G3). os-trim.sh FAILS LOUD if that dir is absent and never creates
+    # it -- hence this runs after step_install_persistent_state_dir (US-667),
+    # which owns the dir, and after sync_tree, which ships the script + manifest.
+    #
+    # A missing manifest is never "nothing to trim": fail here, on the
+    # workstation, before anything reaches the Pi.
+    echo "--- Step: Applying the OS-trim manifest (US-866 / F-157) ---"
+    local manifest="${REPO_ROOT}/deploy/os-trim.manifest"
+    if [ ! -f "$manifest" ]; then
+        echo "ERROR: OS-trim manifest not found: ${manifest} -- refusing to deploy without it (a missing manifest is never 'nothing to trim')." >&2
+        exit 11
+    fi
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/os-trim.sh apply"
+        echo "DRY-RUN would record: each entry's pre-state in /var/lib/eclipse-obd/os-trim.state on the FIRST apply only"
+        echo "DRY-RUN note: takes effect on next boot; undo with bash deploy/deploy-pi.sh --os-trim-revert"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/os-trim.sh' apply"
+}
+
+step_os_trim_revert() {
+    # US-866: --os-trim-revert. Restores every manifest entry to the pre-state the
+    # first apply recorded (no state file: the fixed inverse, with one WARN), then
+    # deletes the state file. Runs the script + manifest ALREADY ON THE PI, so it
+    # needs no sync and works with whatever the last deploy shipped. The next
+    # routine deploy re-applies the trim (step_os_trim).
+    echo "--- Step: Reverting the OS-trim manifest (US-866 --os-trim-revert) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would run: sudo bash ${PI_PATH}/deploy/os-trim.sh revert"
+        echo "DRY-RUN would restore: each entry's recorded pre-state from /var/lib/eclipse-obd/os-trim.state, then delete it"
+        return 0
+    fi
+    remote "sudo bash '${PI_PATH}/deploy/os-trim.sh' revert"
 }
 
 step_install_eclipse_obd_unit() {
@@ -2378,10 +2447,20 @@ step_verify_service_restarts() {
 
 echo "=== OBD2v2 Pi Deployment ==="
 echo "Target:    ${PI_USER}@${PI_HOST}:${PI_PATH}"
-echo "Mode:      $($INIT && echo --init || ($RESTART_ONLY && echo --restart || echo default))$($DRY_RUN && echo ' (dry-run)')"
+echo "Mode:      $($OS_TRIM_REVERT && echo --os-trim-revert || ($INIT && echo --init || ($RESTART_ONLY && echo --restart || echo default)))$($DRY_RUN && echo ' (dry-run)')"
 echo "Local:     ${REPO_ROOT}"
 echo "Remote venv: ${REMOTE_VENV}"
 echo ""
+
+# US-866: --os-trim-revert runs ONLY the revert and exits -- no sync, no unit
+# installs, no restart. It uses the os-trim.sh + manifest already on the Pi.
+if $OS_TRIM_REVERT; then
+    if ! $DRY_RUN; then require_ssh; fi
+    step_os_trim_revert
+    echo ""
+    echo "Deploy OK: $(date -Iseconds) os-trim revert on ${PI_USER}@${PI_HOST}"
+    exit 0
+fi
 
 if $RESTART_ONLY; then
     if ! $DRY_RUN; then require_ssh; fi
@@ -2556,6 +2635,11 @@ step_install_obdctl
 # witnessed, acted on, and then never recorded: the arm line read UNPROVEN on
 # the next boot with no indication why.
 step_install_persistent_state_dir
+# US-866: the OS trim. After sync_tree (ships os-trim.sh + its manifest) and
+# directly after step_install_persistent_state_dir, because os-trim.sh records
+# its first-apply pre-state in /var/lib/eclipse-obd and refuses to create that
+# dir itself. Takes effect on the next boot; nothing is stopped mid-deploy.
+step_os_trim
 step_install_eclipse_obd_unit
 # US-277: install drain-forensics .service + .timer alongside the main
 # eclipse-obd unit so a fresh deploy is enough to start the forensic
