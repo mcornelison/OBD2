@@ -1,5 +1,5 @@
 {
   "version": "V0.30.2",
   "theme": "Sprint 100: V0.30 data feeds 2",
-  "description": "Sprint 100 (7 stories): boot_milestone rows sync Pi to server on the id cursor (US-860-d); one speed integrator publishes this drive's distance in system-status; IMU stale window is a config.json key served per request; the light bridge computes the brightness level; states/fuel-economy publishes this drive's fuel and MPG; since-reset fuel totals persist Pi-locally; POST /fuel-reset zeroes them when parked. Also on dev: ADR ARCH-016 section 11 (labwc kiosk) and UIDEV-001 specs (docs only)."
+  "description": "Sprint 100 (7 stories): boot_milestone syncs Pi to server on the id cursor; speed integrator publishes drive distance; IMU stale window is a config.json key; light bridge computes brightness; states/fuel-economy publishes drive fuel and MPG; since-reset fuel totals persist Pi-locally; POST /fuel-reset zeroes them when parked. Also: ADR ARCH-016 s11 + UIDEV-001 specs (docs)."
 }
