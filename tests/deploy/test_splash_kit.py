@@ -24,6 +24,10 @@
 # 2026-10-15    | Rex (US-649-b) | INTENDED ASSERTION CHANGE: the .wayland boot
 #               |              | variant orders After=eclipse-compositor.service,
 #               |              | not graphical.target; .x11 unchanged.
+# 2026-10-16    | Atlas (US-866) | INTENDED ASSERTION CHANGE: the .x11 boot
+#               |              | variant orders After=display-manager.service,
+#               |              | waits for X access, and OnFailure starts the
+#               |              | dashboard. Directives parsed, not substrings.
 # ================================================================================
 ################################################################################
 
@@ -170,9 +174,49 @@ def test_bootVariants_orderAfterGraphical_d3():
     assert "After=graphical.target" not in wayland
     assert "Before=graphical.target" not in wayland
 
-    x11 = _read("splash-boot.service.x11")
-    assert "After=graphical.target" in x11
-    assert "Before=graphical.target" not in x11
+    # US-866 INTENDED ASSERTION CHANGE (.x11): the display server is lightdm
+    # (display-manager.service), so the x11 variant orders After= IT, not
+    # graphical.target, which waits on the Bluetooth bond check. Read the
+    # DIRECTIVES, not the text: a substring test passed on a comment naming
+    # the old line once that line was gone.
+    x11After = _directiveValues(_read("splash-boot.service.x11"), "After")
+    assert "display-manager.service" in x11After
+    assert "graphical.target" not in x11After
+    assert _directiveValues(_read("splash-boot.service.x11"), "Before") == []
+
+
+def _directiveValues(unit: str, key: str) -> list[str]:
+    """Every space-separated value of ``key=`` lines, comments ignored."""
+    values: list[str] = []
+    for line in unit.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(f"{key}="):
+            values.extend(stripped[len(key) + 1:].split())
+    return values
+
+
+def test_x11BootVariant_waitsForXAccess_us866():
+    """US-866: the x11 splash waits until X accepts the user, then fails loud.
+
+    MEASURED boot 3f8c767d: chromium connected 0.13 s before the autologin
+    session's xhost grant, exited 1, and OnSuccess never started the dashboard.
+    The gate runs as the unit's user with no XAUTHORITY, as chromium connects.
+    """
+    unit = _read("splash-boot.service.x11")
+    pre = _directiveValues(unit, "ExecStartPre")
+    assert pre, "splash-boot.service.x11 has no ExecStartPre readiness gate"
+    gate = " ".join(pre)
+    assert "xset q" in gate
+    assert "-ge 150" in gate and "sleep 0.2" in gate  # bounded: 30 s
+    assert "exit 1" in gate  # fails loud, never starts chromium blind
+    assert "$$((i+1))" in gate  # systemd needs $$ for a shell variable
+
+
+def test_x11BootVariant_failedSplashStillStartsDashboard_us866():
+    """US-866: a FAILED splash starts the dashboard; success still hands off."""
+    unit = _read("splash-boot.service.x11")
+    assert _directiveValues(unit, "OnSuccess") == ["eclipse-dashboard.service"]
+    assert _directiveValues(unit, "OnFailure") == ["eclipse-dashboard.service"]
 
 
 # ---------------------------------------------------------------------------
