@@ -106,3 +106,11 @@ Wideband AFR (no sensor) · bank 2 sensors (4-cylinder, one bank) · switching-s
 - **Atlas:** the 5-minute series provider; carry Spool's rule into the provider story.
 - **Spool:** rear/catalyst rule after the exhaust project.
 - **Mockup:** chip words on the published mockup predate this rework (`needs faster sampling`); refresh in the next mockup pass.
+
+## OEM mockup findings (2026-10-15)
+Mockup: `proposals/2026-10-15-v030-o2-page-oem.html`.
+- **Section labels have no middle dot:** `FRONT  BEFORE CAT` (218.5 px at 15 px) and `REAR  AFTER CAT`, double-spaced, because the Michroma subset has no `·` (same as Motion's `GRADE  LAST 15 MIN`).
+- **Chip fonts:** the live verdict chips (`SWITCHING`, `STUCK LEAN` …) are Michroma. The withheld chips are lower case (`not enough data yet`, `open loop`), so they are `--font-body`: the Michroma subset has no a-z.
+- **Window on the glass:** `last 5 min` ends the meta line, since the trace has no axis labels.
+- **Page dots** follow the page list. With O2 built, the strip has 10 dots (S105 order plus O2).
+- ⚠️ **Open (Spool/Atlas): the cold-closed-loop fixture.** The loop is really closed and only the < 85 °C coolant gate fails, but the withheld chip reads `open loop`, which is false. Proposed: a separate reason `warming up`. The reason text is the provider's, not the page's.

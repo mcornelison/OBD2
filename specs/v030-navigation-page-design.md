@@ -37,7 +37,7 @@ The bearing tape is the focal element. Everything else on the page is secondary.
 
 ```
 ┌──────────────────────────────────────────────┐  top bar (V0.30 page-set design, not this spec)
-│ NAVIGATION                    [NOT CALIBRATED]│  22   title --fs-label · badge --fs-label
+│                               [NOT CALIBRATED]│  22   BADGE ROW: state badge only, --fs-label
 │   SW  ·  ·  |  ·  ·  W  ·  ·  |  ·  ·  NW     │
 │   ┃     ╷     ╷     ┃     ╷     ╷     ┃       │  70   TAPE (hero) · hairline at centre
 │                    247° SW                    │  46   --fs-hero digits · --fs-primary point
@@ -50,11 +50,11 @@ The bearing tape is the focal element. Everything else on the page is secondary.
 
 | Band | Content | Type tokens | Height |
 |---|---|---|---|
-| Title row | `NAVIGATION` left, state badge right | `--fs-label` both | 22 |
+| Badge row | State badge, right-aligned (`--amber-warn` fill). Empty when trusted; height kept | `--fs-label` | 22 |
 
-> **Superseded 2026-10-14 (title row):** the frame spec (§3) removes every page's title row, and the page name moves into the top bar. **This page's bar name is `NAV`** (CIO 2026-10-14; `NAVIGATION` at 135 px doesn't fit the 122 px slot, frame §3.2). The calibration badge still needs a home. My proposal is the right end of the tape band, decided at this page's re-skin. That frees the 22 px back to the tape or the slack. The layout above is kept as drawn until that pass.
-| Tape | Full width (456 px). 90° window. Ticks every 5° (fine), 15° (minor), 45° (major + compass letter). `N` in `--text-primary`, others `--text-secondary`. Centre **hairline** 2 px `--text-primary` | letters `--fs-secondary` | 70 |
-| Heading readout | `247°` (zero-padded 3 digits) + 8-point compass letter, centred under the hairline | `--fs-hero` / `--fs-primary` | 46 |
+> **Superseded 2026-10-14 (title row):** the frame spec (§3) removes every page's title row, and the page name moves into the top bar. **This page's bar name is `NAV`** (CIO 2026-10-14; `NAVIGATION` at 135 px doesn't fit the 122 px slot, frame §3.2). **Badge home DECIDED 2026-10-15 (S105 review G-1): the 22 px row stays, as a BADGE ROW above the tape, badge right-aligned.** Measured in `--font-body` at 20 px: `NOT CALIBRATED` 175.3 px, `NO UPDATE 12 s` 166.3, `STARTING UP` 134.0. On the tape band's right end the badge would cover ~37° of the 90° window, including the W/NW letters: it would hide the hero to label it. The row keeps its height when empty (trusted), so the tape never jumps when a badge appears or clears. Budget unchanged (223 / 258).
+| Tape | Full width (456 px). 90° window. Ticks every 5° (fine), 15° (minor), 45° (major + compass letter). `N` in `--text-primary`, others `--text-secondary`. Centre **hairline** 2 px `--accent` (frame-and-style rule 3: unbanded data is orange; corrected 2026-10-15, was `--text-primary`) | letters `--fs-secondary` | 70 |
+| Heading readout | `247°` (zero-padded 3 digits) + 8-point compass letter, centred under the hairline. **8-point rounding:** sector = round(deg / 45) mod 8, half up: `22.5` ⇒ `NE`, `337.5` ⇒ `N` (wraps 8 → 0). A NEW 8-point function; the interim card's 16-point `headingCardinal` retires with that card | `--fs-hero` / `--fs-primary` | 46 |
 | Bottom row | **GRADE**: slope glyph + `+4.1 %` · **THIS DRIVE**: `12.4 mi` over `0:23 elapsed` | `--fs-primary` values, `--fs-meta` labels, `--fs-label` elapsed | ~79 |
 
 **Total ≈ 223 / 258.** The slack is deliberate: F-132's clip came from a budget spent to the pixel.
@@ -76,9 +76,9 @@ The bearing tape is the focal element. Everything else on the page is secondary.
 | State | Detected from | Tape | Digits | Badge |
 |---|---|---|---|---|
 | **Sensor dead** | `headingDeg` null **and** reason ≠ `heading_unseeded` | **not drawn**: `NO HEADING` + reason text in its place | `---°` | none (the block is the message) |
-| **Stale** | `states/imu.ts` older than **3 missed readings** (config, see §5) | **frozen** at last reading, no glide | last value | `NO UPDATE n s` (counts up) |
+| **Stale** | `states/imu.ts` age **> `pi.display.stale.imuSec`** (strict; the ONE IMU stale key, shared with Motion, see §5) | **frozen** at last reading, no glide | last value | `NO UPDATE n s` (counts up) |
 | **Starting up** | `headingDeg` null **and** reason = `heading_unseeded` | **frozen/blank** until the first reading, then normal | `---°` until first reading | `STARTING UP` |
-| **Not calibrated** | `headingCalibrated == false` | **normal** (N-5) | normal | `NOT CALIBRATED` |
+| **Not calibrated** | `headingCalibrated == false`, **or the key ABSENT** (legacy engine, Atlas 2026-10-14 s5) | **normal** (N-5) | normal | `NOT CALIBRATED` (false) · `--` + reason (absent); never `not calib.` |
 | **Trusted** | otherwise | normal | normal | none |
 
 Reason-code → text mapping lives in one table in `carousel.js` (it already has `imuReason()`); `heading_unseeded` gets text here, **which closes US-821**.
@@ -88,9 +88,16 @@ Reason-code → text mapping lives in one table in `carousel.js` (it already has
 - `gradePct` null ⇒ `--` + its reason text in `--fs-label`, **on the glass** (the US-852 rule: a reason that exists only in the DOM tells nobody anything).
 
 ### 4.4 Trip (this drive)
-- Resets at key-on. Before the car moves: `0.0 mi · 0:00`.
-- Distance: **US-704** producer. Until it exists, the slot shows `-- mi` with `not measured yet`. Never a fabricated zero mid-drive.
-- Elapsed: from the drive-start time (field named by Atlas, §5). Format `h:mm`.
+- Resets at drive start (provider). Before the car moves the provider itself publishes `0.0` and `elapsedSec` 0, so `0.0 mi · 0:00` renders with **no page-side special case** (S105 review B-1c).
+- Distance: `drive.distanceKm` (US-704 / US-880-a, the ONE speed integrator) ÷ 1.609344, one decimal. `distanceKm` null ⇒ `-- mi` + `not measured`. Never a fabricated zero.
+- **Label, from the PROVIDER** (Atlas 2026-10-15, B-1(b) ruling; build US-896-b): `drive.distancePartial` `false` ⇒ `THIS DRIVE`; `true` (orchestrator restarted mid-drive, so the window starts at the first SPEED reading) ⇒ `SINCE h:mm` (local time of `distanceSinceTs`, **12-hour without AM/PM**, the same rule as the Engine history label (US-889-c as built) and the top-bar clock, so the panel never shows two clock formats), same distance and elapsed values; `null` ⇒ the not-measured rule. Same name and polarity as `states/engine-history.partial`. **The page never compares timestamps to decide this.** 🔴 **Font split:** the Michroma subset has no `:` (A-Z 0-9 space hyphen only), so `SINCE` is Michroma and the time is a READING in `--font-mono` (frame §: changing readings use the fixed-width face). Measured at 15 px: `SINCE ` 70.0 + `12:59` (the widest 12-hour time) 45.1 = **115.2 px**, inside the 118.0 px `THIS DRIVE` already takes. All-Michroma would drop the colon to a fallback glyph.
+- **Parked ⇒ `LAST DRIVE`** (CIO RULED 2026-10-16, Q1; the Home idle face retires, and US-704 closes here). When `drive.state` is a known value other than `recording`, the frozen trip reads `LAST DRIVE` with the same distance and elapsed values. Precedence, top wins:
+  1. `distanceKm` or `distancePartial` null ⇒ the not-measured rule (unchanged).
+  2. `distancePartial` true ⇒ `SINCE h:mm`, **parked or not**. `LAST DRIVE` would claim the whole drive when the window covers only part of it, and the true label stays true after the car stops.
+  3. `drive.state` known and not `recording` ⇒ `LAST DRIVE`.
+  4. Otherwise ⇒ `THIS DRIVE`. A null or stale `drive.state` does **not** assert parked: absence of the fact is not the fact.
+  The page reads the state; it never infers parked from speed, elapsed or time. Measured in Michroma at 15 px: `LAST DRIVE` **125.9 px** (`THIS DRIVE` 118.0). It sits in the right-aligned trip cell of the 456 px bottom row beside `GRADE`; the 34 px distance under it is already wider, so the label sets no width.
+- Elapsed: **`drive.elapsedSec`, from the PROVIDER** (Atlas 2026-10-15, S105 rulings Q2; build US-896-b). Same origin as the distance (`distanceSinceTs`), so `12.4 mi over 0:23` is one window. **Frozen at drive end** (drive-end ts − sinceTs), counting while recording, null when sinceTs is null. The page formats `h:mm` and does **no time arithmetic** (a page-side `now − sinceTs` would count parked time as drive time, because the trip resets only at drive start). A stale system-status gets the stale treatment; the page never extrapolates.
 - Miles, one decimal.
 
 ### 4.5 Parked
@@ -104,9 +111,10 @@ Heading and grade stay live: parked, the IMU heading is **correct**, not unavail
 | Calibration flag | `states/imu.headingCalibrated` (`imu_state_bridge.py:989`) | exists | — |
 | Startup / dead reasons | `states/imu` reasons map, `heading_unseeded` (`imu_state_bridge.py:505`) | exists | — |
 | Grade | `states/imu.gradePct` + reason | exists | — |
-| Staleness | `states/imu.ts` age; threshold **"3 missed readings" in config, not code** | page-side | **Atlas: gate the config key** |
-| Trip distance | US-704 producer | **not built** | **Marcus: admit to V0.30** |
-| Drive start time | a drive-state field | **unconfirmed** | **Atlas: name it** |
+| Staleness | `states/imu.ts` age vs `pi.display.stale.imuSec`, injected as `window.DISPLAY_STALE.imuSec` | **exists** (US-882-c); **default 2.0 → 3.0 s** (Atlas 2026-10-15, S105 rulings Q3; build US-896-a) | — **reused 2026-10-15** (S105 Q3). One provider ⇒ one key: two keys would let NAV freeze while Motion shows live on the same fact. **Why 3.0, MEASURED by Atlas on the Pi:** `states/imu` writes every 1.00–1.02 s, but its `ts` is whole seconds and the kiosk polls every 100 ms, so a healthy file reads up to 1.94 s old. 2.0 s left ~0.06 s margin and would flash `NO UPDATE` on a healthy feed. 3.0 s = 3 missed readings at 1 Hz. Measured parked on wall power; jitter under drive load is not yet measured |
+| Trip distance | `drive.distanceKm` (US-704 / US-880-a, the one speed integrator) | **exists** | — |
+| Trip elapsed + window | `drive.elapsedSec` (frozen at drive end) + `drive.distancePartial` + `distanceSinceTs` | **ruled** (Atlas 2026-10-15, Q2 + B-1(b)); build US-896-b | Ralph (S105) |
+| Parked label | `drive.state` (`recording` / `idle` / `waiting`, the value the System page shows) | exists | — (CIO Q1 2026-10-16) |
 
 **Rule kept from Atlas's 2026-08-20 WiFi ruling:** the page **renders what providers derive** and applies no threshold of its own. The one page-side judgement (staleness) has its number in config.
 
@@ -118,15 +126,20 @@ Heading and grade stay live: parked, the IMU heading is **correct**, not unavail
 2. No element clips: every tile/band `scrollHeight <= clientHeight` (DOM check, all fixtures).
 3. Computed font-size of heading digits, grade value and trip distance ≥ 34 px.
 4. Glide (fake clock, JS unit): reaches the target within 1000 ms; 350→10 moves +20°; a mid-glide reading starts from the current drawn bearing; reduced-motion steps.
-5. Stale: with `ts` held, after 3 reading periods the tape stops moving and `NO UPDATE n s` appears and counts.
+5. Stale: with `ts` held, once its age exceeds `imuSec` (strict `>`) the tape stops moving and `NO UPDATE n s` appears and counts.
 6. A dead sensor draws **no** tape element at all, not a hidden or zero-opacity one.
 7. Every null value shows its reason text on the glass (no reason only in the DOM).
 8. **No literal colour or px** in the page's CSS (grep gate, extends US-539/US-557).
 9. **DoD (R15): the CIO, in the car, reads the bearing at a glance with no touch.**
+10. Compass point: `22.5` ⇒ `NE`, `337.5` ⇒ `N`, `247` ⇒ `SW` (8-point, R25).
+11. The badge sits in its own row above the tape; no badge overlaps any tape element (DOM rect check).
+12. Trip label follows the §4.4 precedence for every trip and parked fixture: `parked-engine-off` ⇒ `LAST DRIVE`, `parked-partial` ⇒ `SINCE 2:49`, `parked-state-null` ⇒ `THIS DRIVE`.
 
 ## 7. Fixtures (static state files; no replay rig, per R20)
 
-`trusted-247` · `uncalibrated` · `unseeded` · `dead-mag` · `stale-imu` · `wrap-350-to-010` (two consecutive files) · `parked-engine-off` · `grade-null`.
+`trusted-247` · `uncalibrated` · `legacy-engine-no-flag` · `boundary-022.5` · `boundary-337.5` · `stale-2.5s` (live, no badge) · `stale-3.5s` (`NO UPDATE 3 s`) · `trip-ended-frozen` (elapsedSec 1800 at T+40 min) · `trip-mid-drive` (`THIS DRIVE`) · `trip-partial-after-restart` (`distancePartial` true, sinceTs 14:49 local ⇒ `SINCE 2:49`, `12.4 mi`, `0:23`) · `trip-not-measured` · `unseeded` · `dead-mag` · `stale-imu` · `wrap-350-to-010` (two consecutive files) · `parked-engine-off` (`drive.state` idle ⇒ `LAST DRIVE`, values frozen) · `parked-partial` (idle + `distancePartial` true ⇒ `SINCE 2:49`) · `parked-state-null` (`drive.state` null ⇒ `THIS DRIVE`) · `grade-null`.
+
+**OEM mockup** (2026-10-15): `proposals/2026-10-15-v030-navigation-page-oem.html` draws every fixture above. Choices it made where this spec is silent, now the rule: a legacy-engine COMPASS badge is an amber `--` chip with the reason in `--text-secondary` beside it; before the first heading reading the band shows `waiting for the first heading reading` (AC 7: the reason is on the glass); a stale NAV page freezes and badges but does **not** dim (the badge is the stale signal; Motion dims because it has no badge).
 
 ## 8. Out of scope
 
@@ -134,6 +147,7 @@ Speed (driving page) · altitude (no source: no baro, GPS on hold) · position/r
 
 ## 9. Open items
 
-- **US-704 admission** to V0.30: Marcus, at the DoD.
-- **Drive-start field name + stale-threshold config key**: Atlas.
+- ~~US-704 admission to V0.30~~ **built** (US-880-a, `drive.distanceKm`).
+- ~~Stale-threshold config key~~ **RESOLVED 2026-10-15: `pi.display.stale.imuSec`** (§5).
+- **Trip (§4.4), S105 review B-1: all three RULED, and the CIO ruled Q1 on 2026-10-16 (parked ⇒ `LAST DRIVE`, §4.4).** (a) elapsed needs an END: `distanceKm`/`distanceSinceTs` hold after the drive ends, so `now − sinceTs` would keep counting while parked; (b) `distanceSinceTs` is the drive start OR the first SPEED reading after a mid-drive restart, so `THIS DRIVE` needs a provider flag; (c) no page-side zero: at drive start the provider publishes 0.0. **(a) RULED 2026-10-15:** `drive.elapsedSec`, frozen at drive end (§4.4). **(b) RULED 2026-10-15:** `drive.distancePartial` ⇒ `SINCE h:mm` (§4.4). **(c)** folded: no page-side zero. ~~**CIO** rules Q1~~ **RULED 2026-10-16: parked ⇒ `LAST DRIVE`; `SINCE h:mm` still wins when the window is partial** (§4.4).
 - **DoD 10 pass numbers** (90 % vs 95 %): already raised in my DoD review.

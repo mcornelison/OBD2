@@ -175,3 +175,18 @@ Knock alerts (need ECMLink) · AFR/lean numeric (no wideband) · oil pressure (n
 - ~~**Marcus:** R31 scope~~ **(CIO ruled 2026-10-14, via Marcus):** live coolant red only takes over; RPM + battery red = WATCH; stored codes never take over (§4.4).
 - **Top-bar name:** this page shows **`ALERTS`** in the bar (CIO 2026-10-14; `WARNINGS` at 125 px doesn't fit the 122 px slot). The page keeps the name Warnings everywhere else (frame spec §3.2).
 - **Mockup:** the published Warnings mockup still shows the no-takeover version; a takeover frame is owed in the next mockup pass.
+
+## OEM mockup findings (2026-10-15)
+Mockup: `proposals/2026-10-15-v030-warnings-page-oem.html`. Measured: Michroma from the advances table; DejaVu Sans / Sans Mono via PIL.
+- **Takeover title** goes on its own line at `--fs-secondary`, with the value in `--font-mono` at `--fs-primary` below it. `ENGINE OVERHEATING` is 544 px in Michroma at 34 px (416 px at 26, which fits 460), and Michroma has no `·` or `°`. §4.4's one-line `ENGINE OVERHEATING · 234 °F` is replaced.
+- **"Solid fill"** means an opaque `--bg` with an 8 px `--critical-red` frame, not a red flood.
+- **Header fallbacks** (34 px doesn't fit the long pairs):
+  - unread with nothing active: `NOT CHECKED` alone, with the reason in the empty state;
+  - checked and clean: `NONE` + `codes read h:mm`, and `NO WARNINGS` at 26 px in the empty state;
+  - the `?` is `--font-mono` (it isn't in the Michroma subset).
+- **Icon precedence:** an active STOP or WATCH outranks `?`. With codes unread, the header meta says `codes not read yet`.
+- **Cleared STOP still listed:** outlined chip, dimmed text, `cleared` in the age column. The icon counts active entries only.
+- **Over-rev:** title `OVER-REV`, with `peak 7,150 rpm (sampled)` in the sentence slot (mono 15). On one line it is 398 px. **Spool to confirm the wording.**
+- **Body height:** 270 px (34 px bar + 16 px dots), not 258.
+- ⚠️ **Open (Atlas token gate):** the mockup uses three tokens not in `tokens.css`: `--critical-red-dim` (the pulse's second step), `--neutral-chip-bg` (named by this spec, undefined) and `--chip-ink`.
+- ⚠️ **Open (Spool/Atlas):** an UNRATED code needs a provider sentence. The mockup's `Not rated for this car yet.` is a placeholder.
