@@ -71,6 +71,9 @@ def getShutdownTestConfig(dbPath: str) -> dict[str, Any]:
                 'version': '1.0.0',
                 'environment': 'test'
             },
+            # US-809-0 made the local zone required: realtime writes are
+            # refused, never guessed, when it is undeclared.
+            'time': {'localZone': 'America/Chicago'},
             'database': {
                 'path': dbPath,
                 'walMode': True,
