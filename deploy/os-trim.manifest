@@ -11,6 +11,8 @@
 #   mask               systemctl mask <unit>        revert: unmask
 #   disable            systemctl disable <unit>     revert: enable
 #   flagfile <path>    create <path>                revert: delete <path>
+#   user-mask          systemctl --global mask <unit>  revert: --global unmask
+#                      (a USER unit, for every user's session; US-866 round 2)
 # Blank lines and lines starting with '#' are ignored. Anything else that does
 # not parse is a hard ERROR -- never "nothing to trim".
 #
@@ -20,6 +22,12 @@
 # (pm/inbox/2026-10-14-from-atlas-RULED-S101-OS-designs-...); evidence is the
 # systemd-analyze blame of boot 7c6aafaa unless marked. Add or drop an entry
 # only with an Atlas ruling. The NEVER list lives in os-trim.sh.
+#
+# Round 2 (Atlas, CIO-approved 2026-10-16): the entries below the round-2 line
+# come from the census of every enabled unit on boot 3fac74aa..b132e687
+# (offices/architect/findings/2026-10-16-RESULTS-steps-1-3-...). Their pre-state
+# is recorded by the first apply that SEES them (os-trim.sh appends; it never
+# rewrites a recorded line).
 ################################################################################
 
 cloud-init | flagfile /etc/cloud/cloud-init.disabled | no cloud provisioning in a car; the WiFi profile is netplan /etc/netplan/90-NM-*.yaml, not cloud-init; the flag file is cloud-init's documented off switch | on the boot critical chain: main 1.023 + local 0.213 + network 0.062 s before sysinit.target (Atlas, boot 7c6aafaa)
@@ -35,3 +43,26 @@ dpkg-db-backup.timer | mask | no automatic apt on the car (CIO 2026-10-14) | 0.4
 udisks2.service | mask | no removable-media service needed; no reference in repo deploy/ or src/pi | 0.72 s (Atlas, boot 7c6aafaa)
 ModemManager.service | mask | no modem in the car | 0.37 s (Atlas, boot 7c6aafaa)
 e2scrub_reap.service | mask | plain ext4 partitions, no LVM to scrub | 0.94 s (Atlas, boot 7c6aafaa)
+
+# ---- round 2 (2026-10-16) --------------------------------------------------
+packagekit.service | mask | no package management in a car (apt is already masked, CIO 2026-10-14); lxpanel-pi's updater D-Bus-activates it every boot | activated 15.9-20.4 s, inside the splash, on 3 of 4 boots; packagekitd 4 s CPU by 25 s uptime; the one late-activation boot had the shortest splash, 8.65 s vs 11.5-14.4 s (Atlas, boots 3fac74aa..b132e687; correlation, n = 4)
+rpcbind.service | mask | NFS RPC portmapper; no NFS in /etc/fstab | 0.46 s at boot; listens on 0.0.0.0:111 and [::]:111, i.e. on the WiFi (Atlas, boot 3fac74aa)
+rpcbind.socket | mask | NFS RPC portmapper; the socket would re-activate rpcbind.service | listens on 0.0.0.0:111 (Atlas, boot 3fac74aa)
+nfs-blkmap.service | disable | NFS pNFS block layout; no NFS in /etc/fstab | enabled with nothing to serve (Atlas, boot 3fac74aa)
+man-db.timer | mask | no man pages are read in a car | man-db.service 0.67 s when it fires at boot (Atlas, boot 2026-10-15 09:46)
+e2scrub_all.timer | mask | plain ext4 partitions, no LVM to scrub; same rationale as e2scrub_reap | weekly timer; /etc/cron.d/e2scrub_all is its cron twin (Atlas, boot 3fac74aa)
+wayvnc-control.service | disable | Wayland VNC control; no repo reference; the recovery path is SSH (ADR ARCH-016 11.4) | enabled, no consumer (Atlas, boot 3fac74aa)
+avahi-daemon.service | mask | mDNS; deploy reaches the Pi by IP via ssh config, sync uses serverHost 10.27.27.120, and no .local name is used anywhere in src/deploy/scripts/config.json | 0.70 s at boot (Atlas, boot 3fac74aa); lifted off the NEVER list with the CIO's yes 2026-10-16
+avahi-daemon.socket | mask | mDNS; the socket would re-activate avahi-daemon.service | /run/avahi-daemon/socket (Atlas, boot 3fac74aa)
+pipewire.service | user-mask | no audio in the project (pi.alerts.audioAlerts false; no audio code) | user unit, enabled in the kiosk session (Atlas, boot 3fac74aa)
+pipewire.socket | user-mask | no audio; the socket would re-activate pipewire.service | user unit, enabled (Atlas, boot 3fac74aa)
+pipewire-pulse.service | user-mask | no audio | user unit, enabled (Atlas, boot 3fac74aa)
+pipewire-pulse.socket | user-mask | no audio; the socket would re-activate pipewire-pulse.service | user unit, enabled (Atlas, boot 3fac74aa)
+wireplumber.service | user-mask | no audio (PipeWire's session manager) | user unit, enabled (Atlas, boot 3fac74aa)
+filter-chain.service | user-mask | no audio (PipeWire filter chain) | user unit, enabled (Atlas, boot 3fac74aa)
+mpris-proxy.service | user-mask | Bluetooth media-player proxy; the car's BlueZ link is the OBDLink, not media | user unit, enabled, a BlueZ D-Bus client (Atlas, boot 3fac74aa)
+gvfs-udisks2-volume-monitor.service | user-mask | no removable media (udisks2 is already masked) | 99 ms user-session start (Atlas, boot 3fac74aa)
+gvfs-afc-volume-monitor.service | user-mask | no Apple devices | 76 ms user-session start (Atlas, boot 3fac74aa)
+gvfs-mtp-volume-monitor.service | user-mask | no MTP devices | 76 ms user-session start (Atlas, boot 3fac74aa)
+gvfs-goa-volume-monitor.service | user-mask | no online accounts | 67 ms user-session start (Atlas, boot 3fac74aa)
+gvfs-gphoto2-volume-monitor.service | user-mask | no cameras | 64 ms user-session start (Atlas, boot 3fac74aa)
