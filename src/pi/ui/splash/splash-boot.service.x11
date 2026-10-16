@@ -46,18 +46,38 @@
 
 [Unit]
 Description=Animated boot splash (status-aware, X11)
-After=graphical.target eclipse-states-http.service eclipse-boot-state.service
+# US-866 (Atlas 2026-10-16, CIO-directed): ordered after the display manager,
+# NOT graphical.target. graphical.target waits on multi-user, which waits on
+# the Bluetooth bond check and rfcomm-bind -- a 2.8-12.8 s spread measured on
+# two boots -- and none of that is something the splash needs. Readiness of the
+# X server is the ExecStartPre gate below, not an ordering guess. Same move as
+# the Wayland design (ADR ARCH-016 section 11.3: drop After=graphical.target).
+After=display-manager.service eclipse-states-http.service eclipse-boot-state.service
 Wants=graphical.target eclipse-states-http.service eclipse-boot-state.service
 # A-1 hand-off (US-399): at HEALTHY_YIELD the splash JS calls window.close(),
 # this Type=simple unit exits 0, and systemd starts the carousel dashboard. A
 # DEGRADED boot keeps the splash up (no window.close) -> no dashboard hand-off.
 OnSuccess=eclipse-dashboard.service
+# US-866: a splash that FAILS (it never drew, or chromium died) must not leave
+# the car with no dashboard. A degraded splash that stays up is not a failure,
+# so the D-3 behaviour above is unchanged.
+OnFailure=eclipse-dashboard.service
 
 [Service]
 Type=simple
 User=__PI_USER__
 Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
+# US-866 (MEASURED 2026-10-16, boot 3f8c767d): after the OS trim the splash
+# started at 8.63 s, but X accepts this user only once the autologin session
+# runs /etc/X11/Xsession.d/35x11-common_xhost-local (xhost +si:localuser) at
+# 11.61 s. chromium connected at 11.48 s, got "Authorization required", exited
+# 1, and the dashboard never started. Before the trim a 12.8 s Bluetooth check
+# hid the race. Wait -- as this user, with no XAUTHORITY, exactly as chromium
+# connects -- until X accepts us, for at most 30 s; then fail loud (OnFailure
+# still brings up the dashboard). xset ships in x11-xserver-utils, the same
+# package that provides the xhost grant this waits for. $$ is systemd's escape.
+ExecStartPre=/bin/sh -c 'i=0; until xset q >/dev/null 2>&1; do i=$$((i+1)); if [ "$$i" -ge 150 ]; then echo "splash-boot: X display $$DISPLAY did not accept this user within 30 s" >&2; exit 1; fi; sleep 0.2; done'
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --noerrdialogs --disable-infobars --hide-scrollbars \
