@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.5",
-  "theme": "Sprint 103: V0.30 OEM style + Driving card",
-  "description": "Sprint 103 (5 stories): OEM token set in tokens.css incl. giant size; Michroma replaces Oswald as the embedded display face; the top bar names the page and cards lose their title rows; a Driving card lands first with gear, speed and engine values; its RPM bar steps on real samples with provider zones. Also carries V0.30.3 (S101 OS trim) and V0.30.4 (S102 labwc kiosk)."
+  "version": "V0.30.6",
+  "theme": "Sprint 104: V0.30 Engine + Fuel pages",
+  "description": "Sprint 104 (10 stories): provider normalises python-obd units once (fixes the S103 Driving page); engine-history provider and Engine page; Fuel page with total trim, open-loop flag and recent-window MPG; first-connect python-OBD debug log with connect phase timing. New card order Driving, Engine, Fuel. Re-ships S101 OS trim and S102 kiosk."
 }
