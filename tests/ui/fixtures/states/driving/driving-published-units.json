@@ -1,0 +1,80 @@
+{
+  "description": "US-888-b (Iris G-1): the obd-live builder's output for readings carrying python-obd's measured units (degree_Celsius, kilometer_per_hour, revolutions_per_minute, volt) -- what the Pi publishes once the provider canonicalises them.",
+  "now": "2026-10-15T12:30:10Z",
+  "obd-live": {
+    "params": {
+      "RPM": {
+        "value": 2450,
+        "unit": "rpm",
+        "ts": "2026-10-15T12:30:08Z",
+        "stale": false,
+        "band": {
+          "band": "green",
+          "since": "2026-10-15T12:30:08Z",
+          "reason": "rpm below 5500"
+        },
+        "last": null,
+        "scale": {
+          "amberFrom": 5500.0,
+          "redFrom": 7000.0
+        }
+      },
+      "SPEED": {
+        "value": 64,
+        "unit": "km/h",
+        "ts": "2026-10-15T12:30:08Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "COOLANT_TEMP": {
+        "value": 88,
+        "unit": "C",
+        "ts": "2026-10-15T12:30:08Z",
+        "stale": false,
+        "band": {
+          "band": "green",
+          "since": "2026-10-15T12:30:08Z",
+          "reason": "coolant has not held >= 104 C for 30 s"
+        },
+        "last": null
+      },
+      "INTAKE_TEMP": {
+        "value": 31,
+        "unit": "C",
+        "ts": "2026-10-15T12:30:08Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "BATTERY_V": {
+        "value": 14.1,
+        "unit": "V",
+        "ts": "2026-10-15T12:30:08Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "engine_not_running"
+      }
+    },
+    "fuel": {
+      "loop": null,
+      "totalTrimNow": {
+        "value": null,
+        "unit": "%",
+        "ts": null,
+        "reason": "not_read"
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-15T12:30:10Z"
+  },
+  "gear": {
+    "available": true,
+    "gear": 3,
+    "reason": "matched",
+    "ts": "2026-10-15T12:30:10Z"
+  }
+}

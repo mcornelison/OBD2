@@ -1,0 +1,84 @@
+{
+  "description": "Bucket 15:01:30 holds band amber while its plotted value (the LAST sample) is 101.0 C, below the amber number: the span is amber anyway.",
+  "now": "2026-10-20T15:02:02Z",
+  "engine-history": {
+    "ts": "2026-10-20T15:02:02Z",
+    "driveId": 118,
+    "sinceTs": "2026-10-20T15:00:00Z",
+    "partial": false,
+    "intervalSec": 30.0,
+    "series": {
+      "COOLANT_TEMP": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 106.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 106.0,
+          "band": "amber"
+        },
+        {
+          "ts": "2026-10-20T15:01:30Z",
+          "value": 101.0,
+          "band": "amber"
+        },
+        {
+          "ts": "2026-10-20T15:02:00Z",
+          "value": 101.0,
+          "band": "green"
+        }
+      ],
+      "INTAKE_TEMP": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:01:30Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:02:00Z",
+          "value": 35.0,
+          "band": null
+        }
+      ],
+      "BATTERY_V": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:30Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:02:00Z",
+          "value": 14.0,
+          "band": "green"
+        }
+      ]
+    },
+    "unit": {
+      "COOLANT_TEMP": "C",
+      "INTAKE_TEMP": "C",
+      "BATTERY_V": "V"
+    }
+  }
+}

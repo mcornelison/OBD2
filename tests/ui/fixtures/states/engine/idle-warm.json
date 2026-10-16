@@ -1,0 +1,37 @@
+{
+  "description": "Warm idle: load, throttle and timing all fresh in the canonical units obd-live publishes (%, deg). No band on any of them (no_band_defined), so all three are neutral.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "ENGINE_LOAD": {
+        "value": 21.2,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "noBandReason": "no_band_defined",
+        "last": null
+      },
+      "THROTTLE_POS": {
+        "value": 14.9,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:28Z",
+        "stale": false,
+        "band": null,
+        "noBandReason": "no_band_defined",
+        "last": null
+      },
+      "TIMING_ADVANCE": {
+        "value": 12.0,
+        "unit": "deg",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "noBandReason": "no_band_defined",
+        "last": null
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

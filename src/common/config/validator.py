@@ -148,6 +148,15 @@
 #                                cadence, Atlas G3), finite > 0.
 # 2026-10-14    | Rex (US-881-d) | pi.fuel.resetTimeoutSec: 5 (POST /fuel-reset
 #                                outcome wait), finite > 0.
+# 2026-10-15    | Rex (US-889-a) | pi.display.engineHistory.{intervalSec 30,
+#                                maxPoints 240} (Atlas S104 ruling 1); finite, > 0.
+# 2026-10-15    | Rex (US-890-b) | pi.display.scale.mafMaxGs: 160 (Spool, params.MAF
+#                                .scale.max); finite, > 0.
+# 2026-10-15    | Rex (US-890-e) | pi.fuel.{recentWindowSec 30, recentMinMiles 0.1,
+#                                recentMinMafSamples 10} (Spool 2026-10-14);
+#                                finite, > 0.
+# 2026-10-15    | Rex (US-907)   | pi.obdii.connectDebug: false (absent = off);
+#                                a real bool.  Not an overlay key.
 # ================================================================================
 ################################################################################
 
@@ -732,6 +741,10 @@ DEFAULTS: dict[str, Any] = {
     # runLoop tolerates a not-yet-connected state, US-226 interval sync
     # fires regardless, and the existing US-211 reconnect path takes over.
     'pi.obdii.orchestrator.initialConnectTimeoutSec': 30,
+    # US-907 (Atlas 2026-10-15): python-OBD at DEBUG for the process's first
+    # connect attempt.  A deploy diagnostic set in config.json, deliberately
+    # NOT an overlay key; absent = off.
+    'pi.obdii.connectDebug': False,
     # Pi self-update (B-047 US-C / US-247).  Update-check policy lives here;
     # the transport (server URL + API key) is reused from
     # pi.companionService.  intervalMinutes is the runLoop-side cadence;
@@ -853,10 +866,29 @@ DEFAULTS: dict[str, Any] = {
     # outcome. eclipse-states-http is single-threaded, so the wait blocks every
     # GET the kiosk makes -- keep it short.
     'pi.fuel.resetTimeoutSec': 5,
+    # US-890-e: states/fuel-economy recent -- MPG over the newest windowSec as a
+    # ratio of sums (Spool 2026-10-14, pm/inbox 2026-10-14-from-spool-S104-Fuel-
+    # page-...-MPG-last-30s-ratio-of-sums-null-rules.md section 2). 30 s measured
+    # on the corpus (p50 27.5, p95 50.7 MPG); null under 0.1 mi (an average under
+    # 12 mph) or under 10 MAF readings (normal ~13).
+    'pi.fuel.recentWindowSec': 30,
+    'pi.fuel.recentMinMiles': 0.1,
+    'pi.fuel.recentMinMafSamples': 10,
     # US-882-b (F-159): states/grade-history, written by the IMU bridge -- one
     # point per intervalSec over the newest windowSec (Atlas M-C 2026-10-13).
     'pi.display.gradeHistory.intervalSec': DEFAULT_GRADE_HISTORY_INTERVAL_SEC,
     'pi.display.gradeHistory.windowSec': DEFAULT_GRADE_HISTORY_WINDOW_SEC,
+    # US-889-a (F-127): states/engine-history, this drive's worst-band buckets
+    # from the obd-live tracker -- a point per 30 s, the newest 240 per PID
+    # (2 h) (Atlas S104 ruling 1, 2026-10-14).
+    'pi.display.engineHistory.intervalSec': 30,
+    'pi.display.engineHistory.maxPoints': 240,
+    # US-890-b (F-127): states/obd-live publishes params.MAF.scale = {max: this}
+    # and the Fuel card's airflow bar runs 0..max (Atlas S104 ruling 2). Spool
+    # 2026-10-14 (pm/inbox/2026-10-14-from-spool-S104-Fuel-page-MAF-scale-0-160-
+    # gs-NO-bands-...md s1): the smallest round number above the corpus max
+    # 158.69 g/s. A display scale, not the sensor's clip -- nothing bands on it.
+    'pi.display.scale.mafMaxGs': 160,
     # US-875 (F-159): the band producer (src/pi/obdii/band_producer.py) that
     # colours states/obd-live. Pages hold no number; these are the only copies.
     # Coolant (degrees C): threshold + dwell + clear hysteresis. Source for all
@@ -1028,9 +1060,12 @@ class ConfigValidator:
         self._validateReplay(config)
         self._validateImuStateBridge(config)
         self._validateGradeHistory(config)
+        self._validateEngineHistory(config)
+        self._validateMafScale(config)
         self._validateTripGap(config)
         self._validateStaleImu(config)
         self._validateFuel(config)
+        self._validateObdiiConnectDebug(config)
         self._validateLocalZone(config)
 
         logger.info("Configuration validated successfully")
@@ -1809,6 +1844,63 @@ class ConfigValidator:
                 missingFields=['pi.display.gradeHistory.windowSec'],
             )
 
+    def _validateEngineHistory(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.engineHistory.{intervalSec,maxPoints} (US-889-a).
+
+        Each must be a finite number > 0 (Atlas S104 ruling 1). An absent key is
+        skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If a key is non-numeric, non-finite or
+                non-positive.
+        """
+        for name in ('intervalSec', 'maxPoints'):
+            key = f'pi.display.engineHistory.{name}'
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not math.isfinite(val)
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a finite number > 0 (got {val!r})",
+                    missingFields=[key],
+                )
+
+    def _validateMafScale(self, config: dict[str, Any]) -> None:
+        """Validate pi.display.scale.mafMaxGs (US-890-b): a finite number > 0.
+
+        A zero or negative max would make the airflow bar's 0..max range empty.
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the key is non-numeric, non-finite or
+                non-positive.
+        """
+        key = 'pi.display.scale.mafMaxGs'
+        val = self._getNestedValue(config, key)
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or val <= 0
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number > 0 (got {val!r})",
+                missingFields=[key],
+            )
+
     def _validateTripGap(self, config: dict[str, Any]) -> None:
         """Validate pi.trip.gapSec (US-880-a): a finite number > 0.
 
@@ -1866,8 +1958,9 @@ class ConfigValidator:
     def _validateFuel(self, config: dict[str, Any]) -> None:
         """Validate the pi.fuel.* keys (US-881-b).
 
-        stoichAfr, densityGPerL, minMiles, persistSec (US-881-c) and
-        resetTimeoutSec (US-881-d) are finite numbers > 0; the two
+        stoichAfr, densityGPerL, minMiles, persistSec (US-881-c),
+        resetTimeoutSec (US-881-d) and the three recent* keys (US-890-e) are
+        finite numbers > 0; the two
         percentages are finite numbers in [0, 100]; mafTrusted is a real bool.
         An absent key is skipped (a custom defaults set may not supply it).
 
@@ -1878,7 +1971,8 @@ class ConfigValidator:
             ConfigValidationError: If any present key is out of its range.
         """
         for name in (
-            'stoichAfr', 'densityGPerL', 'minMiles', 'persistSec', 'resetTimeoutSec'
+            'stoichAfr', 'densityGPerL', 'minMiles', 'persistSec', 'resetTimeoutSec',
+            'recentWindowSec', 'recentMinMiles', 'recentMinMafSamples',
         ):
             key = f'pi.fuel.{name}'
             val = self._getNestedValue(config, key)
@@ -1910,6 +2004,25 @@ class ConfigValidator:
                     missingFields=[key],
                 )
         key = 'pi.fuel.mafTrusted'
+        val = self._getNestedValue(config, key)
+        if val is not None and not isinstance(val, bool):
+            raise ConfigValidationError(
+                f"{key} must be true or false (got {val!r})",
+                missingFields=[key],
+            )
+
+    def _validateObdiiConnectDebug(self, config: dict[str, Any]) -> None:
+        """Reject a non-bool ``pi.obdii.connectDebug`` (US-907).
+
+        An absent key is skipped (a custom defaults set may not supply it).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the value is present and not a real bool.
+        """
+        key = 'pi.obdii.connectDebug'
         val = self._getNestedValue(config, key)
         if val is not None and not isinstance(val, bool):
             raise ConfigValidationError(

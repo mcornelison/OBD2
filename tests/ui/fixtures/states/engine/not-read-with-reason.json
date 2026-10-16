@@ -1,0 +1,28 @@
+{
+  "description": "Load read; THROTTLE_POS absent from obd-live (never read this process); TIMING_ADVANCE published with a null value and the provider's not_read reason. Each unread value is '--' with its reason on the glass, never 0.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "ENGINE_LOAD": {
+        "value": 34.5,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "noBandReason": "no_band_defined",
+        "last": null
+      },
+      "TIMING_ADVANCE": {
+        "value": null,
+        "unit": "deg",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "noBandReason": "not_read",
+        "last": null
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

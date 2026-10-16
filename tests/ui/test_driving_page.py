@@ -80,7 +80,11 @@ _NODE_ONLY = pytest.mark.skipif(
 )
 
 # The card order (US-888-a validation row "Card order"), by kit label.
-CARD_ORDER = ["Driving", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"]
+# MOVED PIN (US-889-b): the Engine card is index 1, right after Driving (E-2).
+# MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after Engine.
+CARD_ORDER = [
+    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+]
 
 # The Home/IMU slot as it shipped before this story (US-887-c tree). It moves
 # to index 1 with its DOM UNCHANGED (Iris Q1), so the tag is pinned verbatim.
@@ -121,6 +125,8 @@ FIXTURE_NAMES = [
     "ecu-silent-stale",
     "coolant-stale-last-red",
     "value-null-with-reason",
+    # US-888-b (Iris G-1): the builder's output for python-obd's measured units.
+    "driving-published-units",
 ]
 
 
@@ -296,7 +302,9 @@ def test_drivingCard_isNamedDriving_andInheritsNoHomeSlotMachinery():
 def test_homeSlot_movesToIndexOne_withItsMarkupUnchanged():
     html = _read(_HTML)
     assert HOME_SLOT_MARKUP in html
-    assert 'id="home-card"' in _sectionTags(html)[1]
+    # MOVED PIN (US-889-b): the Engine card took index 1, so Home is index 2.
+    # MOVED PIN (US-890-a): the Fuel card took index 2, so Home is index 3.
+    assert 'id="home-card"' in _sectionTags(html)[3]
 
 
 def test_drivingFacts_doNotUseTheTileClass():

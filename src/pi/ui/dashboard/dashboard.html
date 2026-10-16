@@ -180,6 +180,139 @@
           </div>
         </div>
       </section>
+      <!-- US-889-b (F-127; specs/v030-engine-page-design.md, layout B): the
+           ENGINE card, right after Driving (CIO E-2 order). Above the fold:
+           load and throttle as two vertical bars (0-100 %) with load, throttle
+           and timing beside them, every value from states/obd-live
+           (`engineView`). No `data-state`: the generic availability poll never
+           grays it -- each value carries its own stale / not-read story. The
+           skeleton ships "--" because nothing has been read before the first
+           poll. TIMING_ADVANCE is base timing, not knock (no knock source
+           without ECMLink), so the caption is markup and always on the glass.
+           The cue points at the scroll half (history + status, US-889-c). -->
+      <section class="card" id="engine-card" aria-label="Engine" data-page-name="ENGINE">
+        <div class="card-body">
+          <div class="eng-main">
+            <div class="eng-bars" aria-hidden="true">
+              <div class="eng-bar-col" data-pid="ENGINE_LOAD" data-stale="false">
+                <div class="eng-bar"><div class="eng-bar-fill"></div></div>
+                <span class="eng-label">LOAD</span>
+              </div>
+              <div class="eng-bar-col" data-pid="THROTTLE_POS" data-stale="false">
+                <div class="eng-bar"><div class="eng-bar-fill"></div></div>
+                <span class="eng-label">THR</span>
+              </div>
+            </div>
+            <div class="eng-readings">
+              <div class="eng-reading eng-load" data-pid="ENGINE_LOAD" data-stale="false" data-note="none">
+                <span class="eng-label">LOAD</span>
+                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <span class="eng-note" hidden></span>
+              </div>
+              <div class="eng-reading" data-pid="THROTTLE_POS" data-stale="false" data-note="none">
+                <span class="eng-label">THROTTLE</span>
+                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <span class="eng-note" hidden></span>
+              </div>
+              <div class="eng-reading eng-timing" data-pid="TIMING_ADVANCE" data-stale="false" data-note="none">
+                <span class="eng-label">TIMING</span>
+                <span class="eng-line"><span class="eng-value">--</span><span class="eng-unit"></span></span>
+                <span class="eng-note" hidden></span>
+              </div>
+              <span class="eng-basis">base timing · not knock</span>
+            </div>
+          </div>
+          <span class="eng-cue">↓ history and status below</span>
+          <!-- US-889-c, the scroll half (spec s3-s4, ACs 5-11). The history
+               charts are BUILT by carousel.js from states/engine-history
+               (`engineHistoryView`) -- a chart exists only when there is a
+               point to draw; an empty history is the typed absence and no
+               chart. The status row reads states/obd-live: RUN TIME is the
+               ECU's RUNTIME_SEC (never the drive's duration), CHECK ENGINE is
+               MIL_ON by value, and its count line is a tap to the Alerts card
+               ONLY while parked (data-tap). No O2 SENSORS tile until US-891. -->
+          <div class="eng-history"></div>
+          <div class="eng-status">
+            <div class="eng-stat" data-pid="RUNTIME_SEC" data-stale="false" data-note="none">
+              <span class="eng-label eng-stat-label">RUN TIME</span>
+              <span class="eng-stat-value">--</span>
+              <span class="eng-note" hidden></span>
+            </div>
+            <div class="eng-stat" data-pid="MIL_ON" data-stale="false" data-note="none">
+              <span class="eng-label eng-stat-label">CHECK ENGINE</span>
+              <span class="eng-stat-value">--</span>
+              <span class="eng-codes" id="engine-codes" data-tap="false" hidden></span>
+              <span class="eng-note" hidden></span>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- US-890-a (F-127; specs/v030-fuel-page-design.md, layout A): the FUEL
+           card takes the Fuel Trim card's slot and moves to right after Engine
+           (CIO E-2 order). Its source is still states/ltft-trend, and the
+           trend row keeps the Fuel Trim card's VEHICLE GATE and speaking
+           vocabulary: data-gated="true" fails CLOSED before the first poll, and
+           a bench with no car reads "no engine data", never a stale trim. The
+           gate reaches the trend row ONLY (`.fuel-trend`, the source card's
+           slot) -- the rows above it are markup and ship "--" + "not
+           published" until their providers land (loop and total trim
+           US-890-c, MPG US-890-d): never blank.
+           US-890-b: AIRFLOW is states/obd-live params.MAF (`fuelAirflowView`)
+           over a bar from 0 to params.MAF.scale.max -- the provider's max, no
+           ceiling mark, no limit label (spec s4.1). The skeleton ships "--" +
+           "not read": nothing has been read before the first poll.
+           US-890-c: the LOOP chip and TOTAL TRIM read ONLY states/obd-live
+           `fuel` (`fuelLoopView` / `fuelTotalTrimView`): the provider maps
+           the status code and sums the trims. Skeleton "--" + "not read".
+           US-890-d: THIS DRIVE and SINCE RESET read ONLY states/fuel-economy
+           (`fuelMpgView`), each null with its spec s4.6 reason; the open loop
+           flag (`.fuel-flag`) shows only beside a THIS DRIVE figure. LAST 30 S
+           stays "--" + "not published" until its provider field lands
+           (US-890-e). Skeleton "--" + "not read". -->
+      <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
+               aria-label="Fuel" data-page-name="FUEL">
+        <div class="card-body">
+          <div class="fuel-top">
+            <div class="fuel-reading fuel-airflow" data-slot="airflow" data-stale="false" data-note="reason">
+              <span class="fuel-label">AIRFLOW</span>
+              <span class="fuel-line"><span class="fuel-value">--</span><span class="fuel-unit"></span></span>
+              <span class="fuel-note">not read</span>
+              <span class="fuel-bar" data-stale="false" aria-hidden="true"><span class="fuel-bar-fill"></span></span>
+            </div>
+            <div class="fuel-side">
+              <div class="fuel-reading fuel-loop" data-slot="loop" data-note="reason" data-dimmed="false">
+                <span class="fuel-label">LOOP</span>
+                <span class="fuel-value fuel-chip">--</span>
+                <span class="fuel-note">not read</span>
+              </div>
+              <div class="fuel-reading fuel-total-trim" data-slot="total-trim" data-note="reason" data-dimmed="false">
+                <span class="fuel-label">TOTAL TRIM</span>
+                <span class="fuel-value">--</span>
+                <span class="fuel-note">not read</span>
+              </div>
+            </div>
+          </div>
+          <div class="fuel-mpg">
+            <div class="fuel-reading fuel-mpg-last30" data-slot="mpg-last30" data-note="unpublished">
+              <span class="fuel-label">LAST 30 S</span>
+              <span class="fuel-value">--</span>
+              <span class="fuel-note">not published</span>
+            </div>
+            <div class="fuel-reading fuel-mpg-this-drive" data-slot="mpg-this-drive" data-note="reason">
+              <span class="fuel-label">THIS DRIVE</span>
+              <span class="fuel-value">--</span>
+              <span class="fuel-flag" hidden></span>
+              <span class="fuel-note">not read</span>
+            </div>
+            <div class="fuel-reading fuel-mpg-since-reset" data-slot="mpg-since-reset" data-note="reason">
+              <span class="fuel-label">SINCE RESET</span>
+              <span class="fuel-value">--</span>
+              <span class="fuel-note">not read</span>
+            </div>
+          </div>
+          <div class="fuel-trend">unavailable</div>
+        </div>
+      </section>
       <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
            card sitting beside an always-present fallback card would poll and
            paint the same feed twice and put two rules in charge of the slot.
@@ -237,25 +370,6 @@
            US-508: the standalone Motion card stays gone -- the US-497 live
            instrument is a FACE of the home slot, not a screen of its own. -->
       <section class="card" data-state="battery-health" aria-label="Battery" data-page-name="BATTERY">
-        <div class="card-body">unavailable</div>
-      </section>
-      <!-- Fuel Trim (formerly "LTFT Trend"; plain English, Spool's LTFT
-           semantics unchanged) stays VEHICLE-GATED, and keeps the SPEAKING
-           vocabulary US-507 gave it rather than reverting to the pre-US-507
-           hide. Two reasons, and neither is inertia: this story locks SIX
-           cards, and a card that vanishes on a bench breaks the set in exactly
-           the place the CIO reads the panel most days; and "does not apply
-           right now" is a fact worth stating on a screen the operator swiped
-           to deliberately. So the card renders the honest "no engine data" --
-           never a fabricated 0%.
-
-           Ships data-gated="true" so the pre-first-poll window -- when nothing
-           has been read and "is a car connected?" is genuinely unknown -- fails
-           CLOSED to the gate. The body still reads `unavailable` until the
-           first poll: no read has happened yet, which is a different fact from
-           the gate itself. -->
-      <section class="card" data-state="ltft-trend" data-gated="true"
-               aria-label="Fuel Trim" data-page-name="FUEL TRIM">
         <div class="card-body">unavailable</div>
       </section>
       <section class="card" data-state="light" aria-label="Light" data-page-name="LIGHT">

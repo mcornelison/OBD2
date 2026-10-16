@@ -17,6 +17,17 @@
 # 2026-10-13    | Rex (US-874) | Initial -- obd-live producer and fixture.
 # 2026-10-14    | Rex (US-875) | Bands: noBandReason beside a null band, RPM
 #                                scale, fixture cases rebuilt through the tracker.
+# 2026-10-15    | Rex (US-888-b) | Canonical units: measured python-obd names in,
+#                                C/km/h/V/rpm out. PIN CHANGE: the fixture
+#                                builder-equality test now feeds each fixture
+#                                unit as its python-obd name (inverse map).
+# 2026-10-15    | Rex (US-890-b) | params.MAF.scale {max} from
+#                                pi.display.scale.mafMaxGs (default 160).
+# 2026-10-15    | Rex (US-890-c) | The fuel block {loop, totalTrimNow}. PIN
+#                                CHANGES: _TOP_LEVEL_KEYS gains 'fuel'; the two
+#                                exact-state asserts (fresh shape, empty params)
+#                                gain the not-read fuel block. The fixture
+#                                builder-equality test itself is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -25,6 +36,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,13 +45,22 @@ from typing import Any
 import pytest
 
 from pi.obdii import obd_live_emitter as ole
+from pi.obdii import units
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
 from pi.obdii.orchestrator.event_router import EventRouterMixin
+from tests.pi.obdii.test_units import MEASURED_TO_CANONICAL
 
 _ZONE_CONFIG = {"pi": {"time": {"localZone": "America/Chicago"}}}
 _PID_KEYS = {"value", "unit", "ts", "stale", "band", "last"}
 _OPTIONAL_PID_KEYS = {"noBandReason", "scale"}
-_TOP_LEVEL_KEYS = {"params", "dataSource", "ts"}
+# US-890-c PIN CHANGE: the top level gains the fuel block {loop, totalTrimNow}.
+_TOP_LEVEL_KEYS = {"params", "fuel", "dataSource", "ts"}
+
+# The fuel block while no fuel trim has been read (US-890-c).
+_FUEL_NOT_READ = {
+    "loop": None,
+    "totalTrimNow": {"value": None, "unit": "%", "ts": None, "reason": "not_read"},
+}
 
 _FIXTURE_PATH = (
     Path(__file__).resolve().parents[2]
@@ -105,6 +126,7 @@ class TestBuildObdLiveState:
                     "last": None,
                 }
             },
+            "fuel": _FUEL_NOT_READ,
             "dataSource": "real",
             "ts": "2026-10-13T12:05:03Z",
         }
@@ -171,7 +193,10 @@ class TestBuildObdLiveState:
             {}, nowUtc=_utc("2026-10-13T12:00:00Z"), staleSec=5.0, dataSource=None
         )
 
-        assert state == {"params": {}, "dataSource": None, "ts": "2026-10-13T12:00:00Z"}
+        assert state == {
+            "params": {}, "fuel": _FUEL_NOT_READ, "dataSource": None,
+            "ts": "2026-10-13T12:00:00Z",
+        }
 
     def test_noBandReason_presentExactlyWhenBandIsNull(self) -> None:
         """
@@ -233,6 +258,191 @@ class TestBuildObdLiveState:
         assert state["params"]["RPM"]["scale"] == scale
 
 
+# ============================================================ the fuel block
+
+
+def _fuel(
+    observations: dict[str, ole.ObdLiveObservation], now: str = "2026-10-20T12:00:03Z",
+    staleSec: float = 5.0,
+) -> dict[str, Any]:
+    fuel: dict[str, Any] = ole.buildObdLiveState(
+        observations, nowUtc=_utc(now), staleSec=staleSec, dataSource="real"
+    )["fuel"]
+    return fuel
+
+
+def _fss(code: Any, ts: str = "2026-10-20T12:00:02Z") -> ole.ObdLiveObservation:
+    return _obs(code, "CL", ts)
+
+
+def _ltft(value: Any, ts: str = "2026-10-20T12:00:01Z") -> ole.ObdLiveObservation:
+    return _obs(value, "%", ts)
+
+
+def _stft(value: Any, ts: str = "2026-10-20T12:00:02Z") -> ole.ObdLiveObservation:
+    return _obs(value, "%", ts)
+
+
+class TestFuelBlock:
+    """US-890-c (Atlas S104 ruling (b)): fuel {loop, totalTrimNow} from the
+    SAME observations as params, through the ONE closed-loop code set."""
+
+    def test_closedLoop_totalTrimNow_isTheUnroundedSum_atTheOlderTs(self) -> None:
+        """
+        Given: FUEL_SYSTEM_STATUS 5, LTFT -1.6 at 12:00:01, STFT 3.1 at 12:00:02
+        When: built at 12:00:03
+        Then: loop closed; totalTrimNow {value -1.6 + 3.1 (unrounded), unit %,
+              ts 12:00:01Z (the OLDER input), reason null}
+        """
+        fuel = _fuel({
+            "FUEL_SYSTEM_STATUS": _fss(5),
+            "LONG_FUEL_TRIM_1": _ltft(-1.6),
+            "SHORT_FUEL_TRIM_1": _stft(3.1),
+        })
+
+        assert fuel == {
+            "loop": "closed",
+            "totalTrimNow": {
+                "value": -1.6 + 3.1, "unit": "%", "ts": "2026-10-20T12:00:01Z", "reason": None,
+            },
+        }
+        assert fuel["totalTrimNow"]["value"] == pytest.approx(1.5)
+
+    def test_tsIsTheOlderInput_whicheverTrimItIs(self) -> None:
+        fuel = _fuel({
+            "FUEL_SYSTEM_STATUS": _fss(2),
+            "LONG_FUEL_TRIM_1": _ltft(1.0, "2026-10-20T12:00:02Z"),
+            "SHORT_FUEL_TRIM_1": _stft(0.5, "2026-10-20T11:59:59Z"),
+        })
+
+        assert fuel["totalTrimNow"]["ts"] == "2026-10-20T11:59:59Z"
+
+    def test_code3_isOpen_andTheTrimIsNotApplied(self) -> None:
+        """
+        Given: FUEL_SYSTEM_STATUS 3 (OL-drive), both trims fresh
+        When: built
+        Then: loop open; totalTrimNow reason open_loop, value null, ts kept
+        """
+        fuel = _fuel({
+            "FUEL_SYSTEM_STATUS": _fss(3.0),
+            "LONG_FUEL_TRIM_1": _ltft(-1.6),
+            "SHORT_FUEL_TRIM_1": _stft(3.1),
+        })
+
+        assert fuel == {
+            "loop": "open",
+            "totalTrimNow": {
+                "value": None, "unit": "%", "ts": "2026-10-20T12:00:01Z", "reason": "open_loop",
+            },
+        }
+
+    def test_code5_isClosed_code2FloatIsClosed(self) -> None:
+        assert _fuel({"FUEL_SYSTEM_STATUS": _fss(5)})["loop"] == "closed"
+        assert _fuel({"FUEL_SYSTEM_STATUS": _fss(2.0)})["loop"] == "closed"
+
+    def test_stftNeverRead_isNotRead_beforeStaleAndLoop(self) -> None:
+        """
+        Given: STFT never read; LTFT stale; FUEL_SYSTEM_STATUS never read
+        When: built
+        Then: reason not_read -- it precedes stale and loop_unknown; ts null
+        """
+        fuel = _fuel({"LONG_FUEL_TRIM_1": _ltft(-1.6, "2026-10-20T11:59:00Z")})
+
+        assert fuel == {
+            "loop": None,
+            "totalTrimNow": {"value": None, "unit": "%", "ts": None, "reason": "not_read"},
+        }
+
+    def test_ltftNeverRead_isNotRead(self) -> None:
+        fuel = _fuel({"FUEL_SYSTEM_STATUS": _fss(2), "SHORT_FUEL_TRIM_1": _stft(3.1)})
+
+        assert fuel["loop"] == "closed"
+        assert fuel["totalTrimNow"]["reason"] == "not_read"
+        assert fuel["totalTrimNow"]["value"] is None
+
+    def test_aStaleTrim_isStale_beforeLoopUnknownAndOpenLoop(self) -> None:
+        """
+        Given: LTFT 6 s old (window 5 s), STFT fresh, loop open
+        When: built
+        Then: reason stale, value null, ts the older (stale) input's
+        """
+        fuel = _fuel({
+            "FUEL_SYSTEM_STATUS": _fss(3),
+            "LONG_FUEL_TRIM_1": _ltft(-1.6, "2026-10-20T11:59:57Z"),
+            "SHORT_FUEL_TRIM_1": _stft(3.1),
+        })
+
+        assert fuel["totalTrimNow"] == {
+            "value": None, "unit": "%", "ts": "2026-10-20T11:59:57Z", "reason": "stale",
+        }
+
+    def test_staleTrim_usesTheSameWindowArgument(self) -> None:
+        """A 2 s-old trim is fresh at 5 s and stale at 1 s: the params window."""
+        observations = {
+            "FUEL_SYSTEM_STATUS": _fss(2, "2026-10-20T12:00:03Z"),
+            "LONG_FUEL_TRIM_1": _ltft(1.0),
+            "SHORT_FUEL_TRIM_1": _stft(1.0, "2026-10-20T12:00:03Z"),
+        }
+
+        assert _fuel(observations, staleSec=5.0)["totalTrimNow"]["reason"] is None
+        assert _fuel(observations, staleSec=1.0)["totalTrimNow"]["reason"] == "stale"
+
+    def test_statusStale_trimsFresh_isLoopUnknown(self) -> None:
+        """
+        Given: FUEL_SYSTEM_STATUS 2 read 8 s ago, both trims fresh
+        When: built
+        Then: loop null; totalTrimNow reason loop_unknown, value null
+        """
+        fuel = _fuel({
+            "FUEL_SYSTEM_STATUS": _fss(2, "2026-10-20T11:59:55Z"),
+            "LONG_FUEL_TRIM_1": _ltft(-1.6),
+            "SHORT_FUEL_TRIM_1": _stft(3.1),
+        })
+
+        assert fuel["loop"] is None
+        assert fuel["totalTrimNow"] == {
+            "value": None, "unit": "%", "ts": "2026-10-20T12:00:01Z", "reason": "loop_unknown",
+        }
+
+    def test_statusNeverRead_isLoopUnknown(self) -> None:
+        fuel = _fuel({"LONG_FUEL_TRIM_1": _ltft(-1.6), "SHORT_FUEL_TRIM_1": _stft(3.1)})
+
+        assert fuel["loop"] is None
+        assert fuel["totalTrimNow"]["reason"] == "loop_unknown"
+
+    def test_statusNotACode_isLoopUnknown_neverOpen(self) -> None:
+        fuel = _fuel({
+            "FUEL_SYSTEM_STATUS": _fss("CL"),
+            "LONG_FUEL_TRIM_1": _ltft(-1.6),
+            "SHORT_FUEL_TRIM_1": _stft(3.1),
+        })
+
+        assert fuel["loop"] is None
+        assert fuel["totalTrimNow"]["reason"] == "loop_unknown"
+
+    def test_totalTrimNow_isUnbanded(self) -> None:
+        """No band, no noBandReason: exactly {value, unit, ts, reason}."""
+        fuel = _fuel({
+            "FUEL_SYSTEM_STATUS": _fss(2),
+            "LONG_FUEL_TRIM_1": _ltft(9.0),
+            "SHORT_FUEL_TRIM_1": _stft(9.0),
+        })
+
+        assert set(fuel) == {"loop", "totalTrimNow"}
+        assert set(fuel["totalTrimNow"]) == {"value", "unit", "ts", "reason"}
+
+    def test_paramsAreUnchangedByTheFuelBlock(self) -> None:
+        """The trims and the status still publish as ordinary params entries."""
+        state = ole.buildObdLiveState(
+            {"FUEL_SYSTEM_STATUS": _fss(2), "LONG_FUEL_TRIM_1": _ltft(-1.6)},
+            nowUtc=_utc("2026-10-20T12:00:03Z"), staleSec=5.0, dataSource="real",
+        )
+
+        assert state["params"]["LONG_FUEL_TRIM_1"]["value"] == -1.6
+        assert state["params"]["FUEL_SYSTEM_STATUS"]["value"] == 2
+        assert "totalTrimNow" not in state["params"]
+
+
 # ===================================================================== tracker
 
 
@@ -251,6 +461,59 @@ class TestObdLiveTracker:
 
         obs = tracker.snapshot()["RPM"]
         assert (obs.value, obs.unit, obs.ts) == (812.0, "rpm", "2026-10-13T17:00:00Z")
+
+    def test_observeReading_coolantInDegreeCelsius_publishesC(self, tmp_path) -> None:
+        """
+        Given: COOLANT_TEMP 88 carrying python-obd's MEASURED 'degree_Celsius'
+        When: observed and built
+        Then: params.COOLANT_TEMP.unit is 'C' (US-888-b)
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        tracker.observeReading(
+            _Reading("COOLANT_TEMP", 88, datetime(2026, 10, 13, 12, 0, 0), "degree_Celsius")
+        )
+        built = ole.buildObdLiveState(
+            tracker.snapshot(),
+            nowUtc=_utc("2026-10-13T17:00:01Z"),
+            staleSec=ole.DEFAULT_OBD_LIVE_STALE_S,
+            dataSource="real",
+        )
+
+        assert built["params"]["COOLANT_TEMP"]["unit"] == "C"
+
+    @pytest.mark.parametrize(("raw", "canonical"), MEASURED_TO_CANONICAL)
+    def test_observeReading_measuredUnit_isStoredCanonical(self, raw: str, canonical: str) -> None:
+        """
+        Given: a reading carrying a MEASURED python-obd unit name
+        When: observed
+        Then: the stored observation holds the canonical short unit
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        tracker.observeReading(_Reading("PID", 1.0, datetime(2026, 10, 13, 12, 0, 0), raw))
+
+        assert tracker.snapshot()["PID"].unit == canonical
+
+    def test_observeReading_statusLabels_unchanged_andWarnOncePerString(self, caplog) -> None:
+        """
+        Given: FUEL_SYSTEM_STATUS 'OL-drive' and MIL_ON 'ON', each read three times
+        When: observed
+        Then: units unchanged; one WARN per distinct string, not per reading
+        """
+        units._warnedUnits.clear()
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        with caplog.at_level(logging.WARNING, logger=units.logger.name):
+            for second in range(3):
+                at = datetime(2026, 10, 13, 12, 0, second)
+                tracker.observeReading(_Reading("FUEL_SYSTEM_STATUS", 4, at, "OL-drive"))
+                tracker.observeReading(_Reading("MIL_ON", 1, at, "ON"))
+
+        snap = tracker.snapshot()
+        assert (snap["FUEL_SYSTEM_STATUS"].unit, snap["MIL_ON"].unit) == ("OL-drive", "ON")
+        warned = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warned) == 2
 
     def test_observeReading_keepsOnlyTheLatestPerPid(self) -> None:
         """
@@ -308,6 +571,82 @@ class TestObdLiveTracker:
         tracker.observeReading(_Reading("RPM", 812.0, datetime(2026, 10, 13, 12), "rpm"))
 
         assert tracker.snapshot()["RPM"].scale == {"amberFrom": 4000.0, "redFrom": 6000.0}
+
+    def test_mafScale_defaultsToTheValidatorDefault(self) -> None:
+        """
+        Given: no pi.display.scale key (US-890-b)
+        When: a MAF reading is snapshotted
+        Then: params.MAF.scale is {max: 160.0} -- the validator DEFAULT (Spool)
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        tracker.observeReading(_Reading("MAF", 16.24, datetime(2026, 10, 13, 12), "gps"))
+
+        assert tracker.snapshot()["MAF"].scale == {"max": 160.0}
+
+    def test_mafScale_followsTheConfigKey(self) -> None:
+        """
+        Given: pi.display.scale.mafMaxGs 150
+        When: a MAF reading is snapshotted
+        Then: params.MAF.scale is {max: 150.0} -- read from config, not a literal
+        """
+        config = {"pi": {
+            "time": {"localZone": "America/Chicago"},
+            "display": {"scale": {"mafMaxGs": 150}},
+        }}
+        tracker = ole.ObdLiveTracker(config)
+
+        tracker.observeReading(_Reading("MAF", 158.69, datetime(2026, 10, 13, 12), "gps"))
+
+        assert tracker.snapshot()["MAF"].scale == {"max": 150.0}
+
+    def test_mafScale_leavesRpmAndEveryOtherPidAlone(self) -> None:
+        """
+        Given: RPM, MAF and SPEED read, pi.display.scale.mafMaxGs 150
+        When: snapshotted
+        Then: RPM keeps its {amberFrom, redFrom}; SPEED carries no scale
+        """
+        config = {"pi": {
+            "time": {"localZone": "America/Chicago"},
+            "display": {"scale": {"mafMaxGs": 150}},
+        }}
+        tracker = ole.ObdLiveTracker(config)
+        t = datetime(2026, 10, 13, 12)
+
+        tracker.observeReading(_Reading("RPM", 812.0, t, "rpm"))
+        tracker.observeReading(_Reading("MAF", 4.1, t, "gps"))
+        tracker.observeReading(_Reading("SPEED", 0.0, t, "km/h"))
+
+        snap = tracker.snapshot()
+        assert snap["RPM"].scale == {"amberFrom": 5500.0, "redFrom": 7000.0}
+        assert snap["MAF"].scale == {"max": 150.0}
+        assert snap["SPEED"].scale is None
+
+    def test_mafScale_isPublished_freshAndStale(self) -> None:
+        """
+        Given: a MAF reading at 12:00:00 local (17:00:00Z)
+        When: built 1 s later (fresh) and 6 s later (stale)
+        Then: params.MAF carries scale {max: 160.0} both times, beside the
+              unclamped value or last.value -- the scale never depends on a reading
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+        tracker.observeReading(_Reading("MAF", 158.69, datetime(2026, 10, 13, 12), "gps"))
+        snap = tracker.snapshot()
+
+        fresh = ole.buildObdLiveState(
+            snap, nowUtc=_utc("2026-10-13T17:00:01Z"), staleSec=5.0, dataSource="real"
+        )["params"]["MAF"]
+        stale = ole.buildObdLiveState(
+            snap, nowUtc=_utc("2026-10-13T17:00:06Z"), staleSec=5.0, dataSource="real"
+        )["params"]["MAF"]
+
+        assert fresh["value"] == 158.69
+        assert fresh["unit"] == "g/s"
+        assert fresh["scale"] == {"max": 160.0}
+        assert stale["value"] is None
+        assert stale["last"]["value"] == 158.69
+        assert stale["scale"] == {"max": 160.0}
+        assert set(fresh) <= _PID_KEYS | _OPTIONAL_PID_KEYS
 
     def test_nullReading_resetsTheDwellButIsNotRecorded(self) -> None:
         """
@@ -573,6 +912,29 @@ class TestThroughTheReadingSeam:
         assert state["dataSource"] == tag
         assert "dataSource" not in state["params"]["RPM"]
 
+    def test_fuelBlock_reachesTheFile_fromTheSeam(self, tmp_path) -> None:
+        """
+        Given: FUEL_SYSTEM_STATUS 2.0 ('CL'), LTFT -1.6 and STFT 3.1 ('percent')
+              through _handleReading
+        When: the card tick emits 2 s later
+        Then: states/obd-live carries fuel {loop closed, totalTrimNow ~1.5 %}
+        """
+        statesDir = str(tmp_path / "states")
+        orch = _Orch(statesDir, _UtcClock(_T_UTC + timedelta(seconds=2)))
+
+        orch._handleReading(_Reading("FUEL_SYSTEM_STATUS", 2.0, _T_LOCAL, "CL"))
+        orch._handleReading(_Reading("LONG_FUEL_TRIM_1", -1.6, _T_LOCAL, "percent"))
+        orch._handleReading(
+            _Reading("SHORT_FUEL_TRIM_1", 3.1, _T_LOCAL + timedelta(seconds=1), "percent")
+        )
+        orch._maybeEmitCardStates()
+
+        fuel = _readObdLive(statesDir)["fuel"]
+        assert fuel["loop"] == "closed"
+        assert fuel["totalTrimNow"]["value"] == pytest.approx(1.5)
+        assert fuel["totalTrimNow"]["ts"] == "2026-10-13T17:00:00Z"
+        assert fuel["totalTrimNow"]["reason"] is None
+
     def test_noDataLogger_publishesNullDataSource(self, tmp_path) -> None:
         """
         Given: no data logger exists
@@ -654,8 +1016,10 @@ class TestTheContractFixture:
         Given: one named case, a complete obd-live payload
         When: its history and its readings (fresh value or last.value, unit, ts)
               are fed in event order through a real ObdLiveTracker (default
-              bands) and built at the case's ts with the default window
-        Then: the builder's output -- bands included -- equals the case exactly
+              bands) and built at the case's ts with the default window -- each
+              unit fed as the python-obd name the car reports (US-888-b)
+        Then: the builder's output -- bands and canonical units included --
+              equals the case exactly
         """
         payload = self._load()[case]
         assert set(payload) == _TOP_LEVEL_KEYS
@@ -666,9 +1030,12 @@ class TestTheContractFixture:
             value = pid["last"]["value"] if pid["stale"] else pid["value"]
             readings.append((name, value, pid["unit"], pid["ts"]))
 
+        # US-888-b: feed what python-obd returns, not the target vocabulary.
+        pythonObdName = {canonical: raw for raw, canonical in units.CANONICAL_UNITS.items()}
         tracker = ole.ObdLiveTracker({})
         for name, value, unit, ts in sorted(readings, key=lambda r: r[3]):
-            tracker.observeReading(_Reading(name, value, _utc(ts), unit))
+            assert unit in pythonObdName, f"fixture unit {unit!r} has no python-obd name"
+            tracker.observeReading(_Reading(name, value, _utc(ts), pythonObdName[unit]))
 
         built = ole.buildObdLiveState(
             tracker.snapshot(),

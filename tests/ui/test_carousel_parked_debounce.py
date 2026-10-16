@@ -384,9 +384,9 @@ def test_configJson_carriesTheParkedThresholds():
 # behaviour (pi.dashboard.parkedOnS / parkedOffS) whose removal would reach
 # config.json and the validator, which is well outside a story scoped to a
 # visibility gate. Filed as TD-us659 -- retire the reducer and its config keys,
-# or wire it to its next consumer. Until that is settled, this suite is testing
-# code nothing runs, and `test_theDebounceHasNoConsumer_soThisFileIsGuardingDeadCode`
-# below states that in the suite itself rather than only in a ticket.
+# or wire it to its next consumer. US-889-c (2026-10-15) wired it: the Engine
+# card's CHECK ENGINE count line is a parked-only tap, and "parked" is this
+# reducer -- `test_theDebounceHasOneConsumer_theEngineCodesTap` pins that call.
 # ---------------------------------------------------------------------------
 
 
@@ -398,15 +398,17 @@ def test_carouselJs_stillExportsTheParkedDebounce():
         assert name in js, name
 
 
-def test_theDebounceHasNoConsumer_soThisFileIsGuardingDeadCode():
-    """CHARACTERISATION, and it is meant to be uncomfortable.
+def test_theDebounceHasOneConsumer_theEngineCodesTap():
+    """RE-PINNED by US-889-c (was test_theDebounceHasNoConsumer_soThisFileIs
+    GuardingDeadCode, which asserted exactly ONE `parkedNext(` -- the
+    definition -- and asked to be re-pinned when the reducer gained a consumer).
 
-    US-659 removed `updateMenuAccess`, the reducer's only caller. A suite that
-    keeps passing after its subject stops being reachable is exactly how dead
-    code survives a refactor -- so the absence is asserted rather than left to
-    be noticed. Whoever closes TD-us659 fails this test ON PURPOSE: wire the
-    reducer up and it goes red, delete the reducer and the whole file goes with
-    it. Either outcome is a decision; silence is not.
+    US-659 removed `updateMenuAccess`, the reducer's only caller (TD-us659).
+    US-889-c is its next consumer, by the story's own AC: the Engine card's
+    CHECK ENGINE count line is a tap to the Alerts card ONLY while parked, and
+    "parked" is this debounce. So: the definition plus exactly one call site,
+    and that call is the tick advancing `engineParked`. `updateMenuAccess`
+    stays gone -- the kebab gate is not coming back through this door.
     """
     # Asserted against the STRIPPED source: the deletion left a tombstone comment
     # naming `updateMenuAccess` so the next reader knows what stood there, and a
@@ -419,7 +421,8 @@ def test_theDebounceHasNoConsumer_soThisFileIsGuardingDeadCode():
         "up, so retire this characterisation and re-pin the wiring properly"
     )
     calls = js.count("parkedNext(")
-    assert calls == 1, (
-        f"parkedNext( appears {calls} times -- expected exactly 1 (its own "
-        "definition, no call sites). The reducer gained a consumer; re-pin it."
+    assert calls == 2, (
+        f"parkedNext( appears {calls} times -- expected exactly 2 (its own "
+        "definition and the US-889-c Engine codes tap). A consumer changed; re-pin it."
     )
+    assert "engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);" in js

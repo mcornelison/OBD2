@@ -5879,12 +5879,26 @@ holds. When `pi.dashboard.stateEmitEnabled` is false, the producer is not built 
 no file.
 
 **Shape:** `{params: {<PID name>: {value, unit, ts, stale, band, last}}, dataSource, ts}`.
-A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
+A null `band` adds `noBandReason`; `params.RPM` and `params.MAF` add `scale` (US-875,
+US-890-b, below).
 
 - **`ts` per PID is the reading's event time.** `reading.timestamp` is a naive local
   datetime. It is converted with `localNaiveToCanonicalIso(reading.timestamp, config)`,
   the same converter the bus and the row writer use. The write time is never
   substituted: a reading with no timestamp, or with a null value, is not recorded.
+- **`unit` is the canonical short unit** (US-888-b, Atlas units ruling (a) 2026-10-15).
+  python-obd reports pint names (`degree_Celsius`, `kilometer_per_hour`, `volt`,
+  `revolutions_per_minute`, `percent`, `degree`, `gps`, `count`, MEASURED on obd2db).
+  `ObdLiveTracker.observeReading` maps them ONCE, through
+  `src/pi/obdii/units.py` `CANONICAL_UNITS`, to `C`, `km/h`, `V`, `rpm`, `%`, `deg`,
+  `g/s`, `count` before the observation is stored. Every `states/` consumer of the
+  tracker therefore reads canonical units, and no page carries an alias list. A string
+  with no canonical form passes through UNCHANGED and logs one WARN per distinct
+  string. The status PIDs carry a label there (FUEL_SYSTEM_STATUS `CL`/`OL-drive`,
+  MIL_ON `ON`/`OFF`); they are read by value, never by unit. **The database keeps the
+  captured units:** `obd.db` `realtime_data`, and the server's copy of it, store what
+  python-obd returned. `states/` is the display contract; stored history does not
+  change vocabulary mid-stream.
 - **Stale** (Atlas ruling 2026-10-13 on Iris B-3): at each emit, a PID is stale when
   `utcNow - ts > pi.display.stale.obdLiveSec`. The validator default is 5 s, which is
   1.7x the measured per-PID p99 gap. `value` always means CURRENT. A PID has one of
@@ -5916,6 +5930,23 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
 - **`params.RPM.scale`** is `{amberFrom, redFrom}`, read from the same
   `pi.bands.rpm.amberRpm` / `redRpm` keys as the RPM band, so the bar draws its zones
   from data (Atlas ruling 2026-10-13 on Iris S-6). It is published fresh or stale.
+- **`params.MAF.scale`** (US-890-b, Atlas S104 ruling 2) is `{max}`, read from
+  `pi.display.scale.mafMaxGs` (validator default 160 g/s, Spool 2026-10-14; a finite
+  number above 0) by `ObdLiveTracker`, published fresh or stale. The Fuel card's airflow bar runs
+  0..max. RPM's scale is unchanged and no other PID carries one.
+- **`fuel`** (US-890-c, Atlas S104 total-trim ruling (b), 2026-10-15) is a top-level
+  block `{loop, totalTrimNow}`, built by `buildObdLiveState` from the SAME observations
+  as `params` (it is always present; `params` entries are unchanged).
+  - `loop` is `"closed"` / `"open"` from `FUEL_SYSTEM_STATUS`'s numeric code through
+    the ONE `CLOSED_LOOP_FUEL_STATUS_CODES = {2, 5}` (`src/pi/obdii/fuel_status.py`,
+    moved there from `fuel_economy_emitter.py`, which imports it). It is null when the
+    status was never read, is stale (same `_isStale`, same `pi.display.stale.obdLiveSec`)
+    or is not a code.
+  - `totalTrimNow` is `{value, unit "%", ts, reason}`: `value` =
+    `LONG_FUEL_TRIM_1 + SHORT_FUEL_TRIM_1`, unrounded; `ts` = the OLDER input's ts
+    (null while either trim is unread). `reason` is the first that applies, with
+    `value` null: `not_read` > `stale` > `loop_unknown` > `open_loop`. Unbanded (no
+    band, no `noBandReason`). It is NOT `ltft-trend.totalTrim`, a per-drive mean.
 - **Dwell** is consecutive readings on event time. A stale gap (more than
   `pi.display.stale.obdLiveSec` between readings) or a null reading resets it. The
   producer keeps its own dwell clocks and a few seconds of RPM history for the
@@ -5932,7 +5963,63 @@ A null `band` adds `noBandReason`; `params.RPM` adds `scale` (US-875, below).
   `stale`, `pid-absent`, `replay`, and from US-875 `engine-off-battery`,
   `coolant-amber`, `coolant-red`). `tests/pi/obdii/test_obd_live_emitter.py` feeds
   every case, with the history its dwell needs, through a real `ObdLiveTracker` and
-  `buildObdLiveState` and asserts equality.
+  `buildObdLiveState` and asserts equality. Each unit is fed as its python-obd name
+  (the inverse of `CANONICAL_UNITS`), so the fixture is what the car's readings
+  produce, not a copy of the target vocabulary (US-888-b).
+
+#### `states/engine-history` -- this drive's worst-band buckets (US-889-a)
+
+```json
+{"ts": "2026-10-20T15:12:30Z", "driveId": 118, "sinceTs": "2026-10-20T15:00:00Z",
+ "partial": false, "intervalSec": 30,
+ "series": {"COOLANT_TEMP": [{"ts": "2026-10-20T15:00:30Z", "value": 88.0, "band": "green"}],
+            "INTAKE_TEMP": [{"ts": "2026-10-20T15:00:30Z", "value": 31.0, "band": null}],
+            "BATTERY_V": []},
+ "unit": {"COOLANT_TEMP": "C", "INTAKE_TEMP": "C", "BATTERY_V": "V"}}
+```
+
+The history the Engine page draws (Atlas S104 ruling 1; G2, G3). `EngineHistory` in
+`src/pi/obdii/engine_history.py`. The obd-live tracker owns it, so it shares the band
+producer and lock.
+
+- **The reading seam.** `ObdLiveTracker.observeReading` feeds every fresh reading to
+  `EngineHistory.observe(pid, value, ts, band, unit)` right after `BandProducer.observe`.
+  `band` is `resultFor(pid).band` at that reading. The history copies it and never
+  re-judges it, so dwell stays the band producer's alone. The card snapshot never feeds
+  the history. A null or non-finite reading is not a fresh sample.
+- **Buckets** use the epoch grid `floor(ts / intervalSec)`, as `GradeHistory` does. A
+  point's `ts` is its bucket's END. A bucket closes on its PID's next fresh sample past
+  it, and only closed buckets are published.
+  - `value` is the bucket's LAST fresh sample. The page never averages or smooths it.
+  - `band` is the WORST band held in the bucket (red > amber > green > null), so
+    bucketing never hides a fired span.
+  - A bucket with no fresh sample is OMITTED. There is no null point.
+  - `INTAKE_TEMP` has no band rule, so its band is always null.
+- **`unit`** holds the canonical unit the tracker stored (`C`, `V`; US-888-b) for each
+  PID seen this process. It is never converted; the page converts by it.
+- **Window = this drive.** `event_router._handleDriveStart` calls `_resetEngineHistory`
+  beside `_resetFuelEconomy`. That clears every series and sets `driveId` (the new id on
+  the drive context), `sinceTs` (the drive start's event ts) and `partial: false`.
+- **`partial`** is true when the series does not cover the whole drive:
+  - An orchestrator restart mid-drive, where no drive start was seen. The history
+    starts empty with `driveId` null, and `sinceTs` is the first folded bucket's start.
+  - Buckets trimmed past `maxPoints`. Each series keeps the newest `maxPoints` buckets.
+    When one drops, `sinceTs` moves to the start of the oldest bucket kept.
+  - A clock step back: a sample before its PID's open bucket. Every series restarts
+    there with a WARN.
+- **Write.** The 2 s card tick (`_emitObdLiveState`) writes the file atomically only
+  when a bucket closed or the window reset. The first tick of a process always writes,
+  so it replaces a previous process's file with the empty, partial state. A kiosk restart
+  changes nothing, because the history lives in orchestrator memory and the state file.
+- **Config.** `pi.display.engineHistory.intervalSec` (30) and `.maxPoints` (240 = 2 h)
+  are validator DEFAULTS. `_validateEngineHistory` rejects a value that is not finite
+  or is <= 0.
+- **Fixture.** `tests/ui/fixtures/states/engine-history.json` has the cases
+  `cold-start-history`, `fan-cycle-history`, `coolant-dwell-fired`, `bucket-worst-band`,
+  `history-gap`, `history-trimmed-2h`, `history-restart-mid-drive` and
+  `history-empty-after-restart`. `tests/pi/obdii/test_engine_history.py` builds each one
+  from a scripted reading sequence through a real `ObdLiveTracker` and
+  `buildEngineHistoryState`, and asserts equality.
 
 #### `system-status.runMode` and the not-live marker (US-901-b)
 
@@ -6018,7 +6105,8 @@ same SPEED series through both integrals.
 ```json
 {"thisDrive": {"fuelL": 1.82, "mpg": 24.6, "sinceTs": "2026-10-20T14:58:02Z",
                "approximate": false, "openLoopAirPct": 8.7},
- "sinceReset": null, "ts": "2026-10-20T15:02:11Z"}
+ "sinceReset": null, "ts": "2026-10-20T15:02:11Z",
+ "recent": {"mpg": 27.0, "windowSec": 30, "mafSamples": 13}}
 ```
 
 - **`thisDrive`** is `null` until this process has seen a drive start or a first MAF
@@ -6060,6 +6148,40 @@ no fuel and its time counts as excluded (the speed integrator's gap rule).
 
 The window's time is monotonic seconds from the window start to the newest MAF reading.
 
+**`recent` -- MPG over the last `pi.fuel.recentWindowSec` (US-890-e, Spool 2026-10-14
+section 2; Atlas split C).** `{mpg, windowSec, mafSamples}` plus `mpgNullReason` only when
+`mpg` is null; `recent` itself is `null` until a drive window opens (with `thisDrive`).
+`mpg = miles_in_window / gallons_in_window`, a **ratio of sums** over the newest
+`recentWindowSec` (30) -- never a mean of per-sample MPGs, which is two points per sample,
+swings wildly and is undefined at idle. Spool measured 30 s on the corpus (p50 27.5,
+p95 50.7 MPG). The sums come from a pure `RecentWindow` in `fuel_economy_emitter.py`
+holding `(tS, airG, km, isMafSample)` increments; an increment is in the window while
+`tS > newest - windowSec`, and older ones are dropped. Air is the SAME trapezoid the
+`FuelIntegrator` just added (`observeMaf` returns it, so the gap rule is shared); km is the
+US-880-a speed integrator's delta for that SPEED reading (never a second distance
+integral); `stoichAfr`, `densityGPerL` and the NIST constants are thisDrive's.
+`mafSamples` counts the MAF readings in the window. Null reasons, by precedence:
+
+| Reason | When |
+|---|---|
+| `maf_untrusted`, `maf_stale`, `maf_zero_running` | the drive-level rules above, same order |
+| `too_few_samples` | fewer than `pi.fuel.recentMinMafSamples` (10) MAF readings in the window |
+| `too_short` | window distance < `pi.fuel.recentMinMiles` (0.1 mi, an average under 12 mph) |
+| `no_fuel` | no air in the window (the ratio is undefined; the thisDrive rule) |
+
+The three keys are validator defaults citing Spool, each finite and > 0. **Locks (Atlas
+G2):** `card_state_emitter` feeds the window under `_fuelLock` ONLY.
+`observeFuelReading` adds the MAF air inside the lock it already takes;
+`observeTripSpeed` computes the km delta under `_tripLock`, releases it, and only then
+takes `_fuelLock` (`_feedRecentDistance`), so the two locks are never held together. The
+window resets with the integrator at drive start (`_resetFuelEconomy`), and the publish
+snapshots it in the same `_fuelLock` block as the integrator. **Page (LAST 30 S):**
+`recent.mpg` as an integer (`Math.round`), `99+` at >= 99 (Spool's display rule: decel
+coasts give big numbers, true direction, false precision), no approximately sign;
+`recent` absent -> `--` + `not published` (a provider from before US-890-e); `recent`
+null -> `--` + `not started` (Iris G-5); a null `mpg` -> `--` + its text from the ONE
+s4.6 table, which gains `too_few_samples` -> `too few samples`.
+
 **Producer.** `CardStateEmitterMixin.observeFuelReading(paramName, value, reading)`,
 called from `event_router._handleReading` beside `observeTripSpeed` (an annotation
 there, for the MRO reason). MAF and FUEL_SYSTEM_STATUS only, only while
@@ -6075,7 +6197,8 @@ does, and calls `BandProducer.engineRunningAt(ts)` (a public wrapper over US-875
 `_engineRunningAt`). The band producer is never exposed. No tracker -> the gate is
 unknown, and `maf_zero_running` never fires. Fixture:
 `tests/ui/fixtures/states/fuel-economy.json` (`driving`, `too-short`, `maf-untrusted`,
-`after-reset`), rebuilt by the producer in `tests/pi/obdii/test_fuel_economy_emitter.py`.
+`after-reset`, `recent-crawl`), rebuilt by the producer in
+`tests/pi/obdii/test_fuel_economy_emitter.py`.
 
 **Since-reset totals (US-881-c, Atlas gap 3 / G3).** One Pi-LOCAL row,
 `fuel_since_reset (id INTEGER PRIMARY KEY CHECK (id = 1), fuel_l REAL, distance_km REAL,
@@ -7698,6 +7821,186 @@ Driving spec §4.1-§4.2, R30, R35:
 - **Motion is opt-in.** The flash and the glide are declared only inside
   `@media (prefers-reduced-motion: no-preference)` on data-attribute-qualified
   selectors, so reduced motion keeps every colour and loses only the movement.
+
+#### V0.30 Engine card, layout B above the fold (US-889-b, Sprint 104 / V0.30.6)
+
+Engine spec §3-§4 (`specs/v030-engine-page-design.md`), CIO E-2 order:
+
+- **A new card at index 1, right after Driving.** `#engine-card`
+  (`aria-label="Engine"`, `data-page-name="ENGINE"`); card order is Driving,
+  Engine, Home, Alerts, System Status, Battery, Fuel Trim, Light. No
+  `data-state` (the generic availability poll never grays it), not the landing
+  card, not vehicle-gated.
+- **States it reads -- and nothing else.** `states/obd-live`
+  `params.<PID>.{value, unit, ts, stale, noBandReason, last}` for
+  `ENGINE_LOAD`, `THROTTLE_POS` and `TIMING_ADVANCE`, from the tick's
+  `stateOnce` cache (no extra fetch). `engineView(obdLive, nowMs)` is the pure
+  view; `renderEngineCard` writes text, `data-stale` / `data-note`, and each
+  bar's fill height into a fixed skeleton.
+- **The page computes no value and paints no state colour.** Load at 100 % is
+  expected on this turbo engine and stays neutral; the two vertical bars
+  (26 x 120 px, 0-100 %) are `--accent`, filled from the SAME sample as the
+  number, clamped to the bar, and empty for a non-`%` unit. Each value steps at
+  its own sample; no transition. Stale shows `last.value` dimmed with its age;
+  not read / PID absent is `--` + the provider's reason; no obd-live at all is
+  `--` + `no source`.
+- **Timing.** Always captioned `base timing · not knock` (TIMING_ADVANCE is not
+  knock). SAE J1979 PID 0x0E is degrees relative to TDC, negative = retarded: a
+  `deg` value >= 0 reads `n° BTDC`, < 0 reads `|n|° ATDC`, never `-4° BTDC`; any
+  other unit renders raw with no TDC claim.
+- **Units.** `displayUnits` gained ONLY canonical keys (Atlas G1): `%` (0 dp),
+  `deg` (0 dp, the `°` glyph), `g/s` (1 dp), `count` (no unit text). carousel.js
+  names no OBD-library unit (grep gate in `tests/ui/test_engine_page.py`).
+- **Type and tokens.** Load `--fs-hero`, throttle and timing `--fs-primary`;
+  values, units and captions in `--font-mono` (it carries `°`), labels in
+  Michroma at `--fs-meta` (`--font-display` now also binds
+  `#engine-card .eng-label`). Geometry is scoped custom properties on
+  `#engine-card`; the CSS gate allows literal px only there. The cue
+  `↓ history and status below` points at the scroll half (US-889-c). Fixtures:
+  `tests/ui/fixtures/states/engine/{idle-warm, wot-pull-load-100,
+  not-read-with-reason, stale}.json`.
+
+#### V0.30 Engine card, the scroll half: history + status (US-889-c, Sprint 104 / V0.30.6)
+
+Engine spec §3-§4, ACs 5-11. Below the fold of `#engine-card`, under one rule
+each: this drive's history, then the status row.
+
+- **History render rule: the band comes from the provider ONLY.**
+  `engineHistoryView(engineHistory)` is the pure view of `states/engine-history`
+  (US-889-a) and takes NOTHING else. Each of COOLANT (`COOLANT_TEMP`), INTAKE
+  AIR (`INTAKE_TEMP`) and BATTERY (`BATTERY_V`) is a neutral stepped line
+  (`--text-primary`): one flat run per bucket at its `value` (the last fresh
+  sample), a riser at the boundary, no interpolation or smoothing. A span is
+  painted ONLY where a point's `band` is `amber` or `red`
+  (`.eng-hist-span[data-band]` -> `--amber-warn` / `--critical-red`); the page
+  never compares a value with a number, so a line crossing 104 °C with a green
+  band shows no colour, and an amber bucket whose plotted value is below the
+  number is still amber. `green`, null or any other band paints nothing. No
+  coolant or battery threshold appears in carousel.js (grep gate).
+- **Gaps.** A point's `ts` is its bucket's END; buckets that touch join into one
+  polyline, and an omitted bucket starts a new one -- a gap is a gap, never a
+  bridge. The three charts share one time axis (the extent of the buckets) and
+  each series' own value range; the end value is the last point through
+  `displayUnits` by the series' `unit` entry (no unit -> raw, never assumed °C).
+- **Window label from engine-history alone (Atlas G3).** `partial: false` ->
+  `THIS DRIVE`; `partial: true` -> `SINCE h:mm` from `sinceTs` (local time, the
+  shared 12-hour rule, meridiem dropped); an unreadable `sinceTs` reads
+  `SINCE --`. The page reads no other provider's clock or drive id.
+- **Absence.** No series holding a point (or no / malformed history, or a
+  non-positive `intervalSec`) is the typed absence `History not recorded yet.
+  It starts with this drive's first readings.` with NO chart element; a single
+  series with no points (e.g. after the 2 h trim) shows the same text in its
+  slot, never an empty chart. Charts are built by carousel.js into
+  `.eng-history` and rebuilt only when the view changes.
+- **Status row** (`engineStatusView(obdLive, parked, nowMs)`), grid `max-content
+  1fr`, 8 px gap (`--eng-stat-gap`). RUN TIME is `params.RUNTIME_SEC` as h:mm --
+  the ECU's engine run time, NEVER derived from drive time (Atlas G4); absent
+  -> `--` + `not read`. CHECK ENGINE is `params.MIL_ON` read by VALUE (1 `ON`,
+  0 `OFF`, anything else `--` + `not read`), never by its unit label; while ON,
+  a second line `n codes ›` from `params.DTC_COUNT` (`0 codes ›` for a pending
+  code, `-- codes ›` if the count is not read). That line is a tap to the
+  Alerts card ONLY while parked: `data-tap="true"` + `role="button"` from the
+  US-511 `parkedNext` debounce (its first consumer since TD-us659), advanced
+  once per tick from the same system-status; moving, it carries no tap target.
+  No O2 SENSORS tile until US-891 (Iris G-3). Fixtures:
+  `tests/ui/fixtures/states/engine/{cold-start-history, fan-cycle-history,
+  coolant-dwell-fired, bucket-worst-band, history-gap, history-trimmed-2h,
+  history-restart-mid-drive, history-empty-after-restart, mil-on-two-codes,
+  mil-on-twelve-codes, mil-on-zero-codes}.json` (history payloads copied from
+  US-889-a's `engine-history.json` cases).
+
+#### V0.30 Fuel card replaces Fuel Trim; the trend row (US-890-a, Sprint 104 / V0.30.6)
+
+Fuel spec §3-§4.4 (`specs/v030-fuel-page-design.md`, layout A), CIO E-2 order:
+
+- **The Fuel card REPLACES the Fuel Trim card and moves to index 2, after
+  Engine.** `#fuel-card` (`aria-label="Fuel"`, `data-page-name="FUEL"`); card
+  order is Driving, Engine, Fuel, Home, Alerts, System Status, Battery, Light.
+  The Fuel Trim card, its per-drive bar row (`renderLtftTrendBody` /
+  `.ltft-bars`, each bar coloured by its own drive) and its title are gone.
+- **States it reads.** `states/ltft-trend` only, for the trend row:
+  `sufficient`, `level`, `reason`, `median`, `baseline`, `minDrives`,
+  `points[].{driveId, ltftAvg, inMedian, isReset}`. The card keeps
+  `data-state="ltft-trend"` and the Fuel Trim card's source-card route
+  (`SOURCE_CARDS` entry `ltft-trend`, title `Fuel`): the **vehicle gate**
+  (`data-gated="true"` ships closed; no car -> `FUEL TRIM TREND · no engine
+  data`), the US-700 loading tile and the silent-feed NA all survive -- but the
+  entry's new `slot: ".fuel-trend"` confines every one of them to the trend
+  row. `renderSourceCard` paints a source with a `slot` into that element only.
+- **Upper rows: markup, never blank.** LOOP, TOTAL TRIM, LAST 30 S,
+  THIS DRIVE and SINCE RESET ship `--` + `not published` in the skeleton and
+  stay so under every trend state until their providers land (loop + total
+  trim US-890-c, MPG US-890-d). AIRFLOW is live since US-890-b (below).
+- **Trend render rule** (`fuelTrendView(ltftTrend)`, pure; `ltftTrendView`'s
+  sufficiency rule carries over). Dots = EXACTLY the points with `inMedian`
+  true -- the headline's own drive set, so a 7-drive payload draws its newest
+  5 (closes US-730 by rule). Solid line = the ONE published `median`, flat
+  across those dots (the provider publishes no per-drive median series).
+  Dashed line = the epoch `baseline`. The headline (`--fs-secondary`) is the
+  median. Colour comes ONLY from `level` on `.fuel-trend-row[data-level]`:
+  `amber` and `down` -> `--amber-warn` on the headline and median line (WATCH,
+  Spool per-surface ruling #4), `ok` neutral; the dots never colour. A point
+  with `isReset` true (LTFT 0.00 % flat = adaptive memory reset) is never drawn
+  and the row says `ECU relearning`. Insufficient -> the provider's `reason`
+  (else `need N+ drives (n captured)`) and no chart. The y range is the drawn
+  values' own extent; no trim threshold appears in carousel.js (grep gate in
+  `tests/ui/test_fuel_page.py`). Fixtures:
+  `tests/ui/fixtures/states/fuel/{trend-healthy, trend-amber,
+  ltft-reset-zero-flat, trend-seven-drives}.json` (built by
+  `buildLtftTrendState`; the reset fixture sets `isReset` on its point by hand,
+  because the provider marks a reset on its drive records, not its points).
+
+#### V0.30 Fuel card AIRFLOW against params.MAF.scale (US-890-b, Sprint 104 / V0.30.6)
+
+Fuel spec §4.1 (Atlas S104 ruling 2, 2026-10-14):
+
+- **Provider.** `states/obd-live` `params.MAF.scale = {max}`, `max` =
+  `pi.display.scale.mafMaxGs` (validator default **160**, Spool 2026-10-14: the
+  smallest round number above the corpus max 158.69 g/s; finite and > 0). It is
+  read once by `ObdLiveTracker` and published fresh or stale, on the same path as
+  `params.RPM.scale` (section "obd-live" above). A display scale, not the
+  sensor's clip: MAF stays unbanded (`no_band_defined`).
+- **Render rule** (`fuelAirflowView(obdLive, nowMs)`, pure). The value is
+  `params.MAF.value` at `--fs-hero`, one decimal through `displayUnits` (`g/s`),
+  stepping per reading (no transition). Stale -> `last.value` dimmed with its
+  age; absent -> `--` + `not read`; no obd-live file -> `--` + `no source`. The
+  bar runs 0..`scale.max` with an `--accent` fill; above the max it is exactly
+  full while the number prints UNCLAMPED. No ceiling mark, no `sensor limit`
+  text, nothing on the airflow element amber or red (the stale age included).
+  No usable scale (absent, non-finite, <= 0) or a unit other than `g/s` -> no
+  bar, number kept. No MAF max literal appears in carousel.js (grep gate in
+  `tests/ui/test_fuel_page.py`).
+- Fixtures: `tests/ui/fixtures/states/fuel/{idle-closed, cruise-closed,
+  wot-near-max, synthetic-scale-150, maf-null, stale}.json`, each equal to what
+  the real tracker + builder emit. `synthetic-scale-150` is a SYNTHETIC max that
+  only proves pinning; it is not this car's clip.
+
+#### V0.30 Fuel card LOOP + TOTAL TRIM from obd-live.fuel (US-890-c, Sprint 104 / V0.30.6)
+
+Fuel spec §4.2 (Atlas S104 total-trim ruling (b), 2026-10-15):
+
+- **Provider.** `states/obd-live` `fuel = {loop, totalTrimNow}` (section "obd-live"
+  above). Which FUEL_SYSTEM_STATUS codes mean closed loop is decided ONCE, in
+  `CLOSED_LOOP_FUEL_STATUS_CODES` in `src/pi/obdii/fuel_status.py`, imported by both
+  `fuel_economy_emitter` and `obd_live_emitter`; an AST gate in
+  `tests/pi/obdii/test_fuel_status.py` allows no second `{2, 5}` literal in src/pi.
+  `ltft_trend_emitter.FUEL_SYSTEM_CLOSED_LOOP` (Spool's code-2-only trend gate) is a
+  different rule and is not touched.
+- **Render rule** (`fuelLoopView(obdLive)` / `fuelTotalTrimView(obdLive)`, pure). The
+  chip reads `fuel.loop` only: `CLOSED LOOP` / `OPEN LOOP`, else `--` + `loop unknown`;
+  outlined at `--fs-label`, never coloured. TOTAL TRIM reads `fuel.totalTrimNow` only:
+  signed, one decimal, ` %` from `toFixed(1)` (never `String(float)`, never
+  `displayUnits`) at `--fs-primary`, neutral. A null shows `--` + its reason's text:
+  `open_loop` -> `not applied in open loop` with the `--` dimmed (`data-dimmed`),
+  `not_read` -> `not read`, `loop_unknown` -> `loop unknown`, `stale` -> `stale` (no
+  age and no last value: a stale sum of two samples is not a reading, Iris G-7); any
+  other code shows raw. No obd-live file -> both `--` + `no source`; an obd-live with
+  no `fuel` block -> `not published`. The side notes never wrap, and the 24-character
+  open-loop text fits beside AIRFLOW (width model in `tests/ui/test_fuel_page.py`).
+  carousel.js names no trim or status PID, adds no trims and never reads
+  `ltft-trend.totalTrim` (grep gate).
+- Fixtures: `tests/ui/fixtures/states/fuel/{closed-loop-trim, open-loop-trim,
+  loop-unknown, trim-stale}.json`, each equal to what the real tracker + builder emit.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

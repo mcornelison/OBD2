@@ -1713,3 +1713,386 @@ html, body {
 @keyframes drv-gear-glide-b {
   from { opacity: 0; transform: translateY(var(--drv-glide-rise)); }
 }
+
+/* --- US-889-b Engine card, layout B above the fold (F-127) ------------------ */
+/* specs/v030-engine-page-design.md s3/s4. Tokens only; the layout's geometry
+   (26 x 120 px bars, the gaps) has no token, so -- as on #driving-card (S103
+   G-4) -- it is declared ONCE here as properties scoped to the card and every
+   rule below consumes them. This block is the only place in the Engine rules
+   that may hold a literal px (tests/ui/test_engine_page.py, the CSS gate).
+   No value is ever coloured by state: load at 100 % is expected on this turbo
+   engine (spec s4) and the bars are --accent (the unbanded rule). No motion:
+   a bar steps from one sample to the next and never sweeps between them. */
+#engine-card {
+  --eng-bar-w: 26px;          /* vertical bar width (spec s3) */
+  --eng-bar-h: 120px;         /* vertical bar height, 0-100 % (spec s3) */
+  --eng-col-gap: 16px;        /* bars -> readings */
+  --eng-bars-gap: 12px;       /* between the two bars */
+  --eng-gap: 6px;             /* between stacked rows */
+  --eng-inline-gap: 8px;      /* label -> value -> note on one row */
+  --eng-unit-gap: 4px;        /* number -> unit */
+  --eng-line: 1.2;            /* every line box */
+  --eng-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
+  /* US-889-c, the scroll half (OEM mockup 2026-10-14; spec s3 status fit). */
+  --eng-section-gap: 8px;     /* between history graphs; rule -> content */
+  --eng-rule: 1px;            /* the line above the history and the status */
+  --eng-graph-h: 46px;        /* one history chart's height */
+  --eng-graph-stroke: 2px;    /* the neutral history line */
+  --eng-span-amber: 0.26;     /* amber span fill strength under the line */
+  --eng-span-red: 0.32;       /* red span fill strength under the line */
+  --eng-stat-gap: 8px;        /* status grid gap (spec s3: 104.0 + 160.0 + 8) */
+}
+/* The body keeps the shared .card-body guard (overflow-y auto + the scroll
+   cue): the scroll half (US-889-c) lives below the fold. */
+#engine-card .card-body {
+  display: flex; flex-direction: column; gap: var(--eng-gap);
+}
+#engine-card .eng-main {
+  flex: none;
+  display: flex; align-items: flex-start; gap: var(--eng-col-gap);
+}
+#engine-card .eng-bars {
+  flex: none;
+  display: flex; gap: var(--eng-bars-gap);
+}
+#engine-card .eng-bar-col {
+  display: flex; flex-direction: column; align-items: center; gap: var(--eng-gap);
+}
+#engine-card .eng-bar-col[data-stale="true"] {
+  opacity: var(--eng-stale-opacity);
+}
+#engine-card .eng-bar {
+  position: relative;
+  width: var(--eng-bar-w); height: var(--eng-bar-h);
+  background-color: var(--line); border-radius: var(--radius);
+  overflow: hidden;
+}
+/* carousel.js sets the fill's height (0-100 %) from the latest sample. */
+#engine-card .eng-bar-fill {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background-color: var(--accent);
+}
+#engine-card .eng-readings {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: var(--eng-gap);
+}
+/* One row: label, value + unit, note -- on a shared baseline. LOAD wraps its
+   label onto its own line above the hero number (spec s3). */
+#engine-card .eng-reading {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--eng-inline-gap);
+}
+#engine-card .eng-load .eng-label {
+  flex-basis: 100%;
+}
+/* Labels: Michroma (frame spec s4.3), letter-spacing 0. */
+#engine-card .eng-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--eng-line);
+  color: var(--text-secondary);
+}
+/* Values and units in the fixed-width face: it carries the degree glyph, the
+   Michroma subset does not. Warm white always -- no state colour here. */
+#engine-card .eng-line {
+  line-height: var(--eng-line);
+}
+#engine-card .eng-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); color: var(--text-primary);
+}
+#engine-card .eng-load .eng-value {
+  font-size: var(--fs-hero);
+}
+#engine-card .eng-unit {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); color: var(--text-secondary);
+  margin-inline-start: var(--eng-unit-gap);
+}
+/* "22° BTDC": the degree glyph sits on the number. */
+#engine-card .eng-timing .eng-unit {
+  margin-inline-start: 0;
+}
+/* Stale: last.value dimmed, with its age in amber; a reason stays secondary. */
+#engine-card .eng-reading[data-stale="true"] .eng-line {
+  opacity: var(--eng-stale-opacity);
+}
+#engine-card .eng-note {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-secondary);
+}
+#engine-card .eng-reading[data-note="age"] .eng-note {
+  color: var(--amber-warn);
+}
+#engine-card .eng-basis {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-secondary);
+}
+#engine-card .eng-cue {
+  flex: none;
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-secondary);
+}
+/* --- US-889-c the scroll half: history + status (spec s3-s4, ACs 5-11) ---- */
+/* The history line is neutral warm white. A span's colour comes ONLY from the
+   provider's per-bucket band (data-band, set by carousel.js from the point):
+   this sheet maps band -> token and judges nothing. No motion: the line steps
+   bucket to bucket and never animates between them. */
+#engine-card .eng-history {
+  flex: none;
+  display: flex; flex-direction: column; gap: var(--eng-section-gap);
+  border-top-width: var(--eng-rule); border-top-style: solid; border-top-color: var(--line);
+  padding-top: var(--eng-section-gap);
+}
+#engine-card .eng-hist {
+  display: flex; flex-direction: column;
+}
+#engine-card .eng-hist-head {
+  display: flex; align-items: baseline; gap: var(--eng-inline-gap);
+}
+#engine-card .eng-hist-window {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-secondary); white-space: nowrap;
+}
+#engine-card .eng-hist-row {
+  display: flex; align-items: center; gap: var(--eng-inline-gap);
+}
+#engine-card .eng-hist-chart {
+  display: block; flex: 1; min-width: 0; height: var(--eng-graph-h);
+}
+#engine-card .eng-hist-line {
+  fill: none; stroke: var(--text-primary); stroke-width: var(--eng-graph-stroke);
+  vector-effect: non-scaling-stroke;
+}
+#engine-card .eng-hist-span[data-band="amber"] {
+  fill: var(--amber-warn); fill-opacity: var(--eng-span-amber);
+}
+#engine-card .eng-hist-span[data-band="red"] {
+  fill: var(--critical-red); fill-opacity: var(--eng-span-red);
+}
+#engine-card .eng-hist-end {
+  flex: none; white-space: nowrap;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-meta); line-height: var(--eng-line); color: var(--text-primary);
+}
+#engine-card .eng-hist-unit {
+  color: var(--text-secondary);
+}
+#engine-card .eng-absence {
+  margin: 0;
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--eng-line); color: var(--text-tertiary);
+}
+/* Status grid (spec s3, measured 2026-10-15): RUN TIME sized to its content,
+   CHECK ENGINE takes the rest; values in the fixed-width face at --fs-label,
+   CHECK ENGINE on two lines (ON, then the count) so a 3-digit count fits. */
+#engine-card .eng-status {
+  flex: none;
+  display: grid; grid-template-columns: max-content 1fr; gap: var(--eng-stat-gap);
+  border-top-width: var(--eng-rule); border-top-style: solid; border-top-color: var(--line);
+  padding-top: var(--eng-section-gap);
+}
+#engine-card .eng-stat {
+  display: flex; flex-direction: column; min-width: 0;
+}
+#engine-card .eng-stat-value,
+#engine-card .eng-codes {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); line-height: var(--eng-line); white-space: nowrap;
+  color: var(--text-primary);
+}
+#engine-card .eng-stat[data-stale="true"] .eng-stat-value,
+#engine-card .eng-stat[data-stale="true"] .eng-codes {
+  opacity: var(--eng-stale-opacity);
+}
+#engine-card .eng-stat[data-note="age"] .eng-note {
+  color: var(--amber-warn);
+}
+/* Moving, the count is information, not a link: secondary, no tap target. */
+#engine-card .eng-codes[data-tap="false"] {
+  color: var(--text-secondary);
+}
+
+/* --- US-890-a Fuel card, layout A (F-127) ---------------------------------- */
+/* specs/v030-fuel-page-design.md s3/s4. Tokens only; the geometry with no token
+   is declared ONCE here as properties scoped to the card (S103 G-4), and this
+   block is the only Fuel rule that may hold a literal px. The upper rows ship
+   "--" + "not published" (markup) until their providers land. The trend row's
+   colour comes ONLY from the provider's level (data-level on .fuel-trend-row):
+   amber and down both map to --amber-warn -- a fuel-trim drift is WATCH, not
+   "pull over" (Spool per-surface ruling #4, the rule the Fuel Trim bars kept).
+   The dots, the baseline and an ok median stay neutral. */
+#fuel-card {
+  --fuel-gap: 6px;            /* between stacked rows */
+  --fuel-inline-gap: 8px;     /* label -> value -> note on one row */
+  --fuel-col-gap: 12px;       /* between side-by-side readings */
+  --fuel-line: 1.2;           /* every line box */
+  --fuel-rule: 1px;           /* the line above the MPG row and the trend */
+  --fuel-trend-h: 30px;       /* the trend chart's height (viewBox 0 0 100 30) */
+  --fuel-stroke: 2px;         /* median + baseline lines */
+  --fuel-dash: 4px;           /* baseline dash and gap */
+  --fuel-dot: 8px;            /* one drive's dot (a round-capped stroke) */
+  /* US-890-b, the airflow row (spec s3). */
+  --fuel-bar-h: 10px;         /* the airflow bar, 0..params.MAF.scale.max */
+  --fuel-unit-gap: 4px;       /* number -> unit */
+  --fuel-stale-opacity: 0.4;  /* stale = dimmed (shared rule) */
+  /* US-890-c, the loop chip (spec s3: outlined, no colour). */
+  --fuel-chip-pad-y: 2px;
+  --fuel-chip-pad-x: 8px;
+}
+#fuel-card .card-body {
+  display: flex; flex-direction: column; gap: var(--fuel-gap);
+}
+#fuel-card .fuel-top {
+  flex: none;
+  display: flex; justify-content: space-between; gap: var(--fuel-col-gap);
+}
+#fuel-card .fuel-side {
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--fuel-gap);
+}
+#fuel-card .fuel-mpg {
+  flex: none;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--fuel-col-gap);
+  border-top-width: var(--fuel-rule); border-top-style: solid; border-top-color: var(--line);
+  padding-top: var(--fuel-gap);
+}
+#fuel-card .fuel-reading {
+  display: flex; flex-direction: column; min-width: 0;
+}
+#fuel-card .fuel-label {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--text-secondary); white-space: nowrap;
+}
+#fuel-card .fuel-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); line-height: var(--fuel-line); color: var(--text-primary);
+}
+#fuel-card .fuel-airflow .fuel-value {
+  font-size: var(--fs-hero);
+}
+/* "not published": a reason, never a reading -- the value it explains is "--". */
+#fuel-card .fuel-note {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--text-secondary);
+}
+#fuel-card .fuel-reading[data-note="unpublished"] .fuel-value {
+  color: var(--text-tertiary);
+}
+/* US-890-b AIRFLOW (spec s4.1): value + unit on one baseline, the note (reason
+   or age, never dimmed), then the bar. Unbanded: the fill is --accent (the unbanded rule, as the Engine bars),
+   and nothing here is ever --amber-warn or a red -- not even a stale age,
+   because above the scale max is a reading, not a warning. The width is set
+   per reading by carousel.js with no transition: the bar steps, never sweeps. */
+#fuel-card .fuel-airflow {
+  flex: 1;
+}
+#fuel-card .fuel-line {
+  display: flex; align-items: baseline; gap: var(--fuel-unit-gap);
+  line-height: var(--fuel-line);
+}
+#fuel-card .fuel-unit {
+  font-family: var(--font-mono); font-size: var(--fs-label);
+  color: var(--text-secondary);
+}
+#fuel-card .fuel-airflow[data-stale="true"] .fuel-line {
+  opacity: var(--fuel-stale-opacity);
+}
+#fuel-card .fuel-bar {
+  display: block; position: relative;
+  height: var(--fuel-bar-h);
+  background-color: var(--line); border-radius: var(--radius);
+  overflow: hidden;
+}
+#fuel-card .fuel-bar[data-stale="true"] {
+  opacity: var(--fuel-stale-opacity);
+}
+#fuel-card .fuel-bar-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background-color: var(--accent);
+}
+/* US-890-c LOOP + TOTAL TRIM (spec s4.2), from states/obd-live `fuel` only.
+   The chip is outlined at --fs-label and NEVER coloured: open loop is normal
+   at cold start and full throttle, a mode not a fault. TOTAL TRIM is unbanded
+   (the .fuel-value default, --fs-primary, neutral); its "--" is dimmed ONLY
+   for open_loop (data-dimmed), the reason that says the trims are not being
+   applied. Side notes never wrap: "not applied in open loop" is one line. */
+#fuel-card .fuel-chip {
+  align-self: flex-end;
+  font-size: var(--fs-label); white-space: nowrap;
+  padding: var(--fuel-chip-pad-y) var(--fuel-chip-pad-x);
+  border-width: var(--fuel-rule); border-style: solid; border-color: var(--text-secondary);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+}
+#fuel-card .fuel-loop .fuel-note,
+#fuel-card .fuel-total-trim .fuel-note,
+#fuel-card .fuel-total-trim .fuel-value {
+  white-space: nowrap;
+}
+#fuel-card .fuel-total-trim[data-dimmed="true"] .fuel-value {
+  opacity: var(--fuel-stale-opacity);
+}
+/* US-890-d MPG row (spec s4.3/s4.6). Labels are Michroma at --fs-meta (Iris
+   B-1); the value tiers sit below them: LAST 30 S keeps the .fuel-value
+   default (--fs-primary, driver-read), THIS DRIVE / SINCE RESET are
+   --fs-secondary (parked-read). The open loop flag is --amber-warn at
+   --fs-meta, on its own line under the figure: a one-decimal figure beside
+   "open loop" is wider than a third of the body. A reason never shrinks: a raw code longer
+   than its column wraps (overflow-wrap) rather than overflowing it. */
+#fuel-card .fuel-mpg .fuel-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  letter-spacing: 0;
+}
+#fuel-card .fuel-mpg-this-drive .fuel-value {
+  font-size: var(--fs-secondary);
+}
+#fuel-card .fuel-mpg-since-reset .fuel-value {
+  font-size: var(--fs-secondary);
+}
+#fuel-card .fuel-flag {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--amber-warn); white-space: nowrap;
+}
+#fuel-card .fuel-mpg .fuel-note {
+  overflow-wrap: anywhere;
+}
+/* The trend row. The source card paints this slot only (gate, loading and
+   no-data tiles included), so the rows above never wait on it. */
+#fuel-card .fuel-trend {
+  flex: none;
+  border-top-width: var(--fuel-rule); border-top-style: solid; border-top-color: var(--line);
+  padding-top: var(--fuel-gap);
+}
+#fuel-card .fuel-trend-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--fuel-inline-gap);
+}
+#fuel-card .fuel-trend-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-secondary); line-height: var(--fuel-line); color: var(--text-primary);
+}
+#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-value,
+#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-value {
+  color: var(--amber-warn);
+}
+#fuel-card .fuel-trend-reason,
+#fuel-card .fuel-trend-relearn {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--text-secondary);
+}
+#fuel-card .fuel-trend-chart {
+  display: block; flex: 1; min-width: 0; height: var(--fuel-trend-h);
+}
+#fuel-card .fuel-trend-baseline {
+  stroke: var(--text-tertiary); stroke-width: var(--fuel-stroke);
+  stroke-dasharray: var(--fuel-dash); vector-effect: non-scaling-stroke;
+}
+#fuel-card .fuel-trend-median {
+  stroke: var(--text-primary); stroke-width: var(--fuel-stroke);
+  vector-effect: non-scaling-stroke;
+}
+#fuel-card .fuel-trend-row[data-level="amber"] .fuel-trend-median,
+#fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-median {
+  stroke: var(--amber-warn);
+}
+#fuel-card .fuel-trend-dot {
+  stroke: var(--text-secondary); stroke-width: var(--fuel-dot);
+  stroke-linecap: round; vector-effect: non-scaling-stroke;
+}

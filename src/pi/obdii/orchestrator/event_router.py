@@ -40,6 +40,8 @@
 # 2026-10-14    | Rex (US-881-b) | _handleReading feeds MAF/FUEL_SYSTEM_STATUS to
 #               |              | the fuel integrator (observeFuelReading);
 #               |              | _handleDriveStart resets it (_resetFuelEconomy).
+# 2026-10-15    | Rex (US-889-a) | _handleDriveStart opens the engine-history
+#               |              | window (_resetEngineHistory).
 # ================================================================================
 ################################################################################
 
@@ -138,6 +140,11 @@ class EventRouterMixin:
     # the fuel would silently never integrate or reset).
     observeFuelReading: Callable[..., None]
     _resetFuelEconomy: Callable[[], None]
+
+    # US-889-a: provided by CardStateEmitterMixin -- an ANNOTATION for the same
+    # MRO reason as observeGearInput above (a stub would shadow it and the
+    # engine history would silently span drives).
+    _resetEngineHistory: Callable[[Any], None]
 
     def registerCallbacks(
         self,
@@ -253,6 +260,13 @@ class EventRouterMixin:
             self._resetFuelEconomy()
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.debug(f"Fuel economy reset failed: {e}")
+
+        # US-889-a: this drive's engine history starts empty beside its fuel.
+        # Exception-isolated like the resets above.
+        try:
+            self._resetEngineHistory(getattr(session, 'startTime', None))
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.debug(f"Engine history reset failed: {e}")
 
         # Update display if available
         if self._displayManager is not None and hasattr(self._displayManager, 'showDriveStatus'):

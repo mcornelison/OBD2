@@ -8,7 +8,12 @@
       "openLoopAirPct": 0.0
     },
     "sinceReset": null,
-    "ts": "2026-10-20T15:04:02Z"
+    "ts": "2026-10-20T15:04:02Z",
+    "recent": {
+      "mpg": 42.64440395833318,
+      "windowSec": 30.0,
+      "mafSamples": 15
+    }
   },
   "too-short": {
     "thisDrive": {
@@ -20,7 +25,12 @@
       "mpgNullReason": "too_short"
     },
     "sinceReset": null,
-    "ts": "2026-10-20T14:58:50Z"
+    "ts": "2026-10-20T14:58:50Z",
+    "recent": {
+      "mpg": 42.64440395833332,
+      "windowSec": 30.0,
+      "mafSamples": 15
+    }
   },
   "maf-untrusted": {
     "thisDrive": {
@@ -32,7 +42,13 @@
       "mpgNullReason": "maf_untrusted"
     },
     "sinceReset": null,
-    "ts": "2026-10-20T15:04:02Z"
+    "ts": "2026-10-20T15:04:02Z",
+    "recent": {
+      "mpg": null,
+      "windowSec": 30.0,
+      "mafSamples": 15,
+      "mpgNullReason": "maf_untrusted"
+    }
   },
   "after-reset": {
     "thisDrive": {
@@ -48,6 +64,29 @@
       "mpg": null,
       "resetAtTs": "2026-10-20T15:10:00Z"
     },
-    "ts": "2026-10-20T15:04:02Z"
+    "ts": "2026-10-20T15:04:02Z",
+    "recent": {
+      "mpg": 42.64440395833318,
+      "windowSec": 30.0,
+      "mafSamples": 15
+    }
+  },
+  "recent-crawl": {
+    "thisDrive": {
+      "fuelL": 0.3309431880860453,
+      "mpg": null,
+      "sinceTs": "2026-10-20T14:58:02Z",
+      "approximate": false,
+      "openLoopAirPct": 0.0,
+      "mpgNullReason": "too_short"
+    },
+    "sinceReset": null,
+    "ts": "2026-10-20T15:04:02Z",
+    "recent": {
+      "mpg": null,
+      "windowSec": 30.0,
+      "mafSamples": 15,
+      "mpgNullReason": "too_short"
+    }
   }
 }

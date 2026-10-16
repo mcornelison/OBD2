@@ -470,7 +470,15 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     MOVED PIN (US-888-a): the Driving card's side LABELS and its GEAR glyph
     (frame spec s4.3: "labels, page names, titles, the gear glyph" are
     Michroma; driving spec AC). Neither is a changing reading -- the readings
-    stay --font-mono, pinned in tests/ui/test_driving_page.py."""
+    stay --font-mono, pinned in tests/ui/test_driving_page.py.
+
+    MOVED PIN (US-889-b): the Engine card's LABELS (LOAD / THR / THROTTLE /
+    TIMING; frame spec s4.3). Its values, units and captions stay --font-mono,
+    pinned in tests/ui/test_engine_page.py.
+
+    MOVED PIN (US-890-d): the Fuel card's MPG-row LABELS (LAST 30 S / THIS
+    DRIVE / SINCE RESET are Michroma at --fs-meta, Iris B-1). Its figures and
+    reasons stay --font-mono, pinned in tests/ui/test_fuel_page.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -482,6 +490,8 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#not-live-marker",
         "#driving-card .drv-label",
         "#driving-card .drv-gear",
+        "#engine-card .eng-label",
+        "#fuel-card .fuel-mpg .fuel-label",
     }, bound
 
 

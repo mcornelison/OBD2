@@ -1,0 +1,42 @@
+{
+  "description": "A cruising drive as a provider from BEFORE US-890-e publishes it: no 'recent' field (inputs.recentPublished false), so LAST 30 S reads '--' + 'not published' while THIS DRIVE reads its figure (one decimal, with the approximately sign) and SINCE RESET the stored one. Closed loop (4 % open-loop air), so no open loop flag. Built by the REAL buildFuelEconomyState.",
+  "now": "2026-10-20T15:03:10Z",
+  "inputs": {
+    "mafTrusted": true,
+    "snap": {
+      "started": true,
+      "airG": 19457.0,
+      "openLoopAirG": 778.3,
+      "excludedS": 0.0,
+      "windowS": 190.0,
+      "lastMafGPerS": 6.2,
+      "lastMafEventUtc": "2026-10-20T15:03:09Z",
+      "lastMafEngineRunning": true,
+      "openLoopS": 8.0
+    },
+    "distanceKm": 20.0,
+    "distanceSinceTs": "2026-10-20T15:00:00Z",
+    "sinceReset": {
+      "fuel_l": 39.39,
+      "distance_km": 412.0,
+      "reset_at_ts": "2026-10-01T12:00:00Z"
+    },
+    "recentPublished": false
+  },
+  "fuel-economy": {
+    "thisDrive": {
+      "fuelL": 1.7886560029417173,
+      "mpg": 26.300706558051083,
+      "sinceTs": "2026-10-20T15:00:00Z",
+      "approximate": false,
+      "openLoopAirPct": 4.000102790769389
+    },
+    "sinceReset": {
+      "fuelL": 39.39,
+      "distanceKm": 412.0,
+      "mpg": 24.60228695946517,
+      "resetAtTs": "2026-10-01T12:00:00Z"
+    },
+    "ts": "2026-10-20T15:03:09Z"
+  }
+}

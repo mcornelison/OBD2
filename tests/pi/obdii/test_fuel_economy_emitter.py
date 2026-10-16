@@ -16,6 +16,9 @@
 # 2026-10-14    | Rex (US-881-b) | Initial.
 # 2026-10-14    | Rex (US-881-c) | sinceReset payload rules, open-loop seconds,
 #                                the after-reset fixture case.
+# 2026-10-15    | Rex (US-890-e) | recent (MPG over the last 30 s): RecentWindow,
+#                                null precedence, lock-apart feeding, the
+#                                recent-crawl fixture case.
 # ================================================================================
 ################################################################################
 
@@ -39,6 +42,7 @@ from pi.obdii.drive.types import DriveSession
 from pi.obdii.obd_live_emitter import ObdLiveTracker
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
 from pi.obdii.orchestrator.event_router import EventRouterMixin
+from pi.obdii.speed_integrator import SpeedIntegrator
 
 _FIXTURE_PATH = (
     Path(__file__).resolve().parents[2]
@@ -341,7 +345,8 @@ def test_noMafWithinObdLiveSec_mpgNullMafStale(tmp_path):
 def test_freshProcess_noDrive_thisDriveNull(tmp_path):
     state = _orch(tmp_path).state()
 
-    assert state == {"thisDrive": None, "sinceReset": None, "ts": None}
+    # US-890-e named pin change: the empty state gains 'recent': None.
+    assert state == {"thisDrive": None, "sinceReset": None, "ts": None, "recent": None}
 
 
 def test_driveStartWithNoMafYet_zeroFuel_mpgNullMafStale(tmp_path):
@@ -710,7 +715,12 @@ _CASES: dict[str, tuple[dict[str, Any], float]] = {
     "too-short": ({}, 48.0),
     "maf-untrusted": ({"mafTrusted": False}, 360.0),
     "after-reset": ({}, 360.0),
+    "recent-crawl": ({}, 360.0),
 }
+
+# US-890-e: a case's speed when it is not 60 km/h. recent-crawl: 10 km/h covers
+# 0.083 km (0.05 mi) in the 30 s window, under pi.fuel.recentMinMiles 0.1.
+_CASE_SPEED_KMH: dict[str, float] = {"recent-crawl": 10.0}
 
 # US-881-c: the fuel_since_reset row each case publishes as sinceReset (absent =
 # no row yet). after-reset: parked after a drive, the totals just zeroed.
@@ -725,21 +735,31 @@ _SINCE_RESET_ROWS: dict[str, dict[str, Any]] = {
 def _buildCase(name: str) -> dict[str, Any]:
     """The case's scenario through the real integrator and builder."""
     settingsOver, seconds = _CASES[name]
+    speedKmh = _CASE_SPEED_KMH.get(name, 60.0)
     settings = _settings(**settingsOver)
     integ = fee.FuelIntegrator(settings.gapSec)
     integ.reset(0.0)
+    # US-890-e: the window is fed as the card emitter feeds it -- the air the
+    # integrator just added, and the speed integrator's km delta.
+    window = fee.RecentWindow(settings.recentWindowSec)
+    speed = SpeedIntegrator(settings.gapSec)
+    lastKm = 0.0
     start = _toUtc(_T0_LOCAL)
     integ.observeFuelStatus(2.0)
     steps = round(seconds / _STEP_S)
     for i in range(steps + 1):
         tS = i * _STEP_S
-        integ.observeMaf(10.0, tS, start + timedelta(seconds=tS), True)
-    distanceKm = 60.0 * seconds / 3600.0
+        km = speed.update(speedKmh, tS)
+        window.add(tS, km=km - lastKm)
+        lastKm = km
+        airG = integ.observeMaf(10.0, tS, start + timedelta(seconds=tS), True)
+        window.add(tS, airG=airG, isMafSample=True)
+    distanceKm = speedKmh * seconds / 3600.0
     return fee.buildFuelEconomyState(
         integ.snapshot(), settings,
         distanceKm=distanceKm, distanceSinceTs=_T0_TS,
         nowUtc=start + timedelta(seconds=seconds + 1), staleSec=5.0,
-        sinceReset=_SINCE_RESET_ROWS.get(name),
+        sinceReset=_SINCE_RESET_ROWS.get(name), recent=window.snapshot(),
     )
 
 
@@ -767,3 +787,268 @@ def test_fixture_cases_carryTheirReasons():
     assert fixture["after-reset"]["sinceReset"] == {
         "fuelL": 0.0, "distanceKm": 0.0, "mpg": None, "resetAtTs": "2026-10-20T15:10:00Z",
     }
+    # US-890-e: 30 s of steady 60 km/h / 10 g/s is the drive's own ratio.
+    assert fixture["driving"]["recent"]["mpg"] == pytest.approx(42.65, abs=0.01)
+    assert fixture["driving"]["recent"]["windowSec"] == 30
+    assert fixture["maf-untrusted"]["recent"]["mpgNullReason"] == "maf_untrusted"
+    assert fixture["recent-crawl"]["recent"]["mpg"] is None
+    assert fixture["recent-crawl"]["recent"]["mpgNullReason"] == "too_short"
+
+
+# ======================================================= US-890-e: recent
+
+
+def _recentOrch(tmp_path, **kw) -> _Orch:
+    orch = _orch(tmp_path, **kw)
+    orch.startDrive()
+    return orch
+
+
+def _runEvery(orch: _Orch, stepS: float, seconds: float, *, maf: float | None,
+              speed: float | None) -> None:
+    """SPEED then MAF every ``stepS`` for ``seconds`` (the first at the current t)."""
+    steps = round(seconds / stepS)
+    for i in range(steps + 1):
+        if i:
+            orch.advance(stepS)
+        if speed is not None:
+            orch.read("SPEED", speed)
+        if maf is not None:
+            orch.read("MAF", maf)
+
+
+# Hand arithmetic: miles over gallons for SPEED v km/h and MAF m g/s held over
+# the same seconds -- the seconds cancel.
+def _steadyMpg(speedKmh: float, mafGPerS: float) -> float:
+    milesPerS = speedKmh / 3600.0 / 1.609344
+    gallonsPerS = mafGPerS / 14.7 / 740.0 / 3.785411784
+    return milesPerS / gallonsPerS
+
+
+def test_recent_thirtySecondsAt60KmhMafEvery2p2s_isTheHandRatio(tmp_path):
+    """Validation 1: 30 s at 60 km/h, MAF 10 g/s every 2.2 s."""
+    orch = _recentOrch(tmp_path)
+    _runEvery(orch, 2.2, 30.8, maf=10.0, speed=60.0)
+
+    recent = orch.state()["recent"]
+
+    assert recent["mpg"] == pytest.approx(_steadyMpg(60.0, 10.0))
+    assert recent["mpg"] == pytest.approx(42.64, abs=0.01)
+    # readings at 0 .. 28.6 s back from the newest: 14 inside (newest - 30, newest]
+    assert recent["mafSamples"] == 14
+    assert recent["windowSec"] == 30
+    assert "mpgNullReason" not in recent
+
+
+def test_recent_isTheRatioOfSums_notTheMeanOfSampleRatios():
+    """Two 15 s halves: 90 km/h at 20 g/s, then 30 km/h at 5 g/s. The mean of
+    the two halves' MPGs is not the window's MPG; the ratio of the sums is."""
+    window = fee.RecentWindow(30.0)
+    for i in range(1, 16):
+        window.add(float(i), airG=20.0, km=90.0 / 3600.0, isMafSample=True)
+    for i in range(16, 31):
+        window.add(float(i), airG=5.0, km=30.0 / 3600.0, isMafSample=True)
+
+    recent = fee.buildFuelEconomyState(
+        _snap(), _settings(), distanceKm=6.0, distanceSinceTs=_T0_TS,
+        nowUtc=_NOW, staleSec=5.0, recent=window.snapshot(),
+    )["recent"]
+
+    miles = (15 * 90.0 / 3600.0 + 15 * 30.0 / 3600.0) / 1.609344
+    gallons = (15 * 20.0 + 15 * 5.0) / 14.7 / 740.0 / 3.785411784
+    assert recent["mpg"] == pytest.approx(miles / gallons)
+    meanOfRatios = (_steadyMpg(90.0, 20.0) + _steadyMpg(30.0, 5.0)) / 2
+    assert recent["mpg"] != pytest.approx(meanOfRatios, rel=1e-3)
+
+
+def test_recent_thirtySecondsIdle_tooShort(tmp_path):
+    """Validation 2: 30 s at speed 0 (idle MAF) -> too_short."""
+    orch = _recentOrch(tmp_path)
+    _runEvery(orch, 2.2, 30.8, maf=3.2, speed=0.0)
+
+    recent = orch.state()["recent"]
+
+    assert recent["mpg"] is None
+    assert recent["mpgNullReason"] == "too_short"
+    assert recent["mafSamples"] == 14
+
+
+def test_recent_eightMafSamplesInTheWindow_tooFewSamples(tmp_path):
+    """Validation 3: MAF every 4 s puts 8 readings in the window (< 10)."""
+    orch = _recentOrch(tmp_path)
+    _runEvery(orch, 4.0, 60.0, maf=10.0, speed=60.0)
+
+    recent = orch.state()["recent"]
+
+    assert recent["mafSamples"] == 8
+    assert recent["mpg"] is None
+    assert recent["mpgNullReason"] == "too_few_samples"
+
+
+def test_recent_noDriveWindow_null(tmp_path):
+    assert _orch(tmp_path).state()["recent"] is None
+
+
+def test_recent_driveStartWithNoReadings_isAnEmptyWindowWithAReason(tmp_path):
+    recent = _recentOrch(tmp_path).state()["recent"]
+
+    assert recent == {"mpg": None, "windowSec": 30, "mafSamples": 0,
+                      "mpgNullReason": "maf_stale"}
+
+
+def test_recent_dropsIncrementsOlderThanTheWindow(tmp_path):
+    """60 s of idle then 31 s of cruise: only the cruise is in the window."""
+    orch = _recentOrch(tmp_path)
+    _runEvery(orch, 2.0, 60.0, maf=3.0, speed=0.0)
+    orch.advance(2.0)
+    _runEvery(orch, 2.0, 30.0, maf=10.0, speed=60.0)
+
+    recent = orch.state()["recent"]
+
+    assert recent["mafSamples"] == 15
+    assert recent["mpg"] == pytest.approx(_steadyMpg(60.0, 10.0))
+
+
+def test_recent_resetsAtDriveStart(tmp_path):
+    orch = _recentOrch(tmp_path)
+    _runEvery(orch, 2.0, 30.0, maf=10.0, speed=60.0)
+    orch.advance(2.0)
+    orch.startDrive()
+    orch.read("MAF", 10.0)
+
+    assert orch.state()["recent"]["mafSamples"] == 1
+
+
+def test_recent_mafUntrusted_nullWithTheDriveLevelReason(tmp_path):
+    orch = _recentOrch(tmp_path, fuel={"mafTrusted": False})
+    _runEvery(orch, 2.0, 30.0, maf=10.0, speed=60.0)
+
+    assert orch.state()["recent"]["mpgNullReason"] == "maf_untrusted"
+
+
+def test_recent_windowAndThresholds_comeFromConfig(tmp_path):
+    orch = _recentOrch(
+        tmp_path, fuel={"recentWindowSec": 10, "recentMinMafSamples": 3, "recentMinMiles": 0.01}
+    )
+    _runEvery(orch, 2.0, 30.0, maf=10.0, speed=60.0)
+
+    recent = orch.state()["recent"]
+
+    assert recent["windowSec"] == 10
+    assert recent["mafSamples"] == 5
+    assert recent["mpg"] == pytest.approx(_steadyMpg(60.0, 10.0))
+
+
+@pytest.mark.parametrize(
+    "snapOver, settingsOver, recentIn, expected",
+    [
+        # every condition at once -> the first in precedence
+        ({"lastMafEventUtc": None, "lastMafGPerS": 0.0}, {"mafTrusted": False},
+         (0.0, 0.0, 0), "maf_untrusted"),
+        ({"lastMafEventUtc": datetime(2026, 10, 20, 15, 3, 0, tzinfo=UTC),
+          "lastMafGPerS": 0.0}, {}, (0.0, 0.0, 0), "maf_stale"),
+        ({"lastMafGPerS": 0.0}, {}, (0.0, 0.0, 0), "maf_zero_running"),
+        ({}, {}, (0.0, 0.0, 9), "too_few_samples"),
+        ({}, {}, (0.0, 0.16, 10), "too_short"),
+        ({}, {}, (0.0, 0.17, 10), "no_fuel"),
+    ],
+)
+def test_recentNullReason_precedence(snapOver, settingsOver, recentIn, expected):
+    airG, km, samples = recentIn
+    recent = fee.buildFuelEconomyState(
+        _snap(**snapOver), _settings(**settingsOver),
+        distanceKm=6.0, distanceSinceTs=_T0_TS, nowUtc=_NOW, staleSec=5.0,
+        recent=fee.RecentSnapshot(airG=airG, km=km, mafSamples=samples),
+    )["recent"]
+
+    assert recent["mpg"] is None
+    assert recent["mpgNullReason"] == expected
+    assert expected in fee.RECENT_NULL_REASONS
+
+
+def test_recent_minimumsAreInclusive():
+    """Exactly recentMinMafSamples readings and exactly recentMinMiles is a figure."""
+    recent = fee.buildFuelEconomyState(
+        _snap(), _settings(), distanceKm=6.0, distanceSinceTs=_T0_TS,
+        nowUtc=_NOW, staleSec=5.0,
+        recent=fee.RecentSnapshot(airG=100.0, km=0.1 * 1.609344, mafSamples=10),
+    )["recent"]
+
+    assert recent["mpg"] is not None
+    assert set(recent) == {"mpg", "windowSec", "mafSamples"}
+
+
+def test_recent_withoutAWindowSnapshot_isAnEmptyWindow():
+    """A caller that passes no window gets an honest empty one, never a figure."""
+    recent = fee.buildFuelEconomyState(
+        _snap(), _settings(), distanceKm=6.0, distanceSinceTs=_T0_TS,
+        nowUtc=_NOW, staleSec=5.0,
+    )["recent"]
+
+    assert recent["mafSamples"] == 0
+    assert recent["mpgNullReason"] == "too_few_samples"
+
+
+def test_recentWindow_holdsOnlyTheNewestWindowSec():
+    window = fee.RecentWindow(30.0)
+    window.add(0.0, airG=99.0, km=9.0, isMafSample=True)
+    window.add(30.0, airG=1.0, km=0.5, isMafSample=True)
+    window.add(31.0, km=0.25)
+
+    snap = window.snapshot()
+
+    assert (snap.airG, snap.km, snap.mafSamples) == (1.0, 0.75, 1)
+
+
+def test_recentWindow_resetEmptiesIt():
+    window = fee.RecentWindow(30.0)
+    window.add(1.0, airG=5.0, km=0.1, isMafSample=True)
+    window.reset()
+
+    assert window.snapshot() == fee.RecentSnapshot(airG=0.0, km=0.0, mafSamples=0)
+
+
+def test_integrator_observeMaf_returnsTheAirItAdded():
+    integ = fee.FuelIntegrator(300.0)
+    integ.reset(0.0)
+    t = datetime(2026, 10, 20, 15, 0, 0, tzinfo=UTC)
+
+    assert integ.observeMaf(10.0, 0.0, t, None) == 0.0
+    assert integ.observeMaf(20.0, 2.0, t, None) == pytest.approx(30.0)
+    assert integ.observeMaf(20.0, 500.0, t, None) == 0.0  # a gap adds nothing
+
+
+def test_fromConfig_recentDefaultsAreTheValidatorDefaults():
+    s = fee.FuelSettings.fromConfig({})
+
+    assert (s.recentWindowSec, s.recentMinMiles, s.recentMinMafSamples) == (30.0, 0.1, 10.0)
+
+
+def test_speedKmDelta_feedsTheWindow_withTheTwoLocksNeverHeldTogether(tmp_path):
+    """Atlas G2: observeTripSpeed takes the fuel lock only AFTER the trip lock."""
+    orch = _recentOrch(tmp_path)
+    held: set[str] = set()
+    overlaps: list[str] = []
+
+    class _Lock:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self._lock = threading.Lock()
+
+        def __enter__(self) -> None:
+            if held:
+                overlaps.append(f"{self.name} inside {sorted(held)}")
+            self._lock.acquire()
+            held.add(self.name)
+
+        def __exit__(self, *exc: Any) -> None:
+            held.discard(self.name)
+            self._lock.release()
+
+    orch._tripLock = _Lock("trip")
+    orch._fuelLock = _Lock("fuel")
+    _runEvery(orch, 2.0, 30.0, maf=10.0, speed=60.0)
+    recent = orch.state()["recent"]
+
+    assert overlaps == []
+    assert recent["mpg"] == pytest.approx(_steadyMpg(60.0, 10.0))

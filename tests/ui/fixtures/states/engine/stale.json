@@ -1,0 +1,46 @@
+{
+  "description": "ECU silent: every PID stale for 12 s. The card shows each last.value dimmed with its age, never '--'; the retarded last timing (-4 deg) reads '4° ATDC'.",
+  "now": "2026-10-20T15:12:41Z",
+  "obd-live": {
+    "params": {
+      "ENGINE_LOAD": {
+        "value": null,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 71.0,
+          "band": null
+        }
+      },
+      "THROTTLE_POS": {
+        "value": null,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": 48.2,
+          "band": null
+        }
+      },
+      "TIMING_ADVANCE": {
+        "value": null,
+        "unit": "deg",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": -4.0,
+          "band": null
+        }
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:41Z"
+  }
+}

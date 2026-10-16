@@ -115,6 +115,11 @@
 # 2026-10-13    | Rex (US-860-a)| connect_success writes the boot's obd_connected
 #                |              | milestone at the connect's own time; the first
 #                |              | connect of the boot wins.
+# 2026-10-15    | Rex (US-907)  | pi.obdii.connectDebug: python-OBD's 'obd'
+#                |              | logger at DEBUG for the process's FIRST
+#                |              | attempt only (prior level restored); every
+#                |              | attempt logs INFO 'CONNECT PHASE' lines.
+#                |              | Connect behaviour unchanged.
 # ================================================================================
 ################################################################################
 
@@ -202,6 +207,39 @@ DEFAULT_CONNECTION_TIMEOUT = 30
 # Channel 1 is the SPP channel confirmed via sdptool browse during Session 23.
 DEFAULT_RFCOMM_DEVICE = 0
 DEFAULT_RFCOMM_CHANNEL = 1
+
+# US-907: python-OBD 0.7.3 logs every module under this parent logger and sets
+# it to WARNING at import (obd/__init__.py:52-57), with its own stderr handler.
+PYTHON_OBD_LOGGER_NAME = 'obd'
+
+# US-907: CONNECT PHASE line phases, in the order an attempt reaches them.
+CONNECT_PHASE_PORT_RESOLVED = 'port_resolved'
+CONNECT_PHASE_ELM_CONNECTED = 'elm_connected'
+CONNECT_PHASE_PIDS_PROBED = 'pids_probed'
+CONNECT_PHASE_FAILED = 'failed'
+
+# US-907: port attempts made by THIS PROCESS, across every ObdConnection and
+# every caller.  Attempt 1 is the only one the connectDebug window may open.
+_processConnectAttempts = 0
+_processConnectAttemptsLock = threading.Lock()
+
+
+def _nextProcessConnectAttempt() -> int:
+    """Count one connect attempt for this process and return its number (1-based)."""
+    global _processConnectAttempts
+    with _processConnectAttemptsLock:
+        _processConnectAttempts += 1
+        return _processConnectAttempts
+
+
+def _logConnectPhase(attempt: int, phase: str, attemptStart: float) -> None:
+    """Log one US-907 CONNECT PHASE line, timed from ``attemptStart`` (monotonic)."""
+    logger.info(
+        "CONNECT PHASE | attempt=%d | phase=%s | elapsedSec=%.1f",
+        attempt,
+        phase,
+        time.monotonic() - attemptStart,
+    )
 
 # Connection event types for logging
 EVENT_TYPE_CONNECT_ATTEMPT = 'connect_attempt'
@@ -539,6 +577,10 @@ class ObdConnection:
         self.connectionTimeout = btConfig.get('connectionTimeoutSeconds', DEFAULT_CONNECTION_TIMEOUT)
         self.rfcommDevice = btConfig.get('rfcommDevice', DEFAULT_RFCOMM_DEVICE)
         self.rfcommChannel = btConfig.get('rfcommChannel', DEFAULT_RFCOMM_CHANNEL)
+        # US-907: a deploy diagnostic (absent = off; validator default false).
+        self.connectDebug = (
+            config.get('pi', {}).get('obdii', {}).get('connectDebug', False) is True
+        )
 
         # Connection state
         self.obd: Any | None = None
@@ -1140,6 +1182,19 @@ class ObdConnection:
                 outageAttempt = self._outageAttempts
                 self._outageAttempts += 1
 
+                # US-907: the process's FIRST attempt runs python-OBD at DEBUG
+                # (every ELM exchange) when connectDebug is on; the finally
+                # below restores the level read here.  Later attempts never
+                # write it.  An attempt abandoned by its owner (US-690) keeps
+                # running in its own thread, and its finally closes the window.
+                processAttempt = _nextProcessConnectAttempt()
+                attemptStart = time.monotonic()
+                obdLogger = logging.getLogger(PYTHON_OBD_LOGGER_NAME)
+                debugWindow = self.connectDebug and processAttempt == 1
+                priorObdLevel = obdLogger.level
+                if debugWindow:
+                    obdLogger.setLevel(logging.DEBUG)
+
                 try:
                     self._logConnectionEvent(
                         EVENT_TYPE_CONNECT_ATTEMPT,
@@ -1150,12 +1205,14 @@ class ObdConnection:
                     # passed a literal device path (or left config empty) we
                     # pass it through unchanged for backwards compatibility.
                     serialPort = self._resolvePort()
+                    _logConnectPhase(processAttempt, CONNECT_PHASE_PORT_RESOLVED, attemptStart)
 
                     # Create OBD connection
                     if self._obdFactory is not None:
                         self.obd = self._obdFactory(serialPort, self.connectionTimeout)
                     else:
                         self.obd = self._createObdConnection(serialPort)
+                    _logConnectPhase(processAttempt, CONNECT_PHASE_ELM_CONNECTED, attemptStart)
 
                     # Check if connection was successful
                     if self._isConnected():
@@ -1180,6 +1237,9 @@ class ObdConnection:
                         # candidates on 2G). Best-effort — probe failure never
                         # fails the connection itself.
                         self._runSupportedPidProbe()
+                        _logConnectPhase(
+                            processAttempt, CONNECT_PHASE_PIDS_PROBED, attemptStart
+                        )
 
                         self._logConnectionEvent(
                             EVENT_TYPE_CONNECT_SUCCESS,
@@ -1198,6 +1258,7 @@ class ObdConnection:
 
                 except Exception as e:
                     attemptFailed = True
+                    _logConnectPhase(processAttempt, CONNECT_PHASE_FAILED, attemptStart)
                     self._status.lastError = str(e)
                     self._status.lastErrorTime = datetime.now()
                     self._status.totalErrors += 1
@@ -1241,6 +1302,9 @@ class ObdConnection:
                             f"Failed to connect after {totalAttempts} attempts | "
                             f"mac={self.macAddress}"
                         )
+                finally:
+                    if debugWindow:
+                        obdLogger.setLevel(priorObdLevel)
             # --- _ioLock released here (fix A) ---
 
             # Backoff OUTSIDE the lock so disconnect()/query() can acquire it and

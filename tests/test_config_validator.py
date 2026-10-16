@@ -31,6 +31,9 @@
 # 2026-10-14    | Rex (US-881-b) | pi.fuel.* defaults (Spool, sourced) + range checks.
 # 2026-10-14    | Rex (US-881-c) | pi.fuel.persistSec default 60 + positivity.
 # 2026-10-14    | Rex (US-881-d) | pi.fuel.resetTimeoutSec default 5 + positivity.
+# 2026-10-15    | Rex (US-889-a) | pi.display.engineHistory.{intervalSec,maxPoints}.
+# 2026-10-15    | Rex (US-890-b) | pi.display.scale.mafMaxGs default 160 + positivity.
+# 2026-10-15    | Rex (US-890-e) | pi.fuel.recent* defaults (Spool) + positivity.
 # ================================================================================
 ################################################################################
 
@@ -1357,6 +1360,48 @@ def test_validate_gradeHistory_nonPositiveOrNonFinite_rejected(key, bad):
         ConfigValidator().validate(cfg)
 
 
+def test_validate_engineHistory_defaultsTo30sAnd240Points():
+    """US-889-a: states/engine-history buckets 30 s, 240 points per PID (2 h)
+    by default (Atlas S104 ruling 1)."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["engineHistory"] == {"intervalSec": 30, "maxPoints": 240}
+
+
+@pytest.mark.parametrize("key", ["intervalSec", "maxPoints"])
+@pytest.mark.parametrize("bad", [0, -30, float("inf"), float("nan"), "30", True])
+def test_validate_engineHistory_nonPositiveOrNonFinite_rejected(key, bad):
+    """US-889-a: each engine-history key must be a finite number > 0; the error
+    names the key."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"engineHistory": {key: bad}}}
+    with pytest.raises(ConfigValidationError, match=f"pi.display.engineHistory.{key}"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_mafMaxGs_defaultsTo160():
+    """US-890-b: params.MAF.scale.max defaults to 160 g/s (Spool 2026-10-14: the
+    smallest round number above the corpus max 158.69 g/s)."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["scale"]["mafMaxGs"] == 160
+
+
+def test_validate_mafMaxGs_acceptsAPositiveNumber():
+    """US-890-b: a positive finite override passes unchanged."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"scale": {"mafMaxGs": 150.5}}}
+    assert ConfigValidator().validate(cfg)["pi"]["display"]["scale"]["mafMaxGs"] == 150.5
+
+
+@pytest.mark.parametrize("bad", [0, -160, float("inf"), float("nan"), "160", True])
+def test_validate_mafMaxGs_nonPositiveOrNonFinite_rejected(bad):
+    """US-890-b: pi.display.scale.mafMaxGs must be a finite number > 0; the error
+    names the key."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"scale": {"mafMaxGs": bad}}}
+    with pytest.raises(ConfigValidationError, match="pi.display.scale.mafMaxGs"):
+        ConfigValidator().validate(cfg)
+
+
 def test_validate_tripGapSec_defaultsTo300():
     """US-880-a: the speed integrator's gap rule defaults to 300 s (Atlas: one
     gap definition across tiers)."""
@@ -1414,17 +1459,23 @@ def test_validate_fuelKeys_defaultsAreSpoolsSourcedValues():
         "approximateOpenLoopPct": 10,
         "persistSec": 60,
         "resetTimeoutSec": 5,
+        # US-890-e named pin change: Spool 2026-10-14's last-30 s rules.
+        "recentWindowSec": 30,
+        "recentMinMiles": 0.1,
+        "recentMinMafSamples": 10,
     }
 
 
 @pytest.mark.parametrize(
-    "key", ["stoichAfr", "densityGPerL", "minMiles", "persistSec", "resetTimeoutSec"]
+    "key",
+    ["stoichAfr", "densityGPerL", "minMiles", "persistSec", "resetTimeoutSec",
+     "recentWindowSec", "recentMinMiles", "recentMinMafSamples"],
 )
 @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "14.7", True])
 def test_validate_fuelPositiveKeys_nonPositiveOrNonFinite_rejected(key, bad):
     """US-881-b: stoich, density and the minimum distance are finite numbers > 0;
     US-881-c: so is the since-reset persist cadence; US-881-d: and the POST
-    /fuel-reset outcome wait."""
+    /fuel-reset outcome wait; US-890-e: and the three last-30 s rules."""
     cfg = _baseCfg()
     cfg["pi"] = {"fuel": {key: bad}}
     with pytest.raises(ConfigValidationError, match=f"pi.fuel.{key}"):
@@ -1451,11 +1502,40 @@ def test_validate_fuelMafTrusted_nonBool_rejected(bad):
         ConfigValidator().validate(cfg)
 
 
+def test_validate_obdiiConnectDebug_absent_defaultsFalse():
+    """US-907: absent = off; the diagnostic window is opt-in per deploy."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["obdii"]["connectDebug"] is False
+
+
+@pytest.mark.parametrize("bad", ["yes", 1, 0, "true"])
+def test_validate_obdiiConnectDebug_nonBool_rejected(bad):
+    """US-907: connectDebug is a real boolean, never a truthy stand-in."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"obdii": {"connectDebug": bad}}
+    with pytest.raises(ConfigValidationError, match="pi.obdii.connectDebug"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_obdiiConnectDebug_true_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"obdii": {"connectDebug": True}}
+    assert ConfigValidator().validate(cfg)["pi"]["obdii"]["connectDebug"] is True
+
+
 def test_validate_fuelKeys_validOverrides_accepted():
     cfg = _baseCfg()
     cfg["pi"] = {"fuel": {"stoichAfr": 14.1, "mafTrusted": False, "maxExcludedPct": 0}}
     fuel = ConfigValidator().validate(cfg)["pi"]["fuel"]
     assert (fuel["stoichAfr"], fuel["mafTrusted"], fuel["maxExcludedPct"]) == (14.1, False, 0)
+
+
+def test_validate_fuelRecentKeys_validOverrides_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"fuel": {"recentWindowSec": 60, "recentMinMiles": 0.2, "recentMinMafSamples": 8}}
+    fuel = ConfigValidator().validate(cfg)["pi"]["fuel"]
+    assert (fuel["recentWindowSec"], fuel["recentMinMiles"], fuel["recentMinMafSamples"]) == (
+        60, 0.2, 8)
 
 
 def test_validate_gradeHistory_windowShorterThanInterval_rejected():

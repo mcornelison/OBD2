@@ -96,10 +96,15 @@ def test_dashboardHtml_hasBothCardSlots_s1():
     html = _read(KIT_DIR, "dashboard.html")
     # MOVED PIN (US-888-a): the Driving card lands FIRST (R5, the landing card)
     # and Home moves to index 1 unchanged -- 6 -> 7 cards.
-    assert html.count('class="card"') == 7
+    # MOVED PIN (US-889-b): the Engine card lands right after Driving (CIO E-2
+    # order) and every other card keeps its relative order -- 7 -> 8 cards.
+    # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim and moves to
+    # index 2, after Engine (CIO E-2) -- still 8 cards.
+    assert html.count('class="card"') == 8
     labels = re.findall(r'<section class="card"[^>]*?aria-label="([^"]+)"', html, re.S)
     assert labels == [
-        "Driving", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"
+        "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery",
+        "Light",
     ]
     assert 'data-state="system-status"' in html
     assert 'data-state="dtc"' in html
@@ -1564,6 +1569,10 @@ def test_dashboardHtml_hasFuelTrimSlot_us420_us507():
     """US-420: the fuel-trim surface is present and bound to the `ltft-trend`
     state.
 
+    MOVED PIN (US-890-a): the Fuel card REPLACES the Fuel Trim card and keeps the
+    binding -- its trend row is the fuel-trim surface now. The title pin moves to
+    "Fuel" and "Fuel Trim" joins "LTFT Trend" as a title asserted GONE.
+
     RETITLED by US-507, RELOCATED TWICE: standalone "LTFT Trend" card -> "Fuel
     Trim" section of the merged Health card -> standalone "Fuel Trim" card again
     (US-540-b retires the container). The jargon left the title at the first
@@ -1578,13 +1587,16 @@ def test_dashboardHtml_hasFuelTrimSlot_us420_us507():
     assert 'data-state="ltft-trend"' in html, (
         "the fuel-trim surface is no longer bound to its state file"
     )
-    assert "Fuel Trim" in html
+    assert 'aria-label="Fuel"' in html
     # The old-title pin must read the RENDERED markup, not the comments: the
     # section comment explains the retitle and therefore contains the old title.
     # A pin that greps a defect's NAME otherwise fires on its own documentation.
     markup = re.sub(r"<!--.*?-->", "", html, flags=re.S)
-    assert "Fuel Trim" in markup, "the stripper ate the markup -- the pin below is vacuous"
+    assert 'aria-label="Fuel"' in markup, (
+        "the stripper ate the markup -- the pins below are vacuous"
+    )
     assert "LTFT Trend" not in markup
+    assert "Fuel Trim" not in markup
 
 
 def test_dashboardCss_hasLtftTrendStyles_us420():

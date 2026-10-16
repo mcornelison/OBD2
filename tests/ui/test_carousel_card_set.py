@@ -73,7 +73,12 @@ _NODE_ONLY = pytest.mark.skipif(
 
 # The CIO/Iris-locked card set for the legibility scale, in carousel order.
 # MOVED PIN (US-888-a): the Driving card is the new index 0 (the landing card).
-_CARD_SET = ["Driving", "Home", "Alerts", "System Status", "Battery", "Fuel Trim", "Light"]
+# MOVED PIN (US-889-b): the Engine card is index 1, right after Driving (E-2).
+# MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after
+# Engine; it keeps states/ltft-trend and the vehicle gate (on its trend row).
+_CARD_SET = [
+    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+]
 
 # The AC's capacity ceiling: ~3 facts, 4 in a 2x2. Pinned against the RENDERED
 # tile count, which is what an operator actually has to read.
@@ -247,7 +252,7 @@ class TestCardSet:
         track = _trackMarkup(_read(_HTML))
         for label, state in [
             ("Battery", "battery-health"),
-            ("Fuel Trim", "ltft-trend"),
+            ("Fuel", "ltft-trend"),
             ("Light", "light"),
         ]:
             pattern = r'<section class="card"[^>]*?aria-label="' + label + r'"'
@@ -365,12 +370,12 @@ class TestFuelTrimGateSurvivesTheSplit:
         """
         dom = rh.runDashboard(routes=_routes(obdAvailable=False))
         surface = rh.dashboardSurface(dom["tree"])
-        assert "Fuel Trim" in _visibleCards(surface)
+        assert "Fuel" in _visibleCards(surface)
         gated = [
             path[-1]["attrs"].get("data-gated")
             for path in surface.pathsByClass("card")
             if surface.rendered(path)
-            and path[-1]["attrs"].get("aria-label") == "Fuel Trim"
+            and path[-1]["attrs"].get("aria-label") == "Fuel"
         ]
         assert gated == ["true"], f"the fuel-trim gate did not paint: {gated}"
 
@@ -401,8 +406,8 @@ class TestFuelTrimGateSurvivesTheSplit:
         # An absence check is only evidence once the thing it looks at exists:
         # with no Fuel Trim card the text below is "" and passes for the wrong
         # reason, which is precisely how a retired card reads as a fixed gate.
-        assert "Fuel Trim" in _visibleCards(surface), "nothing to look at"
-        text = _cardText(surface, "card-body", "Fuel Trim")
+        assert "Fuel" in _visibleCards(surface), "nothing to look at"
+        text = _cardText(surface, "card-body", "Fuel")
         assert "%" not in text, f"a gated fuel trim leaked a reading: {text!r}"
         assert "2.5" not in text, f"a gated fuel trim leaked its trend: {text!r}"
         assert "no engine data" in text, f"the gate did not speak: {text!r}"

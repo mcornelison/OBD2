@@ -1692,6 +1692,94 @@
     };
   }
 
+  // --- US-890-a Fuel card, the trend row (F-127) -----------------------------
+  //
+  // specs/v030-fuel-page-design.md s4.4. The Fuel card takes the Fuel Trim
+  // card's slot and keeps its source: states/ltft-trend through the same
+  // vehicle-gated source-card route, with `ltftTrendView`'s sufficiency rule.
+  // What changes is the drawing:
+  //   dots      EXACTLY the points the headline median uses (inMedian true).
+  //             Closes US-730 by rule: no chart shows a window its headline
+  //             does not use, so a 7-drive payload draws its newest 5;
+  //   median    one flat solid line across those dots (the provider publishes
+  //             ONE median, not a per-drive series);
+  //   baseline  the epoch baseline, dashed;
+  //   colour    the provider's `level` alone -- the dots never colour, and
+  //             nothing here compares a trim with a number;
+  //   relearn   a point with isReset (0.00 % flat = adaptive memory reset, not
+  //             fuel) is never drawn; the row says "ECU relearning" instead.
+  // Insufficient -> the provider's reason and no chart. The y range is the
+  // drawn values' own extent: geometry, not a scale.
+  var FUEL_TREND_LABEL = "FUEL TRIM TREND";
+  var FUEL_TREND_RELEARNING = "ECU relearning";
+  var FUEL_TREND_W = 100;
+  var FUEL_TREND_H = 30;
+  var FUEL_TREND_INSET = 4;
+
+  function finiteNumber(n) {
+    return typeof n === "number" && isFinite(n);
+  }
+
+  function fuelTrendChart(dots, median, baseline) {
+    var lo = median;
+    var hi = median;
+    for (var i = 0; i < dots.length; i++) {
+      lo = Math.min(lo, dots[i].value);
+      hi = Math.max(hi, dots[i].value);
+    }
+    if (baseline !== null) {
+      lo = Math.min(lo, baseline);
+      hi = Math.max(hi, baseline);
+    }
+    var span = FUEL_TREND_H - 2 * FUEL_TREND_INSET;
+    var yOf = function (v) {
+      return engineHistoryCoord(hi === lo ? FUEL_TREND_H / 2
+        : FUEL_TREND_INSET + (hi - v) / (hi - lo) * span);
+    };
+    var out = [];
+    for (var j = 0; j < dots.length; j++) {
+      out.push({
+        driveId: dots[j].driveId,
+        x: engineHistoryCoord((j + 0.5) / dots.length * FUEL_TREND_W),
+        y: yOf(dots[j].value),
+      });
+    }
+    return {
+      dots: out,
+      median: { x1: out[0].x, x2: out[out.length - 1].x, y: yOf(median) },
+      baseline: baseline === null ? null : { y: yOf(baseline) },
+    };
+  }
+
+  function fuelTrendView(data) {
+    var base = ltftTrendView(data);
+    if (!base) return null;
+    var pts = Array.isArray(data.points) ? data.points.filter(isObj) : [];
+    var relearning = false;
+    var dots = [];
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i];
+      if (p.isReset === true) {
+        relearning = true;
+        continue;
+      }
+      if (base.sufficient && p.inMedian === true && finiteNumber(p.ltftAvg)) {
+        dots.push({ driveId: typeof p.driveId === "number" ? p.driveId : null, value: p.ltftAvg });
+      }
+    }
+    return {
+      label: FUEL_TREND_LABEL,
+      sufficient: base.sufficient,
+      level: base.headline.level,
+      value: base.sufficient ? base.headline.value : null,
+      reason: base.sufficient ? null : base.headline.detail,
+      relearning: relearning ? FUEL_TREND_RELEARNING : null,
+      chart: dots.length
+        ? fuelTrendChart(dots, data.median, finiteNumber(data.baseline) ? data.baseline : null)
+        : null,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // US-540-b SOURCE CARDS (F-127) -- Battery, Fuel Trim and Light, one card
   // each. These three were standalone cards, were merged into the US-507
@@ -1743,10 +1831,13 @@
       key: "light", title: "Light",
       noData: { label: "AMBIENT", reason: "no data -- light feed absent" },
     },
+    // US-890-a: the Fuel card. Its source is still ltft-trend, but it paints
+    // only the card's trend row (`slot`): the airflow / loop / trim / MPG rows
+    // above it are the card's own markup and never wait on this gate.
     {
-      key: "ltft-trend", title: "Fuel Trim",
+      key: "ltft-trend", title: "Fuel", slot: ".fuel-trend",
       vehicleGated: true,
-      noData: { label: "FUEL TRIM", reason: "no data -- trend not computed" },
+      noData: { label: FUEL_TREND_LABEL, reason: "no data -- trend not computed" },
     },
   ];
 
@@ -1768,7 +1859,7 @@
     if (cardAvailability(data) !== "available") return null;
     if (key === "battery-health") return batteryHealthView(data);
     if (key === "light") return lightView(data, cfg, nowMs);
-    if (key === "ltft-trend") return ltftTrendView(data);
+    if (key === "ltft-trend") return fuelTrendView(data);
     return null;
   }
 
@@ -2125,9 +2216,9 @@
   // on any write to the button's `hidden` flag, and on the rendered cascade.
   //
   // `carouselIdle`, `parkedInit` and `parkedNext` all survive below: carouselIdle
-  // still drives the idle home face, and the US-511 debounce is left intact but
-  // is now UNWIRED (TD-us659 -- retire it or find its next consumer; that is a
-  // design call, not a side effect of this deletion).
+  // still drives the idle home face, and the US-511 debounce was left intact
+  // but UNWIRED (TD-us659). US-889-c is its next consumer: the Engine card's
+  // CHECK ENGINE count line is a tap to the Alerts card only while parked.
 
   // -------------------------------------------------------------------------
   // US-511 (F-124) -- the DEBOUNCED `parked` signal behind the ⋮ affordance.
@@ -3561,6 +3652,13 @@
     // The RPM label already names the unit; "rpm" beside four digits would
     // not fit the 120 px column.
     rpm: { unit: "", decimals: 0, convert: null },
+    // US-889-b: ONLY canonical keys (Atlas G1) -- what obd-live publishes after
+    // US-888-b. The OBD library's unit names never reach this table (grep gate,
+    // tests/ui/test_engine_page.py). Degrees print the glyph, never letters.
+    "%": { unit: "%", decimals: 0, convert: null },
+    deg: { unit: "°", decimals: 0, convert: null },
+    "g/s": { unit: "g/s", decimals: 1, convert: null },
+    count: { unit: "", decimals: 0, convert: null },
   };
 
   function displayUnits(value, unit) {
@@ -3652,6 +3750,455 @@
       // US-888-b: the stepped bar, from the same params.RPM as the number.
       rpmBar: rpmBarView(params ? params.RPM : null),
     };
+  }
+
+  // --- US-889-b Engine card, above the fold (F-127) -------------------------
+  //
+  // specs/v030-engine-page-design.md s3-s4: load, throttle and timing from
+  // states/obd-live, each stepping at its own sample. The page judges nothing:
+  // no value here carries a band (load at 100 % is expected on this turbo
+  // engine and stays neutral -- a compound danger belongs to a provider).
+  var ENGINE_PIDS = ["ENGINE_LOAD", "THROTTLE_POS", "TIMING_ADVANCE"];
+  // The two vertical bars and their scale: 0-100 % of the bar's height. A
+  // geometry bound, not a threshold -- it paints no colour.
+  var ENGINE_BAR_PIDS = ["ENGINE_LOAD", "THROTTLE_POS"];
+  var ENGINE_BAR_MAX_PCT = 100;
+
+  function engineNotRead(reason) {
+    return {
+      value: null, text: DRIVING_NOT_READ, unit: "", stale: false,
+      note: reason, noteKind: "reason",
+    };
+  }
+
+  // SAE J1979 PID 0x0E is degrees relative to TDC, negative = retarded (Iris
+  // G-2): >= 0 reads "n° BTDC", < 0 reads "|n|° ATDC" -- never "-4° BTDC". Only
+  // a 'deg' reading may claim a crank position; any other unit renders raw.
+  function engineTimingText(value, unit) {
+    if (unit !== "deg") return displayUnits(value, unit);
+    var shown = displayUnits(Math.abs(value), unit);
+    return { text: shown.text, unit: shown.unit + (value < 0 ? " ATDC" : " BTDC") };
+  }
+
+  // One obd-live param -> its slot, the drivingReading rules without a band:
+  // fresh -> the value; stale -> last.value with its age (dimmed by the sheet);
+  // not read / absent -> "--" + the provider's reason. `value` is the number
+  // shown, so the bar is drawn from the SAME sample as the digits.
+  function engineReading(param, nowMs, format) {
+    if (!isObj(param)) return engineNotRead("not read");
+    var stale = param.stale === true;
+    var source = stale ? (isObj(param.last) ? param.last.value : null) : param.value;
+    if (typeof source !== "number" || !isFinite(source)) {
+      return engineNotRead(drivingReasonText(param.noBandReason));
+    }
+    var shown = format(source, param.unit);
+    return {
+      value: source, text: shown.text, unit: shown.unit, stale: stale,
+      note: stale ? drivingAgeText(param.ts, nowMs) : "",
+      noteKind: stale ? "age" : "",
+    };
+  }
+
+  // A bar's fill in % of its height, or null (nothing lit). Only a '%' reading
+  // can fill a 0-100 % bar; clamped so a value past the scale pins the bar
+  // rather than overflowing the card.
+  function engineBar(reading, unit) {
+    var fill = reading.value === null || unit !== "%" ? null
+      : Math.max(0, Math.min(ENGINE_BAR_MAX_PCT, reading.value));
+    return { fill: fill, stale: fill !== null && reading.stale };
+  }
+
+  // The Engine card's above-the-fold view from states/obd-live alone.
+  function engineView(obdLiveData, nowMs) {
+    var params = isObj(obdLiveData) && isObj(obdLiveData.params) ? obdLiveData.params : null;
+    var readings = {};
+    for (var i = 0; i < ENGINE_PIDS.length; i++) {
+      var pid = ENGINE_PIDS[i];
+      var format = pid === "TIMING_ADVANCE" ? engineTimingText : displayUnits;
+      readings[pid] = params ? engineReading(params[pid], nowMs, format)
+        : engineNotRead("no source");
+    }
+    var bars = {};
+    for (var b = 0; b < ENGINE_BAR_PIDS.length; b++) {
+      var barPid = ENGINE_BAR_PIDS[b];
+      var param = params && isObj(params[barPid]) ? params[barPid] : null;
+      bars[barPid] = engineBar(readings[barPid], param ? param.unit : null);
+    }
+    return { readings: readings, bars: bars };
+  }
+
+  // --- US-890-b Fuel card, airflow (F-127) -----------------------------------
+  //
+  // specs/v030-fuel-page-design.md s4.1 (Atlas S104 ruling 2): params.MAF at
+  // --fs-hero, one decimal (displayUnits 'g/s'), over a bar from 0 to
+  // params.MAF.scale.max -- the PROVIDER's max (pi.display.scale.mafMaxGs); the
+  // page holds no number. Above the max the bar pins exactly full and the
+  // digits stay unclamped: a full bar says "at least the scale max", never "the
+  // sensor hit its limit" (nobody knows where it clips). Unbanded, so nothing
+  // on the airflow element is ever amber or red. Fresh / stale / not read follow
+  // engineReading: the bar draws the SAME sample as the digits.
+  var FUEL_AIRFLOW_PID = "MAF";
+  // The unit the scale max is published in; a reading in any other unit is not
+  // on that scale and lights no bar.
+  var FUEL_AIRFLOW_UNIT = "g/s";
+  var FUEL_BAR_FULL_PCT = 100;
+
+  // The bar's fill in % of its width, or null (no usable scale: nothing lit).
+  function fuelAirflowFill(reading, param) {
+    var max = isObj(param.scale) ? param.scale.max : null;
+    if (reading.value === null || param.unit !== FUEL_AIRFLOW_UNIT ||
+        typeof max !== "number" || !isFinite(max) || max <= 0) {
+      return null;
+    }
+    return Math.max(0, Math.min(FUEL_BAR_FULL_PCT, reading.value / max * FUEL_BAR_FULL_PCT));
+  }
+
+  // The Fuel card's airflow view from states/obd-live alone.
+  function fuelAirflowView(obdLiveData, nowMs) {
+    var params = isObj(obdLiveData) && isObj(obdLiveData.params) ? obdLiveData.params : null;
+    if (!params) return { reading: engineNotRead("no source"), bar: { fill: null, stale: false } };
+    var param = params[FUEL_AIRFLOW_PID];
+    var reading = engineReading(param, nowMs, displayUnits);
+    var fill = isObj(param) ? fuelAirflowFill(reading, param) : null;
+    return { reading: reading, bar: { fill: fill, stale: fill !== null && reading.stale } };
+  }
+
+  // --- US-890-c Fuel card, loop chip + total trim (F-127) -------------------
+  //
+  // specs/v030-fuel-page-design.md s4.2 (Atlas S104 total-trim ruling (b)): both
+  // read ONLY states/obd-live `fuel` -- the provider decides which status codes
+  // are closed loop and sums the trims, so the page holds no code set and does
+  // no trim arithmetic. The chip is outlined and never coloured (open loop is
+  // normal at cold start and full throttle); TOTAL TRIM is unbanded and neutral.
+  var FUEL_LOOP_TEXT = { closed: "CLOSED LOOP", open: "OPEN LOOP" };
+  var FUEL_LOOP_UNKNOWN = "loop unknown";
+  // totalTrimNow.reason -> its text. open_loop keeps Iris's wording; stale has
+  // no age and no last value (Iris G-7: a stale sum of two samples is not a
+  // reading). Any other code shows raw, never blank.
+  var FUEL_TRIM_REASON_TEXT = {
+    not_read: "not read",
+    stale: "stale",
+    loop_unknown: FUEL_LOOP_UNKNOWN,
+    open_loop: "not applied in open loop",
+  };
+  // The one reason whose "--" is dimmed: trims exist but are not being applied.
+  var FUEL_TRIM_DIMMED_REASON = "open_loop";
+
+  function fuelSideNote(text, note) {
+    return { text: text, note: note, noteKind: note ? "reason" : "", dimmed: false };
+  }
+
+  // obd-live -> its `fuel` block, or a reason it has none.
+  function fuelBlockOf(obdLiveData) {
+    if (!isObj(obdLiveData)) return { fuel: null, missing: "no source" };
+    if (!isObj(obdLiveData.fuel)) return { fuel: null, missing: "not published" };
+    return { fuel: obdLiveData.fuel, missing: "" };
+  }
+
+  // The loop chip: CLOSED LOOP / OPEN LOOP, else "--" + why.
+  function fuelLoopView(obdLiveData) {
+    var block = fuelBlockOf(obdLiveData);
+    if (!block.fuel) return fuelSideNote("--", block.missing);
+    var text = Object.prototype.hasOwnProperty.call(FUEL_LOOP_TEXT, block.fuel.loop)
+      ? FUEL_LOOP_TEXT[block.fuel.loop] : null;
+    return text ? fuelSideNote(text, "") : fuelSideNote("--", FUEL_LOOP_UNKNOWN);
+  }
+
+  // Signed, ONE decimal, "%" (spec s3), from toFixed(1) -- never String(float),
+  // never displayUnits. The sign follows the ROUNDED figure, so -0.04 reads
+  // "+0.0 %", not "−0.0 %".
+  function fmtTotalTrim(value) {
+    var shown = Math.abs(value).toFixed(1);
+    return (value < 0 && Number(shown) !== 0 ? "−" : "+") + shown + " %";
+  }
+
+  // TOTAL TRIM: the provider's totalTrimNow, else "--" + its reason's text.
+  function fuelTotalTrimView(obdLiveData) {
+    var block = fuelBlockOf(obdLiveData);
+    var trim = block.fuel && isObj(block.fuel.totalTrimNow) ? block.fuel.totalTrimNow : null;
+    if (!trim) return fuelSideNote("--", block.missing || "not published");
+    if (trim.reason === null && typeof trim.value === "number" && isFinite(trim.value)) {
+      return fuelSideNote(fmtTotalTrim(trim.value), "");
+    }
+    var reason = typeof trim.reason === "string" && trim.reason ? trim.reason : "not_read";
+    var view = fuelSideNote("--", Object.prototype.hasOwnProperty.call(FUEL_TRIM_REASON_TEXT, reason)
+      ? FUEL_TRIM_REASON_TEXT[reason] : reason);
+    view.dimmed = reason === FUEL_TRIM_DIMMED_REASON;
+    return view;
+  }
+
+  // --- US-890-d Fuel card, the MPG row (F-127) -------------------------------
+  //
+  // specs/v030-fuel-page-design.md s4.3/s4.6: THIS DRIVE and SINCE RESET read
+  // states/fuel-economy ONLY -- the provider integrates distance and fuel and
+  // divides; the page never touches MAF or speed. Every figure carries the
+  // approximately sign (the estimate assumes stoichiometric burn); THIS DRIVE
+  // and SINCE RESET show ONE decimal (spec s3 mockup). LAST 30 S (US-890-e)
+  // reads fuel-economy.recent, the provider's ratio of sums over its window.
+  var FUEL_MPG_APPROX = "≈";
+  // s4.6: the ONE code -> text table for the MPG row. Every text is <= 16
+  // characters (the row's fit rule); a code not in it shows raw, never blank.
+  var FUEL_MPG_REASON_TEXT = {
+    maf_untrusted: "MAF not fitted",
+    maf_stale: "no MAF reading",
+    maf_zero_running: "MAF reads zero",
+    gaps: "too many gaps",
+    too_short: "too short yet",
+    no_fuel: "no fuel counted",
+    too_few_samples: "too few samples",
+  };
+  var FUEL_MPG_NOT_STARTED = "not started";
+  var FUEL_MPG_NEVER_RESET = "never reset";
+  // sinceReset carries no reason field: a null mpg there is "too short yet",
+  // and the page does not guess between the provider's other causes (s4.3).
+  var FUEL_MPG_SINCE_RESET_NULL = "too_short";
+  // thisDrive.mpg null with no code at all -- still a reason, never blank.
+  var FUEL_MPG_NO_CODE = "no reason sent";
+  // thisDrive.approximate (open-loop air over the provider's threshold). Open
+  // loop is BOTH enrichment and decel fuel-cut, so the flag says only that --
+  // never which way the estimate leans.
+  var FUEL_MPG_OPEN_LOOP_FLAG = "open loop";
+  // LAST 30 S is an integer and reads "99+" at >= 99 -- Spool's display rule
+  // (pm/inbox 2026-10-14-from-spool-S104-...-MPG-last-30s-ratio-of-sums-null-
+  // rules.md s2): decel coasts give big numbers, true direction, false
+  // precision. No approximately sign: the label already says "last 30 s".
+  var FUEL_MPG_LAST30_CAP = 99;
+  var FUEL_MPG_LAST30_CAP_TEXT = "99+";
+
+  function fuelMpgSlot(text, note, noteKind) {
+    return { text: text, note: note, noteKind: noteKind, flag: "" };
+  }
+
+  function fuelMpgReasonText(code) {
+    if (typeof code !== "string" || !code) return FUEL_MPG_NO_CODE;
+    return Object.prototype.hasOwnProperty.call(FUEL_MPG_REASON_TEXT, code)
+      ? FUEL_MPG_REASON_TEXT[code] : code;
+  }
+
+  // One decimal from toFixed(1), never String(float); null when not a figure.
+  function fmtFuelMpg(mpg) {
+    if (typeof mpg !== "number" || !isFinite(mpg)) return null;
+    return FUEL_MPG_APPROX + mpg.toFixed(1);
+  }
+
+  // One MPG block (thisDrive / sinceReset) -> its slot. `absentNote` is what a
+  // null block means; `nullCode` is the reason code for a null mpg.
+  function fuelMpgBlockSlot(block, absentNote, nullCode) {
+    if (block === null) return fuelMpgSlot("--", absentNote, "reason");
+    if (!isObj(block)) return fuelMpgSlot("--", "not published", "unpublished");
+    var figure = fmtFuelMpg(block.mpg);
+    if (figure !== null) return fuelMpgSlot(figure, "", "none");
+    return fuelMpgSlot("--", fuelMpgReasonText(nullCode), "reason");
+  }
+
+  // LAST 30 S from fuel-economy.recent: absent -> a provider without the
+  // field; null -> no drive window yet (Iris G-5); a null mpg -> its reason.
+  function fuelMpgLast30Slot(fuelEconomyData) {
+    if (!Object.prototype.hasOwnProperty.call(fuelEconomyData, "recent")) {
+      return fuelMpgSlot("--", "not published", "unpublished");
+    }
+    var recent = fuelEconomyData.recent;
+    if (recent === null) return fuelMpgSlot("--", FUEL_MPG_NOT_STARTED, "reason");
+    if (!isObj(recent)) return fuelMpgSlot("--", "not published", "unpublished");
+    var mpg = recent.mpg;
+    if (typeof mpg === "number" && isFinite(mpg)) {
+      var text = mpg >= FUEL_MPG_LAST30_CAP
+        ? FUEL_MPG_LAST30_CAP_TEXT : String(Math.round(mpg));
+      return fuelMpgSlot(text, "", "none");
+    }
+    return fuelMpgSlot("--", fuelMpgReasonText(recent.mpgNullReason), "reason");
+  }
+
+  // The MPG row's view from states/fuel-economy alone.
+  function fuelMpgView(fuelEconomyData) {
+    if (!isObj(fuelEconomyData)) {
+      return {
+        last30: fuelMpgSlot("--", "not published", "unpublished"),
+        thisDrive: fuelMpgSlot("--", "no source", "reason"),
+        sinceReset: fuelMpgSlot("--", "no source", "reason"),
+      };
+    }
+    var last30 = fuelMpgLast30Slot(fuelEconomyData);
+    var drive = fuelEconomyData.thisDrive;
+    var thisDrive = fuelMpgBlockSlot(
+      drive, FUEL_MPG_NOT_STARTED, isObj(drive) ? drive.mpgNullReason : null
+    );
+    // The flag sits with a figure: a "--" already says why there is none.
+    if (thisDrive.noteKind === "none" && drive.approximate === true) {
+      thisDrive.flag = FUEL_MPG_OPEN_LOOP_FLAG;
+    }
+    var sinceReset = fuelMpgBlockSlot(
+      fuelEconomyData.sinceReset, FUEL_MPG_NEVER_RESET, FUEL_MPG_SINCE_RESET_NULL
+    );
+    return { last30: last30, thisDrive: thisDrive, sinceReset: sinceReset };
+  }
+
+  // --- US-889-c Engine card, the scroll half (F-127) -------------------------
+  //
+  // specs/v030-engine-page-design.md s3-s4, ACs 5-11: this drive's coolant,
+  // intake-air and battery history from states/engine-history, then the RUN
+  // TIME / CHECK ENGINE status row from states/obd-live. The history is the
+  // provider's: one point per bucket {ts (the bucket's END), value (its last
+  // fresh sample), band (the WORST band it held)}. The page plots the value as
+  // a neutral stepped line and paints a span ONLY where a point's band is amber
+  // or red -- it never compares a value with a number, so a line crossing an
+  // edge with no band shows nothing (dwell-as-render-rule, Spool 08-21).
+  var ENGINE_HISTORY_SERIES = [
+    { pid: "COOLANT_TEMP", label: "COOLANT" },
+    { pid: "INTAKE_TEMP", label: "INTAKE AIR" },
+    { pid: "BATTERY_V", label: "BATTERY" },
+  ];
+  var ENGINE_HISTORY_ABSENT =
+    "History not recorded yet. It starts with this drive's first readings.";
+  // The chart's own coordinate box (viewBox 0 0 100 46) and the 4-unit inset
+  // that keeps the line off the top and bottom edges -- the OEM mockup's graph
+  // (proposals/2026-10-14-v030-engine-page-oem.html, h 46, inset 4). Geometry,
+  // not a scale: the y range is the series' own extent.
+  var ENGINE_HISTORY_W = 100;
+  var ENGINE_HISTORY_H = 46;
+  var ENGINE_HISTORY_INSET = 4;
+  var ENGINE_SPAN_BANDS = { amber: true, red: true };
+
+  function engineHistoryPoints(raw) {
+    var out = [];
+    if (!Array.isArray(raw)) return out;
+    for (var i = 0; i < raw.length; i++) {
+      var p = raw[i];
+      var endMs = isObj(p) && typeof p.ts === "string" ? Date.parse(p.ts) : NaN;
+      if (isNaN(endMs) || typeof p.value !== "number" || !isFinite(p.value)) continue;
+      out.push({ endMs: endMs, value: p.value, band: ENGINE_SPAN_BANDS[p.band] ? p.band : null });
+    }
+    return out;
+  }
+
+  // The window label from engine-history ALONE (Atlas G3): partial false is
+  // the whole drive; partial true names where coverage begins, in the panel's
+  // local h:mm. The page compares no other provider's clock, so it never
+  // decides for itself when the drive started.
+  function engineHistoryWindow(data) {
+    if (data.partial === false) return "THIS DRIVE";
+    var since = typeof data.sinceTs === "string" && ISO_INSTANT.test(data.sinceTs)
+      ? new Date(Date.parse(data.sinceTs)) : null;
+    return "SINCE " + (since ? fmtTimeOfDay(since, false).split(" ")[0] : DRIVING_NOT_READ);
+  }
+
+  function engineHistoryCoord(n) {
+    return Math.round(n * 10) / 10;
+  }
+
+  // One series -> its chart. Buckets that touch (this end == the next start)
+  // join into one run; an omitted bucket opens a new run, so a gap is a gap and
+  // never a bridge. Each run is a stepped line: flat across its bucket, a riser
+  // at the boundary, no interpolation.
+  function engineHistorySeries(entry, points, unit, x0, x1, intervalMs) {
+    if (!points.length) {
+      return { pid: entry.pid, label: entry.label, empty: true, segments: [], spans: [], end: null };
+    }
+    var lo = points[0].value;
+    var hi = lo;
+    for (var i = 1; i < points.length; i++) {
+      lo = Math.min(lo, points[i].value);
+      hi = Math.max(hi, points[i].value);
+    }
+    var span = ENGINE_HISTORY_H - 2 * ENGINE_HISTORY_INSET;
+    var xOf = function (ms) {
+      return engineHistoryCoord((ms - x0) / (x1 - x0) * ENGINE_HISTORY_W);
+    };
+    var yOf = function (v) {
+      return engineHistoryCoord(hi === lo ? ENGINE_HISTORY_H / 2
+        : ENGINE_HISTORY_INSET + (hi - v) / (hi - lo) * span);
+    };
+    var segments = [];
+    var spans = [];
+    var run = [];
+    for (var j = 0; j < points.length; j++) {
+      var p = points[j];
+      var startMs = p.endMs - intervalMs;
+      if (j > 0 && startMs !== points[j - 1].endMs) {
+        segments.push(run.join(" "));
+        run = [];
+      }
+      var y = yOf(p.value);
+      run.push(xOf(startMs) + "," + y, xOf(p.endMs) + "," + y);
+      if (p.band) {
+        spans.push({ x: xOf(startMs), width: engineHistoryCoord(xOf(p.endMs) - xOf(startMs)), band: p.band });
+      }
+    }
+    segments.push(run.join(" "));
+    var last = displayUnits(points[points.length - 1].value, unit);
+    return {
+      pid: entry.pid, label: entry.label, empty: false, segments: segments, spans: spans,
+      end: { text: last.text, unit: last.unit },
+    };
+  }
+
+  // The scroll half's history from states/engine-history alone. `empty` means
+  // no series holds a point (or there is no readable history): the card shows
+  // the typed absence and NO chart. All three charts share one time axis, the
+  // extent of the buckets themselves, so the graphs line up.
+  function engineHistoryView(data) {
+    var intervalSec = isObj(data) ? data.intervalSec : null;
+    var empty = { empty: true, absence: ENGINE_HISTORY_ABSENT, window: "", series: [] };
+    if (!isObj(data) || !isObj(data.series) || typeof intervalSec !== "number" ||
+        !isFinite(intervalSec) || intervalSec <= 0) {
+      return empty;
+    }
+    var intervalMs = intervalSec * 1000;
+    var units = isObj(data.unit) ? data.unit : {};
+    var bySeries = [];
+    var x0 = Infinity;
+    var x1 = -Infinity;
+    for (var i = 0; i < ENGINE_HISTORY_SERIES.length; i++) {
+      var pts = engineHistoryPoints(data.series[ENGINE_HISTORY_SERIES[i].pid]);
+      bySeries.push(pts);
+      if (pts.length) {
+        x0 = Math.min(x0, pts[0].endMs - intervalMs);
+        x1 = Math.max(x1, pts[pts.length - 1].endMs);
+      }
+    }
+    if (x1 === -Infinity) return empty;
+    var series = [];
+    for (var k = 0; k < ENGINE_HISTORY_SERIES.length; k++) {
+      var entry = ENGINE_HISTORY_SERIES[k];
+      series.push(engineHistorySeries(entry, bySeries[k], units[entry.pid], x0, x1, intervalMs));
+    }
+    return { empty: false, absence: ENGINE_HISTORY_ABSENT, window: engineHistoryWindow(data), series: series };
+  }
+
+  // RUN TIME as h:mm from params.RUNTIME_SEC -- the ECU's engine run time,
+  // NEVER the drive's duration (Atlas G4: two different facts).
+  function engineRunTimeText(seconds) {
+    var minutes = Math.floor(Math.max(0, seconds) / 60);
+    return { text: Math.floor(minutes / 60) + ":" + two(minutes % 60), unit: "" };
+  }
+
+  // params.MIL_ON is read by VALUE (1 on, 0 off), never by its unit label.
+  var ENGINE_MIL_TEXT = { 0: "OFF", 1: "ON" };
+
+  function engineMilText(value) {
+    return { text: ENGINE_MIL_TEXT[value], unit: "" };
+  }
+
+  // The status row from states/obd-live. CHECK ENGINE's count line ("n codes
+  // ›", "0 codes ›" for a pending code) exists only while the lamp is ON; it
+  // is a tap to the Alerts card ONLY while parked (`parked`, the debounced
+  // parkedNext signal) -- moving, the line carries no tap target.
+  function engineStatusView(obdLiveData, parked, nowMs) {
+    var params = isObj(obdLiveData) && isObj(obdLiveData.params) ? obdLiveData.params : null;
+    var runTime = params ? engineReading(params.RUNTIME_SEC, nowMs, engineRunTimeText)
+      : engineNotRead("no source");
+    var mil = params ? engineReading(params.MIL_ON, nowMs, engineMilText)
+      : engineNotRead("no source");
+    if (mil.value !== null && !Object.prototype.hasOwnProperty.call(ENGINE_MIL_TEXT, mil.value)) {
+      mil = engineNotRead("not read");
+    }
+    var codes = null;
+    if (mil.value === 1) {
+      var count = engineReading(params.DTC_COUNT, nowMs, displayUnits);
+      var n = count.value === null ? DRIVING_NOT_READ : String(Math.round(count.value));
+      codes = { text: n + " codes ›", tap: parked === true };
+    }
+    return { runTime: runTime, mil: mil, codes: codes };
   }
 
   // --- US-888-b the RPM bar (spec s4.1, R30, R35) ----------------------------
@@ -4223,6 +4770,9 @@
     gearReasonText: gearReasonText,
     displayUnits: displayUnits,
     drivingView: drivingView,
+    engineView: engineView,
+    engineHistoryView: engineHistoryView,
+    engineStatusView: engineStatusView,
     rpmBarView: rpmBarView,
     gLevel: gLevel,
     pushGradeTrend: pushGradeTrend,
@@ -4262,6 +4812,11 @@
     batteryHealthView: batteryHealthView,
     fmtLtftPct: fmtLtftPct,
     ltftTrendView: ltftTrendView,
+    fuelTrendView: fuelTrendView,
+    fuelAirflowView: fuelAirflowView,
+    fuelLoopView: fuelLoopView,
+    fuelTotalTrimView: fuelTotalTrimView,
+    fuelMpgView: fuelMpgView,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -4746,6 +5301,217 @@
       }
     }
 
+    // US-889-b: paint `engineView` into the Engine card's FIXED skeleton
+    // (dashboard.html). Text, state attributes and the bars' fill height only:
+    // the stylesheet maps data-stale / data-note to tokens. The fill is a plain
+    // height with no transition, so a bar steps from one sample to the next.
+    function renderEngineCard(card, view) {
+      if (!card || !view) return;
+      var slots = card.querySelectorAll(".eng-reading");
+      for (var s = 0; s < slots.length; s++) {
+        var slot = slots[s];
+        var reading = view.readings[slot.getAttribute("data-pid")];
+        if (!reading) continue;
+        slot.setAttribute("data-stale", reading.stale ? "true" : "false");
+        slot.setAttribute("data-note", reading.noteKind || "none");
+        var valueEl = slot.querySelector(".eng-value");
+        if (valueEl) valueEl.textContent = reading.text;
+        var unitEl = slot.querySelector(".eng-unit");
+        if (unitEl) unitEl.textContent = reading.unit;
+        var noteEl = slot.querySelector(".eng-note");
+        if (noteEl) {
+          noteEl.textContent = reading.note;
+          noteEl.hidden = !reading.note;
+        }
+      }
+      var cols = card.querySelectorAll(".eng-bar-col");
+      for (var c = 0; c < cols.length; c++) {
+        var bar = view.bars[cols[c].getAttribute("data-pid")];
+        if (!bar) continue;
+        cols[c].setAttribute("data-stale", bar.stale ? "true" : "false");
+        var fill = cols[c].querySelector(".eng-bar-fill");
+        if (fill) fill.style.setProperty("height", (bar.fill === null ? 0 : bar.fill) + "%");
+      }
+    }
+
+    // US-890-b: paint `fuelAirflowView` into the Fuel card's AIRFLOW slot
+    // (dashboard.html skeleton). Text, state attributes and the fill's width
+    // only; the width has no transition, so the bar steps per reading.
+    function renderFuelAirflow(card, view) {
+      if (!card || !view) return;
+      var slot = card.querySelector(".fuel-airflow");
+      if (!slot) return;
+      var reading = view.reading;
+      slot.setAttribute("data-stale", reading.stale ? "true" : "false");
+      slot.setAttribute("data-note", reading.noteKind || "none");
+      var valueEl = slot.querySelector(".fuel-value");
+      if (valueEl) valueEl.textContent = reading.text;
+      var unitEl = slot.querySelector(".fuel-unit");
+      if (unitEl) unitEl.textContent = reading.unit;
+      var noteEl = slot.querySelector(".fuel-note");
+      if (noteEl) {
+        noteEl.textContent = reading.note;
+        noteEl.hidden = !reading.note;
+      }
+      var bar = slot.querySelector(".fuel-bar");
+      if (bar) bar.setAttribute("data-stale", view.bar.stale ? "true" : "false");
+      var fill = slot.querySelector(".fuel-bar-fill");
+      if (fill) fill.style.setProperty("width", (view.bar.fill === null ? 0 : view.bar.fill) + "%");
+    }
+
+    // US-890-c: paint `fuelLoopView` / `fuelTotalTrimView` into the LOOP and
+    // TOTAL TRIM slots (dashboard.html skeleton). Text and state attributes
+    // only; data-dimmed is the sheet's one hook for the open-loop "--".
+    function renderFuelSideSlot(card, slotClass, view) {
+      var slot = card.querySelector(slotClass);
+      if (!slot) return;
+      slot.setAttribute("data-note", view.noteKind || "none");
+      slot.setAttribute("data-dimmed", view.dimmed ? "true" : "false");
+      var valueEl = slot.querySelector(".fuel-value");
+      if (valueEl) valueEl.textContent = view.text;
+      var noteEl = slot.querySelector(".fuel-note");
+      if (noteEl) {
+        noteEl.textContent = view.note;
+        noteEl.hidden = !view.note;
+      }
+    }
+
+    function renderFuelLoopAndTrim(card, loopView, trimView) {
+      if (!card || !loopView || !trimView) return;
+      renderFuelSideSlot(card, ".fuel-loop", loopView);
+      renderFuelSideSlot(card, ".fuel-total-trim", trimView);
+    }
+
+    // US-890-d: paint `fuelMpgView` into the three MPG slots (dashboard.html
+    // skeleton), selected by class. The flag shows only when the view sets one.
+    function renderFuelMpg(card, view) {
+      if (!card || !view) return;
+      var slots = [
+        [".fuel-mpg-last30", view.last30],
+        [".fuel-mpg-this-drive", view.thisDrive],
+        [".fuel-mpg-since-reset", view.sinceReset],
+      ];
+      for (var i = 0; i < slots.length; i++) {
+        var slot = card.querySelector(slots[i][0]);
+        var slotView = slots[i][1];
+        if (!slot || !slotView) continue;
+        slot.setAttribute("data-note", slotView.noteKind || "none");
+        var valueEl = slot.querySelector(".fuel-value");
+        if (valueEl) valueEl.textContent = slotView.text;
+        var flagEl = slot.querySelector(".fuel-flag");
+        if (flagEl) {
+          flagEl.textContent = slotView.flag;
+          flagEl.hidden = !slotView.flag;
+        }
+        var noteEl = slot.querySelector(".fuel-note");
+        if (noteEl) {
+          noteEl.textContent = slotView.note;
+          noteEl.hidden = !slotView.note;
+        }
+      }
+    }
+
+    // US-889-c: one history chart. The spans go in first so the neutral line
+    // draws over them; one polyline per run, so an omitted bucket leaves a
+    // real break in the line.
+    function buildEngineHistoryChart(series) {
+      var svg = svgEl("svg", {
+        class: "eng-hist-chart", viewBox: "0 0 " + ENGINE_HISTORY_W + " " + ENGINE_HISTORY_H,
+        preserveAspectRatio: "none", "aria-hidden": "true",
+      });
+      for (var s = 0; s < series.spans.length; s++) {
+        var span = series.spans[s];
+        svg.appendChild(svgEl("rect", {
+          class: "eng-hist-span", "data-band": span.band,
+          x: span.x, y: 0, width: span.width, height: ENGINE_HISTORY_H,
+        }));
+      }
+      for (var g = 0; g < series.segments.length; g++) {
+        svg.appendChild(svgEl("polyline", { class: "eng-hist-line", points: series.segments[g] }));
+      }
+      return svg;
+    }
+
+    function engineTextEl(tag, cls, text) {
+      var el = document.createElement(tag);
+      el.className = cls;
+      el.textContent = text;
+      return el;
+    }
+
+    function buildEngineHistorySeries(series, windowText) {
+      var box = document.createElement("div");
+      box.className = "eng-hist";
+      box.setAttribute("data-pid", series.pid);
+      var head = document.createElement("div");
+      head.className = "eng-hist-head";
+      head.appendChild(engineTextEl("span", "eng-label", series.label));
+      head.appendChild(engineTextEl("span", "eng-hist-window", "· " + windowText));
+      box.appendChild(head);
+      if (series.empty) {
+        box.appendChild(engineTextEl("p", "eng-absence", ENGINE_HISTORY_ABSENT));
+        return box;
+      }
+      var row = document.createElement("div");
+      row.className = "eng-hist-row";
+      row.appendChild(buildEngineHistoryChart(series));
+      var end = document.createElement("span");
+      end.className = "eng-hist-end";
+      end.appendChild(engineTextEl("span", "eng-hist-value", series.end.text));
+      end.appendChild(engineTextEl("span", "eng-hist-unit", series.end.unit));
+      row.appendChild(end);
+      box.appendChild(row);
+      return box;
+    }
+
+    // US-889-c: paint the scroll half. The history changes at most once per
+    // bucket (30 s) while the tick runs at 4 Hz, so the charts are rebuilt
+    // only when the view itself changed; the status row is text and state
+    // attributes on the fixed skeleton, like the readings above the fold.
+    var engineHistoryKey = null;
+
+    function renderEngineScroll(card, historyView, statusView) {
+      if (!card) return;
+      var host = card.querySelector(".eng-history");
+      var key = JSON.stringify(historyView);
+      if (host && key !== engineHistoryKey) {
+        engineHistoryKey = key;
+        host.textContent = "";
+        if (historyView.empty) {
+          host.appendChild(engineTextEl("p", "eng-absence", historyView.absence));
+        } else {
+          for (var i = 0; i < historyView.series.length; i++) {
+            host.appendChild(buildEngineHistorySeries(historyView.series[i], historyView.window));
+          }
+        }
+      }
+      var tiles = card.querySelectorAll(".eng-stat");
+      for (var t = 0; t < tiles.length; t++) {
+        var pid = tiles[t].getAttribute("data-pid");
+        var reading = pid === "RUNTIME_SEC" ? statusView.runTime
+          : pid === "MIL_ON" ? statusView.mil : null;
+        if (!reading) continue;
+        tiles[t].setAttribute("data-stale", reading.stale ? "true" : "false");
+        tiles[t].setAttribute("data-note", reading.noteKind || "none");
+        var valueEl = tiles[t].querySelector(".eng-stat-value");
+        if (valueEl) valueEl.textContent = reading.text;
+        var noteEl = tiles[t].querySelector(".eng-note");
+        if (noteEl) {
+          noteEl.textContent = reading.note;
+          noteEl.hidden = !reading.note;
+        }
+      }
+      var codesEl = card.querySelector(".eng-codes");
+      if (codesEl) {
+        var codes = statusView.codes;
+        codesEl.hidden = !codes;
+        codesEl.textContent = codes ? codes.text : "";
+        codesEl.setAttribute("data-tap", codes && codes.tap ? "true" : "false");
+        if (codes && codes.tap) codesEl.setAttribute("role", "button");
+        else codesEl.removeAttribute("role");
+      }
+    }
+
     // US-888-b: paint `rpmBarView` into `.drv-rpm-bar`. The segments are built
     // ONCE and then only their state attributes move, so a new sample is one
     // paint: the stylesheet maps data-lit / data-zone to tokens, data-stale to
@@ -5081,40 +5847,50 @@
       if (idleView) renderIdleBody(body, idleView);
     }
 
-    // --- US-420 LTFT Trend DOM render (browser only) ------------------------
+    // --- US-890-a Fuel card trend row DOM render (browser only) -------------
 
-    // Render the multi-drive bar row: one bar per drive, coloured by its own
-    // drift level ([data-level] -> CSS), so a drive beyond +/-10% is visibly
-    // not-green. Built with textContent (no innerHTML) -- verbatim, never markup.
-    function appendLtftBars(parent, points) {
-      var bars = document.createElement("div");
-      bars.className = "ltft-bars";
-      for (var i = 0; i < points.length; i++) {
-        var p = points[i];
-        var bar = document.createElement("div");
-        bar.className = "ltft-bar";
-        bar.setAttribute("data-level", p.level);
-        var value = document.createElement("span");
-        value.className = "ltft-bar-value";
-        value.textContent = p.value;
-        var drive = document.createElement("span");
-        drive.className = "ltft-bar-drive";
-        drive.textContent = p.driveId == null ? "—" : "#" + p.driveId;
-        bar.appendChild(value);
-        bar.appendChild(drive);
-        bars.appendChild(bar);
+    // The chart: dashed baseline, the flat median line, then the dots on top.
+    // Every stroke is non-scaling (CSS), so the stretched viewBox keeps a dot
+    // round: each dot is a zero-length line drawn by its round cap.
+    function buildFuelTrendChart(chart) {
+      var svg = svgEl("svg", {
+        class: "fuel-trend-chart", viewBox: "0 0 " + FUEL_TREND_W + " " + FUEL_TREND_H,
+        preserveAspectRatio: "none", "aria-hidden": "true",
+      });
+      if (chart.baseline) {
+        svg.appendChild(svgEl("line", {
+          class: "fuel-trend-baseline", x1: 0, x2: FUEL_TREND_W,
+          y1: chart.baseline.y, y2: chart.baseline.y,
+        }));
       }
-      parent.appendChild(bars);
+      svg.appendChild(svgEl("line", {
+        class: "fuel-trend-median", x1: chart.median.x1, x2: chart.median.x2,
+        y1: chart.median.y, y2: chart.median.y,
+      }));
+      for (var i = 0; i < chart.dots.length; i++) {
+        var dot = chart.dots[i];
+        svg.appendChild(svgEl("line", {
+          class: "fuel-trend-dot", "data-drive": dot.driveId === null ? "" : dot.driveId,
+          x1: dot.x, x2: dot.x, y1: dot.y, y2: dot.y,
+        }));
+      }
+      return svg;
     }
 
-    function renderLtftTrendBody(body, view) {
+    // `fuelTrendView` into the card's `.fuel-trend` slot. data-level is the
+    // only colour input (the stylesheet maps it); textContent only.
+    function renderFuelTrendBody(body, view) {
       if (!body || !view) return;
       body.textContent = "";
-      // The headline tile carries the verdict level (insufficient -> not green).
-      appendTile(body, view.headline);
-      // The per-drive bars render whenever any real point exists (0-1 points is
-      // still shown honestly under an insufficient headline, never fabricated).
-      if (view.points.length > 0) appendLtftBars(body, view.points);
+      var row = document.createElement("div");
+      row.className = "fuel-trend-row";
+      row.setAttribute("data-level", view.level);
+      row.appendChild(engineTextEl("span", "fuel-label", view.label));
+      if (view.sufficient) row.appendChild(engineTextEl("span", "fuel-trend-value", view.value));
+      else row.appendChild(engineTextEl("span", "fuel-trend-reason", view.reason));
+      if (view.chart) row.appendChild(buildFuelTrendChart(view.chart));
+      if (view.relearning) row.appendChild(engineTextEl("span", "fuel-trend-relearn", view.relearning));
+      body.appendChild(row);
     }
 
     // --- US-540-b source card DOM render (browser only) ---------------------
@@ -5128,7 +5904,10 @@
     // says "gated" after the engine started is a stale claim about the vehicle.
     function renderSourceCard(card, view) {
       if (!card || !view) return;
-      var body = card.querySelector(".card-body");
+      // US-890-a: a source with a `slot` paints only that part of its card
+      // (the Fuel card's trend row); every other source owns the whole body.
+      var spec = sourceCardSpec(view.key);
+      var body = card.querySelector(spec && spec.slot ? spec.slot : ".card-body");
       if (!body) return;
       card.setAttribute("data-gated", view.gated ? "true" : "false");
       // The typed NA is the card's whole body here, so the shipped
@@ -5147,7 +5926,7 @@
       }
       if (view.key === "battery-health") renderBatteryHealthBody(body, view.view);
       else if (view.key === "light") renderLightBody(body, view.view);
-      else if (view.key === "ltft-trend") renderLtftTrendBody(body, view.view);
+      else if (view.key === "ltft-trend") renderFuelTrendBody(body, view.view);
     }
 
     // US-482 letterbox: uniformly scale the fixed 480x320 #stage design box to
@@ -5823,6 +6602,24 @@
       // edge firing on the first tick (lastIdle starts null) is what makes the
       // landing card the card the panel opens on.
       var drivingCard = document.getElementById("driving-card");
+      // US-889-b: the Engine card, right after Driving; filled from the same
+      // cached states/obd-live on the same tick.
+      var engineCard = document.getElementById("engine-card");
+      // US-890-b: the Fuel card's AIRFLOW row, from the same cached
+      // states/obd-live on the same tick (the trend row is the source card's).
+      var fuelCard = document.getElementById("fuel-card");
+      // US-889-c: the CHECK ENGINE count line is a PARKED-ONLY tap to the
+      // Alerts card. `engineParked` is the US-511 debounce (parkedNext, its
+      // first consumer since TD-us659), advanced once per tick from the same
+      // system-status every other surface reads; the render sets data-tap from
+      // it, and the handler honours only what is on the glass right now.
+      var engineParked = parkedInit();
+      var engineCodes = document.getElementById("engine-codes");
+      if (engineCodes) {
+        engineCodes.addEventListener("click", function () {
+          if (engineCodes.getAttribute("data-tap") === "true") openAlertsCard();
+        });
+      }
       var landingIndex = -1;
       var lastIdle = null;
       // US-497 g-trail + US-508 grade trend: accumulated across polls from the
@@ -6587,6 +7384,26 @@
         renderDrivingCard(
           drivingCard, drivingView(await stateOnce("obd-live"), lastGear, nowMs)
         );
+        renderEngineCard(engineCard, engineView(await stateOnce("obd-live"), nowMs));
+        // US-889-c: the scroll half -- this drive's history from
+        // states/engine-history alone, and the status row from the same cached
+        // obd-live, its codes tap gated on the debounced parked signal.
+        engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);
+        renderEngineScroll(
+          engineCard,
+          engineHistoryView(await stateOnce("engine-history")),
+          engineStatusView(await stateOnce("obd-live"), engineParked.parked, nowMs)
+        );
+        renderFuelAirflow(fuelCard, fuelAirflowView(await stateOnce("obd-live"), nowMs));
+        // US-890-c: the loop chip and TOTAL TRIM from the same cached obd-live's
+        // `fuel` block -- never from the raw status code or the trims.
+        renderFuelLoopAndTrim(
+          fuelCard,
+          fuelLoopView(await stateOnce("obd-live")),
+          fuelTotalTrimView(await stateOnce("obd-live"))
+        );
+        // US-890-d: the MPG row from states/fuel-economy alone.
+        renderFuelMpg(fuelCard, fuelMpgView(await stateOnce("fuel-economy")));
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint

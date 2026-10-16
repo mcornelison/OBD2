@@ -1,0 +1,49 @@
+{
+  "description": "LTFT last read 10 s ago (stale), STFT and FUEL_SYSTEM_STATUS 2 fresh. totalTrimNow reason stale at the older ts: TOTAL TRIM '--' + 'stale' -- no age and no last value (Iris G-7: a stale sum of two samples is not a reading). The chip still reads 'CLOSED LOOP'.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "LONG_FUEL_TRIM_1": {
+        "value": null,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:20Z",
+        "stale": true,
+        "band": null,
+        "noBandReason": "stale",
+        "last": {
+          "value": -1.6,
+          "band": null
+        }
+      },
+      "FUEL_SYSTEM_STATUS": {
+        "value": 2.0,
+        "unit": "CL",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "SHORT_FUEL_TRIM_1": {
+        "value": 3.1,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      }
+    },
+    "fuel": {
+      "loop": "closed",
+      "totalTrimNow": {
+        "value": null,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:20Z",
+        "reason": "stale"
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

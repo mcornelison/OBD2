@@ -1,0 +1,31 @@
+{
+  "description": "SYNTHETIC SCALE, NOT THIS CAR'S CLIP: MAF 158.69 g/s against a made-up params.MAF.scale.max of 150 (as if pi.display.scale.mafMaxGs were 150), only to prove pinning. The bar is exactly full, the number prints UNCLAMPED '158.7', no 'sensor limit' text, nothing amber or red. Never read 150 as where this sensor clips.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "MAF": {
+        "value": 158.69,
+        "unit": "g/s",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined",
+        "scale": {
+          "max": 150.0
+        }
+      }
+    },
+    "fuel": {
+      "loop": null,
+      "totalTrimNow": {
+        "value": null,
+        "unit": "%",
+        "ts": null,
+        "reason": "not_read"
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

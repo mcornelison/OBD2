@@ -1,0 +1,204 @@
+{
+  "description": "The line crosses 104 C at 15:01:30 with band still green (no colour), then the provider's dwell fires: three amber buckets, then green again.",
+  "now": "2026-10-20T15:06:02Z",
+  "engine-history": {
+    "ts": "2026-10-20T15:06:02Z",
+    "driveId": 118,
+    "sinceTs": "2026-10-20T15:00:00Z",
+    "partial": false,
+    "intervalSec": 30.0,
+    "series": {
+      "COOLANT_TEMP": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 98.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 98.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:30Z",
+          "value": 106.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:02:00Z",
+          "value": 106.0,
+          "band": "amber"
+        },
+        {
+          "ts": "2026-10-20T15:02:30Z",
+          "value": 106.0,
+          "band": "amber"
+        },
+        {
+          "ts": "2026-10-20T15:03:00Z",
+          "value": 98.0,
+          "band": "amber"
+        },
+        {
+          "ts": "2026-10-20T15:03:30Z",
+          "value": 98.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:04:00Z",
+          "value": 98.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:04:30Z",
+          "value": 98.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:05:00Z",
+          "value": 98.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:05:30Z",
+          "value": 98.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:06:00Z",
+          "value": 98.0,
+          "band": "green"
+        }
+      ],
+      "INTAKE_TEMP": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:01:30Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:02:00Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:02:30Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:03:00Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:03:30Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:04:00Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:04:30Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:05:00Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:05:30Z",
+          "value": 35.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:06:00Z",
+          "value": 35.0,
+          "band": null
+        }
+      ],
+      "BATTERY_V": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:30Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:02:00Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:02:30Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:03:00Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:03:30Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:04:00Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:04:30Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:05:00Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:05:30Z",
+          "value": 14.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:06:00Z",
+          "value": 14.0,
+          "band": "green"
+        }
+      ]
+    },
+    "unit": {
+      "COOLANT_TEMP": "C",
+      "INTAKE_TEMP": "C",
+      "BATTERY_V": "V"
+    }
+  }
+}

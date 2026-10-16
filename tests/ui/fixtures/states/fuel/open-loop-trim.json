@@ -1,0 +1,46 @@
+{
+  "description": "Open loop (FUEL_SYSTEM_STATUS 3, 'OL-drive'), both trims fresh. fuel.loop 'open', totalTrimNow reason open_loop: chip 'OPEN LOOP' (outlined, never coloured) and TOTAL TRIM '--' dimmed + 'not applied in open loop'.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "LONG_FUEL_TRIM_1": {
+        "value": -1.6,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:28Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "FUEL_SYSTEM_STATUS": {
+        "value": 3.0,
+        "unit": "OL-drive",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      },
+      "SHORT_FUEL_TRIM_1": {
+        "value": 3.1,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined"
+      }
+    },
+    "fuel": {
+      "loop": "open",
+      "totalTrimNow": {
+        "value": null,
+        "unit": "%",
+        "ts": "2026-10-20T15:12:28Z",
+        "reason": "open_loop"
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

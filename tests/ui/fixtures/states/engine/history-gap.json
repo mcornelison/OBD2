@@ -1,0 +1,84 @@
+{
+  "description": "Buckets 15:01:30 and 15:02:00 are omitted (no fresh sample): every line breaks into two segments, never a bridge.",
+  "now": "2026-10-20T15:03:02Z",
+  "engine-history": {
+    "ts": "2026-10-20T15:03:02Z",
+    "driveId": 118,
+    "sinceTs": "2026-10-20T15:00:00Z",
+    "partial": false,
+    "intervalSec": 30.0,
+    "series": {
+      "COOLANT_TEMP": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 90.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 90.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:02:30Z",
+          "value": 90.0,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:03:00Z",
+          "value": 90.0,
+          "band": "green"
+        }
+      ],
+      "INTAKE_TEMP": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 30.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 30.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:02:30Z",
+          "value": 30.0,
+          "band": null
+        },
+        {
+          "ts": "2026-10-20T15:03:00Z",
+          "value": 30.0,
+          "band": null
+        }
+      ],
+      "BATTERY_V": [
+        {
+          "ts": "2026-10-20T15:00:30Z",
+          "value": 14.1,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:01:00Z",
+          "value": 14.1,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:02:30Z",
+          "value": 14.1,
+          "band": "green"
+        },
+        {
+          "ts": "2026-10-20T15:03:00Z",
+          "value": 14.1,
+          "band": "green"
+        }
+      ]
+    },
+    "unit": {
+      "COOLANT_TEMP": "C",
+      "INTAKE_TEMP": "C",
+      "BATTERY_V": "V"
+    }
+  }
+}

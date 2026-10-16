@@ -1,0 +1,31 @@
+{
+  "description": "Warm idle: MAF 3.57 g/s (specs/grounded-knowledge.md :475, the warm-idle mean) against params.MAF.scale.max 160. Airflow reads '3.6' g/s; the bar is a sliver (~2 %), neutral.",
+  "now": "2026-10-20T15:12:30Z",
+  "obd-live": {
+    "params": {
+      "MAF": {
+        "value": 3.57,
+        "unit": "g/s",
+        "ts": "2026-10-20T15:12:29Z",
+        "stale": false,
+        "band": null,
+        "last": null,
+        "noBandReason": "no_band_defined",
+        "scale": {
+          "max": 160.0
+        }
+      }
+    },
+    "fuel": {
+      "loop": null,
+      "totalTrimNow": {
+        "value": null,
+        "unit": "%",
+        "ts": null,
+        "reason": "not_read"
+      }
+    },
+    "dataSource": "real",
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

@@ -19,6 +19,15 @@
 #                                carries band or noBandReason; params.RPM.scale.
 # 2026-10-14    | Rex (US-881-b) | engineRunningAt(reading): the band producer's
 #                                engine gate, under the lock, same time domain.
+# 2026-10-15    | Rex (US-888-b) | observeReading stores the canonical short unit
+#                                (pi.obdii.units); obd.db keeps the captured one.
+# 2026-10-15    | Rex (US-889-a) | The tracker owns the EngineHistory: each fresh
+#                                reading feeds it with the band at that reading;
+#                                resetEngineHistory / engineHistoryIfChanged.
+# 2026-10-15    | Rex (US-890-b) | params.MAF.scale {max} from
+#                                pi.display.scale.mafMaxGs (Atlas S104 ruling 2).
+# 2026-10-15    | Rex (US-890-c) | Top-level fuel {loop, totalTrimNow} through the
+#                                shared closed-loop code set (Atlas S104 (b)).
 # ================================================================================
 ################################################################################
 
@@ -47,6 +56,7 @@ is, and a null band always carries a ``noBandReason`` code.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 from collections.abc import Callable, Mapping
@@ -62,6 +72,9 @@ from pi.obdii.band_producer import (
     BandProducer,
     BandSettings,
 )
+from pi.obdii.engine_history import EngineHistory, EngineHistorySettings
+from pi.obdii.fuel_status import FUEL_LOOP_OPEN, fuelLoopState
+from pi.obdii.units import canonicalUnit
 
 __all__ = [
     "DEFAULT_OBD_LIVE_STALE_S",
@@ -84,6 +97,41 @@ DEFAULT_OBD_LIVE_STALE_S = 5.0
 # Matches the other card emitters' `ts` format (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
+# US-890-b: the PID whose airflow bar runs 0..pi.display.scale.mafMaxGs.
+PID_MAF = "MAF"
+_MAF_MAX_KEY = "pi.display.scale.mafMaxGs"
+
+# US-890-c (Atlas S104 total-trim ruling (b)): the inputs of the fuel block.
+PID_FUEL_SYSTEM_STATUS = "FUEL_SYSTEM_STATUS"
+PID_LTFT = "LONG_FUEL_TRIM_1"
+PID_STFT = "SHORT_FUEL_TRIM_1"
+TOTAL_TRIM_UNIT = "%"
+
+# totalTrimNow.reason, in PRECEDENCE order: the first that applies is published.
+TRIM_NOT_READ = "not_read"
+TRIM_STALE = "stale"
+TRIM_LOOP_UNKNOWN = "loop_unknown"
+TRIM_OPEN_LOOP = "open_loop"
+
+
+def _mafScale(config: dict[str, Any]) -> dict[str, float]:
+    """``{max}`` for params.MAF.scale, from config or the validator default.
+
+    Args:
+        config: Configuration mapping (validated or raw).
+
+    Returns:
+        ``{"max": pi.display.scale.mafMaxGs}`` as a float.
+    """
+    from common.config.validator import DEFAULTS
+
+    node: Any = config
+    for part in _MAF_MAX_KEY.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return {"max": float(DEFAULTS[_MAF_MAX_KEY])}
+        node = node[part]
+    return {"max": float(DEFAULTS[_MAF_MAX_KEY] if node is None else node)}
+
 
 @dataclass(frozen=True)
 class ObdLiveObservation:
@@ -91,11 +139,13 @@ class ObdLiveObservation:
 
     Attributes:
         value: The reading's value, as realtime_data stores it.
-        unit: Its unit, as the reading carried it.
+        unit: Its canonical short unit (``pi.obdii.units``, US-888-b); a
+            string with no canonical form is kept as the reading carried it.
         ts: Canonical UTC event time of the reading.
         band: ``{band, since, reason}`` at this reading, or None.
         noBandReason: The band producer's code when ``band`` is None.
-        scale: ``{amberFrom, redFrom}`` for RPM's bar zones, else None.
+        scale: ``{amberFrom, redFrom}`` for RPM's bar zones, ``{max}`` for
+            MAF's airflow bar (US-890-b), else None.
     """
 
     value: Any
@@ -117,12 +167,14 @@ class ObdLiveTracker:
         """
         Args:
             config: Validated config; supplies ``pi.time.localZone`` for the
-                naive-local -> canonical-UTC conversion and the ``pi.bands.*``
-                numbers for the band producer.
+                naive-local -> canonical-UTC conversion, the ``pi.bands.*``
+                numbers for the band producer and ``pi.display.scale.mafMaxGs``.
         """
         self._config = config
         self._latest: dict[str, ObdLiveObservation] = {}
         self._bands = BandProducer(BandSettings.fromConfig(config))
+        self._engineHistory = EngineHistory(EngineHistorySettings.fromConfig(config))
+        self._mafScale = _mafScale(config)
         self._lock = threading.Lock()
 
     def observeReading(self, reading: Any) -> None:
@@ -152,11 +204,38 @@ class ObdLiveTracker:
             self._bands.observe(name, value, eventUtc)
             if value is None:
                 return
+            unit = canonicalUnit(getattr(reading, "unit", None))
+            # US-889-a (Atlas G2): the history copies the band AT this reading.
+            band = self._bands.resultFor(name).band
+            self._engineHistory.observe(
+                name, value, eventUtc, None if band is None else band["band"], unit
+            )
             self._latest[name] = ObdLiveObservation(
                 value=value,
-                unit=getattr(reading, "unit", None),
+                unit=unit,
                 ts=toCanonicalIso(eventUtc),
             )
+
+    def resetEngineHistory(self, driveId: int | None, driveStart: Any) -> None:
+        """Open a new drive's engine-history window (US-889-a).
+
+        Args:
+            driveId: The new drive's id.
+            driveStart: The drive start's capture time (naive means the
+                declared zone, as for a reading); not a datetime -> unknown.
+
+        Raises:
+            ValueError: If no usable local zone is declared.
+        """
+        startUtc = self._eventUtc(driveStart) if isinstance(driveStart, datetime) else None
+        with self._lock:
+            self._engineHistory.reset(driveId, startUtc)
+
+    def engineHistoryIfChanged(self) -> dict[str, Any] | None:
+        """The engine-history snapshot when a bucket closed or it was reset."""
+        with self._lock:
+            history: dict[str, Any] | None = self._engineHistory.snapshotIfChanged()
+        return history
 
     def _eventUtc(self, timestamp: datetime) -> datetime:
         """A reading's capture time as aware UTC (naive means the declared zone)."""
@@ -201,15 +280,83 @@ class ObdLiveTracker:
                     obs,
                     band=None if result.band is None else dict(result.band),
                     noBandReason=result.noBandReason,
-                    scale=self._bands.rpmScale if name == PID_RPM else None,
+                    scale=self._scaleFor(name),
                 )
             return snap
+
+    def _scaleFor(self, name: str) -> dict[str, float] | None:
+        """RPM's bar zones, MAF's bar max (US-890-b), else None."""
+        if name == PID_RPM:
+            return self._bands.rpmScale
+        if name == PID_MAF:
+            return dict(self._mafScale)
+        return None
 
 
 def _isStale(ts: str, nowUtc: datetime, staleSec: float) -> bool:
     """True when the reading at ``ts`` is more than ``staleSec`` old at ``nowUtc``."""
-    readAt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    return (nowUtc - readAt).total_seconds() > staleSec
+    return (nowUtc - _parseTs(ts)).total_seconds() > staleSec
+
+
+def _parseTs(ts: str) -> datetime:
+    """A canonical ``...Z`` timestamp as an aware datetime."""
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def _isTrimValue(value: Any) -> bool:
+    """True for a finite number a trim can be summed from (a bool is not one)."""
+    return (
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    )
+
+
+def _buildFuelBlock(
+    observations: Mapping[str, ObdLiveObservation], nowUtc: datetime, staleSec: float
+) -> dict[str, Any]:
+    """The ``fuel`` block: ``{loop, totalTrimNow}`` (US-890-c).
+
+    ``loop`` maps FUEL_SYSTEM_STATUS through the ONE closed-loop code set
+    (``pi.obdii.fuel_status``); it is null when the status was never read, is
+    stale (the params window), or is not a code. ``totalTrimNow`` is LTFT + STFT,
+    unrounded and unbanded, at the OLDER input's ts -- null with the first
+    reason that applies: not_read > stale > loop_unknown > open_loop.
+
+    Args:
+        observations: The SAME latest-per-PID observations as ``params``.
+        nowUtc: Aware UTC instant of this emit.
+        staleSec: ``pi.display.stale.obdLiveSec``.
+
+    Returns:
+        ``{"loop": "closed"|"open"|None, "totalTrimNow": {value, unit, ts, reason}}``.
+    """
+    status = observations.get(PID_FUEL_SYSTEM_STATUS)
+    loop = None
+    if status is not None and not _isStale(status.ts, nowUtc, staleSec):
+        loop = fuelLoopState(status.value)
+
+    ltft = observations.get(PID_LTFT)
+    stft = observations.get(PID_STFT)
+    ts: str | None = None
+    reason: str | None
+    if ltft is None or stft is None or not (_isTrimValue(ltft.value) and _isTrimValue(stft.value)):
+        reason = TRIM_NOT_READ
+    else:
+        ts = min(ltft.ts, stft.ts, key=_parseTs)
+        if _isStale(ltft.ts, nowUtc, staleSec) or _isStale(stft.ts, nowUtc, staleSec):
+            reason = TRIM_STALE
+        elif loop is None:
+            reason = TRIM_LOOP_UNKNOWN
+        elif loop == FUEL_LOOP_OPEN:
+            reason = TRIM_OPEN_LOOP
+        else:
+            reason = None
+    value = None
+    if reason is None and ltft is not None and stft is not None:
+        value = ltft.value + stft.value
+    return {
+        "loop": loop,
+        "totalTrimNow": {"value": value, "unit": TOTAL_TRIM_UNIT, "ts": ts, "reason": reason},
+    }
 
 
 def buildObdLiveState(
@@ -229,9 +376,11 @@ def buildObdLiveState(
             None when no logger has resolved one.
 
     Returns:
-        ``{params: {<PID>: {value, unit, ts, stale, band, last}}, dataSource, ts}``.
-        A null band adds ``noBandReason``; RPM adds ``scale``. While stale no
-        band is evaluated: ``last.band`` is the band frozen at the last reading.
+        ``{params: {<PID>: {value, unit, ts, stale, band, last}}, fuel, dataSource,
+        ts}``. A null band adds ``noBandReason``; RPM and MAF add ``scale``. While
+        stale no band is evaluated: ``last.band`` is the band frozen at the last
+        reading. ``fuel`` is ``{loop, totalTrimNow}`` from the same observations
+        (US-890-c, :func:`_buildFuelBlock`).
     """
     params: dict[str, Any] = {}
     for name, obs in observations.items():
@@ -266,6 +415,7 @@ def buildObdLiveState(
         params[name] = entry
     return {
         "params": params,
+        "fuel": _buildFuelBlock(observations, nowUtc, staleSec),
         "dataSource": dataSource,
         "ts": nowUtc.strftime(_ISO_FMT),
     }

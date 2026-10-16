@@ -352,8 +352,9 @@ def test_dashboardHtml_vehicleGatedSurfaceFailsClosed():
     confirmed.
     """
     html = _read(_HTML)
-    match = re.search(r'<section[^>]*aria-label="Fuel Trim"[^>]*>', html)
-    assert match is not None, "no fuel-trim card in the markup"
+    # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim and keeps the gate.
+    match = re.search(r'<section[^>]*aria-label="Fuel"[^>]*>', html)
+    assert match is not None, "no Fuel card in the markup"
     assert 'data-gated="true"' in match.group(0), (
         "the vehicle-gated surface must ship gated, not open"
     )
@@ -368,7 +369,8 @@ def test_dashboardHtml_fuelTrimIsTheVehicleGatedSurface():
     html = _read(_HTML)
     gated = re.findall(r'<section[^>]*data-gated="true"[^>]*>', html)
     assert len(gated) == 1, f"exactly one surface should ship gated, found {gated}"
-    assert 'aria-label="Fuel Trim"' in gated[0]
+    # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim.
+    assert 'aria-label="Fuel"' in gated[0]
 
 
 def test_carouselJs_tickRendersTheLightReadout():
