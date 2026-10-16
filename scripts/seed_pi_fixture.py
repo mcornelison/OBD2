@@ -15,6 +15,9 @@
 #                               data_source='fixture' so regression-
 #                               harness rows remain distinguishable
 #                               from real-vehicle captures.
+# 2026-10-16    | Atlas        | realtime_data.written_at inserted as NULL so
+#                               the US-809-b1 'now' DEFAULT cannot break
+#                               byte-identical builds.
 # ================================================================================
 ################################################################################
 
@@ -379,10 +382,15 @@ def _insertRealtimeAndConnection(
     # SQL when executemany batches.
     taggedRealtime = [row + ('fixture',) for row in realtimeRows]
     taggedConnLog = [row + ('fixture',) for row in connLogRows]
+    # US-809-b1: written_at is NULL on purpose. Omitting it lets the schema's
+    # strftime('now') DEFAULT fire, so two builds that straddle a second differ.
+    # These rows were never written by a logger, so their write time is a typed
+    # absence -- never the capture time (CIO 2026-09-24, database_schema.py).
     conn.executemany(
         "INSERT INTO realtime_data "
-        "(timestamp, parameter_name, value, unit, profile_id, data_source) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(timestamp, parameter_name, value, unit, profile_id, data_source, "
+        "written_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, NULL)",
         taggedRealtime,
     )
     conn.executemany(
