@@ -85,7 +85,11 @@ ExecStart=__CHROMIUM_BIN__ \
   --check-for-update-interval=31536000 \
   --password-store=basic \
   --user-data-dir=/tmp/splash-chromium-boot \
+  --enable-logging=stderr --log-level=0 \
   http://127.0.0.1:9899/
+# US-866: --enable-logging=stderr puts the splash's "[kiosk] first-frame
+# page=splash" line (when the panel first lights) and any chromium error in the
+# journal, as the grace units already do.
 # Splash exits via JS window.close() at HEALTHY_YIELD / DEGRADED (D-3).
 
 [Install]

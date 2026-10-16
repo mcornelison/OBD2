@@ -68,6 +68,9 @@ Type=simple
 User=__PI_USER__
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
+# US-866 (Atlas 2026-10-16): stderr logging so the splash's
+# "[kiosk] first-frame page=splash" line -- when the panel first lights --
+# and any boot-time chromium error reach the journal (same as the grace units).
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \
@@ -76,6 +79,7 @@ ExecStart=__CHROMIUM_BIN__ \
   --check-for-update-interval=31536000 \
   --password-store=basic \
   --user-data-dir=/tmp/splash-chromium-boot \
+  --enable-logging=stderr --log-level=0 \
   http://127.0.0.1:9899/
 # Splash exits via its own JS calling window.close() once the state machine
 # reaches HEALTHY_YIELD or DEGRADED. No hardcoded sleep/pkill (D-3).
