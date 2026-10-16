@@ -10,7 +10,7 @@
 | 1 | Driving | B · Side columns | `v030-driving-page-design.md` | https://claude.ai/artifact/NGQYx33xXbfcCeUecgscfW | `2026-10-12-v030-driving-page.html` |
 | 1-OEM | Driving, **OEM skin, S103 scope** (build from this one) | B | `v030-driving-page-design.md` | https://claude.ai/artifact/KiysfKSp3eadAa5Mju6X5g | `2026-10-14-v030-driving-page-oem.html` |
 | 2 | Navigation | A · Tape on top | `v030-navigation-page-design.md` | https://claude.ai/artifact/ETqqi2sYC7fkV2cDqJt9A7 | `2026-10-12-v030-navigation-page.html` |
-| 2-OEM | Navigation, **OEM skin, S105 scope** (badge row, 8-point, provider trip; LAST DRIVE ⏸ CIO) | A | `v030-navigation-page-design.md` | https://claude.ai/artifact/7NRpXH3jHbCAc19VH4j1qs | `2026-10-15-v030-navigation-page-oem.html` |
+| 2-OEM | Navigation, **OEM skin, S105 scope** (badge row, 8-point, provider trip; parked `LAST DRIVE`, CIO 2026-10-16) | A | `v030-navigation-page-design.md` | https://claude.ai/artifact/7NRpXH3jHbCAc19VH4j1qs | `2026-10-15-v030-navigation-page-oem.html` |
 | 3 | Engine | B · Vertical bars | `v030-engine-page-design.md` | https://claude.ai/artifact/RiqWXfdDVJiLS5TGrodKgA | `2026-10-13-v030-engine-page.html` |
 | 3-OEM | Engine, **OEM skin, S104 scope** (history graphs need `states/engine-history`) | B | `v030-engine-page-design.md` | https://claude.ai/artifact/WkLF9XXihcAD73PVKJLZ3o | `2026-10-14-v030-engine-page-oem.html` |
 | 4 | Fuel | A · Airflow on top | `v030-fuel-page-design.md` | https://claude.ai/artifact/GVEYon8ST2TREiq3veQBfF | `2026-10-12-v030-fuel-page.html` |

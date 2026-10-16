@@ -22,7 +22,7 @@
 | S-5 | Rows | **OBD link · capture + sync · WiFi · UPS** |
 | S-6 | Pi health | **Detail only**, opened from the verdict line |
 | S-7 | Settings access | **Both**: SETTINGS button on System (parked) **and** the ⋮ overlay |
-| S-8 | WiFi | **Green home · yellow other network · grey down · `?` not read** |
+| S-8 | WiFi | **Green home · ~~yellow~~ neutral other network (CIO 2026-10-16) · grey down · `?` not read** |
 | S-9 | Layout | **A · Verdict and rows** |
 | S-10 | ECU silent with BT + adapter up | **Not an issue**: grey step + `ECU not answering (key off?)` |
 | S-11 | Settings contents | Brightness override + auto-dim ends · auto-rotate · calibration + auto-analyze · power mode |
@@ -65,7 +65,8 @@
 | Step state | Look |
 |---|---|
 | working | `--green-ok` outlined step |
-| connecting / retrying | `--amber-warn` (**closes US-713**: "connecting" is visible) |
+| connecting (first link since key-on) | `--text-secondary`, neutral, **not counted** (CIO 2026-10-16). Still **closes US-713**: the step and its sentence say `connecting…`, so it is visible; it is just not an issue |
+| retrying (the link was up this session and dropped) | `--amber-warn`, **counted** (a lost link is `BT not linked`, which §4.1 counts) |
 | not answering | `--text-tertiary` |
 
 Sentence = the **first** layer not answering + likely cause: `Bluetooth not linked` · `Bluetooth connecting… (takes ~1 min)` · `adapter not answering` · `ECU not answering (key off?)` · `ECU answering`.
@@ -78,7 +79,7 @@ Sentence = the **first** layer not answering + likely cause: `Bluetooth not link
 - Away from home: `away from home`, neutral, not an issue (F-155 at-home sync).
 
 ### 4.4 WIFI (carries US-732 + US-742)
-`home` green · `other network` amber-yellow · `down` grey · `? not read` amber and **counted**. Atlas 2026-08-20: unknown is never `down`. The **emitter** derives `state`; the page applies no RSSI threshold. SSID + strength word in the sentence.
+`home` green · `other network` neutral `--text-secondary`, **not counted** (CIO 2026-10-16) · `down` grey · `? not read` amber and **counted**. Atlas 2026-08-20: unknown is never `down`. The **emitter** derives `state`; the page applies no RSSI threshold. SSID + strength word in the sentence.
 
 ### 4.5 UPS
 - Value: `4.12 V` (VCELL, trusted). Sentence: `≈ 92 %` (modelled SOC, marked) `· on car power` / `· on battery`.
@@ -135,7 +136,7 @@ One list; **scrolls with a visible scrollbar** if taller than the panel (no sile
 ## 6. Acceptance criteria (draft)
 1. Fixtures render per §4 at 480×320 (screenshot).
 2. ARCH-061 fixture (BT + adapter up, ECU silent): chain `g g n`, sentence names the ECU, verdict **not** incremented, top bar shows the 3 dots, and **no element reads "Bluetooth down"**.
-3. Connecting fixture: BT step amber, sentence says connecting.
+3. Connecting fixture (first link since key-on): BT step neutral, sentence says `connecting…`, verdict **not** incremented. Retrying fixture: BT step amber, verdict incremented.
 4. ARCH-062 fixture: a previous-session ECU success with this session silent renders grey, never green.
 5. WiFi `null` + `available:false` renders `? not read` (counted), never `down`.
 6. UPS never renders a runtime, `charging` or `crate`.
@@ -147,7 +148,7 @@ One list; **scrolls with a visible scrollbar** if taller than the panel (no sile
 12. **DoD (R15): CIO judgement in the car.**
 
 ## 7. Fixtures
-`arch061-key-off-home` · `all-ok-driving` · `bt-connecting` · `adapter-silent` · `away-from-home` · `wifi-not-read` · `ups-low` · `pi-hot` · `prev-session-ecu-stale` · `settings-write-rejected`.
+`arch061-key-off-home` · `all-ok-driving` · `bt-connecting` · `bt-retrying` · `adapter-silent` · `away-from-home` · `wifi-not-read` · `ups-low` · `pi-hot` · `prev-session-ecu-stale` · `settings-write-rejected`.
 
 ## 8. Out of scope
 Detecting wall vs car power (US-729) · battery runtime (capacity unmeasured) · managing networks (Atlas WiFi ruling: display only) · audio alerts setting (US-538, deferred).
@@ -159,7 +160,7 @@ Detecting wall vs car power (US-729) · battery runtime (capacity unmeasured) ·
 ## OEM mockup findings (2026-10-15)
 Mockup: `proposals/2026-10-15-v030-system-page-oem.html`. Re-skinning surfaced where §4.1's count and §4.2's colours disagreed; these are now the rule.
 - 🔴 **Amber means counted, and counted means amber.** Every amber element is a member of the verdict count, and every counted item shows amber somewhere on the page (AC 7). An amber row under `ALL OK` is a false instrument.
-- **Expected states are neutral and uncounted:** Bluetooth `connecting…` at key-on, and WiFi on another network away from home, render `--text-secondary` with their sentence. Counting them would put `1 ISSUE` on the glass at every key-on and train the driver to ignore the verdict, the same failure as the coolant 100 °C band. ⚠️ This changes §4.2's amber connecting step (US-713) and S-8's amber-yellow other-network. **Marcus to confirm against US-713 / US-759.**
+- **Expected states are neutral and uncounted:** Bluetooth `connecting…` at key-on, and WiFi on another network away from home, render `--text-secondary` with their sentence. Counting them would put `1 ISSUE` on the glass at every key-on and train the driver to ignore the verdict, the same failure as the coolant 100 °C band. **CIO RULED 2026-10-16: yes** (via Marcus; US-713 acceptance updated). §4.2, §4.4, S-8 and AC 3 now say so. ⚠️ My call, inside the ruling: a **retry** after the link was up this session stays amber and counted, because a dropped link is a real fault. That needs the provider to tell `connecting` from `retrying`; the page must not guess it from time since key-on.
 - **Adapter silent** (counted, steps grey): the row's sentence carries the amber.
 - **Pi health** (counted, detail-only per S-6): an amber line under the verdict names it, e.g. `Pi: CPU 83 °C, over the 80 °C limit ›`, and opens Pi health when parked.
 - **Settings rows are stacked** (name + apply tag, description, control, status). Side by side, `POWER SOURCE` 178.4 px + the 3-way selector 287 px needs 473 px in 436. **Setting names are upper case**: the Michroma subset has no lower case.
