@@ -450,12 +450,12 @@ def test_splashGraceUnits_keepLoadBearingStderrLogging_us604():
 
     The grace units carry `--enable-logging=stderr`, which US-549 (I-043) makes
     LOAD-BEARING: shutdown-state-poll.js logs its terminal reason to the console
-    on every exit, and chromium DISCARDS console output without that flag. The
-    long-running dashboard kiosk deliberately carries NO logging flag. So the
-    two units legitimately DIFFER here, the new flag lands directly beside the
-    difference, and a well-meaning "make them match" sweep would delete the very
-    line that fixes I-043. Both halves are asserted on one pass so a revert
-    aimed at either cannot quietly take the other with it (the US-536 lesson).
+    on every exit, and chromium DISCARDS console output without that flag. (This
+    used to say the dashboard kiosk "deliberately carries NO logging flag". That
+    went stale: ARCH-014 put it on the X11 dashboard, and US-866 on the Wayland
+    one and both boot splashes. The point stands: the flag is load-bearing here,
+    not a debug leftover.) Both halves are asserted on one pass so a revert aimed
+    at either cannot quietly take the other with it (the US-536 lesson).
     """
     for unit in _GRACE_UNITS:
         flags = _execStartFlags(_read(unit))
@@ -479,3 +479,21 @@ def test_splashUnits_carryNoRemoteDebuggingPort_us604():
     for unit in _splashKioskUnits():
         offenders = [f for f in _execStartFlags(_read(unit)) if f.startswith("--remote-debugging-")]
         assert offenders == [], f"{unit}: kiosk must not expose DevTools ({offenders!r})"
+
+
+def test_bootPathKioskUnits_logToTheJournal_us866():
+    """US-866: every BOOT-PATH chromium (both splashes, both dashboards) passes
+    --enable-logging=stderr, so its "[kiosk] first-frame" line and its errors
+    reach the journal in BOTH display modes. The Wayland dashboard was written
+    without it, which left Wayland mode unmeasurable against the X11 baseline
+    (ADR ARCH-016 11.4).
+    """
+    units = [
+        (KIT_DIR, "splash-boot.service.x11"),
+        (KIT_DIR, "splash-boot.service.wayland"),
+        (DASHBOARD_DIR, "dashboard.service.x11"),
+        (DASHBOARD_DIR, "dashboard.service.wayland"),
+    ]
+    for directory, name in units:
+        flags = _execStartFlags((directory / name).read_text(encoding="utf-8"))
+        assert _STDERR_LOGGING_FLAG in flags, f"{name}: chromium is not heard by the journal"

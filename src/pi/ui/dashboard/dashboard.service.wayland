@@ -109,6 +109,13 @@ Type=simple
 User=__PI_USER__
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
+# US-866 (Atlas 2026-10-16): `--enable-logging=stderr --log-level=0`, as the X11
+# unit has carried since ARCH-014 (ec4c21f0) so UI exceptions reach the
+# journal. This variant was written without it, so in Wayland mode the journal
+# heard NOTHING from chromium: no exceptions, no GPU status, and no
+# "[kiosk] first-frame" line -- the measure ADR ARCH-016 11.4's "dashboard draw
+# <= the X11 baseline" gate needs. Silence must mean "chromium said nothing",
+# never "nobody was listening".
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \
@@ -118,6 +125,7 @@ ExecStart=__CHROMIUM_BIN__ \
   --check-for-update-interval=31536000 \
   --password-store=basic \
   --user-data-dir=/tmp/dashboard-chromium \
+  --enable-logging=stderr --log-level=0 \
   http://127.0.0.1:9899/dashboard.html
 # The kiosk runs until Exit/Close (US-403) calls window.close() or systemd
 # stops it. No hardcoded sleep/pkill.
