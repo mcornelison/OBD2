@@ -20,11 +20,16 @@
 # apply:
 #   - The FIRST apply records each entry's pre-state (`systemctl is-enabled`
 #     output, or whether the flag file exists) in ${STATE_FILE}, written to a
-#     temp file and renamed. A later apply NEVER overwrites it: step_os_trim
-#     re-asserts on every deploy, and a pre-state recorded after the first trim
-#     would record the trimmed state and restore nothing (Atlas G3).
-#   - Then performs each entry's action, idempotently: mask / disable / create
-#     the flag file. Nothing is stopped now; it takes effect at the next boot.
+#     temp file and renamed. A later apply NEVER overwrites a recorded line:
+#     step_os_trim re-asserts on every deploy, and a pre-state recorded after
+#     the first trim would record the trimmed state and restore nothing (Atlas
+#     G3). An entry ADDED to the manifest after the first apply has no line yet,
+#     so the first apply that sees it APPENDS its pre-state -- read before that
+#     apply touches it -- keeping every existing line byte-for-byte (US-866
+#     round 2). Without that, revert could only guess its inverse.
+#   - Then performs each entry's action, idempotently: mask / disable /
+#     user-mask / create the flag file. Nothing is stopped now; it takes effect
+#     at the next boot (a user-mask at the next login session).
 # revert:
 #   - Restores each entry to its recorded pre-state, then deletes the state
 #     file. A unit that was already disabled or masked before the first apply
@@ -69,9 +74,12 @@ SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 # polkit for deploy/polkit-rules, lightdm + accounts-daemon for the X11 kiosk
 # autologin (until the DRM story removes them together), rpi-eeprom-update for
 # enforce-eeprom-power-off-on-halt.sh, timesyncd for the clock, plymouth for
-# US-885, journald for the persistent journal. avahi-daemon is unverified, so it
-# stays. A manifest naming any of them is refused before anything is done.
-NEVER_UNITS="bluetooth NetworkManager dbus polkit lightdm accounts-daemon avahi-daemon rpi-eeprom-update netplan systemd-timesyncd plymouth systemd-journald"
+# US-885, journald for the persistent journal. A manifest naming any of them is
+# refused before anything is done.
+# avahi-daemon LEFT this list 2026-10-16 (Atlas, CIO yes): it had stayed only as
+# "unverified". Verified since: deploy reaches the Pi by IP through ssh config,
+# sync uses serverHost 10.27.27.120, and no .local name is used in the repo.
+NEVER_UNITS="bluetooth NetworkManager dbus polkit lightdm accounts-daemon rpi-eeprom-update netplan systemd-timesyncd plymouth systemd-journald"
 
 usage() {
     echo "Usage: sudo bash deploy/os-trim.sh apply|revert [--dry-run]" >&2
@@ -163,7 +171,7 @@ parseManifest() {
         actionWord="${action%%[[:space:]]*}"
         trimInto actionArg "${action#"$actionWord"}"
         case "$actionWord" in
-            mask|disable)
+            mask|disable|user-mask)
                 [ -z "$actionArg" ] || manifestError "line ${n}: '${actionWord}' takes no argument"
                 ;;
             flagfile)
@@ -174,7 +182,7 @@ parseManifest() {
                 esac
                 ;;
             *)
-                manifestError "line ${n}: unknown action '${actionWord}' (mask | disable | flagfile)"
+                manifestError "line ${n}: unknown action '${actionWord}' (mask | disable | user-mask | flagfile)"
                 ;;
         esac
 
@@ -207,9 +215,10 @@ FAILED=0
 # `systemctl is-enabled` prints the state and exits non-zero for disabled /
 # masked, so the exit code is not a failure here. A unit systemd has never
 # heard of prints nothing on older releases; call that not-found.
+# $2 = "--global" reads a USER unit's state for every user (user-mask entries).
 unitState() {
     local out
-    out="$("$SYSTEMCTL_BIN" is-enabled "$1" 2>/dev/null)"
+    out="$("$SYSTEMCTL_BIN" ${2:+"$2"} is-enabled "$1" 2>/dev/null)"
     out="${out%%$'\n'*}"
     [ -z "$out" ] && out="not-found"
     printf '%s' "$out"
@@ -235,23 +244,58 @@ requireStateDir() {
 # apply
 ################################################################################
 
+# The state of entry $1 as it is NOW, before this apply touches it.
+entryPreState() {
+    local i="$1" state
+    case "${ACTIONS[$i]}" in
+        flagfile)
+            state=absent
+            [ -e "${ROOT}${ARGS[$i]}" ] && state=present
+            ;;
+        user-mask) state="$(unitState "${UNITS[$i]}" --global)" ;;
+        *) state="$(unitState "${UNITS[$i]}")" ;;
+    esac
+    printf '%s' "$state"
+}
+
 recordPreState() {
+    local tmp="${STATE_FILE}.tmp.$$" i
     if [ -f "$STATE_FILE" ]; then
-        echo "Pre-state already recorded in ${STATE_FILE} (kept: a later apply never overwrites it)."
+        # Never rewrite a recorded line (Atlas G3). Append only the entries the
+        # manifest gained since then, read before anything below touches them.
+        loadPreState
+        local added=()
+        for i in "${!UNITS[@]}"; do
+            [ -n "${RECORDED[${UNITS[$i]}]+set}" ] || added+=("$i")
+        done
+        if [ "${#added[@]}" -eq 0 ]; then
+            echo "Pre-state already recorded in ${STATE_FILE} (kept: a later apply never overwrites it)."
+            return 0
+        fi
+        {
+            cat "$STATE_FILE"
+            echo "# appended $(date -Iseconds 2>/dev/null) for ${#added[@]} entries added to the manifest after the first apply"
+            for i in "${added[@]}"; do
+                echo "${UNITS[$i]}|$(entryPreState "$i")"
+            done
+        } > "$tmp" || {
+            rm -f "$tmp"
+            echo "ERROR: could not write the os-trim pre-state to ${tmp}; nothing was changed." >&2
+            exit 3
+        }
+        if ! mv "$tmp" "$STATE_FILE"; then
+            rm -f "$tmp"
+            echo "ERROR: could not install the os-trim pre-state at ${STATE_FILE}; nothing was changed." >&2
+            exit 3
+        fi
+        echo "Appended the pre-state of ${#added[@]} new entries to ${STATE_FILE} (recorded lines kept)."
         return 0
     fi
-    local tmp="${STATE_FILE}.tmp.$$" i state
     {
         echo "# os-trim pre-state, recorded by the FIRST apply $(date -Iseconds 2>/dev/null)"
         echo "# unit|state  (systemctl is-enabled, or flag file present/absent)"
         for i in "${!UNITS[@]}"; do
-            if [ "${ACTIONS[$i]}" = "flagfile" ]; then
-                state=absent
-                [ -e "${ROOT}${ARGS[$i]}" ] && state=present
-            else
-                state="$(unitState "${UNITS[$i]}")"
-            fi
-            echo "${UNITS[$i]}|${state}"
+            echo "${UNITS[$i]}|$(entryPreState "$i")"
         done
     } > "$tmp" || {
         rm -f "$tmp"
@@ -275,6 +319,14 @@ applyEntry() {
                 echo "  ${unit}: already masked"
             elif systemctlOrFail mask "$unit"; then
                 echo "  ${unit}: masked (was ${current})"
+            fi
+            ;;
+        user-mask)
+            current="$(unitState "$unit" --global)"
+            if [ "$current" = "masked" ]; then
+                echo "  ${unit}: already masked (user, --global)"
+            elif systemctlOrFail --global mask "$unit"; then
+                echo "  ${unit}: masked for every user (was ${current})"
             fi
             ;;
         disable)
@@ -366,6 +418,13 @@ inverseFor() {
                 *) INVERSE="unmask (recorded pre-state: ${recorded})" ;;
             esac
             ;;
+        user-mask)
+            case "$recorded" in
+                masked|masked-runtime) INVERSE="keep masked (user; recorded pre-state: ${recorded})" ;;
+                "") INVERSE="user-unmask (fixed inverse)" ;;
+                *) INVERSE="user-unmask (recorded pre-state: ${recorded})" ;;
+            esac
+            ;;
         disable)
             case "$recorded" in
                 "") INVERSE="enable (fixed inverse)" ;;
@@ -389,6 +448,7 @@ revertEntry() {
     inverse="$INVERSE"
     case "${inverse%% *}" in
         unmask) systemctlOrFail unmask "$unit" && echo "  ${unit}: ${inverse}" ;;
+        user-unmask) systemctlOrFail --global unmask "$unit" && echo "  ${unit}: ${inverse}" ;;
         enable) systemctlOrFail enable "$unit" && echo "  ${unit}: ${inverse}" ;;
         delete)
             if rm -f "${ROOT}${ARGS[$i]}"; then

@@ -14,6 +14,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-14    | Rex          | Initial implementation (Sprint 101 US-866)
+# 2026-10-16    | Atlas        | US-866 round 2: 21 census entries, the
+#               |              | user-mask action (--global), avahi-daemon off
+#               |              | the NEVER list (CIO yes), and the pre-state of
+#               |              | entries added after the first apply is APPENDED.
 # ================================================================================
 ################################################################################
 
@@ -48,7 +52,7 @@ MANIFEST = REPO_ROOT / "deploy" / "os-trim.manifest"
 SCRIPT = REPO_ROOT / "deploy" / "os-trim.sh"
 DEPLOY_DIR = REPO_ROOT / "deploy"
 
-VALID_ACTIONS = {"mask", "disable", "flagfile"}
+VALID_ACTIONS = {"mask", "disable", "user-mask", "flagfile"}
 
 # Atlas's list, verbatim (US-866 AC1). unit -> action.
 EXPECTED_ENTRIES = {
@@ -66,6 +70,33 @@ EXPECTED_ENTRIES = {
     "ModemManager.service": "mask",
     "e2scrub_reap.service": "mask",
 }
+# US-866 round 2 (Atlas census, CIO-approved 2026-10-16), appended after the
+# first apply had already recorded the 13 above.
+ROUND_2_ENTRIES = {
+    "packagekit.service": "mask",
+    "rpcbind.service": "mask",
+    "rpcbind.socket": "mask",
+    "nfs-blkmap.service": "disable",
+    "man-db.timer": "mask",
+    "e2scrub_all.timer": "mask",
+    "wayvnc-control.service": "disable",
+    "avahi-daemon.service": "mask",
+    "avahi-daemon.socket": "mask",
+    "pipewire.service": "user-mask",
+    "pipewire.socket": "user-mask",
+    "pipewire-pulse.service": "user-mask",
+    "pipewire-pulse.socket": "user-mask",
+    "wireplumber.service": "user-mask",
+    "filter-chain.service": "user-mask",
+    "mpris-proxy.service": "user-mask",
+    "gvfs-udisks2-volume-monitor.service": "user-mask",
+    "gvfs-afc-volume-monitor.service": "user-mask",
+    "gvfs-mtp-volume-monitor.service": "user-mask",
+    "gvfs-goa-volume-monitor.service": "user-mask",
+    "gvfs-gphoto2-volume-monitor.service": "user-mask",
+}
+ROUND_1_ENTRIES = dict(EXPECTED_ENTRIES)
+EXPECTED_ENTRIES = {**ROUND_1_ENTRIES, **ROUND_2_ENTRIES}
 CLOUD_INIT_FLAG = "/etc/cloud/cloud-init.disabled"
 
 # Atlas's MUST-NOT-GO list (US-866 AC2).
@@ -76,7 +107,6 @@ EXPECTED_NEVER = {
     "polkit",
     "lightdm",
     "accounts-daemon",
-    "avahi-daemon",
     "rpi-eeprom-update",
     "netplan",
     "systemd-timesyncd",
@@ -94,8 +124,11 @@ DEPENDENCY_KEYS = ("Wants", "Requires", "After", "BindsTo")
 FAKE_SYSTEMCTL = r"""#!/usr/bin/env bash
 dir="$FAKE_SYSTEMCTL_DIR"
 echo "$*" >> "$dir/calls.log"
+# --global addresses a USER unit (user-mask); its state lives apart.
+scope=""
+if [ "$1" = "--global" ]; then scope="@global-"; shift; fi
 cmd="$1"; unit="$2"
-f="$dir/units/$unit"
+f="$dir/units/$scope$unit"
 case "$cmd" in
     is-enabled)
         if [ ! -f "$f" ]; then echo "not-found"; exit 1; fi
@@ -198,7 +231,7 @@ class Rig:
         self.manifest = manifest
         for unit, action in EXPECTED_ENTRIES.items():
             if action != "flagfile":
-                self.setState(unit, "enabled")
+                self.setState(unit, "enabled", user=action == "user-mask")
 
     @property
     def stateFile(self) -> Path:
@@ -208,11 +241,14 @@ class Rig:
     def flagFile(self) -> Path:
         return self.root / CLOUD_INIT_FLAG.lstrip("/")
 
-    def setState(self, unit: str, state: str) -> None:
-        (self.fakeDir / "units" / unit).write_text(state + "\n", encoding="utf-8", newline="\n")
+    def _unitFile(self, unit: str, user: bool) -> Path:
+        return self.fakeDir / "units" / (f"@global-{unit}" if user else unit)
 
-    def state(self, unit: str) -> str:
-        return (self.fakeDir / "units" / unit).read_text(encoding="utf-8").strip()
+    def setState(self, unit: str, state: str, user: bool = False) -> None:
+        self._unitFile(unit, user).write_text(state + "\n", encoding="utf-8", newline="\n")
+
+    def state(self, unit: str, user: bool = False) -> str:
+        return self._unitFile(unit, user).read_text(encoding="utf-8").strip()
 
     def calls(self) -> list[str]:
         log = self.fakeDir / "calls.log"
@@ -252,7 +288,7 @@ def rig(tmp_path: Path) -> Rig:
 
 
 def _mutating(calls: list[str]) -> list[str]:
-    return [c for c in calls if not c.startswith("is-enabled")]
+    return [c for c in calls if not c.removeprefix("--global ").startswith("is-enabled")]
 
 
 def _errorLines(stderr: str) -> list[str]:
@@ -268,14 +304,15 @@ def _warnLines(stderr: str) -> list[str]:
 # --------------------------------------------------------------------------
 
 
-def test_manifest_hasExactlyAtlasThirteenEntries():
+def test_manifest_hasExactlyAtlasEntries():
     """
     Given: deploy/os-trim.manifest
     When: it is parsed
-    Then: 13 entries, exactly Atlas's units and actions, each with a reason and evidence
+    Then: 34 entries (13 + round 2's 21), exactly Atlas's units and actions,
+          each with a reason and evidence
     """
     entries = _manifestEntries()
-    assert len(entries) == 13, [e["unit"] for e in entries]
+    assert len(entries) == len(EXPECTED_ENTRIES) == 34, [e["unit"] for e in entries]
     assert {e["unit"]: e["action"] for e in entries} == EXPECTED_ENTRIES
     for entry in entries:
         assert entry["action"] in VALID_ACTIONS, entry
@@ -338,13 +375,13 @@ def test_dryRun_printsOneLinePerEntryAndChangesNothing(rig: Rig, mode: str):
     """
     Given: a Pi with every manifest unit enabled and no state file
     When: os-trim.sh <mode> --dry-run
-    Then: exactly 13 stdout lines (one per entry), exit 0, no systemctl call,
+    Then: exactly one stdout line per entry, exit 0, no systemctl call,
           no state file, no flag file
     """
     result = rig.run(mode, "--dry-run")
     assert result.returncode == 0, result.stderr
     lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    assert len(lines) == 13, result.stdout
+    assert len(lines) == len(EXPECTED_ENTRIES), result.stdout
     named = [re.match(rf"^DRY-RUN {mode} (\S+): ", ln) for ln in lines]
     assert all(named), result.stdout
     assert sorted(m.group(1) for m in named if m) == sorted(EXPECTED_ENTRIES)
@@ -378,6 +415,10 @@ def test_applyThenRevert_everyActionIsInverted(rig: Rig):
         elif action == "disable":
             assert f"disable {unit}" in applyCalls
             assert rig.state(unit) == "disabled"
+        elif action == "user-mask":
+            assert f"--global mask {unit}" in applyCalls
+            assert rig.state(unit, user=True) == "masked"
+            assert f"mask {unit}" not in applyCalls  # never the SYSTEM unit
 
     rig.clearCalls()
     reverted = rig.run("revert")
@@ -388,8 +429,10 @@ def test_applyThenRevert_everyActionIsInverted(rig: Rig):
             assert f"unmask {unit}" in revertCalls
         elif action == "disable":
             assert f"enable {unit}" in revertCalls
+        elif action == "user-mask":
+            assert f"--global unmask {unit}" in revertCalls
         if action != "flagfile":
-            assert rig.state(unit) == "enabled", unit
+            assert rig.state(unit, user=action == "user-mask") == "enabled", unit
     assert not rig.flagFile.exists()
     assert not rig.stateFile.exists()
     assert _warnLines(reverted.stderr) == []
@@ -430,7 +473,7 @@ def test_preDisabledUnit_staysDisabledThroughApplyApplyRevert(rig: Rig):
         if action == "flagfile":
             continue
         expected = "disabled" if unit in preDisabled else "enabled"
-        assert rig.state(unit) == expected, unit
+        assert rig.state(unit, user=action == "user-mask") == expected, unit
     assert "enable NetworkManager-wait-online.service" not in rig.calls()
     assert not rig.flagFile.exists()
     assert not rig.stateFile.exists()
@@ -464,7 +507,64 @@ def test_revertWithoutStateFile_appliesFixedInverseWithOneWarn(rig: Rig):
             assert f"unmask {unit}" in calls
         elif action == "disable":
             assert f"enable {unit}" in calls
+        elif action == "user-mask":
+            assert f"--global unmask {unit}" in calls
     assert not rig.flagFile.exists()
+
+
+@requiresBash
+def test_entriesAddedAfterFirstApply_getTheirPreStateAppended(tmp_path: Path):
+    """
+    US-866 round 2. Given: a Pi trimmed by the 13-entry manifest (state file
+    recorded), then the manifest gains round 2, one of whose units was ALREADY
+    disabled and one user unit static.
+    When: apply with the full manifest, apply again, then revert
+    Then: the old state-file bytes are kept as a prefix, each new unit gains one
+          line with its pre-apply state, the second apply leaves the file
+          byte-identical, and revert restores every unit to that state with NO
+          "not in the pre-state" WARN.
+    """
+    round1 = tmp_path / "round1.manifest"
+    keep = [
+        ln for ln in MANIFEST.read_text(encoding="utf-8").splitlines()
+        if ln.strip().startswith("#") or not ln.strip()
+        or ln.split("|")[0].strip() in ROUND_1_ENTRIES
+    ]
+    round1.write_text("\n".join(keep) + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / "pi").mkdir()
+    rig = Rig(tmp_path / "pi", manifest=round1)
+    rig.setState("wayvnc-control.service", "disabled")
+    rig.setState("gvfs-afc-volume-monitor.service", "static", user=True)
+
+    assert rig.run("apply").returncode == 0
+    firstBytes = rig.stateFile.read_bytes()
+    assert b"packagekit.service" not in firstBytes
+
+    rig.manifest = MANIFEST
+    second = rig.run("apply")
+    assert second.returncode == 0, second.stderr
+    grown = rig.stateFile.read_bytes()
+    assert grown.startswith(firstBytes)
+    recorded = dict(
+        ln.split("|", 1) for ln in grown.decode("utf-8").splitlines()
+        if ln and not ln.startswith("#")
+    )
+    assert set(recorded) == set(EXPECTED_ENTRIES)
+    assert recorded["wayvnc-control.service"] == "disabled"
+    assert recorded["gvfs-afc-volume-monitor.service"] == "static"
+    assert recorded["pipewire.service"] == "enabled"
+    assert recorded["packagekit.service"] == "enabled"
+
+    assert rig.run("apply").returncode == 0
+    assert rig.stateFile.read_bytes() == grown
+
+    reverted = rig.run("revert")
+    assert reverted.returncode == 0, reverted.stderr
+    assert _warnLines(reverted.stderr) == [], reverted.stderr
+    assert rig.state("wayvnc-control.service") == "disabled"
+    assert rig.state("gvfs-afc-volume-monitor.service", user=True) == "static"
+    assert rig.state("pipewire.service", user=True) == "enabled"
+    assert rig.state("packagekit.service") == "enabled"
 
 
 def test_stateFile_isWrittenViaTempThenRename():
