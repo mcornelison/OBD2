@@ -155,3 +155,12 @@ Detecting wall vs car power (US-729) · battery runtime (capacity unmeasured) ·
 ## 9. Open items
 - **Atlas:** adapter layer; per-layer this-session state (ARCH-062); per-feed capture; WiFi wiring; Pi-health provider; provider-derived verdict; new settings keys.
 - **Marcus:** F-126 IN (already sent); ARCH-061 + US-713 close through this design.
+
+## OEM mockup findings (2026-10-15)
+Mockup: `proposals/2026-10-15-v030-system-page-oem.html`. Re-skinning surfaced where §4.1's count and §4.2's colours disagreed; these are now the rule.
+- 🔴 **Amber means counted, and counted means amber.** Every amber element is a member of the verdict count, and every counted item shows amber somewhere on the page (AC 7). An amber row under `ALL OK` is a false instrument.
+- **Expected states are neutral and uncounted:** Bluetooth `connecting…` at key-on, and WiFi on another network away from home, render `--text-secondary` with their sentence. Counting them would put `1 ISSUE` on the glass at every key-on and train the driver to ignore the verdict, the same failure as the coolant 100 °C band. ⚠️ This changes §4.2's amber connecting step (US-713) and S-8's amber-yellow other-network. **Marcus to confirm against US-713 / US-759.**
+- **Adapter silent** (counted, steps grey): the row's sentence carries the amber.
+- **Pi health** (counted, detail-only per S-6): an amber line under the verdict names it, e.g. `Pi: CPU 83 °C, over the 80 °C limit ›`, and opens Pi health when parked.
+- **Settings rows are stacked** (name + apply tag, description, control, status). Side by side, `POWER SOURCE` 178.4 px + the 3-way selector 287 px needs 473 px in 436. **Setting names are upper case**: the Michroma subset has no lower case.
+- ⋮ is hidden while moving (W-13 as shipped); moving closes any open screen.
