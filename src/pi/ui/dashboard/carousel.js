@@ -247,6 +247,26 @@
     return true;
   }
 
+  // US-866 (Atlas 2026-10-16, CIO-directed): the FIRST FRAME this page draws,
+  // as one console line. chromium runs with --enable-logging=stderr, so the line
+  // lands in the journal with a boot-relative timestamp -- the only way to see
+  // when the driver actually gets gauges, as opposed to when systemd STARTED
+  // the unit. Two nested requestAnimationFrame callbacks: the second runs after
+  // the first frame has been produced. Deliberately NOT routed through uiLog:
+  // its level gate is off by default, and this is one line per page load.
+  function reportFirstFrame(win, page) {
+    if (!win || typeof win.requestAnimationFrame !== "function") return false;
+    if (typeof console === "undefined" || typeof console.info !== "function") return false;
+    win.requestAnimationFrame(function () {
+      win.requestAnimationFrame(function () {
+        var perf = win.performance;
+        var sinceNav = perf && typeof perf.now === "function" ? Math.round(perf.now()) : -1;
+        console.info("[kiosk] first-frame page=" + page + " sinceNavigationMs=" + sinceNav);
+      });
+    });
+    return true;
+  }
+
   function reportFetchAbort(name, err, log) {
     // US-655: US-653 shipped TWO deadlines and instrumented only ONE. The tick
     // deadline reports; the FETCH deadline aborted into a catch that returns
@@ -4736,6 +4756,7 @@
     reportFetchAbort: reportFetchAbort,
     shouldLog: shouldLog,
     uiLog: uiLog,
+    reportFirstFrame: reportFirstFrame,
     reportLoopError: reportLoopError,
     installGlobalErrorReporting: installGlobalErrorReporting,
     clampIndex: clampIndex,
@@ -7464,6 +7485,7 @@
       });
       tickLoop();
       imuTickLoop();
+      reportFirstFrame(global, "dashboard");
     }
 
     if (document.readyState === "loading") {
