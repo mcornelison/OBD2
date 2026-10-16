@@ -155,6 +155,18 @@
     mark.addEventListener("error", markBrandReady);  // broken SVG: don't wait
   })();
 
+  // US-866: the splash's first frame, one console line (same format as the
+  // dashboard's reportFirstFrame in carousel.js). It reaches the journal only
+  // where chromium runs with --enable-logging=stderr.
+  if (typeof window.requestAnimationFrame === "function" && typeof console !== "undefined") {
+    window.requestAnimationFrame(function () {
+      window.requestAnimationFrame(function () {
+        console.info("[kiosk] first-frame page=splash sinceNavigationMs=" +
+          Math.round(window.performance.now()));
+      });
+    });
+  }
+
   loadVersionChip();
   schedule();
 })();
