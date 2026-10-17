@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.6",
-  "theme": "Sprint 104: V0.30 Engine + Fuel pages",
-  "description": "Sprint 104 (10 stories): provider normalises python-obd units once (fixes the S103 Driving page); engine-history provider and Engine page; Fuel page with total trim, open-loop flag and recent-window MPG; first-connect python-OBD debug log with connect phase timing. New card order Driving, Engine, Fuel. Re-ships S101 OS trim and S102 kiosk."
+  "version": "V0.30.7",
+  "theme": "Pi boot trim round 2 + kiosk logging",
+  "description": "Pi-only (no server change since V0.30.6). OS trim round 2: 21 more units masked, recorded pre-state for late entries (#107). Splash waits for X access (#106). First-frame journal marker for dashboard and splash (#108). Wayland dashboard and both splashes log to the journal (#109). Test fixes for known reds (#105). No mode file = X11, so boot behaviour is unchanged."
 }
