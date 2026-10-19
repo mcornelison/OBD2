@@ -711,6 +711,36 @@ step_install_journald_persistent() {
     "
 }
 
+step_install_logind_powerkey() {
+    # US-649-f: pin the power key to poweroff (CIO 2026-10-16: a clean
+    # shutdown). logind already defaults to poweroff, so this changes nothing
+    # today; it stops a future package or desktop default changing it silently.
+    # Sync-if-changed, mirroring step_install_journald_persistent. Unlike that
+    # step it NEVER restarts or reloads logind -- a live restart can drop the
+    # kiosk session; the drop-in takes effect on the next boot. Runs in both
+    # display modes.
+    echo "--- Step: Installing logind power-key drop-in (US-649-f) ---"
+    local sourceFile="deploy/eclipse-powerkey.conf"
+    local targetPath="/etc/systemd/logind.conf.d/50-eclipse-powerkey.conf"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: no logind restart (takes effect on next boot)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        sudo mkdir -p /etc/systemd/logind.conf.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'logind power-key drop-in already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'logind power-key drop-in installed: ${targetPath} (effective next boot).'
+        fi
+    "
+}
+
 step_install_polkit_poweroff() {
     # US-341 / I-036: install polkit rule granting mcornelison the
     # org.freedesktop.login1.power-off action without interactive auth.
@@ -2724,6 +2754,12 @@ step_purge_stale_bytecode
 # was trampled. Runs AFTER sync_tree so deploy/journald-persistent.conf
 # exists on the Pi.
 step_install_journald_persistent
+
+# US-649-f: logind power-key drop-in (HandlePowerKey=poweroff). Same class as the
+# journald drop-in -- idempotent OS config every deploy reasserts -- and called
+# unconditionally, outside any display-mode branch, so the pin holds in both
+# modes. Runs AFTER sync_tree so deploy/eclipse-powerkey.conf exists on the Pi.
+step_install_logind_powerkey
 
 # US-341 / I-036: polkit rule granting mcornelison the
 # org.freedesktop.login1.power-off action.  Without this rule
