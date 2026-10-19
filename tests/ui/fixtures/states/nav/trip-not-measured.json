@@ -1,0 +1,65 @@
+{
+  "description": "Recording, nothing integrated this process: distanceKm/distanceSinceTs null -> '-- mi' + 'not measured', never a fabricated zero.",
+  "now": "2026-10-20T20:12:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "obdLinkState": "linked",
+    "obdRetries": 0,
+    "obdLastSeenS": null,
+    "syncLastOkTs": null,
+    "syncRows": 0,
+    "syncPending": null,
+    "syncStale": false,
+    "powerSource": "external",
+    "runMode": "live",
+    "driveState": "recording",
+    "driveId": 112,
+    "obdAvailable": true,
+    "nowIso": "2026-10-20T20:12:00Z"
+  },
+  "system-status": {
+    "obdLink": {
+      "state": "linked",
+      "retries": 0,
+      "lastSeenS": null
+    },
+    "sync": {
+      "lastOkTs": null,
+      "rows": 0,
+      "pending": null,
+      "stale": false
+    },
+    "power": {
+      "source": "external",
+      "reasons": {}
+    },
+    "wifi": {
+      "state": null,
+      "ssid": null,
+      "rssiDbm": null
+    },
+    "drive": {
+      "state": "recording",
+      "driveId": 112,
+      "lastDrive": null,
+      "distanceKm": null,
+      "distanceSinceTs": null,
+      "elapsedSec": null,
+      "distancePartial": null
+    },
+    "idle": false,
+    "priorShutdown": null,
+    "runMode": "live",
+    "source": {
+      "obd": {
+        "available": true,
+        "reason": null
+      },
+      "wifi": {
+        "available": false,
+        "reason": "wifi: not read"
+      }
+    },
+    "ts": "2026-10-20T20:12:00Z"
+  }
+}

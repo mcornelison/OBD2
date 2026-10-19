@@ -478,7 +478,11 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
 
     MOVED PIN (US-890-d): the Fuel card's MPG-row LABELS (LAST 30 S / THIS
     DRIVE / SINCE RESET are Michroma at --fs-meta, Iris B-1). Its figures and
-    reasons stay --font-mono, pinned in tests/ui/test_fuel_page.py."""
+    reasons stay --font-mono, pinned in tests/ui/test_fuel_page.py.
+
+    MOVED PIN (US-896-b): the NAV card's bottom-row LABELS (GRADE / THIS
+    DRIVE / LAST DRIVE / SINCE; NAV spec s4.4, Iris UIDEV-004). The SINCE h:mm
+    and every figure stay --font-mono, pinned in tests/ui/test_nav_page.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -492,6 +496,7 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#driving-card .drv-gear",
         "#engine-card .eng-label",
         "#fuel-card .fuel-mpg .fuel-label",
+        "#nav-card .nav-label",
     }, bound
 
 

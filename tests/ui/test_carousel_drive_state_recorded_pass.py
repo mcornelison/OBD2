@@ -1065,38 +1065,10 @@ def test_theLiveFaceActuallyRenders_negativeControlForTheFinding():
     assert _tileByLabel(surface, "HEADING") is not None
 
 
-def test_liveMotionFeedRemovesTheLastDriveTileFromThePanel_characterisation():
-    """
-    Given: a LIVE states/imu payload -- the Pi once the sensor bus is wired
-    When: the panel renders the same system-status carrying drive 51
-    Then: the LAST DRIVE tile is ABSENT FROM THE PANEL ENTIRELY, and no surface
-          prints the drive id.
-
-          MEASURED, NOT INFERRED (and see the control above for how nearly it was
-          neither), and recorded as a finding rather than fixed (I-us638).
-          `idleCardView` is the only builder of the fact and `renderIdleBody` its
-          only consumer, so the tile lives on the idle FALLBACK face -- which
-          under US-541 IMU-always-on fires only when the motion feed is dead. The
-          System card's DRIVE tile prints no id at idle, so US-505's producer
-          keeps reading the drive log and nothing shows the answer.
-
-          Asserted across the WHOLE rendered body, not just the home card: the
-          claim is "nowhere on the panel", and a check scoped to one card would
-          be satisfied by a tile that had merely moved.
-    """
-    surface = _surface(_systemStatus(), imu=_liveImu())
-
-    # Re-stated locally rather than left to the control above: this test must
-    # not be able to pass on a blank face even if it is run alone.
-    assert _tileByLabel(surface, "G-FORCE") is not None, "the live face is blank"
-
-    assert _tileByLabel(surface, "LAST DRIVE") is None, (
-        "the LAST DRIVE tile is on the live face -- the finding in I-us638 has "
-        "been fixed; re-record this measurement and delete this test on purpose"
-    )
-    body = " ".join(_textOf(surface.tree))
-    assert "LAST DRIVE" not in body, body
-    assert "Drive " + str(_ATLAS_DRIVE_ID) not in body, body
+# MOVED PIN (US-896-b): test_liveMotionFeedRemovesTheLastDriveTileFromThePanel_
+# characterisation is DELETED on purpose (PM, CIO-approved 2026-10-19). I-us638
+# is fixed: LAST DRIVE now lives on the NAV card's trip row (CIO Q1, US-704
+# closes on US-896-b), pinned in tests/ui/test_nav_page.py.
 
 
 def test_theDriveTileNeverPrintsADriveIdWhileIdle_characterisation():

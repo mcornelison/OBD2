@@ -44,6 +44,8 @@
 #               |              | window (_resetEngineHistory).
 # 2026-10-18    | Rex (US-892-a) | _handleDriveStart clears the states/imu g peaks
 #               |              | (_resetImuPeaks) beside the trip reset.
+# 2026-10-18    | Rex (US-896-b) | _handleDriveEnd marks the trip's end
+#               |                | (_markTripEnded) so drive.elapsedSec freezes.
 # ================================================================================
 ################################################################################
 
@@ -136,6 +138,9 @@ class EventRouterMixin:
     # the trip distance would silently never integrate or reset).
     observeTripSpeed: Callable[..., None]
     _resetTripDistance: Callable[[Any], None]
+    # US-896-b: same MRO reason -- a stub here would leave drive.elapsedSec
+    # counting parked time after every drive end.
+    _markTripEnded: Callable[[Any], None]
 
     # US-892-a: provided by CardStateEmitterMixin -- an ANNOTATION for the same
     # MRO reason as observeGearInput above (a stub would shadow it and the g
@@ -332,6 +337,14 @@ class EventRouterMixin:
                 resetter()
             except Exception as e:  # noqa: BLE001 -- defensive
                 logger.debug(f"_resetEngineOnEscalation failed: {e}")
+
+        # US-896-b: freeze drive.elapsedSec at the drive end; the distance and
+        # its since-point are kept until the next drive start. Exception-
+        # isolated like the trip reset in _handleDriveStart.
+        try:
+            self._markTripEnded(getattr(session, 'endTime', None))
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.debug(f"Trip end mark failed: {e}")
 
         # B-053 / US-299: notify the SyncCadenceController so cadence
         # transitions ACTIVE -> DRAINING BEFORE triggerDriveEndSync fires

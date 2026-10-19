@@ -3725,6 +3725,93 @@
     return tape;
   }
 
+  // -------------------------------------------------------------------------
+  // US-896-b (F-160; spec s4.3/s4.4/s4.5): the NAV card's bottom row -- GRADE
+  // from states/imu, the trip from system-status's drive block. Pure; the
+  // renderer is in the browser block. No speed on this page (CIO N-2).
+  // -------------------------------------------------------------------------
+
+  // Spec s4.4: the reason under '-- mi' when there is no window to show.
+  var NAV_TRIP_NOT_MEASURED = "not measured";
+  // A window with no elapsedSec (the provider could not span it): the null
+  // says it was not read, on the glass.
+  var NAV_ELAPSED_NOT_READ = "elapsed not read";
+
+  // GRADE: the Motion grade tile's formatter (one decimal, signed, a true
+  // minus), so the two pages can never print one reading two ways. The slope
+  // glyph tilts with the sign of the PRINTED value, so '+0.0 %' lies flat
+  // rather than claiming a climb the digits do not show. A missing or undated
+  // feed is '--' + its reason, on the glass (the US-852 rule). Parked it stays
+  // live (spec s4.5); a stale feed is frozen under the NO UPDATE badge.
+  function navGradeView(data, nowMs) {
+    if (!isObj(data)) return { value: "--", slope: null, reason: "no motion feed" };
+    if (readAgeSec(data, nowMs) === null) {
+      return { value: "--", slope: null, reason: "no read time" };
+    }
+    var tile = imuGradeTile(data);
+    if (!tile.available) return { value: "--", slope: null, reason: tile.detail };
+    var shown = Math.round(tile.pct * 10);
+    return {
+      value: tile.value,
+      slope: shown > 0 ? "up" : shown < 0 ? "down" : "flat",
+      reason: null,
+    };
+  }
+
+  // h:mm from the provider's elapsedSec. NO time arithmetic on timestamps
+  // (spec s4.4): a page-side now - sinceTs would count parked time as drive
+  // time. Whole minutes, never rounded up past what has elapsed.
+  function fmtElapsed(sec) {
+    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
+    return Math.floor(sec / 3600) + ":" + two(Math.floor((sec % 3600) / 60));
+  }
+
+  // The trip label, precedence top wins (spec s4.4, Atlas B-1(b), CIO Q1):
+  //   1. distanceKm or distancePartial null -> '-- mi' + 'not measured'
+  //   2. distancePartial true   -> 'SINCE h:mm', parked OR recording
+  //   3. drive.state known, not recording -> 'LAST DRIVE'
+  //   4. otherwise               -> 'THIS DRIVE'
+  // The page reads the provider's facts and compares no timestamps: parked is
+  // never inferred from speed, elapsed or time, and a null drive.state does not
+  // assert parked. Rule 1 owns the figures only; its label still follows the
+  // state (rules 3/4), as it has no window to qualify. An unreadable
+  // system-status arrives as null, which is rule 1; a stale one is painted as
+  // published -- never extrapolated (Atlas Q2).
+  //
+  // 'SINCE' is a label (Michroma) and h:mm a READING (--font-mono): the
+  // Michroma subset has no ':' (Iris UIDEV-004), so the two travel apart.
+  // h:mm is the panel's one 12-hour clock without AM/PM, the Engine history
+  // label's rule (engineHistoryWindow).
+  function navTripView(sysData) {
+    var d = isObj(sysData) && isObj(sysData.drive) ? sysData.drive : {};
+    var state = typeof d.state === "string" && d.state ? d.state : null;
+    var parked = state !== null && state !== "recording";
+    var km = typeof d.distanceKm === "number" && isFinite(d.distanceKm) ? d.distanceKm : null;
+    var partial = typeof d.distancePartial === "boolean" ? d.distancePartial : null;
+    var stateLabel = parked ? "LAST DRIVE" : "THIS DRIVE";
+    if (km === null || partial === null) {
+      return {
+        window: "not-measured", label: stateLabel, time: null,
+        distance: "-- mi", elapsed: NAV_TRIP_NOT_MEASURED, measured: false,
+      };
+    }
+    var elapsed = fmtElapsed(d.elapsedSec);
+    var view = {
+      window: parked ? "last" : "this", label: stateLabel, time: null,
+      distance: (km / KM_PER_MILE).toFixed(1) + " mi",
+      elapsed: elapsed === null ? NAV_ELAPSED_NOT_READ : elapsed + " elapsed",
+      measured: true,
+    };
+    if (partial) {
+      var since = typeof d.distanceSinceTs === "string" && ISO_INSTANT.test(d.distanceSinceTs)
+        ? new Date(Date.parse(d.distanceSinceTs)) : null;
+      view.window = "since";
+      view.label = "SINCE";
+      view.time = since ? fmtTimeOfDay(since, false).split(" ")[0] : DRIVING_NOT_READ;
+    }
+    return view;
+  }
+
   // US-508: the GEAR glyph. Gear is NOT an IMU fact -- Atlas ruled it out of
   // states/imu explicitly, because it is Spool's OBD derivation from a SEPARATE
   // producer (F5M33 ratios + tyre circumference, debounced; validated against
@@ -5141,6 +5228,10 @@
     navGliding: navGliding,
     navHeadingView: navHeadingView,
     navTape: navTape,
+    // US-896-b: the NAV card's bottom row.
+    navGradeView: navGradeView,
+    navTripView: navTripView,
+    fmtElapsed: fmtElapsed,
     gearView: gearView,
     gearReasonText: gearReasonText,
     displayUnits: displayUnits,
@@ -6183,6 +6274,67 @@
       }
       var point = card.querySelector(".nav-point");
       if (point) point.textContent = drawTape ? compassPoint8(drawnDeg) : "";
+    }
+
+    // US-896-b: the slope glyph's line in its 20 x 20 box, per sign. Up rises
+    // to the right (climbing), down falls, flat is level.
+    var NAV_SLOPE_LINE = {
+      up: { y1: 18, y2: 2 },
+      down: { y1: 2, y2: 18 },
+      flat: { y1: 10, y2: 10 },
+    };
+
+    // Paint GRADE (spec s4.3): the value, the glyph tilted by its sign, and a
+    // null's reason on the glass beneath the '--'.
+    function renderNavGrade(card, view) {
+      if (!card || !view) return;
+      var cell = card.querySelector(".nav-grade");
+      if (!cell) return;
+      cell.setAttribute("data-slope", view.slope || "none");
+      var value = cell.querySelector(".nav-grade-value");
+      if (value) {
+        value.textContent = view.value;
+        value.setAttribute("data-none", view.slope ? "false" : "true");
+      }
+      var glyph = cell.querySelector(".nav-slope");
+      if (glyph) {
+        glyph.hidden = !view.slope;
+        var line = glyph.querySelector(".nav-slope-line");
+        var ends = view.slope ? NAV_SLOPE_LINE[view.slope] : null;
+        if (line && ends) {
+          line.setAttribute("y1", ends.y1);
+          line.setAttribute("y2", ends.y2);
+        }
+      }
+      var note = cell.querySelector(".nav-grade-note");
+      if (note) {
+        note.textContent = view.reason || "";
+        note.hidden = !view.reason;
+      }
+    }
+
+    // Paint the trip (spec s4.4): the label (SINCE + its mono h:mm when the
+    // window is partial), the distance in miles and the elapsed h:mm, all as
+    // navTripView resolved them from the provider.
+    function renderNavTrip(card, view) {
+      if (!card || !view) return;
+      var cell = card.querySelector(".nav-trip");
+      if (!cell) return;
+      cell.setAttribute("data-window", view.window);
+      var label = cell.querySelector(".nav-trip-label");
+      if (label) label.textContent = view.label;
+      var time = cell.querySelector(".nav-trip-time");
+      if (time) {
+        time.textContent = view.time || "";
+        time.hidden = !view.time;
+      }
+      var distance = cell.querySelector(".nav-trip-distance");
+      if (distance) {
+        distance.textContent = view.distance;
+        distance.setAttribute("data-none", view.measured ? "false" : "true");
+      }
+      var elapsed = cell.querySelector(".nav-trip-elapsed");
+      if (elapsed) elapsed.textContent = view.elapsed;
     }
 
     // The ~15-min grade trend, as ONE polyline. y is flipped because screen y
@@ -8032,6 +8184,9 @@
           fuelMpgView(await stateOnce("fuel-economy")),
           fuelReset, engineParked.parked, fuelConfirmSec()
         ));
+        // US-896-b: the NAV trip from the SAME system-status every other
+        // surface on this tick read (cached); the page does no time arithmetic.
+        renderNavTrip(navCard, navTripView(await stateOnce("system-status")));
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint
@@ -8084,6 +8239,8 @@
         );
         navGlide = navGlideStep(navGlide, view, nowMs, prefersReducedMotion());
         renderNavCard(navCard, view, navDrawnDeg(navGlide, nowMs));
+        // US-896-b: GRADE from the same states/imu read, on the same clock.
+        renderNavGrade(navCard, navGradeView(lastImu, nowMs));
         if (navGliding(navGlide, nowMs) && !navFramePending &&
             typeof global.requestAnimationFrame === "function") {
           navFramePending = true;

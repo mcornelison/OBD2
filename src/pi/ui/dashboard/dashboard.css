@@ -2150,6 +2150,12 @@ html, body {
   --nav-tick-major: 2.5px;
   --nav-hairline: 2px;          /* the centre hairline (no caret, US-715) */
   --nav-base: 1px;              /* the tape's baseline */
+  /* US-896-b: the bottom row (spec s3, ~79 px). */
+  --nav-cell-gap: 2px;          /* label -> value -> sub-line */
+  --nav-slope-size: 26px;       /* the slope glyph's box */
+  --nav-slope-gap: 6px;         /* glyph -> grade value */
+  --nav-slope-stroke: 2.5px;
+  --nav-time-gap: 6px;          /* SINCE -> its h:mm */
 }
 #nav-card .card-body {
   display: flex; flex-direction: column; gap: var(--nav-gap);
@@ -2206,4 +2212,64 @@ html, body {
 #nav-card .nav-point {
   font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-primary);
   line-height: var(--nav-line); color: var(--text-secondary);
+}
+/* US-896-b (spec s3/s4.3/s4.4): GRADE left, the trip right-aligned. Pushed
+   to the bottom so the deliberate slack sits above it. Labels are Michroma at
+   --fs-meta (read once, parked); values --fs-primary (>= 34 px, driver-read);
+   the elapsed and a null's reason --fs-label. SINCE's h:mm is a READING in
+   the mono face: the Michroma subset has no ':'. */
+#nav-card .nav-bottom {
+  flex: none; margin-top: auto;
+  /* Top-aligned: the two labels and the two values share lines whether or
+     not GRADE carries a reason beneath its value. */
+  display: flex; justify-content: space-between; align-items: flex-start;
+}
+#nav-card .nav-grade {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--nav-cell-gap);
+}
+#nav-card .nav-trip {
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--nav-cell-gap);
+}
+#nav-card .nav-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--nav-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#nav-card .nav-trip-head {
+  display: flex; align-items: baseline; gap: var(--nav-time-gap);
+}
+#nav-card .nav-trip-time {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-meta); line-height: var(--nav-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#nav-card .nav-grade-line {
+  display: flex; align-items: center; gap: var(--nav-slope-gap);
+}
+#nav-card .nav-slope {
+  flex: none; width: var(--nav-slope-size); height: var(--nav-slope-size);
+}
+#nav-card .nav-slope-line {
+  stroke: var(--accent); stroke-width: var(--nav-slope-stroke); stroke-linecap: round;
+}
+#nav-card .nav-grade-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); line-height: var(--nav-line);
+  color: var(--text-primary); white-space: nowrap;
+}
+#nav-card .nav-trip-distance {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); line-height: var(--nav-line);
+  color: var(--text-primary); white-space: nowrap;
+}
+#nav-card .nav-grade-value[data-none="true"] { color: var(--text-tertiary); }
+#nav-card .nav-trip-distance[data-none="true"] { color: var(--text-tertiary); }
+#nav-card .nav-grade-note {
+  font-size: var(--fs-label); line-height: var(--nav-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#nav-card .nav-trip-elapsed {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); line-height: var(--nav-note-line);
+  color: var(--text-secondary); white-space: nowrap;
 }

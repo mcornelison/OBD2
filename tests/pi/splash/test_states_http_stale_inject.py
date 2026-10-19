@@ -161,10 +161,12 @@ def test_configJsonValue_isServed(tmp_path):
 
 
 def test_keyAbsent_servesTheValidatorDefault(served):
-    """The effective value of an absent key is the validator default (2.0)."""
+    """The effective value of an absent key is the validator default (3.0).
+
+    MOVED PIN (US-896-b): US-896-a raised the imuSec default 2.0 -> 3.0."""
     server, _ = served
     assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
-    assert DEFAULTS[_IMU_SEC_KEY] == 2.0
+    assert DEFAULTS[_IMU_SEC_KEY] == 3.0
 
 
 @pytest.mark.parametrize("bad", [0, -1, "3.5", True, None])

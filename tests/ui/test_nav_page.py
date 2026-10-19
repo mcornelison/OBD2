@@ -26,6 +26,9 @@
 # ================================================================================
 # 2026-10-18    | Rex (US-896-a) | Initial -- NAV bearing tape, digits, point,
 #                                glide and heading states.
+# 2026-10-18    | Rex (US-896-b) | The bottom row: GRADE (states/imu) and the
+#                                trip (system-status drive: distance, elapsed,
+#                                THIS DRIVE / SINCE h:mm / LAST DRIVE).
 # ================================================================================
 ################################################################################
 
@@ -743,3 +746,273 @@ def test_dom_theBarNamesTheCardNav():
     dom = _boot(_imu("trusted-247"), _now("trusted-247"), steps=steps)
     name = _all(dom["tree"], lambda n: n.get("attrs", {}).get("id") == "page-name")
     assert _textOf(name[0]) == "NAV"
+
+
+
+# ---------------------------------------------------------------------------
+# US-896-b: the bottom row -- GRADE and the trip (spec s4.3/s4.4/s4.5)
+# ---------------------------------------------------------------------------
+
+TRIP_FIXTURES = [
+    "trip-mid-drive", "trip-drive-start", "trip-last-drive", "trip-not-measured",
+    "trip-partial-parked", "trip-state-null", "trip-partial-after-restart",
+]
+_ZONE = "America/Chicago"
+
+
+def _sys(name: str) -> dict[str, Any]:
+    return _fixture(name)["system-status"]
+
+
+def _callTz(fn: str, *args: Any, tz: str = _ZONE) -> Any:
+    """_call on a pinned local zone: SINCE's h:mm is LOCAL time."""
+    payload = {"js": _JS, "fn": fn, "args": list(args)}
+    proc = subprocess.run(
+        [_NODE or "node", "-e", _CALL], input=json.dumps(payload),
+        capture_output=True, text=True, encoding="utf-8", env=dict(os.environ, TZ=tz),
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def _trip(payload: Any) -> tuple[str, str | None, str, str]:
+    v = _callTz("navTripView", payload)
+    return (v["label"], v["time"], v["distance"], v["elapsed"])
+
+
+def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
+    """Each trip fixture IS buildSystemStatusState's output for its inputs, so
+    the page is tested against the provider's real drive block."""
+    from pi.splash.system_status_emitter import buildSystemStatusState
+
+    for name in TRIP_FIXTURES:
+        fx = _fixture(name)
+        assert fx["description"] and fx["zone"] == _ZONE, name
+        assert buildSystemStatusState(**fx["inputs"]) == fx["system-status"], name
+
+
+def test_gradeNullFixture_isTheRealBridgesPayload_gradeOnlyNull():
+    from pi.sensors.imu_state_bridge import buildImuState
+
+    fx = _fixture("grade-null")
+    kwargs = dict(fx["inputs"])
+    for key in ("gravity", "linear", "mag"):
+        if kwargs.get(key) is not None:
+            kwargs[key] = tuple(kwargs[key])
+    assert buildImuState(**kwargs) == fx["imu"]
+    assert fx["imu"]["gradePct"] is None
+    assert fx["imu"]["reasons"]["gradePct"] == "pitch_out_of_range"
+    assert fx["imu"]["headingDeg"] == 247.0
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("pct", "value", "slope"), [
+    (4.1, "+4.1 %", "up"),
+    (-2.4, "−2.4 %", "down"),
+    (0.0, "+0.0 %", "flat"),
+    (0.04, "+0.0 %", "flat"),
+    (-0.06, "−0.1 %", "down"),
+])
+def test_grade_oneDecimalSigned_glyphTiltsWithThePrintedSign(pct: float, value: str, slope: str):
+    imu = dict(_imu("trusted-247"), gradePct=pct)
+    v = _call("navGradeView", imu, _now("trusted-247"))
+    assert (v["value"], v["slope"], v["reason"]) == (value, slope, None)
+
+
+@_NODE_ONLY
+def test_grade_null_isDashPlusItsReason():
+    v = _call("navGradeView", _imu("grade-null"), _now("grade-null"))
+    assert (v["value"], v["slope"], v["reason"]) == ("--", None, "pitch beyond range")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("payload", "reason"), [
+    (None, "no motion feed"),
+    ({"available": True, "gradePct": 4.1}, "no read time"),
+])
+def test_grade_noFeedOrUndated_isDashPlusReason(payload: Any, reason: str):
+    v = _call("navGradeView", payload, _now("trusted-247"))
+    assert (v["value"], v["reason"]) == ("--", reason)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("sec", "text"), [
+    (0, "0:00"), (1380, "0:23"), (1800, "0:30"), (1439, "0:23"), (3725, "1:02"),
+    (None, None), (-5, None),
+])
+def test_fmtElapsed_hMm_wholeMinutes(sec: Any, text: str | None):
+    assert _call("fmtElapsed", sec) == text
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("name", "expected"), [
+    ("trip-mid-drive", ("THIS DRIVE", None, "12.4 mi", "0:23 elapsed")),
+    ("trip-drive-start", ("THIS DRIVE", None, "0.0 mi", "0:00 elapsed")),
+    ("trip-last-drive", ("LAST DRIVE", None, "12.4 mi", "0:30 elapsed")),
+    ("trip-not-measured", ("THIS DRIVE", None, "-- mi", "not measured")),
+    ("trip-partial-parked", ("SINCE", "2:49", "12.4 mi", "0:23 elapsed")),
+    ("trip-state-null", ("THIS DRIVE", None, "12.4 mi", "0:23 elapsed")),
+    ("trip-partial-after-restart", ("SINCE", "2:49", "12.4 mi", "0:23 elapsed")),
+])
+def test_validation_tripLabel_precedence_perFixture(name: str, expected: tuple):
+    assert _trip(_sys(name)) == expected
+
+
+@_NODE_ONLY
+def test_validation_distancePartialNull_with19km_isNotMeasured():
+    status = json.loads(json.dumps(_sys("trip-mid-drive")))
+    status["drive"]["distancePartial"] = None
+    assert _trip(status)[2:] == ("-- mi", "not measured")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("state, label", [
+    ("idle", "LAST DRIVE"),
+    ("recording", "THIS DRIVE"),
+    (None, "THIS DRIVE"),
+])
+def test_notMeasured_labelStaysStateDerived(state: Any, label: str):
+    """CIO ruling 2026-10-19 (Q-A): not-measured never fixes THIS DRIVE --
+    LAST DRIVE when the state is known and not recording, else THIS DRIVE."""
+    status = json.loads(json.dumps(_sys("trip-last-drive")))
+    status["drive"]["state"] = state
+    status["drive"]["distancePartial"] = None
+    assert _trip(status) == (label, None, "-- mi", "not measured")
+
+
+@_NODE_ONLY
+def test_partialWins_overParked_neverLastDrive():
+    """A partial window never claims LAST DRIVE, whatever the state says."""
+    for state in ("idle", "waiting", "recording"):
+        status = json.loads(json.dumps(_sys("trip-partial-parked")))
+        status["drive"]["state"] = state
+        assert _trip(status)[:2] == ("SINCE", "2:49"), state
+
+
+@_NODE_ONLY
+def test_since_isTwelveHourWithoutAmPm_inTheLocalZone():
+    """19:49Z is 14:49 in Chicago and 04:49 next day in Tokyo: the panel's
+    local clock, never UTC, never a meridiem."""
+    status = _sys("trip-partial-after-restart")
+    assert _callTz("navTripView", status)["time"] == "2:49"
+    assert _callTz("navTripView", status, tz="Asia/Tokyo")["time"] == "4:49"
+
+
+@_NODE_ONLY
+def test_noPageTimeArithmetic_elapsedIsTheProvidersOnly():
+    """sinceTs 23 min before the payload's ts, elapsedSec 60: the page prints
+    0:01. A page-side now - sinceTs would print 0:23."""
+    status = json.loads(json.dumps(_sys("trip-mid-drive")))
+    status["drive"]["elapsedSec"] = 60
+    assert _trip(status)[3] == "0:01 elapsed"
+    status["drive"]["elapsedSec"] = None
+    assert _trip(status)[3] == "elapsed not read"
+
+
+@_NODE_ONLY
+def test_staleSystemStatus_isNeverExtrapolated():
+    """The same drive block, dated hours earlier, prints the same figures:
+    the page never extends a published window."""
+    status = json.loads(json.dumps(_sys("trip-mid-drive")))
+    status["ts"] = "2026-10-20T08:00:00Z"
+    assert _trip(status) == _trip(_sys("trip-mid-drive"))
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("payload", [None, {}, {"drive": None}, {"drive": {"state": "recording"}}])
+def test_noSystemStatus_isNotMeasured_andNeverParked(payload: Any):
+    assert _trip(payload) == ("THIS DRIVE", None, "-- mi", "not measured")
+
+
+@_NODE_ONLY
+def test_tripView_carriesNoSpeed():
+    """CIO N-2: the driving page owns speed."""
+    v = _callTz("navTripView", _sys("trip-mid-drive"))
+    assert not any("speed" in k.lower() for k in v)
+
+
+def test_skeleton_bottomRowUnderTheReadout_notReadFaces():
+    markup = _navMarkup()
+    assert markup.index('class="nav-readout"') < markup.index('class="nav-bottom"')
+    bottom = markup[markup.index('class="nav-bottom"'):]
+    assert bottom.index('class="nav-grade"') < bottom.index('class="nav-trip"')
+    assert ">GRADE<" in bottom and ">THIS DRIVE<" in bottom
+    assert ">--<" in bottom and ">not read<" in bottom
+    assert ">-- mi<" in bottom and ">not measured<" in bottom
+    assert "mph" not in markup and "speed" not in markup.lower()
+
+
+def test_css_bottomRow_valuesFsPrimary_labelsMichromaMeta_timeMono():
+    rules = _navRules()
+    for sel in ("#nav-card .nav-grade-value", "#nav-card .nav-trip-distance"):
+        assert "font-size: var(--fs-primary)" in rules[sel], sel
+        assert "font-family: var(--font-mono)" in rules[sel], sel
+    label = rules["#nav-card .nav-label"]
+    assert "font-family: var(--font-display)" in label
+    assert "font-size: var(--fs-meta)" in label
+    time = rules["#nav-card .nav-trip-time"]
+    assert "font-family: var(--font-mono)" in time and "font-size: var(--fs-meta)" in time
+    assert "font-size: var(--fs-label)" in rules["#nav-card .nav-trip-elapsed"]
+    assert "font-size: var(--fs-label)" in rules["#nav-card .nav-grade-note"]
+    assert "align-items: flex-end" in rules["#nav-card .nav-trip"]
+    assert _tokenPx("fs-primary") >= 34
+
+
+def _bottom(dom: dict[str, Any]) -> dict[str, Any]:
+    card = _navCard(dom)
+    grade, trip = _one(card, "nav-grade"), _one(card, "nav-trip")
+    note, time = _one(grade, "nav-grade-note"), _one(trip, "nav-trip-time")
+    glyph = _one(grade, "nav-slope")
+    return {
+        "grade": _textOf(_one(grade, "nav-grade-value")),
+        "note": _textOf(note) if _shown(note) else "",
+        "slope": grade["attrs"].get("data-slope"),
+        "glyph": _shown(glyph),
+        "label": _textOf(_one(trip, "nav-trip-label")),
+        "time": _textOf(time) if _shown(time) else "",
+        "distance": _textOf(_one(trip, "nav-trip-distance")),
+        "elapsed": _textOf(_one(trip, "nav-trip-elapsed")),
+        "window": trip["attrs"].get("data-window"),
+    }
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("name", "expected"), [
+    ("trip-mid-drive", ("THIS DRIVE", "", "12.4 mi", "0:23 elapsed")),
+    ("trip-last-drive", ("LAST DRIVE", "", "12.4 mi", "0:30 elapsed")),
+    ("trip-partial-after-restart", ("SINCE", "2:49", "12.4 mi", "0:23 elapsed")),
+    ("trip-partial-parked", ("SINCE", "2:49", "12.4 mi", "0:23 elapsed")),
+    ("trip-state-null", ("THIS DRIVE", "", "12.4 mi", "0:23 elapsed")),
+    ("trip-not-measured", ("THIS DRIVE", "", "-- mi", "not measured")),
+    ("trip-drive-start", ("THIS DRIVE", "", "0.0 mi", "0:00 elapsed")),
+])
+def test_dom_validation_tripOnTheGlass(name: str, expected: tuple, monkeypatch):
+    monkeypatch.setenv("TZ", _ZONE)
+    b = _bottom(_boot(_imu("trusted-247"), _now("trusted-247"), system=_sys(name)))
+    assert (b["label"], b["time"], b["distance"], b["elapsed"]) == expected
+
+
+@_NODE_ONLY
+def test_dom_grade_trusted_isLiveFlat_andNullShowsItsReason():
+    live = _bottom(_boot(_imu("trusted-247"), _now("trusted-247")))
+    assert (live["grade"], live["note"], live["slope"], live["glyph"]) == (
+        "+0.0 %", "", "flat", True
+    )
+    null = _bottom(_boot(_imu("grade-null"), _now("grade-null")))
+    assert (null["grade"], null["note"], null["slope"], null["glyph"]) == (
+        "--", "pitch beyond range", "none", False
+    )
+
+
+@_NODE_ONLY
+def test_dom_parkedEngineOff_gradeAndTripStayLive():
+    """Spec s4.5: nothing greys out because the car stopped."""
+    fx = _fixture("parked-engine-off")
+    b = _bottom(_boot(fx["imu"], _now("parked-engine-off"), system=_sys("trip-last-drive")))
+    assert (b["grade"], b["label"], b["distance"]) == ("+0.0 %", "LAST DRIVE", "12.4 mi")
+
+
+@_NODE_ONLY
+def test_dom_noImuFile_gradeSaysNoMotionFeed():
+    b = _bottom(_boot(None, _now("trusted-247")))
+    assert (b["grade"], b["note"]) == ("--", "no motion feed")

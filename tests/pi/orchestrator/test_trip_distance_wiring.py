@@ -15,6 +15,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-14    | Rex (US-880-a) | Initial.
+# 2026-10-18    | Rex (US-896-b) | drive.elapsedSec (frozen at drive end by
+#               |                | _markTripEnded) and drive.distancePartial;
+#               |                | the system-status clock is injected, and
+#               |                | endDrive carries the session's endTime.
 # ================================================================================
 ################################################################################
 
@@ -24,7 +28,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -32,7 +36,10 @@ import pytest
 from pi.obdii.drive.types import DriveSession
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
 from pi.obdii.orchestrator.event_router import EventRouterMixin
-from pi.splash.system_status_emitter import SYSTEM_STATUS_FILENAME
+from pi.splash.system_status_emitter import (
+    SYSTEM_STATUS_FILENAME,
+    makeSystemStatusEmitter,
+)
 
 # America/Chicago is UTC-5 in October (CDT): a naive local 09:58:02 is 14:58:02Z.
 _ZONE = "America/Chicago"
@@ -117,6 +124,11 @@ class _Orch(EventRouterMixin, CardStateEmitterMixin):
         self._initializeCardStateEmitters()
         self._tripClock = self.clock
         self.statesDir = statesDir
+        # US-896-b: system-status's publish clock, so elapsedSec is exact.
+        self.nowIso = "2026-10-20T15:00:00Z"
+        self._systemStatusEmitter = makeSystemStatusEmitter(
+            statesDir, syncStaleThresholdS=120.0, nowIsoFn=lambda: self.nowIso
+        )
 
     def speed(self, kmh: float | None, local: datetime | None = None) -> None:
         self._handleReading(_Reading("SPEED", kmh, local))
@@ -125,9 +137,11 @@ class _Orch(EventRouterMixin, CardStateEmitterMixin):
         self._driveDetector.driving = True
         self._handleDriveStart(DriveSession(startTime=startLocal))
 
-    def endDrive(self) -> None:
+    def endDrive(self, endLocal: datetime | None = None) -> None:
         self._driveDetector.driving = False
-        self._handleDriveEnd(DriveSession(startTime=_DRIVE_START_LOCAL))
+        self._handleDriveEnd(
+            DriveSession(startTime=_DRIVE_START_LOCAL, endTime=endLocal)
+        )
 
     def drive(self) -> dict:
         self._emitSystemStatusState()
@@ -280,3 +294,161 @@ def test_cardStatesDisabled_observeTripSpeedIsInert(tmp_path):
     orch.speed(50.0, datetime(2026, 10, 20, 9, 58, 3))
 
     assert orch._gatherTripDistance() == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# US-896-b: drive.elapsedSec (Atlas Q2/G2) and drive.distancePartial (B-1(b))
+# ---------------------------------------------------------------------------
+
+
+def test_freshProcess_elapsedAndPartial_areNull(orch):
+    drive = orch.drive()
+
+    assert drive["elapsedSec"] is None
+    assert drive["distancePartial"] is None
+
+
+def test_validation_recording23Minutes_elapsedIs1380(orch):
+    orch.startDrive()
+    orch.nowIso = "2026-10-20T15:21:02Z"  # drive start 14:58:02Z + 23 min
+
+    drive = orch.drive()
+
+    assert drive["state"] == "recording"
+    assert drive["elapsedSec"] == 1380
+
+
+def test_driveStart_publishesElapsedZero(orch):
+    orch.startDrive()
+    orch.nowIso = _DRIVE_START_TS
+
+    assert orch.drive()["elapsedSec"] == 0
+
+
+def test_validation_driveEndAt30Min_readAt40Min_elapsedFrozenAt1800(orch):
+    orch.startDrive()
+    orch.endDrive(datetime(2026, 10, 20, 10, 28, 2))  # local; 15:28:02Z = T+30 min
+    orch.nowIso = "2026-10-20T15:38:02Z"  # T+40 min
+
+    drive = orch.drive()
+
+    assert drive["state"] == "idle"
+    assert drive["elapsedSec"] == 1800
+    orch.nowIso = "2026-10-20T17:00:00Z"
+    assert orch.drive()["elapsedSec"] == 1800
+
+
+def test_driveEnd_withNoUsableEndTime_freezesAtTheCallbacksOwnWallTime(orch):
+    """DriveDetector stamps endTime = now() the instant before the callback; a
+    session without one is frozen at the callback's own UTC wall time, never
+    left counting parked time as drive time."""
+    orch._obdLiveClock = lambda: datetime(2026, 10, 20, 15, 10, 2, tzinfo=UTC)
+    orch.startDrive()
+    orch.endDrive(None)
+    orch.nowIso = "2026-10-20T16:00:00Z"
+
+    assert orch.drive()["elapsedSec"] == 720
+
+
+def test_validation_nextDriveStart_clearsTheEndMark_andElapsedCountsAgain(orch):
+    orch.startDrive()
+    orch.endDrive(datetime(2026, 10, 20, 10, 28, 2))
+    orch.startDrive(datetime(2026, 10, 20, 11, 0, 0))  # 16:00:00Z
+    orch.nowIso = "2026-10-20T16:05:00Z"
+
+    drive = orch.drive()
+
+    assert drive["distanceSinceTs"] == "2026-10-20T16:00:00Z"
+    assert drive["elapsedSec"] == 300
+    orch.nowIso = "2026-10-20T16:06:00Z"
+    assert orch.drive()["elapsedSec"] == 360
+
+
+def test_validation_midDriveRestart_elapsedFromTheFirstSpeedReading(tmp_path):
+    orch = _Orch(str(tmp_path / "states"), driving=True)
+    orch.speed(72.0, datetime(2026, 10, 20, 10, 0, 5))  # 15:00:05Z
+    orch.nowIso = "2026-10-20T15:23:05Z"
+
+    drive = orch.drive()
+
+    assert drive["distanceSinceTs"] == "2026-10-20T15:00:05Z"
+    assert drive["elapsedSec"] == 1380
+
+
+def test_validation_driveStartThenSpeed_distancePartialFalse(orch):
+    orch.startDrive()
+    orch.speed(36.0, datetime(2026, 10, 20, 9, 58, 3))
+
+    assert orch.drive()["distancePartial"] is False
+
+
+def test_driveStart_beforeAnyReading_distancePartialFalse(orch):
+    orch.startDrive()
+
+    assert orch.drive()["distancePartial"] is False
+
+
+def test_validation_freshProcessSpeedNoDriveStart_distancePartialTrue(tmp_path):
+    orch = _Orch(str(tmp_path / "states"), driving=True)
+    orch.speed(72.0, datetime(2026, 10, 20, 10, 0, 5))
+    orch.clock.advance(50.0)
+    orch.speed(72.0, datetime(2026, 10, 20, 10, 0, 55))
+
+    drive = orch.drive()
+
+    assert drive["distancePartial"] is True
+    assert drive["distanceSinceTs"] == "2026-10-20T15:00:05Z"
+
+
+def test_validation_aLaterDriveStart_distancePartialFalse(tmp_path):
+    orch = _Orch(str(tmp_path / "states"), driving=True)
+    orch.speed(72.0, datetime(2026, 10, 20, 10, 0, 5))
+    orch.endDrive(datetime(2026, 10, 20, 10, 20, 5))
+    assert orch.drive()["distancePartial"] is True  # the true label survives the stop
+
+    orch.startDrive(datetime(2026, 10, 20, 11, 0, 0))
+
+    assert orch.drive()["distancePartial"] is False
+
+
+def test_validation_noReading_distancePartialNull(tmp_path):
+    """Recording, but no SPEED reading yet and no drive start: nothing to qualify."""
+    orch = _Orch(str(tmp_path / "states"), driving=True)
+
+    drive = orch.drive()
+
+    assert drive["distanceSinceTs"] is None
+    assert drive["distancePartial"] is None
+    assert drive["elapsedSec"] is None
+
+
+def test_validation_noIntegrator_distancePartialAndElapsedNull(tmp_path):
+    class _Dark(_Orch):
+        def _initializeCardStateEmitters(self) -> None:  # type: ignore[override]
+            self._cardStateEmitEnabled = False
+            CardStateEmitterMixin._initializeCardStateEmitters(self)
+
+    orch = _Dark(str(tmp_path / "states"), driving=True)
+    orch.speed(50.0, datetime(2026, 10, 20, 9, 58, 3))
+    orch._handleDriveStart(DriveSession(startTime=_DRIVE_START_LOCAL))
+    orch._handleDriveEnd(DriveSession(startTime=_DRIVE_START_LOCAL))
+
+    drive = orch.drive()
+
+    assert drive["distancePartial"] is None
+    assert drive["elapsedSec"] is None
+
+
+def test_markTripEnded_failure_isIsolated_fromTheRestOfDriveEnd(orch):
+    """Exception-isolated like _resetTripDistance: the external callback runs."""
+    seen: list[Any] = []
+    orch._onDriveEnd = seen.append
+
+    def _boom(_t: Any) -> None:
+        raise RuntimeError("boom")
+
+    orch._markTripEnded = _boom  # type: ignore[method-assign]
+    orch.startDrive()
+    orch.endDrive(datetime(2026, 10, 20, 10, 28, 2))
+
+    assert len(seen) == 1

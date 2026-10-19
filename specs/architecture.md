@@ -6070,7 +6070,8 @@ The `drive` block of `states/system-status` carries two always-present keys:
 
 ```json
 "drive": {"state": "recording", "driveId": 118, "lastDrive": {...},
-          "distanceKm": 12.38, "distanceSinceTs": "2026-10-20T14:58:02Z"}
+          "distanceKm": 12.38, "distanceSinceTs": "2026-10-20T14:58:02Z",
+          "elapsedSec": 1380, "distancePartial": false}
 ```
 
 - **`distanceKm`** is this drive's distance from the ONE speed integrator,
@@ -6081,6 +6082,26 @@ The `drive` block of `states/system-status` carries two always-present keys:
   it is the drive start's event ts. After a process start in the middle of a drive it is
   the event ts of the first SPEED reading integrated, so a partial distance says so.
   `null` when nothing is integrated and no drive has started in this process.
+- **`elapsedSec`** (int, US-896-b, Atlas S105 Q2/G2) is the window's duration, from the
+  SAME origin as the distance, so "12.4 mi over 0:23" is one window. While the window is
+  open it is the publish instant (the payload's `ts`) minus `distanceSinceTs`. At drive end
+  `EventRouter._handleDriveEnd` calls `_markTripEnded(session.endTime)` (exception-isolated
+  like the reset, same `_tripEventTs` conversion), and from then on it is **frozen** at the
+  drive-end ts minus `distanceSinceTs`: the distance is kept until the next drive start, so
+  without the mark it would count parked time as drive time. A session with no usable end
+  time is marked at the callback's own UTC wall time (the detector stamps `endTime = now()`
+  the instant before it calls back). `_resetTripDistance` (drive start) clears the mark.
+  `null` when `distanceSinceTs` is null, a timestamp does not parse, or the span would be
+  negative (two clocks disagreeing). Derived once, in `deriveElapsedSec`
+  (`system_status_emitter.py`); the page formats `h:mm` and does no time arithmetic.
+- **`distancePartial`** (bool, US-896-b, Atlas B-1(b); same name and polarity as
+  `states/engine-history.partial`) is `true` when the window starts at the first SPEED
+  reading after a mid-drive process start (the restart branch of `observeTripSpeed`), and
+  `false` when it starts at a drive start (`_resetTripDistance`). It survives drive end:
+  a partial window stays partial after the car stops. Published whenever
+  `distanceSinceTs` is non-null, `null` when it is null (nothing to qualify). Always a key.
+  The NAV page labels the window from it: `false` -> `THIS DRIVE` (or `LAST DRIVE` once
+  `drive.state` is known and not `recording`), `true` -> `SINCE h:mm`.
 
 **Producer.** `CardStateEmitterMixin.observeTripSpeed`, called from
 `event_router._handleReading` beside `observeGearInput`. It takes SPEED only, and only
@@ -7031,7 +7052,8 @@ reusing the boot-state primitives). Schema (spec §7):
   "ts":"…" }
 ```
 
-(US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`; see
+(US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`, and US-896-b
+adds `elapsedSec` (frozen at drive end) / `distancePartial`; see
 "`system-status.drive.distanceKm`" in section 11.)
 
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
@@ -8067,6 +8089,24 @@ Navigation spec §3/§4.1/§4.2 (`specs/v030-navigation-page-design.md`, layout 
   wrap-350-b, parked-engine-off}.json`, each the real `buildImuState` payload (the two
   boundaries patch `headingDeg`: the bridge publishes whole degrees, so 22.5 / 337.5
   are only ever drawn bearings).
+- **Bottom row: GRADE + the trip (US-896-b, spec §4.3/§4.4/§4.5).** GRADE reads
+  `states/imu.gradePct` on the motion loop (`navGradeView`, through the Motion grade
+  tile's formatter: one decimal, signed, a true minus); the slope glyph tilts with the
+  sign of the PRINTED value (`+0.0 %` lies flat); null / no file / undated -> `--` +
+  the reason on the glass. The trip reads system-status `drive` on the card tick
+  (`navTripView`, the same cached read as every other surface): distance =
+  `distanceKm / 1.609344` mi, one decimal; elapsed = `h:mm` from `drive.elapsedSec`
+  (section 11), no page time arithmetic, never extrapolated. Label precedence, top
+  wins: `distanceKm` or `distancePartial` null -> `-- mi` + `not measured`;
+  `distancePartial` true -> `SINCE` (Michroma) + `h:mm` (`--font-mono`, local,
+  12-hour without AM/PM -- the Michroma subset has no `:`), parked or not;
+  `drive.state` known and not `recording` -> `LAST DRIVE` (CIO Q1; US-704 closes here);
+  otherwise `THIS DRIVE` (a null state does not assert parked). An unreadable
+  system-status is null, so not measured. Labels Michroma `--fs-meta`
+  (`#nav-card .nav-label`), values `--fs-primary`, elapsed / reasons `--fs-label`. No
+  speed (CIO N-2). Fixtures: `trip-{mid-drive, drive-start, last-drive, not-measured,
+  partial-parked, state-null, partial-after-restart}.json` (each the real
+  `buildSystemStatusState` output, zone America/Chicago) and `grade-null.json`.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 
