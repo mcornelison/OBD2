@@ -2223,3 +2223,129 @@ html, body {
   flex: 1 1 0; min-width: 0; contain: inline-size;
   font-size: var(--fs-meta); line-height: var(--motion-note-line); color: var(--text-secondary);
 }
+
+/* US-893-b (F-127; specs/v030-light-page-design.md layout A + glyph, with the
+   Atlas L1-L6 / Iris L1-L7 rulings of 2026-10-19): the Light page -- the
+   provider's word + glyph and AMBIENT beside the auto-dim curve, the raw
+   channels, then the APPLIED brightness. Tokens only; geometry with no token
+   is declared ONCE here as properties scoped to the card. The word and the
+   labels are Michroma; every other text inherits the body's --font-mono. The
+   word is never coloured. Stale dims the word tile, the curve and the raw row;
+   the notes and the status never dim (they are the evidence). */
+#light-card {
+  --light-band-gap: 6px;        /* between the three rows */
+  --light-band-pad: 6px;        /* row padding, top and bottom */
+  --light-rule: 1px;            /* the line between the rows */
+  --light-col-gap: 8px;         /* word column -> curve; raw cells */
+  --light-cell-gap: 4px;        /* label -> value */
+  --light-glyph: 34px;          /* the sun / dusk / moon glyph (spec s3) */
+  --light-glyph-gap: 8px;       /* glyph -> word: 34 + 8 + NIGHT (197.1 px in
+                                   Michroma at --fs-hero) fits the 240 px column */
+  --light-curve-w: 200px;       /* the curve graph (spec s3: 200 x 104) */
+  --light-curve-h: 104px;
+  --light-curve-line: 2px;
+  --light-curve-axis: 1px;
+  --light-curve-dash: 3px;
+  --light-notes-gap: 6px;       /* reason -> age */
+  --light-line: 1;              /* value line boxes */
+  --light-note-line: 1.2;       /* label / note line boxes */
+  --light-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
+}
+#light-card .light-page {
+  display: flex; flex-direction: column; gap: var(--light-band-gap);
+}
+#light-card .light-top {
+  display: grid; grid-template-columns: 1fr var(--light-curve-w);
+  gap: var(--light-col-gap); align-items: start;
+}
+#light-card .light-left {
+  display: flex; flex-direction: column; gap: var(--light-cell-gap); min-width: 0;
+}
+#light-card .light-word-tile {
+  display: flex; flex-direction: column; gap: var(--light-cell-gap); min-width: 0;
+}
+#light-card .light-page[data-stale="true"] .light-dimmable {
+  opacity: var(--light-stale-opacity);
+}
+#light-card .light-word-row {
+  display: flex; align-items: center; gap: var(--light-glyph-gap);
+}
+#light-card .light-glyph {
+  flex: none; width: var(--light-glyph); height: var(--light-glyph);
+}
+#light-card .glyph circle,
+#light-card .glyph path {
+  fill: none; stroke: var(--text-primary); stroke-width: 2.5; stroke-linecap: round;
+}
+#light-card .light-word {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-hero); line-height: var(--light-line);
+  color: var(--text-primary); white-space: nowrap;
+}
+#light-card .light-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--light-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#light-card .light-ambient { white-space: nowrap; line-height: var(--light-line); }
+#light-card .light-ambient-value {
+  font-weight: 600; font-size: var(--fs-primary); line-height: var(--light-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#light-card .light-ambient-unit {
+  font-size: var(--fs-label); color: var(--text-secondary); white-space: pre;
+}
+#light-card .light-ambient[data-none="true"] .light-ambient-value { color: var(--text-tertiary); }
+#light-card .light-notes {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--light-notes-gap);
+  font-size: var(--fs-meta); line-height: var(--light-note-line);
+}
+#light-card .light-reason { color: var(--text-secondary); }
+#light-card .light-age { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+#light-card .light-age[data-tone="warn"] { color: var(--amber-warn); }
+#light-card .light-curve {
+  display: block; width: var(--light-curve-w); height: var(--light-curve-h);
+}
+#light-card .light-curve-axis { stroke: var(--line); stroke-width: var(--light-curve-axis); }
+#light-card .light-curve-end {
+  stroke: var(--text-tertiary); stroke-width: var(--light-curve-axis);
+  stroke-dasharray: var(--light-curve-dash) var(--light-curve-dash);
+}
+#light-card .light-curve-line {
+  fill: none; stroke: var(--text-secondary); stroke-width: var(--light-curve-line);
+  stroke-linejoin: round;
+}
+#light-card .light-curve-dot { fill: var(--accent); }
+#light-card .light-curve-label { font-size: var(--fs-meta); fill: var(--text-tertiary); }
+#light-card .light-raw {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--light-col-gap); padding-block: var(--light-band-pad);
+  border-top: var(--light-rule) solid var(--line);
+}
+#light-card .light-cell {
+  display: flex; flex-direction: column; gap: var(--light-cell-gap); min-width: 0;
+}
+#light-card .light-cv {
+  font-size: var(--fs-label); line-height: var(--light-note-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary); white-space: nowrap;
+}
+#light-card .light-cell[data-tone="warn"] .light-cv { color: var(--amber-warn); }
+#light-card .light-cell[data-tone="none"] .light-cv { color: var(--text-tertiary); }
+#light-card .light-cmeta {
+  font-size: var(--fs-meta); line-height: var(--light-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#light-card .light-status {
+  display: flex; align-items: baseline; gap: var(--light-notes-gap);
+  padding-block: var(--light-band-pad); border-top: var(--light-rule) solid var(--line);
+  white-space: nowrap;
+}
+#light-card .light-status-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; color: var(--text-secondary);
+}
+#light-card .light-status-value {
+  font-weight: 600; font-size: var(--fs-label); line-height: var(--light-note-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#light-card .light-status-note { font-size: var(--fs-meta); color: var(--text-secondary); }

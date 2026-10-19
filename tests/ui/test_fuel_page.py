@@ -106,9 +106,10 @@ _NODE_ONLY = pytest.mark.skipif(
 # The card order (US-890-a validation row "Card order"), by kit label.
 # MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
 # MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
+# MOVED PIN (US-893-b): Light moves to index 5, right after Motion (E-2).
 CARD_ORDER = [
-    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
-    "Battery", "Light",
+    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+    "System Status", "Battery",
 ]
 
 # This story's fixtures (spec s7). Later Fuel stories add their own to the same

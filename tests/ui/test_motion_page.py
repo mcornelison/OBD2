@@ -427,10 +427,13 @@ def _motionMarkup() -> str:
 
 
 def test_slot_motionIsIndexFour_afterNavEngineFuel():
-    """Card order (E-2): Driving, NAV, Engine, Fuel, Motion, Alerts, ..."""
+    """Card order (E-2): Driving, NAV, Engine, Fuel, Motion, Light, Alerts, ...
+
+    MOVED PIN (US-893-b): the Light card follows Motion (Iris Q6)."""
     tags = _sectionTags(_read(_HTML))
     labels = [re.search(r'aria-label="([^"]+)"', t).group(1) for t in tags]
-    assert labels[:6] == ["Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts"]
+    assert labels[:7] == ["Driving", "Navigation", "Engine", "Fuel", "Motion", "Light",
+                          "Alerts"]
     tag = tags[4]
     assert 'id="motion-card"' in tag and 'data-page-name="MOTION"' in tag
     for attr in ("data-state", "data-idle-home", "data-face"):
@@ -848,7 +851,9 @@ def test_updated_doesNotReuseFmtAgeSec():
     body = src[src.index("function motionHealthView("):]
     body = body[: body.index("\n  }\n")]
     assert "fmtAgeSec" not in body
-    assert 'String(Math.round(ageSec))) + "s";' in src  # fmtAgeSec unchanged
+    # MOVED PIN (US-893-b): fmtAgeSec's only caller was the old Light card; it
+    # retired with it (Atlas L5: nothing left unreachable). Motion never used it.
+    assert "function fmtAgeSec(" not in src
 
 
 @_NODE_ONLY

@@ -13,7 +13,7 @@
 #   bench: (1) the pure appliedBrightness / brightnessAlarmActive logic via the
 #   node probe, and (2) static wiring assertions on the shipped dist assets (the
 #   light fetch, the filter apply, the config-injection global, and the US-893-a
-#   grep gate: no curve, no lux threshold literal, no log in carousel.js). The
+#   grep gate: no curve, no lux threshold literal, no log outside luxAxisX). The
 #   Iris AC-7 "tracks live lux on the REAL Pi" checks are PI-RUNTIME gates.
 #   Skipped when node is not on PATH (a node-less CI box) for the probe tests.
 # Author: Ralph Agent (Rex)
@@ -45,6 +45,8 @@
 #                                case for case. The US-627 curve-branch clamp
 #                                moved to the bridge (test_brightness_golden);
 #                                the unclamped fallback stays pinned here.
+# 2026-10-19    | Rex (US-893-b)| MOVED PIN (US-893-b): the zero-log gate admits
+#                                the log calls inside luxAxisX (Atlas A2).
 # ================================================================================
 ################################################################################
 
@@ -333,8 +335,9 @@ def test_html_injectsDisplayAutodimConfigGlobal():
 # ---------------------------------------------------------------------------
 # US-893-a grep gate (Atlas A2) -- on carousel.js with // and /* */ comments
 # stripped: (i) BRIGHTNESS_DEFAULTS holds no curve key; (ii) no numeric
-# luxMin / luxFull / minLevel literal anywhere; (iii) ZERO Math.log /
-# Math.log10. Identifiers such as curve.luxMin stay allowed (US-893-b).
+# luxMin / luxFull / minLevel literal anywhere; (iii) every Math.log /
+# Math.log10 inside luxAxisX (US-893-b). Identifiers such as curve.luxMin stay
+# allowed.
 # ---------------------------------------------------------------------------
 
 
@@ -400,9 +403,17 @@ def test_gate_noNumericLuxThresholdLiteral():
     assert hits == []
 
 
-def test_gate_noLogarithmInCarouselJs():
-    """(iii) ZERO Math.log / Math.log10: the page computes no curve."""
-    assert re.findall(r"Math\.log(?:10)?\b", _code()) == []
+def test_gate_everyLogarithmIsInsideLuxAxisX():
+    """(iii) The page computes no curve. MOVED PIN (US-893-b, Atlas A2: "893-b's
+    gate then admits exactly the log calls inside luxAxisX"): was ZERO
+    Math.log / Math.log10; the Light page's log-lux AXIS needs one helper, and
+    every log call in carousel.js sits inside it (also pinned, with the
+    function's bounds, in test_light_page.py)."""
+    code = _code()
+    start = code.index("function luxAxisX(")
+    end = code.index("\n  }\n", start)
+    hits = [m.start() for m in re.finditer(r"Math\.log(?:10)?\b", code)]
+    assert hits and all(start < h < end for h in hits), hits
 
 
 def test_gate_pageCurveFunctionsAreDeleted():

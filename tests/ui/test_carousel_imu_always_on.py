@@ -139,8 +139,10 @@ def test_html_alertsIsTheSecondCard():
     # MOVED PIN (US-890-a): the Fuel card sits between Engine and Home (E-2).
     # MOVED PIN (US-896-a): the NAV card sits between Driving and Engine (E-2).
     # MOVED PIN (US-892-b): the Motion card replaces the Home card in its slot.
-    assert cards[:7] == [
-        "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status"
+    # MOVED PIN (US-893-b): the Light card sits between Motion and Alerts (E-2).
+    assert cards[:8] == [
+        "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+        "System Status",
     ]
 
 

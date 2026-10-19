@@ -6758,6 +6758,13 @@ clean read) or as an alert -- the F-6 no-phantom rule at card level; a missing
 `light` state means the **feed stopped**, not "dark" (a fabricated 0 lux). Cards
 not listed keep the one-word fallback.
 
+> **SUPERSEDED by US-893-b (Sprint 105 / V0.30.7).** The two tiles below
+> (AMBIENT + CONDITION, `lightView` / `lightBandWord` / `fmtLux` / `freshLux`) are
+> retired; the card is the Light page -- see "V0.30 Light page" below. Its status
+> line now DOES show the screen brightness, because it shows the level the kiosk
+> APPLIED (`appliedBrightness`, STOP included), not a lux-derived one. Kept below as
+> the record.
+
 **Light card (US-496).** A pure consumer of the same `states/light` file
 that drives the auto-dim (§ Display auto-dim consumer), so the
 reading on the card can never disagree with the screen it explains -- one clock
@@ -7979,7 +7986,9 @@ Fuel spec §3-§4.4 (`specs/v030-fuel-page-design.md`, layout A), CIO E-2 order:
 
 - **The Fuel card REPLACES the Fuel Trim card and moves to index 2, after
   Engine.** `#fuel-card` (`aria-label="Fuel"`, `data-page-name="FUEL"`); card
-  order is Driving, Engine, Fuel, Home, Alerts, System Status, Battery, Light.
+  order is Driving, Engine, Fuel, Home, Alerts, System Status, Battery, Light
+  (since US-893-b: Driving, Navigation, Engine, Fuel, Motion, Light, Alerts,
+  System Status, Battery -- see "V0.30 Light page" below).
   The Fuel Trim card, its per-drive bar row (`renderLtftTrendBody` /
   `.ltft-bars`, each bar coloured by its own drive) and its title are gone.
 - **States it reads.** `states/ltft-trend` only, for the trend row:
@@ -8076,6 +8085,9 @@ Navigation spec §3/§4.1/§4.2 (`specs/v030-navigation-page-design.md`, layout 
   Alerts, System Status, Battery, Light. No `data-state`, not the landing card, not
   vehicle-gated. The interim Home/MOTION card keeps its tape until US-892-b (which
   replaced it with the Motion card; the order is unchanged, Motion at index 4).
+  US-893-b moved Light to right after Motion: Driving, Navigation, Engine, Fuel,
+  Motion, Light, Alerts, System Status, Battery (the Alerts / System / Battery tail
+  is INTERIM -- Warnings replaces Alerts and goes last, US-897..899).
 - **States it reads -- and nothing else.** `states/imu` `headingDeg`,
   `headingCalibrated`, `reasons.headingDeg` (resolved ONCE through `imuHeadingTile`, the
   panel's one heading acquisition) and `ts`, raw (not smoothed), on the ~10 Hz motion
@@ -8189,6 +8201,73 @@ rulings (Atlas B1-B6, Iris M1-M4) governing where they differ:
   descent-brake, corner-left, corner-right, gyro-implausible, stale-imu,
   history-empty-after-restart, peaks-null-after-drive-start}.json`, each the real
   `buildImuState` payload plus the `GradeHistory` snapshot of its recorded writes.
+
+#### V0.30 Light page: DAY/DUSK/NIGHT, lux, the curve, raw channels (US-893-b, Sprint 105 / V0.30.7)
+
+Light spec §3/§4 (`specs/v030-light-page-design.md`, layout A + glyph, minus the
+F-126 override), with the 2026-10-19 rulings (Atlas L1-L6 + X1-X2, Iris L1-L7)
+governing where they differ:
+
+- **The Light card moves to index 5, right after Motion** (E-2, Iris Q6). Card
+  order: Driving, Navigation, Engine, Fuel, Motion, Light, Alerts, System Status,
+  Battery -- the Alerts / System / Battery tail is INTERIM. `#light-card` keeps
+  `data-state="light"`, `aria-label="Light"`, bar name `LIGHT`, and its source-card
+  route (`SOURCE_CARDS` `light`, `renderSourceCard` -> `renderLightBody`); the body is
+  built by `buildLightPage` and painted from the pure `lightPageView(light, autoDim,
+  nowMs, alarmActive)`.
+- **States it reads -- and nothing else.** `states/light` (`lightBand`, `lux`,
+  `reasons.lux`, `irCount`, `fullCount`, `visibleCount`, `atLimit{ir, full}`, `gain`,
+  `integrationMs`, `curve{points, luxMin, luxFull, minLevel}`, `ts`) and, for the
+  applied level, the same `appliedBrightness(light, DISPLAY_AUTODIM, nowMs,
+  brightnessAlarmActive(dtc))` the panel applier calls on the same tick (cached
+  payloads, one clock), so the status, the dot and the screen cannot disagree.
+- **Word.** `lightBand` upper-cased (`DAY` / `DUSK` / `NIGHT`), `--fs-hero`
+  Michroma, never coloured, with a 34 x 34 stroked glyph (sun / dusk / moon, Iris
+  L4). `lightBand` null or unknown -> `--`, no glyph; the page never derives a band.
+- **AMBIENT** `--fs-primary`: under 10 lux one decimal, else rounded with a fixed `,`
+  (`fmtThousands`, never `toLocaleString`); unit `lux`, never `lx`. Reasons, in order
+  (Iris L1 / Atlas L1): no payload (or `source.light` unavailable) -> word and AMBIENT
+  `--`, `no light data`; `ts` null/unparseable -> values as published, dimmed, `no
+  timestamp` in the age slot; lux null -> `--` + `LIGHT_REASON_TEXT[reasons.lux]`
+  (`at_limit` -> `sensor at limit`, `no_reading` -> `no reading`; no code -> `no
+  reading`; an unknown code paints as itself). Stale (`age > luxStaleSec`, or
+  undated) dims the word tile, the curve and the raw row and shows `N s` (floor) in
+  `--amber-warn`; the notes and the status never dim. The page's own absence
+  replaces the shell's typed-NA tile (`sourceCardView` still reports `unavailable`
+  with `noDataView('light')`, plus the absent view); before the first read it is
+  US-700's LOADING tile.
+- **Curve** (200 x 104 svg) drawn ONLY from `curve.points`: `luxAxisX(lux, luxLo,
+  luxHi, widthPx)` -> a pixel x, the ONLY `Math.log10` site in carousel.js (gated);
+  `luxLo` / `luxHi` are the first and last published lux; lux <= luxLo (0 included)
+  pins left, >= luxHi pins right, never a log of <= 0. Each vertex y is the published
+  level; y domain `[max(0, minLevel - CURVE_Y_HEADROOM), 1]` (0.25, presentation
+  headroom; `minLevel` null -> 0..1), labels `100%` and `round(minLevel*100)%`;
+  dashed verticals at `curve.luxMin` / `curve.luxFull`, labelled `3` (left of its
+  line) and `300 lux` (right of its line). **Dot** (X1) = (`luxAxisX(lux)`,
+  `appliedBrightness().level`), drawn only for a numeric lux: fresh auto/default on
+  the line; fallback the injected `defaultLevel` OFF the line, dimmed; alert 1.0. A
+  missing or malformed curve draws nothing. No `luxMin` / `luxFull` / `minLevel`
+  literal in carousel.js.
+- **Raw cells** (X2) IR / FULL / VISIBLE / RANGE, `--fs-label`: IR and FULL read `at
+  limit` (`--amber-warn`) on their own `atLimit` flag, VISIBLE when EITHER is true; a
+  null flag shows the count; a null or failed count is `--` (`--text-tertiary`),
+  never a floored 0 and never a subtraction. RANGE: the gain word exactly as
+  published, then `<integrationMs> ms` (`--fs-meta`); null -> `--`.
+- **Status** from the applied BASIS, never `brightnessMode` (Atlas L4): `auto` ->
+  `BRIGHTNESS AUTO nn %`; `default` or `fallback` -> `BRIGHTNESS nn % (default, no
+  reading)`; `alert` -> `BRIGHTNESS 100 % (alert)`; nn = `round(level * 100)`. Three
+  runs in the mockup's tiers (Michroma `--fs-meta` label, mono `--fs-label` level,
+  mono `--fs-meta` qualifier): the worst case is ~404 px of the 448 px body. No
+  override line, no SETTINGS shortcut (F-126 not built).
+- **Type and tokens.** Michroma only on the word, the labels and the status label
+  (400, no synthesis); everything else inherits `--font-mono`. Geometry is scoped
+  custom properties on `#light-card`; glyph 34 + gap 8 + `NIGHT` (197.1 px) fits the
+  240 px column beside the curve. The old card's `lightView`, `lightBandWord`,
+  `fmtLux`, `freshLux` and `fmtAgeSec` are deleted. Fixtures:
+  `tests/ui/fixtures/states/light/{night-0.6lux, dusk-22lux, day-1400lux,
+  sun-at-limit, config-retuned-boundaries, light-stale, light-null, stop-override,
+  dot-off-curve}.json`, each the real `buildLightState` output for its recorded
+  inputs plus the injected autoDim, the clock and (stop-override) the STOP dtc.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

@@ -426,7 +426,14 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     2026-10-16 Q1), so `.idle-wordmark` leaves the set; the Motion card's
     LABELS join it (PITCH / GRADE  LAST 15 MIN / ACCEL / BRAKE / CORNER, spec
     s3). Its figures, the peak glyphs, the true minus and the degree sign stay
-    the inherited --font-mono, pinned in tests/ui/test_motion_page.py."""
+    the inherited --font-mono, pinned in tests/ui/test_motion_page.py.
+
+    MOVED PIN (US-893-b): the Light page's WORD (DAY / DUSK / NIGHT, --fs-hero
+    --font-display, light spec s3), its LABELS (AMBIENT / IR / FULL / VISIBLE /
+    RANGE) and the status line's BRIGHTNESS [AUTO] label (the mockup's
+    Michroma tier, in which Iris G-2's 412 px worst case was measured). The
+    lux, counts, level and qualifier stay --font-mono, pinned in
+    tests/ui/test_light_page.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -441,6 +448,9 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#fuel-card .fuel-mpg .fuel-label",
         "#nav-card .nav-label",
         "#motion-card .motion-label",
+        "#light-card .light-word",
+        "#light-card .light-label",
+        "#light-card .light-status-label",
     }, bound
 
 

@@ -453,6 +453,14 @@
           </div>
         </div>
       </section>
+      <!-- US-893-b (F-127; specs/v030-light-page-design.md layout A + glyph):
+           the Light page, right after Motion (E-2, Iris Q6). Still a source
+           card on states/light: carousel.js (`renderLightBody`) builds the
+           word + glyph, AMBIENT, the curve, the raw cells and the APPLIED
+           brightness into the body, and paints its own absence. -->
+      <section class="card" id="light-card" data-state="light" aria-label="Light" data-page-name="LIGHT">
+        <div class="card-body">unavailable</div>
+      </section>
       <!-- US-406 Alerts card (F-111): hero (worst code + directive) + a
            tappable list sorted worst-first (na last). JS fills the body from
            the polled `dtc` state; a missing/malformed file -> `unavailable`.
@@ -482,9 +490,6 @@
            per-source independence the merge had to fight for is now free: a
            dead UPS cannot reach the Light card at all. -->
       <section class="card" data-state="battery-health" aria-label="Battery" data-page-name="BATTERY">
-        <div class="card-body">unavailable</div>
-      </section>
-      <section class="card" data-state="light" aria-label="Light" data-page-name="LIGHT">
         <div class="card-body">unavailable</div>
       </section>
     </div>

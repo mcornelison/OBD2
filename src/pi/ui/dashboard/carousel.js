@@ -1741,11 +1741,16 @@
 
   // Build the per-source view. Kept as a switch on the key rather than a
   // function reference in the table so the three signatures (which genuinely
-  // differ -- only the light view needs the dim config + a clock) stay explicit.
-  function sourceView(key, data, cfg, nowMs) {
+  // differ -- only the light view needs the dim config, a clock and the STOP
+  // test) stay explicit.
+  //
+  // US-893-b: the Light page paints its OWN absence ('--' + 'no light data' in
+  // its own layout, the brightness it fell back to beside it), so its view is
+  // built even with no payload; `absent` tells the shell the feed is missing.
+  function sourceView(key, data, cfg, nowMs, alarmActive) {
+    if (key === "light") return lightPageView(data, cfg, nowMs, alarmActive);
     if (cardAvailability(data) !== "available") return null;
     if (key === "battery-health") return batteryHealthView(data);
-    if (key === "light") return lightView(data, cfg, nowMs);
     if (key === "ltft-trend") return fuelTrendView(data);
     return null;
   }
@@ -1756,7 +1761,7 @@
   // t=0. Fixing one and not the other would re-create the confusion one swipe
   // away, which is why the story's conditionalOutcome names the shared shape
   // rather than the three tiles it was reported on.
-  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs) {
+  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs, alarmActive) {
     var base = { key: spec.key, title: spec.title, label: spec.noData.label };
     // The gate is checked FIRST and short-circuits: a gated card must carry no
     // reading, not a suppressed one (nothing downstream can leak what was never
@@ -1771,9 +1776,9 @@
       base.view = null;
       return base;
     }
-    var view = sourceView(spec.key, data, cfg, nowMs);
+    var view = sourceView(spec.key, data, cfg, nowMs, alarmActive);
     base.gated = false;
-    if (view === null) {
+    if (view === null || view.absent === true) {
       if (loadPhase(data, waitedMs) === "loading") {
         base.loading = true;
         base.unavailable = false;
@@ -1786,7 +1791,8 @@
       // Reuse the shipped whole-card wording where one exists (light), so the
       // silent-instrument phrasing lives in exactly one place.
       base.na = noDataView(spec.key) || spec.noData;
-      base.view = null;
+      // US-893-b: the Light page's own absent view (null for every other card).
+      base.view = view;
       return base;
     }
     base.loading = false;
@@ -2849,31 +2855,6 @@
     return out;
   }
 
-  // The fresh, finite lux from a states/light payload, or null. A
-  // missing/malformed file, a null lux (honest saturation), a non-finite value,
-  // or a reading older than luxStaleSec all read null -> the Light card grays
-  // the reading rather than painting a frozen/absent value. (US-893-a: the
-  // brightness no longer reads lux at all -- see appliedBrightness.)
-  function freshLux(lightData, luxStaleSec, nowMs) {
-    if (!lightData || typeof lightData !== "object") return null;
-    var lux = lightData.lux;
-    if (typeof lux !== "number" || !isFinite(lux)) return null;
-    // ARCH-010, defence in depth. A negative lux is a computation failure, not
-    // a dark reading -- and it is FINITE, so isFinite() waved it through. It
-    // once hit the page's own `lux <= luxMin -> 0` and drove the panel to
-    // minLevel, so the brighter the sun the dimmer the screen. The producer now publishes
-    // null for this, but the consumer must not depend on that being deployed:
-    // this slipped past three type checks once already.
-    if (lux < 0) return null;
-    var ts = lightData.ts;
-    if (typeof ts !== "string") return null;
-    var t = Date.parse(ts);
-    if (isNaN(t)) return null;
-    var ageSec = (nowMs - t) / 1000;
-    if (!(ageSec <= luxStaleSec)) return null; // stale (or NaN age) -> fallback
-    return lux;
-  }
-
   // A real ACTIVE STOP alert is present (drives the alarm floor). Reuses the same
   // honest ribbon classifier the takeover/ribbon use: an unavailable DTC source
   // carries no active fault -> false; only a STOP-tier hero forces the floor (the
@@ -2920,31 +2901,6 @@
     return { level: level, basis: lightData.brightnessMode };
   }
 
-  // -------------------------------------------------------------------------
-  // US-496 Light card (S3, F-121) -- pure, node-testable. The card is a PURE
-  // CONSUMER of the SAME states/light file ({lux, ts}) that drives the auto-dim
-  // above, so the number on the card can never disagree with the screen it
-  // explains. The sensor knows exactly one thing, so the card shows exactly two
-  // facts: the reading (with its age) and the auto-dim BAND it falls in. The
-  // band is the bridge's own lightBand (US-893-a), named here -- NOT a second
-  // set of numbers that could drift away from the curve.
-  //
-  // Deliberately NOT shown: the resulting screen brightness. A live STOP alarm
-  // holds the surface at FULL regardless of lux (US-484-b ch.4), so a
-  // lux-derived brightness percent on this card would be a number that
-  // disagrees with the actual screen exactly when it matters most.
-  // -------------------------------------------------------------------------
-
-  // Sub-10 lux keeps one decimal: near the dark end a whole-lux round merges
-  // cabins that sit on opposite sides of the DARK boundary (luxMin 3.0).
-  function fmtLux(lux) {
-    return (lux < 10 ? lux.toFixed(1) : String(Math.round(lux))) + " lx";
-  }
-
-  function fmtAgeSec(ageSec) {
-    return (ageSec < 10 ? ageSec.toFixed(1) : String(Math.round(ageSec))) + "s";
-  }
-
   // The payload's read age in seconds, or null when it carries no parseable ts.
   // An UNDATED reading is the one most likely to be stale, so it can never be
   // rendered as current.
@@ -2955,68 +2911,242 @@
     return (nowMs - t) / 1000;
   }
 
-  // US-893-a (Atlas A1 option c): the CONDITION word for the PROVIDER's
-  // lightBand. The bridge decides the band from the same autoDim read as the
-  // level, so the word and the dimming move together; the page holds no
-  // threshold. A NAME map only -- these are the existing words until US-893-b
-  // replaces the card. Anything else (absent, an unknown band) is null.
-  var LIGHT_BAND_WORD = { night: "DARK", dusk: "DIM", day: "DAYLIGHT" };
+  // -------------------------------------------------------------------------
+  // US-893-b Light page (F-127; specs/v030-light-page-design.md layout A +
+  // glyph, governed by the Atlas L1-L6 / Iris L1-L7 rulings of 2026-10-19).
+  // A PURE CONSUMER of states/light. The word is the provider's lightBand, the
+  // curve is the provider's points, and the dot's y and the status line are the
+  // level the kiosk APPLIED (appliedBrightness, the one applier), so the page,
+  // the screen and the bridge cannot disagree. The page derives no band and no
+  // level from lux and holds no lux threshold: a dot OFF the line (stale
+  // fallback, STOP full) is the truth, not a bug.
+  // -------------------------------------------------------------------------
 
-  function lightBandWord(band) {
-    return typeof band === "string" &&
-      Object.prototype.hasOwnProperty.call(LIGHT_BAND_WORD, band)
-      ? LIGHT_BAND_WORD[band]
-      : null;
+  // The provider's reasons.lux codes -> glass text (Atlas L1). One table, the
+  // IMU_REASON_TEXT pattern; IRIS owns the words.
+  var LIGHT_REASON_TEXT = {
+    at_limit: "sensor at limit",
+    no_reading: "no reading",
+  };
+  var LIGHT_NO_DATA_TEXT = "no light data";
+  var LIGHT_NO_TIMESTAMP_TEXT = "no timestamp";
+  var LIGHT_AT_LIMIT_TEXT = "at limit";
+  var LIGHT_UNIT = "lux";  // the one unit word on the page, never 'lx' (Iris L6)
+
+  // The three provider bands, each drawn by its own glyph (Iris L4).
+  var LIGHT_BANDS = ["night", "dusk", "day"];
+
+  // The curve graph (spec s3: 200 x 104). The plot's left pad holds the y
+  // labels ('100%' is ~36 px in the mono at --fs-meta, Iris L5); the bottom pad
+  // holds the x labels. The y domain sits CURVE_Y_HEADROOM under minLevel so
+  // the flat floor does not lie on the x axis -- presentation headroom, not a
+  // level (Iris L5).
+  var LIGHT_CURVE_W = 200;
+  var LIGHT_CURVE_H = 104;
+  var LIGHT_CURVE_PAD_L = 40;
+  var LIGHT_CURVE_PAD_R = 6;
+  var LIGHT_CURVE_PAD_T = 8;
+  var LIGHT_CURVE_PAD_B = 22;
+  var LIGHT_CURVE_LABEL_DX = 3;   // an x label's gap from its dashed vertical
+  var LIGHT_CURVE_LABEL_DY = 5;   // a y label's baseline under its level
+  var LIGHT_CURVE_X_LABEL_RISE = 3; // the x labels' baseline above the bottom edge
+  var CURVE_Y_HEADROOM = 0.25;
+
+  // THE ONE LOG SITE in carousel.js (Atlas 2026-10-16 gate item 1, Iris L5): a
+  // lux -> a pixel x on the log-lux axis, and nothing else. luxLo / luxHi are
+  // the published curve's first and last lux. It never takes the log of a
+  // value <= 0: a lux at or below luxLo (night reads ~0.35 lux, and 0 is a
+  // reading) pins to the left edge, one at or above luxHi to the right edge. A
+  // non-numeric lux, or an axis that cannot be logged, has no x (null).
+  function luxAxisX(lux, luxLo, luxHi, widthPx) {
+    if (!isNum(lux) || !isNum(luxLo) || !isNum(luxHi) || !isNum(widthPx)) return null;
+    if (!(luxLo > 0) || !(luxHi > luxLo)) return null;
+    if (lux <= luxLo) return 0;
+    if (lux >= luxHi) return widthPx;
+    return widthPx * (Math.log10(lux) - Math.log10(luxLo)) /
+      (Math.log10(luxHi) - Math.log10(luxLo));
   }
 
-  function lightView(data, cfg, nowMs) {
-    if (!isObj(data)) return null; // absent -> the shell renders the no-data view
-    if (sourceUnavailable(data, "light")) {
-      return { unavailable: true, reason: sourceReason(data, "light") };
+  // A lux for the glass (Iris L6): under 10 one decimal, from 10 a whole number
+  // with the fixed ',' separator. The format is chosen from the raw value.
+  function fmtLuxValue(lux) {
+    return lux < 10 ? lux.toFixed(1) : fmtThousands(Math.round(lux));
+  }
+
+  // An x-axis label: a whole config value prints bare ('3', '1,000'), anything
+  // else as a lux (Iris L5).
+  function fmtAxisLux(v) {
+    return v === Math.floor(v) ? fmtThousands(v) : fmtLuxValue(v);
+  }
+
+  // The published lux reason, through the one table. lux null with no code (a
+  // producer older than US-893-a) is the no_reading class (Atlas A3); an
+  // unknown code paints as itself rather than as a guess.
+  function lightLuxReason(data) {
+    var reasons = isObj(data.reasons) ? data.reasons : {};
+    var code = reasons.lux;
+    if (typeof code !== "string" || !code) return LIGHT_REASON_TEXT.no_reading;
+    return Object.prototype.hasOwnProperty.call(LIGHT_REASON_TEXT, code)
+      ? LIGHT_REASON_TEXT[code]
+      : code;
+  }
+
+  // One raw cell (X2): 'at limit' (amber) on its flag, a count with the ','
+  // separator, or '--' (tertiary) for a null or failed count -- never a
+  // floored 0 and never a subtraction.
+  function lightCountCell(count, atLimit) {
+    if (atLimit === true) return { value: LIGHT_AT_LIMIT_TEXT, tone: "warn" };
+    if (isNum(count) && count >= 0) return { value: fmtThousands(count), tone: "plain" };
+    return { value: "--", tone: "none" };
+  }
+
+  function lightRawView(data) {
+    var lim = isObj(data) && isObj(data.atLimit) ? data.atLimit : {};
+    var d = isObj(data) ? data : {};
+    return {
+      ir: lightCountCell(d.irCount, lim.ir),
+      full: lightCountCell(d.fullCount, lim.full),
+      // visible = full - ir, so it is derived from a clipped count when EITHER is.
+      visible: lightCountCell(d.visibleCount, lim.ir === true || lim.full === true),
+      range: {
+        // The gain word exactly as published -- no multiplier, the page holds
+        // no gain table (Iris L2).
+        gain: typeof d.gain === "string" && d.gain ? d.gain : "--",
+        ms: isNum(d.integrationMs) && d.integrationMs >= 0
+          ? fmtThousands(d.integrationMs) + " ms"
+          : "--",
+      },
+    };
+  }
+
+  // The status line, from the APPLIED basis and never from data.brightnessMode
+  // (Atlas L4), so a stale file that says 'auto' can never show AUTO. Three
+  // runs in the mockup's tiers -- the Michroma label, the mono level, the mono
+  // qualifier -- which is the shape Iris measured the 412 px worst case in.
+  function lightStatusView(applied) {
+    var value = Math.round(applied.level * 100) + " %";
+    var label = applied.basis === "auto" ? "BRIGHTNESS AUTO" : "BRIGHTNESS";
+    var note = applied.basis === "auto" ? null
+      : applied.basis === "alert" ? "(alert)" : "(default, no reading)";
+    return {
+      label: label, value: value, note: note,
+      text: label + " " + value + (note ? " " + note : ""),
+    };
+  }
+
+  // The curve graph from states/light.curve alone. Every polyline vertex is a
+  // published [lux, level]; the dot is (lux, the APPLIED level). Nothing is
+  // interpolated along the line, and no level or band comes from lux. A
+  // missing or malformed curve draws nothing (null) -- never a guessed one.
+  function lightCurveView(curve, lux, appliedLevel) {
+    if (!isObj(curve) || !Array.isArray(curve.points) || curve.points.length < 2) return null;
+    var pts = curve.points;
+    for (var i = 0; i < pts.length; i++) {
+      if (!Array.isArray(pts[i]) || !isNum(pts[i][0]) || !isNum(pts[i][1])) return null;
     }
-    var c = resolveAutoDimConfig(cfg);
-    var age = readAgeSec(data, nowMs);
-    var lux = freshLux(data, c.luxStaleSec, nowMs);
-    if (lux === null) {
-      // WHY there is no usable reading IS the value of the gray tile. The order
-      // matters: "no reading arrived at all" is a different fault from "readings
-      // stopped arriving", and the operator needs to know which.
-      var reason =
-        typeof data.lux !== "number" || !isFinite(data.lux)
-          ? "no reading (saturated or unreadable)"
-          : age === null
-            ? "no read time"
-            : "stale -- last read " + fmtAgeSec(age) + " ago";
-      // Both fields gray INDIVIDUALLY (the card stays present -- always-present
-      // is the contract) and the band grays WITH the reading because it is
-      // derived from it: with no lux there is nothing to derive.
+    var luxLo = pts[0][0];
+    var luxHi = pts[pts.length - 1][0];
+    if (luxAxisX(luxHi, luxLo, luxHi, 1) === null) return null;
+    var plotW = LIGHT_CURVE_W - LIGHT_CURVE_PAD_L - LIGHT_CURVE_PAD_R;
+    var plotH = LIGHT_CURVE_H - LIGHT_CURVE_PAD_T - LIGHT_CURVE_PAD_B;
+    var minLevel = isNum(curve.minLevel) ? curve.minLevel : null;
+    var yLo = minLevel === null ? 0 : Math.max(0, minLevel - CURVE_Y_HEADROOM);
+    function px(v) {
+      return Number(v.toFixed(1));
+    }
+    function x(l) {
+      return px(LIGHT_CURVE_PAD_L + luxAxisX(l, luxLo, luxHi, plotW));
+    }
+    // A level outside the domain pins to its edge, the way luxAxisX pins lux.
+    function y(level) {
+      var f = (Math.min(Math.max(level, yLo), 1) - yLo) / (1 - yLo);
+      return px(LIGHT_CURVE_PAD_T + plotH * (1 - f));
+    }
+    var line = [];
+    for (var j = 0; j < pts.length; j++) line.push(x(pts[j][0]) + "," + y(pts[j][1]));
+    var verticals = [];
+    var ends = [
+      { lux: curve.luxMin, label: null, anchor: "end", dx: -LIGHT_CURVE_LABEL_DX },
+      { lux: curve.luxFull, label: " " + LIGHT_UNIT, anchor: "start", dx: LIGHT_CURVE_LABEL_DX },
+    ];
+    // The luxMin label sits left of its line and the luxFull label right of
+    // its own, so the two never meet however close the verticals are.
+    for (var k = 0; k < ends.length; k++) {
+      var e = ends[k];
+      if (!isNum(e.lux) || !(e.lux > 0)) continue;
+      var vx = x(e.lux);
+      verticals.push({
+        x: vx, labelX: px(vx + e.dx), anchor: e.anchor,
+        label: fmtAxisLux(e.lux) + (e.label || ""),
+      });
+    }
+    var yLabels = [{ y: px(y(1) + LIGHT_CURVE_LABEL_DY), text: "100%" }];
+    if (minLevel !== null && minLevel < 1) {
+      yLabels.push({
+        y: px(y(minLevel) + LIGHT_CURVE_LABEL_DY), text: Math.round(minLevel * 100) + "%",
+      });
+    }
+    var dot = null;
+    if (isNum(lux) && lux >= 0 && isNum(appliedLevel)) dot = { x: x(lux), y: y(appliedLevel) };
+    return {
+      points: line.join(" "),
+      axis: {
+        x0: LIGHT_CURVE_PAD_L, x1: LIGHT_CURVE_W - LIGHT_CURVE_PAD_R,
+        yTop: y(1), yBottom: y(yLo),
+      },
+      verticals: verticals,
+      yLabels: yLabels,
+      labelY: LIGHT_CURVE_H - LIGHT_CURVE_X_LABEL_RISE,
+      dot: dot,
+    };
+  }
+
+  // The whole Light page. `alarmActive` is the same STOP test the panel
+  // applier is called with, so the status and the dot read the level the
+  // screen is actually at. Reasons are checked in Atlas L1 / Iris L1 order: no
+  // payload, then no timestamp, then the provider's lux reason; a null
+  // lightBand is '--' with no glyph. Stale (age > luxStaleSec, or undated)
+  // dims the word tile, the curve and the raw row -- never the status, which
+  // reports what the kiosk applied.
+  function lightPageView(data, cfg, nowMs, alarmActive) {
+    var applied = appliedBrightness(data, cfg, nowMs, alarmActive);
+    var status = lightStatusView(applied);
+    if (!isObj(data) || sourceUnavailable(data, "light")) {
       return {
-        unavailable: false,
-        ambient: naTile("AMBIENT", reason),
-        band: naTile("CONDITION", reason),
+        absent: true, stale: false,
+        word: { text: "--", glyph: null },
+        ambient: { value: "--", unit: "", none: true },
+        reason: isObj(data) ? sourceReason(data, "light") : LIGHT_NO_DATA_TEXT,
+        age: null,
+        raw: lightRawView(null),
+        curve: null,
+        applied: applied,
+        status: status,
       };
     }
-    var word = lightBandWord(data.lightBand);
+    var c = resolveAutoDimConfig(cfg);
+    var ageSec = readAgeSec(data, nowMs);
+    var stale = ageSec === null || ageSec > c.luxStaleSec;
+    var age = null;
+    if (ageSec === null) age = { text: LIGHT_NO_TIMESTAMP_TEXT, tone: "none" };
+    else if (stale) age = { text: Math.max(0, Math.floor(ageSec)) + " s", tone: "warn" };
+    var lux = isNum(data.lux) && data.lux >= 0 ? data.lux : null;
+    var band = LIGHT_BANDS.indexOf(data.lightBand) === -1 ? null : data.lightBand;
     return {
-      unavailable: false,
-      ambient: {
-        label: "AMBIENT",
-        value: fmtLux(lux),
-        detail: "read " + fmtAgeSec(age) + " ago",
-        level: "ok",
-      },
-      // A fresh reading whose file carries no band (a producer older than
-      // US-893-a) grays the band ALONE: the page never derives one from lux.
-      band: word === null
-        ? naTile("CONDITION", "no band published")
-        : {
-          label: "CONDITION",
-          value: word,
-          detail: "auto-dim band",
-          // `neutral`, not `ok`: an ambient band is a fact about the cabin, not
-          // a health verdict -- DARK is not a fault and DAYLIGHT is not a pass.
-          level: "neutral",
-        },
+      absent: false,
+      stale: stale,
+      word: band === null
+        ? { text: "--", glyph: null }
+        : { text: band.toUpperCase(), glyph: band },
+      ambient: lux === null
+        ? { value: "--", unit: "", none: true }
+        : { value: fmtLuxValue(lux), unit: LIGHT_UNIT, none: false },
+      reason: lux === null ? lightLuxReason(data) : null,
+      age: age,
+      raw: lightRawView(data),
+      curve: lightCurveView(data.curve, lux, applied.level),
+      applied: applied,
+      status: status,
     };
   }
 
@@ -4772,8 +4902,11 @@
     shouldAutoResume: shouldAutoResume,
     rotateProgress: rotateProgress,
     swipeGesture: swipeGesture,
-    lightBandWord: lightBandWord,
-    lightView: lightView,
+    // US-893-b: the Light page.
+    luxAxisX: luxAxisX,
+    lightCurveView: lightCurveView,
+    lightStatusView: lightStatusView,
+    lightPageView: lightPageView,
     headingCardinal: headingCardinal,
     resolveImuStaleSec: resolveImuStaleSec,
     compassTape: compassTape,
@@ -5525,22 +5658,6 @@
       if (view.ladder) appendLadder(body, view.ladder);
     }
 
-    // --- US-496 Light card DOM render (browser only) ------------------------
-
-    // Two tiles through the SHARED `.tile` component, which is already bound to
-    // src/pi/ui/tokens.css -- the Light card introduces no palette of its own
-    // (AC-4: a bespoke local colour is exactly the drift the SSOT prevents).
-    function renderLightBody(body, view) {
-      if (!body || !view) return;
-      if (view.unavailable) {
-        renderNaBody(body, "AMBIENT", view.reason);
-        return;
-      }
-      body.textContent = "";
-      appendTile(body, view.ambient);
-      appendTile(body, view.band);
-    }
-
     // --- SVG helpers + the US-892-b Motion card render (browser only) -------
 
     var SVG_NS = "http://www.w3.org/2000/svg";
@@ -5662,6 +5779,179 @@
           sub.hidden = !v.sub;
         }
       }
+    }
+
+    // --- US-893-b Light page DOM render (browser only) ----------------------
+
+    // The three glyphs (Iris L4), copied from the OEM mockup unchanged and
+    // stroked through the .glyph class -- never coloured. A null band has none.
+    var LIGHT_GLYPH_SHAPES = {
+      day: [
+        ["circle", { cx: 17, cy: 17, r: 7 }],
+        ["path", { d: "M17 2v5M17 27v5M2 17h5M27 17h5M6 6l3.5 3.5M24.5 24.5L28 28M6 28l3.5-3.5M24.5 9.5L28 6" }],
+      ],
+      night: [["path", { d: "M23 5a12 12 0 1 0 6 18A10 10 0 0 1 23 5z" }]],
+      dusk: [["path", { d: "M4 24h26M9 24a8 8 0 0 1 16 0M17 8v4M7 13l3 3M27 13l-3 3" }]],
+    };
+    var LIGHT_DOT_R = 5;
+    // [cell class, label] in grid order; RANGE carries a second, meta line.
+    var LIGHT_RAW_CELLS = [
+      ["light-ir", "IR"], ["light-full", "FULL"],
+      ["light-visible", "VISIBLE"], ["light-range", "RANGE"],
+    ];
+
+    function lightEl(tag, cls, text) {
+      var el = document.createElement(tag);
+      el.className = cls;
+      if (text !== undefined) el.textContent = text;
+      return el;
+    }
+
+    // The page's skeleton, built into the card body. The US-700 loading tile
+    // and the typed NA replace the body, so it is rebuilt after either.
+    function buildLightPage(body) {
+      body.textContent = "";
+      var page = lightEl("div", "light-page");
+      var top = lightEl("div", "light-top");
+      var left = lightEl("div", "light-left");
+      var tile = lightEl("div", "light-word-tile light-dimmable");
+      var wordRow = lightEl("div", "light-word-row");
+      wordRow.appendChild(svgEl("svg", {
+        class: "glyph light-glyph", viewBox: "0 0 34 34", "aria-hidden": "true",
+      }));
+      wordRow.appendChild(lightEl("span", "light-word", "--"));
+      tile.appendChild(wordRow);
+      tile.appendChild(lightEl("span", "light-label", "AMBIENT"));
+      var ambient = lightEl("span", "light-ambient");
+      ambient.appendChild(lightEl("span", "light-ambient-value", "--"));
+      ambient.appendChild(lightEl("span", "light-ambient-unit", ""));
+      tile.appendChild(ambient);
+      left.appendChild(tile);
+      // Not dimmable: the reason and the age are the evidence of the state.
+      var notes = lightEl("div", "light-notes");
+      notes.appendChild(lightEl("span", "light-reason", ""));
+      notes.appendChild(lightEl("span", "light-age", ""));
+      left.appendChild(notes);
+      top.appendChild(left);
+      top.appendChild(svgEl("svg", {
+        class: "light-curve light-dimmable",
+        viewBox: "0 0 " + LIGHT_CURVE_W + " " + LIGHT_CURVE_H, "aria-hidden": "true",
+      }));
+      page.appendChild(top);
+      var raw = lightEl("div", "light-raw light-dimmable");
+      for (var i = 0; i < LIGHT_RAW_CELLS.length; i++) {
+        var cell = lightEl("div", "light-cell " + LIGHT_RAW_CELLS[i][0]);
+        cell.setAttribute("data-tone", "none");
+        cell.appendChild(lightEl("span", "light-label", LIGHT_RAW_CELLS[i][1]));
+        cell.appendChild(lightEl("span", "light-cv", "--"));
+        if (LIGHT_RAW_CELLS[i][0] === "light-range") {
+          cell.appendChild(lightEl("span", "light-cmeta", "--"));
+        }
+        raw.appendChild(cell);
+      }
+      page.appendChild(raw);
+      var status = lightEl("div", "light-status");
+      status.appendChild(lightEl("span", "light-status-label", "BRIGHTNESS"));
+      status.appendChild(lightEl("span", "light-status-value", "--"));
+      status.appendChild(lightEl("span", "light-status-note", ""));
+      page.appendChild(status);
+      body.appendChild(page);
+      return page;
+    }
+
+    function paintLightGlyph(svg, band) {
+      if (!svg) return;
+      svg.textContent = "";
+      var shapes = band ? LIGHT_GLYPH_SHAPES[band] : null;
+      svg.hidden = !shapes;
+      if (!shapes) return;
+      for (var i = 0; i < shapes.length; i++) svg.appendChild(svgEl(shapes[i][0], shapes[i][1]));
+    }
+
+    function paintLightText(el, text) {
+      if (!el) return;
+      el.textContent = text || "";
+      el.hidden = !text;
+    }
+
+    // The curve: rebuilt per paint from `lightCurveView` (axes, the dashed
+    // curve ends and their labels, the published polyline, the dot). A missing
+    // curve leaves the graph empty -- never a guessed line.
+    function paintLightCurve(svg, curve) {
+      if (!svg) return;
+      svg.textContent = "";
+      if (!curve) return;
+      var a = curve.axis;
+      svg.appendChild(svgEl("line", {
+        class: "light-curve-axis", x1: a.x0, y1: a.yBottom, x2: a.x1, y2: a.yBottom,
+      }));
+      svg.appendChild(svgEl("line", {
+        class: "light-curve-axis", x1: a.x0, y1: a.yTop, x2: a.x0, y2: a.yBottom,
+      }));
+      for (var i = 0; i < curve.yLabels.length; i++) {
+        var yl = svgEl("text", { class: "light-curve-label", x: 0, y: curve.yLabels[i].y });
+        yl.textContent = curve.yLabels[i].text;
+        svg.appendChild(yl);
+      }
+      for (var j = 0; j < curve.verticals.length; j++) {
+        var v = curve.verticals[j];
+        svg.appendChild(svgEl("line", {
+          class: "light-curve-end", x1: v.x, y1: a.yTop, x2: v.x, y2: a.yBottom,
+        }));
+        var xl = svgEl("text", {
+          class: "light-curve-label", x: v.labelX, y: curve.labelY, "text-anchor": v.anchor,
+        });
+        xl.textContent = v.label;
+        svg.appendChild(xl);
+      }
+      svg.appendChild(svgEl("polyline", { class: "light-curve-line", points: curve.points }));
+      if (curve.dot) {
+        svg.appendChild(svgEl("circle", {
+          class: "light-curve-dot", cx: curve.dot.x, cy: curve.dot.y, r: LIGHT_DOT_R,
+        }));
+      }
+    }
+
+    // US-893-b: paint `lightPageView` into the Light card body. Text and
+    // state attributes only -- data-stale dims the word tile, the curve and the
+    // raw row (never the notes or the status); data-tone / data-none map to
+    // tokens in the stylesheet.
+    function renderLightBody(body, view) {
+      if (!body || !view) return;
+      var page = body.querySelector(".light-page") || buildLightPage(body);
+      page.setAttribute("data-stale", view.stale ? "true" : "false");
+      paintLightGlyph(page.querySelector(".light-glyph"), view.word.glyph);
+      var word = page.querySelector(".light-word");
+      word.textContent = view.word.text;
+      word.setAttribute("data-none", view.word.glyph ? "false" : "true");
+      var ambient = page.querySelector(".light-ambient");
+      ambient.setAttribute("data-none", view.ambient.none ? "true" : "false");
+      page.querySelector(".light-ambient-value").textContent = view.ambient.value;
+      page.querySelector(".light-ambient-unit").textContent =
+        view.ambient.unit ? " " + view.ambient.unit : "";
+      paintLightText(page.querySelector(".light-reason"), view.reason);
+      var age = page.querySelector(".light-age");
+      paintLightText(age, view.age ? view.age.text : null);
+      age.setAttribute("data-tone", view.age ? view.age.tone : "none");
+      paintLightCurve(page.querySelector(".light-curve"), view.curve);
+      var cells = { "light-ir": view.raw.ir, "light-full": view.raw.full, "light-visible": view.raw.visible };
+      for (var i = 0; i < LIGHT_RAW_CELLS.length; i++) {
+        var cls = LIGHT_RAW_CELLS[i][0];
+        var cell = page.querySelector("." + cls);
+        if (!cell) continue;
+        if (cls === "light-range") {
+          var noRange = view.raw.range.gain === "--" && view.raw.range.ms === "--";
+          cell.setAttribute("data-tone", noRange ? "none" : "plain");
+          cell.querySelector(".light-cv").textContent = view.raw.range.gain;
+          cell.querySelector(".light-cmeta").textContent = view.raw.range.ms;
+          continue;
+        }
+        cell.setAttribute("data-tone", cells[cls].tone);
+        cell.querySelector(".light-cv").textContent = cells[cls].value;
+      }
+      page.querySelector(".light-status-label").textContent = view.status.label;
+      page.querySelector(".light-status-value").textContent = view.status.value;
+      paintLightText(page.querySelector(".light-status-note"), view.status.note);
     }
 
     // US-896-a: the NAV tape (spec s3) -- full width, the 90-degree window over
@@ -5897,7 +6187,9 @@
         renderLoadingBody(body, view.label);
         return;
       }
-      if (view.gated || view.unavailable) {
+      // US-893-b: an unavailable card WITH a view (the Light page's own
+      // absence) paints that view; every other unavailable card is the NA.
+      if (view.gated || (view.unavailable && !view.view)) {
         renderNaBody(body, view.na.label, view.na.reason);
         return;
       }
@@ -7315,11 +7607,15 @@
             // tick uses (cached -- free when another card already read it), so
             // the fuel-trim gate can never disagree with the vehicle state the
             // top bar was rendered against.
+            // US-893-b: the Light page's status line and dot read the SAME
+            // applied level the panel is set to below -- same cached payloads,
+            // same STOP test, same clock.
             renderSourceCard(
               card,
               sourceCardView(
                 spec, data, await stateOnce("system-status"), displayAutoDim,
-                nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs)
+                nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs),
+                brightnessAlarmActive(await stateOnce("dtc"))
               )
             );
             continue;
