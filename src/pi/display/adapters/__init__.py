@@ -10,6 +10,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-01-22    | Ralph Agent  | US-006: Initial subpackage creation
+# 2026-10-18    | Atlas        | US-872: ADAFRUIT_AVAILABLE forwarded lazily
 # ================================================================================
 ################################################################################
 """
@@ -29,7 +30,6 @@ Usage:
 """
 
 from .adafruit import (
-    ADAFRUIT_AVAILABLE,
     DISPLAY_HEIGHT,
     DISPLAY_WIDTH,
     AdafruitDisplayAdapter,
@@ -58,3 +58,15 @@ __all__: list[str] = [
     'isDisplayHardwareAvailable',
     'createAdafruitAdapter',
 ]
+
+
+def __getattr__(name: str) -> object:
+    """US-872: forward ADAFRUIT_AVAILABLE lazily (PEP 562).
+
+    Reading it loads the Adafruit hardware stack (and with it lgpio), so it
+    must not be bound at import time; see adapters/adafruit.py.
+    """
+    if name == 'ADAFRUIT_AVAILABLE':
+        from .adafruit import ADAFRUIT_AVAILABLE
+        return ADAFRUIT_AVAILABLE
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
