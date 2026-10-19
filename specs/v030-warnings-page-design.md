@@ -1,6 +1,6 @@
 # V0.30 Warnings page + top-bar warning icon — design spec
 
-**Author:** Iris (UI/UX) · **Date:** 2026-10-13 (brainstorm 2026-10-12/13; **reworked 2026-10-13 for R31**) · **Status:** CIO-APPROVED design, awaiting V0.30 DoD + grooming. **§4.4 rewritten: the CIO kept the full-screen takeover (R31, Marcus 2026-10-13 14:41). My no-takeover design (WN-3) is superseded. Scope ruled 2026-10-14: only a live coolant red takes over (§4.4, new §4.4a).** **S106 brief folded 2026-10-18 (UIDEV-005):** the key-on CODE ALERT (§4.4b, CIO put it in S106), SYSTEM/DATA not in V0.30 (Atlas §5), the empty state prints only what was assessed (§4.3), tokens ruled, and §5–§7 rewritten as the build contract. Brief: `pm/inbox/2026-10-18-from-iris-S106-brief-Warnings-US-897-898-899-specs-fields-ACs-gates-gaps.md`.
+**Author:** Iris (UI/UX) · **Date:** 2026-10-13 (brainstorm 2026-10-12/13; **reworked 2026-10-13 for R31**) · **Status:** CIO-APPROVED design; provider in S107, page in S108. **§4.4 rewritten: the CIO kept the full-screen takeover (R31, Marcus 2026-10-13 14:41). My no-takeover design (WN-3) is superseded. Scope ruled 2026-10-14: only a live coolant red takes over (§4.4, new §4.4a).** **S106 brief folded 2026-10-18 (UIDEV-005):** the key-on CODE ALERT (§4.4b, CIO put it in S106), SYSTEM/DATA not in V0.30 (Atlas §5), the empty state prints only what was assessed (§4.3), tokens ruled, and §5–§7 rewritten as the build contract. Brief: `pm/inbox/2026-10-18-from-iris-S106-brief-Warnings-US-897-898-899-specs-fields-ACs-gates-gaps.md`. **S108 folds 2026-10-19 (UIDEV-006):** my U1–U12 answers, my S108 PRD review + row-ages ruling, Atlas G3/G4/G6/G7 (10-18) and his S108 review G1–G3, Spool's US-754 rows (P0430 is not this car) and UNRATED sentence. The page is built in S108 (US-898-a/b1/b2/c, US-899-a1/a2/b). **Where this spec and the OEM mockup differ, the spec wins** (the mockup predates these folds; §10 lists the differences).
 **Mockup (build from this):** `specs/v030-warnings-page-oem.html` (repo copy, UIDEV-005) → https://claude.ai/artifact/KKE2HvXZmUZJDPFP6SrRhk (OEM skin, v2, 2026-10-18: PULL OVER + code alert + every §7 fixture). *(Superseded: the 2026-10-12 layout mockup https://claude.ai/artifact/1hZxFmhcUM8rY5onGu8eXU, which set layout A, scrolling.)*
 **DoD lines served:** 9 (warnings: top-bar icon on every page + own page), 8, 12 (carries US-754, US-758; ARCH-062)
 **Builds on:** W-12 unified alert layer (Atlas ruling 2026-06-19: one arbiter-owned `alerts` view-state, an aggregator over providers; tier → live > stored → newest). Spool tiers: `specs/grounded-knowledge.md` DTC severity row + `tuner/dtc-display-clear-safety-advisory.md`.
@@ -29,36 +29,38 @@
 ## 3. Layout (480 × 320; body 270 = 320 − 34 bar − 16 dots)
 
 ```
-┌──────────────────────────────────────────────┐ top bar: … [▲3] (warning icon, every page)
-│ 3 ACTIVE                     codes read 6:42 PM│ ~40  --fs-primary
+┌──────────────────────────────────────────────┐ top bar: BT ⇅ [wifi] ▲3 (warning icon, every page)
+│ 3 ACTIVE                        codes read 6:42│ ~40  --fs-primary
 ├──────────────────────────────────────────────┤
-│ [STOP ] Coolant 232 °F                  ENGINE │ ~50
-│         Engine overheating. Pull over…    now │
-│ [WATCH] Battery 12.6 V                  ENGINE │
-│         Not charging while running.     2 min │
-│ [WATCH] P0400                             CODE │
-│         EGR flow fault. Get it checked soon.  │
-│ [MINOR] P0443                             CODE │ ▓ scrollbar when more
-│ ↓ 2 more below                                │
+│ [STOP ] ENGINE OVERHEATING  234 °F    just now │ ≥ 48
+│         Stop safely, engine off. Do not open…  │
+│ [WATCH] CHARGING FAULT  11.8 V       2 min ago │
+│         Head somewhere safe. Turn off access…  │
+│ [WATCH] EGR FLOW (P0400)           41 days ago │
+│         Drive gently. Get it diagnosed.        │
+│ [MINOR] EVAP PURGE (P0443)         …           │ ▓ scrollbar when more
+│ ↓ n more below                                 │
 └──────────────────────────────────────────────┘
 ```
 
 | Element | Tier | Note |
 |---|---|---|
-| Header | `--fs-primary` | `n ACTIVE` / `NONE` (142.4 px) / `NOT CHECKED` (amber, 352.7 px) + `codes read h:mm` `--fs-meta` (12-hour, no AM/PM: the one clock rule) |
-| Chip | `--fs-meta` | STOP `--critical-red`, ink `#fff` (the existing STOP copy colour, 4.98) · WATCH `--amber-warn`, ink `var(--bg)` (12.4) · MINOR `--green-ok`, ink `var(--bg)` (8.73) · UNRATED `--neutral-chip-bg` (#2a2f37, tokens.css SSOT), ink `--text-primary` (11.94). **No new tokens** (Atlas 2026-10-16, contrast MEASURED). |
-| Title | `--fs-label` mono | code or live value |
-| Sentence | `--fs-meta` | instruction as **plain text** (US-758) |
-| Source / age | `--fs-meta` | ENGINE · CODE · SYSTEM · DATA |
+| Header | `--fs-primary` | `n ACTIVE` / `NONE` (142.4 px) / `NOT CHECKED` (amber, 352.7 px) / `--` (no data, §4.3) + `codes read h:mm` or `codes not read yet`, `--fs-meta` (12-hour, no AM/PM: the one clock rule, the `fmtTimeOfDay` split) |
+| Chip | `--fs-meta` | STOP `--critical-red`, ink `#fff` (the existing STOP copy colour, 4.98) · WATCH `--amber-warn`, ink `var(--bg)` (12.4) · MINOR `--green-ok`, ink `var(--bg)` (8.73) · UNRATED `--neutral-chip-bg` (#2a2f37, tokens.css SSOT; the dashboard.css:185 mirror STAYS, Atlas G6), ink `--text-primary` (11.94). **No new tokens** (Atlas 2026-10-16, contrast MEASURED). |
+| Title | `--fs-label` mono | the provider's `title` (a code row reads `EGR FLOW (P0400)`) + value and unit through `displayUnits` (°F for coolant). Stale: `last.value` + `last reading n s ago` (§4.6) |
+| Sentence | `--fs-meta` mono | the provider's `sentence` as **plain text** (US-758) |
+| Age | `--fs-meta` mono, right | **`agoText(now, firstSeenTs)` unchanged**: `just now` / `n min ago` / `n h ago` / `n days ago` / `age unknown`; `cleared` for an `active:false` row. **No `code ·` / `engine ·` prefix** (the title already names the source). Worst row: `EVAP PURGE (P0443)` 216.7 + chip ~60 + `999 days ago` 108.4 + 2 × 8 gaps ≈ 401 of 448 px; with a prefix ≈ 455 px, which clips |
 
-Entries ≥ 48 px tall. **All entries render; the list scrolls** with a visible scrollbar and an `↓ n more below` cue (no silent clip). Ranking means the most severe are always above the fold, so **nothing requires touch while driving** (R5).
+Entries ≥ 48 px tall, never `.tile` (the fact-ceiling test). **All entries render; the list scrolls** with a visible scrollbar (styled through scoped custom properties) and a mono `↓ n more below` cue (no silent clip). **n is counted from layout at runtime:** the rows whose bottom edge is below the list's visible bottom. The pure function (48 px rows in 270 px minus the MEASURED header and cue heights) is only the no-layout fallback the harness tests, and it never reports fewer than the layout would; 7 entries ⇒ `↓ 3 more below` (270 − ~40 − ~20 = 210 ⇒ 4 visible). A pure function alone can under-count once a row wraps, which is the dishonest direction. Ranking means the most severe are always above the fold, so **nothing requires touch while driving** (R5).
+
+**Fonts on this page:** Michroma (`--font-display`) is **UPPER-CASE only** (the subset is A-Z, 0-9, space and hyphen). It carries `NONE`, `NO WARNINGS`, `NOT CHECKED`, `NOT CHECKED YET`, `n ACTIVE`, `TROUBLE CODES`, `DISMISS` and the chips. Everything with lower case or a symbol (`?`, `▲`, `△`, `:`, `+`, `↓`, `·`, `°`) is `--font-mono`, including every sentence, reason and notice.
 
 ## 4. Behaviour
 
 ### 4.1 Sources and ranking
 | Source | What becomes an entry | Tier |
 |---|---|---|
-| **CODE** | stored/pending DTCs | Spool's table; **unknown ⇒ UNRATED, never a guessed tier** (US-754). Rated 2026-10-13 (Spool): **P0400 WATCH · P0430 WATCH · P0443 MINOR**. ⚠️ **Not yet in any provider table** (Atlas MEASURED 2026-10-16: the live car publishes both as `unknown`); **US-754 carries the rows, in S106.** A new UNRATED code on the car is Spool's trigger to rate it; there is no speculative P0 table. |
+| **CODE** | stored/pending DTCs | Spool's table; **unknown ⇒ UNRATED, never a guessed tier** (US-754). Rated (Spool 2026-10-18, rows in US-754, S106): **P0400 WATCH** `EGR FLOW (P0400)` / `Drive gently. Get it diagnosed.` · **P0443 MINOR** `EVAP PURGE (P0443)` / `Emissions only. Safe to drive.` P1xxx titles follow the same `<NAME> (<code>)` form (Spool S2, 2026-10-19). **P0430 has NO row** (corrected 2026-10-18; my 10-13 "P0430 WATCH" is withdrawn): bank-2 codes (P0430, P0150–P0167, P0174/P0175) cannot set on this inline four. The only P0430 in `dtc_log` is drive 33, a cross-logged Ford Explorer. Such codes are wrong-vehicle data and render **UNRATED, never a tier**; the drive-33 rows must not appear on the page (provider VCs). **UNRATED sentence** (Spool 2026-10-19, provider-owned): `Severity unknown. Get it diagnosed.` (35 characters = 316.1 px at `--fs-meta`, inside the ~380 px sentence column, so Spool's fallback `Not rated. Get it diagnosed.` is not needed). UNRATED counts above MINOR for the clear gate. A new UNRATED code on the car is Spool's trigger to rate it; there is no speculative P0 table. |
 | **ENGINE** (live) | coolant, battery voltage, RPM over-rev, intake air in a band, **with the dwell rules** | **STOP: live coolant red only.** Battery red and RPM red = **WATCH** (§4.4a). Intake air never above WATCH. |
 | **SYSTEM** | ⏸ **not in V0.30.** `system-status` has no `verdict` yet (US-877 not built), so the provider publishes `sources.system.assessed:false`. When built: whatever the System verdict counts (System spec §4.1) | WATCH |
 | **DATA** | ⏸ **not in V0.30.** The engine-running stall predicate (US-735) is banked (CIO R33), so a stall can't be told from engine-off; `sources.data.assessed:false`. When built: capture stalled while the engine runs, from `capture-health.feeds` | WATCH. Predicate ratified (Spool 2026-09-21): accel_z σ > 0.10 for **N = 7** consecutive 10 s buckets. |
@@ -66,20 +68,31 @@ Entries ≥ 48 px tall. **All entries render; the list scrolls** with a visible 
 Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest first** (Atlas 06-19; Spool-confirmed). The **arbiter** orders; the page renders the order it is given.
 
 ### 4.2 Top-bar icon (every page)
-| State | Condition | Look |
+| State | Condition | Look (mono text in a fixed 3-character slot) |
 |---|---|---|
-| none | checked this session, list empty | grey outline triangle |
+| none | checked this session, list empty | `△` (U+25B3) in `--text-tertiary`. The slot is never empty: the icon is never hidden |
 | **not checked** | codes **not read this session** (ARCH-062) | amber `?`; **never looks like "all clear"** |
-| WATCH | highest active is WATCH/MINOR/UNRATED | amber triangle + count. ~~MINOR-only: grey-text count~~: **proposed (Atlas G7)** the provider maps MINOR-/UNRATED-only to `watch`, since they are counted and counted means amber (CIO 2026-10-16) |
-| STOP | highest active is STOP | red triangle + count; **pulses until acknowledged** |
-`prefers-reduced-motion` ⇒ no pulse; a steady red outline instead.
-**The provider computes the state** (`states/alerts.icon {state: none|not_checked|watch|stop, count, pulse}`); the page renders it and compares nothing. An active STOP or WATCH outranks `?`. Tapping the icon opens Warnings (a control: 40 px hit box).
+| WATCH | highest active is WATCH/MINOR/UNRATED | amber `▲` + count, e.g. `▲2`. **RULED (Atlas G7):** the provider maps MINOR-/UNRATED-only to `watch`; counted means amber (CIO 2026-10-16), and "not rated" is never phrased as safe |
+| STOP | highest active is STOP | red `▲` + count; **pulses until acknowledged** |
+| *(no data)* | `states/alerts` missing, unreadable, or still loading | **`--` in `--text-tertiary`**, no triangle, no pulse; still tappable. **Never `none`:** `none` is the provider's claim that the codes were read and nothing is active, and with no payload that claim is false (S108 review) |
+
+- Count above 99 shows `▲99`.
+- `prefers-reduced-motion` ⇒ no pulse; a steady red outline instead.
+- **The provider computes the state** (`states/alerts.icon {state: none|not_checked|watch|stop, count, pulse}`); the page renders it through a pure `alertIconView(alerts)` and compares nothing. An active STOP or WATCH outranks `?`.
+- **Tap:** opens ALERTS. A control with a transparent 40 px `::after` hit box (the `#menu-btn` pattern). **Allowed while moving:** it only navigates, which a swipe already does, so R5 (nothing may *require* touch while moving) holds. Unlike the kebab, the icon is never hidden.
+- **Room in the top bar (U1 + S108 review).** The left cluster had no room for a fifth glyph, so WiFi gives it up:
+  - `#glyph-wifi` is redrawn as an inline SVG (three arcs + a dot, `stroke: currentColor`, `width: 1ch`, `height: 1em`, relative units only). Its id, `title` and `data-state` binding are unchanged.
+  - Letter-spacing lives in one custom property: `#topbar { --glyph-ls: 0.04em }`, `.glyph { letter-spacing: var(--glyph-ls) }`.
+  - The icon is a `span.glyph` (`#glyph-warnings`) after the sync glyph, with a **fixed** `width: calc(3 * (1ch + var(--glyph-ls)))` and `text-align: start`. Not `min-width: 3ch`: `▲99` is 3 × 16.69 = 50.07 px and 3 ch is only 46.97 px, so a min-width would reflow at two digits.
+  - **Width model** (DejaVu Sans Mono 0.60205 em at `--fs-secondary` 26 px; a text character is `1ch + --glyph-ls` = 16.69 px; letter-spacing does not apply to the SVG): BT 33.38 + sync 16.69 + WiFi 15.65 + icon 50.07 = 115.79 px, + 3 × 10 px gaps = **145.8 of 168.6 px. Headroom 22.8 px < 26.69 px**, so no fifth glyph fits. The width test charges every `span.glyph` by its declared width at that rate and fails on any it can't charge. A reader that charged a bare 1 ch would leave 29.0 px of headroom and let a fifth glyph through.
+  - ⚠️ ARCH-061's OBD link chain, which replaces `BT`, must fit `BT`'s 2 characters (33.4 px) when it is built, or it is a re-layout.
 
 ### 4.3 Empty states
 **Print only what was assessed** (Atlas 2026-10-14 §5, the ARCH-062 rule applied to the whole page). Superseded: `Engine, system and data all clear.`, which claimed two sources V0.30 doesn't check.
 - **Checked, nothing found:** `NO WARNINGS` (26 px, 281.5 px), then `Codes read at h:mm. Engine checks clear.`. The engine clause appears only when `sources.engine.assessed`.
 - **Not checked:** `? NOT CHECKED YET`, plus `Trouble codes haven't been read since key-on, so "nothing found" can't be claimed.`
 - **Both states**, while `sources.system` or `sources.data` is `assessed:false`, add one line in `--text-tertiary`: `System and data checks are not built yet.`
+- **No data:** while the first read is pending, the US-700 bounded LOADING. After the grace, a missing or unreadable `states/alerts` ⇒ header `--`, body `no warnings data`. The icon shows `--` at the same time (§4.2), so the two never disagree.
 - The wording is mine (2026-10-18). The rule (no "clear" for an unassessed source) is Atlas's and not optional.
 
 ### 4.4 STOP handling: full-screen takeover (R31, scope ruled 2026-10-14)
@@ -94,25 +107,27 @@ Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest
 - **Fires** at **≥ 110 °C on a sample, or ≥ 104 °C held 120 s** (R26).
 - **Plausibility guard:** a single ≥ 110 °C sample counts only if the previous fresh sample was ≥ 100 °C; otherwise two consecutive are needed. Coolant cannot move 10 °C in 2.2 s.
 - **Clears** on fresh coolant ≤ 101 °C held 60 s.
-- 🔴 **Stale never clears.** If coolant goes stale (> `obdLiveSec`) while the STOP is active, the takeover **stays up** and shows the **last value with its age** (`12 s ago`). An engine that stalled hot is still hot.
+- 🔴 **Stale never clears.** If coolant goes stale (> `obdLiveSec`) while the STOP is active, the takeover **stays up** and shows the **last value with its age** (`last reading 12 s ago`, §4.6). An engine that stalled hot is still hot.
 - **Key-off** ends the display, not the alarm state. The next key-on re-evaluates from fresh data.
 
 ```
 ┌──────────────────────────────────────────────┐ covers the top bar too; the REPLAY marker stays visible above it
 │                                              │
-│                PULL OVER                     │ --fs-hero, --critical-red
-│                                              │
-│        ENGINE OVERHEATING · 234 °F           │ --fs-primary: title + value + unit
-│  Stop safely, engine off. Do not open the    │ --fs-label: the provider's sentence
-│  radiator cap hot.                12 s ago   │ --fs-meta: since firstSeenTs; when stale, the value's age
-└──────────────────────────────────────────────┘ full-bleed --critical-red frame, solid fill
+│                PULL OVER                     │ --fs-hero band: takeover.directive (provider)
+│              ENGINE OVERHEATING              │ --fs-secondary, own line: takeover.title
+│                   234 °F                     │ --fs-primary mono: value + unit (displayUnits)
+│             last reading 12 s ago            │ --fs-label mono, own line, ONLY when stale
+│  Stop safely, engine off. Do not open the    │ --fs-label mono: takeover.sentence
+│  radiator cap hot.                12 s ago   │ --fs-meta: agoText since firstSeenTs
+└──────────────────────────────────────────────┘ 8 px --critical-red frame on opaque --bg (stop-alarm-pulse)
 ```
 
 | Rule | Detail |
 |---|---|
-| **Words, not colour alone** | Always the words **`PULL OVER`** plus the **value and its unit**. Text survives a single glance; colour alone does not. Words are Spool's (2026-10-14): `PULL OVER` / `ENGINE OVERHEATING` / value / `Stop safely, engine off. Do not open the radiator cap hot.` The provider supplies the title and sentence; the page never writes them. The unit is the Driving page's (°F); the thresholds stay in °C in the provider. Never "probably", never a cause on screen. |
+| **Words, not colour alone** | Always the directive **plus the value and its unit**. Text survives a single glance; colour alone does not. Words are Spool's (2026-10-14): `PULL OVER` / `ENGINE OVERHEATING` / value / `Stop safely, engine off. Do not open the radiator cap hot.` **The provider supplies all of them:** `takeover.directive` (`PULL OVER`, Atlas G4, 10-18), `title` and `sentence`. The page writes none of them, and the literal `PULL OVER` appears nowhere in `carousel.js` (U11, a file-wide gate once US-899-a2 deletes the old directive strings). The unit is the Driving page's (°F); the thresholds stay in °C in the provider. Never "probably", never a cause on screen. |
+| **Stale line** | `last reading n s ago` goes on **its own line at `--fs-label`** (23 characters at most = 276.9 px), never beside the value at `--fs-primary`, where `last reading 999+ s ago` would be 470.8 px against the 464 px inside the frame (S108 review B). Age format per §4.6 |
 | **Every page** | It covers **whatever page is showing**. R31 names the Driving page because it is the default, but a red must not hide on another page. That was the reason the old jump existed. |
-| **Live red: not dismissable while active** | No control removes it while the provider reports `active` (Spool 06-18). No button is shown. Acknowledge (tap anywhere) stops the **icon** pulse only. |
+| **Live red: not dismissable while active** | No control removes it while the provider reports `active` (Spool 06-18). **No button is shown:** `#takeover-detail`, `#takeover-dismiss` and the static `CHECK ENGINE` head are not on this surface (U7), and US-899-a2 deletes them if nothing else uses them. Acknowledge (tap anywhere) stops the **icon** pulse only; the frame keeps pulsing while the takeover is up. |
 | **Ends when the cause ends** | When the provider marks the entry inactive (its clear rule above; **never** because the data went stale), the takeover closes and the page underneath returns. The entry stays on Warnings until the arbiter drops it. |
 | ~~Stored STOP code~~ | **Removed 2026-10-14:** stored codes never take over. If a code were ever rated STOP, it would show on the icon and the Warnings page only. |
 | **Brightness** | **Full brightness while up**, independent of auto-dim. |
@@ -120,9 +135,9 @@ Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest
 | **Layering** | Above every page, menu and detail overlay. **Below the REPLAY marker only** (Sprint 98 review B-2): a replayed overheat must still say REPLAY. The marker is a direct child of `body` (not of `#topbar`, which is its own stacking context at z 10), with a z-index above the highest declared in `dashboard.css` (US-901-b, as folded by Marcus). `pointer-events` stay on the takeover, never on the marker. |
 | **Touch** | Not required at any point (R5). |
 
-Acknowledge is stored by the provider (`POST /alerts-ack {id}`, Atlas 2026-10-14 §3), boot-scoped, so a kiosk or orchestrator restart does not re-pulse and the next key-on re-evaluates. **Honest write:** the icon pulse stops only when the re-read says `acknowledged:true`; on failure (503 in fixture mode) it keeps pulsing and shows `couldn't acknowledge` (`--fs-meta`, 3 s).
+Acknowledge is stored by the provider (`POST /alerts-ack {ids: [takeover.id]}`, Atlas 2026-10-14 §3 + Q26), boot-scoped **and keyed to the episode** (Atlas S108 G1: a record counts only when its `bootId` is the current boot AND its `firstSeenTs` equals the entry's), so a kiosk or orchestrator restart does not re-pulse, an acked STOP that cools is removed rather than re-listed unacked (Q15), a new episode under the same id pulses again, and the next key-on re-evaluates. **Honest write**, through the ONE page helper `postWrite(path, body)` that `/dtc-clear` and `/fuel-reset` also use (U12; not `postAction`, which is the `/service-control` helper; each caller keeps its own honest-write rule and the helper never reports success itself): the icon pulse stops only when a re-read shows `acknowledged:true` within `pi.display.stale.alertsAckConfirmSec` (default 6 s, Atlas Q33); otherwise, and on 409/503/504, it keeps pulsing and shows `couldn't acknowledge` (`--fs-meta` mono) for `pi.display.stale.alertsAckNoticeSec` (default 3 s).
 
-**Build: reuse the shipped `#dtc-takeover[data-severity="stop"]` skeleton** (dashboard.css, enforced by `test_dashboard_stop_tier_safety.py`): opaque `--bg`, 8 px `--critical-red` frame on the shipped `stop-alarm-pulse` keyframe (frame → `var(--bg)` at 50 %; **no second alarm red**, Atlas 2026-10-16), `#fff` copy, full brightness. Content from `states/alerts.takeover {id, title, sentence, value, unit, firstSeenTs}`; while the entry is `stale` the age reads `last reading n s ago`.
+**Build: reuse the shipped `#dtc-takeover[data-severity="stop"]` skeleton** (dashboard.css, enforced by `test_dashboard_stop_tier_safety.py`): opaque `--bg`, 8 px `--critical-red` frame on the shipped `stop-alarm-pulse` keyframe (frame → `var(--bg)` at 50 %; **no second alarm red**, Atlas 2026-10-16), `#fff` copy, full brightness (`brightnessAlarmActive` keys on `states/alerts.takeover != null`). The pulse lives inside `@media (prefers-reduced-motion: no-preference)` (U8); the red frame and the words carry STOP without motion. Content from `states/alerts.takeover {id, directive, title, sentence, value, unit, firstSeenTs, dismissable:false}`. The alerts takeover is the ONLY writer of `#dtc-takeover`'s state and copy; z-index 60, below the REPLAY marker's 70.
 
 ### 4.4a Live reds that are WATCH (no takeover; Spool 2026-10-14)
 The tile on the Driving page is red from its **band**. The Warnings entry is **WATCH** from its **tier**. These are two different facts: band colour says where the value is, and the tier says what the driver should do. The icon follows the tier (amber WATCH), so a red tile with an amber icon is correct, not a contradiction.
@@ -142,26 +157,38 @@ Stored and pending codes re-alert **once per key-on** and can be hidden. This is
 ```
 ┌──────────────────────────────────────────────┐ 8 px frame in the TOP tier's chip colour; no pulse
 │               TROUBLE CODES                  │ Michroma --fs-secondary (315.5 px)
-│ [WATCH] P0400                                │ chip + code (mono --fs-label)
-│         EGR flow fault. Get it checked soon. │ provider sentence --fs-meta
-│ [MINOR] P0443                                │
-│         Evap purge valve circuit.            │
+│ [WATCH] EGR FLOW (P0400)                     │ chip + provider title (mono --fs-label)
+│         Drive gently. Get it diagnosed.      │ provider sentence (mono --fs-meta)
+│ [MINOR] EVAP PURGE (P0443)                   │
+│         Emissions only. Safe to drive.       │
 │ +2 more on ALERTS                  [DISMISS] │ real button: bordered, ≥ 40 px (US-758)
 └──────────────────────────────────────────────┘
 ```
 
 | Rule | Detail |
 |---|---|
-| Source | `states/alerts.codeAlert {ids[], dismissable:true}`. The provider decides when it shows (each key-on, boot-scoped ack). The page never decides. |
-| Skeleton | Same as PULL OVER, with **no pulse and no full-brightness override**. Frame = the chip colour of the highest tier among `ids` (amber WATCH / green MINOR / neutral UNRATED). Never red: no stored code is STOP. |
-| Rows | Up to 3 (chip + code + the provider's sentence); beyond that, `+n more on ALERTS`. |
-| DISMISS | `POST /alerts-ack` for each id. It closes only when the re-read gives `codeAlert == null`; on failure it stays, with `couldn't dismiss`. DISMISS is the only control (`DISMISS` 123.0 px at 20 px). |
-| 🔴 **Moving** | **Not drawn while moving** (the W-13 `parked` predicate + `drive.state`; the page computes no speed rule). It never covers the Driving page at speed (R5). **Hiding it is not a dismiss:** it returns when parked, until dismissed. Key-on is normally parked, so "re-alert every key-on" holds. |
+| Source | `states/alerts.codeAlert {ids[], tier, dismissable:true}`. The provider decides when it shows (each key-on, boot-scoped ack) and computes `tier` (Atlas Q32). The page never decides or compares. |
+| Container | Its own container, `data-surface="code-alert"`, never `data-severity="watch"` or `"minor"` (U7). Head `TROUBLE CODES`; never the static `CHECK ENGINE` head. |
+| Skeleton | The takeover skeleton with **no pulse and no full-brightness override**. Frame colour = `TIER_COLOR_VAR[codeAlert.tier]`, the ONE page map `{stop: --critical-red, watch: --amber-warn, minor: --green-ok, unrated: --neutral-chip-bg}` that PULL OVER also uses (US-899-a1). Never red in practice: no stored code is STOP. UNRATED's `#2a2f37` frame on `#0A0A0A` is low contrast on purpose (an unknown severity doesn't shout); the head and the chips carry it. |
+| Rows | Up to 3, each chip + title + sentence looked up by id in `entries[]`; beyond that, `+n more on ALERTS` (mono: `+` and lower case are not in Michroma). |
+| DISMISS | Michroma `--fs-label`, bordered, ≥ 40 px hit box. ONE request, `POST /alerts-ack {ids: codeAlert.ids}` (Atlas Q26, all-or-nothing), through `postWrite`. It closes only when a re-read gives `codeAlert == null` within `alertsAckConfirmSec`; otherwise it stays, with `couldn't dismiss` (mono `--fs-meta`) for `alertsAckNoticeSec`. DISMISS is the only control (`DISMISS` 123.0 px at 20 px). |
+| 🔴 **Moving** | **Drawn only while `engineParked` is parked** (the US-511 debounce; it starts not-parked, so the alert appears ≥ 8 s after boot — the honest cost of never asserting parked without proof, U6; the page computes no speed rule). It never covers the Driving page at speed (R5). **Hiding it is not a dismiss** and posts nothing: it returns when parked, until dismissed. Key-on is parked, so "re-alert every key-on" holds, 8 s late. |
 | Precedence | **PULL OVER > CODE ALERT.** With both up, only PULL OVER is drawn; the code alert returns after the coolant clears. |
-| Layering | Above every page, below PULL OVER and below the REPLAY marker. |
+| Layering | Above every page, below PULL OVER and below the REPLAY marker (70). |
 
-### 4.5 Code detail + clear (as shipped)
-Parked-only tap on a CODE entry ⇒ detail (directive-first, carded sections, freeze-frame realtime fallback). **Clear:** MINOR (clearable) codes only, hard confirm, re-read, refuse a second clear; never STOP/WATCH; gate re-checked at the action path (Atlas DTC-A1).
+### 4.5 Code detail + clear
+- **Open:** a tap on a CODE row (`source` `code`) opens `#dtc-detail` **only while `engineParked` is parked**; while moving the row tap does nothing. ENGINE rows are not controls and never open a detail (U10: CODE rows are real controls with a pointer; ENGINE rows and every sentence get no border, fill or pointer).
+- **Content (U4):** the directive band shows the entry's **`sentence`** (provider words), never `DTC_TIER`'s tier-table directive. The tier chip comes from the entry; `unrated` renders with the existing `unknown` styling. The code is parsed from the id `code:<code>:<tier>`.
+- **The one `states/dtc` read outside the provider path** (a documented G-7 exception, scoped to the detail open and its ticks while open): the full record (long text, freeze-frame/realtime fallback, suggested fix, logged/syncAcked), which also feeds the clear gate. **If that fetch fails**, the detail still renders the entry's own title, tier and sentence plus `details unavailable`, never a cached or tier-table directive.
+- **Clear (as shipped, `clearGateReason` unchanged):** offered for MINOR codes only, hard confirm, re-read, refuse a second clear; gate re-checked at the action path (Atlas DTC-A1). Spool: an UNRATED code counts above MINOR (Mode 04 wipes everything, and an unknown can't be judged safe to wipe).
+  - WATCH / STOP-tier / UNRATED: **visible, disabled**, with the existing lock label (`🔒 CLEAR CODES — <reason>`, `CLEAR_REASON_LABEL`).
+  - **While moving:** visible, disabled, **`🔒 CLEAR CODES — car is moving`** (`CLEAR_REASON_LABEL.moving`). It states the fact, as the other labels do.
+  - **A permanent reason wins over `moving`** (`severity_present`, `severity_unknown`, `session_locked`, `sync_pending`); `moving` shows only when the gate would otherwise be `ok`. Otherwise a WATCH code seen while driving would say "car is moving", implying that parking unlocks it.
+
+### 4.6 Ages and formats on this page
+- **Freshness** (how old the reading I'm showing is): `last reading n s ago`, the S105 M7 rule: `Math.floor`, clamped at 0, `N s` with a space, capped at `999+ s ago`. On stale rows and in the takeover only.
+- **Duration** (how long the entry has been wrong): `agoText(now, firstSeenTs)` unchanged, on every row (engine rows too; a battery WATCH active 20 min reads `20 min ago`, not `999+ s ago`) and the takeover's age. Never a short form like `41 d`: `carousel.js` deliberately keeps one age vocabulary.
+- Spool's formats (10-19 §5): battery `0.1 V`, one decimal always (`12.0 V`, never `12 V`), **rounded toward the breach** (low alert floors, 11.96 ⇒ `11.9 V`; high alert ceils, 15.04 ⇒ `15.1 V`), so the shown number never sits on the safe side of the threshold that fired. Over-rev: integer rpm, floor, `,` separator, `(sampled)`, composed by the provider into the sentence (Atlas G3). ⚠️ `displayUnits` rounds V to nearest today; whether the toward-the-breach rounding lives in the provider's `value` or in a page helper is **open for Atlas** (§9).
 
 ## 5. Data contract
 **Authority: Atlas 2026-10-14 WARNINGS ruling** (`states/alerts` shape, boot-scoped ack store, tier mechanism, 4-story split); tokens 2026-10-16. **The page reads `states/alerts` only** for warnings (never `states/dtc`, except in the code-detail view).
@@ -171,79 +198,87 @@ Parked-only tap on a CODE entry ⇒ detail (directive-first, carded sections, fr
 | `icon.{state, count, pulse}` | top-bar icon (§4.2) | US-897-b |
 | `sources.code.{assessed, checkedAtTs}` · `sources.engine.assessed` · `sources.system/data.{assessed:false, reason}` | header meta, empty state (§4.3) | US-897-a/b |
 | `entries[] {id, source, key, tier, title, sentence, value, unit, firstSeenTs, lastSeenTs, active, stale, acknowledged}`, **already ordered** (tier > live before stored > newest) | the list | US-897-b |
-| `takeover` null \| `{id, title, sentence, value, unit, firstSeenTs, dismissable:false}` | PULL OVER (§4.4) | US-897-b |
-| `codeAlert` null \| `{ids[], dismissable:true}` | CODE ALERT (§4.4b) | US-897-b |
+| `takeover` null \| `{id, directive, title, sentence, value, unit, firstSeenTs, dismissable:false}` (`directive`: Atlas G4) | PULL OVER (§4.4) | US-897-b |
+| `codeAlert` null \| `{ids[], tier, dismissable:true}` (`tier`: Atlas Q32) | CODE ALERT (§4.4b) | US-897-b |
 | `dataSource` | REPLAY/SIM marker above both screens | US-897-b |
-| `POST /alerts-ack {id}`: token-gated, request/outcome channel, `/var/lib/eclipse-obd/alerts-ack.json`, counts only for the current `bootId` | ack + dismiss | US-897-c |
-| Code severities for P0400/P0430/P0443 in the provider table | real-codes fixture | **US-754 (S106)** |
+| `POST /alerts-ack {ids: [...]}`: token-gated, all-or-nothing (409 `unknown_id` / `not_ackable`, nothing written; Q26), request/outcome channel on the shared helper (US-897-c0), store `/var/lib/eclipse-obd/alerts-ack.json` with records `{id: {bootId, firstSeenTs, ackedAt}}`; an ack counts only for the current boot AND the same episode (`firstSeenTs`, Atlas S108 G1); an acked entry that goes inactive is removed (Q15) | ack + dismiss | US-897-c (S108) |
+| Code severities for P0400 (WATCH) and P0443 (MINOR) in the provider table; **no P0430 row** (bank 2, not this car ⇒ UNRATED); the UNRATED sentence | real-codes fixture | **US-754 (S106)** |
 
 - **id = `<source>:<key>:<tier>`**, so an escalation is a new id, and an ack of a lesser state never silences a worse one.
 - **Units:** the provider passes the reading's own unit (`C`, `V`, `rpm`). The page converts through the S103 G1 helper by `unit` (coolant shows °F).
-- **Words:** every title and sentence is the provider's (Spool 2026-10-14 verbatim). The page composes none. Over-rev: proposed `sentence` = `peak 7,150 rpm (sampled)` with `value` null, so "(sampled)" can't be dropped (Atlas G3).
+- **Words:** every title and sentence is the provider's (Spool 2026-10-14 verbatim). The page composes none. Over-rev: **RULED (Atlas G3, 10-18):** `sentence` = `peak 7,150 rpm (sampled)` with `value` and `unit` null, so "(sampled)" can't be dropped (`value` always means CURRENT, and a drive peak isn't).
 - **Not in V0.30:** SYSTEM entries (no `system-status.verdict`, US-877) and DATA entries (US-735 banked). No adapter stubs.
 
-## 6. Acceptance criteria (S106 build, predicates)
-From the S106 brief (2026-10-18). Provider-side predicates (B1–B8, c1–c6) are in the brief under US-897-b/c.
+## 6. Acceptance criteria (S108 build, predicates)
+From the S106 brief (2026-10-18), U1–U12 and the S108 review (2026-10-19); the S108 PRD carries them per story. Provider-side predicates (B1–B8, c1–c6, Atlas S108 G1/G2) are in the brief and the PRD under US-897-b/c.
 
 **US-898 (icon + page)**
-1. For each `icon.state` fixture, the icon DOM matches §4.2. `?` renders only when `icon.state == not_checked`.
+1. For each `icon.state` fixture, the icon DOM matches §4.2. `?` renders only when `icon.state == not_checked`. `icon-missing-payload` ⇒ `--` tertiary, never `△`.
+1a. Top-bar width: the reader charges every `span.glyph` by declared width (§4.2) and fails on any it can't charge; the cluster is 145.8 of 168.6 px, and a planted fifth one-character glyph fails. The icon slot does not change width between `▲9` and `▲99`.
 2. not-checked: no element's text contains `NONE`, `NO WARNINGS` or `clear`.
 3. system-data-not-assessed: no element pairs `system` or `data` with `clear`. The not-built line is present.
 4. The DOM row order equals `entries[]`. No `.sort(` in the Warnings render.
-5. seven-entries: all 7 rows in the DOM; `↓ n more below` visible at scrollTop 0; scrollbar visible; row 1 most severe.
-6. UNRATED renders the neutral chip and the provider's sentence (null ⇒ no sentence, never a page literal).
+5. seven-entries-scroll: all 7 rows in the DOM; at scrollTop 0 `↓ 3 more below` (counted from layout); scrollbar visible; row 1 most severe.
+6. UNRATED renders the neutral chip and the provider's sentence (`Severity unknown. Get it diagnosed.`), never a page literal.
 7. US-758: no sentence element has a border, fill or `cursor:pointer`. Only real controls look like controls.
 8. Battery-red: a red Driving tile beside an amber WATCH icon (band vs tier).
 9. Chip inks meet AA per §3.
 10. Codes unread + an active WATCH: the icon is watch, not `?`; header meta `codes not read yet`.
-10a. Code detail (§4.5, kept): the Clear button is absent for STOP/WATCH/UNRATED codes and absent while moving.
+10a. Code detail (§4.5): a moving tap on a code row opens nothing; the band shows the entry's sentence; a failed `states/dtc` fetch ⇒ title, chip, sentence + `details unavailable`; the Clear button is visible and disabled for WATCH/STOP/UNRATED (existing lock label) and while moving (`🔒 CLEAR CODES — car is moving`), with a permanent reason winning over `moving`.
+10b. Ages: row ages are `agoText` (a `firstSeenTs` 41 days back reads `41 days ago`, no source prefix); a stale row reads `last reading n s ago` and caps at `999+ s ago`.
 
 **US-899 (PULL OVER + CODE ALERT)**
-11. stop-live-overheat, on each page in turn: takeover visible; contains `PULL OVER`, the value and its unit; frame animation `stop-alarm-pulse`; applied brightness 1.0.
+11. stop-live-overheat, on each page in turn: takeover visible; contains the provider's `directive`, the value and its unit; frame animation `stop-alarm-pulse`; applied brightness 1.0.
 12. No element inside the takeover is a button. After the ack re-read: `icon.pulse` false, the takeover still up, the entry still listed.
 13. `takeover` → null: the takeover hides; the same card index is underneath.
-14. stale-coolant-stop: the takeover stays; age `last reading n s ago`, and n counts up.
+14. stop-live-stale: the takeover stays; `last reading n s ago` on its own `--fs-label` line, and n counts up.
 15. Battery-red / RPM-red: no takeover in the DOM; icon watch; the over-rev row contains `(sampled)`.
 16. Code-only fixtures never show a STOP takeover.
-17. code-alert-keyon (parked): visible, with DISMISS; dismiss → re-read null → hidden. code-alert-moving: not drawn, no ack posted.
+17. code-alert-keyon (parked): visible, with DISMISS; dismiss → one POST with every id → re-read null → hidden. code-alert-moving: not drawn, no ack posted.
 18. ack-prior-boot: the old-boot ack doesn't hold; the pulse and the code alert are back.
+18a. Ack an active STOP, then it clears: the entry is removed, never re-listed unacked, and the icon doesn't pulse (Atlas S108 G1, a provider VC the page sees).
 19. replay-stop-live: the REPLAY marker's z-index is above the takeover's and above every z-index in dashboard.css (existing marker test).
 20. takeover + codeAlert both set: only PULL OVER is drawn.
-21. Ack failure (503): the pulse continues; `couldn't acknowledge` shows. Never optimistic.
+21. Ack failure (503): the pulse continues; `couldn't acknowledge` shows for `alertsAckNoticeSec`. Never optimistic.
 22. **DoD (R15): CIO judgement in the car.** Coolant STOP is desk/replay only; never stage an overheat (Atlas §7).
 
-**Grep gates (carousel.js / dashboard.css)**
+**Grep gates (carousel.js / dashboard.css / dashboard.html; comments count)**
 - G-1. No threshold literals in the warnings/icon/takeover code (110, 104, 101, 7000, 12.0, 15.0).
-- G-2. No tier copy literals (`ENGINE OVERHEATING`, `CHARGING FAULT`, `OVERCHARGING`, `OVER-REV`, `GET DIAGNOSED`, `Stop safely`). Allowed: `PULL OVER` (pending Atlas G4), `TROUBLE CODES`, `DISMISS`, `ALERTS`, the §4.3 lines.
-- G-3. Zero `newSinceTs`, `dtcLastAckedTs`, `takeoverShouldShow` (US-899 deletes the dead path).
+- G-2. No tier copy literals (`ENGINE OVERHEATING`, `CHARGING FAULT`, `OVERCHARGING`, `OVER-REV`, `GET DIAGNOSED`, `Stop safely`) and **no `PULL OVER` anywhere** (U11; it is `takeover.directive`). Allowed: `TROUBLE CODES`, `DISMISS`, `ALERTS`, the §4.3 lines and the notices.
+- G-3. Zero `newSinceTs`, `dtcLastAckedTs`, `takeoverShouldShow`, `dtc-ribbon` (US-899-a2 deletes the dead path and the ribbon, U3).
 - G-4. Exactly one `@keyframes stop-alarm-pulse`. No `--critical-red-dim` or `--chip-ink`. `--neutral-chip-bg` only via `var()`.
 - G-5. No literal colour or px in new CSS; geometry as scoped custom properties. `#fff` STOP ink is the one exemption.
 - G-6. No tier comparison or sort in the render.
-- G-7. No `states/dtc` fetch outside the code-detail view.
+- G-7. No `states/dtc` fetch outside the code-detail open.
+- G-8. `postAction` is called only from the `/service-control` path; every ack, clear and reset write goes through `postWrite`.
 
 ## 7. Fixtures
-All drawn in the OEM mockup (`specs/v030-warnings-page-oem.html`).
-- **PULL OVER:** `stop-live-overheat` · `stop-live-stale` · `stop-acknowledged` · `ack-fails-503` · `stop-live-cleared` · `replay-stop-live` · stop over Driving.
-- **CODE ALERT:** `code-alert-keyon` · `code-alert-moving` · `code-alert-and-stop` · `code-alert-dismiss-fails` · `ack-prior-boot`.
-- **List:** `watch-battery-low` · `watch-battery-high` · `watch-over-rev` · `two-stored-codes-real` (needs US-754) · `unrated-code` · `mixed-live-and-stored` · `seven-entries-scroll`.
-- **Empty / icon:** `checked-clean` · `engine-not-assessed` · `not-checked` · `codes-unread-with-watch`. Plus `system-data-not-assessed` (= checked-clean in V0.30) and `voltage-watch-engine-off-gated` (a provider test).
+The S108 build names (`tests/ui/fixtures/states/alerts/`, from the PRD); where the mockup's names differ, these win.
+- **Icon:** `icon-none` · `icon-not-checked` · `icon-watch-2` · `icon-stop-pulsing` · `icon-stop-acknowledged` · `icon-count-120` · `icon-missing-payload`.
+- **List:** `mixed-live-and-stored` · `two-stored-codes-real` (P0400 WATCH + P0443 MINOR, Spool's titles; needs US-754) · `unrated-code` · `watch-battery-low` · `watch-battery-high` · `watch-over-rev` · `stop-live-overheat` · `stop-live-stale` · `stop-live-cleared`.
+- **Empty / scroll:** `checked-clean` · `not-checked` · `system-data-not-assessed` · `codes-unread-with-watch` · `seven-entries-scroll`.
+- **PULL OVER:** `stop-acknowledged` · `replay-stop-live` · `ack-fails-503` · `watch-battery-red-no-takeover` (+ `stop-live-overheat`, `stop-live-stale`).
+- **CODE ALERT:** `code-alert-keyon` · `code-alert-moving` · `code-alert-and-stop` · `code-alert-five-codes` · `ack-prior-boot`.
+- Mockup-only extras: `engine-not-assessed`, `code-alert-dismiss-fails`, stop over Driving. Provider test: `voltage-watch-engine-off-gated`.
 - **Retired 2026-10-18:** `mixed-four-sources`, `data-stall-n7` (no SYSTEM/DATA entries in V0.30), `stop-stored-code`.
 
 ## 8. Out of scope
-Knock alerts (need ECMLink) · AFR/lean numeric (no wideband) · oil pressure (no sensor) · audio alerts (US-538).
+Knock alerts (need ECMLink) · AFR/lean numeric (no wideband) · oil pressure (no sensor) · audio alerts (US-538) · SYSTEM and DATA sources (§4.1) · "new ECU, learning" (no swap signal on this car, Spool 10-19).
 
 ## 9. Open items
-- **Atlas (S106 brief gaps):**
-  - G3: the over-rev shape (sentence carries `(sampled)`, value null).
-  - G4: `PULL OVER` as a page literal or `takeover.directive`. I lean to the provider field.
-  - G6: dashboard.css:185 re-declares `--neutral-chip-bg`; drop it in US-898, or rule it fine.
-  - G7: MINOR-/UNRATED-only maps to icon `watch`.
-- **Spool:**
-  - G1: the UNRATED provider sentence. Until it exists, null and no placeholder. Confirm "not rated" is never phrased as safe.
-  - G2: the P0400/P0430/P0443 rows via US-754 (S106).
-- **Marcus** grooms S106 once this fold, G3/G4/G6/G7 and G1/G2 land.
-- ~~Mockup owes a takeover frame~~ **done** (OEM v2, 2026-10-18, PULL OVER + CODE ALERT).
+- ~~Atlas G3 / G4 / G6 / G7~~ **RULED 2026-10-18:** value null + `(sampled)` in the sentence; `takeover.directive`; KEEP the dashboard.css:185 mirror; MINOR-/UNRATED-only ⇒ `watch`.
+- ~~Spool G1 (UNRATED sentence)~~ **RULED 2026-10-19:** `Severity unknown. Get it diagnosed.` ~~G2 (rows)~~ **RULED 2026-10-18:** P0400 WATCH, P0443 MINOR, no P0430 row.
+- **Atlas (new, minor):** where the battery value's toward-the-breach rounding lives (§4.6): the provider's `value`, or a page helper beside `displayUnits`. Not blocking S108's ACs.
+- **Iris:** bring the OEM mockup up to this revision (§10).
 - **Top-bar name:** `ALERTS` (86.3 px; `WARNINGS` 125 px doesn't fit the 122 px slot). The page keeps the name Warnings everywhere else.
+
+## 10. Where the v2 OEM mockup is behind this spec (2026-10-19)
+The mockup (`specs/v030-warnings-page-oem.html`, v2 of 2026-10-18) predates these folds. **Build from the spec where they differ:**
+- the icon's `none` look (`△`), the no-data `--`, the WiFi SVG glyph and the fixed icon slot (§4.2);
+- code titles in Spool's `<NAME> (<code>)` form, the UNRATED sentence, no P0430 (§4.1);
+- row ages from `agoText`, no source prefix (§3);
+- the takeover's directive from the provider and the stale line on its own line (§4.4);
+- the clear-button labels (§4.5).
 
 ## OEM mockup findings (2026-10-15)
 Mockup: `proposals/2026-10-15-v030-warnings-page-oem.html`. Measured: Michroma from the advances table; DejaVu Sans / Sans Mono via PIL.
@@ -255,7 +290,7 @@ Mockup: `proposals/2026-10-15-v030-warnings-page-oem.html`. Measured: Michroma f
   - the `?` is `--font-mono` (it isn't in the Michroma subset).
 - **Icon precedence:** an active STOP or WATCH outranks `?`. With codes unread, the header meta says `codes not read yet`.
 - **Cleared STOP still listed:** outlined chip, dimmed text, `cleared` in the age column. The icon counts active entries only.
-- **Over-rev:** title `OVER-REV`, with `peak 7,150 rpm (sampled)` in the sentence slot (mono 15). On one line it is 398 px. **Spool to confirm the wording.**
+- **Over-rev:** title `OVER-REV`, with `peak 7,150 rpm (sampled)` in the sentence slot (mono 15). On one line it is 398 px. ~~Spool to confirm the wording~~ **confirmed (Spool 2026-10-18).**
 - **Body height:** 270 px (34 px bar + 16 px dots), not 258 (§3 heading corrected 2026-10-18).
 - ~~Open (Atlas token gate)~~ **RULED 2026-10-16: no new tokens.** `--critical-red-dim` rejected (reuse `stop-alarm-pulse`); `--neutral-chip-bg` already exists (#2a2f37, the mockup's #3A3631 was a fork); `--chip-ink` rejected (ink per chip, §3). The v2 mockup follows this.
-- **UNRATED sentence: RULED provider-owned (Atlas 2026-10-16); Spool's text still owed (§9 G1).** The v2 mockup draws no sentence (null), not the old placeholder.
+- ~~UNRATED sentence: Spool's text still owed~~ **RULED 2026-10-19** (§4.1).

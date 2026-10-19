@@ -88,7 +88,9 @@
 - Dashed line = epoch baseline. Solid line = **the current 5-drive median, drawn flat across the drives it uses** (`ltft-trend` publishes one `median`, not a per-drive series; corrected 2026-10-14 from "rolling median", which nothing provides).
 - **Colour only from the provider's verdict** of Spool's rule; dots never colour. Neutral otherwise. Both coloured verdicts (`amber` and `down`) paint **`--amber-warn`**, never red (Spool per-surface ruling #4; TD-067: a degraded trend is WATCH, red is reserved for the STOP tier). *"amber/red" here earlier meant the provider's two verdicts, not two colours; US-890-a built it right.*
 - **Labels, as built (US-890-a):** `AIRFLOW`, `TOTAL TRIM`, `FUEL TRIM TREND` are `--font-mono`; the frame rule wants Michroma (100.4 / 130.3 / 191.7 px at 15 px, all fit). Fidelity, not honesty: a later Fuel story widens `test_dashboard_fidelity_pass.py`'s `--font-display` pin. The MPG row labels are already Michroma (US-890-d); `SINCE RESET` is 141.3 px in a 141.33 px `1fr` column, and since `1fr` never shrinks below the nowrap label's min-content, a future overrun widens the column instead of clipping.
-- LTFT **exactly 0.00 % flat** ⇒ the provider reports *adaptive memory reset*; the page shows `ECU relearning` instead of a trend point (spec: 0.00 % flat = power history, not fuel).
+- **After an adaptive-memory reset the PROVIDER says so** (US-890-g, S106; Atlas 2026-10-15, CIO 2026-10-18, Spool 2026-10-19 S4). `states/ltft-trend.reason` = `ECU relearning` while the current epoch began at a reset and has fewer than 5 qualifying drives, including none. The page renders the reason **verbatim** in the trend's reason span (mono, `--fs-meta`; no `--` added, Atlas Q30) and draws no dot for it. *Superseded 2026-10-19: the page's per-point `isReset` branch could never fire (no provider sets it per point), so it is deleted with its hand-set fixture; the page derives nothing from a 0.00 % reading.*
+  - **Precedence is the provider's** (Spool S4): `WARMING` wins only while the CURRENT drive is below the warm gate. Once warm, `ECU relearning` shows for the rest of that drive and every drive until 5 qualifying post-reset drives. A drive that fails the warm gate never counts toward the 5, and missing post-reset data is relearning, never warming.
+  - It ends when the epoch reaches the 5-drive median (the normal `sufficient` transition).
 
 ### 4.5 Absent / stale
 - Any null ⇒ `--` + reason on the glass. Stale (> the shared timeout key) ⇒ dim + age, same rule as the driving page.
@@ -121,7 +123,7 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 | Speed | OBD `SPEED` | exists (tier 2) | — |
 | Loop | `params.FUEL_SYSTEM_STATUS` | exists | — |
 | Total trim now | `params.LONG_FUEL_TRIM_1` + `params.SHORT_FUEL_TRIM_1` (live) | exist (STFT tier 1, LTFT tier 3) | **Atlas: confirm (§4.2)** |
-| Trend + verdict | `states/ltft-trend`: `median`, `level`, `reason`, `sufficient`, `baseline`, `points[].inMedian`, `isReset`/`epochBreak` | exists | — |
+| Trend + verdict | `states/ltft-trend`: `median`, `level`, `reason`, `sufficient`, `baseline`, `points[].inMedian`, `epochBreak`; `reason` includes `ECU relearning` (US-890-g) | exists | — |
 | THIS DRIVE, SINCE RESET | `states/fuel-economy` `{thisDrive{fuelL, mpg, sinceTs, approximate, openLoopAirPct, mpgNullReason?}, sinceReset{fuelL, distanceKm, mpg, resetAtTs}, ts}` | **exists** (US-881-b/c, `fuel_economy_emitter.py`) | — |
 | MPG last 30 s | a `states/fuel-economy` field following Spool's ratio-of-sums rules a–c | **not on dev** (US-881 successor) | Atlas design · Marcus story |
 | Reset write | token-gated `POST /fuel-reset` via `fuel_reset_channel`; outcome `{requestId, ok, reason, resetAtTs, completedAtEpoch}`, refused with `driving` while a drive records | **exists** (US-881-d) | — |
@@ -135,13 +137,13 @@ Codes are the provider's, verified on dev 2026-10-15. The texts are mine, and ea
 6. LAST 30 S: label `LAST 30 S`, never `instant`; integer; `99+` at ≥ 99; `--` + reason for every null. While the provider field is absent: `--` + `not published`. Grep gate: `carousel.js` never divides by a MAF value.
 7. THIS DRIVE / SINCE RESET: every null shows `--` + the §4.6 text for the provider's code. An unknown code shows the raw code. Nothing is ever blank.
 8. Reset: hint + long-press are parked only and absent while moving. Confirm, then `POST /fuel-reset`, then the shown value is the **re-read** stored value. `resetting…` from `Yes`. On `driving` / `unavailable` / failure / 504 / confirm timeout: the LATEST provider value + the §4.6 text, never a page-cached value. VC: a 504, then a read with `sinceReset.resetAtTs` = T and `mpg` null ⇒ `--` + `too short yet`, not the pre-reset MPG.
-9. Trend dots are exactly the `inMedian` points (a > 5-drive fixture proves the window). Colour only from `level`. A relearn shows `ECU relearning`, not a point. Grep gate: no trim threshold in `carousel.js`.
+9. Trend dots are exactly the `inMedian` points (a > 5-drive fixture proves the window). Colour only from `level`. A relearning epoch shows the provider's `ECU relearning` reason and no dot for it; `isReset` does not appear in `carousel.js` (US-890-g). Grep gate: no trim threshold in `carousel.js`.
 10. LAST 30 S and total trim ≥ 34 px; THIS DRIVE / SINCE RESET `--fs-secondary` (parked-read). No reason text wider than its MPG column (§4.6 fit rule).
 11. Tokens-only CSS; geometry as scoped custom properties on the card (S103 G-4 rule).
 12. **DoD (R15): CIO judgement in the car.**
 
 ## 7. Fixtures
-`idle-closed` · `cruise-closed` · `wot-open-above-scale-max` · `stopped` · `last30-null-crawl` · `last30-99-plus` · `last30-not-published` · `trend-healthy` · `trend-amber` · `ltft-reset-zero-flat` · `maf-null` · `mpg-null-reasons` (one per §4.6 code) · `sinceReset-never` · `parked-reset-available` · `reset-refused-driving` · `reset-write-fails` · `stale`.
+`idle-closed` · `cruise-closed` · `wot-open-above-scale-max` · `stopped` · `last30-null-crawl` · `last30-99-plus` · `last30-not-published` · `trend-healthy` · `trend-amber` · `ltft-relearning-after-reset` (built by `buildLtftTrendState`, replaces the hand-set `ltft-reset-zero-flat`) · `maf-null` · `mpg-null-reasons` (one per §4.6 code) · `sinceReset-never` · `parked-reset-available` · `reset-refused-driving` · `reset-write-fails` · `stale`.
 
 ## 8. Out of scope
 Fuel level (PID unsupported on this ECU) · AFR / wideband (no sensor) · boost inference (steady-state only, ±2 psi; not on a live page) · O2 voltage as AFR (narrowband is not AFR).

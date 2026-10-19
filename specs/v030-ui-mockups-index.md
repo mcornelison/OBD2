@@ -2,7 +2,7 @@
 
 **Author:** Iris (UI/UX) · **Date:** 2026-10-13 · **Status:** all designs CIO-approved (2026-10-12/13)
 **What this is:** the one list of every V0.30 mockup, its spec, and the layout the CIO chose. The links are **private claude.ai artifacts owned by the CIO's account**: teammates can open them only if the CIO shares them. The HTML source of each is in `offices/uideveloper/proposals/` on the share (filenames below), so nothing depends on the link alone.
-**Note:** page mockups were drawn in the pre-V0.30 grey style; the chosen **90s Mitsubishi OEM** style (frame-and-style spec, tokens approved by Atlas 2026-10-13) is applied as each page is re-skinned. **Every page is now re-skinned. Build from the OEM row.** Driving (1-OEM, S103 scope) and Engine, Fuel, Motion, Light (3/4/6/7-OEM, S104 scope) were done 2026-10-14. Navigation, O2, System + Settings and Warnings (2/5/8/9-OEM) were done 2026-10-15, and Engine, Motion and Light were brought up to the S105 spec the same day.
+**Note:** page mockups were drawn in the pre-V0.30 grey style; the chosen **90s Mitsubishi OEM** style (frame-and-style spec, tokens approved by Atlas 2026-10-13) is applied as each page is re-skinned. **Every page is now re-skinned. Build from the OEM row.** Driving (1-OEM, S103 scope) and Engine, Fuel, Motion, Light (3/4/6/7-OEM, S104 scope) were done 2026-10-14. Navigation, O2, System + Settings and Warnings (2/5/8/9-OEM) were done 2026-10-15, and Engine, Motion and Light were brought up to the S105 spec the same day. Motion and Light were brought up to the S105 build rulings on 2026-10-19 (UIDEV-006); the Warnings OEM row predates the S108 folds, and its spec §10 lists where the spec wins.
 
 | # | Surface | Chosen | Spec (`specs/`) | Mockup | Source (share `proposals/`) |
 |---|---|---|---|---|---|
@@ -18,9 +18,9 @@
 | 5 | O2 | A · Stacked | `v030-o2-page-design.md` | https://claude.ai/artifact/KEcFYZg9gmoWg7UtaTtHAy | `2026-10-13-v030-o2-page.html` |
 | 5-OEM | O2, **OEM skin** (waits for US-891) | A | `v030-o2-page-design.md` | https://claude.ai/artifact/GPmHUCdyUaxZPqXr8MmKsY | `2026-10-15-v030-o2-page-oem.html` |
 | 6 | Motion | A · Pitch and trend first | `v030-motion-page-design.md` | https://claude.ai/artifact/75enppFLkdqrHAyjhRCMG4 | `2026-10-12-v030-motion-page.html` |
-| 6-OEM | Motion, **OEM skin, S104 scope** | A | `v030-motion-page-design.md` | https://claude.ai/artifact/WMaKutBNqiFuhw37c12F4L | `2026-10-14-v030-motion-page-oem.html` |
+| 6-OEM | Motion, **OEM skin, S105 build rulings** (updated 2026-10-19) | A | `v030-motion-page-design.md` | https://claude.ai/artifact/WMaKutBNqiFuhw37c12F4L | `2026-10-14-v030-motion-page-oem.html` (repo copy `specs/v030-motion-page-oem.html`) |
 | 7 | Light | A · Word and curve + glyph | `v030-light-page-design.md` | https://claude.ai/artifact/KsQ5iXCdsxZRahiJU7Bbsd | `2026-10-12-v030-light-page.html` |
-| 7-OEM | Light, **OEM skin, S104 scope** (no override, no shortcut) | A + glyph | `v030-light-page-design.md` | https://claude.ai/artifact/XVJUtniMmi7Rg9Smhf8x8B | `2026-10-14-v030-light-page-oem.html` |
+| 7-OEM | Light, **OEM skin, S105 build rulings** (updated 2026-10-19; no override, no shortcut) | A + glyph | `v030-light-page-design.md` | https://claude.ai/artifact/XVJUtniMmi7Rg9Smhf8x8B | `2026-10-14-v030-light-page-oem.html` (repo copy `specs/v030-light-page-oem.html`) |
 | 8 | System (+ details) | A · Verdict and rows | `v030-system-page-design.md` | https://claude.ai/artifact/47FkWPp39fVQL3ciKph8ra | `2026-10-12-v030-system-page.html` |
 | 8a | Settings (F-126) | single design | `v030-system-page-design.md` §4.7 | https://claude.ai/artifact/Vfsd6VugUGfoQAMYJZPo6R | `2026-10-13-v030-settings-screen.html` |
 | 8-OEM | System + details + Settings, **OEM skin** (amber means counted) | A | `v030-system-page-design.md` | https://claude.ai/artifact/XXpv3Qn3vUzJj7j4TJfF74 | `2026-10-15-v030-system-page-oem.html` |
