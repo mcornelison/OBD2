@@ -230,6 +230,7 @@ class TestRowsSurviveAHardKill:
         )
         proc = subprocess.Popen(
             [sys.executable, '-c', script], stdout=subprocess.PIPE, text=True,
+            encoding='utf-8',
         )
         try:
             assert proc.stdout is not None

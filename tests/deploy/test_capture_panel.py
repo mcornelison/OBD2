@@ -142,7 +142,7 @@ def _log(rig: dict, name: str) -> str:
 
 def _currentUid() -> str:
     return subprocess.run(["bash", "-c", "id -u"], capture_output=True, text=True,
-                          timeout=30).stdout.strip()
+                          encoding="utf-8", timeout=30).stdout.strip()
 
 
 # ----------------------------------------------------------------------------
