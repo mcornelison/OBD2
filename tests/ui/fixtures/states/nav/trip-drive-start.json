@@ -1,0 +1,68 @@
+{
+  "description": "The drive-start publish: distanceKm 0.0, elapsedSec 0 -> '0.0 mi' '0:00 elapsed' with no page-side special case (N-14, B-1c).",
+  "now": "2026-10-20T19:49:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "obdLinkState": "linked",
+    "obdRetries": 0,
+    "obdLastSeenS": null,
+    "syncLastOkTs": null,
+    "syncRows": 0,
+    "syncPending": null,
+    "syncStale": false,
+    "powerSource": "external",
+    "runMode": "live",
+    "driveState": "recording",
+    "driveId": 113,
+    "obdAvailable": true,
+    "distanceKm": 0.0,
+    "distanceSinceTs": "2026-10-20T19:49:00Z",
+    "distancePartial": false,
+    "nowIso": "2026-10-20T19:49:00Z"
+  },
+  "system-status": {
+    "obdLink": {
+      "state": "linked",
+      "retries": 0,
+      "lastSeenS": null
+    },
+    "sync": {
+      "lastOkTs": null,
+      "rows": 0,
+      "pending": null,
+      "stale": false
+    },
+    "power": {
+      "source": "external",
+      "reasons": {}
+    },
+    "wifi": {
+      "state": null,
+      "ssid": null,
+      "rssiDbm": null
+    },
+    "drive": {
+      "state": "recording",
+      "driveId": 113,
+      "lastDrive": null,
+      "distanceKm": 0.0,
+      "distanceSinceTs": "2026-10-20T19:49:00Z",
+      "elapsedSec": 0,
+      "distancePartial": false
+    },
+    "idle": false,
+    "priorShutdown": null,
+    "runMode": "live",
+    "source": {
+      "obd": {
+        "available": true,
+        "reason": null
+      },
+      "wifi": {
+        "available": false,
+        "reason": "wifi: not read"
+      }
+    },
+    "ts": "2026-10-20T19:49:00Z"
+  }
+}

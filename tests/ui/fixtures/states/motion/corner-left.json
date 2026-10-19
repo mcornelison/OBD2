@@ -1,0 +1,97 @@
+{
+  "description": "Cornering left: gLat -0.27 -> CORNER L 0.27 g; gLon +0.02 -> ACCEL 0.02 g.",
+  "now": "2026-10-20T15:12:30.5Z",
+  "inputs": {
+    "tsUtc": "2026-10-20T15:12:30Z",
+    "gravity": [
+      0.0,
+      0.0,
+      9.81
+    ],
+    "linear": [
+      0.196133,
+      2.647795,
+      0.0
+    ],
+    "mag": [
+      20.0,
+      0.0,
+      -40.0
+    ],
+    "pitchRad": 0.006981317007977318,
+    "gyroImplausible": false,
+    "headingDegOverride": 247.0,
+    "headingCalibrated": true,
+    "fusionEngine": "imufusion",
+    "peaks": {
+      "accelG": 0.12,
+      "brakeG": 0.2,
+      "leftG": 0.27,
+      "rightG": 0.11,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "imu": {
+    "available": true,
+    "ts": "2026-10-20T15:12:30Z",
+    "gLat": -0.27,
+    "gLon": 0.02,
+    "gMag": 0.271,
+    "headingDeg": 247.0,
+    "pitchDeg": 0.4,
+    "gradePct": 0.7,
+    "altitude": null,
+    "stopCount": 0,
+    "biasRad": 0.0,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source"
+    },
+    "fusionEngine": "imufusion",
+    "headingCalibrated": true,
+    "peaks": {
+      "accelG": 0.12,
+      "brakeG": 0.2,
+      "leftG": 0.27,
+      "rightG": 0.11,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "historyInputs": [
+    [
+      "2026-10-20T15:00:05Z",
+      0.3
+    ],
+    [
+      "2026-10-20T15:00:15Z",
+      0.4
+    ],
+    [
+      "2026-10-20T15:00:25Z",
+      0.4
+    ],
+    [
+      "2026-10-20T15:00:35Z",
+      null
+    ]
+  ],
+  "gradeHistory": {
+    "points": [
+      {
+        "ts": "2026-10-20T15:00:10Z",
+        "gradePct": 0.3
+      },
+      {
+        "ts": "2026-10-20T15:00:20Z",
+        "gradePct": 0.4
+      },
+      {
+        "ts": "2026-10-20T15:00:30Z",
+        "gradePct": 0.4
+      }
+    ],
+    "windowS": 900,
+    "intervalS": 10,
+    "ts": "2026-10-20T15:00:35Z"
+  }
+}

@@ -31,6 +31,8 @@
 #               |              | simulate / replay) and its deriveRunMode rule.
 # 2026-10-14    | Rex (US-880-a)| drive block gains the always-present
 #               |              | distanceKm / distanceSinceTs (speed integrator).
+# 2026-10-18    | Rex (US-896-b)| drive block gains the always-present elapsedSec
+#               |              | (frozen at drive end) and distancePartial.
 # ================================================================================
 ################################################################################
 
@@ -89,6 +91,7 @@ __all__ = [
     "RUN_MODE_SIMULATE",
     "SYSTEM_STATUS_FILENAME",
     "buildSystemStatusState",
+    "deriveElapsedSec",
     "deriveRunMode",
     "isSyncStaleWhileDriving",
     "makeSystemStatusEmitter",
@@ -114,6 +117,38 @@ def deriveRunMode(*, replayActive: bool, simulate: bool) -> str:
     if simulate:
         return RUN_MODE_SIMULATE
     return RUN_MODE_LIVE
+
+
+def deriveElapsedSec(
+    sinceTs: str | None, endTs: str | None, nowIso: str
+) -> int | None:
+    """Resolve the US-896-b drive.elapsedSec (Atlas S105 Q2/G2), once, here.
+
+    The window is the distance's own: it starts at ``distanceSinceTs``, so
+    "12.4 mi over 0:23" is one window. It ends at the drive-end mark when the
+    drive has ended (frozen: parked time is not drive time), else at the
+    publish instant. The page formats it and does no time arithmetic.
+
+    Args:
+        sinceTs: ``drive.distanceSinceTs`` (canonical UTC), or None.
+        endTs: The drive-end mark (canonical UTC), or None while the window is
+            open.
+        nowIso: The publish instant (the payload's ``ts``).
+
+    Returns:
+        Whole seconds, or None when there is no since-point, a timestamp does
+        not parse, or the end precedes the since-point -- a negative span is
+        two clocks disagreeing, not a duration.
+    """
+    if sinceTs is None:
+        return None
+    try:
+        since = datetime.strptime(sinceTs, _ISO_FMT)
+        until = datetime.strptime(endTs if endTs is not None else nowIso, _ISO_FMT)
+    except (ValueError, TypeError):
+        return None
+    seconds = (until - since).total_seconds()
+    return int(seconds) if seconds >= 0 else None
 
 
 # ARCH-007 -- WiFi band thresholds. Defaults MIRROR pi.network.wifi.* in
@@ -192,6 +227,8 @@ def buildSystemStatusState(
     runMode: str = RUN_MODE_LIVE,
     distanceKm: float | None = None,
     distanceSinceTs: str | None = None,
+    distanceEndTs: str | None = None,
+    distancePartial: bool | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -248,6 +285,13 @@ def buildSystemStatusState(
         distanceSinceTs: US-880-a: the event ts the distance counts from -- the
             drive start's, or the first integrated SPEED reading's after a
             mid-drive process start -- or None. Transported verbatim.
+        distanceEndTs: US-896-b: the drive-end mark (canonical UTC) that
+            freezes ``elapsedSec``, or None while the window is open. Not
+            published itself; see :func:`deriveElapsedSec`.
+        distancePartial: US-896-b (Atlas B-1(b)): True when the window starts
+            at the first SPEED reading after a mid-drive restart, False when it
+            starts at a drive start. Published only beside a non-null
+            ``distanceSinceTs``; null otherwise (nothing to qualify).
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -328,6 +372,10 @@ def buildSystemStatusState(
             # for the same reason as `lastDrive`.
             "distanceKm": distanceKm,
             "distanceSinceTs": distanceSinceTs,
+            # US-896-b: always keys, null with no distanceSinceTs. Same name
+            # and polarity as states/engine-history.partial.
+            "elapsedSec": deriveElapsedSec(distanceSinceTs, distanceEndTs, nowIso),
+            "distancePartial": distancePartial if distanceSinceTs is not None else None,
         },
         "idle": idle,
         # US-728: always a key (null = not read), same reason as `lastDrive`.
@@ -435,6 +483,8 @@ def makeSystemStatusEmitter(
         runMode: str = RUN_MODE_LIVE,
         distanceKm: float | None = None,
         distanceSinceTs: str | None = None,
+        distanceEndTs: str | None = None,
+        distancePartial: bool | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -461,6 +511,8 @@ def makeSystemStatusEmitter(
                 runMode=runMode,
                 distanceKm=distanceKm,
                 distanceSinceTs=distanceSinceTs,
+                distanceEndTs=distanceEndTs,
+                distancePartial=distancePartial,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

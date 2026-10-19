@@ -27,6 +27,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-11    | Ralph (Rex)  | Initial -- US-541 IMU-always-on + order + rotate.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Home card's two faces
+#                               retired (the Motion card replaced them), so the
+#                               homeFace / liveCardView / renderHome cases of (1)
+#                               go with them; the order pin reads Motion, and the
+#                               stripper's negative control reads motionView.
 # ================================================================================
 ################################################################################
 
@@ -37,11 +42,8 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import UTC, datetime
 
 import pytest
-
-from tests.ui.render_harness import _fnBody
 
 _NODE = shutil.which("node")
 _PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
@@ -50,10 +52,6 @@ _DIST = os.path.join(_ROOT, "src", "pi", "ui", "dashboard")
 _HTML = os.path.join(_DIST, "dashboard.html")
 _JS = os.path.join(_DIST, "carousel.js")
 _CONFIG = os.path.join(_ROOT, "config.json")
-
-_TS = "2026-08-11T12:00:00+00:00"
-_TS_MS = int(datetime(2026, 8, 11, 12, 0, 0, tzinfo=UTC).timestamp() * 1000)
-_STALE_SEC = 2.0  # the card's own IMU_STALE_SEC, mirrored so drift breaks a test
 
 # US-536 disposition B (CIO): auto-rotate OFF is the durable freeze fix.
 _AUTO_ROTATE_OFF = 0
@@ -77,32 +75,6 @@ def _view(fn: str, *args: object) -> object:
     return json.loads(proc.stdout)
 
 
-def _imu(**over: object) -> dict:
-    """A live, fully-resolved states/imu payload (specs/architecture.md 10.8.2)."""
-    payload = {
-        "available": True,
-        "ts": _TS,
-        "headingDeg": 247.0,
-        "gradePct": 3.0,
-        "gLat": 0.30,
-        "gLon": 0.12,
-        "gMag": 0.323,
-        "altitude": None,
-        "reasons": {"altitude": "no_source"},
-    }
-    payload.update(over)
-    return payload
-
-
-def _parkedImu() -> dict:
-    """Parked and honest: the compass still reads, and the g is a TRUE zero.
-
-    This is the payload US-542's retirement argument rests on -- parked, the IMU
-    is CORRECT, not unavailable. It must render as an instrument, not as a gap.
-    """
-    return _imu(gLat=0.0, gLon=0.0, gMag=0.0, gradePct=0.0)
-
-
 def _codeOnly(src: str) -> str:
     """Drop comment lines so an absence assertion cannot fire on the prose that
     DOCUMENTS the removal (the US-507 lesson). Line-based, not string-aware --
@@ -123,124 +95,6 @@ def _codeOnly(src: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_homeFace_parkedWithLiveImu_showsTheLiveInstrument():
-    """
-    Given: the car is parked and states/imu is live + fresh
-    When: the home slot resolves its face
-    Then: the LIVE instrument shows.
-
-          This inverts US-508 deliberately. The IMU is Pi-local and always-live,
-          so parked is precisely when its readings are both true and worth
-          looking at; hiding it behind a STANDBY hero spent the one always-on
-          instrument on the one state where nothing else is readable.
-    """
-    face = _view("homeFace", _parkedImu(), _TS_MS)
-    assert face["face"] == "live"
-
-
-def test_homeFace_takesTheMotionFeedAndAClockAndNothingElse():
-    """
-    Given: the always-on rule
-    When: the shipped declaration is read
-    Then: `homeFace` sees the motion payload, the clock, and how long the panel
-          has waited for a first read -- and NOTHING about the vehicle.
-
-          The parameter list is the guard. A function that cannot SEE
-          system-status cannot re-couple the home face to the vehicle state --
-          a later edit would have to widen the signature first, which is a
-          visible act rather than a one-line condition slipped into the body.
-
-          US-700 IS THAT VISIBLE ACT, and this is the guard being answered
-          rather than removed. `waitedMs` is a fact about the FETCH of the
-          motion feed -- how long this page has been asking for it -- so the
-          face still cannot see the vehicle, the DTC payload or the gear. The
-          exact list is kept exact for the same reason it was written exact.
-    """
-    js = _read(_JS)
-    sig = re.search(r"function homeFace\(([^)]*)\)", js)
-    assert sig, "homeFace is gone"
-    params = [p.strip() for p in sig.group(1).split(",") if p.strip()]
-    assert params == ["imuData", "nowMs", "waitedMs"], params
-    # The claim the list is really making, stated so it survives a rename.
-    forbidden = ("sys", "vehicle", "dtc", "gear", "park", "drive", "idle")
-    for param in params:
-        assert not any(word in param.lower() for word in forbidden), (
-            f"the home face can now see {param} -- the US-541 re-coupling guard"
-        )
-
-
-def test_homeFace_neverConsultsTheParkedSignal():
-    """
-    Given: `carouselIdle` is still the parked SSOT for the auto-rotate pause
-    When: the home-face decision is read
-    Then: it does not call it. Two consumers of one signal is fine; what US-541
-          removes is this ONE consumer, and a grep of the body is what proves
-          the removal rather than the signature alone (a stale global would be
-          just as coupling as a parameter).
-    """
-    body = _codeOnly(_fnBody(_read(_JS), "homeFace"))
-    assert "carouselIdle" not in body
-    assert "imuView(" in body, "negative control: the pin can still see real code"
-
-
-@pytest.mark.parametrize(
-    ("payload", "expect"),
-    [
-        (None, "no motion feed"),
-        ({"available": False, "ts": _TS, "reasons": {"gLat": "sensor_absent"}},
-         "sensor not detected"),
-    ],
-)
-def test_homeFace_deadFeedStillFallsBackWithAReason(payload, expect):
-    """
-    Given: no states/imu file at all, or a bridge reporting an unwired sensor
-    When: the face resolves
-    Then: the idle face, carrying the honest reason.
-
-          ALWAYS-ON is about the parked state, not about pretending a dead
-          sensor is alive. The fallback is the whole reason the idle face
-          survives US-541 at all (US-542 retires only its STANDBY disposition).
-    """
-    face = _view("homeFace", payload, _TS_MS)
-    assert face["face"] == "idle"
-    assert face["reason"] == expect
-
-
-def test_homeFace_staleFeedFallsBackEvenThoughTheCarIsParked():
-    """
-    Given: a parked car whose last IMU write is older than the freshness window
-    When: the face resolves
-    Then: still the idle fallback.
-
-          The subtle regression this catches: "parked no longer forces idle"
-          must not become "parked no longer matters, so paint whatever was last
-          read". A stale reading on a parked car is exactly the frozen
-          instrument AC-3 has forbidden since US-497.
-    """
-    stale_ms = _TS_MS + int((_STALE_SEC + 1.0) * 1000)
-    face = _view("homeFace", _parkedImu(), stale_ms)
-    assert face["face"] == "idle"
-    assert "stale" in face["reason"]
-
-
-def test_renderHome_alwaysNamesTheDeadInstrument():
-    """
-    Given: the idle face now fires ONLY because the motion feed died
-    When: the home renderer is read
-    Then: it passes the reason through unconditionally.
-
-          US-508 suppressed the reason when parked (`face.parked ? null : ...`)
-          so the calm STANDBY hero could show. With parked no longer a route to
-          the idle face, that ternary would silently pick the STANDBY hero for
-          a DEAD SENSOR -- the exact "engine off is a lie built from a sensor
-          fault" defect US-508's own tests were written to prevent, arriving
-          through the back door of a condition that is now always false.
-    """
-    body = _codeOnly(_fnBody(_read(_JS), "renderHome"))
-    assert "idleCardView(" in body, "negative control: the pin can see real code"
-    assert "parked" not in body
-
-
 def test_codeOnly_stillSeesRealCode():
     """
     Given: the comment stripper the absence pins above depend on
@@ -250,7 +104,8 @@ def test_codeOnly_stillSeesRealCode():
           passes VACUOUSLY over a file that still carries the defect.
     """
     stripped = _codeOnly(_read(_JS))
-    assert "function homeFace(" in stripped
+    # MOVED PIN (US-892-b): homeFace retired with the Home card.
+    assert "function motionView(" in stripped
     assert "function carouselIdle(" in stripped
     assert "// US-541" not in stripped
 
@@ -258,88 +113,6 @@ def test_codeOnly_stillSeesRealCode():
 # ---------------------------------------------------------------------------
 # 2. The parked live face must be an instrument, not a fabrication (AC-1)
 # ---------------------------------------------------------------------------
-
-
-def test_liveCardView_parked_gearIsTypedNaAndGreyed():
-    """
-    Given: the parked live face, and no gear producer anywhere (Atlas: gear is
-           Spool's OBD derivation from a SEPARATE producer that does not exist)
-    When: the live view is assembled
-    Then: gear is the typed-NA glyph at the `unavailable` level -- never a
-          number, never "N".
-
-          Newly load-bearing: before US-541 the live face never rendered while
-          parked, so an OBD-dependent tile sitting on a screen with no engine
-          running was not a state the card could reach. It is now the DEFAULT
-          state on a bench, which is where the CIO reads the panel most days.
-    """
-    view = _view("liveCardView", _parkedImu(), None, _TS_MS)
-    assert view["gear"]["available"] is False
-    assert view["gear"]["level"] == "unavailable"
-    assert view["gear"]["value"] == "--"
-    assert view["gear"]["detail"], "typed-NA without a reason is a bare shrug"
-
-
-def test_liveCardView_parked_altitudeIsTypedNaAndGreyed():
-    """
-    Given: the ICM-20948 has no barometer and no GPS is wired
-    When: the parked live view is assembled
-    Then: altitude is typed-NA at the `unavailable` level. A zeroed altitude
-          renders as sea level, which is a confident lie the moment the car is
-          parked on a hill -- and the grade tile beside it would disagree.
-    """
-    view = _view("liveCardView", _parkedImu(), None, _TS_MS)
-    assert view["altitude"]["value"] == "NA"
-    assert view["altitude"]["level"] == "unavailable"
-
-
-def test_liveCardView_parked_trueZeroGIsAMeasuredZeroNotAnAbsence():
-    """
-    Given: a parked car -- the accelerometer honestly reads 0.0 g
-    When: the live view is assembled
-    Then: the g tile is AVAILABLE with a real dot at the origin.
-
-          This is the fact US-542's idle-face retirement is built on: parked,
-          the IMU is correct, not unavailable. If a true zero rendered as a gap
-          the always-on face would show nothing on a parked car and the
-          retirement would have removed a real readout for an empty one.
-    """
-    view = _view("liveCardView", _parkedImu(), None, _TS_MS)
-    assert view["g"]["available"] is True
-    assert view["g"]["dot"] is not None
-
-
-def test_liveCardView_absentGIsNotDrawnAtTheOrigin():
-    """
-    Given: a live payload whose g axes are missing entirely
-    When: the live view is assembled
-    Then: unavailable, with NO dot.
-
-          The negative control for the test above: without it, "0.0 g renders a
-          dot at the origin" would also be satisfied by a card that draws an
-          origin dot for a DEAD accelerometer -- absence and measured-zero
-          painted identically, which is the zeroed instrument AC-3 forbids.
-    """
-    payload = _parkedImu()
-    payload["gLat"] = None
-    payload["gLon"] = None
-    payload["gMag"] = None
-    view = _view("liveCardView", payload, None, _TS_MS)
-    assert view["g"]["available"] is False
-    assert view["g"]["dot"] is None
-
-
-def test_liveCardView_parked_headingIsStillARealBearing():
-    """
-    Given: the parked live face
-    When: the view is assembled
-    Then: the compass reads a real magnetic bearing and the tape is built from
-          it. Heading is the readout that makes the always-on face worth the
-          screen while the engine is off.
-    """
-    view = _view("liveCardView", _parkedImu(), None, _TS_MS)
-    assert view["heading"]["available"] is True
-    assert view["tape"]["available"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +137,13 @@ def test_html_alertsIsTheSecondCard():
     # card, R5), so the US-541 order Home . Alerts . System Status now follows it.
     # MOVED PIN (US-889-b): the Engine card sits between Driving and Home (E-2).
     # MOVED PIN (US-890-a): the Fuel card sits between Engine and Home (E-2).
-    assert cards[:6] == ["Driving", "Engine", "Fuel", "Home", "Alerts", "System Status"]
+    # MOVED PIN (US-896-a): the NAV card sits between Driving and Engine (E-2).
+    # MOVED PIN (US-892-b): the Motion card replaces the Home card in its slot.
+    # MOVED PIN (US-893-b): the Light card sits between Motion and Alerts (E-2).
+    assert cards[:8] == [
+        "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+        "System Status",
+    ]
 
 
 # ---------------------------------------------------------------------------

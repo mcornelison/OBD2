@@ -28,6 +28,8 @@
 # 2026-06-30    | Ralph (Rex)  | US-402: pygame sunset -- assert the shipped
 #               |              | config.json retires the StatusDisplay overlay
 #               |              | (F-4: HTML carousel is the sole surface).
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card at index 4.
 # ================================================================================
 ################################################################################
 
@@ -100,11 +102,16 @@ def test_dashboardHtml_hasBothCardSlots_s1():
     # order) and every other card keeps its relative order -- 7 -> 8 cards.
     # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim and moves to
     # index 2, after Engine (CIO E-2) -- still 8 cards.
-    assert html.count('class="card"') == 8
+    # MOVED PIN (US-896-a): the NAV card lands at index 1, right after Driving
+    # (CIO E-2 order); every other card keeps its relative order -- 8 -> 9 cards.
+    # MOVED PIN (US-892-b): the Motion card replaces the Home card in its slot.
+    # MOVED PIN (US-893-b): the Light card moves to index 5, right after Motion
+    # (E-2, Iris Q6) -- still 9 cards.
+    assert html.count('class="card"') == 9
     labels = re.findall(r'<section class="card"[^>]*?aria-label="([^"]+)"', html, re.S)
     assert labels == [
-        "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery",
-        "Light",
+        "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+        "System Status", "Battery",
     ]
     assert 'data-state="system-status"' in html
     assert 'data-state="dtc"' in html

@@ -52,6 +52,8 @@
 #                                recent's codes; mpg-null-reasons and
 #                                sinceReset-never regenerated with 'recent'
 #                                (last30-not-published keeps it absent).
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card at index 4.
 # ================================================================================
 ################################################################################
 
@@ -102,8 +104,12 @@ _NODE_ONLY = pytest.mark.skipif(
 )
 
 # The card order (US-890-a validation row "Card order"), by kit label.
+# MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
+# MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
+# MOVED PIN (US-893-b): Light moves to index 5, right after Motion (E-2).
 CARD_ORDER = [
-    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+    "System Status", "Battery",
 ]
 
 # This story's fixtures (spec s7). Later Fuel stories add their own to the same
@@ -237,7 +243,8 @@ def test_cardOrder_fuelSitsRightAfterEngine():
 
 def test_fuelCard_isNamedFuel_andKeepsTheTrendSourceAndItsGate():
     tags = re.findall(r'<section class="card"[^>]*>', _read(_HTML), re.S)
-    tag = tags[2]
+    # MOVED PIN (US-896-a): the NAV card took index 1, so Fuel is index 3.
+    tag = tags[3]
     assert 'id="fuel-card"' in tag
     assert 'aria-label="Fuel"' in tag
     assert 'data-page-name="FUEL"' in tag

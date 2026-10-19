@@ -3,7 +3,8 @@
 # Purpose/Description: US-595 guards for the RETIREMENT of
 #   pi.display.autoDim.alarmFloorLevel -- a tunable that resolved cleanly,
 #   validated cleanly, and changed nothing. US-484-b (Spool 6d ch.4) made a live
-#   STOP alarm FULL brightness always, so brightnessLevel() short-circuits on
+#   STOP alarm FULL brightness always, so the page applier (appliedBrightness
+#   since US-893-a) short-circuits on
 #   `alarmActive` BEFORE any ambient math runs; the one condition that ever
 #   consumed the alarm floor became the one condition that returns 1.0. The key
 #   was left resolvable as a compatibility shim and never removed.
@@ -29,6 +30,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-30    | Ralph (Rex)  | Initial -- US-595 alarmFloorLevel retirement.
+# 2026-10-19    | Rex (US-893-a)| MOVED PIN (US-893-a): carousel.js
+#               |              | BRIGHTNESS_DEFAULTS shrank to {defaultLevel,
+#               |              | luxStaleSec}, so the carousel site's premise
+#               |              | siblings are those two; the supersession probes
+#               |              | call appliedBrightness (the page curve is gone).
 # ================================================================================
 ################################################################################
 
@@ -56,6 +62,10 @@ _RETIRED_LEAF = "alarmFloorLevel"
 # below -- if these are missing, the site did not parse (or was gutted) and an
 # absence check would be meaningless rather than reassuring.
 _SURVIVING_LEAVES = ("minLevel", "defaultLevel", "luxMin", "luxFull", "curve")
+
+# US-893-a: the page holds only the two keys it reads itself; the curve keys
+# live in the bridge. These are the carousel site's premise siblings.
+_CAROUSEL_SURVIVING_LEAVES = ("defaultLevel", "luxStaleSec")
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CONFIG_JSON = _REPO_ROOT / "config.json"
@@ -157,7 +167,12 @@ class TestFourSiteRemovalCoupling:
         # this, an empty/failed parse would satisfy the assertion below while
         # checking nothing at all.
         for name, leaves in sites.items():
-            missing = [k for k in ("minLevel", "defaultLevel") if k not in leaves]
+            premise = (
+                _CAROUSEL_SURVIVING_LEAVES
+                if name.startswith("carousel.js")
+                else ("minLevel", "defaultLevel")
+            )
+            missing = [k for k in premise if k not in leaves]
             assert not missing, (
                 f"premise failed: {name} no longer carries {missing} -- this "
                 f"guard cannot report on alarmFloorLevel from a site it did "
@@ -259,9 +274,9 @@ class TestCarouselDefaultsNoLongerCarryIt:
         """
         keys = _brightnessDefaultsLiteral()
         # PREMISE: the literal parsed, and parsed correctly.
-        for leaf in _SURVIVING_LEAVES:
+        for leaf in _CAROUSEL_SURVIVING_LEAVES:
             assert leaf in keys, f"premise failed: {leaf} missing -- bad parse?"
-        assert keys["minLevel"] == "0.15"
+        assert keys["defaultLevel"] == "0.70"
         assert _RETIRED_LEAF not in keys
 
     @nodeless
@@ -273,8 +288,8 @@ class TestCarouselDefaultsNoLongerCarryIt:
         """
         out = _probe("resolveAutoDimConfig", {})
         # PREMISE: the probe really resolved the defaults.
-        assert out["minLevel"] == 0.15
         assert out["defaultLevel"] == 0.70
+        assert out["luxStaleSec"] == 10
         assert _RETIRED_LEAF not in out
 
 
@@ -314,10 +329,8 @@ class TestOldOverlayCarryingTheRetiredKey:
         """
         out = _probe("resolveAutoDimConfig", dict(_OLD_OVERLAY))
         assert _RETIRED_LEAF not in out
-        assert out["minLevel"] == 0.15
         assert out["defaultLevel"] == 0.70
         assert out["luxStaleSec"] == 10
-        assert out["curve"] == "logarithmic"
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +347,7 @@ class TestTheSupersedingRuleThatMakesRemovalSafe:
     def test_stopAlarmIsFullBrightness_notAnyFloor(self):
         """
         Given: the darkest ambient reading and a deliberately DIM config
-        When: brightnessLevel runs with a live STOP alarm
+        When: appliedBrightness runs with a live STOP alarm
         Then: it returns FULL -- and the same config without the alarm does not
 
         The negative half is the load-bearing one: it proves the 1.0 came from
@@ -344,11 +357,13 @@ class TestTheSupersedingRuleThatMakesRemovalSafe:
         dim = dict(_OLD_OVERLAY)
         dim["minLevel"] = 0.15
         dim["defaultLevel"] = 0.15
-        dark = {"lux": 0.0, "ts": _TS}
+        # US-893-a: the bridge publishes the dim level; the page applies it.
+        dark = {"lux": 0.0, "ts": _TS, "brightnessLevel": 0.15, "brightnessMode": "auto"}
 
-        assert _probe("brightnessLevel", dark, dim, _TS_MS + 5000, True) == 1.0
+        lit = _probe("appliedBrightness", dark, dim, _TS_MS + 5000, True)
+        assert lit["level"] == 1.0
         # PREMISE: this config genuinely renders dim when no alarm is live.
-        assert _probe("brightnessLevel", dark, dim, _TS_MS + 5000, False) < 0.5
+        assert _probe("appliedBrightness", dark, dim, _TS_MS + 5000, False)["level"] < 0.5
 
     @nodeless
     def test_retiredKeyCannotDimALiveStopAlarm(self):
@@ -360,6 +375,6 @@ class TestTheSupersedingRuleThatMakesRemovalSafe:
         This is the field scenario in one assertion: a Pi imaged before this
         story, still carrying the key, must not dim a PULL-OVER alarm to 0.40.
         """
-        dark = {"lux": 0.0, "ts": _TS}
-        level = _probe("brightnessLevel", dark, dict(_OLD_OVERLAY), _TS_MS + 5000, True)
-        assert level == 1.0
+        dark = {"lux": 0.0, "ts": _TS, "brightnessLevel": 0.15, "brightnessMode": "auto"}
+        out = _probe("appliedBrightness", dark, dict(_OLD_OVERLAY), _TS_MS + 5000, True)
+        assert out["level"] == 1.0

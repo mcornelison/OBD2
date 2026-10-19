@@ -37,6 +37,8 @@
 #               |              | guard restored; planted-glyph subject controls.
 # 2026-10-15    | Ralph (Rex)  | US-887-c -- right cluster models the Michroma
 #               |              | page name (chip moved to #sys-detail).
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: ADVANCE_OBSERVED now imported from
+#                               css_type_scale (Atlas B6).
 # ================================================================================
 ################################################################################
 
@@ -50,8 +52,9 @@ import re
 
 import pytest
 
+# MOVED PIN (US-892-b): the advance lives in shared test support now.
+from tests.ui.css_type_scale import ADVANCE_OBSERVED as PI_MONO_ADVANCE_EM
 from tests.ui.css_type_scale import readCss, ruleBlock
-from tests.ui.test_gforce_tile_width_budget import ADVANCE_OBSERVED as PI_MONO_ADVANCE_EM
 
 _DIST = os.path.join(
     os.path.dirname(__file__), "..", "..", "src", "pi", "ui", "dashboard"

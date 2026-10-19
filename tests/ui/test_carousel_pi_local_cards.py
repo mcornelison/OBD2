@@ -6,8 +6,8 @@
 #   connected. Three groups:
 #     1. The new Light card (a pure consumer of the states/light file US-483-a
 #        writes -- {lux, ts}). A live reading renders; a null lux (saturated /
-#        unreadable) or a STALE reading grays the AMBIENT + CONDITION fields
-#        INDIVIDUALLY rather than rendering a frozen number as current.
+#        unreadable) reads '--' + its reason and a STALE reading dims with its
+#        age (US-893-b) rather than rendering a frozen number as current.
 #     2. The absent-state message per card. A missing `dtc` state reads a calm
 #        gray "no data", NEVER "no stored codes" (a false all-clear) and never a
 #        red alert at idle -- the F-6 no-phantom rule at the CARD level.
@@ -27,6 +27,15 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-496 Pi-local cards live + gate.
+# 2026-10-19    | Rex (US-893-a)| MOVED PIN (US-893-a, Atlas A1): CONDITION maps
+#               |              | the PROVIDER's lightBand (night/dusk/day ->
+#               |              | DARK/DIM/DAYLIGHT); the page luxBand and its
+#               |              | BRIGHTNESS_DEFAULTS thresholds are gone.
+# 2026-10-19    | Rex (US-893-b)| MOVED PIN (US-893-b): lightView/lightBandWord
+#               |              | RETIRED; the light cases re-pointed at
+#               |              | lightPageView (word = lightBand upper-cased,
+#               |              | '--' + reason, stale dims with its age, an
+#               |              | absent file is the page's own absence).
 # ================================================================================
 ################################################################################
 
@@ -57,10 +66,8 @@ _CSS = os.path.join(_DIST, "dashboard.css")
 _TS = "2026-07-29T12:00:00+00:00"
 _TS_MS = int(datetime(2026, 7, 29, 12, 0, 0, tzinfo=UTC).timestamp() * 1000)
 
-# The grounded auto-dim thresholds the CONDITION band is resolved against
-# (config.json pi.display.autoDim -- mirrored by BRIGHTNESS_DEFAULTS).
-_LUX_MIN = 3.0
-_LUX_FULL = 1000.0
+# The page's luxStaleSec default (BRIGHTNESS_DEFAULTS since US-893-a holds only
+# defaultLevel and luxStaleSec; the band thresholds live in the bridge).
 _STALE_SEC = 10
 
 pytestmark = pytest.mark.skipif(
@@ -94,89 +101,141 @@ def _light(lux: float | None, *, ts: str | None = _TS, **extra: object) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_lightView_freshReading_rendersTheRealLuxValue():
-    """A fresh finite lux renders the real reading + its read age -- the card is
-    a pure consumer of the same {lux, ts} file that drives the auto-dim, so the
-    number on the card can never disagree with the screen."""
-    view = _view("lightView", _light(412.0), None, _TS_MS + 400)
-    assert view["unavailable"] is False
-    assert view["ambient"]["value"] == "412 lx"
-    assert view["ambient"]["level"] == "ok"
-    assert "0.4" in view["ambient"]["detail"]
+def test_lightPageView_freshReading_rendersTheRealLuxValue():
+    """A fresh finite lux renders the real reading -- the card is a pure
+    consumer of the same states/light file that drives the auto-dim, so the
+    number on the card can never disagree with the screen.
+
+    MOVED PIN (US-893-b): lightView -> lightPageView; the unit is 'lux' and a
+    fresh reading shows no age (the age appears only once it is stale)."""
+    view = _view("lightPageView", _light(412.0), None, _TS_MS + 400)
+    assert view["absent"] is False and view["stale"] is False
+    assert (view["ambient"]["value"], view["ambient"]["unit"]) == ("412", "lux")
+    assert view["age"] is None
 
 
-def test_lightView_subTenLux_keepsOneDecimal():
+def test_lightPageView_subTenLux_keepsOneDecimal():
     """Near the dark end the integer would round two distinct cabins together
-    (2.4 lx and 3.4 lx straddle the DARK boundary), so sub-10 keeps a decimal."""
-    view = _view("lightView", _light(2.35), None, _TS_MS)
-    assert view["ambient"]["value"] == "2.4 lx"
+    (2.4 and 3.4 lux straddle the night boundary), so sub-10 keeps a decimal.
+    MOVED PIN (US-893-b): the unit moved to its own field."""
+    view = _view("lightPageView", _light(2.35), None, _TS_MS)
+    assert view["ambient"]["value"] == "2.4"
 
 
-def test_lightView_nullLux_graysAmbientButKeepsTheCard():
-    """A null lux is the bridge's HONEST saturation/unreadable marker. It grays
-    the AMBIENT + CONDITION fields INDIVIDUALLY (the card stays present, the
-    always-present contract) and never renders 0 lx or a last-known value."""
-    view = _view("lightView", _light(None), None, _TS_MS)
-    assert view["unavailable"] is False
-    assert view["ambient"]["value"] == "NA"
-    assert view["ambient"]["level"] == "unavailable"
-    assert "saturat" in view["ambient"]["detail"] or "unreadable" in view["ambient"]["detail"]
-    # The band is DERIVED from lux -- with no lux there is nothing to derive.
-    assert view["band"]["value"] == "NA"
+def test_lightPageView_nullLux_isDashPlusReason_butKeepsTheCard():
+    """A null lux is the bridge's HONEST saturation/unreadable marker. AMBIENT
+    reads '--' with the reason (the card stays present, the always-present
+    contract) and never 0 lux or a last-known value.
+
+    MOVED PIN (US-893-b, Atlas L1): typed '--' + the reasons.lux text instead
+    of an NA tile; the word is the provider's band, so with none it is '--'."""
+    view = _view("lightPageView", _light(None), None, _TS_MS)
+    assert view["absent"] is False
+    assert view["ambient"] == {"value": "--", "unit": "", "none": True}
+    assert view["reason"] == "no reading"
+    assert view["word"] == {"text": "--", "glyph": None}
 
 
-def test_lightView_staleReading_graysRatherThanFreezingTheValue():
-    """A reading older than luxStaleSec is a reading NOT TAKEN NOW. It grays with
-    the age as the reason (so the operator learns the feed stopped), never paints
-    the frozen number as current -- the same rule the brightness consumer uses."""
+def test_lightPageView_staleReading_dimsWithItsAge_neverPaintsItAsCurrent():
+    """A reading older than luxStaleSec is a reading NOT TAKEN NOW. It is
+    dimmed with its age (so the operator learns the feed stopped), never
+    painted as current -- the same freshness rule the brightness applier uses.
+
+    MOVED PIN (US-893-b, Iris L6): stale dims the published values and shows
+    the age ('60 s', amber) instead of replacing them with an NA tile."""
     nowMs = _TS_MS + (_STALE_SEC + 50) * 1000
-    view = _view("lightView", _light(412.0), None, nowMs)
-    assert view["ambient"]["value"] == "NA"
-    assert "stale" in view["ambient"]["detail"]
-    assert "60" in view["ambient"]["detail"]  # the age is named, not just "stale"
+    view = _view("lightPageView", _light(412.0), None, nowMs)
+    assert view["stale"] is True
+    assert view["age"] == {"text": "60 s", "tone": "warn"}  # the age is named
+    assert view["ambient"]["value"] == "412"
 
 
-def test_lightView_noReadTime_grays():
-    """A payload with no parseable ts cannot be dated -> gray, never assumed
-    fresh (an undated reading is the one most likely to be stale)."""
-    view = _view("lightView", _light(412.0, ts=None), None, _TS_MS)
-    assert view["ambient"]["value"] == "NA"
+def test_lightPageView_noReadTime_isStale():
+    """A payload with no parseable ts cannot be dated -> stale, never assumed
+    fresh (an undated reading is the one most likely to be stale).
+    MOVED PIN (US-893-b): dimmed with 'no timestamp' in place of the age."""
+    view = _view("lightPageView", _light(412.0, ts=None), None, _TS_MS)
+    assert view["stale"] is True
+    assert view["age"]["text"] == "no timestamp"
 
 
-def test_lightView_absentFile_isNull_soTheShellRendersNoData():
-    """A missing/malformed states/light -> null: the SHELL owns the whole-card
-    no-data message (one place decides absence for every card)."""
-    assert _view("lightView", None, None, _TS_MS) is None
+def test_lightPageView_absentFile_isThePagesOwnAbsence():
+    """A missing/malformed states/light -> the Light page's own absent view.
+
+    MOVED PIN (US-893-b, Atlas L1): was null so the shell rendered a typed NA;
+    the page now paints '--' + 'no light data' in its own layout, beside the
+    brightness it fell back to. The shell still learns the feed is missing
+    (`absent`, see test_carousel_source_cards.py)."""
+    view = _view("lightPageView", None, None, _TS_MS)
+    assert view["absent"] is True
+    assert view["reason"] == "no light data"
+    assert view["ambient"]["value"] == "--"
 
 
-def test_lightView_sourceUnavailable_wholeCardTypedNa():
+def test_lightPageView_sourceUnavailable_isAbsentWithTheReason():
     """An explicit honest-availability `source.light.available: false` (the
-    sensor is gated off / unreadable) -> a typed whole-card NA with the reason
-    travelling with it."""
+    sensor is gated off / unreadable) -> absent, with the reason travelling
+    with it. MOVED PIN (US-893-b): absent view, not a whole-card NA tile."""
     view = _view(
-        "lightView",
+        "lightPageView",
         _light(None, source={"light": {"available": False, "reason": "sensor disabled"}}),
         None,
         _TS_MS,
     )
-    assert view["unavailable"] is True
+    assert view["absent"] is True
     assert view["reason"] == "sensor disabled"
 
 
-def test_luxBand_resolvesAgainstTheGroundedAutoDimThresholds():
-    """The CONDITION band is a NAME for the two thresholds the auto-dim curve
-    already uses -- not a third set of numbers that could drift from it."""
-    assert _view("luxBand", _LUX_MIN, None) == "DARK"
-    assert _view("luxBand", 50.0, None) == "DIM"
-    assert _view("luxBand", _LUX_FULL, None) == "DAYLIGHT"
+@pytest.mark.parametrize(("band", "word"), [("night", "NIGHT"), ("dusk", "DUSK"), ("day", "DAY")])
+def test_lightPageView_wordIsTheProvidersBand(band: str, word: str):
+    """MOVED PIN (US-893-b): lightBandWord (DARK/DIM/DAYLIGHT) RETIRED with the
+    CONDITION tile; the word is the bridge's lightBand upper-cased. The page
+    holds no threshold, so it cannot drift from the curve."""
+    view = _view("lightPageView", _light(412.0, lightBand=band), None, _TS_MS)
+    assert view["word"] == {"text": word, "glyph": band}
 
 
-def test_luxBand_honoursAnInjectedConfig_notAHardcodedNumber():
-    """The thresholds are CONFIG (pi.display.autoDim, injected at serve time), so
-    an override must move the band -- proving the values are read, not baked in."""
-    cfg = {"luxMin": 100.0, "luxFull": 200.0}
-    assert _view("luxBand", 50.0, cfg) == "DARK"
-    assert _view("luxBand", 150.0, cfg) == "DIM"
+@pytest.mark.parametrize("band", [None, "", "NIGHT", "twilight", 3])
+def test_lightPageView_unknownBand_isDash(band):
+    """Anything but the three provider bands names nothing -- '--', no glyph.
+    MOVED PIN (US-893-b): was lightBandWord -> null."""
+    view = _view("lightPageView", _light(412.0, lightBand=band), None, _TS_MS)
+    assert view["word"] == {"text": "--", "glyph": None}
+
+
+def test_lightPageView_word_isTheProvidersBand_luxMinIsDusk():
+    """
+    Given: a fresh reading AT luxMin (3.0 lux), which the bridge bands 'dusk'
+    When: the Light page renders
+    Then: the word reads DUSK
+
+    THE ONE BOUNDARY SHIFT, named (Atlas A1, US-893-a): the old page luxBand
+    made lux == luxMin DARK (lux <= luxMin); the provider makes it dusk (night
+    is lux < luxMin). MOVED PIN (US-893-b): DIM -> DUSK, the provider's word.
+    """
+    from pi.sensors.light_state_bridge import lightBand
+
+    band = lightBand(3.0, {"luxMin": 3.0, "luxFull": 300.0})
+    view = _view("lightPageView", _light(3.0, lightBand=band), None, _TS_MS)
+
+    assert band == "dusk"
+    assert view["word"]["text"] == "DUSK"
+
+
+def test_lightPageView_word_followsTheProviderNotTheLux():
+    """A day band on a dark-looking lux reads DAY: the page never re-derives
+    the band from lux (a retuned autoDim moves the word through the bridge).
+    MOVED PIN (US-893-b): DAYLIGHT -> DAY."""
+    view = _view("lightPageView", _light(50.0, lightBand="day"), None, _TS_MS)
+    assert view["word"]["text"] == "DAY"
+
+
+def test_lightPageView_freshReadingWithoutABand_dashesTheWordAlone():
+    """Atlas A1: a null band -> the word '--'; the reading still shows.
+    MOVED PIN (US-893-b): the word, not an NA CONDITION tile."""
+    view = _view("lightPageView", _light(412.0), None, _TS_MS)
+    assert view["ambient"]["value"] == "412"
+    assert view["word"] == {"text": "--", "glyph": None}
 
 
 # ---------------------------------------------------------------------------
@@ -414,15 +473,17 @@ def test_carouselJs_moveUsesNextVisibleIndex():
     assert "nextVisibleIndex" in move
 
 
-def test_carouselJs_lightReadoutReusesTheTokenizedTile():
-    """AC-4: the light readout renders through the shared `.tile` component,
-    which is already bound to src/pi/ui/tokens.css. A bespoke light palette is
-    exactly the drift the SSOT rule exists to prevent -- and it survives the
-    US-507 merge: the renderer took a BODY element instead of a card, it did not
-    grow a palette of its own."""
+def test_carouselJs_lightReadoutBuildsTheLightPage():
+    """AC-4: the light readout introduces no palette of its own -- a bespoke
+    light palette is exactly the drift the SSOT rule exists to prevent.
+
+    MOVED PIN (US-893-b): the two `.tile`s (AMBIENT + CONDITION) are replaced
+    by the Light page's own skeleton (buildLightPage); its stylesheet is
+    tokens-only, pinned in test_light_page.py and by the hex check below."""
     js = _read(_JS)
     render = _fnBody(js, "renderLightBody")
-    assert "appendTile" in render
+    assert "buildLightPage" in render
+    assert "appendTile" not in render
 
 
 def test_cardAndDotDisplayRules_cannotDefeatTheHiddenGuard():

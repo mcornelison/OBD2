@@ -32,6 +32,9 @@
 # 2026-08-31    | Rex (US-630) | Initial -- the derived gear, as the panel shows it.
 # 2026-09-07    | Rex (US-687-a) | A stopped car reads N, not a dash; gear
 #               |              | reasons render as words. Contract changes.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: re-pointed from the Home GEAR tile
+#                               DOM at gearView (Atlas B1/B2); the vanish pair
+#                               reads the Driving glyph.
 # ================================================================================
 ################################################################################
 
@@ -39,10 +42,10 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import os
 import shutil
+import subprocess
 import sys
 from typing import Any
 
@@ -67,6 +70,7 @@ from pi.obdii.gear_state_emitter import (  # noqa: E402
 )
 
 _NODE = shutil.which("node")
+_PROBE = os.path.join(os.path.dirname(__file__), "carousel_probe.js")
 
 pytestmark = pytest.mark.skipif(
     _NODE is None,
@@ -146,86 +150,45 @@ def _emitAbsence(tmp_path, speedKph: float, rpm: float) -> dict:
         return json.load(fh)
 
 
-def _liveImu() -> dict:
-    """A states/imu payload the shipped imuView accepts as LIVE.
-
-    Stamped from the wall clock, not a fixed instant: imuView ages the reading
-    against Date.now() inside node, so a frozen stamp would go stale on its own
-    and drop the home slot back to the idle face -- which has no gear glyph at
-    all, and every assertion here would then pass for the wrong reason.
-    """
-    now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return {
-        "ts": now,
-        "available": True,
-        "gLat": 0.01,
-        "gLon": 0.02,
-        "gMag": 0.03,
-        "pitchDeg": 0.5,
-        "rollDeg": 0.2,
-        "headingDeg": 180.0,
-    }
+# MOVED PIN (US-892-b): the Home card's GEAR tile retired with its live face
+# (Atlas B1/B2), so these cases read the SURVIVOR instead of that DOM --
+# gearView, the one pure function the Driving card's gear glyph is painted
+# from (drivingView). The glyph is .value; the reason line is .detail, which
+# gearView still computes although no page prints it today (Atlas B2).
+def _surface(gearPayload: Any) -> dict:
+    """The gear view the panel paints from, for this states/gear payload."""
+    return _probe("gearView", gearPayload)
 
 
-def _surface(gearPayload: Any, steps: list[dict[str, Any]] | None = None):
-    """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet."""
-    routes: dict[str, Any] = {"/imu": _liveImu()}
-    if gearPayload is not None:
-        routes["/gear"] = gearPayload
-    tree = rh.runDashboard(routes=routes, steps=steps, viewport=PANEL)["tree"]
-    return rh.dashboardSurface(tree, viewport=PANEL)
+def _gearGlyph(view: dict) -> str | None:
+    return view["value"]
 
 
-def _textOf(node: dict) -> list[str]:
-    out: list[str] = []
-    for child in node.get("children", []):
-        if "text" in child:
-            out.append(child["text"].strip())
-        else:
-            out.extend(_textOf(child))
-    return out
+def _gearDetail(view: dict) -> str | None:
+    return view["detail"]
 
 
-def _firstRendered(surface, className: str) -> str | None:
-    """The printed text of the first PAINTED element with ``className``.
-
-    Painted, not merely present: a glyph inside a display:none ancestor is not
-    on the panel, and the whole point of resolving the real cascade is that a
-    test cannot be satisfied by an element the driver cannot see.
-    """
-    for path in surface.pathsByClass(className):
-        if not surface.rendered(path):
-            continue
-        return " ".join(_textOf(path[-1])).strip()
-    return None
+def _drivingGlyph(gearPayload: Any, steps: list[dict[str, Any]]) -> str:
+    """The Driving card's painted gear glyph after ``steps`` of the shipped panel."""
+    tree = rh.runDashboard(routes={"/gear": gearPayload}, steps=steps, viewport=PANEL)["tree"]
+    surface = rh.dashboardSurface(tree, viewport=PANEL)
+    paths = [p for p in surface.pathsByClass("drv-gear") if surface.rendered(p)]
+    assert len(paths) == 1, "the Driving gear glyph did not paint"
+    return "".join(c.get("text", "") for c in paths[0][-1].get("children", [])).strip()
 
 
-def _gearGlyph(surface) -> str | None:
-    return _firstRendered(surface, "imu-gear")
-
-
-def _gearDetail(surface) -> str | None:
-    return _firstRendered(surface, "imu-gear-detail")
+def _probe(fn: str, *args: object) -> object:
+    """Evaluate one carousel.js export against fixtures via the node probe."""
+    cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
 
 
 # ---------------------------------------------------------------------------
 # Negative control. Every claim below is about what the GEAR glyph reads, and
 # all of them would "pass" on a live face that never painted.
 # ---------------------------------------------------------------------------
-
-
-def test_theLiveFaceRenders_negativeControlForEveryClaimBelow(tmp_path):
-    """
-    Given: a live motion feed and a resolved gear
-    When:  the panel renders
-    Then:  the live face is genuinely painted, glyph element and all
-    """
-    surface = _surface(_emitCruise(tmp_path, 3))
-
-    assert _firstRendered(surface, "imu-gear-label") == "GEAR", (
-        "the live face did not paint -- every assertion in this file would be "
-        "an artefact of the harness rather than a fact about the panel"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -352,10 +315,10 @@ class TestTheGlyphRefusesToGuess:
         tests/pi/obdii/test_gear_state_emitter.py; this is the half that would
         still fail if the renderer cached the last good gear.
         """
+        # MOVED PIN (US-892-b): read on the Driving glyph, the surviving
+        # painted consumer of the same per-tick gear read.
         vanish = [{"flush": 4}, {"setRoutes": {"/gear": None}}, {"flush": 4}]
-        surface = _surface(_emitCruise(tmp_path, 3), steps=vanish)
-
-        assert _gearGlyph(surface) == EN_DASH_PAIR
+        assert _drivingGlyph(_emitCruise(tmp_path, 3), vanish) == EN_DASH_PAIR
 
     def test_theVanishTestHasAControl_theGearSurvivesWhenTheFileDoesNot(
         self, tmp_path
@@ -369,9 +332,7 @@ class TestTheGlyphRefusesToGuess:
         the vanish test while proving nothing about the renderer.
         """
         kept = [{"flush": 4}, {"flush": 4}]
-        surface = _surface(_emitCruise(tmp_path, 3), steps=kept)
-
-        assert _gearGlyph(surface) == "3"
+        assert _drivingGlyph(_emitCruise(tmp_path, 3), kept) == "3"
 
 
 # ---------------------------------------------------------------------------

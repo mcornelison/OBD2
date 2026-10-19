@@ -50,6 +50,12 @@
 #               |              | RETIRED the six Fuel Trim view/title cases
 #               |              | (the trend row is pinned by test_fuel_page.py);
 #               |              | the gate cases stay -- the gate survives.
+# 2026-10-19    | Rex (US-893-a)| _light carries the bridge's own lightBand: the
+#               |              | CONDITION tile now names the provider's band
+#               |              | (Atlas A1). No assertion change.
+# 2026-10-19    | Rex (US-893-b)| MOVED PIN (US-893-b): the three Light cases read
+#               |              | the Light page view (ambient value/unit, the
+#               |              | provider's word) instead of the two tiles.
 # ================================================================================
 ################################################################################
 
@@ -164,8 +170,13 @@ def _battery(**extra: object) -> dict:
 
 
 def _light(lux: float | None = 412.0, **extra: object) -> dict:
-    """A states/light payload as light_state_bridge.buildLightState writes it."""
-    payload: dict = {"lux": lux, "ts": _TS}
+    """A states/light payload as light_state_bridge.buildLightState writes it.
+
+    US-893-a: the band is the bridge's own (validator-default autoDim).
+    """
+    from pi.sensors.light_state_bridge import lightBand
+
+    payload: dict = {"lux": lux, "ts": _TS, "lightBand": lightBand(lux, None)}
     payload.update(extra)
     return payload
 
@@ -325,25 +336,29 @@ def test_sourceCardView_batterySection_keepsTheDrainLadder():
 def test_sourceCardView_lightSection_rendersTheRealLux():
     """The light section is still a pure consumer of the SAME states/light file
     that drives the auto-dim, so the number can never disagree with the screen
-    it explains."""
+    it explains.
+
+    MOVED PIN (US-893-b): the Light page view -- the lux and its unit apart,
+    the word is the provider's band (no CONDITION tile)."""
     sec = _section(_cards(), "light")
-    assert sec["view"]["ambient"]["value"] == "412 lx"
-    assert sec["view"]["band"]["value"] != "NA"
+    assert (sec["view"]["ambient"]["value"], sec["view"]["ambient"]["unit"]) == ("412", "lux")
+    assert sec["view"]["word"]["text"] == "DUSK"
 
 
 def test_sourceCardView_lightSection_nullLuxGraysWithinTheSection():
     """
     Given: a null lux (the bridge's honest saturated/unreadable marker)
-    Then: the AMBIENT + CONDITION fields gray INDIVIDUALLY -- the section is
+    Then: AMBIENT and the word read '--' INDIVIDUALLY -- the section is
           still present and is NOT promoted to a whole-section NA
 
     The old card grayed fields, not itself. Escalating that to a section-level
     NA in the merge would LOSE information (which of the two fields is dead).
+    MOVED PIN (US-893-b): '--' + reason replaces the NA tiles.
     """
     sec = _section(_cards(light=_light(None)), "light")
     assert sec["unavailable"] is False
-    assert sec["view"]["ambient"]["value"] == "NA"
-    assert sec["view"]["band"]["value"] == "NA"
+    assert sec["view"]["ambient"]["value"] == "--"
+    assert sec["view"]["word"]["text"] == "--"
 
 
 
@@ -372,7 +387,7 @@ def test_sourceCardView_deadUpsDoesNotBlankTheLiveLightReading():
     battery = _section(view, "battery-health")
     light = _section(view, "light")
     assert battery["view"]["unavailable"] is True
-    assert light["view"]["ambient"]["value"] == "412 lx"
+    assert light["view"]["ambient"]["value"] == "412"  # MOVED PIN (US-893-b): unit apart
 
 
 def test_sourceCardView_absentLightFileDoesNotBlankTheBatterySection():

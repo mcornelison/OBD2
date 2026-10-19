@@ -28,6 +28,11 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-10    | Ralph (Rex)  | Initial -- US-700 loading vs unavailable.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the idle-face fact cases
+#                               (idleLastDriveFact / idleBatteryFact /
+#                               idleCardView) retire with that face; the homeFace
+#                               cases and the shipped-panel frames re-point at
+#                               motionView / #motion-card.
 # ================================================================================
 ################################################################################
 
@@ -92,17 +97,6 @@ def _status(**extra: object) -> dict:
     }
     payload.update(extra)
     return payload
-
-
-def _upsDownBattery() -> dict:
-    """A battery payload that ARRIVED and is unusable -- the UPS is not readable.
-
-    This is the fixture the whole story turns on: it must keep today's typed NA,
-    because the panel genuinely knows something here and "loading" would throw
-    that knowledge away.
-    """
-    return {"ts": _TS, "source": {"ups": {"available": False,
-                                          "reason": "gauge unreadable"}}}
 
 
 # ---------------------------------------------------------------------------
@@ -194,166 +188,58 @@ def test_feedObserved_answeredThenNull_staysAnswered():
 # ---------------------------------------------------------------------------
 
 
-def test_idleLastDriveFact_prefetch_readsAsLoading():
-    fact = _view("idleLastDriveFact", None, 0)
-
-    assert fact["level"] == "loading"
-    assert "LOADING" in fact["value"]
-
-
-def test_idleLastDriveFact_prefetchAndAbsent_areNotConfusable():
-    """THE STORY. The two renders must differ in the slot the operator reads at
-    arm's length -- not merely in a level attribute the panel does not speak."""
-    loading = _view("idleLastDriveFact", None, 0)
-    absent = _view("idleLastDriveFact", None, None)
-
-    assert loading["value"] != absent["value"]
-    assert loading["detail"] != absent["detail"]
-    assert loading["level"] != absent["level"]
-
-
-def test_idleLastDriveFact_noProducer_keepsTodaysUnavailable():
-    """The dead-producer render is UNCHANGED -- this story adds a state, it does
-    not restyle the one that was already honest."""
-    fact = _view("idleLastDriveFact", None, None)
-
-    assert fact["value"] == "—"
-    assert fact["detail"] == "unavailable"
-    assert fact["level"] == "unavailable"
-
-
-def test_idleLastDriveFact_arrivedButUnusable_isNotDressedUpAsLoading():
-    """THE PIN THAT KILLS THE NAIVE FIX. The payload is HERE and carries no
-    drive block -- a real absence of a source. Calling that "loading" would hide
-    a defect behind a reassuring word, which is the same class of lie this story
-    exists to remove."""
-    fact = _view("idleLastDriveFact", {"idle": True, "ts": _TS}, 0)
-
-    assert fact["level"] == "unavailable"
-    assert "LOADING" not in fact["value"]
-
-
-def test_idleLastDriveFact_realDriveDuringTheWindow_stillRendersTheDrive():
-    """Control: an open loading window never suppresses data that arrived."""
-    fact = _view("idleLastDriveFact", _status(), 0)
-
-    assert fact["value"] == "Drive 35"
-
-
-def test_idleLastDriveFact_pastTheBound_fallsThroughToUnavailable():
-    fact = _view("idleLastDriveFact", None, _grace())
-
-    assert fact["level"] == "unavailable"
-
-
 # ---------------------------------------------------------------------------
 # BATTERY -- the second misread tile, and the one with a real typed NA to keep.
 # ---------------------------------------------------------------------------
 
 
-def test_idleBatteryFact_prefetch_readsAsLoading():
-    fact = _view("idleBatteryFact", None, 0)
-
-    assert fact["level"] == "loading"
-    assert "LOADING" in fact["value"]
-
-
-def test_idleBatteryFact_prefetchAndAbsent_areNotConfusable():
-    loading = _view("idleBatteryFact", None, 0)
-    absent = _view("idleBatteryFact", None, None)
-
-    assert loading["value"] != absent["value"]
-    assert loading["detail"] != absent["detail"]
-
-
-def test_idleBatteryFact_upsUnreadableDuringTheWindow_keepsTheTypedNaAndReason():
-    """AC-2 verbatim: a payload present but unusable keeps today's typed NA plus
-    the REASON. The reason is the operator's only lead on what to fix."""
-    fact = _view("idleBatteryFact", _upsDownBattery(), 0)
-
-    assert fact["value"] == "NA"
-    assert fact["detail"] == "gauge unreadable"
-    assert fact["level"] == "unavailable"
-
-
-def test_idleBatteryFact_pastTheBound_fallsThroughToUnavailable():
-    fact = _view("idleBatteryFact", None, _grace())
-
-    assert fact["level"] == "unavailable"
-    assert fact["detail"] == "unavailable"
-
-
 # ---------------------------------------------------------------------------
-# THE MOTION CARD -- the third, and the one with its own arbiter (homeFace).
+# THE MOTION CARD. MOVED PIN (US-892-b): the Home card and its arbiter
+# (homeFace) retired; the Motion card keeps the bounded LOADING through the
+# same loadPhase (Atlas Q-1), so these four cases now read motionView.
 # ---------------------------------------------------------------------------
 
 
-def test_homeFace_prefetch_saysItIsWaitingNotThatTheFeedIsGone():
-    face = _view("homeFace", None, _NOW_MS, 0)
-
-    assert face["face"] == "idle"
-    assert face["loading"] is True
-    assert face["reason"] != "no motion feed"
+def _motion(payload: Any, waitedMs: Any) -> dict:
+    return _view("motionView", payload, _NOW_MS, 3.0, waitedMs)
 
 
-def test_homeFace_noProducer_keepsTodaysNoMotionFeedReason():
-    face = _view("homeFace", None, _NOW_MS, None)
+def test_motionView_prefetch_saysItIsWaitingNotThatTheFeedIsGone():
+    view = _motion(None, 0)
 
-    assert face["face"] == "idle"
-    assert face["loading"] is False
-    assert face["reason"] == "no motion feed"
+    assert view["loading"] is True
+    assert view["tile"]["value"] == "LOADING"
+    assert view["tile"]["level"] == "loading"
 
 
-def test_homeFace_unwiredSensorDuringTheWindow_isNotReportedAsLoading():
+def test_motionView_noProducer_keepsTodaysNoMotionFeedReason():
+    view = _motion(None, None)
+
+    assert view["loading"] is False
+    assert view["pitch"]["sub"] == "no motion feed"
+
+
+def test_motionView_unwiredSensorDuringTheWindow_isNotReportedAsLoading():
     """THE SECOND PIN. The bridge ANSWERED and said `available:false`. That is a
     known-broken instrument with a reason, and the reason must survive: a
-    "loading" hero here would tell the operator to keep waiting for a sensor
+    LOADING tile here would tell the operator to keep waiting for a sensor
     that is never coming."""
-    face = _view("homeFace", {"available": False, "ts": _TS,
-                              "reasons": {"gLat": "imu not wired"}},
-                 _NOW_MS, 0)
+    view = _motion({"available": False, "ts": _TS,
+                    "reasons": {"gLat": "imu not wired"}}, 0)
 
-    assert face["loading"] is False
-    assert face["reason"] == "imu not wired"
+    assert view["loading"] is False
+    assert view["lat"]["note"] == "imu not wired"
 
 
-def test_homeFace_pastTheBound_stopsSayingLoading():
-    face = _view("homeFace", None, _NOW_MS, _grace())
+def test_motionView_pastTheBound_stopsSayingLoading():
+    view = _motion(None, _grace())
 
-    assert face["loading"] is False
+    assert view["loading"] is False
 
 
 # ---------------------------------------------------------------------------
 # THE ASSEMBLED IDLE FACE -- what the renderer is actually handed.
 # ---------------------------------------------------------------------------
-
-
-def test_idleCardView_everythingLoading_carriesLoadingToBothFactsAndTheHero():
-    view = _view("idleCardView", None, None, "waiting for first read",
-                 {"systemStatus": 0, "battery": 0, "motionLoading": True})
-
-    assert view["facts"]["lastDrive"]["level"] == "loading"
-    assert view["facts"]["battery"]["level"] == "loading"
-    assert view["hero"]["title"] != "NO MOTION DATA"
-
-
-def test_idleCardView_loadingFooter_doesNotPromiseAReturn():
-    """"resumes when the motion feed returns" is a claim that it was ever here.
-    At first paint it was not, and a footer is copy the operator believes."""
-    view = _view("idleCardView", None, None, "waiting for first read",
-                 {"systemStatus": 0, "battery": 0, "motionLoading": True})
-
-    assert "returns" not in view["footer"]
-
-
-def test_idleCardView_noWaitsSupplied_isTodaysViewUnchanged():
-    """The regression pin: every pre-US-700 caller passes three arguments, and
-    the fourth being absent must leave the shipped face exactly as it was."""
-    view = _view("idleCardView", None, None, "no motion feed")
-
-    assert view["hero"]["title"] == "NO MOTION DATA"
-    assert view["footer"] == "live instrument resumes when the motion feed returns"
-    assert view["facts"]["battery"]["level"] == "unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -429,11 +315,12 @@ def _text(node: dict[str, Any] | None) -> str:
     return " ".join(_text(c) for c in node.get("children", []) or []).strip()
 
 
+# MOVED PIN (US-892-b): the motion slot is #motion-card (the Home card retired).
 def _homeText(tree: dict[str, Any]) -> str:
     for node in _walk(tree):
-        if node.get("attrs", {}).get("id") == "home-card":
+        if node.get("attrs", {}).get("id") == "motion-card":
             return _text(node)
-    raise AssertionError("no home card in the rendered tree")
+    raise AssertionError("no motion card in the rendered tree")
 
 
 def _levels(tree: dict[str, Any]) -> list[str]:

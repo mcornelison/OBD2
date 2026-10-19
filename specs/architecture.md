@@ -4711,8 +4711,25 @@ factor (50 → 2 = 25) — not restated here.
 
 **Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
 / V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
-Chromium kiosk can't reach the panel backlight) from the `states/light` feed via
-pure, node-tested logic in `carousel.js`: `brightnessLevel(lightData, cfg, nowMs,
+Chromium kiosk can't reach the panel backlight) from the `states/light` feed.
+
+> **US-893-a (Sprint 105 / V0.30.7): ONE applier, and it is the bridge.** The
+> light bridge computes the level (`light_state_bridge.brightnessLevel`, the one
+> curve) and publishes it in `states/light`; **the page APPLIES it**. carousel.js
+> `brightnessCurve` and the curve maths in its `brightnessLevel` are deleted, and
+> its `BRIGHTNESS_DEFAULTS` is `{defaultLevel, luxStaleSec}`. The ONE page function
+> is `appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive) -> {level,
+> basis}` (Atlas A7): STOP alarm → `{1.0, 'alert'}`; a FRESH file (an object, not
+> `sourceUnavailable`, a parseable `ts` no older than `luxStaleSec`, a finite
+> `brightnessLevel` in [0, 1]) → `{brightnessLevel, brightnessMode}` as published;
+> anything else → `{injected defaultLevel, 'fallback'}` (the US-483-b injection; no
+> new one, Atlas G5). lux is not consulted, and an out-of-range level is fallback,
+> never clamped (US-627). The screen frame, and from US-893-b the Light page's
+> status line and dot, all read this one return. Grep gate (Atlas A2, comments
+> stripped): no `luxMin`/`luxFull`/`minLevel` numeric literal and zero `Math.log`
+> in carousel.js. The paragraph below is the US-483-b history of the page curve.
+
+Before US-893-a the page computed it itself: `brightnessLevel(lightData, cfg, nowMs,
 alarmActive)` = `clamp(minLevel, brightnessCurve(lux), 1.0)` when the feed is
 fresh, else a fixed `defaultLevel` (honest fallback — an absent/stale/`null`
 reading never fabricates an "auto" behavior), then raised to at least
@@ -6070,7 +6087,8 @@ The `drive` block of `states/system-status` carries two always-present keys:
 
 ```json
 "drive": {"state": "recording", "driveId": 118, "lastDrive": {...},
-          "distanceKm": 12.38, "distanceSinceTs": "2026-10-20T14:58:02Z"}
+          "distanceKm": 12.38, "distanceSinceTs": "2026-10-20T14:58:02Z",
+          "elapsedSec": 1380, "distancePartial": false}
 ```
 
 - **`distanceKm`** is this drive's distance from the ONE speed integrator,
@@ -6081,6 +6099,26 @@ The `drive` block of `states/system-status` carries two always-present keys:
   it is the drive start's event ts. After a process start in the middle of a drive it is
   the event ts of the first SPEED reading integrated, so a partial distance says so.
   `null` when nothing is integrated and no drive has started in this process.
+- **`elapsedSec`** (int, US-896-b, Atlas S105 Q2/G2) is the window's duration, from the
+  SAME origin as the distance, so "12.4 mi over 0:23" is one window. While the window is
+  open it is the publish instant (the payload's `ts`) minus `distanceSinceTs`. At drive end
+  `EventRouter._handleDriveEnd` calls `_markTripEnded(session.endTime)` (exception-isolated
+  like the reset, same `_tripEventTs` conversion), and from then on it is **frozen** at the
+  drive-end ts minus `distanceSinceTs`: the distance is kept until the next drive start, so
+  without the mark it would count parked time as drive time. A session with no usable end
+  time is marked at the callback's own UTC wall time (the detector stamps `endTime = now()`
+  the instant before it calls back). `_resetTripDistance` (drive start) clears the mark.
+  `null` when `distanceSinceTs` is null, a timestamp does not parse, or the span would be
+  negative (two clocks disagreeing). Derived once, in `deriveElapsedSec`
+  (`system_status_emitter.py`); the page formats `h:mm` and does no time arithmetic.
+- **`distancePartial`** (bool, US-896-b, Atlas B-1(b); same name and polarity as
+  `states/engine-history.partial`) is `true` when the window starts at the first SPEED
+  reading after a mid-drive process start (the restart branch of `observeTripSpeed`), and
+  `false` when it starts at a drive start (`_resetTripDistance`). It survives drive end:
+  a partial window stays partial after the car stops. Published whenever
+  `distanceSinceTs` is non-null, `null` when it is null (nothing to qualify). Always a key.
+  The NAV page labels the window from it: `false` -> `THIS DRIVE` (or `LAST DRIVE` once
+  `drive.state` is known and not `recording`), `true` -> `SINCE h:mm`.
 
 **Producer.** `CardStateEmitterMixin.observeTripSpeed`, called from
 `event_router._handleReading` beside `observeGearInput`. It takes SPEED only, and only
@@ -6248,13 +6286,14 @@ quoted-placeholder seam in `_injectHtml`: `window.DISPLAY_AUTODIM` (the auto-dim
 `window.DISPLAY_CAROUSEL` (US-533 B1) and `window.DISPLAY_STALE` (Atlas gap 6):
 
 ```js
-window.DISPLAY_STALE = {"imuSec": 2.0};
+window.DISPLAY_STALE = {"imuSec": 3.0};
 ```
 
-- **`imuSec`** is `pi.display.stale.imuSec` (validator default 2.0, finite, > 0, beside
-  `pi.display.stale.obdLiveSec`). It replaces carousel.js's former `IMU_STALE_SEC`
-  literal and equals it, so nothing on screen changes; at `stateHz` 1 it is two write
-  intervals.
+- **`imuSec`** is `pi.display.stale.imuSec` (validator default 3.0 since US-896-a, was
+  2.0; finite, > 0, beside `pi.display.stale.obdLiveSec`). It replaced carousel.js's
+  former `IMU_STALE_SEC` literal (US-882-c). The 3.0 is MEASURED (Atlas S105 Q3): a
+  healthy 1 Hz `states/imu` reads up to 1.94 s old, so 3.0 = three readings; see the
+  NAV card section. NAV and Motion share it -- the ONE IMU stale key.
 - **Resolved per request** by `loadDisplayStaleConfig` (`_DISPLAY_STALE_PLACEHOLDER`)
   through `overlay.readEffectiveValue`, never cached at construction, so a config.json
   change reaches the kiosk on its next reload with no unit restart. A value that is not
@@ -6283,32 +6322,37 @@ written with its missing fields null. Another burst's counts are never reused
 (Atlas G3).
 
 **Shape:** `{lux, visibleCount, irCount, fullCount, gain, integrationMs, channelAtLimit,
-brightnessLevel, brightnessMode, ts}` (Atlas L-A 2026-10-13; the two brightness keys
-US-878-b). Fixture: `tests/ui/fixtures/states/light.json`.
+atLimit, lightBand, brightnessLevel, brightnessMode, curve, reasons, ts}` (Atlas L-A
+2026-10-13; the two brightness keys US-878-b; atLimit, lightBand, curve and reasons
+US-893-a). Fixture: `tests/ui/fixtures/states/light.json`, regenerated through
+`buildLightState`.
 
 | Key | Source |
 |-----|--------|
-| `lux` | `raw.light.lux`, coerced as before (`null` on saturation, never inf/nan). Also `null` whenever `channelAtLimit` is true. |
+| `lux` | `raw.light.lux` through ONE predicate, `_luxReading` = finite AND >= 0 (Atlas A3): anything else (saturation, a failed read, -1, inf/nan) is `null`. Also `null` whenever `channelAtLimit` is true. The level's default branch, `brightnessMode` `default`, `lightBand` null and `reasons.lux` all key off this same predicate. |
 | `visibleCount` | `raw.light.raw[0]`, which the reader computes as full - infrared. A negative value (a failed read; `facts/light-sensor.md`) is `null`. |
 | `irCount` | `raw.light.raw[1]`, as read. |
 | `fullCount` | `raw.light.raw[2]`, as read. |
 | `gain` | `sensor_reader.tslGainLabel(raw.light.range[0])`: `low`/`med`/`high`/`max` for the AGAIN codes 0x00/0x10/0x20/0x30, else `null`. A register code is never published. |
 | `integrationMs` | `raw.light.range[1]`, as read. |
 | `channelAtLimit` | `true` when `fullCount` or `irCount` >= `sensor_reader.saturationCeilingForIntegrationMs(integrationMs)`, `false` when both are below it, `null` when the ceiling is unknown, or when a count is missing and the other is below it. |
-| `brightnessLevel` | The 0.0-1.0 auto-dim level for the published `lux`, computed by the bridge (`light_state_bridge.brightnessLevel`): carousel.js `brightnessCurve` / `brightnessLevel` ported unchanged, WITHOUT the STOP override (that stays page-side). A null or negative `lux` gives `defaultLevel` UNCLAMPED to `minLevel` (US-627); a curved value is clamped to [`minLevel`, 1.0]. Staleness is the reader's concern. |
-| `brightnessMode` | `auto`, the only mode this sprint (`fixed` arrives with US-878-c's `overrideLevel`). |
+| `atLimit` | `{ir, full}` (US-893-a, Atlas L2): the same test per channel against the same ceiling; `null` when the ceiling or that count is unknown. `channelAtLimit` is unchanged (the OR). The page never compares against a ceiling. |
+| `lightBand` | `night` / `dusk` / `day` for the published `lux` (US-893-a): tested DAY first (`lux >= luxFull`), then night (`lux < luxMin`), else dusk; `null` when `lux` is null. With `luxFull <= luxMin` dusk is unreachable; with `luxMin <= 0` there is no night. The page names it (night → DARK, dusk → DIM, day → DAYLIGHT, Atlas A1) and derives no band of its own. |
+| `brightnessLevel` | The 0.0-1.0 auto-dim level for the published `lux`, computed by the bridge (`light_state_bridge.brightnessLevel`, the ONE curve since US-893-a): the US-878-b port of the old page curve, WITHOUT the STOP override (that stays page-side). A null `lux` gives `defaultLevel` UNCLAMPED to `minLevel` (US-627); a curved value is clamped to [`minLevel`, 1.0]. Staleness is the reader's concern. The page applies this value (`appliedBrightness`). |
+| `brightnessMode` | `auto` when `lux` is a reading; `default` when it is null and the level is `defaultLevel` (US-893-a, Atlas ruling 3). `fixed` arrives with US-878-c's `overrideLevel`. |
+| `curve` | `{points, luxMin, luxFull, minLevel}` (US-893-a, Atlas Q5/A4): `points` are `[lux, level]` LISTS, sorted ascending: the grid `0.3 * 10 ** (i / 10)`, i = 0..50 (0.3..30000 lux), united with the breakpoints `luxMin`, `luxFull` and the knee, each only when finite and > 0; a grid point within relative 1e-9 of a breakpoint is dropped and the exact breakpoint kept (51 points under the shipped config). Each level is `brightnessLevel(lux)` under the same resolved autoDim. Knee (`brightnessKnee`, mirroring `brightnessCurve`'s branches, Atlas A5): none when `minLevel <= 0`, `minLevel >= 1` or `luxFull <= luxMin`; linear `luxMin + minLevel*(luxFull - luxMin)` when `curve` is `linear` or `luxMin <= 0`; else `luxMin*(luxFull/luxMin)**minLevel`. Fresh lists on every write. |
+| `reasons` | `{lux: code}`, the `lux` entry present only when `lux` is null (US-893-a, Atlas L1): `at_limit` when `channelAtLimit` is true, else `no_reading`. Codes, not sentences: the page maps them to words in one table (US-893-b). |
 | `ts` | The lux sample's event time (else the burst's first sample's). Empty gives `null`, never a clock reading (US-809-c). |
 
-`lux` and `ts` keep their meaning, so the brightness consumer and its stale fallback
-(US-483-b) are unchanged.
+`lux` and `ts` keep their meaning; the stale fallback (US-483-b) keys off `ts`.
 
-**Brightness (US-878-b).** NOTHING consumes `brightnessLevel` / `brightnessMode` yet: the
-page applies its own curve until the post-S101 screen story. The frozen golden table in
-`tests/pi/sensors/test_brightness_golden.py` (expected values produced by running
-carousel.js in node, config = the validator `DEFAULTS` autoDim) is the single reference
-for the curve; the bridge matches it to 1e-9, and `tests/ui/test_carousel_brightness.py`
-runs today's page through the same rows, so the two cannot drift apart unnoticed. The
-bridge reads `pi.display.autoDim` from its start config, then (given the `configPath`
+**Brightness (US-878-b; applied since US-893-a).** The page APPLIES `brightnessLevel`
+(`carousel.js appliedBrightness`, see "Display auto-dim consumer"); it holds no curve.
+`lightBand`, `brightnessLevel` and `curve` in one `buildLightState` call come from ONE
+resolved autoDim (Atlas A6). The frozen golden table in
+`tests/pi/sensors/test_brightness_golden.py` (expected values produced by running the
+pre-US-893-a carousel.js in node, config = the validator `DEFAULTS` autoDim) is the single
+reference for the curve; the bridge matches it to 1e-9. The bridge reads `pi.display.autoDim` from its start config, then (given the `configPath`
 lifecycle passes, Atlas G5) re-reads it through `overlay.resolveEffectiveConfig` when
 config.json or config.local.json changes mtime, checked at most once per second on a
 monotonic clock. It never uses the HTTP server's start-time cache (Atlas gap 5).
@@ -6321,7 +6365,7 @@ never skipped, as `(sensor_reader.tslGainCodeForLabel(gain), integration_ms)` wi
 `None` for an unrecorded value (Atlas RULED 2026-10-14). Every replayed row is written;
 a row with no recorded gain is written with `gain` null.
 
-#### `states/imu` `peaks` -- accel, brake and cornering g since the bridge started (US-882-a)
+#### `states/imu` `peaks` -- accel, brake and cornering g this drive (US-882-a, US-892-a)
 
 **Producer:** `src/pi/sensors/imu_state_bridge.py` (`ImuStateBridge`, see "Bus → `states/imu`
 DERIVED bridge" above). `states/imu` gains one key, `peaks`; every other key, its value and
@@ -6336,7 +6380,7 @@ the write cadence are unchanged.
 | `brakeG` | max of `-gLon` over moving means < 0. |
 | `rightG` | max of the moving-mean `gLat` over means > 0 (`gLat` + = RIGHT). |
 | `leftG` | max of `-gLat` over moving means < 0. |
-| `sinceTs` | event ts of the first sample folded since the bridge was constructed. |
+| `sinceTs` | the drive start's event ts after a drive start; before any drive start this process, the event ts of the first sample folded since the bridge was constructed. |
 
 All four g values are non-negative magnitudes. A value with no qualifying sample yet is
 `null`, never 0.
@@ -6354,8 +6398,18 @@ All four g values are non-negative magnitudes. A value with no qualifying sample
 - **Qualifying sample.** A sample folds only when horizontal g resolves: not
   `tilt_unresolved`, accel not gated, `ts` not null.
 - **Lifetime.** `peaks` appears in every `states/imu` write, including the sensor-absent and
-  gate-refusal writes, unchanged. Peaks reset only when the bridge is constructed, which
-  happens once per eclipse-obd process. A kiosk restart does not touch them.
+  gate-refusal writes, unchanged. A kiosk restart does not touch them.
+- **Peaks reset on drive start (US-892-a, Atlas ruling 4 2026-10-14).** The peaks mean THIS
+  DRIVE. `EventRouter._handleDriveStart` calls `_resetImuPeaks` beside `_resetTripDistance`,
+  exception-isolated like it; that calls `ImuStateBridge.resetPeaks(startTs)`, which clears the
+  four peaks to `null` and sets `sinceTs = startTs` (`GPeakTracker.reset`). `startTs` is built
+  by the orchestrator's `_tripEventTs`, the trip reset's own conversion, so `peaks.sinceTs`
+  equals system-status `drive.distanceSinceTs` byte-for-byte (`null` when the start time is
+  unusable; the next fold then labels the peaks). A peak folded after the reset is the first
+  value and does not move `sinceTs`. The reset also restarts the moving window (`breakRun`,
+  itself unchanged), so no mean straddles the drive start. The bridge is otherwise drain-thread-only, so the peaks alone take a lock: the reset
+  runs on the drive detector's thread. No IMU bridge (IMU disabled) means no call. Otherwise
+  peaks reset only when the bridge is constructed, once per eclipse-obd process.
 
 #### `states/grade-history` -- a grade point per 10 s over 15 min (US-882-b)
 
@@ -6704,13 +6758,22 @@ clean read) or as an alert -- the F-6 no-phantom rule at card level; a missing
 `light` state means the **feed stopped**, not "dark" (a fabricated 0 lux). Cards
 not listed keep the one-word fallback.
 
+> **SUPERSEDED by US-893-b (Sprint 105 / V0.30.7).** The two tiles below
+> (AMBIENT + CONDITION, `lightView` / `lightBandWord` / `fmtLux` / `freshLux`) are
+> retired; the card is the Light page -- see "V0.30 Light page" below. Its status
+> line now DOES show the screen brightness, because it shows the level the kiosk
+> APPLIED (`appliedBrightness`, STOP included), not a lux-derived one. Kept below as
+> the record.
+
 **Light card (US-496).** A pure consumer of the same `states/light` file
-(`{lux, ts}`) that drives the auto-dim (§ Display auto-dim consumer), so the
+that drives the auto-dim (§ Display auto-dim consumer), so the
 reading on the card can never disagree with the screen it explains -- one clock
 per poll tick resolves both. Two tiles through the shared tokenized `.tile`
 component: **AMBIENT** (the reading + its read age) and **CONDITION** (`DARK` /
-`DIM` / `DAYLIGHT`, a *name* for the existing grounded `luxMin`/`luxFull`
-thresholds -- not a third set of numbers that could drift from the curve). A null
+`DIM` / `DAYLIGHT`, since US-893-a the *name* of the provider's `lightBand` --
+night / dusk / day -- not a second set of numbers that could drift from the curve;
+a fresh reading with no band grays CONDITION alone. The one boundary that moved:
+lux == `luxMin` was DARK and is now DIM, because night is `lux < luxMin`). A null
 `lux` (the bridge's honest saturated/unreadable marker), an undated payload, or a
 reading older than `luxStaleSec` grays **both fields individually** with the
 *reason* as the tile detail, so the operator learns which fault it is; the card
@@ -6720,6 +6783,13 @@ lux-derived percent would contradict the actual screen exactly when it matters
 most.
 
 ##### The HOME SLOT is two-faced -- live instrument / honest fallback (US-508, US-541/US-542 / F-124, F-127)
+
+> **RETIRED by US-892-b (Sprint 105 / V0.30.7).** The home slot and both its faces
+> are gone: the Motion card replaced it in place (see "V0.30 Motion card" below), the
+> heading tape lives on NAV (US-896-a) and LAST DRIVE in NAV's trip slot (US-896-b).
+> `homeFace`, `liveCardView`, `imuView`, `idleCardView` and the page-side 3 s smoothing
+> (US-662) were deleted with it (Atlas B1/B3). Kept below as the record of why the
+> slot was built the way it was.
 
 The CIO-locked round-2 design puts the live instrument on the **home slot**.
 **US-541/US-542 (F-127) settle which two faces**: the live motion instrument is
@@ -6829,7 +6899,7 @@ distinguishable from *"the producer is refusing to guess right now"*.
 
 | Constant | Value | Grounding |
 |---|---|---|
-| `IMU_STALE_SEC` (now `pi.display.stale.imuSec`, injected as `window.DISPLAY_STALE.imuSec`, US-882-c) | 2.0 s | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `IMU_STALE_SEC` (now `pi.display.stale.imuSec`, injected as `window.DISPLAY_STALE.imuSec`, US-882-c) | 3.0 s (US-896-a, measured basis in the NAV card section; was 2.0 s) | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
 | `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
 | `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
 | `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |
@@ -7020,7 +7090,8 @@ reusing the boot-state primitives). Schema (spec §7):
   "ts":"…" }
 ```
 
-(US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`; see
+(US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`, and US-896-b
+adds `elapsedSec` (frozen at drive end) / `distancePartial`; see
 "`system-status.drive.distanceKm`" in section 11.)
 
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
@@ -7915,7 +7986,9 @@ Fuel spec §3-§4.4 (`specs/v030-fuel-page-design.md`, layout A), CIO E-2 order:
 
 - **The Fuel card REPLACES the Fuel Trim card and moves to index 2, after
   Engine.** `#fuel-card` (`aria-label="Fuel"`, `data-page-name="FUEL"`); card
-  order is Driving, Engine, Fuel, Home, Alerts, System Status, Battery, Light.
+  order is Driving, Engine, Fuel, Home, Alerts, System Status, Battery, Light
+  (since US-893-b: Driving, Navigation, Engine, Fuel, Motion, Light, Alerts,
+  System Status, Battery -- see "V0.30 Light page" below).
   The Fuel Trim card, its per-drive bar row (`renderLtftTrendBody` /
   `.ltft-bars`, each bar coloured by its own drive) and its title are gone.
 - **States it reads.** `states/ltft-trend` only, for the trend row:
@@ -8001,6 +8074,200 @@ Fuel spec §4.2 (Atlas S104 total-trim ruling (b), 2026-10-15):
   `ltft-trend.totalTrim` (grep gate).
 - Fixtures: `tests/ui/fixtures/states/fuel/{closed-loop-trim, open-loop-trim,
   loop-unknown, trim-stale}.json`, each equal to what the real tracker + builder emit.
+
+#### V0.30 NAV card: bearing tape, digits, 8-point point (US-896-a, Sprint 105 / V0.30.7)
+
+Navigation spec §3/§4.1/§4.2 (`specs/v030-navigation-page-design.md`, layout A):
+
+- **A new card at index 1, right after Driving** (CIO E-2). `#nav-card`
+  (`aria-label="Navigation"`, bar name `NAV` -- `NAVIGATION` is 135 px and does not
+  fit the 122 px slot). Card order: Driving, Navigation, Engine, Fuel, Home/MOTION,
+  Alerts, System Status, Battery, Light. No `data-state`, not the landing card, not
+  vehicle-gated. The interim Home/MOTION card keeps its tape until US-892-b (which
+  replaced it with the Motion card; the order is unchanged, Motion at index 4).
+  US-893-b moved Light to right after Motion: Driving, Navigation, Engine, Fuel,
+  Motion, Light, Alerts, System Status, Battery (the Alerts / System / Battery tail
+  is INTERIM -- Warnings replaces Alerts and goes last, US-897..899).
+- **States it reads -- and nothing else.** `states/imu` `headingDeg`,
+  `headingCalibrated`, `reasons.headingDeg` (resolved ONCE through `imuHeadingTile`, the
+  panel's one heading acquisition) and `ts`, raw (not smoothed), on the ~10 Hz motion
+  loop (`renderNav` beside `renderHome`, `renderMotion` since US-892-b). `navHeadingView(imu, nowMs, staleSec)` is the
+  pure view; `renderNavCard` paints a fixed skeleton.
+- **Heading states, first match wins (spec §4.2).** `headingDeg` null with a reason
+  other than `heading_unseeded` (or no file / an undated payload) -> **no tape element
+  in the DOM** + `NO HEADING` + reason, `---°`; `ts` age `>` `resolveImuStaleSec()`
+  (strict) -> tape FROZEN + `NO UPDATE n s` counting (floor of the age), no dim;
+  `heading_unseeded` -> `STARTING UP` (the reason table's `starting up`, upper-cased;
+  closes US-821's text) and the band reads `waiting for the first heading reading`;
+  `headingCalibrated` false -> tape normal + `NOT CALIBRATED`; the key ABSENT (legacy
+  engine) -> tape normal + `--` + reason (`calibration not published` unless the
+  bridge publishes one), never `not calib.`; otherwise no badge. The badge is
+  `--fs-label` on `--amber-warn` in its own 22 px row ABOVE the tape, right-aligned
+  (Iris G-1); the row keeps its height when empty.
+- **Tape.** `navTape` = `compassTape` (same lattice and direction contract, 90° window)
+  at 5° ticks, tiered fine / minor (15°) / major (45°, with the letter); `N` in
+  `--text-primary`, others `--text-secondary`; 2 px centre hairline in
+  `--text-primary` (no caret, US-715). An svg `viewBox 0 0 456 70`, built only while
+  there is a bearing to draw.
+- **Glide (spec §4.1, CIO N-4).** Each new reading starts a 1 s (`NAV_GLIDE_MS`)
+  ease-in-out glide from the DRAWN bearing on the shortest arc (350 -> 10 is +20); a
+  reading mid-glide restarts from the drawn bearing; `prefers-reduced-motion` steps;
+  a stale feed freezes the drawn bearing; a dead sensor drops it. The browser repaints
+  through `requestAnimationFrame` while a glide moves. Digits (`247°`, zero-padded,
+  `--fs-hero`) and the point (`compassPoint8`, NEW 8-point, half up, 8 wraps to 0:
+  22.5 -> NE, 337.5 -> N; `--fs-primary`) follow the drawn bearing. `headingCardinal`
+  (16-point) is untouched for the interim card.
+- **One IMU stale key (Atlas S105 Q3/G1).** `pi.display.stale.imuSec` default
+  **2.0 -> 3.0 s** (validator `DEFAULTS` and the `DEFAULT_IMU_STALE_SEC` mirror).
+  MEASURED basis: `states/imu` writes every 1.00-1.02 s at `stateHz` 1, its `ts` is
+  whole seconds and the kiosk polls every 100 ms, so a healthy file reads a median
+  1.84 s / max 1.94 s old before it is replaced; 2.0 left ~0.06 s margin. 3.0 = three
+  readings, ~1 s above the measured worst case. Parked wall-power sample, NOT
+  drive-validated. NAV's stale state and the Motion dim both read `resolveImuStaleSec()`;
+  there is no second key. (The `DISPLAY_STALE` block above predates this change.)
+- **Type and tokens.** Digits and point in `--font-mono`; the tape letters in
+  `--font-mono` (`--font-display` stays bound to its pinned brand rules). Geometry is
+  scoped custom properties on `#nav-card`; the CSS gate allows literal px only there.
+  Fixtures: `tests/ui/fixtures/states/nav/{trusted-247, boundary-22.5, boundary-337.5,
+  uncalibrated, legacy-engine-no-flag, unseeded, dead-mag, stale-imu, wrap-350-a,
+  wrap-350-b, parked-engine-off}.json`, each the real `buildImuState` payload (the two
+  boundaries patch `headingDeg`: the bridge publishes whole degrees, so 22.5 / 337.5
+  are only ever drawn bearings).
+- **Bottom row: GRADE + the trip (US-896-b, spec §4.3/§4.4/§4.5).** GRADE reads
+  `states/imu.gradePct` on the motion loop (`navGradeView`, through the Motion grade
+  tile's formatter: one decimal, signed, a true minus); the slope glyph tilts with the
+  sign of the PRINTED value (`+0.0 %` lies flat); null / no file / undated -> `--` +
+  the reason on the glass. The trip reads system-status `drive` on the card tick
+  (`navTripView`, the same cached read as every other surface): distance =
+  `distanceKm / 1.609344` mi, one decimal; elapsed = `h:mm` from `drive.elapsedSec`
+  (section 11), no page time arithmetic, never extrapolated. Label precedence, top
+  wins: `distanceKm` or `distancePartial` null -> `-- mi` + `not measured`;
+  `distancePartial` true -> `SINCE` (Michroma) + `h:mm` (`--font-mono`, local,
+  12-hour without AM/PM -- the Michroma subset has no `:`), parked or not;
+  `drive.state` known and not `recording` -> `LAST DRIVE` (CIO Q1; US-704 closes here);
+  otherwise `THIS DRIVE` (a null state does not assert parked). An unreadable
+  system-status is null, so not measured. Labels Michroma `--fs-meta`
+  (`#nav-card .nav-label`), values `--fs-primary`, elapsed / reasons `--fs-label`. No
+  speed (CIO N-2). Fixtures: `trip-{mid-drive, drive-start, last-drive, not-measured,
+  partial-parked, state-null, partial-after-restart}.json` (each the real
+  `buildSystemStatusState` output, zone America/Chicago) and `grade-null.json`.
+
+#### V0.30 Motion card: pitch, grade graph, g + this drive's peaks (US-892-b, Sprint 105 / V0.30.7)
+
+Motion spec §3/§4 (`specs/v030-motion-page-design.md`, layout A), with the 2026-10-19
+rulings (Atlas B1-B6, Iris M1-M4) governing where they differ:
+
+- **The interim Home/MOTION card is gone.** `#motion-card` (`aria-label="Motion"`, bar
+  name `MOTION`) takes its slot at index 4 (after NAV, Engine, Fuel -- CIO E-2). Its
+  live face (tape, g tile, g-meter + trail, client-side grade trend) and its parked idle
+  face retired with it; the code reachable only from them was deleted, not stranded
+  (`homeFace`, `imuView`, `liveCardView`, `idleCardView`, `imuGTile`, `gAxisDetail`,
+  `pushGTrail`, `pushGradeTrend`, `G_AMBER_G`, ...). No `data-state`: each value
+  carries its own `--` + reason.
+- **States it reads -- and nothing else.** `states/imu` RAW (`pitchDeg`, `gLon`,
+  `gLat`, `peaks{accelG, brakeG, leftG, rightG}`, `reasons`, `ts`) on the ~10 Hz motion
+  loop (`renderMotion` beside `renderNav`) -- the page-side 3 s smoothing retired
+  (Atlas B3: the spec steps at the 1 Hz publish; any steadying goes in the PROVIDER) --
+  and `states/grade-history` (`points`, `intervalS`, `windowS` -- the provider's keys,
+  Atlas B4), polled on the 4 Hz tick like the other states. `motionView(imu, nowMs,
+  staleSec, waitedMs)` and `motionGradeGraph(history)` are the pure views;
+  `renderMotionCard` paints a fixed skeleton.
+- **PITCH.** One decimal + `°`, `--fs-primary`, the sign from the ROUNDED value (U+2212
+  minus, `+` positive; a value rounding to `0.0` is `0.0°` + `level`); sub-line `nose
+  up` / `nose down`. Null -> `--` + the IMU_REASON_TEXT reason; `gyro_implausible` reads
+  `gyro implausible` (the one text for that code, Atlas B5) in `--amber-warn`.
+- **GRADE  LAST 15 MIN** (no `·`: the Michroma subset lacks it). A 300 x 58 svg from the
+  history alone: the newest point at the right of a 236-unit line on
+  `floor(windowS / intervalS)` slots; a null point ENDS a polyline and the next real
+  point starts a new one (never a line across a gap); a dashed zero line; the scale is
+  symmetric, whole 2 % steps, never under ±4 % (mockup), and line, end dot and end label
+  share it; the end label is the last non-null point (`+5.0%`). Empty or all-null
+  history -> `no grade history yet` above the zero line, never a flat line.
+- **g.** `ACCEL` / `BRAKE` from the sign of the rounded `gLon` (+ = accelerating),
+  `CORNER R` / `CORNER L` from `gLat` (+ = right); the magnitude to two decimals + ` g`,
+  `--fs-primary`, never coloured (no g band). Null -> `--` + reason under a direction-
+  free label (`ACCEL BRAKE` / `CORNER`). Peak lines `peak ▲0.31 ▼0.38` / `peak L0.27
+  R0.31` (Iris M1), `--fs-label` `--text-secondary`; a null peak is `--`. The glyphs
+  are literal in the skeleton and inherit `--font-mono` (no `--font-body` token exists).
+  No meter, dot or trail element (US-733).
+- **Stale / loading.** Stale is the ONE IMU key shared with NAV (`resolveImuStaleSec()`,
+  strict `age > imuSec`; an undated payload is stale): `data-stale` dims both bands
+  (opacity on the card's scoped `--motion-stale-opacity`), values kept; no age element
+  (UPDATED is US-892-c's health block). Before the first `states/imu` read the bands
+  give way to US-700's bounded LOADING tile (`loadPhase` / `loadingTile`, Atlas Q-1).
+- **Type and tokens.** Labels Michroma `--fs-meta` (`#motion-card .motion-label`, 400,
+  no synthesis); everything else inherits the body mono. Geometry is scoped custom
+  properties on `#motion-card`. Fixtures: `tests/ui/fixtures/states/motion/{climb-accel,
+  descent-brake, corner-left, corner-right, gyro-implausible, stale-imu,
+  history-empty-after-restart, peaks-null-after-drive-start}.json`, each the real
+  `buildImuState` payload plus the `GradeHistory` snapshot of its recorded writes.
+
+#### V0.30 Light page: DAY/DUSK/NIGHT, lux, the curve, raw channels (US-893-b, Sprint 105 / V0.30.7)
+
+Light spec §3/§4 (`specs/v030-light-page-design.md`, layout A + glyph, minus the
+F-126 override), with the 2026-10-19 rulings (Atlas L1-L6 + X1-X2, Iris L1-L7)
+governing where they differ:
+
+- **The Light card moves to index 5, right after Motion** (E-2, Iris Q6). Card
+  order: Driving, Navigation, Engine, Fuel, Motion, Light, Alerts, System Status,
+  Battery -- the Alerts / System / Battery tail is INTERIM. `#light-card` keeps
+  `data-state="light"`, `aria-label="Light"`, bar name `LIGHT`, and its source-card
+  route (`SOURCE_CARDS` `light`, `renderSourceCard` -> `renderLightBody`); the body is
+  built by `buildLightPage` and painted from the pure `lightPageView(light, autoDim,
+  nowMs, alarmActive)`.
+- **States it reads -- and nothing else.** `states/light` (`lightBand`, `lux`,
+  `reasons.lux`, `irCount`, `fullCount`, `visibleCount`, `atLimit{ir, full}`, `gain`,
+  `integrationMs`, `curve{points, luxMin, luxFull, minLevel}`, `ts`) and, for the
+  applied level, the same `appliedBrightness(light, DISPLAY_AUTODIM, nowMs,
+  brightnessAlarmActive(dtc))` the panel applier calls on the same tick (cached
+  payloads, one clock), so the status, the dot and the screen cannot disagree.
+- **Word.** `lightBand` upper-cased (`DAY` / `DUSK` / `NIGHT`), `--fs-hero`
+  Michroma, never coloured, with a 34 x 34 stroked glyph (sun / dusk / moon, Iris
+  L4). `lightBand` null or unknown -> `--`, no glyph; the page never derives a band.
+- **AMBIENT** `--fs-primary`: under 10 lux one decimal, else rounded with a fixed `,`
+  (`fmtThousands`, never `toLocaleString`); unit `lux`, never `lx`. Reasons, in order
+  (Iris L1 / Atlas L1): no payload (or `source.light` unavailable) -> word and AMBIENT
+  `--`, `no light data`; `ts` null/unparseable -> values as published, dimmed, `no
+  timestamp` in the age slot; lux null -> `--` + `LIGHT_REASON_TEXT[reasons.lux]`
+  (`at_limit` -> `sensor at limit`, `no_reading` -> `no reading`; no code -> `no
+  reading`; an unknown code paints as itself). Stale (`age > luxStaleSec`, or
+  undated) dims the word tile, the curve and the raw row and shows `N s` (floor) in
+  `--amber-warn`; the notes and the status never dim. The page's own absence
+  replaces the shell's typed-NA tile (`sourceCardView` still reports `unavailable`
+  with `noDataView('light')`, plus the absent view); before the first read it is
+  US-700's LOADING tile.
+- **Curve** (200 x 104 svg) drawn ONLY from `curve.points`: `luxAxisX(lux, luxLo,
+  luxHi, widthPx)` -> a pixel x, the ONLY `Math.log10` site in carousel.js (gated);
+  `luxLo` / `luxHi` are the first and last published lux; lux <= luxLo (0 included)
+  pins left, >= luxHi pins right, never a log of <= 0. Each vertex y is the published
+  level; y domain `[max(0, minLevel - CURVE_Y_HEADROOM), 1]` (0.25, presentation
+  headroom; `minLevel` null -> 0..1), labels `100%` and `round(minLevel*100)%`;
+  dashed verticals at `curve.luxMin` / `curve.luxFull`, labelled `3` (left of its
+  line) and `300 lux` (right of its line). **Dot** (X1) = (`luxAxisX(lux)`,
+  `appliedBrightness().level`), drawn only for a numeric lux: fresh auto/default on
+  the line; fallback the injected `defaultLevel` OFF the line, dimmed; alert 1.0. A
+  missing or malformed curve draws nothing. No `luxMin` / `luxFull` / `minLevel`
+  literal in carousel.js.
+- **Raw cells** (X2) IR / FULL / VISIBLE / RANGE, `--fs-label`: IR and FULL read `at
+  limit` (`--amber-warn`) on their own `atLimit` flag, VISIBLE when EITHER is true; a
+  null flag shows the count; a null or failed count is `--` (`--text-tertiary`),
+  never a floored 0 and never a subtraction. RANGE: the gain word exactly as
+  published, then `<integrationMs> ms` (`--fs-meta`); null -> `--`.
+- **Status** from the applied BASIS, never `brightnessMode` (Atlas L4): `auto` ->
+  `BRIGHTNESS AUTO nn %`; `default` or `fallback` -> `BRIGHTNESS nn % (default, no
+  reading)`; `alert` -> `BRIGHTNESS 100 % (alert)`; nn = `round(level * 100)`. Three
+  runs in the mockup's tiers (Michroma `--fs-meta` label, mono `--fs-label` level,
+  mono `--fs-meta` qualifier): the worst case is ~404 px of the 448 px body. No
+  override line, no SETTINGS shortcut (F-126 not built).
+- **Type and tokens.** Michroma only on the word, the labels and the status label
+  (400, no synthesis); everything else inherits `--font-mono`. Geometry is scoped
+  custom properties on `#light-card`; glyph 34 + gap 8 + `NIGHT` (197.1 px) fits the
+  240 px column beside the curve. The old card's `lightView`, `lightBandWord`,
+  `fmtLux`, `freshLux` and `fmtAgeSec` are deleted. Fixtures:
+  `tests/ui/fixtures/states/light/{night-0.6lux, dusk-22lux, day-1400lux,
+  sun-at-limit, config-retuned-boundaries, light-stale, light-null, stop-override,
+  dot-off-curve}.json`, each the real `buildLightState` output for its recorded
+  inputs plus the injected autoDim, the clock and (stop-override) the STOP dtc.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

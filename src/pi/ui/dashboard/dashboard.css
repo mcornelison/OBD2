@@ -529,65 +529,6 @@ html, body {
   color: var(--text-tertiary); font-style: italic;
 }
 
-/* --- US-542 motion-fault fallback face (F-127, was the US-481 idle card) ---- */
-/* The calm, honest "the motion feed is down" view. US-542 retired the PARKED
-   disposition these rules were written for (the live IMU is the permanent home
-   face now), so what they dress is the fallback. Every colour is a token
-   reference (no hex literal here; the tokens themselves were reconciled to the
-   SSOT in US-484-a), the hero is neutral grey (never green), and the fact tiles
-   reuse the shared `.tile[data-level]` rules above so green is bound to the
-   SSOT green in exactly one place. The `.idle-*` class names are kept: they are
-   the contract between this sheet and the renderer, and renaming them would be
-   a second, larger diff whose only product is a word. */
-/* US-508: the selector moved from a fixed `.idle-card` CLASS to the `data-face`
-   ATTRIBUTE the JS sets, because the home slot is no longer permanently idle --
-   it has two faces. The JS and the stylesheet now switch on ONE shared value, so
-   a slot cannot be logically live and visually idle (that mismatch, correct JS
-   defeated by a stylesheet the JS cannot see, is the US-495 class of defect). */
-.card[data-face="idle"] .card-body {
-  display: flex; flex-direction: column; align-items: stretch;
-  gap: 6px; padding: 0;
-}
-.idle-header {
-  display: flex; align-items: baseline; gap: 8px;
-  font-size: var(--fs-label); color: var(--text-secondary);
-  letter-spacing: 0.06em;
-}
-/* US-510 A-3: the `ECLIPSE OBD-II` wordmark is THE brand moment on this
-   surface -- the one place the product says its own name.
-   BL-027 weight tidy: 700 -> 600. The embedded Oswald subset carries ONE
-   weight (600), so a 700 request does not pick a bolder face -- it makes the
-   browser SYNTHESISE one by smearing the 600, which on a condensed face looks
-   like a rendering fault on precisely the string that must look deliberate.
-   US-887-b: 600 -> 400 + font-synthesis: none. Michroma, which replaced
-   Oswald, has ONE weight (400); same lesson, new number. */
-.idle-wordmark {
-  font-weight: 400; letter-spacing: 0.14em; font-family: var(--font-display);
-  font-synthesis: none;
-}
-/* US-542: `.idle-clock` / `.idle-date` are GONE. The clock is `#topbar-clock`
-   above; the date is not relocated (see the carousel.js note at fmtDate's
-   deletion -- a named loss, not an oversight). Dead selectors are not untidy
-   here, they are loaded: the first reuse of a retired class name silently
-   inherits the retired card's overrides (US-540-b, `.health-*`, same sheet). */
-/* NO MOTION DATA hero -- deliberately un-alarming neutral grey, never green
-   (F-1). It states an instrument fault, which is not an alarm about the car. */
-.idle-hero {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 4px;
-}
-.idle-hero-title {
-  font-size: var(--fs-hero); font-weight: 700; letter-spacing: 0.10em;
-  color: var(--text-secondary);
-}
-.idle-hero-sub { font-size: var(--fs-label); color: var(--text-tertiary); letter-spacing: 0.04em; }
-.idle-facts { display: flex; flex-direction: column; }
-.idle-footer {
-  font-size: var(--fs-meta); color: var(--text-tertiary);
-  text-align: center; letter-spacing: 0.04em; padding-top: 2px;
-}
-.idle-boot { color: var(--text-tertiary); font-style: italic; }
-
 /* --- US-400 System Status tiles --------------------------------------------- */
 /* Each tile = label + prominent value + detail. The [data-level] attribute
    drives the value colour; a degraded tile (amber/down/unavailable) is NEVER
@@ -620,108 +561,6 @@ html, body {
   color: var(--text-secondary); font-weight: 500; letter-spacing: 0.06em;
 }
 
-/* --- US-497 IMU live-instrument card (S4-card, F-113) ----------------------- */
-/* The g-meter + compass sit side by side above the tile stack. EVERY colour is
-   a var(--token) from src/pi/ui/tokens.css -- this card forks no palette (AC-4;
-   a bespoke local hex is exactly the drift the SSOT exists to prevent).
-   `currentColor`/`stroke: none` is deliberate on the SVG furniture: it inherits
-   the card's text colour, so the .card.unavailable gray sweeps the instrument
-   too and a dead card cannot leave a bright dial behind. */
-.imu-instruments {
-  display: flex; align-items: center; justify-content: space-around;
-  gap: 10px; padding: 2px 0 6px 0;
-}
-.imu-meter, .imu-compass { width: 96px; height: 96px; flex: 0 0 auto; }
-.imu-ring {
-  fill: none; stroke: var(--surface); stroke-width: 2;
-}
-.imu-ring-half { stroke-dasharray: 3 4; }
-.imu-axis { stroke: var(--surface); stroke-width: 1; }
-/* The trail is the recent past: same hue as the live dot but de-emphasised, so
-   "where the car has been" can never be misread as "where it is now". */
-.imu-trail {
-  fill: none; stroke: var(--text-tertiary); stroke-width: 2;
-  stroke-linejoin: round; stroke-linecap: round;
-}
-.imu-dot { fill: var(--text-primary); }
-/* An over-scale reading is FLAGGED, not silently pinned to the ring: the dot
-   goes amber so a clamped 1.4 g stop cannot read as a tidy 1.0 g one. The true
-   magnitude is always on the G-FORCE tile beside it. */
-.imu-dot[data-clamped="true"] { fill: var(--amber-warn); }
-/* US-508: Spool's 0.6 g advisory band. A DIFFERENT fact from the clamp above --
-   the built card only coloured at the 1.0 g clamp, so a hard 0.8 g corner
-   painted identically to a gentle one. Advisory, never an alarm: alarms live on
-   the unified alert layer, and this card stays calm. */
-.imu-dot[data-level="amber"] { fill: var(--amber-warn); }
-.imu-trail[data-level="amber"] { stroke: var(--amber-warn); }
-.imu-tiles { display: flex; flex-direction: column; }
-/* [hidden] on an SVG child needs the same guard the overlays needed (US-495):
-   the UA sheet's [hidden] rule is outranked by the class selectors above, so
-   without this a "hidden" dot would keep painting -- the exact defect S2 fixed,
-   one generation later. */
-.imu-dot[hidden] { display: none; }
-
-/* --- US-508 live/motion home face (F-124, CIO-locked "live2" layout) --------- */
-/* Compass tape + heading + grade/altitude down the left, the GEAR glyph in the
-   middle, the g-meter on the right. Every colour is a var(--token): the live
-   face forks no palette, same rule the card has followed since US-497. */
-.live-body {
-  display: flex; align-items: stretch; gap: 8px;
-  height: 100%; padding: 0;
-}
-.live-col { display: flex; flex-direction: column; justify-content: center; }
-.live-heading { flex: 1 1 auto; min-width: 0; gap: 2px; }
-.live-gear {
-  flex: 0 0 54px; align-items: center; justify-content: center; gap: 2px;
-  border-left: 1px solid var(--surface); border-right: 1px solid var(--surface);
-}
-.live-g { flex: 0 0 108px; align-items: center; gap: 2px; }
-.live-g .imu-meter { width: 104px; height: 104px; }
-
-/* The compass TAPE. US-715 (CIO 2026-09-09): the static caret that sat at dead
-   centre was REMOVED, along with its rule -- it was fixed furniture the CIO
-   never asked for. The argument it was defended with is real and was overruled
-   knowingly: a tape normally reads against one fixed reference with the world
-   sliding past it, so the "current" value is now implicit at this widget's
-   horizontal centre, with the precise bearing on the numeric HEADING tile.
-   The tape keeps its full 26-unit viewBox; the top 6 units the caret occupied
-   are deliberately left empty rather than reclaimed, so nothing below reflows.
-   If the tape proves unreadable in the car, the answer is a SUBTLER fixed mark
-   (a hairline, a notch in the frame) and a new story -- not this triangle. */
-.imu-tape { width: 100%; height: 30px; flex: 0 0 auto; }
-.imu-tick { stroke: var(--text-tertiary); stroke-width: 1; }
-.imu-tick-major { stroke: var(--text-secondary); stroke-width: 1.5; }
-.imu-tape-label {
-  fill: var(--text-secondary); font-size: var(--fs-meta); font-weight: 600;
-  letter-spacing: 0.06em;
-}
-
-/* GEAR. Large because it is the one glyph read at a glance mid-corner; the
-   reason line beneath keeps "--" from being a bare shrug (no producer wired vs
-   the producer honestly refusing to guess are different facts). */
-.imu-gear-label {
-  font-size: var(--fs-meta); letter-spacing: 0.10em; color: var(--text-secondary);
-}
-.imu-gear { font-size: var(--fs-hero); font-weight: 700; color: var(--text-primary); }
-.imu-gear[data-level="unavailable"] {
-  color: var(--text-tertiary); font-weight: 400;
-}
-.imu-gear-detail {
-  font-size: var(--fs-meta); color: var(--text-tertiary); text-align: center;
-  line-height: 1.1;
-}
-
-/* The ~15-min grade trend. The zero line is what makes the sparkline readable
-   as a GRADE rather than an anonymous wiggle -- without it a gentle descent and
-   a gentle climb draw the same shape. */
-.imu-grade-box { display: flex; flex-direction: column; gap: 1px; }
-.imu-trend { width: 100%; height: 22px; flex: 0 0 auto; }
-.imu-trend-zero { stroke: var(--surface); stroke-width: 1; }
-.imu-trend-line {
-  fill: none; stroke: var(--text-secondary); stroke-width: 1.5;
-  stroke-linejoin: round; stroke-linecap: round;
-}
-
 /* --- US-489 System Status glanceability (Iris polish P-1) ------------------- */
 /* Presentation-only over the SHIPPED US-400 state: a one-glance summary line, a
    2x2 tile grid, and a per-tile status dot. No new data, no new contract.
@@ -751,7 +590,7 @@ html, body {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
 /* The 2x2 grid (F-092's original intent). ONLY the System Status card regrids;
-   the idle fact strip, the battery card and the LTFT card keep the base `.tile`
+   the battery card and the LTFT card keep the base `.tile`
    stack above. `:last-child` is spelled out because the base rule zeroes the
    bottom border there -- without it the final grid cell renders open-sided. */
 .sys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -1937,9 +1776,13 @@ html, body {
   /* US-890-c, the loop chip (spec s3: outlined, no colour). */
   --fuel-chip-pad-y: 2px;
   --fuel-chip-pad-x: 8px;
+  /* US-890-f, the SINCE RESET hold (spec s4.3). */
+  --fuel-reset-progress-h: 3px;  /* the hold's fill bar under the slot */
+  --fuel-reset-z: 1;             /* the confirm sits over the card body */
 }
 #fuel-card .card-body {
   display: flex; flex-direction: column; gap: var(--fuel-gap);
+  position: relative;
 }
 #fuel-card .fuel-top {
   flex: none;
@@ -2054,6 +1897,29 @@ html, body {
 #fuel-card .fuel-mpg .fuel-note {
   overflow-wrap: anywhere;
 }
+/* US-890-f SINCE RESET reset (spec s4.3). The line under the slot carries the
+   parked-only "hold to reset" hint or the outcome ("park to reset", "couldn't
+   reset", "couldn't confirm"); every text <= 16 characters, so --fs-meta mono
+   fits the column. Neutral: an outcome is information, not an alarm. The hold
+   fills a bar from longPressProgress via --fill; the confirm covers the card
+   body (in-page, not a modal) on the shared .confirm-box shell. */
+#fuel-card .fuel-reset-line {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--text-secondary); white-space: nowrap;
+}
+#fuel-card .fuel-reset-progress {
+  --fill: 0;
+  display: block; height: var(--fuel-reset-progress-h); background: var(--line);
+}
+#fuel-card .fuel-reset-progress-fill {
+  display: block; height: 100%; background: var(--text-secondary);
+  transform: scaleX(var(--fill)); transform-origin: left;
+}
+#fuel-card .fuel-reset-confirm {
+  position: absolute; inset: 0; z-index: var(--fuel-reset-z);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+}
 /* The trend row. The source card paints this slot only (gate, loading and
    no-data tiles included), so the rows above never wait on it. */
 #fuel-card .fuel-trend {
@@ -2096,3 +1962,390 @@ html, body {
   stroke: var(--text-secondary); stroke-width: var(--fuel-dot);
   stroke-linecap: round; vector-effect: non-scaling-stroke;
 }
+
+/* US-896-a (F-160; specs/v030-navigation-page-design.md s3/s4.2, layout A):
+   the NAV card's heading half -- badge row, bearing tape (the hero), digits +
+   8-point point. Tokens only; the geometry with no token is declared ONCE
+   here as properties scoped to the card, and this block is the only NAV rule
+   that may hold a literal px. A stale NAV freezes and badges but does NOT dim
+   (spec s7: the badge is its stale signal). The tape svg exists only while
+   there is a bearing to draw; a dead sensor has no tape element at all. */
+#nav-card {
+  --nav-gap: 6px;               /* between the bands */
+  --nav-badge-h: 22px;          /* the badge row, kept when empty (spec s3) */
+  --nav-badge-gap: 8px;         /* "--" chip -> its reason */
+  --nav-badge-pad-y: 1px;
+  --nav-badge-pad-x: 8px;
+  --nav-badge-line: 20px;       /* + 2 x pad-y = the 22 px row */
+  --nav-badge-radius: 4px;
+  --nav-tape-h: 70px;           /* the tape band (spec s3, viewBox 0 0 456 70) */
+  --nav-tape-w: 100%;           /* full width: the 456 px body */
+  --nav-readout-h: 46px;        /* digits + point (spec s3) */
+  --nav-readout-gap: 12px;      /* digits -> point */
+  --nav-line: 1;                /* hero line boxes */
+  --nav-note-line: 1.1;         /* reason line boxes */
+  --nav-tick-fine: 1px;         /* tick strokes, fine / minor / major */
+  --nav-tick-minor: 1.5px;
+  --nav-tick-major: 2.5px;
+  --nav-hairline: 2px;          /* the centre hairline (no caret, US-715) */
+  --nav-base: 1px;              /* the tape's baseline */
+  /* US-896-b: the bottom row (spec s3, ~79 px). */
+  --nav-cell-gap: 2px;          /* label -> value -> sub-line */
+  --nav-slope-size: 26px;       /* the slope glyph's box */
+  --nav-slope-gap: 6px;         /* glyph -> grade value */
+  --nav-slope-stroke: 2.5px;
+  --nav-time-gap: 6px;          /* SINCE -> its h:mm */
+}
+#nav-card .card-body {
+  display: flex; flex-direction: column; gap: var(--nav-gap);
+}
+#nav-card .nav-badge-row {
+  flex: none; height: var(--nav-badge-h);
+  display: flex; justify-content: flex-end; align-items: center; gap: var(--nav-badge-gap);
+}
+#nav-card .nav-badge {
+  font-size: var(--fs-label); line-height: var(--nav-badge-line);
+  padding: var(--nav-badge-pad-y) var(--nav-badge-pad-x);
+  border-radius: var(--nav-badge-radius); background: var(--amber-warn); color: var(--bg);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+#nav-card .nav-badge-note {
+  font-size: var(--fs-label); line-height: var(--nav-badge-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#nav-card .nav-band {
+  flex: none; height: var(--nav-tape-h);
+}
+#nav-card .nav-tape {
+  display: block; width: var(--nav-tape-w); height: var(--nav-tape-h);
+}
+#nav-card .nav-tick-fine { stroke: var(--text-tertiary); stroke-width: var(--nav-tick-fine); }
+#nav-card .nav-tick-minor { stroke: var(--text-tertiary); stroke-width: var(--nav-tick-minor); }
+#nav-card .nav-tick-major { stroke: var(--text-secondary); stroke-width: var(--nav-tick-major); }
+#nav-card .nav-tape-label {
+  fill: var(--text-secondary); font-family: var(--font-mono); font-size: var(--fs-secondary);
+}
+#nav-card .nav-tape-north { fill: var(--text-primary); }
+#nav-card .nav-tape-hairline { stroke: var(--text-primary); stroke-width: var(--nav-hairline); }
+#nav-card .nav-tape-base { stroke: var(--line); stroke-width: var(--nav-base); }
+#nav-card .nav-blank {
+  height: var(--nav-tape-h);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--nav-gap);
+}
+#nav-card .nav-blank-head {
+  font-size: var(--fs-primary); line-height: var(--nav-line); color: var(--text-tertiary);
+}
+#nav-card .nav-blank-note {
+  font-size: var(--fs-label); line-height: var(--nav-note-line); color: var(--text-secondary);
+}
+#nav-card .nav-readout {
+  flex: none; height: var(--nav-readout-h);
+  display: flex; justify-content: center; align-items: baseline; gap: var(--nav-readout-gap);
+}
+#nav-card .nav-digits {
+  font-family: var(--font-mono); font-weight: 700; font-size: var(--fs-hero);
+  line-height: var(--nav-line); font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#nav-card .nav-digits[data-none="true"] { color: var(--text-tertiary); }
+#nav-card .nav-point {
+  font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-primary);
+  line-height: var(--nav-line); color: var(--text-secondary);
+}
+/* US-896-b (spec s3/s4.3/s4.4): GRADE left, the trip right-aligned. Pushed
+   to the bottom so the deliberate slack sits above it. Labels are Michroma at
+   --fs-meta (read once, parked); values --fs-primary (>= 34 px, driver-read);
+   the elapsed and a null's reason --fs-label. SINCE's h:mm is a READING in
+   the mono face: the Michroma subset has no ':'. */
+#nav-card .nav-bottom {
+  flex: none; margin-top: auto;
+  /* Top-aligned: the two labels and the two values share lines whether or
+     not GRADE carries a reason beneath its value. */
+  display: flex; justify-content: space-between; align-items: flex-start;
+}
+#nav-card .nav-grade {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--nav-cell-gap);
+}
+#nav-card .nav-trip {
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--nav-cell-gap);
+}
+#nav-card .nav-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--nav-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#nav-card .nav-trip-head {
+  display: flex; align-items: baseline; gap: var(--nav-time-gap);
+}
+#nav-card .nav-trip-time {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-meta); line-height: var(--nav-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#nav-card .nav-grade-line {
+  display: flex; align-items: center; gap: var(--nav-slope-gap);
+}
+#nav-card .nav-slope {
+  flex: none; width: var(--nav-slope-size); height: var(--nav-slope-size);
+}
+#nav-card .nav-slope-line {
+  stroke: var(--accent); stroke-width: var(--nav-slope-stroke); stroke-linecap: round;
+}
+#nav-card .nav-grade-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); line-height: var(--nav-line);
+  color: var(--text-primary); white-space: nowrap;
+}
+#nav-card .nav-trip-distance {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-primary); line-height: var(--nav-line);
+  color: var(--text-primary); white-space: nowrap;
+}
+#nav-card .nav-grade-value[data-none="true"] { color: var(--text-tertiary); }
+#nav-card .nav-trip-distance[data-none="true"] { color: var(--text-tertiary); }
+#nav-card .nav-grade-note {
+  font-size: var(--fs-label); line-height: var(--nav-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#nav-card .nav-trip-elapsed {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-label); line-height: var(--nav-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+
+/* US-892-b (F-127; specs/v030-motion-page-design.md s3/s4, layout A): the
+   Motion card's top two bands -- PITCH beside the 15-minute GRADE graph, then
+   the two g cells with this drive's peaks. Tokens only; geometry with no
+   token is declared ONCE here as properties scoped to the card. Labels are
+   Michroma at --fs-meta; values --fs-primary (>= 34 px, driver-read); every
+   other text inherits the body's --font-mono, so the peak glyphs, the true
+   minus and the degree sign are never Michroma (Iris G-4, Atlas C3). Stale
+   dims both bands (Iris M4); numbers are never coloured (no g band exists).
+   No meter, dot or trail (US-733). */
+#motion-card {
+  --motion-band-gap: 6px;       /* between the two bands */
+  --motion-band-pad: 6px;       /* band padding, top and bottom */
+  --motion-rule: 1px;           /* the line between the bands */
+  --motion-pitch-w: 132px;      /* the PITCH column (mockup .top) */
+  --motion-col-gap: 10px;       /* between columns */
+  --motion-cell-gap: 4px;       /* label -> value -> sub-line */
+  --motion-graph-w: 300px;      /* the grade graph (spec s3: 300 x 58) */
+  --motion-graph-h: 58px;
+  --motion-graph-line: 2px;
+  --motion-graph-zero: 1px;
+  --motion-graph-dash: 4px;
+  --motion-line: 1;             /* value line boxes */
+  --motion-note-line: 1.2;      /* label / sub-line boxes */
+  --motion-stale-opacity: 0.4;  /* stale = dimmed (shared rule) */
+  --motion-health-col-gap: 8px; /* health grid columns (spec s3) */
+  --motion-health-row-gap: 4px; /* health grid rows (mockup .health) */
+  --motion-hrow-gap: 6px;       /* value -> reason / provenance (Iris M2) */
+  --motion-health-line: 1.1;    /* health value line boxes (mockup .hv) */
+}
+#motion-card .card-body {
+  display: flex; flex-direction: column; gap: var(--motion-band-gap);
+}
+#motion-card .motion-band {
+  flex: none; display: grid; gap: var(--motion-col-gap);
+  padding-block: var(--motion-band-pad); align-items: start;
+}
+#motion-card .motion-band + .motion-band { border-top: var(--motion-rule) solid var(--line); }
+#motion-card .motion-top { grid-template-columns: var(--motion-pitch-w) 1fr; }
+#motion-card .motion-g { grid-template-columns: 1fr 1fr; }
+#motion-card[data-stale="true"] .motion-band { opacity: var(--motion-stale-opacity); }
+#motion-card .motion-cell {
+  display: flex; flex-direction: column; gap: var(--motion-cell-gap); min-width: 0;
+}
+#motion-card .motion-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--motion-note-line);
+  color: var(--text-secondary); white-space: pre;
+}
+#motion-card .motion-line { white-space: nowrap; line-height: var(--motion-line); }
+#motion-card .motion-value {
+  font-weight: 600; font-size: var(--fs-primary); line-height: var(--motion-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#motion-card .motion-unit {
+  font-size: var(--fs-label); color: var(--text-secondary); white-space: pre;
+}
+#motion-card .motion-cell[data-none="true"] .motion-value { color: var(--text-tertiary); }
+#motion-card .motion-sub,
+#motion-card .motion-note {
+  font-size: var(--fs-meta); line-height: var(--motion-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#motion-card .motion-cell[data-warn="true"] .motion-sub { color: var(--amber-warn); }
+#motion-card .motion-peak {
+  font-size: var(--fs-label); line-height: var(--motion-note-line);
+  font-variant-numeric: tabular-nums; color: var(--text-secondary); white-space: nowrap;
+}
+#motion-card .motion-graph {
+  display: block; width: var(--motion-graph-w); height: var(--motion-graph-h); overflow: visible;
+}
+#motion-card .motion-graph-zero {
+  stroke: var(--text-tertiary); stroke-width: var(--motion-graph-zero);
+  stroke-dasharray: var(--motion-graph-dash) var(--motion-graph-dash); fill: none;
+}
+#motion-card .motion-graph-line {
+  stroke: var(--accent); stroke-width: var(--motion-graph-line); fill: none;
+  stroke-linejoin: round;
+}
+#motion-card .motion-graph-dot { fill: var(--accent); }
+#motion-card .motion-graph-end { font-size: var(--fs-meta); fill: var(--text-primary); }
+#motion-card .motion-graph-empty { font-size: var(--fs-meta); fill: var(--text-tertiary); }
+/* US-892-c: the IMU health block (spec s3 2 x 2, Iris M2/M4/M5, Atlas C3).
+   Columns 1fr / max-content: the right column takes its widest status word,
+   the left (UPDATED, TILT FIX) the rest. Values --fs-label, reasons and the
+   TILT FIX provenance --fs-meta on the value's baseline. A reason NEVER sizes
+   a column: contain: inline-size makes it add 0 to max-content and it wraps
+   inside its column. data-tone maps to a token here and judges nothing;
+   plain keeps --text-primary. Not a .motion-band, so stale never dims it. */
+#motion-card .motion-health {
+  flex: none; display: grid; grid-template-columns: 1fr max-content;
+  column-gap: var(--motion-health-col-gap); row-gap: var(--motion-health-row-gap);
+  padding-block: var(--motion-band-pad); border-top: var(--motion-rule) solid var(--line);
+}
+#motion-card .motion-hcell {
+  display: flex; flex-direction: column; gap: var(--motion-cell-gap); min-width: 0;
+}
+#motion-card .motion-hrow {
+  display: flex; align-items: baseline; gap: var(--motion-hrow-gap); min-width: 0;
+}
+#motion-card .motion-hv {
+  flex: none; font-size: var(--fs-label); line-height: var(--motion-health-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary); white-space: nowrap;
+}
+#motion-card .motion-hcell[data-tone="ok"] .motion-hv { color: var(--green-ok); }
+#motion-card .motion-hcell[data-tone="warn"] .motion-hv { color: var(--amber-warn); }
+#motion-card .motion-hcell[data-tone="none"] .motion-hv { color: var(--text-tertiary); }
+#motion-card .motion-hsub {
+  flex: 1 1 0; min-width: 0; contain: inline-size;
+  font-size: var(--fs-meta); line-height: var(--motion-note-line); color: var(--text-secondary);
+}
+
+/* US-893-b (F-127; specs/v030-light-page-design.md layout A + glyph, with the
+   Atlas L1-L6 / Iris L1-L7 rulings of 2026-10-19): the Light page -- the
+   provider's word + glyph and AMBIENT beside the auto-dim curve, the raw
+   channels, then the APPLIED brightness. Tokens only; geometry with no token
+   is declared ONCE here as properties scoped to the card. The word and the
+   labels are Michroma; every other text inherits the body's --font-mono. The
+   word is never coloured. Stale dims the word tile, the curve and the raw row;
+   the notes and the status never dim (they are the evidence). */
+#light-card {
+  --light-band-gap: 6px;        /* between the three rows */
+  --light-band-pad: 6px;        /* row padding, top and bottom */
+  --light-rule: 1px;            /* the line between the rows */
+  --light-col-gap: 8px;         /* word column -> curve; raw cells */
+  --light-cell-gap: 4px;        /* label -> value */
+  --light-glyph: 34px;          /* the sun / dusk / moon glyph (spec s3) */
+  --light-glyph-gap: 8px;       /* glyph -> word: 34 + 8 + NIGHT (197.1 px in
+                                   Michroma at --fs-hero) fits the 240 px column */
+  --light-curve-w: 200px;       /* the curve graph (spec s3: 200 x 104) */
+  --light-curve-h: 104px;
+  --light-curve-line: 2px;
+  --light-curve-axis: 1px;
+  --light-curve-dash: 3px;
+  --light-notes-gap: 6px;       /* reason -> age */
+  --light-line: 1;              /* value line boxes */
+  --light-note-line: 1.2;       /* label / note line boxes */
+  --light-stale-opacity: 0.4;   /* stale = dimmed (shared rule) */
+}
+#light-card .light-page {
+  display: flex; flex-direction: column; gap: var(--light-band-gap);
+}
+#light-card .light-top {
+  display: grid; grid-template-columns: 1fr var(--light-curve-w);
+  gap: var(--light-col-gap); align-items: start;
+}
+#light-card .light-left {
+  display: flex; flex-direction: column; gap: var(--light-cell-gap); min-width: 0;
+}
+#light-card .light-word-tile {
+  display: flex; flex-direction: column; gap: var(--light-cell-gap); min-width: 0;
+}
+#light-card .light-page[data-stale="true"] .light-dimmable {
+  opacity: var(--light-stale-opacity);
+}
+#light-card .light-word-row {
+  display: flex; align-items: center; gap: var(--light-glyph-gap);
+}
+#light-card .light-glyph {
+  flex: none; width: var(--light-glyph); height: var(--light-glyph);
+}
+#light-card .glyph circle,
+#light-card .glyph path {
+  fill: none; stroke: var(--text-primary); stroke-width: 2.5; stroke-linecap: round;
+}
+#light-card .light-word {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-hero); line-height: var(--light-line);
+  color: var(--text-primary); white-space: nowrap;
+}
+#light-card .light-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; line-height: var(--light-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#light-card .light-ambient { white-space: nowrap; line-height: var(--light-line); }
+#light-card .light-ambient-value {
+  font-weight: 600; font-size: var(--fs-primary); line-height: var(--light-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#light-card .light-ambient-unit {
+  font-size: var(--fs-label); color: var(--text-secondary); white-space: pre;
+}
+#light-card .light-ambient[data-none="true"] .light-ambient-value { color: var(--text-tertiary); }
+#light-card .light-notes {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--light-notes-gap);
+  font-size: var(--fs-meta); line-height: var(--light-note-line);
+}
+#light-card .light-reason { color: var(--text-secondary); }
+#light-card .light-age { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+#light-card .light-age[data-tone="warn"] { color: var(--amber-warn); }
+#light-card .light-curve {
+  display: block; width: var(--light-curve-w); height: var(--light-curve-h);
+}
+#light-card .light-curve-axis { stroke: var(--line); stroke-width: var(--light-curve-axis); }
+#light-card .light-curve-end {
+  stroke: var(--text-tertiary); stroke-width: var(--light-curve-axis);
+  stroke-dasharray: var(--light-curve-dash) var(--light-curve-dash);
+}
+#light-card .light-curve-line {
+  fill: none; stroke: var(--text-secondary); stroke-width: var(--light-curve-line);
+  stroke-linejoin: round;
+}
+#light-card .light-curve-dot { fill: var(--accent); }
+#light-card .light-curve-label { font-size: var(--fs-meta); fill: var(--text-tertiary); }
+#light-card .light-raw {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--light-col-gap); padding-block: var(--light-band-pad);
+  border-top: var(--light-rule) solid var(--line);
+}
+#light-card .light-cell {
+  display: flex; flex-direction: column; gap: var(--light-cell-gap); min-width: 0;
+}
+#light-card .light-cv {
+  font-size: var(--fs-label); line-height: var(--light-note-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary); white-space: nowrap;
+}
+#light-card .light-cell[data-tone="warn"] .light-cv { color: var(--amber-warn); }
+#light-card .light-cell[data-tone="none"] .light-cv { color: var(--text-tertiary); }
+#light-card .light-cmeta {
+  font-size: var(--fs-meta); line-height: var(--light-note-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#light-card .light-status {
+  display: flex; align-items: baseline; gap: var(--light-notes-gap);
+  padding-block: var(--light-band-pad); border-top: var(--light-rule) solid var(--line);
+  white-space: nowrap;
+}
+#light-card .light-status-label {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); letter-spacing: 0; color: var(--text-secondary);
+}
+#light-card .light-status-value {
+  font-weight: 600; font-size: var(--fs-label); line-height: var(--light-note-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#light-card .light-status-note { font-size: var(--fs-meta); color: var(--text-secondary); }

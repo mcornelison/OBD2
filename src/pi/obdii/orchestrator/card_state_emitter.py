@@ -85,6 +85,10 @@
 # 2026-10-15    | Rex (US-890-e)| fuel-economy recent: a RecentWindow under
 #               |              | _fuelLock fed MAF air + the SPEED km delta (taken
 #               |              | after the trip lock is released; Atlas G2).
+# 2026-10-18    | Rex (US-892-a)| _resetImuPeaks: drive start clears the states/imu
+#               |              | peaks, labelled by _tripEventTs (== distanceSinceTs).
+# 2026-10-18    | Rex (US-896-b)| _markTripEnded: drive end freezes drive.elapsedSec;
+#               |              | drive.distancePartial from the restart branch.
 # ================================================================================
 ################################################################################
 
@@ -313,6 +317,11 @@ class CardStateEmitterMixin:
     _tripLock: Any = None
     _tripDistanceKm: float | None = None
     _tripDistanceSinceTs: str | None = None
+    # US-896-b: the drive-end mark that freezes drive.elapsedSec (None while the
+    # window is open), and whether the window began at a mid-drive restart's
+    # first SPEED reading (True) or a drive start (False). Under _tripLock.
+    _tripDistanceEndTs: str | None = None
+    _tripDistancePartial: bool | None = None
     # Injectable monotonic clock for the integrator's dt; same reason as
     # _gearClock. Never wall time: an NTP step must not add or erase distance.
     _tripClock: Any = None
@@ -1195,6 +1204,8 @@ class CardStateEmitterMixin:
                 # No drive start seen this process (restart mid-drive): the
                 # partial distance counts from THIS reading, and says so.
                 self._tripDistanceSinceTs = self._tripEventTs(eventTime)
+                self._tripDistancePartial = True
+                self._tripDistanceEndTs = None
             self._tripDistanceKm = km
         # US-890-e: the window gets this reading's km delta under the FUEL lock,
         # taken only now the trip lock is released (Atlas G2).
@@ -1222,13 +1233,69 @@ class CardStateEmitterMixin:
             integrator.reset()
             self._tripDistanceKm = None
             self._tripDistanceSinceTs = self._tripEventTs(driveStartTime)
+            self._tripDistancePartial = False
+            self._tripDistanceEndTs = None
+
+    def _markTripEnded(self, driveEndTime: Any) -> None:
+        """Freeze drive.elapsedSec at the drive end (US-896-b, Atlas Q2/G2).
+
+        The distance and its since-point are kept (the trip resets only at the
+        next drive start), so without an end mark the elapsed would go on
+        counting parked time as drive time. Same conversion as the reset.
+        A session with no usable end time is marked at this callback's own UTC
+        wall time: DriveDetector stamps endTime = now() the instant before it
+        calls back, so that is the same moment, and an open window is not.
+
+        Args:
+            driveEndTime: The drive session's end time (its event ts).
+        """
+        if self._speedIntegrator is None:
+            return
+        endTs = self._tripEventTs(driveEndTime)
+        if endTs is None:
+            from common.time.helper import toCanonicalIso
+
+            endTs = toCanonicalIso(self._obdLiveNowUtc())
+        with self._tripLock:
+            self._tripDistanceEndTs = endTs
+
+    def _resetImuPeaks(self, driveStartTime: Any) -> None:
+        """Clear the states/imu g peaks at drive start (US-892-a, Atlas ruling 4).
+
+        The label is built by :meth:`_tripEventTs`, the trip reset's own
+        conversion, so peaks.sinceTs equals drive.distanceSinceTs byte-for-byte.
+        No bridge (IMU disabled) -> nothing to reset.
+
+        Args:
+            driveStartTime: The drive session's start time (its event ts).
+        """
+        bridge = getattr(self, "_imuStateBridge", None)
+        if bridge is None:
+            return
+        bridge.resetPeaks(self._tripEventTs(driveStartTime))
 
     def _gatherTripDistance(self) -> tuple[float | None, str | None]:
         """Return (distanceKm, distanceSinceTs); (None, None) when not wired."""
+        distanceKm, distanceSinceTs, _, _ = self._gatherTripWindow()
+        return (distanceKm, distanceSinceTs)
+
+    def _gatherTripWindow(
+        self,
+    ) -> tuple[float | None, str | None, str | None, bool | None]:
+        """Return (distanceKm, sinceTs, endTs, partial) read under ONE lock.
+
+        One read, so a drive start between two reads can never pair a new
+        since-point with the last drive's end mark. All None when not wired.
+        """
         if self._speedIntegrator is None:
-            return (None, None)
+            return (None, None, None, None)
         with self._tripLock:
-            return (self._tripDistanceKm, self._tripDistanceSinceTs)
+            return (
+                self._tripDistanceKm,
+                self._tripDistanceSinceTs,
+                self._tripDistanceEndTs,
+                self._tripDistancePartial,
+            )
 
     # -------------------------------------------------------- fuel economy
     #
@@ -1484,7 +1551,9 @@ class CardStateEmitterMixin:
         obdLinkState, obdRetries, obdAvailable, obdReason = self._gatherObdLinkState()
         powerSource, powerSourceReason = self._gatherPowerState()
         driveState, driveId = self._gatherDriveState()
-        distanceKm, distanceSinceTs = self._gatherTripDistance()
+        distanceKm, distanceSinceTs, distanceEndTs, distancePartial = (
+            self._gatherTripWindow()
+        )
         emitter(
             obdLinkState=obdLinkState,
             obdRetries=obdRetries,
@@ -1512,6 +1581,9 @@ class CardStateEmitterMixin:
             lastDrive=self._gatherLastDriveSummary(),
             distanceKm=distanceKm,
             distanceSinceTs=distanceSinceTs,
+            # US-896-b: the end mark freezes elapsedSec; the flag labels the window.
+            distanceEndTs=distanceEndTs,
+            distancePartial=distancePartial,
             # US-744: the US-728 verdict was computed on every boot and then
             # discarded. The emitter has taken this parameter since US-728, but
             # nothing ever passed it -- so the car published

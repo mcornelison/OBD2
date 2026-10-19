@@ -78,6 +78,8 @@ async function main() {
     innerHeight: input.viewport ? input.viewport[1] : 1080,
     SPLASH_TOKEN: input.token || "",
     DISPLAY_AUTODIM: input.autoDim === undefined ? "__DISPLAY_AUTODIM__" : input.autoDim,
+    // US-890-f: the per-request stale windows; absent unless a test injects them.
+    DISPLAY_STALE: input.displayStale === undefined ? undefined : input.displayStale,
     addEventListener: function (type, fn) {
       (this._listeners[type] = this._listeners[type] || []).push(fn);
     },

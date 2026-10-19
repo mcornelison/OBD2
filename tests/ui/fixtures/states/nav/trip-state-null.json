@@ -1,0 +1,68 @@
+{
+  "description": "drive.state null with a whole-drive window (distancePartial false): absence of the state is not parked -> 'THIS DRIVE', never 'LAST DRIVE'.",
+  "now": "2026-10-20T20:12:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "obdLinkState": "linked",
+    "obdRetries": 0,
+    "obdLastSeenS": null,
+    "syncLastOkTs": null,
+    "syncRows": 0,
+    "syncPending": null,
+    "syncStale": false,
+    "powerSource": "external",
+    "runMode": "live",
+    "driveState": null,
+    "driveId": null,
+    "obdAvailable": true,
+    "distanceKm": 19.96,
+    "distanceSinceTs": "2026-10-20T19:49:00Z",
+    "distancePartial": false,
+    "nowIso": "2026-10-20T20:12:00Z"
+  },
+  "system-status": {
+    "obdLink": {
+      "state": "linked",
+      "retries": 0,
+      "lastSeenS": null
+    },
+    "sync": {
+      "lastOkTs": null,
+      "rows": 0,
+      "pending": null,
+      "stale": false
+    },
+    "power": {
+      "source": "external",
+      "reasons": {}
+    },
+    "wifi": {
+      "state": null,
+      "ssid": null,
+      "rssiDbm": null
+    },
+    "drive": {
+      "state": null,
+      "driveId": null,
+      "lastDrive": null,
+      "distanceKm": 19.96,
+      "distanceSinceTs": "2026-10-20T19:49:00Z",
+      "elapsedSec": 1380,
+      "distancePartial": false
+    },
+    "idle": false,
+    "priorShutdown": null,
+    "runMode": "live",
+    "source": {
+      "obd": {
+        "available": true,
+        "reason": null
+      },
+      "wifi": {
+        "available": false,
+        "reason": "wifi: not read"
+      }
+    },
+    "ts": "2026-10-20T20:12:00Z"
+  }
+}

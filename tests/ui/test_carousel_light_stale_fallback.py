@@ -43,6 +43,17 @@
 #               |              | the rendered panel + the CSS var that consumes it.
 # 2026-10-14    | Rex (US-878-a)| _producedLightState feeds the full reader burst
 #               |              | (the bridge writes on range); no assertion change.
+# 2026-10-19    | Rex (US-893-a)| The bridge is the ONE applier: the page applies
+#               |              | the level states/light publishes. The bridge here
+#               |              | runs under the SAME autoDim the page is injected
+#               |              | with (as on the Pi, where both read config.json),
+#               |              | so every assertion stands unchanged; the dim
+#               |              | fallback config reaches the bridge too.
+# 2026-10-19    | Rex (US-893-b)| MOVED PIN (US-893-b): the Light page's text --
+#               |              | 'lx' -> 'lux'; stale is the page dimmed with
+#               |              | its age (data-stale + 'N s'), not NA/'stale';
+#               |              | saturated is '--' + 'no reading'. Every
+#               |              | brightness assertion is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -146,16 +157,24 @@ def _luxSample(value: float | None, *, tsUtc: str = _T0_ISO) -> Sample:
     )
 
 
-def _producedLightState(tmpPath: Path, sample: Sample) -> dict[str, Any]:
+def _producedLightState(
+    tmpPath: Path, sample: Sample, autoDim: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Run the REAL bridge and return the bytes it actually wrote to states/light.
 
     The payload every test below serves is the producer's own output, so a
     producer change that stops publishing a usable `ts` fails HERE rather than
     being masked by a hand-written fixture that always had one.
+
+    US-893-a: the bridge computes the published brightnessLevel, so it runs
+    under ``autoDim`` -- by default the DEPLOYED section the page is injected
+    with, exactly as on the Pi where both read config.json.
     """
     # US-878-a: the bridge writes once per reader burst (lux, raw, range under
     # one seq), on the range sample -- so feed the whole burst the reader sends.
-    bridge = LightStateBridge(None, str(tmpPath))
+    bridge = LightStateBridge(
+        None, str(tmpPath), autoDim=_AUTODIM if autoDim is None else autoDim
+    )
     bridge.handleSample(sample)
     for topic, value, unit in (
         ("raw.light.raw", (900, 300, 1200), "count"),
@@ -212,6 +231,14 @@ def _lightCardText(tree: dict[str, Any]) -> str:
     return _text(card)
 
 
+def _lightPageStale(tree: dict[str, Any]) -> str:
+    """The Light page's data-stale (US-893-b: stale dims, it does not blank)."""
+    card = _findAttr(tree, "data-state", "light")
+    page = _findAttr(card, "class", "light-page")
+    assert page is not None, "the Light page did not paint"
+    return page["attrs"]["data-stale"]
+
+
 def _run(
     autoDimCfg: dict[str, Any],
     light: Any,
@@ -258,7 +285,8 @@ def test_liveDarkReading_dimsThePanelToTheCurveFloor(autoDim, tmp_path):
     tree = _run(autoDim, state, nowMs=_T0_MS + 1000)["tree"]
 
     assert _brightness(tree) == pytest.approx(autoDim["minLevel"])
-    assert "lx" in _lightCardText(tree)
+    # MOVED PIN (US-893-b): the unit word is 'lux' (Iris L6), beside the value.
+    assert "1.0 lux" in _lightCardText(tree)
 
 
 def test_liveMidRangeReading_landsBetweenTheFloorAndFull(autoDim, tmp_path):
@@ -328,11 +356,13 @@ def test_frozenFeed_agedPastLuxStaleSec_cardTypesTheReadingStale(autoDim, tmp_pa
     """
     Given: the same frozen reading, aged out
     When: the Light card repaints
-    Then: it reads NA with a stale reason, and the READING IS GONE
+    Then: it is typed stale -- dimmed, with the reading's age
 
-    The "typed stale" half. Asserted as a REPLACEMENT -- the unit `lx` only ever
-    appears beside a real reading, so its absence is the frozen value being
-    withdrawn rather than a card that never painted one.
+    The "typed stale" half. MOVED PIN (US-893-b, Iris L1/L6): the card no
+    longer withdraws the frozen value behind an NA tile; it keeps the
+    published values DIMMED and names the age in amber ('31 s'), so a frozen
+    reading still cannot read as current. Pinned on the control first: the
+    same page is NOT stale before the clock moves.
     """
     state = _producedLightState(tmp_path, _luxSample(_DARK_LUX))
 
@@ -345,9 +375,14 @@ def test_frozenFeed_agedPastLuxStaleSec_cardTypesTheReadingStale(autoDim, tmp_pa
         )["tree"]
     )
 
-    assert "NA" in text
-    assert "stale" in text
-    assert "lx" not in text, f"a stale card still printed a reading: {text!r}"
+    assert "31 s" in text, f"the stale card did not name its age: {text!r}"
+    fresh = _run(autoDim, state, nowMs=_T0_MS + 1000)["tree"]
+    assert _lightPageStale(fresh) == "false"
+    aged = _run(
+        autoDim, state, nowMs=_T0_MS + 1000,
+        steps=[{"flush": 3}, {"advanceMs": 30_000, "flush": 3}],
+    )["tree"]
+    assert _lightPageStale(aged) == "true"
 
 
 def test_frozenFeed_bothSurfacesAgreeOnTheSameTick(autoDim, tmp_path):
@@ -370,7 +405,7 @@ def test_frozenFeed_bothSurfacesAgreeOnTheSameTick(autoDim, tmp_path):
         steps=[{"flush": 3}, {"advanceMs": 30_000, "flush": 3}],
     )["tree"]
 
-    assert "stale" in _lightCardText(tree)
+    assert _lightPageStale(tree) == "true"  # MOVED PIN (US-893-b): dim + age
     assert _brightness(tree) == pytest.approx(autoDim["defaultLevel"])
 
 
@@ -397,7 +432,9 @@ def test_stalledSensor_stillWriting_goesStaleBecauseTheTsIsTheREADTime(
 
     assert state["ts"] == staleReadTime, "the bridge did not carry the sample read-time"
     assert _brightness(tree) == pytest.approx(autoDim["defaultLevel"])
-    assert "stale" in _lightCardText(tree)
+    # MOVED PIN (US-893-b): dimmed with its age, not the word 'stale'.
+    assert _lightPageStale(tree) == "true"
+    assert "60 s" in _lightCardText(tree)
 
 
 # =============================================================================
@@ -457,8 +494,9 @@ def test_saturatedReading_holdsDefaultAndNamesTheCauseNotStaleness(autoDim, tmp_
     text = _lightCardText(tree)
 
     assert _brightness(tree) == pytest.approx(autoDim["defaultLevel"])
-    assert "NA" in text
-    assert "stale" not in text, f"a saturated read was reported as stale: {text!r}"
+    # MOVED PIN (US-893-b, Atlas L1): '--' + the provider's reason, not NA.
+    assert "no reading" in text
+    assert _lightPageStale(tree) == "false", f"a saturated read was reported as stale: {text!r}"
 
 
 def test_absentStateFile_holdsDefaultNeverGoesDark(autoDim):
@@ -547,7 +585,7 @@ def test_frozenFeedUnderActiveStop_staysFullBrightnessNotTheFallback(tmp_path):
     into a single return: a dead light sensor must never be able to dim a
     PULL-OVER alarm. The 0.42 fallback is what makes this test able to fail.
     """
-    state = _producedLightState(tmp_path, _luxSample(_DARK_LUX))
+    state = _producedLightState(tmp_path, _luxSample(_DARK_LUX), _DIM_FALLBACK_CFG)
 
     tree = _run(
         _DIM_FALLBACK_CFG,
@@ -581,7 +619,7 @@ def test_fallbackLevelComesFromConfig_notAHardcodedConstant(tmp_path):
         "luxStaleSec": 10,
         "curve": "logarithmic",
     }
-    state = _producedLightState(tmp_path, _luxSample(_DARK_LUX))
+    state = _producedLightState(tmp_path, _luxSample(_DARK_LUX), cfg)
 
     tree = _run(
         cfg,

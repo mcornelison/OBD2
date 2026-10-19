@@ -1,0 +1,70 @@
+{
+  "description": "Parked (idle) after a 30 min drive, read at T+40 min: elapsedSec frozen at 1800 -> 'LAST DRIVE' '12.4 mi' '0:30' (CIO Q1; US-704).",
+  "now": "2026-10-20T20:29:00Z",
+  "zone": "America/Chicago",
+  "inputs": {
+    "obdLinkState": "linked",
+    "obdRetries": 0,
+    "obdLastSeenS": null,
+    "syncLastOkTs": null,
+    "syncRows": 0,
+    "syncPending": null,
+    "syncStale": false,
+    "powerSource": "external",
+    "runMode": "live",
+    "driveState": "idle",
+    "driveId": null,
+    "obdAvailable": false,
+    "obdUnavailableReason": "obd: off",
+    "distanceKm": 19.96,
+    "distanceSinceTs": "2026-10-20T19:49:00Z",
+    "distanceEndTs": "2026-10-20T20:19:00Z",
+    "distancePartial": false,
+    "nowIso": "2026-10-20T20:29:00Z"
+  },
+  "system-status": {
+    "obdLink": {
+      "state": null,
+      "retries": 0,
+      "lastSeenS": null
+    },
+    "sync": {
+      "lastOkTs": null,
+      "rows": 0,
+      "pending": null,
+      "stale": false
+    },
+    "power": {
+      "source": "external",
+      "reasons": {}
+    },
+    "wifi": {
+      "state": null,
+      "ssid": null,
+      "rssiDbm": null
+    },
+    "drive": {
+      "state": "idle",
+      "driveId": null,
+      "lastDrive": null,
+      "distanceKm": 19.96,
+      "distanceSinceTs": "2026-10-20T19:49:00Z",
+      "elapsedSec": 1800,
+      "distancePartial": false
+    },
+    "idle": true,
+    "priorShutdown": null,
+    "runMode": "live",
+    "source": {
+      "obd": {
+        "available": false,
+        "reason": "obd: off"
+      },
+      "wifi": {
+        "available": false,
+        "reason": "wifi: not read"
+      }
+    },
+    "ts": "2026-10-20T20:29:00Z"
+  }
+}

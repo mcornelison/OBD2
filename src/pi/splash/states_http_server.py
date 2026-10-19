@@ -32,6 +32,9 @@
 # 2026-10-14    | Rex (US-881-d) | FOURTH token-gated POST route /fuel-reset --
 #               |              | asks eclipse-obd to zero fuel_since_reset over
 #               |              | fuel_reset_channel; /dtc-clear's status mapping.
+# 2026-10-18    | Rex (US-890-f) | DISPLAY_STALE gains fuelResetConfirmSec
+#               |              | (pi.display.stale.fuelResetConfirmSec), same
+#               |              | validation + default fallback as imuSec.
 # ================================================================================
 ################################################################################
 
@@ -97,14 +100,18 @@ _DISPLAY_AUTODIM_PLACEHOLDER = '"__DISPLAY_AUTODIM__"'
 _DISPLAY_CAROUSEL_PLACEHOLDER = '"__DISPLAY_CAROUSEL__"'
 
 # US-882-c (F-159, Atlas gap 6): the same quoted-placeholder seam for the page's
-# stale windows -- today only the IMU card's (pi.display.stale.imuSec), which
-# was a carousel.js literal. Resolved PER REQUEST like the carousel section, so a
+# stale windows -- the IMU card's (pi.display.stale.imuSec), which was a
+# carousel.js literal, and since US-890-f the Fuel page's reset confirm window
+# (pi.display.stale.fuelResetConfirmSec). Resolved PER REQUEST like the carousel section, so a
 # tuned window reaches the kiosk on its next reload with no unit restart.
 _DISPLAY_STALE_PLACEHOLDER = '"__DISPLAY_STALE__"'
 
 # The validator-owned key the injected imuSec resolves, and its default (the
 # value served whenever the key is absent, unreadable or not a finite number > 0).
 _STALE_IMU_SEC_KEY = "pi.display.stale.imuSec"
+# US-890-f: the kiosk's wait for the re-read after a /fuel-reset 200, injected
+# beside imuSec under the same rules.
+_STALE_FUEL_RESET_CONFIRM_KEY = "pi.display.stale.fuelResetConfirmSec"
 
 # US-532 (F-126): the same quoted-placeholder seam for the 5 Slice-1 operator
 # settings at their CURRENT EFFECTIVE values, keyed by the overlay's own flat
@@ -754,24 +761,33 @@ def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
 def loadDisplayStaleConfig(configPath: str | None) -> dict[str, float]:
     """Resolve the page's stale windows at their effective values (US-882-c).
 
-    ``imuSec`` is ``pi.display.stale.imuSec`` from the effective config
-    (config.json resolved through the shared overlay seam). Anything that is not
-    a finite number > 0 -- absent key, no config wired, unreadable file, or a
-    value the validator would refuse -- serves the validator default, so the page
-    always receives the window production runs with, never a fabricated one.
-    The key is a config.json engineering key, deliberately NOT in the overlay
-    allow-list (Atlas ruled B), so a config.local.json value is ignored.
+    ``imuSec`` is ``pi.display.stale.imuSec`` and ``fuelResetConfirmSec``
+    (US-890-f) is ``pi.display.stale.fuelResetConfirmSec``, each from the
+    effective config (config.json resolved through the shared overlay seam).
+    Anything that is not a finite number > 0 -- absent key, no config wired,
+    unreadable file, or a value the validator would refuse -- serves the
+    validator default, so the page always receives the window production runs
+    with, never a fabricated one. Both are config.json engineering keys,
+    deliberately NOT in the overlay allow-list (Atlas ruled B), so a
+    config.local.json value is ignored.
 
     Args:
         configPath: Path to config.json, or ``None`` when this server has no
             config wired.
 
     Returns:
-        ``{"imuSec": <seconds>}``.
+        ``{"imuSec": <seconds>, "fuelResetConfirmSec": <seconds>}``.
     """
-    imuSec = DEFAULTS[_STALE_IMU_SEC_KEY]
+    return {
+        "imuSec": _effectiveStaleSec(configPath, _STALE_IMU_SEC_KEY),
+        "fuelResetConfirmSec": _effectiveStaleSec(configPath, _STALE_FUEL_RESET_CONFIRM_KEY),
+    }
+
+
+def _effectiveStaleSec(configPath: str | None, key: str) -> float:
+    """One stale window: the effective value if a finite number > 0, else the default."""
     if configPath is not None:
-        found, value = overlay.readEffectiveValue(configPath, _STALE_IMU_SEC_KEY)
+        found, value = overlay.readEffectiveValue(configPath, key)
         if (
             found
             and not isinstance(value, bool)
@@ -779,8 +795,8 @@ def loadDisplayStaleConfig(configPath: str | None) -> dict[str, float]:
             and math.isfinite(value)
             and value > 0
         ):
-            imuSec = value
-    return {"imuSec": imuSec}
+            return value
+    return DEFAULTS[key]
 
 
 def loadFuelResetTimeoutSec(configPath: str | None) -> float:

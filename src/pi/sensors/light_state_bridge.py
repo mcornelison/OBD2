@@ -46,6 +46,12 @@
 #               |              | pi.display.autoDim is re-read through the
 #               |              | overlay seam when config.json or
 #               |              | config.local.json mtime changes.
+# 2026-10-19    | Rex (US-893-a)| The bridge is the ONE brightness applier:
+#               |              | states/light gains lightBand, brightnessMode
+#               |              | 'default', the curve points, reasons.lux and
+#               |              | atLimit, all from one resolved autoDim. One lux
+#               |              | predicate (_luxReading, Atlas A3): -1 publishes
+#               |              | null.
 # ================================================================================
 ################################################################################
 
@@ -88,12 +94,21 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BRIGHTNESS_MODE_AUTO",
+    "BRIGHTNESS_MODE_DEFAULT",
+    "LIGHT_BAND_DAY",
+    "LIGHT_BAND_DUSK",
+    "LIGHT_BAND_NIGHT",
+    "LIGHT_REASON_AT_LIMIT",
+    "LIGHT_REASON_NO_READING",
     "LIGHT_STATE_FILENAME",
     "LightStateBridge",
     "brightnessCurve",
+    "brightnessCurvePoints",
+    "brightnessKnee",
     "brightnessLevel",
     "buildLightState",
     "createLightStateBridgeFromConfig",
+    "lightBand",
     "resolveAutoDim",
 ]
 
@@ -112,11 +127,32 @@ _SUB_NAME = "light-state"
 # How long the drain loop blocks waiting for a sample before re-checking _stop.
 _DRAIN_TIMEOUT_S = 0.5
 
-# US-878-b: the only brightness mode this sprint. 'fixed' arrives with US-878-c.
+# US-878-b: the level follows the curve. 'fixed' arrives with US-878-c.
 BRIGHTNESS_MODE_AUTO = "auto"
+# US-893-a (Atlas ruling 3): no lux reading, so the level is defaultLevel.
+BRIGHTNESS_MODE_DEFAULT = "default"
+
+# US-893-a: the ambient band the published lux falls in (the page names it).
+LIGHT_BAND_NIGHT = "night"
+LIGHT_BAND_DUSK = "dusk"
+LIGHT_BAND_DAY = "day"
+
+# US-893-a (Atlas L1): why the published lux is null. A code, never a sentence:
+# the page maps it to words in LIGHT_REASON_TEXT, as it does for the IMU.
+LIGHT_REASON_AT_LIMIT = "at_limit"
+LIGHT_REASON_NO_READING = "no_reading"
+
+# US-893-a (Atlas Q5/A4): the published curve's grid -- 10 log-spaced points per
+# decade from 0.3 lux, i = 0..50, so it ends at 0.3 * 10**5 = 30000 lux.
+_CURVE_GRID_START_LUX = 0.3
+_CURVE_GRID_PER_DECADE = 10
+_CURVE_GRID_COUNT = 51
+# A grid point this close (relative) to a breakpoint is dropped and the exact
+# breakpoint kept: the grid's 94.86832980505139 sits one ulp from the knee.
+_CURVE_DEDUP_REL = 1e-9
 
 # The auto-dim section. Its keys and fallback values come from the validator
-# DEFAULTS, the same values carousel.js mirrors in BRIGHTNESS_DEFAULTS.
+# DEFAULTS. Since US-893-a the page holds only defaultLevel and luxStaleSec.
 _AUTODIM_KEY = "pi.display.autoDim"
 _AUTODIM_PREFIX = _AUTODIM_KEY + "."
 _AUTODIM_DEFAULTS: dict[str, Any] = {
@@ -195,16 +231,81 @@ def brightnessCurve(lux: float, luxMin: float, luxFull: float, curve: str) -> fl
     return (lux - luxMin) / (luxFull - luxMin)
 
 
-def brightnessLevel(lux: Any, autoDim: dict[str, Any] | None) -> float:
-    """The 0..1 panel level for one lux reading, as the page computes it today.
+def brightnessKnee(autoDim: dict[str, Any] | None) -> float | None:
+    """The lux at which the curve rises off the minLevel clamp, or None.
 
-    The port of carousel.js ``brightnessLevel`` WITHOUT the STOP override, which
-    stays page-side. A null lux (absent, saturated, failed, negative or
-    non-finite) gives defaultLevel UNCLAMPED to minLevel (US-627: the floor is
-    enforced by validate_config, never hidden here); a curved value is clamped
-    to [minLevel, 1.0]. Both are then bounded to [0, 1], as the page does.
-    Staleness is the reader's concern: this is the level for the reading at its
-    own event time.
+    Mirrors brightnessCurve's branches (Atlas A5): no knee when minLevel <= 0
+    (nothing is clamped), minLevel >= 1 (the clamp is 1 everywhere) or luxFull
+    <= luxMin (the curve is 1 everywhere). Linear when curve is 'linear' or
+    luxMin <= 0, else logarithmic.
+
+    Args:
+        autoDim: The autoDim section; resolved over the validator defaults.
+
+    Returns:
+        The knee lux, or None when the curve has none.
+    """
+    cfg = resolveAutoDim(autoDim)
+    luxMin, luxFull, minLevel = cfg["luxMin"], cfg["luxFull"], cfg["minLevel"]
+    if minLevel <= 0 or minLevel >= 1 or not luxFull > luxMin:
+        return None
+    if cfg["curve"] == _CURVE_LINEAR or luxMin <= 0:
+        return float(luxMin + minLevel * (luxFull - luxMin))
+    return float(luxMin * (luxFull / luxMin) ** minLevel)
+
+
+def brightnessCurvePoints(autoDim: dict[str, Any] | None) -> dict[str, Any]:
+    """The published curve: ``{points, luxMin, luxFull, minLevel}`` (Atlas Q5/A4).
+
+    ``points`` is the log grid (0.3..30000 lux, 10 per decade) united with the
+    breakpoints luxMin, luxFull and the knee -- each only when finite and > 0 --
+    sorted ascending as ``[lux, level]`` lists. A grid point within a relative
+    1e-9 of a breakpoint is dropped so the exact config value is published.
+    Every level is ``brightnessLevel(lux, autoDim)``. Fresh lists every call, so
+    no caller can mutate another write's curve.
+
+    Args:
+        autoDim: The autoDim section; resolved over the validator defaults.
+
+    Returns:
+        The curve dict.
+    """
+    cfg = resolveAutoDim(autoDim)
+    breakpoints = [
+        float(v)
+        for v in (cfg["luxMin"], cfg["luxFull"], brightnessKnee(cfg))
+        if v is not None and math.isfinite(v) and v > 0
+    ]
+    grid = [
+        _CURVE_GRID_START_LUX * 10 ** (i / _CURVE_GRID_PER_DECADE)
+        for i in range(_CURVE_GRID_COUNT)
+    ]
+    kept = [
+        lux
+        for lux in grid
+        if not any(math.isclose(lux, bp, rel_tol=_CURVE_DEDUP_REL, abs_tol=0.0)
+                   for bp in breakpoints)
+    ]
+    luxes = sorted(set(kept) | set(breakpoints))
+    return {
+        "points": [[lux, brightnessLevel(lux, cfg)] for lux in luxes],
+        "luxMin": cfg["luxMin"],
+        "luxFull": cfg["luxFull"],
+        "minLevel": cfg["minLevel"],
+    }
+
+
+def brightnessLevel(lux: Any, autoDim: dict[str, Any] | None) -> float:
+    """The 0..1 panel level for one lux reading -- the ONE brightness curve.
+
+    The port of carousel.js ``brightnessLevel`` (US-878-b) WITHOUT the STOP
+    override, which stays page-side; since US-893-a the page applies this
+    level and holds no curve of its own. A lux that is not a reading (absent,
+    saturated, failed, negative or non-finite: ``_luxReading``) gives
+    defaultLevel UNCLAMPED to minLevel (US-627: the floor is enforced by
+    validate_config, never hidden here); a curved value is clamped to
+    [minLevel, 1.0]. Both are then bounded to [0, 1]. Staleness is the
+    reader's concern: this is the level for the reading at its own event time.
 
     Args:
         lux: The published lux (float or None).
@@ -214,8 +315,8 @@ def brightnessLevel(lux: Any, autoDim: dict[str, Any] | None) -> float:
         The brightness level in [0, 1].
     """
     cfg = resolveAutoDim(autoDim)
-    luxF = _coerceLux(lux)
-    if luxF is None or luxF < 0:
+    luxF = _luxReading(lux)
+    if luxF is None:
         level = cfg["defaultLevel"]
     else:
         curved = brightnessCurve(luxF, cfg["luxMin"], cfg["luxFull"], cfg["curve"])
@@ -223,13 +324,40 @@ def brightnessLevel(lux: Any, autoDim: dict[str, Any] | None) -> float:
     return float(min(max(level, 0.0), 1.0))
 
 
-def _coerceLux(value: Any) -> float | None:
-    """Coerce a lux reading to a finite float, else None (honest NULL).
+def lightBand(lux: Any, autoDim: dict[str, Any] | None) -> str | None:
+    """The ambient band a lux reading falls in, or None when it is not a reading.
 
-    The producer already publishes ``None`` on saturation and guards against
-    inf/nan (sensor_reader._readLux); this is defense-in-depth at the seam so a
-    non-finite or non-numeric value can never land in the state file as a
-    fabricated reading.
+    Tested DAY first (lux >= luxFull), then night (lux < luxMin), else dusk
+    (Atlas A5): with luxFull <= luxMin dusk is unreachable and day agrees with
+    the level 1.0; with luxMin <= 0 there is no night.
+
+    Args:
+        lux: The published lux (float or None).
+        autoDim: The autoDim section; resolved over the validator defaults.
+
+    Returns:
+        ``'night'``, ``'dusk'``, ``'day'`` or None.
+    """
+    luxF = _luxReading(lux)
+    if luxF is None:
+        return None
+    cfg = resolveAutoDim(autoDim)
+    if luxF >= cfg["luxFull"]:
+        return LIGHT_BAND_DAY
+    if luxF < cfg["luxMin"]:
+        return LIGHT_BAND_NIGHT
+    return LIGHT_BAND_DUSK
+
+
+def _luxReading(value: Any) -> float | None:
+    """A lux that is a reading -- finite AND >= 0 -- as a float, else None.
+
+    THE one predicate (Atlas A3): the published lux, the level's default
+    branch, brightnessMode 'default', lightBand null and reasons.lux all key
+    off it. The producer already publishes ``None`` on saturation and on a
+    negative computed lux (sensor_reader._honestLux, ARCH-010); this is
+    defense-in-depth at the seam so a non-finite, negative or non-numeric value
+    can never land in the state file as a fabricated reading.
     """
     if value is None:
         return None
@@ -237,7 +365,7 @@ def _coerceLux(value: Any) -> float | None:
         luxF = float(value)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(luxF):
+    if not math.isfinite(luxF) or luxF < 0:
         return None
     return luxF
 
@@ -272,6 +400,13 @@ def _channelAtLimit(fullCount: int | None, irCount: int | None, ceiling: int | N
     return False
 
 
+def _countAtLimit(count: int | None, ceiling: int | None) -> bool | None:
+    """One channel against the ceiling: None when either is unknown (Atlas L2)."""
+    if count is None or ceiling is None:
+        return None
+    return count >= ceiling
+
+
 def buildLightState(
     *,
     lux: float | None,
@@ -284,7 +419,8 @@ def buildLightState(
 
     Args:
         lux: The burst's lux reading, or None when saturated/unreadable. A
-            non-finite value is coerced to None (never inf/nan in the file).
+            non-finite or negative value is published as None (never inf/nan,
+            never a negative in the file; Atlas A3).
         tsUtc: The reading's ISO-8601 EVENT instant (the freshness marker
             the US-483-b consumer compares against ``luxStaleSec``). Empty
             yields ``ts: null`` rather than a substituted clock reading,
@@ -300,11 +436,14 @@ def buildLightState(
 
     Returns:
         ``{lux, visibleCount, irCount, fullCount, gain, integrationMs,
-        channelAtLimit, brightnessLevel, brightnessMode, ts}``. ``gain`` is a
-        label, never a register code; ``channelAtLimit`` is null when the
-        saturation ceiling for the integration time is unknown; when it is
-        true, ``lux`` is null. ``brightnessLevel`` is computed from the
-        published ``lux`` (US-878-b).
+        channelAtLimit, atLimit, lightBand, brightnessLevel, brightnessMode,
+        curve, reasons, ts}``. ``gain`` is a label, never a register code;
+        ``channelAtLimit`` is null when the saturation ceiling for the
+        integration time is unknown; when it is true, ``lux`` is null.
+        ``atLimit`` holds the same test per channel. ``lightBand``,
+        ``brightnessLevel`` (US-878-b), ``brightnessMode`` and ``curve`` all
+        come from the published ``lux`` under ONE resolved autoDim (Atlas
+        A6); ``reasons.lux`` is present only when ``lux`` is null.
     """
     visibleCount = _coerceCount(_tupleField(rawCounts, 0))
     if visibleCount is not None and visibleCount < 0:
@@ -312,10 +451,15 @@ def buildLightState(
     irCount = _coerceCount(_tupleField(rawCounts, 1))
     fullCount = _coerceCount(_tupleField(rawCounts, 2))
     integrationMs = _coerceCount(_tupleField(rangeContext, 1))
-    channelAtLimit = _channelAtLimit(
-        fullCount, irCount, saturationCeilingForIntegrationMs(integrationMs)
-    )
-    publishedLux = None if channelAtLimit is True else _coerceLux(lux)
+    ceiling = saturationCeilingForIntegrationMs(integrationMs)
+    channelAtLimit = _channelAtLimit(fullCount, irCount, ceiling)
+    publishedLux = None if channelAtLimit is True else _luxReading(lux)
+    cfg = resolveAutoDim(autoDim)
+    reasons: dict[str, str] = {}
+    if publishedLux is None:
+        reasons["lux"] = (
+            LIGHT_REASON_AT_LIMIT if channelAtLimit is True else LIGHT_REASON_NO_READING
+        )
     return {
         "lux": publishedLux,
         "visibleCount": visibleCount,
@@ -324,8 +468,17 @@ def buildLightState(
         "gain": tslGainLabel(_tupleField(rangeContext, 0)),
         "integrationMs": integrationMs,
         "channelAtLimit": channelAtLimit,
-        "brightnessLevel": brightnessLevel(publishedLux, autoDim),
-        "brightnessMode": BRIGHTNESS_MODE_AUTO,
+        "atLimit": {
+            "ir": _countAtLimit(irCount, ceiling),
+            "full": _countAtLimit(fullCount, ceiling),
+        },
+        "lightBand": lightBand(publishedLux, cfg),
+        "brightnessLevel": brightnessLevel(publishedLux, cfg),
+        "brightnessMode": (
+            BRIGHTNESS_MODE_DEFAULT if publishedLux is None else BRIGHTNESS_MODE_AUTO
+        ),
+        "curve": brightnessCurvePoints(cfg),
+        "reasons": reasons,
         "ts": tsUtc or None,
     }
 

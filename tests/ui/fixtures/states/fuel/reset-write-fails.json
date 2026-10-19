@@ -1,0 +1,55 @@
+{
+  "description": "The reset did not happen, for each refusal the server can return: 503 (no states channel / could not publish), 409 reason 'unavailable' (no since-reset store) and 409 reason 'reset failed: ...' (the write raised). Each shows the latest provider value + 'couldn't reset'; the raw text goes to the log only. Read built by the REAL buildFuelEconomyState.",
+  "parked": true,
+  "responses": {
+    "no-channel-503": {
+      "status": 503,
+      "body": {
+        "ok": false,
+        "error": "could not publish the fuel reset request to /run/eclipse-states: [Errno 28] No space left on device"
+      }
+    },
+    "unavailable-409": {
+      "status": 409,
+      "body": {
+        "ok": false,
+        "reason": "unavailable"
+      }
+    },
+    "reset-failed-409": {
+      "status": 409,
+      "body": {
+        "ok": false,
+        "reason": "reset failed: database is locked"
+      }
+    }
+  },
+  "reads": [
+    {
+      "label": "before",
+      "now": "2026-10-20T15:10:00Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": null,
+        "recent": null
+      }
+    }
+  ]
+}

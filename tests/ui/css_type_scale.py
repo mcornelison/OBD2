@@ -19,6 +19,10 @@
 # ================================================================================
 # 2026-08-11    | Ralph (Rex)  | Initial -- US-539 type-scale token resolver.
 # 2026-10-15    | Ralph (Rex)  | US-887-a -- fs-giant joins the top of SCALE_TOKENS.
+# 2026-10-19    | Ralph (Rex)  | US-892-b (Atlas B6) -- ADVANCE_OBSERVED and
+#                               ADVANCE_ROBUST_RANGE move here from the retired
+#                               test_gforce_tile_width_budget.py: shared test
+#                               support, never imported from another test file.
 # ================================================================================
 ################################################################################
 
@@ -39,6 +43,32 @@ DASHBOARD_CSS = os.path.join(_UI, "dashboard", "dashboard.css")
 # exactly this sequence. `fs-giant` (US-887-a) is the V0.30 Driving gear tier and
 # sits ABOVE hero, so it leads the tuple; no existing tier moved.
 SCALE_TOKENS = ("fs-giant", "fs-hero", "fs-primary", "fs-secondary", "fs-label", "fs-meta")
+
+# The Pi's monospace advance (glyph advance / font-size), in em. MOVED HERE
+# (US-892-b, Atlas B6) with the G-FORCE tile it was measured on; its provenance
+# travels with it:
+#
+# A monospace advance ratio cannot be read out of CSS -- it is a property of the
+# face `--font-mono` resolves to. Atlas's observation pins it. He measured that
+# `0.0 left ...` and `0.0 right ...` -- one character apart -- wrapped to a
+# DIFFERENT number of lines in the retired 108px G-FORCE column. Greedy
+# word-wrap in 108px at `--fs-label` only does that when `0.0 left` (8 chars)
+# fits a line and `0.0 right` (9 chars) does not:
+#
+#     8 * 20 * a <= 108  ->  a <= 0.675
+#     9 * 20 * a >  108  ->  a >  0.600
+#
+# So the observed defect CONSTRAINS the advance to (0.600, 0.675]. DejaVu Sans
+# Mono -- what `ui-monospace` resolves to under Chromium on the Pi's Linux --
+# has an advance of 0.60205, which lands inside that window by 0.37px of line
+# box. Calibrated against a real observation, not a number chosen to make the
+# arithmetic come out.
+ADVANCE_OBSERVED = 0.60205
+
+# A deliberately over-wide range covering essentially every monospace face, used
+# to show a "does not fit" finding does NOT depend on the calibration. If a
+# conclusion survives 0.50 it is not an artefact of the font choice.
+ADVANCE_ROBUST_RANGE = (0.50, 0.65)
 
 # A bare px magnitude on a `font-size` -- the drift US-539 exists to remove.
 # `(?<![-\w])` keeps a custom-property declaration (`--fs-hero: 40px`) from

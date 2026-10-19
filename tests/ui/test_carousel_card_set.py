@@ -38,6 +38,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-11    | Ralph (Rex)  | Initial -- US-540-b card set 4 -> 6, Health out.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card at index 4.
 # ================================================================================
 ################################################################################
 
@@ -76,8 +78,12 @@ _NODE_ONLY = pytest.mark.skipif(
 # MOVED PIN (US-889-b): the Engine card is index 1, right after Driving (E-2).
 # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after
 # Engine; it keeps states/ltft-trend and the vehicle gate (on its trend row).
+# MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
+# MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
+# MOVED PIN (US-893-b): Light moves to index 5, right after Motion (E-2).
 _CARD_SET = [
-    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Light", "Alerts",
+    "System Status", "Battery",
 ]
 
 # The AC's capacity ceiling: ~3 facts, 4 in a 2x2. Pinned against the RENDERED
@@ -423,9 +429,11 @@ class TestFuelTrimGateSurvivesTheSplit:
         """
         dom = rh.runDashboard(routes=_routes(obdAvailable=False))
         surface = rh.dashboardSurface(dom["tree"])
+        # MOVED PIN (US-893-b): the Light page shows its reading in its own
+        # AMBIENT value, not a `.tile`.
         live = {
-            owner: _cardText(surface, "tile-value", owner)
-            for owner in ("Battery", "Light")
+            "Battery": _cardText(surface, "tile-value", "Battery"),
+            "Light": _cardText(surface, "light-ambient-value", "Light"),
         }
         assert "4.02" in live["Battery"], f"battery reading absent: {live['Battery']!r}"
         assert "120" in live["Light"], f"light reading absent: {live['Light']!r}"

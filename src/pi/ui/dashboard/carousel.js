@@ -41,139 +41,6 @@
   //
   // Two layers on purpose: the request deadline stops the known cause, the tick
   // deadline stops ANY non-settling body including causes we have not met yet.
-  //: US-662 -- DISPLAY smoothing. The CIO, 2026-08-31, after reading the panel:
-  //: "the heading is flickering plus or minus two or three degrees ... we need to
-  //: add a 3-second smoothing function to some of these readings FOR DISPLAY
-  //: PURPOSES ONLY."
-  //:
-  //: THE ARCHITECTURE IS IN HIS LAST FOUR WORDS. Smoothing is a VIEW concern.
-  //: `lastImu` stays RAW, the state files stay RAW, the database stays RAW.
-  //: Landing a smoothed number would write something no sensor ever reported --
-  //: the ambient-temperature defect rebuilt.
-  //:
-  //: The window is in MILLISECONDS, not samples, so it behaves identically on
-  //: the 4 Hz card tick and the 10 Hz live tick. A count-based window would
-  //: smooth over 3 s on one loop and 0.4 s on the other.
-  var SMOOTH_WINDOW_MS = 3000;
-
-  //: Smoothed for display. Deliberately explicit and deliberately SHORT.
-  //: ⚠️ Nothing alert-bearing, and never speed or rpm: smoothing buys steadiness
-  //: with LATENCY -- a 3 s window shows a real event about 1.5 s late, which is
-  //: correct for a glance instrument and disqualifying for anything that warns.
-  var SMOOTHED_FIELDS = ["headingDeg", "gLat", "gLon", "gradePct"];
-
-  //: Only a BEARING wraps. Grade and g are linear, and a circular mean applied
-  //: to them would be cargo-culting the fix onto values it cannot help.
-  var ANGULAR_FIELDS = ["headingDeg"];
-
-  function makeSmoothWindow(windowMs) {
-    var samples = [];
-    return {
-      push: function (value, atMs) {
-        // A non-finite reading is not a sample. Pushing it would let an absent
-        // value pull the mean, which is how a smoothed display invents data.
-        if (typeof value !== "number" || !isFinite(value)) return false;
-        samples.push({ v: value, t: atMs });
-        return true;
-      },
-      values: function (nowMs) {
-        var cutoff = nowMs - windowMs;
-        var out = [];
-        for (var i = 0; i < samples.length; i++) {
-          if (samples[i].t > cutoff) out.push(samples[i].v);
-        }
-        return out;
-      },
-      prune: function (nowMs) {
-        var cutoff = nowMs - windowMs;
-        var kept = [];
-        for (var i = 0; i < samples.length; i++) {
-          if (samples[i].t > cutoff) kept.push(samples[i]);
-        }
-        samples = kept;
-      },
-    };
-  }
-
-  function linearMean(values) {
-    if (!values || !values.length) return null;
-    var sum = 0;
-    var n = 0;
-    for (var i = 0; i < values.length; i++) {
-      if (typeof values[i] === "number" && isFinite(values[i])) {
-        sum += values[i];
-        n += 1;
-      }
-    }
-    return n ? sum / n : null;
-  }
-
-  function circularMeanDeg(values) {
-    // 🔴 A BEARING CANNOT BE AVERAGED ARITHMETICALLY. The mean of
-    // 358, 359, 1, 2 is 180 -- the display would point SOUTH while the car
-    // drives NORTH. Average unit vectors instead.
-    //
-    // This is the failure that passes every test which does not cross north,
-    // which is most of them, so the wrap case is pinned explicitly in the tests.
-    if (!values || !values.length) return null;
-    var sumSin = 0;
-    var sumCos = 0;
-    var n = 0;
-    for (var i = 0; i < values.length; i++) {
-      var v = values[i];
-      if (typeof v !== "number" || !isFinite(v)) continue;
-      var rad = (v * Math.PI) / 180;
-      sumSin += Math.sin(rad);
-      sumCos += Math.cos(rad);
-      n += 1;
-    }
-    if (!n) return null;
-    var mean = (Math.atan2(sumSin / n, sumCos / n) * 180) / Math.PI;
-    return (mean + 360) % 360;
-  }
-
-  var smoothWindows = {};
-
-  function pushImuSamples(data, nowMs) {
-    // Called where the READING ARRIVES, never at render -- so the window tracks
-    // the sensor's cadence rather than the paint rate.
-    if (!isObj(data)) return;
-    for (var i = 0; i < SMOOTHED_FIELDS.length; i++) {
-      var f = SMOOTHED_FIELDS[i];
-      if (!smoothWindows[f]) smoothWindows[f] = makeSmoothWindow(SMOOTH_WINDOW_MS);
-      smoothWindows[f].push(data[f], nowMs);
-      smoothWindows[f].prune(nowMs);
-    }
-  }
-
-  function smoothedImuView(data, nowMs) {
-    // Returns a COPY. The caller's object is never mutated, so `lastImu` -- the
-    // thing every other consumer reads -- stays raw.
-    if (!isObj(data)) return data;
-    var view = {};
-    for (var k in data) {
-      if (Object.prototype.hasOwnProperty.call(data, k)) view[k] = data[k];
-    }
-    for (var i = 0; i < SMOOTHED_FIELDS.length; i++) {
-      var f = SMOOTHED_FIELDS[i];
-      var raw = data[f];
-      // ⚠️ An absent reading STAYS absent. Smoothing must never resurrect a
-      // value from history when the live one is unavailable -- that would turn
-      // an honest NA into a stale number, which is worse than the jitter.
-      if (typeof raw !== "number" || !isFinite(raw)) {
-        view[f] = raw;
-        continue;
-      }
-      var w = smoothWindows[f];
-      if (!w) continue;
-      var vals = w.values(nowMs);
-      var mean =
-        ANGULAR_FIELDS.indexOf(f) >= 0 ? circularMeanDeg(vals) : linearMean(vals);
-      if (mean !== null) view[f] = mean;
-    }
-    return view;
-  }
-
   var FETCH_DEADLINE_MS = 2000;   // localhost states server answers in <1 ms
   var TICK_DEADLINE_MS = 10000;   // generous: a tick reads several state files
 
@@ -1874,11 +1741,16 @@
 
   // Build the per-source view. Kept as a switch on the key rather than a
   // function reference in the table so the three signatures (which genuinely
-  // differ -- only the light view needs the dim config + a clock) stay explicit.
-  function sourceView(key, data, cfg, nowMs) {
+  // differ -- only the light view needs the dim config, a clock and the STOP
+  // test) stay explicit.
+  //
+  // US-893-b: the Light page paints its OWN absence ('--' + 'no light data' in
+  // its own layout, the brightness it fell back to beside it), so its view is
+  // built even with no payload; `absent` tells the shell the feed is missing.
+  function sourceView(key, data, cfg, nowMs, alarmActive) {
+    if (key === "light") return lightPageView(data, cfg, nowMs, alarmActive);
     if (cardAvailability(data) !== "available") return null;
     if (key === "battery-health") return batteryHealthView(data);
-    if (key === "light") return lightView(data, cfg, nowMs);
     if (key === "ltft-trend") return fuelTrendView(data);
     return null;
   }
@@ -1889,7 +1761,7 @@
   // t=0. Fixing one and not the other would re-create the confusion one swipe
   // away, which is why the story's conditionalOutcome names the shared shape
   // rather than the three tiles it was reported on.
-  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs) {
+  function sourceCardView(spec, data, sysData, cfg, nowMs, waitedMs, alarmActive) {
     var base = { key: spec.key, title: spec.title, label: spec.noData.label };
     // The gate is checked FIRST and short-circuits: a gated card must carry no
     // reading, not a suppressed one (nothing downstream can leak what was never
@@ -1904,9 +1776,9 @@
       base.view = null;
       return base;
     }
-    var view = sourceView(spec.key, data, cfg, nowMs);
+    var view = sourceView(spec.key, data, cfg, nowMs, alarmActive);
     base.gated = false;
-    if (view === null) {
+    if (view === null || view.absent === true) {
       if (loadPhase(data, waitedMs) === "loading") {
         base.loading = true;
         base.unavailable = false;
@@ -1919,7 +1791,8 @@
       // Reuse the shipped whole-card wording where one exists (light), so the
       // silent-instrument phrasing lives in exactly one place.
       base.na = noDataView(spec.key) || spec.noData;
-      base.view = null;
+      // US-893-b: the Light page's own absent view (null for every other card).
+      base.view = view;
       return base;
     }
     base.loading = false;
@@ -2511,176 +2384,6 @@
     return { text: "NOT LIVE", tier: "meta" };
   }
 
-  // Last-drive summary fact (US-505). `drive.lastDrive` is the most recent
-  // COMPLETED drive, produced Pi-locally from drive_summary -- a DIFFERENT fact
-  // from `drive.driveId`, which is the ACTIVE drive and is null whenever nothing
-  // is recording. Before that producer existed this tile had only driveId to
-  // read, so it said "No recent drive" PERMANENTLY rather than until the next
-  // drive: the absence was real, but it was the absence of a producer.
-  //
-  // Renders Iris's idle spec shape ("Drive 35 · 2 h ago") across the tile's
-  // value + detail slots. Honest degradation is per-HALF: a drive whose start
-  // timestamp is missing or unparseable still shows the drive and admits
-  // "age unknown", because the drive genuinely happened and hiding it would lose
-  // a real fact to protect a cosmetic one.
-  //
-  // US-700: `waitedMs` distinguishes "the state file has not been read yet"
-  // from "there is no state file". Absent (every pre-US-700 caller) it resolves
-  // to `unavailable`, which is exactly the behaviour this tile shipped with.
-  function idleLastDriveFact(systemStatusData, waitedMs) {
-    var label = "LAST DRIVE";
-    if (loadPhase(systemStatusData, waitedMs) === "loading") {
-      return loadingTile(label);
-    }
-    // Note the ORDER: an ARRIVED payload with no drive block falls through to
-    // here even inside the loading window, because `loadPhase` already answered
-    // "ready" for it. That absence is real and keeps its own render.
-    if (!isObj(systemStatusData) || !isObj(systemStatusData.drive)) {
-      return { label: label, value: "—", detail: "unavailable", level: "unavailable" };
-    }
-    var drive = systemStatusData.drive;
-    if (drive.state === "recording") {
-      var id = drive.driveId == null ? "?" : drive.driveId;
-      return { label: label, value: "REC", detail: "drive " + id, level: "neutral" };
-    }
-    var last = drive.lastDrive;
-    if (isObj(last) && last.driveId != null) {
-      return {
-        label: label,
-        value: "Drive " + last.driveId,
-        detail: agoText(systemStatusData.ts, last.startedAtTs),
-        level: "neutral",
-      };
-    }
-    // Legacy shape: an active driveId with no lastDrive block. Kept so a state
-    // file written by an older Pi (or mid-deploy) still renders the id it has.
-    if (drive.driveId != null) {
-      return { label: label, value: "drive " + drive.driveId, detail: "last recorded", level: "neutral" };
-    }
-    return { label: label, value: "No recent drive", detail: "since key-off", level: "neutral" };
-  }
-
-  // Battery-with-age fact. The ONE line allowed to go green at idle -- and only
-  // via the Spool verdict, always carrying its data-age (F-9 stale-green guard).
-  // Reuses the battery-health view (single UPS source -> whole-card NA).
-  //
-  // US-700: same three states. The UPS-unreadable disposition below is the one
-  // that proves the discipline -- that payload ARRIVED and says why the gauge
-  // cannot be read, so it keeps its typed NA and its reason even during the
-  // loading window. The reason is the operator's only lead on what to fix.
-  //
-  // US-699 PUT THE VOLTS ON THE TILE, AND THAT IS NOT A COSMETIC ADDITION.
-  // The CIO was shown the full menu of readable values on 2026-09-09 and chose
-  // the SoC PERCENT for the headline on legibility grounds. He was shown at the
-  // same time that this gauge is KNOWN TO CONTRADICT ITSELF: `battery_health_log`
-  // row 38 recorded 3.63 V at soc 100% while row 37 recorded a HIGHER 3.985 V at
-  // 95%, and a voltage-based fuel gauge cannot report a lower charge at a higher
-  // voltage (US-685, open). Rendering `vcell` BENEATH the percent is what keeps
-  // that contradiction on the card, where it can be diagnosed, instead of behind
-  // the percent, where it gets argued about. Nothing here averages, clamps or
-  // reconciles the two registers -- they disagree, and the disagreement IS the
-  // signal a future session needs to see.
-  //
-  // THE VOLTS ARE ADDED TO THE DETAIL LINE, NEVER SWAPPED IN FOR IT. F-9 is the
-  // whole reason this line is allowed to be the one green thing at idle, and
-  // "we needed the room" is exactly how a stale-green guard gets lost.
-  function idleBatteryFact(batteryData, waitedMs) {
-    var label = "BATTERY";
-    if (loadPhase(batteryData, waitedMs) === "loading") {
-      return loadingTile(label);
-    }
-    var view = batteryHealthView(batteryData);
-    if (view === null) {
-      return { label: label, value: "—", detail: "unavailable", level: "unavailable" };
-    }
-    if (view.unavailable) {
-      return { label: label, value: "NA", detail: view.reason, level: "unavailable" };
-    }
-    // F-8 survives the promotion. `shown` is false whenever the MAX17048 SoC
-    // REGISTER was unreadable, and the headline falls back to volts rather than
-    // filling the slot with a percent derived from them. An unread register
-    // costs the operator the percent; it never buys them a fabricated one.
-    var shown = view.soc != null && view.soc.shown === true;
-    // A missing vcell is NAMED rather than quietly dropped: a percent with no
-    // volts beside it would otherwise look identical to a healthy pair, which
-    // is precisely the contradiction this detail line exists to expose.
-    var volts = view.vcell.level === "unavailable" ? "volts unavailable" : view.vcell.value;
-    return {
-      label: label,
-      // The value slot is the one readable at arm's length, which is the whole
-      // basis of the legibility ruling -- a percent in the small line would
-      // satisfy the letter of the decision and none of its point.
-      value: shown ? view.soc.value : view.vcell.value,
-      // "<volts> · last health check · <date> (<age>)". The volts are omitted
-      // when they are ALREADY the headline: one register printed twice on a
-      // two-line tile is a line the operator reads and learns nothing from.
-      detail: shown ? volts + " · " + view.healthCheck.label : view.healthCheck.label,
-      level: view.health.level,         // green ONLY on a `good` verdict (US-504)
-    };
-  }
-
-  // The assembled fallback view consumed by the DOM renderer + the node tests.
-  //
-  // US-542: ONE disposition. The `motionless` ternary is gone with the STANDBY
-  // hero it selected -- not because the branch was wrong, but because US-541
-  // left it permanently false, and a condition that cannot be false is a claim
-  // waiting to be made by accident. The hero now states the only fact this
-  // screen exists to state: the motion instrument is down, and here is why.
-  //
-  // `dtcData` is GONE FROM THE SIGNATURE, and that is the guard, not a tidy-up
-  // (the US-541 pattern). A view that cannot SEE the dtc payload cannot re-
-  // borrow the Alerts fact that just moved off it; a future re-borrow has to
-  // widen the signature first, which is a visible act rather than a line added
-  // to a facts object.
-  //
-  // The footer stays a VIEW field rather than a renderer literal even now that
-  // there is one of them: copy no test can reach is copy that drifts, which is
-  // exactly what US-510 had to come back and repair on this very surface.
-  //
-  // US-700 adds `waits`, and it is a BAG OF FACTS ABOUT THE FETCHES, not a
-  // second opinion about them:
-  //   { systemStatus, battery }  -- ms waited for a payload that never arrived
-  //   { motionLoading }          -- `homeFace`'s verdict, handed DOWN
-  // The motion entry is a boolean rather than a duration on purpose. `homeFace`
-  // is the only arbiter of the motion face (US-508), and re-deriving the phase
-  // from a duration here would quietly install a second one -- the exact defect
-  // the one-arbiter rule on that function exists to prevent.
-  function idleCardView(systemStatusData, batteryData, motionReason, waits) {
-    var w = isObj(waits) ? waits : {};
-    var motionLoading = w.motionLoading === true;
-    return {
-      // US-510 A-1: the LOCKED wordmark, verbatim from Iris's idle spec
-      // (2026-07-21-pi-idle-state-and-full-bleed.md §1.2). The build had
-      // paraphrased it to "ECLIPSE"; nothing pinned it, which is exactly why it
-      // drifted. It is BRANDING, not status, so it survives the retirement --
-      // the LOCKED FOOTER did not: it was a parked-screen navigation hint, and
-      // the screen it taught is gone. The ⋮ it named is still in the top bar.
-      wordmark: "ECLIPSE OBD-II",
-      hero: {
-        // US-700: two words that cannot be misread for each other at arm's
-        // length. "NO MOTION DATA" over a feed that is merely starting is a
-        // confident claim about a producer nobody has heard from yet.
-        title: motionLoading ? "MOTION LOADING" : "NO MOTION DATA",
-        // Never fabricated: `homeFace` reaches this view only WITH a reason, so
-        // the empty string here is an un-taken defensive floor, not a second
-        // disposition wearing a default sentence.
-        substate: typeof motionReason === "string" ? motionReason : "",
-        level: "neutral",
-      },
-      // US-700: "resumes ... returns" asserts the feed was HERE and left. At
-      // first paint it never was, and a footer is copy the operator believes.
-      footer: motionLoading
-        ? "live instrument starts when the first reading arrives"
-        : "live instrument resumes when the motion feed returns",
-      // TWO facts, not three. `faults` left with the Alerts card (AC-2); what
-      // remains is what a dead motion feed does not make unreadable.
-      facts: {
-        lastDrive: idleLastDriveFact(systemStatusData, w.systemStatus),
-        battery: idleBatteryFact(batteryData, w.battery),
-      },
-    };
-  }
-
   // -------------------------------------------------------------------------
   // US-406 DTC Alerts card (Card 5) + detail -- pure, node-testable logic
   // (S-4/S-5/S-12/S-13/I-3). The card is a PURE CONSUMER of the `dtc` state:
@@ -3096,15 +2799,14 @@
 
   // -------------------------------------------------------------------------
   // US-483-b display-brightness consumer (F-121) -- pure, node-testable logic.
-  // The dashboard is a PURE CONSUMER of the states/light file US-483-a writes
-  // ({lux, ts}); it NEVER reads the sensor. The auto-dim curve values are
-  // GROUNDED CONFIG PARAMETERS injected at serve time (window.DISPLAY_AUTODIM),
-  // so tuning is a config change, not a code change (CIO 2026-07-22). These
-  // built-in defaults are the file:// preview / unconfigured fallback and MIRROR
-  // config.json pi.display.autoDim.* (the tuning SSOT). Honest-instrument: an
-  // absent/stale/saturated (null) reading holds the fixed default -- never a
-  // fabricated "auto" behavior; and a real active STOP alert is held at FULL
-  // brightness regardless of lux (the load-bearing safety guard, US-484-b).
+  // The dashboard is a PURE CONSUMER of the states/light file US-483-a writes;
+  // it NEVER reads the sensor. US-893-a (Atlas ruling 3 / A7): the light bridge
+  // is the ONE brightness applier -- it publishes brightnessLevel from the one
+  // curve -- and the page APPLIES that level. The page holds no curve, no lux
+  // thresholds and no floor. It keeps only what it must decide itself: whether
+  // the file is fresh (luxStaleSec), what to show when it is not (the injected
+  // defaultLevel, US-483-b; no new injection, Atlas G5), and the STOP override
+  // (a real active STOP alert is FULL brightness, US-484-b).
   // -------------------------------------------------------------------------
 
   // Spool 6d ch.4 (US-484-b): "a red alarm is full brightness always,
@@ -3113,29 +2815,25 @@
   // key that may lower a live PULL-OVER alarm.
   var STOP_ALARM_LEVEL = 1.0;
 
+  // The file:// preview / unconfigured fallback for the two keys the page reads
+  // from the injected window.DISPLAY_AUTODIM. They MIRROR the validator DEFAULTS
+  // (tests/test_display_autodim_floor_rule.py pins the parity).
+  //
+  // US-893-a: the curve keys left with the curve. The bridge resolves them from
+  // config itself, so a page copy could only ever disagree with the level it
+  // applies.
+  //
+  // US-595 -- alarmFloorLevel was retired here too. It was superseded by
+  // STOP_ALARM_LEVEL above (US-484-b ch.4: a STOP goes to FULL). The merge below
+  // iterates BRIGHTNESS_DEFAULTS rather than the injected object, so a deployed
+  // config.json still carrying a retired key is ignored BY CONSTRUCTION. Do not
+  // re-add one to restore compatibility -- there is nothing to be compatible with.
   var BRIGHTNESS_DEFAULTS = {
-    luxMin: 3.0,          // lux <= this -> min (grounded: civil-twilight dark)
-    luxFull: 1000.0,      // lux >= this -> full (grounded: overcast daylight)
-    minLevel: 0.15,       // US-627 -- READ THE NAME CAREFULLY: this is the floor
-                          // on the CURVE branch, NOT a floor on displayed
-                          // brightness. The absent/stale-feed branch of
-                          // brightnessLevel() returns defaultLevel UNCLAMPED and
-                          // never consults this value.
-    defaultLevel: 0.70,   // fixed fallback when the feed is absent/stale/
-                          // saturated. Returned UNCLAMPED, so it must never sit
-                          // below minLevel -- validate_config enforces
-                          // defaultLevel >= minLevel (US-627); it is deliberately
-                          // NOT clamped here.
-    // US-595 -- alarmFloorLevel was HERE and is RETIRED. It was superseded by
-    // STOP_ALARM_LEVEL above (US-484-b ch.4: a STOP goes to FULL), which left it
-    // resolvable but unreachable -- a tunable that looked adjustable and changed
-    // nothing. Removing it here is SAFE, and specifically because the merge
-    // below iterates BRIGHTNESS_DEFAULTS rather than the injected object: a
-    // deployed config.json still carrying the key is ignored BY CONSTRUCTION,
-    // not by a rule anyone has to remember. Do not re-add it to restore
-    // compatibility -- there is nothing to be compatible with.
-    luxStaleSec: 10,      // a reading older than this -> fallback
-    curve: "logarithmic", // perceptual mapping between luxMin..luxFull
+    defaultLevel: 0.70,   // applied when states/light is absent, stale or
+                          // malformed. Applied UNCLAMPED: validate_config enforces
+                          // defaultLevel >= minLevel (US-627), and a clamp here
+                          // could only mask a config that failed that gate.
+    luxStaleSec: 10,      // a states/light older than this -> fallback
   };
 
   // Resolve the injected config over the grounded defaults (only well-typed
@@ -3151,56 +2849,10 @@
       for (var key in BRIGHTNESS_DEFAULTS) {
         if (!Object.prototype.hasOwnProperty.call(cfg, key)) continue;
         var v = cfg[key];
-        if (key === "curve") {
-          if (typeof v === "string") out[key] = v;
-        } else if (typeof v === "number" && isFinite(v)) {
-          out[key] = v;
-        }
+        if (typeof v === "number" && isFinite(v)) out[key] = v;
       }
     }
     return out;
-  }
-
-  // The perceptual lux -> 0..1 mapping. Returns 0 at/below luxMin, 1 at/above
-  // luxFull, and a curve value between. A degenerate range (luxFull <= luxMin)
-  // or a non-positive luxMin under the log curve falls back to linear/full so it
-  // can never divide by zero or take log of a non-positive number.
-  function brightnessCurve(lux, luxMin, luxFull, curve) {
-    if (typeof lux !== "number" || !isFinite(lux)) return 0;
-    if (!(luxFull > luxMin)) return 1; // misconfigured range -> full, never div0
-    if (lux <= luxMin) return 0;
-    if (lux >= luxFull) return 1;
-    if (curve !== "linear" && luxMin > 0 && lux > 0) {
-      return (
-        (Math.log(lux) - Math.log(luxMin)) /
-        (Math.log(luxFull) - Math.log(luxMin))
-      );
-    }
-    return (lux - luxMin) / (luxFull - luxMin);
-  }
-
-  // The fresh, finite lux from a states/light payload, or null (fall back). A
-  // missing/malformed file, a null lux (honest saturation), a non-finite value,
-  // or a reading older than luxStaleSec all read null -> the caller holds the
-  // fixed default rather than trusting a frozen/absent value.
-  function freshLux(lightData, luxStaleSec, nowMs) {
-    if (!lightData || typeof lightData !== "object") return null;
-    var lux = lightData.lux;
-    if (typeof lux !== "number" || !isFinite(lux)) return null;
-    // ARCH-010, defence in depth. A negative lux is a computation failure, not
-    // a dark reading -- and it is FINITE, so isFinite() waved it through. It
-    // then hit `lux <= luxMin -> 0` below and drove the panel to minLevel, so
-    // the brighter the sun the dimmer the screen. The producer now publishes
-    // null for this, but the consumer must not depend on that being deployed:
-    // this slipped past three type checks once already.
-    if (lux < 0) return null;
-    var ts = lightData.ts;
-    if (typeof ts !== "string") return null;
-    var t = Date.parse(ts);
-    if (isNaN(t)) return null;
-    var ageSec = (nowMs - t) / 1000;
-    if (!(ageSec <= luxStaleSec)) return null; // stale (or NaN age) -> fallback
-    return lux;
   }
 
   // A real ACTIVE STOP alert is present (drives the alarm floor). Reuses the same
@@ -3213,70 +2865,40 @@
     return !!rv && rv.level === "stop";
   }
 
-  // The final 0..1 brightness: clamp(minLevel, curve(lux), 1.0) when the feed is
-  // fresh, else the fixed default (honest fallback).
+  // US-893-a (Atlas A7) -- THE ONE APPLIER. Every surface that needs the panel's
+  // level (the screen frame, and from US-893-b the Light page's status line and
+  // dot) reads this one return, so no two can disagree. In order:
   //
-  // US-484-b / Spool 6d ch.4 -- the load-bearing safety short-circuit: while a
-  // real STOP is active the surface is FULL, before any ambient math runs. It
-  // overrides the curve and the fixed default, so a dark cabin (or a dead light
-  // sensor) can never dim a PULL-OVER alarm. It also SUPERSEDED the old
-  // alarmFloorLevel config key outright -- full brightness is stronger than any
-  // floor -- which is why US-595 could retire that key entirely.
+  //   1. alarmActive -> {1.0, 'alert'}. US-484-b / Spool 6d ch.4, the
+  //      load-bearing safety short-circuit: while a real STOP is active the
+  //      surface is FULL before anything else is read, so a dark cabin (or a dead
+  //      light sensor) can never dim a PULL-OVER alarm. It SUPERSEDED the old
+  //      alarmFloorLevel key outright, which is why US-595 could retire it.
+  //   2. FRESH -> {data.brightnessLevel, data.brightnessMode}: the level the
+  //      bridge published, applied as published ('auto', or 'default' when the
+  //      bridge had no reading). FRESH = an object, not sourceUnavailable, a
+  //      parseable ts no older than luxStaleSec, and a brightnessLevel that is a
+  //      finite number in [0, 1].
+  //   3. otherwise -> {injected defaultLevel, 'fallback'}.
   //
-  // US-627 -- THE TWO BRANCHES ARE DELIBERATELY ASYMMETRIC, AND THAT IS WHY THE
-  // FLOOR IS ENFORCED AT CONFIG TIME. The curve branch clamps to c.minLevel; the
-  // lux === null branch returns c.defaultLevel UNCLAMPED. So c.minLevel bounds
-  // the CURVE, never displayed brightness -- a defaultLevel beneath it would
-  // render below the floor exactly when the light sensor has failed (FOUND
-  // 2026-08-29: minLevel was raised 0.5 -> 0.75 for a dark garage while
-  // defaultLevel sat at 0.70).
-  //
-  // The fix is a validator rule -- pi.display.autoDim.defaultLevel must be >=
-  // minLevel, rejected loudly by validate_config. It is NOT clamped here ON
-  // PURPOSE: clamping would silently repair a bad config and leave the operator
-  // believing a value that never takes effect, which is the inert-guard shape
-  // this project has catalogued repeatedly. A bad config must fail at the gate,
-  // not be quietly corrected on the panel.
-  function brightnessLevel(lightData, cfg, nowMs, alarmActive) {
-    if (alarmActive) return STOP_ALARM_LEVEL;
-    var c = resolveAutoDimConfig(cfg);
-    var lux = freshLux(lightData, c.luxStaleSec, nowMs);
-    var level;
-    if (lux === null) {
-      // absent/stale/saturated -> fixed default. Intentionally NOT floored to
-      // c.minLevel: validate_config guarantees defaultLevel >= minLevel, so a
-      // clamp here could only ever mask a config that failed that gate (US-627).
-      level = c.defaultLevel;
-    } else {
-      var curved = brightnessCurve(lux, c.luxMin, c.luxFull, c.curve);
-      level = Math.min(Math.max(curved, c.minLevel), 1.0);
+  // lux is NOT consulted: the bridge already turned it into the level. An
+  // out-of-range brightnessLevel is fallback, NEVER clamped (US-627: never
+  // silently repair -- a clamp would leave the operator believing a value that
+  // never takes effect). The fallback defaultLevel is applied UNCLAMPED for the
+  // same reason; validate_config enforces defaultLevel >= minLevel. A payload
+  // with no brightnessLevel at all (an older producer) is fallback, not a throw.
+  function appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive) {
+    if (alarmActive) return { level: STOP_ALARM_LEVEL, basis: "alert" };
+    var c = resolveAutoDimConfig(injectedAutoDim);
+    var fallback = { level: c.defaultLevel, basis: "fallback" };
+    if (!isObj(lightData) || sourceUnavailable(lightData, "light")) return fallback;
+    var age = readAgeSec(lightData, nowMs);
+    if (age === null || !(age <= c.luxStaleSec)) return fallback;
+    var level = lightData.brightnessLevel;
+    if (typeof level !== "number" || !isFinite(level) || level < 0 || level > 1) {
+      return fallback;
     }
-    return Math.min(Math.max(level, 0), 1);
-  }
-
-  // -------------------------------------------------------------------------
-  // US-496 Light card (S3, F-121) -- pure, node-testable. The card is a PURE
-  // CONSUMER of the SAME states/light file ({lux, ts}) that drives the auto-dim
-  // above, so the number on the card can never disagree with the screen it
-  // explains. The sensor knows exactly one thing, so the card shows exactly two
-  // facts: the reading (with its age) and the auto-dim BAND it falls in. The
-  // band is a NAME for the existing grounded luxMin/luxFull thresholds -- NOT a
-  // third set of numbers that could drift away from the curve.
-  //
-  // Deliberately NOT shown: the resulting screen brightness. A live STOP alarm
-  // holds the surface at FULL regardless of lux (US-484-b ch.4), so a
-  // lux-derived brightness percent on this card would be a number that
-  // disagrees with the actual screen exactly when it matters most.
-  // -------------------------------------------------------------------------
-
-  // Sub-10 lux keeps one decimal: near the dark end a whole-lux round merges
-  // cabins that sit on opposite sides of the DARK boundary (luxMin 3.0).
-  function fmtLux(lux) {
-    return (lux < 10 ? lux.toFixed(1) : String(Math.round(lux))) + " lx";
-  }
-
-  function fmtAgeSec(ageSec) {
-    return (ageSec < 10 ? ageSec.toFixed(1) : String(Math.round(ageSec))) + "s";
+    return { level: level, basis: lightData.brightnessMode };
   }
 
   // The payload's read age in seconds, or null when it carries no parseable ts.
@@ -3289,59 +2911,242 @@
     return (nowMs - t) / 1000;
   }
 
-  // The auto-dim band this reading falls in, resolved against the SAME injected
-  // config the curve uses (so an operator retuning pi.display.autoDim moves the
-  // label and the dimming together).
-  function luxBand(lux, cfg) {
-    var c = resolveAutoDimConfig(cfg);
-    if (lux <= c.luxMin) return "DARK";
-    if (lux >= c.luxFull) return "DAYLIGHT";
-    return "DIM";
+  // -------------------------------------------------------------------------
+  // US-893-b Light page (F-127; specs/v030-light-page-design.md layout A +
+  // glyph, governed by the Atlas L1-L6 / Iris L1-L7 rulings of 2026-10-19).
+  // A PURE CONSUMER of states/light. The word is the provider's lightBand, the
+  // curve is the provider's points, and the dot's y and the status line are the
+  // level the kiosk APPLIED (appliedBrightness, the one applier), so the page,
+  // the screen and the bridge cannot disagree. The page derives no band and no
+  // level from lux and holds no lux threshold: a dot OFF the line (stale
+  // fallback, STOP full) is the truth, not a bug.
+  // -------------------------------------------------------------------------
+
+  // The provider's reasons.lux codes -> glass text (Atlas L1). One table, the
+  // IMU_REASON_TEXT pattern; IRIS owns the words.
+  var LIGHT_REASON_TEXT = {
+    at_limit: "sensor at limit",
+    no_reading: "no reading",
+  };
+  var LIGHT_NO_DATA_TEXT = "no light data";
+  var LIGHT_NO_TIMESTAMP_TEXT = "no timestamp";
+  var LIGHT_AT_LIMIT_TEXT = "at limit";
+  var LIGHT_UNIT = "lux";  // the one unit word on the page, never 'lx' (Iris L6)
+
+  // The three provider bands, each drawn by its own glyph (Iris L4).
+  var LIGHT_BANDS = ["night", "dusk", "day"];
+
+  // The curve graph (spec s3: 200 x 104). The plot's left pad holds the y
+  // labels ('100%' is ~36 px in the mono at --fs-meta, Iris L5); the bottom pad
+  // holds the x labels. The y domain sits CURVE_Y_HEADROOM under minLevel so
+  // the flat floor does not lie on the x axis -- presentation headroom, not a
+  // level (Iris L5).
+  var LIGHT_CURVE_W = 200;
+  var LIGHT_CURVE_H = 104;
+  var LIGHT_CURVE_PAD_L = 40;
+  var LIGHT_CURVE_PAD_R = 6;
+  var LIGHT_CURVE_PAD_T = 8;
+  var LIGHT_CURVE_PAD_B = 22;
+  var LIGHT_CURVE_LABEL_DX = 3;   // an x label's gap from its dashed vertical
+  var LIGHT_CURVE_LABEL_DY = 5;   // a y label's baseline under its level
+  var LIGHT_CURVE_X_LABEL_RISE = 3; // the x labels' baseline above the bottom edge
+  var CURVE_Y_HEADROOM = 0.25;
+
+  // THE ONE LOG SITE in carousel.js (Atlas 2026-10-16 gate item 1, Iris L5): a
+  // lux -> a pixel x on the log-lux axis, and nothing else. luxLo / luxHi are
+  // the published curve's first and last lux. It never takes the log of a
+  // value <= 0: a lux at or below luxLo (night reads ~0.35 lux, and 0 is a
+  // reading) pins to the left edge, one at or above luxHi to the right edge. A
+  // non-numeric lux, or an axis that cannot be logged, has no x (null).
+  function luxAxisX(lux, luxLo, luxHi, widthPx) {
+    if (!isNum(lux) || !isNum(luxLo) || !isNum(luxHi) || !isNum(widthPx)) return null;
+    if (!(luxLo > 0) || !(luxHi > luxLo)) return null;
+    if (lux <= luxLo) return 0;
+    if (lux >= luxHi) return widthPx;
+    return widthPx * (Math.log10(lux) - Math.log10(luxLo)) /
+      (Math.log10(luxHi) - Math.log10(luxLo));
   }
 
-  function lightView(data, cfg, nowMs) {
-    if (!isObj(data)) return null; // absent -> the shell renders the no-data view
-    if (sourceUnavailable(data, "light")) {
-      return { unavailable: true, reason: sourceReason(data, "light") };
+  // A lux for the glass (Iris L6): under 10 one decimal, from 10 a whole number
+  // with the fixed ',' separator. The format is chosen from the raw value.
+  function fmtLuxValue(lux) {
+    return lux < 10 ? lux.toFixed(1) : fmtThousands(Math.round(lux));
+  }
+
+  // An x-axis label: a whole config value prints bare ('3', '1,000'), anything
+  // else as a lux (Iris L5).
+  function fmtAxisLux(v) {
+    return v === Math.floor(v) ? fmtThousands(v) : fmtLuxValue(v);
+  }
+
+  // The published lux reason, through the one table. lux null with no code (a
+  // producer older than US-893-a) is the no_reading class (Atlas A3); an
+  // unknown code paints as itself rather than as a guess.
+  function lightLuxReason(data) {
+    var reasons = isObj(data.reasons) ? data.reasons : {};
+    var code = reasons.lux;
+    if (typeof code !== "string" || !code) return LIGHT_REASON_TEXT.no_reading;
+    return Object.prototype.hasOwnProperty.call(LIGHT_REASON_TEXT, code)
+      ? LIGHT_REASON_TEXT[code]
+      : code;
+  }
+
+  // One raw cell (X2): 'at limit' (amber) on its flag, a count with the ','
+  // separator, or '--' (tertiary) for a null or failed count -- never a
+  // floored 0 and never a subtraction.
+  function lightCountCell(count, atLimit) {
+    if (atLimit === true) return { value: LIGHT_AT_LIMIT_TEXT, tone: "warn" };
+    if (isNum(count) && count >= 0) return { value: fmtThousands(count), tone: "plain" };
+    return { value: "--", tone: "none" };
+  }
+
+  function lightRawView(data) {
+    var lim = isObj(data) && isObj(data.atLimit) ? data.atLimit : {};
+    var d = isObj(data) ? data : {};
+    return {
+      ir: lightCountCell(d.irCount, lim.ir),
+      full: lightCountCell(d.fullCount, lim.full),
+      // visible = full - ir, so it is derived from a clipped count when EITHER is.
+      visible: lightCountCell(d.visibleCount, lim.ir === true || lim.full === true),
+      range: {
+        // The gain word exactly as published -- no multiplier, the page holds
+        // no gain table (Iris L2).
+        gain: typeof d.gain === "string" && d.gain ? d.gain : "--",
+        ms: isNum(d.integrationMs) && d.integrationMs >= 0
+          ? fmtThousands(d.integrationMs) + " ms"
+          : "--",
+      },
+    };
+  }
+
+  // The status line, from the APPLIED basis and never from data.brightnessMode
+  // (Atlas L4), so a stale file that says 'auto' can never show AUTO. Three
+  // runs in the mockup's tiers -- the Michroma label, the mono level, the mono
+  // qualifier -- which is the shape Iris measured the 412 px worst case in.
+  function lightStatusView(applied) {
+    var value = Math.round(applied.level * 100) + " %";
+    var label = applied.basis === "auto" ? "BRIGHTNESS AUTO" : "BRIGHTNESS";
+    var note = applied.basis === "auto" ? null
+      : applied.basis === "alert" ? "(alert)" : "(default, no reading)";
+    return {
+      label: label, value: value, note: note,
+      text: label + " " + value + (note ? " " + note : ""),
+    };
+  }
+
+  // The curve graph from states/light.curve alone. Every polyline vertex is a
+  // published [lux, level]; the dot is (lux, the APPLIED level). Nothing is
+  // interpolated along the line, and no level or band comes from lux. A
+  // missing or malformed curve draws nothing (null) -- never a guessed one.
+  function lightCurveView(curve, lux, appliedLevel) {
+    if (!isObj(curve) || !Array.isArray(curve.points) || curve.points.length < 2) return null;
+    var pts = curve.points;
+    for (var i = 0; i < pts.length; i++) {
+      if (!Array.isArray(pts[i]) || !isNum(pts[i][0]) || !isNum(pts[i][1])) return null;
     }
-    var c = resolveAutoDimConfig(cfg);
-    var age = readAgeSec(data, nowMs);
-    var lux = freshLux(data, c.luxStaleSec, nowMs);
-    if (lux === null) {
-      // WHY there is no usable reading IS the value of the gray tile. The order
-      // matters: "no reading arrived at all" is a different fault from "readings
-      // stopped arriving", and the operator needs to know which.
-      var reason =
-        typeof data.lux !== "number" || !isFinite(data.lux)
-          ? "no reading (saturated or unreadable)"
-          : age === null
-            ? "no read time"
-            : "stale -- last read " + fmtAgeSec(age) + " ago";
-      // Both fields gray INDIVIDUALLY (the card stays present -- always-present
-      // is the contract) and the band grays WITH the reading because it is
-      // derived from it: with no lux there is nothing to derive.
+    var luxLo = pts[0][0];
+    var luxHi = pts[pts.length - 1][0];
+    if (luxAxisX(luxHi, luxLo, luxHi, 1) === null) return null;
+    var plotW = LIGHT_CURVE_W - LIGHT_CURVE_PAD_L - LIGHT_CURVE_PAD_R;
+    var plotH = LIGHT_CURVE_H - LIGHT_CURVE_PAD_T - LIGHT_CURVE_PAD_B;
+    var minLevel = isNum(curve.minLevel) ? curve.minLevel : null;
+    var yLo = minLevel === null ? 0 : Math.max(0, minLevel - CURVE_Y_HEADROOM);
+    function px(v) {
+      return Number(v.toFixed(1));
+    }
+    function x(l) {
+      return px(LIGHT_CURVE_PAD_L + luxAxisX(l, luxLo, luxHi, plotW));
+    }
+    // A level outside the domain pins to its edge, the way luxAxisX pins lux.
+    function y(level) {
+      var f = (Math.min(Math.max(level, yLo), 1) - yLo) / (1 - yLo);
+      return px(LIGHT_CURVE_PAD_T + plotH * (1 - f));
+    }
+    var line = [];
+    for (var j = 0; j < pts.length; j++) line.push(x(pts[j][0]) + "," + y(pts[j][1]));
+    var verticals = [];
+    var ends = [
+      { lux: curve.luxMin, label: null, anchor: "end", dx: -LIGHT_CURVE_LABEL_DX },
+      { lux: curve.luxFull, label: " " + LIGHT_UNIT, anchor: "start", dx: LIGHT_CURVE_LABEL_DX },
+    ];
+    // The luxMin label sits left of its line and the luxFull label right of
+    // its own, so the two never meet however close the verticals are.
+    for (var k = 0; k < ends.length; k++) {
+      var e = ends[k];
+      if (!isNum(e.lux) || !(e.lux > 0)) continue;
+      var vx = x(e.lux);
+      verticals.push({
+        x: vx, labelX: px(vx + e.dx), anchor: e.anchor,
+        label: fmtAxisLux(e.lux) + (e.label || ""),
+      });
+    }
+    var yLabels = [{ y: px(y(1) + LIGHT_CURVE_LABEL_DY), text: "100%" }];
+    if (minLevel !== null && minLevel < 1) {
+      yLabels.push({
+        y: px(y(minLevel) + LIGHT_CURVE_LABEL_DY), text: Math.round(minLevel * 100) + "%",
+      });
+    }
+    var dot = null;
+    if (isNum(lux) && lux >= 0 && isNum(appliedLevel)) dot = { x: x(lux), y: y(appliedLevel) };
+    return {
+      points: line.join(" "),
+      axis: {
+        x0: LIGHT_CURVE_PAD_L, x1: LIGHT_CURVE_W - LIGHT_CURVE_PAD_R,
+        yTop: y(1), yBottom: y(yLo),
+      },
+      verticals: verticals,
+      yLabels: yLabels,
+      labelY: LIGHT_CURVE_H - LIGHT_CURVE_X_LABEL_RISE,
+      dot: dot,
+    };
+  }
+
+  // The whole Light page. `alarmActive` is the same STOP test the panel
+  // applier is called with, so the status and the dot read the level the
+  // screen is actually at. Reasons are checked in Atlas L1 / Iris L1 order: no
+  // payload, then no timestamp, then the provider's lux reason; a null
+  // lightBand is '--' with no glyph. Stale (age > luxStaleSec, or undated)
+  // dims the word tile, the curve and the raw row -- never the status, which
+  // reports what the kiosk applied.
+  function lightPageView(data, cfg, nowMs, alarmActive) {
+    var applied = appliedBrightness(data, cfg, nowMs, alarmActive);
+    var status = lightStatusView(applied);
+    if (!isObj(data) || sourceUnavailable(data, "light")) {
       return {
-        unavailable: false,
-        ambient: naTile("AMBIENT", reason),
-        band: naTile("CONDITION", reason),
+        absent: true, stale: false,
+        word: { text: "--", glyph: null },
+        ambient: { value: "--", unit: "", none: true },
+        reason: isObj(data) ? sourceReason(data, "light") : LIGHT_NO_DATA_TEXT,
+        age: null,
+        raw: lightRawView(null),
+        curve: null,
+        applied: applied,
+        status: status,
       };
     }
+    var c = resolveAutoDimConfig(cfg);
+    var ageSec = readAgeSec(data, nowMs);
+    var stale = ageSec === null || ageSec > c.luxStaleSec;
+    var age = null;
+    if (ageSec === null) age = { text: LIGHT_NO_TIMESTAMP_TEXT, tone: "none" };
+    else if (stale) age = { text: Math.max(0, Math.floor(ageSec)) + " s", tone: "warn" };
+    var lux = isNum(data.lux) && data.lux >= 0 ? data.lux : null;
+    var band = LIGHT_BANDS.indexOf(data.lightBand) === -1 ? null : data.lightBand;
     return {
-      unavailable: false,
-      ambient: {
-        label: "AMBIENT",
-        value: fmtLux(lux),
-        detail: "read " + fmtAgeSec(age) + " ago",
-        level: "ok",
-      },
-      band: {
-        label: "CONDITION",
-        value: luxBand(lux, cfg),
-        detail: "auto-dim band",
-        // `neutral`, not `ok`: an ambient band is a fact about the cabin, not a
-        // health verdict -- DARK is not a fault and DAYLIGHT is not a pass.
-        level: "neutral",
-      },
+      absent: false,
+      stale: stale,
+      word: band === null
+        ? { text: "--", glyph: null }
+        : { text: band.toUpperCase(), glyph: band },
+      ambient: lux === null
+        ? { value: "--", unit: "", none: true }
+        : { value: fmtLuxValue(lux), unit: LIGHT_UNIT, none: false },
+      reason: lux === null ? lightLuxReason(data) : null,
+      age: age,
+      raw: lightRawView(data),
+      curve: lightCurveView(data.curve, lux, applied.level),
+      applied: applied,
+      status: status,
     };
   }
 
@@ -3363,23 +3168,24 @@
   // gray a label -- AC-3, "never a frozen/zeroed live instrument".
   // -------------------------------------------------------------------------
 
-  // Freshness window, in seconds. RE-GROUNDED by US-508, and the re-grounding
-  // is the point: the bridge now writes at pi.sensors.imu.stateHz = 10 Hz (Atlas
-  // transport ruling), so 2.0 s is TWENTY missed writes, not the eight it was at
-  // 4 Hz. It is deliberately NOT retightened in proportion. This feed now drives
-  // the HOME slot, and a home card that flips to the idle face on a brief
-  // scheduling stall is its own defect -- a flapping home slot. 2.0 s is still
-  // far below the horizon at which a driver could mistake a stale g-vector for a
-  // live one, and still MUCH tighter than the light card's 10 s (a 10 s old lux
-  // is roughly true; a 10 s old g-vector is meaningless). Rex-derived; flagged
-  // for Atlas/Spool against a real drive, same status as the bridge's tau.
+  // Freshness window, in seconds. US-896-a (Atlas S105 Q3/G1) re-grounds it on
+  // a MEASUREMENT: states/imu writes every 1.00-1.02 s at stateHz 1, its ts is
+  // whole seconds and the kiosk polls every 100 ms, so a healthy file reads a
+  // median 1.84 s / max 1.94 s old before it is replaced. The old 2.0 left
+  // ~0.06 s of margin and would flash NO UPDATE on a healthy feed. 3.0 = three
+  // readings at 1 Hz, ~1 s above the measured worst case. Measured parked on
+  // wall power; NOT yet validated under drive load.
   //
-  // US-882-c: the window is now pi.display.stale.imuSec, injected per request as
+  // ONE key for one provider: NAV's stale state and the Motion dim both read
+  // resolveImuStaleSec(). Two keys would let NAV freeze while Motion shows live
+  // on the same fact.
+  //
+  // US-882-c: the window is pi.display.stale.imuSec, injected per request as
   // window.DISPLAY_STALE.imuSec. This constant is only the MIRROR of the
   // validator default, used when the injection is absent or not a finite
   // positive number; tests/ui/test_carousel_imu_stale_config.py pins it equal to
   // the validator DEFAULTS value, so drift fails a test.
-  var DEFAULT_IMU_STALE_SEC = 2.0;
+  var DEFAULT_IMU_STALE_SEC = 3.0;
 
   // Read at CALL time (the currentDebugLevel pattern): the injected value can
   // then be checked by a node probe that sets the global before calling.
@@ -3387,27 +3193,6 @@
     var v = isObj(injected) ? injected.imuSec : null;
     return typeof v === "number" && isFinite(v) && v > 0 ? v : DEFAULT_IMU_STALE_SEC;
   }
-
-  // Spool's advisory g threshold (Iris live-instrument spec, quoted verbatim in
-  // the US-508 acceptance criteria). This is a DIFFERENT FACT from the ring's
-  // full scale below, and conflating them is what the built card got wrong: it
-  // only turned amber at the 1.0 g CLAMP, so a hard 0.8 g corner rendered
-  // identically to a gentle one. Advisory, never an alarm -- alarms live on the
-  // unified alert layer, not on this calm card.
-  var G_AMBER_G = 0.6;
-
-  // Outer ring of the g-meter, in g. A street-tired car tops out near 0.9 g
-  // lateral, so a 1.0 g full scale frames real driving without compressing it
-  // into the middle of the dial. Rex-derived DISPLAY scale (not a vehicle
-  // limit) -- flagged for Spool, who owns vehicle dynamics.
-  var G_FULL_SCALE = 1.0;
-
-  // The g-trail window, in seconds (Iris live-instrument spec). US-508 moved the
-  // live poll to 10 Hz, so this is now ~350 points rather than ~140 -- drawn as
-  // ONE polyline, which is one `points` attribute write per paint however many
-  // points it holds. As discrete nodes it would be 3500 elements/sec on a kiosk
-  // Pi, which is exactly why it never was.
-  var G_TRAIL_WINDOW_SEC = 35;
 
   // The bridge's per-field absence vocabulary, in words. This is a NAME map,
   // not a second set of facts: an unknown code passes straight through rather
@@ -3421,6 +3206,12 @@
     // US-749: the fusion's plausibility guard withheld a pitch the accelerometer contradicts.
     gyro_implausible: "gyro implausible",
     no_source: "no source",
+    // US-896-a (closes US-821's text): the AHRS has no heading YET. The NAV
+    // badge is this text upper-cased, STARTING UP (spec s4.2).
+    heading_unseeded: "starting up",
+    // US-892-c (Atlas C2): the pitch fusion has not seeded YET -- the same
+    // class of fact as heading_unseeded. The Motion GYRO cell reads it.
+    pitch_unseeded: "starting up",
   };
 
   function imuReason(data, field) {
@@ -3431,45 +3222,6 @@
       ? IMU_REASON_TEXT[code]
       : code;
   }
-
-  // Place the g-dot in a unit box centred on the instrument. The SIGN CONTRACT
-  // (specs/architecture.md 10.8.2) mapped to SCREEN coordinates, which is where
-  // it is easy to invert an instrument in a way that still looks plausible:
-  //   gLon + = accelerating -> the dot moves UP    -> y NEGATIVE (screen y runs down)
-  //   gLon - = braking      -> the dot moves DOWN  -> y POSITIVE
-  //   gLat + = RIGHT        -> the dot moves RIGHT -> x POSITIVE
-  // Over-scale readings clamp to the ring along their OWN direction (never
-  // per-axis, which would swing the dot to a corner and misreport which way the
-  // car was loaded). The clamp cannot understate the event silently: the
-  // numeric readout beside the meter always carries the true magnitude.
-  function gDotPosition(gLat, gLon, fullScale) {
-    var fs = typeof fullScale === "number" && isFinite(fullScale) && fullScale > 0
-      ? fullScale
-      : G_FULL_SCALE;
-    if (typeof gLat !== "number" || !isFinite(gLat)) return null;
-    if (typeof gLon !== "number" || !isFinite(gLon)) return null;
-    var x = gLat / fs;
-    var y = -gLon / fs;
-    var r = Math.sqrt(x * x + y * y);
-    if (r > 1) return { x: x / r, y: y / r, clamped: true };
-    return { x: x, y: y, clamped: false };
-  }
-
-  // The g-trend sparkline window (Iris locked spec: a ~15-min moving trend) and
-  // its decimation. At the 10 Hz live poll a 15-minute window is ~9000 raw
-  // samples; one retained point per 5 s bucket is <=180, which is more than a
-  // 480x320 sparkline can resolve anyway. Decimation is SAMPLING, not smoothing:
-  // the retained value is a real reading, never an average that never happened.
-  var GRADE_TREND_WINDOW_SEC = 900;
-  var GRADE_TREND_BUCKET_MS = 5000;
-
-  // The sparkline's FIXED vertical scale, in percent grade. Deliberately fixed
-  // rather than autoscaled to the observed range: an autoscale stretches a flat
-  // road's hundredth-of-a-percent wobble to full height and renders it as a
-  // mountain range -- a fabricated terrain built out of real noise. A 10% grade
-  // is already a very steep road (highway signs warn at 6%). Rex-derived DISPLAY
-  // scale, flagged for Spool like G_FULL_SCALE.
-  var GRADE_TREND_SCALE_PCT = 10;
 
   // The compass tape: how many degrees are visible across the strip, and how
   // often a tick / a rose label lands. A label on every tick is unreadable at
@@ -3511,10 +3263,16 @@
   // `offset` is -1..1 across the strip, so the renderer owns the pixels and this
   // function owns the geometry. Signed shortest-arc, so the tape does not tear
   // itself apart across north: at 350 degrees the window genuinely spans 305..35.
-  function compassTape(headingDeg, spanDeg) {
+  //
+  // US-896-a: `tickDeg` (optional) is the lattice step. The interim card omits
+  // it and keeps its 15-degree ticks; the NAV tape passes 5 (spec s3).
+  function compassTape(headingDeg, spanDeg, tickDeg) {
     var span = typeof spanDeg === "number" && isFinite(spanDeg) && spanDeg > 0
       ? spanDeg
       : COMPASS_TAPE_SPAN_DEG;
+    var step = typeof tickDeg === "number" && isFinite(tickDeg) && tickDeg > 0
+      ? tickDeg
+      : COMPASS_TAPE_TICK_DEG;
     // A dead magnetometer renders NO tape. A tape frozen under the caret reads
     // as a confident heading in exactly the way the frozen needle did -- the
     // instrument must be absent, not stopped (US-497's rule, new geometry).
@@ -3526,8 +3284,8 @@
     var ticks = [];
     // Walk the tick lattice (absolute bearings, not offsets from the heading) so
     // every tick keeps its own true bearing and its label cannot drift off it.
-    var first = Math.ceil((heading - half) / COMPASS_TAPE_TICK_DEG) * COMPASS_TAPE_TICK_DEG;
-    for (var deg = first; deg <= heading + half; deg += COMPASS_TAPE_TICK_DEG) {
+    var first = Math.ceil((heading - half) / step) * step;
+    for (var deg = first; deg <= heading + half; deg += step) {
       var bearing = normDeg(deg);
       var delta = deg - heading;   // already the shortest arc by construction
       ticks.push({
@@ -3540,6 +3298,548 @@
       });
     }
     return { available: true, headingDeg: heading, spanDeg: span, ticks: ticks };
+  }
+
+  // -------------------------------------------------------------------------
+  // US-896-a (F-160; specs/v030-navigation-page-design.md s3/s4.1/s4.2): the
+  // NAV card's heading half -- the bearing tape, the digits, the 8-point point
+  // and the five heading states. Pure; the renderer is in the browser block.
+  // -------------------------------------------------------------------------
+
+  // Spec s3: fine ticks every 5 degrees, minor every 15, major + letter every
+  // 45 (COMPASS_TAPE_LABEL_DEG). The 90-degree window is COMPASS_TAPE_SPAN_DEG.
+  var NAV_TAPE_FINE_DEG = 5;
+  var NAV_TAPE_MINOR_DEG = 15;
+
+  // CIO N-4 (spec s4.1): each new reading starts a 1 s ease-in-out glide.
+  var NAV_GLIDE_MS = 1000;
+
+  // R25 / N-12: the 8 compass points, N first so index 0 is north.
+  var COMPASS_POINTS_8 = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+
+  // The bridge's startup code (imu_state_bridge.REASON_HEADING_UNSEEDED): the
+  // AHRS has no heading YET, which is not a dead sensor (spec s4.2).
+  var REASON_HEADING_UNSEEDED = "heading_unseeded";
+
+  // Spec s7 (OEM mockup rules): the band's text before the first reading, and
+  // the reason beside the legacy engine's "--" chip.
+  var NAV_WAITING_TEXT = "waiting for the first heading reading";
+  var NAV_CALIBRATION_ABSENT_TEXT = "calibration not published";
+
+  // The NEW 8-point function (R25). Half up: 22.5 -> NE, 337.5 -> N, because
+  // the index 8 wraps to 0. headingCardinal (16-point) is deliberately left
+  // alone: the interim card keeps it until US-892-b retires both.
+  function compassPoint8(deg) {
+    if (typeof deg !== "number" || !isFinite(deg)) return null;
+    return COMPASS_POINTS_8[Math.floor(normDeg(deg) / 45 + 0.5) % 8];
+  }
+
+  // '247°', zero-padded to three digits. The modulo after the round keeps
+  // 359.6 reading 000, never a 360 that is not a bearing.
+  function fmtHeadingDigits(deg) {
+    if (typeof deg !== "number" || !isFinite(deg)) return "---°";
+    var n = Math.round(normDeg(deg)) % 360;
+    return (n < 10 ? "00" : n < 100 ? "0" : "") + n + "°";
+  }
+
+  // Signed shortest arc from one bearing to another, in (-180, 180]:
+  // 350 -> 10 is +20, never -340 (spec s4.1).
+  function shortestArcDeg(fromDeg, toDeg) {
+    var d = normDeg(toDeg - fromDeg);
+    return d > 180 ? d - 360 : d;
+  }
+
+  // Quadratic ease-in-out on 0..1. Exactly 0.5 at the midpoint, so half the
+  // glide is half the arc.
+  function easeInOut(p) {
+    return p < 0.5 ? 2 * p * p : 1 - 2 * (1 - p) * (1 - p);
+  }
+
+  // The glide: where the tape is drawn now. {fromDeg, toDeg, startMs}; a null
+  // fromDeg means "drawn at toDeg" (a step: the first reading, a reduced-motion
+  // panel, or a frozen tape).
+  function navGlideInit() {
+    return { fromDeg: null, toDeg: null, startMs: null };
+  }
+
+  function navDrawnDeg(glide, nowMs) {
+    if (!isObj(glide) || glide.toDeg === null) return null;
+    if (glide.fromDeg === null || glide.startMs === null) return glide.toDeg;
+    var p = (nowMs - glide.startMs) / NAV_GLIDE_MS;
+    if (!(p < 1)) return glide.toDeg;
+    if (p < 0) p = 0;
+    return normDeg(glide.fromDeg + shortestArcDeg(glide.fromDeg, glide.toDeg) * easeInOut(p));
+  }
+
+  // True while a glide is still moving the tape (the browser keeps painting
+  // frames until it is false).
+  function navGliding(glide, nowMs) {
+    return isObj(glide) && glide.fromDeg !== null && glide.startMs !== null &&
+      nowMs - glide.startMs < NAV_GLIDE_MS;
+  }
+
+  // A new reading starts a fresh glide FROM WHERE THE TAPE IS DRAWN NOW, so a
+  // reading mid-glide never snaps. The same bearing again is not a new reading.
+  // Reduced motion steps.
+  function navGlideNext(glide, targetDeg, nowMs, reducedMotion) {
+    var g = isObj(glide) ? glide : navGlideInit();
+    if (typeof targetDeg !== "number" || !isFinite(targetDeg)) return g;
+    var target = normDeg(targetDeg);
+    if (g.toDeg === target) return g;
+    var drawn = navDrawnDeg(g, nowMs);
+    if (drawn === null || reducedMotion) return { fromDeg: null, toDeg: target, startMs: null };
+    return { fromDeg: drawn, toDeg: target, startMs: nowMs };
+  }
+
+  // One paint's glide from the heading view: a dead sensor drops the bearing
+  // (no tape, and the next reading steps rather than gliding from a bearing
+  // the panel no longer has); a stale feed FREEZES the tape where it is drawn
+  // (no glide); anything else glides to the reading.
+  function navGlideStep(glide, view, nowMs, reducedMotion) {
+    if (!isObj(view) || view.state === "dead") return navGlideInit();
+    if (view.state === "stale") {
+      var drawn = navDrawnDeg(glide, nowMs);
+      return { fromDeg: null, toDeg: drawn !== null ? drawn : view.headingDeg, startMs: null };
+    }
+    return navGlideNext(glide, view.headingDeg, nowMs, reducedMotion);
+  }
+
+  // The five heading states, FIRST MATCH WINS (spec s4.2):
+  //   dead        headingDeg null, reason not heading_unseeded -> no tape at all
+  //   stale       ts age > imuSec (strict)  -> frozen tape, NO UPDATE n s
+  //   unseeded    heading_unseeded          -> STARTING UP
+  //   uncalibrated headingCalibrated false  -> tape normal, NOT CALIBRATED
+  //   legacy      headingCalibrated absent  -> tape normal, "--" + reason
+  //   trusted     otherwise                 -> no badge
+  // No payload, and an undated one, are dead too: neither can show a bearing
+  // as current (the "no read time" rule). A stale page freezes and
+  // badges but does not dim -- the badge is its stale signal (spec s7).
+  //
+  // ONE ACQUISITION PATH: the bearing and its reason come from the RESOLVED
+  // heading tile (imuHeadingTile), never a second read of the payload --
+  // tests/ui/test_carousel_heading_bare_bearing_recorded_pass.py pins it.
+  function navHeadingView(data, nowMs, staleSec) {
+    if (!isObj(data)) return navDeadView("no motion feed");
+    var resolved = imuHeadingTile(data);
+    var unseeded = !resolved.available &&
+      resolved.detail === IMU_REASON_TEXT[REASON_HEADING_UNSEEDED];
+    if (!resolved.available && !unseeded) return navDeadView(resolved.detail);
+    var age = readAgeSec(data, nowMs);
+    if (age === null) return navDeadView("no read time");
+    var heading = resolved.available ? resolved.deg : null;
+    if (age > staleSec) {
+      return navLiveView("stale", heading, "NO UPDATE " + Math.floor(age) + " s", null);
+    }
+    if (unseeded) {
+      return navLiveView("unseeded", null, resolved.detail.toUpperCase(), null);
+    }
+    if (data.headingCalibrated === false) {
+      return navLiveView("uncalibrated", heading, "NOT CALIBRATED", null);
+    }
+    if (data.headingCalibrated !== true) {
+      var reasons = isObj(data.reasons) ? data.reasons : {};
+      return navLiveView(
+        "legacy", heading, "--",
+        typeof reasons.headingCalibrated === "string" && reasons.headingCalibrated
+          ? imuReason(data, "headingCalibrated")
+          : NAV_CALIBRATION_ABSENT_TEXT
+      );
+    }
+    return navLiveView("trusted", heading, null, null);
+  }
+
+  function navDeadView(reason) {
+    return {
+      state: "dead", tape: false, headingDeg: null,
+      badge: null, badgeNote: null, reason: reason,
+    };
+  }
+
+  function navLiveView(state, heading, badge, badgeNote) {
+    return {
+      state: state, tape: true, headingDeg: heading,
+      badge: badge, badgeNote: badgeNote, reason: null,
+    };
+  }
+
+  // The NAV tape's geometry: compassTape's lattice (same direction contract,
+  // same 90-degree window) at 5-degree ticks, each tagged with its tier.
+  function navTape(drawnDeg) {
+    var tape = compassTape(drawnDeg, COMPASS_TAPE_SPAN_DEG, NAV_TAPE_FINE_DEG);
+    for (var i = 0; i < tape.ticks.length; i++) {
+      var t = tape.ticks[i];
+      t.tier = t.major ? "major" : t.deg % NAV_TAPE_MINOR_DEG === 0 ? "minor" : "fine";
+    }
+    return tape;
+  }
+
+  // -------------------------------------------------------------------------
+  // US-896-b (F-160; spec s4.3/s4.4/s4.5): the NAV card's bottom row -- GRADE
+  // from states/imu, the trip from system-status's drive block. Pure; the
+  // renderer is in the browser block. No speed on this page (CIO N-2).
+  // -------------------------------------------------------------------------
+
+  // Spec s4.4: the reason under '-- mi' when there is no window to show.
+  var NAV_TRIP_NOT_MEASURED = "not measured";
+  // A window with no elapsedSec (the provider could not span it): the null
+  // says it was not read, on the glass.
+  var NAV_ELAPSED_NOT_READ = "elapsed not read";
+
+  // GRADE: the Motion grade tile's formatter (one decimal, signed, a true
+  // minus), so the two pages can never print one reading two ways. The slope
+  // glyph tilts with the sign of the PRINTED value, so '+0.0 %' lies flat
+  // rather than claiming a climb the digits do not show. A missing or undated
+  // feed is '--' + its reason, on the glass (the US-852 rule). Parked it stays
+  // live (spec s4.5); a stale feed is frozen under the NO UPDATE badge.
+  function navGradeView(data, nowMs) {
+    if (!isObj(data)) return { value: "--", slope: null, reason: "no motion feed" };
+    if (readAgeSec(data, nowMs) === null) {
+      return { value: "--", slope: null, reason: "no read time" };
+    }
+    var tile = imuGradeTile(data);
+    if (!tile.available) return { value: "--", slope: null, reason: tile.detail };
+    var shown = Math.round(tile.pct * 10);
+    return {
+      value: tile.value,
+      slope: shown > 0 ? "up" : shown < 0 ? "down" : "flat",
+      reason: null,
+    };
+  }
+
+  // h:mm from the provider's elapsedSec. NO time arithmetic on timestamps
+  // (spec s4.4): a page-side now - sinceTs would count parked time as drive
+  // time. Whole minutes, never rounded up past what has elapsed.
+  function fmtElapsed(sec) {
+    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
+    return Math.floor(sec / 3600) + ":" + two(Math.floor((sec % 3600) / 60));
+  }
+
+  // The trip label, precedence top wins (spec s4.4, Atlas B-1(b), CIO Q1):
+  //   1. distanceKm or distancePartial null -> '-- mi' + 'not measured'
+  //   2. distancePartial true   -> 'SINCE h:mm', parked OR recording
+  //   3. drive.state known, not recording -> 'LAST DRIVE'
+  //   4. otherwise               -> 'THIS DRIVE'
+  // The page reads the provider's facts and compares no timestamps: parked is
+  // never inferred from speed, elapsed or time, and a null drive.state does not
+  // assert parked. Rule 1 owns the figures only; its label still follows the
+  // state (rules 3/4), as it has no window to qualify. An unreadable
+  // system-status arrives as null, which is rule 1; a stale one is painted as
+  // published -- never extrapolated (Atlas Q2).
+  //
+  // 'SINCE' is a label (Michroma) and h:mm a READING (--font-mono): the
+  // Michroma subset has no ':' (Iris UIDEV-004), so the two travel apart.
+  // h:mm is the panel's one 12-hour clock without AM/PM, the Engine history
+  // label's rule (engineHistoryWindow).
+  function navTripView(sysData) {
+    var d = isObj(sysData) && isObj(sysData.drive) ? sysData.drive : {};
+    var state = typeof d.state === "string" && d.state ? d.state : null;
+    var parked = state !== null && state !== "recording";
+    var km = typeof d.distanceKm === "number" && isFinite(d.distanceKm) ? d.distanceKm : null;
+    var partial = typeof d.distancePartial === "boolean" ? d.distancePartial : null;
+    var stateLabel = parked ? "LAST DRIVE" : "THIS DRIVE";
+    if (km === null || partial === null) {
+      return {
+        window: "not-measured", label: stateLabel, time: null,
+        distance: "-- mi", elapsed: NAV_TRIP_NOT_MEASURED, measured: false,
+      };
+    }
+    var elapsed = fmtElapsed(d.elapsedSec);
+    var view = {
+      window: parked ? "last" : "this", label: stateLabel, time: null,
+      distance: (km / KM_PER_MILE).toFixed(1) + " mi",
+      elapsed: elapsed === null ? NAV_ELAPSED_NOT_READ : elapsed + " elapsed",
+      measured: true,
+    };
+    if (partial) {
+      var since = typeof d.distanceSinceTs === "string" && ISO_INSTANT.test(d.distanceSinceTs)
+        ? new Date(Date.parse(d.distanceSinceTs)) : null;
+      view.window = "since";
+      view.label = "SINCE";
+      view.time = since ? fmtTimeOfDay(since, false).split(" ")[0] : DRIVING_NOT_READ;
+    }
+    return view;
+  }
+
+  // -------------------------------------------------------------------------
+  // US-892-b (F-127; specs/v030-motion-page-design.md s3/s4, layout A): the
+  // Motion card's top two bands -- PITCH, the 15-minute GRADE graph, and g now
+  // plus this drive's peaks. Pure; the renderer is in the browser block.
+  //
+  // Motion reads the RAW states/imu (Atlas B3): the provider publishes at
+  // 1 Hz and the page steps with it, no interpolation and no page smoothing.
+  // The grade graph reads states/grade-history ONLY (intervalS / windowS, the
+  // provider's keys -- Atlas B4); the page keeps no trend of its own. Peaks are
+  // states/imu.peaks, reset by the PROVIDER at drive start (US-892-a).
+  // -------------------------------------------------------------------------
+
+  // The absence text for an empty or all-null history (Iris M3), drawn above
+  // the dashed zero line -- never a flat line, which would claim level road.
+  var MOTION_NO_GRADE_HISTORY = "no grade history yet";
+  // The bridge's REASON_GYRO_IMPLAUSIBLE (imu_state_bridge.py), the one key
+  // whose text IMU_REASON_TEXT already holds (Atlas B5).
+  var REASON_GYRO_IMPLAUSIBLE = "gyro_implausible";
+  // The labels while a g reading is null: no sign means no direction to name.
+  var MOTION_LON_NONE_LABEL = "ACCEL BRAKE";
+  var MOTION_LAT_NONE_LABEL = "CORNER";
+
+  // Grade graph geometry, in the svg's user units (spec s3: 300 x 58). The
+  // line spans PLOT_W, so the end label sits right of the newest point inside
+  // the box (OEM mockup 2026-10-14, motion:graph).
+  var MOTION_GRAPH_W = 300;
+  var MOTION_GRAPH_H = 58;
+  var MOTION_GRAPH_PLOT_W = 236;
+  var MOTION_GRAPH_PAD = 4;
+  var MOTION_GRAPH_LABEL_DX = 6;
+  var MOTION_GRAPH_LABEL_DY = 5;
+  var MOTION_GRAPH_DOT_R = 4;
+  // The empty-history text sits this far above the zero line (mockup: 8).
+  var MOTION_GRAPH_EMPTY_RISE = 8;
+  // The vertical scale is symmetric about 0 and grows with the history, in
+  // whole steps of 2 %, never under +/-4 % (mockup motion:graph) -- so a flat
+  // road's 0.1 % wobble is not stretched into hills.
+  var MOTION_GRAPH_MIN_RANGE_PCT = 4;
+  var MOTION_GRAPH_RANGE_STEP_PCT = 2;
+
+  function isNum(v) {
+    return typeof v === "number" && isFinite(v);
+  }
+
+  // Signed with a TRUE minus, the sign taken from the ROUNDED value: a value
+  // that rounds to zero has no sign (never '-0.0', Iris M3/M6).
+  function fmtSignedFixed(v, decimals) {
+    var text = Math.abs(v).toFixed(decimals);
+    if (Number(text) === 0) return text;
+    return (v > 0 ? "+" : "−") + text;
+  }
+
+  function motionPitchView(data) {
+    if (!isObj(data)) {
+      return { value: "--", unit: "", sub: "no motion feed", none: true, warn: false };
+    }
+    var p = data.pitchDeg;
+    if (!isNum(p)) {
+      var reasons = isObj(data.reasons) ? data.reasons : {};
+      return {
+        value: "--", unit: "", sub: imuReason(data, "pitchDeg"), none: true,
+        // The gyro guard is the one pitch reason that is a WARNING (spec s4):
+        // the attitude is known to be contradicted, not merely not yet known.
+        warn: reasons.pitchDeg === REASON_GYRO_IMPLAUSIBLE,
+      };
+    }
+    var value = fmtSignedFixed(p, 1);
+    var shown = Number(Math.abs(p).toFixed(1));
+    return {
+      value: value, unit: "°",
+      sub: shown === 0 ? "level" : p > 0 ? "nose up" : "nose down",
+      none: false, warn: false,
+    };
+  }
+
+  function fmtPeak(v) {
+    return isNum(v) ? Math.abs(v).toFixed(2) : "--";
+  }
+
+  // One g cell. The word follows the sign of the ROUNDED reading (+ =
+  // accelerating / right, the imu_state_bridge contract), so '0.00' is never
+  // labelled BRAKE; the number is the magnitude. Numbers are never coloured:
+  // no g band exists (spec s4).
+  function motionGCell(data, field, posWord, negWord, noneWord, peakLine) {
+    var g = isObj(data) ? data[field] : null;
+    if (!isNum(g)) {
+      return {
+        label: noneWord, value: "--", unit: "", none: true,
+        note: isObj(data) ? imuReason(data, field) : "no motion feed",
+        peak: peakLine,
+      };
+    }
+    var text = Math.abs(g).toFixed(2);
+    return {
+      label: g < 0 && Number(text) !== 0 ? negWord : posWord,
+      value: text, unit: " g", none: false, note: null, peak: peakLine,
+    };
+  }
+
+  // US-892-c: the IMU health block (spec s3/s4 M-7). Each cell READS
+  // states/imu and judges nothing: COMPASS is the provider's headingCalibrated,
+  // GYRO its pitch reason, TILT FIX its ZUPT bias and stop count, UPDATED the
+  // age of its ts. A cell is {value, tone, sub}; tone is the status colour --
+  // ok / warn for the status cells, plain for a value, none for '--' + reason
+  // (Iris M5). Unknown is never green.
+  var MOTION_NO_FEED_TEXT = "no motion feed";
+  var MOTION_NO_TIMESTAMP_TEXT = "no timestamp";
+  // The legacy engine publishes no headingCalibrated and no reason for it
+  // (Atlas C1, reconciled X3: Iris's Motion wording, not NAV's chip text).
+  var MOTION_CALIBRATION_ABSENT_TEXT = "not published";
+  // stopCount 0 means the bias is NOT measured yet: 0.0 is not a reading
+  // (imu_state_bridge buildImuState).
+  var MOTION_NO_STOPS_TEXT = "no stops yet";
+  var MOTION_TILT_ABSENT_TEXT = "not published";
+  // The UPDATED age stops counting here; the amber already says "long ago"
+  // (Iris M7).
+  var MOTION_AGE_CAP_SEC = 999;
+
+  // A whole, non-negative count with a FIXED ',' separator. Never
+  // toLocaleString: the kiosk's locale is not ours to assume (Iris L6, shared
+  // with the Light page).
+  function fmtThousands(n) {
+    return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  function healthCell(value, tone, sub) {
+    return { value: value, tone: tone, sub: sub === undefined ? null : sub };
+  }
+
+  // Floor for the shown number, clamped at 0 (a future ts reads '0 s ago');
+  // the stale DECISION keeps the raw float, strict age > imuSec. An undated
+  // payload has no age to show (Iris M7).
+  function motionUpdatedCell(data, nowMs, staleSec) {
+    var age = readAgeSec(data, nowMs);
+    if (age === null) return healthCell("--", "none", MOTION_NO_TIMESTAMP_TEXT);
+    var shown = Math.max(0, Math.floor(age));
+    var text = shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown);
+    return healthCell(text + " s ago", age > staleSec ? "warn" : "plain");
+  }
+
+  // Only a boolean is a verdict. Absent: the provider's own reason when it
+  // publishes one, else 'not published' -- never 'not calibrated' (Atlas C1).
+  function motionCompassCell(data) {
+    if (data.headingCalibrated === true) return healthCell("calibrated", "ok");
+    if (data.headingCalibrated === false) return healthCell("not calibrated", "warn");
+    var reasons = isObj(data.reasons) ? data.reasons : {};
+    return healthCell(
+      "--", "none",
+      typeof reasons.headingCalibrated === "string" && reasons.headingCalibrated
+        ? imuReason(data, "headingCalibrated")
+        : MOTION_CALIBRATION_ABSENT_TEXT
+    );
+  }
+
+  // The mount-tilt bias in degrees, 2 decimals, signed from the ROUNDED value,
+  // with its provenance 'from N stops' (Iris M2/M6). A measurement, never
+  // coloured.
+  function motionTiltCell(data) {
+    var n = data.stopCount;
+    if (n === 0) return healthCell("--", "none", MOTION_NO_STOPS_TEXT);
+    if (!isNum(n) || n < 0 || !isNum(data.biasRad)) {
+      return healthCell("--", "none", MOTION_TILT_ABSENT_TEXT);
+    }
+    return healthCell(
+      fmtSignedFixed(data.biasRad * 180 / Math.PI, 2) + "°", "plain",
+      "from " + fmtThousands(n) + (n === 1 ? " stop" : " stops")
+    );
+  }
+
+  // Atlas C2: 'plausible' ONLY when the guard ran and passed -- a published
+  // finite pitch. A dead or unseeded IMU is '--' + its reason, never green.
+  function motionGyroCell(data) {
+    var reasons = isObj(data.reasons) ? data.reasons : {};
+    if (reasons.pitchDeg === REASON_GYRO_IMPLAUSIBLE) return healthCell("implausible", "warn");
+    if (isNum(data.pitchDeg)) return healthCell("plausible", "ok");
+    return healthCell("--", "none", imuReason(data, "pitchDeg"));
+  }
+
+  function motionHealthView(data, nowMs, staleSec) {
+    if (!isObj(data)) {
+      var none = healthCell("--", "none", MOTION_NO_FEED_TEXT);
+      return { updated: none, compass: none, tilt: none, gyro: none };
+    }
+    return {
+      updated: motionUpdatedCell(data, nowMs, staleSec),
+      compass: motionCompassCell(data),
+      tilt: motionTiltCell(data),
+      gyro: motionGyroCell(data),
+    };
+  }
+
+  // The whole top of the Motion card. `waitedMs` is the US-700 wait for a
+  // feed that has never answered: inside the bound the card reads LOADING
+  // (Atlas Q-1), after it '--' + reason. Stale is the ONE IMU key shared with
+  // NAV (resolveImuStaleSec), strict age > imuSec; an undated payload is stale
+  // too (Iris M4). Stale dims the values; it never blanks them.
+  function motionView(data, nowMs, staleSec, waitedMs) {
+    if (loadPhase(data, waitedMs) === "loading") {
+      return { loading: true, tile: loadingTile("MOTION"), stale: false };
+    }
+    var peaks = isObj(data) && isObj(data.peaks) ? data.peaks : {};
+    var age = isObj(data) ? readAgeSec(data, nowMs) : null;
+    return {
+      loading: false,
+      tile: null,
+      stale: isObj(data) && (age === null || age > staleSec),
+      pitch: motionPitchView(data),
+      lon: motionGCell(
+        data, "gLon", "ACCEL", "BRAKE", MOTION_LON_NONE_LABEL,
+        "peak ▲" + fmtPeak(peaks.accelG) + " ▼" + fmtPeak(peaks.brakeG)
+      ),
+      lat: motionGCell(
+        data, "gLat", "CORNER R", "CORNER L", MOTION_LAT_NONE_LABEL,
+        "peak L" + fmtPeak(peaks.leftG) + " R" + fmtPeak(peaks.rightG)
+      ),
+      health: motionHealthView(data, nowMs, staleSec),
+    };
+  }
+
+  // The 15-minute grade graph from states/grade-history alone. Points are on
+  // the provider's grid, oldest first, newest at the right edge; a slot the
+  // window has not filled yet is empty space on the left. A null point ENDS a
+  // segment and the next real point starts a new one -- never a line drawn
+  // across a gap (Iris M3). Line, end dot and end label share ONE scale, and
+  // the label is the last non-null point.
+  function motionGradeGraph(history) {
+    var pts = isObj(history) && Array.isArray(history.points) ? history.points : [];
+    var maxAbs = null;
+    for (var i = 0; i < pts.length; i++) {
+      var v = isObj(pts[i]) ? pts[i].gradePct : null;
+      if (isNum(v)) maxAbs = Math.max(maxAbs === null ? 0 : maxAbs, Math.abs(v));
+    }
+    var midY = MOTION_GRAPH_H / 2;
+    if (maxAbs === null) {
+      return { empty: true, text: MOTION_NO_GRADE_HISTORY, zeroY: midY, segments: [], end: null };
+    }
+    var range = Math.max(
+      MOTION_GRAPH_MIN_RANGE_PCT,
+      Math.ceil(maxAbs / MOTION_GRAPH_RANGE_STEP_PCT) * MOTION_GRAPH_RANGE_STEP_PCT
+    );
+    var inner = MOTION_GRAPH_H - 2 * MOTION_GRAPH_PAD;
+    function y(pct) {
+      return MOTION_GRAPH_PAD + inner * (1 - (pct + range) / (2 * range));
+    }
+    var slots = isNum(history.windowS) && isNum(history.intervalS) && history.intervalS > 0
+      ? Math.floor(history.windowS / history.intervalS) : pts.length;
+    if (slots < pts.length) slots = pts.length;
+    function x(idx) {
+      if (slots <= 1) return MOTION_GRAPH_PLOT_W;
+      return MOTION_GRAPH_PLOT_W * (slots - pts.length + idx) / (slots - 1);
+    }
+    var segments = [];
+    var current = [];
+    var end = null;
+    for (var j = 0; j < pts.length; j++) {
+      var g = isObj(pts[j]) ? pts[j].gradePct : null;
+      if (!isNum(g)) {
+        if (current.length) segments.push(current.join(" "));
+        current = [];
+        continue;
+      }
+      var px = Number(x(j).toFixed(1));
+      var py = Number(y(g).toFixed(1));
+      current.push(px + "," + py);
+      end = { x: px, y: py, pct: g };
+    }
+    if (current.length) segments.push(current.join(" "));
+    return {
+      empty: false,
+      text: null,
+      zeroY: Number(y(0).toFixed(1)),
+      rangePct: range,
+      segments: segments,
+      end: {
+        x: end.x, y: end.y,
+        labelX: MOTION_GRAPH_PLOT_W + MOTION_GRAPH_LABEL_DX,
+        labelY: Number((end.y + MOTION_GRAPH_LABEL_DY).toFixed(1)),
+        label: fmtSignedFixed(end.pct, 1) + "%",
+      },
+    };
   }
 
   // US-508: the GEAR glyph. Gear is NOT an IMU fact -- Atlas ruled it out of
@@ -4053,6 +4353,166 @@
     return { last30: last30, thisDrive: thisDrive, sinceReset: sinceReset };
   }
 
+  // --- US-890-f the SINCE RESET reset (F-127, spec s4.3) ---------------------
+  //
+  // Parked only: hold SINCE RESET ~2 s, confirm "Reset average MPG?", then a
+  // token-gated POST /fuel-reset, then show the RE-READ stored value (F-126
+  // honest write, never optimistic). The page never caches an "old value": the
+  // slot always renders the LATEST states/fuel-economy read plus an outcome
+  // line. The ONE time it masks the provider is "resetting…", from Yes until a
+  // read whose sinceReset.resetAtTs equals the 200's resetAtTs, bounded by
+  // pi.display.stale.fuelResetConfirmSec counted from the 200 (Atlas Q4/G3).
+  //
+  // Hold time: CIO F-6, "long-press the tile (~2 s)" (fuel spec s2).
+  var FUEL_RESET_HOLD_MS = 2000;
+  // Every outcome text is <= 16 characters, the MPG row's fit rule (s4.6).
+  var FUEL_RESET_HINT = "hold to reset";
+  var FUEL_RESET_RESETTING = "resetting…";
+  var FUEL_RESET_OUTCOME_TEXT = {
+    park: "park to reset",
+    failed: "couldn't reset",
+    unconfirmed: "couldn't confirm",
+  };
+  // The one refusal that means "move the car first" (core.py
+  // _maybeServiceFuelResetRequest); every other 409 reason is a failed reset.
+  var FUEL_RESET_DRIVING_REASON = "driving";
+
+  // pi.display.stale.fuelResetConfirmSec, injected per request as
+  // window.DISPLAY_STALE.fuelResetConfirmSec (the imuSec pattern). There is NO
+  // mirrored default here, on purpose (no literal in this file): without a real
+  // window "resetting…" would be unbounded, so an absent or invalid injection
+  // returns null and the reset is simply not offered (fail closed).
+  function resolveFuelResetConfirmSec(injected) {
+    var v = isObj(injected) ? injected.fuelResetConfirmSec : null;
+    return typeof v === "number" && isFinite(v) && v > 0 ? v : null;
+  }
+
+  function fuelSinceResetTs(fuelEconomyData) {
+    var block = isObj(fuelEconomyData) ? fuelEconomyData.sinceReset : null;
+    return isObj(block) && typeof block.resetAtTs === "string" ? block.resetAtTs : null;
+  }
+
+  // phase: idle | confirm | posting (Yes -> the answer) | awaiting (200 -> the
+  // matching read). `outcome` is a FUEL_RESET_OUTCOME_TEXT key or null.
+  // `baselineTs` is the resetAtTs on the read at Yes -- an identity, not a
+  // value: a later read with a different one means a reset landed.
+  function fuelResetInit() {
+    return { phase: "idle", outcome: null, baselineTs: null, resetAtTs: null, confirmFromMs: null };
+  }
+
+  // A POST /fuel-reset answer -> the next state (states_http_server
+  // _handleFuelReset: 200, 409, 503, 504, 401). Only a 200 that names its
+  // resetAtTs can be confirmed by a read; a 504, a 200 without a stamp and any
+  // status the server does not document leave the outcome UNKNOWN.
+  function fuelResetAnswer(state, status, body, nowMs) {
+    var b = isObj(body) ? body : {};
+    if (status === 200 && b.ok === true && typeof b.resetAtTs === "string" && b.resetAtTs) {
+      state.phase = "awaiting";
+      state.resetAtTs = b.resetAtTs;
+      state.confirmFromMs = nowMs;
+      return state;
+    }
+    state.phase = "idle";
+    if (status === 409 && b.reason === FUEL_RESET_DRIVING_REASON) state.outcome = "park";
+    else if (status === 409 || status === 503 || status === 401) state.outcome = "failed";
+    else state.outcome = "unconfirmed";
+    return state;
+  }
+
+  // Advance the reset by one event. Pure; the clock arrives on the event.
+  //   {type: "hold", parked, confirmSec}      the 2 s hold completed
+  //   {type: "no"}                            confirm -> No (changes nothing)
+  //   {type: "yes", read}                     confirm -> Yes
+  //   {type: "answer", status, body, nowMs}   the POST answered
+  //   {type: "failure"}                       the POST never answered
+  //   {type: "read", read, parked, nowMs, confirmSec}   one tick's read
+  function fuelResetNext(prev, ev) {
+    var s = isObj(prev) && typeof prev.phase === "string" ? {
+      phase: prev.phase, outcome: prev.outcome, baselineTs: prev.baselineTs,
+      resetAtTs: prev.resetAtTs, confirmFromMs: prev.confirmFromMs,
+    } : fuelResetInit();
+    var type = isObj(ev) ? ev.type : null;
+    if (type === "hold") {
+      if (s.phase === "idle" && ev.parked === true && typeof ev.confirmSec === "number") {
+        s.phase = "confirm";
+      }
+      return s;
+    }
+    if (type === "no") {
+      if (s.phase === "confirm") s.phase = "idle";
+      return s;
+    }
+    if (type === "yes") {
+      if (s.phase !== "confirm") return s;
+      s.phase = "posting";
+      s.outcome = null;
+      s.baselineTs = fuelSinceResetTs(ev.read);
+      s.resetAtTs = null;
+      s.confirmFromMs = null;
+      return s;
+    }
+    if (type === "answer") {
+      if (s.phase !== "posting") return s;
+      return fuelResetAnswer(s, ev.status, ev.body, ev.nowMs);
+    }
+    if (type === "failure") {
+      // No answer at all: the server may or may not have acted.
+      if (s.phase === "posting") {
+        s.phase = "idle";
+        s.outcome = "unconfirmed";
+      }
+      return s;
+    }
+    if (type !== "read") return s;
+    var ts = fuelSinceResetTs(ev.read);
+    if (s.phase === "confirm" && ev.parked !== true) {
+      // The car moved under an open confirm: withdraw it.
+      s.phase = "idle";
+    } else if (s.phase === "awaiting") {
+      if (ts !== null && ts === s.resetAtTs) {
+        s.phase = "idle";
+        s.outcome = null;
+      } else if (!(typeof ev.nowMs === "number" && typeof ev.confirmSec === "number" &&
+                   ev.nowMs - s.confirmFromMs <= ev.confirmSec * 1000)) {
+        // Past the window, or no window to measure against.
+        s.phase = "idle";
+        s.outcome = "unconfirmed";
+      }
+    } else if (s.phase === "idle" && s.outcome !== null && ts !== null && ts !== s.baselineTs) {
+      // A reset landed after all (a 504 or a late read): the read speaks.
+      s.outcome = null;
+    }
+    return s;
+  }
+
+  // The MPG row with the reset applied to SINCE RESET.
+  function fuelMpgResetView(fuelEconomyData, resetState, parked, confirmSec) {
+    return fuelResetOverlay(fuelMpgView(fuelEconomyData), resetState, parked, confirmSec);
+  }
+
+  // Apply the reset to a fuelMpgView. `sinceReset.line` is the slot's outcome /
+  // hint line; `reset` says whether the hold is live and the confirm is open.
+  function fuelResetOverlay(view, resetState, parked, confirmSec) {
+    var s = isObj(resetState) && typeof resetState.phase === "string" ? resetState : fuelResetInit();
+    var offered = parked === true && typeof confirmSec === "number";
+    var slot = view.sinceReset;
+    slot.line = "";
+    if (s.phase === "posting" || s.phase === "awaiting") {
+      view.sinceReset = fuelMpgSlot("--", FUEL_RESET_RESETTING, "resetting");
+      view.sinceReset.line = "";
+    } else if (s.outcome !== null &&
+               Object.prototype.hasOwnProperty.call(FUEL_RESET_OUTCOME_TEXT, s.outcome)) {
+      slot.line = FUEL_RESET_OUTCOME_TEXT[s.outcome];
+    } else if (offered) {
+      slot.line = FUEL_RESET_HINT;
+    }
+    view.reset = {
+      pressable: offered && s.phase === "idle",
+      confirm: offered && s.phase === "confirm",
+    };
+    return view;
+  }
+
   // --- US-889-c Engine card, the scroll half (F-127) -------------------------
   //
   // specs/v030-engine-page-design.md s3-s4, ACs 5-11: this drive's coolant,
@@ -4286,206 +4746,6 @@
     };
   }
 
-  // Spool's advisory band on the g magnitude. Neutral for an unreadable value:
-  // an absent measurement must never paint a warning colour, which would be a
-  // fabricated event manufactured out of a dead sensor.
-  function gLevel(gMag) {
-    if (typeof gMag !== "number" || !isFinite(gMag)) return "neutral";
-    return Math.abs(gMag) >= G_AMBER_G ? "amber" : "neutral";
-  }
-
-  // Advance the ~15-min grade trend. Same shape as pushGTrail and for the same
-  // reason: eviction runs even when there is NO new value, so a feed that stops
-  // decays the sparkline to empty instead of freezing its last shape on screen.
-  // Within a bucket the newest reading REPLACES the previous one (latest-wins),
-  // so the retained point is always a real sample.
-  function pushGradeTrend(trend, pct, nowMs, windowSec, bucketMs) {
-    var w = (typeof windowSec === "number" && windowSec > 0
-      ? windowSec
-      : GRADE_TREND_WINDOW_SEC) * 1000;
-    var bucket = typeof bucketMs === "number" && bucketMs > 0
-      ? bucketMs
-      : GRADE_TREND_BUCKET_MS;
-    var src = Array.isArray(trend) ? trend : [];
-    var out = [];
-    for (var i = 0; i < src.length; i++) {
-      if (isObj(src[i]) && nowMs - src[i].t <= w) out.push(src[i]);
-    }
-    if (typeof pct !== "number" || !isFinite(pct)) return out;
-    var last = out.length ? out[out.length - 1] : null;
-    if (last && Math.floor(last.t / bucket) === Math.floor(nowMs / bucket)) {
-      out[out.length - 1] = { v: pct, t: nowMs };
-    } else {
-      out.push({ v: pct, t: nowMs });
-    }
-    return out;
-  }
-
-  // Sparkline geometry in a unit box: x 0..1 across the window, y -1..1 with
-  // POSITIVE = climbing. Fixed scale + clamp (see GRADE_TREND_SCALE_PCT) -- a
-  // clamped point still lands at the edge, so a very steep road reads as
-  // pinned rather than vanishing off the card.
-  function gradeTrendPoints(trend) {
-    var src = Array.isArray(trend) ? trend : [];
-    if (src.length === 0) return [];
-    var first = src[0].t;
-    var last = src[src.length - 1].t;
-    var span = last - first;
-    var out = [];
-    for (var i = 0; i < src.length; i++) {
-      var y = src[i].v / GRADE_TREND_SCALE_PCT;
-      if (y > 1) y = 1;
-      if (y < -1) y = -1;
-      out.push({ x: span > 0 ? (src[i].t - first) / span : 1, y: y });
-    }
-    return out;
-  }
-
-  // Advance the client-side g-trail (Atlas Q-B: the animation is accumulated
-  // from POLLED values, so eviction is this card's job). Pure: returns a new
-  // array. Eviction runs even when there is NO new point, so a feed that stops
-  // decays the trail to empty instead of freezing its last shape on screen.
-  function pushGTrail(trail, point, nowMs, windowSec) {
-    var w = (typeof windowSec === "number" && windowSec > 0
-      ? windowSec
-      : G_TRAIL_WINDOW_SEC) * 1000;
-    var src = Array.isArray(trail) ? trail : [];
-    var out = [];
-    for (var i = 0; i < src.length; i++) {
-      if (isObj(src[i]) && nowMs - src[i].t <= w) out.push(src[i]);
-    }
-    if (isObj(point) && typeof point.x === "number" && typeof point.y === "number") {
-      out.push({ x: point.x, y: point.y, t: nowMs });
-    }
-    return out;
-  }
-
-  // ARCH-011 -- ONE decimal, not two. CIO 2026-08-29 from the driver's seat:
-  // "I did see actual g force values, although 2 decimal places is not needed
-  // and just noise."
-  //
-  // The measurement argument, stated honestly because it is narrower than it
-  // first looks: Spool measured this accelerometer's SCALE error at +1.62%
-  // (|g| = 9.9659 vs 9.80665, 3,224 samples at rest). A scale error is
-  // PROPORTIONAL, so the second decimal is defensible below ~0.6 g and only
-  // becomes unsupported above it:
-  //
-  //     0.10 g -> +/-0.0016 g   2nd decimal supported
-  //     0.50 g -> +/-0.0081 g   2nd decimal supported
-  //     1.00 g -> +/-0.0162 g   2nd decimal NOT supported
-  //
-  // So the digit is least trustworthy exactly when the reading matters most --
-  // hard cornering and braking. Below that it is supported and meaningless: it
-  // flickers continuously at cruise and carries nothing a driver can act on.
-  //
-  // One decimal is honest at every magnitude AND readable at a glance, which is
-  // the only way this value is ever read.
-  var _G_DECIMALS = 1;
-
-  // US-645: the direction-label deadband, DERIVED from the decimals constant
-  // above and never written out as a literal. Half of the last displayed place
-  // is precisely the value at which `toFixed(_G_DECIMALS)` stops printing zero,
-  // so the label's neutral band and the number's rounding band are the SAME
-  // band by construction -- at one decimal, 0.05 g. See gAxisDetail.
-  var G_LABEL_DEADBAND_G = 0.5 * Math.pow(10, -_G_DECIMALS);
-
-  function fmtG(g) {
-    return g.toFixed(_G_DECIMALS) + " g";
-  }
-
-  // Name the two components on the tile. This puts the SIGN CONTRACT on the
-  // screen, where a mounted-backwards board becomes obvious to the operator
-  // ("0.3 brake" while accelerating) instead of a silently mirrored dot.
-  //
-  // US-631 (A) -- THE LATERAL LABEL IS ABBREVIATED TO ONE CHARACTER, and that is
-  // a defect fix, not a style preference. CIO 2026-08-31, from the driver's
-  // seat: "they do bounce as the word right will wrap around cuz it's too long
-  // to fit on the screen." Atlas photographed both states one minute apart --
-  // the tile rendered FOUR lines with `right` and THREE with `left`.
-  //
-  // The mechanism, and why one character is the whole fix: `.tile-detail`
-  // declares no `white-space: nowrap` and no `min-height`, and `.live-col` sets
-  // `justify-content: center`. So a string ONE CHARACTER wider re-wraps, grows
-  // the tile by a line box, and re-centres the entire column -- the bounce. The
-  // lateral word was the ONLY varying-length token on this line: `left` is 4 and
-  // `right` is 5, while `accel` and `brake` are both 5 and never moved anything.
-  // At `L`/`R` the rendered length depends ONLY on the two magnitudes, so no
-  // change of DIRECTION can change the line count.
-  //
-  // WHAT THIS DOES NOT FIX, stated so it is not mistaken for closed: the line
-  // still WRAPS in a 108px column -- it is merely stable now. That is the width
-  // reservation US-631 (B) asks for, it does not fit at any tier in the F-127
-  // scale, and it is escalated to Iris as I-us631. Abbreviating further, or
-  // collapsing L/R to a shared token, would buy width by DELETING the sign
-  // contract above; the direction stays distinguishable.
-  //
-  // The words are spelled INLINE, not hoisted to constants, because the
-  // US-631 width guard reads this function's body to learn what vocabulary the
-  // tile actually ships. Moving them out of it leaves that tripwire green and
-  // blind, which is the failure mode it exists to prevent.
-  //
-  // US-645 (F-138) -- THE DEADBAND. A bare sign test has no neutral, so at rest
-  // the label reports the sign of the NOISE: Atlas measured ELEVEN longitudinal
-  // sign flips in 17 seconds at idle, on noise of +/-0.015 g straddling zero.
-  // The lateral label has the identical defect and nobody had noticed. Both
-  // axes get the same mechanical fix -- one pattern applied twice, not two
-  // behaviours.
-  //
-  // THE DEADBAND IS THE DISPLAY'S OWN ROUNDING THRESHOLD, DERIVED. At one
-  // decimal anything under 0.05 g prints as `0.0`, so deriving the band from
-  // _G_DECIMALS makes the word go neutral EXACTLY when the number reads zero:
-  // the tile can never show a direction beside a 0.0, and a future change to
-  // the decimals constant moves both together. A hardcoded 0.05 would be the
-  // same number today and a silent lie the day that constant moves -- which is
-  // this defect over again, one layer up.
-  //
-  // WHAT THE DEADBAND DOES NOT TOUCH, stated because it would be the tempting
-  // over-reach: the NUMBER and the METER DOT are untouched. A deadband that
-  // zeroed the reading would fabricate a stillness the accelerometer never
-  // measured. Only the WORD goes neutral; 0.03 g still moves the dot.
-  //
-  // THE WIDTHS ARE THE CONSTRAINT, and they are stated here because US-631 (A)
-  // bought the tile's constant height with exactly this property:
-  //     lateral      `L` `R` `-`                     -- ALL 1 character
-  //     longitudinal `accel` `brake` `coast` `still` -- ALL 5 characters
-  // Every value a term can take is the same width as its siblings, so no state
-  // change on either axis can change the rendered length, the line count, or
-  // the tile's height. That is why the neutral is a dash and not `steady`, and
-  // why the stopped state is `still` and not `stopped`: US-645's own acceptance
-  // requires one character laterally and five longitudinally, and the six- and
-  // seven-character spellings would have re-opened the bounce US-631 just shut
-  // on the far axis. tests/ui/test_gforce_tile_width_budget.py sweeps it.
-  //
-  // `still` IS AN OBD CLAIM, NOT AN IMU ONE. gLon is ~0 at a 65 mph cruise just
-  // as it is in a parking space, so "stopped" inferred from this instrument
-  // alone would be a lie at speed. It is upgraded ONLY on a vehicle speed that
-  // is TRULY zero, and an absent/unreadable speed degrades to `coast` -- true at
-  // any speed, including zero. NO PRODUCER PUBLISHES SPEED TO THIS DASHBOARD
-  // TODAY (I-us645), so `null` is what the browser passes and `still` is
-  // currently unreachable on the panel. That is the honest state, not an
-  // oversight: the branch is here so wiring a producer is zero-rework, exactly
-  // the shape GEAR carried before US-630 landed its own.
-  // NO NON-LABEL STRING LITERAL MAY APPEAR IN THIS BODY. The US-631 tripwire
-  // reads every quoted word out of it and treats them all as tile vocabulary,
-  // so a stray `typeof x === "number"` here lands `number` in the measured
-  // width set and the guard starts sizing against a word that never renders.
-  // The speed test is a STRICT equality for exactly that reason as well as its
-  // own: `=== 0` alone refuses null, undefined, NaN and the string "0" (which
-  // `==` would accept), so it needs no typeof to be safe.
-  function gAxisDetail(gLat, gLon, speedKph) {
-    var band = G_LABEL_DEADBAND_G;
-    var stopped = speedKph === 0;
-    var lat = Math.abs(gLat) < band ? "-" : (gLat >= 0 ? "R" : "L");
-    var lon = Math.abs(gLon) < band
-      ? (stopped ? "still" : "coast")
-      : (gLon >= 0 ? "accel" : "brake");
-    return (
-      Math.abs(gLat).toFixed(_G_DECIMALS) + " " + lat +
-      " · " +
-      Math.abs(gLon).toFixed(_G_DECIMALS) + " " + lon
-    );
-  }
-
   function imuHeadingTile(data) {
     var deg = data.headingDeg;
     if (typeof deg !== "number" || !isFinite(deg)) {
@@ -4555,134 +4815,6 @@
     };
   }
 
-  // `speedKph` is the OBD vehicle speed, and it is a PARAMETER rather than a
-  // field read off `data` on purpose: it is not an IMU fact, and letting this
-  // function reach into the states/imu payload for it would re-merge two
-  // producers into one contract -- the same SSOT violation Atlas named when he
-  // kept gear out of states/imu. Absent (the shipped case today) it is null and
-  // the tile simply never claims `still`.
-  function imuGTile(data, speedKph) {
-    var dot = gDotPosition(data.gLat, data.gLon, G_FULL_SCALE);
-    var mag = data.gMag;
-    if (dot === null || typeof mag !== "number" || !isFinite(mag)) {
-      var na = naTile("G-FORCE", imuReason(data, "gLat"));
-      // NO DOT. An origin dot would render as a real, measured "no g" -- the
-      // zeroed instrument AC-3 forbids. Absence must look like absence.
-      na.dot = null;
-      na.available = false;
-      return na;
-    }
-    return {
-      label: "G-FORCE",
-      value: fmtG(mag),
-      detail: gAxisDetail(data.gLat, data.gLon, speedKph),
-      // US-508: amber from 0.6 g (Spool), which the built card did not do -- it
-      // only coloured at the 1.0 g CLAMP, so a hard 0.8 g corner looked exactly
-      // like a gentle one. The colour is a NUDGE beside the true magnitude,
-      // never a replacement for it and never a takeover.
-      level: gLevel(mag),
-      dot: dot,
-      available: true,
-    };
-  }
-
-  // The whole-card view. Returns:
-  //   null                     -- no state file; the SHELL owns the absent
-  //                               message, so one place decides absence
-  //   {idle:true, reason}      -- present but not renderable as a live
-  //                               instrument (unwired / undated / stale)
-  //   {idle:false, ...}        -- the live instrument
-  function imuView(data, nowMs, speedKph) {
-    if (!isObj(data)) return null;
-    // The bridge's EXPLICIT availability claim. An unwired sensor writes
-    // available:false (and that write bypasses the bridge's own rate limit, so
-    // an unplug can never leave a live reading sitting here looking current).
-    if (data.available !== true) {
-      // The blanket reason the bridge stamps on every derived field.
-      return { idle: true, reason: imuReason(data, "gLat") };
-    }
-    var age = readAgeSec(data, nowMs);
-    if (age === null) return { idle: true, reason: "no read time" };
-    if (age > resolveImuStaleSec(global && global.DISPLAY_STALE)) {
-      return { idle: true, reason: "stale -- last read " + fmtAgeSec(age) + " ago" };
-    }
-    return {
-      idle: false,
-      ageSec: age,
-      fullScale: G_FULL_SCALE,
-      g: imuGTile(data, speedKph),
-      heading: imuHeadingTile(data),
-      grade: imuGradeTile(data),
-      // ALWAYS typed-NA (AC-2). The ICM-20948 has no barometer and a zeroed
-      // altitude renders as sea level -- a confident lie. It never blocks the
-      // card; a future BMP280/GPS fills it at the BRIDGE, not here.
-      altitude: naTile("ALTITUDE", imuReason(data, "altitude")),
-    };
-  }
-
-  // US-508: the whole LIVE face. imuView owns the states/imu contract; this adds
-  // the two things that are NOT IMU facts -- the compass tape geometry (derived
-  // from the heading the bridge already resolved, not from a second fusion) and
-  // the gear glyph, whose producer is separate by Atlas's ruling. Returns the
-  // same three shapes imuView does, so the caller has ONE thing to branch on.
-  function liveCardView(imuData, gearData, nowMs, speedKph) {
-    var view = imuView(imuData, nowMs, speedKph);
-    if (view === null || view.idle) return view;
-    view.tape = compassTape(
-      view.heading.available ? view.heading.deg : null,
-      COMPASS_TAPE_SPAN_DEG
-    );
-    // Gear is read from its OWN producer's payload, never from imuData -- even
-    // if a states/imu file were to sprout a gear field, honouring it here would
-    // quietly re-merge two producers into one fact (the SSOT violation Atlas
-    // named when he kept gear out of the contract).
-    view.gear = gearView(gearData);
-    return view;
-  }
-
-  // US-508 HOME-SLOT SWAP: one slot, two faces. THIS FUNCTION IS THE ONLY PLACE
-  // that decides which -- a second arbiter would put two rules in charge of one
-  // fact, which is exactly why US-497 declined to build the swap at all.
-  //
-  // US-541 IMU-ALWAYS-ON (Atlas): the decision now reads THE MOTION FEED ONLY.
-  // US-508 let `parked` win outright, which hid the one instrument that is
-  // Pi-local and always-live at precisely the moment its readings are both true
-  // and worth looking at -- parked, the IMU is CORRECT (real heading, a real
-  // 0.0 g), not unavailable. The vehicle state is deliberately NOT a parameter:
-  // a function that cannot see system-status cannot re-couple the home face to
-  // it, so a future re-coupling has to widen the signature first, which is a
-  // visible act rather than a condition slipped into the body. `carouselIdle`
-  // keeps its OTHER consumers (the auto-rotate pause, the home nav edge).
-  //
-  // The idle face survives as the honest fallback and NOTHING ELSE: no file,
-  // unwired sensor, undated payload or stale reading (AC-3 -- never a frozen
-  // motion display). It therefore always carries a reason; there is no longer a
-  // disposition where the fallback fires with nothing to say.
-  //
-  // US-700 adds the THIRD state, and this function stays the only arbiter of
-  // it: the `loading` flag it returns is what the idle view renders, so the
-  // motion face still has exactly one rule in charge of it.
-  function homeFace(imuData, nowMs, waitedMs) {
-    var view = imuView(imuData, nowMs);
-    if (view === null) {
-      // NOTHING has arrived. Which nothing matters: a feed still inside the
-      // bound is starting up; a feed past it -- or one that answered once and
-      // then died -- is genuinely absent.
-      if (loadPhase(imuData, waitedMs) === "loading") {
-        return { face: "idle", reason: "waiting for first read", loading: true };
-      }
-      return { face: "idle", reason: "no motion feed", loading: false };
-    }
-    if (view.idle) {
-      // A payload ARRIVED and is not renderable as an instrument: unwired,
-      // undated, stale. That is a real defect carrying a real reason, and a
-      // "loading" hero here would tell the operator to keep waiting for a
-      // sensor that is never coming.
-      return { face: "idle", reason: view.reason, loading: false };
-    }
-    return { face: "live", reason: null, loading: false };
-  }
-
   // US-503 idle-card wall clock. PURE -- the caller supplies the Date, so this
   // formats a clock face without reading one (the tests stay deterministic and
   // it is node-testable; it previously lived in the browser-only block below,
@@ -4749,10 +4881,6 @@
 
   var api = {
     makeResilientLoop: makeResilientLoop,
-    makeSmoothWindow: makeSmoothWindow,
-    circularMeanDeg: circularMeanDeg,
-    linearMean: linearMean,
-    smoothedImuView: smoothedImuView,
     reportFetchAbort: reportFetchAbort,
     shouldLog: shouldLog,
     uiLog: uiLog,
@@ -4774,19 +4902,32 @@
     shouldAutoResume: shouldAutoResume,
     rotateProgress: rotateProgress,
     swipeGesture: swipeGesture,
-    luxBand: luxBand,
-    lightView: lightView,
-    gDotPosition: gDotPosition,
-    // US-645: exported so the deadband can be swept densely across its own
-    // boundary. gDotPosition and gLevel are already here for the same reason --
-    // the per-axis rules on this tile are the parts worth measuring at 0.001 g,
-    // and doing it through a whole card view would be 400 renders of furniture.
-    gAxisDetail: gAxisDetail,
+    // US-893-b: the Light page.
+    luxAxisX: luxAxisX,
+    lightCurveView: lightCurveView,
+    lightStatusView: lightStatusView,
+    lightPageView: lightPageView,
     headingCardinal: headingCardinal,
-    pushGTrail: pushGTrail,
-    imuView: imuView,
     resolveImuStaleSec: resolveImuStaleSec,
     compassTape: compassTape,
+    // US-896-a: the NAV card's heading half.
+    compassPoint8: compassPoint8,
+    fmtHeadingDigits: fmtHeadingDigits,
+    shortestArcDeg: shortestArcDeg,
+    navGlideInit: navGlideInit,
+    navGlideNext: navGlideNext,
+    navGlideStep: navGlideStep,
+    navDrawnDeg: navDrawnDeg,
+    navGliding: navGliding,
+    navHeadingView: navHeadingView,
+    navTape: navTape,
+    // US-896-b: the NAV card's bottom row.
+    navGradeView: navGradeView,
+    navTripView: navTripView,
+    fmtElapsed: fmtElapsed,
+    // US-892-b: the Motion card's top two bands.
+    motionView: motionView,
+    motionGradeGraph: motionGradeGraph,
     gearView: gearView,
     gearReasonText: gearReasonText,
     displayUnits: displayUnits,
@@ -4795,11 +4936,6 @@
     engineHistoryView: engineHistoryView,
     engineStatusView: engineStatusView,
     rpmBarView: rpmBarView,
-    gLevel: gLevel,
-    pushGradeTrend: pushGradeTrend,
-    gradeTrendPoints: gradeTrendPoints,
-    liveCardView: liveCardView,
-    homeFace: homeFace,
     sourceUnavailable: sourceUnavailable,
     sourceReason: sourceReason,
     naTile: naTile,
@@ -4838,6 +4974,11 @@
     fuelLoopView: fuelLoopView,
     fuelTotalTrimView: fuelTotalTrimView,
     fuelMpgView: fuelMpgView,
+    FUEL_RESET_HOLD_MS: FUEL_RESET_HOLD_MS,
+    resolveFuelResetConfirmSec: resolveFuelResetConfirmSec,
+    fuelResetInit: fuelResetInit,
+    fuelResetNext: fuelResetNext,
+    fuelMpgResetView: fuelMpgResetView,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -4863,8 +5004,7 @@
     takeoverShouldShow: takeoverShouldShow,
     ribbonView: ribbonView,
     dtcListSorted: dtcListSorted,
-    brightnessCurve: brightnessCurve,
-    brightnessLevel: brightnessLevel,
+    appliedBrightness: appliedBrightness,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
     fmtClock: fmtClock,
@@ -4872,10 +5012,7 @@
     carouselIdle: carouselIdle,
     notLiveMarker: notLiveMarker,
     agoText: agoText,
-    idleLastDriveFact: idleLastDriveFact,
-    idleBatteryFact: idleBatteryFact,
     dtcNotReadTile: dtcNotReadTile,
-    idleCardView: idleCardView,
     dtcRow: dtcRow,
     alertsCardView: alertsCardView,
     lastKnownDtcView: lastKnownDtcView,
@@ -4890,10 +5027,8 @@
     postClearMessage: postClearMessage,
     POLL_MS: POLL_MS,
     IMU_POLL_MS: IMU_POLL_MS,
-    G_AMBER_G: G_AMBER_G,
-    GRADE_TREND_WINDOW_SEC: GRADE_TREND_WINDOW_SEC,
-    GRADE_TREND_BUCKET_MS: GRADE_TREND_BUCKET_MS,
     COMPASS_TAPE_SPAN_DEG: COMPASS_TAPE_SPAN_DEG,
+    NAV_GLIDE_MS: NAV_GLIDE_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
     CAROUSEL_DEFAULTS: CAROUSEL_DEFAULTS,
     STAGE_W: STAGE_W,
@@ -4910,10 +5045,11 @@
   if (typeof document !== "undefined") {
     var token = global.SPLASH_TOKEN || "";
 
-    // US-483-b: the auto-dim curve config injected same-origin at serve time
-    // (states_http_server substitutes the placeholder from config.json). An
+    // US-483-b: the pi.display.autoDim section injected same-origin at serve
+    // time (states_http_server substitutes the placeholder from config.json).
+    // Since US-893-a the page reads only its defaultLevel and luxStaleSec. An
     // object -> use it; anything else (unsubstituted preview / null) -> the
-    // built-in grounded defaults kick in inside resolveAutoDimConfig.
+    // built-in defaults kick in inside resolveAutoDimConfig.
     var displayAutoDim =
       global.DISPLAY_AUTODIM && typeof global.DISPLAY_AUTODIM === "object"
         ? global.DISPLAY_AUTODIM
@@ -5166,77 +5302,6 @@
       if (glyphEls.wifi) glyphEls.wifi.setAttribute("data-state", "neutral");
     }
 
-    // --- US-542 motion-fault fallback DOM render (browser only) -------------
-
-    // US-542: `fmtDate` and its month/day tables are DELETED, not left for a
-    // future caller. The parked header was their only consumer, and the date is
-    // the one piece of that header this story does NOT relocate: the top bar is
-    // 480px wide and already carries three glyphs, a version chip and the ⋮ at
-    // the US-540-a scale, where a clock fits and a clock-plus-date does not. A
-    // deliberate, named loss -- flagged for Iris in the story notes rather than
-    // absorbed silently. (`fmtClock` stays: it moved to the pure section in
-    // US-503 and now feeds the top bar, so there is still exactly ONE clock
-    // formatter and it is still the one a test can reach.)
-
-    // Render the fallback card from the assembled view. Built with textContent
-    // (no innerHTML) so emitter values render verbatim, never as markup. The
-    // fact tiles reuse the shared `.tile[data-level]` styling, so green is bound
-    // to the SSOT token exactly once (US-484) -- this card holds no hex literal.
-    // US-508: takes a BODY, not a card -- the same move US-507 made for the
-    // three Health renderers, and for the same reason. Reaching for its own
-    // `.card-body` assumed this renderer owned the whole card, which is the
-    // assumption the two-faced home slot overturns.
-    // US-542: the `now` parameter is GONE with the clock it fed. Same guard as
-    // the `dtcData` drop above -- a renderer with no clock in its signature
-    // cannot grow a second one behind the top bar's back.
-    function renderIdleBody(body, view) {
-      if (!body || !view) return;
-      body.textContent = "";
-
-      // Header: the wordmark. US-542 moved the CLOCK to the top bar, where it
-      // is readable on every card rather than only on the one screen a parked
-      // operator happened to be looking at -- and where it survives this face
-      // being reachable only when the motion feed dies.
-      var header = document.createElement("div");
-      header.className = "idle-header";
-      var wm = document.createElement("span");
-      wm.className = "idle-wordmark";
-      wm.textContent = view.wordmark;
-      header.appendChild(wm);
-      body.appendChild(header);
-
-      // The NO MOTION DATA hero (neutral grey, never green) + the reason.
-      var hero = document.createElement("div");
-      hero.className = "idle-hero";
-      hero.setAttribute("data-level", view.hero.level);
-      var heroTitle = document.createElement("div");
-      heroTitle.className = "idle-hero-title";
-      heroTitle.textContent = view.hero.title;
-      var heroSub = document.createElement("div");
-      heroSub.className = "idle-hero-sub";
-      heroSub.textContent = view.hero.substate;
-      hero.appendChild(heroTitle);
-      hero.appendChild(heroSub);
-      body.appendChild(hero);
-
-      // 2-fact summary strip: last-drive / battery-with-age. The faults tile
-      // left with US-542 -- it is on the Alerts card, one swipe away, and the
-      // ribbon still carries a REAL fault over this screen like any other.
-      var strip = document.createElement("div");
-      strip.className = "idle-facts";
-      appendTile(strip, view.facts.lastDrive);
-      appendTile(strip, view.facts.battery);
-      body.appendChild(strip);
-
-      // Footer: read from the VIEW rather than a literal here. Copy no test can
-      // reach is copy that drifts from the spec -- which is precisely what
-      // US-510 had to come back and restore on this surface.
-      var footer = document.createElement("div");
-      footer.className = "idle-footer";
-      footer.textContent = view.footer;
-      body.appendChild(footer);
-    }
-
     // --- US-401 Battery Health DOM render (browser only) --------------------
 
     // Render the failsafe ladder block (F-2 / A-6) -- built ONLY when draining.
@@ -5430,6 +5495,20 @@
           noteEl.hidden = !slotView.note;
         }
       }
+      // US-890-f: SINCE RESET's hint / outcome line, whether the hold is live,
+      // and the in-page confirm -- all from `fuelMpgResetView`.
+      var since = card.querySelector(".fuel-mpg-since-reset");
+      var reset = isObj(view.reset) ? view.reset : { pressable: false, confirm: false };
+      if (since && view.sinceReset) {
+        var lineEl = since.querySelector(".fuel-reset-line");
+        if (lineEl) {
+          lineEl.textContent = view.sinceReset.line || "";
+          lineEl.hidden = !view.sinceReset.line;
+        }
+        since.setAttribute("data-pressable", reset.pressable ? "true" : "false");
+      }
+      var confirmEl = card.querySelector(".fuel-reset-confirm");
+      if (confirmEl) confirmEl.hidden = !reset.confirm;
     }
 
     // US-889-c: one history chart. The spans go in first so the neutral line
@@ -5579,31 +5658,9 @@
       if (view.ladder) appendLadder(body, view.ladder);
     }
 
-    // --- US-496 Light card DOM render (browser only) ------------------------
+    // --- SVG helpers + the US-892-b Motion card render (browser only) -------
 
-    // Two tiles through the SHARED `.tile` component, which is already bound to
-    // src/pi/ui/tokens.css -- the Light card introduces no palette of its own
-    // (AC-4: a bespoke local colour is exactly the drift the SSOT prevents).
-    function renderLightBody(body, view) {
-      if (!body || !view) return;
-      if (view.unavailable) {
-        renderNaBody(body, "AMBIENT", view.reason);
-        return;
-      }
-      body.textContent = "";
-      appendTile(body, view.ambient);
-      appendTile(body, view.band);
-    }
-
-    // --- US-497 IMU live-instrument DOM render (browser only) ---------------
-
-    // The g-meter is ONE inline SVG, rebuilt only when its shape changes and
-    // otherwise updated by ATTRIBUTE. At the US-508 10 Hz live poll a 350-point
-    // trail rebuilt as discrete nodes would churn thousands of elements/sec on a
-    // kiosk Pi; as a single <polyline> it is one `points` write per paint.
     var SVG_NS = "http://www.w3.org/2000/svg";
-    var G_METER_R = 46;   // outer ring radius in the meter's own viewBox units
-    var G_METER_C = 50;   // viewBox centre (the box is 100x100)
 
     function svgEl(name, attrs) {
       var el = document.createElementNS(SVG_NS, name);
@@ -5615,96 +5672,331 @@
       return el;
     }
 
-    // Build the static furniture once: the outer ring, the half-scale ring and
-    // the cross-hairs. The rings are LABELLED by the full-scale constant, so a
-    // change to G_FULL_SCALE cannot leave the dial claiming the old scale.
-    function buildGMeter() {
+    // One Motion value cell: label, value + unit, the sub-line / reason, the
+    // peak line. data-none greys a '--'; data-warn colours the gyro reason.
+    function paintMotionCell(cell, v, subCls) {
+      if (!cell || !v) return;
+      cell.setAttribute("data-none", v.none ? "true" : "false");
+      if (v.warn !== undefined) cell.setAttribute("data-warn", v.warn ? "true" : "false");
+      var label = cell.querySelector(".motion-label");
+      if (label && v.label !== undefined) label.textContent = v.label;
+      var value = cell.querySelector(".motion-value");
+      if (value) value.textContent = v.value;
+      var unit = cell.querySelector(".motion-unit");
+      if (unit) unit.textContent = v.unit;
+      var sub = cell.querySelector(subCls);
+      if (sub) {
+        var text = subCls === ".motion-sub" ? v.sub : v.note;
+        sub.textContent = text || "";
+        sub.hidden = !text;
+      }
+      var peak = cell.querySelector(".motion-peak");
+      if (peak && v.peak !== undefined) peak.textContent = v.peak;
+    }
+
+    // The grade graph: rebuilt per paint from `motionGradeGraph` -- a handful
+    // of nodes at the 1 Hz publish. One polyline per run of real points, so a
+    // null point is a gap, never a line drawn across it.
+    function paintMotionGraph(cell, graph) {
+      if (!cell || !graph) return;
+      var svg = cell.querySelector(".motion-graph");
+      if (!svg) return;
+      cell.setAttribute("data-empty", graph.empty ? "true" : "false");
+      svg.textContent = "";
+      svg.appendChild(svgEl("line", {
+        class: "motion-graph-zero", x1: 0, y1: graph.zeroY,
+        x2: MOTION_GRAPH_PLOT_W, y2: graph.zeroY,
+      }));
+      if (graph.empty) {
+        var empty = svgEl("text", {
+          class: "motion-graph-empty", x: 0,
+          y: graph.zeroY - MOTION_GRAPH_EMPTY_RISE,
+        });
+        empty.textContent = graph.text;
+        svg.appendChild(empty);
+        return;
+      }
+      for (var i = 0; i < graph.segments.length; i++) {
+        svg.appendChild(svgEl("polyline", {
+          class: "motion-graph-line", points: graph.segments[i],
+        }));
+      }
+      svg.appendChild(svgEl("circle", {
+        class: "motion-graph-dot", cx: graph.end.x, cy: graph.end.y,
+        r: MOTION_GRAPH_DOT_R,
+      }));
+      var label = svgEl("text", {
+        class: "motion-graph-end", x: graph.end.labelX, y: graph.end.labelY,
+      });
+      label.textContent = graph.end.label;
+      svg.appendChild(label);
+    }
+
+    // US-892-b: paint the Motion card from `motionView` + `motionGradeGraph`.
+    // Before the first read the bands give way to US-700's LOADING tile; after
+    // that every value carries its own '--' + reason. data-stale dims both
+    // bands (the stylesheet), never blanks them.
+    function renderMotionCard(card, view, graph) {
+      if (!card || !view) return;
+      var loading = card.querySelector(".motion-loading");
+      var bands = card.querySelectorAll(".motion-band");
+      if (loading) {
+        loading.textContent = "";
+        if (view.loading) appendTile(loading, view.tile);
+        loading.hidden = !view.loading;
+      }
+      for (var b = 0; b < bands.length; b++) bands[b].hidden = view.loading;
+      var health = card.querySelector(".motion-health");
+      if (health) health.hidden = view.loading;
+      card.setAttribute("data-stale", view.stale ? "true" : "false");
+      if (view.loading) return;
+      paintMotionCell(card.querySelector(".motion-pitch"), view.pitch, ".motion-sub");
+      paintMotionCell(card.querySelector(".motion-lon"), view.lon, ".motion-note");
+      paintMotionCell(card.querySelector(".motion-lat"), view.lat, ".motion-note");
+      paintMotionGraph(card.querySelector(".motion-grade"), graph);
+      renderMotionHealth(health, view.health);
+    }
+
+    // US-892-c: the health block. data-tone carries the status colour (the
+    // stylesheet maps it to a token); the sub-line is the reason or, for TILT
+    // FIX, the provenance. The block is not a .motion-band, so it never dims.
+    function renderMotionHealth(block, health) {
+      if (!block || !health) return;
+      var cells = [
+        [".motion-updated", health.updated], [".motion-compass", health.compass],
+        [".motion-tilt", health.tilt], [".motion-gyro", health.gyro],
+      ];
+      for (var i = 0; i < cells.length; i++) {
+        var cell = block.querySelector(cells[i][0]);
+        var v = cells[i][1];
+        if (!cell || !v) continue;
+        cell.setAttribute("data-tone", v.tone);
+        var value = cell.querySelector(".motion-hv");
+        if (value) value.textContent = v.value;
+        var sub = cell.querySelector(".motion-hsub");
+        if (sub) {
+          sub.textContent = v.sub || "";
+          sub.hidden = !v.sub;
+        }
+      }
+    }
+
+    // --- US-893-b Light page DOM render (browser only) ----------------------
+
+    // The three glyphs (Iris L4), copied from the OEM mockup unchanged and
+    // stroked through the .glyph class -- never coloured. A null band has none.
+    var LIGHT_GLYPH_SHAPES = {
+      day: [
+        ["circle", { cx: 17, cy: 17, r: 7 }],
+        ["path", { d: "M17 2v5M17 27v5M2 17h5M27 17h5M6 6l3.5 3.5M24.5 24.5L28 28M6 28l3.5-3.5M24.5 9.5L28 6" }],
+      ],
+      night: [["path", { d: "M23 5a12 12 0 1 0 6 18A10 10 0 0 1 23 5z" }]],
+      dusk: [["path", { d: "M4 24h26M9 24a8 8 0 0 1 16 0M17 8v4M7 13l3 3M27 13l-3 3" }]],
+    };
+    var LIGHT_DOT_R = 5;
+    // [cell class, label] in grid order; RANGE carries a second, meta line.
+    var LIGHT_RAW_CELLS = [
+      ["light-ir", "IR"], ["light-full", "FULL"],
+      ["light-visible", "VISIBLE"], ["light-range", "RANGE"],
+    ];
+
+    function lightEl(tag, cls, text) {
+      var el = document.createElement(tag);
+      el.className = cls;
+      if (text !== undefined) el.textContent = text;
+      return el;
+    }
+
+    // The page's skeleton, built into the card body. The US-700 loading tile
+    // and the typed NA replace the body, so it is rebuilt after either.
+    function buildLightPage(body) {
+      body.textContent = "";
+      var page = lightEl("div", "light-page");
+      var top = lightEl("div", "light-top");
+      var left = lightEl("div", "light-left");
+      var tile = lightEl("div", "light-word-tile light-dimmable");
+      var wordRow = lightEl("div", "light-word-row");
+      wordRow.appendChild(svgEl("svg", {
+        class: "glyph light-glyph", viewBox: "0 0 34 34", "aria-hidden": "true",
+      }));
+      wordRow.appendChild(lightEl("span", "light-word", "--"));
+      tile.appendChild(wordRow);
+      tile.appendChild(lightEl("span", "light-label", "AMBIENT"));
+      var ambient = lightEl("span", "light-ambient");
+      ambient.appendChild(lightEl("span", "light-ambient-value", "--"));
+      ambient.appendChild(lightEl("span", "light-ambient-unit", ""));
+      tile.appendChild(ambient);
+      left.appendChild(tile);
+      // Not dimmable: the reason and the age are the evidence of the state.
+      var notes = lightEl("div", "light-notes");
+      notes.appendChild(lightEl("span", "light-reason", ""));
+      notes.appendChild(lightEl("span", "light-age", ""));
+      left.appendChild(notes);
+      top.appendChild(left);
+      top.appendChild(svgEl("svg", {
+        class: "light-curve light-dimmable",
+        viewBox: "0 0 " + LIGHT_CURVE_W + " " + LIGHT_CURVE_H, "aria-hidden": "true",
+      }));
+      page.appendChild(top);
+      var raw = lightEl("div", "light-raw light-dimmable");
+      for (var i = 0; i < LIGHT_RAW_CELLS.length; i++) {
+        var cell = lightEl("div", "light-cell " + LIGHT_RAW_CELLS[i][0]);
+        cell.setAttribute("data-tone", "none");
+        cell.appendChild(lightEl("span", "light-label", LIGHT_RAW_CELLS[i][1]));
+        cell.appendChild(lightEl("span", "light-cv", "--"));
+        if (LIGHT_RAW_CELLS[i][0] === "light-range") {
+          cell.appendChild(lightEl("span", "light-cmeta", "--"));
+        }
+        raw.appendChild(cell);
+      }
+      page.appendChild(raw);
+      var status = lightEl("div", "light-status");
+      status.appendChild(lightEl("span", "light-status-label", "BRIGHTNESS"));
+      status.appendChild(lightEl("span", "light-status-value", "--"));
+      status.appendChild(lightEl("span", "light-status-note", ""));
+      page.appendChild(status);
+      body.appendChild(page);
+      return page;
+    }
+
+    function paintLightGlyph(svg, band) {
+      if (!svg) return;
+      svg.textContent = "";
+      var shapes = band ? LIGHT_GLYPH_SHAPES[band] : null;
+      svg.hidden = !shapes;
+      if (!shapes) return;
+      for (var i = 0; i < shapes.length; i++) svg.appendChild(svgEl(shapes[i][0], shapes[i][1]));
+    }
+
+    function paintLightText(el, text) {
+      if (!el) return;
+      el.textContent = text || "";
+      el.hidden = !text;
+    }
+
+    // The curve: rebuilt per paint from `lightCurveView` (axes, the dashed
+    // curve ends and their labels, the published polyline, the dot). A missing
+    // curve leaves the graph empty -- never a guessed line.
+    function paintLightCurve(svg, curve) {
+      if (!svg) return;
+      svg.textContent = "";
+      if (!curve) return;
+      var a = curve.axis;
+      svg.appendChild(svgEl("line", {
+        class: "light-curve-axis", x1: a.x0, y1: a.yBottom, x2: a.x1, y2: a.yBottom,
+      }));
+      svg.appendChild(svgEl("line", {
+        class: "light-curve-axis", x1: a.x0, y1: a.yTop, x2: a.x0, y2: a.yBottom,
+      }));
+      for (var i = 0; i < curve.yLabels.length; i++) {
+        var yl = svgEl("text", { class: "light-curve-label", x: 0, y: curve.yLabels[i].y });
+        yl.textContent = curve.yLabels[i].text;
+        svg.appendChild(yl);
+      }
+      for (var j = 0; j < curve.verticals.length; j++) {
+        var v = curve.verticals[j];
+        svg.appendChild(svgEl("line", {
+          class: "light-curve-end", x1: v.x, y1: a.yTop, x2: v.x, y2: a.yBottom,
+        }));
+        var xl = svgEl("text", {
+          class: "light-curve-label", x: v.labelX, y: curve.labelY, "text-anchor": v.anchor,
+        });
+        xl.textContent = v.label;
+        svg.appendChild(xl);
+      }
+      svg.appendChild(svgEl("polyline", { class: "light-curve-line", points: curve.points }));
+      if (curve.dot) {
+        svg.appendChild(svgEl("circle", {
+          class: "light-curve-dot", cx: curve.dot.x, cy: curve.dot.y, r: LIGHT_DOT_R,
+        }));
+      }
+    }
+
+    // US-893-b: paint `lightPageView` into the Light card body. Text and
+    // state attributes only -- data-stale dims the word tile, the curve and the
+    // raw row (never the notes or the status); data-tone / data-none map to
+    // tokens in the stylesheet.
+    function renderLightBody(body, view) {
+      if (!body || !view) return;
+      var page = body.querySelector(".light-page") || buildLightPage(body);
+      page.setAttribute("data-stale", view.stale ? "true" : "false");
+      paintLightGlyph(page.querySelector(".light-glyph"), view.word.glyph);
+      var word = page.querySelector(".light-word");
+      word.textContent = view.word.text;
+      word.setAttribute("data-none", view.word.glyph ? "false" : "true");
+      var ambient = page.querySelector(".light-ambient");
+      ambient.setAttribute("data-none", view.ambient.none ? "true" : "false");
+      page.querySelector(".light-ambient-value").textContent = view.ambient.value;
+      page.querySelector(".light-ambient-unit").textContent =
+        view.ambient.unit ? " " + view.ambient.unit : "";
+      paintLightText(page.querySelector(".light-reason"), view.reason);
+      var age = page.querySelector(".light-age");
+      paintLightText(age, view.age ? view.age.text : null);
+      age.setAttribute("data-tone", view.age ? view.age.tone : "none");
+      paintLightCurve(page.querySelector(".light-curve"), view.curve);
+      var cells = { "light-ir": view.raw.ir, "light-full": view.raw.full, "light-visible": view.raw.visible };
+      for (var i = 0; i < LIGHT_RAW_CELLS.length; i++) {
+        var cls = LIGHT_RAW_CELLS[i][0];
+        var cell = page.querySelector("." + cls);
+        if (!cell) continue;
+        if (cls === "light-range") {
+          var noRange = view.raw.range.gain === "--" && view.raw.range.ms === "--";
+          cell.setAttribute("data-tone", noRange ? "none" : "plain");
+          cell.querySelector(".light-cv").textContent = view.raw.range.gain;
+          cell.querySelector(".light-cmeta").textContent = view.raw.range.ms;
+          continue;
+        }
+        cell.setAttribute("data-tone", cells[cls].tone);
+        cell.querySelector(".light-cv").textContent = cells[cls].value;
+      }
+      page.querySelector(".light-status-label").textContent = view.status.label;
+      page.querySelector(".light-status-value").textContent = view.status.value;
+      paintLightText(page.querySelector(".light-status-note"), view.status.note);
+    }
+
+    // US-896-a: the NAV tape (spec s3) -- full width, the 90-degree window over
+    // NAV_TAPE_W user units, so offset -1..1 maps edge to edge. Tick heights
+    // and the letter baseline are the OEM mockup's (2026-10-15), measured from
+    // the band's bottom edge. The hairline is drawn LAST so no tick covers it.
+    var NAV_TAPE_W = 456;
+    var NAV_TAPE_H = 70;
+    var NAV_TICK_LEN = { major: 30, minor: 18, fine: 8 };
+    var NAV_HAIRLINE_LEN = 34;
+    var NAV_LABEL_Y = 28;
+
+    function buildNavTape() {
       var svg = svgEl("svg", {
-        class: "imu-meter",
-        viewBox: "0 0 100 100",
+        class: "nav-tape", viewBox: "0 0 " + NAV_TAPE_W + " " + NAV_TAPE_H,
         "aria-hidden": "true",
       });
-      svg.appendChild(svgEl("circle", {
-        class: "imu-ring", cx: G_METER_C, cy: G_METER_C, r: G_METER_R,
-      }));
-      svg.appendChild(svgEl("circle", {
-        class: "imu-ring imu-ring-half",
-        cx: G_METER_C, cy: G_METER_C, r: G_METER_R / 2,
-      }));
       svg.appendChild(svgEl("line", {
-        class: "imu-axis",
-        x1: G_METER_C - G_METER_R, y1: G_METER_C,
-        x2: G_METER_C + G_METER_R, y2: G_METER_C,
+        class: "nav-tape-base", x1: 0, x2: NAV_TAPE_W,
+        y1: NAV_TAPE_H - 0.5, y2: NAV_TAPE_H - 0.5,
       }));
+      svg.appendChild(svgEl("g", { class: "nav-tape-ticks" }));
       svg.appendChild(svgEl("line", {
-        class: "imu-axis",
-        x1: G_METER_C, y1: G_METER_C - G_METER_R,
-        x2: G_METER_C, y2: G_METER_C + G_METER_R,
+        class: "nav-tape-hairline", x1: NAV_TAPE_W / 2, x2: NAV_TAPE_W / 2,
+        y1: NAV_TAPE_H - NAV_HAIRLINE_LEN, y2: NAV_TAPE_H,
       }));
-      svg.appendChild(svgEl("polyline", { class: "imu-trail", points: "" }));
-      svg.appendChild(svgEl("circle", { class: "imu-dot", cx: G_METER_C, cy: G_METER_C, r: 4 }));
       return svg;
     }
 
-    function trailPoints(trail) {
-      var parts = [];
-      for (var i = 0; i < trail.length; i++) {
-        parts.push(
-          (G_METER_C + trail[i].x * G_METER_R).toFixed(1) + "," +
-          (G_METER_C + trail[i].y * G_METER_R).toFixed(1)
-        );
-      }
-      return parts.join(" ");
-    }
-
-    // US-508: the scrolling compass TAPE (CIO-locked; it replaces the built
-    // rotating needle outright rather than sitting beside it -- two heading
-    // instruments on one card can disagree, and the operator has no way to know
-    // which one to believe).
-    //
-    // US-715 (CIO 2026-09-09): the triangle that used to mark dead centre is
-    // REMOVED. It was fixed furniture the CIO never asked for. The argument it
-    // was defended with is real and was overruled knowingly -- a tape normally
-    // reads against one fixed reference with the world sliding past it -- so the
-    // "current" value is now implicit at the widget's horizontal centre and read
-    // precisely off the numeric HEADING tile instead.
-    //
-    // The TAPE itself stays, deliberately: it is the moving half, and while
-    // headingDeg is wrong (US-708's axis swap, A-30's magnetometer SNR) the tape
-    // is what keeps that defect visible on the glass. Only the tick group is
-    // rebuilt, and at 7 ticks that is nothing next to the 140-point trail beside
-    // it.
-    var TAPE_W = 100;          // tape viewBox width
-    var TAPE_HALF = 48;        // usable half-width (leaves room for edge labels)
-
-    function buildTape() {
-      var svg = svgEl("svg", {
-        class: "imu-tape", viewBox: "0 0 100 26", "aria-hidden": "true",
-      });
-      svg.appendChild(svgEl("g", { class: "imu-tape-ticks" }));
-      return svg;
-    }
-
-    function renderTape(svg, tape) {
-      var group = svg.querySelector(".imu-tape-ticks");
+    function renderNavTape(svg, tape) {
+      var group = svg.querySelector(".nav-tape-ticks");
       if (!group) return;
-      while (group.firstChild) group.removeChild(group.firstChild);
-      // No bearing -> no ticks. An empty strip reads as an absent instrument;
-      // ticks left frozen at the tape's centre read as a confident heading,
-      // which is the same fabrication the frozen needle made in another shape.
+      group.textContent = "";
       if (!tape || !tape.available) return;
       for (var i = 0; i < tape.ticks.length; i++) {
         var t = tape.ticks[i];
-        var x = TAPE_W / 2 + t.offset * TAPE_HALF;
+        var x = (NAV_TAPE_W / 2 + t.offset * NAV_TAPE_W / 2).toFixed(1);
         group.appendChild(svgEl("line", {
-          class: t.major ? "imu-tick imu-tick-major" : "imu-tick",
-          x1: x.toFixed(1), y1: t.major ? 8 : 10,
-          x2: x.toFixed(1), y2: 16,
+          class: "nav-tick nav-tick-" + t.tier,
+          x1: x, x2: x, y1: NAV_TAPE_H - NAV_TICK_LEN[t.tier], y2: NAV_TAPE_H,
         }));
         if (t.label) {
           var text = svgEl("text", {
-            class: "imu-tape-label", x: x.toFixed(1), y: 25,
-            "text-anchor": "middle",
+            class: t.label === "N" ? "nav-tape-label nav-tape-north" : "nav-tape-label",
+            x: x, y: NAV_LABEL_Y, "text-anchor": "middle",
           });
           text.textContent = t.label;
           group.appendChild(text);
@@ -5712,160 +6004,114 @@
       }
     }
 
-    // The ~15-min grade trend, as ONE polyline. y is flipped because screen y
-    // runs down and the view's y is POSITIVE = climbing -- the same inversion
-    // the g-dot makes, and the same place a sign error would hide.
-    function trendPoints(points) {
-      var parts = [];
-      for (var i = 0; i < points.length; i++) {
-        parts.push(
-          (points[i].x * 100).toFixed(1) + "," +
-          (10 - points[i].y * 9).toFixed(1)
-        );
+    // Paint the NAV heading half into its FIXED skeleton (dashboard.html). The
+    // tape is BUILT only while there is a bearing to draw and REMOVED for a
+    // dead sensor -- not hidden, not zero-opacity (spec AC 6). Digits and the
+    // point follow the DRAWN bearing, so they always agree with the hairline.
+    function renderNavCard(card, view, drawnDeg) {
+      if (!card || !view) return;
+      card.setAttribute("data-heading", view.state);
+      var badge = card.querySelector(".nav-badge");
+      if (badge) {
+        badge.textContent = view.badge || "";
+        badge.hidden = !view.badge;
       }
-      return parts.join(" ");
+      var badgeNote = card.querySelector(".nav-badge-note");
+      if (badgeNote) {
+        badgeNote.textContent = view.badgeNote || "";
+        badgeNote.hidden = !view.badgeNote;
+      }
+      var band = card.querySelector(".nav-band");
+      if (!band) return;
+      var tapeEl = band.querySelector(".nav-tape");
+      var drawTape = view.tape && drawnDeg !== null;
+      if (drawTape) {
+        if (!tapeEl) {
+          tapeEl = buildNavTape();
+          band.appendChild(tapeEl);
+        }
+        renderNavTape(tapeEl, navTape(drawnDeg));
+      } else if (tapeEl) {
+        band.removeChild(tapeEl);
+      }
+      var blank = band.querySelector(".nav-blank");
+      if (blank) {
+        blank.hidden = drawTape;
+        var head = blank.querySelector(".nav-blank-head");
+        // NO HEADING only for a dead sensor; before the first reading the band
+        // just says what it is waiting for (spec s7).
+        if (head) head.hidden = view.tape;
+        var why = blank.querySelector(".nav-blank-note");
+        if (why) why.textContent = view.tape ? NAV_WAITING_TEXT : view.reason;
+      }
+      var digits = card.querySelector(".nav-digits");
+      if (digits) {
+        digits.textContent = fmtHeadingDigits(drawTape ? drawnDeg : null);
+        digits.setAttribute("data-none", drawTape ? "false" : "true");
+      }
+      var point = card.querySelector(".nav-point");
+      if (point) point.textContent = drawTape ? compassPoint8(drawnDeg) : "";
     }
 
-    function buildTrend() {
-      var svg = svgEl("svg", {
-        class: "imu-trend", viewBox: "0 0 100 20", "aria-hidden": "true",
-      });
-      svg.appendChild(svgEl("line", {
-        class: "imu-trend-zero", x1: 0, y1: 10, x2: 100, y2: 10,
-      }));
-      svg.appendChild(svgEl("polyline", { class: "imu-trend-line", points: "" }));
-      return svg;
-    }
+    // US-896-b: the slope glyph's line in its 20 x 20 box, per sign. Up rises
+    // to the right (climbing), down falls, flat is level.
+    var NAV_SLOPE_LINE = {
+      up: { y1: 18, y2: 2 },
+      down: { y1: 2, y2: 18 },
+      flat: { y1: 10, y2: 10 },
+    };
 
-    // US-508: the LIVE face, built to the CIO-locked layout -- compass tape and
-    // heading down the left, the GEAR glyph in the middle, the g-meter on the
-    // right, grade % + a prominent altitude + the ~15-min trend beneath.
-    // Rebuilt only when the furniture is absent; every tick after that is an
-    // attribute write, so a 10 Hz poll does not churn the DOM.
-    function renderLiveBody(body, view, trail, trend) {
-      if (!body || !view) return;
-      var meter = body.querySelector(".imu-meter");
-      if (!meter) {
-        body.textContent = "";
-        var wrap = document.createElement("div");
-        wrap.className = "live-body";
-
-        var left = document.createElement("div");
-        left.className = "live-col live-heading";
-        left.appendChild(buildTape());
-        var headTile = document.createElement("div");
-        headTile.className = "imu-tiles live-heading-tile";
-        left.appendChild(headTile);
-        var gradeBox = document.createElement("div");
-        gradeBox.className = "imu-grade-box";
-        gradeBox.appendChild(buildTrend());
-        var gradeTiles = document.createElement("div");
-        gradeTiles.className = "imu-tiles live-grade-tiles";
-        gradeBox.appendChild(gradeTiles);
-        left.appendChild(gradeBox);
-        wrap.appendChild(left);
-
-        var gearBox = document.createElement("div");
-        gearBox.className = "live-col live-gear";
-        var gearLabel = document.createElement("span");
-        gearLabel.className = "imu-gear-label";
-        gearLabel.textContent = "GEAR";
-        var gearGlyph = document.createElement("span");
-        gearGlyph.className = "imu-gear";
-        var gearDetail = document.createElement("span");
-        gearDetail.className = "imu-gear-detail";
-        gearBox.appendChild(gearLabel);
-        gearBox.appendChild(gearGlyph);
-        gearBox.appendChild(gearDetail);
-        wrap.appendChild(gearBox);
-
-        var right = document.createElement("div");
-        right.className = "live-col live-g";
-        right.appendChild(buildGMeter());
-        var gTiles = document.createElement("div");
-        gTiles.className = "imu-tiles live-g-tiles";
-        right.appendChild(gTiles);
-        wrap.appendChild(right);
-
-        body.appendChild(wrap);
-        meter = body.querySelector(".imu-meter");
+    // Paint GRADE (spec s4.3): the value, the glyph tilted by its sign, and a
+    // null's reason on the glass beneath the '--'.
+    function renderNavGrade(card, view) {
+      if (!card || !view) return;
+      var cell = card.querySelector(".nav-grade");
+      if (!cell) return;
+      cell.setAttribute("data-slope", view.slope || "none");
+      var value = cell.querySelector(".nav-grade-value");
+      if (value) {
+        value.textContent = view.value;
+        value.setAttribute("data-none", view.slope ? "false" : "true");
       }
-
-      var dot = meter.querySelector(".imu-dot");
-      var line = meter.querySelector(".imu-trail");
-      // An unresolved g hides the dot + trail rather than parking them at the
-      // origin, which would read as a measured "stationary".
-      if (view.g.available && view.g.dot) {
-        dot.removeAttribute("hidden");
-        dot.setAttribute("cx", String(G_METER_C + view.g.dot.x * G_METER_R));
-        dot.setAttribute("cy", String(G_METER_C + view.g.dot.y * G_METER_R));
-        dot.setAttribute("data-clamped", view.g.dot.clamped ? "true" : "false");
-        // US-508: Spool's 0.6 g advisory band, carried as the level the tile
-        // already uses so the dot and its number can never disagree about
-        // whether this was a hard corner.
-        dot.setAttribute("data-level", view.g.level);
-        line.setAttribute("points", trailPoints(trail || []));
-        line.setAttribute("data-level", view.g.level);
-      } else {
-        dot.setAttribute("hidden", "hidden");
-        line.setAttribute("points", "");
+      var glyph = cell.querySelector(".nav-slope");
+      if (glyph) {
+        glyph.hidden = !view.slope;
+        var line = glyph.querySelector(".nav-slope-line");
+        var ends = view.slope ? NAV_SLOPE_LINE[view.slope] : null;
+        if (line && ends) {
+          line.setAttribute("y1", ends.y1);
+          line.setAttribute("y2", ends.y2);
+        }
       }
-
-      renderTape(body.querySelector(".imu-tape"), view.tape);
-
-      var trendLine = body.querySelector(".imu-trend-line");
-      if (trendLine) trendLine.setAttribute("points", trendPoints(gradeTrendPoints(trend || [])));
-
-      var gearGlyphEl = body.querySelector(".imu-gear");
-      var gearDetailEl = body.querySelector(".imu-gear-detail");
-      if (gearGlyphEl) {
-        gearGlyphEl.textContent = view.gear.value;
-        gearGlyphEl.setAttribute("data-level", view.gear.level);
-      }
-      // The reason rides beside the glyph so "--" is never a bare shrug: the
-      // operator can tell "no producer wired" from "the producer is refusing to
-      // guess right now", which are different facts about the same dashes.
-      if (gearDetailEl) gearDetailEl.textContent = view.gear.detail || "";
-
-      var headBox = body.querySelector(".live-heading-tile");
-      if (headBox) {
-        headBox.textContent = "";
-        appendTile(headBox, view.heading);
-      }
-      var gradeTileBox = body.querySelector(".live-grade-tiles");
-      if (gradeTileBox) {
-        gradeTileBox.textContent = "";
-        appendTile(gradeTileBox, view.grade);
-        // Altitude is PROMINENT per the locked spec and ALWAYS typed-NA today
-        // (no barometer, no GPS -- Atlas's correction to the original design).
-        // It sits in the grade box as a first-class readout rather than a
-        // trailing tile, so when a source lands it is already in its place.
-        appendTile(gradeTileBox, view.altitude);
-      }
-      var gTileBox = body.querySelector(".live-g-tiles");
-      if (gTileBox) {
-        gTileBox.textContent = "";
-        appendTile(gTileBox, view.g);
+      var note = cell.querySelector(".nav-grade-note");
+      if (note) {
+        note.textContent = view.reason || "";
+        note.hidden = !view.reason;
       }
     }
 
-    // US-508 HOME SLOT: paint whichever face `homeFace` chose. The two faces
-    // REPLACE each other wholesale on a change -- leaving a stale <svg> under an
-    // idle message is precisely the frozen instrument AC-3 forbids, and it is
-    // the exact failure the swap makes possible for the first time.
-    function renderHomeCard(card, face, liveView, idleView, trail, trend) {
-      if (!card || !face) return;
-      var body = card.querySelector(".card-body");
-      if (!body) return;
-      if (card.getAttribute("data-face") !== face.face) {
-        card.setAttribute("data-face", face.face);
-        body.textContent = "";
+    // Paint the trip (spec s4.4): the label (SINCE + its mono h:mm when the
+    // window is partial), the distance in miles and the elapsed h:mm, all as
+    // navTripView resolved them from the provider.
+    function renderNavTrip(card, view) {
+      if (!card || !view) return;
+      var cell = card.querySelector(".nav-trip");
+      if (!cell) return;
+      cell.setAttribute("data-window", view.window);
+      var label = cell.querySelector(".nav-trip-label");
+      if (label) label.textContent = view.label;
+      var time = cell.querySelector(".nav-trip-time");
+      if (time) {
+        time.textContent = view.time || "";
+        time.hidden = !view.time;
       }
-      if (face.face === "live") {
-        if (liveView && !liveView.idle) renderLiveBody(body, liveView, trail, trend);
-        return;
+      var distance = cell.querySelector(".nav-trip-distance");
+      if (distance) {
+        distance.textContent = view.distance;
+        distance.setAttribute("data-none", view.measured ? "false" : "true");
       }
-      if (idleView) renderIdleBody(body, idleView);
+      var elapsed = cell.querySelector(".nav-trip-elapsed");
+      if (elapsed) elapsed.textContent = view.elapsed;
     }
 
     // --- US-890-a Fuel card trend row DOM render (browser only) -------------
@@ -5941,7 +6187,9 @@
         renderLoadingBody(body, view.label);
         return;
       }
-      if (view.gated || view.unavailable) {
+      // US-893-b: an unavailable card WITH a view (the Light page's own
+      // absence) paints that view; every other unavailable card is the NA.
+      if (view.gated || (view.unavailable && !view.view)) {
         renderNaBody(body, view.na.label, view.na.reason);
         return;
       }
@@ -6613,16 +6861,24 @@
       var lastDtc = null;
       // The Alerts card index, so a tap navigates the carousel to it.
       var dtcCardIndex = -1;
-      // US-508 home slot: ONE element with two faces. `lastIdle` edge-triggers
-      // the navigation so it fires only on a state CHANGE -- it never fights a
-      // manual swipe while a state holds.
-      var homeCard = document.getElementById("home-card");
+      // US-892-b: the Motion card (it replaced the interim Home card). Painted
+      // from the raw states/imu on the ~10 Hz motion loop and from
+      // states/grade-history, polled on the 4 Hz tick like the other states.
+      var motionCard = document.getElementById("motion-card");
+      var lastGradeHistory = null;
       // US-888-a: the Driving card is the LANDING card (R5, `data-landing`).
-      // The engine-state edge below returns the carousel HERE, not to the home
-      // slot: the home slot's idle/live swap stays with the Home card, and the
-      // edge firing on the first tick (lastIdle starts null) is what makes the
-      // landing card the card the panel opens on.
+      // The engine-state edge below returns the carousel HERE; `lastIdle`
+      // edge-triggers it so it fires only on a state CHANGE -- it never fights
+      // a manual swipe while a state holds -- and its firing on the first tick
+      // (lastIdle starts null) is what makes the landing card the card the
+      // panel opens on.
       var drivingCard = document.getElementById("driving-card");
+      // US-896-a: the NAV card, right after Driving. Its heading half reads the
+      // raw states/imu on the ~10 Hz motion loop (the glide needs frames the
+      // 4 Hz tick cannot give); `navGlide` is the drawn bearing's state.
+      var navCard = document.getElementById("nav-card");
+      var navGlide = navGlideInit();
+      var navFramePending = false;
       // US-889-b: the Engine card, right after Driving; filled from the same
       // cached states/obd-live on the same tick.
       var engineCard = document.getElementById("engine-card");
@@ -6641,14 +6897,126 @@
           if (engineCodes.getAttribute("data-tap") === "true") openAlertsCard();
         });
       }
+      // US-890-f: the SINCE RESET reset (spec s4.3). `fuelReset` is the
+      // fuelResetNext state and `lastFuelEconomy` the LATEST states/fuel-economy
+      // read; Yes and the POST's answer repaint from them between ticks, so
+      // "resetting…" shows from Yes. Parked is `engineParked` -- the ONE US-511
+      // debounce, so the hint and the CHECK ENGINE tap can never disagree.
+      var fuelReset = fuelResetInit();
+      var lastFuelEconomy = null;
+      var fuelSinceResetEl = document.getElementById("fuel-since-reset");
+      var fuelResetYes = document.getElementById("fuel-reset-yes");
+      var fuelResetNo = document.getElementById("fuel-reset-no");
+      function fuelConfirmSec() {
+        return resolveFuelResetConfirmSec(global.DISPLAY_STALE);
+      }
+      function paintFuelMpg() {
+        renderFuelMpg(
+          fuelCard,
+          fuelMpgResetView(lastFuelEconomy, fuelReset, engineParked.parked, fuelConfirmSec())
+        );
+      }
+      if (fuelSinceResetEl) {
+        // The menu long-press's shape (US-747): each press owns its interval.
+        var fuelProgress = fuelSinceResetEl.querySelector(".fuel-reset-progress");
+        var fuelHoldStart = null;
+        var fuelHoldX = 0;
+        var fuelHoldY = 0;
+        var fuelHoldTimer = null;
+        var fuelHoldClear = function () {
+          fuelHoldStart = null;
+          if (fuelHoldTimer) {
+            clearInterval(fuelHoldTimer);
+            fuelHoldTimer = null;
+          }
+          if (fuelProgress) {
+            fuelProgress.hidden = true;
+            fuelProgress.style.setProperty("--fill", "0");
+          }
+        };
+        fuelSinceResetEl.addEventListener("pointerdown", function (e) {
+          fuelHoldClear();
+          // Moving, the slot carries no hold at all.
+          if (fuelSinceResetEl.getAttribute("data-pressable") !== "true") return;
+          fuelHoldStart = Date.now();
+          fuelHoldX = e.clientX;
+          fuelHoldY = e.clientY;
+          var id = setInterval(function () {
+            if (fuelHoldTimer !== id || fuelHoldStart === null) {
+              clearInterval(id);
+              return;
+            }
+            var elapsed = Date.now() - fuelHoldStart;
+            if (fuelProgress) {
+              fuelProgress.hidden = false;
+              fuelProgress.style.setProperty(
+                "--fill", String(longPressProgress(elapsed, FUEL_RESET_HOLD_MS))
+              );
+            }
+            if (!isLongPressComplete(elapsed, FUEL_RESET_HOLD_MS)) return;
+            fuelHoldClear();
+            // Honour only what is on the glass right now: the car may have
+            // moved during the hold.
+            if (fuelSinceResetEl.getAttribute("data-pressable") !== "true") return;
+            fuelReset = fuelResetNext(fuelReset, {
+              type: "hold", parked: engineParked.parked, confirmSec: fuelConfirmSec(),
+            });
+            paintFuelMpg();
+          }, 50);
+          fuelHoldTimer = id;
+        });
+        fuelSinceResetEl.addEventListener("pointermove", function (e) {
+          if (fuelHoldStart === null) return;
+          if (exceedsMoveCancel(e.clientX - fuelHoldX, e.clientY - fuelHoldY)) fuelHoldClear();
+        });
+        fuelSinceResetEl.addEventListener("pointerup", fuelHoldClear);
+        fuelSinceResetEl.addEventListener("pointercancel", fuelHoldClear);
+        fuelSinceResetEl.addEventListener("pointerleave", fuelHoldClear);
+      }
+      if (fuelResetNo) {
+        fuelResetNo.addEventListener("click", function () {
+          fuelReset = fuelResetNext(fuelReset, { type: "no" });
+          paintFuelMpg();
+        });
+      }
+      if (fuelResetYes) {
+        fuelResetYes.addEventListener("click", function () {
+          if (fuelReset.phase !== "confirm") return;
+          fuelReset = fuelResetNext(fuelReset, { type: "yes", read: lastFuelEconomy });
+          // "resetting…" from Yes, not from the 200: the POST can take up to
+          // pi.fuel.resetTimeoutSec and the states server stalls reads meanwhile.
+          paintFuelMpg();
+          // The /dtc-clear pattern: token-gated POST, status + JSON body. The
+          // server's raw text goes to the log only, never to the glass.
+          fetch("/fuel-reset", {
+            method: "POST",
+            headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
+          })
+            .then(function (r) {
+              return r.json().then(
+                function (j) { return { status: r.status, body: j }; },
+                function () { return { status: r.status, body: {} }; }
+              );
+            })
+            .then(function (res) {
+              var b = isObj(res.body) ? res.body : {};
+              if (res.status !== 200) {
+                uiLog(LOG_WARN, "fuel-reset " + res.status + ": " + (b.reason || b.error || ""));
+              }
+              fuelReset = fuelResetNext(fuelReset, {
+                type: "answer", status: res.status, body: b, nowMs: Date.now(),
+              });
+              paintFuelMpg();
+            })
+            .then(null, function (e) {
+              uiLog(LOG_WARN, "fuel-reset no answer: " + String(e));
+              fuelReset = fuelResetNext(fuelReset, { type: "failure" });
+              paintFuelMpg();
+            });
+        });
+      }
       var landingIndex = -1;
       var lastIdle = null;
-      // US-497 g-trail + US-508 grade trend: accumulated across polls from the
-      // states/imu values (Atlas Q-B -- animate from the polled feed). They live
-      // here, not on the card, so they are dropped with the poll rather than
-      // outliving the feed that produced them.
-      var gTrail = [];
-      var gradeTrend = [];
       // US-508: the live feed is polled on its OWN faster loop, so its payload
       // and the slow tick's payloads meet here rather than in one function's
       // arguments.
@@ -6660,8 +7028,6 @@
       // (`pi.gear.enabled` false) no such file exists, the fetch 404s, and this
       // stays null -- the pre-US-630 behaviour, unchanged.
       var lastImu = null;
-      var lastSys = null;
-      var lastBattery = null;
       var lastGear = null;
       // US-700: the waiting room. `feedStartedMs` is when THIS PAGE started
       // asking, not when the producer started -- the panel cannot know the
@@ -7155,82 +7521,18 @@
         }
       }
 
-      // US-508: paint the home slot. Called from BOTH loops -- the ~10 Hz live
-      // poll (which supplies fresh motion) and the 4 Hz card tick (which
-      // supplies fresh system/battery/dtc for the idle face) -- so whichever
-      // fact changed, the slot repaints from ONE renderer against ONE face
-      // decision. Two renderers racing for one slot is the defect a two-faced
-      // card invites, and the reason `homeFace` is the only arbiter.
-      function renderHome(nowMs) {
-        if (!homeCard) return;
-        // US-662: smooth for DISPLAY only. lastImu itself is untouched.
-        var imuView = smoothedImuView(lastImu, nowMs);
-        var face = homeFace(
-          imuView, nowMs, feedWaitedMs(feedSeen, "imu", feedStartedMs, nowMs)
-        );
-        if (face.face === "live") {
-          // US-645: the fourth argument is the OBD vehicle speed, and it is
-          // NULL because no producer publishes one to this dashboard -- the
-          // realtime SPEED reading lives in the orchestrator and reaches no
-          // state file the panel can fetch (I-us645). Null is the honest value,
-          // not a placeholder: it is what stops the G-FORCE tile claiming
-          // `still` at a 65 mph cruise, where gLon is ~0 too. The label
-          // degrades to `coast`, which is true at any speed.
-          // MERGE 2026-09-01 (US-671): the FIRST argument is US-662's SMOOTHED
-          // `imuView`, not `lastImu`. Both sides of this conflict were fixes the
-          // CIO had already accepted, and either one-sided resolution silently
-          // reverts one of them: `lastImu` kills the 3-second smoothing he
-          // confirmed by eye in the car, and dropping the 4th argument brings
-          // back `still` at a 65 mph cruise. The union is the only correct
-          // answer, which is why this call reads the way it does.
-          var live = liveCardView(imuView, lastGear, nowMs, null);
-          if (live && !live.idle) {
-            // Advance both accumulators every paint. Eviction runs even with no
-            // new point, so a feed that degrades mid-drive decays its history
-            // instead of leaving a shape the vehicle is no longer making.
-            gTrail = pushGTrail(
-              gTrail,
-              live.g.available ? live.g.dot : null,
-              nowMs, G_TRAIL_WINDOW_SEC
-            );
-            gradeTrend = pushGradeTrend(
-              gradeTrend,
-              live.grade.available ? live.grade.pct : null,
-              nowMs, GRADE_TREND_WINDOW_SEC, GRADE_TREND_BUCKET_MS
-            );
-            renderHomeCard(homeCard, face, live, null, gTrail, gradeTrend);
-            return;
-          }
-        }
-        // The idle face. RESET both accumulators: splicing a point from before
-        // an outage onto one after it would draw a trail the vehicle never took
-        // and a grade history it never climbed.
-        gTrail = [];
-        gradeTrend = [];
-        // US-541: the reason is passed UNCONDITIONALLY. Under IMU-always-on the
-        // idle face fires only because the motion feed died, so the hero must
-        // always name the dead instrument. US-508 suppressed the reason when
-        // parked so the calm STANDBY hero could show; leaving that ternary here
-        // would hand a DEAD SENSOR the "engine off - OBD asleep" hero -- a
-        // confident claim about the vehicle manufactured out of a sensor fault,
-        // arriving through a condition that is now always false.
-        // US-542: `lastDtc` is no longer handed to this view -- the faults tile
-        // it fed is on the Alerts card now -- and neither is a Date: the clock
-        // lives in the top bar, painted by its own tick.
-        // US-700: the two slow feeds' waits, plus the motion verdict handed
-        // DOWN from `face` rather than re-derived -- one arbiter per fact.
-        renderHomeCard(
-          homeCard, face, null,
-          idleCardView(lastSys, lastBattery, face.reason, {
-            systemStatus: feedWaitedMs(
-              feedSeen, "system-status", feedStartedMs, nowMs
-            ),
-            battery: feedWaitedMs(
-              feedSeen, "battery-health", feedStartedMs, nowMs
-            ),
-            motionLoading: face.loading === true,
-          }),
-          null, null
+      // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
+      // motion poll (fresh states/imu) and the 4 Hz tick (fresh
+      // states/grade-history) -- against one clock per paint.
+      function renderMotion(nowMs) {
+        if (!motionCard) return;
+        renderMotionCard(
+          motionCard,
+          motionView(
+            lastImu, nowMs, resolveImuStaleSec(global && global.DISPLAY_STALE),
+            feedWaitedMs(feedSeen, "imu", feedStartedMs, nowMs)
+          ),
+          motionGradeGraph(lastGradeHistory)
         );
       }
 
@@ -7253,8 +7555,7 @@
 
       async function tick() {
         var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
-        var sysData = null; // shared with the idle-home card (one fetch per tick)
-        var batteryData = null;
+        var sysData = null; // shared by every surface (one fetch per tick)
         var lightData = null; // shared: the US-507 Health card + the auto-dim
         // US-496: ONE clock for the whole tick, so the Light card's freshness
         // verdict and the brightness the screen is actually set to are resolved
@@ -7283,7 +7584,6 @@
           feedSeen = feedObserved(feedSeen, name, payload);
           if (name === "dtc") dtcData = payload;
           else if (name === "system-status") sysData = payload;
-          else if (name === "battery-health") batteryData = payload;
           else if (name === "light") lightData = payload;
           return payload;
         }
@@ -7306,12 +7606,16 @@
             // The gate resolves against the SAME system-status the rest of the
             // tick uses (cached -- free when another card already read it), so
             // the fuel-trim gate can never disagree with the vehicle state the
-            // top bar and the idle-home card were rendered against.
+            // top bar was rendered against.
+            // US-893-b: the Light page's status line and dot read the SAME
+            // applied level the panel is set to below -- same cached payloads,
+            // same STOP test, same clock.
             renderSourceCard(
               card,
               sourceCardView(
                 spec, data, await stateOnce("system-status"), displayAutoDim,
-                nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs)
+                nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs),
+                brightnessAlarmActive(await stateOnce("dtc"))
               )
             );
             continue;
@@ -7385,12 +7689,6 @@
         // US-405/US-406: drive the takeover + persistent ribbon from the same
         // `dtc` state the Alerts card rendered (one fetch per tick).
         updateDtcSurfaces(dtcData);
-        // US-508: hand the slow-moving states to the home slot and repaint it,
-        // then edge-trigger the home navigation. The live motion half arrives on
-        // its own faster loop; this half keeps the IDLE face current so the slot
-        // is already honest the instant the feed drops.
-        lastSys = sysData;
-        lastBattery = batteryData;
         // US-630: the derived gear. Read on THIS tick rather than the ~10 Hz
         // motion loop -- the producer debounces for >= 2 s before it will name a
         // gear, so a gear cannot change faster than the 4 Hz card tick can see
@@ -7423,28 +7721,45 @@
           fuelLoopView(await stateOnce("obd-live")),
           fuelTotalTrimView(await stateOnce("obd-live"))
         );
-        // US-890-d: the MPG row from states/fuel-economy alone.
-        renderFuelMpg(fuelCard, fuelMpgView(await stateOnce("fuel-economy")));
-        renderHome(nowMs);
+        // US-890-d: the MPG row from states/fuel-economy alone. US-890-f: the
+        // read also advances the reset (match / confirm window / a landed
+        // reset), against the same parked signal and this tick's one clock.
+        lastFuelEconomy = await stateOnce("fuel-economy");
+        fuelReset = fuelResetNext(fuelReset, {
+          type: "read", read: lastFuelEconomy, parked: engineParked.parked,
+          nowMs: nowMs, confirmSec: fuelConfirmSec(),
+        });
+        renderFuelMpg(fuelCard, fuelResetOverlay(
+          fuelMpgView(await stateOnce("fuel-economy")),
+          fuelReset, engineParked.parked, fuelConfirmSec()
+        ));
+        // US-896-b: the NAV trip from the SAME system-status every other
+        // surface on this tick read (cached); the page does no time arithmetic.
+        renderNavTrip(navCard, navTripView(await stateOnce("system-status")));
+        // US-892-b: the grade graph's history, polled like the other states;
+        // the motion values arrive on their own faster loop.
+        lastGradeHistory = await stateOnce("grade-history");
+        renderMotion(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint
         // the ⋮ per tick against the debounced parked signal. Removed with the
         // gate -- the kebab's visibility is no longer a function of any state.
-        // US-483-b: drive the display brightness from the states/light feed
-        // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
-        // floor; an absent/stale feed holds the fixed default (honest fallback).
+        // US-483-b / US-893-a: APPLY the level the light bridge published in
+        // states/light (pure consumer -- never the sensor, never a curve). A
+        // real STOP holds it at full; an absent/stale feed holds the injected
+        // defaultLevel (honest fallback). See appliedBrightness.
         // US-507: `stateOnce` is idempotent, so this REUSES the payload the
         // Health card's Light section already read and only performs a real
         // fetch if no surface consumed it -- the auto-dim keeps working even if
         // the section is ever removed from the markup, with no flag to forget.
         await stateOnce("light");
         applyBrightness(
-          brightnessLevel(
+          appliedBrightness(
             lightData,
             displayAutoDim,
             nowMs,
             brightnessAlarmActive(dtcData)
-          )
+          ).level
         );
       }
 
@@ -7460,8 +7775,40 @@
         // loop), so it books its own arrival. Missing this is how the motion
         // card would have sat at LOADING while every other tile moved on.
         feedSeen = feedObserved(feedSeen, "imu", lastImu);
-        pushImuSamples(lastImu, Date.now());
-        renderHome(Date.now());
+        var nowMs = Date.now();
+        renderMotion(nowMs);
+        renderNav(nowMs);
+      }
+
+      // US-896-a: paint the NAV heading from the RAW states/imu (the provider's
+      // value; the glide is the only motion between readings, spec s4.1). While
+      // a glide is moving, the browser's frame clock repaints it so the tape
+      // glides rather than stepping at the 100 ms poll; without
+      // requestAnimationFrame the poll alone repaints it.
+      function renderNav(nowMs) {
+        if (!navCard) return;
+        var view = navHeadingView(
+          lastImu, nowMs, resolveImuStaleSec(global && global.DISPLAY_STALE)
+        );
+        navGlide = navGlideStep(navGlide, view, nowMs, prefersReducedMotion());
+        renderNavCard(navCard, view, navDrawnDeg(navGlide, nowMs));
+        // US-896-b: GRADE from the same states/imu read, on the same clock.
+        renderNavGrade(navCard, navGradeView(lastImu, nowMs));
+        if (navGliding(navGlide, nowMs) && !navFramePending &&
+            typeof global.requestAnimationFrame === "function") {
+          navFramePending = true;
+          global.requestAnimationFrame(function () {
+            navFramePending = false;
+            renderNav(Date.now());
+          });
+        }
+      }
+
+      // prefers-reduced-motion => the tape STEPS to each reading (spec s4.1).
+      // Read per paint, so a change to the OS setting applies at once.
+      function prefersReducedMotion() {
+        return typeof global.matchMedia === "function" &&
+          global.matchMedia("(prefers-reduced-motion: reduce)").matches === true;
       }
 
       // ARCH-014: the loops are BUILT here rather than self-scheduling, so a

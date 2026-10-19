@@ -20,6 +20,9 @@
 #               |              | the emit forwarding, and the orchestrator gather.
 # 2026-10-14    | Rex (US-880-a)| the two exact drive pins gain distanceKm /
 #               |              | distanceSinceTs (null when not supplied).
+# 2026-10-18    | Rex (US-896-b)| the two exact drive pins gain elapsedSec /
+#               |              | distancePartial (null when not supplied); the
+#               |              | elapsed rule and the partial rule.
 # ================================================================================
 ################################################################################
 
@@ -84,6 +87,8 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
             "state": "recording", "driveId": 27, "lastDrive": None,
             # US-880-a: always keys; null when nothing integrated this process.
             "distanceKm": None, "distanceSinceTs": None,
+            # US-896-b: always keys, null with no distanceSinceTs.
+            "elapsedSec": None, "distancePartial": None,
         },
         # US-480-a idle-SSOT (b): recording -> never idle (a drive is active).
         "idle": False,
@@ -410,6 +415,9 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
         # US-880-a: always keys, null when the caller omits them.
         "distanceKm": None,
         "distanceSinceTs": None,
+        # US-896-b: always keys, null when the caller omits distanceSinceTs.
+        "elapsedSec": None,
+        "distancePartial": None,
     }
     assert written["ts"] == _NOW
 
@@ -618,3 +626,81 @@ def test_orchestratorEmit_noSimulateAttribute_isLive():
     composer._emitSystemStatusState()
 
     assert composer.calls[0]["runMode"] == "live"
+
+
+# ---------------------------------------------------------------------------
+# US-896-b: drive.elapsedSec (Atlas Q2/G2) + drive.distancePartial (B-1(b)).
+# ---------------------------------------------------------------------------
+
+_SINCE = "2026-06-30T19:19:00Z"  # 23 min before _NOW
+
+
+def _drive(**kwargs) -> dict:
+    return buildSystemStatusState(
+        obdLinkState=OBD_LINKED, obdRetries=0, obdLastSeenS=None,
+        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        powerSource="external", driveState="recording", driveId=27,
+        nowIso=_NOW, **kwargs,
+    )["drive"]
+
+
+def test_elapsedSec_recording_isPublishTimeNowMinusSince():
+    drive = _drive(distanceKm=19.96, distanceSinceTs=_SINCE, distancePartial=False)
+
+    assert drive["elapsedSec"] == 1380
+    assert isinstance(drive["elapsedSec"], int)
+
+
+def test_elapsedSec_afterDriveEnd_isFrozenAtTheEndTs():
+    drive = _drive(
+        distanceKm=19.96, distanceSinceTs=_SINCE,
+        distanceEndTs="2026-06-30T19:30:00Z", distancePartial=False,
+    )
+
+    assert drive["elapsedSec"] == 660
+
+
+def test_elapsedSec_isNull_whenSinceIsNull_evenWithAnEndMark():
+    drive = _drive(distanceEndTs="2026-06-30T19:30:00Z", distancePartial=True)
+
+    assert drive["elapsedSec"] is None
+
+
+@pytest.mark.parametrize("since", ["not-a-ts", "2026-06-30T19:45:00Z"])
+def test_elapsedSec_unparseableOrAfterNow_isNull_neverAGuess(since):
+    """A since-point after the publish instant is two clocks disagreeing;
+    a negative elapsed is not a duration, so it is not published."""
+    assert _drive(distanceSinceTs=since, distancePartial=False)["elapsedSec"] is None
+
+
+@pytest.mark.parametrize("partial", [True, False])
+def test_distancePartial_isCarried_whenSinceIsSet(partial):
+    drive = _drive(distanceSinceTs=_SINCE, distancePartial=partial)
+
+    assert drive["distancePartial"] is partial
+
+
+def test_distancePartial_isNull_whenSinceIsNull():
+    assert _drive(distancePartial=False)["distancePartial"] is None
+
+
+def test_emitter_forwardsElapsedAndPartial_throughTheJsonRoundTrip(tmp_path):
+    """The emit -> build forwarding of the end mark and the flag: only a
+    populated value on the far side of the file write pins it."""
+    emit = makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=60, nowIsoFn=lambda: _NOW
+    )
+
+    emit(
+        obdLinkState=OBD_LINKED, obdRetries=0, obdLastSeenS=None,
+        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
+        powerSource="external", driveState="idle", driveId=None,
+        distanceKm=19.96, distanceSinceTs=_SINCE,
+        distanceEndTs="2026-06-30T19:49:00Z", distancePartial=True,
+    )
+
+    drive = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )["drive"]
+    assert drive["elapsedSec"] == 1800
+    assert drive["distancePartial"] is True

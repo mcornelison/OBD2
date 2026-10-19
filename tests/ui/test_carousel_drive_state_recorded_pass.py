@@ -79,6 +79,9 @@
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-638 punch-list 3.4 recorded pass +
 #               |              | the live-face reachability finding (I-us638).
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the idle face LAST DRIVE cases
+#                               retire (LAST DRIVE is on NAV, US-896-b); the
+#                               System card cases stay.
 # ================================================================================
 ################################################################################
 
@@ -86,8 +89,6 @@
 
 from __future__ import annotations
 
-import copy
-import datetime as dt
 import json
 import os
 import shutil
@@ -315,16 +316,6 @@ _OPEN_DRILL = [
     {"flush": 1},
 ]
 
-# A state file that is read once and then DISAPPEARS -- the emitter dying, or
-# /run being cleared under a running kiosk.
-_THEN_VANISH = [{"flush": 4}, {"setRoutes": {"/system-status": None}}, {"flush": 4}]
-
-# The control for the above: the same two-step render with the file left in
-# place, so a harness whose second step reset everything unconditionally cannot
-# pass the vanish tests while proving nothing.
-_THEN_KEPT = [{"flush": 4}, {"flush": 4}]
-
-
 def _textOf(node: dict) -> list[str]:
     out: list[str] = []
     for child in node.get("children", []):
@@ -378,10 +369,6 @@ def _driveTile(payload: Any, **kwargs: Any) -> dict | None:
     return _tileByLabel(_surface(payload, **kwargs), "DRIVE")
 
 
-def _lastDriveTile(payload: Any, **kwargs: Any) -> dict | None:
-    return _tileByLabel(_surface(payload, **kwargs), "LAST DRIVE")
-
-
 def _systemCardText(payload: Any, **kwargs: Any) -> list[str]:
     """The whole System Status card's rendered text, in reading order."""
     surface = _surface(payload, **kwargs)
@@ -406,25 +393,6 @@ def _drillRows(payload: Any) -> list[str]:
 # of them passes vacuously if the harness reads nothing at all. A renamed class
 # or a probe crash would turn the whole file green while pinning nothing.
 # ---------------------------------------------------------------------------
-
-
-def test_theHarnessActuallyReadsBothTiles_negativeControl():
-    """
-    Given: every "must not" assertion below fails open if a tile is unreadable
-    When: an unmistakably ACTIVE drive with a remembered predecessor is rendered
-    Then: the harness reads a real value, a real level and a real colour on the
-          DRIVE tile, and a real value on the LAST DRIVE tile.
-    """
-    payload = _systemStatus(driveState="recording", driveId=52)
-    tile = _driveTile(payload)
-    assert tile is not None, "no DRIVE tile in the rendered DOM"
-    assert tile["value"] == "REC", f"harness read no tile value: {tile!r}"
-    assert tile["level"] == "ok", f"harness read no tile level: {tile!r}"
-    assert tile["colour"] == GREEN, f"harness read no tile colour: {tile!r}"
-
-    last = _lastDriveTile(payload)
-    assert last is not None, "no LAST DRIVE tile in the rendered DOM"
-    assert last["value"] != "", f"harness read no last-drive value: {last!r}"
 
 
 def test_theStylesheetPaintsGreenOnlyForTheOkLevel():
@@ -642,155 +610,11 @@ def test_unreadableDriveBlock_blocksTheCardsGreenAndIsListed():
 # ---------------------------------------------------------------------------
 
 
-def test_atlasLastDriveObservation_paintsTheDriveAndItsAge():
-    """
-    Given: Atlas's punch-list 3.4 reading -- `lastDrive.driveId: 51`
-    When: the shipped panel renders it
-    Then: the LAST DRIVE tile reads "Drive 51" beside a real age.
-
-          THE RECORDED PASS for the identity half. The age is asserted as the
-          computed value, not merely as non-empty: the whole reason US-505 ships
-          a TIMESTAMP rather than a pre-formatted "2 h ago" is that the display
-          must age it against its own read instant, and an age frozen at emit
-          time would still look plausible here.
-    """
-    tile = _lastDriveTile(_systemStatus())
-
-    assert tile is not None
-    assert tile["value"] == "Drive " + str(_ATLAS_DRIVE_ID), tile
-    assert tile["detail"] == "2 h ago", tile
-    assert tile["level"] == "neutral", tile
-
-
-def test_noDriveEverRecorded_paintsTheTypedAbsence_withNoDigitAnywhere():
-    """
-    Given: no real drive is on record -- a fresh Pi, or a simulator-only bench
-    When: the shipped panel renders it
-    Then: the tile reads "No recent drive" / "since key-off", and NOTHING on it
-          is a digit or a blank.
-
-          THE STORY'S STATED NEGATIVE CASE, asserted the way it is worded
-          ("a typed absence rather than a zero or a blank"). The digit sweep is
-          the load-bearing half: "Drive 0" is the exact fabrication a `!= null`
-          check written as a truthiness check would produce, and it reads as a
-          real drive on a 3.5in panel.
-    """
-    tile = _lastDriveTile(_systemStatus(lastDrive=None))
-
-    assert tile is not None
-    assert tile["value"] == "No recent drive", tile
-    assert tile["detail"] == "since key-off", tile
-    assert tile["value"] != "", tile
-    assert not any(ch.isdigit() for ch in " ".join(tile["texts"])), tile
-
-
-def test_lastDriveBlockWithNoId_keepsTheHonestAbsence():
-    """
-    Given: a `lastDrive` block that is PRESENT but carries no drive id
-    When: the shipped panel renders it
-    Then: it reads the same honest absence -- never "Drive null", never a tile
-          built out of the half that did arrive.
-
-          A different input shape from the test above (block absent vs. block
-          empty) reaching the same disposition, which is the property the
-          producer's own `toStatePayload` docstring argues for: the display keys
-          on ABSENCE, so a null-filled block must not read as a drive whose
-          every detail failed to load.
-    """
-    tile = _lastDriveTile(
-        _systemStatus(lastDrive={"driveId": None, "startedAtTs": _ATLAS_DRIVE_STARTED})
-    )
-
-    assert tile is not None
-    assert tile["value"] == "No recent drive", tile
-    assert "null" not in " ".join(tile["texts"]).lower(), tile
-
-
-def test_realDriveWithNoStartTime_showsTheDriveAndAdmitsTheMissingAge():
-    """
-    Given: drive 51 genuinely happened but its start column is NULL
-    When: the shipped panel renders it
-    Then: the drive is still shown and the AGE alone degrades to "age unknown".
-
-          Per-HALF degradation, on the painted tile. The drive is a real fact and
-          hiding it to protect a cosmetic one would lose more than it saves; a
-          fabricated age would be the exact lie the tile exists to avoid. Both
-          failure directions are wrong, so both are pinned in one assertion.
-    """
-    tile = _lastDriveTile(
-        _systemStatus(lastDrive={"driveId": _ATLAS_DRIVE_ID, "startedAtTs": None})
-    )
-
-    assert tile is not None
-    assert tile["value"] == "Drive " + str(_ATLAS_DRIVE_ID), tile
-    assert tile["detail"] == "age unknown", tile
-
-
-def test_absentDriveBlock_isUnavailable_notNoRecentDrive():
-    """
-    Given: no drive block at all
-    When: the shipped panel renders it
-    Then: the tile reads the em-dash / "unavailable" -- NOT "No recent drive".
-
-          Two different claims that a lazier renderer would merge: "no drive has
-          ever happened" is a MEASUREMENT over a log we read, and "we could not
-          read the log" is not. Distinguishing them on the panel is what makes an
-          empty tile actionable.
-    """
-    tile = _lastDriveTile(_withoutDriveBlock())
-
-    assert tile is not None
-    assert tile["value"] == EM_DASH, tile
-    assert tile["detail"] == "unavailable", tile
-    assert tile["level"] == "unavailable", tile
-    assert "No recent drive" not in " ".join(tile["texts"]), tile
-
-
-def test_activeDriveOutranksTheRememberedOneOnTheLastDriveTile():
-    """
-    Given: drive 52 is recording while drive 51 sits in the completed log
-    When: the shipped panel renders it
-    Then: the LAST DRIVE tile reports the LIVE drive, not the remembered one.
-
-          A live drive is the more useful fact and the two must never be shown as
-          if the older one were current. Asserted by NAME on both ids, because
-          "shows 52" alone is also satisfied by a tile that shows both.
-    """
-    tile = _lastDriveTile(_systemStatus(driveState="recording", driveId=52))
-
-    assert tile is not None
-    assert tile["value"] == "REC", tile
-    assert tile["detail"] == "drive 52", tile
-    assert str(_ATLAS_DRIVE_ID) not in " ".join(tile["texts"]), tile
-
-
 # ---------------------------------------------------------------------------
 # THE INDEPENDENCE OF THE TWO FACTS. One block, two renderers -- so the
 # tempting simplification is to gate one on the other, and it would look right in
 # every healthy payload. Only a payload whose two halves DISAGREE can tell.
 # ---------------------------------------------------------------------------
-
-
-def test_anUnreadableStateDoesNotEraseACompletedDrive():
-    """
-    Given: `drive.state` is a word nobody can read, but drive 51 IS on record
-    When: the shipped panel renders that one payload
-    Then: the DRIVE tile goes unavailable AND the LAST DRIVE tile still shows
-          drive 51.
-
-          A drive that finished is not un-finished by a state field going bad.
-          Gate the identity on the state and a single unreadable string erases a
-          real, independently-sourced fact.
-    """
-    payload = _systemStatus()
-    payload["drive"]["state"] = "starting"
-
-    drive = _driveTile(payload)
-    last = _lastDriveTile(payload)
-
-    assert drive is not None and drive["level"] == "unavailable", drive
-    assert last is not None
-    assert last["value"] == "Drive " + str(_ATLAS_DRIVE_ID), last
 
 
 def test_aNeverDrivenPiStillShowsTheLiveRecording():
@@ -820,121 +644,12 @@ def test_aNeverDrivenPiStillShowsTheLiveRecording():
 # ---------------------------------------------------------------------------
 
 
-def test_stateFileVanishesMidRecording_noLingeringRecOnEitherTile():
-    """
-    Given: the panel has read a healthy REC payload
-    When: the state file DISAPPEARS and the panel keeps polling
-    Then: the DRIVE tile is gone with its card, and the LAST DRIVE tile falls to
-          the typed absence -- no REC survives anywhere.
-
-          A frozen REC is the worst lingering value this pair can take: it claims
-          the vehicle is being recorded, right at the moment the thing doing the
-          recording has stopped.
-    """
-    payload = copy.deepcopy(_systemStatus(driveState="recording", driveId=52))
-    surface = _surface(payload, steps=_THEN_VANISH)
-
-    assert _tileByLabel(surface, "DRIVE") is None, "the DRIVE tile outlived its state"
-    last = _tileByLabel(surface, "LAST DRIVE")
-    assert last is not None
-    assert last["value"] == EM_DASH, last
-    assert last["level"] == "unavailable", last
-
-    printed: list[str] = []
-    for path in surface.paths():
-        if path[-1].get("attrs", {}).get("data-state") == "system-status":
-            printed = _textOf(path[-1])
-    assert "REC" not in printed, printed
-    assert "drive 52" not in printed, printed
-
-
-def test_stateFileKeptAfterAGoodRead_stillShowsRec_control():
-    """
-    Given: the same two-step render, but the file does NOT vanish
-    When: the second poll returns the same recording payload
-    Then: REC is still on both tiles.
-
-          The control for the test above: without it, a harness whose second step
-          reset everything unconditionally would pass the no-lingering test while
-          proving nothing.
-    """
-    payload = copy.deepcopy(_systemStatus(driveState="recording", driveId=52))
-    surface = _surface(payload, steps=_THEN_KEPT)
-
-    drive = _tileByLabel(surface, "DRIVE")
-    assert drive is not None and drive["value"] == "REC", drive
-    last = _tileByLabel(surface, "LAST DRIVE")
-    assert last is not None and last["value"] == "REC", last
-
-
 # ---------------------------------------------------------------------------
 # THE CHAIN, END TO END. Everything above starts at `buildSystemStatusState`.
 # The last-drive fact is decided one layer UP by a SQL read, and the state fact
 # by the drive detector, so this is where a producer rename or a re-shape at any
 # link actually fails. US-505's own chain test stops at the pure probe.
 # ---------------------------------------------------------------------------
-
-
-def test_realOrchestratorWithARealDriveLog_paintsThatDriveOnThePanel(tmp_path):
-    """
-    Given: the REAL orchestrator over a REAL drive_summary table holding drives
-           50 and 51
-    When: it emits system-status to a real file and the SHIPPED dashboard reads
-          that file
-    Then: the panel paints "Drive 51" -- the NEWEST drive -- and the DRIVE tile
-          reads IDLE.
-
-          SQL -> producer -> orchestrator -> state file -> renderer -> DOM, in
-          one assertion, with no hand-written JSON anywhere in it. Two rows, not
-          one, so "the newest wins" is under test rather than "the only row is
-          shown".
-    """
-    emitted = _emitToStateFile(
-        tmp_path,
-        database=_driveSummaryDb(
-            [
-                (50, "2026-08-30T09:15:00Z", "real"),
-                (_ATLAS_DRIVE_ID, "2026-08-31T12:46:00Z", "real"),
-            ]
-        ),
-    )
-
-    assert emitted["drive"]["state"] == "idle", emitted["drive"]
-    assert emitted["drive"]["lastDrive"]["driveId"] == _ATLAS_DRIVE_ID, emitted["drive"]
-
-    last = _lastDriveTile(emitted)
-    assert last is not None
-    assert last["value"] == "Drive " + str(_ATLAS_DRIVE_ID), last
-    assert "50" not in " ".join(last["texts"]), last
-
-    drive = _driveTile(emitted)
-    assert drive is not None and drive["value"] == "IDLE", drive
-
-
-def test_realOrchestratorWithOnlySimulatedDrives_paintsTheHonestAbsence(tmp_path):
-    """
-    Given: the REAL orchestrator over a drive_summary holding ONLY a
-           `physics_sim` row -- a simulator-only bench
-    When: the panel renders what it emitted
-    Then: the tile reads "No recent drive".
-
-          The producer filters on `data_source = 'real'` because presenting a
-          bench run as "your last drive" would be a fabrication in the only terms
-          the panel has. That filter is three layers away from the tile; this is
-          the only test that watches it reach the glass. It also protects the
-          test above from passing for the wrong reason -- without it, a producer
-          that ignored `data_source` entirely would look identical.
-    """
-    emitted = _emitToStateFile(
-        tmp_path,
-        database=_driveSummaryDb([(9, "2026-08-31T10:00:00Z", "physics_sim")]),
-    )
-
-    assert emitted["drive"]["lastDrive"] is None, emitted["drive"]
-
-    tile = _lastDriveTile(emitted)
-    assert tile is not None
-    assert tile["value"] == "No recent drive", tile
 
 
 def test_realOrchestratorWhileDriving_paintsRecWithNoFabricatedId(tmp_path):
@@ -965,29 +680,6 @@ def test_realOrchestratorWhileDriving_paintsRecWithNoFabricatedId(tmp_path):
     assert tile["detail"] == "drive ?", tile
 
 
-def test_realOrchestratorWithNoDatabase_paintsTheHonestAbsence(tmp_path):
-    """
-    Given: the REAL orchestrator with no database handle at all -- the boot-order
-           window `_gatherLastDriveSummary` re-reads per tick to survive
-    When: the panel renders what it emitted
-    Then: the tile reads "No recent drive", and the emitted block is null rather
-          than a dict of nulls.
-
-          Both halves matter: the payload SHAPE is what the renderer branches on,
-          and a producer that started emitting `{"driveId": null}` would still
-          render correctly today while being one truthiness check away from
-          "Drive null".
-    """
-    emitted = _emitToStateFile(tmp_path, database=None)
-
-    assert "lastDrive" in emitted["drive"], emitted["drive"]
-    assert emitted["drive"]["lastDrive"] is None, emitted["drive"]
-
-    tile = _lastDriveTile(emitted)
-    assert tile is not None
-    assert tile["value"] == "No recent drive", tile
-
-
 # ---------------------------------------------------------------------------
 # CHARACTERISATION -- the finding, recorded and NOT fixed.
 #
@@ -1001,102 +693,10 @@ def test_realOrchestratorWithNoDatabase_paintsTheHonestAbsence(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _liveImu() -> dict:
-    """A states/imu payload the shipped `imuView` accepts as LIVE.
-
-    Stamped from the wall clock rather than a fixed instant because `imuView`
-    ages the reading against `Date.now()` inside node, and a frozen ISO stamp
-    would go stale on its own and send the home slot back to the idle face -- the
-    branch this trio exists to distinguish. The negative control below is what
-    proves the payload really did flip the face.
-    """
-    now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return {
-        "ts": now,
-        "available": True,
-        "gLat": 0.01,
-        "gLon": 0.02,
-        "gMag": 0.03,
-        "pitchDeg": 0.5,
-        "rollDeg": 0.2,
-        "headingDeg": 180.0,
-    }
-
-
-def test_lastDriveTileIsPresentWhileTheMotionFeedIsDead_control():
-    """
-    Given: no states/imu at all -- the shipped Pi today, where
-           `pi.sensors.imu.enabled` defaults false
-    When: the panel renders
-    Then: the LAST DRIVE tile is on the panel showing drive 51.
-
-          The CONTROL for the characterisation below. Without it, "the tile is
-          absent" would also pass on a harness that had stopped rendering the
-          home card at all, and the finding would be an artefact.
-    """
-    tile = _lastDriveTile(_systemStatus(), imu=None)
-
-    assert tile is not None
-    assert tile["value"] == "Drive " + str(_ATLAS_DRIVE_ID), tile
-
-
-def test_theLiveFaceActuallyRenders_negativeControlForTheFinding():
-    """
-    Given: the finding below is an ABSENCE claim about the live face
-    When: the live face is rendered
-    Then: its own tiles are really on the panel.
-
-          THE MOST IMPORTANT CONTROL IN THIS FILE, and it is here because the
-          first draft of the finding was WRONG WITHOUT IT. `mini_dom.js` had no
-          `createElementNS`, and `svgEl` is the first call `renderLiveBody`
-          makes, so the live face THREW and left an empty card body -- and the
-          characterisation below read that emptiness as evidence that the tile is
-          not on the live face. The claim happens to be true, but the test was
-          measuring the harness. `createElementNS` is now implemented (additively
-          -- no existing behaviour changed) and this control is what stops the
-          same crash being mistaken for a measurement again.
-    """
-    surface = _surface(_systemStatus(), imu=_liveImu())
-
-    assert _tileByLabel(surface, "G-FORCE") is not None, (
-        "the live face rendered NOTHING -- every absence claim below is an "
-        "artefact of the harness, not a fact about the panel"
-    )
-    assert _tileByLabel(surface, "HEADING") is not None
-
-
-def test_liveMotionFeedRemovesTheLastDriveTileFromThePanel_characterisation():
-    """
-    Given: a LIVE states/imu payload -- the Pi once the sensor bus is wired
-    When: the panel renders the same system-status carrying drive 51
-    Then: the LAST DRIVE tile is ABSENT FROM THE PANEL ENTIRELY, and no surface
-          prints the drive id.
-
-          MEASURED, NOT INFERRED (and see the control above for how nearly it was
-          neither), and recorded as a finding rather than fixed (I-us638).
-          `idleCardView` is the only builder of the fact and `renderIdleBody` its
-          only consumer, so the tile lives on the idle FALLBACK face -- which
-          under US-541 IMU-always-on fires only when the motion feed is dead. The
-          System card's DRIVE tile prints no id at idle, so US-505's producer
-          keeps reading the drive log and nothing shows the answer.
-
-          Asserted across the WHOLE rendered body, not just the home card: the
-          claim is "nowhere on the panel", and a check scoped to one card would
-          be satisfied by a tile that had merely moved.
-    """
-    surface = _surface(_systemStatus(), imu=_liveImu())
-
-    # Re-stated locally rather than left to the control above: this test must
-    # not be able to pass on a blank face even if it is run alone.
-    assert _tileByLabel(surface, "G-FORCE") is not None, "the live face is blank"
-
-    assert _tileByLabel(surface, "LAST DRIVE") is None, (
-        "the LAST DRIVE tile is on the live face -- the finding in I-us638 has "
-        "been fixed; re-record this measurement and delete this test on purpose"
-    )
-    body = " ".join(_textOf(surface.tree))
-    assert "LAST DRIVE" not in body, body
-    assert "Drive " + str(_ATLAS_DRIVE_ID) not in body, body
+# MOVED PIN (US-896-b): test_liveMotionFeedRemovesTheLastDriveTileFromThePanel_
+# characterisation is DELETED on purpose (PM, CIO-approved 2026-10-19). I-us638
+# is fixed: LAST DRIVE now lives on the NAV card's trip row (CIO Q1, US-704
+# closes on US-896-b), pinned in tests/ui/test_nav_page.py.
 
 
 def test_theDriveTileNeverPrintsADriveIdWhileIdle_characterisation():

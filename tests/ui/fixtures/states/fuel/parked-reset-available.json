@@ -1,0 +1,91 @@
+{
+  "description": "Parked, a stored since-reset total (24.6 mpg since 2026-10-01). Hold 2 s, Yes; the server answers 200 with resetAtTs T. The first read after the 200 still carries the OLD row (the provider publishes every ~2 s), so the slot keeps 'resetting…'; the next read carries sinceReset.resetAtTs T with mpg null, so the slot shows that read: '--' + 'too short yet'. Reads built by the REAL buildFuelEconomyState.",
+  "parked": true,
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "resetAtTs": "2026-10-20T15:10:00Z"
+    }
+  },
+  "reads": [
+    {
+      "label": "before",
+      "now": "2026-10-20T15:10:00Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": null,
+        "recent": null
+      }
+    },
+    {
+      "label": "stale",
+      "now": "2026-10-20T15:10:02Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": null,
+        "recent": null
+      }
+    },
+    {
+      "label": "after",
+      "now": "2026-10-20T15:10:04Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 0.0,
+          "distance_km": 0.0,
+          "reset_at_ts": "2026-10-20T15:10:00Z"
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 0.0,
+          "distanceKm": 0.0,
+          "mpg": null,
+          "resetAtTs": "2026-10-20T15:10:00Z"
+        },
+        "ts": null,
+        "recent": null
+      }
+    }
+  ]
+}

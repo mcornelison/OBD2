@@ -133,10 +133,8 @@
     <div id="track">
       <!-- US-888-a (F-140; specs/v030-driving-page-design.md, layout B): the
            DRIVING card, the LANDING card (R5) -- `data-landing` is where the
-           carousel opens and where the engine-state edge returns it. It is NOT
-           the home slot: no `data-idle-home`, no `data-face` (the idle/live
-           swap stays with the Home card at index 1), and no `data-state`, so
-           the generic availability poll never grays it. carousel.js fills it
+           carousel opens and where the engine-state edge returns it. No
+           `data-state`, so the generic availability poll never grays it. carousel.js fills it
            from states/obd-live + states/gear (`drivingView`); the skeleton
            ships "--" because nothing has been read before the first poll.
            Readings are not `.tile`s: the 4-fact ceiling counts tiles, and
@@ -176,6 +174,61 @@
                 <div class="drv-line"><span class="drv-value">--</span><span class="drv-unit"></span></div>
                 <span class="drv-note" hidden></span>
               </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- US-896-a (F-160; specs/v030-navigation-page-design.md s3/s4.1/s4.2,
+           layout A): the NAV card, right after Driving (CIO E-2 order). The
+           hero is the bearing tape. BADGE ROW above it (Iris G-1: on the tape
+           a 175 px badge would hide ~37 deg of it), kept at its height when
+           empty so the tape never jumps. carousel.js BUILDS the tape svg in
+           .nav-band only while there is a bearing to draw (`navHeadingView`,
+           `navTape`) and removes it for a dead sensor; .nav-blank carries
+           NO HEADING + reason, or the wait before the first reading. No
+           `data-state`: the generic availability poll never grays it -- the
+           heading states are its own. The skeleton ships "---°" + "not read":
+           nothing has been read before the first poll.
+           US-896-b (spec s4.3/s4.4): the bottom row -- GRADE (states/imu,
+           `navGradeView`) and the trip (system-status drive, `navTripView`).
+           Labels are Michroma; the h:mm after SINCE is a reading in the mono
+           face (the Michroma subset has no ':'). The skeleton ships the
+           not-read faces: '--' + 'not read', '-- mi' + 'not measured'. -->
+      <section class="card" id="nav-card" aria-label="Navigation" data-page-name="NAV"
+               data-heading="dead">
+        <div class="card-body">
+          <div class="nav-badge-row">
+            <span class="nav-badge" hidden></span>
+            <span class="nav-badge-note" hidden></span>
+          </div>
+          <div class="nav-band">
+            <div class="nav-blank">
+              <span class="nav-blank-head">NO HEADING</span>
+              <span class="nav-blank-note">not read</span>
+            </div>
+          </div>
+          <div class="nav-readout">
+            <span class="nav-digits" data-none="true">---°</span>
+            <span class="nav-point"></span>
+          </div>
+          <div class="nav-bottom">
+            <div class="nav-grade" data-slope="none">
+              <span class="nav-label">GRADE</span>
+              <span class="nav-grade-line">
+                <svg class="nav-slope" viewBox="0 0 20 20" aria-hidden="true" hidden>
+                  <line class="nav-slope-line" x1="2" y1="10" x2="18" y2="10"></line>
+                </svg>
+                <span class="nav-grade-value" data-none="true">--</span>
+              </span>
+              <span class="nav-grade-note">not read</span>
+            </div>
+            <div class="nav-trip" data-window="not-measured">
+              <span class="nav-trip-head">
+                <span class="nav-label nav-trip-label">THIS DRIVE</span>
+                <span class="nav-trip-time" hidden></span>
+              </span>
+              <span class="nav-trip-distance" data-none="true">-- mi</span>
+              <span class="nav-trip-elapsed">not measured</span>
             </div>
           </div>
         </div>
@@ -268,7 +321,10 @@
            (`fuelMpgView`), each null with its spec s4.6 reason; the open loop
            flag (`.fuel-flag`) shows only beside a THIS DRIVE figure. LAST 30 S
            stays "--" + "not published" until its provider field lands
-           (US-890-e). Skeleton "--" + "not read". -->
+           (US-890-e). Skeleton "--" + "not read".
+           US-890-f: SINCE RESET's parked-only reset (`fuelMpgResetView`):
+           `.fuel-reset-line` carries "hold to reset" or the outcome,
+           `.fuel-reset-progress` the hold, #fuel-reset-confirm the confirm. -->
       <section class="card" id="fuel-card" data-state="ltft-trend" data-gated="true"
                aria-label="Fuel" data-page-name="FUEL">
         <div class="card-body">
@@ -304,39 +360,106 @@
               <span class="fuel-flag" hidden></span>
               <span class="fuel-note">not read</span>
             </div>
-            <div class="fuel-reading fuel-mpg-since-reset" data-slot="mpg-since-reset" data-note="reason">
+            <div class="fuel-reading fuel-mpg-since-reset" id="fuel-since-reset" data-slot="mpg-since-reset"
+                 data-note="reason" data-pressable="false">
               <span class="fuel-label">SINCE RESET</span>
               <span class="fuel-value">--</span>
               <span class="fuel-note">not read</span>
+              <span class="fuel-reset-line" hidden></span>
+              <span class="fuel-reset-progress" hidden aria-hidden="true"><span class="fuel-reset-progress-fill"></span></span>
             </div>
           </div>
           <div class="fuel-trend">unavailable</div>
+          <!-- US-890-f: the in-page reset confirm (spec s4.3). Opened only by a
+               parked 2 s hold on SINCE RESET; Yes posts /fuel-reset, No
+               changes nothing. Ships hidden. -->
+          <div id="fuel-reset-confirm" class="fuel-reset-confirm" hidden role="alertdialog"
+               aria-label="Reset average MPG">
+            <div class="confirm-box">
+              <p class="fuel-reset-question">Reset average MPG?</p>
+              <div class="confirm-actions">
+                <button id="fuel-reset-no" class="tap-target">No</button>
+                <button id="fuel-reset-yes" class="tap-target">Yes</button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
-      <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
-           card sitting beside an always-present fallback card would poll and
-           paint the same feed twice and put two rules in charge of the slot.
-
-           US-541 + US-542 (F-127) settle WHICH two. The live IMU instrument is
-           the PERMANENT face -- parked, the IMU is correct (a true heading, a
-           true 0.0 g), so the US-481 STANDBY view had nothing to say that the
-           instrument does not say better, and it is RETIRED. The second face is
-           now the honest fallback and nothing else: the motion feed is down and
-           the operator is owed the reason.
-
-           `data-face` is the switch, set by carousel.js from ONE decision
-           (`homeFace`) and read by the stylesheet, so the logical face and the
-           painted face can never disagree. It ships `idle` because that is the
-           honest pre-first-poll state: nothing has been read, so there is no
-           motion to show.
-
-           Still `data-idle-home` with NO `data-state`: the generic availability
-           poll must not reach this slot. Its absence story is not "unavailable"
-           -- an absent/stale states/imu falls back to the fallback face (AC-3),
-           never a frozen or zeroed motion display. -->
-      <section class="card" data-idle-home data-face="idle" id="home-card"
-               aria-label="Home" data-page-name="MOTION">
-        <div class="card-body"><span class="idle-boot">standby …</span></div>
+      <!-- US-892-b (F-127; specs/v030-motion-page-design.md s3/s4, layout A):
+           the MOTION card, after NAV, Engine and Fuel (CIO E-2 order). It
+           replaces the interim Home/MOTION card: the live face (tape, g tile,
+           trail, client-side grade trend) and the parked idle face retire with
+           it -- the heading lives on NAV, LAST DRIVE in NAV's trip slot.
+           carousel.js paints both bands from the RAW states/imu (`motionView`)
+           and the graph from states/grade-history (`motionGradeGraph`); before
+           the first read .motion-loading carries US-700's bounded LOADING. No
+           `data-state`: the generic availability poll never grays it -- each
+           value carries its own '--' + reason. Labels are Michroma; the peak
+           glyphs are literal here and inherit the mono face. The skeleton ships
+           the not-read faces. The IMU health block below is US-892-c. -->
+      <section class="card" id="motion-card" aria-label="Motion" data-page-name="MOTION"
+               data-stale="false">
+        <div class="card-body">
+          <div class="motion-loading" hidden></div>
+          <div class="motion-band motion-top">
+            <div class="motion-cell motion-pitch" data-none="true" data-warn="false">
+              <span class="motion-label">PITCH</span>
+              <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
+              <span class="motion-sub">not read</span>
+            </div>
+            <div class="motion-cell motion-grade" data-empty="true">
+              <span class="motion-label motion-grade-label">GRADE  LAST 15 MIN</span>
+              <svg class="motion-graph" viewBox="0 0 300 58" aria-hidden="true">
+                <line class="motion-graph-zero" x1="0" y1="29" x2="236" y2="29"></line>
+                <text class="motion-graph-empty" x="0" y="21">no grade history yet</text>
+              </svg>
+            </div>
+          </div>
+          <div class="motion-band motion-g">
+            <div class="motion-cell motion-lon" data-none="true">
+              <span class="motion-label">ACCEL BRAKE</span>
+              <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
+              <span class="motion-note">not read</span>
+              <span class="motion-peak">peak ▲-- ▼--</span>
+            </div>
+            <div class="motion-cell motion-lat" data-none="true">
+              <span class="motion-label">CORNER</span>
+              <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
+              <span class="motion-note">not read</span>
+              <span class="motion-peak">peak L-- R--</span>
+            </div>
+          </div>
+          <!-- US-892-c: the IMU health block, a 2 x 2 grid (left UPDATED /
+               TILT FIX, right COMPASS / GYRO, by auto-flow). Not a
+               .motion-band: it never dims (Iris M4). carousel.js
+               (`renderMotionHealth`) sets each cell's data-tone and texts. -->
+          <div class="motion-health">
+            <div class="motion-hcell motion-updated" data-tone="none">
+              <span class="motion-label">UPDATED</span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+            </div>
+            <div class="motion-hcell motion-compass" data-tone="none">
+              <span class="motion-label">COMPASS</span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+            </div>
+            <div class="motion-hcell motion-tilt" data-tone="none">
+              <span class="motion-label">TILT FIX</span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+            </div>
+            <div class="motion-hcell motion-gyro" data-tone="none">
+              <span class="motion-label">GYRO</span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- US-893-b (F-127; specs/v030-light-page-design.md layout A + glyph):
+           the Light page, right after Motion (E-2, Iris Q6). Still a source
+           card on states/light: carousel.js (`renderLightBody`) builds the
+           word + glyph, AMBIENT, the curve, the raw cells and the APPLIED
+           brightness into the body, and paints its own absence. -->
+      <section class="card" id="light-card" data-state="light" aria-label="Light" data-page-name="LIGHT">
+        <div class="card-body">unavailable</div>
       </section>
       <!-- US-406 Alerts card (F-111): hero (worst code + directive) + a
            tappable list sorted worst-first (na last). JS fills the body from
@@ -365,14 +488,8 @@
            it used as a section (and as a standalone card before that), so this
            is a RELOCATION in the opposite direction, not a redesign. The
            per-source independence the merge had to fight for is now free: a
-           dead UPS cannot reach the Light card at all.
-
-           US-508: the standalone Motion card stays gone -- the US-497 live
-           instrument is a FACE of the home slot, not a screen of its own. -->
+           dead UPS cannot reach the Light card at all. -->
       <section class="card" data-state="battery-health" aria-label="Battery" data-page-name="BATTERY">
-        <div class="card-body">unavailable</div>
-      </section>
-      <section class="card" data-state="light" aria-label="Light" data-page-name="LIGHT">
         <div class="card-body">unavailable</div>
       </section>
     </div>

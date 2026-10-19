@@ -395,7 +395,13 @@ async function drainMicrotasks(cycles) {
 // wants to exist; nothing is invented on its behalf.
 function makeFetch(routes, log) {
   return function (url, options) {
-    if (log) log.push({ url: url, method: (options && options.method) || "GET" });
+    if (log) {
+      var entry = { url: url, method: (options && options.method) || "GET" };
+      // US-890-f: a write's token, so a test can see the POST was token-gated.
+      var hdrs = options && options.headers;
+      if (hdrs && typeof hdrs["X-Splash-Token"] === "string") entry.token = hdrs["X-Splash-Token"];
+      log.push(entry);
+    }
     var key = String(url).split("?")[0];
     if (!Object.prototype.hasOwnProperty.call(routes, key)) {
       return Promise.resolve({ ok: false, status: 404, json: notJson, text: notText });
@@ -404,9 +410,17 @@ function makeFetch(routes, log) {
     if (body === null) {
       return Promise.resolve({ ok: false, status: 404, json: notJson, text: notText });
     }
+    // US-890-f: a route may answer with a status of its own --
+    // {"__status": 409, "__body": {...}} -- so a write's refusals (409 / 503 /
+    // 504) can be driven through the real page. Every other body is a 200.
+    var status = 200;
+    if (body && typeof body === "object" && typeof body.__status === "number") {
+      status = body.__status;
+      body = body.__body;
+    }
     return Promise.resolve({
-      ok: true,
-      status: 200,
+      ok: status >= 200 && status < 300,
+      status: status,
       json: function () {
         return Promise.resolve(body);
       },

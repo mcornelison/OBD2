@@ -32,6 +32,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-27    | Ralph (Rex)  | Initial -- US-489 System Status glanceability.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the 2-arg appendTile pin reads the
+#                               battery card (the idle strip retired).
 # ================================================================================
 ################################################################################
 
@@ -451,14 +453,16 @@ def test_renderer_appendsTheFourTilesIntoTheGrid_notTheCardBody():
 
 
 def test_dotIsOptIn_soTheShippedStackedCardsAreUnchanged():
-    """Scope fence: `appendTile` is shared with the idle card, the battery card
-    and the LTFT card. The dot must be opt-in, or three shipped cards change
+    """Scope fence: `appendTile` is shared with the battery card and the LTFT
+    card (and, until US-892-b, the idle card). The dot must be opt-in, or three shipped cards change
     appearance in a story that promised presentation-only on ONE card."""
     js = _read(_JS)
     start = js.index("function appendTile")
     body = js[start : js.index("\n    }", start)]
     assert "withDot" in body
     assert 'el.className = "tile"' in body
-    # The other three cards keep calling the 2-arg form (no dot).
-    assert "appendTile(strip," in js
-    assert "appendTile(strip, view.facts.lastDrive)" in js
+    # The other cards keep calling the 2-arg form (no dot).
+    # MOVED PIN (US-892-b): the idle card's strip retired with its face; the
+    # battery card is the surviving stacked consumer pinned here.
+    assert "appendTile(body, view.health)" in js
+    assert "appendTile(body, view.vcell)" in js

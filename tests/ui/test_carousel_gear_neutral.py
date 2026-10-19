@@ -28,6 +28,9 @@
 # ================================================================================
 # 2026-09-07    | Rex (US-687-a) | Initial -- N on the panel, and the sweep that
 #               |                | keeps machine vocabulary off it.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: re-pointed from the Home GEAR tile
+#                               DOM at gearView / gearReasonText (Atlas
+#                               B1/B2).
 # ================================================================================
 ################################################################################
 
@@ -35,7 +38,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import os
 import shutil
@@ -54,7 +56,6 @@ sys.path.insert(
     ),
 )
 
-import render_harness as rh  # noqa: E402
 
 from common.config.validator import ConfigValidator  # noqa: E402
 from pi.obdii import gear_derivation as gd  # noqa: E402
@@ -70,9 +71,6 @@ pytestmark = pytest.mark.skipif(
     _NODE is None,
     reason="node not on PATH -- the render harness boots the shipped carousel.js",
 )
-
-# The shipped panel, not the harness default.
-PANEL = (480, 320)
 
 # Spelled as a named constant: this file is written and re-read over a Windows
 # SMB share where raw non-ASCII has been mangled before.
@@ -143,61 +141,22 @@ def _emitHeld(tmp_path, speedKph: float, rpm: float) -> dict:
         return json.load(fh)
 
 
-def _liveImu() -> dict:
-    """A states/imu payload the shipped imuView accepts as LIVE.
-
-    Stamped from the wall clock, not a fixed instant: imuView ages the reading
-    against Date.now() inside node, so a frozen stamp would go stale on its own
-    and drop the home slot back to the idle face -- which has no gear glyph at
-    all, and every assertion here would then pass for the wrong reason.
-    """
-    now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return {
-        "ts": now,
-        "available": True,
-        "gLat": 0.01,
-        "gLon": 0.02,
-        "gMag": 0.03,
-        "pitchDeg": 0.5,
-        "rollDeg": 0.2,
-        "headingDeg": 180.0,
-    }
+# MOVED PIN (US-892-b): the Home card's GEAR tile retired with its live face
+# (Atlas B1/B2), so these cases read the SURVIVOR instead of that DOM --
+# gearView, the one pure function the Driving card's gear glyph is painted
+# from (drivingView). The glyph is .value; the reason line is .detail, which
+# gearView still computes although no page prints it today (Atlas B2).
+def _surface(gearPayload: Any) -> dict:
+    """The gear view the panel paints from, for this states/gear payload."""
+    return _probe("gearView", gearPayload)
 
 
-def _surface(gearPayload: Any):
-    """Boot the SHIPPED carousel.js over the SHIPPED markup + stylesheet."""
-    routes: dict[str, Any] = {"/imu": _liveImu()}
-    if gearPayload is not None:
-        routes["/gear"] = gearPayload
-    tree = rh.runDashboard(routes=routes, viewport=PANEL)["tree"]
-    return rh.dashboardSurface(tree, viewport=PANEL)
+def _gearGlyph(view: dict) -> str | None:
+    return view["value"]
 
 
-def _textOf(node: dict) -> list[str]:
-    out: list[str] = []
-    for child in node.get("children", []):
-        if "text" in child:
-            out.append(child["text"].strip())
-        else:
-            out.extend(_textOf(child))
-    return out
-
-
-def _firstRendered(surface, className: str) -> str | None:
-    """The printed text of the first PAINTED element with ``className``."""
-    for path in surface.pathsByClass(className):
-        if not surface.rendered(path):
-            continue
-        return " ".join(_textOf(path[-1])).strip()
-    return None
-
-
-def _gearGlyph(surface) -> str | None:
-    return _firstRendered(surface, "imu-gear")
-
-
-def _gearDetail(surface) -> str | None:
-    return _firstRendered(surface, "imu-gear-detail")
+def _gearDetail(view: dict) -> str | None:
+    return view["detail"]
 
 
 def _probe(fn: str, *args: object) -> object:
@@ -234,20 +193,6 @@ _PRODUCER_REASONS = (
 # Negative control. Every claim below is about what the GEAR glyph reads, and
 # all of them would "pass" on a live face that never painted.
 # ---------------------------------------------------------------------------
-
-
-def test_theLiveFaceRenders_negativeControlForEveryClaimBelow(tmp_path):
-    """
-    Given: a live motion feed and a stationary gear state
-    When:  the panel renders
-    Then:  the live face is genuinely painted, glyph element and all
-    """
-    surface = _surface(_emitStationary(tmp_path))
-
-    assert _firstRendered(surface, "imu-gear-label") == "GEAR", (
-        "the live face did not paint -- every assertion in this file would be "
-        "an artefact of the harness rather than a fact about the panel"
-    )
 
 
 # ---------------------------------------------------------------------------

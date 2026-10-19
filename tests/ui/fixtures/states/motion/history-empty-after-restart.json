@@ -1,0 +1,72 @@
+{
+  "description": "The bridge restarted: grade-history holds no closed bucket yet (points [], ts null) -> 'no grade history yet' above the dashed zero line, never a flat line.",
+  "now": "2026-10-20T15:12:30.5Z",
+  "inputs": {
+    "tsUtc": "2026-10-20T15:12:30Z",
+    "gravity": [
+      0.0,
+      0.0,
+      9.81
+    ],
+    "linear": [
+      0.490333,
+      -0.098067,
+      0.0
+    ],
+    "mag": [
+      20.0,
+      0.0,
+      -40.0
+    ],
+    "pitchRad": 0.020943951023931952,
+    "gyroImplausible": false,
+    "headingDegOverride": 247.0,
+    "headingCalibrated": true,
+    "fusionEngine": "imufusion",
+    "peaks": {
+      "accelG": 0.05,
+      "brakeG": 0.02,
+      "leftG": 0.01,
+      "rightG": 0.03,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "imu": {
+    "available": true,
+    "ts": "2026-10-20T15:12:30Z",
+    "gLat": 0.01,
+    "gLon": 0.05,
+    "gMag": 0.051,
+    "headingDeg": 247.0,
+    "pitchDeg": 1.2,
+    "gradePct": 2.1,
+    "altitude": null,
+    "stopCount": 0,
+    "biasRad": 0.0,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source"
+    },
+    "fusionEngine": "imufusion",
+    "headingCalibrated": true,
+    "peaks": {
+      "accelG": 0.05,
+      "brakeG": 0.02,
+      "leftG": 0.01,
+      "rightG": 0.03,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "historyInputs": [
+    [
+      "2026-10-20T15:00:05Z",
+      null
+    ]
+  ],
+  "gradeHistory": {
+    "points": [],
+    "windowS": 900,
+    "intervalS": 10,
+    "ts": null
+  }
+}

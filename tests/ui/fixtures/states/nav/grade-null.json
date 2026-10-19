@@ -1,0 +1,60 @@
+{
+  "description": "Grade withheld: a pitch beyond the bridge's range publishes gradePct null with reason pitch_out_of_range -> GRADE '--' + 'pitch beyond range' ON THE GLASS (US-852); the heading stays trusted at 247.",
+  "now": "2026-10-20T15:12:30Z",
+  "inputs": {
+    "tsUtc": "2026-10-20T15:12:29Z",
+    "gravity": [
+      0.0,
+      0.0,
+      9.81
+    ],
+    "linear": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mag": [
+      20.0,
+      0.0,
+      -40.0
+    ],
+    "pitchRad": 1.5,
+    "headingDegOverride": 247.0,
+    "headingCalibrated": true,
+    "fusionEngine": "imufusion",
+    "peaks": {
+      "accelG": null,
+      "brakeG": null,
+      "leftG": null,
+      "rightG": null,
+      "sinceTs": null
+    }
+  },
+  "imu": {
+    "available": true,
+    "ts": "2026-10-20T15:12:29Z",
+    "gLat": -0.0,
+    "gLon": 0.0,
+    "gMag": 0.0,
+    "headingDeg": 247.0,
+    "pitchDeg": 85.94,
+    "gradePct": null,
+    "altitude": null,
+    "stopCount": 0,
+    "biasRad": 0.0,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source",
+      "gradePct": "pitch_out_of_range"
+    },
+    "fusionEngine": "imufusion",
+    "headingCalibrated": true,
+    "peaks": {
+      "accelG": null,
+      "brakeG": null,
+      "leftG": null,
+      "rightG": null,
+      "sinceTs": null
+    }
+  }
+}

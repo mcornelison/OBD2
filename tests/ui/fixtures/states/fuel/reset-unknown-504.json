@@ -1,0 +1,65 @@
+{
+  "description": "504: no outcome from eclipse-obd inside pi.fuel.resetTimeoutSec, so the server does not know whether the reset landed (ok null). The slot shows the latest provider value + 'couldn't confirm'; the next read carries sinceReset.resetAtTs T with mpg null (it DID land), so the slot shows '--' + 'too short yet' -- never the pre-reset MPG. Reads built by the REAL buildFuelEconomyState.",
+  "parked": true,
+  "response": {
+    "status": 504,
+    "body": {
+      "ok": null,
+      "error": "no answer from the OBD service within 5s"
+    }
+  },
+  "reads": [
+    {
+      "label": "before",
+      "now": "2026-10-20T15:10:00Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": null,
+        "recent": null
+      }
+    },
+    {
+      "label": "after",
+      "now": "2026-10-20T15:10:06Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 0.0,
+          "distance_km": 0.0,
+          "reset_at_ts": "2026-10-20T15:10:00Z"
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 0.0,
+          "distanceKm": 0.0,
+          "mpg": null,
+          "resetAtTs": "2026-10-20T15:10:00Z"
+        },
+        "ts": null,
+        "recent": null
+      }
+    }
+  ]
+}

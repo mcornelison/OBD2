@@ -1,0 +1,60 @@
+{
+  "description": "The N sector's lower edge, half up, index 8 wraps to 0: 337.5 -> 'N'. headingDeg patched (whole degrees are published; 337.5 is a drawn bearing).",
+  "now": "2026-10-20T15:12:30Z",
+  "inputs": {
+    "tsUtc": "2026-10-20T15:12:29Z",
+    "gravity": [
+      0.0,
+      0.0,
+      9.81
+    ],
+    "linear": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mag": [
+      20.0,
+      0.0,
+      -40.0
+    ],
+    "pitchRad": 0.0,
+    "headingDegOverride": 338.0,
+    "headingCalibrated": true,
+    "fusionEngine": "imufusion",
+    "peaks": {
+      "accelG": null,
+      "brakeG": null,
+      "leftG": null,
+      "rightG": null,
+      "sinceTs": null
+    }
+  },
+  "imu": {
+    "available": true,
+    "ts": "2026-10-20T15:12:29Z",
+    "gLat": -0.0,
+    "gLon": 0.0,
+    "gMag": 0.0,
+    "headingDeg": 337.5,
+    "pitchDeg": 0.0,
+    "gradePct": 0.0,
+    "altitude": null,
+    "stopCount": 0,
+    "biasRad": 0.0,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source"
+    },
+    "fusionEngine": "imufusion",
+    "headingCalibrated": true,
+    "peaks": {
+      "accelG": null,
+      "brakeG": null,
+      "leftG": null,
+      "rightG": null,
+      "sinceTs": null
+    }
+  },
+  "drawnHeadingDeg": 337.5
+}

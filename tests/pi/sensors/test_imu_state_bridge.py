@@ -21,6 +21,8 @@
 #     the bridge started) -- per-sample fold, moving-mean smoothing, fixture R29.
 # 2026-10-14 Rex (US-882-b): states/grade-history -- each states/imu write's
 #     gradePct bucketed on its ts; clock steps, gaps, window cap, fixture R29.
+# 2026-10-18 Rex (US-892-a): GPeakTracker.reset / bridge resetPeaks -- the peaks
+#     clear and sinceTs takes the drive start (additions only).
 ################################################################################
 """Unit tests for the IMU-state bridge (bus raw.imu.* -> states/imu)."""
 
@@ -1380,6 +1382,49 @@ class TestGPeakTracker:
         assert snap["brakeG"] == 0.4
         assert snap["sinceTs"] == _tsAt(0)
 
+    def test_reset_clearsEveryPeak_andSetsSinceTsToTheGivenStart(self):
+        """
+        Given: peaks in all four directions
+        When: reset(T) -- a drive start at T (US-892-a)
+        Then: every peak is null and sinceTs is T
+        """
+        tracker = GPeakTracker(0.5)
+        legs = [(0.3, 0.0), (-0.5, 0.0), (0.0, 0.4), (0.0, -0.2)]
+        i = 0
+        for gLon, gLat in legs:
+            for _ in range(50):
+                tracker.fold(gLon, gLat, i / 50.0, _tsAt(i))
+                i += 1
+        assert all(v is not None for v in tracker.snapshot().values())
+
+        tracker.reset("2026-10-20T15:00:00Z")
+
+        assert tracker.snapshot() == {**_NO_PEAKS, "sinceTs": "2026-10-20T15:00:00Z"}
+
+    def test_foldAfterReset_isTheFirstValue_andSinceTsStaysTheResetTs(self):
+        """A fold after the reset raises from null, from a window holding only
+        post-reset samples; sinceTs is the drive start, never the first fold's ts."""
+        tracker = GPeakTracker(0.5)
+        for i in range(50):
+            tracker.fold(-0.6, 0.0, i / 50.0, _tsAt(i))
+        tracker.reset("2026-10-20T15:00:00Z")
+        for i in range(50, 100):
+            tracker.fold(-0.2, 0.0, i / 50.0, _tsAt(i))
+        snap = tracker.snapshot()
+        assert snap["brakeG"] == 0.2
+        assert snap["accelG"] is None
+        assert snap["sinceTs"] == "2026-10-20T15:00:00Z"
+
+    def test_resetWithNoStartTs_letsTheFirstFoldLabelThePeaks(self):
+        """An unusable drive-start ts is None, never a guess: the next fold labels it."""
+        tracker = GPeakTracker(0.5)
+        for i in range(50):
+            tracker.fold(-0.6, 0.0, i / 50.0, _tsAt(i))
+        tracker.reset(None)
+        assert tracker.snapshot() == _NO_PEAKS
+        tracker.fold(0.0, 0.0, 1.0, _tsAt(50))
+        assert tracker.snapshot()["sinceTs"] == _tsAt(50)
+
     def test_snapshotIsACopy(self):
         tracker = GPeakTracker(0.5)
         tracker.snapshot()["brakeG"] = 9.9
@@ -1500,6 +1545,47 @@ class TestBridgePeaks:
         restarted = ImuStateBridge(None, str(tmp_path), stateHz=1)
         restarted.handleSample(_presence(False, capture=0.0))
         assert _readState(tmp_path)["peaks"] == _NO_PEAKS
+
+    def test_resetPeaks_nextWriteCarriesNullPeaksSinceTheDriveStart(self, tmp_path: Path):
+        """
+        Given: a bridge holding peaks
+        When: resetPeaks(T) (drive start, US-892-a), then the next write fires
+        Then: that write's peaks are all null with sinceTs T
+        """
+        bridge, i = _settledBridge(tmp_path, seconds=2.0)
+        for k in range(50):
+            bridge.handleSample(_accelAt((-0.4 * G, 0.0, G), (i + k) / 50.0, _tsAt(i + k)))
+        assert bridge._peaks.snapshot()["brakeG"] is not None  # noqa: SLF001
+
+        bridge.resetPeaks("2026-10-20T15:00:00Z")
+        bridge.handleSample(_presence(False, capture=(i + 50) / 50.0))
+
+        assert _readState(tmp_path)["peaks"] == {**_NO_PEAKS, "sinceTs": "2026-10-20T15:00:00Z"}
+
+    def test_resetPeaks_fromAnotherThread_whileTheDrainFolds_neverRaises(self, tmp_path: Path):
+        """The orchestrator's drive-start thread resets while the drain thread folds."""
+        import threading
+
+        bridge, i = _settledBridge(tmp_path, seconds=2.0)
+        errors: list[BaseException] = []
+
+        def _drain() -> None:
+            try:
+                for k in range(500):
+                    bridge.handleSample(
+                        _accelAt((-0.4 * G, 0.0, G), (i + k) / 50.0, _tsAt(i + k))
+                    )
+            except BaseException as e:  # noqa: BLE001 -- surfaced by the assert
+                errors.append(e)
+
+        worker = threading.Thread(target=_drain)
+        worker.start()
+        for _ in range(200):
+            bridge.resetPeaks("2026-10-20T15:00:00Z")
+        worker.join()
+
+        assert errors == []
+        assert bridge._peaks.snapshot()["sinceTs"] == "2026-10-20T15:00:00Z"  # noqa: SLF001
 
     def test_everyWrite_carriesPeaks(self, tmp_path: Path):
         bridge = ImuStateBridge(None, str(tmp_path), stateHz=1)

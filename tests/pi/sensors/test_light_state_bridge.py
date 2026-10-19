@@ -12,6 +12,9 @@
 #     US-878-b: states/light gains brightnessLevel / brightnessMode; the
 #     exact-payload pins below gain the two keys, and the autoDim re-read on a
 #     config.json / config.local.json mtime change is tested on a fake clock.
+#     US-893-a: states/light gains lightBand, curve, reasons and atLimit, and a
+#     null lux publishes brightnessMode 'default'. MOVED PIN (US-893-a): the
+#     key set and the two exact-payload pins gain the four keys.
 # Author: Rex (US-483-a)
 # Creation Date: 2026-07-22
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -33,9 +36,12 @@ from pi.bus.sample import QoS, Sample
 from pi.sensors.light_state_bridge import (
     LIGHT_STATE_FILENAME,
     LightStateBridge,
+    brightnessCurvePoints,
+    brightnessKnee,
     brightnessLevel,
     buildLightState,
     createLightStateBridgeFromConfig,
+    lightBand,
 )
 from pi.sensors.sensor_reader import (
     TOPIC_LIGHT_LUX,
@@ -51,15 +57,27 @@ _FIXTURE = (
 
 _T = "2026-10-20T15:02:11.3Z"
 
+# MOVED PIN (US-893-a): gains lightBand, curve, reasons and atLimit.
 _STATE_KEYS = {
     "lux", "visibleCount", "irCount", "fullCount", "gain", "integrationMs",
-    "channelAtLimit", "brightnessLevel", "brightnessMode", "ts",
+    "channelAtLimit", "atLimit", "lightBand", "brightnessLevel", "brightnessMode",
+    "curve", "reasons", "ts",
 }
 
 # Validator-default levels for the lux values the exact pins below use (the
 # curve itself is pinned by tests/pi/sensors/test_brightness_golden.py).
 _LEVEL_120_5 = 0.635728449174043
 _LEVEL_80 = brightnessLevel(80.0, None)
+
+# The curve every validator-default write publishes (its points are pinned by
+# the curve tests below, not restated in each exact-payload pin).
+_CURVE_DEFAULTS = brightnessCurvePoints(None)
+
+# pi.display.autoDim as shipped on this car (Atlas MEASURED 2026-10-14).
+_SHIPPED_AUTODIM = {
+    "luxMin": 3.0, "luxFull": 300.0, "minLevel": 0.75, "defaultLevel": 1.0,
+    "luxStaleSec": 10, "curve": "logarithmic",
+}
 
 
 def _sample(topic: str, value, seq: int, *, ts: str = _T) -> Sample:
@@ -215,6 +233,222 @@ def test_buildLightState_rawLost_channelAtLimitNull():
     assert state["channelAtLimit"] is None
 
 
+# ------------------------------------------- US-893-a: band, mode, reasons, atLimit
+
+
+def test_lightBand_belowLuxMin_isNight_andModeAuto():
+    """VC: lux 0.6, luxMin 3, luxFull 300 -> lightBand 'night', mode 'auto'."""
+    state = buildLightState(lux=0.6, tsUtc=_T, autoDim=_SHIPPED_AUTODIM)
+
+    assert state["lightBand"] == "night"
+    assert state["brightnessMode"] == "auto"
+
+
+def test_buildLightState_nullLux_bandNull_levelDefault_modeDefault():
+    """VC: lux null, defaultLevel 1.0 -> lightBand null, level 1.0, mode 'default'."""
+    state = buildLightState(lux=None, tsUtc=_T, autoDim=_SHIPPED_AUTODIM)
+
+    assert state["lightBand"] is None
+    assert state["brightnessLevel"] == 1.0
+    assert state["brightnessMode"] == "default"
+
+
+@pytest.mark.parametrize(
+    ("lux", "band"),
+    [(0.0, "night"), (2.999, "night"), (3.0, "dusk"), (299.9, "dusk"),
+     (300.0, "day"), (30000.0, "day")],
+)
+def test_lightBand_boundaries_dayInclusiveAtLuxFull_nightExclusiveAtLuxMin(lux, band):
+    """lux < luxMin is night, lux >= luxFull is day, between is dusk."""
+    assert lightBand(lux, _SHIPPED_AUTODIM) == band
+
+
+@pytest.mark.parametrize("lux", [None, -1.0, -0.001, float("nan"), float("inf"), "x"])
+def test_lightBand_notAReading_isNull(lux):
+    """The one lux predicate (Atlas A3): not finite-and->=0 -> no band."""
+    assert lightBand(lux, _SHIPPED_AUTODIM) is None
+
+
+def test_lightBand_degenerateRange_isDayAtLuxFull_neverDusk():
+    """luxFull <= luxMin: day is tested first, so dusk is unreachable."""
+    autoDim = dict(_SHIPPED_AUTODIM, luxMin=100.0, luxFull=100.0)
+
+    assert lightBand(50.0, autoDim) == "night"
+    assert lightBand(100.0, autoDim) == "day"
+    assert brightnessLevel(100.0, autoDim) == 1.0
+
+
+def test_lightBand_nonPositiveLuxMin_hasNoNight():
+    """With luxMin <= 0 no reading (>= 0) is below it."""
+    autoDim = dict(_SHIPPED_AUTODIM, luxMin=0.0)
+
+    assert lightBand(0.0, autoDim) == "dusk"
+
+
+def test_buildLightState_negativeLux_publishesNull_modeDefault():
+    """Atlas A3: -1 is a failed read, published null, never a number."""
+    state = buildLightState(lux=-1.0, tsUtc=_T, autoDim=_SHIPPED_AUTODIM)
+
+    assert state["lux"] is None
+    assert state["brightnessMode"] == "default"
+    assert state["lightBand"] is None
+    assert state["reasons"] == {"lux": "no_reading"}
+
+
+def test_buildLightState_reasons_atLimitWhenSaturated():
+    """L1: a null lux from a channel at the ceiling says at_limit."""
+    state = buildLightState(
+        lux=55.0, tsUtc=_T, rawCounts=(2100, 34763, 36863), rangeContext=(TSL_GAIN_LOW, 100)
+    )
+
+    assert state["reasons"] == {"lux": "at_limit"}
+
+
+def test_buildLightState_reasons_noReadingWhenAbsent_emptyWhenRead():
+    """L1: present only when lux is null; no_reading when not at the limit."""
+    assert buildLightState(lux=None, tsUtc=_T)["reasons"] == {"lux": "no_reading"}
+    assert buildLightState(lux=12.0, tsUtc=_T)["reasons"] == {}
+
+
+def test_buildLightState_atLimit_isPerChannel():
+    """L2: ir at the 200 ms ceiling, full below it -> {ir: true, full: false}."""
+    state = buildLightState(
+        lux=None, tsUtc=_T, rawCounts=(0, 65535, 60000), rangeContext=(TSL_GAIN_LOW, 200)
+    )
+
+    assert state["atLimit"] == {"ir": True, "full": False}
+    assert state["channelAtLimit"] is True
+
+
+def test_buildLightState_atLimit_unknownCeilingOrCount_isNull():
+    """L2: an unknown ceiling or a lost count is null, never a guess."""
+    noCeiling = buildLightState(
+        lux=1.0, tsUtc=_T, rawCounts=(9, 1, 10), rangeContext=(TSL_GAIN_MED, 150)
+    )
+    noIr = buildLightState(
+        lux=1.0, tsUtc=_T, rawCounts=(9, None, 10), rangeContext=(TSL_GAIN_MED, 100)
+    )
+
+    assert noCeiling["atLimit"] == {"ir": None, "full": None}
+    assert noIr["atLimit"] == {"ir": None, "full": False}
+
+
+# ------------------------------------------------------------ US-893-a: the curve
+
+
+def test_curve_shippedConfig_kneeAt94_9IsMinLevel_and300IsFull():
+    """VC: the point at ~94.9 lux has level 0.75; the point at 300 has 1.0."""
+    curve = buildLightState(lux=22.0, tsUtc=_T, autoDim=_SHIPPED_AUTODIM)["curve"]
+    byLux = {lux: level for lux, level in curve["points"]}
+    knee = [lux for lux in byLux if 94.0 < lux < 95.5]
+
+    assert knee == [pytest.approx(94.8683298050514, abs=1e-9)]
+    assert byLux[knee[0]] == pytest.approx(0.75, abs=1e-9)
+    assert byLux[300.0] == 1.0
+
+
+def test_curve_shippedConfig_is51SortedListPointsWithExactBreakpoints():
+    """A4: 51 points; luxMin, luxFull and the knee are published exactly."""
+    curve = brightnessCurvePoints(_SHIPPED_AUTODIM)
+    luxes = [p[0] for p in curve["points"]]
+
+    assert len(curve["points"]) == 51
+    assert all(isinstance(p, list) and len(p) == 2 for p in curve["points"])
+    assert luxes == sorted(luxes)
+    assert len(set(luxes)) == len(luxes)
+    assert 3.0 in luxes
+    assert 300.0 in luxes
+    assert brightnessKnee(_SHIPPED_AUTODIM) in luxes
+    assert luxes[0] == pytest.approx(0.3)
+    assert luxes[-1] == pytest.approx(30000.0)
+    assert (curve["luxMin"], curve["luxFull"], curve["minLevel"]) == (3.0, 300.0, 0.75)
+
+
+def test_curve_everyLevelIsBrightnessLevelExactly():
+    """A4: each level is brightnessLevel(lux, the same autoDim), exactly."""
+    for lux, level in brightnessCurvePoints(_SHIPPED_AUTODIM)["points"]:
+        assert level == brightnessLevel(lux, _SHIPPED_AUTODIM), lux
+
+
+def test_curve_gridPointOneUlpFromTheKnee_isDroppedForTheBreakpoint():
+    """A4: the grid's 94.86832980505139 is dropped; the exact knee is kept."""
+    luxes = [p[0] for p in brightnessCurvePoints(_SHIPPED_AUTODIM)["points"]]
+    gridNeighbour = 0.3 * 10 ** (25 / 10)
+
+    assert gridNeighbour != brightnessKnee(_SHIPPED_AUTODIM)
+    assert gridNeighbour not in luxes
+
+
+def test_curve_validatorDefaults_addLuxFullAndKneeOffTheGrid():
+    """luxFull 1000 and its knee are off the grid, so both are added (53)."""
+    luxes = [p[0] for p in brightnessCurvePoints(None)["points"]]
+
+    assert 1000.0 in luxes
+    assert brightnessKnee(None) in luxes
+    assert len(luxes) == 53
+
+
+def test_knee_minLevelZero_none():
+    """VC: minLevel 0 -> no knee point."""
+    autoDim = dict(_SHIPPED_AUTODIM, minLevel=0.0)
+
+    assert brightnessKnee(autoDim) is None
+    assert len(brightnessCurvePoints(autoDim)["points"]) == 51
+
+
+def test_knee_minLevelOne_none():
+    """A5: minLevel >= 1 clamps the curve to 1 everywhere -- no knee."""
+    assert brightnessKnee(dict(_SHIPPED_AUTODIM, minLevel=1.0)) is None
+
+
+def test_knee_degenerateRange_none():
+    """A5: luxFull <= luxMin is 1.0 everywhere -- no knee."""
+    assert brightnessKnee(dict(_SHIPPED_AUTODIM, luxMin=300.0, luxFull=300.0)) is None
+
+
+def test_knee_linearCurve_isLinearInterpolation():
+    """A5: linear -> luxMin + minLevel * (luxFull - luxMin)."""
+    autoDim = dict(_SHIPPED_AUTODIM, curve="linear")
+
+    assert brightnessKnee(autoDim) == pytest.approx(3.0 + 0.75 * 297.0)
+
+
+def test_knee_nonPositiveLuxMin_isLinear_andLuxMinNotABreakpoint():
+    """A5: luxMin <= 0 -> linear; a non-positive luxMin is not published."""
+    autoDim = dict(_SHIPPED_AUTODIM, luxMin=0.0)
+    luxes = [p[0] for p in brightnessCurvePoints(autoDim)["points"]]
+
+    assert brightnessKnee(autoDim) == pytest.approx(0.75 * 300.0)
+    assert 0.0 not in luxes
+
+
+def test_knee_logCurve_isGeometric():
+    """A5: log -> luxMin * (luxFull / luxMin) ** minLevel."""
+    assert brightnessKnee(_SHIPPED_AUTODIM) == pytest.approx(3.0 * 100.0 ** 0.75)
+
+
+def test_buildLightState_freshCurveListsEveryCall():
+    """A6: no write can mutate another write's curve."""
+    first = buildLightState(lux=1.0, tsUtc=_T)
+    first["curve"]["points"][0][1] = -5.0
+    first["curve"]["points"].clear()
+
+    second = buildLightState(lux=1.0, tsUtc=_T)
+
+    assert len(second["curve"]["points"]) == 53
+    assert second["curve"]["points"][0][1] >= 0.0
+
+
+def test_buildLightState_levelBandAndCurve_shareOneAutoDim():
+    """A6: level, band and curve come from the same resolved autoDim."""
+    autoDim = dict(_SHIPPED_AUTODIM, luxFull=50.0)
+    state = buildLightState(lux=60.0, tsUtc=_T, autoDim=autoDim)
+
+    assert state["lightBand"] == "day"
+    assert state["brightnessLevel"] == 1.0
+    assert state["curve"]["luxFull"] == 50.0
+
+
 # ------------------------------------------------------- fixture conformance (R29)
 
 # The producer inputs behind every named case of tests/ui/fixtures/states/light.json.
@@ -274,10 +508,13 @@ def test_handleSample_oneBurst_writesOnceOnTheRangeSample():
     assert bridge.writes == []
     bridge.handleSample(rangeSample)
 
+    # MOVED PIN (US-893-a): + atLimit, lightBand, curve, reasons.
     assert bridge.writes == [{
         "lux": 120.5, "visibleCount": 900, "irCount": 300, "fullCount": 1200,
         "gain": "med", "integrationMs": 100, "channelAtLimit": False,
-        "brightnessLevel": _LEVEL_120_5, "brightnessMode": "auto", "ts": _T,
+        "atLimit": {"ir": False, "full": False}, "lightBand": "dusk",
+        "brightnessLevel": _LEVEL_120_5, "brightnessMode": "auto",
+        "curve": _CURVE_DEFAULTS, "reasons": {}, "ts": _T,
     }]
 
 
@@ -309,10 +546,13 @@ def test_handleSample_rangeDropped_burstWrittenWhenNewerSeqArrives_neverBorrowed
     bridge.handleSample(_sample(TOPIC_LIGHT_LUX, 81.0, 9, ts="2026-10-20T15:02:13.3Z"))
 
     assert len(bridge.writes) == 2
+    # MOVED PIN (US-893-a): + atLimit, lightBand, curve, reasons.
     assert bridge.writes[1] == {
         "lux": 80.0, "visibleCount": 600, "irCount": 200, "fullCount": 800,
         "gain": None, "integrationMs": None, "channelAtLimit": None,
-        "brightnessLevel": _LEVEL_80, "brightnessMode": "auto", "ts": seq8,
+        "atLimit": {"ir": None, "full": None}, "lightBand": "dusk",
+        "brightnessLevel": _LEVEL_80, "brightnessMode": "auto",
+        "curve": _CURVE_DEFAULTS, "reasons": {}, "ts": seq8,
     }
 
 
