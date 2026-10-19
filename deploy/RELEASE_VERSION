@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.7",
-  "theme": "Pi boot trim round 2 + kiosk logging",
-  "description": "Pi-only (no server change since V0.30.6). OS trim round 2: 21 more units masked, recorded pre-state for late entries (#107). Splash waits for X access (#106). First-frame journal marker for dashboard and splash (#108). Wayland dashboard and both splashes log to the journal (#109). Test fixes for known reds (#105). No mode file = X11, so boot behaviour is unchanged."
+  "version": "V0.30.8",
+  "theme": "V0.30 Motion, Light and NAV pages + fuel reset",
+  "description": "Pi-only (no server change since V0.30.6). Sprint 105 (#113): NAV page (bearing tape, grade, trip distance/elapsed), Motion page (pitch, grade trend, g + this-drive peaks, IMU health), Light page + light provider lightBand/curve/applied brightness, fuel since-reset long-press reset. US-872 F1 (#110): Adafruit/lgpio stack loads on first use, not at import. Test fix (#111). Specs: Warnings spec fold (#114), ADR ARCH-016 11.2/11.3/11.5 design A (#112, docs only)."
 }
