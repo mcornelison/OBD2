@@ -43,6 +43,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-10    | Ralph (Rex)  | Initial -- US-698 cause measurement + re-home pin.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the idleLastDriveFact cases retire
+#                               with the idle face; the producer cases stay.
 # ================================================================================
 ################################################################################
 
@@ -51,9 +53,7 @@
 import json
 import os
 import shutil
-import sqlite3
 import subprocess
-from contextlib import contextmanager
 
 import pytest
 
@@ -89,12 +89,6 @@ _MEASURED_STARTED_AT = None
 
 # The panel's poll clock. `feedStartedMs` is when THIS PAGE started asking.
 _PAGE_START_MS = 0
-# The real Pi's card emitter republishes system-status every ~2 s
-# (orchestrator/types.py stateEmitIntervalSeconds), so this is when the first
-# payload actually lands after a page load.
-_FIRST_PAYLOAD_MS = 2000
-
-
 def _view(fn: str, *args: object) -> object:
     cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
     # encoding pinned: the card's copy carries "·" and "—", which mojibake
@@ -154,66 +148,6 @@ def test_measuredRealPiPayload_carriesTheLastDriveBlock_soCandidateBIsFalse():
     assert payload["drive"]["state"] == _MEASURED_DRIVE_STATE
 
 
-def test_measuredRealPiPayload_rendersTheRecordedDrive_notUnavailable():
-    """THE STORY'S QUESTION, ANSWERED.
-
-    Fed the payload the CIO's own Pi was publishing, the shipped tile renders
-    the drive. It cannot reach the "unavailable" branch, because that branch
-    requires the payload or its `drive` block to be ABSENT -- which is cause A,
-    not cause B.
-    """
-    fact = _view("idleLastDriveFact", _realPiPayload(), None)
-
-    assert fact["value"] == f"Drive {_MEASURED_DRIVE_ID}"
-    assert fact["detail"] != "unavailable"
-    assert fact["level"] == "neutral"
-
-
-@pytest.mark.parametrize(
-    "waitedMs",
-    [None, 0, 1, 2999, 5999, 6000, 6001, 3600000],
-)
-def test_measuredRealPiPayload_isNeverUnavailable_atAnyWait(waitedMs):
-    """An ARRIVED payload outranks the clock, at every wait the panel can hand
-    it -- inside the grace window, at the bound, and an hour past it.
-
-    This is the claim the story's END STATE actually makes: "'unavailable' must
-    not be the resting state". A tile that fell through to `unavailable` once
-    the window expired *despite holding a payload* would satisfy every
-    literal-waitedMs test in US-700's suite and still be the reported defect.
-    """
-    fact = _view("idleLastDriveFact", _realPiPayload(), waitedMs)
-
-    assert fact["level"] == "neutral"
-    assert fact["value"] == f"Drive {_MEASURED_DRIVE_ID}"
-
-
-def test_neverDrivenPi_saysNoRecentDrive_notUnavailable():
-    """The OTHER half of the falsification, and the one that makes it sharp.
-
-    Had cause B been real -- payload present, `lastDrive` empty -- the tile
-    would read "No recent drive", a DIFFERENT string which the CIO did not
-    photograph. Measured here so the discriminator is a run rather than an
-    argument.
-    """
-    fact = _view("idleLastDriveFact", _realPiPayload(lastDrive=None), None)
-
-    assert fact["value"] == "No recent drive"
-    assert fact["level"] == "neutral"
-
-
-def test_theOnlyRouteToUnavailable_isAnAbsentPayload():
-    """Names the cause positively rather than by elimination: "unavailable" is
-    what this tile says when NOTHING arrived and the grace window has expired.
-
-    That is cause A, and it is the state US-700 gave a word of its own.
-    """
-    fact = _view("idleLastDriveFact", None, 60000)
-
-    assert fact["detail"] == "unavailable"
-    assert fact["level"] == "unavailable"
-
-
 # ---------------------------------------------------------------------------
 # THE PHOTOGRAPH (validationCriterion 1), run through the REAL ledger.
 #
@@ -223,69 +157,6 @@ def test_theOnlyRouteToUnavailable_isAnAbsentPayload():
 # `feedWaitedMs` for real instead of hand-passing the wait, so a ledger that
 # never marks this feed answered is a FAILURE here rather than an invisibility.
 # ---------------------------------------------------------------------------
-
-
-def _tileAt(nowMs: int, *, firstPayloadMs: int | None) -> dict:
-    """Render LAST DRIVE at `nowMs`, driving the shipped waiting-room ledger.
-
-    Args:
-        nowMs: the tick clock, relative to page start.
-        firstPayloadMs: when the first real payload lands, or None for a feed
-            that never answers.
-    """
-    payload = None
-    seen: object = {}
-    if firstPayloadMs is not None and nowMs >= firstPayloadMs:
-        payload = _realPiPayload()
-        # The SHIPPED ledger, not a boolean this test made up.
-        seen = _view("feedObserved", seen, "system-status", payload)
-    waitedMs = _view(
-        "feedWaitedMs", seen, "system-status", _PAGE_START_MS, nowMs
-    )
-    return _view("idleLastDriveFact", payload, waitedMs)
-
-
-@pytest.mark.parametrize("nowMs", [5000, 30000, 60000])
-def test_bootTimeline_realPi_showsTheRealDriveByFiveSeconds(nowMs):
-    """validationCriterion 1's outcome: "by 60 s the tile shows a real drive id".
-
-    It shows one by 5 s, because the emitter republishes every ~2 s. Nothing on
-    this timeline reads "unavailable" -- so it is not the resting state, and
-    cause B is not confirmed.
-    """
-    fact = _tileAt(nowMs, firstPayloadMs=_FIRST_PAYLOAD_MS)
-
-    assert fact["value"] == f"Drive {_MEASURED_DRIVE_ID}"
-    assert fact["level"] == "neutral"
-
-
-def test_bootTimeline_theFirstMomentAfterAReload_saysLoadingNotUnavailable():
-    """t=0, the instant the CIO's photo was taken relative to the PANEL's clock.
-
-    This is US-700 reaching THIS tile through the real ledger. Before US-700 the
-    same instant painted "unavailable" -- a confident claim that the feed was
-    broken, made before anyone had answered.
-    """
-    fact = _tileAt(0, firstPayloadMs=_FIRST_PAYLOAD_MS)
-
-    assert fact["value"] == "LOADING"
-    assert fact["level"] == "loading"
-
-
-def test_bootTimeline_deadFeed_saysLoadingThenSettlesOnUnavailable():
-    """The negative arm, and it is what stops the loading word from becoming a
-    blanket excuse: a feed that NEVER answers gets the grace window and then the
-    honest "unavailable".
-
-    Without this, an implementation that reported "loading" forever would pass
-    every other test in this file and hide a genuinely dead producer.
-    """
-    early = _tileAt(1000, firstPayloadMs=None)
-    late = _tileAt(60000, firstPayloadMs=None)
-
-    assert early["value"] == "LOADING"
-    assert late["detail"] == "unavailable"
-    assert late["level"] == "unavailable"
 
 
 def test_bootTimeline_theLedgerHandsThisTileARealWait_notAConstantNull():
@@ -314,113 +185,6 @@ def test_bootTimeline_theLedgerHandsThisTileARealWait_notAConstantNull():
 # validationCriteria 2 + 3: the payload's block matches the newest REAL row in
 # drive_summary, end to end -- real producer, real emitter, real carousel.js.
 # ---------------------------------------------------------------------------
-
-
-def _driveSummaryDb(rows: list[tuple[int, str | None, str]]):
-    from pi.obdii.drive_summary import SCHEMA_DRIVE_SUMMARY
-
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.execute(SCHEMA_DRIVE_SUMMARY)
-    conn.executemany(
-        "INSERT INTO drive_summary "
-        "(drive_id, drive_start_timestamp, data_source) VALUES (?, ?, ?)",
-        rows,
-    )
-    conn.commit()
-
-    class _Database:
-        @contextmanager
-        def connect(self):
-            yield conn
-
-    return conn, _Database()
-
-
-def _emitThrough(tmp_path, database) -> dict:
-    """Drive the REAL card emitter and return the REAL emitted state file."""
-    from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
-
-    class _Orch(CardStateEmitterMixin):
-        def __init__(self):
-            self._config = {
-                "pi": {
-                    "splash": {"statesDir": str(tmp_path / "states")},
-                    "dashboard": {"stateEmitIntervalSeconds": 0.0},
-                }
-            }
-            self._connection = None
-            self._driveDetector = None
-            self._powerSourceProvider = None
-            self._hardwareManager = None
-            self._database = database
-            self._systemStatusEmitter = None
-            self._batteryHealthEmitter = None
-            self._dtcEmitter = None
-            self._cardPowerModeProvider = None
-            self._cardStateEmitEnabled = True
-            self._cardStateEmitInterval = 0.0
-            self._cardSyncStaleThresholdS = 120.0
-            self._lastCardStateEmitTime = None
-            self._lastSyncOkTsIso = None
-            self._lastSyncRows = 0
-
-    orch = _Orch()
-    orch._initializeCardStateEmitters()
-    orch._maybeEmitCardStates()
-    return json.loads(
-        (tmp_path / "states" / "system-status").read_text(encoding="utf-8")
-    )
-
-
-def test_chain_theTileRendersTheNewestRealRow_andNotADifferentDrive(tmp_path):
-    """validationCriteria 2 + 3 in one run: the emitted block, and the rendered
-    tile, both name the newest REAL row in `drive_summary`.
-
-    The sim row is the load-bearing fixture and it carries a HIGHER id than the
-    real one. "The tile is not showing a different drive" is trivially satisfied
-    when only one drive exists; it is only a measurement when a wrong answer is
-    available to be given.
-    """
-    conn, database = _driveSummaryDb(
-        [
-            (50, "2026-08-28T09:00:00Z", "real"),
-            (51, "2026-08-29T18:00:00Z", "real"),
-            (52, "2026-08-29T20:00:00Z", "physics_sim"),
-        ]
-    )
-    newestReal = conn.execute(
-        "SELECT drive_id FROM drive_summary WHERE data_source = 'real' "
-        "ORDER BY drive_id DESC LIMIT 1"
-    ).fetchone()[0]
-
-    emitted = _emitThrough(tmp_path, database)
-    fact = _view("idleLastDriveFact", emitted, None)
-
-    assert newestReal == _MEASURED_DRIVE_ID       # the fixture models Atlas's read
-    assert emitted["drive"]["lastDrive"]["driveId"] == newestReal
-    assert fact["value"] == f"Drive {newestReal}"
-
-
-def test_chain_emptyDriveLog_stillPublishesTheDriveBlock_soTheTileIsNotUnavailable(
-    tmp_path,
-):
-    """The FOURTH-CAUSE PIN Atlas's re-homing condition asks for.
-
-    A Pi with nothing to report must still publish `drive`, because the tile's
-    "unavailable" branch keys on that block's ABSENCE. An emitter that dropped
-    the key when it had no drive to name would re-create the reported symptom
-    on exactly the machine least able to explain it -- and would look like a
-    tidy-up in review.
-    """
-    _, database = _driveSummaryDb([])
-
-    emitted = _emitThrough(tmp_path, database)
-    fact = _view("idleLastDriveFact", emitted, None)
-
-    assert "drive" in emitted
-    assert emitted["drive"]["lastDrive"] is None
-    assert fact["value"] == "No recent drive"
-    assert fact["level"] != "unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -462,22 +226,3 @@ def test_lastDriveHasExactlyOneProducer_andNoSecondAcquisition():
     assert acquisitions[0].endswith(
         os.path.join("orchestrator", "card_state_emitter.py")
     ), acquisitions[0]
-
-
-def test_theDisplayReadsThePublishedFact_andDerivesNoDriveIdOfItsOwn():
-    """The consumer half of validationCriterion 4.
-
-    A fix that reached into another payload for a drive id would be a second
-    acquisition on the display side, which is the shape this project's
-    read-once/publish/subscribe rule exists to forbid.
-    """
-    jsPath = os.path.join(_SRC, "ui", "dashboard", "carousel.js")
-    with open(jsPath, encoding="utf-8") as fh:
-        js = fh.read()
-
-    start = js.index("function idleLastDriveFact")
-    body = js[start:js.index("\n  }", start)]
-
-    assert "drive.lastDrive" in body
-    assert "drive_summary" not in body
-    assert "fetch" not in body

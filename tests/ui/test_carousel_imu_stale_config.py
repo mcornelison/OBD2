@@ -15,6 +15,9 @@
 # ================================================================================
 # 2026-10-14    | Ralph (Rex)  | Initial -- US-882-c DISPLAY_STALE.imuSec.
 # 2026-10-18    | Ralph (Rex)  | US-896-a -- the mirror pin moves 2.0 -> 3.0 s.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: imuView retired with the
+#                               Home card; the validation rows re-point at
+#                               resolveImuStaleSec, as its consumers call it.
 # ================================================================================
 ################################################################################
 """US-882-c tests: the IMU stale window comes from window.DISPLAY_STALE."""
@@ -43,13 +46,17 @@ pytestmark = pytest.mark.skipif(
     reason="node not on PATH -- carousel.js pure-logic tests need node",
 )
 
-# Loads carousel.js with window.DISPLAY_STALE set (or left absent), then
-# evaluates imuView -- the global is read at CALL time, exactly as in the kiosk.
+# Loads carousel.js with window.DISPLAY_STALE set (or left absent), resolves
+# the window exactly as the kiosk's consumers do -- resolveImuStaleSec of the
+# global, read at CALL time -- and judges the reading through the Motion view.
+# MOVED PIN (US-892-b): this evaluated imuView, which retired with the Home card.
 _WITH_GLOBAL = """
 const args = JSON.parse(process.argv[1]);
 if (args.stale !== undefined) globalThis.DISPLAY_STALE = args.stale;
 const carousel = require(args.js);
-process.stdout.write(JSON.stringify(carousel.imuView(args.data, args.nowMs)));
+const staleSec = carousel.resolveImuStaleSec(globalThis.DISPLAY_STALE);
+const view = carousel.motionView(args.data, args.nowMs, staleSec, null);
+process.stdout.write(JSON.stringify({staleSec: staleSec, stale: view.stale}));
 """
 
 
@@ -68,7 +75,8 @@ def _imu() -> dict:
 
 
 def _imuViewWith(ageSec: float, **stale: object) -> dict:
-    """imuView for a reading ``ageSec`` old, with DISPLAY_STALE set if given."""
+    """The resolved window + verdict for a reading ``ageSec`` old, with
+    DISPLAY_STALE set if given."""
     args = {"js": _JS, "data": _imu(), "nowMs": _TS_MS + int(ageSec * 1000)}
     if "value" in stale:
         args["stale"] = stale["value"]
@@ -112,30 +120,32 @@ def test_unusableInjection_fallsBackToTheMirroredDefault(bad):
 def test_readingTwoAndAHalfSecondsOld_injected3point5_isNotStale():
     """Validation: a 2.5 s old reading with DISPLAY_STALE.imuSec 3.5 is live."""
     view = _imuViewWith(2.5, value={"imuSec": 3.5})
-    assert view["idle"] is False
+    assert view == {"staleSec": 3.5, "stale": False}
 
 
 def test_noInjection_usesTheThreeSecondMirror_strictGreaterThan():
     """Validation: with no DISPLAY_STALE the mirrored default applies.
     MOVED PIN (US-896-a, Atlas S105 Q3/G1): the mirror is 3.0 s, not 2.0 -- a
     2.5 s old reading is now live, and 3.5 s is stale."""
-    assert _imuViewWith(2.5)["idle"] is False
-    view = _imuViewWith(3.5)
-    assert view["idle"] is True
-    assert view["reason"].startswith("stale")
+    assert _imuViewWith(2.5) == {"staleSec": 3.0, "stale": False}
+    assert _imuViewWith(3.0)["stale"] is False
+    assert _imuViewWith(3.5) == {"staleSec": 3.0, "stale": True}
 
 
 def test_unsubstitutedPlaceholder_behavesAsToday():
     """A file:// preview leaves the quoted placeholder string in place.
     MOVED PIN (US-896-a): the mirror it falls back to is 3.0 s (was 2.0)."""
     view = _imuViewWith(3.5, value="__DISPLAY_STALE__")
-    assert view["idle"] is True
-    assert _imuViewWith(2.5, value="__DISPLAY_STALE__")["idle"] is False
+    assert view["stale"] is True
+    assert _imuViewWith(2.5, value="__DISPLAY_STALE__")["stale"] is False
 
 
 def test_literalIsGoneFromTheStaleTest():
-    """The stale comparison reads the resolver, not a bare constant."""
+    """The stale comparison reads the resolver, not a bare constant.
+    MOVED PIN (US-892-b): the comparison takes the window as an argument
+    (`age > staleSec`), and both IMU pages pass it the resolver's value."""
     with open(_JS, encoding="utf-8") as fh:
         src = fh.read()
     assert "IMU_STALE_SEC)" not in src.replace("DEFAULT_IMU_STALE_SEC", "")
-    assert "age > resolveImuStaleSec(" in src
+    assert "age > staleSec" in src
+    assert src.count("resolveImuStaleSec(global && global.DISPLAY_STALE)") == 2

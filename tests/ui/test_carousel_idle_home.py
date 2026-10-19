@@ -23,6 +23,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-22    | Ralph (Rex)  | Initial -- US-481 idle-state home card.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the idle-face view cases retire;
+#                               the carouselIdle SSOT cases stay.
 # ================================================================================
 ################################################################################
 
@@ -54,10 +56,6 @@ def _view(fn: str, *args: object) -> dict | None:
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
-
-
-def _available(name: str) -> dict:
-    return {name: {"available": True, "reason": None}}
 
 
 def _unavailable(name: str, reason: str) -> dict:
@@ -136,73 +134,9 @@ def test_carouselIdle_neverDerivesFromDriveState():
 # ---------------------------------------------------------------------------
 
 
-def test_idleBatteryFact_upsUnavailable_typedNa():
-    """UPS unavailable -> a typed NA with the reason, never a stale cell reading."""
-    fact = _view(
-        "idleBatteryFact",
-        {"vcellV": None, "soc": None, "source": _unavailable("ups", "gauge unreadable")},
-    )
-    assert fact["value"] == "NA"
-    assert fact["detail"] == "gauge unreadable"
-    assert fact["level"] == "unavailable"
-
-
-def test_idleBatteryFact_healthGreen_greenWithAge():
-    """A GREEN Spool verdict -> level ok (green) AND the detail carries the data-
-    age (F-9 stale-green guard: a month-old GOOD can never read as live)."""
-    fact = _view(
-        "idleBatteryFact",
-        {
-            "vcellV": 4.02,
-            "soc": 76,
-            "socCalibrated": True,
-            "health": "good",
-            "draining": False,
-            "lastHealthCheckTs": "2026-07-20T00:00:00Z",
-            "source": _available("ups"),
-            "ts": "2026-07-22T00:00:00Z",
-        },
-    )
-    assert fact["level"] == "ok"
-    assert fact["value"] == "76%"
-    assert "last health check" in fact["detail"]
-    assert "2026-07-20" in fact["detail"]
-
-
-def test_idleBatteryFact_healthDegraded_isNeutralNeverGreenNeverRed():
-    """US-504: a DEGRADED verdict is informational -- it must not claim health
-    (`ok`) and must not alarm (`down`) on the idle surface either."""
-    fact = _view(
-        "idleBatteryFact",
-        {
-            "vcellV": 3.6,
-            "soc": 40,
-            "health": "degraded",
-            "lastHealthCheckTs": "2026-07-20T00:00:00Z",
-            "source": _available("ups"),
-            "ts": "2026-07-22T00:00:00Z",
-        },
-    )
-    assert fact["level"] == "neutral"
-
-
 # ---------------------------------------------------------------------------
 # idleLastDriveFact -- honest degradation when no last-drive reference exists.
 # ---------------------------------------------------------------------------
-
-
-def test_idleLastDriveFact_noDrive_honestAbsent():
-    """Parked with no drive reference (the emitter writes driveId:null when idle)
-    -> "No recent drive", never a fabricated last trip."""
-    fact = _view("idleLastDriveFact", _sys(True))
-    assert fact["value"] == "No recent drive"
-    assert fact["level"] == "neutral"
-
-
-def test_idleLastDriveFact_absentBlock_unavailable():
-    """A malformed system-status (no drive block) -> unavailable, not fabricated."""
-    fact = _view("idleLastDriveFact", None)
-    assert fact["level"] == "unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -212,50 +146,3 @@ def test_idleLastDriveFact_absentBlock_unavailable():
 # replaced it. The retirement itself is gated in
 # tests/ui/test_carousel_idle_face_retirement.py.
 # ---------------------------------------------------------------------------
-
-
-def test_idleCardView_assemblesTheHeroAndTheTwoSurvivingFacts():
-    """The card = a neutral (never green) hero + the last-drive/battery strip.
-
-    The faults tile is deliberately absent: US-542 moved it to Alerts. Asserting
-    the key SET rather than only the two members is what makes that a real pin --
-    a membership check goes green on a view that quietly grew the tile back."""
-    view = _view(
-        "idleCardView",
-        _sys(True),
-        {
-            "vcellV": 4.02,
-            "soc": 76,
-            "socCalibrated": True,
-            "health": "good",
-            "lastHealthCheckTs": "2026-07-20T00:00:00Z",
-            "source": _available("ups"),
-            "ts": "2026-07-22T00:00:00Z",
-        },
-        "no motion feed",
-    )
-    assert view["hero"]["level"] == "neutral"
-    assert view["hero"]["level"] != "ok"  # never green
-    assert set(view["facts"].keys()) == {"lastDrive", "battery"}
-    assert view["facts"]["battery"]["level"] == "ok"  # the one allowed green
-
-
-def test_idleCardView_heroNeverGreenEvenWhenAllHealthy():
-    """Honest-instrument 1.3, carried across the retirement: even with a healthy
-    battery, the hero stays neutral. It reports a DEAD INSTRUMENT -- a green
-    backdrop over that is the one colour it must never take."""
-    view = _view(
-        "idleCardView",
-        _sys(True),
-        {
-            "vcellV": 4.1,
-            "soc": 90,
-            "health": "good",
-            "lastHealthCheckTs": "2026-07-22T00:00:00Z",
-            "source": _available("ups"),
-            "ts": "2026-07-22T00:00:00Z",
-        },
-        "compass reading absent",
-    )
-    assert view["hero"]["level"] == "neutral"
-    assert view["facts"]["battery"]["level"] == "ok"

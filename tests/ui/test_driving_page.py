@@ -35,6 +35,8 @@
 # 2026-10-15    | Ralph (Rex)  | Initial -- US-888-a Driving card.
 # 2026-10-15    | Ralph (Rex)  | US-888-b: CSS gate admits state-qualified motion
 #               |              | only (+ planted bare-animation control).
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card at index 4.
 # ================================================================================
 ################################################################################
 
@@ -83,19 +85,11 @@ _NODE_ONLY = pytest.mark.skipif(
 # MOVED PIN (US-889-b): the Engine card is index 1, right after Driving (E-2).
 # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after Engine.
 # MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
+# MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
 CARD_ORDER = [
-    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
     "Battery", "Light",
 ]
-
-# The Home/IMU slot as it shipped before this story (US-887-c tree). It moves
-# to index 1 with its DOM UNCHANGED (Iris Q1), so the tag is pinned verbatim.
-HOME_SLOT_MARKUP = (
-    '<section class="card" data-idle-home data-face="idle" id="home-card"\n'
-    '               aria-label="Home" data-page-name="MOTION">\n'
-    '        <div class="card-body"><span class="idle-boot">standby …</span></div>\n'
-    "      </section>"
-)
 
 # The five readings and where layout B puts them (spec s3, D-12).
 READING_PIDS = ["COOLANT_TEMP", "INTAKE_TEMP", "SPEED", "RPM", "BATTERY_V"]
@@ -301,13 +295,12 @@ def test_drivingCard_isNamedDriving_andInheritsNoHomeSlotMachinery():
         assert attr not in tag, attr
 
 
-def test_homeSlot_movesToIndexOne_withItsMarkupUnchanged():
+def test_motionSlot_sitsAtIndexFour():
+    # MOVED PIN (US-892-b): the Home card (and its pinned-verbatim markup)
+    # retired; the Motion card took its slot, index 4, after NAV, Engine and
+    # Fuel (CIO E-2 order).
     html = _read(_HTML)
-    assert HOME_SLOT_MARKUP in html
-    # MOVED PIN (US-889-b): the Engine card took index 1, so Home is index 2.
-    # MOVED PIN (US-890-a): the Fuel card took index 2, so Home is index 3.
-    # MOVED PIN (US-896-a): the NAV card took index 1, so Home is index 4.
-    assert 'id="home-card"' in _sectionTags(html)[4]
+    assert 'id="motion-card"' in _sectionTags(html)[4]
 
 
 def test_drivingFacts_doNotUseTheTileClass():

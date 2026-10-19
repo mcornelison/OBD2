@@ -37,23 +37,24 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-31    | Ralph (Rex)  | Initial -- US-510 fidelity pass (copy/tokens/font).
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the idle wordmark/footer cases
+#                               retire with the idle face; the font-display
+#                               set swaps .idle-wordmark for #motion-card
+#                               .motion-label.
 # ================================================================================
 ################################################################################
 
 """US-510 tests for the dashboard fidelity pass (locked copy, tokens, brand face)."""
 
-import json
 import os
 import re
 import shutil
-import subprocess
 
 import pytest
 
 from tests.ui.render_harness import parseCss
 
 _HERE = os.path.dirname(__file__)
-_PROBE = os.path.join(_HERE, "carousel_probe.js")
 _UI = os.path.join(_HERE, "..", "..", "src", "pi", "ui")
 _TOKENS = os.path.join(_UI, "tokens.css")
 _DIST = os.path.join(_UI, "dashboard")
@@ -66,12 +67,6 @@ _needsNode = pytest.mark.skipif(
     _NODE is None, reason="node not on PATH -- carousel.js pure-logic tests need node"
 )
 
-# --- the locked strings (Iris, 2026-07-21-pi-idle-state-and-full-bleed.md 1.2,
-# re-asserted verbatim as US-510 A-1). These are the SPEC, not a paraphrase of
-# it: the PM's story text renders "·" as "." and "⋮" as "the kebab", and the AC
-# says "verbatim from the locked idle spec" -- reproducing the paraphrase would
-# repeat the exact drift this story exists to undo.
-_LOCKED_WORDMARK = "ECLIPSE OBD-II"
 _LOCKED_FOOTER = "swipe for details · hold or ⋮ for setup"
 # The pre-drift line the build shipped instead. Named so its removal is pinned.
 _DRIFTED_FOOTER = "monitoring resumes on engine start"
@@ -104,25 +99,6 @@ _ALLOWED_CONTRAST_HEX = frozenset({"#fff", "#000"})
 def _read(path: str) -> str:
     with open(path, encoding="utf-8") as fh:
         return fh.read()
-
-
-def _view(fn: str, *args: object) -> object:
-    """Evaluate one carousel.js export against fixtures via the shared probe."""
-    cmd = [_NODE, _PROBE, fn] + [json.dumps(a) for a in args]
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
-    assert proc.returncode == 0, proc.stderr
-    return json.loads(proc.stdout)
-
-
-def _idleView(motionReason: object = "sensor not detected") -> dict:
-    """The assembled fallback-card view. Only the copy fields matter here, and
-    they do not depend on the state fixtures.
-
-    US-542 dropped `dtcData` from the signature, so this helper is THREE args
-    now. That drop is why it has to be repointed rather than left alone: a stale
-    4-arg call still runs, it just binds the motion reason to a parameter that
-    no longer exists -- green, and testing nothing (the US-541 lesson)."""
-    return _view("idleCardView", None, None, motionReason)
 
 
 def _tokenValue(css: str, name: str) -> str:
@@ -221,23 +197,6 @@ def test_stripJsComments_survivesTheShippedSvgNamespaceString():
 
 
 @_needsNode
-def test_idleWordmark_isTheLockedEclipseObdIiString():
-    """Given: Iris's locked idle spec 1.2 says the wordmark is `ECLIPSE OBD-II`
-    When: the idle view is assembled
-    Then: it carries the locked string, not the build's `ECLIPSE` paraphrase."""
-    assert _idleView()["wordmark"] == _LOCKED_WORDMARK
-
-
-@_needsNode
-def test_idleWordmark_survivesTheUs542Retirement():
-    """The wordmark is BRANDING, not status. US-542 retired the parked screen
-    around it and the LOCKED FOOTER with that screen -- this string stays,
-    because a dead motion feed does not re-brand the product and the wordmark
-    was never teaching the operator anything about being parked."""
-    assert _idleView("no motion feed")["wordmark"] == _LOCKED_WORDMARK
-
-
-@_needsNode
 def test_theLockedNavigationHintRetiredWithTheScreenItTaught():
     """US-542 (Atlas design-gate) retires the parked face, and the locked footer
     was a PARKED-screen navigation hint. It is not relocated: the hint taught
@@ -253,33 +212,12 @@ def test_theLockedNavigationHintRetiredWithTheScreenItTaught():
     assert "⋮" in _read(_HTML), "the setup affordance itself must still be there"
 
 
-@_needsNode
-def test_theSurvivingFooterStatesTheFaultNotANavigationHint():
-    """The one remaining disposition (motion feed dead) keeps its OWN footer: it
-    states the fault the operator otherwise has no explanation for -- the live
-    card just vanished. Replacing it with a navigation hint would delete a real
-    instrument fact to make room for a tutorial."""
-    footer = _idleView("sensor not detected")["footer"]
-    assert footer, "the fallback disposition still needs a footer"
-    assert footer != _LOCKED_FOOTER
-    assert "motion feed" in footer
-
-
 def test_theDriftedStatusLineIsGoneFromTheSource():
     """The pre-drift copy must not survive anywhere executable. Comments are
     stripped first: the renderer's own note NAMES this string while explaining
     why the footer became a view field, so an un-stripped grep would fail on
     the documentation of the fix rather than on the defect."""
     assert _DRIFTED_FOOTER not in _stripJsComments(_read(_JS))
-
-
-def test_theRestoredCopyIsActuallyPainted():
-    """A view field nobody renders is not copy -- it is a variable. Both the
-    wordmark and the footer must reach the DOM from the VIEW (never a literal
-    re-typed in the renderer, which is how the two drifted apart originally)."""
-    js = _stripJsComments(_read(_JS))
-    assert "wm.textContent = view.wordmark" in js
-    assert "footer.textContent = view.footer" in js
 
 
 # ---------------------------------------------------------------------------
@@ -482,14 +420,19 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
 
     MOVED PIN (US-896-b): the NAV card's bottom-row LABELS (GRADE / THIS
     DRIVE / LAST DRIVE / SINCE; NAV spec s4.4, Iris UIDEV-004). The SINCE h:mm
-    and every figure stay --font-mono, pinned in tests/ui/test_nav_page.py."""
+    and every figure stay --font-mono, pinned in tests/ui/test_nav_page.py.
+
+    MOVED PIN (US-892-b): the idle face's wordmark retired with that face (CIO
+    2026-10-16 Q1), so `.idle-wordmark` leaves the set; the Motion card's
+    LABELS join it (PITCH / GRADE  LAST 15 MIN / ACCEL / BRAKE / CORNER, spec
+    s3). Its figures, the peak glyphs, the true minus and the degree sign stay
+    the inherited --font-mono, pinned in tests/ui/test_motion_page.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
         if "var(--font-display)" in body
     }
     assert bound == {
-        ".idle-wordmark",
         "#page-name",
         "#not-live-marker",
         "#driving-card .drv-label",
@@ -497,6 +440,7 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#engine-card .eng-label",
         "#fuel-card .fuel-mpg .fuel-label",
         "#nav-card .nav-label",
+        "#motion-card .motion-label",
     }, bound
 
 

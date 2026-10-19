@@ -79,6 +79,9 @@
 #               |              | REASON corrected -- a browser paints nothing
 #               |              | for `textContent = undefined` (measured,
 #               |              | Chrome/Edge 152). The pin itself is unchanged.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Home card retired, so its DOM
+#                               cases go; the producer and imuHeadingTile
+#                               (NAV) cases stay.
 # ================================================================================
 ################################################################################
 
@@ -87,7 +90,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import shutil
@@ -115,9 +117,7 @@ from pi.sensors.imu_state_bridge import (  # noqa: E402
     DEFAULT_STATE_HZ,
     IMU_STATE_FILENAME,
     REASON_NO_MAG,
-    REASON_SENSOR_ABSENT,
     STANDARD_GRAVITY_MS2,
-    STATE_IMU_PRESENCE,
     TOPIC_IMU_ACCEL,
     TOPIC_IMU_MAG,
     ImuStateBridge,
@@ -168,9 +168,6 @@ G = STANDARD_GRAVITY_MS2
 # heading that read NA because the whole CARD had gone stale would prove nothing
 # about the heading field.
 _T0_ISO = "2026-08-31T12:00:00Z"
-_T0_MS = 1787227200000  # 2026-08-31T12:00:00Z in epoch ms
-_NOW_MS = _T0_MS + 1000
-
 # The gate-state topic the reader publishes when the magnetometer stops
 # measuring. Derived from the raw topic by the producer's own helper, never
 # spelled: a wrong topic string is IGNORED by `handleSample` and the previous
@@ -189,33 +186,7 @@ _MAG_GATE_TOPIC = channelStateTopic(TOPIC_IMU_MAG)
 #   (30, 17, -20)            29.5388       30.0      "30° NNE"
 #   (-16, -38, 5)           247.1663      247.0      "247° WSW"
 _MAG_EAST = (0.0, 20.0, -40.0)
-_MAG_NORTH = (40.0, 0.0, -20.0)
-_MAG_FRACTIONAL = (30.0, 17.0, -20.0)
-
 _EAST_BEARING = 90
-_NORTH_BEARING = 0
-
-# The one uncalibrated-hedge vocabulary sweep. The CIO's ruling is a rule about
-# what must NOT be on the tile, so it is asserted as a vocabulary rather than as
-# an equality: an equality passes the day someone appends " (approx)" to a value
-# nobody re-read the assertion for.
-_HEDGE_WORDS = (
-    "uncalibrated",
-    "calibrat",
-    "approx",
-    "estimate",
-    "unverified",
-    "unreliable",
-    "untrusted",
-    "roughly",
-    "nominal",
-    "ballpark",
-    "unsure",
-    "maybe",
-)
-_HEDGE_MARKS = ("±", "+/-", "~")
-
-
 # ------------------------------------------------------------------- producer
 
 
@@ -259,13 +230,6 @@ def _accelGate(reason: str, *, seq: int = 2, capture: float = 0.02):
     return _sample(CHANNEL_STATE_ACCEL, 0.0, reason, seq=seq, capture=capture)
 
 
-def _presence(present: bool, *, seq: int = 2, capture: float = 0.5):
-    """The retained IMU presence STATE the reader publishes on an unplug."""
-    return _sample(
-        STATE_IMU_PRESENCE, 1.0 if present else 0.0, "bool", seq=seq, capture=capture
-    )
-
-
 def _producedImuState(tmpPath: Path, samples: list[Any]) -> dict[str, Any]:
     """Run the REAL bridge over ``samples`` and return the bytes it wrote."""
     bridge = ImuStateBridge(None, str(tmpPath))
@@ -295,23 +259,6 @@ def _afterALiveBearing(tmpPath: Path, *tail: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------- render
 
 
-def _run(imu: Any, *, nowMs: int = _NOW_MS) -> dict[str, Any]:
-    """Boot the SHIPPED carousel over the SHIPPED markup at the panel size.
-
-    ``imu`` is served at /imu; pass None to model the state file being ABSENT
-    (an unlisted route 404s -- nothing is invented on the test's behalf).
-    """
-    routes: dict[str, Any] = {}
-    if imu is not None:
-        routes["/imu"] = imu
-    return rh.runDashboard(
-        routes=routes,
-        steps=[{"flush": 4}],
-        viewport=PANEL,
-        nowMs=nowMs,
-    )["tree"]
-
-
 def _findAttr(node: Any, attr: str, value: str) -> dict[str, Any] | None:
     if isinstance(node, dict) and node.get("attrs", {}).get(attr) == value:
         return node
@@ -330,85 +277,11 @@ def _text(node: dict[str, Any] | None) -> str:
     return " ".join(_text(c) for c in node.get("children", []) or []).strip()
 
 
-def _homeCard(tree: dict[str, Any]) -> dict[str, Any]:
-    card = _findAttr(tree, "id", "home-card")
-    assert card is not None, "the Home card is not in the rendered tree"
-    return card
-
-
 def _walk(node: Any):
     if isinstance(node, dict):
         yield node
         for child in node.get("children", []) or []:
             yield from _walk(child)
-
-
-def _classOf(node: dict[str, Any]) -> str:
-    return str(node.get("attrs", {}).get("class") or "")
-
-
-def _childText(tile: dict[str, Any], cls: str) -> str:
-    for node in _walk(tile):
-        if _classOf(node) == cls:
-            return _text(node)
-    return ""
-
-
-def _hasChild(tile: dict[str, Any], cls: str) -> bool:
-    """Does ``tile`` actually CONTAIN an element of class ``cls``?
-
-    `_childText` answers "" for BOTH an empty element and a missing one, which
-    makes every "reads empty" assertion in this file degenerate on its own: it
-    is equally satisfied by a span someone deleted. US-697 turns the HEADING
-    detail into the empty case deliberately, so the two have to be tellable
-    apart from here on.
-    """
-    return any(_classOf(node) == cls for node in _walk(tile))
-
-
-def _tiles(tree: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Every PAINTED tile on the Home card, keyed by its rendered label."""
-    out: dict[str, dict[str, Any]] = {}
-    for node in _walk(_homeCard(tree)):
-        if _classOf(node) != "tile":
-            continue
-        label = _childText(node, "tile-label")
-        if label:
-            out[label] = node
-    return out
-
-
-def _tile(tree: dict[str, Any], label: str) -> dict[str, Any]:
-    tiles = _tiles(tree)
-    assert label in tiles, (
-        f"no {label} tile was painted on the Home card -- found {sorted(tiles)}"
-    )
-    return tiles[label]
-
-
-def _value(tile: dict[str, Any]) -> str:
-    return _childText(tile, "tile-value")
-
-
-def _detail(tile: dict[str, Any]) -> str:
-    return _childText(tile, "tile-detail")
-
-
-def _level(tile: dict[str, Any]) -> str:
-    return str(tile.get("attrs", {}).get("data-level") or "")
-
-
-def _tapeLabels(tree: dict[str, Any]) -> list[str]:
-    """The rose labels actually drawn on the compass tape.
-
-    See the fidelity limit in the header: these ACCUMULATE across paints under
-    this harness, so only their presence/absence and their SET are meaningful.
-    """
-    return [
-        _text(node)
-        for node in _walk(_homeCard(tree))
-        if _classOf(node) == "imu-tape-label"
-    ]
 
 
 def _srcFilesContaining(needle: str) -> set[str]:
@@ -452,125 +325,6 @@ def test_realBridge_resolvesABearingFromRealMagAndAccelSamples(tmp_path):
     # A resolved field must not ALSO carry a reason: a value plus an excuse is
     # two producers disagreeing inside one payload.
     assert "headingDeg" not in state["reasons"]
-
-
-def test_liveFaceActuallyPainted_control(tmp_path):
-    """
-    Given: that same live payload on the shipped panel
-    When: the Home card is inspected
-    Then: it is on the LIVE face and carries real readings beside the heading
-
-    THE CONTROL FOR EVERY ABSENCE CLAIM BELOW. US-638 established the hazard by
-    walking into it: a harness that throws renders an empty card body, and an
-    empty body satisfies "no stale bearing is painted" while proving nothing.
-    """
-    tree = _run(_liveState(tmp_path))
-
-    assert _homeCard(tree).get("attrs", {}).get("data-face") == "live"
-    tiles = _tiles(tree)
-    assert "HEADING" in tiles and "GRADE" in tiles and "G-FORCE" in tiles
-    assert re.search(r"\d", _value(tiles["GRADE"])), _value(tiles["GRADE"])
-    assert re.search(r"\d", _value(tiles["G-FORCE"])), _value(tiles["G-FORCE"])
-
-
-def test_shippedPanel_headingTileReadsTheBareBearing(tmp_path):
-    """
-    Given: the producer's own payload served at /imu
-    When: the shipped carousel paints the Home card at 480x320
-    Then: the HEADING tile reads the bearing plainly -- "90° E"
-
-    THE STORY'S END STATE, and the assertion that did not exist anywhere in the
-    repository before this file: no test had ever read the heading's rendered
-    text on any surface.
-    """
-    tile = _tile(_run(_liveState(tmp_path)), "HEADING")
-
-    assert _value(tile) == f"{_EAST_BEARING}° E"
-
-
-def test_headingTile_carriesNoUncertaintyQualifier(tmp_path):
-    """
-    Given: the painted HEADING tile, whole tile text
-    When: it is swept for uncalibrated-hedge vocabulary
-    Then: there is none
-
-    THE CIO'S RULING, as the rule it actually is. TD-087 is open and the bearing
-    IS uncalibrated -- the ruling is that the panel does not say so, because at
-    480x320 a qualifier on every uncertain field is clutter and precision
-    happens server-side. Swept as a vocabulary rather than pinned as an equality
-    so that appending " (approx)" to the value fails here too.
-    """
-    text = _text(_tile(_run(_liveState(tmp_path)), "HEADING")).lower()
-
-    for word in _HEDGE_WORDS:
-        assert word not in text, f"{word!r} qualifies the bearing: {text!r}"
-    for mark in _HEDGE_MARKS:
-        assert mark not in text, f"{mark!r} qualifies the bearing: {text!r}"
-
-
-def test_headingTile_carriesNoDetailLine_us697(tmp_path):
-    """
-    Given: the painted HEADING tile on a live bearing
-    When: its detail line is read
-    Then: it is EMPTY -- the "magnetic" qualifier is gone
-
-    US-697, CIO 2026-09-09: removal, not rewording. This test used to assert the
-    string and said in its own docstring that deleting it must be "a deliberate
-    act rather than a tidy-up" -- so it is flipped to the absence rather than
-    deleted, and the deliberate act is recorded here.
-
-    THE ARGUMENT THAT WAS OVERRULED, kept so it is not re-discovered and
-    re-applied: "magnetic" named the REFERENCE FRAME (a fact about the quantity,
-    the same class of statement as a unit) rather than a CONFIDENCE, so it was
-    never one of the hedges the sweep above bans. It was there so that a bearing
-    a few degrees off a paper map read as expected rather than as a broken
-    compass. The CIO's call is that on a 3.5 inch screen at arm's length that is
-    one more thing to read.
-
-    PAIRED WITH ITS POSITIVES IN THE SAME PASS, because `_detail` cannot tell an
-    empty line from a deleted tile: "no detail on HEADING" is equally true of a
-    card that never painted. So the bearing must still be a bearing, and a
-    SIBLING tile's detail must still render -- an over-delete that took the
-    detail mechanism with it dies on GRADE, not here.
-
-    THE VALUE IS ASSERTED AS A SHAPE, NOT AS 90 DEGREES, and that is deliberate:
-    the exact bearing this fixture paints is currently wrong by -90 degrees
-    (I-us708b -- US-708 corrected the body frame and this file's vectors still
-    encode the old answer). US-697 does not touch the data path, so tying this
-    pin to a number would make it fail for somebody else's reason.
-    """
-    tiles = _tiles(_run(_liveState(tmp_path)))
-
-    assert _detail(tiles["HEADING"]) == "", (
-        "the HEADING tile still paints a detail line: "
-        f"{_detail(tiles['HEADING'])!r}"
-    )
-    # The positives. A bearing is still a bearing...
-    assert re.fullmatch(r"\d{1,3}° [NESW]{1,3}", _value(tiles["HEADING"])), _value(
-        tiles["HEADING"]
-    )
-    # ...and the detail LINE still works one tile over, so the emptiness above is
-    # this tile's decision and not a renderer someone broke.
-    assert _detail(tiles["GRADE"]) in ("climbing", "descending")
-
-
-def test_headingTile_detailSpanIsStillInTheDom_merelyEmpty(tmp_path):
-    """
-    Given: the HEADING tile after US-697 removed its detail string
-    When: the tile's own children are inspected
-    Then: the `.tile-detail` element is STILL THERE and reads exactly empty
-
-    The mutation the test above cannot see: DELETING THE SPAN, in carousel.js or
-    by removing the tile outright. `_detail` answers "" for a missing element
-    exactly as it does for an empty one, so "reads empty" is blind to it.
-    """
-    tile = _tile(_run(_liveState(tmp_path)), "HEADING")
-
-    assert _hasChild(tile, "tile-detail"), (
-        "the `.tile-detail` span is GONE from the HEADING tile. US-697 empties "
-        "the detail; it does not remove the element or the tile."
-    )
-    assert _detail(tile) == ""
 
 
 def test_headingTile_declaresAnEmptyDetail_ratherThanOmittingTheKey():
@@ -710,96 +464,6 @@ def test_theEmptyDetailReservesNoLineBox_soTheTileIsGenuinelyShorter():
             )
 
 
-def test_headingTile_isWholeDegrees_neverATenth(tmp_path):
-    """
-    Given: a magnetometer vector whose true bearing is 29.5388 degrees
-    When: the producer publishes and the tile paints
-    Then: both read a WHOLE degree -- 30, with no decimal point anywhere
-
-    ARCH-012, held at both ends. The sensor's own standing-still scatter is
-    ~11.8 degrees (specs/grounded-knowledge.md, 10 samples on the live Pi), so a
-    tenth of a degree resolved the bearing ~118x finer than the instrument
-    moves. That is a claim the measurement does not make -- and it is exactly the
-    kind of false precision the bare-number ruling must not be read as licensing.
-    """
-    state = _liveState(tmp_path, _MAG_FRACTIONAL)
-    rawBearing = math.degrees(math.atan2(_MAG_FRACTIONAL[1], _MAG_FRACTIONAL[0]))
-
-    # The control: the underlying arithmetic really is fractional, so "no decimal
-    # point" is a rounding claim rather than an accident of the chosen vector.
-    assert rawBearing != pytest.approx(round(rawBearing))
-    assert state["headingDeg"] == pytest.approx(30.0)
-
-    value = _value(_tile(_run(state), "HEADING"))
-    assert value == "30° NNE"
-    assert "." not in value
-
-
-def test_headingTile_presentsAsAReading_notAsAnAbsence(tmp_path):
-    """
-    Given: the painted HEADING tile beside the typed-NA ALTITUDE tile
-    When: their [data-level]s are compared
-    Then: the heading is `neutral` and the altitude is `unavailable`
-
-    The ruling's other half at the level of the stylesheet: an uncalibrated but
-    REAL reading must not be dressed in the absence presentation. Asserted
-    against a tile that IS absent on the same card, so "neutral" is shown to be
-    a distinction the panel actually draws rather than a string this test read.
-    """
-    tiles = _tiles(_run(_liveState(tmp_path)))
-
-    assert _level(tiles["HEADING"]) == "neutral"
-    assert _level(tiles["ALTITUDE"]) == "unavailable"
-
-
-def test_headingTile_isPaintedInTheLiveHeadingBox_notMerelyComputed(tmp_path):
-    """
-    Given: the CIO-locked live-face layout (tape + heading down the left)
-    When: the rendered tree is walked
-    Then: the HEADING tile is inside `.live-heading-tile`, under `.live-heading`
-
-    Placement, witnessed. The alternative -- grepping carousel.js for
-    `appendTile(headBox, view.heading)` -- matches the source text whether or not
-    the call ever runs.
-    """
-    tree = _run(_liveState(tmp_path))
-    column = None
-    for node in _walk(_homeCard(tree)):
-        if "live-heading" in _classOf(node).split():
-            column = node
-            break
-    assert column is not None, "the live heading column was never built"
-
-    box = None
-    for node in _walk(column):
-        if "live-heading-tile" in _classOf(node).split():
-            box = node
-            break
-    assert box is not None, "the heading tile box was never built"
-
-    labels = [
-        _childText(t, "tile-label") for t in _walk(box) if _classOf(t) == "tile"
-    ]
-    assert labels == ["HEADING"], labels
-
-
-def test_compassTape_isDrawnAroundTheSameBearingTheTilePrints(tmp_path):
-    """
-    Given: a live bearing of 90 degrees and a 90-degree tape span
-    When: the tape's rose labels are read off the panel
-    Then: they bracket east -- {NE, E, SE} and nothing else
-
-    The tape is the heading's SECOND surface and it is fed from the resolved
-    `view.heading.deg`, not from a second derivation. Two heading instruments on
-    one card that could disagree is the defect US-508 deliberately avoided; this
-    is the assertion that they still cannot.
-    """
-    labels = _tapeLabels(_run(_liveState(tmp_path)))
-
-    assert labels, "no rose label was drawn on the compass tape"
-    assert set(labels) == {"NE", "E", "SE"}, sorted(set(labels))
-
-
 # =============================================================================
 # 2. THE FENCE -- an ABSENT bearing is still a typed absence with a reason.
 # =============================================================================
@@ -822,100 +486,6 @@ def test_deadMagnetometer_producerWritesTypedNullWithItsReason(tmp_path):
     assert state["reasons"]["headingDeg"] == REASON_NO_MAG
 
 
-def test_deadMagnetometer_headingTileReadsNaWithThatReason(tmp_path):
-    """
-    Given: that payload on the shipped panel
-    When: the HEADING tile paints
-    Then: it reads NA, its detail carries the reason, and it looks unavailable
-
-    The story's negative case as the operator meets it. All three are asserted
-    because any one alone can be right while the tile still reads as a settled
-    value -- the word NA in the confident costume is punch-list 2.1's defect.
-    """
-    tile = _tile(_run(_producedImuState(tmp_path, [_accel()])), "HEADING")
-
-    assert _value(tile) == "NA"
-    assert _detail(tile) == "no compass reading"
-    assert _level(tile) == "unavailable"
-
-
-def test_absentHeading_carriesNoDigitAnywhereOnTheTile(tmp_path):
-    """
-    Given: the NA heading tile
-    When: its value AND its detail are searched for a digit
-    Then: there is none
-
-    Necessary but NOT sufficient on this channel, which is why the next test
-    exists: a heading of 0 is a real bearing, so banning the digit cannot by
-    itself distinguish an absence from due north.
-    """
-    tile = _tile(_run(_producedImuState(tmp_path, [_accel()])), "HEADING")
-
-    assert not re.search(r"\d", _value(tile)), _value(tile)
-    assert not re.search(r"\d", _detail(tile)), _detail(tile)
-
-
-def test_absenceAndDueNorth_areDifferentOnThePanel(tmp_path):
-    """
-    Given: a REAL north-pointing magnetometer, and separately a dead one
-    When: both are painted
-    Then: north reads "0° N" as a live neutral reading, absence reads NA as
-          unavailable -- and the two agree on nothing
-
-    THE STORY'S "NEVER 0 DEGREES", AND THE ONLY HONEST WAY TO CHECK IT. Altitude
-    can ban the zero outright; a heading cannot, because 0 is due north and
-    suppressing it would re-create the US-565 failure in reverse -- hiding a real
-    measurement. So the claim is not "0 never appears", it is "0 means north and
-    absence means absence, and the panel never lets one wear the other's face".
-    """
-    north = _tile(_run(_liveState(tmp_path, _MAG_NORTH)), "HEADING")
-    absent = _tile(_run(_producedImuState(tmp_path, [_accel()])), "HEADING")
-
-    assert _value(north) == f"{_NORTH_BEARING}° N"
-    assert _level(north) == "neutral"
-
-    assert _value(absent) == "NA"
-    assert _level(absent) == "unavailable"
-    assert _value(absent) != _value(north)
-    assert _detail(absent) != _detail(north)
-
-
-def test_absentHeading_drawsNoCompassTapeAtAll(tmp_path):
-    """
-    Given: a dead magnetometer
-    When: the live face paints
-    Then: not one rose label is drawn on the tape
-
-    The heading's second surface must go absent WITH it. A tape left with its
-    ticks frozen reads as a confident bearing in exactly the way the frozen
-    needle did -- the same fabrication in different geometry (US-497's rule,
-    US-508's instrument). Asserted as "no tick was EVER drawn" rather than "the
-    tape cleared", per the harness limit in the header.
-
-    US-715 removed the static caret this docstring used to name; the claim is
-    unchanged, because it was never about the caret -- it is about ticks that
-    outlive their bearing.
-    """
-    assert _tapeLabels(_run(_producedImuState(tmp_path, [_accel()]))) == []
-
-
-def test_deadMagnetometer_doesNotRecruitTheRestOfTheCard(tmp_path):
-    """
-    Given: the same dead magnetometer
-    When: the neighbouring tiles are read
-    Then: GRADE and G-FORCE are still live readings
-
-    Failures are independent. A card where one absent field took the others with
-    it would turn a dead compass into a dead instrument -- and would also make
-    every absence assertion above vacuous.
-    """
-    tiles = _tiles(_run(_producedImuState(tmp_path, [_accel()])))
-
-    assert _value(tiles["HEADING"]) == "NA"
-    assert re.search(r"\d", _value(tiles["GRADE"])), _value(tiles["GRADE"])
-    assert re.search(r"\d", _value(tiles["G-FORCE"])), _value(tiles["G-FORCE"])
-
-
 # =============================================================================
 # 3. NEVER A HELD BEARING -- reached from a REAL 90 degrees, three ways.
 #
@@ -927,57 +497,6 @@ def test_deadMagnetometer_doesNotRecruitTheRestOfTheCard(tmp_path):
 # UNDER-informs rather than claiming anything false, so it does not breach this
 # story's end state, and the story forbids fixing it here. Characterised below.
 # =============================================================================
-
-
-def test_gateRefusal_dropsTheHeldBearingAndCarriesTheGatesOwnReason(tmp_path):
-    """
-    Given: a REAL 90 degree bearing published, then the magnetometer gate
-           refusing the channel as `sensor_stale`
-    When: the next accel frame writes and the panel paints
-    Then: the heading is null with the GATE's reason, and no digit of 90 is
-          anywhere on the card
-
-    THE FABRICATED COMPASS, PREVENTED, on the exact failure this channel had: a
-    chip answering with a vector it has not measured since boot. The bearing
-    genuinely existed one frame earlier, so a bridge that kept the pairing window
-    open across the refusal would have had a real 90 to print -- and it prints
-    nothing instead.
-    """
-    state = _afterALiveBearing(
-        tmp_path, _magGate(REASON_SENSOR_STALE),
-        _accel(seq=3, capture=_NEXT_WRITE_INSIDE_WINDOW_S),
-    )
-
-    assert state["headingDeg"] is None
-    assert state["reasons"]["headingDeg"] == REASON_SENSOR_STALE
-
-    tree = _run(state)
-    assert _value(_tile(tree, "HEADING")) == "NA"
-    assert "90" not in _text(_homeCard(tree))
-    assert _tapeLabels(tree) == []
-
-
-def test_gateRefusal_paintsTheRawCodeBecauseTheCardCannotSpellIt(tmp_path):
-    """
-    Given: the gate's `sensor_stale` refusal on the heading
-    When: the tile's detail is read
-    Then: it is the raw code, NOT operator-facing words
-
-    CHARACTERISATION OF THE FINDING ABOVE, not an endorsement. Pinned so that
-    whoever teaches IMU_REASON_TEXT the gate vocabulary fails this test ON
-    PURPOSE and re-records it against the new wording, rather than the finding
-    quietly evaporating. The value half is asserted alongside because THAT half
-    must not change: an unspellable reason still renders a typed absence.
-    """
-    state = _afterALiveBearing(
-        tmp_path, _magGate(REASON_SENSOR_STALE),
-        _accel(seq=3, capture=_NEXT_WRITE_INSIDE_WINDOW_S),
-    )
-    tile = _tile(_run(state), "HEADING")
-
-    assert _value(tile) == "NA"
-    assert _detail(tile) == REASON_SENSOR_STALE
-    assert _detail(tile) == "sensor_stale"
 
 
 def test_aRefusedCompass_doesNotBlankTheWholeInstrument(tmp_path):
@@ -1029,196 +548,14 @@ def test_aRefusedAccelerometer_doesBlankTheWholeInstrument(tmp_path):
     assert state["reasons"]["headingDeg"] == REASON_SENSOR_STALE
 
 
-def test_pairingWindowLapse_dropsTheHeldBearingRatherThanReusingIt(tmp_path):
-    """
-    Given: a REAL 90 degree bearing, then an accel frame far outside the
-           magnetometer pairing window with no fresh mag beside it
-    When: the state file is written
-    Then: the heading is null with "no_mag_reading" and 90 reaches no pixel
-
-    The quieter of the two stale paths, and the one with no gate to announce it:
-    the compass simply stopped answering. `magMaxAgeSec` is what decides
-    this, and the failure it prevents is a bearing that stays on the card looking
-    current while nothing behind it is reading.
-    """
-    state = _afterALiveBearing(tmp_path, _accel(seq=9, capture=_PAST_PAIRING_WINDOW_S))
-
-    assert state["headingDeg"] is None
-    assert state["reasons"]["headingDeg"] == REASON_NO_MAG
-
-    tree = _run(state)
-    assert _value(_tile(tree, "HEADING")) == "NA"
-    assert "90" not in _text(_homeCard(tree))
-
-
-def test_unplug_takesTheBearingWithTheWholeInstrument(tmp_path):
-    """
-    Given: a REAL 90 degree bearing, then the reader reporting the IMU absent
-    When: the bridge writes the unavailable payload and the panel paints
-    Then: the heading is null with `sensor_absent`, the card leaves the live
-          face, and 90 is nowhere on it
-
-    The third path, and the one that removes the tile rather than emptying it.
-    That is honest -- the tile is gone with the face it lived on. What must not
-    happen, and does not, is a fallback face that fills the gap with the last
-    bearing anyone saw.
-    """
-    state = _afterALiveBearing(tmp_path, _presence(False))
-
-    assert state["available"] is False
-    assert state["headingDeg"] is None
-    assert state["reasons"]["headingDeg"] == REASON_SENSOR_ABSENT
-
-    tree = _run(state)
-    assert _homeCard(tree).get("attrs", {}).get("data-face") != "live"
-    assert "HEADING" not in _tiles(tree)
-    assert "90" not in _text(_homeCard(tree))
-
-
-def test_absentStateFile_paintsNoBearingEither(tmp_path):
-    """
-    Given: no states/imu file at all -- the shipped Pi today, where
-           pi.sensors.imu.enabled defaults false
-    When: the Home card paints
-    Then: it falls off the live face and no heading tile exists
-
-    The absence case at the OTHER end of the chain, where there is no producer at
-    all to have a reason. The shell owns this message, so one place decides
-    absence rather than each tile inventing its own.
-    """
-    tree = _run(None)
-
-    assert _homeCard(tree).get("attrs", {}).get("data-face") != "live"
-    assert "HEADING" not in _tiles(tree)
-    assert _tapeLabels(tree) == []
-
-
 # =============================================================================
 # 4. THE REASON IS CARRIED ACROSS THE SEAM -- NA alone is a shrug.
 # =============================================================================
 
 
-def test_producersReasonWord_isOneTheShippedRendererCanActuallySpell(tmp_path):
-    """
-    Given: the reason word the REAL producer wrote for a dead magnetometer
-    When: it is looked up in the vocabulary read OUT OF the shipped carousel.js
-    Then: it is present, and its rendered text is what the panel painted
-
-    THE JOIN, stated as a join. Both sides can be internally consistent and still
-    disagree: rename the producer's constant and the tile silently starts
-    printing the raw code. The vocabulary is PARSED from the shipped file rather
-    than hardcoded here, so this cannot pass by remembering what the map said.
-    """
-    js = Path(_CAROUSEL_JS).read_text(encoding="utf-8")
-    block = re.search(r"var IMU_REASON_TEXT = \{(.*?)\};", js, re.S)
-    assert block, "IMU_REASON_TEXT is no longer declared in carousel.js"
-    vocabulary = dict(re.findall(r"(\w+):\s*\"([^\"]*)\"", block.group(1)))
-
-    state = _producedImuState(tmp_path, [_accel()])
-    code = state["reasons"]["headingDeg"]
-    assert code in vocabulary, (
-        f"the producer writes {code!r}, which carousel.js cannot spell: "
-        f"{sorted(vocabulary)}"
-    )
-
-    assert _detail(_tile(_run(state), "HEADING")) == vocabulary[code]
-
-
-def test_missingReasonsMap_stillReadsNaWithTheGenericUnavailable(tmp_path):
-    """
-    Given: a payload whose `reasons` map has been lost entirely
-    When: the HEADING tile paints
-    Then: it reads NA with the generic "unavailable" -- and still no number
-
-    The degradation is toward LESS information, never toward a fabricated one. A
-    renderer that fell back to a value instead of a word would be the exact
-    failure the typed null exists to prevent.
-    """
-    state = _producedImuState(tmp_path, [_accel()])
-    state.pop("reasons")
-
-    tile = _tile(_run(state), "HEADING")
-
-    assert _value(tile) == "NA"
-    assert _detail(tile) == "unavailable"
-    assert not re.search(r"\d", _detail(tile))
-
-
-def test_aCalibrationReasonWouldPassThroughRatherThanBeSwallowed(tmp_path):
-    """
-    Given: a reason word the panel has not been taught -- the shape TD-087's own
-           fix would arrive in, once a calibration routine can say "not yet"
-    When: the tile paints
-    Then: the raw code reaches the operator instead of a generic word
-
-    TD-087 stays OPEN and this story does not close it. This is the seam that
-    fix will land on: the day the bearing can be REFUSED for being uncalibrated
-    (as opposed to shown plainly, which is today's ruling), the reason travels on
-    this path. Pinned because the tempting tidy-up -- mapping anything unknown to
-    "unavailable" -- would delete the only clue on the panel.
-    """
-    state = _producedImuState(tmp_path, [_accel()])
-    state["reasons"]["headingDeg"] = "mag_calibrating"
-
-    tile = _tile(_run(state), "HEADING")
-
-    assert _value(tile) == "NA"
-    assert _detail(tile) == "mag_calibrating"
-
-
-def test_aBearingBesideItsOwnReason_stillReadsAsAnAbsence(tmp_path):
-    """
-    Given: a payload carrying a REAL bearing AND an absence reason for it -- what
-           a producer that forgot to blank the field on refusal would write
-    When: the tile paints
-    Then: it reads the bearing, and the stray reason changes nothing
-
-    CHARACTERISATION of the renderer's precedence, not a wish: `imuHeadingTile`
-    branches on the VALUE and consults the reason only when there is no number.
-    Recorded because it names where the trust boundary is -- the producer is the
-    only thing that can refuse a heading, so a producer that publishes a number
-    it has just disowned is a PRODUCER defect and will not be caught downstream.
-    """
-    state = _liveState(tmp_path)
-    state["reasons"]["headingDeg"] = REASON_SENSOR_STALE
-
-    tile = _tile(_run(state), "HEADING")
-
-    assert _value(tile) == f"{_EAST_BEARING}° E"
-    assert _level(tile) == "neutral"
-
-
 # =============================================================================
 # 5. ONE ACQUISITION PATH (ssot-design-pattern rule B).
 # =============================================================================
-
-
-def test_thePanelAcquiresTheHeadingExactlyOnce(tmp_path):
-    """
-    Given: the shipped carousel.js
-    When: it is searched for heading acquisitions
-    Then: `data.headingDeg` is read once, its reason is looked up once, and both
-          consumers -- the tile and the tape -- read the RESOLVED `view.heading`
-
-    Two acquisitions is how this project got a latched magnetometer. The
-    asymmetry is the contract: ONE resolution, MANY consumers. The counts are
-    deliberately split -- the ACQUISITIONS are pinned at exactly one each, while
-    the consumers are named rather than counted, because a third consumer of the
-    resolved value is fine and a second reader of `data.headingDeg` is not.
-    """
-    js = Path(_CAROUSEL_JS).read_text(encoding="utf-8")
-
-    assert len(re.findall(r"\bdata\.headingDeg\b", js)) == 1
-    assert len(re.findall(r'imuReason\(\s*\w+\s*,\s*"headingDeg"\s*\)', js)) == 1
-
-    # The tape derives its geometry from the tile's OWN resolved bearing, which
-    # is what makes it impossible for the two surfaces to disagree.
-    assert re.search(
-        r"compassTape\(\s*view\.heading\.available \? view\.heading\.deg : null", js
-    ), "the compass tape no longer reads the resolved heading"
-    assert re.search(r"appendTile\(\s*headBox,\s*view\.heading\s*\)", js), (
-        "the heading tile is no longer appended from the resolved view"
-    )
 
 
 def test_theOnlyStatesImuWriterIsTheBridge():

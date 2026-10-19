@@ -38,6 +38,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-11    | Ralph (Rex)  | Initial -- US-540-b card set 4 -> 6, Health out.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card at index 4.
 # ================================================================================
 ################################################################################
 
@@ -77,8 +79,9 @@ _NODE_ONLY = pytest.mark.skipif(
 # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after
 # Engine; it keeps states/ltft-trend and the vehicle gate (on its trend row).
 # MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
+# MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
 _CARD_SET = [
-    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
     "Battery", "Light",
 ]
 

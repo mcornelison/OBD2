@@ -34,6 +34,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-11    | Ralph (Rex)  | Initial -- US-542 idle-face retirement.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the fallback-face cases retire with
+#                               the face; the clock, Alerts and parked-signal
+#                               cases stay.
 # ================================================================================
 ################################################################################
 
@@ -153,24 +156,6 @@ def _textOf(node: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_codeOnly_stillSeesRealCode():
-    """Over-stripping is the dangerous direction: it deletes the very text the
-    absence pins hunt for, and every one of them then passes for free."""
-    stripped = _codeOnly(_read(_JS))
-    assert "function idleCardView(" in stripped
-    assert "function alertsCardView(" in stripped
-
-
-def test_fnBody_isBoundedAndDoesNotSwallowTheFile():
-    """A body probe that runs to EOF makes an absence assertion meaningless --
-    it would report "STANDBY is not in renderIdleBody" only because it never
-    found renderIdleBody's end either."""
-    js = _read(_JS)
-    body = _fnBody(js, "idleCardView")
-    assert "wordmark" in body, "negative control: the probe can see real code"
-    assert len(body) < len(js) / 4, "the probe swallowed the file"
-
-
 # ---------------------------------------------------------------------------
 # AC-1a -- the STANDBY hero is retired, not merely unselected.
 # ---------------------------------------------------------------------------
@@ -193,80 +178,6 @@ def test_theStandbyClaimIsGoneFromAnythingExecutable():
     code = _codeOnly(_read(_JS))
     assert _RETIRED_SUBSTATE not in code
     assert f'"{_RETIRED_HERO}"' not in code
-
-
-def test_idleCardView_hasOneDispositionAndItNamesTheDeadInstrument():
-    """
-    Given: the face is now reachable ONLY because the motion feed died
-    When: the view is assembled with any reason
-    Then: the hero states that, every time -- there is no second title left for
-          a future edit to select.
-    """
-    for reason in ("no motion feed", "sensor not detected", "reading stale"):
-        view = _view("idleCardView", None, None, reason)
-        assert view["hero"]["title"] == "NO MOTION DATA"
-        assert view["hero"]["substate"] == reason
-        assert view["hero"]["level"] == "neutral"
-
-
-def test_idleCardView_cannotSeeTheDtcPayloadAtAll():
-    """
-    Given: the faults tile moved to the Alerts card
-    When: the shipped declaration is read
-    Then: `idleCardView` takes (systemStatusData, batteryData, motionReason,
-          waits) -- and nothing that could carry a fault back onto this face.
-
-          The signature is the guard, not a tidy-up (the US-541 pattern). A view
-          that cannot SEE the dtc payload cannot quietly re-borrow the fact that
-          just left it; a future re-borrow has to widen the signature first,
-          which is a visible act rather than a line added to a facts object.
-
-          US-700 IS THAT VISIBLE ACT. `waits` carries facts about the FETCHES --
-          how long each feed has gone unanswered, plus `homeFace`'s own loading
-          verdict handed down -- so the view still cannot see a code, a severity
-          or a count. The exact list stays exact; only the reviewed entry is new.
-    """
-    sig = re.search(r"function idleCardView\(([^)]*)\)", _read(_JS))
-    assert sig, "idleCardView is gone"
-    params = [p.strip() for p in sig.group(1).split(",") if p.strip()]
-    assert params == [
-        "systemStatusData", "batteryData", "motionReason", "waits",
-    ], params
-    assert not any("dtc" in p.lower() or "code" in p.lower() for p in params), (
-        "the idle face can see the fault payload again -- US-542's whole point"
-    )
-
-
-def test_idleCardView_carriesNoFaultsTile():
-    """
-    Given: the moved fact
-    When: the view is assembled
-    Then: the facts set is exactly the two that survived.
-
-          Set equality, not a `"faults" not in` check: the second fails to
-          notice the tile coming back under any other name, and the failure mode
-          this guards is a later story re-adding "just one more readout" to the
-          card the legibility scale was re-laid to thin out (US-540-b).
-    """
-    view = _view("idleCardView", None, None, "no motion feed")
-    assert set(view["facts"]) == {"lastDrive", "battery"}
-
-
-def test_theRetiredFaceIsNotStillBeingBuiltByTheRenderer():
-    """
-    Given: a renderer can keep painting a field the view no longer supplies
-    When: `renderIdleBody` is read
-    Then: it appends neither a faults tile nor a clock.
-
-          Both halves of a markup/renderer pair have to be asserted -- US-540-b
-          shipped an orphan `data-vehicle-speaks` attribute past a suite whose
-          orphan-check only watched the JS.
-    """
-    body = _codeOnly(_fnBody(_read(_JS), "renderIdleBody"))
-    assert "view.facts.lastDrive" in body, "negative control: the pin sees real code"
-    assert "faults" not in body
-    assert "fmtClock" not in body
-    assert "fmtDate" not in body
 
 
 def test_theDateFormatterWentWithTheHeaderItServed():

@@ -6753,6 +6753,13 @@ most.
 
 ##### The HOME SLOT is two-faced -- live instrument / honest fallback (US-508, US-541/US-542 / F-124, F-127)
 
+> **RETIRED by US-892-b (Sprint 105 / V0.30.7).** The home slot and both its faces
+> are gone: the Motion card replaced it in place (see "V0.30 Motion card" below), the
+> heading tape lives on NAV (US-896-a) and LAST DRIVE in NAV's trip slot (US-896-b).
+> `homeFace`, `liveCardView`, `imuView`, `idleCardView` and the page-side 3 s smoothing
+> (US-662) were deleted with it (Atlas B1/B3). Kept below as the record of why the
+> slot was built the way it was.
+
 The CIO-locked round-2 design puts the live instrument on the **home slot**.
 **US-541/US-542 (F-127) settle which two faces**: the live motion instrument is
 the **permanent** face, and the second face is the honest fallback and nothing
@@ -8043,11 +8050,12 @@ Navigation spec §3/§4.1/§4.2 (`specs/v030-navigation-page-design.md`, layout 
   (`aria-label="Navigation"`, bar name `NAV` -- `NAVIGATION` is 135 px and does not
   fit the 122 px slot). Card order: Driving, Navigation, Engine, Fuel, Home/MOTION,
   Alerts, System Status, Battery, Light. No `data-state`, not the landing card, not
-  vehicle-gated. The interim Home/MOTION card keeps its tape until US-892-b.
+  vehicle-gated. The interim Home/MOTION card keeps its tape until US-892-b (which
+  replaced it with the Motion card; the order is unchanged, Motion at index 4).
 - **States it reads -- and nothing else.** `states/imu` `headingDeg`,
   `headingCalibrated`, `reasons.headingDeg` (resolved ONCE through `imuHeadingTile`, the
   panel's one heading acquisition) and `ts`, raw (not smoothed), on the ~10 Hz motion
-  loop (`renderNav` beside `renderHome`). `navHeadingView(imu, nowMs, staleSec)` is the
+  loop (`renderNav` beside `renderHome`, `renderMotion` since US-892-b). `navHeadingView(imu, nowMs, staleSec)` is the
   pure view; `renderNavCard` paints a fixed skeleton.
 - **Heading states, first match wins (spec §4.2).** `headingDeg` null with a reason
   other than `heading_unseeded` (or no file / an undated payload) -> **no tape element
@@ -8107,6 +8115,56 @@ Navigation spec §3/§4.1/§4.2 (`specs/v030-navigation-page-design.md`, layout 
   speed (CIO N-2). Fixtures: `trip-{mid-drive, drive-start, last-drive, not-measured,
   partial-parked, state-null, partial-after-restart}.json` (each the real
   `buildSystemStatusState` output, zone America/Chicago) and `grade-null.json`.
+
+#### V0.30 Motion card: pitch, grade graph, g + this drive's peaks (US-892-b, Sprint 105 / V0.30.7)
+
+Motion spec §3/§4 (`specs/v030-motion-page-design.md`, layout A), with the 2026-10-19
+rulings (Atlas B1-B6, Iris M1-M4) governing where they differ:
+
+- **The interim Home/MOTION card is gone.** `#motion-card` (`aria-label="Motion"`, bar
+  name `MOTION`) takes its slot at index 4 (after NAV, Engine, Fuel -- CIO E-2). Its
+  live face (tape, g tile, g-meter + trail, client-side grade trend) and its parked idle
+  face retired with it; the code reachable only from them was deleted, not stranded
+  (`homeFace`, `imuView`, `liveCardView`, `idleCardView`, `imuGTile`, `gAxisDetail`,
+  `pushGTrail`, `pushGradeTrend`, `G_AMBER_G`, ...). No `data-state`: each value
+  carries its own `--` + reason.
+- **States it reads -- and nothing else.** `states/imu` RAW (`pitchDeg`, `gLon`,
+  `gLat`, `peaks{accelG, brakeG, leftG, rightG}`, `reasons`, `ts`) on the ~10 Hz motion
+  loop (`renderMotion` beside `renderNav`) -- the page-side 3 s smoothing retired
+  (Atlas B3: the spec steps at the 1 Hz publish; any steadying goes in the PROVIDER) --
+  and `states/grade-history` (`points`, `intervalS`, `windowS` -- the provider's keys,
+  Atlas B4), polled on the 4 Hz tick like the other states. `motionView(imu, nowMs,
+  staleSec, waitedMs)` and `motionGradeGraph(history)` are the pure views;
+  `renderMotionCard` paints a fixed skeleton.
+- **PITCH.** One decimal + `°`, `--fs-primary`, the sign from the ROUNDED value (U+2212
+  minus, `+` positive; a value rounding to `0.0` is `0.0°` + `level`); sub-line `nose
+  up` / `nose down`. Null -> `--` + the IMU_REASON_TEXT reason; `gyro_implausible` reads
+  `gyro implausible` (the one text for that code, Atlas B5) in `--amber-warn`.
+- **GRADE  LAST 15 MIN** (no `·`: the Michroma subset lacks it). A 300 x 58 svg from the
+  history alone: the newest point at the right of a 236-unit line on
+  `floor(windowS / intervalS)` slots; a null point ENDS a polyline and the next real
+  point starts a new one (never a line across a gap); a dashed zero line; the scale is
+  symmetric, whole 2 % steps, never under ±4 % (mockup), and line, end dot and end label
+  share it; the end label is the last non-null point (`+5.0%`). Empty or all-null
+  history -> `no grade history yet` above the zero line, never a flat line.
+- **g.** `ACCEL` / `BRAKE` from the sign of the rounded `gLon` (+ = accelerating),
+  `CORNER R` / `CORNER L` from `gLat` (+ = right); the magnitude to two decimals + ` g`,
+  `--fs-primary`, never coloured (no g band). Null -> `--` + reason under a direction-
+  free label (`ACCEL BRAKE` / `CORNER`). Peak lines `peak ▲0.31 ▼0.38` / `peak L0.27
+  R0.31` (Iris M1), `--fs-label` `--text-secondary`; a null peak is `--`. The glyphs
+  are literal in the skeleton and inherit `--font-mono` (no `--font-body` token exists).
+  No meter, dot or trail element (US-733).
+- **Stale / loading.** Stale is the ONE IMU key shared with NAV (`resolveImuStaleSec()`,
+  strict `age > imuSec`; an undated payload is stale): `data-stale` dims both bands
+  (opacity on the card's scoped `--motion-stale-opacity`), values kept; no age element
+  (UPDATED is US-892-c's health block). Before the first `states/imu` read the bands
+  give way to US-700's bounded LOADING tile (`loadPhase` / `loadingTile`, Atlas Q-1).
+- **Type and tokens.** Labels Michroma `--fs-meta` (`#motion-card .motion-label`, 400,
+  no synthesis); everything else inherits the body mono. Geometry is scoped custom
+  properties on `#motion-card`. Fixtures: `tests/ui/fixtures/states/motion/{climb-accel,
+  descent-brake, corner-left, corner-right, gyro-implausible, stale-imu,
+  history-empty-after-restart, peaks-null-after-drive-start}.json`, each the real
+  `buildImuState` payload plus the `GradeHistory` snapshot of its recorded writes.
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

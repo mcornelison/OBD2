@@ -41,6 +41,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-07    | Ralph (Rex)  | Initial -- US-691 second-DTC banner discovery.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: ADVANCE_OBSERVED /
+#                               ADVANCE_ROBUST_RANGE now from css_type_scale
+#                               (Atlas B6).
 # ================================================================================
 ################################################################################
 
@@ -59,19 +62,23 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 
 import render_harness as rh  # noqa: E402
-from css_type_scale import DASHBOARD_CSS, TOKENS_CSS, readCss, ruleBlock  # noqa: E402
+from css_type_scale import (  # noqa: E402
+    ADVANCE_OBSERVED,
+    ADVANCE_ROBUST_RANGE,
+    DASHBOARD_CSS,
+    TOKENS_CSS,
+    readCss,
+    ruleBlock,
+)
 
 # REUSED, NOT RESTATED. Both of these are already calibrated in this suite and
 # both are load-bearing here, so a second copy would be a second thing to drift.
 # STAGE_WIDTH_PX is grounded against the shipped `#stage` rule by its own home
-# file; ADVANCE_OBSERVED is calibrated against Atlas's measured line-wrap bounce
+# file; ADVANCE_OBSERVED (tests/ui/css_type_scale.py since US-892-b, MOVED PIN)
+# is calibrated against Atlas's measured line-wrap bounce
 # and is the advance of the face `--font-mono` resolves to -- which is what the
 # ribbon inherits, because `html, body` binds --font-mono and `#dtc-ribbon`
 # declares no font-family of its own (asserted below, never assumed).
-from test_gforce_tile_width_budget import (  # noqa: E402
-    ADVANCE_OBSERVED,
-    ADVANCE_ROBUST_RANGE,
-)
 from test_topbar_three_column_grid import STAGE_WIDTH_PX  # noqa: E402
 
 _NODE = shutil.which("node")

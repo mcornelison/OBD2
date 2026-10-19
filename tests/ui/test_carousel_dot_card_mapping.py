@@ -47,6 +47,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-31    | Ralph (Rex)  | Initial -- US-635 dot/card mapping recorded.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card at index 4.
 # ================================================================================
 ################################################################################
 
@@ -83,8 +85,10 @@ _NODE_ONLY = pytest.mark.skipif(
 # Engine); Home..Battery each moved +1 (Battery is index 6), Light stays 7.
 # MOVED PIN (US-896-a): the NAV card is index 1 (after Driving, E-2); every
 # absolute index past it below moved +1 (Battery is index 7, Light 8).
+# MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4;
+# no index moved.
 _CARD_SET = [
-    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
     "Battery", "Light",
 ]
 
@@ -347,7 +351,7 @@ class TestGatedCardOwnsNoDot:
         # US-890-a: +1 again behind the Fuel card (Battery is index 6).
         # US-896-a: +1 again behind the NAV card (Battery is index 7).
         assert _visibleCards(surface) == [
-            "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+            "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
             "Light",
         ]
         assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 6, 8)]
@@ -359,7 +363,7 @@ class TestGatedCardOwnsNoDot:
         # US-890-a: the Fuel card at 2; Home..System Status +1, Battery (6) gated.
         # US-896-a: the NAV card at 1; Engine..System Status +1, Battery (7) gated.
         [
-            (0, "Driving"), (1, "Navigation"), (2, "Engine"), (3, "Fuel"), (4, "Home"),
+            (0, "Driving"), (1, "Navigation"), (2, "Engine"), (3, "Fuel"), (4, "Motion"),
             (5, "Alerts"), (6, "System Status"), (8, "Light"),
         ],
     )
@@ -500,7 +504,7 @@ class TestOneCardRegistry:
         # US-896-a: nine shipped (NAV at 1), so this markup is TEN cards; Spare
         # is 7 and the gated Battery 8.
         expected = [
-            "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+            "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
             "Spare", "Light",
         ]
 

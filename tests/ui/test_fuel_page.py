@@ -52,6 +52,8 @@
 #                                recent's codes; mpg-null-reasons and
 #                                sinceReset-never regenerated with 'recent'
 #                                (last30-not-published keeps it absent).
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card at index 4.
 # ================================================================================
 ################################################################################
 
@@ -103,8 +105,9 @@ _NODE_ONLY = pytest.mark.skipif(
 
 # The card order (US-890-a validation row "Card order"), by kit label.
 # MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
+# MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
 CARD_ORDER = [
-    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
     "Battery", "Light",
 ]
 

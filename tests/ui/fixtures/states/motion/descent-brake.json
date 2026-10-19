@@ -1,0 +1,121 @@
+{
+  "description": "Descending and braking (validation row 2): pitch -2.4 deg, gLon -0.22 -> BRAKE 0.22 g; the history descends to -4.2.",
+  "now": "2026-10-20T15:12:30.5Z",
+  "inputs": {
+    "tsUtc": "2026-10-20T15:12:30Z",
+    "gravity": [
+      0.0,
+      0.0,
+      9.81
+    ],
+    "linear": [
+      -2.157463,
+      -0.490333,
+      0.0
+    ],
+    "mag": [
+      20.0,
+      0.0,
+      -40.0
+    ],
+    "pitchRad": -0.041887902047863905,
+    "gyroImplausible": false,
+    "headingDegOverride": 247.0,
+    "headingCalibrated": true,
+    "fusionEngine": "imufusion",
+    "peaks": {
+      "accelG": 0.31,
+      "brakeG": 0.38,
+      "leftG": 0.27,
+      "rightG": 0.31,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "imu": {
+    "available": true,
+    "ts": "2026-10-20T15:12:30Z",
+    "gLat": 0.05,
+    "gLon": -0.22,
+    "gMag": 0.226,
+    "headingDeg": 247.0,
+    "pitchDeg": -2.4,
+    "gradePct": -4.2,
+    "altitude": null,
+    "stopCount": 0,
+    "biasRad": 0.0,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source"
+    },
+    "fusionEngine": "imufusion",
+    "headingCalibrated": true,
+    "peaks": {
+      "accelG": 0.31,
+      "brakeG": 0.38,
+      "leftG": 0.27,
+      "rightG": 0.31,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "historyInputs": [
+    [
+      "2026-10-20T15:00:05Z",
+      -0.5
+    ],
+    [
+      "2026-10-20T15:00:15Z",
+      -1.2
+    ],
+    [
+      "2026-10-20T15:00:25Z",
+      -2.0
+    ],
+    [
+      "2026-10-20T15:00:35Z",
+      -2.9
+    ],
+    [
+      "2026-10-20T15:00:45Z",
+      -3.6
+    ],
+    [
+      "2026-10-20T15:00:55Z",
+      -4.2
+    ],
+    [
+      "2026-10-20T15:01:05Z",
+      null
+    ]
+  ],
+  "gradeHistory": {
+    "points": [
+      {
+        "ts": "2026-10-20T15:00:10Z",
+        "gradePct": -0.5
+      },
+      {
+        "ts": "2026-10-20T15:00:20Z",
+        "gradePct": -1.2
+      },
+      {
+        "ts": "2026-10-20T15:00:30Z",
+        "gradePct": -2.0
+      },
+      {
+        "ts": "2026-10-20T15:00:40Z",
+        "gradePct": -2.9
+      },
+      {
+        "ts": "2026-10-20T15:00:50Z",
+        "gradePct": -3.6
+      },
+      {
+        "ts": "2026-10-20T15:01:00Z",
+        "gradePct": -4.2
+      }
+    ],
+    "windowS": 900,
+    "intervalS": 10,
+    "ts": "2026-10-20T15:01:05Z"
+  }
+}

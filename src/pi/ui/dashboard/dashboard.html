@@ -133,10 +133,8 @@
     <div id="track">
       <!-- US-888-a (F-140; specs/v030-driving-page-design.md, layout B): the
            DRIVING card, the LANDING card (R5) -- `data-landing` is where the
-           carousel opens and where the engine-state edge returns it. It is NOT
-           the home slot: no `data-idle-home`, no `data-face` (the idle/live
-           swap stays with the Home card at index 1), and no `data-state`, so
-           the generic availability poll never grays it. carousel.js fills it
+           carousel opens and where the engine-state edge returns it. No
+           `data-state`, so the generic availability poll never grays it. carousel.js fills it
            from states/obd-live + states/gear (`drivingView`); the skeleton
            ships "--" because nothing has been read before the first poll.
            Readings are not `.tile`s: the 4-fact ceiling counts tiles, and
@@ -387,30 +385,51 @@
           </div>
         </div>
       </section>
-      <!-- US-508 HOME SLOT (F-124): ONE slot, TWO FACES. NOT two cards: a live
-           card sitting beside an always-present fallback card would poll and
-           paint the same feed twice and put two rules in charge of the slot.
-
-           US-541 + US-542 (F-127) settle WHICH two. The live IMU instrument is
-           the PERMANENT face -- parked, the IMU is correct (a true heading, a
-           true 0.0 g), so the US-481 STANDBY view had nothing to say that the
-           instrument does not say better, and it is RETIRED. The second face is
-           now the honest fallback and nothing else: the motion feed is down and
-           the operator is owed the reason.
-
-           `data-face` is the switch, set by carousel.js from ONE decision
-           (`homeFace`) and read by the stylesheet, so the logical face and the
-           painted face can never disagree. It ships `idle` because that is the
-           honest pre-first-poll state: nothing has been read, so there is no
-           motion to show.
-
-           Still `data-idle-home` with NO `data-state`: the generic availability
-           poll must not reach this slot. Its absence story is not "unavailable"
-           -- an absent/stale states/imu falls back to the fallback face (AC-3),
-           never a frozen or zeroed motion display. -->
-      <section class="card" data-idle-home data-face="idle" id="home-card"
-               aria-label="Home" data-page-name="MOTION">
-        <div class="card-body"><span class="idle-boot">standby …</span></div>
+      <!-- US-892-b (F-127; specs/v030-motion-page-design.md s3/s4, layout A):
+           the MOTION card, after NAV, Engine and Fuel (CIO E-2 order). It
+           replaces the interim Home/MOTION card: the live face (tape, g tile,
+           trail, client-side grade trend) and the parked idle face retire with
+           it -- the heading lives on NAV, LAST DRIVE in NAV's trip slot.
+           carousel.js paints both bands from the RAW states/imu (`motionView`)
+           and the graph from states/grade-history (`motionGradeGraph`); before
+           the first read .motion-loading carries US-700's bounded LOADING. No
+           `data-state`: the generic availability poll never grays it -- each
+           value carries its own '--' + reason. Labels are Michroma; the peak
+           glyphs are literal here and inherit the mono face. The skeleton ships
+           the not-read faces. The IMU health block is US-892-c. -->
+      <section class="card" id="motion-card" aria-label="Motion" data-page-name="MOTION"
+               data-stale="false">
+        <div class="card-body">
+          <div class="motion-loading" hidden></div>
+          <div class="motion-band motion-top">
+            <div class="motion-cell motion-pitch" data-none="true" data-warn="false">
+              <span class="motion-label">PITCH</span>
+              <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
+              <span class="motion-sub">not read</span>
+            </div>
+            <div class="motion-cell motion-grade" data-empty="true">
+              <span class="motion-label motion-grade-label">GRADE  LAST 15 MIN</span>
+              <svg class="motion-graph" viewBox="0 0 300 58" aria-hidden="true">
+                <line class="motion-graph-zero" x1="0" y1="29" x2="236" y2="29"></line>
+                <text class="motion-graph-empty" x="0" y="21">no grade history yet</text>
+              </svg>
+            </div>
+          </div>
+          <div class="motion-band motion-g">
+            <div class="motion-cell motion-lon" data-none="true">
+              <span class="motion-label">ACCEL BRAKE</span>
+              <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
+              <span class="motion-note">not read</span>
+              <span class="motion-peak">peak ▲-- ▼--</span>
+            </div>
+            <div class="motion-cell motion-lat" data-none="true">
+              <span class="motion-label">CORNER</span>
+              <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
+              <span class="motion-note">not read</span>
+              <span class="motion-peak">peak L-- R--</span>
+            </div>
+          </div>
+        </div>
       </section>
       <!-- US-406 Alerts card (F-111): hero (worst code + directive) + a
            tappable list sorted worst-first (na last). JS fills the body from
@@ -439,10 +458,7 @@
            it used as a section (and as a standalone card before that), so this
            is a RELOCATION in the opposite direction, not a redesign. The
            per-source independence the merge had to fight for is now free: a
-           dead UPS cannot reach the Light card at all.
-
-           US-508: the standalone Motion card stays gone -- the US-497 live
-           instrument is a FACE of the home slot, not a screen of its own. -->
+           dead UPS cannot reach the Light card at all. -->
       <section class="card" data-state="battery-health" aria-label="Battery" data-page-name="BATTERY">
         <div class="card-body">unavailable</div>
       </section>

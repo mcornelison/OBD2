@@ -1,0 +1,92 @@
+{
+  "description": "The fusion's plausibility guard has tripped: pitchDeg and gradePct are null with gyro_implausible -> pitch '--' + 'gyro implausible' (amber); g is unaffected.",
+  "now": "2026-10-20T15:12:30.5Z",
+  "inputs": {
+    "tsUtc": "2026-10-20T15:12:30Z",
+    "gravity": [
+      0.0,
+      0.0,
+      9.81
+    ],
+    "linear": [
+      0.980665,
+      -0.0,
+      0.0
+    ],
+    "mag": [
+      20.0,
+      0.0,
+      -40.0
+    ],
+    "pitchRad": 0.054105206811824215,
+    "gyroImplausible": true,
+    "headingDegOverride": 247.0,
+    "headingCalibrated": true,
+    "fusionEngine": "imufusion",
+    "peaks": {
+      "accelG": 0.31,
+      "brakeG": 0.38,
+      "leftG": 0.27,
+      "rightG": 0.31,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "imu": {
+    "available": true,
+    "ts": "2026-10-20T15:12:30Z",
+    "gLat": -0.0,
+    "gLon": 0.1,
+    "gMag": 0.1,
+    "headingDeg": null,
+    "pitchDeg": null,
+    "gradePct": null,
+    "altitude": null,
+    "stopCount": 0,
+    "biasRad": 0.0,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source",
+      "pitchDeg": "gyro_implausible",
+      "gradePct": "gyro_implausible",
+      "headingDeg": "gyro_implausible"
+    },
+    "fusionEngine": "imufusion",
+    "headingCalibrated": true,
+    "peaks": {
+      "accelG": 0.31,
+      "brakeG": 0.38,
+      "leftG": 0.27,
+      "rightG": 0.31,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "historyInputs": [
+    [
+      "2026-10-20T15:00:05Z",
+      1.0
+    ],
+    [
+      "2026-10-20T15:00:15Z",
+      1.2
+    ],
+    [
+      "2026-10-20T15:00:25Z",
+      null
+    ]
+  ],
+  "gradeHistory": {
+    "points": [
+      {
+        "ts": "2026-10-20T15:00:10Z",
+        "gradePct": 1.0
+      },
+      {
+        "ts": "2026-10-20T15:00:20Z",
+        "gradePct": 1.2
+      }
+    ],
+    "windowS": 900,
+    "intervalS": 10,
+    "ts": "2026-10-20T15:00:25Z"
+  }
+}

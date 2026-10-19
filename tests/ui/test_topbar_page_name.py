@@ -23,6 +23,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Ralph (Rex)  | Initial -- US-887-c top-bar page name.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card (bar name MOTION).
 # ================================================================================
 ################################################################################
 
@@ -74,7 +76,8 @@ BAR_NAMES = {
     "Engine": "ENGINE",
     # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim (Iris, 53.5 px).
     "Fuel": "FUEL",
-    "Home": "MOTION",
+    # MOVED PIN (US-892-b): the Motion card replaces the Home card (same bar name).
+    "Motion": "MOTION",
     "Alerts": "ALERTS",
     "System Status": "SYSTEM",
     "Battery": "BATTERY",

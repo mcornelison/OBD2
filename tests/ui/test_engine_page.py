@@ -31,6 +31,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Ralph (Rex)  | Initial -- US-889-b Engine card above the fold.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
+#                               card at index 4.
 # ================================================================================
 ################################################################################
 
@@ -78,8 +80,9 @@ _NODE_ONLY = pytest.mark.skipif(
 # The card order (US-889-b validation row "Card order"), by kit label.
 # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after Engine.
 # MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
+# MOVED PIN (US-892-b): the Motion card replaces the Home card at index 4.
 CARD_ORDER = [
-    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Driving", "Navigation", "Engine", "Fuel", "Motion", "Alerts", "System Status",
     "Battery", "Light",
 ]
 

@@ -42,6 +42,9 @@
 #               |              | 2,896 B byte ceiling, font-synthesis: none, both
 #               |              | licence copies, and derives the subset from
 #               |              | Iris's michroma-advances.json.
+# 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the wordmark retired with the idle
+#                               face; the Motion labels join the brand
+#                               strings.
 # ================================================================================
 ################################################################################
 
@@ -152,12 +155,22 @@ def _brandStrings() -> list:
 
     MOVED PIN (US-887-c): the card titles are gone; the brand face now paints
     the top-bar PAGE NAMES, which each card carries as `data-page-name`.
+
+    MOVED PIN (US-892-b): the `ECLIPSE OBD-II` wordmark retired with the idle
+    face it lived on (CIO 2026-10-16 Q1). The Motion card's LABELS are brand
+    strings now (Michroma, `#motion-card .motion-label`): the skeleton's, and
+    the g words carousel.js writes into them.
     """
-    titles = re.findall(r'data-page-name="([^"]+)"', _read(_HTML))
-    wordmark = re.findall(r'wordmark:\s*"([^"]+)"', _read(_JS))
+    html = _read(_HTML)
+    js = _read(_JS)
+    titles = re.findall(r'data-page-name="([^"]+)"', html)
+    motionLabels = re.findall(r'class="motion-label[^"]*">([^<]+)<', html)
+    gWords = re.findall(r'motionGCell\(\s*data, "g\w+", "([^"]+)", "([^"]+)"', js)
+    noneWords = re.findall(r'var MOTION_\w+_NONE_LABEL = "([^"]+)"', js)
     assert titles, "no page names found -- the attribute moved"
-    assert wordmark, "the wordmark literal moved out of carousel.js"
-    return [text.strip().upper() for text in titles + wordmark]
+    assert motionLabels and len(gWords) == 2 and len(noneWords) == 2, "the Motion labels moved"
+    words = [w for pair in gWords for w in pair]
+    return [text.strip().upper() for text in titles + motionLabels + words + noneWords]
 
 
 # ---------------------------------------------------------------------------
@@ -320,11 +333,14 @@ def test_everyBrandStringStaysInsideTheSubset():
         assert not outside, f"{text!r} needs glyphs outside the cut subset: {outside}"
 
 
-def test_theWordmarkIsStillTheLockedString():
+def test_theMotionLabelsAreAmongTheGuardedStrings():
     """The subset assertion above is only meaningful while it guards the REAL
-    wordmark -- if the locked string drifted, this suite would be cheerfully
-    validating the drift's glyph coverage."""
-    assert "ECLIPSE OBD-II" in _brandStrings()
+    brand copy. MOVED PIN (US-892-b): the wordmark retired with the idle face;
+    the Motion labels -- the grade label with its doubled space and no '·'
+    (Iris G-4) -- are what this face now paints."""
+    strings = _brandStrings()
+    for text in ("PITCH", "GRADE  LAST 15 MIN", "ACCEL", "BRAKE", "CORNER R", "CORNER L"):
+        assert text in strings, text
 
 
 # ---------------------------------------------------------------------------
