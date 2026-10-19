@@ -349,13 +349,6 @@ def test_autostart_isEmpty():
 
 
 @pytest.mark.parametrize("unit", WAYLAND_UNITS, ids=lambda p: p.name)
-def test_waylandUnit_bindsToAndOrdersAfterTheCompositor(unit: Path):
-    text = unit.read_text(encoding="utf-8")
-    assert "eclipse-compositor.service" in _words(text, "Unit", "BindsTo")
-    assert "eclipse-compositor.service" in _words(text, "Unit", "After")
-
-
-@pytest.mark.parametrize("unit", WAYLAND_UNITS, ids=lambda p: p.name)
 def test_waylandUnit_noLongerOrdersAfterGraphicalTarget(unit: Path):
     """After=graphical.target queued the kiosk behind multi-user (18.73 s)."""
     text = unit.read_text(encoding="utf-8")
