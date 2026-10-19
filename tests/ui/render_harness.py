@@ -764,8 +764,12 @@ def runDashboard(
     autoDim: Any = None,
     viewport: tuple[int, int] = (1920, 1080),
     nowMs: int | None = None,
+    displayStale: Any = None,
 ) -> dict[str, Any]:
     """Boot the SHIPPED carousel.js over the SHIPPED markup; return the DOM.
+
+    ``displayStale`` (US-890-f) is ``window.DISPLAY_STALE`` as the server would
+    inject it; omitted, the global is absent (an un-served page).
 
     ``routes`` maps a fetch path ('/system-status') to its JSON body; an unlisted
     route 404s, so a test states exactly which state files exist.
@@ -789,6 +793,8 @@ def runDashboard(
     }
     if nowMs is not None:
         payload["nowMs"] = nowMs
+    if displayStale is not None:
+        payload["displayStale"] = displayStale
     return _runProbe("dom_probe.js", payload)
 
 

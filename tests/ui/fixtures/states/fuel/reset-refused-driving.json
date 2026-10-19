@@ -1,0 +1,39 @@
+{
+  "description": "The page offered the reset parked, but a drive began recording before eclipse-obd serviced it: 409 {ok:false, reason:'driving'}, nothing changed. SINCE RESET shows the latest provider value (24.6) + 'park to reset'. Read built by the REAL buildFuelEconomyState.",
+  "parked": true,
+  "response": {
+    "status": 409,
+    "body": {
+      "ok": false,
+      "reason": "driving"
+    }
+  },
+  "reads": [
+    {
+      "label": "before",
+      "now": "2026-10-20T15:10:00Z",
+      "inputs": {
+        "mafTrusted": true,
+        "snap": null,
+        "distanceKm": 0.0,
+        "distanceSinceTs": null,
+        "sinceReset": {
+          "fuel_l": 39.39,
+          "distance_km": 412.0,
+          "reset_at_ts": "2026-10-01T12:00:00Z"
+        }
+      },
+      "fuel-economy": {
+        "thisDrive": null,
+        "sinceReset": {
+          "fuelL": 39.39,
+          "distanceKm": 412.0,
+          "mpg": 24.60228695946517,
+          "resetAtTs": "2026-10-01T12:00:00Z"
+        },
+        "ts": null,
+        "recent": null
+      }
+    }
+  ]
+}

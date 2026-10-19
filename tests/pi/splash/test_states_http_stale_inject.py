@@ -17,6 +17,9 @@
 # ================================================================================
 # 2026-10-14    | Ralph (Rex)  | Initial -- US-882-c per-request DISPLAY_STALE.
 # 2026-10-14    | Ralph (Rex)  | Atlas ruled B: overlay value IGNORED (flipped).
+# 2026-10-18    | Rex (US-890-f) | PIN CHANGE: the injected-dict equalities gain
+#               |              | fuelResetConfirmSec (via _stale); its own
+#               |              | default / configured / invalid / overlay cases.
 # ================================================================================
 ################################################################################
 """US-882-c tests: window.DISPLAY_STALE is injected per request."""
@@ -36,6 +39,7 @@ from pi.splash.states_http_server import StatesHttpServer
 
 _TOKEN = "test-token-abcdefghijklmnopqrstuvwxyz123456"
 _IMU_SEC_KEY = "pi.display.stale.imuSec"
+_CONFIRM_KEY = "pi.display.stale.fuelResetConfirmSec"
 
 _INDEX = "<script>\n" 'window.DISPLAY_STALE = "__DISPLAY_STALE__";\n' "</script>"
 
@@ -91,6 +95,14 @@ def _injectedStale(body: str):
     return json.loads(body[start : body.index(";", start)])
 
 
+def _stale(imuSec, fuelResetConfirmSec=None) -> dict:
+    """The whole injected dict. US-890-f PIN CHANGE: it gains fuelResetConfirmSec,
+    the validator default unless a test configures it."""
+    if fuelResetConfirmSec is None:
+        fuelResetConfirmSec = DEFAULTS[_CONFIRM_KEY]
+    return {"imuSec": imuSec, "fuelResetConfirmSec": fuelResetConfirmSec}
+
+
 def test_configJsonChange_appliesWithoutARestart(tmp_path):
     """
     Given: config.json sets pi.display.stale.imuSec 3.5
@@ -101,10 +113,10 @@ def test_configJsonChange_appliesWithoutARestart(tmp_path):
     _writeJson(configPath, {"pi": {"display": {"stale": {"imuSec": 3.5}}}})
     server, thread = _startServer(tmp_path, str(configPath))
     try:
-        assert _injectedStale(_index(server)) == {"imuSec": 3.5}
+        assert _injectedStale(_index(server)) == _stale(3.5)
 
         _writeJson(configPath, {"pi": {"display": {"stale": {"imuSec": 4.0}}}})
-        assert _injectedStale(_index(server)) == {"imuSec": 4.0}
+        assert _injectedStale(_index(server)) == _stale(4.0)
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -121,7 +133,7 @@ def test_overlayImuSec_isIgnored_theAllowListHolds(served):
     overlayPath = Path(overlay.overlayPathFor(str(configPath)))
     _writeJson(overlayPath, {_IMU_SEC_KEY: 3.5})
 
-    assert _injectedStale(_index(server)) == {"imuSec": DEFAULTS[_IMU_SEC_KEY]}
+    assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
 
 
 def test_overlayImuSec_isIgnored_configJsonValueStands(tmp_path):
@@ -131,7 +143,7 @@ def test_overlayImuSec_isIgnored_configJsonValueStands(tmp_path):
     _writeJson(Path(overlay.overlayPathFor(str(configPath))), {_IMU_SEC_KEY: 3.5})
     server, thread = _startServer(tmp_path, str(configPath))
     try:
-        assert _injectedStale(_index(server)) == {"imuSec": 6}
+        assert _injectedStale(_index(server)) == _stale(6)
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -142,7 +154,7 @@ def test_configJsonValue_isServed(tmp_path):
     _writeJson(configPath, {"pi": {"display": {"stale": {"imuSec": 6}}}})
     server, thread = _startServer(tmp_path, str(configPath))
     try:
-        assert _injectedStale(_index(server)) == {"imuSec": 6}
+        assert _injectedStale(_index(server)) == _stale(6)
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -151,7 +163,7 @@ def test_configJsonValue_isServed(tmp_path):
 def test_keyAbsent_servesTheValidatorDefault(served):
     """The effective value of an absent key is the validator default (2.0)."""
     server, _ = served
-    assert _injectedStale(_index(server)) == {"imuSec": DEFAULTS[_IMU_SEC_KEY]}
+    assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
     assert DEFAULTS[_IMU_SEC_KEY] == 2.0
 
 
@@ -162,7 +174,7 @@ def test_invalidConfiguredValue_servesTheValidatorDefault(tmp_path, bad):
     _writeJson(configPath, {"pi": {"display": {"stale": {"imuSec": bad}}}})
     server, thread = _startServer(tmp_path, str(configPath))
     try:
-        assert _injectedStale(_index(server)) == {"imuSec": DEFAULTS[_IMU_SEC_KEY]}
+        assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -171,16 +183,54 @@ def test_invalidConfiguredValue_servesTheValidatorDefault(tmp_path, bad):
 def test_unreadableConfig_servesTheValidatorDefault_notACrash(served):
     server, configPath = served
     configPath.unlink()
-    assert _injectedStale(_index(server)) == {"imuSec": DEFAULTS[_IMU_SEC_KEY]}
+    assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
 
 
 def test_noConfigPath_servesTheValidatorDefault(tmp_path):
     server, thread = _startServer(tmp_path, None)
     try:
-        assert _injectedStale(_index(server)) == {"imuSec": DEFAULTS[_IMU_SEC_KEY]}
+        assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
     finally:
         server.shutdown()
         thread.join(timeout=5)
+
+
+def test_fuelResetConfirmSec_absent_servesTheValidatorDefaultOfSix(served):
+    """US-890-f: the key is validator-default only (config.json is not edited)."""
+    server, _ = served
+    assert _injectedStale(_index(server))["fuelResetConfirmSec"] == DEFAULTS[_CONFIRM_KEY] == 6
+
+
+def test_fuelResetConfirmSec_configJsonValue_isServed_perRequest(tmp_path):
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, {"pi": {"display": {"stale": {"fuelResetConfirmSec": 8.5}}}})
+    server, thread = _startServer(tmp_path, str(configPath))
+    try:
+        assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY], 8.5)
+        _writeJson(configPath, {"pi": {"display": {"stale": {"fuelResetConfirmSec": 9}}}})
+        assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY], 9)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("bad", [0, -1, "6", True, None])
+def test_fuelResetConfirmSec_invalid_servesTheValidatorDefault(tmp_path, bad):
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, {"pi": {"display": {"stale": {"fuelResetConfirmSec": bad}}}})
+    server, thread = _startServer(tmp_path, str(configPath))
+    try:
+        assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_fuelResetConfirmSec_overlayValue_isIgnored(served):
+    """Not operator-overridable (Atlas ruling B), exactly as imuSec."""
+    server, configPath = served
+    _writeJson(Path(overlay.overlayPathFor(str(configPath))), {_CONFIRM_KEY: 30})
+    assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
 
 
 def test_staleConfigIsNotSerializedAtConstruction():

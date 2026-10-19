@@ -34,6 +34,8 @@
 # 2026-10-15    | Rex (US-889-a) | pi.display.engineHistory.{intervalSec,maxPoints}.
 # 2026-10-15    | Rex (US-890-b) | pi.display.scale.mafMaxGs default 160 + positivity.
 # 2026-10-15    | Rex (US-890-e) | pi.fuel.recent* defaults (Spool) + positivity.
+# 2026-10-18    | Rex (US-890-f) | pi.display.stale.fuelResetConfirmSec default 6 +
+#                                positivity.
 # ================================================================================
 ################################################################################
 
@@ -1444,6 +1446,29 @@ def test_validate_staleImuSec_positiveFloat_accepted():
     cfg = _baseCfg()
     cfg["pi"] = {"display": {"stale": {"imuSec": 3.5}}}
     assert ConfigValidator().validate(cfg)["pi"]["display"]["stale"]["imuSec"] == 3.5
+
+
+def test_validate_staleFuelResetConfirmSec_defaultsToSix():
+    """US-890-f (Atlas Q4): the kiosk's wait for the re-read after a 200 from
+    POST /fuel-reset defaults to 6 s -- three ~2.03 s fuel-economy publishes."""
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["display"]["stale"]["fuelResetConfirmSec"] == 6
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "6", True])
+def test_validate_staleFuelResetConfirmSec_nonPositiveOrNonFinite_rejected(bad):
+    """US-890-f: pi.display.stale.fuelResetConfirmSec must be a finite number > 0."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"stale": {"fuelResetConfirmSec": bad}}}
+    with pytest.raises(ConfigValidationError, match="pi.display.stale.fuelResetConfirmSec"):
+        ConfigValidator().validate(cfg)
+
+
+def test_validate_staleFuelResetConfirmSec_positiveFloat_accepted():
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"stale": {"fuelResetConfirmSec": 8.5}}}
+    stale = ConfigValidator().validate(cfg)["pi"]["display"]["stale"]
+    assert stale["fuelResetConfirmSec"] == 8.5
 
 
 def test_validate_fuelKeys_defaultsAreSpoolsSourcedValues():

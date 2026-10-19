@@ -157,6 +157,10 @@
 #                                finite, > 0.
 # 2026-10-15    | Rex (US-907)   | pi.obdii.connectDebug: false (absent = off);
 #                                a real bool.  Not an overlay key.
+# 2026-10-18    | Rex (US-890-f) | pi.display.stale.fuelResetConfirmSec: 6 (Atlas
+#                                Q4: the kiosk's wait for the re-read after a
+#                                /fuel-reset 200, injected as window.DISPLAY_
+#                                STALE); finite, > 0. Not an overlay key.
 # ================================================================================
 ################################################################################
 
@@ -831,6 +835,15 @@ DEFAULTS: dict[str, Any] = {
     # 1 it is two write intervals. Mirrored by carousel.js DEFAULT_IMU_STALE_SEC
     # (pinned by tests/ui/test_carousel_imu_stale_config.py).
     'pi.display.stale.imuSec': 2.0,
+    # US-890-f (F-127, Atlas Q4): after a 200 from POST /fuel-reset the kiosk
+    # holds "resetting…" until a states/fuel-economy read carries the answered
+    # resetAtTs, for at most this long (clock from the 200), then says "couldn't
+    # confirm". states/fuel-economy publishes every 2.02-2.05 s (MEASURED
+    # 2026-10-15) and the kiosk polls every 250 ms: 6 s is three publish periods,
+    # so one missed publish still confirms with ~1.6 s to spare. Injected per
+    # request as window.DISPLAY_STALE.fuelResetConfirmSec beside imuSec; NOT an
+    # overlay key (Atlas ruling B) and carousel.js holds no mirror of it.
+    'pi.display.stale.fuelResetConfirmSec': 6,
     # US-880-a (F-159): the speed integrator's gap rule (src/pi/obdii/
     # speed_integrator.py) -- an interval between SPEED readings wider than this
     # is not continuous travel and adds no distance. ONE gap definition across
@@ -1929,31 +1942,33 @@ class ConfigValidator:
             )
 
     def _validateStaleImu(self, config: dict[str, Any]) -> None:
-        """Validate pi.display.stale.imuSec (US-882-c): a finite number > 0.
+        """Validate the page's injected stale windows: each a finite number > 0.
 
-        An absent key is skipped (a custom defaults set may not supply it).
+        pi.display.stale.imuSec (US-882-c) and
+        pi.display.stale.fuelResetConfirmSec (US-890-f). An absent key is
+        skipped (a custom defaults set may not supply it).
 
         Args:
             config: Validated configuration (post-default-application).
 
         Raises:
-            ConfigValidationError: If the key is non-numeric, non-finite or
+            ConfigValidationError: If a key is non-numeric, non-finite or
                 non-positive.
         """
-        key = 'pi.display.stale.imuSec'
-        val = self._getNestedValue(config, key)
-        if val is None:
-            return
-        if (
-            isinstance(val, bool)
-            or not isinstance(val, (int, float))
-            or not math.isfinite(val)
-            or val <= 0
-        ):
-            raise ConfigValidationError(
-                f"{key} must be a finite number > 0 (got {val!r})",
-                missingFields=[key],
-            )
+        for key in ('pi.display.stale.imuSec', 'pi.display.stale.fuelResetConfirmSec'):
+            val = self._getNestedValue(config, key)
+            if val is None:
+                continue
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, (int, float))
+                or not math.isfinite(val)
+                or val <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{key} must be a finite number > 0 (got {val!r})",
+                    missingFields=[key],
+                )
 
     def _validateFuel(self, config: dict[str, Any]) -> None:
         """Validate the pi.fuel.* keys (US-881-b).

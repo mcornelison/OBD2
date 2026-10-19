@@ -1937,9 +1937,13 @@ html, body {
   /* US-890-c, the loop chip (spec s3: outlined, no colour). */
   --fuel-chip-pad-y: 2px;
   --fuel-chip-pad-x: 8px;
+  /* US-890-f, the SINCE RESET hold (spec s4.3). */
+  --fuel-reset-progress-h: 3px;  /* the hold's fill bar under the slot */
+  --fuel-reset-z: 1;             /* the confirm sits over the card body */
 }
 #fuel-card .card-body {
   display: flex; flex-direction: column; gap: var(--fuel-gap);
+  position: relative;
 }
 #fuel-card .fuel-top {
   flex: none;
@@ -2053,6 +2057,29 @@ html, body {
 }
 #fuel-card .fuel-mpg .fuel-note {
   overflow-wrap: anywhere;
+}
+/* US-890-f SINCE RESET reset (spec s4.3). The line under the slot carries the
+   parked-only "hold to reset" hint or the outcome ("park to reset", "couldn't
+   reset", "couldn't confirm"); every text <= 16 characters, so --fs-meta mono
+   fits the column. Neutral: an outcome is information, not an alarm. The hold
+   fills a bar from longPressProgress via --fill; the confirm covers the card
+   body (in-page, not a modal) on the shared .confirm-box shell. */
+#fuel-card .fuel-reset-line {
+  font-family: var(--font-mono); font-size: var(--fs-meta);
+  line-height: var(--fuel-line); color: var(--text-secondary); white-space: nowrap;
+}
+#fuel-card .fuel-reset-progress {
+  --fill: 0;
+  display: block; height: var(--fuel-reset-progress-h); background: var(--line);
+}
+#fuel-card .fuel-reset-progress-fill {
+  display: block; height: 100%; background: var(--text-secondary);
+  transform: scaleX(var(--fill)); transform-origin: left;
+}
+#fuel-card .fuel-reset-confirm {
+  position: absolute; inset: 0; z-index: var(--fuel-reset-z);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
 }
 /* The trend row. The source card paints this slot only (gate, loading and
    no-data tiles included), so the rows above never wait on it. */

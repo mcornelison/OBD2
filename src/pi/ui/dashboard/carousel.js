@@ -4053,6 +4053,166 @@
     return { last30: last30, thisDrive: thisDrive, sinceReset: sinceReset };
   }
 
+  // --- US-890-f the SINCE RESET reset (F-127, spec s4.3) ---------------------
+  //
+  // Parked only: hold SINCE RESET ~2 s, confirm "Reset average MPG?", then a
+  // token-gated POST /fuel-reset, then show the RE-READ stored value (F-126
+  // honest write, never optimistic). The page never caches an "old value": the
+  // slot always renders the LATEST states/fuel-economy read plus an outcome
+  // line. The ONE time it masks the provider is "resetting…", from Yes until a
+  // read whose sinceReset.resetAtTs equals the 200's resetAtTs, bounded by
+  // pi.display.stale.fuelResetConfirmSec counted from the 200 (Atlas Q4/G3).
+  //
+  // Hold time: CIO F-6, "long-press the tile (~2 s)" (fuel spec s2).
+  var FUEL_RESET_HOLD_MS = 2000;
+  // Every outcome text is <= 16 characters, the MPG row's fit rule (s4.6).
+  var FUEL_RESET_HINT = "hold to reset";
+  var FUEL_RESET_RESETTING = "resetting…";
+  var FUEL_RESET_OUTCOME_TEXT = {
+    park: "park to reset",
+    failed: "couldn't reset",
+    unconfirmed: "couldn't confirm",
+  };
+  // The one refusal that means "move the car first" (core.py
+  // _maybeServiceFuelResetRequest); every other 409 reason is a failed reset.
+  var FUEL_RESET_DRIVING_REASON = "driving";
+
+  // pi.display.stale.fuelResetConfirmSec, injected per request as
+  // window.DISPLAY_STALE.fuelResetConfirmSec (the imuSec pattern). There is NO
+  // mirrored default here, on purpose (no literal in this file): without a real
+  // window "resetting…" would be unbounded, so an absent or invalid injection
+  // returns null and the reset is simply not offered (fail closed).
+  function resolveFuelResetConfirmSec(injected) {
+    var v = isObj(injected) ? injected.fuelResetConfirmSec : null;
+    return typeof v === "number" && isFinite(v) && v > 0 ? v : null;
+  }
+
+  function fuelSinceResetTs(fuelEconomyData) {
+    var block = isObj(fuelEconomyData) ? fuelEconomyData.sinceReset : null;
+    return isObj(block) && typeof block.resetAtTs === "string" ? block.resetAtTs : null;
+  }
+
+  // phase: idle | confirm | posting (Yes -> the answer) | awaiting (200 -> the
+  // matching read). `outcome` is a FUEL_RESET_OUTCOME_TEXT key or null.
+  // `baselineTs` is the resetAtTs on the read at Yes -- an identity, not a
+  // value: a later read with a different one means a reset landed.
+  function fuelResetInit() {
+    return { phase: "idle", outcome: null, baselineTs: null, resetAtTs: null, confirmFromMs: null };
+  }
+
+  // A POST /fuel-reset answer -> the next state (states_http_server
+  // _handleFuelReset: 200, 409, 503, 504, 401). Only a 200 that names its
+  // resetAtTs can be confirmed by a read; a 504, a 200 without a stamp and any
+  // status the server does not document leave the outcome UNKNOWN.
+  function fuelResetAnswer(state, status, body, nowMs) {
+    var b = isObj(body) ? body : {};
+    if (status === 200 && b.ok === true && typeof b.resetAtTs === "string" && b.resetAtTs) {
+      state.phase = "awaiting";
+      state.resetAtTs = b.resetAtTs;
+      state.confirmFromMs = nowMs;
+      return state;
+    }
+    state.phase = "idle";
+    if (status === 409 && b.reason === FUEL_RESET_DRIVING_REASON) state.outcome = "park";
+    else if (status === 409 || status === 503 || status === 401) state.outcome = "failed";
+    else state.outcome = "unconfirmed";
+    return state;
+  }
+
+  // Advance the reset by one event. Pure; the clock arrives on the event.
+  //   {type: "hold", parked, confirmSec}      the 2 s hold completed
+  //   {type: "no"}                            confirm -> No (changes nothing)
+  //   {type: "yes", read}                     confirm -> Yes
+  //   {type: "answer", status, body, nowMs}   the POST answered
+  //   {type: "failure"}                       the POST never answered
+  //   {type: "read", read, parked, nowMs, confirmSec}   one tick's read
+  function fuelResetNext(prev, ev) {
+    var s = isObj(prev) && typeof prev.phase === "string" ? {
+      phase: prev.phase, outcome: prev.outcome, baselineTs: prev.baselineTs,
+      resetAtTs: prev.resetAtTs, confirmFromMs: prev.confirmFromMs,
+    } : fuelResetInit();
+    var type = isObj(ev) ? ev.type : null;
+    if (type === "hold") {
+      if (s.phase === "idle" && ev.parked === true && typeof ev.confirmSec === "number") {
+        s.phase = "confirm";
+      }
+      return s;
+    }
+    if (type === "no") {
+      if (s.phase === "confirm") s.phase = "idle";
+      return s;
+    }
+    if (type === "yes") {
+      if (s.phase !== "confirm") return s;
+      s.phase = "posting";
+      s.outcome = null;
+      s.baselineTs = fuelSinceResetTs(ev.read);
+      s.resetAtTs = null;
+      s.confirmFromMs = null;
+      return s;
+    }
+    if (type === "answer") {
+      if (s.phase !== "posting") return s;
+      return fuelResetAnswer(s, ev.status, ev.body, ev.nowMs);
+    }
+    if (type === "failure") {
+      // No answer at all: the server may or may not have acted.
+      if (s.phase === "posting") {
+        s.phase = "idle";
+        s.outcome = "unconfirmed";
+      }
+      return s;
+    }
+    if (type !== "read") return s;
+    var ts = fuelSinceResetTs(ev.read);
+    if (s.phase === "confirm" && ev.parked !== true) {
+      // The car moved under an open confirm: withdraw it.
+      s.phase = "idle";
+    } else if (s.phase === "awaiting") {
+      if (ts !== null && ts === s.resetAtTs) {
+        s.phase = "idle";
+        s.outcome = null;
+      } else if (!(typeof ev.nowMs === "number" && typeof ev.confirmSec === "number" &&
+                   ev.nowMs - s.confirmFromMs <= ev.confirmSec * 1000)) {
+        // Past the window, or no window to measure against.
+        s.phase = "idle";
+        s.outcome = "unconfirmed";
+      }
+    } else if (s.phase === "idle" && s.outcome !== null && ts !== null && ts !== s.baselineTs) {
+      // A reset landed after all (a 504 or a late read): the read speaks.
+      s.outcome = null;
+    }
+    return s;
+  }
+
+  // The MPG row with the reset applied to SINCE RESET.
+  function fuelMpgResetView(fuelEconomyData, resetState, parked, confirmSec) {
+    return fuelResetOverlay(fuelMpgView(fuelEconomyData), resetState, parked, confirmSec);
+  }
+
+  // Apply the reset to a fuelMpgView. `sinceReset.line` is the slot's outcome /
+  // hint line; `reset` says whether the hold is live and the confirm is open.
+  function fuelResetOverlay(view, resetState, parked, confirmSec) {
+    var s = isObj(resetState) && typeof resetState.phase === "string" ? resetState : fuelResetInit();
+    var offered = parked === true && typeof confirmSec === "number";
+    var slot = view.sinceReset;
+    slot.line = "";
+    if (s.phase === "posting" || s.phase === "awaiting") {
+      view.sinceReset = fuelMpgSlot("--", FUEL_RESET_RESETTING, "resetting");
+      view.sinceReset.line = "";
+    } else if (s.outcome !== null &&
+               Object.prototype.hasOwnProperty.call(FUEL_RESET_OUTCOME_TEXT, s.outcome)) {
+      slot.line = FUEL_RESET_OUTCOME_TEXT[s.outcome];
+    } else if (offered) {
+      slot.line = FUEL_RESET_HINT;
+    }
+    view.reset = {
+      pressable: offered && s.phase === "idle",
+      confirm: offered && s.phase === "confirm",
+    };
+    return view;
+  }
+
   // --- US-889-c Engine card, the scroll half (F-127) -------------------------
   //
   // specs/v030-engine-page-design.md s3-s4, ACs 5-11: this drive's coolant,
@@ -4838,6 +4998,11 @@
     fuelLoopView: fuelLoopView,
     fuelTotalTrimView: fuelTotalTrimView,
     fuelMpgView: fuelMpgView,
+    FUEL_RESET_HOLD_MS: FUEL_RESET_HOLD_MS,
+    resolveFuelResetConfirmSec: resolveFuelResetConfirmSec,
+    fuelResetInit: fuelResetInit,
+    fuelResetNext: fuelResetNext,
+    fuelMpgResetView: fuelMpgResetView,
     sourceCardSpecs: sourceCardSpecs,
     sourceCardSpec: sourceCardSpec,
     sourceCardView: sourceCardView,
@@ -5430,6 +5595,20 @@
           noteEl.hidden = !slotView.note;
         }
       }
+      // US-890-f: SINCE RESET's hint / outcome line, whether the hold is live,
+      // and the in-page confirm -- all from `fuelMpgResetView`.
+      var since = card.querySelector(".fuel-mpg-since-reset");
+      var reset = isObj(view.reset) ? view.reset : { pressable: false, confirm: false };
+      if (since && view.sinceReset) {
+        var lineEl = since.querySelector(".fuel-reset-line");
+        if (lineEl) {
+          lineEl.textContent = view.sinceReset.line || "";
+          lineEl.hidden = !view.sinceReset.line;
+        }
+        since.setAttribute("data-pressable", reset.pressable ? "true" : "false");
+      }
+      var confirmEl = card.querySelector(".fuel-reset-confirm");
+      if (confirmEl) confirmEl.hidden = !reset.confirm;
     }
 
     // US-889-c: one history chart. The spans go in first so the neutral line
@@ -6641,6 +6820,124 @@
           if (engineCodes.getAttribute("data-tap") === "true") openAlertsCard();
         });
       }
+      // US-890-f: the SINCE RESET reset (spec s4.3). `fuelReset` is the
+      // fuelResetNext state and `lastFuelEconomy` the LATEST states/fuel-economy
+      // read; Yes and the POST's answer repaint from them between ticks, so
+      // "resetting…" shows from Yes. Parked is `engineParked` -- the ONE US-511
+      // debounce, so the hint and the CHECK ENGINE tap can never disagree.
+      var fuelReset = fuelResetInit();
+      var lastFuelEconomy = null;
+      var fuelSinceResetEl = document.getElementById("fuel-since-reset");
+      var fuelResetYes = document.getElementById("fuel-reset-yes");
+      var fuelResetNo = document.getElementById("fuel-reset-no");
+      function fuelConfirmSec() {
+        return resolveFuelResetConfirmSec(global.DISPLAY_STALE);
+      }
+      function paintFuelMpg() {
+        renderFuelMpg(
+          fuelCard,
+          fuelMpgResetView(lastFuelEconomy, fuelReset, engineParked.parked, fuelConfirmSec())
+        );
+      }
+      if (fuelSinceResetEl) {
+        // The menu long-press's shape (US-747): each press owns its interval.
+        var fuelProgress = fuelSinceResetEl.querySelector(".fuel-reset-progress");
+        var fuelHoldStart = null;
+        var fuelHoldX = 0;
+        var fuelHoldY = 0;
+        var fuelHoldTimer = null;
+        var fuelHoldClear = function () {
+          fuelHoldStart = null;
+          if (fuelHoldTimer) {
+            clearInterval(fuelHoldTimer);
+            fuelHoldTimer = null;
+          }
+          if (fuelProgress) {
+            fuelProgress.hidden = true;
+            fuelProgress.style.setProperty("--fill", "0");
+          }
+        };
+        fuelSinceResetEl.addEventListener("pointerdown", function (e) {
+          fuelHoldClear();
+          // Moving, the slot carries no hold at all.
+          if (fuelSinceResetEl.getAttribute("data-pressable") !== "true") return;
+          fuelHoldStart = Date.now();
+          fuelHoldX = e.clientX;
+          fuelHoldY = e.clientY;
+          var id = setInterval(function () {
+            if (fuelHoldTimer !== id || fuelHoldStart === null) {
+              clearInterval(id);
+              return;
+            }
+            var elapsed = Date.now() - fuelHoldStart;
+            if (fuelProgress) {
+              fuelProgress.hidden = false;
+              fuelProgress.style.setProperty(
+                "--fill", String(longPressProgress(elapsed, FUEL_RESET_HOLD_MS))
+              );
+            }
+            if (!isLongPressComplete(elapsed, FUEL_RESET_HOLD_MS)) return;
+            fuelHoldClear();
+            // Honour only what is on the glass right now: the car may have
+            // moved during the hold.
+            if (fuelSinceResetEl.getAttribute("data-pressable") !== "true") return;
+            fuelReset = fuelResetNext(fuelReset, {
+              type: "hold", parked: engineParked.parked, confirmSec: fuelConfirmSec(),
+            });
+            paintFuelMpg();
+          }, 50);
+          fuelHoldTimer = id;
+        });
+        fuelSinceResetEl.addEventListener("pointermove", function (e) {
+          if (fuelHoldStart === null) return;
+          if (exceedsMoveCancel(e.clientX - fuelHoldX, e.clientY - fuelHoldY)) fuelHoldClear();
+        });
+        fuelSinceResetEl.addEventListener("pointerup", fuelHoldClear);
+        fuelSinceResetEl.addEventListener("pointercancel", fuelHoldClear);
+        fuelSinceResetEl.addEventListener("pointerleave", fuelHoldClear);
+      }
+      if (fuelResetNo) {
+        fuelResetNo.addEventListener("click", function () {
+          fuelReset = fuelResetNext(fuelReset, { type: "no" });
+          paintFuelMpg();
+        });
+      }
+      if (fuelResetYes) {
+        fuelResetYes.addEventListener("click", function () {
+          if (fuelReset.phase !== "confirm") return;
+          fuelReset = fuelResetNext(fuelReset, { type: "yes", read: lastFuelEconomy });
+          // "resetting…" from Yes, not from the 200: the POST can take up to
+          // pi.fuel.resetTimeoutSec and the states server stalls reads meanwhile.
+          paintFuelMpg();
+          // The /dtc-clear pattern: token-gated POST, status + JSON body. The
+          // server's raw text goes to the log only, never to the glass.
+          fetch("/fuel-reset", {
+            method: "POST",
+            headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
+          })
+            .then(function (r) {
+              return r.json().then(
+                function (j) { return { status: r.status, body: j }; },
+                function () { return { status: r.status, body: {} }; }
+              );
+            })
+            .then(function (res) {
+              var b = isObj(res.body) ? res.body : {};
+              if (res.status !== 200) {
+                uiLog(LOG_WARN, "fuel-reset " + res.status + ": " + (b.reason || b.error || ""));
+              }
+              fuelReset = fuelResetNext(fuelReset, {
+                type: "answer", status: res.status, body: b, nowMs: Date.now(),
+              });
+              paintFuelMpg();
+            })
+            .then(null, function (e) {
+              uiLog(LOG_WARN, "fuel-reset no answer: " + String(e));
+              fuelReset = fuelResetNext(fuelReset, { type: "failure" });
+              paintFuelMpg();
+            });
+        });
+      }
       var landingIndex = -1;
       var lastIdle = null;
       // US-497 g-trail + US-508 grade trend: accumulated across polls from the
@@ -7423,8 +7720,18 @@
           fuelLoopView(await stateOnce("obd-live")),
           fuelTotalTrimView(await stateOnce("obd-live"))
         );
-        // US-890-d: the MPG row from states/fuel-economy alone.
-        renderFuelMpg(fuelCard, fuelMpgView(await stateOnce("fuel-economy")));
+        // US-890-d: the MPG row from states/fuel-economy alone. US-890-f: the
+        // read also advances the reset (match / confirm window / a landed
+        // reset), against the same parked signal and this tick's one clock.
+        lastFuelEconomy = await stateOnce("fuel-economy");
+        fuelReset = fuelResetNext(fuelReset, {
+          type: "read", read: lastFuelEconomy, parked: engineParked.parked,
+          nowMs: nowMs, confirmSec: fuelConfirmSec(),
+        });
+        renderFuelMpg(fuelCard, fuelResetOverlay(
+          fuelMpgView(await stateOnce("fuel-economy")),
+          fuelReset, engineParked.parked, fuelConfirmSec()
+        ));
         renderHome(nowMs);
         updateHomeNav(sysData);
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint
