@@ -77,8 +77,10 @@ _NODE_ONLY = pytest.mark.skipif(
 
 # The card order (US-889-b validation row "Card order"), by kit label.
 # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after Engine.
+# MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
 CARD_ORDER = [
-    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Battery", "Light",
 ]
 
 ENGINE_PIDS = ["ENGINE_LOAD", "THROTTLE_POS", "TIMING_ADVANCE"]
@@ -258,7 +260,8 @@ def test_cardOrder_engineSitsRightAfterDriving():
 
 
 def test_engineCard_isNamedEngine_andCarriesNoPollOrLandingMachinery():
-    tag = _sectionTags(_read(_HTML))[1]
+    # MOVED PIN (US-896-a): the NAV card took index 1, so Engine is index 2.
+    tag = _sectionTags(_read(_HTML))[2]
     assert 'id="engine-card"' in tag
     assert 'aria-label="Engine"' in tag
     assert 'data-page-name="ENGINE"' in tag

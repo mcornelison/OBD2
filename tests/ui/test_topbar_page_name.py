@@ -67,6 +67,9 @@ _NODE_ONLY = pytest.mark.skipif(
 # the landing card from US-888-a; a name only has to be here to be allowed.
 BAR_NAMES = {
     "Driving": "DRIVING",
+    # MOVED PIN (US-896-a): the NAV card (CIO 2026-10-14: NAVIGATION is 135 px
+    # and does not fit the 122 px slot; nav spec s3).
+    "Navigation": "NAV",
     # MOVED PIN (US-889-b): the Engine card (Iris, 80 px).
     "Engine": "ENGINE",
     # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim (Iris, 53.5 px).

@@ -66,7 +66,8 @@ _TS = "2026-07-31T12:00:00+00:00"
 _TS_MS = int(datetime(2026, 7, 31, 12, 0, 0, tzinfo=UTC).timestamp() * 1000)
 
 # The card's own constants, mirrored so a drift in either breaks a test.
-_STALE_SEC = 2.0
+# US-896-a (Atlas S105 Q3/G1): the mirrored IMU default is 3.0 s (was 2.0).
+_STALE_SEC = 3.0
 _G_AMBER = 0.6  # Spool: the advisory lateral/longitudinal nudge
 _G_FULL_SCALE = 1.0  # the outer ring -- a DIFFERENT fact from the amber threshold
 _TAPE_SPAN_DEG = 90.0

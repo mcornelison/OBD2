@@ -36,6 +36,7 @@
 # 2026-10-15    | Rex (US-890-e) | pi.fuel.recent* defaults (Spool) + positivity.
 # 2026-10-18    | Rex (US-890-f) | pi.display.stale.fuelResetConfirmSec default 6 +
 #                                positivity.
+# 2026-10-18    | Rex (US-896-a) | pi.display.stale.imuSec default pin 2.0 -> 3.0.
 # ================================================================================
 ################################################################################
 
@@ -1426,11 +1427,13 @@ def test_validate_tripGapSec_positiveFloat_accepted():
     assert ConfigValidator().validate(cfg)["pi"]["trip"]["gapSec"] == 120.5
 
 
-def test_validate_staleImuSec_defaultsToTodaysCarouselLiteral():
-    """US-882-c: pi.display.stale.imuSec defaults to 2.0 s -- carousel.js's
-    former IMU_STALE_SEC literal, so nothing on screen changes."""
+def test_validate_staleImuSec_defaultsToThreeSeconds_theMeasuredBasis():
+    """US-882-c: pi.display.stale.imuSec is the one IMU stale key.
+    MOVED PIN (US-896-a, Atlas S105 Q3/G1): default 2.0 -> 3.0 s -- a healthy
+    1 Hz states/imu reads up to 1.94 s old (measured), so 2.0 had ~0.06 s of
+    margin; 3.0 is three readings."""
     cfg = ConfigValidator().validate(_baseCfg())
-    assert cfg["pi"]["display"]["stale"]["imuSec"] == 2.0
+    assert cfg["pi"]["display"]["stale"]["imuSec"] == 3.0
 
 
 @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "2.0", True])

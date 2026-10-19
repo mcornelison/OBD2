@@ -82,8 +82,10 @@ _NODE_ONLY = pytest.mark.skipif(
 # The card order (US-888-a validation row "Card order"), by kit label.
 # MOVED PIN (US-889-b): the Engine card is index 1, right after Driving (E-2).
 # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after Engine.
+# MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
 CARD_ORDER = [
-    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Battery", "Light",
 ]
 
 # The Home/IMU slot as it shipped before this story (US-887-c tree). It moves
@@ -304,7 +306,8 @@ def test_homeSlot_movesToIndexOne_withItsMarkupUnchanged():
     assert HOME_SLOT_MARKUP in html
     # MOVED PIN (US-889-b): the Engine card took index 1, so Home is index 2.
     # MOVED PIN (US-890-a): the Fuel card took index 2, so Home is index 3.
-    assert 'id="home-card"' in _sectionTags(html)[3]
+    # MOVED PIN (US-896-a): the NAV card took index 1, so Home is index 4.
+    assert 'id="home-card"' in _sectionTags(html)[4]
 
 
 def test_drivingFacts_doNotUseTheTileClass():

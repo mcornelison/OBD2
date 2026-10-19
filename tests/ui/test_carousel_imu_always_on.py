@@ -53,7 +53,8 @@ _CONFIG = os.path.join(_ROOT, "config.json")
 
 _TS = "2026-08-11T12:00:00+00:00"
 _TS_MS = int(datetime(2026, 8, 11, 12, 0, 0, tzinfo=UTC).timestamp() * 1000)
-_STALE_SEC = 2.0  # the card's own IMU_STALE_SEC, mirrored so drift breaks a test
+# MOVED PIN (US-896-a, Atlas S105 Q3/G1): the mirrored default is 3.0 s (was 2.0).
+_STALE_SEC = 3.0  # the card's own IMU_STALE_SEC, mirrored so drift breaks a test
 
 # US-536 disposition B (CIO): auto-rotate OFF is the durable freeze fix.
 _AUTO_ROTATE_OFF = 0
@@ -364,7 +365,10 @@ def test_html_alertsIsTheSecondCard():
     # card, R5), so the US-541 order Home . Alerts . System Status now follows it.
     # MOVED PIN (US-889-b): the Engine card sits between Driving and Home (E-2).
     # MOVED PIN (US-890-a): the Fuel card sits between Engine and Home (E-2).
-    assert cards[:6] == ["Driving", "Engine", "Fuel", "Home", "Alerts", "System Status"]
+    # MOVED PIN (US-896-a): the NAV card sits between Driving and Engine (E-2).
+    assert cards[:7] == [
+        "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status"
+    ]
 
 
 # ---------------------------------------------------------------------------

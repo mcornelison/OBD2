@@ -3363,23 +3363,24 @@
   // gray a label -- AC-3, "never a frozen/zeroed live instrument".
   // -------------------------------------------------------------------------
 
-  // Freshness window, in seconds. RE-GROUNDED by US-508, and the re-grounding
-  // is the point: the bridge now writes at pi.sensors.imu.stateHz = 10 Hz (Atlas
-  // transport ruling), so 2.0 s is TWENTY missed writes, not the eight it was at
-  // 4 Hz. It is deliberately NOT retightened in proportion. This feed now drives
-  // the HOME slot, and a home card that flips to the idle face on a brief
-  // scheduling stall is its own defect -- a flapping home slot. 2.0 s is still
-  // far below the horizon at which a driver could mistake a stale g-vector for a
-  // live one, and still MUCH tighter than the light card's 10 s (a 10 s old lux
-  // is roughly true; a 10 s old g-vector is meaningless). Rex-derived; flagged
-  // for Atlas/Spool against a real drive, same status as the bridge's tau.
+  // Freshness window, in seconds. US-896-a (Atlas S105 Q3/G1) re-grounds it on
+  // a MEASUREMENT: states/imu writes every 1.00-1.02 s at stateHz 1, its ts is
+  // whole seconds and the kiosk polls every 100 ms, so a healthy file reads a
+  // median 1.84 s / max 1.94 s old before it is replaced. The old 2.0 left
+  // ~0.06 s of margin and would flash NO UPDATE on a healthy feed. 3.0 = three
+  // readings at 1 Hz, ~1 s above the measured worst case. Measured parked on
+  // wall power; NOT yet validated under drive load.
   //
-  // US-882-c: the window is now pi.display.stale.imuSec, injected per request as
+  // ONE key for one provider: NAV's stale state and the Motion dim both read
+  // resolveImuStaleSec(). Two keys would let NAV freeze while Motion shows live
+  // on the same fact.
+  //
+  // US-882-c: the window is pi.display.stale.imuSec, injected per request as
   // window.DISPLAY_STALE.imuSec. This constant is only the MIRROR of the
   // validator default, used when the injection is absent or not a finite
   // positive number; tests/ui/test_carousel_imu_stale_config.py pins it equal to
   // the validator DEFAULTS value, so drift fails a test.
-  var DEFAULT_IMU_STALE_SEC = 2.0;
+  var DEFAULT_IMU_STALE_SEC = 3.0;
 
   // Read at CALL time (the currentDebugLevel pattern): the injected value can
   // then be checked by a node probe that sets the global before calling.
@@ -3421,6 +3422,9 @@
     // US-749: the fusion's plausibility guard withheld a pitch the accelerometer contradicts.
     gyro_implausible: "gyro implausible",
     no_source: "no source",
+    // US-896-a (closes US-821's text): the AHRS has no heading YET. The NAV
+    // badge is this text upper-cased, STARTING UP (spec s4.2).
+    heading_unseeded: "starting up",
   };
 
   function imuReason(data, field) {
@@ -3511,10 +3515,16 @@
   // `offset` is -1..1 across the strip, so the renderer owns the pixels and this
   // function owns the geometry. Signed shortest-arc, so the tape does not tear
   // itself apart across north: at 350 degrees the window genuinely spans 305..35.
-  function compassTape(headingDeg, spanDeg) {
+  //
+  // US-896-a: `tickDeg` (optional) is the lattice step. The interim card omits
+  // it and keeps its 15-degree ticks; the NAV tape passes 5 (spec s3).
+  function compassTape(headingDeg, spanDeg, tickDeg) {
     var span = typeof spanDeg === "number" && isFinite(spanDeg) && spanDeg > 0
       ? spanDeg
       : COMPASS_TAPE_SPAN_DEG;
+    var step = typeof tickDeg === "number" && isFinite(tickDeg) && tickDeg > 0
+      ? tickDeg
+      : COMPASS_TAPE_TICK_DEG;
     // A dead magnetometer renders NO tape. A tape frozen under the caret reads
     // as a confident heading in exactly the way the frozen needle did -- the
     // instrument must be absent, not stopped (US-497's rule, new geometry).
@@ -3526,8 +3536,8 @@
     var ticks = [];
     // Walk the tick lattice (absolute bearings, not offsets from the heading) so
     // every tick keeps its own true bearing and its label cannot drift off it.
-    var first = Math.ceil((heading - half) / COMPASS_TAPE_TICK_DEG) * COMPASS_TAPE_TICK_DEG;
-    for (var deg = first; deg <= heading + half; deg += COMPASS_TAPE_TICK_DEG) {
+    var first = Math.ceil((heading - half) / step) * step;
+    for (var deg = first; deg <= heading + half; deg += step) {
       var bearing = normDeg(deg);
       var delta = deg - heading;   // already the shortest arc by construction
       ticks.push({
@@ -3540,6 +3550,179 @@
       });
     }
     return { available: true, headingDeg: heading, spanDeg: span, ticks: ticks };
+  }
+
+  // -------------------------------------------------------------------------
+  // US-896-a (F-160; specs/v030-navigation-page-design.md s3/s4.1/s4.2): the
+  // NAV card's heading half -- the bearing tape, the digits, the 8-point point
+  // and the five heading states. Pure; the renderer is in the browser block.
+  // -------------------------------------------------------------------------
+
+  // Spec s3: fine ticks every 5 degrees, minor every 15, major + letter every
+  // 45 (COMPASS_TAPE_LABEL_DEG). The 90-degree window is COMPASS_TAPE_SPAN_DEG.
+  var NAV_TAPE_FINE_DEG = 5;
+  var NAV_TAPE_MINOR_DEG = 15;
+
+  // CIO N-4 (spec s4.1): each new reading starts a 1 s ease-in-out glide.
+  var NAV_GLIDE_MS = 1000;
+
+  // R25 / N-12: the 8 compass points, N first so index 0 is north.
+  var COMPASS_POINTS_8 = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+
+  // The bridge's startup code (imu_state_bridge.REASON_HEADING_UNSEEDED): the
+  // AHRS has no heading YET, which is not a dead sensor (spec s4.2).
+  var REASON_HEADING_UNSEEDED = "heading_unseeded";
+
+  // Spec s7 (OEM mockup rules): the band's text before the first reading, and
+  // the reason beside the legacy engine's "--" chip.
+  var NAV_WAITING_TEXT = "waiting for the first heading reading";
+  var NAV_CALIBRATION_ABSENT_TEXT = "calibration not published";
+
+  // The NEW 8-point function (R25). Half up: 22.5 -> NE, 337.5 -> N, because
+  // the index 8 wraps to 0. headingCardinal (16-point) is deliberately left
+  // alone: the interim card keeps it until US-892-b retires both.
+  function compassPoint8(deg) {
+    if (typeof deg !== "number" || !isFinite(deg)) return null;
+    return COMPASS_POINTS_8[Math.floor(normDeg(deg) / 45 + 0.5) % 8];
+  }
+
+  // '247°', zero-padded to three digits. The modulo after the round keeps
+  // 359.6 reading 000, never a 360 that is not a bearing.
+  function fmtHeadingDigits(deg) {
+    if (typeof deg !== "number" || !isFinite(deg)) return "---°";
+    var n = Math.round(normDeg(deg)) % 360;
+    return (n < 10 ? "00" : n < 100 ? "0" : "") + n + "°";
+  }
+
+  // Signed shortest arc from one bearing to another, in (-180, 180]:
+  // 350 -> 10 is +20, never -340 (spec s4.1).
+  function shortestArcDeg(fromDeg, toDeg) {
+    var d = normDeg(toDeg - fromDeg);
+    return d > 180 ? d - 360 : d;
+  }
+
+  // Quadratic ease-in-out on 0..1. Exactly 0.5 at the midpoint, so half the
+  // glide is half the arc.
+  function easeInOut(p) {
+    return p < 0.5 ? 2 * p * p : 1 - 2 * (1 - p) * (1 - p);
+  }
+
+  // The glide: where the tape is drawn now. {fromDeg, toDeg, startMs}; a null
+  // fromDeg means "drawn at toDeg" (a step: the first reading, a reduced-motion
+  // panel, or a frozen tape).
+  function navGlideInit() {
+    return { fromDeg: null, toDeg: null, startMs: null };
+  }
+
+  function navDrawnDeg(glide, nowMs) {
+    if (!isObj(glide) || glide.toDeg === null) return null;
+    if (glide.fromDeg === null || glide.startMs === null) return glide.toDeg;
+    var p = (nowMs - glide.startMs) / NAV_GLIDE_MS;
+    if (!(p < 1)) return glide.toDeg;
+    if (p < 0) p = 0;
+    return normDeg(glide.fromDeg + shortestArcDeg(glide.fromDeg, glide.toDeg) * easeInOut(p));
+  }
+
+  // True while a glide is still moving the tape (the browser keeps painting
+  // frames until it is false).
+  function navGliding(glide, nowMs) {
+    return isObj(glide) && glide.fromDeg !== null && glide.startMs !== null &&
+      nowMs - glide.startMs < NAV_GLIDE_MS;
+  }
+
+  // A new reading starts a fresh glide FROM WHERE THE TAPE IS DRAWN NOW, so a
+  // reading mid-glide never snaps. The same bearing again is not a new reading.
+  // Reduced motion steps.
+  function navGlideNext(glide, targetDeg, nowMs, reducedMotion) {
+    var g = isObj(glide) ? glide : navGlideInit();
+    if (typeof targetDeg !== "number" || !isFinite(targetDeg)) return g;
+    var target = normDeg(targetDeg);
+    if (g.toDeg === target) return g;
+    var drawn = navDrawnDeg(g, nowMs);
+    if (drawn === null || reducedMotion) return { fromDeg: null, toDeg: target, startMs: null };
+    return { fromDeg: drawn, toDeg: target, startMs: nowMs };
+  }
+
+  // One paint's glide from the heading view: a dead sensor drops the bearing
+  // (no tape, and the next reading steps rather than gliding from a bearing
+  // the panel no longer has); a stale feed FREEZES the tape where it is drawn
+  // (no glide); anything else glides to the reading.
+  function navGlideStep(glide, view, nowMs, reducedMotion) {
+    if (!isObj(view) || view.state === "dead") return navGlideInit();
+    if (view.state === "stale") {
+      var drawn = navDrawnDeg(glide, nowMs);
+      return { fromDeg: null, toDeg: drawn !== null ? drawn : view.headingDeg, startMs: null };
+    }
+    return navGlideNext(glide, view.headingDeg, nowMs, reducedMotion);
+  }
+
+  // The five heading states, FIRST MATCH WINS (spec s4.2):
+  //   dead        headingDeg null, reason not heading_unseeded -> no tape at all
+  //   stale       ts age > imuSec (strict)  -> frozen tape, NO UPDATE n s
+  //   unseeded    heading_unseeded          -> STARTING UP
+  //   uncalibrated headingCalibrated false  -> tape normal, NOT CALIBRATED
+  //   legacy      headingCalibrated absent  -> tape normal, "--" + reason
+  //   trusted     otherwise                 -> no badge
+  // No payload, and an undated one, are dead too: neither can show a bearing
+  // as current (imuView's "no read time" rule). A stale page freezes and
+  // badges but does not dim -- the badge is its stale signal (spec s7).
+  //
+  // ONE ACQUISITION PATH: the bearing and its reason come from the RESOLVED
+  // heading tile (imuHeadingTile), never a second read of the payload --
+  // tests/ui/test_carousel_heading_bare_bearing_recorded_pass.py pins it.
+  function navHeadingView(data, nowMs, staleSec) {
+    if (!isObj(data)) return navDeadView("no motion feed");
+    var resolved = imuHeadingTile(data);
+    var unseeded = !resolved.available &&
+      resolved.detail === IMU_REASON_TEXT[REASON_HEADING_UNSEEDED];
+    if (!resolved.available && !unseeded) return navDeadView(resolved.detail);
+    var age = readAgeSec(data, nowMs);
+    if (age === null) return navDeadView("no read time");
+    var heading = resolved.available ? resolved.deg : null;
+    if (age > staleSec) {
+      return navLiveView("stale", heading, "NO UPDATE " + Math.floor(age) + " s", null);
+    }
+    if (unseeded) {
+      return navLiveView("unseeded", null, resolved.detail.toUpperCase(), null);
+    }
+    if (data.headingCalibrated === false) {
+      return navLiveView("uncalibrated", heading, "NOT CALIBRATED", null);
+    }
+    if (data.headingCalibrated !== true) {
+      var reasons = isObj(data.reasons) ? data.reasons : {};
+      return navLiveView(
+        "legacy", heading, "--",
+        typeof reasons.headingCalibrated === "string" && reasons.headingCalibrated
+          ? imuReason(data, "headingCalibrated")
+          : NAV_CALIBRATION_ABSENT_TEXT
+      );
+    }
+    return navLiveView("trusted", heading, null, null);
+  }
+
+  function navDeadView(reason) {
+    return {
+      state: "dead", tape: false, headingDeg: null,
+      badge: null, badgeNote: null, reason: reason,
+    };
+  }
+
+  function navLiveView(state, heading, badge, badgeNote) {
+    return {
+      state: state, tape: true, headingDeg: heading,
+      badge: badge, badgeNote: badgeNote, reason: null,
+    };
+  }
+
+  // The NAV tape's geometry: compassTape's lattice (same direction contract,
+  // same 90-degree window) at 5-degree ticks, each tagged with its tier.
+  function navTape(drawnDeg) {
+    var tape = compassTape(drawnDeg, COMPASS_TAPE_SPAN_DEG, NAV_TAPE_FINE_DEG);
+    for (var i = 0; i < tape.ticks.length; i++) {
+      var t = tape.ticks[i];
+      t.tier = t.major ? "major" : t.deg % NAV_TAPE_MINOR_DEG === 0 ? "minor" : "fine";
+    }
+    return tape;
   }
 
   // US-508: the GEAR glyph. Gear is NOT an IMU fact -- Atlas ruled it out of
@@ -4947,6 +5130,17 @@
     imuView: imuView,
     resolveImuStaleSec: resolveImuStaleSec,
     compassTape: compassTape,
+    // US-896-a: the NAV card's heading half.
+    compassPoint8: compassPoint8,
+    fmtHeadingDigits: fmtHeadingDigits,
+    shortestArcDeg: shortestArcDeg,
+    navGlideInit: navGlideInit,
+    navGlideNext: navGlideNext,
+    navGlideStep: navGlideStep,
+    navDrawnDeg: navDrawnDeg,
+    navGliding: navGliding,
+    navHeadingView: navHeadingView,
+    navTape: navTape,
     gearView: gearView,
     gearReasonText: gearReasonText,
     displayUnits: displayUnits,
@@ -5059,6 +5253,7 @@
     GRADE_TREND_WINDOW_SEC: GRADE_TREND_WINDOW_SEC,
     GRADE_TREND_BUCKET_MS: GRADE_TREND_BUCKET_MS,
     COMPASS_TAPE_SPAN_DEG: COMPASS_TAPE_SPAN_DEG,
+    NAV_GLIDE_MS: NAV_GLIDE_MS,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
     CAROUSEL_DEFAULTS: CAROUSEL_DEFAULTS,
     STAGE_W: STAGE_W,
@@ -5889,6 +6084,105 @@
           group.appendChild(text);
         }
       }
+    }
+
+    // US-896-a: the NAV tape (spec s3) -- full width, the 90-degree window over
+    // NAV_TAPE_W user units, so offset -1..1 maps edge to edge. Tick heights
+    // and the letter baseline are the OEM mockup's (2026-10-15), measured from
+    // the band's bottom edge. The hairline is drawn LAST so no tick covers it.
+    var NAV_TAPE_W = 456;
+    var NAV_TAPE_H = 70;
+    var NAV_TICK_LEN = { major: 30, minor: 18, fine: 8 };
+    var NAV_HAIRLINE_LEN = 34;
+    var NAV_LABEL_Y = 28;
+
+    function buildNavTape() {
+      var svg = svgEl("svg", {
+        class: "nav-tape", viewBox: "0 0 " + NAV_TAPE_W + " " + NAV_TAPE_H,
+        "aria-hidden": "true",
+      });
+      svg.appendChild(svgEl("line", {
+        class: "nav-tape-base", x1: 0, x2: NAV_TAPE_W,
+        y1: NAV_TAPE_H - 0.5, y2: NAV_TAPE_H - 0.5,
+      }));
+      svg.appendChild(svgEl("g", { class: "nav-tape-ticks" }));
+      svg.appendChild(svgEl("line", {
+        class: "nav-tape-hairline", x1: NAV_TAPE_W / 2, x2: NAV_TAPE_W / 2,
+        y1: NAV_TAPE_H - NAV_HAIRLINE_LEN, y2: NAV_TAPE_H,
+      }));
+      return svg;
+    }
+
+    function renderNavTape(svg, tape) {
+      var group = svg.querySelector(".nav-tape-ticks");
+      if (!group) return;
+      group.textContent = "";
+      if (!tape || !tape.available) return;
+      for (var i = 0; i < tape.ticks.length; i++) {
+        var t = tape.ticks[i];
+        var x = (NAV_TAPE_W / 2 + t.offset * NAV_TAPE_W / 2).toFixed(1);
+        group.appendChild(svgEl("line", {
+          class: "nav-tick nav-tick-" + t.tier,
+          x1: x, x2: x, y1: NAV_TAPE_H - NAV_TICK_LEN[t.tier], y2: NAV_TAPE_H,
+        }));
+        if (t.label) {
+          var text = svgEl("text", {
+            class: t.label === "N" ? "nav-tape-label nav-tape-north" : "nav-tape-label",
+            x: x, y: NAV_LABEL_Y, "text-anchor": "middle",
+          });
+          text.textContent = t.label;
+          group.appendChild(text);
+        }
+      }
+    }
+
+    // Paint the NAV heading half into its FIXED skeleton (dashboard.html). The
+    // tape is BUILT only while there is a bearing to draw and REMOVED for a
+    // dead sensor -- not hidden, not zero-opacity (spec AC 6). Digits and the
+    // point follow the DRAWN bearing, so they always agree with the hairline.
+    function renderNavCard(card, view, drawnDeg) {
+      if (!card || !view) return;
+      card.setAttribute("data-heading", view.state);
+      var badge = card.querySelector(".nav-badge");
+      if (badge) {
+        badge.textContent = view.badge || "";
+        badge.hidden = !view.badge;
+      }
+      var badgeNote = card.querySelector(".nav-badge-note");
+      if (badgeNote) {
+        badgeNote.textContent = view.badgeNote || "";
+        badgeNote.hidden = !view.badgeNote;
+      }
+      var band = card.querySelector(".nav-band");
+      if (!band) return;
+      var tapeEl = band.querySelector(".nav-tape");
+      var drawTape = view.tape && drawnDeg !== null;
+      if (drawTape) {
+        if (!tapeEl) {
+          tapeEl = buildNavTape();
+          band.appendChild(tapeEl);
+        }
+        renderNavTape(tapeEl, navTape(drawnDeg));
+      } else if (tapeEl) {
+        band.removeChild(tapeEl);
+      }
+      var blank = band.querySelector(".nav-blank");
+      if (blank) {
+        blank.hidden = drawTape;
+        var head = blank.querySelector(".nav-blank-head");
+        // NO HEADING only for a dead sensor; before the first reading the band
+        // just says what it is waiting for (spec s7).
+        if (head) head.hidden = view.tape;
+        var why = blank.querySelector(".nav-blank-note");
+        if (why) why.textContent = view.tape ? NAV_WAITING_TEXT : view.reason;
+      }
+      var digits = card.querySelector(".nav-digits");
+      if (digits) {
+        digits.textContent = fmtHeadingDigits(drawTape ? drawnDeg : null);
+        digits.setAttribute("data-none", drawTape ? "false" : "true");
+      }
+      var point = card.querySelector(".nav-point");
+      if (point) point.textContent = drawTape ? compassPoint8(drawnDeg) : "";
     }
 
     // The ~15-min grade trend, as ONE polyline. y is flipped because screen y
@@ -6802,6 +7096,12 @@
       // edge firing on the first tick (lastIdle starts null) is what makes the
       // landing card the card the panel opens on.
       var drivingCard = document.getElementById("driving-card");
+      // US-896-a: the NAV card, right after Driving. Its heading half reads the
+      // raw states/imu on the ~10 Hz motion loop (the glide needs frames the
+      // 4 Hz tick cannot give); `navGlide` is the drawn bearing's state.
+      var navCard = document.getElementById("nav-card");
+      var navGlide = navGlideInit();
+      var navFramePending = false;
       // US-889-b: the Engine card, right after Driving; filled from the same
       // cached states/obd-live on the same tick.
       var engineCard = document.getElementById("engine-card");
@@ -7769,6 +8069,36 @@
         feedSeen = feedObserved(feedSeen, "imu", lastImu);
         pushImuSamples(lastImu, Date.now());
         renderHome(Date.now());
+        renderNav(Date.now());
+      }
+
+      // US-896-a: paint the NAV heading from the RAW states/imu (the provider's
+      // value; the glide is the only motion between readings, spec s4.1). While
+      // a glide is moving, the browser's frame clock repaints it so the tape
+      // glides rather than stepping at the 100 ms poll; without
+      // requestAnimationFrame the poll alone repaints it.
+      function renderNav(nowMs) {
+        if (!navCard) return;
+        var view = navHeadingView(
+          lastImu, nowMs, resolveImuStaleSec(global && global.DISPLAY_STALE)
+        );
+        navGlide = navGlideStep(navGlide, view, nowMs, prefersReducedMotion());
+        renderNavCard(navCard, view, navDrawnDeg(navGlide, nowMs));
+        if (navGliding(navGlide, nowMs) && !navFramePending &&
+            typeof global.requestAnimationFrame === "function") {
+          navFramePending = true;
+          global.requestAnimationFrame(function () {
+            navFramePending = false;
+            renderNav(Date.now());
+          });
+        }
+      }
+
+      // prefers-reduced-motion => the tape STEPS to each reading (spec s4.1).
+      // Read per paint, so a change to the OS setting applies at once.
+      function prefersReducedMotion() {
+        return typeof global.matchMedia === "function" &&
+          global.matchMedia("(prefers-reduced-motion: reduce)").matches === true;
       }
 
       // ARCH-014: the loops are BUILT here rather than self-scheduling, so a

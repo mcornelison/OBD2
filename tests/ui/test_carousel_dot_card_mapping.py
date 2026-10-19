@@ -81,8 +81,11 @@ _NODE_ONLY = pytest.mark.skipif(
 # past it below moved +1.
 # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2 (after
 # Engine); Home..Battery each moved +1 (Battery is index 6), Light stays 7.
+# MOVED PIN (US-896-a): the NAV card is index 1 (after Driving, E-2); every
+# absolute index past it below moved +1 (Battery is index 7, Light 8).
 _CARD_SET = [
-    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Battery", "Light",
 ]
 
 # carousel.js labels each dot by its ABSOLUTE card index, 1-based.
@@ -326,8 +329,8 @@ class TestGatedCardOwnsNoDot:
         assert _visibleCards(surface) == _CARD_SET[:-1]
         assert _visibleDots(surface) == [_dotLabel(i) for i in range(len(_CARD_SET) - 1)]
         # US-888-a: Light is absolute index 6 now (Driving at 0).
-        # US-889-b: 7 (Engine at 1).
-        assert _dotLabel(7) not in _visibleDots(surface)
+        # US-889-b: 7 (Engine at 1). US-896-a: 8 (NAV at 1).
+        assert _dotLabel(8) not in _visibleDots(surface)
 
     def test_midRowGatedCard_contributesNoDot(self):
         """
@@ -342,19 +345,22 @@ class TestGatedCardOwnsNoDot:
         # US-888-a: every absolute index moved +1 behind the Driving card.
         # US-889-b: +1 again behind the Engine card (Battery is index 5).
         # US-890-a: +1 again behind the Fuel card (Battery is index 6).
+        # US-896-a: +1 again behind the NAV card (Battery is index 7).
         assert _visibleCards(surface) == [
-            "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Light"
+            "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+            "Light",
         ]
-        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 7)]
+        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 6, 8)]
 
     @pytest.mark.parametrize(
         "index,card",
         # US-888-a: absolute indices +1 behind the Driving card.
         # US-889-b: +1 again behind the Engine card.
         # US-890-a: the Fuel card at 2; Home..System Status +1, Battery (6) gated.
+        # US-896-a: the NAV card at 1; Engine..System Status +1, Battery (7) gated.
         [
-            (0, "Driving"), (1, "Engine"), (2, "Fuel"), (3, "Home"), (4, "Alerts"),
-            (5, "System Status"), (7, "Light"),
+            (0, "Driving"), (1, "Navigation"), (2, "Engine"), (3, "Fuel"), (4, "Home"),
+            (5, "Alerts"), (6, "System Status"), (8, "Light"),
         ],
     )
     def test_midRowGate_everySurvivingDotStillLandsOnItsOwnCard(self, index: int, card: str):
@@ -386,8 +392,8 @@ class TestGatedCardOwnsNoDot:
         before = _boot(markupPath=_gatedMarkup("Battery"))
         # US-888-a: Battery's dot is absolute index 4, and the carousel rests on
         # the landing card (Driving), not the home slot. US-889-b: index 5.
-        # US-890-a: index 6 (the Fuel card at 2).
-        after = _boot(markupPath=_gatedMarkup("Battery"), steps=_clickDot(6))
+        # US-890-a: index 6 (the Fuel card at 2). US-896-a: 7 (the NAV card at 1).
+        after = _boot(markupPath=_gatedMarkup("Battery"), steps=_clickDot(7))
         assert _landedCard(after) == _landedCard(before) == "Driving"
         assert _activeDot(after) == _dotLabel(0)
 
@@ -405,7 +411,7 @@ class TestGatedCardOwnsNoDot:
         del routes["/system-status"]
         surface = _boot(markupPath=_gatedMarkup("Battery"), routes=routes)
         assert "Battery" not in _visibleCards(surface)
-        assert _dotLabel(6) not in _visibleDots(surface)  # US-888-a/889-b/890-a: index +3
+        assert _dotLabel(7) not in _visibleDots(surface)  # US-888-a/889-b/890-a/896-a: +4
 
     def test_aCardRevealedAtRuntimeGetsItsDotBack(self):
         """
@@ -438,12 +444,13 @@ class TestGatedCardOwnsNoDot:
 
         tapped = _boot(
             markupPath=_gatedMarkup("Battery"),
-            steps=[*reveal, {"clickNth": {"selector": ".dot", "index": 6}}],
+            steps=[*reveal, {"clickNth": {"selector": ".dot", "index": 7}}],
         )
         # US-888-a: Battery is absolute index 4 behind the Driving card.
         # US-889-b: index 5 behind the Engine card. US-890-a: 6 behind Fuel.
+        # US-896-a: 7 behind the NAV card.
         assert _landedCard(tapped) == "Battery"
-        assert _activeDot(tapped) == _dotLabel(6)
+        assert _activeDot(tapped) == _dotLabel(7)
 
 
 # ---------------------------------------------------------------------------
@@ -490,18 +497,20 @@ class TestOneCardRegistry:
         # EIGHT cards and every absolute index past Driving moved +1.
         # US-889-b: eight shipped (Engine at 1), so this markup is NINE cards.
         # US-890-a: Fuel moved to index 2, so Spare is 6 and the gated Battery 7.
+        # US-896-a: nine shipped (NAV at 1), so this markup is TEN cards; Spare
+        # is 7 and the gated Battery 8.
         expected = [
-            "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Spare",
-            "Light",
+            "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+            "Spare", "Light",
         ]
 
         surface = _boot(markupPath=markup)
         assert _visibleCards(surface) == expected
-        # Nine cards, so nine dots exist; the gated one (absolute index 7) is
+        # Ten cards, so ten dots exist; the gated one (absolute index 8) is
         # the only one absent.
-        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 6, 8)]
+        assert _visibleDots(surface) == [_dotLabel(i) for i in (0, 1, 2, 3, 4, 5, 6, 7, 9)]
 
-        for index, card in zip((0, 1, 2, 3, 4, 5, 6, 8), expected, strict=True):
+        for index, card in zip((0, 1, 2, 3, 4, 5, 6, 7, 9), expected, strict=True):
             surface = _boot(markupPath=markup, steps=_clickDot(index))
             assert _landedCard(surface) == card, f"dot {index} did not reach {card}"
             assert _activeDot(surface) == _dotLabel(index)

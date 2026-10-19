@@ -14,6 +14,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-14    | Ralph (Rex)  | Initial -- US-882-c DISPLAY_STALE.imuSec.
+# 2026-10-18    | Ralph (Rex)  | US-896-a -- the mirror pin moves 2.0 -> 3.0 s.
 # ================================================================================
 ################################################################################
 """US-882-c tests: the IMU stale window comes from window.DISPLAY_STALE."""
@@ -114,18 +115,22 @@ def test_readingTwoAndAHalfSecondsOld_injected3point5_isNotStale():
     assert view["idle"] is False
 
 
-def test_readingTwoAndAHalfSecondsOld_noInjection_isStale_exactlyAsToday():
-    """Validation: the same reading with no DISPLAY_STALE is stale (2.0 s)."""
-    view = _imuViewWith(2.5)
+def test_noInjection_usesTheThreeSecondMirror_strictGreaterThan():
+    """Validation: with no DISPLAY_STALE the mirrored default applies.
+    MOVED PIN (US-896-a, Atlas S105 Q3/G1): the mirror is 3.0 s, not 2.0 -- a
+    2.5 s old reading is now live, and 3.5 s is stale."""
+    assert _imuViewWith(2.5)["idle"] is False
+    view = _imuViewWith(3.5)
     assert view["idle"] is True
     assert view["reason"].startswith("stale")
 
 
 def test_unsubstitutedPlaceholder_behavesAsToday():
-    """A file:// preview leaves the quoted placeholder string in place."""
-    view = _imuViewWith(2.5, value="__DISPLAY_STALE__")
+    """A file:// preview leaves the quoted placeholder string in place.
+    MOVED PIN (US-896-a): the mirror it falls back to is 3.0 s (was 2.0)."""
+    view = _imuViewWith(3.5, value="__DISPLAY_STALE__")
     assert view["idle"] is True
-    assert _imuViewWith(1.5, value="__DISPLAY_STALE__")["idle"] is False
+    assert _imuViewWith(2.5, value="__DISPLAY_STALE__")["idle"] is False
 
 
 def test_literalIsGoneFromTheStaleTest():

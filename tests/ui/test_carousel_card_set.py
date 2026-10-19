@@ -76,8 +76,10 @@ _NODE_ONLY = pytest.mark.skipif(
 # MOVED PIN (US-889-b): the Engine card is index 1, right after Driving (E-2).
 # MOVED PIN (US-890-a): the Fuel card replaces Fuel Trim at index 2, after
 # Engine; it keeps states/ltft-trend and the vehicle gate (on its trend row).
+# MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
 _CARD_SET = [
-    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Battery", "Light",
 ]
 
 # The AC's capacity ceiling: ~3 facts, 4 in a 2x2. Pinned against the RENDERED

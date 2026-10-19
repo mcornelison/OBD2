@@ -180,6 +180,36 @@
           </div>
         </div>
       </section>
+      <!-- US-896-a (F-160; specs/v030-navigation-page-design.md s3/s4.1/s4.2,
+           layout A): the NAV card, right after Driving (CIO E-2 order). The
+           hero is the bearing tape. BADGE ROW above it (Iris G-1: on the tape
+           a 175 px badge would hide ~37 deg of it), kept at its height when
+           empty so the tape never jumps. carousel.js BUILDS the tape svg in
+           .nav-band only while there is a bearing to draw (`navHeadingView`,
+           `navTape`) and removes it for a dead sensor; .nav-blank carries
+           NO HEADING + reason, or the wait before the first reading. No
+           `data-state`: the generic availability poll never grays it -- the
+           heading states are its own. The skeleton ships "---°" + "not read":
+           nothing has been read before the first poll. -->
+      <section class="card" id="nav-card" aria-label="Navigation" data-page-name="NAV"
+               data-heading="dead">
+        <div class="card-body">
+          <div class="nav-badge-row">
+            <span class="nav-badge" hidden></span>
+            <span class="nav-badge-note" hidden></span>
+          </div>
+          <div class="nav-band">
+            <div class="nav-blank">
+              <span class="nav-blank-head">NO HEADING</span>
+              <span class="nav-blank-note">not read</span>
+            </div>
+          </div>
+          <div class="nav-readout">
+            <span class="nav-digits" data-none="true">---°</span>
+            <span class="nav-point"></span>
+          </div>
+        </div>
+      </section>
       <!-- US-889-b (F-127; specs/v030-engine-page-design.md, layout B): the
            ENGINE card, right after Driving (CIO E-2 order). Above the fold:
            load and throttle as two vertical bars (0-100 %) with load, throttle

@@ -2123,3 +2123,87 @@ html, body {
   stroke: var(--text-secondary); stroke-width: var(--fuel-dot);
   stroke-linecap: round; vector-effect: non-scaling-stroke;
 }
+
+/* US-896-a (F-160; specs/v030-navigation-page-design.md s3/s4.2, layout A):
+   the NAV card's heading half -- badge row, bearing tape (the hero), digits +
+   8-point point. Tokens only; the geometry with no token is declared ONCE
+   here as properties scoped to the card, and this block is the only NAV rule
+   that may hold a literal px. A stale NAV freezes and badges but does NOT dim
+   (spec s7: the badge is its stale signal). The tape svg exists only while
+   there is a bearing to draw; a dead sensor has no tape element at all. */
+#nav-card {
+  --nav-gap: 6px;               /* between the bands */
+  --nav-badge-h: 22px;          /* the badge row, kept when empty (spec s3) */
+  --nav-badge-gap: 8px;         /* "--" chip -> its reason */
+  --nav-badge-pad-y: 1px;
+  --nav-badge-pad-x: 8px;
+  --nav-badge-line: 20px;       /* + 2 x pad-y = the 22 px row */
+  --nav-badge-radius: 4px;
+  --nav-tape-h: 70px;           /* the tape band (spec s3, viewBox 0 0 456 70) */
+  --nav-tape-w: 100%;           /* full width: the 456 px body */
+  --nav-readout-h: 46px;        /* digits + point (spec s3) */
+  --nav-readout-gap: 12px;      /* digits -> point */
+  --nav-line: 1;                /* hero line boxes */
+  --nav-note-line: 1.1;         /* reason line boxes */
+  --nav-tick-fine: 1px;         /* tick strokes, fine / minor / major */
+  --nav-tick-minor: 1.5px;
+  --nav-tick-major: 2.5px;
+  --nav-hairline: 2px;          /* the centre hairline (no caret, US-715) */
+  --nav-base: 1px;              /* the tape's baseline */
+}
+#nav-card .card-body {
+  display: flex; flex-direction: column; gap: var(--nav-gap);
+}
+#nav-card .nav-badge-row {
+  flex: none; height: var(--nav-badge-h);
+  display: flex; justify-content: flex-end; align-items: center; gap: var(--nav-badge-gap);
+}
+#nav-card .nav-badge {
+  font-size: var(--fs-label); line-height: var(--nav-badge-line);
+  padding: var(--nav-badge-pad-y) var(--nav-badge-pad-x);
+  border-radius: var(--nav-badge-radius); background: var(--amber-warn); color: var(--bg);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+#nav-card .nav-badge-note {
+  font-size: var(--fs-label); line-height: var(--nav-badge-line);
+  color: var(--text-secondary); white-space: nowrap;
+}
+#nav-card .nav-band {
+  flex: none; height: var(--nav-tape-h);
+}
+#nav-card .nav-tape {
+  display: block; width: var(--nav-tape-w); height: var(--nav-tape-h);
+}
+#nav-card .nav-tick-fine { stroke: var(--text-tertiary); stroke-width: var(--nav-tick-fine); }
+#nav-card .nav-tick-minor { stroke: var(--text-tertiary); stroke-width: var(--nav-tick-minor); }
+#nav-card .nav-tick-major { stroke: var(--text-secondary); stroke-width: var(--nav-tick-major); }
+#nav-card .nav-tape-label {
+  fill: var(--text-secondary); font-family: var(--font-mono); font-size: var(--fs-secondary);
+}
+#nav-card .nav-tape-north { fill: var(--text-primary); }
+#nav-card .nav-tape-hairline { stroke: var(--text-primary); stroke-width: var(--nav-hairline); }
+#nav-card .nav-tape-base { stroke: var(--line); stroke-width: var(--nav-base); }
+#nav-card .nav-blank {
+  height: var(--nav-tape-h);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--nav-gap);
+}
+#nav-card .nav-blank-head {
+  font-size: var(--fs-primary); line-height: var(--nav-line); color: var(--text-tertiary);
+}
+#nav-card .nav-blank-note {
+  font-size: var(--fs-label); line-height: var(--nav-note-line); color: var(--text-secondary);
+}
+#nav-card .nav-readout {
+  flex: none; height: var(--nav-readout-h);
+  display: flex; justify-content: center; align-items: baseline; gap: var(--nav-readout-gap);
+}
+#nav-card .nav-digits {
+  font-family: var(--font-mono); font-weight: 700; font-size: var(--fs-hero);
+  line-height: var(--nav-line); font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+#nav-card .nav-digits[data-none="true"] { color: var(--text-tertiary); }
+#nav-card .nav-point {
+  font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-primary);
+  line-height: var(--nav-line); color: var(--text-secondary);
+}

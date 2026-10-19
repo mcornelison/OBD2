@@ -102,8 +102,10 @@ _NODE_ONLY = pytest.mark.skipif(
 )
 
 # The card order (US-890-a validation row "Card order"), by kit label.
+# MOVED PIN (US-896-a): the NAV card is index 1, right after Driving (E-2).
 CARD_ORDER = [
-    "Driving", "Engine", "Fuel", "Home", "Alerts", "System Status", "Battery", "Light"
+    "Driving", "Navigation", "Engine", "Fuel", "Home", "Alerts", "System Status",
+    "Battery", "Light",
 ]
 
 # This story's fixtures (spec s7). Later Fuel stories add their own to the same
@@ -237,7 +239,8 @@ def test_cardOrder_fuelSitsRightAfterEngine():
 
 def test_fuelCard_isNamedFuel_andKeepsTheTrendSourceAndItsGate():
     tags = re.findall(r'<section class="card"[^>]*>', _read(_HTML), re.S)
-    tag = tags[2]
+    # MOVED PIN (US-896-a): the NAV card took index 1, so Fuel is index 3.
+    tag = tags[3]
     assert 'id="fuel-card"' in tag
     assert 'aria-label="Fuel"' in tag
     assert 'data-page-name="FUEL"' in tag

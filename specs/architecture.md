@@ -6248,13 +6248,14 @@ quoted-placeholder seam in `_injectHtml`: `window.DISPLAY_AUTODIM` (the auto-dim
 `window.DISPLAY_CAROUSEL` (US-533 B1) and `window.DISPLAY_STALE` (Atlas gap 6):
 
 ```js
-window.DISPLAY_STALE = {"imuSec": 2.0};
+window.DISPLAY_STALE = {"imuSec": 3.0};
 ```
 
-- **`imuSec`** is `pi.display.stale.imuSec` (validator default 2.0, finite, > 0, beside
-  `pi.display.stale.obdLiveSec`). It replaces carousel.js's former `IMU_STALE_SEC`
-  literal and equals it, so nothing on screen changes; at `stateHz` 1 it is two write
-  intervals.
+- **`imuSec`** is `pi.display.stale.imuSec` (validator default 3.0 since US-896-a, was
+  2.0; finite, > 0, beside `pi.display.stale.obdLiveSec`). It replaced carousel.js's
+  former `IMU_STALE_SEC` literal (US-882-c). The 3.0 is MEASURED (Atlas S105 Q3): a
+  healthy 1 Hz `states/imu` reads up to 1.94 s old, so 3.0 = three readings; see the
+  NAV card section. NAV and Motion share it -- the ONE IMU stale key.
 - **Resolved per request** by `loadDisplayStaleConfig` (`_DISPLAY_STALE_PLACEHOLDER`)
   through `overlay.readEffectiveValue`, never cached at construction, so a config.json
   change reaches the kiosk on its next reload with no unit restart. A value that is not
@@ -6839,7 +6840,7 @@ distinguishable from *"the producer is refusing to guess right now"*.
 
 | Constant | Value | Grounding |
 |---|---|---|
-| `IMU_STALE_SEC` (now `pi.display.stale.imuSec`, injected as `window.DISPLAY_STALE.imuSec`, US-882-c) | 2.0 s | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
+| `IMU_STALE_SEC` (now `pi.display.stale.imuSec`, injected as `window.DISPLAY_STALE.imuSec`, US-882-c) | 3.0 s (US-896-a, measured basis in the NAV card section; was 2.0 s) | **Re-grounded by US-508** at the then-new 10 Hz `stateHz`, where it was *20* missed writes (8 at the 4 Hz before it). 🔴 At the SHIPPED 1 Hz (US-796-b) the same 2.0 s is **2** missed writes — the window did not move, the rate under it did, and nobody re-derived this line until US-773/Sprint 92. Deliberately NOT retightened in proportion -- this feed now drives the HOME slot, and a slot that flips to the fallback face on a brief scheduling stall is its own defect. Still far tighter than the light card's 10 s (a 10 s-old lux is roughly true; a 10 s-old g-vector is meaningless). *Rex-derived; flagged for Atlas/Spool against a real drive.* |
 | `G_FULL_SCALE` | 1.0 g | outer ring. A street-tired car tops out near 0.9 g lateral, so 1 g frames real driving without compressing it. *Rex-derived DISPLAY scale, not a vehicle limit -- flagged for Spool.* |
 | `G_AMBER_G` | 0.6 g | **Spool** (Iris locked spec, quoted verbatim in the US-508 AC). A **different fact** from the full scale above, and conflating them is what the built card got wrong: it only coloured at the 1.0 g *clamp*, so a hard 0.8 g corner painted identically to a gentle one. Advisory, never an alarm -- alarms ride the unified alert layer. |
 | `G_TRAIL_WINDOW_SEC` | 35 s | Iris live-instrument spec. ~350 points at the 10 Hz live poll. |
@@ -8011,6 +8012,61 @@ Fuel spec §4.2 (Atlas S104 total-trim ruling (b), 2026-10-15):
   `ltft-trend.totalTrim` (grep gate).
 - Fixtures: `tests/ui/fixtures/states/fuel/{closed-loop-trim, open-loop-trim,
   loop-unknown, trim-stale}.json`, each equal to what the real tracker + builder emit.
+
+#### V0.30 NAV card: bearing tape, digits, 8-point point (US-896-a, Sprint 105 / V0.30.7)
+
+Navigation spec §3/§4.1/§4.2 (`specs/v030-navigation-page-design.md`, layout A):
+
+- **A new card at index 1, right after Driving** (CIO E-2). `#nav-card`
+  (`aria-label="Navigation"`, bar name `NAV` -- `NAVIGATION` is 135 px and does not
+  fit the 122 px slot). Card order: Driving, Navigation, Engine, Fuel, Home/MOTION,
+  Alerts, System Status, Battery, Light. No `data-state`, not the landing card, not
+  vehicle-gated. The interim Home/MOTION card keeps its tape until US-892-b.
+- **States it reads -- and nothing else.** `states/imu` `headingDeg`,
+  `headingCalibrated`, `reasons.headingDeg` (resolved ONCE through `imuHeadingTile`, the
+  panel's one heading acquisition) and `ts`, raw (not smoothed), on the ~10 Hz motion
+  loop (`renderNav` beside `renderHome`). `navHeadingView(imu, nowMs, staleSec)` is the
+  pure view; `renderNavCard` paints a fixed skeleton.
+- **Heading states, first match wins (spec §4.2).** `headingDeg` null with a reason
+  other than `heading_unseeded` (or no file / an undated payload) -> **no tape element
+  in the DOM** + `NO HEADING` + reason, `---°`; `ts` age `>` `resolveImuStaleSec()`
+  (strict) -> tape FROZEN + `NO UPDATE n s` counting (floor of the age), no dim;
+  `heading_unseeded` -> `STARTING UP` (the reason table's `starting up`, upper-cased;
+  closes US-821's text) and the band reads `waiting for the first heading reading`;
+  `headingCalibrated` false -> tape normal + `NOT CALIBRATED`; the key ABSENT (legacy
+  engine) -> tape normal + `--` + reason (`calibration not published` unless the
+  bridge publishes one), never `not calib.`; otherwise no badge. The badge is
+  `--fs-label` on `--amber-warn` in its own 22 px row ABOVE the tape, right-aligned
+  (Iris G-1); the row keeps its height when empty.
+- **Tape.** `navTape` = `compassTape` (same lattice and direction contract, 90° window)
+  at 5° ticks, tiered fine / minor (15°) / major (45°, with the letter); `N` in
+  `--text-primary`, others `--text-secondary`; 2 px centre hairline in
+  `--text-primary` (no caret, US-715). An svg `viewBox 0 0 456 70`, built only while
+  there is a bearing to draw.
+- **Glide (spec §4.1, CIO N-4).** Each new reading starts a 1 s (`NAV_GLIDE_MS`)
+  ease-in-out glide from the DRAWN bearing on the shortest arc (350 -> 10 is +20); a
+  reading mid-glide restarts from the drawn bearing; `prefers-reduced-motion` steps;
+  a stale feed freezes the drawn bearing; a dead sensor drops it. The browser repaints
+  through `requestAnimationFrame` while a glide moves. Digits (`247°`, zero-padded,
+  `--fs-hero`) and the point (`compassPoint8`, NEW 8-point, half up, 8 wraps to 0:
+  22.5 -> NE, 337.5 -> N; `--fs-primary`) follow the drawn bearing. `headingCardinal`
+  (16-point) is untouched for the interim card.
+- **One IMU stale key (Atlas S105 Q3/G1).** `pi.display.stale.imuSec` default
+  **2.0 -> 3.0 s** (validator `DEFAULTS` and the `DEFAULT_IMU_STALE_SEC` mirror).
+  MEASURED basis: `states/imu` writes every 1.00-1.02 s at `stateHz` 1, its `ts` is
+  whole seconds and the kiosk polls every 100 ms, so a healthy file reads a median
+  1.84 s / max 1.94 s old before it is replaced; 2.0 left ~0.06 s margin. 3.0 = three
+  readings, ~1 s above the measured worst case. Parked wall-power sample, NOT
+  drive-validated. NAV's stale state and the Motion dim both read `resolveImuStaleSec()`;
+  there is no second key. (The `DISPLAY_STALE` block above predates this change.)
+- **Type and tokens.** Digits and point in `--font-mono`; the tape letters in
+  `--font-mono` (`--font-display` stays bound to its pinned brand rules). Geometry is
+  scoped custom properties on `#nav-card`; the CSS gate allows literal px only there.
+  Fixtures: `tests/ui/fixtures/states/nav/{trusted-247, boundary-22.5, boundary-337.5,
+  uncalibrated, legacy-engine-no-flag, unseeded, dead-mag, stale-imu, wrap-350-a,
+  wrap-350-b, parked-engine-off}.json`, each the real `buildImuState` payload (the two
+  boundaries patch `headingDeg`: the bridge publishes whole degrees, so 22.5 / 337.5
+  are only ever drawn bearings).
 
 ### Release Versioning + Deploy Records (US-241, B-047 US-A)
 

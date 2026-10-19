@@ -1,0 +1,56 @@
+{
+  "description": "No fresh magnetometer reading (no_mag_reading): NO tape element, '---°', 'NO HEADING' + reason.",
+  "now": "2026-10-20T15:12:30Z",
+  "inputs": {
+    "tsUtc": "2026-10-20T15:12:29Z",
+    "gravity": [
+      0.0,
+      0.0,
+      9.81
+    ],
+    "linear": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mag": null,
+    "pitchRad": 0.0,
+    "headingDegOverride": 247.0,
+    "headingCalibrated": true,
+    "fusionEngine": "imufusion",
+    "peaks": {
+      "accelG": null,
+      "brakeG": null,
+      "leftG": null,
+      "rightG": null,
+      "sinceTs": null
+    }
+  },
+  "imu": {
+    "available": true,
+    "ts": "2026-10-20T15:12:29Z",
+    "gLat": -0.0,
+    "gLon": 0.0,
+    "gMag": 0.0,
+    "headingDeg": null,
+    "pitchDeg": 0.0,
+    "gradePct": 0.0,
+    "altitude": null,
+    "stopCount": 0,
+    "biasRad": 0.0,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source",
+      "headingDeg": "no_mag_reading"
+    },
+    "fusionEngine": "imufusion",
+    "headingCalibrated": true,
+    "peaks": {
+      "accelG": null,
+      "brakeG": null,
+      "leftG": null,
+      "rightG": null,
+      "sinceTs": null
+    }
+  }
+}
