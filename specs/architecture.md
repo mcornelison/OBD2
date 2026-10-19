@@ -4711,8 +4711,25 @@ factor (50 → 2 = 25) — not restated here.
 
 **Display auto-dim consumer + config-injection seam (US-483-b / F-121, Sprint 61
 / V0.29.15).** The carousel drives the panel brightness (a **software dim** — the
-Chromium kiosk can't reach the panel backlight) from the `states/light` feed via
-pure, node-tested logic in `carousel.js`: `brightnessLevel(lightData, cfg, nowMs,
+Chromium kiosk can't reach the panel backlight) from the `states/light` feed.
+
+> **US-893-a (Sprint 105 / V0.30.7): ONE applier, and it is the bridge.** The
+> light bridge computes the level (`light_state_bridge.brightnessLevel`, the one
+> curve) and publishes it in `states/light`; **the page APPLIES it**. carousel.js
+> `brightnessCurve` and the curve maths in its `brightnessLevel` are deleted, and
+> its `BRIGHTNESS_DEFAULTS` is `{defaultLevel, luxStaleSec}`. The ONE page function
+> is `appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive) -> {level,
+> basis}` (Atlas A7): STOP alarm → `{1.0, 'alert'}`; a FRESH file (an object, not
+> `sourceUnavailable`, a parseable `ts` no older than `luxStaleSec`, a finite
+> `brightnessLevel` in [0, 1]) → `{brightnessLevel, brightnessMode}` as published;
+> anything else → `{injected defaultLevel, 'fallback'}` (the US-483-b injection; no
+> new one, Atlas G5). lux is not consulted, and an out-of-range level is fallback,
+> never clamped (US-627). The screen frame, and from US-893-b the Light page's
+> status line and dot, all read this one return. Grep gate (Atlas A2, comments
+> stripped): no `luxMin`/`luxFull`/`minLevel` numeric literal and zero `Math.log`
+> in carousel.js. The paragraph below is the US-483-b history of the page curve.
+
+Before US-893-a the page computed it itself: `brightnessLevel(lightData, cfg, nowMs,
 alarmActive)` = `clamp(minLevel, brightnessCurve(lux), 1.0)` when the feed is
 fresh, else a fixed `defaultLevel` (honest fallback — an absent/stale/`null`
 reading never fabricates an "auto" behavior), then raised to at least
@@ -6305,32 +6322,37 @@ written with its missing fields null. Another burst's counts are never reused
 (Atlas G3).
 
 **Shape:** `{lux, visibleCount, irCount, fullCount, gain, integrationMs, channelAtLimit,
-brightnessLevel, brightnessMode, ts}` (Atlas L-A 2026-10-13; the two brightness keys
-US-878-b). Fixture: `tests/ui/fixtures/states/light.json`.
+atLimit, lightBand, brightnessLevel, brightnessMode, curve, reasons, ts}` (Atlas L-A
+2026-10-13; the two brightness keys US-878-b; atLimit, lightBand, curve and reasons
+US-893-a). Fixture: `tests/ui/fixtures/states/light.json`, regenerated through
+`buildLightState`.
 
 | Key | Source |
 |-----|--------|
-| `lux` | `raw.light.lux`, coerced as before (`null` on saturation, never inf/nan). Also `null` whenever `channelAtLimit` is true. |
+| `lux` | `raw.light.lux` through ONE predicate, `_luxReading` = finite AND >= 0 (Atlas A3): anything else (saturation, a failed read, -1, inf/nan) is `null`. Also `null` whenever `channelAtLimit` is true. The level's default branch, `brightnessMode` `default`, `lightBand` null and `reasons.lux` all key off this same predicate. |
 | `visibleCount` | `raw.light.raw[0]`, which the reader computes as full - infrared. A negative value (a failed read; `facts/light-sensor.md`) is `null`. |
 | `irCount` | `raw.light.raw[1]`, as read. |
 | `fullCount` | `raw.light.raw[2]`, as read. |
 | `gain` | `sensor_reader.tslGainLabel(raw.light.range[0])`: `low`/`med`/`high`/`max` for the AGAIN codes 0x00/0x10/0x20/0x30, else `null`. A register code is never published. |
 | `integrationMs` | `raw.light.range[1]`, as read. |
 | `channelAtLimit` | `true` when `fullCount` or `irCount` >= `sensor_reader.saturationCeilingForIntegrationMs(integrationMs)`, `false` when both are below it, `null` when the ceiling is unknown, or when a count is missing and the other is below it. |
-| `brightnessLevel` | The 0.0-1.0 auto-dim level for the published `lux`, computed by the bridge (`light_state_bridge.brightnessLevel`): carousel.js `brightnessCurve` / `brightnessLevel` ported unchanged, WITHOUT the STOP override (that stays page-side). A null or negative `lux` gives `defaultLevel` UNCLAMPED to `minLevel` (US-627); a curved value is clamped to [`minLevel`, 1.0]. Staleness is the reader's concern. |
-| `brightnessMode` | `auto`, the only mode this sprint (`fixed` arrives with US-878-c's `overrideLevel`). |
+| `atLimit` | `{ir, full}` (US-893-a, Atlas L2): the same test per channel against the same ceiling; `null` when the ceiling or that count is unknown. `channelAtLimit` is unchanged (the OR). The page never compares against a ceiling. |
+| `lightBand` | `night` / `dusk` / `day` for the published `lux` (US-893-a): tested DAY first (`lux >= luxFull`), then night (`lux < luxMin`), else dusk; `null` when `lux` is null. With `luxFull <= luxMin` dusk is unreachable; with `luxMin <= 0` there is no night. The page names it (night → DARK, dusk → DIM, day → DAYLIGHT, Atlas A1) and derives no band of its own. |
+| `brightnessLevel` | The 0.0-1.0 auto-dim level for the published `lux`, computed by the bridge (`light_state_bridge.brightnessLevel`, the ONE curve since US-893-a): the US-878-b port of the old page curve, WITHOUT the STOP override (that stays page-side). A null `lux` gives `defaultLevel` UNCLAMPED to `minLevel` (US-627); a curved value is clamped to [`minLevel`, 1.0]. Staleness is the reader's concern. The page applies this value (`appliedBrightness`). |
+| `brightnessMode` | `auto` when `lux` is a reading; `default` when it is null and the level is `defaultLevel` (US-893-a, Atlas ruling 3). `fixed` arrives with US-878-c's `overrideLevel`. |
+| `curve` | `{points, luxMin, luxFull, minLevel}` (US-893-a, Atlas Q5/A4): `points` are `[lux, level]` LISTS, sorted ascending: the grid `0.3 * 10 ** (i / 10)`, i = 0..50 (0.3..30000 lux), united with the breakpoints `luxMin`, `luxFull` and the knee, each only when finite and > 0; a grid point within relative 1e-9 of a breakpoint is dropped and the exact breakpoint kept (51 points under the shipped config). Each level is `brightnessLevel(lux)` under the same resolved autoDim. Knee (`brightnessKnee`, mirroring `brightnessCurve`'s branches, Atlas A5): none when `minLevel <= 0`, `minLevel >= 1` or `luxFull <= luxMin`; linear `luxMin + minLevel*(luxFull - luxMin)` when `curve` is `linear` or `luxMin <= 0`; else `luxMin*(luxFull/luxMin)**minLevel`. Fresh lists on every write. |
+| `reasons` | `{lux: code}`, the `lux` entry present only when `lux` is null (US-893-a, Atlas L1): `at_limit` when `channelAtLimit` is true, else `no_reading`. Codes, not sentences: the page maps them to words in one table (US-893-b). |
 | `ts` | The lux sample's event time (else the burst's first sample's). Empty gives `null`, never a clock reading (US-809-c). |
 
-`lux` and `ts` keep their meaning, so the brightness consumer and its stale fallback
-(US-483-b) are unchanged.
+`lux` and `ts` keep their meaning; the stale fallback (US-483-b) keys off `ts`.
 
-**Brightness (US-878-b).** NOTHING consumes `brightnessLevel` / `brightnessMode` yet: the
-page applies its own curve until the post-S101 screen story. The frozen golden table in
-`tests/pi/sensors/test_brightness_golden.py` (expected values produced by running
-carousel.js in node, config = the validator `DEFAULTS` autoDim) is the single reference
-for the curve; the bridge matches it to 1e-9, and `tests/ui/test_carousel_brightness.py`
-runs today's page through the same rows, so the two cannot drift apart unnoticed. The
-bridge reads `pi.display.autoDim` from its start config, then (given the `configPath`
+**Brightness (US-878-b; applied since US-893-a).** The page APPLIES `brightnessLevel`
+(`carousel.js appliedBrightness`, see "Display auto-dim consumer"); it holds no curve.
+`lightBand`, `brightnessLevel` and `curve` in one `buildLightState` call come from ONE
+resolved autoDim (Atlas A6). The frozen golden table in
+`tests/pi/sensors/test_brightness_golden.py` (expected values produced by running the
+pre-US-893-a carousel.js in node, config = the validator `DEFAULTS` autoDim) is the single
+reference for the curve; the bridge matches it to 1e-9. The bridge reads `pi.display.autoDim` from its start config, then (given the `configPath`
 lifecycle passes, Atlas G5) re-reads it through `overlay.resolveEffectiveConfig` when
 config.json or config.local.json changes mtime, checked at most once per second on a
 monotonic clock. It never uses the HTTP server's start-time cache (Atlas gap 5).
@@ -6737,12 +6759,14 @@ clean read) or as an alert -- the F-6 no-phantom rule at card level; a missing
 not listed keep the one-word fallback.
 
 **Light card (US-496).** A pure consumer of the same `states/light` file
-(`{lux, ts}`) that drives the auto-dim (§ Display auto-dim consumer), so the
+that drives the auto-dim (§ Display auto-dim consumer), so the
 reading on the card can never disagree with the screen it explains -- one clock
 per poll tick resolves both. Two tiles through the shared tokenized `.tile`
 component: **AMBIENT** (the reading + its read age) and **CONDITION** (`DARK` /
-`DIM` / `DAYLIGHT`, a *name* for the existing grounded `luxMin`/`luxFull`
-thresholds -- not a third set of numbers that could drift from the curve). A null
+`DIM` / `DAYLIGHT`, since US-893-a the *name* of the provider's `lightBand` --
+night / dusk / day -- not a second set of numbers that could drift from the curve;
+a fresh reading with no band grays CONDITION alone. The one boundary that moved:
+lux == `luxMin` was DARK and is now DIM, because night is `lux < luxMin`). A null
 `lux` (the bridge's honest saturated/unreadable marker), an undated payload, or a
 reading older than `luxStaleSec` grays **both fields individually** with the
 *reason* as the tile detail, so the operator learns which fault it is; the card

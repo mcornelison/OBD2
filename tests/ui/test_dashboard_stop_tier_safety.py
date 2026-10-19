@@ -13,8 +13,8 @@
 #           text contrast >= the WCAG-AA large-text floor (3:1).
 #     ch.3  deeper-and-darker axis only -- no warmer/orange shift (that would
 #           collide with amber WATCH and invert the severity order).
-#     ch.4  a STOP alarm is FULL BRIGHTNESS ALWAYS -- it overrides the US-483-b
-#           auto-dim curve and its fixed fallback; only ambient dims. (Being
+#     ch.4  a STOP alarm is FULL BRIGHTNESS ALWAYS -- it overrides the published
+#           auto-dim level (US-893-a) and the fixed fallback; only ambient dims. (Being
 #           stronger than any floor is what let US-595 retire alarmFloorLevel.)
 #   Colour + contrast are computed from the PARSED token values (both files), so
 #   a drift in src/pi/ui/tokens.css OR in the shipped dist re-reds these tests.
@@ -30,6 +30,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-26    | Ralph (Rex)  | Initial -- US-484-b STOP-tier safety treatment.
+# 2026-10-19    | Rex (US-893-a)| MOVED PIN (US-893-a): the ch.4 probes call
+#               |              | appliedBrightness over a payload carrying the
+#               |              | bridge's published level (the page curve is
+#               |              | gone); same four cases, same expected values.
 # ================================================================================
 ################################################################################
 
@@ -410,39 +414,41 @@ def test_watchAndMinorTiers_areUnchanged():
 
 
 @nodeless
-def test_brightnessLevel_stopAlarmInTheDark_isFullBrightness():
+def test_appliedBrightness_stopAlarmInTheDark_isFullBrightness():
     """LOAD-BEARING: the darkest possible ambient reading cannot dim a live
     PULL-OVER alarm at all."""
-    light = {"lux": 0.0, "ts": _TS}
-    assert _probe("brightnessLevel", light, _CFG, _TS_MS + 5000, True) == 1.0
+    # The darkest cabin, as the bridge publishes it: dimmed to the floor.
+    light = {"lux": 0.0, "ts": _TS, "brightnessLevel": 0.15, "brightnessMode": "auto"}
+    assert _probe("appliedBrightness", light, _CFG, _TS_MS + 5000, True)["level"] == 1.0
 
 
 @nodeless
-def test_brightnessLevel_stopAlarm_ignoresARetiredAlarmFloorOnAStaleOverlay():
+def test_appliedBrightness_stopAlarm_ignoresARetiredAlarmFloorOnAStaleOverlay():
     """US-595: ch.4 SUPERSEDED the US-483-b alarm floor, so the key was retired.
 
     A Pi imaged before that removal still ships alarmFloorLevel=0.40 in its
     config.json. This pins the field consequence: the stale key is ignored and a
     live PULL-OVER alarm is still FULL, never dimmed to 0.40.
     """
-    light = {"lux": 1.0, "ts": _TS}
-    assert _probe("brightnessLevel", light, _CFG_PRE_US595, _TS_MS + 5000, True) == 1.0
+    light = {"lux": 1.0, "ts": _TS, "brightnessLevel": 0.15, "brightnessMode": "auto"}
+    out = _probe("appliedBrightness", light, _CFG_PRE_US595, _TS_MS + 5000, True)
+    assert out["level"] == 1.0
 
 
 @nodeless
-def test_brightnessLevel_stopAlarm_isFullEvenOnAStaleOrAbsentFeed():
+def test_appliedBrightness_stopAlarm_isFullEvenOnAStaleOrAbsentFeed():
     """A dead light sensor must never leave the alarm at the 0.70 default."""
-    stale = {"lux": 1.0, "ts": _TS}
-    assert _probe("brightnessLevel", stale, _CFG, _TS_MS + 20000, True) == 1.0
-    assert _probe("brightnessLevel", None, _CFG, _TS_MS + 5000, True) == 1.0
+    stale = {"lux": 1.0, "ts": _TS, "brightnessLevel": 0.15, "brightnessMode": "auto"}
+    assert _probe("appliedBrightness", stale, _CFG, _TS_MS + 20000, True)["level"] == 1.0
+    assert _probe("appliedBrightness", None, _CFG, _TS_MS + 5000, True)["level"] == 1.0
 
 
 @nodeless
-def test_brightnessLevel_withoutAStopAlarm_ambientStillDims():
+def test_appliedBrightness_withoutAStopAlarm_ambientStillDims():
     """Only ambient content dims -- the ch.4 override must not disable auto-dim
     for the normal case (that would defeat US-483-b entirely)."""
-    light = {"lux": 1.0, "ts": _TS}
-    assert _probe("brightnessLevel", light, _CFG, _TS_MS + 5000, False) == 0.15
+    light = {"lux": 1.0, "ts": _TS, "brightnessLevel": 0.15, "brightnessMode": "auto"}
+    assert _probe("appliedBrightness", light, _CFG, _TS_MS + 5000, False)["level"] == 0.15
 
 
 @nodeless

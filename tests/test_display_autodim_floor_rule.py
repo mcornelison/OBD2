@@ -2,7 +2,9 @@
 # File Name: test_display_autodim_floor_rule.py
 # Purpose/Description: US-627 tests for the pi.display.autoDim FLOOR COUPLING --
 #   the cross-field rule that pi.display.autoDim.defaultLevel must be >=
-#   pi.display.autoDim.minLevel. brightnessLevel() has TWO branches: the curve
+#   pi.display.autoDim.minLevel. The brightness has TWO branches (the curve in
+#   light_state_bridge.brightnessLevel, the fallback in carousel.js
+#   appliedBrightness since US-893-a): the curve
 #   branch clamps to minLevel, the lux===null (absent/stale/saturated feed)
 #   branch returns defaultLevel UNCLAMPED. So minLevel is a floor on the CURVE,
 #   never on displayed brightness, and a dead sensor could render BELOW the floor
@@ -26,6 +28,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-29    | Ralph (Rex)  | Initial -- US-627 defaultLevel >= minLevel rule.
+# 2026-10-19    | Rex (US-893-a)| MOVED PIN (US-893-a): the curve (and its
+#               |              | minLevel clamp) moved to the light bridge; the
+#               |              | page keeps only {defaultLevel, luxStaleSec}. The
+#               |              | parity test now holds the panel's two keys to
+#               |              | the validator and the floor rule compares the
+#               |              | panel fallback with the bridge's minLevel.
 # ================================================================================
 ################################################################################
 
@@ -230,7 +238,12 @@ class TestShippedConfigHonoursTheFloor:
 
 
 class TestValidatorDefaultsMatchThePanelDefaults:
-    """The rule's promise is about the PANEL, so the two default sets must agree."""
+    """The rule's promise is about the PANEL, so the default sets must agree.
+
+    US-893-a: the curve and its minLevel clamp live in the light bridge, whose
+    defaults ARE the validator DEFAULTS; the page holds only defaultLevel (its
+    fallback) and luxStaleSec.
+    """
 
     @staticmethod
     def _panelDefaults() -> dict[str, float]:
@@ -252,32 +265,37 @@ class TestValidatorDefaultsMatchThePanelDefaults:
     def test_levelDefaults_agreeBetweenValidatorAndCarousel(self):
         """
         Given: the validator DEFAULTS and the carousel BRIGHTNESS_DEFAULTS
-        When: the two level defaults are compared
-        Then: they are identical
+        When: the panel's two keys are compared
+        Then: they are identical, and the panel carries no minLevel of its own
 
         WHY THIS BELONGS TO US-627. The validator resolves a config against ITS
         defaults; the panel resolves the SAME raw config.json against the JS
         BRIGHTNESS_DEFAULTS (states_http_server injects the raw section, not the
         validated one). "defaultLevel >= minLevel" is therefore a true statement
-        about the screen only while the two default sets agree. Let them drift
-        and validate_config would green-light a config the panel still renders
-        below its floor -- the same inert guard one level up.
+        about the screen only while the default sets agree.
+
+        MOVED PIN (US-893-a): was minLevel + defaultLevel; minLevel left the page
+        with the curve, so the pin is defaultLevel + luxStaleSec.
         """
         panel = self._panelDefaults()
 
         # Premise: the parse found a real block, not an empty dict.
-        assert "minLevel" in panel, panel
         assert "defaultLevel" in panel, panel
+        assert "luxStaleSec" in panel, panel
 
-        assert panel["minLevel"] == DEFAULTS[_MIN_KEY]
         assert panel["defaultLevel"] == DEFAULTS[_DEFAULT_KEY]
+        assert panel["luxStaleSec"] == DEFAULTS["pi.display.autoDim.luxStaleSec"]
+        assert "minLevel" not in panel
 
     def test_panelDefaults_satisfyTheFloorRule(self):
         """
-        Given: the carousel's own built-in fallback defaults
-        When: the floor rule is applied to them
-        Then: they satisfy it -- a config-less kiosk cannot render below its floor
+        Given: the carousel's built-in fallback default
+        When: the floor rule is applied against the minLevel the bridge resolves
+        Then: it satisfies it -- a config-less kiosk cannot render below its floor
+
+        MOVED PIN (US-893-a): the floor is the bridge's (validator) minLevel,
+        no longer a page copy.
         """
         panel = self._panelDefaults()
 
-        assert panel["defaultLevel"] >= panel["minLevel"]
+        assert panel["defaultLevel"] >= DEFAULTS[_MIN_KEY]

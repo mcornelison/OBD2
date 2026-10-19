@@ -27,6 +27,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-496 Pi-local cards live + gate.
+# 2026-10-19    | Rex (US-893-a)| MOVED PIN (US-893-a, Atlas A1): CONDITION maps
+#               |              | the PROVIDER's lightBand (night/dusk/day ->
+#               |              | DARK/DIM/DAYLIGHT); the page luxBand and its
+#               |              | BRIGHTNESS_DEFAULTS thresholds are gone.
 # ================================================================================
 ################################################################################
 
@@ -57,10 +61,8 @@ _CSS = os.path.join(_DIST, "dashboard.css")
 _TS = "2026-07-29T12:00:00+00:00"
 _TS_MS = int(datetime(2026, 7, 29, 12, 0, 0, tzinfo=UTC).timestamp() * 1000)
 
-# The grounded auto-dim thresholds the CONDITION band is resolved against
-# (config.json pi.display.autoDim -- mirrored by BRIGHTNESS_DEFAULTS).
-_LUX_MIN = 3.0
-_LUX_FULL = 1000.0
+# The page's luxStaleSec default (BRIGHTNESS_DEFAULTS since US-893-a holds only
+# defaultLevel and luxStaleSec; the band thresholds live in the bridge).
 _STALE_SEC = 10
 
 pytestmark = pytest.mark.skipif(
@@ -163,20 +165,54 @@ def test_lightView_sourceUnavailable_wholeCardTypedNa():
     assert view["reason"] == "sensor disabled"
 
 
-def test_luxBand_resolvesAgainstTheGroundedAutoDimThresholds():
-    """The CONDITION band is a NAME for the two thresholds the auto-dim curve
-    already uses -- not a third set of numbers that could drift from it."""
-    assert _view("luxBand", _LUX_MIN, None) == "DARK"
-    assert _view("luxBand", 50.0, None) == "DIM"
-    assert _view("luxBand", _LUX_FULL, None) == "DAYLIGHT"
+def test_lightBandWord_namesTheProvidersBand():
+    """MOVED PIN (US-893-a, Atlas A1 option c): the CONDITION word is a NAME for
+    the bridge's lightBand -- night -> DARK, dusk -> DIM, day -> DAYLIGHT. The
+    page holds no threshold, so it cannot drift from the curve."""
+    assert _view("lightBandWord", "night") == "DARK"
+    assert _view("lightBandWord", "dusk") == "DIM"
+    assert _view("lightBandWord", "day") == "DAYLIGHT"
 
 
-def test_luxBand_honoursAnInjectedConfig_notAHardcodedNumber():
-    """The thresholds are CONFIG (pi.display.autoDim, injected at serve time), so
-    an override must move the band -- proving the values are read, not baked in."""
-    cfg = {"luxMin": 100.0, "luxFull": 200.0}
-    assert _view("luxBand", 50.0, cfg) == "DARK"
-    assert _view("luxBand", 150.0, cfg) == "DIM"
+@pytest.mark.parametrize("band", [None, "", "NIGHT", "twilight", 3])
+def test_lightBandWord_unknownBand_isNull(band):
+    """Anything but the three provider bands names nothing."""
+    assert _view("lightBandWord", band) is None
+
+
+def test_lightView_condition_isTheProvidersBand_luxMinIsNowDusk():
+    """
+    Given: a fresh reading AT luxMin (3.0 lx), which the bridge bands 'dusk'
+    When: the Light card renders
+    Then: CONDITION reads DIM
+
+    MOVED PIN (US-893-a) -- THE ONE BOUNDARY SHIFT, named (Atlas A1): the old
+    page luxBand made lux == luxMin DARK (lux <= luxMin); the provider makes it
+    dusk (night is lux < luxMin).
+    """
+    from pi.sensors.light_state_bridge import lightBand
+
+    band = lightBand(3.0, {"luxMin": 3.0, "luxFull": 300.0})
+    view = _view("lightView", _light(3.0, lightBand=band), None, _TS_MS)
+
+    assert band == "dusk"
+    assert view["band"]["value"] == "DIM"
+    assert view["band"]["level"] == "neutral"
+
+
+def test_lightView_condition_followsTheProviderNotTheLux():
+    """A day band on a dark-looking lux reads DAYLIGHT: the page never re-derives
+    the band from lux (a retuned autoDim moves the word through the bridge)."""
+    view = _view("lightView", _light(50.0, lightBand="day"), None, _TS_MS)
+    assert view["band"]["value"] == "DAYLIGHT"
+
+
+def test_lightView_freshReadingWithoutABand_graysTheBandAlone():
+    """Atlas A1: a null band -> naTile with its reason; the reading still shows."""
+    view = _view("lightView", _light(412.0), None, _TS_MS)
+    assert view["ambient"]["value"] == "412 lx"
+    assert view["band"]["value"] == "NA"
+    assert view["band"]["detail"]
 
 
 # ---------------------------------------------------------------------------

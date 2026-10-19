@@ -98,13 +98,24 @@ def test_brightnessLevel_matchesTheFrozenPageCurve(name, lux, logLevel, linLevel
     assert abs(level - expected) <= _TOLERANCE, (name, curve, level)
 
 
+# US-893-a (Atlas A3): the rows whose lux is not a reading (not finite, or
+# negative). Their LEVEL is unchanged -- already defaultLevel -- and their mode
+# is 'default'; every other row stays 'auto'.
+_NOT_A_READING = {"null", "-1", "NaN", "inf"}
+
+
 @pytest.mark.parametrize("curve", ["logarithmic", "linear"])
 @pytest.mark.parametrize(("name", "lux", "logLevel", "linLevel"), _GOLDEN)
 def test_publishedState_carriesTheFrozenLevel(name, lux, logLevel, linLevel, curve):
     """
     Given: a golden row reaching buildLightState as the burst's lux
     When: the bridge builds the states/light payload
-    Then: brightnessLevel matches the table and brightnessMode is 'auto'
+    Then: brightnessLevel matches the table; brightnessMode is 'default' for a
+        lux that is not a reading, else 'auto'
+
+    MOVED PIN (US-893-a, Atlas ruled): the null-lux row's mode, and beside it
+    the '-1' row's (A3), were 'auto' and are now 'default'. Level table
+    UNCHANGED.
     """
     expected = logLevel if curve == "logarithmic" else linLevel
 
@@ -112,7 +123,8 @@ def test_publishedState_carriesTheFrozenLevel(name, lux, logLevel, linLevel, cur
                             autoDim=_defaultsAutoDim(curve))
 
     assert abs(state["brightnessLevel"] - expected) <= _TOLERANCE, (name, curve)
-    assert state["brightnessMode"] == "auto"
+    expectedMode = "default" if name in _NOT_A_READING else "auto"
+    assert state["brightnessMode"] == expectedMode, (name, curve)
 
 
 def test_brightnessLevel_degenerateRange_matchesThePage():

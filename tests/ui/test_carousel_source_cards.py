@@ -50,6 +50,9 @@
 #               |              | RETIRED the six Fuel Trim view/title cases
 #               |              | (the trend row is pinned by test_fuel_page.py);
 #               |              | the gate cases stay -- the gate survives.
+# 2026-10-19    | Rex (US-893-a)| _light carries the bridge's own lightBand: the
+#               |              | CONDITION tile now names the provider's band
+#               |              | (Atlas A1). No assertion change.
 # ================================================================================
 ################################################################################
 
@@ -164,8 +167,13 @@ def _battery(**extra: object) -> dict:
 
 
 def _light(lux: float | None = 412.0, **extra: object) -> dict:
-    """A states/light payload as light_state_bridge.buildLightState writes it."""
-    payload: dict = {"lux": lux, "ts": _TS}
+    """A states/light payload as light_state_bridge.buildLightState writes it.
+
+    US-893-a: the band is the bridge's own (validator-default autoDim).
+    """
+    from pi.sensors.light_state_bridge import lightBand
+
+    payload: dict = {"lux": lux, "ts": _TS, "lightBand": lightBand(lux, None)}
     payload.update(extra)
     return payload
 

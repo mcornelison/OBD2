@@ -2793,15 +2793,14 @@
 
   // -------------------------------------------------------------------------
   // US-483-b display-brightness consumer (F-121) -- pure, node-testable logic.
-  // The dashboard is a PURE CONSUMER of the states/light file US-483-a writes
-  // ({lux, ts}); it NEVER reads the sensor. The auto-dim curve values are
-  // GROUNDED CONFIG PARAMETERS injected at serve time (window.DISPLAY_AUTODIM),
-  // so tuning is a config change, not a code change (CIO 2026-07-22). These
-  // built-in defaults are the file:// preview / unconfigured fallback and MIRROR
-  // config.json pi.display.autoDim.* (the tuning SSOT). Honest-instrument: an
-  // absent/stale/saturated (null) reading holds the fixed default -- never a
-  // fabricated "auto" behavior; and a real active STOP alert is held at FULL
-  // brightness regardless of lux (the load-bearing safety guard, US-484-b).
+  // The dashboard is a PURE CONSUMER of the states/light file US-483-a writes;
+  // it NEVER reads the sensor. US-893-a (Atlas ruling 3 / A7): the light bridge
+  // is the ONE brightness applier -- it publishes brightnessLevel from the one
+  // curve -- and the page APPLIES that level. The page holds no curve, no lux
+  // thresholds and no floor. It keeps only what it must decide itself: whether
+  // the file is fresh (luxStaleSec), what to show when it is not (the injected
+  // defaultLevel, US-483-b; no new injection, Atlas G5), and the STOP override
+  // (a real active STOP alert is FULL brightness, US-484-b).
   // -------------------------------------------------------------------------
 
   // Spool 6d ch.4 (US-484-b): "a red alarm is full brightness always,
@@ -2810,29 +2809,25 @@
   // key that may lower a live PULL-OVER alarm.
   var STOP_ALARM_LEVEL = 1.0;
 
+  // The file:// preview / unconfigured fallback for the two keys the page reads
+  // from the injected window.DISPLAY_AUTODIM. They MIRROR the validator DEFAULTS
+  // (tests/test_display_autodim_floor_rule.py pins the parity).
+  //
+  // US-893-a: the curve keys left with the curve. The bridge resolves them from
+  // config itself, so a page copy could only ever disagree with the level it
+  // applies.
+  //
+  // US-595 -- alarmFloorLevel was retired here too. It was superseded by
+  // STOP_ALARM_LEVEL above (US-484-b ch.4: a STOP goes to FULL). The merge below
+  // iterates BRIGHTNESS_DEFAULTS rather than the injected object, so a deployed
+  // config.json still carrying a retired key is ignored BY CONSTRUCTION. Do not
+  // re-add one to restore compatibility -- there is nothing to be compatible with.
   var BRIGHTNESS_DEFAULTS = {
-    luxMin: 3.0,          // lux <= this -> min (grounded: civil-twilight dark)
-    luxFull: 1000.0,      // lux >= this -> full (grounded: overcast daylight)
-    minLevel: 0.15,       // US-627 -- READ THE NAME CAREFULLY: this is the floor
-                          // on the CURVE branch, NOT a floor on displayed
-                          // brightness. The absent/stale-feed branch of
-                          // brightnessLevel() returns defaultLevel UNCLAMPED and
-                          // never consults this value.
-    defaultLevel: 0.70,   // fixed fallback when the feed is absent/stale/
-                          // saturated. Returned UNCLAMPED, so it must never sit
-                          // below minLevel -- validate_config enforces
-                          // defaultLevel >= minLevel (US-627); it is deliberately
-                          // NOT clamped here.
-    // US-595 -- alarmFloorLevel was HERE and is RETIRED. It was superseded by
-    // STOP_ALARM_LEVEL above (US-484-b ch.4: a STOP goes to FULL), which left it
-    // resolvable but unreachable -- a tunable that looked adjustable and changed
-    // nothing. Removing it here is SAFE, and specifically because the merge
-    // below iterates BRIGHTNESS_DEFAULTS rather than the injected object: a
-    // deployed config.json still carrying the key is ignored BY CONSTRUCTION,
-    // not by a rule anyone has to remember. Do not re-add it to restore
-    // compatibility -- there is nothing to be compatible with.
-    luxStaleSec: 10,      // a reading older than this -> fallback
-    curve: "logarithmic", // perceptual mapping between luxMin..luxFull
+    defaultLevel: 0.70,   // applied when states/light is absent, stale or
+                          // malformed. Applied UNCLAMPED: validate_config enforces
+                          // defaultLevel >= minLevel (US-627), and a clamp here
+                          // could only mask a config that failed that gate.
+    luxStaleSec: 10,      // a states/light older than this -> fallback
   };
 
   // Resolve the injected config over the grounded defaults (only well-typed
@@ -2848,46 +2843,25 @@
       for (var key in BRIGHTNESS_DEFAULTS) {
         if (!Object.prototype.hasOwnProperty.call(cfg, key)) continue;
         var v = cfg[key];
-        if (key === "curve") {
-          if (typeof v === "string") out[key] = v;
-        } else if (typeof v === "number" && isFinite(v)) {
-          out[key] = v;
-        }
+        if (typeof v === "number" && isFinite(v)) out[key] = v;
       }
     }
     return out;
   }
 
-  // The perceptual lux -> 0..1 mapping. Returns 0 at/below luxMin, 1 at/above
-  // luxFull, and a curve value between. A degenerate range (luxFull <= luxMin)
-  // or a non-positive luxMin under the log curve falls back to linear/full so it
-  // can never divide by zero or take log of a non-positive number.
-  function brightnessCurve(lux, luxMin, luxFull, curve) {
-    if (typeof lux !== "number" || !isFinite(lux)) return 0;
-    if (!(luxFull > luxMin)) return 1; // misconfigured range -> full, never div0
-    if (lux <= luxMin) return 0;
-    if (lux >= luxFull) return 1;
-    if (curve !== "linear" && luxMin > 0 && lux > 0) {
-      return (
-        (Math.log(lux) - Math.log(luxMin)) /
-        (Math.log(luxFull) - Math.log(luxMin))
-      );
-    }
-    return (lux - luxMin) / (luxFull - luxMin);
-  }
-
-  // The fresh, finite lux from a states/light payload, or null (fall back). A
+  // The fresh, finite lux from a states/light payload, or null. A
   // missing/malformed file, a null lux (honest saturation), a non-finite value,
-  // or a reading older than luxStaleSec all read null -> the caller holds the
-  // fixed default rather than trusting a frozen/absent value.
+  // or a reading older than luxStaleSec all read null -> the Light card grays
+  // the reading rather than painting a frozen/absent value. (US-893-a: the
+  // brightness no longer reads lux at all -- see appliedBrightness.)
   function freshLux(lightData, luxStaleSec, nowMs) {
     if (!lightData || typeof lightData !== "object") return null;
     var lux = lightData.lux;
     if (typeof lux !== "number" || !isFinite(lux)) return null;
     // ARCH-010, defence in depth. A negative lux is a computation failure, not
     // a dark reading -- and it is FINITE, so isFinite() waved it through. It
-    // then hit `lux <= luxMin -> 0` below and drove the panel to minLevel, so
-    // the brighter the sun the dimmer the screen. The producer now publishes
+    // once hit the page's own `lux <= luxMin -> 0` and drove the panel to
+    // minLevel, so the brighter the sun the dimmer the screen. The producer now publishes
     // null for this, but the consumer must not depend on that being deployed:
     // this slipped past three type checks once already.
     if (lux < 0) return null;
@@ -2910,45 +2884,40 @@
     return !!rv && rv.level === "stop";
   }
 
-  // The final 0..1 brightness: clamp(minLevel, curve(lux), 1.0) when the feed is
-  // fresh, else the fixed default (honest fallback).
+  // US-893-a (Atlas A7) -- THE ONE APPLIER. Every surface that needs the panel's
+  // level (the screen frame, and from US-893-b the Light page's status line and
+  // dot) reads this one return, so no two can disagree. In order:
   //
-  // US-484-b / Spool 6d ch.4 -- the load-bearing safety short-circuit: while a
-  // real STOP is active the surface is FULL, before any ambient math runs. It
-  // overrides the curve and the fixed default, so a dark cabin (or a dead light
-  // sensor) can never dim a PULL-OVER alarm. It also SUPERSEDED the old
-  // alarmFloorLevel config key outright -- full brightness is stronger than any
-  // floor -- which is why US-595 could retire that key entirely.
+  //   1. alarmActive -> {1.0, 'alert'}. US-484-b / Spool 6d ch.4, the
+  //      load-bearing safety short-circuit: while a real STOP is active the
+  //      surface is FULL before anything else is read, so a dark cabin (or a dead
+  //      light sensor) can never dim a PULL-OVER alarm. It SUPERSEDED the old
+  //      alarmFloorLevel key outright, which is why US-595 could retire it.
+  //   2. FRESH -> {data.brightnessLevel, data.brightnessMode}: the level the
+  //      bridge published, applied as published ('auto', or 'default' when the
+  //      bridge had no reading). FRESH = an object, not sourceUnavailable, a
+  //      parseable ts no older than luxStaleSec, and a brightnessLevel that is a
+  //      finite number in [0, 1].
+  //   3. otherwise -> {injected defaultLevel, 'fallback'}.
   //
-  // US-627 -- THE TWO BRANCHES ARE DELIBERATELY ASYMMETRIC, AND THAT IS WHY THE
-  // FLOOR IS ENFORCED AT CONFIG TIME. The curve branch clamps to c.minLevel; the
-  // lux === null branch returns c.defaultLevel UNCLAMPED. So c.minLevel bounds
-  // the CURVE, never displayed brightness -- a defaultLevel beneath it would
-  // render below the floor exactly when the light sensor has failed (FOUND
-  // 2026-08-29: minLevel was raised 0.5 -> 0.75 for a dark garage while
-  // defaultLevel sat at 0.70).
-  //
-  // The fix is a validator rule -- pi.display.autoDim.defaultLevel must be >=
-  // minLevel, rejected loudly by validate_config. It is NOT clamped here ON
-  // PURPOSE: clamping would silently repair a bad config and leave the operator
-  // believing a value that never takes effect, which is the inert-guard shape
-  // this project has catalogued repeatedly. A bad config must fail at the gate,
-  // not be quietly corrected on the panel.
-  function brightnessLevel(lightData, cfg, nowMs, alarmActive) {
-    if (alarmActive) return STOP_ALARM_LEVEL;
-    var c = resolveAutoDimConfig(cfg);
-    var lux = freshLux(lightData, c.luxStaleSec, nowMs);
-    var level;
-    if (lux === null) {
-      // absent/stale/saturated -> fixed default. Intentionally NOT floored to
-      // c.minLevel: validate_config guarantees defaultLevel >= minLevel, so a
-      // clamp here could only ever mask a config that failed that gate (US-627).
-      level = c.defaultLevel;
-    } else {
-      var curved = brightnessCurve(lux, c.luxMin, c.luxFull, c.curve);
-      level = Math.min(Math.max(curved, c.minLevel), 1.0);
+  // lux is NOT consulted: the bridge already turned it into the level. An
+  // out-of-range brightnessLevel is fallback, NEVER clamped (US-627: never
+  // silently repair -- a clamp would leave the operator believing a value that
+  // never takes effect). The fallback defaultLevel is applied UNCLAMPED for the
+  // same reason; validate_config enforces defaultLevel >= minLevel. A payload
+  // with no brightnessLevel at all (an older producer) is fallback, not a throw.
+  function appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive) {
+    if (alarmActive) return { level: STOP_ALARM_LEVEL, basis: "alert" };
+    var c = resolveAutoDimConfig(injectedAutoDim);
+    var fallback = { level: c.defaultLevel, basis: "fallback" };
+    if (!isObj(lightData) || sourceUnavailable(lightData, "light")) return fallback;
+    var age = readAgeSec(lightData, nowMs);
+    if (age === null || !(age <= c.luxStaleSec)) return fallback;
+    var level = lightData.brightnessLevel;
+    if (typeof level !== "number" || !isFinite(level) || level < 0 || level > 1) {
+      return fallback;
     }
-    return Math.min(Math.max(level, 0), 1);
+    return { level: level, basis: lightData.brightnessMode };
   }
 
   // -------------------------------------------------------------------------
@@ -2957,8 +2926,8 @@
   // above, so the number on the card can never disagree with the screen it
   // explains. The sensor knows exactly one thing, so the card shows exactly two
   // facts: the reading (with its age) and the auto-dim BAND it falls in. The
-  // band is a NAME for the existing grounded luxMin/luxFull thresholds -- NOT a
-  // third set of numbers that could drift away from the curve.
+  // band is the bridge's own lightBand (US-893-a), named here -- NOT a second
+  // set of numbers that could drift away from the curve.
   //
   // Deliberately NOT shown: the resulting screen brightness. A live STOP alarm
   // holds the surface at FULL regardless of lux (US-484-b ch.4), so a
@@ -2986,14 +2955,18 @@
     return (nowMs - t) / 1000;
   }
 
-  // The auto-dim band this reading falls in, resolved against the SAME injected
-  // config the curve uses (so an operator retuning pi.display.autoDim moves the
-  // label and the dimming together).
-  function luxBand(lux, cfg) {
-    var c = resolveAutoDimConfig(cfg);
-    if (lux <= c.luxMin) return "DARK";
-    if (lux >= c.luxFull) return "DAYLIGHT";
-    return "DIM";
+  // US-893-a (Atlas A1 option c): the CONDITION word for the PROVIDER's
+  // lightBand. The bridge decides the band from the same autoDim read as the
+  // level, so the word and the dimming move together; the page holds no
+  // threshold. A NAME map only -- these are the existing words until US-893-b
+  // replaces the card. Anything else (absent, an unknown band) is null.
+  var LIGHT_BAND_WORD = { night: "DARK", dusk: "DIM", day: "DAYLIGHT" };
+
+  function lightBandWord(band) {
+    return typeof band === "string" &&
+      Object.prototype.hasOwnProperty.call(LIGHT_BAND_WORD, band)
+      ? LIGHT_BAND_WORD[band]
+      : null;
   }
 
   function lightView(data, cfg, nowMs) {
@@ -3023,6 +2996,7 @@
         band: naTile("CONDITION", reason),
       };
     }
+    var word = lightBandWord(data.lightBand);
     return {
       unavailable: false,
       ambient: {
@@ -3031,14 +3005,18 @@
         detail: "read " + fmtAgeSec(age) + " ago",
         level: "ok",
       },
-      band: {
-        label: "CONDITION",
-        value: luxBand(lux, cfg),
-        detail: "auto-dim band",
-        // `neutral`, not `ok`: an ambient band is a fact about the cabin, not a
-        // health verdict -- DARK is not a fault and DAYLIGHT is not a pass.
-        level: "neutral",
-      },
+      // A fresh reading whose file carries no band (a producer older than
+      // US-893-a) grays the band ALONE: the page never derives one from lux.
+      band: word === null
+        ? naTile("CONDITION", "no band published")
+        : {
+          label: "CONDITION",
+          value: word,
+          detail: "auto-dim band",
+          // `neutral`, not `ok`: an ambient band is a fact about the cabin, not
+          // a health verdict -- DARK is not a fault and DAYLIGHT is not a pass.
+          level: "neutral",
+        },
     };
   }
 
@@ -4794,7 +4772,7 @@
     shouldAutoResume: shouldAutoResume,
     rotateProgress: rotateProgress,
     swipeGesture: swipeGesture,
-    luxBand: luxBand,
+    lightBandWord: lightBandWord,
     lightView: lightView,
     headingCardinal: headingCardinal,
     resolveImuStaleSec: resolveImuStaleSec,
@@ -4893,8 +4871,7 @@
     takeoverShouldShow: takeoverShouldShow,
     ribbonView: ribbonView,
     dtcListSorted: dtcListSorted,
-    brightnessCurve: brightnessCurve,
-    brightnessLevel: brightnessLevel,
+    appliedBrightness: appliedBrightness,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
     fmtClock: fmtClock,
@@ -4935,10 +4912,11 @@
   if (typeof document !== "undefined") {
     var token = global.SPLASH_TOKEN || "";
 
-    // US-483-b: the auto-dim curve config injected same-origin at serve time
-    // (states_http_server substitutes the placeholder from config.json). An
+    // US-483-b: the pi.display.autoDim section injected same-origin at serve
+    // time (states_http_server substitutes the placeholder from config.json).
+    // Since US-893-a the page reads only its defaultLevel and luxStaleSec. An
     // object -> use it; anything else (unsubstituted preview / null) -> the
-    // built-in grounded defaults kick in inside resolveAutoDimConfig.
+    // built-in defaults kick in inside resolveAutoDimConfig.
     var displayAutoDim =
       global.DISPLAY_AUTODIM && typeof global.DISPLAY_AUTODIM === "object"
         ? global.DISPLAY_AUTODIM
@@ -7470,21 +7448,22 @@
         // US-659: `updateMenuAccess(sysData, nowMs)` was called here to repaint
         // the ⋮ per tick against the debounced parked signal. Removed with the
         // gate -- the kebab's visibility is no longer a function of any state.
-        // US-483-b: drive the display brightness from the states/light feed
-        // (pure consumer -- never the sensor). A real STOP holds it >= the alarm
-        // floor; an absent/stale feed holds the fixed default (honest fallback).
+        // US-483-b / US-893-a: APPLY the level the light bridge published in
+        // states/light (pure consumer -- never the sensor, never a curve). A
+        // real STOP holds it at full; an absent/stale feed holds the injected
+        // defaultLevel (honest fallback). See appliedBrightness.
         // US-507: `stateOnce` is idempotent, so this REUSES the payload the
         // Health card's Light section already read and only performs a real
         // fetch if no surface consumed it -- the auto-dim keeps working even if
         // the section is ever removed from the markup, with no flag to forget.
         await stateOnce("light");
         applyBrightness(
-          brightnessLevel(
+          appliedBrightness(
             lightData,
             displayAutoDim,
             nowMs,
             brightnessAlarmActive(dtcData)
-          )
+          ).level
         );
       }
 

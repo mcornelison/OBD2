@@ -43,6 +43,12 @@
 #               |              | the rendered panel + the CSS var that consumes it.
 # 2026-10-14    | Rex (US-878-a)| _producedLightState feeds the full reader burst
 #               |              | (the bridge writes on range); no assertion change.
+# 2026-10-19    | Rex (US-893-a)| The bridge is the ONE applier: the page applies
+#               |              | the level states/light publishes. The bridge here
+#               |              | runs under the SAME autoDim the page is injected
+#               |              | with (as on the Pi, where both read config.json),
+#               |              | so every assertion stands unchanged; the dim
+#               |              | fallback config reaches the bridge too.
 # ================================================================================
 ################################################################################
 
@@ -146,16 +152,24 @@ def _luxSample(value: float | None, *, tsUtc: str = _T0_ISO) -> Sample:
     )
 
 
-def _producedLightState(tmpPath: Path, sample: Sample) -> dict[str, Any]:
+def _producedLightState(
+    tmpPath: Path, sample: Sample, autoDim: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Run the REAL bridge and return the bytes it actually wrote to states/light.
 
     The payload every test below serves is the producer's own output, so a
     producer change that stops publishing a usable `ts` fails HERE rather than
     being masked by a hand-written fixture that always had one.
+
+    US-893-a: the bridge computes the published brightnessLevel, so it runs
+    under ``autoDim`` -- by default the DEPLOYED section the page is injected
+    with, exactly as on the Pi where both read config.json.
     """
     # US-878-a: the bridge writes once per reader burst (lux, raw, range under
     # one seq), on the range sample -- so feed the whole burst the reader sends.
-    bridge = LightStateBridge(None, str(tmpPath))
+    bridge = LightStateBridge(
+        None, str(tmpPath), autoDim=_AUTODIM if autoDim is None else autoDim
+    )
     bridge.handleSample(sample)
     for topic, value, unit in (
         ("raw.light.raw", (900, 300, 1200), "count"),
@@ -547,7 +561,7 @@ def test_frozenFeedUnderActiveStop_staysFullBrightnessNotTheFallback(tmp_path):
     into a single return: a dead light sensor must never be able to dim a
     PULL-OVER alarm. The 0.42 fallback is what makes this test able to fail.
     """
-    state = _producedLightState(tmp_path, _luxSample(_DARK_LUX))
+    state = _producedLightState(tmp_path, _luxSample(_DARK_LUX), _DIM_FALLBACK_CFG)
 
     tree = _run(
         _DIM_FALLBACK_CFG,
@@ -581,7 +595,7 @@ def test_fallbackLevelComesFromConfig_notAHardcodedConstant(tmp_path):
         "luxStaleSec": 10,
         "curve": "logarithmic",
     }
-    state = _producedLightState(tmp_path, _luxSample(_DARK_LUX))
+    state = _producedLightState(tmp_path, _luxSample(_DARK_LUX), cfg)
 
     tree = _run(
         cfg,
