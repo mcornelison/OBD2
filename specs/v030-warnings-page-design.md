@@ -177,13 +177,16 @@ Stored and pending codes re-alert **once per key-on** and can be hidden. This is
 | Layering | Above every page, below PULL OVER and below the REPLAY marker (70). |
 
 ### 4.5 Code detail + clear
-- **Open:** a tap on a CODE row (`source` `code`) opens `#dtc-detail` **only while `engineParked` is parked**; while moving the row tap does nothing. ENGINE rows are not controls and never open a detail (U10: CODE rows are real controls with a pointer; ENGINE rows and every sentence get no border, fill or pointer).
+- **Open:** a tap on a CODE row (`source` `code`) opens `#dtc-detail` **only while `engineParked` is parked** (engine off held 8 s, Atlas A7); while not parked (driving, idling stationary, or within the 8 s hold) the row tap does nothing. ENGINE rows are not controls and never open a detail (U10: CODE rows are real controls with a pointer; ENGINE rows and every sentence get no border, fill or pointer).
 - **Content (U4):** the directive band shows the entry's **`sentence`** (provider words), never `DTC_TIER`'s tier-table directive. The tier chip comes from the entry; `unrated` renders with the existing `unknown` styling. The code is parsed from the id `code:<code>:<tier>`.
 - **The one `states/dtc` read outside the provider path** (a documented G-7 exception, scoped to the detail open and its ticks while open): the full record (long text, freeze-frame/realtime fallback, suggested fix, logged/syncAcked), which also feeds the clear gate. **If that fetch fails**, the detail still renders the entry's own title, tier and sentence plus `details unavailable`, never a cached or tier-table directive.
 - **Clear (as shipped, `clearGateReason` unchanged):** offered for MINOR codes only, hard confirm, re-read, refuse a second clear; gate re-checked at the action path (Atlas DTC-A1). Spool: an UNRATED code counts above MINOR (Mode 04 wipes everything, and an unknown can't be judged safe to wipe).
   - WATCH / STOP-tier / UNRATED: **visible, disabled**, with the existing lock label (`🔒 CLEAR CODES — <reason>`, `CLEAR_REASON_LABEL`).
-  - **While moving:** visible, disabled, **`🔒 CLEAR CODES — car is moving`** (`CLEAR_REASON_LABEL.moving`). It states the fact, as the other labels do.
-  - **A permanent reason wins over `moving`** (`severity_present`, `severity_unknown`, `session_locked`, `sync_pending`); `moving` shows only when the gate would otherwise be `ok`. Otherwise a WATCH code seen while driving would say "car is moving", implying that parking unlocks it.
+  - **While not parked:** visible, disabled, **`🔒 CLEAR CODES — engine off to clear`** (`CLEAR_REASON_LABEL.moving`; the key name is US-898-c's and is kept, its words are not). Corrected 2026-10-19 (UIDEV-008, the PRD changed the same day):
+    - **Why not `car is moving`:** the lock is `engineParked`, which also holds a stationary car with the engine idling and for 8 s after the engine stops. There the old words were false.
+    - **Why an instruction:** like the System Settings lock (`🔒 view only — engine off to change`), it says what unlocks the button, which is true in every locked state.
+    - No clear-lock text says `moving`.
+  - **A permanent reason wins over `moving`** (`severity_present`, `severity_unknown`, `session_locked`, `sync_pending`); `moving` shows only when the gate would otherwise be `ok`. Otherwise a WATCH code seen while driving would say "engine off to clear", implying that turning the engine off unlocks it.
 
 ### 4.6 Ages and formats on this page
 - **Freshness** (how old the reading I'm showing is): `last reading n s ago`, the S105 M7 rule: `Math.floor`, clamped at 0, `N s` with a space, capped at `999+ s ago`. On stale rows and in the takeover only.
@@ -224,7 +227,7 @@ From the S106 brief (2026-10-18), U1–U12 and the S108 review (2026-10-19); the
 8. Battery-red: a red Driving tile beside an amber WATCH icon (band vs tier).
 9. Chip inks meet AA per §3.
 10. Codes unread + an active WATCH: the icon is watch, not `?`; header meta `codes not read yet`.
-10a. Code detail (§4.5): a moving tap on a code row opens nothing; the band shows the entry's sentence; a failed `states/dtc` fetch ⇒ title, chip, sentence + `details unavailable`; the Clear button is visible and disabled for WATCH/STOP/UNRATED (existing lock label) and while moving (`🔒 CLEAR CODES — car is moving`), with a permanent reason winning over `moving`.
+10a. Code detail (§4.5): a tap on a code row while not parked (driving, and idling stationary) opens nothing; the band shows the entry's sentence; a failed `states/dtc` fetch ⇒ title, chip, sentence + `details unavailable`; the Clear button is visible and disabled for WATCH/STOP/UNRATED (existing lock label) and while not parked (`🔒 CLEAR CODES — engine off to clear`, tested both driving and idling stationary), with a permanent reason winning over `moving`. No clear-lock text contains `moving`.
 10b. Ages: row ages are `agoText` (a `firstSeenTs` 41 days back reads `41 days ago`, no source prefix); a stale row reads `last reading n s ago` and caps at `999+ s ago`.
 
 **US-899 (PULL OVER + CODE ALERT)**
