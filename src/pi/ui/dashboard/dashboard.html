@@ -396,7 +396,7 @@
            `data-state`: the generic availability poll never grays it -- each
            value carries its own '--' + reason. Labels are Michroma; the peak
            glyphs are literal here and inherit the mono face. The skeleton ships
-           the not-read faces. The IMU health block is US-892-c. -->
+           the not-read faces. The IMU health block below is US-892-c. -->
       <section class="card" id="motion-card" aria-label="Motion" data-page-name="MOTION"
                data-stale="false">
         <div class="card-body">
@@ -427,6 +427,28 @@
               <span class="motion-line"><span class="motion-value">--</span><span class="motion-unit"></span></span>
               <span class="motion-note">not read</span>
               <span class="motion-peak">peak L-- R--</span>
+            </div>
+          </div>
+          <!-- US-892-c: the IMU health block, a 2 x 2 grid (left UPDATED /
+               TILT FIX, right COMPASS / GYRO, by auto-flow). Not a
+               .motion-band: it never dims (Iris M4). carousel.js
+               (`renderMotionHealth`) sets each cell's data-tone and texts. -->
+          <div class="motion-health">
+            <div class="motion-hcell motion-updated" data-tone="none">
+              <span class="motion-label">UPDATED</span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+            </div>
+            <div class="motion-hcell motion-compass" data-tone="none">
+              <span class="motion-label">COMPASS</span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+            </div>
+            <div class="motion-hcell motion-tilt" data-tone="none">
+              <span class="motion-label">TILT FIX</span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
+            </div>
+            <div class="motion-hcell motion-gyro" data-tone="none">
+              <span class="motion-label">GYRO</span>
+              <span class="motion-hrow"><span class="motion-hv">--</span><span class="motion-hsub">not read</span></span>
             </div>
           </div>
         </div>

@@ -2137,6 +2137,10 @@ html, body {
   --motion-line: 1;             /* value line boxes */
   --motion-note-line: 1.2;      /* label / sub-line boxes */
   --motion-stale-opacity: 0.4;  /* stale = dimmed (shared rule) */
+  --motion-health-col-gap: 8px; /* health grid columns (spec s3) */
+  --motion-health-row-gap: 4px; /* health grid rows (mockup .health) */
+  --motion-hrow-gap: 6px;       /* value -> reason / provenance (Iris M2) */
+  --motion-health-line: 1.1;    /* health value line boxes (mockup .hv) */
 }
 #motion-card .card-body {
   display: flex; flex-direction: column; gap: var(--motion-band-gap);
@@ -2190,3 +2194,32 @@ html, body {
 #motion-card .motion-graph-dot { fill: var(--accent); }
 #motion-card .motion-graph-end { font-size: var(--fs-meta); fill: var(--text-primary); }
 #motion-card .motion-graph-empty { font-size: var(--fs-meta); fill: var(--text-tertiary); }
+/* US-892-c: the IMU health block (spec s3 2 x 2, Iris M2/M4/M5, Atlas C3).
+   Columns 1fr / max-content: the right column takes its widest status word,
+   the left (UPDATED, TILT FIX) the rest. Values --fs-label, reasons and the
+   TILT FIX provenance --fs-meta on the value's baseline. A reason NEVER sizes
+   a column: contain: inline-size makes it add 0 to max-content and it wraps
+   inside its column. data-tone maps to a token here and judges nothing;
+   plain keeps --text-primary. Not a .motion-band, so stale never dims it. */
+#motion-card .motion-health {
+  flex: none; display: grid; grid-template-columns: 1fr max-content;
+  column-gap: var(--motion-health-col-gap); row-gap: var(--motion-health-row-gap);
+  padding-block: var(--motion-band-pad); border-top: var(--motion-rule) solid var(--line);
+}
+#motion-card .motion-hcell {
+  display: flex; flex-direction: column; gap: var(--motion-cell-gap); min-width: 0;
+}
+#motion-card .motion-hrow {
+  display: flex; align-items: baseline; gap: var(--motion-hrow-gap); min-width: 0;
+}
+#motion-card .motion-hv {
+  flex: none; font-size: var(--fs-label); line-height: var(--motion-health-line);
+  font-variant-numeric: tabular-nums; color: var(--text-primary); white-space: nowrap;
+}
+#motion-card .motion-hcell[data-tone="ok"] .motion-hv { color: var(--green-ok); }
+#motion-card .motion-hcell[data-tone="warn"] .motion-hv { color: var(--amber-warn); }
+#motion-card .motion-hcell[data-tone="none"] .motion-hv { color: var(--text-tertiary); }
+#motion-card .motion-hsub {
+  flex: 1 1 0; min-width: 0; contain: inline-size;
+  font-size: var(--fs-meta); line-height: var(--motion-note-line); color: var(--text-secondary);
+}

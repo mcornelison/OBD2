@@ -1,0 +1,155 @@
+{
+  "description": "The story example: a fresh, calibrated, seeded IMU with 14 stops behind a -0.00785 rad tilt fix -> UPDATED '0 s ago', COMPASS 'calibrated' (green), TILT FIX '\u22120.45\u00b0' 'from 14 stops', GYRO 'plausible' (green).",
+  "now": "2026-10-20T15:12:29.5Z",
+  "inputs": {
+    "tsUtc": "2026-10-20T15:12:29Z",
+    "gravity": [
+      0.0,
+      0.0,
+      9.81
+    ],
+    "linear": [
+      3.040061,
+      -2.157463,
+      0.0
+    ],
+    "mag": [
+      20.0,
+      0.0,
+      -40.0
+    ],
+    "pitchRad": 0.054105206811824215,
+    "gyroImplausible": false,
+    "headingDegOverride": 247.0,
+    "headingCalibrated": true,
+    "fusionEngine": "imufusion",
+    "peaks": {
+      "accelG": 0.31,
+      "brakeG": 0.38,
+      "leftG": 0.27,
+      "rightG": 0.31,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    },
+    "stopCount": 14,
+    "biasRad": -0.00785
+  },
+  "imu": {
+    "available": true,
+    "ts": "2026-10-20T15:12:29Z",
+    "gLat": 0.22,
+    "gLon": 0.31,
+    "gMag": 0.38,
+    "headingDeg": 247.0,
+    "pitchDeg": 3.1,
+    "gradePct": 5.4,
+    "altitude": null,
+    "stopCount": 14,
+    "biasRad": -0.00785,
+    "magRotation": "undetermined",
+    "reasons": {
+      "altitude": "no_source"
+    },
+    "fusionEngine": "imufusion",
+    "headingCalibrated": true,
+    "peaks": {
+      "accelG": 0.31,
+      "brakeG": 0.38,
+      "leftG": 0.27,
+      "rightG": 0.31,
+      "sinceTs": "2026-10-20T15:00:00Z"
+    }
+  },
+  "historyInputs": [
+    [
+      "2026-10-20T15:00:05Z",
+      1.0
+    ],
+    [
+      "2026-10-20T15:00:15Z",
+      1.4
+    ],
+    [
+      "2026-10-20T15:00:25Z",
+      1.9
+    ],
+    [
+      "2026-10-20T15:00:35Z",
+      null
+    ],
+    [
+      "2026-10-20T15:00:45Z",
+      null
+    ],
+    [
+      "2026-10-20T15:00:55Z",
+      2.8
+    ],
+    [
+      "2026-10-20T15:01:05Z",
+      3.3
+    ],
+    [
+      "2026-10-20T15:01:15Z",
+      3.9
+    ],
+    [
+      "2026-10-20T15:01:25Z",
+      4.4
+    ],
+    [
+      "2026-10-20T15:01:35Z",
+      5.0
+    ],
+    [
+      "2026-10-20T15:01:45Z",
+      null
+    ]
+  ],
+  "gradeHistory": {
+    "points": [
+      {
+        "ts": "2026-10-20T15:00:10Z",
+        "gradePct": 1.0
+      },
+      {
+        "ts": "2026-10-20T15:00:20Z",
+        "gradePct": 1.4
+      },
+      {
+        "ts": "2026-10-20T15:00:30Z",
+        "gradePct": 1.9
+      },
+      {
+        "ts": "2026-10-20T15:00:40Z",
+        "gradePct": null
+      },
+      {
+        "ts": "2026-10-20T15:00:50Z",
+        "gradePct": null
+      },
+      {
+        "ts": "2026-10-20T15:01:00Z",
+        "gradePct": 2.8
+      },
+      {
+        "ts": "2026-10-20T15:01:10Z",
+        "gradePct": 3.3
+      },
+      {
+        "ts": "2026-10-20T15:01:20Z",
+        "gradePct": 3.9
+      },
+      {
+        "ts": "2026-10-20T15:01:30Z",
+        "gradePct": 4.4
+      },
+      {
+        "ts": "2026-10-20T15:01:40Z",
+        "gradePct": 5.0
+      }
+    ],
+    "windowS": 900,
+    "intervalS": 10,
+    "ts": "2026-10-20T15:01:45Z"
+  }
+}

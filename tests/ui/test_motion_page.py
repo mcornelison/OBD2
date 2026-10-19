@@ -14,6 +14,9 @@
 #        brand face only on labels;
 #     4. the SHIPPED DOM, painted by the real loops with fetch and the clock
 #        stubbed -- the validation rows, the gap, the empty history, no meter.
+#   US-892-c adds section 5, the IMU health block (UPDATED, COMPASS, TILT FIX,
+#   GYRO; Atlas C1-C3, Iris M2/M4-M7): its cells, the 2 x 2 grid and the
+#   widest-texts width budget, computed in the shipped mono advance.
 #   NOT GUARDED: layout on the glass (render_harness resolves the cascade, not
 #   boxes): "no clip" and the >= 34 px reads are owed as R15 screenshots on the
 #   Pi; here the sizes are pinned through the tokens they bind.
@@ -26,6 +29,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-19    | Rex (US-892-b) | Initial -- Motion pitch, grade graph, g + peaks.
+# 2026-10-19    | Rex (US-892-c) | The IMU health block + 5 fixtures.
 # ================================================================================
 ################################################################################
 
@@ -63,6 +67,9 @@ FIXTURE_NAMES = [
     "climb-accel", "descent-brake", "corner-left", "corner-right",
     "gyro-implausible", "stale-imu", "history-empty-after-restart",
     "peaks-null-after-drive-start",
+    # US-892-c: the health block's cases.
+    "health-trusted", "compass-uncalibrated", "compass-legacy-engine",
+    "no-stops-yet", "gyro-unjudged",
 ]
 
 IMU_SEC = 3.0
@@ -671,3 +678,362 @@ def test_dom_theBarNamesTheCardMotion():
     card = _boot("climb-accel")
     assert card["attrs"]["data-page-name"] == "MOTION"
     assert card["attrs"]["aria-label"] == "Motion"
+
+
+# ---------------------------------------------------------------------------
+# 5. US-892-c -- the IMU health block (spec s3/s4 M-7; Atlas C1-C3, Iris M2,
+#    M4-M7). Each cell READS states/imu and judges nothing.
+# ---------------------------------------------------------------------------
+
+DEG = "°"
+
+
+def _health(name: str, shiftMs: int = 0, imu: Any = None) -> dict[str, Any]:
+    return _view(name, shiftMs, imu)["health"]
+
+
+def _hc(cell: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return (cell["value"], cell["tone"], cell["sub"])
+
+
+def test_health_fixturesCarryTheCasesTheyAreNamedFor():
+    legacy = _fixture("compass-legacy-engine")["imu"]
+    assert "headingCalibrated" not in legacy
+    assert "headingCalibrated" not in legacy["reasons"]
+    assert (legacy["stopCount"], round(legacy["biasRad"], 5)) == (999, -0.17453)
+    assert _fixture("compass-uncalibrated")["imu"]["headingCalibrated"] is False
+    noStops = _fixture("no-stops-yet")["imu"]
+    assert (noStops["stopCount"], noStops["biasRad"]) == (0, 0.0)
+    assert _fixture("gyro-unjudged")["imu"]["reasons"]["pitchDeg"] == "sensor_absent"
+    trusted = _fixture("health-trusted")["imu"]
+    assert (trusted["stopCount"], trusted["biasRad"]) == (14, -0.00785)
+
+
+@_NODE_ONLY
+def test_health_storyExample_allFourCells():
+    """The story's example: '0 s ago', 'calibrated', '−0.45°' 'from 14 stops',
+    'plausible' -- the two status words green, the measurement never coloured."""
+    h = _health("health-trusted")
+    assert _hc(h["updated"]) == ("0 s ago", "plain", None)
+    assert _hc(h["compass"]) == ("calibrated", "ok", None)
+    assert _hc(h["tilt"]) == (f"{MINUS}0.45{DEG}", "plain", "from 14 stops")
+    assert _hc(h["gyro"]) == ("plausible", "ok", None)
+
+
+@_NODE_ONLY
+def test_validation_noStopsYet_isDashPlusReason_never0point00():
+    """VC row 1: stopCount 0, biasRad 0.0 -> '--' 'no stops yet'."""
+    assert _hc(_health("no-stops-yet")["tilt"]) == ("--", "none", "no stops yet")
+
+
+@_NODE_ONLY
+def test_validation_14Stops_minus0point45():
+    """VC row 2: stopCount 14, biasRad −0.00785 -> '−0.45°' 'from 14 stops'."""
+    tilt = _health("health-trusted")["tilt"]
+    assert (tilt["value"], tilt["sub"]) == (f"{MINUS}0.45{DEG}", "from 14 stops")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("biasRad", "stopCount", "value", "sub"), [
+    (0.00785, 1, f"+0.45{DEG}", "from 1 stop"),
+    (-0.174533, 999, f"{MINUS}10.00{DEG}", "from 999 stops"),
+    (0.00004, 3, f"0.00{DEG}", "from 3 stops"),
+    (-0.00004, 3, f"0.00{DEG}", "from 3 stops"),
+    (0.01, 1234, f"+0.57{DEG}", "from 1,234 stops"),
+    (0.01, 1234567, f"+0.57{DEG}", "from 1,234,567 stops"),
+])
+def test_tiltFix_signFromTheRoundedValue_singular_fixedThousands(
+    biasRad: float, stopCount: int, value: str, sub: str
+):
+    """Iris M6: '+' on positive, the sign from the rounded value (a zero has
+    none), singular 'stop', a FIXED ',' separator (never toLocaleString)."""
+    imu = dict(_fixture("health-trusted")["imu"], biasRad=biasRad, stopCount=stopCount)
+    assert _hc(_health("health-trusted", imu=imu)["tilt"]) == (value, "plain", sub)
+
+
+def test_tiltFix_neverUsesToLocaleString():
+    assert ".toLocaleString(" not in _read(_JS)
+
+
+@_NODE_ONLY
+def test_validation_compassAbsent_isDashPlusReason_neverNotCalibrated():
+    """VC row 3 / Atlas C1 + Iris M5: the key ABSENT on the legacy engine."""
+    assert _hc(_health("compass-legacy-engine")["compass"]) == ("--", "none", "not published")
+
+
+@_NODE_ONLY
+def test_compassAbsent_aPublishedReasonWinsThroughImuReason():
+    base = _fixture("compass-legacy-engine")["imu"]
+    known = dict(base, reasons=dict(base["reasons"], headingCalibrated="no_source"))
+    unknown = dict(base, reasons=dict(base["reasons"], headingCalibrated="ahrs_offline"))
+    assert _hc(_health("compass-legacy-engine", imu=known)["compass"]) == ("--", "none", "no source")
+    assert _hc(_health("compass-legacy-engine", imu=unknown)["compass"]) == (
+        "--", "none", "ahrs_offline")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("value", [None, "true", 1])
+def test_compass_onlyABooleanIsAVerdict_unknownIsNeverGreen(value: Any):
+    imu = dict(_fixture("health-trusted")["imu"], headingCalibrated=value)
+    assert _health("health-trusted", imu=imu)["compass"]["tone"] == "none"
+
+
+@_NODE_ONLY
+def test_compass_falseIsNotCalibrated_amber():
+    assert _hc(_health("compass-uncalibrated")["compass"]) == ("not calibrated", "warn", None)
+
+
+@_NODE_ONLY
+def test_gyro_implausible_amber_fromTheGyroReason():
+    assert _hc(_health("gyro-implausible")["gyro"]) == ("implausible", "warn", None)
+
+
+@_NODE_ONLY
+def test_gyro_unjudged_sensorAbsent_isDashPlusReason_neverPlausible():
+    """Atlas C2: a dead IMU must never read green."""
+    assert _hc(_health("gyro-unjudged")["gyro"]) == ("--", "none", "sensor not detected")
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("reasons", "sub"), [
+    ({"pitchDeg": "tilt_unresolved"}, "orientation unresolved"),
+    ({"pitchDeg": "pitch_unseeded"}, "starting up"),
+    ({}, "unavailable"),
+])
+def test_gyro_plausibleOnlyForAPublishedFinitePitch(reasons: dict[str, str], sub: str):
+    imu = dict(_fixture("health-trusted")["imu"], pitchDeg=None, reasons=reasons)
+    assert _hc(_health("health-trusted", imu=imu)["gyro"]) == ("--", "none", sub)
+
+
+def test_reasonTable_pitchUnseededIsStartingUp():
+    """Atlas C2: the bridge's pitch_unseeded must not paint the raw code."""
+    src = _read(_JS)
+    table = src[src.index("var IMU_REASON_TEXT = {"):]
+    table = table[: table.index("};")]
+    assert 'pitch_unseeded: "starting up"' in table
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("ageSec", "text", "tone"), [
+    (0.5, "0 s ago", "plain"),
+    (2.9, "2 s ago", "plain"),
+    (3.0, "3 s ago", "plain"),      # strict: age == imuSec is fresh
+    (3.5, "3 s ago", "warn"),       # floor for the text, raw float for stale
+    (-5.0, "0 s ago", "plain"),     # a future ts clamps at 0
+    (999.9, "999 s ago", "warn"),
+    (1000.0, "999+ s ago", "warn"),
+])
+def test_updated_floorClampCap_amberWhenStale(ageSec: float, text: str, tone: str):
+    """Iris M7: floor, clamped at 0, 'N s ago', above 999 '999+ s ago';
+    amber when the RAW age > imuSec."""
+    ts = _fixture("health-trusted")["imu"]["ts"]
+    nowMs = _ms(ts) + int(round(ageSec * 1000))
+    view = _call("motionView", _fixture("health-trusted")["imu"], nowMs, IMU_SEC, None)
+    assert _hc(view["health"]["updated"]) == (text, tone, None)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("ts", [None, "not a time"])
+def test_updated_noTimestamp_isDashPlusReason_andThePageIsStale(ts: Any):
+    imu = dict(_fixture("health-trusted")["imu"], ts=ts)
+    view = _view("health-trusted", imu=imu)
+    assert _hc(view["health"]["updated"]) == ("--", "none", "no timestamp")
+    assert view["stale"] is True
+
+
+@_NODE_ONLY
+def test_updated_doesNotReuseFmtAgeSec():
+    """Iris M7: fmtAgeSec ('12s', '1.2s') is left as it is for older cards."""
+    src = _read(_JS)
+    body = src[src.index("function motionHealthView("):]
+    body = body[: body.index("\n  }\n")]
+    assert "fmtAgeSec" not in body
+    assert 'String(Math.round(ageSec))) + "s";' in src  # fmtAgeSec unchanged
+
+
+@_NODE_ONLY
+def test_health_noFeed_everyCellIsDashPlusNoMotionFeed():
+    late = _call("motionView", None, _now("climb-accel"), IMU_SEC,
+                 _call("loadingGraceMs") + 4000)
+    for key in ("updated", "compass", "tilt", "gyro"):
+        assert _hc(late["health"][key]) == ("--", "none", "no motion feed"), key
+
+
+# --- markup + stylesheet ----------------------------------------------------
+
+
+def _healthMarkup() -> str:
+    m = _motionMarkup()
+    return m[m.index('class="motion-health"'):]
+
+
+def test_skeleton_healthBlock_fourCellsInGridOrder_notReadFaces():
+    """Left column UPDATED / TILT FIX, right COMPASS / GYRO: in a 2-column
+    auto-flow grid that is the source order UPDATED, COMPASS, TILT FIX, GYRO."""
+    m = _healthMarkup()
+    labels = re.findall(r'<span class="motion-label">([^<]+)</span>', m)
+    assert labels == ["UPDATED", "COMPASS", "TILT FIX", "GYRO"]
+    cells = re.findall(r'class="motion-hcell (motion-\w+)"', m)
+    assert cells == ["motion-updated", "motion-compass", "motion-tilt", "motion-gyro"]
+    assert m.count('class="motion-hv">--<') == 4
+    assert 'class="motion-band' not in m  # never dims with the bands (Iris M4)
+
+
+def test_namingTraps_noHealthSectionNoHealthCardNames():
+    """test_carousel_source_cards.py / test_carousel_card_set.py reserve these."""
+    assert "health-section" not in _read(_HTML)
+    js = _read(_JS)
+    for name in ("healthCardView", "renderHealthCard", "renderHealthSection"):
+        assert name not in js, name
+
+
+def test_css_healthGrid_1frMaxContent_8pxColumnGap():
+    rules = _motionRules()
+    body = rules["#motion-card .motion-health"]
+    assert "display: grid" in body
+    assert "grid-template-columns: 1fr max-content" in body
+    assert "column-gap: var(--motion-health-col-gap)" in body
+    assert re.search(r"--motion-health-col-gap:\s*8px", rules["#motion-card"])
+    assert re.search(r"--motion-hrow-gap:\s*6px", rules["#motion-card"])
+
+
+def test_css_healthNeverDims():
+    """Iris M4: the block is the evidence the data is stale; dimming it would
+    hide the reason exactly when it matters."""
+    for selector, body in _motionRules().items():
+        if "motion-h" in selector:
+            assert "opacity" not in body, selector
+        if "opacity" in body:
+            assert "motion-h" not in selector, selector
+
+
+def test_css_healthTiers_valuesLabelReasonMeta_tonesAreTokens():
+    rules = _motionRules()
+    hv = rules["#motion-card .motion-hv"]
+    assert "font-size: var(--fs-label)" in hv and "color: var(--text-primary)" in hv
+    sub = rules["#motion-card .motion-hsub"]
+    assert "font-size: var(--fs-meta)" in sub and "color: var(--text-secondary)" in sub
+    assert "contain: inline-size" in sub  # Atlas C3: a reason never sizes a column
+    for tone, token in (("ok", "--green-ok"), ("warn", "--amber-warn"),
+                        ("none", "--text-tertiary")):
+        sel = f'#motion-card .motion-hcell[data-tone="{tone}"] .motion-hv'
+        assert f"color: var({token})" in rules[sel], sel
+    assert not [s for s in rules if 'data-tone="plain"' in s]
+
+
+def _px(token: str, css: str) -> float:
+    return float(re.search(re.escape(token) + r":\s*([0-9.]+)px", css).group(1))
+
+
+def test_validation_widestTextsTogether_noCellClips():
+    """VC row 4 / spec s6 AC 10, measured in the SHIPPED mono (Atlas C3: every
+    health text inherits --font-mono, advance 0.60205 em on the Pi): with
+    'not calibrated', '−10.00° from 999 stops', 'implausible' and '999 s ago'
+    together, the left column fits beside the max-content right column in the
+    448 px card body (480 - 2 x 16 px padding)."""
+    from css_type_scale import ADVANCE_OBSERVED
+
+    tokens, rules = _read(_TOKENS), _motionRules()
+    label, meta = _px("--fs-label", tokens), _px("--fs-meta", tokens)
+    colGap = _px("--motion-health-col-gap", rules["#motion-card"])
+    rowGap = _px("--motion-hrow-gap", rules["#motion-card"])
+
+    def w(text: str, px: float) -> float:
+        return len(text) * ADVANCE_OBSERVED * px
+
+    # The texts the view really paints for the widest case.
+    legacy = dict(_fixture("compass-legacy-engine")["imu"], headingCalibrated=False)
+    nowMs = _ms(legacy["ts"]) + 999_000
+    h = _call("motionView", legacy, nowMs, IMU_SEC, None)["health"]
+    assert h["compass"]["value"] == "not calibrated"
+    assert (h["tilt"]["value"], h["tilt"]["sub"]) == (f"{MINUS}10.00{DEG}", "from 999 stops")
+    assert h["updated"]["value"] == "999 s ago"
+    implausible = _health("gyro-implausible")["gyro"]["value"]
+    assert implausible == "implausible"
+
+    right = max(w(h["compass"]["value"], label), w(implausible, label))
+    left = 448 - colGap - right
+    tilt = w(h["tilt"]["value"], label) + rowGap + w(h["tilt"]["sub"], meta)
+    assert round(right, 1) == 168.6 and round(left, 1) == 271.4  # Atlas C3, measured
+    assert tilt <= left, (tilt, left)
+    assert w(h["updated"]["value"], label) <= left
+    assert w("999+ s ago", label) <= left
+
+
+# --- the shipped DOM ---------------------------------------------------------
+
+
+def _leafTexts(node: dict[str, Any]) -> list[str]:
+    if "hidden" in node.get("attrs", {}):
+        return []
+    out: list[str] = []
+    for child in node.get("children", []) or []:
+        if "text" in child:
+            if child["text"].strip():
+                out.append(child["text"].strip())
+        else:
+            out += _leafTexts(child)
+    return out
+
+
+def _hcell(card: dict[str, Any], cls: str) -> str:
+    return " ".join(_leafTexts(_one(card, cls)))
+
+
+def _tone(card: dict[str, Any], cls: str) -> str:
+    return _one(card, cls)["attrs"]["data-tone"]
+
+
+@_NODE_ONLY
+def test_dom_storyExample_healthBlock():
+    card = _boot("health-trusted")
+    assert _hcell(card, "motion-updated") == "UPDATED 0 s ago"
+    assert _hcell(card, "motion-compass") == "COMPASS calibrated"
+    assert _hcell(card, "motion-tilt") == f"TILT FIX {MINUS}0.45{DEG} from 14 stops"
+    assert _hcell(card, "motion-gyro") == "GYRO plausible"
+    assert [_tone(card, c) for c in ("motion-updated", "motion-compass",
+                                     "motion-tilt", "motion-gyro")] == [
+        "plain", "ok", "plain", "ok"]
+
+
+@_NODE_ONLY
+def test_dom_compassLegacyEngine_dashPlusReason_andTheWidestTiltFix():
+    card = _boot("compass-legacy-engine")
+    assert _hcell(card, "motion-compass") == "COMPASS -- not published"
+    assert _tone(card, "motion-compass") == "none"
+    assert _hcell(card, "motion-tilt") == f"TILT FIX {MINUS}10.00{DEG} from 999 stops"
+
+
+@_NODE_ONLY
+def test_dom_compassUncalibrated_amber_andOneStop():
+    card = _boot("compass-uncalibrated")
+    assert _hcell(card, "motion-compass") == "COMPASS not calibrated"
+    assert _tone(card, "motion-compass") == "warn"
+    assert _hcell(card, "motion-tilt") == f"TILT FIX +0.45{DEG} from 1 stop"
+
+
+@_NODE_ONLY
+def test_dom_noStopsYet_andTheGyroCases():
+    assert _hcell(_boot("no-stops-yet"), "motion-tilt") == "TILT FIX -- no stops yet"
+    implausible = _boot("gyro-implausible")
+    assert _hcell(implausible, "motion-gyro") == "GYRO implausible"
+    assert _tone(implausible, "motion-gyro") == "warn"
+    unjudged = _boot("gyro-unjudged")
+    assert _hcell(unjudged, "motion-gyro") == "GYRO -- sensor not detected"
+    assert _tone(unjudged, "motion-gyro") == "none"
+
+
+@_NODE_ONLY
+def test_dom_stale_updatedTurnsAmber_theHealthBlockIsNotABand():
+    card = _boot("stale-imu")
+    assert card["attrs"]["data-stale"] == "true"
+    assert _hcell(card, "motion-updated") == "UPDATED 3 s ago"
+    assert _tone(card, "motion-updated") == "warn"
+    health = _one(card, "motion-health")
+    assert "motion-band" not in _classes(health) and "hidden" not in health["attrs"]
+
+
+@_NODE_ONLY
+def test_dom_beforeTheFirstRead_theHealthBlockGivesWayToLoading():
+    early = _boot("climb-accel", routes={})
+    assert "hidden" in _one(early, "motion-health")["attrs"]

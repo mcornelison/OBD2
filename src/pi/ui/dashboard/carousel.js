@@ -3101,6 +3101,9 @@
     // US-896-a (closes US-821's text): the AHRS has no heading YET. The NAV
     // badge is this text upper-cased, STARTING UP (spec s4.2).
     heading_unseeded: "starting up",
+    // US-892-c (Atlas C2): the pitch fusion has not seeded YET -- the same
+    // class of fact as heading_unseeded. The Motion GYRO cell reads it.
+    pitch_unseeded: "starting up",
   };
 
   function imuReason(data, field) {
@@ -3548,6 +3551,98 @@
     };
   }
 
+  // US-892-c: the IMU health block (spec s3/s4 M-7). Each cell READS
+  // states/imu and judges nothing: COMPASS is the provider's headingCalibrated,
+  // GYRO its pitch reason, TILT FIX its ZUPT bias and stop count, UPDATED the
+  // age of its ts. A cell is {value, tone, sub}; tone is the status colour --
+  // ok / warn for the status cells, plain for a value, none for '--' + reason
+  // (Iris M5). Unknown is never green.
+  var MOTION_NO_FEED_TEXT = "no motion feed";
+  var MOTION_NO_TIMESTAMP_TEXT = "no timestamp";
+  // The legacy engine publishes no headingCalibrated and no reason for it
+  // (Atlas C1, reconciled X3: Iris's Motion wording, not NAV's chip text).
+  var MOTION_CALIBRATION_ABSENT_TEXT = "not published";
+  // stopCount 0 means the bias is NOT measured yet: 0.0 is not a reading
+  // (imu_state_bridge buildImuState).
+  var MOTION_NO_STOPS_TEXT = "no stops yet";
+  var MOTION_TILT_ABSENT_TEXT = "not published";
+  // The UPDATED age stops counting here; the amber already says "long ago"
+  // (Iris M7).
+  var MOTION_AGE_CAP_SEC = 999;
+
+  // A whole, non-negative count with a FIXED ',' separator. Never
+  // toLocaleString: the kiosk's locale is not ours to assume (Iris L6, shared
+  // with the Light page).
+  function fmtThousands(n) {
+    return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  function healthCell(value, tone, sub) {
+    return { value: value, tone: tone, sub: sub === undefined ? null : sub };
+  }
+
+  // Floor for the shown number, clamped at 0 (a future ts reads '0 s ago');
+  // the stale DECISION keeps the raw float, strict age > imuSec. An undated
+  // payload has no age to show (Iris M7).
+  function motionUpdatedCell(data, nowMs, staleSec) {
+    var age = readAgeSec(data, nowMs);
+    if (age === null) return healthCell("--", "none", MOTION_NO_TIMESTAMP_TEXT);
+    var shown = Math.max(0, Math.floor(age));
+    var text = shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown);
+    return healthCell(text + " s ago", age > staleSec ? "warn" : "plain");
+  }
+
+  // Only a boolean is a verdict. Absent: the provider's own reason when it
+  // publishes one, else 'not published' -- never 'not calibrated' (Atlas C1).
+  function motionCompassCell(data) {
+    if (data.headingCalibrated === true) return healthCell("calibrated", "ok");
+    if (data.headingCalibrated === false) return healthCell("not calibrated", "warn");
+    var reasons = isObj(data.reasons) ? data.reasons : {};
+    return healthCell(
+      "--", "none",
+      typeof reasons.headingCalibrated === "string" && reasons.headingCalibrated
+        ? imuReason(data, "headingCalibrated")
+        : MOTION_CALIBRATION_ABSENT_TEXT
+    );
+  }
+
+  // The mount-tilt bias in degrees, 2 decimals, signed from the ROUNDED value,
+  // with its provenance 'from N stops' (Iris M2/M6). A measurement, never
+  // coloured.
+  function motionTiltCell(data) {
+    var n = data.stopCount;
+    if (n === 0) return healthCell("--", "none", MOTION_NO_STOPS_TEXT);
+    if (!isNum(n) || n < 0 || !isNum(data.biasRad)) {
+      return healthCell("--", "none", MOTION_TILT_ABSENT_TEXT);
+    }
+    return healthCell(
+      fmtSignedFixed(data.biasRad * 180 / Math.PI, 2) + "°", "plain",
+      "from " + fmtThousands(n) + (n === 1 ? " stop" : " stops")
+    );
+  }
+
+  // Atlas C2: 'plausible' ONLY when the guard ran and passed -- a published
+  // finite pitch. A dead or unseeded IMU is '--' + its reason, never green.
+  function motionGyroCell(data) {
+    var reasons = isObj(data.reasons) ? data.reasons : {};
+    if (reasons.pitchDeg === REASON_GYRO_IMPLAUSIBLE) return healthCell("implausible", "warn");
+    if (isNum(data.pitchDeg)) return healthCell("plausible", "ok");
+    return healthCell("--", "none", imuReason(data, "pitchDeg"));
+  }
+
+  function motionHealthView(data, nowMs, staleSec) {
+    if (!isObj(data)) {
+      var none = healthCell("--", "none", MOTION_NO_FEED_TEXT);
+      return { updated: none, compass: none, tilt: none, gyro: none };
+    }
+    return {
+      updated: motionUpdatedCell(data, nowMs, staleSec),
+      compass: motionCompassCell(data),
+      tilt: motionTiltCell(data),
+      gyro: motionGyroCell(data),
+    };
+  }
+
   // The whole top of the Motion card. `waitedMs` is the US-700 wait for a
   // feed that has never answered: inside the bound the card reads LOADING
   // (Atlas Q-1), after it '--' + reason. Stale is the ONE IMU key shared with
@@ -3572,6 +3667,7 @@
         data, "gLat", "CORNER R", "CORNER L", MOTION_LAT_NONE_LABEL,
         "peak L" + fmtPeak(peaks.leftG) + " R" + fmtPeak(peaks.rightG)
       ),
+      health: motionHealthView(data, nowMs, staleSec),
     };
   }
 
@@ -5555,12 +5651,39 @@
         loading.hidden = !view.loading;
       }
       for (var b = 0; b < bands.length; b++) bands[b].hidden = view.loading;
+      var health = card.querySelector(".motion-health");
+      if (health) health.hidden = view.loading;
       card.setAttribute("data-stale", view.stale ? "true" : "false");
       if (view.loading) return;
       paintMotionCell(card.querySelector(".motion-pitch"), view.pitch, ".motion-sub");
       paintMotionCell(card.querySelector(".motion-lon"), view.lon, ".motion-note");
       paintMotionCell(card.querySelector(".motion-lat"), view.lat, ".motion-note");
       paintMotionGraph(card.querySelector(".motion-grade"), graph);
+      renderMotionHealth(health, view.health);
+    }
+
+    // US-892-c: the health block. data-tone carries the status colour (the
+    // stylesheet maps it to a token); the sub-line is the reason or, for TILT
+    // FIX, the provenance. The block is not a .motion-band, so it never dims.
+    function renderMotionHealth(block, health) {
+      if (!block || !health) return;
+      var cells = [
+        [".motion-updated", health.updated], [".motion-compass", health.compass],
+        [".motion-tilt", health.tilt], [".motion-gyro", health.gyro],
+      ];
+      for (var i = 0; i < cells.length; i++) {
+        var cell = block.querySelector(cells[i][0]);
+        var v = cells[i][1];
+        if (!cell || !v) continue;
+        cell.setAttribute("data-tone", v.tone);
+        var value = cell.querySelector(".motion-hv");
+        if (value) value.textContent = v.value;
+        var sub = cell.querySelector(".motion-hsub");
+        if (sub) {
+          sub.textContent = v.sub || "";
+          sub.hidden = !v.sub;
+        }
+      }
     }
 
     // US-896-a: the NAV tape (spec s3) -- full width, the 90-degree window over
