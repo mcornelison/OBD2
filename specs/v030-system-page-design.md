@@ -74,7 +74,7 @@ Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, 
 ### 4.0 The colour rule (🔴 load-bearing)
 **Amber means counted, and counted means amber.** Every amber element is a member of the verdict count, and every counted member shows amber somewhere on the page (AC 7). An amber row under `ALL OK` is a false instrument.
 - **Expected states are neutral and uncounted:**
-  - Bluetooth `connecting…` at key-on;
+  - Bluetooth trying to link, at key-on and for hours on a parked key-off car (Atlas S110 G1);
   - WiFi on another network, `weak` WiFi, or WiFi `down`;
   - the UPS on battery;
   - a DEGRADED / REPLACE battery verdict.
@@ -109,7 +109,7 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
 | Layer state | Step look | Counted |
 |---|---|---|
 | `up` | `--green-ok` outlined step | no |
-| `connecting` (first link since key-on) | `--text-secondary`, neutral | no (CIO 2026-10-16; still closes US-713, because the step and sentence say `connecting…`) |
+| `connecting` (not linked; an attempt is under way or due) | `--text-secondary`, neutral | no (CIO 2026-10-16; still closes US-713, because the step is visible and the sentence says what is happening) |
 | `retrying` (was up this session, dropped) | `--amber-warn` **only on a member's layer**; otherwise `--text-secondary` (I2) | only `bt` |
 | `down` | `--amber-warn` on a member's layer; otherwise `--text-tertiary`, solid outline | only if it's a member (`bt`, or `adapter` while BT is up) |
 | `null` (not read this session) | `--text-tertiary`, **dashed** outline, label kept | never |
@@ -122,13 +122,13 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
 
 | First non-up layer → state | Sentence | Note |
 |---|---|---|
-| bt `connecting` | `Bluetooth connecting… (takes ~1 min)` | |
+| bt `connecting` | `Bluetooth trying to link (key off?)` | **G1:** key off and parked, rfcomm releases after each failed attempt, so this is the steady state for hours (`n-n-n`). The old `(takes ~1 min)` was a promise that never comes true there, and it's **dropped everywhere**: the page can't know when a link will come. The words are true at key-on and on a parked car alike, and the `(key off?)` is the same honest guess as the ECU's |
 | bt `down` / `retrying`, no member | `Bluetooth not linked` / `Bluetooth retrying…` | fallback only: the S109 rules make these a member |
 | bt `null` | `Bluetooth not read yet` | covers "all null": later layers don't speak |
 | adapter `connecting` | `adapter connecting…` | |
 | adapter `down` / `retrying`, no member | `adapter not answering` / `adapter retrying…` | fallback only: with BT up, these are a member |
 | adapter `null` | `adapter not read yet` | |
-| ecu `connecting` | `ECU connecting…` | |
+| ecu `connecting` | `ECU not answering (key off?)` | **G1:** with BT + adapter up, this is the parked car *during* an attempt (`g-g-n`). It takes the same words as `down` so the ARCH-061 fixture and the attempt read alike. Not Atlas's `not answering yet`, because `yet` promises an answer a parked car never gives |
 | ecu `down` or `retrying` | `ECU not answering (key off?)` | never a member; retrying after key-off is normal (S109 G1) |
 | ecu `null` | `ECU not read yet` | |
 | all `up` | `ECU answering` | |
@@ -341,13 +341,13 @@ The lock is `engineParked.parked === false`, the ONE US-511 debounce: **parked =
 
 ## 6. Acceptance criteria (draft)
 1. Fixtures render per §4 at 480×320 (screenshot).
-2. **ARCH-061 fixture** (BT + adapter up, ECU silent):
+2. **ARCH-061 fixtures** (`arch061-during-attempt`: BT + adapter up, ECU connecting or down):
    - chain `g g n`;
    - the sentence is `ECU not answering (key off?)`;
    - the verdict is **not** incremented;
    - the top bar shows the 3 dots;
    - **no element reads "Bluetooth down"**.
-3. **Connecting fixture:** BT step neutral, `Bluetooth connecting… (takes ~1 min)`, verdict **not** incremented. **Retrying fixture:** BT step amber, verdict incremented, sentence = the `bt` member's `reason` verbatim.
+3. **Connecting fixture:** BT step neutral, `Bluetooth trying to link (key off?)`, verdict **not** incremented. No element anywhere reads `takes ~1 min`. **Retrying fixture:** BT step amber, verdict incremented, sentence = the `bt` member's `reason` verbatim.
 4. **ARCH-062:**
    - A previous-session ECU success with this session silent renders grey, never green.
    - A `null` layer renders a **dashed** step (and a hollow top-bar dot), never the solid `down` look.
@@ -384,7 +384,8 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 
 | Fixture | Exercises |
 |---|---|
-| `arch061-key-off-home` | AC 2: BT + adapter up, ECU down, home, `ALL OK` |
+| `arch061-during-attempt` | AC 2 (G1): key off, parked, home; BT + adapter up, ECU `connecting` (`g-g-n`) ⇒ `ECU not answering (key off?)`, `ALL OK` |
+| `arch061-between-attempts` | AC 3 (G1): key off, parked, home; all three `connecting` (`n-n-n`) ⇒ `Bluetooth trying to link (key off?)`, every step neutral, `ALL OK` |
 | `all-ok-driving` | all `up`, recording, home, external power |
 | `bt-connecting` | AC 3, neutral, uncounted |
 | `bt-retrying` | AC 3, `bt` member, `1 ISSUE`, reason verbatim |
