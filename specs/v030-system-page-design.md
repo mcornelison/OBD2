@@ -1,7 +1,7 @@
 # V0.30 System page (+ detail screens + Settings) — design spec
 
 **Author:** Iris (UI/UX) · **Date:** 2026-10-12 · **Status:** CIO-APPROVED design (brainstorm 2026-10-12). **S110 fold 2026-10-19 (UIDEV-007):**
-- the CIO's rulings of 2026-10-19 (UPS row, power mode, ⋮ while moving, brightness);
+- the CIO's rulings of 2026-10-19 (UPS row, power mode, ⋮ while not parked, brightness, and auto-dim ends settable; Marcus C1–C4 corrections folded the same day);
 - the S109 providers as groomed (verdict members, per-layer link, WiFi, sync, Pi health);
 - my S109 words;
 - the shipped Settings band, whose words win.
@@ -9,7 +9,7 @@
 Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, this spec wins.
 
 **Mockup:** `proposals/2026-10-12-v030-system-page.html` → https://claude.ai/artifact/47FkWPp39fVQL3ciKph8ra (**layout A is the locked one**). OEM skin: https://claude.ai/artifact/XXpv3Qn3vUzJj7j4TJfF74.
-- ⚠️ Both mockups predate this fold. They still show `≈ 92 %` and `on car power` on the UPS row, a power-mode row, the auto-dim steppers and an amber weak-WiFi glyph.
+- ⚠️ Both mockups predate this fold. They still show `≈ 92 %` and `on car power` on the UPS row, a power-mode row and an amber weak-WiFi glyph.
 - §4 and §4.7 win over both mockups (§10 lists the gaps).
 
 **DoD lines served:** 7 (themed pages: System + power), 8, 12 (closes ARCH-061 and US-713; carries US-729, US-732, US-742, US-759 as rules)
@@ -35,9 +35,9 @@ Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, 
 | S-8 | WiFi | **Green home · neutral other network (CIO 2026-10-16) · grey down · `--` not read · amber `? not read` only when the read failed** |
 | S-9 | Layout | **A · Verdict and rows** |
 | S-10 | ECU silent with BT + adapter up | **Not an issue**: grey step + `ECU not answering (key off?)` |
-| S-11 | Settings contents | **Brightness override (US-878-c, CIO 2026-10-19 IN)** · auto-rotate · calibration · auto-analyze. ~~Power mode~~ **DROPPED** (CIO 2026-10-19; already deleted from the code by US-668). ~~Auto-dim ends~~: **not a setting** (§4.7) |
+| S-11 | Settings contents | **Brightness override (US-878-c, CIO 2026-10-19 IN)** · **auto-dim ends (`luxMin` / `luxFull`; CIO 2026-10-19 reversed Atlas ruling B, Atlas acked)** · auto-rotate · calibration · auto-analyze. ~~Power mode~~ **DROPPED** (CIO 2026-10-19; already deleted from the code by US-668) |
 | S-12 | UPS power source (CIO 2026-10-19) | **External or battery only, never wall / car.** The Pi can't tell those two apart, and the US-668 ruling stands: if the screen is lit, the power is on |
-| S-13 | ⋮ while moving (CIO 2026-10-19, US-659) | **The ⋮ stays visible and openable while driving.** Its Settings band stays, and **every control is locked read-only while moving** (§4.7.2) |
+| S-13 | ⋮ while not parked (CIO 2026-10-19, US-659) | **The ⋮ stays visible and openable while driving.** Its Settings band stays, and **every control is locked read-only until parked**: engine off, held 8 s (Atlas A7, CIO accepted; §4.7.2) |
 
 **Why three layers and not "powered / BT / ECU" (ARCH-061's wording):** the Pi cannot measure "dongle powered"; an unpowered dongle and an out-of-range one look identical. It **can** measure Bluetooth `Connected`, the ELM adapter answering AT commands (works key-off), and the ECU answering. Those three are the honest layers.
 
@@ -147,8 +147,8 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
   1. `stalled` ⇒ the `capture` member's `reason` verbatim (`OBD feed stalled.`). Otherwise `all 4 feeds writing` (R3: OBD, light, IMU, UPS) while recording, or `not driving` while idle.
   2. **Away:** `wifi.home === false` ⇒ `away from home` (neutral; F-155 at-home sync). If `wifi.home` is null, no home word at all: never guess away.
   3. **Rows:** `sync.rowsWaiting` ⇒ `n rows waiting` (`fmtThousands`, so `12,345`). `sync.edrRowsWaiting` > 0 ⇒ `n event rows`. Zero event rows prints nothing.
-     - `notCounted` true ⇒ `rows not counted`, **never `0 rows waiting`**. A count we didn't take is not zero.
-     - ⚠️ I've assumed `notCounted` is a boolean "the count wasn't taken". If it's a list of tables, the words are `some rows not counted`. Atlas, confirm the type.
+     - `notCounted` is a **list of table names** (US-916: the snapshot tables, named, never folded into `rowsWaiting`). Non-empty ⇒ the count reads `12,345+ rows waiting`: the `+` sits on the number itself, so an ellipsis can never cut it off and leave a total that looks complete. The names are in the DATA detail (`not counted: <table>, <table>`). An empty list prints no `+`.
+     - **Never fold them in and never imply zero:** `rowsWaiting` counts only the counted tables, so the words always say some tables weren't counted.
 - **Sync failing at home** (no member until US-917): the sentence shows the provider's state, neutral, never amber. With no member, amber would break §4.0.
 - **Old fields retired:** `rows` / `pending` no longer exist.
 
@@ -192,7 +192,7 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 | Detail | Contents |
 |---|---|
 | **OBD** | per layer: state, since when, last success `ts`, retry count; adapter MAC; the row's sentence in full |
-| **DATA** | per feed (OBD, light, IMU, UPS): writing / silent + last row age; sync: last data stored (`lastOkTs`, local), rows waiting, event rows waiting, at-home state |
+| **DATA** | per feed (OBD, light, IMU, UPS): writing / silent + last row age; sync: last data stored (`lastOkTs`, local), rows waiting, event rows waiting, `not counted: <table>, <table>` (the `notCounted` names, verbatim), at-home state |
 | **WIFI** | SSID, strength (word + `rssiDbm` dBm), home network yes / no / unknown, the typed `source.wifi.reason` in words. ~~IP~~ (no field) |
 | **UPS** (replaces the Battery Health card; S6) | below |
 | **Pi** (from the verdict line) | below |
@@ -220,17 +220,23 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 - **Version (S7, confirmed):** the same string as the top-bar `#version-chip`, from `.deploy-version` through its ONE existing reader (Atlas P8). It's **not** in the `pi` block, and the page never reads it a second way.
 
 ### 4.7 Settings (F-126, now in V0.30; S9)
-Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **parked or moving** (§4.7.2). The ⋮ is never hidden (S-13). That replaces the 2026-10-15 note "⋮ is hidden while moving".
+Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **parked or not** (§4.7.2). The ⋮ is never hidden (S-13). That replaces the 2026-10-15 note "⋮ is hidden while moving".
 
 | Setting | Control | Key | Apply tag |
 |---|---|---|---|
 | Brightness (US-878-c) | `AUTO` \| `FIXED` segmented, then a `− nn % +` stepper shown only when FIXED | Atlas names the key(s) | the shipped tag its consumer earns (see below) |
+| Auto-dim ends (dim-start, full-bright) | two lux steppers on a **1-2-3-5 ladder** (… 1 · 2 · 3 · 5 · 10 · 20 · 30 · 50 · 100 · 200 · 300 · 500 …), whose ends **cannot cross** | `pi.display.autoDim.luxMin` / `luxFull` (now in `OVERRIDABLE_KEYS`, Atlas) | the tag its consumer earns (Atlas; `autoDim` is re-read on mtime change, US-878-b) |
 | Auto-rotate pages | stepper `OFF · 5 · 8 · 10 · 15 · 30 s` | `pi.display.carousel.autoRotateS`, 0 = off (US-541-a) | `applies on reload` |
 | Calibration mode | `Off` \| `On` | `pi.calibration.mode` | `applies on capture restart` |
 | Auto-analyze after drive | `Off` \| `On` | `pi.analysis.triggerAfterDrive` | `applies on capture restart` |
 
 - **Power mode: DROPPED** (CIO 2026-10-19). It was already deleted from `SETTINGS_SPECS` by US-668, and nothing returns.
-- **Auto-dim ends: NOT a setting.** Atlas ruled B (2026-10-14): `pi.display.autoDim.*` are config.json keys, not in `OVERRIDABLE_KEYS`, and nothing is added to `/settings`. So the lux steppers and the 1-2-3-5 ladder from the 10-13 mockup are **withdrawn**. If the CIO wants them, that's a new ruling for Atlas, not an S110 word.
+- **Auto-dim ends: a setting** (CIO 2026-10-19 reversed Atlas ruling B; Atlas acked).
+  - **What they set:** `luxMin` (dim-start) and `luxFull` (full-bright) are also the DAY/DUSK/NIGHT boundaries on the Light page.
+  - **Steps:** each stepper moves to the next value on the 1-2-3-5 ladder. A stored value off the ladder (e.g. a hand-edited `4`) shows exactly as stored, and the next tap moves to the neighbouring ladder value.
+  - **Ends cannot cross**, enforced twice:
+    - **Page:** dim-start's `+` is disabled when its next step would be ≥ full-bright, and full-bright's `−` when its next step would be ≤ dim-start.
+    - **Seam (Atlas):** `luxFull > luxMin` on the EFFECTIVE values, and a crossing POST returns **400**. A 400 is a rejected write: `couldn't save`, and the stepper snaps back to the re-read value (§4.7.1). The page guard is a convenience; the 400 is the rule.
 - **Shipped words win (S9):**
   - **Apply tags:** the shipped `SETTINGS_APPLY_NOTES`, i.e. `applies on reload` / `applies on capture restart`.
     - My `applies now` / `next drive` / `after a restart` are retired. US-668 deleted `live`, and `test_noDeadApplyStatesAreLeftInTheMapping` fences it.
@@ -239,12 +245,15 @@ Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **par
   - **Status:** the shipped `saving…` / `saved` / `couldn't save`. My `stored: …` / `kept …` are retired: the control itself shows the stored value, and a rejected write snaps the control back to it.
 - **Auto-rotate (S9):** the stepper is the CIO-approved design (2026-10-13). The shipped Off/On (on writes `CAROUSEL_DEFAULTS.autoRotateS`, 8 s) is its two-value subset, and the key and the 0 = off rule are unchanged.
   - **The stepper writes the chosen seconds through the same key.** It needs no new contract, only `kind: "seconds"` getting a stepper instead of `settingsChoices`.
-  - If S110 is tight, Off/On may stay as shipped and the stepper becomes a later story. Nothing else on the page depends on it.
+  - **In S110** (CIO-approved design; Atlas A8 OK).
 - **Brightness stepper (S9):**
-  - **Range:** 20–100 % in 5 % steps. ⚠️ **The 20 % floor and 5 % step are my design defaults (10-13 mockup), not sourced numbers.**
-  - **What is load-bearing:** FIXED can never reach 0 % or a level the panel can't be read at. A STOP takeover forces full brightness regardless (`brightnessAlarmActive`), so an alarm is never dimmed by the override.
-  - **Which keys:** Atlas puts the floor and step in the validator next to `pi.display.autoDim.minLevel` (default 0.15) so the page reads them, never literals.
-  - **CIO judgement in the car (AC 12) is the source** for the floor.
+  - **Floor = the EFFECTIVE `pi.display.autoDim.minLevel`** (Atlas A5, the US-627 coupling), never a literal. Shipped config is 0.75, so FIXED runs **75–100 %**.
+    - There's no separate 20 % floor: that was my unsourced 10-13 default, and it's withdrawn.
+    - If `minLevel` is off the 5 % grid, the lowest step is `minLevel` itself, then the next multiple of 5.
+    - If the effective `minLevel` can't be read, the FIXED stepper is disabled and reads `Unknown`. A guessed floor would be a fabricated one.
+  - **Step:** 5 % (my operator choice, kept).
+  - **STOP still wins:** a STOP takeover forces full brightness regardless (`brightnessAlarmActive`), so an alarm is never dimmed by the override.
+  - **CIO judgement in the car (AC 12)** still decides whether the floor is right. A different floor is a `minLevel` change, not a second number.
 - **Each change saves on its own** (CIO); there's no Save button.
 - The Light page shortcut opens Settings **scrolled to Brightness**.
 - A footer line points to the ⋮ menu for service controls; they never appear in Settings.
@@ -252,10 +261,10 @@ Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **par
 **Visual design (CIO-approved 2026-10-13; mockup https://claude.ai/artifact/Vfsd6VugUGfoQAMYJZPo6R, `proposals/2026-10-13-v030-settings-screen.html`):**
 - **Top bar:** `‹ BACK` (left) · clock · `SETTINGS` (page-name slot).
 - **Two sections**, headed in `--accent`:
-  - **DISPLAY:** brightness, rotate pages;
+  - **DISPLAY:** brightness, auto-dim range, rotate pages;
   - **SYSTEM:** calibration mode, analyze each drive.
 - **Rows are stacked:** name + apply tag; description; control; status. **Setting names are upper case**, since the Michroma subset has no lower case.
-- **Controls:** steppers `− value +` with 40 px targets; segmented choices for `AUTO|FIXED`; switches for the two booleans.
+- **Controls:** steppers `− value +` with 40 px targets (brightness, the two lux ends, rotate pages); segmented choices for `AUTO|FIXED`; switches for the two booleans.
 
 One list, which **scrolls with a visible scrollbar** if it's taller than the panel (no silent clip).
 
@@ -264,21 +273,23 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
 - **On tap:** `saving…`, then confirm **from the re-read** (`settingsSaveResult`), or snap back + `couldn't save`. Never optimistic success.
 - **Service controls:** the destructive service controls stay in their own band below, with confirms (unchanged).
 
-#### 4.7.2 Locked while moving (S-13; S9)
-"Moving" is `engineParked.parked === false`, the ONE US-511 debounce. Never a second test.
-- **The band stays visible and readable while moving.** Every value shows its real stored value, as parked.
+#### 4.7.2 Locked until parked (S-13; S9)
+The lock is `engineParked.parked === false`, the ONE US-511 debounce: **parked = engine OFF held 8 s** (Atlas A7, CIO accepted). Never a second test.
+- ⚠️ **The lock is not "moving".** It also locks a stationary car with the engine idling, and for 8 s after the engine stops, so no word on the glass may say `moving`.
+- **The band stays visible and readable while locked.** Every value shows its real stored value, as parked.
 - **Every control is locked:**
   - `--text-tertiary` ink, no fill on the active segment (the active one keeps a `--text-tertiary` outline so the stored value is still readable);
   - no pointer, and steppers show no `−` / `+`;
   - a tap does nothing: no write, no `saving…`.
-- **One line at the top of the band**, mono `--fs-meta`, `--text-secondary`: **`🔒 car is moving — view only`** (25 characters, 225.7 px). That's the same `🔒 … — car is moving` vocabulary as the Warnings clear lock.
+- **One line at the top of the band**, mono `--fs-meta`, `--text-secondary`: **`🔒 view only — engine off to change`** (34 characters, 307.0 px).
+  - It's an instruction, so it's true in every locked state: idling at the kerb, driving, and the 8 s hold. `engine on — view only` would be false during the hold; `car is moving` is false whenever the car is idling.
   - It's not Michroma: it has lower case, `—` and `🔒`.
   - Apply tags and status lines stay as they are.
-- **A write in flight when motion starts finishes honestly:** its re-read still confirms or snaps back. Locking must never abandon a write mid-way and leave `saving…` on the glass.
+- **A write in flight when the lock engages finishes honestly:** its re-read still confirms or snaps back. Locking must never abandon a write mid-way and leave `saving…` on the glass.
 - **Parking unlocks** on the same debounce, with no reload.
-- **SETTINGS › on System** follows the same rule. It's always shown and opens the locked view while moving, because it only navigates (R5 holds, like the Warnings icon).
+- **SETTINGS › on System** follows the same rule. It's always shown and opens the locked view while not parked, because it only navigates (R5 holds, like the Warnings icon).
 - **System row taps** (details) stay **parked-only** as before.
-- The service band's own moving rules are US-659's and unchanged.
+- The service band's own rules are US-659's and unchanged.
 
 ## 5. Data contract
 
@@ -293,7 +304,7 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
 | Power source | `system-status.power.source` (`external` \| `battery`) | exists (US-668) | — |
 | Pi health | `system-status.pi {cpuTempC, throttled, throttledHex, throttledSinceBoot, diskFreeBytes, diskThresholdBytes, diskVerdict, uptimeS, overLimit[], ts}` | **S109 US-877-a** | Atlas / Ralph |
 | Version | `.deploy-version` via the `#version-chip` reader | exists (Atlas P8) | — |
-| Settings | `/settings` overlay (`OVERRIDABLE_KEYS`), re-read on write | exists; **brightness key(s) new, US-878-c** | Atlas |
+| Settings | `/settings` overlay (`OVERRIDABLE_KEYS`), re-read on write | exists; **brightness key(s) new, US-878-c**; **`autoDim.luxMin` / `luxFull` join `OVERRIDABLE_KEYS`** with the cross-key rule `luxFull > luxMin` on effective values (POST 400) | Atlas |
 | Issue counting | the verdict | **provider-derived** (Atlas 08-20 rule) | Atlas |
 
 ## 6. Acceptance criteria (draft)
@@ -317,20 +328,22 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
    - `on battery` is not amber;
    - no `min to cutoff` anywhere on the page or its details.
 7. **🔴 The amber set equals the member set:** every amber element maps to exactly one `verdict.members[].key`, and every member has one (US-759). Assert it on every fixture.
-8. **While moving:**
+8. **While not parked** (engine on, or off < 8 s; test both an idling-stationary and a driving fixture):
    - row taps open nothing;
    - SETTINGS › and ⋮ open the Settings band locked;
    - no control writes;
-   - `🔒 car is moving — view only` is present.
+   - `🔒 view only — engine off to change` is present, and no element on the page says `moving`.
    - **In-flight write:** one in flight across the transition still ends in `saved` or `couldn't save`.
 9. **Settings:**
    - a rejected write snaps back with `couldn't save`;
    - the success state shows the re-read value;
    - the apply tags are exactly the shipped `SETTINGS_APPLY_NOTES` values;
-   - no power-mode row and no auto-dim row exist.
+   - no power-mode row exists;
+   - the auto-dim ends cannot cross: the page guard disables the crossing step, and a crossing write that reaches the seam gets a 400, shows `couldn't save` and snaps back;
+   - the FIXED floor equals the effective `minLevel` (75 % on shipped config), and no literal floor exists in carousel.js.
 10. Long row text ellipsizes on one line (no wrap overflow, no clip).
 11. No literal colour or px in this page's CSS. The chain SVG uses relative units only.
-12. **DoD (R15): CIO judgement in the car,** including the brightness floor.
+12. **DoD (R15): CIO judgement in the car,** including whether the `minLevel` floor is right.
 13. **Words:** every member sentence on the page is the provider's `reason` byte for byte. `carousel.js` contains none of the S109 reason strings (a file-wide grep gate, as US-899's `PULL OVER` one).
 14. **Top bar:** the left cluster with the chain fits its 168.6 px side track, by `test_topbar_three_column_grid`'s measured model.
 
@@ -348,7 +361,7 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 | `prev-session-ecu-stale` | AC 4 |
 | `capture-stalled` | `capture` member, value `stalled`, reason verbatim |
 | `away-from-home` | `wifi.home false`, `away from home`, rows waiting, uncounted |
-| `rows-not-counted` | `notCounted` ⇒ `rows not counted`, never `0` |
+| `rows-not-counted` | `notCounted: ["<table>", "<table>"]` ⇒ `12,345+ rows waiting` on the row, the names in the detail, never folded into the count |
 | `wifi-weak-home` | `home` green, `weak signal`, glyph neutral |
 | `wifi-not-read` | `null`, no reason ⇒ `--`, uncounted |
 | `wifi-nmcli-absent` | dev box ⇒ `--`, `no WiFi tool on this host`, uncounted |
@@ -360,7 +373,10 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 | `two-issues` | `bt` + `pi`: `2 ISSUES`, the amber set equals the member set |
 | `verdict-absent` | `--`, never `ALL OK` |
 | `settings-write-rejected` | AC 9 |
-| `settings-moving-locked` | AC 8, incl. one in-flight write |
+| `settings-lux-cross-rejected` | AC 9: a crossing write gets a 400 ⇒ `couldn't save`, snap back |
+| `settings-floor-from-minlevel` | AC 9: FIXED floor = effective `minLevel` (0.75 ⇒ 75 %); `minLevel` unreadable ⇒ FIXED disabled, `Unknown` |
+| `settings-locked-idling` | AC 8: stationary, engine on |
+| `settings-locked-driving` | AC 8, incl. one in-flight write |
 
 **Retired:** `ups-low`. There's no UPS member (Spool + Atlas P5), so the fixture had no basis.
 
@@ -369,20 +385,15 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 - battery runtime (capacity unmeasured);
 - managing networks (Atlas WiFi ruling: display only);
 - the audio alerts setting (US-538, deferred);
-- auto-dim range as a setting (Atlas ruling B);
 - the sync verdict member (US-917).
 
 ## 9. Open items
 - **Atlas:**
-  - the brightness override key(s), the floor/step keys and their apply tag (US-878-c);
-  - the `notCounted` type (§4.3);
+  - the brightness override key(s) and the apply tags for brightness and auto-dim (US-878-c);
   - whether `restedHistory` is ever reader-facing (with Spool).
 - **CIO:**
-  - the brightness floor, in the car;
-  - whether the auto-dim range should become a setting (a new ruling; withdrawn here).
-- **Marcus:**
-  - the stepper vs the shipped Off/On for auto-rotate, if S110 is tight (§4.7);
-  - ARCH-061 + US-713 close through this design.
+  - whether the effective `minLevel` floor is right, in the car.
+- **Marcus:** ARCH-061 + US-713 close through this design.
 
 ## 10. Mockup gaps (the spec wins)
 Both System mockups (2026-10-12, OEM 2026-10-15) and the Settings mockup (2026-10-13) predate this fold. **Where they differ, this spec wins:**
@@ -392,9 +403,10 @@ Both System mockups (2026-10-12, OEM 2026-10-15) and the Settings mockup (2026-1
 - **WiFi:** the weak glyph is amber (now neutral); `? not read` shows for every unread state (now `--` unless `read_failed`); it says `strong` (now `good signal`).
 - **OBD:** no `null` (dashed) step; old sentences (now the member reasons).
 - **Settings:**
-  - a power-source row and the auto-dim lux steppers (both gone);
+  - a power-source row (gone);
+  - a 20 % brightness floor (now the effective `minLevel`);
   - the apply tags `applies now / next drive / after a restart` and status `stored: … / kept …` (now the shipped words);
-  - no locked-while-moving state.
+  - no locked state.
 - **⋮:** shown hidden while moving (now always visible).
 
 The mockups can be brought up on a later lease. Nothing in S110's build reads them.
