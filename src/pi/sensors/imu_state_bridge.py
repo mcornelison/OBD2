@@ -138,6 +138,9 @@
 # 2026-10-14    | Rex (US-882-b) | New states/grade-history: GradeHistory buckets
 #               |              | each states/imu write's gradePct on its ts
 #               |              | (pi.display.gradeHistory.intervalSec/windowSec).
+# 2026-10-18    | Rex (US-892-a) | resetPeaks(startTs): drive start clears the
+#               |              | peaks and sets sinceTs (GPeakTracker.reset),
+#               |              | under a peaks-only lock (cross-thread caller).
 # ================================================================================
 ################################################################################
 
@@ -1125,7 +1128,7 @@ def _vec3(value: Any) -> tuple[float, float, float] | None:
 
 
 class GPeakTracker:
-    """The accel / brake / left / right g peaks since the bridge started (US-882-a).
+    """The accel / brake / left / right g peaks this drive (US-882-a, US-892-a).
 
     Each peak is the MAXIMUM of a moving mean over ``smoothingSec`` (Atlas M-B),
     not of raw samples: a 20 ms pothole spike of 1.2 g is not a 1.2 g stop. A mean
@@ -1141,7 +1144,8 @@ class GPeakTracker:
 
     Lifetime is the bridge's: built once per eclipse-obd process, so a kiosk
     restart (a browser reload) never touches it. ``breakRun`` restarts only the
-    moving window (sensor absent, accel gated); the peaks survive it.
+    moving window (sensor absent, accel gated); the peaks survive it. ``reset``
+    (drive start, US-892-a) clears the peaks so they mean THIS DRIVE.
     """
 
     def __init__(self, smoothingSec: float = DEFAULT_IMU_PEAKS_SMOOTHING_SEC) -> None:
@@ -1171,6 +1175,22 @@ class GPeakTracker:
         """Restart the moving window; the peaks and sinceTs are kept."""
         self._window.clear()
         self._runStart = None
+
+    def reset(self, sinceTs: str | None) -> None:
+        """Clear the four peaks to None and label them from ``sinceTs``.
+
+        The moving window restarts too (breakRun): a mean straddling the reset
+        would carry samples from before the drive into its first peak. A later
+        fold raises from None and never relabels: sinceTs stays the drive start.
+        A None ``sinceTs`` (no usable drive-start ts) leaves the next fold to
+        label it.
+
+        Args:
+            sinceTs: The drive start's canonical UTC event ts, or None.
+        """
+        self.breakRun()
+        self._peaks = dict.fromkeys(_PEAK_FIELDS)
+        self._sinceTs = sinceTs
 
     def fold(self, gLon: float, gLat: float, capture: float, tsUtc: str) -> None:
         """Fold one QUALIFYING sample (horizontal g resolved, event ts present).
@@ -1522,6 +1542,10 @@ class ImuStateBridge:
         # US-882-a: built HERE and nowhere else, so the peaks reset exactly when
         # the bridge does -- once per eclipse-obd process, never on a kiosk restart.
         self._peaks = GPeakTracker(peaksSmoothingSec)
+        # US-892-a: the ONE cross-thread touch on this bridge -- the drive-start
+        # reset runs on the orchestrator's thread while the drain folds -- so the
+        # peaks alone take a lock; the rest of the running state stays drain-only.
+        self._peaksLock = threading.Lock()
         # US-882-b: likewise built only here -- the grade history resets when the
         # bridge starts, never when the kiosk does.
         self._gradeHistory = GradeHistory(gradeHistoryIntervalSec, gradeHistoryWindowSec)
@@ -1854,7 +1878,8 @@ class ImuStateBridge:
             diagnostics["headingCalibrated"] = self._pitchFusion.headingCalibrated
         # US-882-a: every write path spreads this dict into buildImuState, so
         # peaks ride the live, sensor-absent and gate-refusal writes alike.
-        diagnostics["peaks"] = self._peaks.snapshot()
+        with self._peaksLock:
+            diagnostics["peaks"] = self._peaks.snapshot()
         return diagnostics
 
     def _recordDerived(self, sample: Any, capture: float) -> None:
@@ -2048,7 +2073,22 @@ class ImuStateBridge:
         if horizontal is None:
             return
         gLon, gLat = horizontal
-        self._peaks.fold(gLon, gLat, capture, tsUtc)
+        with self._peaksLock:
+            self._peaks.fold(gLon, gLat, capture, tsUtc)
+
+    def resetPeaks(self, startTs: str | None) -> None:
+        """Clear the peaks at drive start so they mean THIS DRIVE (US-892-a).
+
+        Called from the orchestrator's drive-start handler, off the drain
+        thread. The next states/imu write carries the cleared peaks.
+
+        Args:
+            startTs: The drive start's canonical UTC event ts (the orchestrator's
+                _tripEventTs, so it equals system-status drive.distanceSinceTs),
+                or None when the start time is unusable.
+        """
+        with self._peaksLock:
+            self._peaks.reset(startTs)
 
     def _updateGravity(self, accel: tuple[float, float, float], capture: float) -> None:
         """Fold one accel reading into the low-pass gravity estimate.

@@ -85,6 +85,8 @@
 # 2026-10-15    | Rex (US-890-e)| fuel-economy recent: a RecentWindow under
 #               |              | _fuelLock fed MAF air + the SPEED km delta (taken
 #               |              | after the trip lock is released; Atlas G2).
+# 2026-10-18    | Rex (US-892-a)| _resetImuPeaks: drive start clears the states/imu
+#               |              | peaks, labelled by _tripEventTs (== distanceSinceTs).
 # ================================================================================
 ################################################################################
 
@@ -1222,6 +1224,21 @@ class CardStateEmitterMixin:
             integrator.reset()
             self._tripDistanceKm = None
             self._tripDistanceSinceTs = self._tripEventTs(driveStartTime)
+
+    def _resetImuPeaks(self, driveStartTime: Any) -> None:
+        """Clear the states/imu g peaks at drive start (US-892-a, Atlas ruling 4).
+
+        The label is built by :meth:`_tripEventTs`, the trip reset's own
+        conversion, so peaks.sinceTs equals drive.distanceSinceTs byte-for-byte.
+        No bridge (IMU disabled) -> nothing to reset.
+
+        Args:
+            driveStartTime: The drive session's start time (its event ts).
+        """
+        bridge = getattr(self, "_imuStateBridge", None)
+        if bridge is None:
+            return
+        bridge.resetPeaks(self._tripEventTs(driveStartTime))
 
     def _gatherTripDistance(self) -> tuple[float | None, str | None]:
         """Return (distanceKm, distanceSinceTs); (None, None) when not wired."""

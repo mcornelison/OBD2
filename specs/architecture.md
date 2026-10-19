@@ -6321,7 +6321,7 @@ never skipped, as `(sensor_reader.tslGainCodeForLabel(gain), integration_ms)` wi
 `None` for an unrecorded value (Atlas RULED 2026-10-14). Every replayed row is written;
 a row with no recorded gain is written with `gain` null.
 
-#### `states/imu` `peaks` -- accel, brake and cornering g since the bridge started (US-882-a)
+#### `states/imu` `peaks` -- accel, brake and cornering g this drive (US-882-a, US-892-a)
 
 **Producer:** `src/pi/sensors/imu_state_bridge.py` (`ImuStateBridge`, see "Bus → `states/imu`
 DERIVED bridge" above). `states/imu` gains one key, `peaks`; every other key, its value and
@@ -6336,7 +6336,7 @@ the write cadence are unchanged.
 | `brakeG` | max of `-gLon` over moving means < 0. |
 | `rightG` | max of the moving-mean `gLat` over means > 0 (`gLat` + = RIGHT). |
 | `leftG` | max of `-gLat` over moving means < 0. |
-| `sinceTs` | event ts of the first sample folded since the bridge was constructed. |
+| `sinceTs` | the drive start's event ts after a drive start; before any drive start this process, the event ts of the first sample folded since the bridge was constructed. |
 
 All four g values are non-negative magnitudes. A value with no qualifying sample yet is
 `null`, never 0.
@@ -6354,8 +6354,18 @@ All four g values are non-negative magnitudes. A value with no qualifying sample
 - **Qualifying sample.** A sample folds only when horizontal g resolves: not
   `tilt_unresolved`, accel not gated, `ts` not null.
 - **Lifetime.** `peaks` appears in every `states/imu` write, including the sensor-absent and
-  gate-refusal writes, unchanged. Peaks reset only when the bridge is constructed, which
-  happens once per eclipse-obd process. A kiosk restart does not touch them.
+  gate-refusal writes, unchanged. A kiosk restart does not touch them.
+- **Peaks reset on drive start (US-892-a, Atlas ruling 4 2026-10-14).** The peaks mean THIS
+  DRIVE. `EventRouter._handleDriveStart` calls `_resetImuPeaks` beside `_resetTripDistance`,
+  exception-isolated like it; that calls `ImuStateBridge.resetPeaks(startTs)`, which clears the
+  four peaks to `null` and sets `sinceTs = startTs` (`GPeakTracker.reset`). `startTs` is built
+  by the orchestrator's `_tripEventTs`, the trip reset's own conversion, so `peaks.sinceTs`
+  equals system-status `drive.distanceSinceTs` byte-for-byte (`null` when the start time is
+  unusable; the next fold then labels the peaks). A peak folded after the reset is the first
+  value and does not move `sinceTs`. The reset also restarts the moving window (`breakRun`,
+  itself unchanged), so no mean straddles the drive start. The bridge is otherwise drain-thread-only, so the peaks alone take a lock: the reset
+  runs on the drive detector's thread. No IMU bridge (IMU disabled) means no call. Otherwise
+  peaks reset only when the bridge is constructed, once per eclipse-obd process.
 
 #### `states/grade-history` -- a grade point per 10 s over 15 min (US-882-b)
 
