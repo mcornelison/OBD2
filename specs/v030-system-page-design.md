@@ -1,7 +1,7 @@
 # V0.30 System page (+ detail screens + Settings) — design spec
 
 **Author:** Iris (UI/UX) · **Date:** 2026-10-12 · **Status:** CIO-APPROVED design (brainstorm 2026-10-12). **S110 fold 2026-10-19 (UIDEV-007):**
-- the CIO's rulings of 2026-10-19 (UPS row, power mode, ⋮ while not parked, brightness, and auto-dim ends settable; Marcus C1–C4 corrections folded the same day);
+- the CIO's rulings of 2026-10-19 (UPS row, power mode, ⋮ while not parked, brightness, and auto-dim ends settable; Marcus C1–C4 corrections and the S110 draft's I1–I13 gaps folded the same day);
 - the S109 providers as groomed (verdict members, per-layer link, WiFi, sync, Pi health);
 - my S109 words;
 - the shipped Settings band, whose words win.
@@ -66,7 +66,7 @@ Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, 
   - value `--fs-label` mono, in its state colour;
   - sentence `--fs-meta` mono, 9.03 px per character on the Pi's DejaVu Sans Mono, ≈ 40 characters in the ≈ 368 px sentence column.
 - These rows are **read parked or glanced for colour**. The verdict is the driver-glance element (`--fs-primary`).
-- **Every row is ≥ 44 px tall** (a touch target when parked).
+- **Every row is ≥ 44 px tall** (a touch target when parked), through a new token **`--row-min: 44px`** in the `dashboard.css` token block beside `--tap-min: 40px` (I10). No literal px in the page's CSS.
 - **Long text ellipsizes on one line**, and the full text is in the row's detail. That's no silent clip: the ellipsis is the visible sign.
 
 ## 4. Behaviour
@@ -99,7 +99,8 @@ Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, 
   - **`sync`:** banked as US-917, with my sync words in its goal. Until it lands, a sync failing at home is **shown, never counted**. The DATA sentence says it, neutral.
   - **UPS:** no grounded band (Spool + Atlas P5).
   - ECU silent (S-10), away from home, WiFi down, WiFi weak, WiFi not read for want of a tool (`nmcli_absent`), and any null.
-- **The Pi line** shows only when `pi` is a member. It's one mono `--fs-meta` line in amber under the verdict, carrying the member's `reason` verbatim plus ` ›`, e.g. `CPU 80.2 °C, limit 80 °C. ›`. Tap it (parked) ⇒ **Pi health** detail.
+- **The Pi line** shows only when `pi` is a member. It's one mono `--fs-meta` line in amber under the verdict, carrying the member's `reason` verbatim, e.g. `CPU 80.2 °C, limit 80 °C.`. Tap it (parked) ⇒ **Pi health** detail.
+  - **` ›` (I9):** a space + U+203A, appended **only while parked**, when the tap works. While not parked the tap does nothing, so no `›`: a chevron that leads nowhere is the US-758 failure.
 - **No verdict** (`verdict` absent or the file unreadable): the value is `--` in `--text-tertiary`, never `ALL OK`. `ALL OK` is the provider's claim that it looked.
 
 ### 4.2 OBD chain (S2)
@@ -109,24 +110,32 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
 |---|---|---|
 | `up` | `--green-ok` outlined step | no |
 | `connecting` (first link since key-on) | `--text-secondary`, neutral | no (CIO 2026-10-16; still closes US-713, because the step and sentence say `connecting…`) |
-| `retrying` (was up this session, dropped) | `--amber-warn` | yes, if it's a member |
-| `down` | `--text-tertiary`, solid outline | only if it's a member (`bt`, or `adapter` while BT is up) |
+| `retrying` (was up this session, dropped) | `--amber-warn` **only on a member's layer**; otherwise `--text-secondary` (I2) | only `bt` |
+| `down` | `--amber-warn` on a member's layer; otherwise `--text-tertiary`, solid outline | only if it's a member (`bt`, or `adapter` while BT is up) |
 | `null` (not read this session) | `--text-tertiary`, **dashed** outline, label kept | never |
 
+- **Amber is keyed to the member, never to the state (I2):** the BT step is amber only while `bt` is a member, and the ADAPTER step only while `adapter` is. A retrying ECU (never a member; after key-off it's the normal state, S109 G1) and an adapter down or retrying while BT is down (not a member: BT is the fault) are `--text-secondary` / `--text-tertiary`. **The top-bar dots follow the same rule.**
 - `null` is new in this fold. It's the ARCH-062 rule as a look: a step we didn't read must not look like a step we read as down. **Dashed = no reading; solid = a reading.**
 - **Sentence, one rule:**
   1. **If the row has a verdict member (`bt` or `adapter`), print that member's `reason` verbatim.** Those are the S109 words, e.g. `Link dropped. Retrying.` / `Not linked. Check the OBD dongle.` / `Bluetooth up; adapter not answering.` Then the Warnings entry and this row can never disagree, because they're one string.
-  2. **Otherwise**, the page looks up the first non-`up` layer's state in a fixed table. That's a lookup on a provider enum, not a comparison, the same pattern as `LIGHT_REASON_TEXT`:
+  2. **Otherwise**, walk the layers in order **BT → ADAPTER → ECU** and take the **first layer whose state isn't `up`** (I1). Look its state up in this table; the layers after it don't speak. That's a lookup on a provider enum, not a comparison, the same pattern as `LIGHT_REASON_TEXT`:
 
-| First non-up layer → state | Sentence |
-|---|---|
-| bt `connecting` | `Bluetooth connecting… (takes ~1 min)` |
-| adapter `connecting` | `adapter connecting…` |
-| ecu `down` or `connecting` (BT + adapter up) | `ECU not answering (key off?)` |
-| any layer `null` | `not read yet` |
-| all `up` | `ECU answering` |
+| First non-up layer → state | Sentence | Note |
+|---|---|---|
+| bt `connecting` | `Bluetooth connecting… (takes ~1 min)` | |
+| bt `down` / `retrying`, no member | `Bluetooth not linked` / `Bluetooth retrying…` | fallback only: the S109 rules make these a member |
+| bt `null` | `Bluetooth not read yet` | covers "all null": later layers don't speak |
+| adapter `connecting` | `adapter connecting…` | |
+| adapter `down` / `retrying`, no member | `adapter not answering` / `adapter retrying…` | fallback only: with BT up, these are a member |
+| adapter `null` | `adapter not read yet` | |
+| ecu `connecting` | `ECU connecting…` | |
+| ecu `down` or `retrying` | `ECU not answering (key off?)` | never a member; retrying after key-off is normal (S109 G1) |
+| ecu `null` | `ECU not read yet` | |
+| all `up` | `ECU answering` | |
 
-- **Retired:** the old `Bluetooth not linked` and `adapter not answering` sentences. The member reasons replace them.
+   - **An adapter fault while BT is down never speaks:** BT is the first non-up layer, so its member or row decides the sentence.
+
+- **Retired as primary words:** `Bluetooth not linked` and `adapter not answering` survive only as the no-member fallbacks above. The member reasons replace them.
 - **ARCH-061:** no element reads "Bluetooth down".
 
 #### 4.2.1 Top-bar chain (every page; S8)
@@ -140,16 +149,27 @@ The provider publishes a state per layer (`link.bt`, `link.adapter`, `link.ecu`)
 
 ### 4.3 DATA (capture + sync; S4)
 - **Value:**
-  - the capture state from `capture-health`: `recording` / `idle` (not driving) / `stalled` (amber, the `capture` member);
-  - then ` · synced h:mm AM` from `sync.lastOkTs` ("last data stored", S109 Rule 10), through `fmtTimeOfDay`, the US-559 local-time helper;
+  - the capture state from **`capture-health`, never from the drive state** (I3 confirmed): `recording` / `idle` / `stalled` / `--` when capture-health is absent or its state is unknown (`--text-tertiary`).
+    - **`stalled` is amber only while `capture` is a member.** A stall with the ECU not up isn't a member, so the value is `stalled` in `--text-secondary`, with the sentence `not counted: ECU not answering`.
+  - then ` · synced <when>` from `sync.lastOkTs` ("last data stored", S109 Rule 10), in local time (I3 date rule):
+    - same local day ⇒ `fmtTimeOfDay` (`6:42 PM`);
+    - the local day before ⇒ `yesterday 6:42 PM`;
+    - older ⇒ `Oct 12` (month and padded day from the US-559 `STAMP_MONTHS`). The full `fmtStamp` is in the DATA detail;
+    - a time with no date is only ever today's. A days-old sync must never read like this afternoon.
   - `lastOkTs` null ⇒ ` · no sync on record`. Never `1970` or a raw ISO string.
 - **Sentence, in this order, ` · ` joined, ellipsized:**
-  1. `stalled` ⇒ the `capture` member's `reason` verbatim (`OBD feed stalled.`). Otherwise `all 4 feeds writing` (R3: OBD, light, IMU, UPS) while recording, or `not driving` while idle.
+  1. `stalled` with the member ⇒ the `capture` member's `reason` verbatim (`OBD feed stalled.`). Otherwise:
+     - `all 4 feeds writing` (R3: OBD, light, IMU, UPS) while recording;
+     - `not driving` while idle (I3 confirmed);
+     - `capture not read yet` when the value is `--`.
   2. **Away:** `wifi.home === false` ⇒ `away from home` (neutral; F-155 at-home sync). If `wifi.home` is null, no home word at all: never guess away.
   3. **Rows:** `sync.rowsWaiting` ⇒ `n rows waiting` (`fmtThousands`, so `12,345`). `sync.edrRowsWaiting` > 0 ⇒ `n event rows`. Zero event rows prints nothing.
+     - **Singular (I3):** `1 row waiting`, `1 event row`. With the `+` it stays plural: `1+ rows waiting`.
+     - **`rowsWaiting` null ⇒ `rows not read`**, never `0 rows waiting`. The same rule applies to a null `edrRowsWaiting`: nothing prints.
      - `notCounted` is a **list of table names** (US-916: the snapshot tables, named, never folded into `rowsWaiting`). Non-empty ⇒ the count reads `12,345+ rows waiting`: the `+` sits on the number itself, so an ellipsis can never cut it off and leave a total that looks complete. The names are in the DATA detail (`not counted: <table>, <table>`). An empty list prints no `+`.
      - **Never fold them in and never imply zero:** `rowsWaiting` counts only the counted tables, so the words always say some tables weren't counted.
 - **Sync failing at home** (no member until US-917): the sentence shows the provider's state, neutral, never amber. With no member, amber would break §4.0.
+- **Top-bar sync glyph (I4):** shipped `syncGlyphState` paints `sync.stale` amber with no member behind it. US-894 makes it **neutral** (`--text-secondary`). When US-917 lands a `sync` member, the glyph goes amber exactly while that member is present.
 - **Old fields retired:** `rows` / `pending` no longer exist.
 
 ### 4.4 WIFI (carries US-732 + US-742; S3)
@@ -160,7 +180,7 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 | `up`/`weak`, `home: true` | `home` | `--green-ok` | `<ssid> · good signal` / `· weak signal` | no |
 | `up`/`weak`, `home: false` | `other network` | `--text-secondary` | same | no |
 | `up`/`weak`, `home: null` | `connected` | `--text-secondary` | same | no |
-| `down` (`not_associated`) | `down` | `--text-tertiary` | `not connected` | no |
+| `down`, **or** `null` with reason `not_associated` (I5) | `down` | `--text-tertiary` | `not connected` | no |
 | `null`, no reason | `--` | `--text-tertiary` | `not read yet` | no |
 | `null`, `nmcli_absent` | `--` | `--text-tertiary` | `no WiFi tool on this host` | no (dev box never counts, Atlas) |
 | `null`, `read_failed` | `? not read` | `--amber-warn` | the `wifi` member's `reason` (`WiFi couldn't be read.`) | **yes** |
@@ -169,9 +189,11 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
   - 🔴 **Code change owed:** shipped `wifiGlyphState` maps `weak → "amber"`. US-894 makes it `weak → "neutral"` (the `--text-secondary` glyph). The strength word lives in the sentence, and the dBm in the detail.
 - **`up` reads `good signal`, not `strong`.** `up` only means "above the weak band", and `strong` would claim more than that.
 - **Unknown is never `down`** (Atlas 2026-08-20). **`--` is the one no-data mark** (two hyphens, as on the Warnings icon), never `—`.
+- **`home: null` ⇒ `connected`, neutral** (I5 confirmed). Never `home`, and never `other network`.
+- **`not_associated` is a reading** (we looked; wlan0 isn't associated). The builder publishes `state: null` whenever `available` is false (I5), so **the row and the glyph key on `state` and `reason` together**: `null` + `not_associated` renders as `down`. Atlas may instead publish `state: down` with `available: true`, and the page then needs no special case. Either way it is never `--`.
 - **Top-bar WiFi glyph:**
-  - `null` ⇒ dim `--text-tertiary` arcs, **no slash** (a slash claims `down`);
-  - `down` ⇒ the slashed glyph;
+  - `null` (no reason, `nmcli_absent`) ⇒ dim `--text-tertiary` arcs, **no slash** (a slash claims `down`);
+  - `down`, or `null` + `not_associated` ⇒ the slashed glyph;
   - `read_failed` ⇒ amber, the one amber WiFi state.
 
 ### 4.5 UPS (S5)
@@ -179,7 +201,8 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 - **Value:** `4.12 V` (`vcellV`, 2 decimals as the shipped `vcellTile`).
   - `vcellV` null ⇒ `--`.
   - UPS source unavailable ⇒ `--` + the typed reason (`gauge unreadable`, as shipped).
-- **Sentence:** `on external power` / `on battery` / `power source unknown`, then ` · <age>`, where age = `agoText(now, battery-health.ts)`.
+- **Sentence:** `on external power` / `on battery` / `power source unknown` (any other `power.source`, including unresolved; the typed `reasons.source` is in the UPS detail in words), then ` · <age>`.
+  - **The age is a FRESHNESS age (I6), so it uses the S105 M7 rule, not `agoText`:** floor, clamp at 0, `N s ago`, cap `999+ s ago`. `agoText` says `just now` under 60 s, so `12 s ago` could never show. US-894 lifts the M7 rule out of `motionUpdatedCell` into one shared helper that Motion and this row both call, so there's one freshness vocabulary. An undated payload ⇒ no age.
   - **Spool 2026-10-19:** the source, the VCELL value and its age are information.
   - **Never `on car power` or `wall`** (CIO 2026-10-19). The shipped `powerTile` detail `wall/car power` retires with the card.
 - **Colour:** value `--text-primary`, sentence `--text-secondary`.
@@ -192,18 +215,19 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 | Detail | Contents |
 |---|---|
 | **OBD** | per layer: state, since when, last success `ts`, retry count; adapter MAC; the row's sentence in full |
-| **DATA** | per feed (OBD, light, IMU, UPS): writing / silent + last row age; sync: last data stored (`lastOkTs`, local), rows waiting, event rows waiting, `not counted: <table>, <table>` (the `notCounted` names, verbatim), at-home state |
-| **WIFI** | SSID, strength (word + `rssiDbm` dBm), home network yes / no / unknown, the typed `source.wifi.reason` in words. ~~IP~~ (no field) |
+| **DATA** | per feed (OBD, light, IMU, UPS): `writing` / `stalled` / `idle` / `--` (unknown) + last row age (`--` when undated) (I3); sync: last data stored (`lastOkTs` through `fmtStamp`, local, full date), rows waiting, event rows waiting, `not counted: <table>, <table>` (the `notCounted` names, verbatim), at-home state |
+| **WIFI** | SSID, strength (word + `rssiDbm` dBm), home network `yes` / `no` / `unknown`, and the typed `source.wifi.reason` in words: `nmcli_absent` ⇒ `no WiFi tool on this host`, `not_associated` ⇒ `not connected to any network`, `read_failed` ⇒ the member's reason. **No IP:** there's no field, and the row isn't drawn (I5) |
 | **UPS** (replaces the Battery Health card; S6) | below |
 | **Pi** (from the verdict line) | below |
 
 #### 4.6.1 UPS detail (S5 + S6)
 **The Battery Health card retires (CIO).** Its content moves here, with its existing rules (US-401 F-8–F-11, US-504, US-736, ARCH-065) and its existing view functions:
-- **VCELL** (`vcellTile`) and the **source** with its age.
+- **VCELL** (`vcellTile`) and the **source** with its age (M7 rule). An unresolved source shows its typed `reasons.source` in words.
 - **Health verdict:** `GOOD` / `DEGRADED` / `REPLACE` / `--` (`healthValue`), **never alarm-red, never amber** (Spool, load-bearing; `healthLevel` as shipped: green for good, neutral otherwise).
   - It's followed by the unknown reason (`BATTERY_HEALTH_REASON_TEXT`) or the T-vs-J margin (`healthMarginText`, e.g. `11 min vs 40 s job`), and **always** the F-9 `last health check · <date> (<age>)` line.
-  - The margin is the verdict's evidence, not a runtime: it says how long to the reserve floor against the at-home job, and it appears only under a resolved verdict.
-- **SOC:** `≈ 92 % (modelled)`, only when `soc` is a real number (F-8), `--text-secondary`, last in the list. It's never a readiness signal (Spool) and never on the row.
+  - **The margin is exempt from "never a runtime" (I6), on three conditions:** it's the verdict's evidence (minutes to the reserve floor against the at-home job, ARCH-065, shipped); it appears only here, only under a resolved verdict; and it's always printed with its `vs n s job` half, so it reads as a margin. It never goes on the row.
+- **SOC (I6):** `≈ 92 % (modelled)` when `socCalibrated === true`, and `≈ 92 % (modelled, uncalibrated)` otherwise. The shipped `(uncalibrated)` caveat survives. Only when `soc` is a real number (F-8), `--text-secondary`, last in the list. It's never a readiness signal (Spool) and never on the row.
+- **LAST STOP (I7):** the US-744 prior-shutdown verdict lives here, as one line, `LAST STOP  <word> · <age>`, through the shipped `priorShutdownTile` (words, ages and the `(clock unsynced)` mark unchanged; always neutral, because it's history). It belongs with the UPS because the UPS is what makes a shutdown graceful.
 - **Label:** `Pi UPS battery` (F-11: never vehicle/car battery).
 - **Dropped:**
   - the drain ladder and **`~N min to cutoff`** (a banned runtime: the pack capacity is unmeasured);
@@ -214,9 +238,10 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 - **CPU temperature:** `cpuTempC` at its 0.1 °C as read, with `limit 80 °C` beside it.
 - **Throttling:** `throttled` now / since boot, in words + `throttledHex`.
 - **Disk:** `diskFreeBytes` in GiB, floored to 0.1, with `limit 20 GiB` (`diskThresholdBytes`).
-- **Uptime:** `uptimeS` as `3 h 2 min`.
+- **Uptime (I9):** `uptimeS` as a duration: under 60 s ⇒ `under 1 min`; under 1 h ⇒ `42 min`; under 1 day ⇒ `3 h 2 min`; then `2 days 3 h` (`1 day 3 h`). Null ⇒ `--`.
 - **Version.**
 - Each limit in `pi.overLimit` is named in amber, and **only those** (§4.0).
+- **Where the details render (I8):** every detail screen renders in the one `#sys-detail` overlay. The `#version-chip` pinned inside it is shown **only in the Pi detail**.
 - **Version (S7, confirmed):** the same string as the top-bar `#version-chip`, from `.deploy-version` through its ONE existing reader (Atlas P8). It's **not** in the `pi` block, and the page never reads it a second way.
 
 ### 4.7 Settings (F-126, now in V0.30; S9)
@@ -225,15 +250,16 @@ Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **par
 | Setting | Control | Key | Apply tag |
 |---|---|---|---|
 | Brightness (US-878-c) | `AUTO` \| `FIXED` segmented, then a `− nn % +` stepper shown only when FIXED | Atlas names the key(s) | the shipped tag its consumer earns (see below) |
-| Auto-dim ends (dim-start, full-bright) | two lux steppers on a **1-2-3-5 ladder** (… 1 · 2 · 3 · 5 · 10 · 20 · 30 · 50 · 100 · 200 · 300 · 500 …), whose ends **cannot cross** | `pi.display.autoDim.luxMin` / `luxFull` (now in `OVERRIDABLE_KEYS`, Atlas) | the tag its consumer earns (Atlas; `autoDim` is re-read on mtime change, US-878-b) |
-| Auto-rotate pages | stepper `OFF · 5 · 8 · 10 · 15 · 30 s` | `pi.display.carousel.autoRotateS`, 0 = off (US-541-a) | `applies on reload` |
+| Auto-dim ends (dim-start, full-bright) | two lux steppers on a **1-2-3-5 ladder from 1 to 1000 lux** (1 · 2 · 3 · 5 · 10 · 20 · 30 · 50 · 100 · 200 · 300 · 500 · 1000), whose ends **cannot cross** | `pi.display.autoDim.luxMin` / `luxFull` (now in `OVERRIDABLE_KEYS`, Atlas) | the tag its consumer earns (Atlas; `autoDim` is re-read on mtime change, US-878-b) |
+| Auto-rotate pages | stepper `Off · 5 s · 8 s · 10 s · 15 s · 30 s` | `pi.display.carousel.autoRotateS`, 0 = off (US-541-a) | `applies on reload` |
 | Calibration mode | `Off` \| `On` | `pi.calibration.mode` | `applies on capture restart` |
 | Auto-analyze after drive | `Off` \| `On` | `pi.analysis.triggerAfterDrive` | `applies on capture restart` |
 
 - **Power mode: DROPPED** (CIO 2026-10-19). It was already deleted from `SETTINGS_SPECS` by US-668, and nothing returns.
 - **Auto-dim ends: a setting** (CIO 2026-10-19 reversed Atlas ruling B; Atlas acked).
   - **What they set:** `luxMin` (dim-start) and `luxFull` (full-bright) are also the DAY/DUSK/NIGHT boundaries on the Light page.
-  - **Steps:** each stepper moves to the next value on the 1-2-3-5 ladder. A stored value off the ladder (e.g. a hand-edited `4`) shows exactly as stored, and the next tap moves to the neighbouring ladder value.
+  - **Bounds (I11):** 1 … 1000 lux. Twilight is ~3.4 lux and overcast daylight ~1000, and the shipped 3 / 300 sit inside. At an end, that end's `−` / `+` is hidden.
+  - **Steps:** each stepper moves to the next value on the 1-2-3-5 ladder. A stored value off the ladder (e.g. a hand-edited `4`) shows exactly as stored, and **the next tap moves to the neighbouring ladder value in the tap's direction** (`4`: `+` ⇒ 5, `−` ⇒ 3).
   - **Ends cannot cross**, enforced twice:
     - **Page:** dim-start's `+` is disabled when its next step would be ≥ full-bright, and full-bright's `−` when its next step would be ≤ dim-start.
     - **Seam (Atlas):** `luxFull > luxMin` on the EFFECTIVE values, and a crossing POST returns **400**. A 400 is a rejected write: `couldn't save`, and the stepper snaps back to the re-read value (§4.7.1). The page guard is a convenience; the 400 is the rule.
@@ -246,16 +272,20 @@ Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **par
 - **Auto-rotate (S9):** the stepper is the CIO-approved design (2026-10-13). The shipped Off/On (on writes `CAROUSEL_DEFAULTS.autoRotateS`, 8 s) is its two-value subset, and the key and the 0 = off rule are unchanged.
   - **The stepper writes the chosen seconds through the same key.** It needs no new contract, only `kind: "seconds"` getting a stepper instead of `settingsChoices`.
   - **In S110** (CIO-approved design; Atlas A8 OK).
+  - **Case (I11):** `Off`, mono, matching the switches' `Off` / `On`, then `5 s` … `30 s`. Not Michroma `OFF`: values are mono on this screen.
+  - **Off-step values (I11):** a stored value off the steps (e.g. `12`) shows as stored (`12 s`). The next tap moves to the neighbouring step in the tap's direction (`+` ⇒ 15, `−` ⇒ 10). `−` from `5 s` ⇒ `Off`.
 - **Brightness stepper (S9):**
   - **Floor = the EFFECTIVE `pi.display.autoDim.minLevel`** (Atlas A5, the US-627 coupling), never a literal. Shipped config is 0.75, so FIXED runs **75–100 %**.
     - There's no separate 20 % floor: that was my unsourced 10-13 default, and it's withdrawn.
     - If `minLevel` is off the 5 % grid, the lowest step is `minLevel` itself, then the next multiple of 5.
     - If the effective `minLevel` can't be read, the FIXED stepper is disabled and reads `Unknown`. A guessed floor would be a fabricated one.
   - **Step:** 5 % (my operator choice, kept).
+  - **AUTO → FIXED first value (I11):** the level the screen is applying right now (`appliedBrightness().level`), rounded to the nearest 5 % and clamped to [effective `minLevel`, 100 %]. Switching mode never jumps the panel. If the applied level isn't known, use 100 %.
+  - **Light page status while FIXED (I12, Atlas A5's `fixed` basis):** `BRIGHTNESS 80 % (fixed in Settings)`. It says where to undo it, in `--text-secondary`, never amber (an override is a choice, not a fault). It replaces the `(default, no reading)` that `lightStatusView` would print for an unknown basis today. The Light spec's "override (amber)" note is superseded, and folds on the next Light lease.
   - **STOP still wins:** a STOP takeover forces full brightness regardless (`brightnessAlarmActive`), so an alarm is never dimmed by the override.
   - **CIO judgement in the car (AC 12)** still decides whether the floor is right. A different floor is a `minLevel` change, not a second number.
 - **Each change saves on its own** (CIO); there's no Save button.
-- The Light page shortcut opens Settings **scrolled to Brightness**.
+- ~~The Light page shortcut opens Settings scrolled to Brightness.~~ **Banked, not S110** (I13, Marcus's default accepted).
 - A footer line points to the ⋮ menu for service controls; they never appear in Settings.
 
 **Visual design (CIO-approved 2026-10-13; mockup https://claude.ai/artifact/Vfsd6VugUGfoQAMYJZPo6R, `proposals/2026-10-13-v030-settings-screen.html`):**
@@ -267,6 +297,8 @@ Reached from **SETTINGS ›** on System and from the **⋮** overlay band, **par
 - **Controls:** steppers `− value +` with 40 px targets (brightness, the two lux ends, rotate pages); segmented choices for `AUTO|FIXED`; switches for the two booleans.
 
 One list, which **scrolls with a visible scrollbar** if it's taller than the panel (no silent clip).
+
+**In S110 (I13, Marcus's defaults accepted):** the DISPLAY / SYSTEM sections, upper-case names, 40 px targets (US-895-a); the visible scrollbar; `‹ BACK` and `SETTINGS` in the top bar. Banked: the Light-page shortcut.
 
 #### 4.7.1 Honest write (unchanged from W-18)
 - **Shown value:** each control shows the real stored value. Unknown selects nothing and reads `Unknown`, never `Off`.
@@ -370,6 +402,14 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 | `ups-gauge-unreadable` | typed NA |
 | `pi-hot` | `pi` member, one limit, the Pi line |
 | `pi-multi-limit` | `Over limit: CPU temp, throttling, disk.` |
+| `ecu-retrying-after-keyoff` | I1/I2: BT + adapter up, ECU retrying ⇒ `ECU not answering (key off?)`, ECU step and dot `--text-secondary`, `ALL OK` |
+| `adapter-down-bt-down` | I1/I2: `bt` member speaks; the adapter step isn't amber |
+| `capture-stalled-ecu-silent` | I3: `stalled` in `--text-secondary`, `not counted: ECU not answering`, uncounted |
+| `sync-days-old` | I3: `synced Oct 12`, never a bare time |
+| `sync-stale-glyph` | I4: `sync.stale`, no member ⇒ sync glyph neutral |
+| `wifi-not-associated` | I5: `null` + `not_associated` ⇒ `down`, slashed glyph |
+| `ups-fresh-12s` | I6: `on external power · 12 s ago` |
+| `last-stop-ungraceful` | I7: LAST STOP line in the UPS detail, neutral |
 | `two-issues` | `bt` + `pi`: `2 ISSUES`, the amber set equals the member set |
 | `verdict-absent` | `--`, never `ALL OK` |
 | `settings-write-rejected` | AC 9 |
