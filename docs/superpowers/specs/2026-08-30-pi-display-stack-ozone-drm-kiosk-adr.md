@@ -5,6 +5,8 @@
 - **Amended:** 2026-10-14 (ARCH-016, CIO-ratified) -- **§3 cannot be built: this chromium has no DRM Ozone platform.** The
   destination is now a **labwc Wayland kiosk** (the §4 fallback rung). Gate 2 is replaced, and the revert is one command + reboot.
   **Read §11 first; it supersedes §3, §4 (cage row), §6 gate 2, §7 and §9 S2-S5 wherever they disagree.**
+- **Amended:** 2026-10-19 (ARCH-016, design A, CIO-ruled 2026-10-16) -- §11.2, §11.3 and §11.5: **"no lightdm" is withdrawn.**
+  lightdm autologins into a kiosk-only labwc session; Xorg and the desktop are still gone. `eclipse-compositor.service` is retired.
 - **Author:** Atlas (Architect)
 - **Date:** 2026-08-30
 - **Supersedes:** the `--disable-gpu` remedy documented in `dashboard.service.x11` (US-522)
@@ -292,10 +294,26 @@ way S1b resolves it -- but which repair applies depends on the answer.
 So §3 (`--ozone-platform=drm`, no compositor) **cannot be built as written**. This is strong evidence, not a run. The only run that would prove it
 takes DRM master away from Xorg, and it was not worth a session to confirm a binary that carries no DRM platform code.
 
-### 11.2 Decision (CIO-ratified 2026-10-14)
+### 11.2 Decision (CIO-ratified 2026-10-14; amended 2026-10-16, design A)
 
-**A labwc Wayland kiosk, with no lightdm, no Xorg and no desktop**, chosen by an explicit mode file and switched by one command.
+**A labwc Wayland kiosk with no Xorg and no desktop. lightdm stays, and autologins into a kiosk-only labwc session** (CIO 2026-10-16,
+design A). The mode is chosen by an explicit mode file and switched by one command.
 
+- **Amended 2026-10-16: "no lightdm" is withdrawn.** The 10-14 text read "no lightdm, no Xorg and no desktop", with labwc run by our own
+  system unit (`eclipse-compositor.service`). The desk dry-run of that unit on 2026-10-16 never booted a kiosk
+  (`offices/architect/findings/2026-10-16-PREDICTION-labwc-desk-dry-run.md` on the share). The unit had to do by hand five things a display
+  manager does, and failed at each one:
+  - XDG_RUNTIME_DIR;
+  - VT activation;
+  - a privileged plymouth quit;
+  - output to the journal;
+  - exactly ONE logind session (`PAMName=` opens one per `Exec*` command).
+
+  lightdm already does all five for Raspberry Pi's own labwc session on this image. Two alternatives were weighed and rejected:
+  - B, greetd: a new package to install and own, for about 0.2 s;
+  - C, a self-managed unit on cage's documented pattern: we would own all five duties for good.
+- **What the CIO asked for still holds:** Xorg, lxsession and the desktop leave the boot path ("the Pi doesn't need an X11 user interface").
+  The cost is that lightdm stays on it (0.27 s blame, MEASURED 2026-10-15).
 - **Why labwc, not cage (the §4 fallback named cage).** The kiosk is THREE chromium processes:
   - `splash-boot` hands off by EXITING (`OnSuccess=eclipse-dashboard`);
   - the dashboard;
@@ -303,25 +321,57 @@ takes DRM master away from Xorg, and it was not worth a session to confirm a bin
 
   cage runs one application and exits when it does (RECALLED), so the splash's designed exit would take the display down. labwc is a
   multi-client compositor, installed and maintained by RPi on this OS.
-- **The §3 rationale still holds.** The GPU stays on (US-536 disposition B). The X server and the display manager leave the boot path. One
-  minimal compositor replaces them, and it owns the panel directly through KMS.
+- **The §3 rationale still holds.** The GPU stays on (US-536 disposition B). The X server and the desktop leave the boot path. lightdm
+  stays only to open the session. One minimal compositor owns the panel directly through KMS.
 - **The destination is unchanged in intent; the rung is one step less aggressive.** Every §6 gate still applies except gate 2 (below).
   §8 still applies, word for word.
 
-### 11.3 Shape (S102: US-649-a, US-649-b, US-650; US-651 + the US-885 hand-off folded into US-649-b)
+### 11.3 Shape (amended 2026-10-16, design A; built in S106 as US-649-c..g. S102 built the 10-14 shape, which this replaces)
 
-- `eclipse-compositor.service` runs `labwc -C /etc/eclipse/labwc` in a logind session (`PAMName=login`, `TTYPath=/dev/tty7`).
-  - It holds the **`display-manager.service` slot** (`Alias=`) that lightdm holds today, so `default.target` stays `graphical.target` in
-    both modes.
-  - A socket-wait `ExecStartPost` makes it fail loud rather than let chromium start against a missing socket.
-- **Plymouth hand-off:** `Conflicts=` + `After=plymouth-quit.service`, copied from lightdm, PLUS `ExecStartPre=-plymouth quit --retain-splash`,
-  because labwc, unlike lightdm, does not quit Plymouth itself.
-- The three chromium `.wayland` units bind to the compositor (`BindsTo=` + `After=`) and **drop `After=graphical.target`**, which held the
-  kiosk behind multi-user (18.73 s on boot 7c6aafaa).
+- **The session.** `deploy/wayland-sessions/eclipse-kiosk.desktop` is installed to `/usr/share/wayland-sessions/`:
+  `Exec=/usr/bin/labwc -C /etc/eclipse/labwc` (the kiosk rc.xml: no menus, no keybinds, empty autostart), `Type=Application`.
+  - lightdm autologins into it.
+  - lightdm provides the VT, the one logind session, XDG_RUNTIME_DIR, the PAM stack and the plymouth quit (as root), as it does for
+    `rpd-labwc` on this image.
+  - If labwc's output does not reach the journal, the `Exec` wraps it as `systemd-cat -t labwc ...`.
+- **The switch is two keys in `/etc/lightdm/lightdm.conf`, never a `lightdm.conf.d` drop-in.** The keys are `autologin-session` and
+  `user-session` in `[Seat:*]`.
+  - Why not a drop-in: `lightdm --show-config` loads `lightdm.conf` last, and the image sets both keys to `rpd-x` there, so a drop-in
+    would be overridden (MEASURED 2026-10-16).
+  - `wayland` sets both keys to `eclipse-kiosk`. `x11` restores the values recorded on the first switch.
+  - **Record before edit.** The priors go into `/var/lib/eclipse-obd/display-mode.state` BEFORE `lightdm.conf` is replaced. Both writes
+    use a temp file and a rename. The record is never overwritten. If no record exists, `x11` writes `rpd-x` and logs one WARN.
+- **lightdm stays ENABLED in both modes.** `default.target` stays `graphical.target`. The mode switch no longer swaps display managers.
+- **`eclipse-compositor.service` is retired.** It is removed from the deploy tree. The mode switch disables and removes the copy on the
+  car. The deploy itself never touches that copy, so a car in Wayland mode does not lose its session mid-deploy.
+- **The three chromium `.wayland` units:**
+  - drop `BindsTo=`/`After=eclipse-compositor.service` and order `After=display-manager.service`;
+  - keep dropping `After=graphical.target`, which held the kiosk behind multi-user (18.73 s on boot 7c6aafaa);
+  - gate their start on the socket: `ExecStartPre` waits up to 30 s for `/run/user/__PI_UID__/wayland-0`, then fails loud. Ordering is
+    not readiness (the PR #106 lesson);
+  - `splash-boot.wayland` gains `OnFailure=eclipse-dashboard.service`, as on X11.
+  - **The socket name is part of the contract.** The units set `WAYLAND_DISPLAY=wayland-0`. labwc takes the first free `wayland-N`
+    (RECALLED). Any other name at a desk boot is a design defect, not a timing one.
+- **Plymouth hand-off:** lightdm's own (`Conflicts=` + `After=plymouth-quit.service`, and it quits Plymouth itself). The 10-14
+  `ExecStartPre=-plymouth quit --retain-splash` leaves with the compositor unit.
+- **The power key (CIO 2026-10-16: a clean shutdown):** a `logind.conf.d` drop-in sets `HandlePowerKey=poweroff`, installed in both modes.
+  - It PINS logind's default. MEASURED 2026-10-19: there is no power-key inhibitor and no drop-in, and the default already powers off. So
+    there is no behaviour change today; the drop-in guards against a package or desktop change.
+  - A press runs `systemctl poweroff`, not powerwatch's key-off path, so neither the shed nor `splash-grace` runs. Wanting that is a
+    new story.
 - `KIOSK_UNIT` stays `eclipse-dashboard.service` in both modes. Shed, watchdog, panel liveness and polkit are unchanged.
 - **The mode is a file, never a detection.** `/etc/eclipse/display-mode` = `x11` | `wayland` is the only authority. Detecting the running
   session (the old installer behaviour) re-installs X11 over a Wayland choice whenever a deploy runs while X11 is up.
 - **§5's capture replacement:** `eclipse-capture-panel` uses grim (Wayland) or scrot (X11), by the mode file.
+- **Stated unknowns, measured at the first desk boot (S106 bigDoD):**
+  - lightdm starts NO Xorg for a Wayland autologin session (`pgrep Xorg` is empty);
+  - `session-wrapper=/etc/X11/Xsession` (`01_debian.conf`) does not break or slow the session;
+  - `display-setup-script` (an X-only xrandr script) is skipped or harmless;
+  - labwc's output reaches the journal;
+  - the dashboard first frame against same-day X11 boots, n >= 3 each.
+
+  If lightdm starts an X server anyway, design A loses part of its point: reopen B or C. If the kiosk is still slower to gauges than X11
+  (§11.4 draw gate), the fallback is option D: stay on X11 with a bare X session and no desktop.
 
 ### 11.4 Gates -- §6 amended
 
@@ -334,12 +384,14 @@ takes DRM master away from Xorg, and it was not worth a session to confirm a bin
   against the S101 after-ladder.
 - All gates are measured on production power (CIO 2026-10-12).
 
-### 11.5 Reversibility -- §7 amended (CIO 2026-10-14)
+### 11.5 Reversibility -- §7 amended (CIO 2026-10-14; amended 2026-10-16, design A)
 
 **`sudo eclipse-display-mode x11`: one command, then a reboot.**
-- It writes the mode file, re-installs the X11 units from the deployed tree (it works offline in the car), re-enables lightdm and disables the
-  compositor.
-- lightdm is DISABLED in Wayland mode, never masked or purged.
+- It writes the mode file, restores the recorded `autologin-session` and `user-session` in `lightdm.conf` (`rpd-x` on this image), and
+  re-installs the X11 units from the deployed tree. It works offline in the car.
+- **Amended 2026-10-16:** lightdm is ENABLED in both modes. The 10-14 text ("re-enables lightdm and disables the compositor") no longer
+  applies: there is no display-manager swap, and no compositor unit to disable.
+- Nothing is masked or purged. The X11 session (`rpd-x`) and its packages stay installed in Wayland mode.
 - The reboot is deliberate: the result is exactly what a cold key-on boots, so the revert lands in a proven state rather than a live-switched
   one that no key-on produces.
 
