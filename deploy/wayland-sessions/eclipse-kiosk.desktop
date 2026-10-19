@@ -1,0 +1,5 @@
+# Eclipse kiosk Wayland session -- lightdm autologin launches labwc on the isolated kiosk config (US-649-d; CIO 2026-10-16 design A).
+[Desktop Entry]
+Name=Eclipse kiosk
+Exec=/usr/bin/labwc -C /etc/eclipse/labwc
+Type=Application
