@@ -11,6 +11,8 @@
 # ================================================================================
 # 2026-01-22    | M. Cornelison | Initial implementation for US-008
 # 2026-01-22    | Ralph Agent  | US-006: Moved to display/adapters subpackage
+# 2026-10-18    | Atlas        | US-872: hardware libraries load on first use,
+#                               |   not at import (lgpio cwd FIFO race)
 # ================================================================================
 ################################################################################
 
@@ -53,24 +55,63 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Try to import Adafruit libraries
-# Note: On non-Raspberry Pi platforms, board may raise NotImplementedError
-try:
-    import board
-    import digitalio
-    from adafruit_rgb_display import st7789
-    from PIL import Image, ImageDraw, ImageFont
-    ADAFRUIT_AVAILABLE = True
-except (ImportError, NotImplementedError, RuntimeError) as e:
-    logger.debug(f"Adafruit display libraries not available: {e}")
-    ADAFRUIT_AVAILABLE = False
-    # Placeholders for type hints
-    board = None  # type: ignore
-    digitalio = None  # type: ignore
-    st7789 = None  # type: ignore
-    Image = None  # type: ignore
-    ImageDraw = None  # type: ignore
-    ImageFont = None  # type: ignore
+# US-872: the Adafruit libraries load on FIRST USE, never at import.
+#   `import board` pulls in lgpio, and lgpio's import creates a notify FIFO named
+#   `.lgd-nfy0` in the process's working directory and then re-opens it by name.
+#   Every Python unit on the Pi shares one WorkingDirectory, so two units
+#   importing lgpio together race on that one path: a FileNotFoundError at import
+#   (eclipse-bond-selfheal, eclipse-powerwatch, boot-progress-arm, 3 of 108 boots)
+#   or, silently, one process holding the other's FIFO. This module is imported
+#   by every importer of pi.display and pi.obdii, and the ST7789 it drives is not
+#   in use (display.mode defaults to headless). So nothing may load the hardware
+#   stack until an adapter actually needs it.
+#   RCA: offices/architect/findings/2026-10-18-RESULTS-US-872-lgpio-import-race-RCA.md
+#   Fenced by tests/pi/display/test_display_import_loads_no_gpio_us872.py.
+#   ADAFRUIT_AVAILABLE stays readable as a module attribute (see __getattr__);
+#   reading it is what triggers the load.
+board = None  # type: ignore
+digitalio = None  # type: ignore
+st7789 = None  # type: ignore
+Image = None  # type: ignore
+ImageDraw = None  # type: ignore
+ImageFont = None  # type: ignore
+
+_hardwareAvailable: bool | None = None
+
+
+def _loadHardware() -> bool:
+    """
+    Import the Adafruit/PIL libraries once, on first call.
+
+    Returns:
+        True if the libraries imported (not whether a display is attached)
+    """
+    global _hardwareAvailable, board, digitalio, st7789, Image, ImageDraw, ImageFont
+    if _hardwareAvailable is not None:
+        return _hardwareAvailable
+    # Note: On non-Raspberry Pi platforms, board may raise NotImplementedError
+    try:
+        import board as _board
+        import digitalio as _digitalio
+        from adafruit_rgb_display import st7789 as _st7789
+        from PIL import Image as _Image
+        from PIL import ImageDraw as _ImageDraw
+        from PIL import ImageFont as _ImageFont
+    except (ImportError, NotImplementedError, RuntimeError) as e:
+        logger.debug(f"Adafruit display libraries not available: {e}")
+        _hardwareAvailable = False
+        return False
+    board, digitalio, st7789 = _board, _digitalio, _st7789
+    Image, ImageDraw, ImageFont = _Image, _ImageDraw, _ImageFont
+    _hardwareAvailable = True
+    return True
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve ADAFRUIT_AVAILABLE lazily (PEP 562) so importing stays cheap."""
+    if name == 'ADAFRUIT_AVAILABLE':
+        return _loadHardware()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # Display constants
@@ -243,7 +284,7 @@ class AdafruitDisplayAdapter:
         Raises:
             DisplayInitializationError: If hardware initialization fails
         """
-        if not ADAFRUIT_AVAILABLE:
+        if not _loadHardware():
             logger.warning(
                 "Adafruit display libraries not available. "
                 "Install with: pip install adafruit-circuitpython-rgb-display pillow"
@@ -301,7 +342,7 @@ class AdafruitDisplayAdapter:
 
     def _loadFonts(self) -> None:
         """Load fonts for text rendering."""
-        if not ADAFRUIT_AVAILABLE or ImageFont is None:
+        if not _loadHardware() or ImageFont is None:
             return
 
         # Try to load TrueType fonts, fall back to default bitmap font
@@ -325,7 +366,7 @@ class AdafruitDisplayAdapter:
 
     def _setupBacklight(self) -> None:
         """Set up backlight control."""
-        if not ADAFRUIT_AVAILABLE or digitalio is None:
+        if not _loadHardware() or digitalio is None:
             return
 
         try:
@@ -567,7 +608,7 @@ def isDisplayHardwareAvailable() -> bool:
     Returns:
         True if libraries are available
     """
-    return ADAFRUIT_AVAILABLE
+    return _loadHardware()
 
 
 def createAdafruitAdapter(config: dict[str, Any] | None = None) -> AdafruitDisplayAdapter:
