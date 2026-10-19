@@ -25,7 +25,7 @@
 | 8a | Settings (F-126) | single design | `v030-system-page-design.md` §4.7 | https://claude.ai/artifact/Vfsd6VugUGfoQAMYJZPo6R | `2026-10-13-v030-settings-screen.html` |
 | 8-OEM | System + details + Settings, **OEM skin** (amber means counted) | A | `v030-system-page-design.md` | https://claude.ai/artifact/XXpv3Qn3vUzJj7j4TJfF74 | `2026-10-15-v030-system-page-oem.html` |
 | 9 | Warnings + top-bar icon | A · Ranked list, scrolling | `v030-warnings-page-design.md` | https://claude.ai/artifact/1hZxFmhcUM8rY5onGu8eXU | `2026-10-12-v030-warnings-page.html` |
-| 9-OEM | Warnings + icon + STOP takeover, **OEM skin** (R31) | A | `v030-warnings-page-design.md` | https://claude.ai/artifact/KKE2HvXZmUZJDPFP6SrRhk | `2026-10-15-v030-warnings-page-oem.html` |
+| 9-OEM | Warnings + icon + PULL OVER + key-on CODE ALERT, **OEM skin, S106 scope** (v2 2026-10-18; repo copy `specs/v030-warnings-page-oem.html`) | A | `v030-warnings-page-design.md` | https://claude.ai/artifact/KKE2HvXZmUZJDPFP6SrRhk | `2026-10-15-v030-warnings-page-oem.html` |
 | — | Visual style (4 directions) | 2 · 90s Mitsubishi OEM | `v030-frame-and-style-design.md` | https://claude.ai/artifact/Eeuc311nAqoR5JFa5axvcT | `2026-10-13-v030-style-directions.html` |
 | — | Boot + shutdown storyboard | as approved | `v030-boot-shutdown-design.md` | https://claude.ai/artifact/HfQ1QVUq7N9EbBunrSF4hi | `2026-10-13-v030-boot-shutdown.html` |
 
