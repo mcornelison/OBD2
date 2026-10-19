@@ -2275,64 +2275,102 @@ was up re-installed X11 over a Wayland choice (Atlas, measured trap).
 **The one command:** `sudo eclipse-display-mode x11|wayland|status [--no-reboot]`
 (`deploy/eclipse-display-mode.sh`, installed by deploy-pi.sh as a wrapper at
 `/usr/local/sbin/eclipse-display-mode` that runs the deployed tree's copy, so it
-works offline). `x11|wayland` writes the file, runs both kit installers forced to
-that mode, swaps the display manager (wayland: disable `lightdm`, enable
-`eclipse-compositor`; x11: the reverse -- the outgoing one first, since both claim
-`display-manager.service`), runs `daemon-reload`, then reboots unless
-`--no-reboot`. An unknown mode exits non-zero and changes nothing. The X11 revert
-is this one command + its reboot; SSH is the recovery path (CIO 2026-10-14).
+works offline). **lightdm stays enabled in both modes** (design A, CIO 2026-10-16,
+US-649-e): the switch no longer swaps display managers, it changes which session
+lightdm autologins into. `x11|wayland`, in order:
 
-- **lightdm is disabled, never masked or purged**, and this command is its only
-  owner. The deploy installs the command but enables nothing for Wayland: the car
-  stays on X11 until the CIO runs `eclipse-display-mode wayland`.
+1. **Pre-flight**, before anything changes: `lightdm.service` is known to
+   systemctl; for wayland also the session file and labwc exist;
+   `/etc/lightdm/lightdm.conf` exists with a `[Seat:*]` section; the state dir
+   `/var/lib/eclipse-obd` exists (provisioned by deploy-pi.sh, US-667 -- never
+   created here). Any failure exits non-zero with nothing changed.
+2. **wayland records the priors first:** the current `autologin-session` and
+   `user-session` values go to `/var/lib/eclipse-obd/display-mode.state`, once and
+   never rewritten (os-trim's G3 never-overwrite rule), BEFORE the edit.
+3. **Edits the two keys `autologin-session=` and `user-session=` inside `[Seat:*]`
+   of `/etc/lightdm/lightdm.conf`** by temp file + rename (same mode and owner,
+   never an in-place edit). wayland: both `eclipse-kiosk`; x11: the recorded
+   priors, then the state file is deleted. A key with no recorded prior that
+   still reads `eclipse-kiosk` falls back to `rpd-x` with one WARN. Not a
+   `lightdm.conf.d` drop-in: lightdm loads `lightdm.conf` last, so it would win
+   (Atlas, MEASURED 2026-10-16).
+4. Writes the mode file and runs both kit installers forced to that mode.
+5. Clears out the retired `eclipse-compositor.service` if a car still has it
+   (disable if enabled, delete the unit file), enables `lightdm`, `daemon-reload`, then
+   reboots unless `--no-reboot`.
+
+An unknown mode exits non-zero and changes nothing. `status` also reports
+lightdm's autologin session. The X11 revert is this one command + its reboot;
+SSH is the recovery path (CIO 2026-10-14).
+
+- **lightdm is never disabled, masked or purged.** The deploy installs the
+  command but switches nothing: the car stays on X11 until the CIO runs
+  `eclipse-display-mode wayland`.
 - `KIOSK_UNIT` stays `eclipse-dashboard.service` in both modes.
 - **Name clash, not the same thing:** `deploy/set-display-mode.sh` and its
   `$ECLIPSE_DISPLAY_MODE` (US-552) pin the HDMI *resolution* in `cmdline.txt`.
   The mode file and `eclipse-display-mode` never read or set that variable.
 
-#### The Wayland compositor: `eclipse-compositor.service` (US-649-b)
+#### The Wayland kiosk session: lightdm autologin of eclipse-kiosk.desktop
 
 Chromium on the Pi has **no DRM Ozone platform** (Atlas measured chromium
 151.0.7922.137: 70 `ozone/platform/wayland` paths, zero `platform/drm`), so the
-Wayland kiosk cannot draw on the panel by itself. `deploy/eclipse-compositor.service`
-runs **labwc** (0.9.8) in the display-manager slot lightdm holds in x11 mode
-(`[Install] Alias=display-manager.service`).
+Wayland kiosk cannot draw on the panel by itself: it needs **labwc** (0.9.8) as
+its compositor. In wayland mode lightdm autologins into a kiosk-only labwc
+session -- no Xorg, no desktop (design A, CIO 2026-10-16; US-649-c..f). lightdm
+does the duties a display manager owns: the VT, exactly one logind session,
+`XDG_RUNTIME_DIR` (`/run/user/<uid>`), the PAM stack and the privileged plymouth
+quit.
 
-- **Session:** `User=mcornelison`, `PAMName=login` on `/dev/tty7` (TTYReset,
-  TTYVHangup, `StandardInput=tty-fail`, `UtmpIdentifier=tty7`) -- a real logind
-  seat0 session, which creates `/run/user/1000`. User and uid are LITERAL, like
-  every `deploy/*.service` (deploy-pi.sh substitutes no placeholders there).
-- **Ordering:** `After=systemd-user-sessions.service plymouth-start.service
-  plymouth-quit.service`; `Wants=` + `After=` `dev-dri-card0.device
-  dev-dri-renderD128.device`.
-- **Plymouth hand-off** (lightdm's shape): `Conflicts=plymouth-quit.service` and
-  `ExecStartPre=-/usr/bin/plymouth quit --retain-splash`, so the last boot-splash
-  frame stays on screen until labwc draws.
-- **Readiness:** an `ExecStartPost` polls for `/run/user/1000/wayland-0` for up to
-  5 s and exits non-zero if it never appears -- the unit fails LOUD rather than
-  letting chromium start against a missing socket.
-- **Isolated config:** `ExecStart=/usr/bin/labwc -C /etc/eclipse/labwc` reads only
-  `deploy/labwc/` as installed there -- `rc.xml` (no root menu, no window keybinds,
-  no decorations; one inert keybind and one Client-context mousebind exist only
-  because labwc loads its stock bindings when either list is empty) and an EMPTY
-  `autostart`. Never `/etc/xdg/labwc` or `~/.config/labwc`.
-- **Chromium binds to it:** the three `.wayland` units (dashboard, splash-boot,
-  splash-grace) carry `BindsTo=` + `After=eclipse-compositor.service` and no
-  longer order after `graphical.target` (that queued the kiosk behind multi-user,
-  18.73 s on boot 7c6aafaa). splash-boot keeps `WantedBy=graphical.target` only as
-  its pull-in. The `.x11` units are unchanged.
-- **Deploy:** `step_install_compositor_unit` (before the kiosk-unit step) installs
-  the unit and `/etc/eclipse/labwc/` sync-if-changed and **enables nothing** --
-  `eclipse-display-mode wayland` is the only thing that enables it. It FAILS the
-  deploy (exit 12, ERROR naming the path) if `deploy/labwc/rc.xml` is absent. Both
-  sync paths ship the directory: rsync `--include=deploy/labwc/` +
-  `--include=deploy/labwc/***` (a lone directory include ships it empty), tar
-  `./deploy/labwc`.
+- **The session file:** `deploy/wayland-sessions/eclipse-kiosk.desktop`, installed
+  to `/usr/share/wayland-sessions/` (where lightdm looks for Wayland sessions;
+  lightdm names a session by the file's basename, `eclipse-kiosk`):
+  `Name=Eclipse kiosk`, `Exec=/usr/bin/labwc -C /etc/eclipse/labwc`,
+  `Type=Application`.
+- **Isolated config:** `labwc -C /etc/eclipse/labwc` reads only `deploy/labwc/` as
+  installed there -- `rc.xml` (no root menu, no window keybinds, no decorations;
+  one inert keybind and one Client-context mousebind exist only because labwc
+  loads its stock bindings when either list is empty) and an EMPTY `autostart`.
+  Never `/etc/xdg/labwc` or `~/.config/labwc`.
+- **Chromium waits for the socket, not for a unit:** the three `.wayland` units
+  (dashboard, splash-boot, splash-grace) order `After=display-manager.service`,
+  bind to no display unit, and gate on an `ExecStartPre=` that waits for the
+  socket `/run/user/__PI_UID__/wayland-0` (150 polls of 0.2 s, the 30 s budget of
+  the PR #106 X11 gate), then fails loud. Ordering is no guarantee of readiness;
+  the socket test is. They still do not order after `graphical.target` (that
+  queued the kiosk behind multi-user, 18.73 s on boot 7c6aafaa); splash-boot keeps
+  `WantedBy=graphical.target` only as its pull-in. The `.x11` units are unchanged.
+- **splash-boot `OnFailure=eclipse-dashboard.service`**, as on X11 (PR #106): a
+  splash that fails (the socket gate timed out, or chromium died) still brings up
+  the dashboard. The units stay systemd units, so the kiosk watchdog, panel
+  liveness, load shed and polkit (all keyed on `KIOSK_UNIT`) are unchanged.
+- **The power key** (CIO 2026-10-16: a clean shutdown):
+  `deploy/eclipse-powerkey.conf` -> `/etc/systemd/logind.conf.d/50-eclipse-powerkey.conf`
+  (`[Login] HandlePowerKey=poweroff`), installed by
+  `step_install_logind_powerkey` in **both** modes. logind's default is already
+  poweroff; the drop-in pins it. logind is never restarted by the deploy (the
+  drop-in takes effect on the next boot). The press goes logind -> poweroff; the
+  load shed and splash-grace hang off powerwatch's key-off path, not the power key.
+- **Deploy:** `step_install_kiosk_session` installs `/etc/eclipse/labwc/` and the
+  session file sync-if-changed and **runs no systemctl** -- `eclipse-display-mode`
+  chooses the session. It FAILS the deploy (exit 12, ERROR naming the path) if
+  `deploy/labwc/rc.xml` is absent on the workstation, or `rc.xml` / the session
+  file is absent on the Pi after the sync. Both sync paths ship both directories:
+  rsync `--include=deploy/labwc/` + `--include=deploy/labwc/***` (a lone directory
+  include ships it empty), likewise `deploy/wayland-sessions/`; tar
+  `./deploy/labwc` and `./deploy/wayland-sessions`.
+- **`eclipse-compositor.service` is retired** (CIO 2026-10-16; US-649-d removed it
+  from the deploy tree). The US-649-b system unit ran labwc itself with
+  `PAMName=login` and had to do every display-manager duty by hand; the
+  2026-10-16 desk dry-run never booted a kiosk. `eclipse-display-mode` disables
+  and deletes a leftover copy of the retired eclipse-compositor unit on any car
+  switched before US-649-e.
 - `tools/imu/drive_console.py` `takeKiosk()` follows the same mode file: wayland ->
   `WAYLAND_DISPLAY=wayland-0` + `--ozone-platform=wayland`, without the X11-only
   GPU-raster stopgap; x11 -> its argv unchanged.
-- **ADR ARCH-016** is amended for the compositor by Atlas; the ADR itself is not
-  edited by Ralph.
+- **ADR ARCH-016 §11.2** (amended by Atlas 2026-10-19; "no lightdm" withdrawn) is
+  the decision of record; §11.3 the shape, §11.5 the revert. The ADR itself is
+  not edited by Ralph.
 
 #### Panel capture: `eclipse-capture-panel` (US-650)
 

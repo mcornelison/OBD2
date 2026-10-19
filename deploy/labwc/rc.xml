@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   File:    deploy/labwc/rc.xml
-  Purpose: US-649-b (F-139): labwc config for the kiosk compositor
-           (eclipse-compositor.service). Installed to /etc/eclipse/labwc/ by
+  Purpose: US-649-b (F-139): labwc config for the Wayland kiosk. labwc is
+           launched by lightdm's eclipse-kiosk session
+           (/usr/share/wayland-sessions/eclipse-kiosk.desktop, US-649-d; design
+           A, CIO 2026-10-16). Installed to /etc/eclipse/labwc/ by
            deploy-pi.sh; `labwc -C /etc/eclipse/labwc` reads only that dir.
   Author:  Rex (Ralph Agent)
   Created: 2026-10-15 - Sprint 102 US-649-b
