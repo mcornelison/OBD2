@@ -8031,7 +8031,7 @@ Fuel spec §3-§4.4 (`specs/v030-fuel-page-design.md`, layout A), CIO E-2 order:
   `.ltft-bars`, each bar coloured by its own drive) and its title are gone.
 - **States it reads.** `states/ltft-trend` only, for the trend row:
   `sufficient`, `level`, `reason`, `median`, `baseline`, `minDrives`,
-  `points[].{driveId, ltftAvg, inMedian, isReset}`. The card keeps
+  `points[].{driveId, ltftAvg, inMedian}`. The card keeps
   `data-state="ltft-trend"` and the Fuel Trim card's source-card route
   (`SOURCE_CARDS` entry `ltft-trend`, title `Fuel`): the **vehicle gate**
   (`data-gated="true"` ships closed; no car -> `FUEL TRIM TREND · no engine
@@ -8050,16 +8050,23 @@ Fuel spec §3-§4.4 (`specs/v030-fuel-page-design.md`, layout A), CIO E-2 order:
   Dashed line = the epoch `baseline`. The headline (`--fs-secondary`) is the
   median. Colour comes ONLY from `level` on `.fuel-trend-row[data-level]`:
   `amber` and `down` -> `--amber-warn` on the headline and median line (WATCH,
-  Spool per-surface ruling #4), `ok` neutral; the dots never colour. A point
-  with `isReset` true (LTFT 0.00 % flat = adaptive memory reset) is never drawn
-  and the row says `ECU relearning`. Insufficient -> the provider's `reason`
-  (else `need N+ drives (n captured)`) and no chart. The y range is the drawn
-  values' own extent; no trim threshold appears in carousel.js (grep gate in
+  Spool per-surface ruling #4), `ok` neutral; the dots never colour.
+  Insufficient -> the provider's `reason`, verbatim (else `need N+ drives (n
+  captured)`), and no chart. **After an adaptive-memory reset that reason is the
+  provider's** (US-890-g, Atlas 2026-10-15 + CIO 2026-10-18 + Spool 2026-10-19):
+  `buildLtftTrendState` publishes `REASON_RELEARNING_AFTER_RESET` =
+  `ECU relearning` while `epochBreak` is true and the epoch has fewer than
+  `medianWindow` (5) points -- none included, and a drive that failed the warm
+  gate never counts. Precedence: no records, then epoch clipped, then relearning,
+  then WARMING / not enough qualifying drives; it ends when the epoch reaches 5
+  points and the median publishes. The page carries no reset logic of its own.
+  The y range is the drawn values' own extent; no trim threshold appears in
+  carousel.js (grep gate in
   `tests/ui/test_fuel_page.py`). Fixtures:
   `tests/ui/fixtures/states/fuel/{trend-healthy, trend-amber,
-  ltft-reset-zero-flat, trend-seven-drives}.json` (built by
-  `buildLtftTrendState`; the reset fixture sets `isReset` on its point by hand,
-  because the provider marks a reset on its drive records, not its points).
+  ltft-relearning-after-reset, trend-seven-drives}.json` (built by
+  `buildLtftTrendState`; the relearning fixture is pinned equal to the builder's
+  output for a reset drive followed by 3 qualifying drives).
 
 #### V0.30 Fuel card AIRFLOW against params.MAF.scale (US-890-b, Sprint 104 / V0.30.6)
 

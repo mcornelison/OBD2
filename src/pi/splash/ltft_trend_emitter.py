@@ -78,6 +78,8 @@
 # 2026-10-14    | Ralph (Rex)  | US-881-a -- every `points` entry carries inMedian:
 #               |              | true exactly for the drives the headline median
 #               |              | used (matched by driveId); false with no median.
+# 2026-10-19    | Ralph (Rex)  | US-890-g -- REASON_RELEARNING_AFTER_RESET while a
+#               |              | reset epoch has fewer than medianWindow points.
 # ================================================================================
 ################################################################################
 
@@ -194,6 +196,13 @@ REASON_NO_DRIVES = "no real drives recorded"
 #: forbids -- so we publish a typed absence rather than a number we cannot
 #: stand behind. This is the honest-instrument rule: unknown, and WHY.
 REASON_EPOCH_CLIPPED = "epoch longer than the fetched window -- boundary unknown"
+#: US-890-g: the current epoch began at an adaptive-memory reset and has fewer
+#: than medianWindow qualifying drives -- none included. Spool 2026-10-15/10-19:
+#: missing post-reset data is the ECU relearning, never warming (this provider
+#: has no current-drive warm input), and a drive that failed the warm gate never
+#: counts toward the window. CIO 2026-10-18: it ends at TREND_MEDIAN_WINDOW (5)
+#: points -- Spool's number, measured on ONE reset.
+REASON_RELEARNING_AFTER_RESET = "ECU relearning"
 
 # The ISO-8601 instant format the F-103 emitters stamp (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -218,6 +227,7 @@ __all__ = [
     "REASON_INSUFFICIENT_HISTORY",
     "REASON_EPOCH_CLIPPED",
     "REASON_NO_DRIVES",
+    "REASON_RELEARNING_AFTER_RESET",
     "REASON_WARMING",
     "STFT_PID",
     "TREND_IMPROVING",
@@ -600,6 +610,12 @@ def buildLtftTrendState(
         # epoch starts. Publishing a baseline over this window would be a
         # number computed across a reset we simply did not see.
         state["reason"] = REASON_EPOCH_CLIPPED
+        return state
+    if epochBreak and len(points) < medianWindow:
+        # US-890-g: a reset epoch short of the window -- empty, all-cold, or a
+        # few points -- is the ECU relearning. Only points count, so cold drives
+        # never bring the median closer; the median below takes over at the window.
+        state["reason"] = REASON_RELEARNING_AFTER_RESET
         return state
     if not points:
         # Drives exist but none cleared the warm closed-loop gate. Spool measured

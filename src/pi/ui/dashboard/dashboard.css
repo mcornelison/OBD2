@@ -1938,8 +1938,7 @@ html, body {
 #fuel-card .fuel-trend-row[data-level="down"] .fuel-trend-value {
   color: var(--amber-warn);
 }
-#fuel-card .fuel-trend-reason,
-#fuel-card .fuel-trend-relearn {
+#fuel-card .fuel-trend-reason {
   font-family: var(--font-mono); font-size: var(--fs-meta);
   line-height: var(--fuel-line); color: var(--text-secondary);
 }

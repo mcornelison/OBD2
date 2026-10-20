@@ -1592,13 +1592,11 @@
   //             ONE median, not a per-drive series);
   //   baseline  the epoch baseline, dashed;
   //   colour    the provider's `level` alone -- the dots never colour, and
-  //             nothing here compares a trim with a number;
-  //   relearn   a point with isReset (0.00 % flat = adaptive memory reset, not
-  //             fuel) is never drawn; the row says "ECU relearning" instead.
-  // Insufficient -> the provider's reason and no chart. The y range is the
-  // drawn values' own extent: geometry, not a scale.
+  //             nothing here compares a trim with a number.
+  // Insufficient -> the provider's reason, verbatim, and no chart (US-890-g:
+  // after a reset that reason is the provider's own "ECU relearning"). The y
+  // range is the drawn values' own extent: geometry, not a scale.
   var FUEL_TREND_LABEL = "FUEL TRIM TREND";
-  var FUEL_TREND_RELEARNING = "ECU relearning";
   var FUEL_TREND_W = 100;
   var FUEL_TREND_H = 30;
   var FUEL_TREND_INSET = 4;
@@ -1642,14 +1640,9 @@
     var base = ltftTrendView(data);
     if (!base) return null;
     var pts = Array.isArray(data.points) ? data.points.filter(isObj) : [];
-    var relearning = false;
     var dots = [];
     for (var i = 0; i < pts.length; i++) {
       var p = pts[i];
-      if (p.isReset === true) {
-        relearning = true;
-        continue;
-      }
       if (base.sufficient && p.inMedian === true && finiteNumber(p.ltftAvg)) {
         dots.push({ driveId: typeof p.driveId === "number" ? p.driveId : null, value: p.ltftAvg });
       }
@@ -1660,7 +1653,6 @@
       level: base.headline.level,
       value: base.sufficient ? base.headline.value : null,
       reason: base.sufficient ? null : base.headline.detail,
-      relearning: relearning ? FUEL_TREND_RELEARNING : null,
       chart: dots.length
         ? fuelTrendChart(dots, data.median, finiteNumber(data.baseline) ? data.baseline : null)
         : null,
@@ -6156,7 +6148,6 @@
       if (view.sufficient) row.appendChild(engineTextEl("span", "fuel-trend-value", view.value));
       else row.appendChild(engineTextEl("span", "fuel-trend-reason", view.reason));
       if (view.chart) row.appendChild(buildFuelTrendChart(view.chart));
-      if (view.relearning) row.appendChild(engineTextEl("span", "fuel-trend-relearn", view.relearning));
       body.appendChild(row);
     }
 
