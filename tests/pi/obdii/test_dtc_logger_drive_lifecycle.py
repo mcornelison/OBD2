@@ -334,3 +334,92 @@ class TestLogDriveEndDtcs:
 
         assert "GET_CURRENT_DTC" in conn.queryCalls
         assert "GET_DTC" not in conn.queryCalls
+
+
+# ================================================================================
+# US-897-a1 -- every Mode 03 read hands back its codes and whether it polled
+# ================================================================================
+
+
+class TestResultsCarryCodesAndPolled:
+    """The router publishes states/dtc from these fields (Atlas G-a1)."""
+
+    def test_periodicPollThatRan_isPolledAndCarriesTheStoredCodes(
+        self, freshDb: ObdDatabase,
+    ) -> None:
+        client, conn = _client(stored=[("P0400", "EGR flow")])
+        dtcLogger = DtcLogger(database=freshDb, dtcClient=client)
+
+        result = dtcLogger.maybePeriodicMode03(
+            driveId=7, connection=conn, now=datetime(2026, 10, 19, 14, 0, 0),
+        )
+
+        assert result.polled is True
+        assert [(c.code, c.status) for c in result.codes] == [("P0400", "stored")]
+
+    def test_periodicPollInsideTheCooldown_isNotPolledAndCarriesNothing(
+        self, freshDb: ObdDatabase,
+    ) -> None:
+        client, conn = _client(stored=[("P0400", "EGR flow")])
+        dtcLogger = DtcLogger(database=freshDb, dtcClient=client)
+        t0 = datetime(2026, 10, 19, 14, 0, 0)
+        dtcLogger.maybePeriodicMode03(driveId=7, connection=conn, now=t0)
+
+        result = dtcLogger.maybePeriodicMode03(
+            driveId=7, connection=conn, now=t0 + timedelta(seconds=10),
+        )
+
+        assert result.polled is False
+        assert result.codes == []
+
+    def test_periodicPollWithNoDrive_isNotPolled(
+        self, freshDb: ObdDatabase,
+    ) -> None:
+        client, conn = _client(stored=[("P0400", "EGR flow")])
+        dtcLogger = DtcLogger(database=freshDb, dtcClient=client)
+
+        result = dtcLogger.maybePeriodicMode03(driveId=None, connection=conn)
+
+        assert result.polled is False
+        assert result.codes == []
+        assert conn.queryCalls == []
+
+    def test_periodicPoll_logsTheMode03RoundTripAtDebug(
+        self, freshDb: ObdDatabase, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client, conn = _client(stored=[])
+        dtcLogger = DtcLogger(database=freshDb, dtcClient=client)
+
+        with caplog.at_level("DEBUG", logger="src.pi.obdii.dtc_logger"):
+            dtcLogger.maybePeriodicMode03(driveId=7, connection=conn)
+
+        lines = [r for r in caplog.records if "Mode 03 round-trip" in r.getMessage()]
+        assert len(lines) == 1
+        assert lines[0].levelname == "DEBUG"
+        assert "ms=" in lines[0].getMessage()
+
+    def test_milEvent_isPolledAndCarriesTheStoredCodes(
+        self, freshDb: ObdDatabase,
+    ) -> None:
+        client, conn = _client(stored=[("P0443", "EVAP purge")])
+        dtcLogger = DtcLogger(database=freshDb, dtcClient=client)
+
+        result = dtcLogger.logMilEventDtcs(driveId=7, connection=conn)
+
+        assert result.polled is True
+        assert [c.code for c in result.codes] == ["P0443"]
+
+    def test_sessionStart_isPolledAndCarriesStoredThenPending(
+        self, freshDb: ObdDatabase,
+    ) -> None:
+        client, conn = _client(
+            stored=[("P0400", "EGR flow")], pending=[("P0171", "lean")],
+        )
+        dtcLogger = DtcLogger(database=freshDb, dtcClient=client)
+
+        result = dtcLogger.logSessionStartDtcs(driveId=7, connection=conn)
+
+        assert result.polled is True
+        assert [(c.code, c.status) for c in result.codes] == [
+            ("P0400", "stored"), ("P0171", "pending"),
+        ]

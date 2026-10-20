@@ -182,3 +182,29 @@ def test_logKeyOnDtcs_mode07Unsupported_storedStillCaptured(freshDb):
     assert result.pendingCount == 0
     rows = _rows(freshDb)
     assert all(r["drive_id"] is None for r in rows)
+
+
+def test_logKeyOnDtcs_mode07Raises_mode03CodesStillReturnedAndPersisted(freshDb):
+    """
+    Given: Mode 03 answers P0443, then the Mode 07 read raises (Atlas Q4)
+    When: a KOEO read runs
+    Then: the stored code is persisted NULL and returned for the emitter
+    """
+    logger, conn = _logger(freshDb, stored=[("P0443", "EVAP purge control valve")])
+    realQuery = conn._query
+
+    def _mode07Raises(cmd: Any) -> Any:
+        if cmd == "GET_CURRENT_DTC":
+            raise RuntimeError("device disconnected while reading")
+        return realQuery(cmd)
+
+    conn.obd = SimpleNamespace(query=_mode07Raises)
+
+    result = logger.logKeyOnDtcs(connection=conn)
+
+    assert [(c.code, c.status) for c in result.codes] == [("P0443", "stored")]
+    assert result.storedCount == 1
+    assert result.pendingCount == 0
+    assert _rows(freshDb) == [
+        {"dtc_code": "P0443", "status": "stored", "drive_id": None}
+    ]

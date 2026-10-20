@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import types
 
+import pytest
+
 from pi.splash.dtc_clear_channel import readOutcome, readRequest, writeRequest
 
 
@@ -215,3 +217,97 @@ class TestServiceDtcClearRequest:
         writeRequest(str(tmp_path), "req-1", nowFn=lambda: 1.0)
 
         orch._maybeServiceDtcClearRequest()  # must not raise
+
+
+def _diag(code, status):
+    return types.SimpleNamespace(code=code, status=status, description="")
+
+
+def _publishingOrchestrator(tmp_path, client):
+    """The clear hook plus the router's real emit (US-897-a1, Atlas Q4)."""
+    from pi.obdii.orchestrator.event_router import EventRouterMixin
+
+    conn = types.SimpleNamespace(isConnected=lambda: True)
+    orch = _orchestrator(tmp_path, connection=conn, client=client)
+    emitted = []
+    orch._dtcEmitter = lambda **kw: emitted.append(kw)
+    orch._emitDtcState = types.MethodType(EventRouterMixin._emitDtcState, orch)
+    return orch, emitted
+
+
+class TestPostClearReReadPublishes:
+    """US-897-a1: the post-clear re-read replaces the panel's pre-clear codes."""
+
+    @pytest.fixture(autouse=True)
+    def _noDrive(self):
+        from pi.obdii.drive_id import setCurrentDriveId
+
+        setCurrentDriveId(None)
+        yield
+        setCurrentDriveId(None)
+
+    def test_cleanReRead_publishesAnEmptyCodeSet(self, tmp_path):
+        orch, emitted = _publishingOrchestrator(
+            tmp_path, _FakeDtcClient(stored=[], pending=[])
+        )
+        writeRequest(str(tmp_path), "req-1", nowFn=lambda: 1.0)
+
+        orch._maybeServiceDtcClearRequest()
+
+        assert len(emitted) == 1
+        assert emitted[0]["codes"] == []
+        assert emitted[0]["mil"] is False
+
+    def test_instantReSet_publishesTheReReadWithTheCurrentDriveId(self, tmp_path):
+        from pi.obdii.drive_id import setCurrentDriveId
+
+        setCurrentDriveId(12)
+        orch, emitted = _publishingOrchestrator(
+            tmp_path,
+            _FakeDtcClient(
+                stored=[_diag("P0400", "stored")], pending=[_diag("P0171", "pending")]
+            ),
+        )
+        writeRequest(str(tmp_path), "req-1", nowFn=lambda: 1.0)
+
+        orch._maybeServiceDtcClearRequest()
+
+        assert [(c["code"], c["status"], c["driveId"]) for c in emitted[0]["codes"]] == [
+            ("P0400", "stored", 12), ("P0171", "pending", 12),
+        ]
+        assert emitted[0]["mil"] is True
+
+    def test_postClearPublish_replacesACarriedPendingSet(self, tmp_path):
+        orch, emitted = _publishingOrchestrator(
+            tmp_path, _FakeDtcClient(stored=[], pending=[])
+        )
+        orch._dtcCarriedPending = [_diag("P0171", "pending")]
+        writeRequest(str(tmp_path), "req-1", nowFn=lambda: 1.0)
+
+        orch._maybeServiceDtcClearRequest()
+
+        assert emitted[0]["codes"] == []
+        assert orch._dtcCarriedPending == []
+
+    def test_refusedClear_publishesNothing(self, tmp_path):
+        """No Mode 04 and no re-read happened, so the panel is not rewritten."""
+        orch, emitted = _publishingOrchestrator(tmp_path, _FakeDtcClient())
+        orch._connection = None
+        writeRequest(str(tmp_path), "req-1", nowFn=lambda: 1.0)
+
+        orch._maybeServiceDtcClearRequest()
+
+        assert emitted == []
+
+    def test_aRaisingPublish_neverRewritesTheClearOutcome(self, tmp_path):
+        orch, _ = _publishingOrchestrator(tmp_path, _FakeDtcClient(stored=[], pending=[]))
+
+        def _boom(**_kw):
+            raise RuntimeError("states dir gone")
+
+        orch._dtcEmitter = _boom
+        writeRequest(str(tmp_path), "req-1", nowFn=lambda: 1.0)
+
+        orch._maybeServiceDtcClearRequest()  # must not raise
+
+        assert readOutcome(str(tmp_path))["ok"] is True

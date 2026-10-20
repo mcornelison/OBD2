@@ -46,6 +46,10 @@
 #               |              | (_resetImuPeaks) beside the trip reset.
 # 2026-10-18    | Rex (US-896-b) | _handleDriveEnd marks the trip's end
 #               |                | (_markTripEnded) so drive.elapsedSec freezes.
+# 2026-10-19    | Rex (US-897-a1) | The periodic poll gets the current drive id;
+#               |                | drive-start, MIL and periodic reads publish
+#               |                | states/dtc with it (polled reads only), and a
+#               |                | Mode 03-only publish carries the last pending set.
 # ================================================================================
 ################################################################################
 
@@ -64,6 +68,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from ..drive_id import getCurrentDriveId
 from .types import HealthCheckStats
 
 # Unified logger name matches the original monolith module so existing tests
@@ -103,6 +108,8 @@ class EventRouterMixin:
     _dtcLogger: Any | None
     _milEdgeDetector: Any | None
     _freezeFrameCapture: Any | None
+    # US-897-a1: pending codes of the last publish that read Mode 07.
+    _dtcCarriedPending: list[Any]
     _onDriveStart: Callable[[Any], None] | None
     _onDriveEnd: Callable[[Any], None] | None
     _onAlert: Callable[[Any], None] | None
@@ -815,6 +822,8 @@ class EventRouterMixin:
                 "DTC session-start | stored=%d | pending=%d | mode07=%s",
                 stored, pending, mode07Note,
             )
+            # US-897-a1: drive start read Mode 07 too, so it replaces both sets.
+            self._emitDriveDtcState(result, includesPending=True)
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.warning(f"DTC session-start dispatch failed: {e}")
 
@@ -855,38 +864,76 @@ class EventRouterMixin:
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.warning(f"DTC key-on dispatch failed: {e}")
 
-    def _emitDtcState(self, result: Any) -> None:
-        """Publish the captured KOEO codes to the ``dtc`` state file (US-404).
+    def _emitDtcState(
+        self,
+        result: Any,
+        *,
+        driveId: int | None = None,
+        includesPending: bool = True,
+    ) -> None:
+        """Publish a DTC read's codes to the ``dtc`` state file (US-404, US-897-a1).
 
         Best-effort: when no ``dtc`` emitter is wired (the live call-site
-        injection follows the US-400/401 deferral pattern) this is a no-op.
-        Converts the captured ``DiagnosticCode`` list into the emitter's raw
-        code dicts, stamping ``driveId = None`` (a KOEO read is never a drive)
-        and ``logged = True`` (the rows were just written).  ``mil`` is the
-        honest "a stored fault is present" proxy; ``newSinceTs`` (the takeover
-        trigger) is US-405's concern and ``sessionResetLock`` is US-407's.
+        injection follows the US-400/401 deferral pattern) this is a no-op, and
+        so is a result with no ``codes`` attribute (test doubles).  Converts the
+        captured ``DiagnosticCode`` list into the emitter's raw code dicts,
+        stamping ``driveId`` (``None`` for a KOEO read, the current drive for a
+        drive-time read) and ``logged = True`` (the rows were just written).
+        ``mil`` is the honest "a stored fault is present" proxy; ``newSinceTs``
+        (the takeover trigger) is US-405's concern and ``sessionResetLock`` is
+        US-407's.
+
+        Pending carry-forward (Atlas G-a1): a read that included Mode 07
+        (``includesPending``: key-on, drive start, post-clear) replaces both
+        sets and becomes the pending set later reads carry.  A Mode 03-only read
+        (MIL edge, periodic) publishes its fresh stored codes plus that carried
+        pending set, minus any code now stored, so no code is listed twice.
         """
         emitter = getattr(self, '_dtcEmitter', None)
-        if emitter is None:
+        if emitter is None or not hasattr(result, 'codes'):
             return
-        codes = getattr(result, 'codes', None) or []
+        fresh = list(getattr(result, 'codes', None) or [])
+        if includesPending:
+            self._dtcCarriedPending = [
+                c for c in fresh if getattr(c, 'status', None) == 'pending'
+            ]
+            published = fresh
+        else:
+            storedNow = {getattr(c, 'code', None) for c in fresh}
+            carried = [
+                c for c in getattr(self, '_dtcCarriedPending', None) or []
+                if getattr(c, 'code', None) not in storedNow
+            ]
+            published = [*fresh, *carried]
         rawCodes = [
             {
                 "code": getattr(c, 'code', None),
                 "status": getattr(c, 'status', None),
                 "description": getattr(c, 'description', ''),
-                "driveId": None,
+                "driveId": driveId,
                 "setAtTs": None,
                 "logged": True,
                 "syncAcked": False,
             }
-            for c in codes
+            for c in published
         ]
         emitter(
             codes=rawCodes,
-            mil=getattr(result, 'storedCount', 0) > 0,
+            mil=any(getattr(c, 'status', None) == 'stored' for c in published),
             newSinceTs=None,
             sessionResetLock=[],
+        )
+
+    def _emitDriveDtcState(self, result: Any, *, includesPending: bool) -> None:
+        """Publish a drive-time DTC read with the current drive id (US-897-a1).
+
+        Only a read that actually ran Mode 03 (``polled`` True) publishes: a
+        cooldown skip or the no-drive no-op must never rewrite the panel.
+        """
+        if getattr(result, 'polled', False) is not True:
+            return
+        self._emitDtcState(
+            result, driveId=getCurrentDriveId(), includesPending=includesPending,
         )
 
     def _dispatchMilEventDtcs(self) -> None:
@@ -903,6 +950,7 @@ class EventRouterMixin:
                 "DTC MIL-event | inserted=%d | updated=%d",
                 inserted, updated,
             )
+            self._emitDriveDtcState(result, includesPending=False)
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.warning(f"DTC MIL-event dispatch failed: {e}")
 
@@ -935,12 +983,17 @@ class EventRouterMixin:
         gate -- this dispatcher is cheap to call every tick.  Inserts /
         updates are logged at DEBUG (per-tick volume) so a healthy idle
         drive doesn't flood INFO; promote to INFO if a row landed.
+
+        US-897-a1 (Atlas Q1): the poll gets the CURRENT drive id -- it was
+        passed ``None``, which the logger treats as "no drive", so the poll
+        never ran.  With no drive the logger's no-op still runs (resetting its
+        cadence) and nothing is published; a poll that ran publishes states/dtc.
         """
         if self._dtcLogger is None or self._connection is None:
             return
         try:
             result = self._dtcLogger.maybePeriodicMode03(
-                driveId=None, connection=self._connection,
+                driveId=getCurrentDriveId(), connection=self._connection,
             )
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.debug(f"Periodic DTC poll failed: {e}")
@@ -952,6 +1005,10 @@ class EventRouterMixin:
                 "DTC periodic | inserted=%d | updated=%d",
                 inserted, updated,
             )
+        try:
+            self._emitDriveDtcState(result, includesPending=False)
+        except Exception as e:  # noqa: BLE001 -- a publish must not crash the poll loop
+            logger.warning(f"DTC periodic publish failed: {e}")
 
     def _dispatchDriveEndDtcs(self) -> None:
         """Fire DtcLogger.logDriveEndDtcs from _handleDriveEnd.

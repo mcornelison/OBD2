@@ -69,6 +69,8 @@
 # 2026-10-14    | Rex (US-881-d) | _maybeServiceFuelResetRequest beside the DTC
 #               |              | clear hook: services POST /fuel-reset, refused
 #               |              | while a drive is recording.
+# 2026-10-19    | Rex (US-897-a1) | The post-clear Mode 03(+07) re-read publishes
+#               |              | states/dtc through the router's _emitDtcState.
 # ================================================================================
 ################################################################################
 
@@ -299,6 +301,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._systemStatusEmitter: Any | None = None
         self._batteryHealthEmitter: Any | None = None
         self._dtcEmitter: Any | None = None
+        # US-897-a1: pending codes of the last states/dtc publish that read
+        # Mode 07; a Mode 03-only publish carries them (EventRouterMixin).
+        self._dtcCarriedPending: list[Any] = []
         # Card-state emit cadence + cached sync status (updated by the sync
         # trigger path so the system-status tile reflects the REAL last push
         # without a per-tick DB scan).  None before the first tick so the very
@@ -1019,6 +1024,33 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 logger.error(
                     "US-752 clear watermark not written for request %s: %s -- "
                     "the resting Alerts card may still show pre-clear codes",
+                    requestId, exc,
+                )
+            # US-897-a1 (Atlas Q4): the re-read is the panel's new truth, so it
+            # goes out through the router's one dtc emit -- replacing stored
+            # AND pending -- with the current drive id. The ClearReadback is
+            # adapted to the `codes` shape the emit reads. Isolated like the
+            # watermark: the clear HAPPENED and must never read as a failure.
+            try:
+                emitDtcState = getattr(self, "_emitDtcState", None)
+                if callable(emitDtcState):
+                    from types import SimpleNamespace
+
+                    from pi.obdii.drive_id import getCurrentDriveId
+
+                    rereadCodes = [
+                        *(getattr(readback, "stored", None) or []),
+                        *(getattr(readback, "pending", None) or []),
+                    ]
+                    emitDtcState(
+                        SimpleNamespace(codes=rereadCodes),
+                        driveId=getCurrentDriveId(),
+                        includesPending=True,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "US-897-a1 post-clear states/dtc not published for request "
+                    "%s: %s -- the panel may still show pre-clear codes",
                     requestId, exc,
                 )
         except Exception as exc:  # noqa: BLE001
