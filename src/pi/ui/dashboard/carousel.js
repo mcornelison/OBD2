@@ -3313,10 +3313,13 @@
   // AHRS has no heading YET, which is not a dead sensor (spec s4.2).
   var REASON_HEADING_UNSEEDED = "heading_unseeded";
 
-  // Spec s7 (OEM mockup rules): the band's text before the first reading, and
-  // the reason beside the legacy engine's "--" chip.
+  // Spec s7 (OEM mockup rules): the band's text before the first reading.
   var NAV_WAITING_TEXT = "waiting for the first heading reading";
-  var NAV_CALIBRATION_ABSENT_TEXT = "calibration not published";
+  // US-911 (Atlas X3; CIO 2026-10-19 chose Iris's wording): ONE text for "the
+  // legacy engine publishes no headingCalibrated and no reason for it". Motion's
+  // labelled COMPASS cell shows it as is; NAV's unlabelled badge note prefixes
+  // 'calibration ' (so NAV still reads 'calibration not published').
+  var CALIBRATION_ABSENT_TEXT = "not published";
 
   // The NEW 8-point function (R25). Half up: 22.5 -> NE, 337.5 -> N, because
   // the index 8 wraps to 0. headingCardinal (16-point) is deliberately left
@@ -3434,7 +3437,7 @@
         "legacy", heading, "--",
         typeof reasons.headingCalibrated === "string" && reasons.headingCalibrated
           ? imuReason(data, "headingCalibrated")
-          : NAV_CALIBRATION_ABSENT_TEXT
+          : "calibration " + CALIBRATION_ABSENT_TEXT
       );
     }
     return navLiveView("trusted", heading, null, null);
@@ -3659,13 +3662,12 @@
   // (Iris M5). Unknown is never green.
   var MOTION_NO_FEED_TEXT = "no motion feed";
   var MOTION_NO_TIMESTAMP_TEXT = "no timestamp";
-  // The legacy engine publishes no headingCalibrated and no reason for it
-  // (Atlas C1, reconciled X3: Iris's Motion wording, not NAV's chip text).
-  var MOTION_CALIBRATION_ABSENT_TEXT = "not published";
   // stopCount 0 means the bias is NOT measured yet: 0.0 is not a reading
   // (imu_state_bridge buildImuState).
   var MOTION_NO_STOPS_TEXT = "no stops yet";
-  var MOTION_TILT_ABSENT_TEXT = "not published";
+  // The same wording as COMPASS's absent cell, so it reads the one source text
+  // (US-911: 'not published' is written once in the NAV and Motion code).
+  var MOTION_TILT_ABSENT_TEXT = CALIBRATION_ABSENT_TEXT;
   // The UPDATED age stops counting here; the amber already says "long ago"
   // (Iris M7).
   var MOTION_AGE_CAP_SEC = 999;
@@ -3702,7 +3704,7 @@
       "--", "none",
       typeof reasons.headingCalibrated === "string" && reasons.headingCalibrated
         ? imuReason(data, "headingCalibrated")
-        : MOTION_CALIBRATION_ABSENT_TEXT
+        : CALIBRATION_ABSENT_TEXT
     );
   }
 

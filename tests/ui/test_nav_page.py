@@ -29,6 +29,8 @@
 # 2026-10-18    | Rex (US-896-b) | The bottom row: GRADE (states/imu) and the
 #                                trip (system-status drive: distance, elapsed,
 #                                THIS DRIVE / SINCE h:mm / LAST DRIVE).
+# 2026-10-19    | Rex (US-911) | NAV's badge note and Motion's COMPASS absent
+#                                text built from one CALIBRATION_ABSENT_TEXT.
 # ================================================================================
 ################################################################################
 
@@ -1016,3 +1018,111 @@ def test_dom_parkedEngineOff_gradeAndTripStayLive():
 def test_dom_noImuFile_gradeSaysNoMotionFeed():
     b = _bottom(_boot(None, _now("trusted-247")))
     assert (b["grade"], b["note"]) == ("--", "no motion feed")
+
+
+# ---------------------------------------------------------------------------
+# US-911: NAV's badge note and Motion's COMPASS absent text are built from ONE
+# constant, CALIBRATION_ABSENT_TEXT (Atlas X3; CIO 2026-10-19 chose Iris's
+# wording). NAV's output stays 'calibration not published'.
+# ---------------------------------------------------------------------------
+
+_MOTION_FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "states", "motion")
+_ABSENT_DECL = 'var CALIBRATION_ABSENT_TEXT = "not published";'
+_SENTINEL = "SENTINEL-911"
+
+
+def _motionImu(name: str) -> dict[str, Any]:
+    with open(os.path.join(_MOTION_FIXTURES, name + ".json"), encoding="utf-8") as fh:
+        return json.load(fh)["imu"]
+
+
+def _enclosingFunction(lines: list[str], index: int) -> str:
+    for line in reversed(lines[:index]):
+        m = re.match(r"\s*function (\w+)\(", line)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def test_calibrationAbsentText_isOneConstant_andTheOldNamesAreGone():
+    src = _read(_JS)
+    assert src.count(_ABSENT_DECL) == 1
+    assert "NAV_CALIBRATION_ABSENT_TEXT" not in src
+    assert "MOTION_CALIBRATION_ABSENT_TEXT" not in src
+    assert '"calibration not published"' not in src
+    assert '"calibration " + CALIBRATION_ABSENT_TEXT' in src
+
+
+def test_notPublishedLiteral_onlyTheConstant_outsideTheFuelPage():
+    """The literal appears once in the NAV and Motion code (the constant); the
+    Fuel page's own 'not published' literals stay (acceptance)."""
+    lines = _read(_JS).splitlines()
+    outside = [
+        i + 1 for i, line in enumerate(lines)
+        if '"not published"' in line and line.strip() != _ABSENT_DECL
+        and not _enclosingFunction(lines, i).startswith("fuel")
+    ]
+    assert outside == []
+
+
+def _callCopy(js: str, calls: list[list[Any]]) -> list[Any]:
+    script = (
+        'const a = JSON.parse(require("fs").readFileSync(0, "utf-8"));'
+        "const c = require(a.js);"
+        "process.stdout.write(JSON.stringify(a.calls.map("
+        "(k) => c[k[0]].apply(null, k.slice(1)))));"
+    )
+    proc = subprocess.run(
+        [_NODE or "node", "-e", script], input=json.dumps({"js": js, "calls": calls}),
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def _mutatedCopy(tmp_path) -> str:
+    src = _read(_JS)
+    assert src.count(_ABSENT_DECL) == 1
+    out = tmp_path / "carousel.js"
+    out.write_text(
+        src.replace(_ABSENT_DECL, f'var CALIBRATION_ABSENT_TEXT = "{_SENTINEL}";'),
+        encoding="utf-8",
+    )
+    return str(out)
+
+
+def _bothViews(js: str, navImu: Any, motionImu: Any) -> tuple[Any, Any]:
+    nav, motion = _callCopy(js, [
+        ["navHeadingView", navImu, _now("legacy-engine-no-flag"), IMU_SEC],
+        ["motionView", motionImu, _ms(_fixture("legacy-engine-no-flag")["now"]), 1e9, None],
+    ])
+    return (nav["badge"], nav["badgeNote"]), (
+        motion["health"]["compass"]["value"], motion["health"]["compass"]["sub"])
+
+
+@_NODE_ONLY
+def test_navNoteAndMotionCompass_areBothBuiltFromTheOneConstant(tmp_path):
+    """Change the constant's text in a copy: BOTH pages follow it, so neither
+    keeps a second copy of the wording."""
+    nav, motion = _bothViews(
+        _mutatedCopy(tmp_path), _imu("legacy-engine-no-flag"), _motionImu("compass-legacy-engine"))
+    assert nav == ("--", "calibration " + _SENTINEL)
+    assert motion == ("--", _SENTINEL)
+
+
+@_NODE_ONLY
+def test_validation_shippedText_navCalibrationNotPublished_motionNotPublished():
+    nav, motion = _bothViews(
+        _JS, _imu("legacy-engine-no-flag"), _motionImu("compass-legacy-engine"))
+    assert nav == ("--", "calibration not published")
+    assert motion == ("--", "not published")
+
+
+@_NODE_ONLY
+def test_aPublishedHeadingCalibratedReason_stillWinsOnBothPages(tmp_path):
+    navImu, motionImu = _imu("legacy-engine-no-flag"), _motionImu("compass-legacy-engine")
+    navImu = dict(navImu, reasons=dict(navImu.get("reasons") or {}, headingCalibrated="no_source"))
+    motionImu = dict(motionImu, reasons=dict(motionImu["reasons"], headingCalibrated="no_source"))
+    nav, motion = _bothViews(_mutatedCopy(tmp_path), navImu, motionImu)
+    assert nav == ("--", "no source")
+    assert motion == ("--", "no source")
