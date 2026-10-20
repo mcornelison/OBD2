@@ -9,8 +9,9 @@
 #   and its persist watermark; a reset that touched the table from the HTTP
 #   process would leave the other two behind, and the next persist would write
 #   pre-reset accumulation back in.  So the HTTP process asks and the
-#   orchestrator answers -- the dtc_clear_channel pattern, copied into its own
-#   module (the DTC channel is not generalised).
+#   orchestrator answers -- the same shared `request_channel` the DTC clear
+#   rides (US-897-c0); this module keeps its own filenames, exception classes,
+#   messages and the return-on-refusal shape.
 #
 #   THE CONTRACT.  Request ``{requestId, requestedAtEpoch}``; outcome
 #   ``{requestId, ok, reason, resetAtTs, completedAtEpoch}``.  ``requestId`` is
@@ -29,6 +30,8 @@
 # ================================================================================
 # 2026-10-14    | Rex (US-881-d) | Initial -- request/outcome channel + the bridge
 #               |                | runner POST /fuel-reset calls.
+# 2026-10-20    | Rex (US-897-c0) | Thin wrapper over request_channel; every
+#               |                 | public name, message and shape unchanged.
 # ================================================================================
 ################################################################################
 
@@ -36,20 +39,22 @@
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
-from collections.abc import Callable, Mapping
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
-from pi.splash.boot_state_emitter import writeStateAtomic
-
 # Poll the same way, at the same cadence, as the DTC channel: a stat on tmpfs.
-from pi.splash.dtc_clear_channel import POLL_INTERVAL_SECONDS
+from pi.splash.request_channel import (
+    POLL_INTERVAL_SECONDS,
+    RequestChannel,
+    RequestChannelPublishError,
+    RequestChannelTimeout,
+)
 
 __all__ = [
     "OUTCOME_FILENAME",
+    "POLL_INTERVAL_SECONDS",
     "REQUEST_FILENAME",
     "ResetBridgeError",
     "ResetBridgeTimeout",
@@ -64,6 +69,9 @@ __all__ = [
 #: Both files live in the tmpfs states dir the two units already share.
 REQUEST_FILENAME = "fuel-reset-request.json"
 OUTCOME_FILENAME = "fuel-reset-outcome.json"
+
+#: The shared channel over this module's two files.
+_CHANNEL = RequestChannel(REQUEST_FILENAME, OUTCOME_FILENAME)
 
 
 class ResetBridgeError(RuntimeError):
@@ -90,10 +98,7 @@ def writeRequest(
     nowFn: Callable[[], float] = time.time,
 ) -> None:
     """Publish a reset request for the orchestrator to service."""
-    writeStateAtomic(
-        str(Path(statesDir) / REQUEST_FILENAME),
-        {"requestId": requestId, "requestedAtEpoch": nowFn()},
-    )
+    _CHANNEL.writeRequest(statesDir, requestId, nowFn=nowFn)
 
 
 def readRequest(statesDir: str) -> dict[str, Any] | None:
@@ -103,15 +108,12 @@ def readRequest(statesDir: str) -> dict[str, Any] | None:
     orchestrator's run loop, and a malformed request must never take capture
     down.  The requester then times out honestly.
     """
-    return _readJson(Path(statesDir) / REQUEST_FILENAME)
+    return _CHANNEL.readRequest(statesDir)
 
 
 def consumeRequest(statesDir: str) -> None:
     """Remove the request once it has been serviced (or abandoned). Idempotent."""
-    try:
-        (Path(statesDir) / REQUEST_FILENAME).unlink()
-    except OSError:
-        pass
+    _CHANNEL.consumeRequest(statesDir)
 
 
 # ==============================================================================
@@ -129,21 +131,21 @@ def writeOutcome(
     nowFn: Callable[[], float] = time.time,
 ) -> None:
     """Publish the result of servicing ``requestId`` (echoed back)."""
-    writeStateAtomic(
-        str(Path(statesDir) / OUTCOME_FILENAME),
+    _CHANNEL.writeOutcome(
+        statesDir,
         {
             "requestId": requestId,
             "ok": bool(ok),
             "reason": reason,
             "resetAtTs": resetAtTs,
-            "completedAtEpoch": nowFn(),
         },
+        nowFn=nowFn,
     )
 
 
 def readOutcome(statesDir: str) -> dict[str, Any] | None:
     """Read the most recent outcome, or None."""
-    return _readJson(Path(statesDir) / OUTCOME_FILENAME)
+    return _CHANNEL.readOutcome(statesDir)
 
 
 # ==============================================================================
@@ -182,43 +184,29 @@ def makeBridgeResetRunner(
     """
 
     def runner() -> dict[str, Any]:
-        requestId = idFn()
+        # The channel's requestId match stops a LEFTOVER outcome answering this press.
         try:
-            writeRequest(statesDir, requestId)
-        except OSError as exc:
+            outcome = _CHANNEL.awaitOutcome(
+                statesDir,
+                timeoutSeconds=timeoutSeconds,
+                nowFn=nowFn,
+                wallFn=time.time,
+                sleepFn=sleepFn,
+                idFn=idFn,
+            )
+        except RequestChannelPublishError as exc:
             raise ResetBridgeError(
-                f"could not publish the fuel reset request to {statesDir}: {exc}"
+                f"could not publish the fuel reset request to {statesDir}: {exc.cause}"
+            ) from exc.cause
+        except RequestChannelTimeout as exc:
+            # The channel has already withdrawn the request so it cannot fire later.
+            raise ResetBridgeTimeout(
+                f"no answer from the OBD service within {timeoutSeconds:g}s"
             ) from exc
-
-        deadline = nowFn() + timeoutSeconds
-        while True:
-            outcome = readOutcome(statesDir)
-            # The requestId match stops a LEFTOVER outcome answering this press.
-            if isinstance(outcome, Mapping) and outcome.get("requestId") == requestId:
-                return {
-                    "ok": bool(outcome.get("ok", False)),
-                    "reason": outcome.get("reason"),
-                    "resetAtTs": outcome.get("resetAtTs"),
-                }
-            if nowFn() >= deadline:
-                consumeRequest(statesDir)  # do not leave it to fire later
-                raise ResetBridgeTimeout(
-                    f"no answer from the OBD service within {timeoutSeconds:g}s"
-                )
-            sleepFn(POLL_INTERVAL_SECONDS)
+        return {
+            "ok": bool(outcome.get("ok", False)),
+            "reason": outcome.get("reason"),
+            "resetAtTs": outcome.get("resetAtTs"),
+        }
 
     return runner
-
-
-# ==============================================================================
-# Internals
-# ==============================================================================
-
-
-def _readJson(path: Path) -> dict[str, Any] | None:
-    """Read a JSON object, or None when absent/unreadable/not an object."""
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
