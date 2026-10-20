@@ -25,7 +25,7 @@ import json
 import logging
 import os
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -932,6 +932,259 @@ def test_seed_batteryEntrySurvivesARestart_activeIsStale(tmp_path: Path) -> None
     assert entry["title"] == _HIGH_TITLE
     assert entry["last"]["value"] == 15.1
     assert entry["firstSeenTs"] == "2026-10-20T15:12:00Z"
+
+
+# ---------------------------------------------------------------- over-rev
+#
+# US-897-b4: the peak is fed per READING (observeRpmReading, the seam), the
+# end is decided on the tick (observe).
+
+_RPM_ID = "engine:RPM:watch"
+
+
+def _at(second: float) -> datetime:
+    return datetime(2026, 10, 20, 15, 12, 0, tzinfo=UTC) + timedelta(seconds=second)
+
+
+def _rpmLive(value: float | None, second: int, band: str | None = "green") -> dict[str, Any]:
+    """An obd-live payload whose RPM is a fresh reading (band None -> unbanded)."""
+    obdLive = _obdLive(None)
+    obdLive["params"]["RPM"] = {
+        "value": value,
+        "unit": "rpm",
+        "ts": f"2026-10-20T15:12:{second:02d}Z",
+        "stale": False,
+        "band": None if band is None else _band(band),
+        "last": None,
+    }
+    return obdLive
+
+
+def _rpmTick(
+    arbiter: aa.AlertsArbiter,
+    obdLive: dict[str, Any] | None,
+    *,
+    recording: bool = False,
+    ended: bool = False,
+) -> dict[str, Any] | None:
+    arbiter.observe(
+        obdLive, dataSource="real", database=None, driveRecording=recording, driveEnded=ended
+    )
+    state = _build(arbiter, obdLive)
+    return next((e for e in state["entries"] if e["id"] == _RPM_ID), None)
+
+
+def test_overRev_peakFromEveryReadingBetweenSnapshots_sampledSentence_valueUnitNull() -> None:
+    """VC1: 6900, 7150.75, 7020 (all red) between two ticks -> 'peak 7,150 rpm
+    (sampled)' -- the 7150.75 the snapshot never shows is the peak."""
+    arbiter = _arbiter()
+    for second, rpm in ((1, 6900), (3, 7150.75), (5, 7020)):
+        arbiter.observeRpmReading(rpm, _at(second), _band("red"))
+
+    entry = _rpmTick(arbiter, _rpmLive(7020, 5, band="red"), recording=True)
+
+    assert entry is not None
+    assert set(entry) == _ENTRY_KEYS
+    assert entry["source"] == "engine"
+    assert entry["key"] == "RPM"
+    assert entry["tier"] == "watch"
+    assert entry["title"] == "OVER-REV"
+    assert entry["sentence"] == "peak 7,150 rpm (sampled)"
+    assert entry["value"] is None
+    assert entry["unit"] is None
+    assert entry["directive"] is None
+    assert entry["active"] is True
+    assert entry["firstSeenTs"] == "2026-10-20T15:12:01Z"
+    assert entry["lastSeenTs"] == "2026-10-20T15:12:05Z"
+
+
+@pytest.mark.parametrize(
+    ("peak", "sentence"),
+    [(7000, "peak 7,000 rpm (sampled)"), (7999.99, "peak 7,999 rpm (sampled)"),
+     (12345.5, "peak 12,345 rpm (sampled)"), (950.9, "peak 950 rpm (sampled)")],
+)
+def test_overRev_sentence_floorAndThousandsSeparator(peak: float, sentence: str) -> None:
+    """Spool 2026-10-19: n = floor(peak), ',' thousands, '(sampled)' always."""
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(peak, _at(1), _band("red"))
+
+    entry = _rpmTick(arbiter, None)
+
+    assert entry is not None
+    assert entry["sentence"] == sentence
+    assert entry["sentence"].endswith("(sampled)")
+
+
+def test_overRev_nonRedReadings_neverRaiseThePeakOrOpenAnEpisode() -> None:
+    """The band producer is the judge: amber/green readings do not count."""
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(6500, _at(0), _band("amber"))
+    assert _rpmTick(arbiter, None) is None
+
+    arbiter.observeRpmReading(7100, _at(1), _band("red"))
+    arbiter.observeRpmReading(9000, _at(2), _band("amber"))
+
+    assert _rpmTick(arbiter, None)["sentence"] == "peak 7,100 rpm (sampled)"
+
+
+def test_overRev_iconWatchPulsing_noTakeover() -> None:
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7100, _at(1), _band("red"))
+    arbiter.observe(None, dataSource="real", database=None, driveRecording=True)
+
+    state = _build(arbiter, None)
+
+    assert state["icon"] == {"state": "watch", "count": 1, "pulse": True}
+    assert state["takeover"] is None
+
+
+def test_overRev_endsAtDriveEnd_staysListedInactive() -> None:
+    """VC2: drive ends -> active false, still listed (Q15)."""
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7150, _at(1), _band("red"))
+    assert _rpmTick(arbiter, _rpmLive(7150, 1, band="red"), recording=True)["active"] is True
+
+    entry = _rpmTick(arbiter, None, recording=False, ended=True)
+
+    assert entry is not None
+    assert entry["active"] is False
+    assert entry["sentence"] == "peak 7,150 rpm (sampled)"
+    assert entry["value"] is None
+    assert _build(arbiter, None)["icon"]["count"] == 0
+
+
+def test_overRev_whileRecording_greenNeverEndsIt() -> None:
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7150, _at(0), _band("red"))
+    for second in range(2, 40, 2):
+        arbiter.observeRpmReading(3000, _at(second), _band("green"))
+
+    entry = _rpmTick(arbiter, _rpmLive(3000, 38), recording=True)
+
+    assert entry is not None and entry["active"] is True
+
+
+def test_overRev_noDriveRecording_green9sKeeps_green10sEnds_byReadingTime() -> None:
+    """Atlas Q13: with no drive recording it ends after the band has been green
+    for pi.warnings.rpm.clearGreenHoldSec (10 s) by the READINGS' time."""
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7150, _at(0), _band("red"))
+    arbiter.observeRpmReading(3000, _at(2), _band("green"))
+    arbiter.observeRpmReading(3000, _at(11), _band("green"))
+    assert _rpmTick(arbiter, _rpmLive(3000, 11))["active"] is True
+
+    arbiter.observeRpmReading(3000, _at(12), _band("green"))
+    entry = _rpmTick(arbiter, _rpmLive(3000, 12))
+
+    assert entry is not None and entry["active"] is False
+
+
+def test_overRev_greenHold_brokenByAmberOrNull_restarts() -> None:
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7150, _at(0), _band("red"))
+    arbiter.observeRpmReading(3000, _at(2), _band("green"))
+    arbiter.observeRpmReading(6000, _at(5), _band("amber"))
+    arbiter.observeRpmReading(3000, _at(6), _band("green"))
+    arbiter.observeRpmReading(None, _at(8), None)
+    arbiter.observeRpmReading(3000, _at(9), _band("green"))
+    arbiter.observeRpmReading(3000, _at(15), _band("green"))
+
+    assert _rpmTick(arbiter, _rpmLive(3000, 15))["active"] is True
+
+
+def test_overRev_greenHold_staleTickNeverEndsIt() -> None:
+    """Stale never clears: the tick must see a FRESH green RPM to end it."""
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7150, _at(0), _band("red"))
+    arbiter.observeRpmReading(3000, _at(2), _band("green"))
+    arbiter.observeRpmReading(3000, _at(14), _band("green"))
+    stale = _obdLive(None)
+    stale["params"]["RPM"] = {
+        "value": None, "unit": "rpm", "ts": "2026-10-20T15:12:14Z", "stale": True,
+        "band": None, "noBandReason": "stale", "last": {"value": 3000, "band": _band("green")},
+    }
+
+    assert _rpmTick(arbiter, stale)["active"] is True
+    assert _rpmTick(arbiter, None)["active"] is True
+
+
+def test_overRev_clearGreenHoldSec_comesFromItsOwnKey() -> None:
+    config = {"pi": {"warnings": {"rpm": {"clearGreenHoldSec": 3},
+                                  "battery": {"clearGreenHoldSec": 60}}}}
+    arbiter = _arbiter(config)
+    arbiter.observeRpmReading(7150, _at(0), _band("red"))
+    arbiter.observeRpmReading(3000, _at(2), _band("green"))
+    arbiter.observeRpmReading(3000, _at(5), _band("green"))
+
+    assert _rpmTick(arbiter, _rpmLive(3000, 5))["active"] is False
+
+
+def test_overRev_newDrive_resetsThePeak_newEpisodeNewFirstSeen() -> None:
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7400, _at(1), _band("red"))
+    _rpmTick(arbiter, None, recording=True)
+    _rpmTick(arbiter, None, recording=False, ended=True)
+
+    arbiter.resetRpmPeak()
+    arbiter.observeRpmReading(7050, _at(30), _band("red"))
+    entry = _rpmTick(arbiter, None, recording=True)
+
+    assert entry is not None
+    assert entry["active"] is True
+    assert entry["sentence"] == "peak 7,050 rpm (sampled)"
+    assert entry["firstSeenTs"] == "2026-10-20T15:12:30Z"
+
+
+def test_overRev_resetWhileActive_peakRestartsFromTheNextRedReading() -> None:
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7400, _at(1), _band("red"))
+
+    arbiter.resetRpmPeak()
+    arbiter.observeRpmReading(7050, _at(3), _band("red"))
+
+    assert _rpmTick(arbiter, None, recording=True)["sentence"] == "peak 7,050 rpm (sampled)"
+
+
+def test_overRev_tierComesFromConfig() -> None:
+    from common.config.validator import DEFAULTS
+
+    assert DEFAULTS["pi.warnings.engine.RPM.redTier"] == "watch"
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7100, _at(1), _band("red"))
+    assert _rpmTick(arbiter, None)["tier"] == "watch"
+
+
+def test_overRev_writesNoAlertLogRow(db: Any) -> None:
+    arbiter = _arbiter()
+    arbiter.observeRpmReading(7100, _at(1), _band("red"))
+    arbiter.observe(None, dataSource="real", database=db, driveEnded=True)
+
+    assert _alertRows(db) == []
+
+
+@pytest.mark.parametrize("active", [True, False])
+def test_seed_overRevAndItsPeakSurviveARestart(tmp_path: Path, active: bool) -> None:
+    """G3: the RPM episode and its peak are seeded from tmpfs states/alerts."""
+    first = _arbiter()
+    first.observeRpmReading(7150.75, _at(1), _band("red"))
+    if not active:
+        first.observe(None, dataSource="real", database=None, driveEnded=True)
+    _writeAlerts(tmp_path, _build(first, None))
+
+    restarted = aa.AlertsArbiter(
+        {}, driveIdProvider=_DriveIds(), seedEntries=aa.readAlertsSeed(str(tmp_path))
+    )
+    entry = next(e for e in _build(restarted, None)["entries"] if e["id"] == _RPM_ID)
+
+    assert entry["active"] is active
+    assert entry["sentence"] == "peak 7,150 rpm (sampled)"
+    assert entry["firstSeenTs"] == "2026-10-20T15:12:01Z"
+    assert entry["value"] is None and entry["unit"] is None
+    # An active seeded peak still counts: a lower red reading keeps it; after a
+    # cleared one, the same reading opens a new episode with its own peak.
+    restarted.observeRpmReading(7020, _at(40), _band("red"))
+    expected = "peak 7,150 rpm (sampled)" if active else "peak 7,020 rpm (sampled)"
+    assert _rpmTick(restarted, None, recording=True)["sentence"] == expected
 
 
 # ----------------------------------------------------------------- emitter

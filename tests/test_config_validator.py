@@ -1165,10 +1165,11 @@ def test_warnings_rejectsATierOutsideStopWatch(tier):
 
 
 def test_warnings_rejectsANonMappingEngineRule():
-    # RPM has no default, so the shape reaches _validateWarnings untouched.
+    # MOVED PIN (US-897-b4): RPM now has a default, so the rule is a PID with
+    # none -- the shape reaches _validateWarnings untouched.
     bad = _baseCfg()
-    bad["pi"] = {"warnings": {"engine": {"RPM": "watch"}}}
-    with pytest.raises(ConfigValidationError, match="pi.warnings.engine.RPM"):
+    bad["pi"] = {"warnings": {"engine": {"SPEED": "watch"}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.engine.SPEED"):
         ConfigValidator().validate(bad)
 
 
@@ -1209,6 +1210,43 @@ def test_warnings_battery_clearGreenHoldSec_acceptsAPositiveNumber():
     ok["pi"] = {"warnings": {"battery": {"clearGreenHoldSec": 2.5}}}
     cfg = ConfigValidator().validate(ok)
     assert cfg["pi"]["warnings"]["battery"]["clearGreenHoldSec"] == 2.5
+
+
+def test_warnings_rpm_defaults_watchTier_ownClearGreenHold10s():
+    """US-897-b4 (Atlas Q13): RPM red is a WATCH; its no-drive green hold is its
+    OWN key, separate from the battery's."""
+    from common.config.validator import DEFAULTS
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["warnings"]["engine"]["RPM"]["redTier"] == "watch"
+    assert cfg["pi"]["warnings"]["rpm"]["clearGreenHoldSec"] == 10
+    assert DEFAULTS["pi.warnings.engine.RPM.redTier"] == "watch"
+    assert DEFAULTS["pi.warnings.rpm.clearGreenHoldSec"] == 10
+
+
+def test_warnings_rpm_clearGreenHoldSec_defaultCitesAtlasQ13():
+    import inspect
+
+    import common.config.validator as validatorModule
+
+    lines = inspect.getsource(validatorModule).splitlines()
+    line = next(text for text in lines if "'pi.warnings.rpm.clearGreenHoldSec':" in text)
+    assert "Atlas Q13" in line
+
+
+@pytest.mark.parametrize("badValue", [0, -1, "10", True])
+def test_warnings_rpm_clearGreenHoldSec_rejectsANonPositiveNumber(badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"rpm": {"clearGreenHoldSec": badValue}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.rpm.clearGreenHoldSec"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_rpm_rejectsAStopTier():
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"engine": {"RPM": {"redTier": "stop"}}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.engine.RPM"):
+        ConfigValidator().validate(bad)
 
 
 def test_replay_active_defaultsToFalse_andAnExplicitTrueIsKept():

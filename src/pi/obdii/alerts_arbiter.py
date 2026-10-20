@@ -4,9 +4,10 @@
 #                      the warnings page: what was assessed (sources), the icon,
 #                      the ordered entries and the non-dismissable PULL OVER
 #                      takeover. Fed the obd-live payload the card tick just
-#                      published; its entries are the live coolant STOP and
-#                      the battery WATCH. Each STOP episode edge is INSERTed
-#                      into alert_log.
+#                      published; its entries are the live coolant STOP, the
+#                      battery WATCH and the over-rev WATCH (whose peak is fed
+#                      per reading). Each STOP episode edge is INSERTed into
+#                      alert_log.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-10-20
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -20,6 +21,11 @@
 # 2026-10-20    | Rex (US-897-b3) | Battery WATCH: side words, value rounded
 #                                toward the breach, ends after a 10 s green
 #                                hold by reading time; seeded like coolant.
+# 2026-10-20    | Rex (US-897-b4) | Over-rev WATCH: peak from EVERY RPM reading
+#                                on the reading seam (own lock), '(sampled)'
+#                                sentence, value/unit null; ends at drive end or
+#                                after a no-drive green hold; drive start resets
+#                                the peak; seeded like coolant.
 # ================================================================================
 ################################################################################
 
@@ -54,14 +60,17 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+import re
+import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
-from pi.obdii.band_producer import BAND_GREEN, BAND_RED, PID_BATTERY, PID_COOLANT
+from pi.obdii.band_producer import BAND_GREEN, BAND_RED, PID_BATTERY, PID_COOLANT, PID_RPM
 
 __all__ = [
     "ALERTS_STATE_FILENAME",
@@ -131,6 +140,15 @@ _BATTERY_WORDS = {
 _BATTERY_REDTIER_KEY = "pi.warnings.engine.BATTERY_V.redTier"
 _BATTERY_RED_ABOVE_V_KEY = "pi.bands.battery.redAboveV"
 _BATTERY_CLEAR_GREEN_HOLD_KEY = "pi.warnings.battery.clearGreenHoldSec"
+
+# The over-rev WATCH (Spool 2026-10-14/10-18 + Atlas G3): the sentence carries
+# the SAMPLED peak -- '(sampled)' is mandatory, the poll can miss the true one.
+RPM_OVER_REV_TITLE = "OVER-REV"
+_RPM_SENTENCE_FMT = "peak {peak:,} rpm (sampled)"
+_RPM_SENTENCE_PEAK = re.compile(r"^peak ([0-9][0-9,]*) rpm \(sampled\)$")
+
+_RPM_REDTIER_KEY = "pi.warnings.engine.RPM.redTier"
+_RPM_CLEAR_GREEN_HOLD_KEY = "pi.warnings.rpm.clearGreenHoldSec"
 
 # Matches the other card emitters' `ts` format (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -240,6 +258,17 @@ def _towardBreach(value: float, side: str) -> float:
     return float(Decimal(repr(float(value))).quantize(_TENTH, rounding=rounding))
 
 
+def _rpmSentence(peak: float) -> str:
+    """'peak 7,150 rpm (sampled)': floor of the peak, ',' thousands (Spool 2026-10-19)."""
+    return _RPM_SENTENCE_FMT.format(peak=math.floor(peak))
+
+
+def _rpmPeakOf(sentence: Any) -> float | None:
+    """The peak a published over-rev sentence carries, or None."""
+    match = _RPM_SENTENCE_PEAK.match(sentence) if isinstance(sentence, str) else None
+    return None if match is None else float(match.group(1).replace(",", ""))
+
+
 def _parseTs(ts: Any) -> datetime | None:
     if not isinstance(ts, str) or not ts:
         return None
@@ -302,6 +331,17 @@ class AlertsArbiter:
         self._batteryLastReading: dict[str, Any] | None = None
         # Event time of the first reading of the current unbroken green run.
         self._batteryGreenSince: datetime | None = None
+        self._rpmTier = str(_configValue(config, _RPM_REDTIER_KEY))
+        self._rpmClearGreenHoldSec = float(_configValue(config, _RPM_CLEAR_GREEN_HOLD_KEY))
+        # The over-rev episode and its green run are written on the realtime
+        # thread (observeRpmReading) and read on the run loop: one lock, the
+        # _fuelLock precedent.
+        self._rpmLock = threading.Lock()
+        self._rpm: AlertEpisode | None = None
+        # Event times of the first and newest reading of the current unbroken
+        # green run (per reading, not per snapshot).
+        self._rpmGreenSince: datetime | None = None
+        self._rpmGreenLatest: datetime | None = None
         for entry in seedEntries:
             self._seed(entry)
 
@@ -309,7 +349,9 @@ class AlertsArbiter:
 
     def episodes(self) -> list[AlertEpisode]:
         """Every episode of this boot, active or cleared (unordered)."""
-        return [e for e in (self._coolant, self._battery) if e is not None]
+        with self._rpmLock:
+            rpm = self._rpm
+        return [e for e in (self._coolant, self._battery, rpm) if e is not None]
 
     # ------------------------------------------------------------- the tick
 
@@ -319,6 +361,8 @@ class AlertsArbiter:
         *,
         dataSource: str | None,
         database: Any,
+        driveRecording: bool = False,
+        driveEnded: bool = False,
     ) -> None:
         """Move the episodes on from the obd-live payload the tick published.
 
@@ -328,9 +372,114 @@ class AlertsArbiter:
             dataSource: The data_source tag of the readings; replay and
                 physics_sim write no alert_log row.
             database: An ``ObdDatabase``-like object (``connect()``), or None.
+            driveRecording: A drive is recording now (``_gatherDriveState``).
+            driveEnded: The recording -> idle edge happened since the last tick.
         """
         self._observeCoolant(obdLive, dataSource=dataSource, database=database)
         self._observeBattery(obdLive)
+        self._observeRpmEnd(obdLive, driveRecording=driveRecording, driveEnded=driveEnded)
+
+    # ------------------------------------------------------------ over-rev
+
+    def observeRpmReading(self, value: Any, eventUtc: datetime, band: Any) -> None:
+        """Feed ONE RPM reading from the reading seam (US-897-b4).
+
+        Every reading, not the ~2 s snapshot, so the peak is the highest SAMPLED
+        value. ``band`` is the band producer's result for THIS reading -- the
+        producer is the one judge of red; nothing is compared here.
+
+        Args:
+            value: The RPM reading; None (or non-numeric) breaks the green run.
+            eventUtc: Aware UTC event time of the reading.
+            band: ``{band, since, reason}`` at this reading, or None.
+        """
+        bandName = band.get("band") if isinstance(band, Mapping) else None
+        with self._rpmLock:
+            if not _isNumber(value):
+                self._rpmGreenSince = None
+                self._rpmGreenLatest = None
+                return
+            rpm = float(value)
+            if bandName == BAND_RED:
+                self._rpmGreenSince = None
+                self._rpmGreenLatest = None
+                from common.time.helper import toCanonicalIso
+
+                ts = toCanonicalIso(eventUtc)
+                episode = self._rpm
+                if episode is None or not episode.active:
+                    episode = self._newRpmEpisode(ts)
+                peak = rpm if episode.peak is None else max(episode.peak, rpm)
+                self._rpm = replace(
+                    episode, lastSeenTs=ts, peak=peak, sentence=_rpmSentence(peak)
+                )
+                return
+            if bandName == BAND_GREEN:
+                if self._rpmGreenSince is None:
+                    self._rpmGreenSince = eventUtc
+                self._rpmGreenLatest = eventUtc
+                return
+            # Amber or unbanded: not green, so the green run starts over.
+            self._rpmGreenSince = None
+            self._rpmGreenLatest = None
+
+    def resetRpmPeak(self) -> None:
+        """Drive start: the peak counts from this drive's readings only.
+
+        A cleared episode stays listed; the next red reading opens a new one.
+        An episode still active at the drive start keeps its entry, and its
+        peak restarts from the next red reading.
+        """
+        with self._rpmLock:
+            if self._rpm is not None and self._rpm.active:
+                self._rpm = replace(self._rpm, peak=None)
+
+    def _observeRpmEnd(
+        self, obdLive: Mapping[str, Any] | None, *, driveRecording: bool, driveEnded: bool
+    ) -> None:
+        """End the over-rev at drive end, or -- no drive recording -- after the
+        band has been green for clearGreenHoldSec by reading time (Atlas Q13).
+        The green end also needs the tick's RPM to be a FRESH green reading:
+        stale never clears."""
+        param = _freshParam(obdLive, PID_RPM)
+        freshGreen = param is not None and _bandName(param) == BAND_GREEN
+        with self._rpmLock:
+            episode = self._rpm
+            if episode is None or not episode.active:
+                return
+            if driveEnded:
+                self._endRpm(episode)
+                return
+            if driveRecording or not freshGreen:
+                return
+            since, latest = self._rpmGreenSince, self._rpmGreenLatest
+            if (
+                since is not None
+                and latest is not None
+                and (latest - since).total_seconds() >= self._rpmClearGreenHoldSec
+            ):
+                self._endRpm(episode)
+
+    def _endRpm(self, episode: AlertEpisode) -> None:
+        """Mark the over-rev ended; it stays listed until acked (Q15)."""
+        self._rpm = replace(episode, active=False)
+        self._rpmGreenSince = None
+        self._rpmGreenLatest = None
+
+    def _newRpmEpisode(self, firstSeenTs: Any) -> AlertEpisode:
+        """A fresh over-rev episode: value and unit stay null (Atlas G3)."""
+        return AlertEpisode(
+            source=SOURCE_ENGINE,
+            key=PID_RPM,
+            tier=self._rpmTier,
+            title=RPM_OVER_REV_TITLE,
+            sentence="",
+            directive=None,
+            unit=None,
+            firstSeenTs=firstSeenTs,
+            lastSeenTs=firstSeenTs,
+            active=True,
+        )
 
     def _observeBattery(self, obdLive: Mapping[str, Any] | None) -> None:
         """Move the battery WATCH on (US-897-b3, Spool 2026-10-14 + Atlas Q12).
@@ -498,6 +647,9 @@ class AlertsArbiter:
         if entry.get("id") == _entryId(SOURCE_ENGINE, PID_BATTERY, self._batteryTier):
             self._seedBattery(entry)
             return
+        if entry.get("id") == _entryId(SOURCE_ENGINE, PID_RPM, self._rpmTier):
+            self._seedRpm(entry)
+            return
         if entry.get("id") != _entryId(SOURCE_ENGINE, PID_COOLANT, self._coolantTier):
             return
         active = entry.get("active") is True
@@ -537,6 +689,22 @@ class AlertsArbiter:
         )
         self._batterySide = side
         self._batteryLastReading = None if last is None else dict(last)
+
+    def _seedRpm(self, entry: Mapping[str, Any]) -> None:
+        """Take a prior over-rev back with its peak, read from its sentence
+        (Atlas G3); the green run starts over, so an ACTIVE one ends only on a
+        fresh green hold or the next drive end."""
+        sentence = entry.get("sentence")
+        peak = _rpmPeakOf(sentence)
+        episode = replace(
+            self._newRpmEpisode(entry.get("firstSeenTs")),
+            lastSeenTs=entry.get("lastSeenTs"),
+            active=entry.get("active") is True,
+            peak=peak,
+            sentence=sentence if isinstance(sentence, str) else "",
+        )
+        with self._rpmLock:
+            self._rpm = episode
 
     # ---------------------------------------------------------- the record
 

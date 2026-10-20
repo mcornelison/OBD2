@@ -797,3 +797,180 @@ def test_b2_bootIdSurfacePresent_publishesTheBootId(tmp_path, monkeypatch):
     orch._maybeEmitCardStates()
 
     assert _readState(tmp_path, "alerts")["bootId"] == "b7c0ffee"
+
+
+# ---------------------------------------------------------------------------
+# US-897-b4 -- the over-rev peak is fed at the READING seam (every RPM reading,
+# judged by the real band producer), the end at the alerts tick's own
+# recording -> idle edge, and the reset at drive start.
+# ---------------------------------------------------------------------------
+
+
+def _rpmReading(value, at):
+    return SimpleNamespace(parameterName="RPM", value=value, unit="rpm", timestamp=at)
+
+
+class _Driving:
+    def __init__(self):
+        self.driving = False
+
+    def isDriving(self):
+        return self.driving
+
+
+def _overRevEntry(tmp_path):
+    alerts = _readState(tmp_path, "alerts")
+    return next((e for e in alerts["entries"] if e["id"] == "engine:RPM:watch"), None)
+
+
+def _overRevOrch(tmp_path):
+    orch, now = _alertsOrch(tmp_path)
+    orch._driveDetector = _Driving()
+    return orch, now
+
+
+def test_b4_peakTakenFromReadingsBetweenSnapshots_throughTheRealBandProducer(tmp_path):
+    """VC1: 6900, 7150.75, 7020 between two ticks; the snapshot only ever holds
+    7020, yet the sentence carries the 7150.75 the seam saw (floored)."""
+    orch, now = _overRevOrch(tmp_path)
+    orch._driveDetector.driving = True
+    for second, rpm in ((0, 6900), (1, 7150.75), (2, 7020)):
+        orch.observeObdLiveReading(_rpmReading(rpm, _B2_T0 + timedelta(seconds=second)))
+    now["t"] = _B2_T0 + timedelta(seconds=3)
+
+    assert orch._maybeEmitCardStates() is True
+
+    assert _readState(tmp_path, "obd-live")["params"]["RPM"]["value"] == 7020
+    entry = _overRevEntry(tmp_path)
+    assert entry is not None
+    assert entry["title"] == "OVER-REV"
+    assert entry["sentence"] == "peak 7,150 rpm (sampled)"
+    assert entry["value"] is None
+    assert entry["unit"] is None
+    assert entry["active"] is True
+    # 6900 is amber under the default redRpm 7000 -- the producer's call, not ours.
+    assert entry["firstSeenTs"] == "2026-10-20T15:12:26Z"
+    assert _readState(tmp_path, "alerts")["icon"]["state"] == "watch"
+
+
+def test_b4_driveEnd_recordingToIdleEdge_endsTheOverRev(tmp_path):
+    """VC2: drive ends -> active false, still listed."""
+    orch, now = _overRevOrch(tmp_path)
+    orch._driveDetector.driving = True
+    orch.observeObdLiveReading(_rpmReading(7200, _B2_T0))
+    now["t"] = _B2_T0 + timedelta(seconds=1)
+    orch._maybeEmitCardStates()
+    assert _overRevEntry(tmp_path)["active"] is True
+
+    orch._driveDetector.driving = False
+    now["t"] = _B2_T0 + timedelta(seconds=3)
+    orch._maybeEmitCardStates()
+
+    entry = _overRevEntry(tmp_path)
+    assert entry is not None
+    assert entry["active"] is False
+    assert entry["sentence"] == "peak 7,200 rpm (sampled)"
+
+
+def test_b4_driveEndEdge_isItsOwnFlag_notTheFuelPersists(tmp_path):
+    orch, now = _overRevOrch(tmp_path)
+    orch._driveDetector.driving = True
+    orch.observeObdLiveReading(_rpmReading(7200, _B2_T0))
+    now["t"] = _B2_T0 + timedelta(seconds=1)
+    orch._maybeEmitCardStates()
+
+    assert orch._alertsWasRecording is True
+    # Even with the fuel edge already consumed, the alerts edge still fires.
+    orch._fuelWasRecording = False
+    orch._driveDetector.driving = False
+    now["t"] = _B2_T0 + timedelta(seconds=3)
+    orch._maybeEmitCardStates()
+
+    assert _overRevEntry(tmp_path)["active"] is False
+    assert orch._alertsWasRecording is False
+
+
+def test_b4_nonRpmReadings_neverReachTheArbiter(tmp_path):
+    orch, _ = _overRevOrch(tmp_path)
+    seen = []
+    orch._alertsArbiter.observeRpmReading = lambda *a: seen.append(a)
+
+    orch.observeObdLiveReading(_coolantReading(90.0, _B2_T0))
+    orch.observeObdLiveReading(_rpmReading(800, _B2_T0))
+
+    assert len(seen) == 1
+    value, eventUtc, band = seen[0]
+    assert value == 800
+    assert eventUtc == _B2_T0
+    assert band["band"] == "green"
+
+
+class _DriveStartOrch(_FakeOrch, EventRouterMixin):
+    def __init__(self, config):
+        from pi.obdii.orchestrator.types import HealthCheckStats
+
+        super().__init__(config)
+        self._healthCheckStats = HealthCheckStats()
+        self._displayManager = None
+        self._milEdgeDetector = None
+        self._dtcLogger = None
+        self._onDriveStart = None
+
+
+def test_b4_driveStart_resetsThePeak_throughHandleDriveStart(tmp_path):
+    """A pre-drive over-rev still active at the drive start (no recording, no
+    green hold yet): the drive start resets its peak, so the drive's own red
+    reading is the peak -- a lower one than before."""
+    orch = _DriveStartOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._driveDetector = _Driving()
+    now = {"t": _B2_T0}
+    orch._obdLiveClock = lambda: now["t"]
+    orch._initializeCardStateEmitters()
+    orch.observeObdLiveReading(_rpmReading(7400, _B2_T0))
+    now["t"] = _B2_T0 + timedelta(seconds=1)
+    orch._maybeEmitCardStates()
+    assert _overRevEntry(tmp_path)["sentence"] == "peak 7,400 rpm (sampled)"
+
+    orch._handleDriveStart(SimpleNamespace(id=2, startTime=None))
+    orch._driveDetector.driving = True
+    orch.observeObdLiveReading(_rpmReading(7050, _B2_T0 + timedelta(seconds=3)))
+    now["t"] = _B2_T0 + timedelta(seconds=4)
+    orch._maybeEmitCardStates()
+
+    entry = _overRevEntry(tmp_path)
+    assert entry["active"] is True
+    assert entry["sentence"] == "peak 7,050 rpm (sampled)"
+
+
+def test_b4_newDriveAfterADriveEnd_opensANewEpisode(tmp_path):
+    orch, now = _overRevOrch(tmp_path)
+    orch._driveDetector.driving = True
+    orch.observeObdLiveReading(_rpmReading(7400, _B2_T0))
+    now["t"] = _B2_T0 + timedelta(seconds=1)
+    orch._maybeEmitCardStates()
+    orch._driveDetector.driving = False
+    now["t"] = _B2_T0 + timedelta(seconds=2)
+    orch._maybeEmitCardStates()
+
+    orch._resetAlertsRpmPeak()
+    orch._driveDetector.driving = True
+    orch.observeObdLiveReading(_rpmReading(7050, _B2_T0 + timedelta(seconds=30)))
+    now["t"] = _B2_T0 + timedelta(seconds=31)
+    orch._maybeEmitCardStates()
+
+    entry = _overRevEntry(tmp_path)
+    assert entry["active"] is True
+    assert entry["sentence"] == "peak 7,050 rpm (sampled)"
+    assert entry["firstSeenTs"] == "2026-10-20T15:12:55Z"
+
+
+def test_b4_aFailingPeakReset_doesNotBlockTheDriveStart(tmp_path):
+    orch = _DriveStartOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    orch._resetAlertsRpmPeak = _boom
+    orch._handleDriveStart(SimpleNamespace(id=2, startTime=None))
+
+    assert orch._healthCheckStats.drivesDetected == 1

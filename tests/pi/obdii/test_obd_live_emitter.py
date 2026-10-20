@@ -1086,3 +1086,48 @@ class TestTheContractFixture:
         coolant = self._load()["coolant-red"]["params"]["COOLANT_TEMP"]
         assert coolant["band"]["band"] == "red"
         assert "noBandReason" not in coolant
+
+
+# ============================================ US-897-b4 tracker accessors
+
+
+class TestOverRevAccessors:
+    """The arbiter's RPM peak reads the tracker's time domain and band verdict."""
+
+    def test_eventUtc_isThePublicAliasOfTheReadingConversion(self) -> None:
+        """
+        Given: a naive local 10:00 in America/Chicago (CDT, UTC-5)
+        When: eventUtc converts it
+        Then: 15:00Z -- exactly what _eventUtc gives (the private name stays)
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+        naive = datetime(2026, 10, 20, 10, 0, 0)
+
+        assert tracker.eventUtc(naive) == datetime(2026, 10, 20, 15, 0, 0, tzinfo=UTC)
+        assert tracker.eventUtc(naive) == tracker._eventUtc(naive)
+
+    def test_bandResultFor_isTheProducersVerdictAtTheLatestReading(self) -> None:
+        """
+        Given: RPM 7150.75 then 6500 observed
+        When: bandResultFor('RPM') is read after each
+        Then: red, then amber -- per reading, no dwell; a copy, not the live dict
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+        t0 = datetime(2026, 10, 20, 15, 0, 0, tzinfo=UTC)
+
+        tracker.observeReading(_Reading("RPM", 7150.75, t0))
+        red = tracker.bandResultFor("RPM")
+        tracker.observeReading(_Reading("RPM", 6500, t0 + timedelta(seconds=1)))
+
+        assert red.band is not None and red.band["band"] == "red"
+        assert tracker.bandResultFor("RPM").band["band"] == "amber"
+        red.band["band"] = "mutated"
+        assert tracker.bandResultFor("RPM").band["band"] == "amber"
+
+    def test_bandResultFor_unreadPid_carriesTheNoBandReason(self) -> None:
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        result = tracker.bandResultFor("RPM")
+
+        assert result.band is None
+        assert result.noBandReason == "not_read"

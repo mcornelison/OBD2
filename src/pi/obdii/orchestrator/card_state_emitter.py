@@ -93,6 +93,9 @@
 #               |              | states/dtc BEFORE the boot write, which carries them.
 # 2026-10-20    | Rex (US-897-b2)| states/alerts: the alerts arbiter runs after
 #               |              | obd-live on the SAME payload that emit returned.
+# 2026-10-20    | Rex (US-897-b4)| observeObdLiveReading hands each RPM reading +
+#               |              | its band to the arbiter's peak; the alerts tick
+#               |              | passes its own recording -> idle edge.
 # ================================================================================
 ################################################################################
 
@@ -311,6 +314,8 @@ class CardStateEmitterMixin:
     _alertsArbiter: Any = None
     _alertsEmitter: Any = None
     _alertsBootId: str = "unknown"
+    # US-897-b4: the card tick's recording -> idle edge that ends the over-rev.
+    _alertsWasRecording: bool = False
     # US-889-a: the states/engine-history writer; the history itself lives in
     # the obd-live tracker. CLASS default for the same reason as above.
     _engineHistoryEmitter: Any = None
@@ -722,6 +727,26 @@ class CardStateEmitterMixin:
         if tracker is None:
             return
         tracker.observeReading(reading)
+        self._observeAlertsRpmReading(tracker, reading)
+
+    def _observeAlertsRpmReading(self, tracker: Any, reading: Any) -> None:
+        """Hand an RPM reading to the alerts arbiter's peak (US-897-b4).
+
+        AFTER the tracker observed it, so the band read back (under the
+        tracker's lock) is the band producer's verdict on THIS reading -- the
+        producer stays the one judge of red. Every reading, never the snapshot.
+        """
+        arbiter = self._alertsArbiter
+        if arbiter is None or getattr(reading, "parameterName", None) != "RPM":
+            return
+        timestamp = getattr(reading, "timestamp", None)
+        if not isinstance(timestamp, datetime):
+            return
+        arbiter.observeRpmReading(
+            getattr(reading, "value", None),
+            tracker.eventUtc(timestamp),
+            tracker.bandResultFor("RPM").band,
+        )
 
     def _obdLiveNowUtc(self) -> datetime:
         """Aware UTC now for the obd-live staleness decision."""
@@ -827,10 +852,17 @@ class CardStateEmitterMixin:
         if arbiter is None or emitter is None:
             return
         dataSource = self._gatherObdLiveDataSource()
+        # US-897-b4: the over-rev ends at the recording -> idle edge -- its OWN
+        # flag, never the fuel persist's.
+        recording = self._gatherDriveState()[0] == "recording"
+        driveEnded = self._alertsWasRecording and not recording
+        self._alertsWasRecording = recording
         arbiter.observe(
             obdLive,
             dataSource=dataSource,
             database=getattr(self, "_database", None),
+            driveRecording=recording,
+            driveEnded=driveEnded,
         )
         emitter(
             arbiter.episodes(),
@@ -839,6 +871,13 @@ class CardStateEmitterMixin:
             dataSource=dataSource,
             bootId=self._alertsBootId,
         )
+
+    def _resetAlertsRpmPeak(self) -> None:
+        """Drive start: the over-rev peak counts from this drive (US-897-b4)."""
+        arbiter = self._alertsArbiter
+        if arbiter is None:
+            return
+        arbiter.resetRpmPeak()
 
     def _resetEngineHistory(self, driveStartTime: Any) -> None:
         """Open this drive's engine-history window at drive start (US-889-a).

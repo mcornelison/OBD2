@@ -30,6 +30,8 @@
 #                                shared closed-loop code set (Atlas S104 (b)).
 # 2026-10-20    | Rex (US-897-b2) | emit returns the payload it wrote (None when
 #                                the write failed) for the alerts arbiter (Q18).
+# 2026-10-20    | Rex (US-897-b4) | Public eventUtc alias + bandResultFor (under
+#                                the lock) for the arbiter's RPM peak.
 # ================================================================================
 ################################################################################
 
@@ -72,6 +74,7 @@ from pi.obdii.band_producer import (
     NO_BAND_STALE,
     PID_RPM,
     BandProducer,
+    BandResult,
     BandSettings,
 )
 from pi.obdii.engine_history import EngineHistory, EngineHistorySettings
@@ -246,6 +249,26 @@ class ObdLiveTracker:
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=resolveLocalZone(self._config))
         return timestamp.astimezone(UTC)
+
+    def eventUtc(self, timestamp: datetime) -> datetime:
+        """Public alias of :meth:`_eventUtc` (US-897-b4): the alerts arbiter
+        stamps an RPM reading in the SAME time domain the bands observed it in.
+
+        Raises:
+            ValueError: If no usable local zone is declared.
+        """
+        return self._eventUtc(timestamp)
+
+    def bandResultFor(self, name: str) -> BandResult:
+        """The band producer's result for ``name`` at its latest reading, read
+        under this tracker's lock (US-897-b4: the producer stays the ONE judge
+        of red; the polling thread writes it while the run loop reads)."""
+        with self._lock:
+            result = self._bands.resultFor(name)
+            return BandResult(
+                band=None if result.band is None else dict(result.band),
+                noBandReason=result.noBandReason,
+            )
 
     def engineRunningAt(self, reading: Any) -> bool | None:
         """Was the engine running at this reading's capture time? (US-881-b)

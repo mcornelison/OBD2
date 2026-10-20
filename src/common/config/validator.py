@@ -173,6 +173,9 @@
 # 2026-10-20    | Rex (US-897-b3)| pi.warnings.engine.BATTERY_V.redTier 'watch',
 #                                pi.warnings.battery.clearGreenHoldSec 10 (Spool
 #                                2026-10-14); the hold must be positive.
+# 2026-10-20    | Rex (US-897-b4)| pi.warnings.engine.RPM.redTier 'watch',
+#                                pi.warnings.rpm.clearGreenHoldSec 10 (Atlas
+#                                Q13); the hold must be positive.
 # ================================================================================
 ################################################################################
 
@@ -980,6 +983,11 @@ DEFAULTS: dict[str, Any] = {
     # band has been green this long, by reading event time.
     'pi.warnings.engine.BATTERY_V.redTier': 'watch',  # Spool 2026-10-14
     'pi.warnings.battery.clearGreenHoldSec': 10,  # Spool 2026-10-14
+    # US-897-b4: RPM red is one OVER-REV WATCH carrying its sampled peak; it ends
+    # at drive end, or -- with no drive recording -- after the RPM band has been
+    # green this long (its own key, separate from the battery's).
+    'pi.warnings.engine.RPM.redTier': 'watch',  # Spool 2026-10-14
+    'pi.warnings.rpm.clearGreenHoldSec': 10,  # Atlas Q13
     # US-901-a (F-162): a replay run. True makes SyncClient refuse every push
     # (REFUSED, nothing written to sync_log), main.py refuse the production
     # database and states dir, and rows carry data_source 'replay'. Off in
@@ -1632,7 +1640,8 @@ class ConfigValidator:
         Called after defaults are applied. Each engine rule is a mapping whose
         ``redTier`` is ``stop`` or ``watch``; only COOLANT_TEMP may be a STOP
         (Spool 2026-10-14: live coolant red is the one PULL OVER).
-        ``pi.warnings.battery.clearGreenHoldSec`` must be a positive number.
+        ``pi.warnings.battery.clearGreenHoldSec`` and
+        ``pi.warnings.rpm.clearGreenHoldSec`` must be positive numbers.
 
         Args:
             config: Validated configuration (post-default-application).
@@ -1642,15 +1651,18 @@ class ConfigValidator:
                 outside stop/watch, a PID other than COOLANT_TEMP is a stop, or
                 the battery green hold is not a positive number.
         """
-        holdKey = 'pi.warnings.battery.clearGreenHoldSec'
-        hold = self._getNestedValue(config, holdKey)
-        if hold is not None and (
-            isinstance(hold, bool) or not isinstance(hold, (int, float)) or hold <= 0
+        for holdKey in (
+            'pi.warnings.battery.clearGreenHoldSec',
+            'pi.warnings.rpm.clearGreenHoldSec',
         ):
-            raise ConfigValidationError(
-                f"{holdKey} must be a positive number (got {hold!r})",
-                missingFields=[holdKey],
-            )
+            hold = self._getNestedValue(config, holdKey)
+            if hold is not None and (
+                isinstance(hold, bool) or not isinstance(hold, (int, float)) or hold <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{holdKey} must be a positive number (got {hold!r})",
+                    missingFields=[holdKey],
+                )
         engine = self._getNestedValue(config, 'pi.warnings.engine')
         if engine is None:
             return

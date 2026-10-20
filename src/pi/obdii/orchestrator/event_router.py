@@ -53,6 +53,8 @@
 # 2026-10-19    | Rex (US-897-a2) | _emitDtcState stamps checkedAtTs (and, on a
 #               |                | Mode 07 read that answered, pendingCheckedAtTs);
 #               |                | a null Mode 03 frame publishes nothing (G1).
+# 2026-10-20    | Rex (US-897-b4) | _handleDriveStart resets the over-rev peak
+#               |                | (_resetAlertsRpmPeak), isolated like the others.
 # ================================================================================
 ################################################################################
 
@@ -170,6 +172,11 @@ class EventRouterMixin:
     # MRO reason as observeGearInput above (a stub would shadow it and the
     # engine history would silently span drives).
     _resetEngineHistory: Callable[[Any], None]
+
+    # US-897-b4: provided by CardStateEmitterMixin -- an ANNOTATION for the same
+    # MRO reason as observeGearInput above (a stub would shadow it and the
+    # over-rev peak would silently span drives).
+    _resetAlertsRpmPeak: Callable[[], None]
 
     def registerCallbacks(
         self,
@@ -299,6 +306,13 @@ class EventRouterMixin:
             self._resetEngineHistory(getattr(session, 'startTime', None))
         except Exception as e:  # noqa: BLE001 -- defensive
             logger.debug(f"Engine history reset failed: {e}")
+
+        # US-897-b4: the over-rev peak counts from this drive's readings.
+        # Exception-isolated like the resets above.
+        try:
+            self._resetAlertsRpmPeak()
+        except Exception as e:  # noqa: BLE001 -- defensive
+            logger.debug(f"Over-rev peak reset failed: {e}")
 
         # Update display if available
         if self._displayManager is not None and hasattr(self._displayManager, 'showDriveStatus'):
