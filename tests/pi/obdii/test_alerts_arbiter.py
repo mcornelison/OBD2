@@ -633,6 +633,307 @@ def test_seed_missingOrUnusableFile_seedsNothing(tmp_path: Path, content: Any) -
     assert restarted.episodes() == []
 
 
+# ------------------------------------------- battery WATCH (US-897-b3)
+
+_BATTERY_ID = "engine:BATTERY_V:watch"
+_LOW_TITLE = "CHARGING FAULT"
+_LOW_SENTENCE = "Head somewhere safe. Turn off accessories."
+_HIGH_TITLE = "OVERCHARGING"
+_HIGH_SENTENCE = "Head somewhere safe, then engine off."
+
+
+def _batt(value: float, ts: str, band: str | None = "red", reason: str = "test") -> dict[str, Any]:
+    """An obd-live BATTERY_V entry as buildObdLiveState publishes it fresh.
+
+    ``band=None`` is the null band (engine_not_running / amber_not_shipped).
+    """
+    return {
+        "value": value,
+        "unit": "V",
+        "ts": ts,
+        "stale": False,
+        "band": None if band is None else _band(band),
+        **({"noBandReason": reason} if band is None else {}),
+        "last": None,
+    }
+
+
+def _battStale(lastValue: float, ts: str) -> dict[str, Any]:
+    return {
+        "value": None,
+        "unit": "V",
+        "ts": ts,
+        "stale": True,
+        "band": None,
+        "noBandReason": "stale",
+        "last": {"value": lastValue, "band": _band("red")},
+    }
+
+
+def _stepBattery(arbiter: aa.AlertsArbiter, battery: dict[str, Any] | None) -> dict[str, Any]:
+    obdLive = _obdLive(None)
+    if battery is not None:
+        obdLive["params"]["BATTERY_V"] = battery
+    arbiter.observe(obdLive, dataSource="real", database=None)
+    return _build(arbiter, obdLive)
+
+
+def _batteryEntry(state: dict[str, Any]) -> dict[str, Any] | None:
+    return next((e for e in state["entries"] if e["id"] == _BATTERY_ID), None)
+
+
+def test_batteryLow_watchEntry_chargingFaultWords_valueFlooredTowardTheBreach() -> None:
+    """VC1: 11.96 V red -> CHARGING FAULT, 11.9 (floor toward the breach)."""
+    state = _stepBattery(_arbiter(), _batt(11.96, "2026-10-20T15:12:27Z"))
+
+    entry = _batteryEntry(state)
+    assert entry is not None
+    assert set(entry) == _ENTRY_KEYS
+    assert entry["source"] == "engine"
+    assert entry["key"] == "BATTERY_V"
+    assert entry["tier"] == "watch"
+    assert entry["title"] == _LOW_TITLE
+    assert entry["sentence"] == _LOW_SENTENCE
+    assert entry["directive"] is None
+    assert entry["value"] == 11.9
+    assert entry["unit"] == "V"
+    assert entry["active"] is True
+    assert entry["stale"] is False
+    assert entry["last"] is None
+    assert entry["firstSeenTs"] == "2026-10-20T15:12:27Z"
+    # A WATCH never takes over the screen.
+    assert state["takeover"] is None
+
+
+def test_batteryHigh_overchargingWords_valueCeiledTowardTheBreach() -> None:
+    """VC2: 15.04 V red -> OVERCHARGING, 15.1 (ceil toward the breach)."""
+    entry = _batteryEntry(_stepBattery(_arbiter(), _batt(15.04, "2026-10-20T15:12:27Z")))
+
+    assert entry is not None
+    assert entry["title"] == _HIGH_TITLE
+    assert entry["sentence"] == _HIGH_SENTENCE
+    assert entry["value"] == 15.1
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(11.96, 11.9), (11.9, 11.9), (11.01, 11.0), (9.99, 9.9), (15.04, 15.1), (15.1, 15.1),
+     (15.0001, 15.1), (16.0, 16.0)],
+)
+def test_batteryValue_oneDecimal_roundedTowardTheBreach(value: float, expected: float) -> None:
+    """Spool 2026-10-19: low floors, high ceils; an exact tenth is never moved."""
+    entry = _batteryEntry(_stepBattery(_arbiter(), _batt(value, "2026-10-20T15:12:27Z")))
+
+    assert entry is not None
+    assert entry["value"] == expected
+
+
+def test_batterySide_comesFromTheConfiguredEdges_notTheBandReason() -> None:
+    """Side from the VALUE vs pi.bands.battery.redBelowV / redAboveV."""
+    config = {"pi": {"bands": {"battery": {"redBelowV": 11.0, "redAboveV": 14.8}}}}
+    arbiter = _arbiter(config)
+
+    entry = _batteryEntry(_stepBattery(arbiter, _batt(14.9, "2026-10-20T15:12:27Z")))
+
+    assert entry is not None
+    assert entry["title"] == _HIGH_TITLE
+
+
+def test_batteryTier_comesFromConfig() -> None:
+    from common.config.validator import DEFAULTS
+
+    assert DEFAULTS["pi.warnings.engine.BATTERY_V.redTier"] == "watch"
+    arbiter = _arbiter()
+    entry = _batteryEntry(_stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:27Z")))
+    assert entry is not None and entry["tier"] == "watch"
+
+
+def test_batteryGreen9s_keepsIt_green10s_endsIt_byReadingTime() -> None:
+    """VC3: the episode ends only after the band has been GREEN for 10 s, measured
+    on the READINGS' ts (not the wall clock)."""
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:00Z"))
+
+    _stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:02Z", band="green"))
+    held = _batteryEntry(_stepBattery(arbiter, _batt(13.9, "2026-10-20T15:12:11Z", band="green")))
+    assert held is not None
+    assert held["active"] is True
+    assert held["stale"] is False
+    # The hold keeps the low side's words.
+    assert held["title"] == _LOW_TITLE
+
+    state = _stepBattery(arbiter, _batt(13.9, "2026-10-20T15:12:12Z", band="green"))
+    ended = _batteryEntry(state)
+    assert ended is not None
+    assert ended["active"] is False
+    assert ended["value"] is None
+    assert ended["last"]["value"] == 11.5
+    # Ended stays listed (Q15) and no longer counts.
+    assert state["icon"]["count"] == 0
+
+
+def test_batteryGreenHold_restartsAfterARedReading() -> None:
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:00Z"))
+    _stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:02Z", band="green"))
+    _stepBattery(arbiter, _batt(11.6, "2026-10-20T15:12:06Z"))
+
+    held = _batteryEntry(_stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:13Z", band="green")))
+    assert held is not None and held["active"] is True
+
+    ended = _batteryEntry(_stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:23Z", band="green")))
+    assert ended is not None and ended["active"] is False
+
+
+def test_batteryClearGreenHoldSec_comesFromConfig() -> None:
+    from common.config.validator import DEFAULTS
+
+    assert DEFAULTS["pi.warnings.battery.clearGreenHoldSec"] == 10
+    arbiter = _arbiter({"pi": {"warnings": {"battery": {"clearGreenHoldSec": 3}}}})
+    _stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:00Z"))
+    _stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:02Z", band="green"))
+
+    ended = _batteryEntry(_stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:05Z", band="green")))
+    assert ended is not None and ended["active"] is False
+
+
+@pytest.mark.parametrize("reason", ["engine_not_running", "amber_not_shipped"])
+def test_batteryNullBand_neverEndsIt_staysActiveStale(reason: str) -> None:
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(11.96, "2026-10-20T15:12:00Z"))
+
+    for second in range(1, 40, 2):
+        state = _stepBattery(
+            arbiter, _batt(12.5, f"2026-10-20T15:12:{second:02d}Z", band=None, reason=reason)
+        )
+
+    entry = _batteryEntry(state)
+    assert entry is not None
+    assert entry["active"] is True
+    assert entry["stale"] is True
+    assert entry["value"] is None
+    assert entry["last"]["value"] == 11.9
+    assert entry["last"]["ts"] == "2026-10-20T15:12:00Z"
+
+
+def test_batteryNullBand_breaksTheGreenHold() -> None:
+    """Green must be HELD: a null band in between restarts the 10 s."""
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:00Z"))
+    _stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:02Z", band="green"))
+    _stepBattery(arbiter, _batt(13.0, "2026-10-20T15:12:06Z", band=None, reason="amber_not_shipped"))
+
+    held = _batteryEntry(_stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:13Z", band="green")))
+    assert held is not None and held["active"] is True
+
+
+def test_batteryStale_keepsItActive_withLastRoundedTowardTheBreach() -> None:
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(15.04, "2026-10-20T15:12:00Z"))
+
+    state = _stepBattery(arbiter, _battStale(15.04, "2026-10-20T15:12:30Z"))
+    entry = _batteryEntry(state)
+    assert entry is not None
+    assert entry["active"] is True
+    assert entry["stale"] is True
+    assert entry["value"] is None
+    assert entry["last"]["value"] == 15.1
+    assert entry["last"]["band"]["band"] == "red"
+    assert entry["title"] == _HIGH_TITLE
+
+    # Absent altogether (obd-live published nothing): still active.
+    arbiter.observe(None, dataSource="real", database=None)
+    assert _batteryEntry(_build(arbiter, None))["active"] is True
+
+
+def test_batteryFlipLowToHigh_keepsTheId_titleFollowsTheSide() -> None:
+    arbiter = _arbiter()
+    first = _batteryEntry(_stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:00Z")))
+
+    state = _stepBattery(arbiter, _batt(15.3, "2026-10-20T15:12:02Z"))
+
+    assert [e["id"] for e in state["entries"]] == [_BATTERY_ID]
+    flipped = _batteryEntry(state)
+    assert flipped is not None
+    assert flipped["title"] == _HIGH_TITLE
+    assert flipped["sentence"] == _HIGH_SENTENCE
+    assert flipped["value"] == 15.3
+    assert flipped["firstSeenTs"] == first["firstSeenTs"]
+    assert flipped["lastSeenTs"] == "2026-10-20T15:12:02Z"
+
+
+def test_batteryAmberOrGreen_withoutAnEpisode_makesNoEntry() -> None:
+    arbiter = _arbiter()
+
+    _stepBattery(arbiter, _batt(13.0, "2026-10-20T15:12:00Z", band=None, reason="amber_not_shipped"))
+    state = _stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:02Z", band="green"))
+
+    assert state["entries"] == []
+    assert arbiter.episodes() == []
+
+
+def test_batteryActive_iconWatchPulsing_noTakeover() -> None:
+    state = _stepBattery(_arbiter(), _batt(11.5, "2026-10-20T15:12:00Z"))
+
+    assert state["icon"] == {"state": "watch", "count": 1, "pulse": True}
+    assert state["takeover"] is None
+
+
+def test_batteryWatch_ordersBelowTheCoolantStop() -> None:
+    arbiter = _arbiter()
+    obdLive = _obdLive(_fresh(112, "2026-10-20T15:12:27Z"))
+    obdLive["params"]["BATTERY_V"] = _batt(11.5, "2026-10-20T15:12:27Z")
+    arbiter.observe(obdLive, dataSource="real", database=None)
+
+    state = _build(arbiter, obdLive)
+
+    assert [e["id"] for e in state["entries"]] == [_STOP_ID, _BATTERY_ID]
+    assert state["icon"] == {"state": "stop", "count": 2, "pulse": True}
+    assert state["takeover"]["id"] == _STOP_ID
+
+
+def test_batteryEpisode_writesNoAlertLogRow(db: Any) -> None:
+    """Only the coolant STOP is recorded (Atlas Q15); the battery WATCH is not."""
+    arbiter = _arbiter()
+    obdLive = _obdLive(None)
+    obdLive["params"]["BATTERY_V"] = _batt(11.5, "2026-10-20T15:12:00Z")
+    arbiter.observe(obdLive, dataSource="real", database=db)
+
+    assert _alertRows(db) == []
+
+
+def test_batteryNewEpisode_afterAnEnd_reactivatesTheSameIdWithANewFirstSeen() -> None:
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(11.5, "2026-10-20T15:12:00Z"))
+    _stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:02Z", band="green"))
+    _stepBattery(arbiter, _batt(13.8, "2026-10-20T15:12:12Z", band="green"))
+
+    state = _stepBattery(arbiter, _batt(15.2, "2026-10-20T15:20:00Z"))
+
+    assert [e["id"] for e in state["entries"]] == [_BATTERY_ID]
+    entry = _batteryEntry(state)
+    assert entry["active"] is True
+    assert entry["firstSeenTs"] == "2026-10-20T15:20:00Z"
+    assert entry["title"] == _HIGH_TITLE
+
+
+def test_seed_batteryEntrySurvivesARestart_activeIsStale(tmp_path: Path) -> None:
+    first = _arbiter()
+    _writeAlerts(tmp_path, _stepBattery(first, _batt(15.04, "2026-10-20T15:12:00Z")))
+
+    restarted = aa.AlertsArbiter(
+        {}, driveIdProvider=_DriveIds(), seedEntries=aa.readAlertsSeed(str(tmp_path))
+    )
+    entry = _batteryEntry(_build(restarted, None))
+
+    assert entry is not None
+    assert entry["active"] is True
+    assert entry["stale"] is True
+    assert entry["title"] == _HIGH_TITLE
+    assert entry["last"]["value"] == 15.1
+    assert entry["firstSeenTs"] == "2026-10-20T15:12:00Z"
+
+
 # ----------------------------------------------------------------- emitter
 
 

@@ -6080,11 +6080,12 @@ codeAlert, entries}`.
   US-897-b5.
 
 **Tiers** come from config, never a literal: `pi.warnings.engine.<PID>.redTier`
-(validator DEFAULTS only; `COOLANT_TEMP` = `stop`, Spool 2026-10-14). `_validateWarnings`
-accepts only `stop` / `watch`, and `stop` only for COOLANT_TEMP. Never `pi.alerts.*`: the
+(validator DEFAULTS only; `COOLANT_TEMP` = `stop`, `BATTERY_V` = `watch`, Spool 2026-10-14).
+`_validateWarnings` accepts only `stop` / `watch`, and `stop` only for COOLANT_TEMP; it also
+requires `pi.warnings.battery.clearGreenHoldSec` to be a positive number. Never `pi.alerts.*`: the
 legacy AlertManager owns that section (config.json).
 
-**The coolant STOP** (this story's only entry), id `engine:COOLANT_TEMP:stop`:
+**The coolant STOP** (US-897-b2), id `engine:COOLANT_TEMP:stop`:
 - Active while the obd-live COOLANT_TEMP band is `red`. The band producer owns entry and
   exit (US-897-b1: the plausibility guard, and red clears at <= 101 C held 60 s); the
   arbiter has no band logic.
@@ -6099,6 +6100,28 @@ legacy AlertManager owns that section (config.json).
 - **Cleared** (band left red): the entry stays listed `active: false` (`value: null`,
   `last` = the last red reading) for the rest of the boot. It never drops by time (Q15). A
   new red episode re-activates the same id with a new `firstSeenTs`.
+
+**The battery WATCH** (US-897-b3; Spool 2026-10-14, Atlas Q12), id `engine:BATTERY_V:watch`
+(tier `pi.warnings.engine.BATTERY_V.redTier`, default `watch`):
+- Active while the obd-live BATTERY_V band is `red`, low or high. The SIDE comes from the
+  VALUE against `pi.bands.battery.redAboveV` (above it is high, else low; the band is red,
+  so else is below `redBelowV`) -- never from parsing the band reason.
+- Words, Spool 2026-10-14 verbatim, follow the CURRENT side: low -> title `CHARGING FAULT`,
+  sentence `Head somewhere safe. Turn off accessories.`; high -> title `OVERCHARGING`,
+  sentence `Head somewhere safe, then engine off.` No directive. A low<->high flip keeps
+  the same id and `firstSeenTs`.
+- `value`: one decimal, rounded TOWARD the breach (Spool 2026-10-19): low floors
+  (11.96 -> 11.9), high ceils (15.04 -> 15.1); unit `V`. `last.value` while stale follows
+  the same rule. `lastSeenTs` = the last red reading.
+- **End**: only after the band has been GREEN for `pi.warnings.battery.clearGreenHoldSec`
+  (10, Spool 2026-10-14), measured on the readings' `ts`. During the hold the entry stays
+  active with the current reading (rounded on the episode's side). A red reading, a null
+  band (`engine_not_running`, `amber_not_shipped`), a stale or an absent reading restarts
+  the green run and never ends it -- the last three show the stale shape (`value: null`,
+  `stale: true`, `last` = the last red reading).
+- Ended -> `active: false`, listed for the rest of the boot (until acked, Q15). Amber or
+  green with no open episode makes no entry. No `alert_log` row (the record is the
+  coolant STOP's). Seeded like the STOP (side from the seeded title).
 
 **Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
 synced `alert_log`. It never UPDATEs: sync is a delta by id.

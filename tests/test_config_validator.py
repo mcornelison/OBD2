@@ -1172,6 +1172,45 @@ def test_warnings_rejectsANonMappingEngineRule():
         ConfigValidator().validate(bad)
 
 
+def test_warnings_battery_defaults_watchTier_clearGreenHold10s():
+    """US-897-b3 (Spool 2026-10-14): battery red is a WATCH that ends after the
+    band has been green for 10 s."""
+    from common.config.validator import DEFAULTS
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["warnings"]["engine"]["BATTERY_V"]["redTier"] == "watch"
+    assert cfg["pi"]["warnings"]["battery"]["clearGreenHoldSec"] == 10
+    assert DEFAULTS["pi.warnings.engine.BATTERY_V.redTier"] == "watch"
+    assert DEFAULTS["pi.warnings.battery.clearGreenHoldSec"] == 10
+
+
+def test_warnings_battery_defaultsCiteSpool():
+    """Each new key's OWN DEFAULTS line cites its source."""
+    import inspect
+
+    import common.config.validator as validatorModule
+
+    lines = inspect.getsource(validatorModule).splitlines()
+    for key in ("pi.warnings.engine.BATTERY_V.redTier", "pi.warnings.battery.clearGreenHoldSec"):
+        line = next(text for text in lines if f"'{key}':" in text)
+        assert "Spool 2026-10-14" in line
+
+
+@pytest.mark.parametrize("badValue", [0, -1, "10", True])
+def test_warnings_battery_clearGreenHoldSec_rejectsANonPositiveNumber(badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"battery": {"clearGreenHoldSec": badValue}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.battery.clearGreenHoldSec"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_battery_clearGreenHoldSec_acceptsAPositiveNumber():
+    ok = _baseCfg()
+    ok["pi"] = {"warnings": {"battery": {"clearGreenHoldSec": 2.5}}}
+    cfg = ConfigValidator().validate(ok)
+    assert cfg["pi"]["warnings"]["battery"]["clearGreenHoldSec"] == 2.5
+
+
 def test_replay_active_defaultsToFalse_andAnExplicitTrueIsKept():
     """US-901-a: pi.replay.active exists with validator default false (production
     unchanged), and a replay config's true survives validation."""

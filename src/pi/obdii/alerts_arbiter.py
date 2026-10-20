@@ -4,8 +4,9 @@
 #                      the warnings page: what was assessed (sources), the icon,
 #                      the ordered entries and the non-dismissable PULL OVER
 #                      takeover. Fed the obd-live payload the card tick just
-#                      published; this sprint's only entry is the live coolant
-#                      STOP. Each STOP episode edge is INSERTed into alert_log.
+#                      published; its entries are the live coolant STOP and
+#                      the battery WATCH. Each STOP episode edge is INSERTed
+#                      into alert_log.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-10-20
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -16,6 +17,9 @@
 # ================================================================================
 # 2026-10-20    | Rex (US-897-b2) | Initial -- arbiter, pure builder, emitter,
 #                                coolant STOP episode, alert_log record, seed.
+# 2026-10-20    | Rex (US-897-b3) | Battery WATCH: side words, value rounded
+#                                toward the breach, ends after a 10 s green
+#                                hold by reading time; seeded like coolant.
 # ================================================================================
 ################################################################################
 
@@ -36,8 +40,9 @@ The F-092 card-emitter house shape, plus one stateful piece:
 Three rules are load-bearing:
 
 * **Stale never clears** (Spool). Only a FRESH reading whose band has left red
-  ends a STOP; while the reading is stale or absent the entry stays active with
-  ``value: null`` and ``last`` carrying the last red reading (Atlas Q10).
+  ends a STOP -- and only a fresh GREEN held 10 s ends the battery WATCH; while
+  the reading is stale or absent the entry stays active with ``value: null``
+  and ``last`` carrying the last red reading (Atlas Q10).
 * **A cleared STOP stays listed** ``active: false`` for the rest of the boot; it
   never drops by time (Atlas Q15). A restart inside the boot re-reads it from the
   tmpfs ``states/alerts`` (Atlas G3).
@@ -53,9 +58,10 @@ import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
-from pi.obdii.band_producer import BAND_RED, PID_COOLANT
+from pi.obdii.band_producer import BAND_GREEN, BAND_RED, PID_BATTERY, PID_COOLANT
 
 __all__ = [
     "ALERTS_STATE_FILENAME",
@@ -108,8 +114,29 @@ _REDTIER_KEY = "pi.warnings.engine.COOLANT_TEMP.redTier"
 _RED_C_KEY = "pi.bands.coolant.redC"
 _RED_CLEAR_BELOW_C_KEY = "pi.bands.coolant.redClearBelowC"
 
+# The battery WATCH's words by side, Spool 2026-10-14 WARNINGS rulings (verbatim).
+BATTERY_LOW_TITLE = "CHARGING FAULT"
+BATTERY_LOW_SENTENCE = "Head somewhere safe. Turn off accessories."
+BATTERY_HIGH_TITLE = "OVERCHARGING"
+BATTERY_HIGH_SENTENCE = "Head somewhere safe, then engine off."
+BATTERY_UNIT = "V"
+
+_SIDE_LOW = "low"
+_SIDE_HIGH = "high"
+_BATTERY_WORDS = {
+    _SIDE_LOW: (BATTERY_LOW_TITLE, BATTERY_LOW_SENTENCE),
+    _SIDE_HIGH: (BATTERY_HIGH_TITLE, BATTERY_HIGH_SENTENCE),
+}
+
+_BATTERY_REDTIER_KEY = "pi.warnings.engine.BATTERY_V.redTier"
+_BATTERY_RED_ABOVE_V_KEY = "pi.bands.battery.redAboveV"
+_BATTERY_CLEAR_GREEN_HOLD_KEY = "pi.warnings.battery.clearGreenHoldSec"
+
 # Matches the other card emitters' `ts` format (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
+# A battery value is published to one decimal (Spool 2026-10-19).
+_TENTH = Decimal("0.1")
 
 
 def _configValue(config: Mapping[str, Any], key: str) -> Any:
@@ -178,23 +205,48 @@ def _isNumber(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _coolantParam(obdLive: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
-    """The obd-live COOLANT_TEMP entry, or None when absent."""
+def _param(obdLive: Mapping[str, Any] | None, pid: str) -> Mapping[str, Any] | None:
+    """The obd-live ``params[pid]`` entry, or None when absent."""
     if not isinstance(obdLive, Mapping):
         return None
     params = obdLive.get("params")
     if not isinstance(params, Mapping):
         return None
-    param = params.get(PID_COOLANT)
+    param = params.get(pid)
     return param if isinstance(param, Mapping) else None
+
+
+def _freshParam(obdLive: Mapping[str, Any] | None, pid: str) -> Mapping[str, Any] | None:
+    """The ``params[pid]`` entry when it is a FRESH reading, else None (Q14)."""
+    param = _param(obdLive, pid)
+    if param is None or param.get("stale") is not False or not _isNumber(param.get("value")):
+        return None
+    return param
 
 
 def _freshCoolant(obdLive: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
     """The COOLANT_TEMP entry when it is a FRESH reading, else None (Q14)."""
-    param = _coolantParam(obdLive)
-    if param is None or param.get("stale") is not False or not _isNumber(param.get("value")):
+    return _freshParam(obdLive, PID_COOLANT)
+
+
+def _towardBreach(value: float, side: str) -> float:
+    """One decimal, rounded TOWARD the breach (Spool 2026-10-19).
+
+    Low floors (11.96 -> 11.9), high ceils (15.04 -> 15.1). Through the
+    shortest decimal repr, so an exact tenth such as 11.9 is never moved by a
+    binary-float artefact.
+    """
+    rounding = ROUND_FLOOR if side == _SIDE_LOW else ROUND_CEILING
+    return float(Decimal(repr(float(value))).quantize(_TENTH, rounding=rounding))
+
+
+def _parseTs(ts: Any) -> datetime | None:
+    if not isinstance(ts, str) or not ts:
         return None
-    return param
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _bandName(param: Mapping[str, Any]) -> str | None:
@@ -240,6 +292,16 @@ class AlertsArbiter:
         self._coolant: AlertEpisode | None = None
         # {value, band, ts} of the coolant episode's last red reading.
         self._coolantLastReading: dict[str, Any] | None = None
+        self._batteryTier = str(_configValue(config, _BATTERY_REDTIER_KEY))
+        self._batteryRedAboveV = float(_configValue(config, _BATTERY_RED_ABOVE_V_KEY))
+        self._batteryClearGreenHoldSec = float(_configValue(config, _BATTERY_CLEAR_GREEN_HOLD_KEY))
+        self._battery: AlertEpisode | None = None
+        # The side ('low'/'high') of the battery episode's last red reading.
+        self._batterySide = _SIDE_LOW
+        # {value, band, ts} of the battery episode's last red reading (rounded).
+        self._batteryLastReading: dict[str, Any] | None = None
+        # Event time of the first reading of the current unbroken green run.
+        self._batteryGreenSince: datetime | None = None
         for entry in seedEntries:
             self._seed(entry)
 
@@ -247,7 +309,7 @@ class AlertsArbiter:
 
     def episodes(self) -> list[AlertEpisode]:
         """Every episode of this boot, active or cleared (unordered)."""
-        return [] if self._coolant is None else [self._coolant]
+        return [e for e in (self._coolant, self._battery) if e is not None]
 
     # ------------------------------------------------------------- the tick
 
@@ -268,6 +330,93 @@ class AlertsArbiter:
             database: An ``ObdDatabase``-like object (``connect()``), or None.
         """
         self._observeCoolant(obdLive, dataSource=dataSource, database=database)
+        self._observeBattery(obdLive)
+
+    def _observeBattery(self, obdLive: Mapping[str, Any] | None) -> None:
+        """Move the battery WATCH on (US-897-b3, Spool 2026-10-14 + Atlas Q12).
+
+        Red (low or high) opens or continues the one ``engine:BATTERY_V`` episode;
+        it ends only after the band has been GREEN for clearGreenHoldSec by the
+        READINGS' event time. A null band (engine_not_running, amber_not_shipped),
+        a stale or absent reading never ends it and breaks the green run.
+        """
+        episode = self._battery
+        active = episode is not None and episode.active
+        param = _freshParam(obdLive, PID_BATTERY)
+        band = None if param is None else _bandName(param)
+        if param is None or band not in (BAND_RED, BAND_GREEN):
+            self._batteryGreenSince = None
+            if episode is not None and active and not episode.stale:
+                self._battery = replace(
+                    episode, stale=True, value=None, last=self._batteryLast(episode)
+                )
+            return
+        value = float(param["value"])
+        ts = param.get("ts")
+        if band == BAND_RED:
+            self._batteryGreenSince = None
+            # Side from the VALUE against the configured edge; the band is red,
+            # so a value not above redAboveV is below redBelowV.
+            side = _SIDE_HIGH if value > self._batteryRedAboveV else _SIDE_LOW
+            shown = _towardBreach(value, side)
+            if episode is None or not active:
+                episode = self._newBatteryEpisode(ts, side)
+            title, sentence = _BATTERY_WORDS[side]
+            self._batterySide = side
+            self._batteryLastReading = {"value": shown, "band": dict(param["band"]), "ts": ts}
+            self._battery = replace(
+                episode,
+                title=title,
+                sentence=sentence,
+                lastSeenTs=ts,
+                stale=False,
+                value=shown,
+                last=None,
+            )
+            return
+        if episode is None or not active:
+            return
+        # Green while active: hold, then end.
+        at = _parseTs(ts)
+        if self._batteryGreenSince is None:
+            self._batteryGreenSince = at
+        held = (
+            at is not None
+            and self._batteryGreenSince is not None
+            and (at - self._batteryGreenSince).total_seconds() >= self._batteryClearGreenHoldSec
+        )
+        if held:
+            self._batteryGreenSince = None
+            self._battery = replace(
+                episode, active=False, stale=False, value=None, last=self._batteryLast(episode)
+            )
+            return
+        self._battery = replace(
+            episode, stale=False, value=_towardBreach(value, self._batterySide), last=None
+        )
+
+    def _batteryLast(self, episode: AlertEpisode) -> dict[str, Any] | None:
+        """``{value, band, ts}`` of the battery episode's last red reading."""
+        if self._batteryLastReading is not None:
+            return dict(self._batteryLastReading)
+        return episode.last
+
+    def _newBatteryEpisode(self, firstSeenTs: Any, side: str) -> AlertEpisode:
+        self._batteryLastReading = None
+        self._batteryGreenSince = None
+        title, sentence = _BATTERY_WORDS[side]
+        return AlertEpisode(
+            source=SOURCE_ENGINE,
+            key=PID_BATTERY,
+            tier=self._batteryTier,
+            title=title,
+            sentence=sentence,
+            directive=None,
+            unit=BATTERY_UNIT,
+            firstSeenTs=firstSeenTs,
+            lastSeenTs=firstSeenTs,
+            active=True,
+        )
 
     def _observeCoolant(
         self, obdLive: Mapping[str, Any] | None, *, dataSource: str | None, database: Any
@@ -346,6 +495,9 @@ class AlertsArbiter:
         """
         if not isinstance(entry, Mapping):
             return
+        if entry.get("id") == _entryId(SOURCE_ENGINE, PID_BATTERY, self._batteryTier):
+            self._seedBattery(entry)
+            return
         if entry.get("id") != _entryId(SOURCE_ENGINE, PID_COOLANT, self._coolantTier):
             return
         active = entry.get("active") is True
@@ -366,6 +518,25 @@ class AlertsArbiter:
         )
         self._coolantLastReading = None if last is None else dict(last)
         self._coolant = episode
+
+    def _seedBattery(self, entry: Mapping[str, Any]) -> None:
+        """Take a prior battery WATCH back: its side from its title, its last red
+        reading from ``last`` (else ``value``); an ACTIVE one is stale until a
+        fresh reading decides it, and its green run starts over."""
+        side = _SIDE_HIGH if entry.get("title") == BATTERY_HIGH_TITLE else _SIDE_LOW
+        active = entry.get("active") is True
+        last = entry.get("last") if isinstance(entry.get("last"), Mapping) else None
+        if last is None and _isNumber(entry.get("value")):
+            last = {"value": entry.get("value"), "band": None, "ts": entry.get("lastSeenTs")}
+        self._battery = replace(
+            self._newBatteryEpisode(entry.get("firstSeenTs"), side),
+            lastSeenTs=entry.get("lastSeenTs"),
+            active=active,
+            stale=active,
+            last=None if last is None else dict(last),
+        )
+        self._batterySide = side
+        self._batteryLastReading = None if last is None else dict(last)
 
     # ---------------------------------------------------------- the record
 

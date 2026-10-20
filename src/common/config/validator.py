@@ -170,6 +170,9 @@
 # 2026-10-20    | Rex (US-897-b2)| pi.warnings.engine.COOLANT_TEMP.redTier 'stop'
 #                                (Spool 2026-10-14); _validateWarnings: tiers
 #                                stop/watch only, stop for COOLANT_TEMP only.
+# 2026-10-20    | Rex (US-897-b3)| pi.warnings.engine.BATTERY_V.redTier 'watch',
+#                                pi.warnings.battery.clearGreenHoldSec 10 (Spool
+#                                2026-10-14); the hold must be positive.
 # ================================================================================
 ################################################################################
 
@@ -973,6 +976,10 @@ DEFAULTS: dict[str, Any] = {
     # pi.warnings, never pi.alerts (the legacy AlertManager owns that section).
     # Spool 2026-10-14 WARNINGS rulings: live coolant red is the one STOP.
     'pi.warnings.engine.COOLANT_TEMP.redTier': 'stop',  # Spool 2026-10-14
+    # US-897-b3: battery red (low or high) is a WATCH that ends only after the
+    # band has been green this long, by reading event time.
+    'pi.warnings.engine.BATTERY_V.redTier': 'watch',  # Spool 2026-10-14
+    'pi.warnings.battery.clearGreenHoldSec': 10,  # Spool 2026-10-14
     # US-901-a (F-162): a replay run. True makes SyncClient refuse every push
     # (REFUSED, nothing written to sync_log), main.py refuse the production
     # database and states dir, and rows carry data_source 'replay'. Off in
@@ -1620,19 +1627,30 @@ class ConfigValidator:
                 )
 
     def _validateWarnings(self, config: dict[str, Any]) -> None:
-        """Validate pi.warnings.engine.<PID>.redTier (US-897-b2 alerts arbiter).
+        """Validate pi.warnings.* (US-897-b2/b3 alerts arbiter).
 
         Called after defaults are applied. Each engine rule is a mapping whose
         ``redTier`` is ``stop`` or ``watch``; only COOLANT_TEMP may be a STOP
         (Spool 2026-10-14: live coolant red is the one PULL OVER).
+        ``pi.warnings.battery.clearGreenHoldSec`` must be a positive number.
 
         Args:
             config: Validated configuration (post-default-application).
 
         Raises:
             ConfigValidationError: If an engine rule is not a mapping, a tier is
-                outside stop/watch, or a PID other than COOLANT_TEMP is a stop.
+                outside stop/watch, a PID other than COOLANT_TEMP is a stop, or
+                the battery green hold is not a positive number.
         """
+        holdKey = 'pi.warnings.battery.clearGreenHoldSec'
+        hold = self._getNestedValue(config, holdKey)
+        if hold is not None and (
+            isinstance(hold, bool) or not isinstance(hold, (int, float)) or hold <= 0
+        ):
+            raise ConfigValidationError(
+                f"{holdKey} must be a positive number (got {hold!r})",
+                missingFields=[holdKey],
+            )
         engine = self._getNestedValue(config, 'pi.warnings.engine')
         if engine is None:
             return
