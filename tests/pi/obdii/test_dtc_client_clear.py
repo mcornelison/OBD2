@@ -134,3 +134,47 @@ def test_clearDtcs_requiresOpenConnection():
         client.clearDtcs(conn)
 
     assert conn.calls == [], "no command issued when disconnected"
+
+
+def test_clearDtcs_nonNullReRead_frameNullFalse_fieldsUnchanged():
+    """US-897-a2 (Atlas Q2): a non-null post-clear re-read is a successful read."""
+    conn = _RecordingConnection(
+        {
+            "CLEAR_DTC": _FakeResponse(value=None),
+            "GET_DTC": _FakeResponse(value=[]),
+            "GET_CURRENT_DTC": _FakeResponse(value=[]),
+        }
+    )
+
+    readback = DtcClient(commandFactory=_factory).clearDtcs(conn)
+
+    assert readback.frameNull is False
+    assert readback.stored == [] and readback.pending == []
+    assert readback.mode07Probe.supported is True
+
+
+def test_clearDtcs_nullReRead_frameNullTrue_storedStillEmpty():
+    """A null Mode 03 frame after the wipe is flagged, never read as 'cleared'."""
+    conn = _RecordingConnection(
+        {
+            "CLEAR_DTC": _FakeResponse(value=None),
+            "GET_DTC": _FakeResponse(value=None, null=True),
+            "GET_CURRENT_DTC": _FakeResponse(value=[]),
+        }
+    )
+
+    readback = DtcClient(commandFactory=_factory).clearDtcs(conn)
+
+    assert readback.frameNull is True
+    assert readback.stored == []
+    assert conn.calls == ["CLEAR_DTC", "GET_DTC", "GET_CURRENT_DTC"]
+
+
+def test_clearReadback_frameNullDefaultsFalse():
+    from src.pi.obdii.dtc_client import ClearReadback, Mode07ProbeResult
+
+    readback = ClearReadback(
+        stored=[], pending=[], mode07Probe=Mode07ProbeResult(True, "supported"),
+    )
+
+    assert readback.frameNull is False

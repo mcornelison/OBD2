@@ -17,6 +17,8 @@
 # ================================================================================
 # 2026-09-14    | Ralph (Rex)  | Initial -- US-752 last-known DTC reader + Mode-04
 #               |              | clear watermark.
+# 2026-10-20    | Ralph (Rex)  | US-897-a3: readFirstSeenByCode -- when each code
+#               |              | was first seen since the last clear.
 # ================================================================================
 ################################################################################
 
@@ -51,6 +53,7 @@ from .dtc_log_schema import DTC_LOG_TABLE
 
 __all__ = [
     'LAST_KNOWN_SOURCE',
+    'readFirstSeenByCode',
     'readLastKnownDtcs',
     'recordClearWatermark',
 ]
@@ -128,6 +131,56 @@ def readLastKnownDtcs(database: Any) -> dict | None:
         'codes': codes,
         'asOfTs': codes[0]['lastSeenTs'],
         'source': LAST_KNOWN_SOURCE,
+    }
+
+
+def readFirstSeenByCode(database: Any) -> dict[str, str]:
+    """Read when each code was first seen since the last clear (US-897-a3).
+
+    ``MIN(first_seen_timestamp)`` per code over ``data_source = 'real'`` rows
+    whose ``id`` is above the newest ``cleared`` marker. By ``id`` ONLY (Atlas
+    G-a1): unlike :func:`readLastKnownDtcs` there is no ``last_seen`` arm, because
+    a pre-clear row the drive-scoped upsert re-read after the clear still carries
+    its PRE-clear ``first_seen`` and would age the code from before the clear.
+
+    The column is canonical UTC (``'%Y-%m-%dT%H:%M:%SZ'``, dtc_log_schema), so
+    the string passes through unconverted -- no local-zone step (Atlas Q5).
+
+    Args:
+        database: An ``ObdDatabase``-like object whose ``connect()`` yields a
+            sqlite3 connection. ``None`` -> nothing to read.
+
+    Returns:
+        ``{code: firstSeenTs}`` (codes upper-cased); empty when nothing was
+        logged since the clear, or the log could not be read (logged, never
+        raised -- a missing age must never stop a ``dtc`` publish).
+    """
+    if database is None:
+        return {}
+    try:
+        with database.connect() as conn:
+            (markerId,) = conn.execute(
+                f"SELECT MAX(id) FROM {DTC_LOG_TABLE} "
+                "WHERE status = ? AND data_source = ?",
+                (_STATUS_CLEARED, _REAL_DATA_SOURCE),
+            ).fetchone()
+            rows = conn.execute(
+                "SELECT UPPER(dtc_code), MIN(first_seen_timestamp) "
+                f"FROM {DTC_LOG_TABLE} "
+                "WHERE data_source = ? AND status IN ('stored', 'pending') "
+                "AND (? IS NULL OR id > ?) "
+                "GROUP BY UPPER(dtc_code)",
+                (_REAL_DATA_SOURCE, markerId, markerId),
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001 -- a missing age must never block the emit
+        logger.warning(
+            "first-seen DTC read from dtc_log failed (%s) -- codes publish "
+            "firstSeenTs null",
+            exc,
+        )
+        return {}
+    return {
+        str(code): str(firstSeen) for code, firstSeen in rows if firstSeen is not None
     }
 
 

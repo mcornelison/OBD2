@@ -89,6 +89,15 @@
 #               |              | peaks, labelled by _tripEventTs (== distanceSinceTs).
 # 2026-10-18    | Rex (US-896-b)| _markTripEnded: drive end freezes drive.elapsedSec;
 #               |              | drive.distancePartial from the restart branch.
+# 2026-10-19    | Rex (US-897-a2)| The dtc read times are seeded from the tmpfs
+#               |              | states/dtc BEFORE the boot write, which carries them.
+# 2026-10-20    | Rex (US-897-b2)| states/alerts: the alerts arbiter runs after
+#               |              | obd-live on the SAME payload that emit returned.
+# 2026-10-20    | Rex (US-897-b4)| observeObdLiveReading hands each RPM reading +
+#               |              | its band to the arbiter's peak; the alerts tick
+#               |              | passes its own recording -> idle edge.
+# 2026-10-20    | Rex (US-897-b5)| the boot dtc payload reaches the arbiter; the
+#               |              | alerts tick publishes its code source.
 # ================================================================================
 ################################################################################
 
@@ -241,6 +250,9 @@ class CardStateEmitterMixin:
     _systemStatusEmitter: Any | None
     _batteryHealthEmitter: Any | None
     _dtcEmitter: Any | None
+    # US-897-a2: last successful Mode 03 / Mode 07 read times this boot.
+    _dtcCheckedAtTs: str | None
+    _dtcPendingCheckedAtTs: str | None
     # US-533: config.json's path, when the composer knows it. A CLASS default of
     # None (rather than a getattr) so every composer -- including the standalone
     # ones that never had a path -- keeps working while the orchestrator sets a
@@ -300,6 +312,12 @@ class CardStateEmitterMixin:
     # Injectable aware-UTC wall clock: staleness compares against reading event
     # times, which are wall-clock instants, not monotonic ones.
     _obdLiveClock: Any = None
+    # US-897-b2: the alerts arbiter (episodes for this boot) + its emitter.
+    _alertsArbiter: Any = None
+    _alertsEmitter: Any = None
+    _alertsBootId: str = "unknown"
+    # US-897-b4: the card tick's recording -> idle edge that ends the over-rev.
+    _alertsWasRecording: bool = False
     # US-889-a: the states/engine-history writer; the history itself lives in
     # the obd-live tracker. CLASS default for the same reason as above.
     _engineHistoryEmitter: Any = None
@@ -378,6 +396,7 @@ class CardStateEmitterMixin:
         self._initializeLtftTrendProducer(statesDir)
         self._initializeCaptureHealthProducer(statesDir)
         self._initializeObdLiveProducer(statesDir)
+        self._initializeAlertsProducer(statesDir)
         self._initializeTripDistance()
         self._initializeFuelEconomyProducer(statesDir)
         severityTablePath = dtcConfig.get(
@@ -385,7 +404,7 @@ class CardStateEmitterMixin:
         )
         try:
             from pi.splash.battery_health_emitter import makeBatteryHealthEmitter
-            from pi.splash.dtc_emitter import makeDtcEmitter
+            from pi.splash.dtc_emitter import makeDtcEmitter, readDtcCheckTimes
             from pi.splash.dtc_severity_table import loadP1xxxSeverityTable
             from pi.splash.system_status_emitter import makeSystemStatusEmitter
 
@@ -409,6 +428,12 @@ class CardStateEmitterMixin:
                 )
             self._dtcEmitter = makeDtcEmitter(
                 statesDir, severityTable=severityTable
+            )
+            # US-897-a2 (Atlas Q3): the states dir is per boot, so a states/dtc
+            # already there was written THIS boot by a previous orchestrator.
+            # Seed the read times from it BEFORE the boot write overwrites it.
+            self._dtcCheckedAtTs, self._dtcPendingCheckedAtTs = readDtcCheckTimes(
+                statesDir
             )
             # AC5: write an HONEST initial `dtc` state at boot so a parked-from-
             # boot Pi (no KOEO read yet) renders "DTC not read since key-off"
@@ -704,6 +729,26 @@ class CardStateEmitterMixin:
         if tracker is None:
             return
         tracker.observeReading(reading)
+        self._observeAlertsRpmReading(tracker, reading)
+
+    def _observeAlertsRpmReading(self, tracker: Any, reading: Any) -> None:
+        """Hand an RPM reading to the alerts arbiter's peak (US-897-b4).
+
+        AFTER the tracker observed it, so the band read back (under the
+        tracker's lock) is the band producer's verdict on THIS reading -- the
+        producer stays the one judge of red. Every reading, never the snapshot.
+        """
+        arbiter = self._alertsArbiter
+        if arbiter is None or getattr(reading, "parameterName", None) != "RPM":
+            return
+        timestamp = getattr(reading, "timestamp", None)
+        if not isinstance(timestamp, datetime):
+            return
+        arbiter.observeRpmReading(
+            getattr(reading, "value", None),
+            tracker.eventUtc(timestamp),
+            tracker.bandResultFor("RPM").band,
+        )
 
     def _obdLiveNowUtc(self) -> datetime:
         """Aware UTC now for the obd-live staleness decision."""
@@ -729,14 +774,19 @@ class CardStateEmitterMixin:
         tag = getattr(writer, "dataSource", None) if writer is not None else None
         return tag if isinstance(tag, str) and tag in DATA_SOURCE_VALUES else None
 
-    def _emitObdLiveState(self) -> None:
-        """Publish states/obd-live from the tracker's latest readings."""
+    def _emitObdLiveState(self) -> dict[str, Any] | None:
+        """Publish states/obd-live from the tracker's latest readings.
+
+        Returns:
+            The payload written (US-897-b2, Atlas Q18: the alerts arbiter reads
+            it), or None when nothing was published.
+        """
         tracker = self._obdLiveTracker
         emitter = self._obdLiveEmitter
         if tracker is None or emitter is None or self._obdLiveStaleSec is None:
-            return
+            return None
         nowUtc = self._obdLiveNowUtc()
-        emitter(
+        payload: dict[str, Any] | None = emitter(
             tracker.snapshot(),
             nowUtc=nowUtc,
             staleSec=self._obdLiveStaleSec,
@@ -745,11 +795,92 @@ class CardStateEmitterMixin:
         # US-889-a: the history is fed at the reading seam, never from this
         # snapshot; the tick only writes it when a bucket closed (or a reset).
         historyEmitter = self._engineHistoryEmitter
-        if historyEmitter is None:
+        if historyEmitter is not None:
+            history = tracker.engineHistoryIfChanged()
+            if history is not None:
+                historyEmitter(history, nowUtc=nowUtc)
+        return payload
+
+    # --------------------------------------------------------- states/alerts
+    #
+    # US-897-b2 (F-127). The arbiter is shown the obd-live payload the tick has
+    # just published -- never a file read-back -- so the alert and the Driving
+    # tile can never disagree. Its alert_log INSERT goes through the database
+    # object handed to it (G2); this mixin opens nothing.
+
+    def _initializeAlertsProducer(self, statesDir: str) -> None:
+        """Build the alerts arbiter + emitter in their own try/except.
+
+        The arbiter is handed the FULL resolved config and seeded from this
+        boot's tmpfs states/alerts (Atlas G3), so a restart inside the boot
+        keeps a cleared STOP listed.
+        """
+        try:
+            import os
+
+            from pi.diagnostics import boot_progress, boot_reason
+            from pi.obdii.alerts_arbiter import (
+                AlertsArbiter,
+                makeAlertsEmitter,
+                readAlertsSeed,
+            )
+
+            self._alertsArbiter = AlertsArbiter(
+                self._config, seedEntries=readAlertsSeed(statesDir)
+            )
+            self._alertsEmitter = makeAlertsEmitter(statesDir)
+            # The boot_milestone precedent: with no boot-id surface (off-Linux, a
+            # desk simulator run) readBootId could only say 'unknown' and would
+            # log an ERROR saying so; answer it without the call.
+            self._alertsBootId = (
+                boot_progress.readBootId()
+                if os.path.exists(boot_reason.BOOT_ID_PATH)
+                else "unknown"
+            )
+            logger.info("alerts arbiter wired (boot_id=%s)", self._alertsBootId)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("alerts arbiter init skipped: %s", e)
+            self._alertsArbiter = None
+            self._alertsEmitter = None
+
+    def _emitAlertsState(self, obdLive: dict[str, Any] | None) -> None:
+        """Move the episodes on from ``obdLive`` and publish states/alerts.
+
+        Args:
+            obdLive: The payload ``_emitObdLiveState`` just wrote, or None.
+        """
+        arbiter = self._alertsArbiter
+        emitter = self._alertsEmitter
+        if arbiter is None or emitter is None:
             return
-        history = tracker.engineHistoryIfChanged()
-        if history is not None:
-            historyEmitter(history, nowUtc=nowUtc)
+        dataSource = self._gatherObdLiveDataSource()
+        # US-897-b4: the over-rev ends at the recording -> idle edge -- its OWN
+        # flag, never the fuel persist's.
+        recording = self._gatherDriveState()[0] == "recording"
+        driveEnded = self._alertsWasRecording and not recording
+        self._alertsWasRecording = recording
+        arbiter.observe(
+            obdLive,
+            dataSource=dataSource,
+            database=getattr(self, "_database", None),
+            driveRecording=recording,
+            driveEnded=driveEnded,
+        )
+        emitter(
+            arbiter.episodes(),
+            obdLive,
+            nowUtc=self._obdLiveNowUtc(),
+            dataSource=dataSource,
+            bootId=self._alertsBootId,
+            codeSource=arbiter.codeSource(),
+        )
+
+    def _resetAlertsRpmPeak(self) -> None:
+        """Drive start: the over-rev peak counts from this drive (US-897-b4)."""
+        arbiter = self._alertsArbiter
+        if arbiter is None:
+            return
+        arbiter.resetRpmPeak()
 
     def _resetEngineHistory(self, driveStartTime: Any) -> None:
         """Open this drive's engine-history window at drive start (US-889-a).
@@ -987,15 +1118,28 @@ class CardStateEmitterMixin:
         # US-752: the resting state carries the codes the system ALREADY holds,
         # read from the persisted dtc_log -- never a re-query of the ECU (SSOT
         # rule B). Null when nothing is remembered, so "not read" keeps meaning.
-        from pi.obdii.dtc_last_known import readLastKnownDtcs
+        from pi.obdii.dtc_last_known import readFirstSeenByCode, readLastKnownDtcs
 
-        emitter(
+        database = getattr(self, "_database", None)
+        payload = emitter(
             codes=[],
             mil=False,
             newSinceTs=None,
             dtcAvailable=False,
-            lastKnown=readLastKnownDtcs(getattr(self, "_database", None)),
+            lastKnown=readLastKnownDtcs(database),
+            # US-897-a3: each remembered code ages from its first sighting
+            # since the last clear.
+            firstSeenByCode=readFirstSeenByCode(database),
+            # US-897-a2: the seeded read times -- an unavailable source never
+            # nulls them.
+            checkedAtTs=getattr(self, "_dtcCheckedAtTs", None),
+            pendingCheckedAtTs=getattr(self, "_dtcPendingCheckedAtTs", None),
         )
+        # US-897-b5: the arbiter sees the boot state too -- codes null, so its
+        # lastKnown makes no entry and sources.code stays unassessed ('?').
+        arbiter = self._alertsArbiter
+        if arbiter is not None and isinstance(payload, dict):
+            arbiter.observeDtc(payload)
 
     def _recordSyncOutcome(self, rowsPushed: int) -> None:
         """Cache the REAL last-sync outcome for the system-status sync tile.
@@ -1114,11 +1258,17 @@ class CardStateEmitterMixin:
             self._emitCaptureHealthState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("capture-health card emit failed: %s", e)
+        obdLive: dict[str, Any] | None = None
         try:
             # US-874: staleness is decided here, against a moving clock.
-            self._emitObdLiveState()
+            obdLive = self._emitObdLiveState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("obd-live card emit failed: %s", e)
+        try:
+            # US-897-b2: AFTER obd-live, on the payload that emit returned.
+            self._emitAlertsState(obdLive)
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("alerts card emit failed: %s", e)
         try:
             # US-881-b: beside obd-live; MAF staleness is decided here too.
             self._emitFuelEconomyState()

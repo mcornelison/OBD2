@@ -164,6 +164,18 @@
 # 2026-10-18    | Rex (US-896-a) | pi.display.stale.imuSec default 2.0 -> 3.0
 #                                (Atlas S105 Q3/G1, measured basis; the ONE IMU
 #                                stale key, NAV + Motion).
+# 2026-10-20    | Rex (US-897-b1)| pi.bands.coolant.{redGuardPrevMinC 100,
+#                                redClearBelowC 101, redClearHoldSec 60} (Spool
+#                                2026-10-14); ordered below redC / amberC.
+# 2026-10-20    | Rex (US-897-b2)| pi.warnings.engine.COOLANT_TEMP.redTier 'stop'
+#                                (Spool 2026-10-14); _validateWarnings: tiers
+#                                stop/watch only, stop for COOLANT_TEMP only.
+# 2026-10-20    | Rex (US-897-b3)| pi.warnings.engine.BATTERY_V.redTier 'watch',
+#                                pi.warnings.battery.clearGreenHoldSec 10 (Spool
+#                                2026-10-14); the hold must be positive.
+# 2026-10-20    | Rex (US-897-b4)| pi.warnings.engine.RPM.redTier 'watch',
+#                                pi.warnings.rpm.clearGreenHoldSec 10 (Atlas
+#                                Q13); the hold must be positive.
 # ================================================================================
 ################################################################################
 
@@ -267,6 +279,12 @@ GYRO_FULL_SCALE_RAD_S = math.radians(500)
 # against a three-digit count -- TILT FIX '−10.00° from 999 stops' = 264.9 px of
 # the 271.4 px column, MEASURED. A fourth digit is an unproven width.
 ZUPT_WINDOW_STOPS_MAX = 999
+
+# US-897-b2: the tiers a live red band may raise in states/alerts, and the one
+# PID that may be a STOP (Spool 2026-10-14: coolant is the only PULL OVER;
+# battery and RPM are WATCH). Minor/unrated are code tiers, never engine ones.
+WARNINGS_RED_TIERS: tuple[str, ...] = ('stop', 'watch')
+WARNINGS_STOP_PID = 'COOLANT_TEMP'
 
 # US-790: pi.power.cellEpoch -- WHICH cell was fitted, stamped on every
 # drain_vcell_trajectory row so a floor measured from them is never an average
@@ -929,6 +947,12 @@ DEFAULTS: dict[str, Any] = {
     'pi.bands.coolant.redDwellSec': 120,  # grounded-knowledge :75, Spool 2026-10-13
     'pi.bands.coolant.clearBelowC': 102,  # grounded-knowledge :75, Spool 2026-10-13
     'pi.bands.coolant.clearHoldSec': 10,  # grounded-knowledge :75, Spool 2026-10-13
+    # US-897-b1: a single sample >= redC is red only after a fresh predecessor
+    # >= redGuardPrevMinC (else 2 consecutive); red clears only at <= redClearBelowC
+    # (inclusive) held redClearHoldSec. Spool 2026-10-14 WARNINGS rulings.
+    'pi.bands.coolant.redGuardPrevMinC': 100,  # Spool 2026-10-14
+    'pi.bands.coolant.redClearBelowC': 101,  # Spool 2026-10-14
+    'pi.bands.coolant.redClearHoldSec': 60,  # Spool 2026-10-14
     # Battery (BATTERY_V via ELM_VOLTAGE): banded only while the engine runs.
     # Spool 2026-10-13: of 32,241 RPM samples the idle floor is >= 572; the 11
     # samples at 113-548 are all start/stall transients, and 500 sits in the gap.
@@ -951,6 +975,19 @@ DEFAULTS: dict[str, Any] = {
     # 2G redline, specs/grounded-knowledge.md RPM row (:84).
     'pi.bands.rpm.amberRpm': 5500,
     'pi.bands.rpm.redRpm': 7000,
+    # US-897-b2 (F-127): the tier a live red band raises in states/alerts. Under
+    # pi.warnings, never pi.alerts (the legacy AlertManager owns that section).
+    # Spool 2026-10-14 WARNINGS rulings: live coolant red is the one STOP.
+    'pi.warnings.engine.COOLANT_TEMP.redTier': 'stop',  # Spool 2026-10-14
+    # US-897-b3: battery red (low or high) is a WATCH that ends only after the
+    # band has been green this long, by reading event time.
+    'pi.warnings.engine.BATTERY_V.redTier': 'watch',  # Spool 2026-10-14
+    'pi.warnings.battery.clearGreenHoldSec': 10,  # Spool 2026-10-14
+    # US-897-b4: RPM red is one OVER-REV WATCH carrying its sampled peak; it ends
+    # at drive end, or -- with no drive recording -- after the RPM band has been
+    # green this long (its own key, separate from the battery's).
+    'pi.warnings.engine.RPM.redTier': 'watch',  # Spool 2026-10-14
+    'pi.warnings.rpm.clearGreenHoldSec': 10,  # Atlas Q13
     # US-901-a (F-162): a replay run. True makes SyncClient refuse every push
     # (REFUSED, nothing written to sync_log), main.py refuse the production
     # database and states dir, and rows carry data_source 'replay'. Off in
@@ -1085,6 +1122,7 @@ class ConfigValidator:
         self._validateCellEpoch(config)
         self._validateDisplayAutoDim(config)
         self._validateBands(config)
+        self._validateWarnings(config)
         self._validateReplay(config)
         self._validateImuStateBridge(config)
         self._validateGradeHistory(config)
@@ -1549,6 +1587,7 @@ class ConfigValidator:
         Called after defaults are applied. Every key must be a positive number,
         and the edges must be ordered so each band is reachable:
         clearBelowC < amberC <= redC, amberDwellSec < redDwellSec,
+        redGuardPrevMinC < redC, redClearBelowC < redC, redClearBelowC < amberC,
         redBelowV < greenMinV <= greenMaxV < redAboveV, amberRpm < redRpm.
 
         Args:
@@ -1575,6 +1614,9 @@ class ConfigValidator:
             ('pi.bands.coolant.clearBelowC', 'pi.bands.coolant.amberC', False),
             ('pi.bands.coolant.amberC', 'pi.bands.coolant.redC', True),
             ('pi.bands.coolant.amberDwellSec', 'pi.bands.coolant.redDwellSec', False),
+            ('pi.bands.coolant.redGuardPrevMinC', 'pi.bands.coolant.redC', False),
+            ('pi.bands.coolant.redClearBelowC', 'pi.bands.coolant.redC', False),
+            ('pi.bands.coolant.redClearBelowC', 'pi.bands.coolant.amberC', False),
             ('pi.bands.battery.redBelowV', 'pi.bands.battery.greenMinV', False),
             ('pi.bands.battery.greenMinV', 'pi.bands.battery.greenMaxV', True),
             ('pi.bands.battery.greenMaxV', 'pi.bands.battery.redAboveV', False),
@@ -1590,6 +1632,66 @@ class ConfigValidator:
                     f"{low} ({values[low]!r}) must be {relation} {high} "
                     f"({values[high]!r})",
                     missingFields=[low, high],
+                )
+
+    def _validateWarnings(self, config: dict[str, Any]) -> None:
+        """Validate pi.warnings.* (US-897-b2/b3 alerts arbiter).
+
+        Called after defaults are applied. Each engine rule is a mapping whose
+        ``redTier`` is ``stop`` or ``watch``; only COOLANT_TEMP may be a STOP
+        (Spool 2026-10-14: live coolant red is the one PULL OVER).
+        ``pi.warnings.battery.clearGreenHoldSec`` and
+        ``pi.warnings.rpm.clearGreenHoldSec`` must be positive numbers.
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If an engine rule is not a mapping, a tier is
+                outside stop/watch, a PID other than COOLANT_TEMP is a stop, or
+                the battery green hold is not a positive number.
+        """
+        for holdKey in (
+            'pi.warnings.battery.clearGreenHoldSec',
+            'pi.warnings.rpm.clearGreenHoldSec',
+        ):
+            hold = self._getNestedValue(config, holdKey)
+            if hold is not None and (
+                isinstance(hold, bool) or not isinstance(hold, (int, float)) or hold <= 0
+            ):
+                raise ConfigValidationError(
+                    f"{holdKey} must be a positive number (got {hold!r})",
+                    missingFields=[holdKey],
+                )
+        engine = self._getNestedValue(config, 'pi.warnings.engine')
+        if engine is None:
+            return
+        if not isinstance(engine, dict):
+            raise ConfigValidationError(
+                f"pi.warnings.engine must be a mapping (got {engine!r})",
+                missingFields=['pi.warnings.engine'],
+            )
+        for pid, rule in engine.items():
+            key = f'pi.warnings.engine.{pid}'
+            if not isinstance(rule, dict):
+                raise ConfigValidationError(
+                    f"{key} must be a mapping (got {rule!r})",
+                    missingFields=[key],
+                )
+            tier = rule.get('redTier')
+            if tier is None:
+                continue
+            if tier not in WARNINGS_RED_TIERS:
+                raise ConfigValidationError(
+                    f"{key}.redTier must be one of {list(WARNINGS_RED_TIERS)} "
+                    f"(got {tier!r})",
+                    missingFields=[f'{key}.redTier'],
+                )
+            if tier == 'stop' and pid != WARNINGS_STOP_PID:
+                raise ConfigValidationError(
+                    f"{key}.redTier may be 'stop' only for {WARNINGS_STOP_PID} "
+                    f"(got {pid})",
+                    missingFields=[f'{key}.redTier'],
                 )
 
     def _validateReplay(self, config: dict[str, Any]) -> None:

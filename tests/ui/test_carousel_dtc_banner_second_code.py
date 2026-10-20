@@ -44,6 +44,8 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: ADVANCE_OBSERVED /
 #                               ADVANCE_ROBUST_RANGE now from css_type_scale
 #                               (Atlas B6).
+# 2026-10-19    | Ralph (Rex)  | US-754-b -- MOVED PIN: comments on the incident
+#               |              | codes' tiers corrected (P0400 watch, P0443 minor).
 # ================================================================================
 ################################################################################
 
@@ -91,11 +93,11 @@ pytestmark = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 # The incident, as measured (US-691 acceptance).
 # ---------------------------------------------------------------------------
-# P0400 was first seen 2026-09-04 17:51:37Z and stored alongside P0443. NEITHER
-# is a row in the shipped severity table (src/pi/resources/dsm-p1xxx-severity-
-# table.md lists P0443 only in PROSE, at line 41, as an example of a code it
-# deliberately does NOT carry), so dtc_emitter.enrichCode degrades both to
-# `unknown` -- which is alert-eligible, so both reach the banner's count.
+# P0400 was first seen 2026-09-04 17:51:37Z and stored alongside P0443. At the
+# time NEITHER was a row in the shipped severity table, so enrichCode degraded
+# both to `unknown`. MOVED PIN (US-754-b): the table's '## Generic P0' section
+# now rates P0400 `watch` and P0443 `minor`. All three tiers are alert-eligible,
+# so both codes still reach the banner's count either way (swept below).
 _HERO_CODE = "P0443"
 _SECOND_CODE = "P0400"
 
@@ -109,10 +111,10 @@ _HERO_SHORT = "Evaporative Emission System Purge Control Valve Circuit"
 _SECOND_SHORT = "EGR Flow"
 
 # Every severity `alertableCodes` accepts. The banner's behaviour must not
-# depend on which tier the un-tabled incident codes land in -- that mapping is
-# an OPEN question (US-636 cross-check: Atlas's punch list recorded P0443 as
-# MINOR, the shipped table yields `unknown`), and this story must not quietly
-# take a position on it.
+# depend on which tier the incident codes land in. That mapping was an open
+# question when this file was written (US-636 cross-check); US-754-b settled it
+# in the shipped table (P0443 `minor`, P0400 `watch`), and the sweep still
+# covers every tier so the banner holds whatever Spool rates them.
 _ALERTABLE_SEVERITIES = ("stop", "watch", "minor", "unknown")
 
 

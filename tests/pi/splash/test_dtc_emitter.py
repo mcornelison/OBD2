@@ -16,6 +16,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-404 `dtc` emitter.
+# 2026-10-19    | Ralph (Rex)  | US-754-a -- enrichCode title + sentence.
+# 2026-10-19    | Ralph (Rex)  | US-897-a2 -- checkedAtTs + pendingCheckedAtTs
+#               |              | keys and the per-boot seed reader.
+# 2026-10-20    | Ralph (Rex)  | US-897-a3 -- per-code firstSeenTs.
 # ================================================================================
 ################################################################################
 
@@ -28,7 +32,9 @@ import json
 from pi.splash.dtc_emitter import (
     DTC_FILENAME,
     buildDtcState,
+    enrichCode,
     makeDtcEmitter,
+    readDtcCheckTimes,
 )
 
 # A minimal severity table fixture (the loader's output shape) -- the emitter
@@ -93,6 +99,9 @@ def test_buildDtcState_schema_hasAllSpecKeys():
         "sessionResetLock",
         "lastKnown",
         "source",
+        # US-897-a2: when Mode 03 / Mode 07 last read successfully this boot.
+        "checkedAtTs",
+        "pendingCheckedAtTs",
         "ts",
     }
     assert state["mil"] is True
@@ -423,5 +432,215 @@ def test_makeDtcEmitter_writeFailure_neverRaises(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "writeStateAtomic", _boom)
     emit = makeDtcEmitter(str(tmp_path), severityTable=_TABLE)
 
-    # Must not raise.
-    emit(codes=[_rawCode("P1300")], mil=True, newSinceTs=None, sessionResetLock=[])
+    # Must not raise -- and says nothing was written (US-897-b5).
+    assert emit(
+        codes=[_rawCode("P1300")], mil=True, newSinceTs=None, sessionResetLock=[]
+    ) is None
+
+
+def test_makeDtcEmitter_returnsThePayloadItWrote(tmp_path):
+    """US-897-b5 (Atlas Q6): the arbiter is handed exactly what was written."""
+    emit = makeDtcEmitter(
+        str(tmp_path), severityTable=_TABLE, nowIsoFn=lambda: "2026-10-20T15:02:11Z"
+    )
+
+    returned = emit(codes=[_rawCode("P1300")], mil=True, checkedAtTs="2026-10-20T15:02:11Z")
+
+    assert returned == json.loads((tmp_path / DTC_FILENAME).read_text())
+    assert returned["checkedAtTs"] == "2026-10-20T15:02:11Z"
+
+
+def test_enrichCode_tabledCode_carriesTableTitleAndSentence():
+    """
+    Given: a tabled code whose table entry carries Spool's title + sentence
+    When: it is enriched
+    Then: both flow through verbatim and the existing keys are unchanged
+    """
+    table = {
+        "P1300": {
+            **_TABLE["P1300"],
+            "title": "TIMING CIRCUIT (P1300)",
+            "sentence": "No full throttle. Get it diagnosed.",
+        }
+    }
+
+    code = enrichCode(_rawCode("P1300"), table)
+
+    assert code["title"] == "TIMING CIRCUIT (P1300)"
+    assert code["sentence"] == "No full throttle. Get it diagnosed."
+    assert code["severity"] == "watch"
+    assert code["suggestedFix"] == "Verify base timing is set."
+
+
+def test_enrichCode_unTabledCode_titleAndSentenceNone():
+    """
+    Given: a code absent from the table (P0300)
+    When: it is enriched
+    Then: title and sentence are both None and severity is `unknown` --
+          UNRATED words belong to the arbiter, never the dtc payload
+    """
+    code = enrichCode(_rawCode("P0300", desc="Random misfire"), _TABLE)
+
+    assert code["title"] is None
+    assert code["sentence"] is None
+    assert code["severity"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# US-897-a2 -- checkedAtTs / pendingCheckedAtTs + the per-boot seed
+# ---------------------------------------------------------------------------
+
+
+def test_buildDtcState_checkTimes_defaultNull():
+    state = buildDtcState(
+        codes=[], severityTable=_TABLE, mil=False, newSinceTs=None,
+        sessionResetLock=[], nowIso="2026-10-20T15:02:11Z",
+    )
+
+    assert state["checkedAtTs"] is None
+    assert state["pendingCheckedAtTs"] is None
+
+
+def test_buildDtcState_checkTimes_publishedVerbatim_evenWhenUnavailable():
+    """The held times ride on every publish -- an unavailable source never nulls them."""
+    for available in (True, False):
+        state = buildDtcState(
+            codes=[], severityTable=_TABLE, mil=False, newSinceTs=None,
+            sessionResetLock=[], nowIso="2026-10-20T15:05:00Z",
+            dtcAvailable=available,
+            checkedAtTs="2026-10-20T15:02:11Z",
+            pendingCheckedAtTs="2026-10-20T15:01:00Z",
+        )
+
+        assert state["checkedAtTs"] == "2026-10-20T15:02:11Z"
+        assert state["pendingCheckedAtTs"] == "2026-10-20T15:01:00Z"
+
+
+def test_makeDtcEmitter_writesTheCheckTimes(tmp_path):
+    emit = makeDtcEmitter(
+        str(tmp_path), severityTable=_TABLE, nowIsoFn=lambda: "2026-10-20T15:02:11Z"
+    )
+
+    emit(codes=[], mil=False, checkedAtTs="2026-10-20T15:02:11Z")
+
+    state = json.loads((tmp_path / DTC_FILENAME).read_text(encoding="utf-8"))
+    assert state["checkedAtTs"] == "2026-10-20T15:02:11Z"
+    assert state["pendingCheckedAtTs"] is None
+
+
+def test_readDtcCheckTimes_fromAPriorFile(tmp_path):
+    (tmp_path / DTC_FILENAME).write_text(
+        json.dumps({"checkedAtTs": "2026-10-20T15:02:11Z",
+                    "pendingCheckedAtTs": "2026-10-20T15:01:00Z"}),
+        encoding="utf-8",
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (
+        "2026-10-20T15:02:11Z", "2026-10-20T15:01:00Z",
+    )
+
+
+def test_readDtcCheckTimes_missingFile_seedsNull(tmp_path):
+    assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+
+
+def test_readDtcCheckTimes_unparseableJson_seedsNull(tmp_path):
+    (tmp_path / DTC_FILENAME).write_text("{not json", encoding="utf-8")
+
+    assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+
+
+def test_readDtcCheckTimes_unparseableTimes_seedNull(tmp_path):
+    """Each time is judged alone: a bad one seeds null, a good one survives."""
+    (tmp_path / DTC_FILENAME).write_text(
+        json.dumps({"checkedAtTs": "yesterday-ish",
+                    "pendingCheckedAtTs": "2026-10-20T15:01:00Z"}),
+        encoding="utf-8",
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (None, "2026-10-20T15:01:00Z")
+
+
+def test_readDtcCheckTimes_nonObjectOrNonString_seedsNull(tmp_path):
+    for body in ("[1, 2]", json.dumps({"checkedAtTs": 1760972531})):
+        (tmp_path / DTC_FILENAME).write_text(body, encoding="utf-8")
+
+        assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+
+
+# ---- US-897-a3: per-code firstSeenTs ------------------------------------------
+
+
+def test_enrichCode_firstSeenTs_carriedVerbatim_noneByDefault():
+    tabled = enrichCode(_rawCode("P1300"), _TABLE, "2026-09-04T13:20:05Z")
+
+    assert tabled["firstSeenTs"] == "2026-09-04T13:20:05Z"
+    assert enrichCode(_rawCode("P0999"), _TABLE)["firstSeenTs"] is None
+
+
+def test_buildDtcState_liveCodes_carryFirstSeenTs_nullWhenNoRow():
+    """
+    Given: a live read of P1300 + p0400 and a first-seen map holding only P0400
+    When: the state is built
+    Then: P0400 carries its first-seen string, P1300 (no row) carries null
+    """
+    state = buildDtcState(
+        codes=[_rawCode("P1300"), _rawCode("p0400")],
+        severityTable=_TABLE,
+        mil=True,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T09:00:00Z",
+        firstSeenByCode={"P0400": "2026-09-10T08:15:00Z"},
+    )
+
+    byCode = {c["code"]: c for c in state["codes"]}
+    assert byCode["P0400"]["firstSeenTs"] == "2026-09-10T08:15:00Z"
+    assert byCode["P1300"]["firstSeenTs"] is None
+
+
+def test_buildDtcState_noFirstSeenMap_everyCodeNull():
+    state = buildDtcState(
+        codes=[_rawCode("P1300")],
+        severityTable=_TABLE,
+        mil=True,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T09:00:00Z",
+    )
+
+    assert state["codes"][0]["firstSeenTs"] is None
+
+
+def test_buildDtcState_lastKnownCodes_carryFirstSeenTs():
+    """Remembered codes age from the same reader as live ones."""
+    state = buildDtcState(
+        codes=[],
+        severityTable=_TABLE,
+        mil=False,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T09:00:00Z",
+        dtcAvailable=False,
+        lastKnown=_lastKnownBlock(_knownCode("P0400"), _knownCode("P1300")),
+        firstSeenByCode={"P0400": "2026-09-04T13:20:05Z"},
+    )
+
+    byCode = {c["code"]: c for c in state["lastKnown"]["codes"]}
+    assert byCode["P0400"]["firstSeenTs"] == "2026-09-04T13:20:05Z"
+    assert byCode["P1300"]["firstSeenTs"] is None
+
+
+def test_makeDtcEmitter_writesFirstSeenTs(tmp_path):
+    emit = makeDtcEmitter(
+        str(tmp_path), severityTable=_TABLE, nowIsoFn=lambda: "2026-09-14T09:00:00Z"
+    )
+
+    emit(
+        codes=[_rawCode("P0400")],
+        mil=True,
+        firstSeenByCode={"P0400": "2026-09-10T08:15:00Z"},
+    )
+
+    payload = json.loads((tmp_path / DTC_FILENAME).read_text(encoding="utf-8"))
+    assert payload["codes"][0]["firstSeenTs"] == "2026-09-10T08:15:00Z"

@@ -2437,7 +2437,16 @@ HTML pages comes from ONE provider, the band producer
 (section 11). The page maps `band -> token` and holds no threshold, band or curve:
 `src/pi/ui/` contains no number. The producer covers coolant (threshold + dwell +
 clear hysteresis), battery (RED/GREEN only, gated on the engine running) and the
-RPM bar cues; every other PID has no live band. The numbers, and why they are what
+RPM bar cues; every other PID has no live band. Coolant red is guarded and has its
+own clear (US-897-b1, Spool 2026-10-14 / 2026-10-19, Atlas Q11): a single reading
+>= `redC` (110 C) is red only when the previous fresh, non-null reading was >=
+`redGuardPrevMinC` (100 C); otherwise red needs two consecutive readings >= `redC`
+(same reason `coolant >= 110 C` either way). The amber 104 C x 120 s dwell path to
+red is not guarded. Red clears only when a fresh reading <= `redClearBelowC` (101 C,
+inclusive) has held `redClearHoldSec` (60 s), and then takes whatever band the normal
+producer computes for that value; amber keeps its own clear (below `clearBelowC`
+102 C held `clearHoldSec` 10 s). The band producer is the ONE owner of band entry and
+exit, so the Driving tile and PULL OVER cannot disagree. The numbers, and why they are what
 they are, live in `specs/grounded-knowledge.md` (Coolant Temp, RPM and Battery
 Voltage rows, and "Battery Voltage via ELM_VOLTAGE"); the config keys are
 `pi.bands.*`, with defaults and sources in `src/common/config/validator.py`.
@@ -6005,7 +6014,12 @@ US-890-b, below).
 - **Dwell** is consecutive readings on event time. A stale gap (more than
   `pi.display.stale.obdLiveSec` between readings) or a null reading resets it. The
   producer keeps its own dwell clocks and a few seconds of RPM history for the
-  battery gate; it reads no SQLite either.
+  battery gate; it reads no SQLite either. The same stale gap or null reading also
+  resets the coolant red guard (the last fresh value and the consecutive-red count)
+  and the red-clear hold (US-897-b1): a single 110 C reading is red only after a fresh
+  reading >= 100 C, else after a second in a row (the first reading ever needs a
+  second -- a hot restart reaches red one sample, ~2.2 s, later), and red clears only
+  at <= 101 C held 60 s.
 - **`dataSource`** is a single file-level value: the `data_source` tag of the rows these
   values came from. It is read from `ObdDataLogger.dataSource`, which
   `_resolveDataSource` sets, so it is not derived a second time. It is not
@@ -6021,6 +6035,154 @@ US-890-b, below).
   `buildObdLiveState` and asserts equality. Each unit is fed as its python-obd name
   (the inverse of `CANONICAL_UNITS`), so the fixture is what the car's readings
   produce, not a copy of the target vocabulary (US-888-b).
+
+#### `states/alerts` -- what was assessed, the ordered alerts and the PULL OVER takeover (US-897-b2)
+
+**Producer:** `src/pi/obdii/alerts_arbiter.py`, run inside the eclipse-obd process (Atlas
+WARNINGS s2 2026-10-14; G3/G4/G7 2026-10-18; Q10/Q14/Q15/Q17/Q18/Q34 2026-10-19). It is
+the one provider of the warnings page: the page renders it and derives nothing (rule 0).
+- `CardStateEmitterMixin._maybeEmitCardStates` runs `_emitAlertsState` AFTER
+  `_emitObdLiveState`, on the payload that emit RETURNED (Atlas Q18:
+  `makeObdLiveEmitter`'s emit returns what it wrote, None when the write failed). It is
+  never a file read-back, so the alert and the Driving tile cannot disagree.
+- An `AlertsArbiter` held by the orchestrator keeps this boot's episodes in memory. It is
+  handed the FULL resolved config (`pi.bands.*`, `pi.warnings.*`).
+  `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId, codeSource)` is pure
+  over them;
+  `makeAlertsEmitter(statesDir)` writes `<statesDir>/alerts` atomically and never raises.
+- Built in its own try/except (`_initializeAlertsProducer`); when
+  `pi.dashboard.stateEmitEnabled` is false it is not built and writes no file.
+
+**Shape** (every key always present; all times ISO UTC, Q34):
+`{ts, dataSource, bootId, sources, codesCheckedThisSession, checkedAtTs, icon, takeover,
+codeAlert, entries}`.
+- `dataSource` is `_gatherObdLiveDataSource()` (the obd-live tag); `bootId` is
+  `readBootId()` (`unknown` when unreadable).
+- **`sources`** says what was ASSESSED; the page prints only that (ARCH-062):
+  - `code: {assessed, checkedAtTs}` (US-897-b5) -- from the last dtc payload handed in:
+    `assessed` = `source.dtc.available` AND `checkedAtTs` not null AND `codes` not null;
+    `checkedAtTs` = that payload's. `codesCheckedThisSession` and `checkedAtTs` repeat it
+    (Iris contract names).
+  - `engine: {assessed}` -- true only when obd-live carries a FRESH COOLANT_TEMP reading
+    (Q14). Engine off, stale or absent is false.
+  - `system` and `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
+- **`entries`**: `{id, source, key, tier, title, sentence, directive, value, unit, last,
+  stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus}` (`codeStatus` is
+  `stored` | `pending` on a code entry, null on an engine one), ALREADY ORDERED (B5): tier
+  `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
+  newest `firstSeenTs`.
+  - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
+    new id. `acknowledged` is always false until the ack store (S108).
+- **`icon`** `{state, count, pulse}`: `count` = active entries. `state` is `stop` when any
+  active stop; `watch` when any active watch, minor or unrated (G7: never grey); else
+  `not_checked` while `sources.code.assessed` is false; else `none`. An active stop/watch
+  outranks `not_checked` (B6). `pulse` = any active, unacknowledged stop or watch ENGINE
+  entry.
+- **`takeover`** = `{id, title, sentence, directive, value, unit, last, stale,
+  firstSeenTs, dismissable: false}` while the top ACTIVE entry is a stop, else null (Iris
+  B1; G4: `directive` is a provider field, Spool's words). A code entry is never a stop,
+  so a code never takes over.
+- **`codeAlert`** (US-897-b5, Atlas Q32) = `{ids: [the active code entry ids, in entries
+  order], tier: the tier of the first of them, dismissable: true}` while any code entry is
+  active, else null. The provider computes `tier`; the page decides moving/parked.
+
+**Tiers** come from config, never a literal: `pi.warnings.engine.<PID>.redTier`
+(validator DEFAULTS only; `COOLANT_TEMP` = `stop`, `BATTERY_V` = `watch`, Spool 2026-10-14).
+`_validateWarnings` accepts only `stop` / `watch`, and `stop` only for COOLANT_TEMP; it also
+requires `pi.warnings.battery.clearGreenHoldSec` to be a positive number. Never `pi.alerts.*`: the
+legacy AlertManager owns that section (config.json).
+
+**The coolant STOP** (US-897-b2), id `engine:COOLANT_TEMP:stop`:
+- Active while the obd-live COOLANT_TEMP band is `red`. The band producer owns entry and
+  exit (US-897-b1: the plausibility guard, and red clears at <= 101 C held 60 s); the
+  arbiter has no band logic.
+- Words, Spool 2026-10-14 verbatim: directive `PULL OVER`, title `ENGINE OVERHEATING`,
+  sentence `Stop safely, engine off. Do not open the radiator cap hot.`
+- Fresh: `value` + unit `C`, `stale: false`, `last: null`. `firstSeenTs` = the
+  `params.COOLANT_TEMP.ts` of the episode's first red reading; `lastSeenTs` = its last.
+- **Stale rule** (Spool: "stale never clears"; Atlas Q10): only a FRESH reading whose band
+  is not red ends the episode. While the reading is stale, absent, not read or unbanded
+  -- or obd-live published nothing -- an active STOP stays active with `value: null`,
+  `stale: true`, `last: {value, band, ts}` of the last red reading.
+- **Cleared** (band left red): the entry stays listed `active: false` (`value: null`,
+  `last` = the last red reading) for the rest of the boot. It never drops by time (Q15). A
+  new red episode re-activates the same id with a new `firstSeenTs`.
+
+**The battery WATCH** (US-897-b3; Spool 2026-10-14, Atlas Q12), id `engine:BATTERY_V:watch`
+(tier `pi.warnings.engine.BATTERY_V.redTier`, default `watch`):
+- Active while the obd-live BATTERY_V band is `red`, low or high. The SIDE comes from the
+  VALUE against `pi.bands.battery.redAboveV` (above it is high, else low; the band is red,
+  so else is below `redBelowV`) -- never from parsing the band reason.
+- Words, Spool 2026-10-14 verbatim, follow the CURRENT side: low -> title `CHARGING FAULT`,
+  sentence `Head somewhere safe. Turn off accessories.`; high -> title `OVERCHARGING`,
+  sentence `Head somewhere safe, then engine off.` No directive. A low<->high flip keeps
+  the same id and `firstSeenTs`.
+- `value`: one decimal, rounded TOWARD the breach (Spool 2026-10-19): low floors
+  (11.96 -> 11.9), high ceils (15.04 -> 15.1); unit `V`. `last.value` while stale follows
+  the same rule. `lastSeenTs` = the last red reading.
+- **End**: only after the band has been GREEN for `pi.warnings.battery.clearGreenHoldSec`
+  (10, Spool 2026-10-14), measured on the readings' `ts`. During the hold the entry stays
+  active with the current reading (rounded on the episode's side). A red reading, a null
+  band (`engine_not_running`, `amber_not_shipped`), a stale or an absent reading restarts
+  the green run and never ends it -- the last three show the stale shape (`value: null`,
+  `stale: true`, `last` = the last red reading).
+- Ended -> `active: false`, listed for the rest of the boot (until acked, Q15). Amber or
+  green with no open episode makes no entry. No `alert_log` row (the record is the
+  coolant STOP's). Seeded like the STOP (side from the seeded title).
+
+**The CODE source** (US-897-b5; Atlas s1/s2, G1, G7, Q6, Q16, Q32; Spool 2026-10-19):
+- **Input**: the dtc payload handed IN-PROCESS (`AlertsArbiter.observeDtc`). `makeDtcEmitter`'s
+  emit returns the payload it wrote (None on a failed write); `EventRouterMixin._emitDtcState`
+  and `CardStateEmitterMixin._emitInitialDtcState` hand it over. Never a file read-back. The
+  next card tick publishes it (`codeSource()` rides into `buildAlertsState`).
+- **Entries**: one per code in `payload.codes`, stored AND pending, whose severity is `stop`,
+  `watch`, `minor` or `unknown`; `na` is excluded. id `code:<code>:<tier>`, tier
+  `watch | minor | unrated`: a stop-tier row publishes as `watch` (a code is NEVER stop,
+  Spool s4) and keeps the TABLE's own sentence; `unknown` -> `unrated`. `title` / `sentence`
+  are the payload's (US-754-a). An untabled code: `title` = the bare code, `sentence`
+  **`Severity unknown. Get it diagnosed.`** (the UNRATED text, Spool 2026-10-19).
+  `value`/`unit`/`directive` null; `firstSeenTs` = the code's (US-897-a3); `lastSeenTs` =
+  `checkedAtTs`; `source` `code`, ordered after engine entries of the same tier (Q16).
+- **Pending** (Spool 2026-10-19): `codeStatus` `pending`, same tier and sentence, title + ` ·
+  pending` (e.g. `EGR FLOW (P0400) · pending`). A pending code that later stores stays ONE
+  entry (same id; `codeStatus` flips); a code listed both ways in one read is one `stored`
+  entry. Pending entries appear after a drive (Mode 07 runs at drive end), never live.
+- **Removal** (G1): a code absent from a read is REMOVED (not kept `active: false`, unlike the
+  coolant STOP) only when that read's `checkedAtTs` is NEWER than the last one applied. An
+  unchanged `checkedAtTs` only adds; an older one changes nothing. Carried pending codes ride
+  every Mode 03-only payload, so such a read never removes them.
+- **Unknown is not present**: `codes` null (unavailable) creates and removes no entry and
+  leaves `sources.code.assessed` false. The boot state's `lastKnown` codes make NO entries
+  before the first successful read. A null-frame read publishes no payload, so it changes
+  nothing. Code entries are not seeded from the prior `states/alerts`; they return with
+  the next successful read.
+- **Icon** (G7): code entries count; minor-only or unrated-only gives `watch`; codes never
+  pulse.
+- **The clear gate is unchanged**: it keeps reading the dtc payload's TABLE tier
+  (`dtc_emitter._computeClearGate`, `dtc_clear._relevantStored`, `carousel.js`), never the
+  alerts tier, so a stop-tier code is never clearable. It stays stored-only; counting
+  pending codes is US-919.
+
+**Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
+synced `alert_log`. It never UPDATEs: sync is a delta by id.
+- At episode OPEN, at once: `alert_type 'coolant_stop'`, `parameter_name 'COOLANT_TEMP'`,
+  `value` = the opening reading, `threshold` = `pi.bands.coolant.redC`,
+  `drive_id` = `getCurrentDriveId()`, `timestamp` = the reading's event time.
+- At CLEAR: `alert_type 'coolant_stop_clear'`, `value` = the episode PEAK, `threshold` =
+  `pi.bands.coolant.redClearBelowC`. A key-off mid-episode leaves only the open row.
+- No row when `dataSource` is `replay` or `physics_sim` (R28). A failed INSERT logs ERROR
+  and never blocks the live STOP.
+- The INSERT lives in `alerts_arbiter.py` and goes through the database object it is
+  handed (G2): `card_state_emitter.py` still contains no `.connect(`.
+
+**Per-boot seed** (Atlas G3): at init the arbiter re-reads this boot's tmpfs
+`states/alerts` (`readAlertsSeed`; a missing or unparseable file seeds nothing). An
+orchestrator restart inside the boot therefore keeps a cleared STOP listed.
+- A seeded ACTIVE entry stays stale until a fresh reading decides it.
+- Stated cost: a restart while still red writes a second `coolant_stop` open row (honest;
+  INSERT-only). Its later clear row carries the highest reading this process saw, which
+  starts from the seeded last value.
+- Prior-boot episodes are not re-listed from `alert_log` (Atlas Q15 design 4).
 
 #### `states/engine-history` -- this drive's worst-band buckets (US-889-a)
 
@@ -7459,7 +7621,31 @@ orchestrator — its live injection follows the US-400/401 deferral pattern). Th
 state schema is design-spec §8: `mil` · `codes[]` (each with
 `severity`/`severityCaveat`/`short`/`setAtTs`/`driveId`/`freezeFrame`/
 `suggestedFix`/`fixProvenance`/`logged`/`syncAcked`/`clearEligible`) · `newSinceTs`
-· `clearGate` · `sessionResetLock` · `lastKnown` · `source` · `ts`.
+· `clearGate` · `sessionResetLock` · `lastKnown` · `source` · `checkedAtTs` ·
+`pendingCheckedAtTs` · `ts`.
+
+**Read times: `checkedAtTs` / `pendingCheckedAtTs` (US-897-a2, ARCH-062 + Atlas
+Q2/Q3 2026-10-19).** `checkedAtTs` (ISO-8601 UTC, null when no successful read
+this boot) is the time of the last **successful** Mode 03 this boot — a call that
+returned without raising **and** got a non-null frame
+(`DtcClient.readStoredDtcsWithFrame` → `(codes, frameNull)`; `readStoredDtcs`
+delegates and keeps returning `[]` on a null frame for `pre_drive_gate`). A null
+frame or a timeout is a **failure**: it logs WARNING `Mode 03 null frame`, leaves
+the time unchanged and **publishes nothing** — states/dtc stays byte-identical
+(codes, pending, both times), so a null frame at key-on leaves the boot state's
+`codes: null` / `source.dtc` unavailable (G1). Every publish path — key-on, drive
+start, MIL edge, periodic, post-clear re-read (`ClearReadback.frameNull`) —
+follows the rule. `pendingCheckedAtTs` is the time of the Mode 07 read the
+published pending set came from: it advances only on a Mode 07 read that answered
+(`mode07Probe.supported`), and a Mode 03-only publish leaves it. The orchestrator
+holds both and passes them on every publish, available or not — never nulled once
+set. **Per boot (Atlas Q3):** the states dir is tmpfs, so at card-emitter init,
+before the boot-time write overwrites it, both are seeded from the existing
+`states/dtc` (`readDtcCheckTimes`); a missing file, unparseable JSON or an
+unparseable time seeds null. The raw Mode 03 / Mode 07 responses are logged at
+DEBUG — this ECU's empty-frame shape is not measured, and the raw frame is the
+falsifier (if it answers "no codes" with a null frame, `checkedAtTs` never
+advances after the next clear).
 
 **Resting state: honest nulls + `lastKnown` (US-752, Atlas ruling 2026-09-14).**
 When no live read is possible (boot, key-off, process restart) the live fields
@@ -7498,10 +7684,14 @@ until a clear. The pinned design-spec §8 lives on the fleet share (PM-owned).
 
 **Honest-instrument by construction.** The Pi never decides severity: a static
 loader (`dtc_severity_table.py`) parses **Spool's SSOT**
-(`offices/tuner/dsm-p1xxx-severity-table.md`) into the `{code → enrichment}` map
-the emitter merges verbatim — engine P1xxx → `watch`, condition-dependent codes
+(`src/pi/resources/dsm-p1xxx-severity-table.md`) into the `{code → enrichment}` map
+the emitter merges verbatim. The table holds the P1xxx codes plus a **Generic P0**
+section (US-754-b: the car's two real stored codes, P0400 → `watch`, P0443 →
+`minor`) — engine P1xxx → `watch`, condition-dependent codes
 carry a `severityCaveat` that **never auto-upgrades the tier** (R-1), auto-trans
-P1xxx → `na` (quiet disposition). A code **absent** from the table degrades to
+P1xxx → `na` (quiet disposition). A P0 code not in the Generic P0 section — P0430
+and every bank-2 code included (wrong-vehicle data on this inline four) — is
+`unknown` (UNRATED), never a guessed tier. A code **absent** from the table degrades to
 `severity: unknown` with whatever description python-obd supplied (empty → the
 display shows "No description yet") — no fabricated severity or fix. `freezeFrame`
 is always `null` (Mode 02 confirmed unsupported on MD326328; US-406 renders the

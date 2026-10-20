@@ -297,3 +297,136 @@ class TestCommandFactoryInjection:
         client.readPendingDtcs(conn)
 
         assert "GET_CURRENT_DTC" in calls
+
+
+# ================================================================================
+# US-897-a2 -- readStoredDtcsWithFrame + the logger's frame-aware Mode 03 reads
+# ================================================================================
+
+
+class TestReadStoredDtcsWithFrame:
+    """ARCH-062: a null Mode 03 frame is a FAILED read, not 'no codes'."""
+
+    def test_nonNullEmptyFrame_isASuccessWithNoCodes(self) -> None:
+        conn = _FakeConnection(responses={"GET_DTC": _FakeResponse(value=[])})
+        client = DtcClient(commandFactory=_fakeCommandFactory)
+
+        codes, frameNull = client.readStoredDtcsWithFrame(conn)
+
+        assert codes == []
+        assert frameNull is False
+
+    def test_nullFrame_isFlagged(self) -> None:
+        conn = _FakeConnection(responses={"GET_DTC": _FakeResponse(value=None, null=True)})
+        client = DtcClient(commandFactory=_fakeCommandFactory)
+
+        codes, frameNull = client.readStoredDtcsWithFrame(conn)
+
+        assert codes == []
+        assert frameNull is True
+
+    def test_codesComeBackStored(self) -> None:
+        conn = _FakeConnection(
+            responses={"GET_DTC": _FakeResponse(value=[("P0400", "EGR flow")])}
+        )
+        client = DtcClient(commandFactory=_fakeCommandFactory)
+
+        codes, frameNull = client.readStoredDtcsWithFrame(conn)
+
+        assert codes == [DiagnosticCode(code="P0400", description="EGR flow", status="stored")]
+        assert frameNull is False
+
+    def test_readStoredDtcs_keepsItsContract_nullFrameIsEmptyList(self) -> None:
+        """pre_drive_gate + the clear readback rely on [] for a null frame."""
+        conn = _FakeConnection(responses={"GET_DTC": _FakeResponse(value=None, null=True)})
+        client = DtcClient(commandFactory=_fakeCommandFactory)
+
+        assert client.readStoredDtcs(conn) == []
+
+    def test_rawResponseLoggedAtDebug(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Spool 2026-10-19: the raw frame is the cheap falsifier."""
+        conn = _FakeConnection(responses={"GET_DTC": _FakeResponse(value=None, null=True)})
+        client = DtcClient(commandFactory=_fakeCommandFactory)
+
+        with caplog.at_level("DEBUG", logger="src.pi.obdii.dtc_client"):
+            client.readStoredDtcsWithFrame(conn)
+
+        assert any("Mode 03 raw response" in r.getMessage() for r in caplog.records)
+
+
+def _loggerWith(tmp_path: Any, responses: dict[str, Any]) -> tuple[Any, _FakeConnection]:
+    from src.pi.obdii.database import ObdDatabase
+    from src.pi.obdii.dtc_logger import DtcLogger
+
+    db = ObdDatabase(str(tmp_path / "a2.db"), walMode=False)
+    db.initialize()
+    conn = _FakeConnection(responses=responses)
+    return DtcLogger(database=db, dtcClient=DtcClient(commandFactory=_fakeCommandFactory)), conn
+
+
+def _nullFrameWarnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage() for r in caplog.records
+        if r.levelname == "WARNING" and "Mode 03 null frame" in r.getMessage()
+    ]
+
+
+_NULL_03 = {"GET_DTC": _FakeResponse(value=None, null=True),
+            "GET_CURRENT_DTC": _FakeResponse(value=[])}
+_GOOD_03 = {"GET_DTC": _FakeResponse(value=[]), "GET_CURRENT_DTC": _FakeResponse(value=[])}
+
+
+class TestDtcLoggerMode03FrameNull:
+    """Every Mode 03 read path reports a null frame and WARNs once per read."""
+
+    @pytest.mark.parametrize("path", ["keyOn", "sessionStart", "mil", "periodic"])
+    def test_nullFrame_flagsTheResult_andWarnsOnce(
+        self, tmp_path: Any, caplog: pytest.LogCaptureFixture, path: str,
+    ) -> None:
+        dtcLogger, conn = _loggerWith(tmp_path, _NULL_03)
+
+        with caplog.at_level("DEBUG"):
+            result = _runPath(dtcLogger, conn, path)
+
+        assert result.mode03FrameNull is True
+        assert len(_nullFrameWarnings(caplog)) == 1
+
+    @pytest.mark.parametrize("path", ["keyOn", "sessionStart", "mil", "periodic"])
+    def test_nonNullFrame_isNotFlagged_andDoesNotWarn(
+        self, tmp_path: Any, caplog: pytest.LogCaptureFixture, path: str,
+    ) -> None:
+        dtcLogger, conn = _loggerWith(tmp_path, _GOOD_03)
+
+        with caplog.at_level("DEBUG"):
+            result = _runPath(dtcLogger, conn, path)
+
+        assert result.mode03FrameNull is False
+        assert _nullFrameWarnings(caplog) == []
+
+    def test_resultTypesDefaultTheFlagFalse(self) -> None:
+        from src.pi.obdii.dtc_logger import KeyOnDtcResult, MilEventResult, SessionStartResult
+
+        probe = Mode07ProbeResult(supported=True, reason="supported")
+        assert MilEventResult(inserted=0, updated=0).mode03FrameNull is False
+        assert SessionStartResult(0, 0, probe).mode03FrameNull is False
+        assert KeyOnDtcResult(0, 0, probe, []).mode03FrameNull is False
+
+    def test_driveEnd_logsTheRawMode07ResponseAtDebug(
+        self, tmp_path: Any, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        dtcLogger, conn = _loggerWith(tmp_path, _GOOD_03)
+
+        with caplog.at_level("DEBUG"):
+            dtcLogger.logDriveEndDtcs(driveId=3, connection=conn)
+
+        assert any("Mode 07 raw response" in r.getMessage() for r in caplog.records)
+
+
+def _runPath(dtcLogger: Any, conn: _FakeConnection, path: str) -> Any:
+    if path == "keyOn":
+        return dtcLogger.logKeyOnDtcs(connection=conn)
+    if path == "sessionStart":
+        return dtcLogger.logSessionStartDtcs(driveId=3, connection=conn)
+    if path == "mil":
+        return dtcLogger.logMilEventDtcs(driveId=3, connection=conn)
+    return dtcLogger.maybePeriodicMode03(driveId=3, connection=conn)

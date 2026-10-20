@@ -82,6 +82,12 @@
 #         MINOR / "SAFE TO CLEAR ONCE LOGGED" render of P0443 would require. That
 #         discrepancy is Atlas's to settle, not this story's.
 #
+#         MOVED PIN (US-754-b): the shipped table now carries a '## Generic P0'
+#         section rating the car's two stored codes -- P0400 WATCH, P0443 MINOR
+#         (clearable) -- so the counts are 8 watch, 5 na, 1 minor. P0443 alone
+#         now gates `ok` and the panel offers CLEAR CODES; the car's real pair
+#         (P0443 + P0400) refuses as `severity_present`, which is now TRUE.
+#
 #   Skipped when node is not on PATH (a node-less CI box); the Python-only gate
 #   tests below run everywhere.
 # Author: Ralph Agent (Rex)
@@ -96,6 +102,8 @@
 #               |              | F1/F2/F3 characterisations (I-us636).
 # 2026-09-14    | Ralph (Rex)  | US-753 fixed F3's WORDS: the two P0443 tests are
 #               |              | re-recorded to `severity_unknown` (refusal same).
+# 2026-10-19    | Ralph (Rex)  | US-754-b MOVED PIN: F3 re-recorded -- P0443 is
+#               |              | MINOR in the shipped table (1 minor, 8 watch).
 # ================================================================================
 ################################################################################
 
@@ -134,10 +142,10 @@ _SHIPPED_TABLE_PATH = os.path.join(
     _REPO, "src", "pi", "resources", "dsm-p1xxx-severity-table.md"
 )
 
-# A fixture table for the MECHANISM tests. It exists because the shipped table
-# contains no `minor` row at all (F3) -- the clearable branch of the gate cannot
-# be reached with real data, so a fixture is the only way to exercise the "this
-# IS allowed" side. Keeping that side exercised is what stops every absence
+# A fixture table for the MECHANISM tests. It was introduced because the shipped
+# table then contained no `minor` row at all (F3); since US-754-b it rates P0443
+# MINOR, but the fixture stays so the mechanism tests do not move with Spool's
+# data. Keeping the "this IS allowed" side exercised is what stops every absence
 # assertion in this file from passing vacuously.
 _FIXTURE_TABLE: dict[str, dict[str, Any]] = {
     "P0442": {
@@ -737,45 +745,50 @@ def test_characterisation_theShippedSeverityTableContainsNoClearableTier():
     """
     Given: the severity table the orchestrator loads by default
     When: its tiers are counted
-    Then: 7 `watch`, 5 `na`, and ZERO `minor`.
+    Then: 8 `watch`, 5 `na`, and ONE `minor` (P0443).
 
-          The gate enables only when every stored non-`na` code is `minor`, so
-          with this data the enabled branch is unreachable and CLEAR CODES can
-          never light up on this car. Recorded as a number, per the sprint's
-          "record the measurement, pass or fail" discipline -- re-record it when
-          the table grows, do not delete it. The table's own line 41 says the
-          clearable codes here are generic evap P0xxx and this table is
-          P1xxx-only, so this is a known gap, not a parse failure.
+          MOVED PIN (US-754-b): re-recorded, not deleted, as this docstring
+          always asked. Until the Generic P0 section landed the count was
+          7 watch / 0 minor and the enabled branch was unreachable on this car.
+          The single `minor` is P0443, so the enabled branch is now reachable
+          with shipped data -- but only when P0443 is stored ALONE (see below).
+          The name is kept so the history of this pin stays greppable.
     """
     tiers = [entry["severity"] for entry in _shippedTable().values()]
 
-    assert tiers.count("minor") == 0, "a MINOR row appeared -- re-record F3"
-    assert tiers.count("watch") == 7, tiers
+    assert tiers.count("minor") == 1, "the MINOR count moved -- re-record F3"
+    assert tiers.count("watch") == 8, tiers
     assert tiers.count("na") == 5, tiers
 
 
 def test_characterisation_theLiveP0443_isRefusedAsSeverityUnknown():
     """
     Given: P0443 -- stored on the car since 2026-08-20, MIL lit -- enriched by
-           the SHIPPED table, which has no entry for it
-    When: the gate runs and the detail is rendered
-    Then: severity degrades honestly to `unknown` and the gate refuses with
-          `severity_unknown`.
+           the SHIPPED table, which since US-754-b rates it MINOR, clearable
+    When: the gate runs alone on it, and on the car's real pair P0443 + P0400
+    Then: alone -> `minor`, gate {enabled: True, reason: ok}; beside P0400
+          (WATCH) -> refused as `severity_present`, which is now TRUE.
 
-          Re-recorded by US-753. This used to pin `severity_present` -- "a
-          STOP/WATCH code is present", which the code is not. Refusing was and
-          is CORRECT (never clear what you could not classify); only the reason
-          moved. Python-only assertions here so the measurement survives on a
-          node-less box; the rendered label is pinned in the sibling test.
+          MOVED PIN (US-754-b). US-636 pinned `severity_present` here and US-753
+          re-recorded it to `severity_unknown`; both were correct for a table
+          with no P0443 row. Spool's row moves it again. Mode 04 is
+          all-or-nothing, so while P0400 is stored the car's clear stays shut.
+          The name is kept so the history of this pin stays greppable.
     """
     table = _shippedTable()
-    assert "P0443" not in table
+    assert table["P0443"]["severity"] == "minor"
 
-    state = _state([_raw("P0443")], table=table)
+    alone = _state([_raw("P0443")], table=table)
 
-    assert state["codes"][0]["severity"] == "unknown", state["codes"]
-    assert state["clearGate"] == {"enabled": False, "reason": "severity_unknown"}
-    assert dtc_clear.evaluateClearGate(state).reason == dtc_clear.GATE_SEVERITY_UNKNOWN
+    assert alone["codes"][0]["severity"] == "minor", alone["codes"]
+    assert alone["clearGate"] == {"enabled": True, "reason": "ok"}
+    assert dtc_clear.evaluateClearGate(alone).reason == dtc_clear.GATE_OK
+
+    livePair = _state([_raw("P0443"), _raw("P0400")], table=table)
+
+    assert [c["severity"] for c in livePair["codes"]] == ["minor", "watch"]
+    assert livePair["clearGate"] == {"enabled": False, "reason": "severity_present"}
+    assert dtc_clear.evaluateClearGate(livePair).reason == dtc_clear.GATE_SEVERITY
 
 
 @_needsNode
@@ -783,13 +796,24 @@ def test_characterisation_theLiveP0443_rendersTheSeverityUnknownLabelOnThePanel(
     """
     Given: the same P0443 state through the shipped table
     When: the operator opens its detail on the panel
-    Then: the button is disabled and says severity could not be determined.
+    Then: alone, the button is ENABLED and reads "CLEAR CODES"; beside P0400 it
+          is disabled and says a STOP/WATCH code is present.
 
+          MOVED PIN (US-754-b): recorded as measured on the shipped carousel.js.
           The rendered half of F3 -- the words the driver actually reads about
-          the code that is actually on their car (US-753 re-record).
+          the codes that are actually on their car.
     """
-    got = _clearSurface(_state([_raw("P0443")], table=_shippedTable()), _OPEN_DETAIL)
+    table = _shippedTable()
+    alone = _clearSurface(_state([_raw("P0443")], table=table), _OPEN_DETAIL)
 
-    assert got["disabled"] is True, got
-    assert got["reason"] == "severity_unknown", got
-    assert got["label"] == _LABEL_SEVERITY_UNKNOWN, got
+    assert alone["disabled"] is False, alone
+    assert alone["reason"] == "ok", alone
+    assert alone["label"] == _LABEL_ENABLED, alone
+
+    livePair = _clearSurface(
+        _state([_raw("P0443"), _raw("P0400")], table=table), _OPEN_DETAIL
+    )
+
+    assert livePair["disabled"] is True, livePair
+    assert livePair["reason"] == "severity_present", livePair
+    assert livePair["label"] == _LABEL_SEVERITY, livePair

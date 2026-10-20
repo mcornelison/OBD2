@@ -1045,6 +1045,8 @@ def test_bands_defaults_areSpoolsAndTheCiosNumbers():
     assert bands["coolant"] == {
         "amberC": 104, "amberDwellSec": 30, "redC": 110,
         "redDwellSec": 120, "clearBelowC": 102, "clearHoldSec": 10,
+        # US-897-b1 (Spool 2026-10-14): red run-up guard and red's own clear.
+        "redGuardPrevMinC": 100, "redClearBelowC": 101, "redClearHoldSec": 60,
     }
     assert bands["battery"] == {
         "rpmMaxAgeSec": 3.0, "runningRpmMin": 500, "crankGuardSec": 3,
@@ -1077,6 +1079,12 @@ def test_bands_eachDefaultCitesItsSource():
         "RPM row (:84)",
     ):
         assert needle in source, needle
+    # US-897-b1: each red guard / red clear key cites Spool 2026-10-14 ON ITS OWN
+    # line (the date alone already appears elsewhere in the module).
+    for key in ("redGuardPrevMinC", "redClearBelowC", "redClearHoldSec"):
+        lines = [ln for ln in source.splitlines() if f"'pi.bands.coolant.{key}':" in ln]
+        assert len(lines) == 1, key
+        assert "Spool 2026-10-14" in lines[0], key
 
 
 @pytest.mark.parametrize(
@@ -1102,6 +1110,11 @@ def test_bands_rejectsANonPositiveOrNonNumericValue(section, key, badValue):
         ("coolant", {"clearBelowC": 104}),
         ("coolant", {"redC": 103}),
         ("coolant", {"redDwellSec": 30}),
+        # US-897-b1 (Spool 2026-10-19): redGuardPrevMinC < redC, redClearBelowC
+        # < redC, redClearBelowC < amberC.
+        ("coolant", {"redGuardPrevMinC": 110}),
+        ("coolant", {"redClearBelowC": 110}),
+        ("coolant", {"redClearBelowC": 104}),
         ("battery", {"redBelowV": 13.5}),
         ("battery", {"greenMinV": 14.6}),
         ("battery", {"redAboveV": 14.5}),
@@ -1112,6 +1125,127 @@ def test_bands_rejectsMisorderedEdges(section, overrides):
     bad = _baseCfg()
     bad["pi"] = {"bands": {section: overrides}}
     with pytest.raises(ConfigValidationError, match="must be"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_coolantRedTier_defaultsToStop_underPiWarningsNeverPiAlerts():
+    """US-897-b2: the coolant STOP tier is pi.warnings.engine.COOLANT_TEMP.redTier
+    'stop' in validator DEFAULTS -- never pi.alerts.* (the legacy AlertManager's)."""
+    from common.config.validator import DEFAULTS
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["warnings"]["engine"]["COOLANT_TEMP"]["redTier"] == "stop"
+    assert DEFAULTS["pi.warnings.engine.COOLANT_TEMP.redTier"] == "stop"
+    assert not [k for k in DEFAULTS if k.startswith("pi.alerts.")]
+
+
+@pytest.mark.parametrize("tier", ["stop", "watch"])
+def test_warnings_coolantRedTier_acceptsStopOrWatch(tier):
+    ok = _baseCfg()
+    ok["pi"] = {"warnings": {"engine": {"COOLANT_TEMP": {"redTier": tier}}}}
+    cfg = ConfigValidator().validate(ok)
+    assert cfg["pi"]["warnings"]["engine"]["COOLANT_TEMP"]["redTier"] == tier
+
+
+@pytest.mark.parametrize("pid", ["BATTERY_V", "RPM"])
+def test_warnings_rejectsStopForAnyPidButCoolant(pid):
+    """US-897-b2: only COOLANT_TEMP may be a STOP (Spool: battery and RPM are WATCH)."""
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"engine": {pid: {"redTier": "stop"}}}}
+    with pytest.raises(ConfigValidationError, match=f"pi.warnings.engine.{pid}.redTier"):
+        ConfigValidator().validate(bad)
+
+
+@pytest.mark.parametrize("tier", ["minor", "unrated", "STOP", "", 1])
+def test_warnings_rejectsATierOutsideStopWatch(tier):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"engine": {"COOLANT_TEMP": {"redTier": tier}}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.engine.COOLANT_TEMP.redTier"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_rejectsANonMappingEngineRule():
+    # MOVED PIN (US-897-b4): RPM now has a default, so the rule is a PID with
+    # none -- the shape reaches _validateWarnings untouched.
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"engine": {"SPEED": "watch"}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.engine.SPEED"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_battery_defaults_watchTier_clearGreenHold10s():
+    """US-897-b3 (Spool 2026-10-14): battery red is a WATCH that ends after the
+    band has been green for 10 s."""
+    from common.config.validator import DEFAULTS
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["warnings"]["engine"]["BATTERY_V"]["redTier"] == "watch"
+    assert cfg["pi"]["warnings"]["battery"]["clearGreenHoldSec"] == 10
+    assert DEFAULTS["pi.warnings.engine.BATTERY_V.redTier"] == "watch"
+    assert DEFAULTS["pi.warnings.battery.clearGreenHoldSec"] == 10
+
+
+def test_warnings_battery_defaultsCiteSpool():
+    """Each new key's OWN DEFAULTS line cites its source."""
+    import inspect
+
+    import common.config.validator as validatorModule
+
+    lines = inspect.getsource(validatorModule).splitlines()
+    for key in ("pi.warnings.engine.BATTERY_V.redTier", "pi.warnings.battery.clearGreenHoldSec"):
+        line = next(text for text in lines if f"'{key}':" in text)
+        assert "Spool 2026-10-14" in line
+
+
+@pytest.mark.parametrize("badValue", [0, -1, "10", True])
+def test_warnings_battery_clearGreenHoldSec_rejectsANonPositiveNumber(badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"battery": {"clearGreenHoldSec": badValue}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.battery.clearGreenHoldSec"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_battery_clearGreenHoldSec_acceptsAPositiveNumber():
+    ok = _baseCfg()
+    ok["pi"] = {"warnings": {"battery": {"clearGreenHoldSec": 2.5}}}
+    cfg = ConfigValidator().validate(ok)
+    assert cfg["pi"]["warnings"]["battery"]["clearGreenHoldSec"] == 2.5
+
+
+def test_warnings_rpm_defaults_watchTier_ownClearGreenHold10s():
+    """US-897-b4 (Atlas Q13): RPM red is a WATCH; its no-drive green hold is its
+    OWN key, separate from the battery's."""
+    from common.config.validator import DEFAULTS
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["warnings"]["engine"]["RPM"]["redTier"] == "watch"
+    assert cfg["pi"]["warnings"]["rpm"]["clearGreenHoldSec"] == 10
+    assert DEFAULTS["pi.warnings.engine.RPM.redTier"] == "watch"
+    assert DEFAULTS["pi.warnings.rpm.clearGreenHoldSec"] == 10
+
+
+def test_warnings_rpm_clearGreenHoldSec_defaultCitesAtlasQ13():
+    import inspect
+
+    import common.config.validator as validatorModule
+
+    lines = inspect.getsource(validatorModule).splitlines()
+    line = next(text for text in lines if "'pi.warnings.rpm.clearGreenHoldSec':" in text)
+    assert "Atlas Q13" in line
+
+
+@pytest.mark.parametrize("badValue", [0, -1, "10", True])
+def test_warnings_rpm_clearGreenHoldSec_rejectsANonPositiveNumber(badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"rpm": {"clearGreenHoldSec": badValue}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.rpm.clearGreenHoldSec"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_rpm_rejectsAStopTier():
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"engine": {"RPM": {"redTier": "stop"}}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.engine.RPM"):
         ConfigValidator().validate(bad)
 
 

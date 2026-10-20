@@ -31,6 +31,16 @@
 #               |              | the US-429 fresh-empty contract (Atlas ruling).
 # 2026-09-14    | Ralph (Rex)  | US-753: clearGate `severity_unknown` for an
 #               |              | ungraded code (was `severity_present`).
+# 2026-10-19    | Ralph (Rex)  | US-754-a: every code carries `title` + `sentence`
+#               |              | (table words; None for an untabled code).
+# 2026-10-19    | Ralph (Rex)  | US-897-a2: top-level `checkedAtTs` /
+#               |              | `pendingCheckedAtTs` (last successful Mode 03 /
+#               |              | Mode 07 this boot) + readDtcCheckTimes, the
+#               |              | per-boot seed from the tmpfs file.
+# 2026-10-20    | Ralph (Rex)  | US-897-a3: every code (live + lastKnown) carries
+#               |              | `firstSeenTs` (first seen since the last clear).
+# 2026-10-20    | Ralph (Rex)  | US-897-b5: the emit returns the payload it wrote
+#               |              | (None on a failed write) for the alerts arbiter.
 # ================================================================================
 ################################################################################
 
@@ -38,6 +48,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable
@@ -84,12 +95,59 @@ _REASON_OK = "ok"
 __all__ = [
     "DTC_FILENAME",
     "buildDtcState",
+    "dtcNowIso",
     "enrichCode",
     "makeDtcEmitter",
+    "readDtcCheckTimes",
 ]
 
 
-def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
+def dtcNowIso() -> str:
+    """Return UTC now in the `dtc` file's ISO format (``ts`` and the read times)."""
+    return datetime.now(UTC).strftime(_ISO_FMT)
+
+
+def _parseIsoOrNone(value: object) -> str | None:
+    """Return ``value`` when it is an ISO instant in ``_ISO_FMT``, else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        datetime.strptime(value, _ISO_FMT)
+    except ValueError:
+        return None
+    return value
+
+
+def readDtcCheckTimes(statesDir: str) -> tuple[str | None, str | None]:
+    """Read ``(checkedAtTs, pendingCheckedAtTs)`` from the existing `dtc` file.
+
+    Atlas Q3 (US-897-a2): the states dir is tmpfs, so the file it holds was
+    written THIS boot -- an orchestrator restart seeds its read times from it
+    before the boot-time write overwrites it. A missing file, unparseable JSON
+    or an unparseable time seeds None (each time is judged alone).
+
+    Args:
+        statesDir: tmpfs states directory.
+
+    Returns:
+        The two seeded times, each an ISO-8601 UTC string or None.
+    """
+    try:
+        with open(os.path.join(statesDir, DTC_FILENAME), encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    return (
+        _parseIsoOrNone(payload.get("checkedAtTs")),
+        _parseIsoOrNone(payload.get("pendingCheckedAtTs")),
+    )
+
+
+def enrichCode(
+    raw: dict, severityTable: dict[str, dict], firstSeenTs: str | None = None
+) -> dict:
     """Merge one captured code with Spool's static severity table (pure).
 
     Args:
@@ -98,6 +156,8 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
             ``syncAcked``. ``driveId`` is None for a KOEO read.
         severityTable: The ``{code -> enrichment}`` map from
             :func:`~src.pi.splash.dtc_severity_table.loadP1xxxSeverityTable`.
+        firstSeenTs: When ``dtc_log`` first saw this code since the last clear
+            (US-897-a3, ``readFirstSeenByCode``); None when it has no row.
 
     Returns:
         The enriched code dict (design-spec §8 per-code shape). A code absent
@@ -118,6 +178,8 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
         suggestedFix = entry["suggestedFix"]
         fixProvenance = entry["fixProvenance"]
         clearEligible = entry["clearEligible"]
+        title = entry.get("title")
+        sentence = entry.get("sentence")
     else:
         # Un-tabled: never fabricate severity/fix. Use python-obd's text only.
         severity = SEVERITY_UNKNOWN
@@ -127,6 +189,9 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
         suggestedFix = None
         fixProvenance = FIX_PROVENANCE_NONE
         clearEligible = False
+        # UNRATED words are the alerts arbiter's, never the dtc payload's.
+        title = None
+        sentence = None
 
     return {
         "code": code,
@@ -143,6 +208,9 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
         "logged": bool(raw.get("logged", False)),
         "syncAcked": bool(raw.get("syncAcked", False)),
         "clearEligible": clearEligible,
+        "title": title,
+        "sentence": sentence,
+        "firstSeenTs": firstSeenTs,
     }
 
 
@@ -173,13 +241,23 @@ def _computeClearGate(enrichedCodes: list[dict]) -> dict:
     return {"enabled": True, "reason": _REASON_OK}
 
 
-def _buildLastKnown(lastKnown: dict | None, severityTable: dict[str, dict]) -> dict | None:
+def _firstSeenFor(raw: dict, firstSeenByCode: dict[str, str]) -> str | None:
+    """Look up one code's first-seen time (the map is keyed upper-case)."""
+    return firstSeenByCode.get(str(raw.get("code", "")).upper())
+
+
+def _buildLastKnown(
+    lastKnown: dict | None,
+    severityTable: dict[str, dict],
+    firstSeenByCode: dict[str, str],
+) -> dict | None:
     """Enrich the persisted last-known codes into the `lastKnown` block (US-752).
 
     Args:
         lastKnown: The :func:`pi.obdii.dtc_last_known.readLastKnownDtcs` result,
             or None when nothing is remembered.
         severityTable: Spool's static P1xxx severity map.
+        firstSeenByCode: ``{code: firstSeenTs}`` (US-897-a3).
 
     Returns:
         ``{codes, mil, asOfTs, source}`` -- codes enriched exactly like live ones
@@ -197,6 +275,7 @@ def _buildLastKnown(lastKnown: dict | None, severityTable: dict[str, dict]) -> d
         enriched = enrichCode(
             {**raw, "setAtTs": None, "logged": True, "syncAcked": False},
             severityTable,
+            _firstSeenFor(raw, firstSeenByCode),
         )
         enriched["lastSeenTs"] = raw.get("lastSeenTs")
         codes.append(enriched)
@@ -219,6 +298,9 @@ def buildDtcState(
     dtcAvailable: bool = True,
     dtcUnavailableReason: str | None = None,
     lastKnown: dict | None = None,
+    checkedAtTs: str | None = None,
+    pendingCheckedAtTs: str | None = None,
+    firstSeenByCode: dict | None = None,
 ) -> dict:
     """Assemble the `dtc` payload (pure; design-spec §8 pinned schema).
 
@@ -242,6 +324,14 @@ def buildDtcState(
         lastKnown: The persisted last-known codes (``readLastKnownDtcs``), shown
             ONLY when the source is unavailable. Ignored when available -- a
             live read always wins.
+        checkedAtTs: When Mode 03 last read successfully (non-null frame) this
+            boot; None when it has not (US-897-a2). The orchestrator holds it
+            and passes it on EVERY publish, available or not.
+        pendingCheckedAtTs: When the Mode 07 read the published pending set
+            came from ran; None until the first this boot.
+        firstSeenByCode: ``{code: firstSeenTs}`` from ``readFirstSeenByCode``
+            (US-897-a3). Every code, live and lastKnown, carries its value as
+            ``firstSeenTs`` -- None for a code with no row; None -> all None.
 
     Returns:
         The `dtc` dict with the spec §8 keys, the US-429 ``source`` block (one
@@ -254,15 +344,18 @@ def buildDtcState(
     # fields are now honest absences, and what the system already holds rides
     # in a SEPARATE `lastKnown` block -- `codes` is never overloaded. newSinceTs
     # stays None so a remembered code can never mis-fire the US-405 takeover.
+    firstSeen = firstSeenByCode if isinstance(firstSeenByCode, dict) else {}
     if dtcAvailable:
-        enriched: list[dict] | None = [enrichCode(raw, severityTable) for raw in codes]
+        enriched: list[dict] | None = [
+            enrichCode(raw, severityTable, _firstSeenFor(raw, firstSeen)) for raw in codes
+        ]
         liveMil: bool | None = bool(mil)
         lastKnownBlock = None
     else:
         enriched = None
         liveMil = None
         newSinceTs = None
-        lastKnownBlock = _buildLastKnown(lastKnown, severityTable)
+        lastKnownBlock = _buildLastKnown(lastKnown, severityTable, firstSeen)
     return {
         "mil": liveMil,
         "codes": enriched,
@@ -277,6 +370,8 @@ def buildDtcState(
                 dtcAvailable, dtcUnavailableReason or REASON_DTC_NOT_READ
             )
         },
+        "checkedAtTs": checkedAtTs,
+        "pendingCheckedAtTs": pendingCheckedAtTs,
         "ts": nowIso,
     }
 
@@ -286,13 +381,15 @@ def makeDtcEmitter(
     *,
     severityTable: dict[str, dict],
     nowIsoFn: Callable[[], str] | None = None,
-) -> Callable[..., None]:
+) -> Callable[..., dict | None]:
     """Build the `dtc` emit callable owned by the DTC capture path (US-404).
 
     The returned callable takes the just-captured codes (KOEO or drive read),
     merges Spool's severity table, and writes the `dtc` SSOT atomically.
     Best-effort by contract: a write failure is logged but NEVER raised, so the
-    emit hook can never block the connection-edge DTC read.
+    emit hook can never block the connection-edge DTC read. It RETURNS the
+    payload it wrote, None when the write failed (US-897-b5, Atlas Q6: the
+    alerts arbiter is handed it in-process, never a file read-back).
 
     Args:
         statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
@@ -303,7 +400,7 @@ def makeDtcEmitter(
     Returns:
         The emit callable.
     """
-    nowFn = nowIsoFn or (lambda: datetime.now(UTC).strftime(_ISO_FMT))
+    nowFn = nowIsoFn or (lambda: dtcNowIso())
     target = os.path.join(statesDir, DTC_FILENAME)
 
     def emit(
@@ -315,7 +412,10 @@ def makeDtcEmitter(
         dtcAvailable: bool = True,
         dtcUnavailableReason: str | None = None,
         lastKnown: dict | None = None,
-    ) -> None:
+        checkedAtTs: str | None = None,
+        pendingCheckedAtTs: str | None = None,
+        firstSeenByCode: dict | None = None,
+    ) -> dict | None:
         try:
             payload = buildDtcState(
                 codes=codes,
@@ -327,6 +427,9 @@ def makeDtcEmitter(
                 dtcAvailable=dtcAvailable,
                 dtcUnavailableReason=dtcUnavailableReason,
                 lastKnown=lastKnown,
+                checkedAtTs=checkedAtTs,
+                pendingCheckedAtTs=pendingCheckedAtTs,
+                firstSeenByCode=firstSeenByCode,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
@@ -336,5 +439,7 @@ def makeDtcEmitter(
                 "blocks the DTC capture path)",
                 exc,
             )
+            return None
+        return payload
 
     return emit

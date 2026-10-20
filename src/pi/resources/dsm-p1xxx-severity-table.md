@@ -10,15 +10,15 @@
 
 ## Engine-relevant P1xxx (CAN set on our manual 4G63)
 
-| Code | Description (mfr) | Severity | Clearable | Suggested fix (Spool) |
-|---|---|---|---|---|
-| **P1103** | Turbocharger Wastegate **Actuator** | 🟡 WATCH → **🔴 if overboost** | No¹ | Boost-control fault. Inspect wastegate actuator can + rod + its vacuum line. **Don't WOT** until diagnosed — a stuck-closed actuator overboosts the TD04 into detonation. Pull over if boost climbs/surges. |
-| **P1104** | Turbocharger Wastegate **Solenoid** (boost-control solenoid) | 🟡 WATCH → **🔴 if overboost** | No¹ | Check the boost-control solenoid + its vacuum lines + connector (commonly disturbed during intake work). Usually fails to wastegate spring pressure (low boost = safe), but verify boost isn't spiking. |
-| **P1105** | Fuel Pressure Solenoid | 🟡 WATCH → **🔴 if lean under load** | No¹ | Fuel-pressure control fault. You run an aftermarket FPR + lines — check its wiring/vacuum + fuel pressure. A lean condition under boost = detonation; watch trims, don't WOT until verified. |
-| **P1300** | Ignition Timing Adjustment circuit | 🟡 WATCH → **🔴 if knock** | No¹ | Timing-adjustment connector/circuit. Verify base timing is set and ignition timing is sane — a timing reference fault can advance into knock under load. |
-| **P1400** | Manifold Differential Pressure (MDP) Sensor circuit | 🟡 WATCH | No¹ | EGR-system pressure sensor. Emissions/driveability, not an engine-damage path. Check MDP sensor + EGR plumbing. *If EGR is deleted/disabled in the ECMLink tune, this may be config noise.* |
-| **P1500** | Alternator FR Terminal circuit | 🟡 WATCH | No¹ | Charging-system monitor. Check alternator + charging; watch `BATTERY_V` (healthy 13.5–14.5 V running). Not engine-damaging but a dead alternator eventually strands you. |
-| **P1600** | Serial Communication Link | 🟡 WATCH | No¹ | ECU↔TCM/diagnostic comms. Affects diagnostics, not engine protection. Check comms wiring/connectors. |
+| Code | Description (mfr) | Severity | Clearable | Suggested fix (Spool) | Title | Sentence |
+|---|---|---|---|---|---|---|
+| **P1103** | Turbocharger Wastegate **Actuator** | 🟡 WATCH → **🔴 if overboost** | No¹ | Boost-control fault. Inspect wastegate actuator can + rod + its vacuum line. **Don't WOT** until diagnosed — a stuck-closed actuator overboosts the turbo into detonation. Pull over if boost climbs/surges. | WASTEGATE (P1103) | No full throttle. Get it diagnosed. |
+| **P1104** | Turbocharger Wastegate **Solenoid** (boost-control solenoid) | 🟡 WATCH → **🔴 if overboost** | No¹ | Check the boost-control solenoid + its vacuum lines + connector (commonly disturbed during intake work). Usually fails to wastegate spring pressure (low boost = safe), but verify boost isn't spiking. | BOOST SOLENOID (P1104) | No full throttle. Get it diagnosed. |
+| **P1105** | Fuel Pressure Solenoid | 🟡 WATCH → **🔴 if lean under load** | No¹ | Fuel-pressure control fault. You run an aftermarket FPR + lines — check its wiring/vacuum + fuel pressure. A lean condition under boost = detonation; watch trims, don't WOT until verified. | FUEL PRESSURE (P1105) | No full throttle. Get it diagnosed. |
+| **P1300** | Ignition Timing Adjustment circuit | 🟡 WATCH → **🔴 if knock** | No¹ | Timing-adjustment connector/circuit. Verify base timing is set and ignition timing is sane — a timing reference fault can advance into knock under load. | TIMING CIRCUIT (P1300) | No full throttle. Get it diagnosed. |
+| **P1400** | Manifold Differential Pressure (MDP) Sensor circuit | 🟡 WATCH | No¹ | EGR-system pressure sensor. Emissions/driveability, not an engine-damage path. Check MDP sensor + EGR plumbing. *If EGR is deleted/disabled in the ECMLink tune, this may be config noise.* | EGR SENSOR (P1400) | Drive gently. Get it diagnosed. |
+| **P1500** | Alternator FR Terminal circuit | 🟡 WATCH | No¹ | Charging-system monitor. Check alternator + charging; watch `BATTERY_V` (healthy 13.5–14.5 V running). Not engine-damaging but a dead alternator eventually strands you. | CHARGING SIGNAL (P1500) | Watch battery voltage. Get it checked. |
+| **P1600** | Serial Communication Link | 🟡 WATCH | No¹ | ECU↔TCM/diagnostic comms. Affects diagnostics, not engine protection. Check comms wiring/connectors. | ECU LINK (P1600) | Drive gently. Get it diagnosed. |
 
 ¹ **None of these are "clear-and-forget."** P1xxx are circuit/system faults — clearing (Mode 04) only blanks the light; the code returns next drive cycle until the underlying fault is fixed. The clear button stays **disabled** while any of these is stored (they're 🟡, above MINOR). Fix first, then the light clears itself.
 
@@ -26,18 +26,27 @@
 
 These exist in the Mitsubishi P1xxx namespace but **cannot set on our manual-transmission car** — flag them as not-applicable if ever seen (would indicate a misread or wrong-vehicle data, not a real fault):
 
-| Code | Description (mfr) | Disposition |
-|---|---|---|
-| P1715 | Pulse Generator Assembly (A/T) | N/A — auto-trans only |
-| P1750 | Solenoid Assembly (A/T) | N/A — auto-trans only |
-| P1751 | A/T Control Relay | N/A — auto-trans only |
-| P1791 | Engine Coolant Temp Level Input → TCM | N/A — auto-trans only |
-| P1795 | Throttle Position Input → TCM | N/A — auto-trans only |
+| Code | Description (mfr) | Disposition | Title | Sentence |
+|---|---|---|---|---|
+| P1715 | Pulse Generator Assembly (A/T) | N/A — auto-trans only |  |  |
+| P1750 | Solenoid Assembly (A/T) | N/A — auto-trans only |  |  |
+| P1751 | A/T Control Relay | N/A — auto-trans only |  |  |
+| P1791 | Engine Coolant Temp Level Input → TCM | N/A — auto-trans only |  |  |
+| P1795 | Throttle Position Input → TCM | N/A — auto-trans only |  |  |
+
+## Generic P0
+
+The car's two real stored generic codes (Spool 2026-10-18, US-754). Descriptions are SAE J2012 generic text. Any other P0 code — including P0430 and every bank-2 code (P0150–P0167, P0174/P0175), which cannot set on this inline four and mean wrong-vehicle data — has no row and stays **unknown (UNRATED)**, never a guessed tier.
+
+| Code | Description (mfr) | Severity | Clearable | Suggested fix (Spool) | Title | Sentence |
+|---|---|---|---|---|---|---|
+| **P0400** | Exhaust Gas Recirculation Flow Malfunction | 🟡 WATCH | No | EGR flow fault. Emissions + part-load driveability; EGR is off under boost, so not a WOT engine-damage path. Check EGR valve, EGR solenoid and its vacuum lines (shop had this area apart 09-02). Drive gently, get it diagnosed. | EGR FLOW (P0400) | Drive gently. Get it diagnosed. |
+| **P0443** | Evaporative Emission Control System Purge Control Valve Circuit | 🟢 MINOR | Yes, conditionally (advisory §4) | Purge solenoid circuit, intermittent -> connector/wiring first. Emissions only, no engine risk. Never replace the PCM for this code. | EVAP PURGE (P0443) | Emissions only. Safe to drive. |
 
 ---
 
 ## Notes for the feature
 - **Condition-dependent severity** (P1103/P1104/P1105/P1300): base tier 🟡, escalates to 🔴 under a specific condition (overboost / lean-at-load / knock). This is exactly the "severity chip + caveat line" Iris built into the detail view — render the caveat, don't flatten to a bare tier.
-- **No 🟢 MINOR / clearable P1xxx** here — the clearable-once-logged codes on this car are generic evap (P0440/P0442/P0455, e.g. the P0443 we just cleared), which carry their own python-obd descriptions.
+- **No 🟢 MINOR / clearable P1xxx** here — the clearable-once-logged codes on this car are generic P0, rated in the **Generic P0** section above (P0443 🟢 MINOR, P0400 🟡 WATCH). A P0 code not in that section is unknown (UNRATED).
 - **ECMLink caveat**: the loaded tune can suppress/alter EGR (P1400) and boost-control behavior. Treat this table as the *factory* meaning; ECMLink config may change which codes are live.
 - **Extensible**: this is the confirmed vehicle-class subset. Add codes only when grounded in an authoritative source (factory manual / ECMtuning / DSMtuners) — never fabricate a P1xxx meaning ([[feedback-pin-units-before-magnitude-claims]]).

@@ -69,6 +69,10 @@
 # 2026-10-14    | Rex (US-881-d) | _maybeServiceFuelResetRequest beside the DTC
 #               |              | clear hook: services POST /fuel-reset, refused
 #               |              | while a drive is recording.
+# 2026-10-19    | Rex (US-897-a1) | The post-clear Mode 03(+07) re-read publishes
+#               |              | states/dtc through the router's _emitDtcState.
+# 2026-10-19    | Rex (US-897-a2) | Holds _dtcCheckedAtTs / _dtcPendingCheckedAtTs;
+#               |              | a null post-clear Mode 03 frame publishes nothing.
 # ================================================================================
 ################################################################################
 
@@ -299,6 +303,15 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._systemStatusEmitter: Any | None = None
         self._batteryHealthEmitter: Any | None = None
         self._dtcEmitter: Any | None = None
+        # US-897-a1: pending codes of the last states/dtc publish that read
+        # Mode 07; a Mode 03-only publish carries them (EventRouterMixin).
+        self._dtcCarriedPending: list[Any] = []
+        # US-897-a2: when Mode 03 / Mode 07 last read successfully this boot.
+        # Seeded from the tmpfs states/dtc at card-emitter init (an orchestrator
+        # restart within the boot keeps them); advanced only by the router's
+        # dtc emit, never nulled once set.
+        self._dtcCheckedAtTs: str | None = None
+        self._dtcPendingCheckedAtTs: str | None = None
         # Card-state emit cadence + cached sync status (updated by the sync
         # trigger path so the system-status tile reflects the REAL last push
         # without a per-tick DB scan).  None before the first tick so the very
@@ -1019,6 +1032,45 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                 logger.error(
                     "US-752 clear watermark not written for request %s: %s -- "
                     "the resting Alerts card may still show pre-clear codes",
+                    requestId, exc,
+                )
+            # US-897-a1 (Atlas Q4): the re-read is the panel's new truth, so it
+            # goes out through the router's one dtc emit -- replacing stored
+            # AND pending -- with the current drive id. The ClearReadback is
+            # adapted to the `codes` shape the emit reads. Isolated like the
+            # watermark: the clear HAPPENED and must never read as a failure.
+            # US-897-a2 (G1): a null Mode 03 frame on the re-read is a failed
+            # read -- it publishes nothing and claims no checkedAtTs. Inline,
+            # not a helper: this hook also runs on bare test hosts.
+            frameNull = getattr(readback, "frameNull", False) is True
+            if frameNull:
+                logger.warning(
+                    "Mode 03 null frame | path=post-clear request=%s -- not a "
+                    "successful read; states/dtc is left as it was", requestId,
+                )
+            try:
+                emitDtcState = getattr(self, "_emitDtcState", None)
+                if callable(emitDtcState) and not frameNull:
+                    from types import SimpleNamespace
+
+                    from pi.obdii.drive_id import getCurrentDriveId
+
+                    rereadCodes = [
+                        *(getattr(readback, "stored", None) or []),
+                        *(getattr(readback, "pending", None) or []),
+                    ]
+                    emitDtcState(
+                        SimpleNamespace(
+                            codes=rereadCodes,
+                            mode07Probe=getattr(readback, "mode07Probe", None),
+                        ),
+                        driveId=getCurrentDriveId(),
+                        includesPending=True,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "US-897-a1 post-clear states/dtc not published for request "
+                    "%s: %s -- the panel may still show pre-clear codes",
                     requestId, exc,
                 )
         except Exception as exc:  # noqa: BLE001

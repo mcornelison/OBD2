@@ -28,6 +28,10 @@
 #                                pi.display.scale.mafMaxGs (Atlas S104 ruling 2).
 # 2026-10-15    | Rex (US-890-c) | Top-level fuel {loop, totalTrimNow} through the
 #                                shared closed-loop code set (Atlas S104 (b)).
+# 2026-10-20    | Rex (US-897-b2) | emit returns the payload it wrote (None when
+#                                the write failed) for the alerts arbiter (Q18).
+# 2026-10-20    | Rex (US-897-b4) | Public eventUtc alias + bandResultFor (under
+#                                the lock) for the arbiter's RPM peak.
 # ================================================================================
 ################################################################################
 
@@ -70,6 +74,7 @@ from pi.obdii.band_producer import (
     NO_BAND_STALE,
     PID_RPM,
     BandProducer,
+    BandResult,
     BandSettings,
 )
 from pi.obdii.engine_history import EngineHistory, EngineHistorySettings
@@ -244,6 +249,26 @@ class ObdLiveTracker:
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=resolveLocalZone(self._config))
         return timestamp.astimezone(UTC)
+
+    def eventUtc(self, timestamp: datetime) -> datetime:
+        """Public alias of :meth:`_eventUtc` (US-897-b4): the alerts arbiter
+        stamps an RPM reading in the SAME time domain the bands observed it in.
+
+        Raises:
+            ValueError: If no usable local zone is declared.
+        """
+        return self._eventUtc(timestamp)
+
+    def bandResultFor(self, name: str) -> BandResult:
+        """The band producer's result for ``name`` at its latest reading, read
+        under this tracker's lock (US-897-b4: the producer stays the ONE judge
+        of red; the polling thread writes it while the run loop reads)."""
+        with self._lock:
+            result = self._bands.resultFor(name)
+            return BandResult(
+                band=None if result.band is None else dict(result.band),
+                noBandReason=result.noBandReason,
+            )
 
     def engineRunningAt(self, reading: Any) -> bool | None:
         """Was the engine running at this reading's capture time? (US-881-b)
@@ -421,7 +446,7 @@ def buildObdLiveState(
     }
 
 
-def makeObdLiveEmitter(statesDir: str) -> Callable[..., None]:
+def makeObdLiveEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
     """Build the states/obd-live emit callable.
 
     Args:
@@ -429,8 +454,10 @@ def makeObdLiveEmitter(statesDir: str) -> Callable[..., None]:
 
     Returns:
         ``emit(observations, *, nowUtc, staleSec, dataSource)`` writing the
-        payload atomically. Best-effort by contract: write failures are logged,
-        never raised.
+        payload atomically and returning it (US-897-b2, Atlas Q18: the alerts
+        arbiter reads the payload that was published, never a file read-back).
+        Best-effort by contract: a write failure is logged, never raised, and
+        returns None -- nothing was published.
     """
     from pi.splash import boot_state_emitter
 
@@ -442,19 +469,19 @@ def makeObdLiveEmitter(statesDir: str) -> Callable[..., None]:
         nowUtc: datetime,
         staleSec: float,
         dataSource: str | None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         try:
-            boot_state_emitter.ensureStatesDir(statesDir)
-            boot_state_emitter.writeStateAtomic(
-                target,
-                buildObdLiveState(
-                    observations,
-                    nowUtc=nowUtc,
-                    staleSec=staleSec,
-                    dataSource=dataSource,
-                ),
+            payload = buildObdLiveState(
+                observations,
+                nowUtc=nowUtc,
+                staleSec=staleSec,
+                dataSource=dataSource,
             )
+            boot_state_emitter.ensureStatesDir(statesDir)
+            boot_state_emitter.writeStateAtomic(target, payload)
         except Exception as e:  # noqa: BLE001 -- never crash the run loop
             logger.error("states/obd-live write failed (%s) -- ignored", e)
+            return None
+        return payload
 
     return emit

@@ -19,6 +19,9 @@
 #                                RPM cues and scale.
 # 2026-10-14    | Rex (US-881-b) | Public engineRunningAt(ts) wrapper (no logic
 #                                change) for the fuel-economy producer.
+# 2026-10-20    | Rex (US-897-b1) | Coolant red run-up guard (a single sample
+#                                needs a fresh predecessor >= redGuardPrevMinC,
+#                                else 2 in a row) and red's own clear.
 # ================================================================================
 ################################################################################
 
@@ -28,11 +31,15 @@ Pages render; providers compute (Atlas 08-20 rule). Every number below is a
 ``pi.bands.*`` config key whose default and source live in the validator; this
 module holds none.
 
-Three rules are load-bearing:
+Four rules are load-bearing:
 
 * **A dwell is CONSECUTIVE readings on EVENT time.** It resets when a reading
   arrives more than ``pi.display.stale.obdLiveSec`` after the previous one (a
   stale gap) or when a null reading arrives. A sliding window is not a dwell.
+* **Coolant red is guarded and clears on its own rule** (US-897-b1). A single
+  sample >= ``redC`` is red only when the previous fresh reading was >=
+  ``redGuardPrevMinC``; otherwise it needs two in a row. Red then clears only
+  at <= ``redClearBelowC`` held ``redClearHoldSec``, never by amber's clear.
 * **The battery is banded only while the engine runs.** Engine-off means RPM
   STOPS reporting, not that it reads 0, so a last-known RPM > 0 is not
   "running": the latest RPM must be fresh relative to the battery reading.
@@ -116,6 +123,9 @@ class BandSettings:
     coolantRedDwellSec: float
     coolantClearBelowC: float
     coolantClearHoldSec: float
+    coolantRedGuardPrevMinC: float
+    coolantRedClearBelowC: float
+    coolantRedClearHoldSec: float
     batteryRpmMaxAgeSec: float
     batteryRunningRpmMin: float
     batteryCrankGuardSec: float
@@ -154,6 +164,9 @@ class BandSettings:
             coolantRedDwellSec=read("pi.bands.coolant.redDwellSec"),
             coolantClearBelowC=read("pi.bands.coolant.clearBelowC"),
             coolantClearHoldSec=read("pi.bands.coolant.clearHoldSec"),
+            coolantRedGuardPrevMinC=read("pi.bands.coolant.redGuardPrevMinC"),
+            coolantRedClearBelowC=read("pi.bands.coolant.redClearBelowC"),
+            coolantRedClearHoldSec=read("pi.bands.coolant.redClearHoldSec"),
             batteryRpmMaxAgeSec=read("pi.bands.battery.rpmMaxAgeSec"),
             batteryRunningRpmMin=read("pi.bands.battery.runningRpmMin"),
             batteryCrankGuardSec=read("pi.bands.battery.crankGuardSec"),
@@ -227,6 +240,11 @@ class BandProducer:
         self._coolantLastTs: datetime | None = None
         self._coolantAboveAmberSince: datetime | None = None
         self._coolantBelowClearSince: datetime | None = None
+        # US-897-b1 red guard and red clear: the last fresh value, the count of
+        # consecutive readings >= redC, and the start of the red-clear hold.
+        self._coolantLastC: float | None = None
+        self._coolantRedRun = 0
+        self._coolantRedClearSince: datetime | None = None
         # RPM history long enough to pair a battery reading and see its guard.
         self._rpmSamples: deque[_RpmSample] = deque()
         self._battery: tuple[float, datetime] | None = None
@@ -282,19 +300,31 @@ class BandProducer:
         s = self._s
         if value is None:
             self._coolantLastTs = None
+            self._coolantLastC = None
+            self._coolantRedRun = 0
             self._coolantAboveAmberSince = None
             self._coolantBelowClearSince = None
+            self._coolantRedClearSince = None
             return
+        # The run-up predecessor: the previous reading, unless a stale gap
+        # (or a null, which cleared it above) came between.
+        previousC = self._coolantLastC
         if (
             self._coolantLastTs is not None
             and (ts - self._coolantLastTs).total_seconds() > s.staleSec
         ):
-            # A stale gap resets every dwell; the band itself carries over.
+            # A stale gap resets every dwell and the red guard; the band itself
+            # carries over.
+            previousC = None
+            self._coolantRedRun = 0
             self._coolantAboveAmberSince = None
             self._coolantBelowClearSince = None
-        self._coolantLastTs = ts
-
+            self._coolantRedClearSince = None
         temp = float(value)
+        self._coolantLastTs = ts
+        self._coolantLastC = temp
+
+        self._coolantRedRun = self._coolantRedRun + 1 if temp >= s.coolantRedC else 0
         if temp >= s.coolantAmberC:
             self._coolantAboveAmberSince = self._coolantAboveAmberSince or ts
         else:
@@ -303,6 +333,10 @@ class BandProducer:
             self._coolantBelowClearSince = self._coolantBelowClearSince or ts
         else:
             self._coolantBelowClearSince = None
+        if temp <= s.coolantRedClearBelowC:
+            self._coolantRedClearSince = self._coolantRedClearSince or ts
+        else:
+            self._coolantRedClearSince = None
 
         aboveFor = (
             None
@@ -314,11 +348,25 @@ class BandProducer:
             if self._coolantBelowClearSince is None
             else (ts - self._coolantBelowClearSince).total_seconds()
         )
+        redClearFor = (
+            None
+            if self._coolantRedClearSince is None
+            else (ts - self._coolantRedClearSince).total_seconds()
+        )
         tracked = self._tracked(PID_COOLANT)
         current = tracked.bandName
 
-        if current != BAND_RED:
-            if temp >= s.coolantRedC:
+        if current == BAND_RED:
+            # Red has its own clear (Spool 2026-10-19): <= redClearBelowC held
+            # redClearHoldSec, then the band the normal producer computes.
+            if redClearFor is None or redClearFor < s.coolantRedClearHoldSec:
+                return
+        else:
+            # A single sample >= redC is red only after a plausible run-up
+            # (Spool 2026-10-14); otherwise it needs a second in a row. Both
+            # paths carry the same reason.
+            plausible = previousC is not None and previousC >= s.coolantRedGuardPrevMinC
+            if temp >= s.coolantRedC and (plausible or self._coolantRedRun >= 2):
                 tracked.set(BAND_RED, f"coolant >= {_num(s.coolantRedC)} C", ts)
                 return
             if aboveFor is not None and aboveFor >= s.coolantRedDwellSec:
@@ -329,7 +377,7 @@ class BandProducer:
                     ts,
                 )
                 return
-        if current in (BAND_AMBER, BAND_RED):
+        if current == BAND_AMBER:
             if clearFor is not None and clearFor >= s.coolantClearHoldSec:
                 tracked.set(
                     BAND_GREEN,

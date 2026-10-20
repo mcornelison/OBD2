@@ -718,7 +718,7 @@ def test_makeObdLiveEmitter_writesTheStateFileAtomically(tmp_path) -> None:
     statesDir = str(tmp_path / "states")
     emit = ole.makeObdLiveEmitter(statesDir)
 
-    emit(
+    returned = emit(
         {"RPM": _obs(812, "rpm", "2026-10-13T12:05:01Z")},
         nowUtc=_utc("2026-10-13T12:05:03Z"),
         staleSec=5.0,
@@ -729,6 +729,9 @@ def test_makeObdLiveEmitter_writesTheStateFileAtomically(tmp_path) -> None:
         written = json.load(fh)
     assert written["params"]["RPM"]["value"] == 812
     assert set(written) == _TOP_LEVEL_KEYS
+    # US-897-b2 (Atlas Q18): emit returns the payload it wrote, so the alerts
+    # arbiter reads the SAME payload, never a file read-back.
+    assert returned == written
 
 
 def test_makeObdLiveEmitter_neverRaisesOnAWriteFailure(tmp_path, monkeypatch) -> None:
@@ -745,7 +748,10 @@ def test_makeObdLiveEmitter_neverRaisesOnAWriteFailure(tmp_path, monkeypatch) ->
     monkeypatch.setattr(bse, "writeStateAtomic", boom)
     emit = ole.makeObdLiveEmitter(str(tmp_path / "states"))
 
-    emit({}, nowUtc=_utc("2026-10-13T12:00:00Z"), staleSec=5.0, dataSource="real")
+    returned = emit({}, nowUtc=_utc("2026-10-13T12:00:00Z"), staleSec=5.0, dataSource="real")
+
+    # US-897-b2: a failed write returns None -- nothing was published.
+    assert returned is None
 
 
 # ======================================================= through the real seam
@@ -987,6 +993,8 @@ class TestTheContractFixture:
         "coolant-amber": [
             ("COOLANT_TEMP", 105, "C", f"2026-10-13T12:10:{s:02d}Z") for s in range(30)
         ],
+        # US-897-b1: a single 110 C is red only after a fresh >= 100 C reading.
+        "coolant-red": [("COOLANT_TEMP", 100, "C", "2026-10-13T12:15:00Z")],
     }
 
     @staticmethod
@@ -1071,10 +1079,55 @@ class TestTheContractFixture:
 
     def test_coolantRedCase_isRedOnASingleSample(self) -> None:
         """
-        Given: the coolant-red case (one 110 C reading)
+        Given: the coolant-red case (one 110 C reading after a fresh 100 C)
         When: read
         Then: band red, no noBandReason
         """
         coolant = self._load()["coolant-red"]["params"]["COOLANT_TEMP"]
         assert coolant["band"]["band"] == "red"
         assert "noBandReason" not in coolant
+
+
+# ============================================ US-897-b4 tracker accessors
+
+
+class TestOverRevAccessors:
+    """The arbiter's RPM peak reads the tracker's time domain and band verdict."""
+
+    def test_eventUtc_isThePublicAliasOfTheReadingConversion(self) -> None:
+        """
+        Given: a naive local 10:00 in America/Chicago (CDT, UTC-5)
+        When: eventUtc converts it
+        Then: 15:00Z -- exactly what _eventUtc gives (the private name stays)
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+        naive = datetime(2026, 10, 20, 10, 0, 0)
+
+        assert tracker.eventUtc(naive) == datetime(2026, 10, 20, 15, 0, 0, tzinfo=UTC)
+        assert tracker.eventUtc(naive) == tracker._eventUtc(naive)
+
+    def test_bandResultFor_isTheProducersVerdictAtTheLatestReading(self) -> None:
+        """
+        Given: RPM 7150.75 then 6500 observed
+        When: bandResultFor('RPM') is read after each
+        Then: red, then amber -- per reading, no dwell; a copy, not the live dict
+        """
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+        t0 = datetime(2026, 10, 20, 15, 0, 0, tzinfo=UTC)
+
+        tracker.observeReading(_Reading("RPM", 7150.75, t0))
+        red = tracker.bandResultFor("RPM")
+        tracker.observeReading(_Reading("RPM", 6500, t0 + timedelta(seconds=1)))
+
+        assert red.band is not None and red.band["band"] == "red"
+        assert tracker.bandResultFor("RPM").band["band"] == "amber"
+        red.band["band"] = "mutated"
+        assert tracker.bandResultFor("RPM").band["band"] == "amber"
+
+    def test_bandResultFor_unreadPid_carriesTheNoBandReason(self) -> None:
+        tracker = ole.ObdLiveTracker(_ZONE_CONFIG)
+
+        result = tracker.bandResultFor("RPM")
+
+        assert result.band is None
+        assert result.noBandReason == "not_read"

@@ -25,6 +25,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-14    | Ralph (Rex)  | Initial -- US-752 last-known Alerts card.
+# 2026-10-19    | Ralph (Rex)  | US-754-b -- MOVED PIN: stale comment on the live
+#               |              | tiers of P0443/P0400 corrected.
 # ================================================================================
 ################################################################################
 
@@ -63,8 +65,10 @@ _AS_OF = "2026-09-14T09:00:00Z"
 _NOW_ISO = "2026-09-14T12:00:00Z"
 _NOW_MS = int(datetime(2026, 9, 14, 12, 0, 0, tzinfo=UTC).timestamp() * 1000)
 
-# The two codes stored on the car. Neither is in the shipped P1xxx table, so an
-# empty table reproduces their live `unknown` enrichment.
+# The two codes stored on the car. MOVED PIN (US-754-b): the shipped table now
+# rates both (P0400 watch, P0443 minor), so this empty table no longer mirrors
+# their live enrichment -- it holds them `unknown` on purpose, so these tests
+# pin the resting card's mechanism independently of Spool's tiers.
 _TABLE: dict[str, dict[str, Any]] = {}
 
 

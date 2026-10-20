@@ -19,6 +19,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-404 P1xxx severity-table loader.
+# 2026-10-19    | Ralph (Rex)  | US-754-a -- map Spool's Title + Sentence columns
+#               |              | by header name (title / sentence keys).
 # ================================================================================
 ################################################################################
 
@@ -47,6 +49,11 @@ SEVERITY_UNKNOWN = "unknown"
 # Provenance tags for the suggested-fix trust badge (design-spec §5.4).
 FIX_PROVENANCE_SPOOL = "spool-validated"
 FIX_PROVENANCE_NONE = "none"
+
+# Header names of Spool's per-code words columns (US-754-a), matched
+# case-insensitively wherever they sit in the header row.
+TITLE_HEADER = "title"
+SENTENCE_HEADER = "sentence"
 
 __all__ = [
     "FIX_PROVENANCE_NONE",
@@ -108,6 +115,19 @@ def _isSeparatorRow(cells: list[str]) -> bool:
     return joined != "" and set(joined) <= set("-: ")
 
 
+def _headerIndexes(cells: list[str]) -> dict[str, int]:
+    """Map each lower-cased header name of a table's header row to its index."""
+    return {cell.replace("*", "").strip().lower(): i for i, cell in enumerate(cells)}
+
+
+def _namedCell(cells: list[str], columns: dict[str, int], header: str) -> str | None:
+    """The trimmed cell under ``header``; None when the column or value is absent."""
+    index = columns.get(header)
+    if index is None or index >= len(cells):
+        return None
+    return cells[index].strip() or None
+
+
 def loadP1xxxSeverityTable(path: str) -> dict[str, dict]:
     """Parse Spool's P1xxx severity SSOT into a ``{code -> enrichment}`` map.
 
@@ -115,7 +135,9 @@ def loadP1xxxSeverityTable(path: str) -> dict[str, dict]:
     code / description / severity / clearable / suggested-fix) and the
     auto-transmission P1xxx (3 columns: code / description / disposition),
     which are ``na`` on this manual car. Rows outside those two tables are
-    ignored, so surrounding prose never pollutes the map.
+    ignored, so surrounding prose never pollutes the map. Either table may
+    carry ``Title`` and ``Sentence`` columns (US-754-a); they are found by
+    header NAME, not position, and a table without them still loads.
 
     Args:
         path: Filesystem path to ``dsm-p1xxx-severity-table.md``.
@@ -123,7 +145,8 @@ def loadP1xxxSeverityTable(path: str) -> dict[str, dict]:
     Returns:
         A map keyed by uppercase DTC code; each value carries
         ``severity`` / ``severityCaveat`` / ``short`` / ``long`` /
-        ``suggestedFix`` / ``fixProvenance`` / ``clearEligible``. Returns an
+        ``suggestedFix`` / ``fixProvenance`` / ``clearEligible`` / ``title`` /
+        ``sentence`` (None for an empty or absent cell). Returns an
         empty map (never raises) when the file is absent or unreadable, so a
         missing table degrades to "no enrichment" rather than crashing the
         emitter -- un-tabled codes fall through to ``unknown`` downstream.
@@ -139,6 +162,7 @@ def loadP1xxxSeverityTable(path: str) -> dict[str, dict]:
 
     table: dict[str, dict] = {}
     mode: str | None = None  # 'engine' | 'na' | None (outside a known table)
+    columns: dict[str, int] = {}  # the current table's header name -> index
 
     for line in text.splitlines():
         stripped = line.strip()
@@ -151,9 +175,11 @@ def loadP1xxxSeverityTable(path: str) -> dict[str, dict]:
 
         if "severity" in joined and "clearable" in joined:
             mode = "engine"
+            columns = _headerIndexes(cells)
             continue
         if "disposition" in joined:
             mode = "na"
+            columns = _headerIndexes(cells)
             continue
         if _isSeparatorRow(cells):
             continue
@@ -172,6 +198,8 @@ def loadP1xxxSeverityTable(path: str) -> dict[str, dict]:
                 "suggestedFix": cells[4].strip() or None,
                 "fixProvenance": FIX_PROVENANCE_SPOOL,
                 "clearEligible": cells[3].lower().startswith("yes"),
+                "title": _namedCell(cells, columns, TITLE_HEADER),
+                "sentence": _namedCell(cells, columns, SENTENCE_HEADER),
             }
         elif mode == "na" and len(cells) >= 3:
             code = _stripCode(cells[0]).upper()
@@ -186,6 +214,8 @@ def loadP1xxxSeverityTable(path: str) -> dict[str, dict]:
                 "suggestedFix": None,
                 "fixProvenance": FIX_PROVENANCE_NONE,
                 "clearEligible": False,
+                "title": _namedCell(cells, columns, TITLE_HEADER),
+                "sentence": _namedCell(cells, columns, SENTENCE_HEADER),
             }
 
     return table

@@ -17,6 +17,8 @@
 # ================================================================================
 # 2026-09-14    | Ralph (Rex)  | Initial -- US-753 split severity_unknown out of
 #               |              | severity_present.
+# 2026-10-19    | Ralph (Rex)  | US-754-b MOVED PIN: the live-table test now pins
+#               |              | P0443 minor and an untabled P0300 as unknown.
 # ================================================================================
 ################################################################################
 
@@ -116,7 +118,7 @@ def _neverRuns() -> tuple[list[int], Any]:
 
 def test_twoUnknownCodes_emitterPublishesSeverityUnknown_stillDisabled():
     """
-    Given: two stored codes the table does not grade (P0443, P0400 -> `unknown`)
+    Given: two stored codes the FIXTURE table does not grade (P0443, P0400)
     When: the emitter computes the published clearGate
     Then: {enabled: False, reason: severity_unknown} -- not severity_present.
     """
@@ -258,16 +260,25 @@ def test_displayMirror_missingOrUnrecognisedSeverity_isUnknown(severity: Any):
     assert view["label"] == _LABEL_UNKNOWN, view
 
 
-def test_theLiveShippedTable_refusesP0443AsUnknown():
+def test_theLiveShippedTable_ratesP0443Minor_andStillRefusesAnUntabledCodeAsUnknown():
     """
-    Given: the severity table the Pi loads, which has no P0443 row
-    When: the live car's stored P0443 is gated
-    Then: severity_unknown -- the F3 finding from US-636, now told truthfully.
+    Given: the severity table the Pi loads, which since US-754-b rates P0443
+           MINOR in its Generic P0 section and has no P0300 row
+    When: the live car's stored P0443, and an untabled P0300, are gated
+    Then: P0443 is `minor` (not refused as unknown); P0300 is still refused as
+          severity_unknown -- the F3 finding from US-636, still told truthfully.
+
+          MOVED PIN (US-754-b): was test_theLiveShippedTable_refusesP0443AsUnknown,
+          which pinned the table WITHOUT a P0443 row.
     """
     table = loadP1xxxSeverityTable(_SHIPPED_TABLE_PATH)
-    assert "P0443" not in table
+    assert "P0300" not in table
 
-    assert _state(["P0443"], table=table)["clearGate"]["reason"] == "severity_unknown"
+    p0443 = _state(["P0443"], table=table)
+    assert p0443["codes"][0]["severity"] == "minor"
+    assert p0443["clearGate"]["reason"] != "severity_unknown"
+
+    assert _state(["P0300"], table=table)["clearGate"]["reason"] == "severity_unknown"
 
 
 # ---------------------------------------------------------------------------

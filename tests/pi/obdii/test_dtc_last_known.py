@@ -15,6 +15,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-14    | Ralph (Rex)  | Initial -- US-752 last-known reader + watermark.
+# 2026-10-20    | Ralph (Rex)  | US-897-a3: readFirstSeenByCode (first seen since
+#               |              | the last clear, canonical UTC passed through).
 # ================================================================================
 ################################################################################
 
@@ -22,6 +24,8 @@
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -29,6 +33,7 @@ import pytest
 from pi.obdii.database import ObdDatabase
 from pi.obdii.dtc_last_known import (
     LAST_KNOWN_SOURCE,
+    readFirstSeenByCode,
     readLastKnownDtcs,
     recordClearWatermark,
 )
@@ -183,3 +188,140 @@ def test_readLastKnownDtcs_codeReadAfterTheClear_isRememberedAgain(db):
 def test_recordClearWatermark_nothingRemembered_writesNothing(db):
     assert recordClearWatermark(db) == 0
     assert _statuses(db) == []
+
+
+# ---- US-897-a3: readFirstSeenByCode ----------------------------------------
+
+
+def _seedRow(
+    database: ObdDatabase,
+    code: str,
+    *,
+    firstSeen: str,
+    lastSeen: str | None = None,
+    status: str = "stored",
+    source: str = "real",
+) -> int:
+    with database.connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO dtc_log (dtc_code, description, status, first_seen_timestamp, "
+            "last_seen_timestamp, drive_id, data_source) VALUES (?, '', ?, ?, ?, NULL, ?)",
+            (code, status, firstSeen, lastSeen or firstSeen, source),
+        )
+        return int(cur.lastrowid)
+
+
+def _clearAt(database: ObdDatabase, code: str, ts: str) -> None:
+    _seedRow(database, code, firstSeen=ts, status="cleared")
+
+
+def test_readFirstSeenByCode_repeatedKeyOnRows_returnsTheEarliest(db):
+    """
+    Given: three key-on reads logged P0400 (a row each), plus one P0443 row
+    When: first-seen is read
+    Then: each code maps to its MIN first_seen_timestamp
+    """
+    _seedRow(db, "P0400", firstSeen="2026-09-12T10:00:00Z")
+    _seedRow(db, "P0400", firstSeen="2026-09-04T13:20:05Z")
+    _seedRow(db, "P0400", firstSeen="2026-09-10T09:00:00Z")
+    _seedRow(db, "p0443", firstSeen="2026-09-06T07:00:00Z", status="pending")
+
+    assert readFirstSeenByCode(db) == {
+        "P0400": "2026-09-04T13:20:05Z",
+        "P0443": "2026-09-06T07:00:00Z",
+    }
+
+
+def test_readFirstSeenByCode_rowsBeforeTheClear_areIgnored(db):
+    """
+    Given: P0400 first seen 09-04, a clear at 09-08, P0400 seen again 09-10
+    When: first-seen is read
+    Then: 09-10 -- the code's age restarts at the clear that wiped it
+    """
+    _seedRow(db, "P0400", firstSeen="2026-09-04T13:20:05Z")
+    _seedRow(db, "P0443", firstSeen="2026-09-05T13:20:05Z")
+    _clearAt(db, "P0400", "2026-09-08T12:00:00Z")
+    _seedRow(db, "P0400", firstSeen="2026-09-10T08:15:00Z")
+
+    assert readFirstSeenByCode(db) == {"P0400": "2026-09-10T08:15:00Z"}
+
+
+def test_readFirstSeenByCode_nonRealRows_areIgnored(db):
+    """Replay / fixture rows are not something the car reported."""
+    _seedRow(db, "P0400", firstSeen="2026-09-01T00:00:00Z", source="fixture")
+    _seedRow(db, "P0400", firstSeen="2026-09-02T00:00:00Z", source="replay")
+    _seedRow(db, "P0400", firstSeen="2026-09-10T00:00:00Z")
+    _seedRow(db, "P0302", firstSeen="2026-09-01T00:00:00Z", source="physics_sim")
+
+    assert readFirstSeenByCode(db) == {"P0400": "2026-09-10T00:00:00Z"}
+
+
+def test_readFirstSeenByCode_nonRealClearRow_isNotAWatermark(db):
+    """A fixture `cleared` row never hides the car's real codes."""
+    _seedRow(db, "P0400", firstSeen="2026-09-04T00:00:00Z")
+    _seedRow(db, "P0400", firstSeen="2026-09-08T00:00:00Z", status="cleared", source="fixture")
+
+    assert readFirstSeenByCode(db) == {"P0400": "2026-09-04T00:00:00Z"}
+
+
+def test_readFirstSeenByCode_preClearRowBumpedByLastSeen_isIgnored(db):
+    """
+    Given: a pre-clear P0400 row the drive-scoped upsert re-read AFTER the clear
+           (last_seen bumped past the marker, id still below it)
+    When: first-seen is read
+    Then: that row is ignored -- its first_seen predates the clear (Atlas G-a1)
+    """
+    preClearId = _seedRow(db, "P0400", firstSeen="2026-09-04T13:20:05Z")
+    _clearAt(db, "P0400", "2026-09-08T12:00:00Z")
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE dtc_log SET last_seen_timestamp = ? WHERE id = ?",
+            ("2026-09-12T00:00:00Z", preClearId),
+        )
+
+    assert readFirstSeenByCode(db) == {}
+
+    _seedRow(db, "P0400", firstSeen="2026-09-10T08:15:00Z")
+    assert readFirstSeenByCode(db) == {"P0400": "2026-09-10T08:15:00Z"}
+
+
+def test_readFirstSeenByCode_underChicagoTz_returnsTheSameUtcString(db, monkeypatch):
+    """
+    Given: the process local zone is America/Chicago (Atlas Q5)
+    When: first-seen is read
+    Then: the stored canonical UTC string comes back byte-for-byte -- no local
+          conversion anywhere on the path
+    """
+    _seedRow(db, "P0400", firstSeen="2026-09-04T13:20:05Z")
+    utcResult = readFirstSeenByCode(db)
+
+    monkeypatch.setenv("TZ", "America/Chicago")
+    if hasattr(time, "tzset"):
+        time.tzset()
+    try:
+        chicagoResult = readFirstSeenByCode(db)
+    finally:
+        monkeypatch.delenv("TZ")
+        if hasattr(time, "tzset"):
+            time.tzset()
+
+    assert os.environ.get("TZ") is None
+    assert chicagoResult == utcResult == {"P0400": "2026-09-04T13:20:05Z"}
+
+
+def test_readFirstSeenByCode_nothingLogged_returnsEmpty(db):
+    assert readFirstSeenByCode(db) == {}
+
+
+def test_readFirstSeenByCode_noDatabase_returnsEmpty():
+    assert readFirstSeenByCode(None) == {}
+
+
+def test_readFirstSeenByCode_unreadableLog_returnsEmpty():
+    """A log that cannot be read degrades to 'no first-seen', never raises."""
+
+    class _Broken:
+        def connect(self):
+            raise OSError("disk gone")
+
+    assert readFirstSeenByCode(_Broken()) == {}
