@@ -15,13 +15,20 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Rex (US-649-a) | Initial implementation (Sprint 102 V0.30.1).
+# 2026-10-19    | Rex (US-649-e) | Design A: lightdm in both modes; the switch
+#                               | edits [Seat:*] of a fake lightdm.conf and
+#                               | records priors in display-mode.state. The
+#                               | compositor-mode tests are rewritten to the
+#                               | lightdm model; state-file / decoy / pre-flight
+#                               | / read-only / order tests added.
 # ================================================================================
 ################################################################################
 
-"""Display-mode SSOT + switch-command tests (US-649-a).
+"""Display-mode SSOT + switch-command tests (US-649-a, US-649-e).
 
 Desk-only: systemctl is a PATH recorder that keeps enable state in a temp dir,
-the kit installers are recorders in a fake tree, and every path the command
+the kit installers are recorders in a fake tree, lightdm.conf / the session
+file / labwc / the state dir are tmp copies, and every path the command
 touches is redirected by its KIOSK_* overrides. No ssh, no Pi, no root.
 """
 
@@ -30,6 +37,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -48,10 +56,12 @@ pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash not a
 
 # systemctl recorder: logs every call, keeps enable state as marker files so
 # is-enabled answers from what enable/disable did, and exits 0 for the rest
-# (daemon-reload, reboot, cat).
+# (daemon-reload, reboot, cat). A `unknown.<unit>` marker makes `cat` fail, as
+# systemctl does for a unit it does not know.
 FAKE_SYSTEMCTL = """#!/usr/bin/env bash
 echo "$*" >> "$FAKE_STATE/systemctl.log"
 case "$1" in
+  cat)     [ ! -f "$FAKE_STATE/unknown.$2" ] || exit 1 ;;
   enable)  touch "$FAKE_STATE/enabled.$2" ;;
   disable) rm -f "$FAKE_STATE/enabled.$2" ;;
   mask)    exit 9 ;;
@@ -78,18 +88,45 @@ fi
 """
 
 
+# Today's car (US-649-e acceptance): [Seat:*] autologin-user=mcornelison,
+# autologin-session=rpd-x, user-session=rpd-x; a commented '#autologin-session='
+# decoy inside the section and a second section holding the same keys as decoy.
+LIGHTDM_CONF = """\
+[LightDM]
+#start-default-seat=true
+
+[Seat:*]
+#autologin-session=
+autologin-user=mcornelison
+autologin-session=rpd-x
+user-session=rpd-x
+greeter-hide-users=false
+
+[XDMCPServer]
+autologin-session=decoy-xdmcp
+user-session=decoy-xdmcp
+"""
+
+KIOSK = "eclipse-kiosk"
+STATE_NAME = "display-mode.state"
+
+
 def _posix(path: Path) -> str:
     return path.as_posix()
 
 
 @pytest.fixture()
 def rig(tmp_path: Path) -> dict:
-    """A fake Pi: state dir, PATH bin with systemctl, kit tree, systemd dir."""
+    """A fake Pi: state dir, PATH bin with systemctl, kit tree, systemd dir,
+    lightdm.conf, the kiosk session file, labwc and the eclipse-obd state dir."""
     state = tmp_path / "state"
     binDir = tmp_path / "bin"
     tree = tmp_path / "tree"
     systemdDir = tmp_path / "systemd"
-    for d in (state, binDir, systemdDir, tree / "src/pi/ui/splash", tree / "src/pi/ui/dashboard"):
+    lightdmDir = tmp_path / "etc" / "lightdm"
+    obdStateDir = tmp_path / "var" / "lib" / "eclipse-obd"
+    for d in (state, binDir, systemdDir, tree / "src/pi/ui/splash", tree / "src/pi/ui/dashboard",
+              lightdmDir, obdStateDir):
         d.mkdir(parents=True)
     (binDir / "systemctl").write_text(FAKE_SYSTEMCTL, encoding="utf-8", newline="\n")
     (tree / "src/pi/ui/splash/install.sh").write_text(FAKE_SPLASH_KIT, encoding="utf-8", newline="\n")
@@ -97,12 +134,26 @@ def rig(tmp_path: Path) -> dict:
     # Production today: X11 kiosk, lightdm is the display manager.
     (state / "enabled.lightdm.service").touch()
     (systemdDir / "eclipse-dashboard.service").write_text("Environment=DISPLAY=:0\n", encoding="utf-8")
+    conf = lightdmDir / "lightdm.conf"
+    conf.write_text(LIGHTDM_CONF, encoding="utf-8", newline="\n")
+    sessionFile = tmp_path / "usr" / "share" / "wayland-sessions" / f"{KIOSK}.desktop"
+    sessionFile.parent.mkdir(parents=True)
+    sessionFile.write_text("[Desktop Entry]\nName=Eclipse kiosk\n", encoding="utf-8", newline="\n")
+    labwc = binDir / "labwc"
+    labwc.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+    labwc.chmod(0o755)
     return {
+        "root": tmp_path,
         "state": state,
         "bin": binDir,
         "tree": tree,
         "systemd": systemdDir,
         "modeFile": tmp_path / "etc" / "eclipse" / "display-mode",
+        "conf": conf,
+        "sessionFile": sessionFile,
+        "labwc": labwc,
+        "obdState": obdStateDir,
+        "stateFile": obdStateDir / STATE_NAME,
     }
 
 
@@ -114,6 +165,10 @@ def _runMode(rig: dict, *args: str) -> subprocess.CompletedProcess:
     env["KIOSK_TREE"] = _posix(rig["tree"])
     env["KIOSK_SYSTEMD_DIR"] = _posix(rig["systemd"])
     env["KIOSK_USER"] = "mcornelison"
+    env["KIOSK_LIGHTDM_CONF"] = _posix(rig["conf"])
+    env["KIOSK_SESSION_FILE"] = _posix(rig["sessionFile"])
+    env["KIOSK_LABWC_BIN"] = _posix(rig["labwc"])
+    env["KIOSK_STATE_DIR"] = _posix(rig["obdState"])
     return subprocess.run(
         ["bash", _posix(MODE_CMD), *args],
         capture_output=True,
@@ -133,6 +188,38 @@ def _enabled(rig: dict, unit: str) -> bool:
     return (rig["state"] / f"enabled.{unit}").exists()
 
 
+def _confText(rig: dict) -> str:
+    return rig["conf"].read_text(encoding="utf-8")
+
+
+def _withSeatKeys(autologin: str | None, user: str | None) -> str:
+    """LIGHTDM_CONF with [Seat:*]'s two session keys set (None = line removed)."""
+    text = LIGHTDM_CONF
+    for key, value in (("autologin-session", autologin), ("user-session", user)):
+        old = f"\n{key}=rpd-x\n"
+        new = "\n" if value is None else f"\n{key}={value}\n"
+        text = text.replace(old, new, 1)
+    return text
+
+
+def _setConf(rig: dict, text: str) -> None:
+    rig["conf"].write_text(text, encoding="utf-8", newline="\n")
+
+
+def _snapshot(rig: dict) -> dict[str, bytes]:
+    """Every file under the rig except the systemctl call log."""
+    log = rig["state"] / "systemctl.log"
+    return {
+        str(p): p.read_bytes()
+        for p in rig["root"].rglob("*")
+        if p.is_file() and p != log
+    }
+
+
+def _modeChanges(rig: dict) -> list[str]:
+    return [ln for ln in _systemctlLog(rig) if ln.split()[0] in ("enable", "disable", "reboot")]
+
+
 # ----------------------------------------------------------------------------
 # eclipse-display-mode x11|wayland|status
 # ----------------------------------------------------------------------------
@@ -140,21 +227,29 @@ def _enabled(rig: dict, unit: str) -> bool:
 
 def test_waylandThenX11_noReboot_restoresTheX11Kiosk(rig):
     """
-    Given: production X11 (lightdm enabled, x11 dashboard installed, no mode file)
+    Given: production X11 (lightdm enabled at rpd-x, x11 dashboard, no mode file)
     When: eclipse-display-mode wayland --no-reboot, then x11 --no-reboot
-    Then: after x11 lightdm is enabled, eclipse-compositor disabled, the x11
-        dashboard variant installed, the file says x11, and reboot never ran.
+    Then: wayland sets both [Seat:*] keys to eclipse-kiosk, records the rpd-x
+        priors and keeps lightdm enabled; x11 restores both rpd-x values,
+        deletes the state file, installs the x11 dashboard; lightdm stays
+        enabled throughout, the compositor never is, and reboot never ran.
     """
     wayland = _runMode(rig, "wayland", "--no-reboot")
     assert wayland.returncode == 0, wayland.stdout + wayland.stderr
     assert rig["modeFile"].read_text(encoding="utf-8").strip() == "wayland"
-    assert _enabled(rig, "eclipse-compositor.service")
-    assert not _enabled(rig, "lightdm.service")
+    assert _confText(rig) == _withSeatKeys(KIOSK, KIOSK)
+    assert rig["stateFile"].read_text(encoding="utf-8") == (
+        "autologin-session=rpd-x\nuser-session=rpd-x\n"
+    )
+    assert _enabled(rig, "lightdm.service")
+    assert not _enabled(rig, "eclipse-compositor.service")
 
     x11 = _runMode(rig, "x11", "--no-reboot")
 
     assert x11.returncode == 0, x11.stdout + x11.stderr
     assert rig["modeFile"].read_text(encoding="utf-8").strip() == "x11"
+    assert _confText(rig) == LIGHTDM_CONF
+    assert not rig["stateFile"].exists()
     assert _enabled(rig, "lightdm.service")
     assert not _enabled(rig, "eclipse-compositor.service")
     dash = (rig["systemd"] / "eclipse-dashboard.service").read_text(encoding="utf-8")
@@ -162,7 +257,8 @@ def test_waylandThenX11_noReboot_restoresTheX11Kiosk(rig):
     log = _systemctlLog(rig)
     assert "daemon-reload" in log
     assert not any("reboot" in line for line in log), log
-    assert not any(line.startswith("mask") for line in log), "lightdm is disabled, never masked"
+    assert not any(line.startswith("mask") for line in log), "lightdm is never masked"
+    assert "disable lightdm.service" not in log, "lightdm stays enabled in both modes"
 
 
 def test_switch_forcesBothKitInstallersToTheChosenMode(rig):
@@ -183,15 +279,37 @@ def test_switch_withoutNoReboot_reboots(rig):
     assert _systemctlLog(rig)[-1] == "reboot"
 
 
-def test_switch_x11_disablesTheCompositorBeforeEnablingLightdm(rig):
-    """Both claim display-manager.service: the old one goes before the new one."""
-    _runMode(rig, "wayland", "--no-reboot")
-    (rig["state"] / "systemctl.log").unlink()
+@pytest.mark.parametrize("mode", ["wayland", "x11"])
+def test_switch_retiresAnEnabledCompositorBeforeEnablingLightdm(rig, mode):
+    """
+    Given: a car switched to Wayland before US-649-e (compositor enabled and
+        installed, lightdm disabled)
+    When: either switch
+    Then: the compositor is disabled BEFORE lightdm is enabled (both claim
+        display-manager.service), its unit file is deleted, lightdm is enabled.
+    """
+    (rig["state"] / "enabled.lightdm.service").unlink()
+    (rig["state"] / "enabled.eclipse-compositor.service").touch()
+    (rig["systemd"] / "eclipse-compositor.service").write_text("[Unit]\n", encoding="utf-8")
 
-    _runMode(rig, "x11", "--no-reboot")
+    result = _runMode(rig, mode, "--no-reboot")
 
+    assert result.returncode == 0, result.stdout + result.stderr
     log = _systemctlLog(rig)
     assert log.index("disable eclipse-compositor.service") < log.index("enable lightdm.service")
+    assert not (rig["systemd"] / "eclipse-compositor.service").exists()
+    assert not _enabled(rig, "eclipse-compositor.service")
+    assert _enabled(rig, "lightdm.service")
+
+
+def test_switch_compositorAbsent_disablesNothing(rig):
+    """No compositor enabled: no disable call, lightdm is still (re)enabled."""
+    result = _runMode(rig, "wayland", "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = _systemctlLog(rig)
+    assert not any(ln.startswith("disable") for ln in log), log
+    assert "enable lightdm.service" in log
 
 
 @pytest.mark.parametrize("args", [("bogus",), ("bogus", "--no-reboot"), ("x11", "--bogus"), ()])
@@ -199,7 +317,8 @@ def test_unknownMode_exitsNonZero_andChangesNothing(rig, args):
     """
     Given: any unknown mode / flag (or none)
     When: eclipse-display-mode is run
-    Then: non-zero exit; no mode file, no systemctl call, no installer run.
+    Then: non-zero exit; no mode file, no systemctl call, no installer run,
+        lightdm.conf untouched.
     """
     result = _runMode(rig, *args)
 
@@ -208,6 +327,287 @@ def test_unknownMode_exitsNonZero_andChangesNothing(rig, args):
     assert _systemctlLog(rig) == []
     assert not (rig["state"] / "kits.log").exists()
     assert _enabled(rig, "lightdm.service")
+    assert _confText(rig) == LIGHTDM_CONF
+
+
+# ---- the lightdm.conf edit -------------------------------------------------
+
+
+def test_wayland_editsOnlyTheTwoSeatKeys_decoysByteIdentical(rig):
+    """The commented '#autologin-session=', autologin-user, greeter-hide-users
+    and the [LightDM] / [XDMCPServer] sections come through byte-identical."""
+    before = rig["conf"].read_bytes()
+
+    result = _runMode(rig, "wayland", "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    after = rig["conf"].read_bytes()
+    expected = before.replace(
+        b"\nautologin-session=rpd-x\nuser-session=rpd-x\n",
+        b"\nautologin-session=eclipse-kiosk\nuser-session=eclipse-kiosk\n",
+    )
+    assert expected != before
+    assert after == expected
+    assert b"#autologin-session=\n" in after
+    assert b"autologin-session=decoy-xdmcp\nuser-session=decoy-xdmcp\n" in after
+
+
+@pytest.mark.parametrize("mode", ["wayland", "x11"])
+def test_switch_leavesNoTempFileBehind(rig, mode):
+    if mode == "x11":
+        _runMode(rig, "wayland", "--no-reboot")
+
+    result = _runMode(rig, mode, "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    for d in (rig["conf"].parent, rig["obdState"]):
+        leftovers = [p.name for p in d.iterdir() if ".tmp" in p.name]
+        assert leftovers == [], leftovers
+
+
+def test_wayland_missingKey_isAppendedUnderSeatAndRecordedAbsent_revertDeletesIt(rig):
+    """
+    Given: [Seat:*] has no user-session line
+    When: wayland, then x11
+    Then: wayland appends user-session=eclipse-kiosk directly under [Seat:*] and
+        records 'user-session=absent'; x11 deletes the line again, so the file
+        is byte-identical to where it started.
+    """
+    original = _withSeatKeys("rpd-x", None)
+    _setConf(rig, original)
+
+    wayland = _runMode(rig, "wayland", "--no-reboot")
+
+    assert wayland.returncode == 0, wayland.stdout + wayland.stderr
+    conf = _confText(rig)
+    assert "[Seat:*]\nuser-session=eclipse-kiosk\n" in conf
+    assert "\nautologin-session=eclipse-kiosk\n" in conf
+    assert rig["stateFile"].read_text(encoding="utf-8") == (
+        "autologin-session=rpd-x\nuser-session=absent\n"
+    )
+
+    x11 = _runMode(rig, "x11", "--no-reboot")
+
+    assert x11.returncode == 0, x11.stdout + x11.stderr
+    assert _confText(rig) == original
+    assert not rig["stateFile"].exists()
+
+
+def test_waylandTwice_secondSwitchRecordsNothing(rig):
+    """wayland -> wayland: the priors are eclipse-kiosk now and never recorded."""
+    _runMode(rig, "wayland", "--no-reboot")
+    stateBefore = rig["stateFile"].read_bytes()
+
+    again = _runMode(rig, "wayland", "--no-reboot")
+
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert rig["stateFile"].read_bytes() == stateBefore
+    assert _confText(rig) == _withSeatKeys(KIOSK, KIOSK)
+
+
+def test_wayland_priorsAlreadyEclipseKiosk_noStateFileWritten(rig):
+    _setConf(rig, _withSeatKeys(KIOSK, KIOSK))
+
+    result = _runMode(rig, "wayland", "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not rig["stateFile"].exists()
+
+
+def test_wayland_recordedLineIsNeverRewritten_onlyMissingKeysAppended(rig):
+    """
+    Given: the state file already records autologin-session (a custom prior)
+    When: wayland
+    Then: that line is kept byte-identical; only user-session is appended.
+    """
+    rig["stateFile"].write_text("autologin-session=lightdm-xsession\n", encoding="utf-8",
+                                newline="\n")
+
+    result = _runMode(rig, "wayland", "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert rig["stateFile"].read_text(encoding="utf-8") == (
+        "autologin-session=lightdm-xsession\nuser-session=rpd-x\n"
+    )
+
+
+def test_x11_noStateFile_kioskKeysFallBackToRpdX_withExactlyOneWarn(rig):
+    """os-trim fixed-inverse pattern: no recorded priors -> rpd-x, ONE WARN."""
+    _setConf(rig, _withSeatKeys(KIOSK, KIOSK))
+
+    result = _runMode(rig, "x11", "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _confText(rig) == LIGHTDM_CONF
+    out = result.stdout + result.stderr
+    assert len(re.findall(r"^WARN", out, flags=re.MULTILINE)) == 1, out
+
+
+def test_x11_oneKeyRecorded_otherFallsBack_withOneWarn(rig):
+    rig["stateFile"].write_text("autologin-session=lightdm-xsession\n", encoding="utf-8",
+                                newline="\n")
+    _setConf(rig, _withSeatKeys(KIOSK, KIOSK))
+
+    result = _runMode(rig, "x11", "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _confText(rig) == _withSeatKeys("lightdm-xsession", "rpd-x")
+    out = result.stdout + result.stderr
+    assert len(re.findall(r"^WARN", out, flags=re.MULTILINE)) == 1, out
+    assert not rig["stateFile"].exists()
+
+
+def test_x11_unrecordedKeyWithAnotherValue_isLeftAlone(rig):
+    _setConf(rig, _withSeatKeys(KIOSK, "LXDE-pi-x"))
+
+    result = _runMode(rig, "x11", "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _confText(rig) == _withSeatKeys("rpd-x", "LXDE-pi-x")
+
+
+def test_x11_onTodaysCar_leavesLightdmConfByteIdentical(rig):
+    before = rig["conf"].read_bytes()
+
+    result = _runMode(rig, "x11", "--no-reboot")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert rig["conf"].read_bytes() == before
+    assert "WARN" not in result.stdout + result.stderr
+
+
+# ---- pre-flight and failure ------------------------------------------------
+
+
+def _breakStateDir(rig: dict) -> None:
+    rig["obdState"].rmdir()
+
+
+def _breakSessionFile(rig: dict) -> None:
+    rig["sessionFile"].unlink()
+
+
+def _breakLabwc(rig: dict) -> None:
+    rig["labwc"].unlink()
+
+
+def _breakConfMissing(rig: dict) -> None:
+    rig["conf"].unlink()
+
+
+def _breakNoSeatSection(rig: dict) -> None:
+    _setConf(rig, LIGHTDM_CONF.replace("[Seat:*]", "[Seat:seat0]"))
+
+
+def _breakLightdmUnknown(rig: dict) -> None:
+    (rig["state"] / "unknown.lightdm.service").touch()
+
+
+PREFLIGHT_FAILURES = [
+    ("wayland", _breakStateDir),
+    ("x11", _breakStateDir),
+    ("wayland", _breakSessionFile),
+    ("wayland", _breakLabwc),
+    ("wayland", _breakConfMissing),
+    ("x11", _breakConfMissing),
+    ("wayland", _breakNoSeatSection),
+    ("wayland", _breakLightdmUnknown),
+    ("x11", _breakLightdmUnknown),
+]
+
+
+@pytest.mark.parametrize(
+    "mode,breaker", PREFLIGHT_FAILURES,
+    ids=[f"{m}-{b.__name__.removeprefix('_break')}" for m, b in PREFLIGHT_FAILURES],
+)
+def test_preflightFailure_exitsNonZero_nothingChanged_everyFileByteIdentical(rig, mode, breaker):
+    breaker(rig)
+    if mode == "x11" and rig["conf"].exists():
+        # A switch that got past pre-flight would rewrite these keys.
+        _setConf(rig, _withSeatKeys(KIOSK, KIOSK))
+    before = _snapshot(rig)
+
+    result = _runMode(rig, mode, "--no-reboot")
+
+    assert result.returncode != 0
+    assert "nothing changed" in (result.stdout + result.stderr).lower()
+    assert _snapshot(rig) == before
+    assert not rig["obdState"].exists() or not rig["stateFile"].exists()
+    assert _modeChanges(rig) == []
+
+
+def test_preflight_neverCreatesTheStateDir(rig):
+    _breakStateDir(rig)
+
+    _runMode(rig, "wayland", "--no-reboot")
+
+    assert not rig["obdState"].exists()
+
+
+def test_wayland_lightdmConfReadOnly_confByteIdentical_priorsRecorded_nonZero(rig):
+    """
+    Given: lightdm.conf cannot be written (read-only)
+    When: wayland
+    Then: non-zero exit; lightdm.conf byte-identical; display-mode.state holds
+        both priors (recorded BEFORE the edit, Atlas G2); no mode file, no kit
+        run, no systemctl enable.
+    """
+    before = rig["conf"].read_bytes()
+    rig["conf"].chmod(stat.S_IREAD)
+    try:
+        result = _runMode(rig, "wayland", "--no-reboot")
+        after = rig["conf"].read_bytes()
+    finally:
+        rig["conf"].chmod(stat.S_IREAD | stat.S_IWRITE)
+
+    assert result.returncode != 0
+    assert after == before
+    assert rig["stateFile"].read_text(encoding="utf-8") == (
+        "autologin-session=rpd-x\nuser-session=rpd-x\n"
+    )
+    assert not rig["modeFile"].exists()
+    assert not (rig["state"] / "kits.log").exists()
+    assert _modeChanges(rig) == []
+    assert [p.name for p in rig["conf"].parent.iterdir() if ".tmp" in p.name] == []
+
+
+# ---- static checks on the script --------------------------------------------
+
+
+def _functionBody(name: str) -> str:
+    text = MODE_CMD.read_text(encoding="utf-8")
+    start = text.index(f"\n{name}() {{")
+    return text[start : text.index("\n}\n", start)]
+
+
+def test_script_neverUsesSedInPlace():
+    assert not re.search(r"\bsed\b[^\n]*\s-i", MODE_CMD.read_text(encoding="utf-8"))
+
+
+def test_script_tempFileTakesTheOriginalsModeAndOwner():
+    body = _functionBody("edit_lightdm_conf")
+    assert re.search(r'tmp="\$LIGHTDM_CONF\.tmp', body), "temp file in lightdm.conf's own dir"
+    assert re.search(r'chmod --reference="\$LIGHTDM_CONF" "\$tmp"', body)
+    assert re.search(r'chown --reference="\$LIGHTDM_CONF" "\$tmp"', body)
+    assert re.search(r'\bmv\b[^\n]*"\$tmp" "\$LIGHTDM_CONF"', body), "installed by rename"
+
+
+def test_script_stateFileIsWrittenViaTempThenRename():
+    body = _functionBody("record_priors")
+    assert re.search(r'tmp="\$STATE_FILE\.tmp', body)
+    assert re.search(r'\bmv\b[^\n]*"\$tmp" "\$STATE_FILE"', body)
+
+
+def test_cmdSwitch_recordsPriorsBeforeTheLightdmConfEdit():
+    """os-trim order (Atlas G2): the state-file write precedes the rename."""
+    body = _functionBody("cmd_switch")
+    assert body.index("record_priors") < body.index("edit_lightdm_conf")
+    assert body.index("preflight") < body.index("record_priors")
+    assert body.index("edit_lightdm_conf") < body.index('> "$MODE_FILE"')
+    assert body.index("run_kit") < body.index("systemctl enable")
+
+
+# ---- status ------------------------------------------------------------------
 
 
 def test_status_consistentWayland_printsOkAndExitsZero(rig):
@@ -217,8 +617,8 @@ def test_status_consistentWayland_printsOkAndExitsZero(rig):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == (
-        "mode file: wayland | display-manager: eclipse-compositor.service "
-        "| dashboard variant: wayland | OK"
+        "mode file: wayland | display-manager: lightdm.service "
+        "| lightdm session: eclipse-kiosk | dashboard variant: wayland | OK"
     )
 
 
@@ -230,23 +630,80 @@ def test_status_absentFile_readsX11_onTodaysCar(rig):
     assert "mode file: x11" in result.stdout
     assert "display-manager: lightdm.service" in result.stdout
     assert "dashboard variant: x11" in result.stdout
+    assert "lightdm session: rpd-x" in result.stdout
 
 
-def test_status_waylandFileButLightdmEnabled_exitsNonZeroNamingTheMismatch(rig):
-    """
-    Given: the file says wayland but lightdm is still the enabled display manager
-    When: status
-    Then: non-zero exit, and the output names the display-manager mismatch.
-    """
-    rig["modeFile"].parent.mkdir(parents=True)
-    rig["modeFile"].write_text("wayland\n", encoding="utf-8")
+def test_status_waylandAfterSwitch_compositorStillEnabled_isAMismatch(rig):
+    _runMode(rig, "wayland", "--no-reboot")
+    (rig["state"] / "enabled.eclipse-compositor.service").touch()
 
     result = _runMode(rig, "status")
 
-    assert result.returncode != 0
-    out = result.stdout + result.stderr
-    assert "MISMATCH" in out
-    assert "lightdm.service" in out
+    assert result.returncode == 1
+    assert result.stdout.strip().endswith("| MISMATCH: eclipse-compositor.service still enabled")
+
+
+def test_status_waylandFileButX11Session_exitsNonZeroNamingTheMismatch(rig):
+    """
+    Given: the file says wayland but lightdm still autologins rpd-x
+    When: status
+    Then: exit 1, and the output names the session mismatch.
+    """
+    rig["modeFile"].parent.mkdir(parents=True)
+    rig["modeFile"].write_text("wayland\n", encoding="utf-8")
+    (rig["systemd"] / "eclipse-dashboard.service").write_text(
+        "Environment=WAYLAND_DISPLAY=wayland-0\n", encoding="utf-8")
+
+    result = _runMode(rig, "status")
+
+    assert result.returncode == 1
+    assert result.stdout.strip() == (
+        "mode file: wayland | display-manager: lightdm.service | lightdm session: rpd-x "
+        "| dashboard variant: wayland "
+        "| MISMATCH: lightdm session is rpd-x, mode wayland needs eclipse-kiosk"
+    )
+
+
+def test_status_x11FileButKioskSession_isAMismatch(rig):
+    _setConf(rig, _withSeatKeys(KIOSK, KIOSK))
+
+    result = _runMode(rig, "status")
+
+    assert result.returncode == 1
+    assert "lightdm session: eclipse-kiosk" in result.stdout
+    assert "MISMATCH: lightdm session is eclipse-kiosk" in result.stdout
+
+
+def test_status_lightdmConfMissing_showsMissing(rig):
+    rig["conf"].unlink()
+
+    result = _runMode(rig, "status")
+
+    assert result.returncode == 1
+    assert "lightdm session: <missing>" in result.stdout
+    assert "MISMATCH: lightdm.conf missing" in result.stdout
+
+
+def test_status_autologinSessionUnset_showsUnset(rig):
+    _setConf(rig, _withSeatKeys(None, "rpd-x"))
+
+    result = _runMode(rig, "status")
+
+    assert result.returncode == 1
+    assert "lightdm session: <unset>" in result.stdout
+    assert "MISMATCH: autologin-session unset" in result.stdout
+
+
+def test_status_lightdmNotEnabled_andSeveralReasons_joinedByComma(rig):
+    (rig["state"] / "enabled.lightdm.service").unlink()
+    (rig["state"] / "enabled.eclipse-compositor.service").touch()
+
+    result = _runMode(rig, "status")
+
+    assert result.returncode == 1
+    assert result.stdout.strip().endswith(
+        "| MISMATCH: lightdm.service not enabled, eclipse-compositor.service still enabled"
+    )
 
 
 def test_status_wrongDashboardVariant_isAMismatch(rig):

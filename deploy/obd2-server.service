@@ -29,6 +29,11 @@ Wants=mysql.service
 # network.target - network is configured
 # mysql.service  - MariaDB is ready (server depends on DB)
 
+# Maximum restart attempts in a time period. These keys belong in [Unit]:
+# under [Service] systemd logs 'Unknown key' and the limit is off (US-908).
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
 [Service]
 # Service type: simple means ExecStart is the main process
 Type=simple
@@ -52,10 +57,6 @@ Restart=on-failure
 
 # Wait 10 seconds before restarting (allows DB connections to settle)
 RestartSec=10
-
-# Maximum restart attempts in a time period
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Logging: use journal (default) plus file appends for easier debugging
 StandardOutput=append:/home/mcornelison/Projects/OBD2v2/logs/server.log

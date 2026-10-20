@@ -10,9 +10,8 @@
 #        under every trend state (gated, absent, live): never blank;
 #     3. the TREND VIEW -- dots are exactly the inMedian points (a 7-drive
 #        payload draws 5), the median is one flat line across them, the
-#        baseline dashed, colour only from `level`, a point with isReset is
-#        not drawn and the row says "ECU relearning", insufficient -> the
-#        provider's reason and no chart;
+#        baseline dashed, colour only from `level`, insufficient -> the
+#        provider's reason (after a reset, its "ECU relearning") and no chart;
 #     4. the SHIPPED DOM -- the same, painted by the real tick;
 #     5. the GREP GATE -- no trim threshold in carousel.js, with a planted
 #        negative control;
@@ -54,6 +53,10 @@
 #                                (last30-not-published keeps it absent).
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
 #                               card at index 4.
+# 2026-10-19    | Ralph (Rex)  | US-890-g -- the per-point isReset branch and the
+#                               ltft-reset-zero-flat fixture go; 'ECU relearning'
+#                               is the provider's reason (ltft-relearning-after-reset,
+#                               == buildLtftTrendState of _RELEARNING_DRIVES).
 # ================================================================================
 ################################################################################
 
@@ -75,6 +78,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import render_harness as rh  # noqa: E402
 
+from pi.splash.ltft_trend_emitter import REASON_RELEARNING_AFTER_RESET  # noqa: E402
 from tests.ui.test_carousel_kebab_always_visible import (  # noqa: E402
     _driving,
     _parked,
@@ -114,7 +118,24 @@ CARD_ORDER = [
 
 # This story's fixtures (spec s7). Later Fuel stories add their own to the same
 # directory, so the set is asserted as PRESENT, not as the whole directory.
-FIXTURE_NAMES = ["trend-healthy", "trend-amber", "ltft-reset-zero-flat", "trend-seven-drives"]
+# US-890-g: ltft-reset-zero-flat (a hand-set per-point isReset) is retired; the
+# relearning fixture is the provider's own output for _RELEARNING_DRIVES.
+FIXTURE_NAMES = [
+    "trend-healthy", "trend-amber", "ltft-relearning-after-reset", "trend-seven-drives",
+]
+
+# US-890-g: the relearning fixture's per-drive input. Drive 111 reads LTFT 0.00
+# flat (an adaptive-memory reset); 112-114 each clear the gate (90 C >= 85 C,
+# closed loop, 25 >= 20 samples), so the reset epoch holds 3 points, short of 5.
+# driveId: (drive start ts, LTFT %, samples).
+_RELEARNING_DRIVES: dict[int, tuple[str, float, int]] = {
+    111: ("2026-10-11T14:00:00Z", 0.0, 25),
+    112: ("2026-10-12T14:00:00Z", -1.2, 25),
+    113: ("2026-10-13T14:00:00Z", -0.8, 25),
+    114: ("2026-10-14T14:00:00Z", -1.6, 25),
+}
+_RELEARNING_COOLANT_C = 90.0
+_RELEARNING_CADENCE_S = 5  # the ~5 s LTFT cadence the provider's gate is sized on
 
 # The upper rows and the story that owns each (acceptance 3).
 UPPER_SLOTS = [
@@ -135,7 +156,6 @@ UNPUBLISHED_SLOTS = [
     (s, lbl) for s, lbl in UPPER_SLOTS if s not in _OBD_LIVE_SLOTS + _FUEL_ECONOMY_SLOTS
 ]
 NOT_PUBLISHED = "not published"
-RELEARNING = "ECU relearning"
 TREND_LABEL = "FUEL TRIM TREND"
 GATED_REASON = "no engine data"
 
@@ -157,6 +177,28 @@ def _fixture(name: str) -> dict[str, Any]:
 
 def _trend(name: str) -> dict[str, Any]:
     return _fixture(name)["ltft-trend"]
+
+
+def _relearningPerDrive() -> dict[int, tuple[str, list[tuple[str, str, float]]]]:
+    """_RELEARNING_DRIVES as buildDriveRecords' raw rows: coolant, loop, LTFT per cycle."""
+    from datetime import datetime, timedelta
+
+    from pi.splash import ltft_trend_emitter as lte
+
+    perDrive: dict[int, tuple[str, list[tuple[str, str, float]]]] = {}
+    for driveId, (startTs, ltft, samples) in _RELEARNING_DRIVES.items():
+        start = datetime.strptime(startTs, "%Y-%m-%dT%H:%M:%SZ")
+        rows: list[tuple[str, str, float]] = []
+        for cycle in range(samples):
+            for offset, name, value in (
+                (0, lte.COOLANT_PID, _RELEARNING_COOLANT_C),
+                (1, lte.FUEL_SYSTEM_PID, float(lte.FUEL_SYSTEM_CLOSED_LOOP)),
+                (2, lte.LTFT_PID, ltft),
+            ):
+                at = start + timedelta(seconds=cycle * _RELEARNING_CADENCE_S + offset)
+                rows.append((at.strftime("%Y-%m-%dT%H:%M:%SZ"), name, value))
+        perDrive[driveId] = (startTs, rows)
+    return perDrive
 
 
 def _probe(fn: str, *args: object) -> Any:
@@ -363,20 +405,23 @@ def test_level_comesOnlyFromTheProvider_notFromTheValues():
     assert ok["chart"] == amber["chart"]
 
 
-@_NODE_ONLY
-def test_resetPoint_isNotDrawn_andTheRowSaysEcuRelearning():
-    payload = _trend("ltft-reset-zero-flat")
-    reset = [p for p in payload["points"] if p.get("isReset")]
-    assert [p["driveId"] for p in reset] == [115]
-    assert reset[0]["ltftAvg"] == 0.0 and reset[0]["inMedian"] is True
-    view = _view(payload)
-    assert view["relearning"] == RELEARNING
-    assert [d["driveId"] for d in view["chart"]["dots"]] == [111, 112, 113, 114]
+def test_relearningFixture_ltftTrendIsWhatTheBuilderEmits():
+    """
+    Given: the ltft-relearning-after-reset fixture
+    When: _RELEARNING_DRIVES is run through buildDriveRecords + buildLtftTrendState
+          at the fixture's `now`
+    Then: the builder's output equals the payload -- the provider, not a hand,
+          says 'ECU relearning' (US-890-g).
+    """
+    from pi.splash.ltft_trend_emitter import buildDriveRecords, buildLtftTrendState
 
-
-@_NODE_ONLY
-def test_noResetPoint_saysNothingAboutRelearning():
-    assert _view(_trend("trend-healthy"))["relearning"] is None
+    fx = _fixture("ltft-relearning-after-reset")
+    built = buildLtftTrendState(
+        driveRecords=buildDriveRecords(_relearningPerDrive()), nowIso=fx["now"]
+    )
+    assert fx["ltft-trend"] == built
+    assert built["reason"] == REASON_RELEARNING_AFTER_RESET
+    assert built["epochBreak"] is True and len(built["points"]) == 3
 
 
 @_NODE_ONLY
@@ -432,11 +477,11 @@ def test_dom_amber_headlineRowCarriesTheLevel_dotsCarryNone():
 
 
 @_NODE_ONLY
-def test_dom_reset_saysEcuRelearning_andDrawsNoDotForThatDrive():
-    surface = _bootFixture("ltft-reset-zero-flat")
-    assert _fuelText(surface, "fuel-trend-relearn") == [RELEARNING]
-    assert "115" not in _dotDrives(surface)
-    assert _dotDrives(surface) == ["111", "112", "113", "114"]
+def test_dom_relearning_saysEcuRelearningInTheReason_andDrawsNoDot():
+    surface = _bootFixture("ltft-relearning-after-reset")
+    assert _fuelText(surface, "fuel-trend-reason") == [REASON_RELEARNING_AFTER_RESET]
+    assert _dotDrives(surface) == []
+    assert _fuelPaths(surface, "fuel-trend-chart") == []
 
 
 @_NODE_ONLY

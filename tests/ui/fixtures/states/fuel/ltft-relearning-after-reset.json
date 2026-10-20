@@ -1,0 +1,55 @@
+{
+  "description": "Drive 111 read LTFT exactly 0.00 % flat (an adaptive-memory reset); drives 112-114 each cleared the warm closed-loop gate, so the reset epoch holds 3 qualifying drives, short of the 5-drive median. The provider says 'ECU relearning' in reason and publishes no median, so the row shows that reason and draws no dot. Built by buildLtftTrendState(driveRecords=buildDriveRecords(_RELEARNING_DRIVES)) -- see test_relearningFixture_ltftTrendIsWhatTheBuilderEmits (US-890-g).",
+  "now": "2026-10-20T15:12:30Z",
+  "ltft-trend": {
+    "pid": "LONG_FUEL_TRIM_1",
+    "sufficient": false,
+    "level": "insufficient",
+    "reason": "ECU relearning",
+    "median": null,
+    "medianWindow": 5,
+    "baseline": null,
+    "deviationPp": null,
+    "sustained": false,
+    "totalTrim": null,
+    "trend": null,
+    "current": null,
+    "points": [
+      {
+        "driveId": 112,
+        "ts": "2026-10-12T14:00:00Z",
+        "ltftAvg": -1.2,
+        "sampleCount": 25,
+        "inMedian": false
+      },
+      {
+        "driveId": 113,
+        "ts": "2026-10-13T14:00:00Z",
+        "ltftAvg": -0.8,
+        "sampleCount": 25,
+        "inMedian": false
+      },
+      {
+        "driveId": 114,
+        "ts": "2026-10-14T14:00:00Z",
+        "ltftAvg": -1.6,
+        "sampleCount": 25,
+        "inMedian": false
+      }
+    ],
+    "driveCount": 3,
+    "minDrives": 5,
+    "epochBreak": true,
+    "epochStartDriveId": 112,
+    "epochClipped": false,
+    "epochDriveCount": 3,
+    "noiseFloorPp": 4.0,
+    "faultAbs": 10.0,
+    "gate": {
+      "coolantMinC": 85.0,
+      "closedLoopCode": 2,
+      "minQualifyingSamples": 20
+    },
+    "ts": "2026-10-20T15:12:30Z"
+  }
+}

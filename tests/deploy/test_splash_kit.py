@@ -28,6 +28,12 @@
 #               |              | variant orders After=display-manager.service,
 #               |              | waits for X access, and OnFailure starts the
 #               |              | dashboard. Directives parsed, not substrings.
+# 2026-10-19    | Rex (US-649-c) | INTENDED ASSERTION CHANGE (US-649-c): the .wayland
+#               |              | boot variant orders After=display-manager.service,
+#               |              | not eclipse-compositor.service. New: the three
+#               |              | .wayland units carry no BindsTo, one 30 s wayland-0
+#               |              | socket gate (executed under a fake sleep), and
+#               |              | OnFailure on splash-boot only.
 # ================================================================================
 ################################################################################
 
@@ -35,7 +41,10 @@
 
 from __future__ import annotations
 
+import os
+import shlex
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -164,15 +173,18 @@ def test_waylandVariants_referenceWayland_s3():
 def test_bootVariants_orderAfterGraphical_d3():
     """D-3: variants defer until the display server is up (After=, not Before=).
 
-    US-649-b INTENDED ASSERTION CHANGE (.wayland only): the display server is
-    eclipse-compositor.service, so the wayland variant orders After= IT and no
-    longer After=graphical.target (that queued the kiosk behind multi-user,
-    18.73 s on boot 7c6aafaa). The .x11 assertion is unchanged.
+    The wayland variant no longer orders After=graphical.target (US-649-b: that
+    queued the kiosk behind multi-user, 18.73 s on boot 7c6aafaa).
     """
+    # INTENDED ASSERTION CHANGE (US-649-c): design A (CIO 2026-10-16) -- lightdm
+    # owns the Wayland session too, so the wayland variant orders After= the
+    # display manager, as the x11 one does; eclipse-compositor.service is gone.
     wayland = _read("splash-boot.service.wayland")
-    assert "After=eclipse-compositor.service" in wayland
-    assert "After=graphical.target" not in wayland
-    assert "Before=graphical.target" not in wayland
+    waylandAfter = _directiveValues(wayland, "After")
+    assert "display-manager.service" in waylandAfter
+    assert "eclipse-compositor.service" not in waylandAfter
+    assert "graphical.target" not in waylandAfter
+    assert _directiveValues(wayland, "Before") == []
 
     # US-866 INTENDED ASSERTION CHANGE (.x11): the display server is lightdm
     # (display-manager.service), so the x11 variant orders After= IT, not
@@ -217,6 +229,149 @@ def test_x11BootVariant_failedSplashStillStartsDashboard_us866():
     unit = _read("splash-boot.service.x11")
     assert _directiveValues(unit, "OnSuccess") == ["eclipse-dashboard.service"]
     assert _directiveValues(unit, "OnFailure") == ["eclipse-dashboard.service"]
+
+
+# ---------------------------------------------------------------------------
+# US-649-c -- design A (CIO 2026-10-16): lightdm's own autologin session hosts
+#             labwc, so the three .wayland kiosk units no longer bind to
+#             eclipse-compositor.service. They order After= the display manager
+#             and gate on the wayland-0 socket for at most 30 s (the PR #106 X11
+#             pattern: 150 x 0.2 s).
+# ---------------------------------------------------------------------------
+
+# Unit name (the template file name minus '.service.wayland') -> template path.
+WAYLAND_UNITS = {
+    "splash-boot": KIT_DIR / "splash-boot.service.wayland",
+    "splash-grace": KIT_DIR / "splash-grace.service.wayland",
+    "dashboard": DASHBOARD_DIR / "dashboard.service.wayland",
+}
+
+# The other After= units each template already carried, which must survive.
+WAYLAND_KEPT_AFTER = {
+    "splash-boot": ["eclipse-states-http.service", "eclipse-boot-state.service"],
+    "splash-grace": ["eclipse-states-http.service"],
+    "dashboard": ["eclipse-states-http.service"],
+}
+
+UID_TOKEN_RUNTIME_DIR = "/run/user/__PI_UID__"
+
+
+def _waylandGate(name: str) -> str:
+    """The exact ExecStartPre socket gate the story fixes for ``name``."""
+    return (
+        "/bin/sh -c 'i=0; until [ -S /run/user/__PI_UID__/wayland-0 ]; do i=$$((i+1)); "
+        'if [ "$$i" -ge 150 ]; then echo "' + name + ': wayland-0 not up within 30 s" >&2; '
+        "exit 1; fi; sleep 0.2; done'"
+    )
+
+
+def _directiveLines(unit: str, key: str) -> list[str]:
+    """The whole value of every ``key=`` line, comments ignored."""
+    return [
+        line.strip()[len(key) + 1 :]
+        for line in unit.splitlines()
+        if line.strip().startswith(f"{key}=")
+    ]
+
+
+@pytest.mark.parametrize("name", sorted(WAYLAND_UNITS))
+def test_waylandUnit_noBindsToAndNoCompositor_us649c(name: str):
+    """No BindsTo= line, and the old compositor unit is not named anywhere."""
+    text = WAYLAND_UNITS[name].read_text(encoding="utf-8")
+    assert _directiveValues(text, "BindsTo") == []
+    assert "BindsTo" not in text
+    assert "eclipse-compositor" not in text
+
+
+@pytest.mark.parametrize("name", sorted(WAYLAND_UNITS))
+def test_waylandUnit_ordersAfterTheDisplayManager_us649c(name: str):
+    """After= names display-manager.service and keeps its other units."""
+    after = _directiveValues(WAYLAND_UNITS[name].read_text(encoding="utf-8"), "After")
+    assert "display-manager.service" in after
+    for kept in WAYLAND_KEPT_AFTER[name]:
+        assert kept in after, f"{name}: After= lost {kept}"
+
+
+@pytest.mark.parametrize("name", sorted(WAYLAND_UNITS))
+def test_waylandUnit_hasExactlyTheOneSocketGate_us649c(name: str):
+    """Exactly one ExecStartPre, the 30 s wayland-0 gate, uid left as the token."""
+    pre = _directiveLines(WAYLAND_UNITS[name].read_text(encoding="utf-8"), "ExecStartPre")
+    assert pre == [_waylandGate(name)]
+    assert "/run/user/1000" not in pre[0]  # rendered by install.sh, never literal
+
+
+@pytest.mark.parametrize("name", sorted(WAYLAND_UNITS))
+def test_waylandUnit_onFailureOnSplashBootOnly_us649c(name: str):
+    """splash-boot gains OnFailure (parity with .x11); its OnSuccess is unchanged."""
+    text = WAYLAND_UNITS[name].read_text(encoding="utf-8")
+    if name == "splash-boot":
+        assert _directiveValues(text, "OnFailure") == ["eclipse-dashboard.service"]
+        assert _directiveValues(text, "OnSuccess") == ["eclipse-dashboard.service"]
+    else:
+        assert _directiveValues(text, "OnFailure") == []
+
+
+def _runWaylandGate(tmp_path: Path, runtimeDir: Path) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Run splash-boot's gate against ``runtimeDir``, ``sleep`` recorded, not slept.
+
+    Same technique as tests/deploy/test_compositor_unit.py's socket wait: the
+    template's __PI_UID__ runtime dir is swapped for a temp dir and ``sleep`` is
+    faked (a shell function here, so 150 polls cost no process spawns).
+    """
+    pre = _directiveLines(WAYLAND_UNITS["splash-boot"].read_text(encoding="utf-8"), "ExecStartPre")
+    argv = shlex.split(pre[0].replace("$$", "$"))  # systemd's $$ escape -> $
+    assert argv[:2] == ["/bin/sh", "-c"]
+    script = argv[2]
+    assert UID_TOKEN_RUNTIME_DIR in script
+    script = script.replace(UID_TOKEN_RUNTIME_DIR, runtimeDir.as_posix())
+    log = tmp_path / "sleep.log"
+    fakeSleep = f"sleep() {{ echo \"$1\" >> '{log.as_posix()}'; }}; "
+    result = subprocess.run(
+        ["sh", "-c", fakeSleep + script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        env=dict(os.environ),
+    )
+    sleeps = log.read_text(encoding="utf-8").split() if log.exists() else []
+    return result, sleeps
+
+
+@pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+def test_waylandGate_runsAgainstTheSocket_us649c(tmp_path: Path):
+    """
+    Given: a runtime dir without, then with, a wayland-0 socket
+    When:  the splash-boot gate runs (sleep faked)
+    Then:  absent -> exit 1 after 150 checks and 149 sleeps (29.8 s), the
+           message on stderr; present -> exit 0 with no sleep.
+
+    The string increments before it tests, byte-parallel with the X11 gate, so
+    the 150th check exits instead of sleeping (PM ruling 2026-10-19: the string
+    wins over the "150 x 0.2 s" arithmetic). The absent half runs everywhere. The present half needs a real AF_UNIX
+    socket (``-S``, not ``-e``), which a Windows CPython cannot make, so there
+    it is skipped AFTER the absent half has asserted.
+    """
+    for sub in ("present", "present-log", "absent", "absent-log"):
+        (tmp_path / sub).mkdir()
+
+    result, sleeps = _runWaylandGate(tmp_path / "absent-log", tmp_path / "absent")
+    assert result.returncode == 1
+    assert "splash-boot: wayland-0 not up within 30 s" in result.stderr
+    assert len(sleeps) == 149
+    assert all(s == "0.2" for s in sleeps)
+    assert abs(sum(float(s) for s in sleeps) - 29.8) < 1e-6
+
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("absent case passed; the socket-present case needs AF_UNIX sockets")
+    sock = socket.socket(socket.AF_UNIX)  # type: ignore[attr-defined]
+    try:
+        sock.bind(str(tmp_path / "present" / "wayland-0"))
+        result, sleeps = _runWaylandGate(tmp_path / "present-log", tmp_path / "present")
+    finally:
+        sock.close()
+    assert result.returncode == 0, result.stderr
+    assert sleeps == []
 
 
 # ---------------------------------------------------------------------------

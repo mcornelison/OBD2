@@ -229,6 +229,8 @@ sync_tree() {
             --include=deploy/polkit-rules/*.rules \
             --include=deploy/labwc/ \
             --include=deploy/labwc/*** \
+            --include=deploy/wayland-sessions/ \
+            --include=deploy/wayland-sessions/*** \
             --exclude=deploy/obd-server.service \
             --exclude=deploy/obd2-server.service \
             --exclude=deploy/server-analytics-batch.* \
@@ -253,6 +255,8 @@ sync_tree() {
         # fails the deploy without it). The duplicate archive entry is harmless.
         # US-649-b: ./deploy/labwc is named for the same reason -- shipped empty or
         # not at all, labwc would run its default root menu and keybinds.
+        # US-649-d: ./deploy/wayland-sessions likewise -- without it lightdm has
+        # no eclipse-kiosk session to launch.
         ( cd "$REPO_ROOT" && tar -cz \
             --exclude="__pycache__" \
             --exclude="*.pyc" \
@@ -267,7 +271,7 @@ sync_tree() {
             -f - \
             ./config.json ./requirements.txt ./requirements-pi.txt ./.deploy-version \
             ./src/__init__.py ./src/pi ./src/common ./scripts \
-            ./deploy/os-trim.manifest ./deploy/labwc ./deploy ) | \
+            ./deploy/os-trim.manifest ./deploy/labwc ./deploy/wayland-sessions ./deploy ) | \
           ssh -p "${PI_PORT}" "${PI_USER}@${PI_HOST}" "
             set -e
             mkdir -p '${PI_PATH}'
@@ -704,6 +708,36 @@ step_install_journald_persistent() {
             fi
         fi
         echo \"Persistent journal verified (US-230): \$MACHINE_JOURNAL_DIR present; \$DISK_USAGE_OUT\"
+    "
+}
+
+step_install_logind_powerkey() {
+    # US-649-f: pin the power key to poweroff (CIO 2026-10-16: a clean
+    # shutdown). logind already defaults to poweroff, so this changes nothing
+    # today; it stops a future package or desktop default changing it silently.
+    # Sync-if-changed, mirroring step_install_journald_persistent. Unlike that
+    # step it NEVER restarts or reloads logind -- a live restart can drop the
+    # kiosk session; the drop-in takes effect on the next boot. Runs in both
+    # display modes.
+    echo "--- Step: Installing logind power-key drop-in (US-649-f) ---"
+    local sourceFile="deploy/eclipse-powerkey.conf"
+    local targetPath="/etc/systemd/logind.conf.d/50-eclipse-powerkey.conf"
+
+    if $DRY_RUN; then
+        echo "DRY-RUN would install ${PI_PATH}/${sourceFile} -> ${targetPath}"
+        echo "DRY-RUN would: no logind restart (takes effect on next boot)"
+        return 0
+    fi
+
+    remote "
+        set -e
+        sudo mkdir -p /etc/systemd/logind.conf.d
+        if sudo test -f '${targetPath}' && sudo cmp -s '${PI_PATH}/${sourceFile}' '${targetPath}'; then
+            echo 'logind power-key drop-in already current at ${targetPath} (no change).'
+        else
+            sudo install -m 644 '${PI_PATH}/${sourceFile}' '${targetPath}'
+            echo 'logind power-key drop-in installed: ${targetPath} (effective next boot).'
+        fi
     "
 }
 
@@ -2009,7 +2043,7 @@ step_install_dashboard_assets() {
     echo "--- Step: Installing carousel dashboard assets to /opt/dashboard (US-399) ---"
     local assetSrc="$REPO_ROOT/src/pi/ui/dashboard"
     local installDir="/opt/dashboard"
-    # OFL.txt (BL-027): the Oswald brand face ships INSIDE dashboard.css as an
+    # OFL.txt (BL-027): the Michroma brand face ships INSIDE dashboard.css as an
     # inlined data: URI, and SIL OFL 1.1 requires the licence to travel with the
     # font. It must be VOUCHED here or refresh_asset_dir prunes it from
     # /opt/dashboard -- i.e. the repo would look compliant while the deployed
@@ -2032,24 +2066,29 @@ step_install_dashboard_assets() {
     "
 }
 
-step_install_compositor_unit() {
-    # US-649-b (F-139): install eclipse-compositor.service (labwc in the
-    # display-manager slot -- chromium on the Pi has no DRM platform, so the
-    # Wayland kiosk needs a compositor) and its isolated labwc config
-    # deploy/labwc/ -> /etc/eclipse/labwc/ (the unit runs `labwc -C` on it).
+step_install_kiosk_session() {
+    # US-649-d (F-139, design A -- CIO 2026-10-16): lightdm launches the Wayland
+    # kiosk as its own autologin session, so the deploy ships the SESSION FILE
+    # deploy/wayland-sessions/eclipse-kiosk.desktop -> /usr/share/wayland-sessions/
+    # (where lightdm looks for Wayland sessions) and the isolated labwc config
+    # deploy/labwc/ -> /etc/eclipse/labwc/ (the session runs `labwc -C` on it).
     #
-    # INSTALLS, NEVER ENABLES.  `eclipse-display-mode wayland` is the only thing
-    # that enables the compositor (it pre-flights `systemctl cat` on it, so this
-    # step must run before anyone can switch).  The car stays on whatever the mode
-    # file says; a changed unit or config takes effect at the next compositor
-    # start, so nothing is restarted under a live kiosk.  Same sync-if-changed
-    # posture as the other unit installers: cmp -s, daemon-reload only on change.
+    # INSTALLS FILES ONLY: no systemctl call.  Which session lightdm starts is
+    # `eclipse-display-mode`'s business; a changed file takes effect at the next
+    # session start, so nothing is restarted under a live kiosk.  The retired
+    # display-manager unit of the US-649-b model is NOT touched here -- on a car
+    # in Wayland mode it is still the display manager, and US-649-e's mode
+    # switch is what retires it.  Sync-if-changed (cmp -s, install -m 644) as in
+    # step_install_journald_persistent.
     #
     # FAIL LOUD (Atlas G2) on a missing deploy/labwc/rc.xml, here on the
     # workstation AND on the Pi after the sync: without it labwc runs its stock
-    # root menu and keybinds over the kiosk.  Never "nothing to install".
-    echo "--- Step: Installing eclipse-compositor unit + labwc config (US-649-b, F-139) ---"
+    # root menu and keybinds over the kiosk.  Never "nothing to install".  The
+    # session file is checked on the Pi only, after the sync.
+    echo "--- Step: Installing the eclipse-kiosk Wayland session + labwc config (US-649-d, F-139) ---"
     local rcXml="${REPO_ROOT}/deploy/labwc/rc.xml"
+    local sessionSrc="deploy/wayland-sessions/eclipse-kiosk.desktop"
+    local sessionDst="/usr/share/wayland-sessions/eclipse-kiosk.desktop"
     if [ ! -f "$rcXml" ]; then
         echo "ERROR: labwc config not found: ${rcXml} -- refusing to deploy without it (labwc would run its default root menu and keybinds)." >&2
         exit 12
@@ -2057,23 +2096,23 @@ step_install_compositor_unit() {
     if $DRY_RUN; then
         echo "DRY-RUN would: sudo install -d -m 0755 /etc/eclipse/labwc"
         echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/labwc/{rc.xml,autostart} /etc/eclipse/labwc/ || install -m 0644"
-        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/eclipse-compositor.service /etc/systemd/system/eclipse-compositor.service || (install + daemon-reload)"
-        echo "DRY-RUN note: the compositor is NOT enabled here -- only 'sudo eclipse-display-mode wayland' enables it"
+        echo "DRY-RUN would: sudo install -m 644 ${PI_PATH}/${sessionSrc} ${sessionDst} (only if cmp -s says it changed)"
+        echo "DRY-RUN note: no unit is enabled or started here -- 'sudo eclipse-display-mode wayland' chooses the session"
         return 0
     fi
     remote "
         set -e
         SRC_DIR='${PI_PATH}/deploy/labwc'
         DST_DIR='/etc/eclipse/labwc'
-        SRC_SVC='${PI_PATH}/deploy/eclipse-compositor.service'
-        DST_SVC='/etc/systemd/system/eclipse-compositor.service'
+        SRC_SESSION='${PI_PATH}/${sessionSrc}'
+        DST_SESSION='${sessionDst}'
 
         if [ ! -f \"\$SRC_DIR/rc.xml\" ]; then
             echo \"ERROR: labwc config not found on the Pi: \$SRC_DIR/rc.xml -- the sync did not ship deploy/labwc.\" >&2
             exit 12
         fi
-        if [ ! -f \"\$SRC_SVC\" ]; then
-            echo \"ERROR: compositor unit not found on the Pi: \$SRC_SVC\" >&2
+        if [ ! -f \"\$SRC_SESSION\" ]; then
+            echo \"ERROR: kiosk session file not found on the Pi: \$SRC_SESSION -- the sync did not ship deploy/wayland-sessions.\" >&2
             exit 12
         fi
 
@@ -2091,14 +2130,13 @@ step_install_compositor_unit() {
             fi
         done
 
-        if sudo test -f \"\$DST_SVC\" && sudo cmp -s \"\$SRC_SVC\" \"\$DST_SVC\"; then
-            echo 'eclipse-compositor.service already up-to-date.'
+        sudo install -d -m 0755 \"\$(dirname \"\$DST_SESSION\")\"
+        if sudo test -f \"\$DST_SESSION\" && sudo cmp -s \"\$SRC_SESSION\" \"\$DST_SESSION\"; then
+            echo \"eclipse-kiosk session already current at \$DST_SESSION.\"
         else
-            sudo install -m 644 \"\$SRC_SVC\" \"\$DST_SVC\"
-            sudo systemctl daemon-reload
-            echo 'eclipse-compositor.service installed (daemon-reload complete).'
+            sudo install -m 644 \"\$SRC_SESSION\" \"\$DST_SESSION\"
+            echo \"eclipse-kiosk session installed -> \$DST_SESSION\"
         fi
-        echo \"eclipse-compositor: installed, enabled=\$(systemctl is-enabled eclipse-compositor.service 2>/dev/null || true) -- only 'sudo eclipse-display-mode wayland' enables it.\"
     "
 }
 
@@ -2717,6 +2755,12 @@ step_purge_stale_bytecode
 # exists on the Pi.
 step_install_journald_persistent
 
+# US-649-f: logind power-key drop-in (HandlePowerKey=poweroff). Same class as the
+# journald drop-in -- idempotent OS config every deploy reasserts -- and called
+# unconditionally, outside any display-mode branch, so the pin holds in both
+# modes. Runs AFTER sync_tree so deploy/eclipse-powerkey.conf exists on the Pi.
+step_install_logind_powerkey
+
 # US-341 / I-036: polkit rule granting mcornelison the
 # org.freedesktop.login1.power-off action.  Without this rule
 # eclipse-obd.service (User=mcornelison) cannot invoke `systemctl poweroff`
@@ -2903,10 +2947,10 @@ step_install_splash_assets
 # serves at /dashboard.html. The kiosk UNIT is installed by the kit's install.sh.
 step_install_dashboard_assets
 step_install_state_server_units
-# US-649-b: the labwc compositor unit + its config (installed, NEVER enabled --
-# only eclipse-display-mode wayland enables it). Before the kiosk units: their
-# .wayland variants BindsTo= it. Fails the deploy on a missing deploy/labwc/rc.xml.
-step_install_compositor_unit
+# US-649-d: the eclipse-kiosk Wayland session file lightdm launches + its labwc
+# config (files only, no systemctl -- eclipse-display-mode picks the session).
+# Before the kiosk units. Fails the deploy on a missing deploy/labwc/rc.xml.
+step_install_kiosk_session
 # Atlas 2026-07-01 BUG-FIX: install the chromium KIOSK UNITS (splash + dashboard).
 # The asset + backend steps above only install what the state server SERVES; without
 # this the kiosk is never installed and the 3.5" screen stays blank (pygame sunset).

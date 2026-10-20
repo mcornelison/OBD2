@@ -23,7 +23,7 @@
 #
 # Overrides (desk tests only):
 #   KIOSK_MODE_FILE     the mode file   (default /etc/eclipse/display-mode)
-#   KIOSK_USER          the kiosk user  (default mcornelison, as eclipse-compositor.service)
+#   KIOSK_USER          the kiosk user  (default mcornelison, the Pi user the kiosk session runs as)
 #   KIOSK_UID           its uid         (default: id -u "$KIOSK_USER")
 #   KIOSK_RUNTIME_ROOT  runtime dirs    (default /run/user)
 ################################################################################
@@ -81,7 +81,7 @@ if [ "$mode" = wayland ]; then
     runtimeDir="$RUNTIME_ROOT/$uid"
     # -e, not -S: a stale non-socket here makes grim fail -> capture_failed.
     [ -e "$runtimeDir/wayland-0" ] \
-        || fail no_socket "$runtimeDir/wayland-0 does not exist -- is eclipse-compositor running?"
+        || fail no_socket "$runtimeDir/wayland-0 does not exist -- is the kiosk session running (lightdm, eclipse-kiosk)?"
     as_kiosk_user env XDG_RUNTIME_DIR="$runtimeDir" WAYLAND_DISPLAY=wayland-0 grim "$out" >&2 \
         || fail capture_failed "grim exited non-zero"
 else

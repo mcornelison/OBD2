@@ -2,9 +2,10 @@
 # File:    splash-boot.service.wayland  (one of two variants; install.sh picks)
 # Purpose: F-103 status-aware boot splash, Bookworm/Wayland. Chromium kiosk that
 #          renders the boot splash + polls the localhost state server. D-3 fix:
-#          ordered AFTER the display server (since US-649-b that is
-#          eclipse-compositor.service, not graphical.target; never Before),
-#          Wayland-native (--ozone-platform=wayland), JS-driven exit (no pkill).
+#          ordered AFTER the display server (since US-649-c that is lightdm's
+#          kiosk session, display-manager.service, not graphical.target; never
+#          Before), Wayland-native (--ozone-platform=wayland), JS-driven exit
+#          (no pkill).
 # Author:  Ralph Agent (Rex)  (D-3 corrected unit per spec §7)
 # Created: 2026-06-29 -- Sprint 48 US-393 (F-103 boot splash)
 #
@@ -50,18 +51,25 @@
 
 [Unit]
 Description=Animated boot splash (status-aware, Wayland)
-# US-649-b: the display server is eclipse-compositor.service (labwc). BindsTo= +
-# After= it, which waits for its wayland-0 readiness check. The old ordering after
-# graphical.target is gone (it queued the splash behind multi-user, 18.73 s on
-# boot 7c6aafaa).
+# US-649-c (design A, CIO 2026-10-16): labwc runs inside lightdm's own autologin
+# kiosk session, so the display server is display-manager.service. Ordered
+# After= it; readiness of the session's wayland-0 socket is the ExecStartPre
+# gate below, not an ordering guess. No binding to any display unit: lightdm
+# owns the session, and a binding to the retired compositor unit would pull it
+# back in. The old
+# ordering after graphical.target stays gone (US-649-b: it queued the splash
+# behind multi-user, 18.73 s on boot 7c6aafaa).
 # graphical.target stays ONLY as the pull-in, via WantedBy= below.
-BindsTo=eclipse-compositor.service
-After=eclipse-compositor.service eclipse-states-http.service eclipse-boot-state.service
+After=display-manager.service eclipse-states-http.service eclipse-boot-state.service
 Wants=eclipse-states-http.service eclipse-boot-state.service
 # A-1 hand-off (US-399): at HEALTHY_YIELD the splash JS calls window.close(),
 # this Type=simple unit exits 0, and systemd starts the carousel dashboard. A
 # DEGRADED boot keeps the splash up (no window.close) -> no dashboard hand-off.
 OnSuccess=eclipse-dashboard.service
+# US-649-c, parity with splash-boot.service.x11 (US-866 / PR #106): a splash
+# that FAILS (the wayland-0 gate timed out, or chromium died) must not leave the
+# car with no dashboard. A degraded splash that stays up is not a failure.
+OnFailure=eclipse-dashboard.service
 
 [Service]
 Type=simple
@@ -71,6 +79,11 @@ Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
 # US-866 (Atlas 2026-10-16): stderr logging so the splash's
 # "[kiosk] first-frame page=splash" line -- when the panel first lights --
 # and any boot-time chromium error reach the journal (same as the grace units).
+# US-649-c: wait for the kiosk session's wayland-0 socket, for at most 30 s
+# (150 x 0.2 s, Atlas design part 3 -- the PR #106 X11 gate's budget); then
+# fail loud (OnFailure still brings up the dashboard). __PI_UID__ is rendered
+# by install.sh's global substitution. $$ is systemd's escape for a shell $.
+ExecStartPre=/bin/sh -c 'i=0; until [ -S /run/user/__PI_UID__/wayland-0 ]; do i=$$((i+1)); if [ "$$i" -ge 150 ]; then echo "splash-boot: wayland-0 not up within 30 s" >&2; exit 1; fi; sleep 0.2; done'
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \
