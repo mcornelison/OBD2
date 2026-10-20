@@ -261,6 +261,13 @@ DEFAULT_HOME_SWEEP_TIMEOUT_SEC = 6
 # OFF. (Not the datasheet's +/-250 dps: that is the RESET value, not this Pi.)
 GYRO_FULL_SCALE_RAD_S = math.radians(500)
 
+# US-910: the ceiling on pi.sensors.imu.zuptWindowStops. Motion's TILT FIX
+# reports the stop count, which the provider bounds at zuptWindowStops, so this
+# bound is that text's worst case. Atlas C3 2026-10-19: Motion was proven
+# against a three-digit count -- TILT FIX '−10.00° from 999 stops' = 264.9 px of
+# the 271.4 px column, MEASURED. A fourth digit is an unproven width.
+ZUPT_WINDOW_STOPS_MAX = 999
+
 # US-790: pi.power.cellEpoch -- WHICH cell was fitted, stamped on every
 # drain_vcell_trajectory row so a floor measured from them is never an average
 # across batteries. CIO ruling 2026-09-25. Vocabulary from
@@ -1808,7 +1815,8 @@ class ConfigValidator:
             config: Validated configuration (post-default-application).
 
         Raises:
-            ConfigValidationError: If one of the IMU rates is non-positive.
+            ConfigValidationError: If one of the IMU rates is non-positive, or
+                zuptWindowStops exceeds ZUPT_WINDOW_STOPS_MAX (US-910).
         """
         for key in self._IMU_POSITIVE_KEYS:
             val = self._getNestedValue(config, key)
@@ -1819,6 +1827,13 @@ class ConfigValidator:
                     f"{key} must be a positive number (got {val!r})",
                     missingFields=[key],
                 )
+        stopsKey = 'pi.sensors.imu.zuptWindowStops'
+        stops = self._getNestedValue(config, stopsKey)
+        if stops is not None and stops > ZUPT_WINDOW_STOPS_MAX:
+            raise ConfigValidationError(
+                f"{stopsKey} must be at most {ZUPT_WINDOW_STOPS_MAX} (got {stops!r})",
+                missingFields=[stopsKey],
+            )
         self._validateImuEnums(config)
         self._validateImuDeclination(config)
         self._validateImuAccelCalibration(config)

@@ -1592,13 +1592,11 @@
   //             ONE median, not a per-drive series);
   //   baseline  the epoch baseline, dashed;
   //   colour    the provider's `level` alone -- the dots never colour, and
-  //             nothing here compares a trim with a number;
-  //   relearn   a point with isReset (0.00 % flat = adaptive memory reset, not
-  //             fuel) is never drawn; the row says "ECU relearning" instead.
-  // Insufficient -> the provider's reason and no chart. The y range is the
-  // drawn values' own extent: geometry, not a scale.
+  //             nothing here compares a trim with a number.
+  // Insufficient -> the provider's reason, verbatim, and no chart (US-890-g:
+  // after a reset that reason is the provider's own "ECU relearning"). The y
+  // range is the drawn values' own extent: geometry, not a scale.
   var FUEL_TREND_LABEL = "FUEL TRIM TREND";
-  var FUEL_TREND_RELEARNING = "ECU relearning";
   var FUEL_TREND_W = 100;
   var FUEL_TREND_H = 30;
   var FUEL_TREND_INSET = 4;
@@ -1642,14 +1640,9 @@
     var base = ltftTrendView(data);
     if (!base) return null;
     var pts = Array.isArray(data.points) ? data.points.filter(isObj) : [];
-    var relearning = false;
     var dots = [];
     for (var i = 0; i < pts.length; i++) {
       var p = pts[i];
-      if (p.isReset === true) {
-        relearning = true;
-        continue;
-      }
       if (base.sufficient && p.inMedian === true && finiteNumber(p.ltftAvg)) {
         dots.push({ driveId: typeof p.driveId === "number" ? p.driveId : null, value: p.ltftAvg });
       }
@@ -1660,7 +1653,6 @@
       level: base.headline.level,
       value: base.sufficient ? base.headline.value : null,
       reason: base.sufficient ? null : base.headline.detail,
-      relearning: relearning ? FUEL_TREND_RELEARNING : null,
       chart: dots.length
         ? fuelTrendChart(dots, data.median, finiteNumber(data.baseline) ? data.baseline : null)
         : null,
@@ -3321,10 +3313,13 @@
   // AHRS has no heading YET, which is not a dead sensor (spec s4.2).
   var REASON_HEADING_UNSEEDED = "heading_unseeded";
 
-  // Spec s7 (OEM mockup rules): the band's text before the first reading, and
-  // the reason beside the legacy engine's "--" chip.
+  // Spec s7 (OEM mockup rules): the band's text before the first reading.
   var NAV_WAITING_TEXT = "waiting for the first heading reading";
-  var NAV_CALIBRATION_ABSENT_TEXT = "calibration not published";
+  // US-911 (Atlas X3; CIO 2026-10-19 chose Iris's wording): ONE text for "the
+  // legacy engine publishes no headingCalibrated and no reason for it". Motion's
+  // labelled COMPASS cell shows it as is; NAV's unlabelled badge note prefixes
+  // 'calibration ' (so NAV still reads 'calibration not published').
+  var CALIBRATION_ABSENT_TEXT = "not published";
 
   // The NEW 8-point function (R25). Half up: 22.5 -> NE, 337.5 -> N, because
   // the index 8 wraps to 0. headingCardinal (16-point) is deliberately left
@@ -3442,7 +3437,7 @@
         "legacy", heading, "--",
         typeof reasons.headingCalibrated === "string" && reasons.headingCalibrated
           ? imuReason(data, "headingCalibrated")
-          : NAV_CALIBRATION_ABSENT_TEXT
+          : "calibration " + CALIBRATION_ABSENT_TEXT
       );
     }
     return navLiveView("trusted", heading, null, null);
@@ -3667,13 +3662,12 @@
   // (Iris M5). Unknown is never green.
   var MOTION_NO_FEED_TEXT = "no motion feed";
   var MOTION_NO_TIMESTAMP_TEXT = "no timestamp";
-  // The legacy engine publishes no headingCalibrated and no reason for it
-  // (Atlas C1, reconciled X3: Iris's Motion wording, not NAV's chip text).
-  var MOTION_CALIBRATION_ABSENT_TEXT = "not published";
   // stopCount 0 means the bias is NOT measured yet: 0.0 is not a reading
   // (imu_state_bridge buildImuState).
   var MOTION_NO_STOPS_TEXT = "no stops yet";
-  var MOTION_TILT_ABSENT_TEXT = "not published";
+  // The same wording as COMPASS's absent cell, so it reads the one source text
+  // (US-911: 'not published' is written once in the NAV and Motion code).
+  var MOTION_TILT_ABSENT_TEXT = CALIBRATION_ABSENT_TEXT;
   // The UPDATED age stops counting here; the amber already says "long ago"
   // (Iris M7).
   var MOTION_AGE_CAP_SEC = 999;
@@ -3710,7 +3704,7 @@
       "--", "none",
       typeof reasons.headingCalibrated === "string" && reasons.headingCalibrated
         ? imuReason(data, "headingCalibrated")
-        : MOTION_CALIBRATION_ABSENT_TEXT
+        : CALIBRATION_ABSENT_TEXT
     );
   }
 
@@ -4660,7 +4654,7 @@
   }
 
   // The status row from states/obd-live. CHECK ENGINE's count line ("n codes
-  // ›", "0 codes ›" for a pending code) exists only while the lamp is ON; it
+  // ›", "1 code ›", "0 codes ›" for a pending code) exists only while the lamp is ON; it
   // is a tap to the Alerts card ONLY while parked (`parked`, the debounced
   // parkedNext signal) -- moving, the line carries no tap target.
   function engineStatusView(obdLiveData, parked, nowMs) {
@@ -4676,7 +4670,9 @@
     if (mil.value === 1) {
       var count = engineReading(params.DTC_COUNT, nowMs, displayUnits);
       var n = count.value === null ? DRIVING_NOT_READ : String(Math.round(count.value));
-      codes = { text: n + " codes ›", tap: parked === true };
+      // US-909: exactly one reads "1 code ›" (spec v030-engine-page-design.md
+      // s3, the most common real MIL case); 0, n and "--" stay plural.
+      codes = { text: n + (n === "1" ? " code ›" : " codes ›"), tap: parked === true };
     }
     return { runTime: runTime, mil: mil, codes: codes };
   }
@@ -6156,7 +6152,6 @@
       if (view.sufficient) row.appendChild(engineTextEl("span", "fuel-trend-value", view.value));
       else row.appendChild(engineTextEl("span", "fuel-trend-reason", view.reason));
       if (view.chart) row.appendChild(buildFuelTrendChart(view.chart));
-      if (view.relearning) row.appendChild(engineTextEl("span", "fuel-trend-relearn", view.relearning));
       body.appendChild(row);
     }
 

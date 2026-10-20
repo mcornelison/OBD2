@@ -35,12 +35,15 @@
 #               |              | the live contract moved to
 #               |              | test_ltft_trend_spool_contract.py.
 # 2026-10-14    | Ralph (Rex)  | US-881-a -- points[].inMedian cases appended.
+# 2026-10-19    | Ralph (Rex)  | US-890-g -- 'ECU relearning' reason cases.
 # ================================================================================
 ################################################################################
 
 """US-661: records that the US-420 `ltft-trend` contract was superseded."""
 
 from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
 
 import pi.splash.ltft_trend_emitter as emitter
 
@@ -278,3 +281,128 @@ def test_inMedian_currentAndEveryOtherFieldUnchanged():
 
     assert set(state["current"]) == {"driveId", "ts", "ltftAvg", "sampleCount"}
     assert set(state["points"][0]) == {"driveId", "ts", "ltftAvg", "sampleCount", "inMedian"}
+
+
+# ===========================================================================
+# US-890-g -- 'ECU relearning' until the reset epoch reaches medianWindow points.
+# Driven through buildDriveRecords so the real gate and reset detection decide.
+# ===========================================================================
+
+_ROW_T0 = datetime(2026, 10, 19, 10, 0, 0, tzinfo=UTC)
+
+
+def _driveRows(
+    ltft: float, *, samples: int = 25, coolant: float = 90.0, driveIndex: int = 0
+) -> list[tuple[str, str, float]]:
+    """One drive's (timestamp, parameter_name, value) rows at the ~5 s LTFT cadence.
+
+    coolant 90 C + closed loop + 25 samples clears the gate (>= 85 C, status 2,
+    >= 20 samples); coolant 40 C fails it on every sample.
+    """
+    rows: list[tuple[str, str, float]] = []
+    for cycle in range(samples):
+        at = _ROW_T0 + timedelta(hours=driveIndex, seconds=cycle * 5)
+        for offset, name, value in (
+            (0, emitter.COOLANT_PID, coolant),
+            (1, emitter.FUEL_SYSTEM_PID, float(emitter.FUEL_SYSTEM_CLOSED_LOOP)),
+            (2, emitter.LTFT_PID, ltft),
+        ):
+            stamp = (at + timedelta(seconds=offset)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            rows.append((stamp, name, value))
+    return rows
+
+
+def _perDrive(kinds: list[str]) -> dict[int, tuple[str | None, list[tuple[str, str, float]]]]:
+    """Drives 101.. oldest first: 'reset' (LTFT 0.0 flat), 'ok' (qualifies), 'cold'.
+
+    A cold drive carries -1.5, never 0.0: an all-0.0 drive reads as a reset.
+    """
+    perDrive: dict[int, tuple[str | None, list[tuple[str, str, float]]]] = {}
+    for index, kind in enumerate(kinds):
+        if kind == "reset":
+            rows = _driveRows(0.0, driveIndex=index)
+        elif kind == "ok":
+            rows = _driveRows(1.25, driveIndex=index)
+        else:
+            rows = _driveRows(-1.5, coolant=40.0, driveIndex=index)
+        perDrive[101 + index] = (None, rows)
+    return perDrive
+
+
+def _state(kinds: list[str], **kwargs: object) -> dict:
+    return emitter.buildLtftTrendState(
+        driveRecords=emitter.buildDriveRecords(_perDrive(kinds)), nowIso=_NOW, **kwargs
+    )
+
+
+def test_relearning_constantIsExported():
+    assert emitter.REASON_RELEARNING_AFTER_RESET == "ECU relearning"
+    assert "REASON_RELEARNING_AFTER_RESET" in emitter.__all__
+
+
+def test_relearning_resetIsTheNewestDrive_zeroPostResetDrives():
+    state = _state(["ok", "ok", "reset"])
+
+    assert state["epochBreak"] is True
+    assert state["points"] == []
+    assert state["reason"] == emitter.REASON_RELEARNING_AFTER_RESET
+    assert state["level"] == emitter.LEVEL_INSUFFICIENT
+    assert state["median"] is None
+
+
+def test_relearning_resetThenThreeDrivesThatAllFailTheGate():
+    state = _state(["ok", "reset", "cold", "cold", "cold"])
+
+    assert state["epochDriveCount"] == 3
+    assert state["points"] == []
+    assert state["reason"] == emitter.REASON_RELEARNING_AFTER_RESET
+
+
+def test_relearning_resetThenFourPoints():
+    state = _state(["reset", "ok", "ok", "ok", "ok"])
+
+    assert len(state["points"]) == 4
+    assert state["reason"] == emitter.REASON_RELEARNING_AFTER_RESET
+    assert state["sufficient"] is False
+
+
+def test_relearning_endsAtFivePoints_medianPublished_reasonNone():
+    state = _state(["reset", "ok", "ok", "ok", "ok", "ok"])
+
+    assert state["sufficient"] is True
+    assert state["median"] == 1.25
+    assert state["reason"] is None
+
+
+def test_relearning_coldDrivesNeverCountTowardTheFive():
+    """Spool VOID IF: reset + 4 qualifying + 3 cold is still relearning."""
+    state = _state(["reset", "ok", "cold", "ok", "cold", "ok", "cold", "ok"])
+
+    assert state["epochDriveCount"] == 7
+    assert len(state["points"]) == 4
+    assert state["reason"] == emitter.REASON_RELEARNING_AFTER_RESET
+
+
+def test_relearning_noReset_fourPoints_isStillInsufficientHistory():
+    state = _state(["ok", "ok", "ok", "ok"])
+
+    assert state["epochBreak"] is False
+    assert state["reason"] == emitter.REASON_INSUFFICIENT_HISTORY
+
+
+def test_relearning_noReset_drivesButZeroPoints_isStillWarming():
+    state = _state(["cold", "cold"])
+
+    assert state["reason"] == emitter.REASON_WARMING
+
+
+def test_relearning_noReset_historyNotExhausted_isStillEpochClipped():
+    state = _state(["ok", "ok"], historyExhausted=False)
+
+    assert state["reason"] == emitter.REASON_EPOCH_CLIPPED
+
+
+def test_relearning_noRecords_isStillNoDrives():
+    state = emitter.buildLtftTrendState(driveRecords=[], nowIso=_NOW)
+
+    assert state["reason"] == emitter.REASON_NO_DRIVES

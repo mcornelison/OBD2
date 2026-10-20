@@ -48,6 +48,11 @@ Requires=bluetooth.service
 After=bluetooth.service bluetooth.target
 Wants=bluetooth.target
 ConditionPathExists=/etc/default/obdlink
+# Rate limit for the Restart=on-failure retries below. These keys belong in
+# [Unit]: under [Service] systemd logs 'Unknown key' and the limit is off
+# (systemd-analyze verify on the Pi 2026-10-16; US-908).
+StartLimitBurst=5
+StartLimitIntervalSec=30
 
 [Service]
 Type=oneshot
@@ -81,10 +86,9 @@ ExecStop=/bin/sh -c 'rfcomm release 0 2>/dev/null || true'
 
 # Retry a handful of times if the bluetooth stack isn't quite ready —
 # real-world race seen on cold boot even with After=bluetooth.service.
+# (The StartLimit* rate limit is in [Unit] above.)
 Restart=on-failure
 RestartSec=2
-StartLimitBurst=5
-StartLimitIntervalSec=30
 
 [Install]
 WantedBy=multi-user.target

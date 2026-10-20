@@ -29,6 +29,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-27    | Ralph (Rex)  | Initial -- US-488 non-STOP alarm-tier sweep.
+# 2026-10-19    | Ralph (Rex)  | US-909: the two .ltft-bar tests retire with
+#               |              | the dead bar-row CSS.
 # ================================================================================
 ################################################################################
 
@@ -110,20 +112,8 @@ def test_statusTileDown_rendersAmber_notBrandRed():
     assert not _brandRedsIn(block)
 
 
-def test_ltftBarDownValue_rendersAmber_notBrandRed():
-    """A drive beyond +/-10% LTFT is a WATCH-tier fuel-trim drift, not a
-    pull-over alarm (Spool per-surface ruling #4)."""
-    block = _ruleBlock(_read(_CSS), '.ltft-bar[data-level="down"]  .ltft-bar-value')
-    assert "var(--amber-warn)" in block
-    assert not _brandRedsIn(block)
-
-
-def test_ltftBarDownBorder_rendersAmber_notBrandRed():
-    """The bar's BORDER is the second half of the same surface -- sweeping only
-    the value would leave a red box around an amber number."""
-    block = _ruleBlock(_read(_CSS), '.ltft-bar[data-level="down"]')
-    assert "var(--amber-warn)" in block
-    assert not _brandRedsIn(block)
+# US-909: the two fuel-trim bar tests (value + border) retired with the dead
+# bar-row rules they pinned; the Fuel card that replaced it carries no bar row.
 
 
 def test_dtcClearResultReset_rendersAmber_notBrandRed():

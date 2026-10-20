@@ -63,11 +63,13 @@
 
 [Unit]
 Description=Grace-period shutdown splash (Wayland)
-# US-649-b: the display server is eclipse-compositor.service (labwc). BindsTo= +
-# After= it: with no compositor there is nothing to draw on, and starting chromium
-# against a missing wayland-0 socket only produces a crash in the journal.
-BindsTo=eclipse-compositor.service
-After=eclipse-compositor.service eclipse-states-http.service
+# US-649-c (design A, CIO 2026-10-16): labwc runs inside lightdm's own autologin
+# kiosk session, so the display server is display-manager.service; ordered
+# After= it. With no session there is nothing to draw on, and starting chromium
+# against a missing wayland-0 socket only produces a crash in the journal -- so
+# the ExecStartPre gate below waits for the socket instead. No binding to any
+# display unit: lightdm owns the session.
+After=display-manager.service eclipse-states-http.service
 Wants=eclipse-states-http.service
 
 [Service]
@@ -75,6 +77,11 @@ Type=simple
 User=__PI_USER__
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=XDG_RUNTIME_DIR=/run/user/__PI_UID__
+# US-649-c: wait for the kiosk session's wayland-0 socket, for at most 30 s
+# (150 x 0.2 s, Atlas design part 3 -- the PR #106 X11 gate's budget); then
+# fail loud. __PI_UID__ is rendered by install.sh's global substitution. $$ is
+# systemd's escape for a shell $.
+ExecStartPre=/bin/sh -c 'i=0; until [ -S /run/user/__PI_UID__/wayland-0 ]; do i=$$((i+1)); if [ "$$i" -ge 150 ]; then echo "splash-grace: wayland-0 not up within 30 s" >&2; exit 1; fi; sleep 0.2; done'
 ExecStart=__CHROMIUM_BIN__ \
   --kiosk \
   --ozone-platform=wayland \

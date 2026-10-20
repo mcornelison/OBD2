@@ -147,9 +147,12 @@ cp "$REPO_ROOT/deploy/addresses.sh" "$TMP/deploy/addresses.sh"
 # US-866: step_os_trim refuses to run without its manifest (fail loud, even in
 # --dry-run), so the isolated copy carries it too. Test 9 removes it.
 cp "$REPO_ROOT/deploy/os-trim.manifest" "$TMP/deploy/os-trim.manifest"
-# US-649-b: step_install_compositor_unit refuses to run without deploy/labwc/rc.xml
-# (fail loud, even in --dry-run), so the isolated copy carries deploy/labwc too.
+# US-649-b/d: step_install_kiosk_session refuses to run without deploy/labwc/rc.xml
+# (fail loud, even in --dry-run), so the isolated copy carries deploy/labwc too,
+# and deploy/wayland-sessions with it (the other dir that step ships).
+# MOVED PIN (US-649-d): step renamed from step_install_compositor_unit.
 cp -r "$REPO_ROOT/deploy/labwc" "$TMP/deploy/labwc"
+cp -r "$REPO_ROOT/deploy/wayland-sessions" "$TMP/deploy/wayland-sessions"
 cat > "$TMP/deploy/deploy.conf" <<EOF
 PI_HOST=192.0.2.1
 PI_USER=nobody

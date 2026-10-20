@@ -13,6 +13,8 @@
 # Date          | Author         | Description
 # ================================================================================
 # 2026-09-24    | Rex (US-802-a) | Initial -- shipped-config and wrong-type pins.
+# 2026-10-19    | Rex (US-910)   | zuptWindowStops upper bound 999: 1000 rejected,
+#               |                | 999 and 20 accepted.
 # ================================================================================
 ################################################################################
 """Validator tests for the six pitch-fusion keys under pi.sensors.imu (US-802-a)."""
@@ -75,3 +77,47 @@ def test_validate_stringValue_rejectedNamingTheKey(key: str):
         ConfigValidator().validate(raw)
 
     assert f"pi.sensors.imu.{key}" in str(info.value)
+
+
+def test_validate_zuptWindowStopsAboveMax_rejectedNamingKeyAndMax():
+    """
+    Given: the shipped config.json with zuptWindowStops = 1000
+    When: it is validated
+    Then: ConfigValidationError names pi.sensors.imu.zuptWindowStops and 999
+    """
+    raw = _shippedConfig()
+    raw["pi"]["sensors"]["imu"]["zuptWindowStops"] = 1000
+
+    with pytest.raises(ConfigValidationError) as info:
+        ConfigValidator().validate(raw)
+
+    message = str(info.value)
+    assert "pi.sensors.imu.zuptWindowStops" in message
+    assert "999" in message
+    assert info.value.missingFields == ["pi.sensors.imu.zuptWindowStops"]
+
+
+@pytest.mark.parametrize("stops", [999, 20])
+def test_validate_zuptWindowStopsAtOrBelowMax_accepted(stops: int):
+    """
+    Given: the shipped config.json with zuptWindowStops = 999 (the bound) or 20 (shipped)
+    When: it is validated
+    Then: no error, and the value is kept as given
+    """
+    raw = _shippedConfig()
+    raw["pi"]["sensors"]["imu"]["zuptWindowStops"] = stops
+
+    result = ConfigValidator().validate(raw)
+
+    assert result["pi"]["sensors"]["imu"]["zuptWindowStops"] == stops
+
+
+def test_zuptWindowStopsMax_isTheMeasuredMotionWidth():
+    """
+    Given: the validator module
+    When: its bound constant is read
+    Then: it is 999 -- the stop count Motion's TILT FIX was measured against
+    """
+    from src.common.config import validator
+
+    assert validator.ZUPT_WINDOW_STOPS_MAX == 999

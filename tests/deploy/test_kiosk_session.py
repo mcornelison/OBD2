@@ -1,37 +1,41 @@
 ################################################################################
-# File Name: test_compositor_unit.py
-# Purpose/Description: US-649-b -- eclipse-compositor.service (labwc in the
-#                      display-manager slot) hosts the Wayland kiosk. Covers the
-#                      unit's directives, its ExecStartPost socket wait, the
-#                      isolated labwc config, the three chromium .wayland units
-#                      binding to it, and the deploy-pi.sh shipping + install
-#                      step (whitelist, tar list, fail-loud on a missing rc.xml,
-#                      never enabled by the deploy).
+# File Name: test_kiosk_session.py
+# Purpose/Description: US-649-d -- the Wayland kiosk is a lightdm session (design
+#                      A, CIO 2026-10-16). Covers the eclipse-kiosk.desktop
+#                      session file, the isolated labwc config it runs, the
+#                      three chromium .wayland units' ordering, and the
+#                      deploy-pi.sh shipping + install step (whitelist, tar list,
+#                      fail-loud on a missing rc.xml, the retired compositor unit
+#                      never named).
 # Author: Rex (Ralph Agent)
-# Creation Date: 2026-10-15
+# Creation Date: 2026-10-19
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
 #
 # Modification History:
 # ================================================================================
 # Date          | Author       | Description
 # ================================================================================
-# 2026-10-15    | Rex (US-649-b) | Initial implementation (Sprint 102 V0.30.1).
+# 2026-10-15    | Rex (US-649-b) | The labwc, .wayland-unit and deploy tests began
+#               |              | in tests/deploy/test_compositor_unit.py.
+# 2026-10-19    | Rex (US-649-d) | Replaces test_compositor_unit.py: the labwc,
+#               |              | .wayland-unit, sync and fail-loud tests MOVED here;
+#               |              | the step tests rewritten for
+#               |              | step_install_kiosk_session; the .desktop content
+#               |              | and dry-run session-path tests added. The
+#               |              | compositor unit-content and socket-wait tests
+#               |              | retired with deploy/eclipse-compositor.service.
 # ================================================================================
 ################################################################################
 
-"""Compositor unit + labwc config + deploy tests (US-649-b).
+"""Kiosk session file + labwc config + deploy tests (US-649-d).
 
-Desk-only: the unit is parsed as text, its socket wait runs under a fake
-``sleep`` against a temp runtime dir, and deploy-pi.sh runs in --dry-run.
-No ssh, no Pi, no root, no labwc.
+Desk-only: files are parsed as text and deploy-pi.sh runs in --dry-run from an
+isolated temp copy. No ssh, no Pi, no root, no labwc.
 """
 
 from __future__ import annotations
 
-import os
-import shlex
 import shutil
-import socket
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -41,14 +45,15 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEPLOY_DIR = REPO_ROOT / "deploy"
 DEPLOY_SCRIPT = DEPLOY_DIR / "deploy-pi.sh"
-COMPOSITOR_UNIT = DEPLOY_DIR / "eclipse-compositor.service"
 LABWC_DIR = DEPLOY_DIR / "labwc"
 RC_XML = LABWC_DIR / "rc.xml"
 AUTOSTART = LABWC_DIR / "autostart"
+SESSION_FILE = DEPLOY_DIR / "wayland-sessions" / "eclipse-kiosk.desktop"
 
-SOCKET_PATH = "/run/user/1000/wayland-0"
-RUNTIME_DIR = "/run/user/1000"
-STEP = "step_install_compositor_unit"
+# Where lightdm looks for Wayland sessions (design note 2026-10-16, part 1).
+SESSION_TARGET = "/usr/share/wayland-sessions/eclipse-kiosk.desktop"
+STEP = "step_install_kiosk_session"
+OLD_STEP = "step_install_compositor_unit"
 
 WAYLAND_UNITS = [
     REPO_ROOT / "src" / "pi" / "ui" / "dashboard" / "dashboard.service.wayland",
@@ -99,171 +104,34 @@ def _words(text: str, section: str, key: str) -> set[str]:
     return {w for v in _values(text, section, key) for w in v.split()}
 
 
-def _unitText() -> str:
-    return COMPOSITOR_UNIT.read_text(encoding="utf-8")
-
-
 # ----------------------------------------------------------------------------
-# deploy/eclipse-compositor.service
+# deploy/wayland-sessions/eclipse-kiosk.desktop
 # ----------------------------------------------------------------------------
 
 
-def test_compositorUnit_carriesTheProjectFileHeader():
-    """Like every sibling deploy/*.service, it opens with the header block."""
-    text = _unitText()
-    assert text.lstrip().startswith("#"), "no project file-header comment block"
-    assert "US-649-b" in text
-
-
-def test_compositorUnit_unitSection_ordersBehindPlymouthAndTheGpu():
+def test_sessionFile_hasExactlyTheFourDesignALines():
     """
-    Given: the unit file
-    When:  its [Unit] section is parsed
-    Then:  it orders after user sessions + both plymouth units, conflicts with
-           plymouth-quit (the lightdm hand-off), and wants + orders after both
-           DRM device nodes.
+    Given: the session file
+    When:  comments and blank lines are dropped
+    Then:  exactly the [Desktop Entry] header, Name, Exec and Type -- the Exec
+           runs labwc on the isolated kiosk config, with no systemd-cat wrapper.
     """
-    text = _unitText()
-    after = _words(text, "Unit", "After")
-    for unit in (
-        "systemd-user-sessions.service",
-        "plymouth-start.service",
-        "plymouth-quit.service",
-        "dev-dri-card0.device",
-        "dev-dri-renderD128.device",
-    ):
-        assert unit in after, f"After= is missing {unit}"
-    assert _words(text, "Unit", "Conflicts") == {"plymouth-quit.service"}
-    assert {"dev-dri-card0.device", "dev-dri-renderD128.device"} <= _words(text, "Unit", "Wants")
+    text = SESSION_FILE.read_text(encoding="utf-8")
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    assert lines == [
+        "[Desktop Entry]",
+        "Name=Eclipse kiosk",
+        "Exec=/usr/bin/labwc -C /etc/eclipse/labwc",
+        "Type=Application",
+    ]
+    assert "systemd-cat" not in text
 
 
-def test_compositorUnit_serviceSection_isALoginSessionOnTty7():
-    """Every [Service] line Atlas ruled, verbatim."""
-    text = _unitText()
-    expected = {
-        "User": "mcornelison",
-        "PAMName": "login",
-        "TTYPath": "/dev/tty7",
-        "TTYReset": "yes",
-        "TTYVHangup": "yes",
-        "StandardInput": "tty-fail",
-        "UtmpIdentifier": "tty7",
-        "ExecStart": "/usr/bin/labwc -C /etc/eclipse/labwc",
-        "Restart": "on-failure",
-    }
-    for key, value in expected.items():
-        assert _values(text, "Service", key) == [value], f"{key}= must be exactly {value!r}"
-    assert "XDG_SESSION_TYPE=wayland" in _values(text, "Service", "Environment")
-
-
-def test_compositorUnit_quitsPlymouthRetainingTheSplash():
-    """The Plymouth hand-off: quit (keeping the last frame), failure tolerated."""
-    text = _unitText()
-    assert _values(text, "Service", "ExecStartPre") == ["-/usr/bin/plymouth quit --retain-splash"]
-
-
-def test_compositorUnit_takesTheDisplayManagerSlot():
-    """[Install] Alias=display-manager.service -- graphical.target pulls it."""
-    text = _unitText()
-    assert _values(text, "Install", "Alias") == ["display-manager.service"]
-    assert not _values(text, "Install", "WantedBy"), (
-        "the display-manager alias is the pull-in; a WantedBy= would start it in x11 mode too"
-    )
-
-
-def test_compositorUnit_userAndUidAreLiteral_noPlaceholders():
-    """
-    deploy/*.service convention (Atlas G1): deploy-pi.sh substitutes nothing,
-    so the user and uid are literal and no __PI_ token may appear.
-    """
-    text = _unitText()
-    assert "__PI_" not in text
-    assert "User=mcornelison" in text
-    assert SOCKET_PATH in text
-
-
-# ----------------------------------------------------------------------------
-# ExecStartPost: the wayland-0 socket wait
-# ----------------------------------------------------------------------------
-
-FAKE_SLEEP = """#!/usr/bin/env bash
-echo "$1" >> "$FAKE_SLEEP_LOG"
-"""
-
-
-def _socketWaitArgv() -> list[str]:
-    """The ExecStartPost command as systemd would exec it ($$ -> $)."""
-    posts = _values(_unitText(), "Service", "ExecStartPost")
-    assert len(posts) == 1, f"expected exactly one ExecStartPost, got {posts}"
-    return shlex.split(posts[0].replace("$$", "$"))
-
-
-def _runSocketWait(tmp_path: Path, runtimeDir: Path) -> tuple[subprocess.CompletedProcess, list[str]]:
-    """Run the socket wait against ``runtimeDir`` with ``sleep`` recorded, not slept."""
-    argv = _socketWaitArgv()
-    assert argv[:2] == ["/bin/sh", "-c"], f"ExecStartPost must be /bin/sh -c '...', got {argv[:2]}"
-    script = argv[2]
-    assert RUNTIME_DIR in script, "the wait must poll the literal /run/user/1000 runtime dir"
-    script = script.replace(RUNTIME_DIR, _posix(runtimeDir))
-    binDir = tmp_path / "bin"
-    binDir.mkdir()
-    (binDir / "sleep").write_text(FAKE_SLEEP, encoding="utf-8", newline="\n")
-    log = tmp_path / "sleep.log"
-    env = dict(os.environ)
-    env["PATH"] = _posix(binDir) + os.pathsep + env.get("PATH", "")
-    env["FAKE_SLEEP_LOG"] = _posix(log)
-    result = subprocess.run(
-        ["sh", "-c", script], capture_output=True, text=True, encoding="utf-8", timeout=60, env=env
-    )
-    sleeps = log.read_text(encoding="utf-8").split() if log.exists() else []
-    return result, sleeps
-
-
-@needsBash
-def test_socketWait_noSocket_failsLoudAfterAFiveSecondBudget(tmp_path: Path):
-    """
-    Given: a runtime dir with no wayland-0
-    When:  the ExecStartPost wait runs (sleep mocked)
-    Then:  it exits non-zero, names the socket, and its sleeps total 5 s.
-    """
-    runtimeDir = tmp_path / "run"
-    runtimeDir.mkdir()
-
-    result, sleeps = _runSocketWait(tmp_path, runtimeDir)
-
-    assert result.returncode != 0
-    assert "wayland-0" in result.stderr
-    assert sleeps, "the wait never slept -- it is not polling"
-    assert abs(sum(float(s) for s in sleeps) - 5.0) < 1e-6, f"budget is {sum(map(float, sleeps))} s, not 5 s"
-
-
-@needsBash
-def test_socketWait_aRegularFileIsNotTheSocket(tmp_path: Path):
-    """A plain file named wayland-0 is not a compositor socket (-S, not -e)."""
-    runtimeDir = tmp_path / "run"
-    runtimeDir.mkdir()
-    (runtimeDir / "wayland-0").write_text("", encoding="utf-8")
-
-    result, _ = _runSocketWait(tmp_path, runtimeDir)
-
-    assert result.returncode != 0
-
-
-@needsBash
-@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="no AF_UNIX sockets on this platform")
-def test_socketWait_socketPresent_succeedsWithoutSleeping(tmp_path: Path):
-    """The socket already there -> exit 0 at once."""
-    runtimeDir = tmp_path / "run"
-    runtimeDir.mkdir()
-    sock = socket.socket(socket.AF_UNIX)  # type: ignore[attr-defined]
-    try:
-        sock.bind(str(runtimeDir / "wayland-0"))
-        result, sleeps = _runSocketWait(tmp_path, runtimeDir)
-    finally:
-        sock.close()
-
-    assert result.returncode == 0, result.stderr
-    assert sleeps == []
+def test_sessionFile_commentsCiteDesignA():
+    """Any leading comment names its source: CIO 2026-10-16 design A."""
+    comments = [ln for ln in SESSION_FILE.read_text(encoding="utf-8").splitlines() if ln.startswith("#")]
+    assert comments, "the session file should cite its design ruling"
+    assert any("2026-10-16" in ln for ln in comments)
 
 
 # ----------------------------------------------------------------------------
@@ -344,15 +212,8 @@ def test_autostart_isEmpty():
 
 
 # ----------------------------------------------------------------------------
-# The three chromium .wayland units bind to the compositor
+# The three chromium .wayland units: not queued behind graphical.target
 # ----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("unit", WAYLAND_UNITS, ids=lambda p: p.name)
-def test_waylandUnit_bindsToAndOrdersAfterTheCompositor(unit: Path):
-    text = unit.read_text(encoding="utf-8")
-    assert "eclipse-compositor.service" in _words(text, "Unit", "BindsTo")
-    assert "eclipse-compositor.service" in _words(text, "Unit", "After")
 
 
 @pytest.mark.parametrize("unit", WAYLAND_UNITS, ids=lambda p: p.name)
@@ -370,7 +231,7 @@ def test_splashBootWayland_keepsGraphicalTargetOnlyAsItsPullIn():
 
 
 # ----------------------------------------------------------------------------
-# deploy-pi.sh: ship deploy/labwc, install it + the unit, never enable
+# deploy-pi.sh: ship deploy/labwc + deploy/wayland-sessions, install both
 # ----------------------------------------------------------------------------
 
 
@@ -390,30 +251,62 @@ def _stepBody(name: str) -> str:
     return text[start : text.index("\n}\n", start)]
 
 
-def test_rsyncWhitelist_shipsTheLabwcDirAndItsContents():
+def _code(body: str) -> str:
+    """The step body without its comment lines -- prose is not behaviour."""
+    return "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+
+
+@pytest.mark.parametrize("subdir", ["labwc", "wayland-sessions"])
+def test_rsyncWhitelist_shipsTheDirAndItsContents(subdir: str):
     block = _rsyncBlock()
     finalExclude = block.index("--exclude=* ")
-    for rule in ("--include=deploy/labwc/ ", "--include=deploy/labwc/*** "):
+    for rule in (f"--include=deploy/{subdir}/ ", f"--include=deploy/{subdir}/*** "):
         assert rule in block, f"rsync whitelist lacks {rule.strip()}"
         assert block.index(rule) < finalExclude, f"{rule.strip()} must precede --exclude=*"
 
 
-def test_tarFallback_namesTheLabwcDirBeforeDeploy():
+def test_tarFallback_namesLabwcAndWaylandSessionsBeforeDeploy():
     text = _deployText()
-    assert "./deploy/labwc ./deploy )" in text
+    assert "./deploy/labwc ./deploy/wayland-sessions ./deploy )" in text
 
 
-def test_compositorStep_neverEnablesTheCompositor():
-    """Only eclipse-display-mode enables it; the deploy leaves the car on x11."""
+def test_deployScript_neverNamesTheRetiredCompositor():
+    """The car's existing unit is left for US-649-e's mode switch to retire."""
+    text = _deployText()
+    assert "eclipse-compositor" not in text
+    assert f"{OLD_STEP}" not in text
+
+
+def test_kioskSessionStep_installsTheSessionFileSyncIfChanged():
+    """cmp -s, then install -m 644 -- the step_install_journald_persistent pattern."""
     body = _stepBody(STEP)
-    assert "systemctl enable" not in body
-    assert "systemctl start" not in body and "systemctl restart" not in body
+    assert SESSION_TARGET in body
+    assert "deploy/wayland-sessions/eclipse-kiosk.desktop" in body
+    assert "cmp -s" in body
+    assert "install -m 644" in body
     assert "/etc/eclipse/labwc" in body
-    assert "eclipse-compositor.service" in body
 
 
-def test_compositorStep_isWiredBeforeTheKioskUnits():
-    """The .wayland units BindsTo= it and eclipse-display-mode pre-flights it."""
+def test_kioskSessionStep_startsEnablesAndRemovesNothing():
+    """No systemctl call on the car from this step (scope fence)."""
+    body = _code(_stepBody(STEP))
+    assert "systemctl" not in body
+    assert "eclipse-compositor" not in body
+    assert "sudo rm" not in body
+
+
+def test_kioskSessionStep_hasNoWorkstationCheckForTheSessionFile():
+    """
+    Only rc.xml fails loud on the workstation; the .desktop is checked on the Pi
+    after the sync, so isolated --dry-run trees without it keep working.
+    """
+    body = _code(_stepBody(STEP))
+    local = body[: body.index("if $DRY_RUN")]
+    checks = [ln.strip() for ln in local.splitlines() if "[ ! -f" in ln or "[ -f" in ln]
+    assert checks == ['if [ ! -f "$rcXml" ]; then'], checks
+
+
+def test_kioskSessionStep_isWiredBeforeTheKioskUnits():
     text = _deployText()
     call = f"\n{STEP}\n"
     assert call in text, f"{STEP} is defined but never called"
@@ -448,27 +341,33 @@ def test_deployDryRun_missingRcXml_failsLoudNamingThePath(tmp_path: Path):
     """
     Given: a tree with no deploy/labwc/rc.xml
     When:  deploy-pi.sh --dry-run runs
-    Then:  non-zero exit; an ERROR names the missing path; no later step ran.
+    Then:  exit 12; an ERROR names the missing path; no later step ran.
     """
     result = _isolatedDeploy(tmp_path, withLabwc=False)
     out = result.stdout
-    assert result.returncode != 0, out
+    assert result.returncode == 12, out[-2000:]
     # bash prints the path in its own form (/tmp/... under msys), so match the
     # line by its prefix and its tail inside THIS test's tmp dir.
     errors = [ln for ln in out.splitlines() if ln.startswith("ERROR: labwc config not found: ")]
     assert errors, out[-2000:]
     assert f"{tmp_path.name}/deploy/labwc/rc.xml" in errors[0]
-    assert "chromium kiosk units" not in out, "the deploy carried on past the compositor step"
+    assert "chromium kiosk units" not in out, "the deploy carried on past the kiosk-session step"
 
 
 @needsBash
-def test_deployDryRun_withRcXml_installsUnitAndConfig_enablesNothing(tmp_path: Path):
+def test_deployDryRun_namesTheSessionPath_andNeverTheCompositor(tmp_path: Path):
+    """
+    Given: an isolated tree carrying deploy/labwc but NOT deploy/wayland-sessions
+    When:  deploy-pi.sh --dry-run runs
+    Then:  exit 0; the step's section names the labwc config dir and the session
+           install path; no line anywhere names eclipse-compositor.
+    """
     result = _isolatedDeploy(tmp_path, withLabwc=True)
     out = result.stdout
     assert result.returncode == 0, out[-2000:]
-    start = out.index("--- Step: Installing eclipse-compositor")
+    start = out.index("--- Step: Installing the eclipse-kiosk Wayland session")
     section = out[start : out.index("--- Step:", start + 1)]
     assert "/etc/eclipse/labwc" in section
-    assert "/etc/systemd/system/eclipse-compositor.service" in section
-    assert "eclipse-display-mode wayland" in section, "the dry-run must say who enables it"
-    assert "systemctl enable" not in section
+    assert any(SESSION_TARGET in ln and ln.startswith("DRY-RUN") for ln in section.splitlines())
+    assert "systemctl" not in section
+    assert "eclipse-compositor" not in out
