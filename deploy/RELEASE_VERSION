@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.8",
-  "theme": "V0.30 Motion, Light and NAV pages + fuel reset",
-  "description": "Pi-only (server unchanged since V0.30.6). Sprint 105 (#113): NAV page (bearing tape, grade, trip), Motion page (pitch, grade trend, g + peaks, IMU health), Light page + light provider band/curve/applied level, fuel since-reset long-press reset. US-872 (#110): lgpio stack loads on first use. Test fix (#111). Specs #114, ADR #112."
+  "version": "V0.30.9",
+  "theme": "V0.30 kiosk session + warnings provider",
+  "description": "Pi-only (server unchanged since V0.30.6). Sprint 106 (#118): lightdm Wayland kiosk session shipped (design A; X11 stays the default), logind power-key drop-in, StartLimit keys moved to [Unit], Fuel 'ECU relearning', '1 code', chores. Sprint 107 (#119): warnings provider -- rated DTC titles, code read times, alerts arbiter + states/alerts (coolant STOP, battery, over-rev, codes). Specs #115-#117."
 }
