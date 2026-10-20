@@ -51,7 +51,7 @@
 | Ambient | `--fs-primary` | below 10 lux one decimal (`0.6`); 10 and above `Math.round` with the fixed `,` separator. The format is chosen from the raw value, so 9.96 shows `10.0`. Worst `30,000 lux` = 171.0 px of the 248 px tile |
 | Curve | **200** × 104 SVG (`NIGHT` in Michroma at 44 px is 197 px, so word + glyph + gap need ~241 px; measured 2026-10-14) | log-lux x axis, brightness y. **One scale for line, dot and labels.** Labels per §4.2 |
 | Raw cells | `--fs-label` values, `--fs-meta` labels | parked-read; 108 px each. `at limit` 96.3 px, `65,535` 72.2 px |
-| Status | `--fs-label` | per §4.3; amber only for the F-126 override |
+| Status | `--fs-label` | per §4.3; never amber, including the F-126 fixed level (S110 US-878-c) |
 | Shortcut | ≥ 32 px tall hit target, outlined | **parked only** (R5); ships with F-126 |
 
 ## 4. Behaviour
@@ -85,7 +85,7 @@
   - STOP alert: 1.0.
   - The page never snaps the dot onto the polyline and never recomputes the level.
 - ⚠️ **Fact the CIO should know before the in-car check:** as shipped (`luxMin` 3, `luxFull` 300, `minLevel` 0.75) the line is FLAT at 75 % up to the knee at ≈ 94.9 lux, so **NIGHT and DUSK both dim to 75 %**. The graph shows that honestly; whether it is the wanted behaviour is an auto-dim tuning question, not a page defect.
-- **Override** (once F-126 is built): a dashed amber horizontal line at the forced level, and the dot moves onto it.
+- **Fixed level** (F-126, S110 US-878-c): no extra line and no amber. The dot is drawn at `appliedBrightness().level` as always (Atlas L3/X1). Under a fixed level that is the Settings value, so the dot sits off the curve, and the status line says why (§4.3). Corrected 2026-10-20 (Atlas PR #115 review F1): the old "dashed amber line" painted a setting the driver chose in the colour reserved for counted problems.
 
 ### 4.3 Status
 - **One applier** (Atlas A7): `appliedBrightness(lightData, injectedAutoDim, nowMs, alarmActive) -> {level, basis}`. In order: alarm ⇒ `{1.0, alert}`; FRESH (an object, not `sourceUnavailable`, `ts` parseable with age ≤ `luxStaleSec`, `brightnessLevel` finite in [0, 1]) ⇒ `{brightnessLevel, brightnessMode}`; otherwise ⇒ `{injected defaultLevel, fallback}`. An out-of-range level is fallback, never clamped. The panel, the status line and the dot all read this one return.
@@ -93,7 +93,7 @@
   - `auto`: `BRIGHTNESS AUTO nn %`.
   - `default` or `fallback`: `BRIGHTNESS nn % (default, no reading)` (worst 405.6 px). **Never `AUTO`.**
   - `alert`: `BRIGHTNESS 100 % (alert)`. Without it, the page could read `AUTO 80 %` while the panel sits at 100 %.
-  - F-126 override (once built): `BRIGHTNESS FIXED nn % (override)` in `--amber-warn`.
+  - F-126 fixed level: `BRIGHTNESS 80 % (fixed in Settings)` in `--text-secondary`, never amber (S110 US-878-c; Iris I12 2026-10-19). A setting is not a warning.
 - Percent is `Math.round(level × 100)`.
 - **Shortcut:** parked only; opens the F-126 overlay **at the brightness row**. ⏸ **Ships with F-126, not before** (Atlas 2026-10-14 s3): until then the status row is full width, with no override line and no shortcut. The CIO decisions L-2/L-7 stand; only the build order changes.
 
@@ -118,7 +118,8 @@
 | channel at limit | `states/light.channelAtLimit` (bool or null, the OR of the two) **+ `atLimit {ir, full}`** (bool or null each) | **built** (US-893-a) | — |
 | lux reason | `states/light.reasons.lux` = `at_limit` / `no_reading`, present only when `lux` is null | **built** (US-893-a) | — |
 | word | `states/light.lightBand` | **built** (US-893-a) | — |
-| brightness level + mode | `states/light.brightnessLevel` + `brightnessMode` (`auto` / `default`; `fixed` with F-126). The bridge is the ONE level source; `appliedBrightness` is the one applier | **built** (US-893-a) | — |
+| brightness level + mode | `states/light.brightnessLevel` + `brightnessMode` (`auto` / `default`). The bridge publishes the auto level; `appliedBrightness` is the one applier | **built** (US-893-a) | — |
+| fixed level | `fixed` is an **applied basis only** (`appliedBrightness` → `{overrideLevel, 'fixed'}`, after STOP, before the bridge level). The value comes **only** from the per-request settings blob: **states/light gains no key, and the bridge is untouched** (Atlas B4, S110 US-878-c). Do not add a `fixed` mode to the bridge | S110 | Ralph |
 | Curve data | `states/light.curve {points, luxMin, luxFull, minLevel}` | **built** (US-893-a) | — |
 | Override setting | **F-126** settings (new key) | **new** (F-126 now IN) | **Atlas: key + write path; Iris: F-126 band design** |
 | Deep link to the brightness row | F-126 overlay | **new** | Atlas / Ralph |
@@ -128,7 +129,7 @@
 2. No clipping; word = `--fs-hero`; ambient ≥ 34 px.
 3. Word boundaries come from config: a fixture with changed `luxMin`/`luxFull` moves the boundary with **no page code change**.
 4. Word and glyph never take a severity colour.
-5. Override fixture: amber status + dashed line + dot on the line; auto fixture: neither. *(With F-126.)*
+5. Fixed-level fixture: status `BRIGHTNESS 80 % (fixed in Settings)` in `--text-secondary`, dot at 0.80 off the curve, no extra line, no amber anywhere on the page; auto fixture: auto status, dot on the curve. *(With F-126, S110.)*
 6. Shortcut absent while moving, present when parked, and opens F-126 at the brightness row. *(With F-126.)*
 7. A channel at the limit shows `at limit` on its own cell and on VISIBLE, never the clipped count.
 8. Curve line, dot and labels share one scale. **Grep gate (corrected 2026-10-19; my earlier "no `Math.log` on lux" was impossible on a log axis):** `Math.log` / `Math.log10` appear in `carousel.js` **only inside `luxAxisX`**; no `luxMin` / `luxFull` / `minLevel` numeric literal; no level or band computed from lux. The dot is at (`luxAxisX(lux)`, `appliedBrightness().level`); it is on the line for a fresh auto fixture and off it for `dot-off-curve`.

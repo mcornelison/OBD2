@@ -111,7 +111,7 @@ How the car is moving right now, **and** whether the motion sensor can be truste
 | **Peaks this drive** | `states/imu.peaks{accelG, brakeG, leftG, rightG, sinceTs}`, reset on drive start | **built** (US-892-a) | — |
 | **15-min grade history** | `states/grade-history` (10 s points, `intervalS` / `windowS` as published; null = gap) | **exists** (US-882-b). The page reads the provider names; `intervalSec` / `windowSec` are only the config keys (Atlas B4) | — |
 | Stale key | `pi.display.stale.imuSec`, default **3.0 s** (Atlas 2026-10-15, S105 Q3) | **exists** (US-882-c, US-896-a) | — |
-| `stopCount` bound | `pi.sensors.imu.zuptWindowStops`, 20 as shipped | exists; a validator upper bound (≤ 999) is banked for S106 (Atlas C3) | Ralph |
+| `stopCount` bound | `pi.sensors.imu.zuptWindowStops`, 20 as shipped | exists; validator upper bound ≤ 999 **shipped in S106 US-910 (V0.30.9)** (Atlas C3) | — |
 
 ## 6. Acceptance criteria
 1. Fixtures render per §4 at 480×320 (screenshot).
