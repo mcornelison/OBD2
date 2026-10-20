@@ -1,0 +1,588 @@
+################################################################################
+# File Name: alerts_arbiter.py
+# Purpose/Description: US-897-b2 (F-127) states/alerts -- the one provider of
+#                      the warnings page: what was assessed (sources), the icon,
+#                      the ordered entries and the non-dismissable PULL OVER
+#                      takeover. Fed the obd-live payload the card tick just
+#                      published; this sprint's only entry is the live coolant
+#                      STOP. Each STOP episode edge is INSERTed into alert_log.
+# Author: Ralph Agent (Rex)
+# Creation Date: 2026-10-20
+# Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
+#
+# Modification History:
+# ================================================================================
+# Date          | Author       | Description
+# ================================================================================
+# 2026-10-20    | Rex (US-897-b2) | Initial -- arbiter, pure builder, emitter,
+#                                coolant STOP episode, alert_log record, seed.
+# ================================================================================
+################################################################################
+
+"""Publish ``states/alerts`` (US-897-b2, Atlas 2026-10-14 s2).
+
+The F-092 card-emitter house shape, plus one stateful piece:
+
+* :class:`AlertsArbiter` holds the episodes in memory for this boot. Each card
+  tick it is shown the obd-live payload the tick just published and moves the
+  episodes on; a STOP episode's open and clear are each INSERTed into the
+  existing, already-synced ``alert_log`` (Atlas Q15 option C).
+* :func:`buildAlertsState` is pure over (episodes, obd-live payload, now): it
+  computes everything the page shows -- the icon, the order, the takeover. The
+  page compares nothing (rule 0).
+* :func:`makeAlertsEmitter` writes ``<statesDir>/alerts`` atomically and never
+  raises.
+
+Three rules are load-bearing:
+
+* **Stale never clears** (Spool). Only a FRESH reading whose band has left red
+  ends a STOP; while the reading is stale or absent the entry stays active with
+  ``value: null`` and ``last`` carrying the last red reading (Atlas Q10).
+* **A cleared STOP stays listed** ``active: false`` for the rest of the boot; it
+  never drops by time (Atlas Q15). A restart inside the boot re-reads it from the
+  tmpfs ``states/alerts`` (Atlas G3).
+* **ids are deterministic**: ``<source>:<key>:<tier>``, never a counter, so an
+  escalation is a new id.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, replace
+from datetime import datetime
+from typing import Any
+
+from pi.obdii.band_producer import BAND_RED, PID_COOLANT
+
+__all__ = [
+    "ALERTS_STATE_FILENAME",
+    "ALERT_TYPE_COOLANT_STOP",
+    "ALERT_TYPE_COOLANT_STOP_CLEAR",
+    "AlertEpisode",
+    "AlertsArbiter",
+    "buildAlertsState",
+    "makeAlertsEmitter",
+    "readAlertsSeed",
+]
+
+logger = logging.getLogger("pi.obdii.alerts_arbiter")
+
+# The state name a page fetches: GET /alerts.
+ALERTS_STATE_FILENAME = "alerts"
+
+# alert_log.alert_type for a coolant STOP episode's two edges (Atlas Q15 design
+# 5): new strings in the existing column; the legacy AlertManager's are untouched.
+ALERT_TYPE_COOLANT_STOP = "coolant_stop"
+ALERT_TYPE_COOLANT_STOP_CLEAR = "coolant_stop_clear"
+
+SOURCE_ENGINE = "engine"
+SOURCE_CODE = "code"
+
+TIER_STOP = "stop"
+TIER_WATCH = "watch"
+TIER_MINOR = "minor"
+TIER_UNRATED = "unrated"
+
+ICON_STOP = "stop"
+ICON_WATCH = "watch"
+ICON_NOT_CHECKED = "not_checked"
+ICON_NONE = "none"
+
+# B5 order: tier first, then live (engine) before stored (code).
+_TIER_RANK = {TIER_STOP: 0, TIER_WATCH: 1, TIER_MINOR: 2, TIER_UNRATED: 3}
+_SOURCE_RANK = {SOURCE_ENGINE: 0, SOURCE_CODE: 1}
+
+# R28: the server rejects rows from these sources, so the Pi never writes them.
+_NO_RECORD_SOURCES = frozenset({"replay", "physics_sim"})
+
+# The coolant STOP's words, Spool 2026-10-14 WARNINGS rulings s3 (verbatim).
+COOLANT_STOP_DIRECTIVE = "PULL OVER"
+COOLANT_STOP_TITLE = "ENGINE OVERHEATING"
+COOLANT_STOP_SENTENCE = "Stop safely, engine off. Do not open the radiator cap hot."
+COOLANT_UNIT = "C"
+
+_REDTIER_KEY = "pi.warnings.engine.COOLANT_TEMP.redTier"
+_RED_C_KEY = "pi.bands.coolant.redC"
+_RED_CLEAR_BELOW_C_KEY = "pi.bands.coolant.redClearBelowC"
+
+# Matches the other card emitters' `ts` format (second resolution, UTC).
+_ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _configValue(config: Mapping[str, Any], key: str) -> Any:
+    """``key`` (dot notation) from config, else the validator default."""
+    from common.config.validator import DEFAULTS
+
+    node: Any = config
+    for part in key.split("."):
+        if not isinstance(node, Mapping) or node.get(part) is None:
+            return DEFAULTS[key]
+        node = node[part]
+    return node
+
+
+def _entryId(source: str, key: str, tier: str) -> str:
+    return f"{source}:{key}:{tier}"
+
+
+@dataclass(frozen=True)
+class AlertEpisode:
+    """One condition's episode, as the arbiter holds it for this boot.
+
+    Attributes:
+        source: ``engine`` (live) or ``code`` (stored).
+        key: The PID or code.
+        tier: ``stop`` / ``watch`` / ``minor`` / ``unrated``.
+        title: Spool's title, verbatim.
+        sentence: Spool's sentence, verbatim.
+        directive: The instruction a takeover shows (a STOP's), else None.
+        unit: The reading's own unit, or None.
+        firstSeenTs: Event time of the episode's first observation (ISO UTC).
+        lastSeenTs: Event time of its last observation (ISO UTC).
+        active: False once the condition cleared; it stays listed.
+        stale: True while the active condition has no fresh reading.
+        value: The CURRENT reading, None while stale or cleared.
+        last: ``{value, band, ts}`` of the last red reading while ``value`` is
+            None, else None.
+        acknowledged: Always False until the ack store (S108).
+        peak: Highest reading of the episode (the clear row's value).
+        recorded: True once THIS process wrote the episode's open row.
+    """
+
+    source: str
+    key: str
+    tier: str
+    title: str
+    sentence: str
+    directive: str | None
+    unit: str | None
+    firstSeenTs: str | None
+    lastSeenTs: str | None
+    active: bool
+    stale: bool = False
+    value: Any = None
+    last: dict[str, Any] | None = None
+    acknowledged: bool = False
+    peak: float | None = None
+    recorded: bool = False
+
+    @property
+    def id(self) -> str:
+        return _entryId(self.source, self.key, self.tier)
+
+
+def _isNumber(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _coolantParam(obdLive: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The obd-live COOLANT_TEMP entry, or None when absent."""
+    if not isinstance(obdLive, Mapping):
+        return None
+    params = obdLive.get("params")
+    if not isinstance(params, Mapping):
+        return None
+    param = params.get(PID_COOLANT)
+    return param if isinstance(param, Mapping) else None
+
+
+def _freshCoolant(obdLive: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The COOLANT_TEMP entry when it is a FRESH reading, else None (Q14)."""
+    param = _coolantParam(obdLive)
+    if param is None or param.get("stale") is not False or not _isNumber(param.get("value")):
+        return None
+    return param
+
+
+def _bandName(param: Mapping[str, Any]) -> str | None:
+    band = param.get("band")
+    if isinstance(band, Mapping) and isinstance(band.get("band"), str):
+        return str(band["band"])
+    return None
+
+
+class AlertsArbiter:
+    """The episodes of this boot; moved on once per card tick.
+
+    In memory and boot-bounded: a service restart inside a boot forgets them
+    unless they are seeded from the tmpfs ``states/alerts`` (Atlas G3); the
+    alert_log rows survive regardless.
+    """
+
+    def __init__(
+        self,
+        config: Mapping[str, Any],
+        *,
+        driveIdProvider: Callable[[], int | None] | None = None,
+        seedEntries: Iterable[Mapping[str, Any]] = (),
+    ) -> None:
+        """
+        Args:
+            config: The FULL resolved config (``pi.bands.*``, ``pi.warnings.*``).
+            driveIdProvider: Returns the current drive id for an alert_log row;
+                defaults to ``pi.obdii.drive_id.getCurrentDriveId``.
+            seedEntries: Entries of this boot's prior ``states/alerts``
+                (:func:`readAlertsSeed`); unknown ids are ignored.
+        """
+        self._config = config
+        self._coolantTier = str(_configValue(config, _REDTIER_KEY))
+        self._redC = float(_configValue(config, _RED_C_KEY))
+        self._redClearBelowC = float(_configValue(config, _RED_CLEAR_BELOW_C_KEY))
+        if driveIdProvider is None:
+            from pi.obdii.drive_id import getCurrentDriveId
+
+            driveIdProvider = getCurrentDriveId
+        self._driveIdProvider = driveIdProvider
+        self._noDatabaseWarned = False
+        self._coolant: AlertEpisode | None = None
+        # {value, band, ts} of the coolant episode's last red reading.
+        self._coolantLastReading: dict[str, Any] | None = None
+        for entry in seedEntries:
+            self._seed(entry)
+
+    # ------------------------------------------------------------- reading
+
+    def episodes(self) -> list[AlertEpisode]:
+        """Every episode of this boot, active or cleared (unordered)."""
+        return [] if self._coolant is None else [self._coolant]
+
+    # ------------------------------------------------------------- the tick
+
+    def observe(
+        self,
+        obdLive: Mapping[str, Any] | None,
+        *,
+        dataSource: str | None,
+        database: Any,
+    ) -> None:
+        """Move the episodes on from the obd-live payload the tick published.
+
+        Args:
+            obdLive: The states/obd-live payload just written, or None when
+                nothing was published (no tracker, or the write failed).
+            dataSource: The data_source tag of the readings; replay and
+                physics_sim write no alert_log row.
+            database: An ``ObdDatabase``-like object (``connect()``), or None.
+        """
+        self._observeCoolant(obdLive, dataSource=dataSource, database=database)
+
+    def _observeCoolant(
+        self, obdLive: Mapping[str, Any] | None, *, dataSource: str | None, database: Any
+    ) -> None:
+        episode = self._coolant
+        param = _freshCoolant(obdLive)
+        band = None if param is None else _bandName(param)
+        if param is None or band is None:
+            # Undecided (absent / stale / not read / unbanded): stale never clears.
+            if episode is not None and episode.active and not episode.stale:
+                self._coolant = replace(episode, stale=True, value=None, last=self._lastOf(episode))
+            return
+        value = param["value"]
+        ts = param.get("ts")
+        if band == BAND_RED:
+            reading = {"value": value, "band": dict(param["band"]), "ts": ts}
+            if episode is None or not episode.active:
+                episode = self._newCoolantEpisode(ts)
+            episode = replace(
+                episode,
+                lastSeenTs=ts,
+                stale=False,
+                value=value,
+                last=None,
+                peak=value if episode.peak is None else max(episode.peak, value),
+            )
+            self._coolantLastReading = reading
+            if not episode.recorded:
+                self._record(
+                    ALERT_TYPE_COOLANT_STOP, value, self._redC, ts,
+                    dataSource=dataSource, database=database,
+                )
+                episode = replace(episode, recorded=True)
+            self._coolant = episode
+            return
+        if episode is not None and episode.active:
+            # The band left red (red's own clear is the band producer's).
+            self._coolant = replace(
+                episode, active=False, stale=False, value=None, last=self._lastOf(episode)
+            )
+            if episode.peak is not None:
+                self._record(
+                    ALERT_TYPE_COOLANT_STOP_CLEAR, episode.peak, self._redClearBelowC, ts,
+                    dataSource=dataSource, database=database,
+                )
+
+    def _lastOf(self, episode: AlertEpisode) -> dict[str, Any] | None:
+        """``{value, band, ts}`` of the episode's last red reading."""
+        if self._coolantLastReading is not None:
+            return dict(self._coolantLastReading)
+        return episode.last
+
+    def _newCoolantEpisode(self, firstSeenTs: Any) -> AlertEpisode:
+        self._coolantLastReading = None
+        return AlertEpisode(
+            source=SOURCE_ENGINE,
+            key=PID_COOLANT,
+            tier=self._coolantTier,
+            title=COOLANT_STOP_TITLE,
+            sentence=COOLANT_STOP_SENTENCE,
+            directive=COOLANT_STOP_DIRECTIVE,
+            unit=COOLANT_UNIT,
+            firstSeenTs=firstSeenTs,
+            lastSeenTs=firstSeenTs,
+            active=True,
+        )
+
+    # ------------------------------------------------------------ the seed
+
+    def _seed(self, entry: Mapping[str, Any]) -> None:
+        """Take one prior-state entry back (Atlas G3); unknown ids are ignored.
+
+        A seeded ACTIVE entry is stale until a fresh reading decides it, and
+        has no open row from THIS process: if it is still red, a second
+        'coolant_stop' row is written (the stated, honest cost).
+        """
+        if not isinstance(entry, Mapping):
+            return
+        if entry.get("id") != _entryId(SOURCE_ENGINE, PID_COOLANT, self._coolantTier):
+            return
+        active = entry.get("active") is True
+        last = entry.get("last") if isinstance(entry.get("last"), Mapping) else None
+        lastValue = entry.get("value")
+        if not _isNumber(lastValue) and last is not None:
+            lastValue = last.get("value")
+        if last is None and _isNumber(lastValue):
+            last = {"value": lastValue, "band": None, "ts": entry.get("lastSeenTs")}
+        episode = replace(
+            self._newCoolantEpisode(entry.get("firstSeenTs")),
+            lastSeenTs=entry.get("lastSeenTs"),
+            active=active,
+            stale=active,
+            value=None,
+            last=None if last is None else dict(last),
+            peak=float(lastValue) if isinstance(lastValue, (int, float)) and _isNumber(lastValue) else None,
+        )
+        self._coolantLastReading = None if last is None else dict(last)
+        self._coolant = episode
+
+    # ---------------------------------------------------------- the record
+
+    def _record(
+        self,
+        alertType: str,
+        value: float,
+        threshold: float,
+        ts: Any,
+        *,
+        dataSource: str | None,
+        database: Any,
+    ) -> None:
+        """INSERT one alert_log row; never UPDATE, never raise (Atlas Q15).
+
+        The page fact comes first and the record second: a failure logs ERROR
+        and the live STOP is published regardless.
+        """
+        if dataSource in _NO_RECORD_SOURCES:
+            return
+        if database is None:
+            if not self._noDatabaseWarned:
+                logger.warning("alert_log: no database -- %s row not written", alertType)
+                self._noDatabaseWarned = True
+            return
+        try:
+            from common.time.helper import utcIsoNow
+
+            # The reading's event time; the write time only when it carries none.
+            timestamp = ts if isinstance(ts, str) and ts else utcIsoNow()
+            driveId = self._driveIdProvider()
+            with database.connect() as conn:
+                conn.execute(
+                    "INSERT INTO alert_log "
+                    "(timestamp, alert_type, parameter_name, value, threshold, drive_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (timestamp, alertType, PID_COOLANT, float(value), float(threshold), driveId),
+                )
+        except Exception as e:  # noqa: BLE001 -- never block the live STOP
+            logger.error("alert_log INSERT of %s failed (%s) -- STOP still published", alertType, e)
+
+
+def _sortKey(episode: AlertEpisode) -> tuple[int, int, float, str]:
+    """B5: tier, then live before stored, then NEWEST firstSeenTs, then id."""
+    newest = float("inf")
+    if isinstance(episode.firstSeenTs, str):
+        try:
+            newest = -datetime.fromisoformat(episode.firstSeenTs.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return (
+        _TIER_RANK.get(episode.tier, len(_TIER_RANK)),
+        _SOURCE_RANK.get(episode.source, len(_SOURCE_RANK)),
+        newest,
+        episode.id,
+    )
+
+
+def _entryOf(episode: AlertEpisode) -> dict[str, Any]:
+    return {
+        "id": episode.id,
+        "source": episode.source,
+        "key": episode.key,
+        "tier": episode.tier,
+        "title": episode.title,
+        "sentence": episode.sentence,
+        "directive": episode.directive,
+        "value": episode.value,
+        "unit": episode.unit,
+        "last": None if episode.last is None else dict(episode.last),
+        "stale": episode.stale,
+        "firstSeenTs": episode.firstSeenTs,
+        "lastSeenTs": episode.lastSeenTs,
+        "active": episode.active,
+        "acknowledged": episode.acknowledged,
+    }
+
+
+def _takeoverOf(entry: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": entry["id"],
+        "title": entry["title"],
+        "sentence": entry["sentence"],
+        "directive": entry["directive"],
+        "value": entry["value"],
+        "unit": entry["unit"],
+        "last": entry["last"],
+        "stale": entry["stale"],
+        "firstSeenTs": entry["firstSeenTs"],
+        "dismissable": False,
+    }
+
+
+def _icon(active: list[AlertEpisode], codeAssessed: bool) -> dict[str, Any]:
+    """B6/G7: an active stop/watch outranks not_checked; minor/unrated are watch."""
+    tiers = {e.tier for e in active}
+    if TIER_STOP in tiers:
+        state = ICON_STOP
+    elif tiers & {TIER_WATCH, TIER_MINOR, TIER_UNRATED}:
+        state = ICON_WATCH
+    elif not codeAssessed:
+        state = ICON_NOT_CHECKED
+    else:
+        state = ICON_NONE
+    pulse = any(
+        e.source == SOURCE_ENGINE and not e.acknowledged and e.tier in (TIER_STOP, TIER_WATCH)
+        for e in active
+    )
+    return {"state": state, "count": len(active), "pulse": pulse}
+
+
+def buildAlertsState(
+    episodes: Iterable[AlertEpisode],
+    obdLive: Mapping[str, Any] | None,
+    nowUtc: datetime,
+    *,
+    dataSource: str | None,
+    bootId: str,
+) -> dict[str, Any]:
+    """Build the states/alerts payload (Atlas s2 shape; pure).
+
+    Args:
+        episodes: The arbiter's episodes of this boot.
+        obdLive: The obd-live payload the tick published, or None.
+        nowUtc: Aware UTC instant of this emit.
+        dataSource: The obd-live data_source tag, or None.
+        bootId: ``readBootId()`` ('unknown' when unreadable).
+
+    Returns:
+        ``{ts, dataSource, bootId, sources, codesCheckedThisSession,
+        checkedAtTs, icon, takeover, codeAlert, entries}`` -- every key present.
+        ``entries`` is already ordered; ``takeover`` is set while the top
+        ACTIVE entry is a stop.
+    """
+    ordered = sorted(episodes, key=_sortKey)
+    entries = [_entryOf(e) for e in ordered]
+    active = [e for e in ordered if e.active]
+    # Codes are not an alert source until US-897-b5.
+    codeSource: dict[str, Any] = {"assessed": False, "checkedAtTs": None}
+    takeover = None
+    firstActive = next((entry for entry in entries if entry["active"]), None)
+    if firstActive is not None and firstActive["tier"] == TIER_STOP:
+        takeover = _takeoverOf(firstActive)
+    return {
+        "ts": nowUtc.strftime(_ISO_FMT),
+        "dataSource": dataSource,
+        "bootId": bootId,
+        "sources": {
+            "code": dict(codeSource),
+            "engine": {"assessed": _freshCoolant(obdLive) is not None},
+            "system": {"assessed": False, "reason": "not_built"},
+            "data": {"assessed": False, "reason": "not_built"},
+        },
+        "codesCheckedThisSession": codeSource["assessed"],
+        "checkedAtTs": codeSource["checkedAtTs"],
+        "icon": _icon(active, codeSource["assessed"]),
+        "takeover": takeover,
+        "codeAlert": None,
+        "entries": entries,
+    }
+
+
+def readAlertsSeed(statesDir: str) -> list[dict[str, Any]]:
+    """The entries of this boot's existing ``states/alerts`` (Atlas G3).
+
+    The states dir is tmpfs, so a file there was written THIS boot by a prior
+    orchestrator. A missing or unparseable file seeds nothing.
+
+    Args:
+        statesDir: tmpfs states directory.
+
+    Returns:
+        The prior entries (dicts only); empty when there is nothing usable.
+    """
+    try:
+        with open(os.path.join(statesDir, ALERTS_STATE_FILENAME), encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def makeAlertsEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
+    """Build the states/alerts emit callable.
+
+    Args:
+        statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
+
+    Returns:
+        ``emit(episodes, obdLive, *, nowUtc, dataSource, bootId)`` writing the
+        payload atomically and returning it. Best-effort by contract: a failure
+        is logged, never raised, and returns None.
+    """
+    from pi.splash import boot_state_emitter
+
+    target = os.path.join(statesDir, ALERTS_STATE_FILENAME)
+
+    def emit(
+        episodes: Iterable[AlertEpisode],
+        obdLive: Mapping[str, Any] | None,
+        *,
+        nowUtc: datetime,
+        dataSource: str | None,
+        bootId: str,
+    ) -> dict[str, Any] | None:
+        try:
+            payload = buildAlertsState(
+                episodes, obdLive, nowUtc, dataSource=dataSource, bootId=bootId
+            )
+            boot_state_emitter.ensureStatesDir(statesDir)
+            boot_state_emitter.writeStateAtomic(target, payload)
+        except Exception as e:  # noqa: BLE001 -- never crash the run loop
+            logger.error("states/alerts write failed (%s) -- ignored", e)
+            return None
+        return payload
+
+    return emit

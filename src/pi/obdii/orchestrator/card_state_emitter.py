@@ -91,6 +91,8 @@
 #               |              | drive.distancePartial from the restart branch.
 # 2026-10-19    | Rex (US-897-a2)| The dtc read times are seeded from the tmpfs
 #               |              | states/dtc BEFORE the boot write, which carries them.
+# 2026-10-20    | Rex (US-897-b2)| states/alerts: the alerts arbiter runs after
+#               |              | obd-live on the SAME payload that emit returned.
 # ================================================================================
 ################################################################################
 
@@ -305,6 +307,10 @@ class CardStateEmitterMixin:
     # Injectable aware-UTC wall clock: staleness compares against reading event
     # times, which are wall-clock instants, not monotonic ones.
     _obdLiveClock: Any = None
+    # US-897-b2: the alerts arbiter (episodes for this boot) + its emitter.
+    _alertsArbiter: Any = None
+    _alertsEmitter: Any = None
+    _alertsBootId: str = "unknown"
     # US-889-a: the states/engine-history writer; the history itself lives in
     # the obd-live tracker. CLASS default for the same reason as above.
     _engineHistoryEmitter: Any = None
@@ -383,6 +389,7 @@ class CardStateEmitterMixin:
         self._initializeLtftTrendProducer(statesDir)
         self._initializeCaptureHealthProducer(statesDir)
         self._initializeObdLiveProducer(statesDir)
+        self._initializeAlertsProducer(statesDir)
         self._initializeTripDistance()
         self._initializeFuelEconomyProducer(statesDir)
         severityTablePath = dtcConfig.get(
@@ -740,14 +747,19 @@ class CardStateEmitterMixin:
         tag = getattr(writer, "dataSource", None) if writer is not None else None
         return tag if isinstance(tag, str) and tag in DATA_SOURCE_VALUES else None
 
-    def _emitObdLiveState(self) -> None:
-        """Publish states/obd-live from the tracker's latest readings."""
+    def _emitObdLiveState(self) -> dict[str, Any] | None:
+        """Publish states/obd-live from the tracker's latest readings.
+
+        Returns:
+            The payload written (US-897-b2, Atlas Q18: the alerts arbiter reads
+            it), or None when nothing was published.
+        """
         tracker = self._obdLiveTracker
         emitter = self._obdLiveEmitter
         if tracker is None or emitter is None or self._obdLiveStaleSec is None:
-            return
+            return None
         nowUtc = self._obdLiveNowUtc()
-        emitter(
+        payload: dict[str, Any] | None = emitter(
             tracker.snapshot(),
             nowUtc=nowUtc,
             staleSec=self._obdLiveStaleSec,
@@ -756,11 +768,77 @@ class CardStateEmitterMixin:
         # US-889-a: the history is fed at the reading seam, never from this
         # snapshot; the tick only writes it when a bucket closed (or a reset).
         historyEmitter = self._engineHistoryEmitter
-        if historyEmitter is None:
+        if historyEmitter is not None:
+            history = tracker.engineHistoryIfChanged()
+            if history is not None:
+                historyEmitter(history, nowUtc=nowUtc)
+        return payload
+
+    # --------------------------------------------------------- states/alerts
+    #
+    # US-897-b2 (F-127). The arbiter is shown the obd-live payload the tick has
+    # just published -- never a file read-back -- so the alert and the Driving
+    # tile can never disagree. Its alert_log INSERT goes through the database
+    # object handed to it (G2); this mixin opens nothing.
+
+    def _initializeAlertsProducer(self, statesDir: str) -> None:
+        """Build the alerts arbiter + emitter in their own try/except.
+
+        The arbiter is handed the FULL resolved config and seeded from this
+        boot's tmpfs states/alerts (Atlas G3), so a restart inside the boot
+        keeps a cleared STOP listed.
+        """
+        try:
+            import os
+
+            from pi.diagnostics import boot_progress, boot_reason
+            from pi.obdii.alerts_arbiter import (
+                AlertsArbiter,
+                makeAlertsEmitter,
+                readAlertsSeed,
+            )
+
+            self._alertsArbiter = AlertsArbiter(
+                self._config, seedEntries=readAlertsSeed(statesDir)
+            )
+            self._alertsEmitter = makeAlertsEmitter(statesDir)
+            # The boot_milestone precedent: with no boot-id surface (off-Linux, a
+            # desk simulator run) readBootId could only say 'unknown' and would
+            # log an ERROR saying so; answer it without the call.
+            self._alertsBootId = (
+                boot_progress.readBootId()
+                if os.path.exists(boot_reason.BOOT_ID_PATH)
+                else "unknown"
+            )
+            logger.info("alerts arbiter wired (boot_id=%s)", self._alertsBootId)
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("alerts arbiter init skipped: %s", e)
+            self._alertsArbiter = None
+            self._alertsEmitter = None
+
+    def _emitAlertsState(self, obdLive: dict[str, Any] | None) -> None:
+        """Move the episodes on from ``obdLive`` and publish states/alerts.
+
+        Args:
+            obdLive: The payload ``_emitObdLiveState`` just wrote, or None.
+        """
+        arbiter = self._alertsArbiter
+        emitter = self._alertsEmitter
+        if arbiter is None or emitter is None:
             return
-        history = tracker.engineHistoryIfChanged()
-        if history is not None:
-            historyEmitter(history, nowUtc=nowUtc)
+        dataSource = self._gatherObdLiveDataSource()
+        arbiter.observe(
+            obdLive,
+            dataSource=dataSource,
+            database=getattr(self, "_database", None),
+        )
+        emitter(
+            arbiter.episodes(),
+            obdLive,
+            nowUtc=self._obdLiveNowUtc(),
+            dataSource=dataSource,
+            bootId=self._alertsBootId,
+        )
 
     def _resetEngineHistory(self, driveStartTime: Any) -> None:
         """Open this drive's engine-history window at drive start (US-889-a).
@@ -1133,11 +1211,17 @@ class CardStateEmitterMixin:
             self._emitCaptureHealthState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("capture-health card emit failed: %s", e)
+        obdLive: dict[str, Any] | None = None
         try:
             # US-874: staleness is decided here, against a moving clock.
-            self._emitObdLiveState()
+            obdLive = self._emitObdLiveState()
         except Exception as e:  # noqa: BLE001 -- never crash the loop
             logger.debug("obd-live card emit failed: %s", e)
+        try:
+            # US-897-b2: AFTER obd-live, on the payload that emit returned.
+            self._emitAlertsState(obdLive)
+        except Exception as e:  # noqa: BLE001 -- never crash the loop
+            logger.debug("alerts card emit failed: %s", e)
         try:
             # US-881-b: beside obd-live; MAF staleness is decided here too.
             self._emitFuelEconomyState()

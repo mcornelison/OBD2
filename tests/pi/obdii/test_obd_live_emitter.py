@@ -718,7 +718,7 @@ def test_makeObdLiveEmitter_writesTheStateFileAtomically(tmp_path) -> None:
     statesDir = str(tmp_path / "states")
     emit = ole.makeObdLiveEmitter(statesDir)
 
-    emit(
+    returned = emit(
         {"RPM": _obs(812, "rpm", "2026-10-13T12:05:01Z")},
         nowUtc=_utc("2026-10-13T12:05:03Z"),
         staleSec=5.0,
@@ -729,6 +729,9 @@ def test_makeObdLiveEmitter_writesTheStateFileAtomically(tmp_path) -> None:
         written = json.load(fh)
     assert written["params"]["RPM"]["value"] == 812
     assert set(written) == _TOP_LEVEL_KEYS
+    # US-897-b2 (Atlas Q18): emit returns the payload it wrote, so the alerts
+    # arbiter reads the SAME payload, never a file read-back.
+    assert returned == written
 
 
 def test_makeObdLiveEmitter_neverRaisesOnAWriteFailure(tmp_path, monkeypatch) -> None:
@@ -745,7 +748,10 @@ def test_makeObdLiveEmitter_neverRaisesOnAWriteFailure(tmp_path, monkeypatch) ->
     monkeypatch.setattr(bse, "writeStateAtomic", boom)
     emit = ole.makeObdLiveEmitter(str(tmp_path / "states"))
 
-    emit({}, nowUtc=_utc("2026-10-13T12:00:00Z"), staleSec=5.0, dataSource="real")
+    returned = emit({}, nowUtc=_utc("2026-10-13T12:00:00Z"), staleSec=5.0, dataSource="real")
+
+    # US-897-b2: a failed write returns None -- nothing was published.
+    assert returned is None
 
 
 # ======================================================= through the real seam

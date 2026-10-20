@@ -1128,6 +1128,50 @@ def test_bands_rejectsMisorderedEdges(section, overrides):
         ConfigValidator().validate(bad)
 
 
+def test_warnings_coolantRedTier_defaultsToStop_underPiWarningsNeverPiAlerts():
+    """US-897-b2: the coolant STOP tier is pi.warnings.engine.COOLANT_TEMP.redTier
+    'stop' in validator DEFAULTS -- never pi.alerts.* (the legacy AlertManager's)."""
+    from common.config.validator import DEFAULTS
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["warnings"]["engine"]["COOLANT_TEMP"]["redTier"] == "stop"
+    assert DEFAULTS["pi.warnings.engine.COOLANT_TEMP.redTier"] == "stop"
+    assert not [k for k in DEFAULTS if k.startswith("pi.alerts.")]
+
+
+@pytest.mark.parametrize("tier", ["stop", "watch"])
+def test_warnings_coolantRedTier_acceptsStopOrWatch(tier):
+    ok = _baseCfg()
+    ok["pi"] = {"warnings": {"engine": {"COOLANT_TEMP": {"redTier": tier}}}}
+    cfg = ConfigValidator().validate(ok)
+    assert cfg["pi"]["warnings"]["engine"]["COOLANT_TEMP"]["redTier"] == tier
+
+
+@pytest.mark.parametrize("pid", ["BATTERY_V", "RPM"])
+def test_warnings_rejectsStopForAnyPidButCoolant(pid):
+    """US-897-b2: only COOLANT_TEMP may be a STOP (Spool: battery and RPM are WATCH)."""
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"engine": {pid: {"redTier": "stop"}}}}
+    with pytest.raises(ConfigValidationError, match=f"pi.warnings.engine.{pid}.redTier"):
+        ConfigValidator().validate(bad)
+
+
+@pytest.mark.parametrize("tier", ["minor", "unrated", "STOP", "", 1])
+def test_warnings_rejectsATierOutsideStopWatch(tier):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"engine": {"COOLANT_TEMP": {"redTier": tier}}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.engine.COOLANT_TEMP.redTier"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_rejectsANonMappingEngineRule():
+    # RPM has no default, so the shape reaches _validateWarnings untouched.
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"engine": {"RPM": "watch"}}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.engine.RPM"):
+        ConfigValidator().validate(bad)
+
+
 def test_replay_active_defaultsToFalse_andAnExplicitTrueIsKept():
     """US-901-a: pi.replay.active exists with validator default false (production
     unchanged), and a replay config's true survives validation."""

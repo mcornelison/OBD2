@@ -6036,6 +6036,91 @@ US-890-b, below).
   (the inverse of `CANONICAL_UNITS`), so the fixture is what the car's readings
   produce, not a copy of the target vocabulary (US-888-b).
 
+#### `states/alerts` -- what was assessed, the ordered alerts and the PULL OVER takeover (US-897-b2)
+
+**Producer:** `src/pi/obdii/alerts_arbiter.py`, run inside the eclipse-obd process (Atlas
+WARNINGS s2 2026-10-14; G3/G4/G7 2026-10-18; Q10/Q14/Q15/Q17/Q18/Q34 2026-10-19). It is
+the one provider of the warnings page: the page renders it and derives nothing (rule 0).
+- `CardStateEmitterMixin._maybeEmitCardStates` runs `_emitAlertsState` AFTER
+  `_emitObdLiveState`, on the payload that emit RETURNED (Atlas Q18:
+  `makeObdLiveEmitter`'s emit returns what it wrote, None when the write failed). It is
+  never a file read-back, so the alert and the Driving tile cannot disagree.
+- An `AlertsArbiter` held by the orchestrator keeps this boot's episodes in memory. It is
+  handed the FULL resolved config (`pi.bands.*`, `pi.warnings.*`).
+  `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId)` is pure over them;
+  `makeAlertsEmitter(statesDir)` writes `<statesDir>/alerts` atomically and never raises.
+- Built in its own try/except (`_initializeAlertsProducer`); when
+  `pi.dashboard.stateEmitEnabled` is false it is not built and writes no file.
+
+**Shape** (every key always present; all times ISO UTC, Q34):
+`{ts, dataSource, bootId, sources, codesCheckedThisSession, checkedAtTs, icon, takeover,
+codeAlert, entries}`.
+- `dataSource` is `_gatherObdLiveDataSource()` (the obd-live tag); `bootId` is
+  `readBootId()` (`unknown` when unreadable).
+- **`sources`** says what was ASSESSED; the page prints only that (ARCH-062):
+  - `code: {assessed, checkedAtTs}` -- `{false, null}` until US-897-b5.
+    `codesCheckedThisSession` and `checkedAtTs` repeat it (Iris contract names).
+  - `engine: {assessed}` -- true only when obd-live carries a FRESH COOLANT_TEMP reading
+    (Q14). Engine off, stale or absent is false.
+  - `system` and `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
+- **`entries`**: `{id, source, key, tier, title, sentence, directive, value, unit, last,
+  stale, firstSeenTs, lastSeenTs, active, acknowledged}`, ALREADY ORDERED (B5): tier
+  `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
+  newest `firstSeenTs`.
+  - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
+    new id. `acknowledged` is always false until the ack store (S108).
+- **`icon`** `{state, count, pulse}`: `count` = active entries. `state` is `stop` when any
+  active stop; `watch` when any active watch, minor or unrated (G7: never grey); else
+  `not_checked` while `sources.code.assessed` is false; else `none`. An active stop/watch
+  outranks `not_checked` (B6). `pulse` = any active, unacknowledged stop or watch ENGINE
+  entry.
+- **`takeover`** = `{id, title, sentence, directive, value, unit, last, stale,
+  firstSeenTs, dismissable: false}` while the top ACTIVE entry is a stop, else null (Iris
+  B1; G4: `directive` is a provider field, Spool's words). `codeAlert` is null until
+  US-897-b5.
+
+**Tiers** come from config, never a literal: `pi.warnings.engine.<PID>.redTier`
+(validator DEFAULTS only; `COOLANT_TEMP` = `stop`, Spool 2026-10-14). `_validateWarnings`
+accepts only `stop` / `watch`, and `stop` only for COOLANT_TEMP. Never `pi.alerts.*`: the
+legacy AlertManager owns that section (config.json).
+
+**The coolant STOP** (this story's only entry), id `engine:COOLANT_TEMP:stop`:
+- Active while the obd-live COOLANT_TEMP band is `red`. The band producer owns entry and
+  exit (US-897-b1: the plausibility guard, and red clears at <= 101 C held 60 s); the
+  arbiter has no band logic.
+- Words, Spool 2026-10-14 verbatim: directive `PULL OVER`, title `ENGINE OVERHEATING`,
+  sentence `Stop safely, engine off. Do not open the radiator cap hot.`
+- Fresh: `value` + unit `C`, `stale: false`, `last: null`. `firstSeenTs` = the
+  `params.COOLANT_TEMP.ts` of the episode's first red reading; `lastSeenTs` = its last.
+- **Stale rule** (Spool: "stale never clears"; Atlas Q10): only a FRESH reading whose band
+  is not red ends the episode. While the reading is stale, absent, not read or unbanded
+  -- or obd-live published nothing -- an active STOP stays active with `value: null`,
+  `stale: true`, `last: {value, band, ts}` of the last red reading.
+- **Cleared** (band left red): the entry stays listed `active: false` (`value: null`,
+  `last` = the last red reading) for the rest of the boot. It never drops by time (Q15). A
+  new red episode re-activates the same id with a new `firstSeenTs`.
+
+**Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
+synced `alert_log`. It never UPDATEs: sync is a delta by id.
+- At episode OPEN, at once: `alert_type 'coolant_stop'`, `parameter_name 'COOLANT_TEMP'`,
+  `value` = the opening reading, `threshold` = `pi.bands.coolant.redC`,
+  `drive_id` = `getCurrentDriveId()`, `timestamp` = the reading's event time.
+- At CLEAR: `alert_type 'coolant_stop_clear'`, `value` = the episode PEAK, `threshold` =
+  `pi.bands.coolant.redClearBelowC`. A key-off mid-episode leaves only the open row.
+- No row when `dataSource` is `replay` or `physics_sim` (R28). A failed INSERT logs ERROR
+  and never blocks the live STOP.
+- The INSERT lives in `alerts_arbiter.py` and goes through the database object it is
+  handed (G2): `card_state_emitter.py` still contains no `.connect(`.
+
+**Per-boot seed** (Atlas G3): at init the arbiter re-reads this boot's tmpfs
+`states/alerts` (`readAlertsSeed`; a missing or unparseable file seeds nothing). An
+orchestrator restart inside the boot therefore keeps a cleared STOP listed.
+- A seeded ACTIVE entry stays stale until a fresh reading decides it.
+- Stated cost: a restart while still red writes a second `coolant_stop` open row (honest;
+  INSERT-only). Its later clear row carries the highest reading this process saw, which
+  starts from the seeded last value.
+- Prior-boot episodes are not re-listed from `alert_log` (Atlas Q15 design 4).
+
 #### `states/engine-history` -- this drive's worst-band buckets (US-889-a)
 
 ```json

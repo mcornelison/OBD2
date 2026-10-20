@@ -19,12 +19,15 @@
 # 2026-07-21    | Ralph (Rex)  | Initial -- US-480-a emitter wiring tests.
 # 2026-10-19    | Ralph (Rex)  | US-897-a2 -- checkedAtTs / pendingCheckedAtTs:
 #               |              | the per-boot seed and the publish success rule.
+# 2026-10-20    | Ralph (Rex)  | US-897-b2 -- the alerts arbiter wiring.
 # ================================================================================
 ################################################################################
 
 """Tests for ``pi.obdii.orchestrator.card_state_emitter``."""
 
 import json
+import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -610,3 +613,187 @@ def test_a2_postClear_nullReRead_publishesNothing_andWarns(tmp_path, clock, capl
     assert any("Mode 03 null frame" in r.getMessage() for r in caplog.records)
     # The clear itself still happened and its outcome is still published.
     assert readOutcome(str(tmp_path / "states"))["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# US-897-b2 -- the alerts arbiter joins the card tick AFTER obd-live and reads
+# the SAME payload that emit just wrote (Atlas Q18), never a file read-back.
+# ---------------------------------------------------------------------------
+
+_B2_T0 = datetime(2026, 10, 20, 15, 12, 25, tzinfo=UTC)
+
+
+def _coolantReading(value, at):
+    return SimpleNamespace(parameterName="COOLANT_TEMP", value=value, unit="C", timestamp=at)
+
+
+def _alertsOrch(tmp_path, *, database=None):
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._database = database
+    now = {"t": _B2_T0}
+    orch._obdLiveClock = lambda: now["t"]
+    orch._initializeCardStateEmitters()
+    return orch, now
+
+
+def _runUpToRed(orch, now):
+    """105 C then 112 C two seconds later: red through the REAL band producer
+    (a single >= redC sample after a predecessor >= redGuardPrevMinC)."""
+    orch.observeObdLiveReading(_coolantReading(105.0, _B2_T0))
+    orch.observeObdLiveReading(_coolantReading(112.0, _B2_T0 + timedelta(seconds=2)))
+    now["t"] = _B2_T0 + timedelta(seconds=3)
+    assert orch._maybeEmitCardStates() is True
+
+
+def test_b2_initialize_wiresTheArbiterAndItsEmitter(tmp_path):
+    orch, _ = _alertsOrch(tmp_path)
+
+    assert orch._alertsArbiter is not None
+    assert orch._alertsEmitter is not None
+
+
+def test_b2_cardsDisabled_noArbiter_noFile(tmp_path):
+    orch = _FakeOrch(_config(tmp_path, stateEmitEnabled=False))
+    orch._initializeCardStateEmitters()
+
+    assert orch._maybeEmitCardStates() is False
+    assert orch._alertsArbiter is None
+    assert not (tmp_path / "states" / "alerts").exists()
+
+
+def test_b2_emitObdLiveState_returnsThePayloadItWrote(tmp_path):
+    orch, now = _alertsOrch(tmp_path)
+    orch.observeObdLiveReading(_coolantReading(90.0, _B2_T0))
+    now["t"] = _B2_T0 + timedelta(seconds=1)
+
+    returned = orch._emitObdLiveState()
+
+    assert returned == _readState(tmp_path, "obd-live")
+
+
+def test_b2_coolantRed_tickWritesTheStop_fromWhatObdLivePublished(tmp_path):
+    orch, now = _alertsOrch(tmp_path)
+
+    _runUpToRed(orch, now)
+
+    alerts = _readState(tmp_path, "alerts")
+    coolant = _readState(tmp_path, "obd-live")["params"]["COOLANT_TEMP"]
+    assert coolant["band"]["band"] == "red"
+    entry = alerts["entries"][0]
+    assert entry["id"] == "engine:COOLANT_TEMP:stop"
+    assert entry["value"] == coolant["value"] == 112.0
+    assert entry["firstSeenTs"] == coolant["ts"]
+    assert alerts["takeover"]["directive"] == "PULL OVER"
+    assert alerts["icon"] == {"state": "stop", "count": 1, "pulse": True}
+    assert alerts["sources"]["engine"] == {"assessed": True}
+    assert alerts["dataSource"] == _readState(tmp_path, "obd-live")["dataSource"]
+
+
+def test_b2_arbiterIsHandedTheSamePayloadObdLiveWrote(tmp_path):
+    orch, now = _alertsOrch(tmp_path)
+    seen = []
+    observe = orch._alertsArbiter.observe
+
+    def spy(obdLive, **kw):
+        seen.append(obdLive)
+        observe(obdLive, **kw)
+
+    orch._alertsArbiter.observe = spy
+
+    _runUpToRed(orch, now)
+
+    assert seen == [_readState(tmp_path, "obd-live")]
+
+
+def test_b2_obdLiveWriteFails_arbiterSeesNothing_engineUnassessed(tmp_path, monkeypatch):
+    orch, now = _alertsOrch(tmp_path)
+    orch.observeObdLiveReading(_coolantReading(90.0, _B2_T0))
+    now["t"] = _B2_T0 + timedelta(seconds=1)
+    emitter = orch._obdLiveEmitter
+    orch._obdLiveEmitter = lambda *a, **k: (emitter(*a, **k), None)[1]
+
+    orch._maybeEmitCardStates()
+
+    assert _readState(tmp_path, "alerts")["sources"]["engine"] == {"assessed": False}
+
+
+def test_b2_alertLogRow_writtenThroughTheRealWiring(tmp_path, driveSeven):
+    from pi.obdii.database import ObdDatabase
+
+    db = ObdDatabase(str(tmp_path / "obd.db"), walMode=False)
+    db.initialize()
+    orch, now = _alertsOrch(tmp_path, database=db)
+
+    _runUpToRed(orch, now)
+
+    with db.connect() as conn:
+        rows = [tuple(r) for r in conn.execute(
+            "SELECT alert_type, parameter_name, value, threshold, drive_id FROM alert_log"
+        )]
+    assert rows == [("coolant_stop", "COOLANT_TEMP", 112.0, 110.0, 7)]
+
+
+def test_b2_replayDataSource_noAlertLogRow(tmp_path):
+    from pi.obdii.database import ObdDatabase
+
+    db = ObdDatabase(str(tmp_path / "obd.db"), walMode=False)
+    db.initialize()
+    orch, now = _alertsOrch(tmp_path, database=db)
+    orch._dataLogger = SimpleNamespace(dataLogger=SimpleNamespace(dataSource="replay"))
+
+    _runUpToRed(orch, now)
+
+    assert _readState(tmp_path, "alerts")["entries"][0]["active"] is True
+    with db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM alert_log").fetchone()[0] == 0
+
+
+def test_b2_clearedStop_survivesAnOrchestratorRestart(tmp_path):
+    """VC5: listed active:false, then a restart inside the boot (Atlas G3)."""
+    orch, now = _alertsOrch(tmp_path)
+    _runUpToRed(orch, now)
+    # Red clears only at <= redClearBelowC held redClearHoldSec (US-897-b1).
+    for i in range(0, 64, 2):
+        orch.observeObdLiveReading(
+            _coolantReading(95.0, _B2_T0 + timedelta(seconds=4 + i))
+        )
+    now["t"] = _B2_T0 + timedelta(seconds=68)
+    orch._maybeEmitCardStates()
+    cleared = _readState(tmp_path, "alerts")["entries"]
+    assert [(e["id"], e["active"]) for e in cleared] == [("engine:COOLANT_TEMP:stop", False)]
+
+    restarted, _ = _alertsOrch(tmp_path)
+    restarted._maybeEmitCardStates()
+
+    entries = _readState(tmp_path, "alerts")["entries"]
+    assert [(e["id"], e["active"]) for e in entries] == [("engine:COOLANT_TEMP:stop", False)]
+    assert entries[0]["firstSeenTs"] == cleared[0]["firstSeenTs"]
+
+
+def test_b2_noBootIdSurface_bootIdUnknown_noErrorLogged(tmp_path, monkeypatch, caplog):
+    """Off-Linux (a desk simulator run) readBootId could only say 'unknown' and
+    would log an ERROR; the boot_milestone precedent answers it without the call."""
+    import pi.diagnostics.boot_reason as boot_reason
+
+    monkeypatch.setattr(boot_reason, "BOOT_ID_PATH", str(tmp_path / "no-boot-id"))
+    with caplog.at_level(logging.ERROR):
+        orch, now = _alertsOrch(tmp_path)
+        orch._maybeEmitCardStates()
+
+    assert _readState(tmp_path, "alerts")["bootId"] == "unknown"
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_b2_bootIdSurfacePresent_publishesTheBootId(tmp_path, monkeypatch):
+    import pi.diagnostics.boot_progress as boot_progress
+    import pi.diagnostics.boot_reason as boot_reason
+
+    surface = tmp_path / "boot_id"
+    surface.write_text("b7", encoding="ascii")
+    monkeypatch.setattr(boot_reason, "BOOT_ID_PATH", str(surface))
+    monkeypatch.setattr(boot_progress, "readBootId", lambda: "b7c0ffee")
+
+    orch, now = _alertsOrch(tmp_path)
+    orch._maybeEmitCardStates()
+
+    assert _readState(tmp_path, "alerts")["bootId"] == "b7c0ffee"

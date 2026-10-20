@@ -28,6 +28,8 @@
 #                                pi.display.scale.mafMaxGs (Atlas S104 ruling 2).
 # 2026-10-15    | Rex (US-890-c) | Top-level fuel {loop, totalTrimNow} through the
 #                                shared closed-loop code set (Atlas S104 (b)).
+# 2026-10-20    | Rex (US-897-b2) | emit returns the payload it wrote (None when
+#                                the write failed) for the alerts arbiter (Q18).
 # ================================================================================
 ################################################################################
 
@@ -421,7 +423,7 @@ def buildObdLiveState(
     }
 
 
-def makeObdLiveEmitter(statesDir: str) -> Callable[..., None]:
+def makeObdLiveEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
     """Build the states/obd-live emit callable.
 
     Args:
@@ -429,8 +431,10 @@ def makeObdLiveEmitter(statesDir: str) -> Callable[..., None]:
 
     Returns:
         ``emit(observations, *, nowUtc, staleSec, dataSource)`` writing the
-        payload atomically. Best-effort by contract: write failures are logged,
-        never raised.
+        payload atomically and returning it (US-897-b2, Atlas Q18: the alerts
+        arbiter reads the payload that was published, never a file read-back).
+        Best-effort by contract: a write failure is logged, never raised, and
+        returns None -- nothing was published.
     """
     from pi.splash import boot_state_emitter
 
@@ -442,19 +446,19 @@ def makeObdLiveEmitter(statesDir: str) -> Callable[..., None]:
         nowUtc: datetime,
         staleSec: float,
         dataSource: str | None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         try:
-            boot_state_emitter.ensureStatesDir(statesDir)
-            boot_state_emitter.writeStateAtomic(
-                target,
-                buildObdLiveState(
-                    observations,
-                    nowUtc=nowUtc,
-                    staleSec=staleSec,
-                    dataSource=dataSource,
-                ),
+            payload = buildObdLiveState(
+                observations,
+                nowUtc=nowUtc,
+                staleSec=staleSec,
+                dataSource=dataSource,
             )
+            boot_state_emitter.ensureStatesDir(statesDir)
+            boot_state_emitter.writeStateAtomic(target, payload)
         except Exception as e:  # noqa: BLE001 -- never crash the run loop
             logger.error("states/obd-live write failed (%s) -- ignored", e)
+            return None
+        return payload
 
     return emit
