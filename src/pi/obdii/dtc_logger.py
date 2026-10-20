@@ -29,6 +29,9 @@
 #               |              | publish states/dtc; key-on keeps its Mode 03 codes
 #               |              | when Mode 07 then raises (Atlas Q4); every Mode 03
 #               |              | round-trip is logged at DEBUG in ms.
+# 2026-10-19    | Rex (US-897-a2) | Mode 03 reads go through readStoredDtcsWithFrame;
+#               |              | results carry `mode03FrameNull` and a null frame
+#               |              | logs WARNING 'Mode 03 null frame' once per read.
 # ================================================================================
 ################################################################################
 
@@ -139,6 +142,8 @@ class SessionStartResult:
         codes: The captured DiagnosticCodes (stored, then pending) so the
             router can publish states/dtc without a re-read (US-897-a1).
         polled: True when Mode 03 actually ran; the router publishes only then.
+        mode03FrameNull: True when Mode 03 returned a null frame -- a failed
+            read the router never publishes (US-897-a2).
     """
 
     storedCount: int
@@ -146,6 +151,7 @@ class SessionStartResult:
     mode07Probe: Mode07ProbeResult
     codes: list[DiagnosticCode] = field(default_factory=list)
     polled: bool = False
+    mode03FrameNull: bool = False
 
 
 @dataclass(frozen=True)
@@ -164,12 +170,14 @@ class MilEventResult:
         codes: The Mode 03 stored codes this read returned (US-897-a1).
         polled: True when Mode 03 actually ran; False on the cooldown skip
             and the no-drive no-op, so a skipped poll publishes nothing.
+        mode03FrameNull: True when Mode 03 returned a null frame (US-897-a2).
     """
 
     inserted: int
     updated: int
     codes: list[DiagnosticCode] = field(default_factory=list)
     polled: bool = False
+    mode03FrameNull: bool = False
 
 
 @dataclass(frozen=True)
@@ -188,12 +196,14 @@ class KeyOnDtcResult:
         mode07Probe: Probe result so the caller can cache the verdict.
         codes: The captured DiagnosticCodes (stored + pending) so the caller
             can feed the ``dtc`` emitter without a re-read.
+        mode03FrameNull: True when Mode 03 returned a null frame (US-897-a2).
     """
 
     storedCount: int
     pendingCount: int
     mode07Probe: Mode07ProbeResult
     codes: list[DiagnosticCode]
+    mode03FrameNull: bool = False
 
 
 @dataclass(frozen=True)
@@ -317,7 +327,7 @@ class DtcLogger:
         with self._markRetrievalActive():
             effectiveDriveId = driveId if driveId is not None else getCurrentDriveId()
 
-            stored = self._readStoredTimed(connection, 'session-start')
+            stored, frameNull = self._readStoredTimed(connection, 'session-start')
             pending, probe = self._client.readPendingDtcs(connection)
 
             with self._database.connect() as conn:
@@ -335,6 +345,7 @@ class DtcLogger:
                 mode07Probe=probe,
                 codes=[*stored, *pending],
                 polled=True,
+                mode03FrameNull=frameNull,
             )
 
     # ------------------------------------------------------------------
@@ -373,7 +384,7 @@ class DtcLogger:
         """
         with self._markRetrievalActive():
             # drive_id = NULL stamped EXPLICITLY -- never getCurrentDriveId().
-            stored = self._readStoredTimed(connection, 'key-on')
+            stored, frameNull = self._readStoredTimed(connection, 'key-on')
             # Atlas Q4: a Mode 07 failure after a good Mode 03 read must not
             # throw the stored codes away -- they are persisted and published.
             pending: list[DiagnosticCode]
@@ -403,6 +414,7 @@ class DtcLogger:
                 pendingCount=len(pending),
                 mode07Probe=probe,
                 codes=[*stored, *pending],
+                mode03FrameNull=frameNull,
             )
 
     # ------------------------------------------------------------------
@@ -430,8 +442,8 @@ class DtcLogger:
         """
         with self._markRetrievalActive():
             effectiveDriveId = driveId if driveId is not None else getCurrentDriveId()
-            stored = self._readStoredTimed(connection, 'mil-event')
-            return self._upsertStoredCodes(stored, effectiveDriveId)
+            stored, frameNull = self._readStoredTimed(connection, 'mil-event')
+            return self._upsertStoredCodes(stored, effectiveDriveId, frameNull)
 
     # ------------------------------------------------------------------
     # US-292 -- 30s during-drive Mode 03 cadence
@@ -499,8 +511,8 @@ class DtcLogger:
                 if elapsed < intervalSeconds:
                     return MilEventResult(inserted=0, updated=0)
 
-            stored = self._readStoredTimed(connection, 'periodic')
-            result = self._upsertStoredCodes(stored, driveId)
+            stored, frameNull = self._readStoredTimed(connection, 'periodic')
+            result = self._upsertStoredCodes(stored, driveId, frameNull)
             self._periodicMode03LastAt = currentTime
             return result
 
@@ -569,26 +581,36 @@ class DtcLogger:
 
     def _readStoredTimed(
         self, connection: ObdConnectionLike, path: str,
-    ) -> list[DiagnosticCode]:
+    ) -> tuple[list[DiagnosticCode], bool]:
         """Run Mode 03 through the client and log its round-trip at DEBUG.
 
-        The read goes through :meth:`DtcClient.readStoredDtcs` -- the one
-        serialized query path under the connection's ``_ioLock`` -- so timing
-        it never opens a second channel.  The figure feeds Spool S1's check
-        that the 30 s poll does not starve the realtime loop.
+        The read goes through :meth:`DtcClient.readStoredDtcsWithFrame` -- the
+        one serialized query path under the connection's ``_ioLock`` -- so
+        timing it never opens a second channel.  The figure feeds Spool S1's
+        check that the 30 s poll does not starve the realtime loop.
+
+        Returns:
+            ``(stored, frameNull)``.  A null frame is a failed read (ARCH-062):
+            it is WARNed here, once, and the router publishes nothing for it.
         """
         startedAt = time.perf_counter()
-        stored = self._client.readStoredDtcs(connection)
+        stored, frameNull = self._client.readStoredDtcsWithFrame(connection)
         logger.debug(
             "Mode 03 round-trip | path=%s | ms=%.1f | stored=%d",
             path, (time.perf_counter() - startedAt) * 1000.0, len(stored),
         )
-        return stored
+        if frameNull:
+            logger.warning(
+                "Mode 03 null frame | path=%s -- not a successful read; "
+                "states/dtc is left as it was", path,
+            )
+        return stored, frameNull
 
     def _upsertStoredCodes(
         self,
         codes: list[DiagnosticCode],
         driveId: int | None,
+        frameNull: bool = False,
     ) -> MilEventResult:
         """Apply (drive_id, code) upsert semantics to a Mode 03 result list.
 
@@ -607,6 +629,7 @@ class DtcLogger:
                     inserted += 1
         return MilEventResult(
             inserted=inserted, updated=updated, codes=list(codes), polled=True,
+            mode03FrameNull=frameNull,
         )
 
     def _insertCodes(

@@ -20,6 +20,11 @@
 #               |              | DTC reads provably share the one serialization
 #               |              | lock; a connection without query() is a type
 #               |              | error, not a silent bypass.
+# 2026-10-19    | Rex (US-897-a2) | readStoredDtcsWithFrame -> (codes, frameNull):
+#               |              | a null Mode 03 frame is a FAILED read (ARCH-062);
+#               |              | readStoredDtcs delegates and keeps its contract.
+#               |              | ClearReadback.frameNull; raw Mode 03/07 responses
+#               |              | logged at DEBUG (Spool: the cheap falsifier).
 # ================================================================================
 ################################################################################
 
@@ -115,11 +120,14 @@ class ClearReadback:
         stored: Stored DTCs from the post-clear Mode 03 re-read (empty = cleared).
         pending: Pending DTCs from the post-clear Mode 07 re-read.
         mode07Probe: The Mode 07 support verdict from the re-read.
+        frameNull: True when the Mode 03 re-read returned a null frame -- a
+            failed read, so an empty ``stored`` proves nothing (US-897-a2).
     """
 
     stored: list[DiagnosticCode]
     pending: list[DiagnosticCode]
     mode07Probe: Mode07ProbeResult
+    frameNull: bool = False
 
 
 @dataclass(frozen=True)
@@ -255,15 +263,40 @@ class DtcClient:
         Raises:
             DtcClientError: If ``connection.isConnected()`` is False.
         """
+        codes, _frameNull = self.readStoredDtcsWithFrame(connection)
+        return codes
+
+    def readStoredDtcsWithFrame(
+        self, connection: ObdConnectionLike,
+    ) -> tuple[list[DiagnosticCode], bool]:
+        """Query Mode 03 and say whether the ECU answered with a real frame.
+
+        ARCH-062 (US-897-a2): a null frame is a FAILED read, not "no codes" --
+        only a non-null frame may claim the codes were checked.  The empty-frame
+        shape of this ECU is not measured, so the raw response goes to DEBUG.
+
+        Args:
+            connection: Live OBD connection.
+
+        Returns:
+            ``(codes, frameNull)``: the stored :class:`DiagnosticCode` list
+            (empty on a null frame) and whether the frame was null (by
+            :meth:`_isNull`, the test Mode 07 already uses).
+
+        Raises:
+            DtcClientError: If ``connection.isConnected()`` is False.
+        """
         self._requireConnected(connection)
         cmd = self._commandFactory(self._MODE_03_COMMAND_NAME)
         response = self._serializedQuery(connection, cmd)
+        logger.debug("Mode 03 raw response | %r", response)
         raw = self._extractTuples(response)
-        return [
+        codes = [
             self._asCode(entry, status='stored')
             for entry in raw
             if self._isValidEntry(entry)
         ]
+        return codes, self._isNull(response)
 
     # ------------------------------------------------------------------
     # Mode 07 -- pending DTCs with probe
@@ -290,6 +323,7 @@ class DtcClient:
         self._requireConnected(connection)
         cmd = self._commandFactory(self._MODE_07_COMMAND_NAME)
         response = self._serializedQuery(connection, cmd)
+        logger.debug("Mode 07 raw response | %r", response)
 
         if self._isNull(response):
             logger.info(
@@ -326,7 +360,7 @@ class DtcClient:
 
         Returns:
             A :class:`ClearReadback` with the post-clear stored + pending re-read
-            (empty stored list = the wipe took effect).
+            (empty stored list = the wipe took effect, unless ``frameNull``).
 
         Raises:
             DtcClientError: If the connection is not open (a vehicle-write must
@@ -336,9 +370,11 @@ class DtcClient:
         clearCmd = self._commandFactory(self._MODE_04_COMMAND_NAME)
         self._serializedQuery(connection, clearCmd)  # Mode 04 -- all-or-nothing wipe
         # Advisory §4d: prove the clear (and catch an instant re-set) by re-reading.
-        stored = self.readStoredDtcs(connection)
+        stored, frameNull = self.readStoredDtcsWithFrame(connection)
         pending, probe = self.readPendingDtcs(connection)
-        return ClearReadback(stored=stored, pending=pending, mode07Probe=probe)
+        return ClearReadback(
+            stored=stored, pending=pending, mode07Probe=probe, frameNull=frameNull,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

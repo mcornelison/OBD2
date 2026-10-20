@@ -50,6 +50,9 @@
 #               |                | drive-start, MIL and periodic reads publish
 #               |                | states/dtc with it (polled reads only), and a
 #               |                | Mode 03-only publish carries the last pending set.
+# 2026-10-19    | Rex (US-897-a2) | _emitDtcState stamps checkedAtTs (and, on a
+#               |                | Mode 07 read that answered, pendingCheckedAtTs);
+#               |                | a null Mode 03 frame publishes nothing (G1).
 # ================================================================================
 ################################################################################
 
@@ -110,6 +113,9 @@ class EventRouterMixin:
     _freezeFrameCapture: Any | None
     # US-897-a1: pending codes of the last publish that read Mode 07.
     _dtcCarriedPending: list[Any]
+    # US-897-a2: last successful Mode 03 / Mode 07 read times this boot.
+    _dtcCheckedAtTs: str | None
+    _dtcPendingCheckedAtTs: str | None
     _onDriveStart: Callable[[Any], None] | None
     _onDriveEnd: Callable[[Any], None] | None
     _onAlert: Callable[[Any], None] | None
@@ -888,15 +894,32 @@ class EventRouterMixin:
         sets and becomes the pending set later reads carry.  A Mode 03-only read
         (MIL edge, periodic) publishes its fresh stored codes plus that carried
         pending set, minus any code now stored, so no code is listed twice.
+
+        Read times (US-897-a2, ARCH-062): reaching the emit means Mode 03
+        answered with a real frame, so ``checkedAtTs`` advances to now; a read
+        whose Mode 03 frame was null (``mode03FrameNull``) publishes NOTHING
+        (G1 -- the logger already WARNed), and a read that raised never gets
+        here. ``pendingCheckedAtTs`` advances only on a Mode 07 read that
+        answered (``mode07Probe.supported``); a Mode 03-only read leaves it.
+        Both are held on the orchestrator and never nulled once set.
         """
         emitter = getattr(self, '_dtcEmitter', None)
         if emitter is None or not hasattr(result, 'codes'):
             return
+        if getattr(result, 'mode03FrameNull', False) is True:
+            return
+        from pi.splash import dtc_emitter
+
+        readAtTs = dtc_emitter.dtcNowIso()
+        self._dtcCheckedAtTs = readAtTs
         fresh = list(getattr(result, 'codes', None) or [])
         if includesPending:
             self._dtcCarriedPending = [
                 c for c in fresh if getattr(c, 'status', None) == 'pending'
             ]
+            probe = getattr(result, 'mode07Probe', None)
+            if getattr(probe, 'supported', False) is True:
+                self._dtcPendingCheckedAtTs = readAtTs
             published = fresh
         else:
             storedNow = {getattr(c, 'code', None) for c in fresh}
@@ -922,6 +945,8 @@ class EventRouterMixin:
             mil=any(getattr(c, 'status', None) == 'stored' for c in published),
             newSinceTs=None,
             sessionResetLock=[],
+            checkedAtTs=readAtTs,
+            pendingCheckedAtTs=getattr(self, '_dtcPendingCheckedAtTs', None),
         )
 
     def _emitDriveDtcState(self, result: Any, *, includesPending: bool) -> None:

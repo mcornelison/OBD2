@@ -89,6 +89,8 @@
 #               |              | peaks, labelled by _tripEventTs (== distanceSinceTs).
 # 2026-10-18    | Rex (US-896-b)| _markTripEnded: drive end freezes drive.elapsedSec;
 #               |              | drive.distancePartial from the restart branch.
+# 2026-10-19    | Rex (US-897-a2)| The dtc read times are seeded from the tmpfs
+#               |              | states/dtc BEFORE the boot write, which carries them.
 # ================================================================================
 ################################################################################
 
@@ -241,6 +243,9 @@ class CardStateEmitterMixin:
     _systemStatusEmitter: Any | None
     _batteryHealthEmitter: Any | None
     _dtcEmitter: Any | None
+    # US-897-a2: last successful Mode 03 / Mode 07 read times this boot.
+    _dtcCheckedAtTs: str | None
+    _dtcPendingCheckedAtTs: str | None
     # US-533: config.json's path, when the composer knows it. A CLASS default of
     # None (rather than a getattr) so every composer -- including the standalone
     # ones that never had a path -- keeps working while the orchestrator sets a
@@ -385,7 +390,7 @@ class CardStateEmitterMixin:
         )
         try:
             from pi.splash.battery_health_emitter import makeBatteryHealthEmitter
-            from pi.splash.dtc_emitter import makeDtcEmitter
+            from pi.splash.dtc_emitter import makeDtcEmitter, readDtcCheckTimes
             from pi.splash.dtc_severity_table import loadP1xxxSeverityTable
             from pi.splash.system_status_emitter import makeSystemStatusEmitter
 
@@ -409,6 +414,12 @@ class CardStateEmitterMixin:
                 )
             self._dtcEmitter = makeDtcEmitter(
                 statesDir, severityTable=severityTable
+            )
+            # US-897-a2 (Atlas Q3): the states dir is per boot, so a states/dtc
+            # already there was written THIS boot by a previous orchestrator.
+            # Seed the read times from it BEFORE the boot write overwrites it.
+            self._dtcCheckedAtTs, self._dtcPendingCheckedAtTs = readDtcCheckTimes(
+                statesDir
             )
             # AC5: write an HONEST initial `dtc` state at boot so a parked-from-
             # boot Pi (no KOEO read yet) renders "DTC not read since key-off"
@@ -995,6 +1006,10 @@ class CardStateEmitterMixin:
             newSinceTs=None,
             dtcAvailable=False,
             lastKnown=readLastKnownDtcs(getattr(self, "_database", None)),
+            # US-897-a2: the seeded read times -- an unavailable source never
+            # nulls them.
+            checkedAtTs=getattr(self, "_dtcCheckedAtTs", None),
+            pendingCheckedAtTs=getattr(self, "_dtcPendingCheckedAtTs", None),
         )
 
     def _recordSyncOutcome(self, rowsPushed: int) -> None:

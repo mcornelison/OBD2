@@ -17,6 +17,8 @@
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-404 `dtc` emitter.
 # 2026-10-19    | Ralph (Rex)  | US-754-a -- enrichCode title + sentence.
+# 2026-10-19    | Ralph (Rex)  | US-897-a2 -- checkedAtTs + pendingCheckedAtTs
+#               |              | keys and the per-boot seed reader.
 # ================================================================================
 ################################################################################
 
@@ -31,6 +33,7 @@ from pi.splash.dtc_emitter import (
     buildDtcState,
     enrichCode,
     makeDtcEmitter,
+    readDtcCheckTimes,
 )
 
 # A minimal severity table fixture (the loader's output shape) -- the emitter
@@ -95,6 +98,9 @@ def test_buildDtcState_schema_hasAllSpecKeys():
         "sessionResetLock",
         "lastKnown",
         "source",
+        # US-897-a2: when Mode 03 / Mode 07 last read successfully this boot.
+        "checkedAtTs",
+        "pendingCheckedAtTs",
         "ts",
     }
     assert state["mil"] is True
@@ -463,3 +469,85 @@ def test_enrichCode_unTabledCode_titleAndSentenceNone():
     assert code["title"] is None
     assert code["sentence"] is None
     assert code["severity"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# US-897-a2 -- checkedAtTs / pendingCheckedAtTs + the per-boot seed
+# ---------------------------------------------------------------------------
+
+
+def test_buildDtcState_checkTimes_defaultNull():
+    state = buildDtcState(
+        codes=[], severityTable=_TABLE, mil=False, newSinceTs=None,
+        sessionResetLock=[], nowIso="2026-10-20T15:02:11Z",
+    )
+
+    assert state["checkedAtTs"] is None
+    assert state["pendingCheckedAtTs"] is None
+
+
+def test_buildDtcState_checkTimes_publishedVerbatim_evenWhenUnavailable():
+    """The held times ride on every publish -- an unavailable source never nulls them."""
+    for available in (True, False):
+        state = buildDtcState(
+            codes=[], severityTable=_TABLE, mil=False, newSinceTs=None,
+            sessionResetLock=[], nowIso="2026-10-20T15:05:00Z",
+            dtcAvailable=available,
+            checkedAtTs="2026-10-20T15:02:11Z",
+            pendingCheckedAtTs="2026-10-20T15:01:00Z",
+        )
+
+        assert state["checkedAtTs"] == "2026-10-20T15:02:11Z"
+        assert state["pendingCheckedAtTs"] == "2026-10-20T15:01:00Z"
+
+
+def test_makeDtcEmitter_writesTheCheckTimes(tmp_path):
+    emit = makeDtcEmitter(
+        str(tmp_path), severityTable=_TABLE, nowIsoFn=lambda: "2026-10-20T15:02:11Z"
+    )
+
+    emit(codes=[], mil=False, checkedAtTs="2026-10-20T15:02:11Z")
+
+    state = json.loads((tmp_path / DTC_FILENAME).read_text(encoding="utf-8"))
+    assert state["checkedAtTs"] == "2026-10-20T15:02:11Z"
+    assert state["pendingCheckedAtTs"] is None
+
+
+def test_readDtcCheckTimes_fromAPriorFile(tmp_path):
+    (tmp_path / DTC_FILENAME).write_text(
+        json.dumps({"checkedAtTs": "2026-10-20T15:02:11Z",
+                    "pendingCheckedAtTs": "2026-10-20T15:01:00Z"}),
+        encoding="utf-8",
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (
+        "2026-10-20T15:02:11Z", "2026-10-20T15:01:00Z",
+    )
+
+
+def test_readDtcCheckTimes_missingFile_seedsNull(tmp_path):
+    assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+
+
+def test_readDtcCheckTimes_unparseableJson_seedsNull(tmp_path):
+    (tmp_path / DTC_FILENAME).write_text("{not json", encoding="utf-8")
+
+    assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+
+
+def test_readDtcCheckTimes_unparseableTimes_seedNull(tmp_path):
+    """Each time is judged alone: a bad one seeds null, a good one survives."""
+    (tmp_path / DTC_FILENAME).write_text(
+        json.dumps({"checkedAtTs": "yesterday-ish",
+                    "pendingCheckedAtTs": "2026-10-20T15:01:00Z"}),
+        encoding="utf-8",
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (None, "2026-10-20T15:01:00Z")
+
+
+def test_readDtcCheckTimes_nonObjectOrNonString_seedsNull(tmp_path):
+    for body in ("[1, 2]", json.dumps({"checkedAtTs": 1760972531})):
+        (tmp_path / DTC_FILENAME).write_text(body, encoding="utf-8")
+
+        assert readDtcCheckTimes(str(tmp_path)) == (None, None)

@@ -33,6 +33,10 @@
 #               |              | ungraded code (was `severity_present`).
 # 2026-10-19    | Ralph (Rex)  | US-754-a: every code carries `title` + `sentence`
 #               |              | (table words; None for an untabled code).
+# 2026-10-19    | Ralph (Rex)  | US-897-a2: top-level `checkedAtTs` /
+#               |              | `pendingCheckedAtTs` (last successful Mode 03 /
+#               |              | Mode 07 this boot) + readDtcCheckTimes, the
+#               |              | per-boot seed from the tmpfs file.
 # ================================================================================
 ################################################################################
 
@@ -40,6 +44,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable
@@ -86,9 +91,54 @@ _REASON_OK = "ok"
 __all__ = [
     "DTC_FILENAME",
     "buildDtcState",
+    "dtcNowIso",
     "enrichCode",
     "makeDtcEmitter",
+    "readDtcCheckTimes",
 ]
+
+
+def dtcNowIso() -> str:
+    """Return UTC now in the `dtc` file's ISO format (``ts`` and the read times)."""
+    return datetime.now(UTC).strftime(_ISO_FMT)
+
+
+def _parseIsoOrNone(value: object) -> str | None:
+    """Return ``value`` when it is an ISO instant in ``_ISO_FMT``, else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        datetime.strptime(value, _ISO_FMT)
+    except ValueError:
+        return None
+    return value
+
+
+def readDtcCheckTimes(statesDir: str) -> tuple[str | None, str | None]:
+    """Read ``(checkedAtTs, pendingCheckedAtTs)`` from the existing `dtc` file.
+
+    Atlas Q3 (US-897-a2): the states dir is tmpfs, so the file it holds was
+    written THIS boot -- an orchestrator restart seeds its read times from it
+    before the boot-time write overwrites it. A missing file, unparseable JSON
+    or an unparseable time seeds None (each time is judged alone).
+
+    Args:
+        statesDir: tmpfs states directory.
+
+    Returns:
+        The two seeded times, each an ISO-8601 UTC string or None.
+    """
+    try:
+        with open(os.path.join(statesDir, DTC_FILENAME), encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    return (
+        _parseIsoOrNone(payload.get("checkedAtTs")),
+        _parseIsoOrNone(payload.get("pendingCheckedAtTs")),
+    )
 
 
 def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
@@ -228,6 +278,8 @@ def buildDtcState(
     dtcAvailable: bool = True,
     dtcUnavailableReason: str | None = None,
     lastKnown: dict | None = None,
+    checkedAtTs: str | None = None,
+    pendingCheckedAtTs: str | None = None,
 ) -> dict:
     """Assemble the `dtc` payload (pure; design-spec §8 pinned schema).
 
@@ -251,6 +303,11 @@ def buildDtcState(
         lastKnown: The persisted last-known codes (``readLastKnownDtcs``), shown
             ONLY when the source is unavailable. Ignored when available -- a
             live read always wins.
+        checkedAtTs: When Mode 03 last read successfully (non-null frame) this
+            boot; None when it has not (US-897-a2). The orchestrator holds it
+            and passes it on EVERY publish, available or not.
+        pendingCheckedAtTs: When the Mode 07 read the published pending set
+            came from ran; None until the first this boot.
 
     Returns:
         The `dtc` dict with the spec §8 keys, the US-429 ``source`` block (one
@@ -286,6 +343,8 @@ def buildDtcState(
                 dtcAvailable, dtcUnavailableReason or REASON_DTC_NOT_READ
             )
         },
+        "checkedAtTs": checkedAtTs,
+        "pendingCheckedAtTs": pendingCheckedAtTs,
         "ts": nowIso,
     }
 
@@ -312,7 +371,7 @@ def makeDtcEmitter(
     Returns:
         The emit callable.
     """
-    nowFn = nowIsoFn or (lambda: datetime.now(UTC).strftime(_ISO_FMT))
+    nowFn = nowIsoFn or (lambda: dtcNowIso())
     target = os.path.join(statesDir, DTC_FILENAME)
 
     def emit(
@@ -324,6 +383,8 @@ def makeDtcEmitter(
         dtcAvailable: bool = True,
         dtcUnavailableReason: str | None = None,
         lastKnown: dict | None = None,
+        checkedAtTs: str | None = None,
+        pendingCheckedAtTs: str | None = None,
     ) -> None:
         try:
             payload = buildDtcState(
@@ -336,6 +397,8 @@ def makeDtcEmitter(
                 dtcAvailable=dtcAvailable,
                 dtcUnavailableReason=dtcUnavailableReason,
                 lastKnown=lastKnown,
+                checkedAtTs=checkedAtTs,
+                pendingCheckedAtTs=pendingCheckedAtTs,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

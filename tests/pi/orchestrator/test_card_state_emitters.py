@@ -17,6 +17,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-21    | Ralph (Rex)  | Initial -- US-480-a emitter wiring tests.
+# 2026-10-19    | Ralph (Rex)  | US-897-a2 -- checkedAtTs / pendingCheckedAtTs:
+#               |              | the per-boot seed and the publish success rule.
 # ================================================================================
 ################################################################################
 
@@ -26,7 +28,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
+from pi.obdii.orchestrator.event_router import EventRouterMixin
 
 
 def _connectionStatus(*, connected, retryCount=0, totalConnections=0, state="disconnected"):
@@ -305,3 +310,303 @@ def test_cardStateEmitter_opensNoSecondObdConnection():
     assert "obd.OBD(" not in src
     assert "createConnectionFromConfig" not in src
     assert ".connect(" not in src
+
+
+# ---------------------------------------------------------------------------
+# US-897-a2 -- states/dtc says when codes were last read successfully this boot
+# (ARCH-062 + Atlas Q2/Q3 2026-10-19). Router + card-state mixins composed the
+# way the orchestrator composes them, writing through the REAL dtc emitter.
+# ---------------------------------------------------------------------------
+
+_T0 = "2026-10-20T15:00:00Z"
+_T1 = "2026-10-20T15:02:11Z"
+_T2 = "2026-10-20T15:02:41Z"
+
+
+def _code(code, status):
+    return SimpleNamespace(code=code, status=status, description="")
+
+
+def _read(codes=(), *, frameNull=False, mode07=True, polled=True):
+    """A logger result shaped like the a1/a2 result types."""
+    return SimpleNamespace(
+        storedCount=0, pendingCount=0, inserted=0, updated=0,
+        mode07Probe=SimpleNamespace(
+            supported=mode07, reason="supported" if mode07 else "unsupported"
+        ),
+        codes=list(codes), polled=polled, mode03FrameNull=frameNull,
+    )
+
+
+class _ScriptedDtcLogger:
+    """Every entry point answers with `self.next` (or raises it)."""
+
+    def __init__(self):
+        self.next = _read()
+
+    def _answer(self):
+        if isinstance(self.next, Exception):
+            raise self.next
+        return self.next
+
+    def logKeyOnDtcs(self, *, connection):
+        return self._answer()
+
+    def logSessionStartDtcs(self, *, driveId, connection):
+        return self._answer()
+
+    def logMilEventDtcs(self, *, driveId, connection):
+        return self._answer()
+
+    def maybePeriodicMode03(self, *, driveId, connection):
+        return self._answer()
+
+
+class _DtcOrch(_FakeOrch, EventRouterMixin):
+    def __init__(self, config):
+        super().__init__(config, connection=object())
+        self._dtcLogger = _ScriptedDtcLogger()
+        self._dtcCarriedPending = []
+        self._dtcCheckedAtTs = None
+        self._dtcPendingCheckedAtTs = None
+
+
+@pytest.fixture()
+def clock(monkeypatch):
+    """Pin the dtc read-time clock (the router stamps the read with it)."""
+    from pi.splash import dtc_emitter
+
+    now = {"iso": _T0}
+    monkeypatch.setattr(dtc_emitter, "dtcNowIso", lambda: now["iso"])
+    return now
+
+
+@pytest.fixture()
+def driveSeven():
+    from pi.obdii.drive_id import setCurrentDriveId
+
+    setCurrentDriveId(7)
+    yield
+    setCurrentDriveId(None)
+
+
+def _bootedOrch(tmp_path):
+    orch = _DtcOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+    return orch
+
+
+def _dtcBytes(tmp_path):
+    return (tmp_path / "states" / "dtc").read_bytes()
+
+
+def test_a2_successfulRead_advancesCheckedAtTs_codesEmpty(tmp_path, clock):
+    """VC: Mode 03 returns a non-null frame with no codes -> checkedAtTs = its time."""
+    orch = _bootedOrch(tmp_path)
+    assert _readState(tmp_path, "dtc")["checkedAtTs"] is None  # nothing read this boot
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([])
+
+    orch._dispatchKeyOnDtcs()
+
+    dtc = _readState(tmp_path, "dtc")
+    assert dtc["checkedAtTs"] == _T1
+    assert dtc["pendingCheckedAtTs"] == _T1
+    assert dtc["codes"] == []
+    assert orch._dtcCheckedAtTs == _T1
+
+
+def test_a2_nullFrame_publishesNothing_storedPairByteIdentical(tmp_path, clock, driveSeven):
+    """VC/G1: states/dtc holds P0400 + P0443; a null-frame read changes NOTHING."""
+    orch = _bootedOrch(tmp_path)
+    orch._driveDetector = None  # key-on is gated on no RUNNING drive
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "stored"), _code("P0443", "stored")])
+    orch._dispatchKeyOnDtcs()
+    before = _dtcBytes(tmp_path)
+
+    clock["iso"] = _T2
+    for dispatch in (
+        orch._dispatchKeyOnDtcs,
+        orch._dispatchSessionStartDtcs,
+        orch._dispatchMilEventDtcs,
+        orch._dispatchPeriodicDtcPoll,
+    ):
+        orch._dtcLogger.next = _read([], frameNull=True)
+        dispatch()
+
+    assert _dtcBytes(tmp_path) == before
+    assert orch._dtcCheckedAtTs == _T1
+    assert orch._dtcPendingCheckedAtTs == _T1
+
+
+def test_a2_nullFrameAtKeyOn_leavesTheBootStateUnassessed(tmp_path, clock):
+    """G1: a null frame at key-on leaves codes null and source.dtc unavailable."""
+    orch = _bootedOrch(tmp_path)
+    orch._dtcLogger.next = _read([], frameNull=True)
+
+    orch._dispatchKeyOnDtcs()
+
+    dtc = _readState(tmp_path, "dtc")
+    assert dtc["codes"] is None
+    assert dtc["source"]["dtc"]["available"] is False
+    assert dtc["checkedAtTs"] is None
+
+
+def test_a2_raisingRead_leavesCheckedAtTs(tmp_path, clock, driveSeven):
+    orch = _bootedOrch(tmp_path)
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([])
+    orch._dispatchKeyOnDtcs()
+    before = _dtcBytes(tmp_path)
+
+    clock["iso"] = _T2
+    orch._dtcLogger.next = RuntimeError("timeout")
+    orch._dispatchPeriodicDtcPoll()
+    orch._dispatchMilEventDtcs()
+
+    assert _dtcBytes(tmp_path) == before
+    assert orch._dtcCheckedAtTs == _T1
+
+
+def test_a2_periodicMode03Only_advancesChecked_pendingAndItsTimeUnchanged(
+    tmp_path, clock, driveSeven,
+):
+    """VC: periodic Mode 03-only publish after key-on."""
+    orch = _bootedOrch(tmp_path)
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0171", "pending")])
+    orch._dispatchKeyOnDtcs()
+
+    clock["iso"] = _T2
+    orch._dtcLogger.next = _read([_code("P0400", "stored")])
+    orch._dispatchPeriodicDtcPoll()
+
+    dtc = _readState(tmp_path, "dtc")
+    assert dtc["checkedAtTs"] == _T2
+    assert dtc["pendingCheckedAtTs"] == _T1
+    assert [(c["code"], c["status"]) for c in dtc["codes"]] == [
+        ("P0400", "stored"), ("P0171", "pending"),
+    ]
+
+
+def test_a2_mode07Unsupported_leavesPendingCheckedAtTs(tmp_path, clock):
+    """A null Mode 07 frame (unsupported) is not a successful pending read."""
+    orch = _bootedOrch(tmp_path)
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([], mode07=False)
+
+    orch._dispatchKeyOnDtcs()
+
+    dtc = _readState(tmp_path, "dtc")
+    assert dtc["checkedAtTs"] == _T1
+    assert dtc["pendingCheckedAtTs"] is None
+
+
+def test_a2_seedFromThePriorBootFile_initialEmitCarriesIt(tmp_path, clock):
+    """VC: orchestrator restarts; tmpfs states/dtc has checkedAtTs T -> initial emit carries T."""
+    statesDir = tmp_path / "states"
+    statesDir.mkdir()
+    (statesDir / "dtc").write_text(
+        json.dumps({"codes": [], "checkedAtTs": _T1, "pendingCheckedAtTs": _T0}),
+        encoding="utf-8",
+    )
+
+    orch = _bootedOrch(tmp_path)
+
+    dtc = _readState(tmp_path, "dtc")
+    assert dtc["checkedAtTs"] == _T1
+    assert dtc["pendingCheckedAtTs"] == _T0
+    assert dtc["codes"] is None  # still the honest unavailable boot state
+    assert dtc["source"]["dtc"]["available"] is False
+    assert (orch._dtcCheckedAtTs, orch._dtcPendingCheckedAtTs) == (_T1, _T0)
+
+
+def test_a2_badSeed_seedsNull(tmp_path, clock):
+    statesDir = tmp_path / "states"
+    statesDir.mkdir()
+    (statesDir / "dtc").write_text("{truncated", encoding="utf-8")
+
+    orch = _bootedOrch(tmp_path)
+
+    dtc = _readState(tmp_path, "dtc")
+    assert dtc["checkedAtTs"] is None
+    assert dtc["pendingCheckedAtTs"] is None
+    assert orch._dtcCheckedAtTs is None
+
+
+def test_a2_seededTime_survivesANullFrameRead(tmp_path, clock):
+    statesDir = tmp_path / "states"
+    statesDir.mkdir()
+    (statesDir / "dtc").write_text(json.dumps({"checkedAtTs": _T1}), encoding="utf-8")
+    orch = _bootedOrch(tmp_path)
+    before = _dtcBytes(tmp_path)
+
+    orch._dtcLogger.next = _read([], frameNull=True)
+    orch._dispatchKeyOnDtcs()
+
+    assert _dtcBytes(tmp_path) == before
+    assert _readState(tmp_path, "dtc")["checkedAtTs"] == _T1
+
+
+class _Readback:
+    def __init__(self, stored, pending, *, frameNull=False, mode07=True):
+        self.stored = stored
+        self.pending = pending
+        self.frameNull = frameNull
+        self.mode07Probe = SimpleNamespace(supported=mode07)
+
+
+def _clearingOrch(tmp_path, readback):
+    """The booted orch plus the core clear hook, bound the way core composes it."""
+    import types
+
+    from pi.obdii.orchestrator.core import ApplicationOrchestrator
+
+    orch = _bootedOrch(tmp_path)
+    orch._connection = SimpleNamespace(isConnected=lambda: True)
+    orch._dtcClearClientFactory = lambda: SimpleNamespace(
+        clearDtcs=lambda connection: readback
+    )
+    for name in ("_maybeServiceDtcClearRequest", "_publishDtcClearOutcome"):
+        setattr(orch, name, types.MethodType(getattr(ApplicationOrchestrator, name), orch))
+    return orch
+
+
+def test_a2_postClear_nonNullReRead_advancesBothTimes_replacesBothSets(tmp_path, clock):
+    """VC: post-clear re-read with a non-null frame."""
+    from pi.splash.dtc_clear_channel import writeRequest
+
+    orch = _clearingOrch(tmp_path, _Readback([], []))
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "stored"), _code("P0171", "pending")])
+    orch._dispatchKeyOnDtcs()
+
+    clock["iso"] = _T2
+    writeRequest(str(tmp_path / "states"), "req-1", nowFn=lambda: 1.0)
+    assert orch._maybeServiceDtcClearRequest() is True
+
+    dtc = _readState(tmp_path, "dtc")
+    assert dtc["codes"] == []
+    assert dtc["checkedAtTs"] == _T2
+    assert dtc["pendingCheckedAtTs"] == _T2
+
+
+def test_a2_postClear_nullReRead_publishesNothing_andWarns(tmp_path, clock, caplog):
+    from pi.splash.dtc_clear_channel import readOutcome, writeRequest
+
+    orch = _clearingOrch(tmp_path, _Readback([], [], frameNull=True))
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "stored")])
+    orch._dispatchKeyOnDtcs()
+    before = _dtcBytes(tmp_path)
+
+    clock["iso"] = _T2
+    writeRequest(str(tmp_path / "states"), "req-1", nowFn=lambda: 1.0)
+    with caplog.at_level("WARNING"):
+        orch._maybeServiceDtcClearRequest()
+
+    assert _dtcBytes(tmp_path) == before
+    assert any("Mode 03 null frame" in r.getMessage() for r in caplog.records)
+    # The clear itself still happened and its outcome is still published.
+    assert readOutcome(str(tmp_path / "states"))["ok"] is True

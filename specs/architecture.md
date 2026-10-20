@@ -7459,7 +7459,31 @@ orchestrator — its live injection follows the US-400/401 deferral pattern). Th
 state schema is design-spec §8: `mil` · `codes[]` (each with
 `severity`/`severityCaveat`/`short`/`setAtTs`/`driveId`/`freezeFrame`/
 `suggestedFix`/`fixProvenance`/`logged`/`syncAcked`/`clearEligible`) · `newSinceTs`
-· `clearGate` · `sessionResetLock` · `lastKnown` · `source` · `ts`.
+· `clearGate` · `sessionResetLock` · `lastKnown` · `source` · `checkedAtTs` ·
+`pendingCheckedAtTs` · `ts`.
+
+**Read times: `checkedAtTs` / `pendingCheckedAtTs` (US-897-a2, ARCH-062 + Atlas
+Q2/Q3 2026-10-19).** `checkedAtTs` (ISO-8601 UTC, null when no successful read
+this boot) is the time of the last **successful** Mode 03 this boot — a call that
+returned without raising **and** got a non-null frame
+(`DtcClient.readStoredDtcsWithFrame` → `(codes, frameNull)`; `readStoredDtcs`
+delegates and keeps returning `[]` on a null frame for `pre_drive_gate`). A null
+frame or a timeout is a **failure**: it logs WARNING `Mode 03 null frame`, leaves
+the time unchanged and **publishes nothing** — states/dtc stays byte-identical
+(codes, pending, both times), so a null frame at key-on leaves the boot state's
+`codes: null` / `source.dtc` unavailable (G1). Every publish path — key-on, drive
+start, MIL edge, periodic, post-clear re-read (`ClearReadback.frameNull`) —
+follows the rule. `pendingCheckedAtTs` is the time of the Mode 07 read the
+published pending set came from: it advances only on a Mode 07 read that answered
+(`mode07Probe.supported`), and a Mode 03-only publish leaves it. The orchestrator
+holds both and passes them on every publish, available or not — never nulled once
+set. **Per boot (Atlas Q3):** the states dir is tmpfs, so at card-emitter init,
+before the boot-time write overwrites it, both are seeded from the existing
+`states/dtc` (`readDtcCheckTimes`); a missing file, unparseable JSON or an
+unparseable time seeds null. The raw Mode 03 / Mode 07 responses are logged at
+DEBUG — this ECU's empty-frame shape is not measured, and the raw frame is the
+falsifier (if it answers "no codes" with a null frame, `checkedAtTs` never
+advances after the next clear).
 
 **Resting state: honest nulls + `lastKnown` (US-752, Atlas ruling 2026-09-14).**
 When no live read is possible (boot, key-off, process restart) the live fields
