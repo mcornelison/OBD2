@@ -22,8 +22,8 @@
 | 7 | Light | A · Word and curve + glyph | `v030-light-page-design.md` | https://claude.ai/artifact/KsQ5iXCdsxZRahiJU7Bbsd | `2026-10-12-v030-light-page.html` |
 | 7-OEM | Light, **OEM skin, S105 build rulings** (updated 2026-10-19; no override, no shortcut) | A + glyph | `v030-light-page-design.md` | https://claude.ai/artifact/XVJUtniMmi7Rg9Smhf8x8B | `2026-10-14-v030-light-page-oem.html` (repo copy `specs/v030-light-page-oem.html`) |
 | 8 | System (+ details) | A · Verdict and rows | `v030-system-page-design.md` | https://claude.ai/artifact/47FkWPp39fVQL3ciKph8ra | `2026-10-12-v030-system-page.html` |
-| 8a | Settings (F-126) | single design | `v030-system-page-design.md` §4.7 | https://claude.ai/artifact/Vfsd6VugUGfoQAMYJZPo6R | `2026-10-13-v030-settings-screen.html` |
-| 8-OEM | System + details + Settings, **OEM skin** (amber means counted) | A | `v030-system-page-design.md` | https://claude.ai/artifact/XXpv3Qn3vUzJj7j4TJfF74 | `2026-10-15-v030-system-page-oem.html` |
+| 8a | Settings (F-126) (predates the S110 fold: power-mode + auto-dim rows gone, shipped apply/status words; spec §4.7 + §10 win) | single design | `v030-system-page-design.md` §4.7 | https://claude.ai/artifact/Vfsd6VugUGfoQAMYJZPo6R | `2026-10-13-v030-settings-screen.html` |
+| 8-OEM | System + details + Settings, **OEM skin** (amber means counted; predates the S110 fold 2026-10-19, spec §10 wins) | A | `v030-system-page-design.md` | https://claude.ai/artifact/XXpv3Qn3vUzJj7j4TJfF74 | `2026-10-15-v030-system-page-oem.html` |
 | 9 | Warnings + top-bar icon | A · Ranked list, scrolling | `v030-warnings-page-design.md` | https://claude.ai/artifact/1hZxFmhcUM8rY5onGu8eXU | `2026-10-12-v030-warnings-page.html` |
 | 9-OEM | Warnings + icon + PULL OVER + key-on CODE ALERT, **OEM skin, S106 scope** (v2 2026-10-18; repo copy `specs/v030-warnings-page-oem.html`) | A | `v030-warnings-page-design.md` | https://claude.ai/artifact/KKE2HvXZmUZJDPFP6SrRhk | `2026-10-15-v030-warnings-page-oem.html` |
 | — | Visual style (4 directions) | 2 · 90s Mitsubishi OEM | `v030-frame-and-style-design.md` | https://claude.ai/artifact/Eeuc311nAqoR5JFa5axvcT | `2026-10-13-v030-style-directions.html` |
