@@ -16,6 +16,8 @@
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-404 P1xxx severity-table loader.
 # 2026-10-19    | Ralph (Rex)  | US-754-a -- Title + Sentence columns.
+# 2026-10-19    | Ralph (Rex)  | US-754-b -- Generic P0 rows (P0400, P0443);
+#               |              | bank-2 + unrated P0 stay unknown.
 # ================================================================================
 ################################################################################
 
@@ -27,8 +29,11 @@ from pathlib import Path
 
 import pytest
 
+from pi.splash.dtc_emitter import enrichCode
 from pi.splash.dtc_severity_table import (
+    SEVERITY_MINOR,
     SEVERITY_NA,
+    SEVERITY_UNKNOWN,
     SEVERITY_WATCH,
     loadP1xxxSeverityTable,
 )
@@ -226,3 +231,108 @@ def test_loadP1xxxSeverityTable_tableWithoutTitleSentenceHeaders_stillLoads(tmp_
     assert table["P1750"]["severity"] == SEVERITY_NA
     assert table["P1750"]["title"] is None
     assert table["P1750"]["sentence"] is None
+
+
+# US-754-b: the '## Generic P0' section -- the car's two real stored codes,
+# Spool 2026-10-18 rows verbatim.
+_P0400_FIX = (
+    "EGR flow fault. Emissions + part-load driveability; EGR is off under boost, so"
+    " not a WOT engine-damage path. Check EGR valve, EGR solenoid and its vacuum"
+    " lines (shop had this area apart 09-02). Drive gently, get it diagnosed."
+)
+_P0443_FIX = (
+    "Purge solenoid circuit, intermittent -> connector/wiring first. Emissions only,"
+    " no engine risk. Never replace the PCM for this code."
+)
+
+# Bank-2 codes cannot set on this inline four: wrong-vehicle data (Spool
+# 2026-10-18), so none gets a row and each stays UNRATED.
+_BANK2_UNRATED = [
+    "P0430",
+    "P0432",
+    *[f"P0{n}" for n in range(150, 168)],
+    "P0174",
+    "P0175",
+]
+
+
+def _rawCode(code: str) -> dict:
+    return {
+        "code": code,
+        "status": "stored",
+        "description": "",
+        "driveId": None,
+        "setAtTs": "2026-10-19T12:00:00Z",
+        "logged": True,
+        "syncAcked": True,
+    }
+
+
+def test_loadP1xxxSeverityTable_p0400_isWatchWithSpoolWordsVerbatim(table):
+    """
+    Given: Spool's SSOT table with the Generic P0 section
+    When: P0400 is looked up
+    Then: WATCH, not clearable, and every cell is Spool's text verbatim
+    """
+    entry = table["P0400"]
+
+    assert entry["severity"] == SEVERITY_WATCH
+    assert entry["severityCaveat"] is None
+    assert entry["clearEligible"] is False
+    assert entry["short"] == "Exhaust Gas Recirculation Flow Malfunction"
+    assert entry["suggestedFix"] == _P0400_FIX
+    assert entry["fixProvenance"] == "spool-validated"
+    assert entry["title"] == "EGR FLOW (P0400)"
+    assert entry["sentence"] == "Drive gently. Get it diagnosed."
+
+
+def test_loadP1xxxSeverityTable_p0443_isMinorClearableWithSpoolWordsVerbatim(table):
+    """
+    Given: Spool's SSOT table with the Generic P0 section
+    When: P0443 is looked up
+    Then: MINOR, clearEligible (its Clearable cell starts 'Yes'), Spool's words
+    """
+    entry = table["P0443"]
+
+    assert entry["severity"] == SEVERITY_MINOR
+    assert entry["severityCaveat"] is None
+    assert entry["clearEligible"] is True
+    assert entry["short"] == (
+        "Evaporative Emission Control System Purge Control Valve Circuit"
+    )
+    assert entry["suggestedFix"] == _P0443_FIX
+    assert entry["title"] == "EVAP PURGE (P0443)"
+    assert entry["sentence"] == "Emissions only. Safe to drive."
+
+
+def test_loadP1xxxSeverityTable_genericP0Section_holdsExactlyTwoCodes(table):
+    """
+    Given: Spool's SSOT table
+    When: its P0 codes are listed
+    Then: exactly P0400 and P0443 -- no other generic code is rated
+    """
+    assert sorted(c for c in table if c.startswith("P0")) == ["P0400", "P0443"]
+
+
+def test_enrichCode_theCarsTwoStoredCodes_areRatedWithTheirTitles(table):
+    """
+    Given: the shipped table
+    When: the car's stored P0400 and P0443 are enriched
+    Then: watch / 'EGR FLOW (P0400)' and minor / 'EVAP PURGE (P0443)'
+    """
+    p0400 = enrichCode(_rawCode("P0400"), table)
+    p0443 = enrichCode(_rawCode("P0443"), table)
+
+    assert (p0400["severity"], p0400["title"]) == (SEVERITY_WATCH, "EGR FLOW (P0400)")
+    assert (p0443["severity"], p0443["title"]) == (SEVERITY_MINOR, "EVAP PURGE (P0443)")
+
+
+@pytest.mark.parametrize("code", ["P0171", "P0300", *_BANK2_UNRATED])
+def test_enrichCode_untabledP0AndBank2Codes_stayUnknown(table, code):
+    """
+    Given: the shipped table, which rates only P0400 and P0443 among P0 codes
+    When: an unrated generic or bank-2 (wrong-vehicle) code is enriched
+    Then: severity unknown (UNRATED) -- never a guessed tier
+    """
+    assert code not in table
+    assert enrichCode(_rawCode(code), table)["severity"] == SEVERITY_UNKNOWN

@@ -34,10 +34,19 @@ These exist in the Mitsubishi P1xxx namespace but **cannot set on our manual-tra
 | P1791 | Engine Coolant Temp Level Input → TCM | N/A — auto-trans only |  |  |
 | P1795 | Throttle Position Input → TCM | N/A — auto-trans only |  |  |
 
+## Generic P0
+
+The car's two real stored generic codes (Spool 2026-10-18, US-754). Descriptions are SAE J2012 generic text. Any other P0 code — including P0430 and every bank-2 code (P0150–P0167, P0174/P0175), which cannot set on this inline four and mean wrong-vehicle data — has no row and stays **unknown (UNRATED)**, never a guessed tier.
+
+| Code | Description (mfr) | Severity | Clearable | Suggested fix (Spool) | Title | Sentence |
+|---|---|---|---|---|---|---|
+| **P0400** | Exhaust Gas Recirculation Flow Malfunction | 🟡 WATCH | No | EGR flow fault. Emissions + part-load driveability; EGR is off under boost, so not a WOT engine-damage path. Check EGR valve, EGR solenoid and its vacuum lines (shop had this area apart 09-02). Drive gently, get it diagnosed. | EGR FLOW (P0400) | Drive gently. Get it diagnosed. |
+| **P0443** | Evaporative Emission Control System Purge Control Valve Circuit | 🟢 MINOR | Yes, conditionally (advisory §4) | Purge solenoid circuit, intermittent -> connector/wiring first. Emissions only, no engine risk. Never replace the PCM for this code. | EVAP PURGE (P0443) | Emissions only. Safe to drive. |
+
 ---
 
 ## Notes for the feature
 - **Condition-dependent severity** (P1103/P1104/P1105/P1300): base tier 🟡, escalates to 🔴 under a specific condition (overboost / lean-at-load / knock). This is exactly the "severity chip + caveat line" Iris built into the detail view — render the caveat, don't flatten to a bare tier.
-- **No 🟢 MINOR / clearable P1xxx** here — the clearable-once-logged codes on this car are generic evap (P0440/P0442/P0455, e.g. the P0443 we just cleared), which carry their own python-obd descriptions.
+- **No 🟢 MINOR / clearable P1xxx** here — the clearable-once-logged codes on this car are generic P0, rated in the **Generic P0** section above (P0443 🟢 MINOR, P0400 🟡 WATCH). A P0 code not in that section is unknown (UNRATED).
 - **ECMLink caveat**: the loaded tune can suppress/alter EGR (P1400) and boost-control behavior. Treat this table as the *factory* meaning; ECMLink config may change which codes are live.
 - **Extensible**: this is the confirmed vehicle-class subset. Add codes only when grounded in an authoritative source (factory manual / ECMtuning / DSMtuners) — never fabricate a P1xxx meaning ([[feedback-pin-units-before-magnitude-claims]]).

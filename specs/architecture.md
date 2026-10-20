@@ -7498,10 +7498,14 @@ until a clear. The pinned design-spec §8 lives on the fleet share (PM-owned).
 
 **Honest-instrument by construction.** The Pi never decides severity: a static
 loader (`dtc_severity_table.py`) parses **Spool's SSOT**
-(`offices/tuner/dsm-p1xxx-severity-table.md`) into the `{code → enrichment}` map
-the emitter merges verbatim — engine P1xxx → `watch`, condition-dependent codes
+(`src/pi/resources/dsm-p1xxx-severity-table.md`) into the `{code → enrichment}` map
+the emitter merges verbatim. The table holds the P1xxx codes plus a **Generic P0**
+section (US-754-b: the car's two real stored codes, P0400 → `watch`, P0443 →
+`minor`) — engine P1xxx → `watch`, condition-dependent codes
 carry a `severityCaveat` that **never auto-upgrades the tier** (R-1), auto-trans
-P1xxx → `na` (quiet disposition). A code **absent** from the table degrades to
+P1xxx → `na` (quiet disposition). A P0 code not in the Generic P0 section — P0430
+and every bank-2 code included (wrong-vehicle data on this inline four) — is
+`unknown` (UNRATED), never a guessed tier. A code **absent** from the table degrades to
 `severity: unknown` with whatever description python-obd supplied (empty → the
 display shows "No description yet") — no fabricated severity or fix. `freezeFrame`
 is always `null` (Mode 02 confirmed unsupported on MD326328; US-406 renders the
