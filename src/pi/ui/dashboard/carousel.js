@@ -4652,7 +4652,7 @@
   }
 
   // The status row from states/obd-live. CHECK ENGINE's count line ("n codes
-  // ›", "0 codes ›" for a pending code) exists only while the lamp is ON; it
+  // ›", "1 code ›", "0 codes ›" for a pending code) exists only while the lamp is ON; it
   // is a tap to the Alerts card ONLY while parked (`parked`, the debounced
   // parkedNext signal) -- moving, the line carries no tap target.
   function engineStatusView(obdLiveData, parked, nowMs) {
@@ -4668,7 +4668,9 @@
     if (mil.value === 1) {
       var count = engineReading(params.DTC_COUNT, nowMs, displayUnits);
       var n = count.value === null ? DRIVING_NOT_READ : String(Math.round(count.value));
-      codes = { text: n + " codes ›", tap: parked === true };
+      // US-909: exactly one reads "1 code ›" (spec v030-engine-page-design.md
+      // s3, the most common real MIL case); 0, n and "--" stay plural.
+      codes = { text: n + (n === "1" ? " code ›" : " codes ›"), tap: parked === true };
     }
     return { runTime: runTime, mil: mil, codes: codes };
   }

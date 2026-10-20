@@ -640,27 +640,9 @@ html, body {
 .tile[data-level="insufficient"] .tile-value {
   color: var(--text-tertiary); font-style: italic; font-weight: 400;
 }
-/* The multi-drive bar row: one bar per drive, coloured by its OWN drift level
-   so a drive beyond +/-10% (down) is visibly not-green next to healthy drives. */
-.ltft-bars {
-  display: flex; gap: 4px; margin-top: 8px; padding-bottom: 2px;
-  overflow-x: auto;
-}
-.ltft-bar {
-  flex: 1 0 auto; min-width: 44px;
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 6px 4px; border-radius: 4px;
-  border: 1px solid var(--surface);
-}
-.ltft-bar-value { font-size: var(--fs-secondary); font-weight: 600; color: var(--text-primary); }
-.ltft-bar-drive { font-size: var(--fs-meta); color: var(--text-tertiary); }
-.ltft-bar[data-level="ok"]    .ltft-bar-value { color: var(--green-ok); }
-.ltft-bar[data-level="amber"] .ltft-bar-value { color: var(--amber-warn); }
-/* US-488: a drive beyond +/-10% LTFT is a fuel-trim drift worth investigating
-   -- WATCH, not "pull over" (TD-067 ruling #4). Value + border move together;
-   sweeping only one would leave a red box around an amber number. */
-.ltft-bar[data-level="down"]  .ltft-bar-value { color: var(--amber-warn); }
-.ltft-bar[data-level="down"]  { border-color: var(--amber-warn); }
+/* US-909: the per-drive bar row's rules are gone. Nothing has rendered that
+   row since the Fuel card replaced the Fuel Trim card (architecture.md, the
+   V0.30 Fuel page); only the insufficient headline above is still live. */
 
 /* --- US-540-b: the US-507 merged Health card is RETIRED ---------------------- */
 /* Its whole rule block goes with it. That block existed to make three sources

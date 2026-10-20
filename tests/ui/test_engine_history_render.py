@@ -32,6 +32,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-15    | Ralph (Rex)  | Initial -- US-889-c Engine scroll half.
+# 2026-10-19    | Ralph (Rex)  | US-909: mil-on-one-code joins MIL_FIXTURES;
+#               |              | DTC_COUNT 1 reads '1 code ›' (spec s3:53).
 # ================================================================================
 ################################################################################
 
@@ -96,11 +98,22 @@ HISTORY_FIXTURES = [
     "history-restart-mid-drive",
     "history-empty-after-restart",
 ]
-MIL_FIXTURES = {"mil-on-two-codes": 2, "mil-on-twelve-codes": 12, "mil-on-zero-codes": 0}
+MIL_FIXTURES = {
+    "mil-on-one-code": 1,
+    "mil-on-two-codes": 2,
+    "mil-on-twelve-codes": 12,
+    "mil-on-zero-codes": 0,
+}
 SERIES = [("COOLANT_TEMP", "COOLANT"), ("INTAKE_TEMP", "INTAKE AIR"), ("BATTERY_V", "BATTERY")]
 ABSENCE = "History not recorded yet. It starts with this drive's first readings."
 SPAN_BANDS = ("amber", "red")
 CHART_W = 100.0
+
+
+def _codesText(count: int) -> str:
+    """The count line for a read DTC_COUNT: singular at exactly one
+    (specs/v030-engine-page-design.md:53), plural for 0 and for 2+."""
+    return f"{count} code ›" if count == 1 else f"{count} codes ›"
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +537,7 @@ def test_milOn_isOn_withTheCountLine(name: str, count: int):
     for parked in (False, True):
         view = _status(_fixture(name)["obd-live"], parked)
         assert view["mil"]["text"] == "ON"
-        assert view["codes"] == {"text": f"{count} codes ›", "tap": parked}, (name, parked)
+        assert view["codes"] == {"text": _codesText(count), "tap": parked}, (name, parked)
 
 
 @_NODE_ONLY
@@ -544,6 +557,16 @@ def test_mil_isReadByValue_neverByUnit(unit: str | None):
 def test_milWithAValueOtherThan0Or1_isNotRead_neverAGuess():
     view = _status({"params": {"MIL_ON": _param(2.0, "mil")}})
     assert (view["mil"]["text"], view["mil"]["note"], view["codes"]) == ("--", "not read", None)
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(("name", "text"), [("mil-on-one-code", "1 code ›"), ("mil-on-two-codes", "2 codes ›")])
+def test_milOn_countOne_isSingular_twoStaysPlural(name: str, text: str):
+    """US-909 validation rows: DTC_COUNT 1 reads '1 code ›' (spec
+    v030-engine-page-design.md:53, the most common real MIL case); 2 is
+    unchanged. Literal strings, not _codesText, so the rule is pinned twice."""
+    view = _status(_fixture(name)["obd-live"], True)
+    assert view["codes"] == {"text": text, "tap": True}
 
 
 @_NODE_ONLY
@@ -718,7 +741,7 @@ def test_dom_everyMilFixture_paintsOnAndItsCount(name: str, count: int):
     surface = _bootMil(name, parked=True)
     assert _textOf(_child(_stat(surface, "MIL_ON"), "eng-stat-value")[-1]) == "ON"
     codes = surface.pathById("engine-codes")
-    assert codes is not None and _textOf(codes[-1]) == f"{count} codes ›"
+    assert codes is not None and _textOf(codes[-1]) == _codesText(count)
     runTime = _stat(surface, "RUNTIME_SEC")
     assert _textOf(_child(runTime, "eng-stat-value")[-1]) == "0:23"
 

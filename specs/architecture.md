@@ -8006,8 +8006,9 @@ each: this drive's history, then the status row.
   the ECU's engine run time, NEVER derived from drive time (Atlas G4); absent
   -> `--` + `not read`. CHECK ENGINE is `params.MIL_ON` read by VALUE (1 `ON`,
   0 `OFF`, anything else `--` + `not read`), never by its unit label; while ON,
-  a second line `n codes ›` from `params.DTC_COUNT` (`0 codes ›` for a pending
-  code, `-- codes ›` if the count is not read). That line is a tap to the
+  a second line `n codes ›` from `params.DTC_COUNT` (singular `1 code ›` for
+  exactly one, US-909; `0 codes ›` for a pending code, `-- codes ›` if the
+  count is not read). That line is a tap to the
   Alerts card ONLY while parked: `data-tap="true"` + `role="button"` from the
   US-511 `parkedNext` debounce (its first consumer since TD-us659), advanced
   once per tick from the same system-status; moving, it carries no tap target.

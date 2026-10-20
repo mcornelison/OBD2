@@ -101,10 +101,6 @@ _EXEMPT_SCROLLERS = {
     "#setup-menu": "fixed overlay OUTSIDE #track -- no card swipe starts on it",
     "#dtc-detail": "fixed overlay OUTSIDE #track -- no card swipe starts on it",
     "#sys-detail": "fixed overlay OUTSIDE #track -- no card swipe starts on it",
-    ".ltft-bars": (
-        "horizontal scroller BY DESIGN inside the Fuel Trim card; a drag that "
-        "starts on the bar row scrolls the bars, not the carousel"
-    ),
 }
 
 

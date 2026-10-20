@@ -1607,14 +1607,9 @@ def test_dashboardHtml_hasFuelTrimSlot_us420_us507():
 
 
 def test_dashboardCss_hasLtftTrendStyles_us420():
-    """US-420: the per-drive bar styles bind ok/amber/down to the palette so a
-    drifted drive is visibly not-green, and the insufficient headline is muted."""
+    """US-420: the insufficient headline is muted. (US-909: the per-drive bar
+    styles this also pinned were dead and are deleted.)"""
     css = _read(KIT_DIR, "dashboard.css")
-    assert ".ltft-bars" in css
-    assert ".ltft-bar" in css
-    assert '.ltft-bar[data-level="down"]  .ltft-bar-value' in css or (
-        '.ltft-bar[data-level="down"]' in css
-    )
     assert '.tile[data-level="insufficient"]' in css
 
 

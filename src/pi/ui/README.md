@@ -34,7 +34,7 @@ documentation tree that shipped to hardware.
 src/pi/ui/
   dashboard/        the F-092 carousel dashboard  -> /opt/dashboard on the Pi
   splash/           the F-103 boot/shutdown splash -> /opt/splash on the Pi
-  assets/fonts/     the Oswald brand face + its OFL licence (source of record)
+  assets/fonts/     the Michroma brand face + its OFL licence (source of record)
   tokens.css        the visual token SSOT
   INSTALL.md        kit install notes
 ```
