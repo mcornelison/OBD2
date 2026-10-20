@@ -85,7 +85,7 @@ Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest
   - Letter-spacing lives in one custom property: `#topbar { --glyph-ls: 0.04em }`, `.glyph { letter-spacing: var(--glyph-ls) }`.
   - The icon is a `span.glyph` (`#glyph-warnings`) after the sync glyph, with a **fixed** `width: calc(3 * (1ch + var(--glyph-ls)))` and `text-align: start`. Not `min-width: 3ch`: `▲99` is 3 × 16.69 = 50.07 px and 3 ch is only 46.97 px, so a min-width would reflow at two digits.
   - **Width model** (DejaVu Sans Mono 0.60205 em at `--fs-secondary` 26 px; a text character is `1ch + --glyph-ls` = 16.69 px; letter-spacing does not apply to the SVG): BT 33.38 + sync 16.69 + WiFi 15.65 + icon 50.07 = 115.79 px, + 3 × 10 px gaps = **145.8 of 168.6 px. Headroom 22.8 px < 26.69 px**, so no fifth glyph fits. The width test charges every `span.glyph` by its declared width at that rate and fails on any it can't charge. A reader that charged a bare 1 ch would leave 29.0 px of headroom and let a fifth glyph through.
-  - ⚠️ ARCH-061's OBD link chain, which replaces `BT`, must fit `BT`'s 2 characters (33.4 px) when it is built, or it is a re-layout.
+  - ARCH-061's OBD link chain replaces `BT` with the 3-dot SVG at its declared `3ch` (46.97 px; letter-spacing does not apply to an SVG). Cluster: 145.79 − 33.38 (`BT`) + 46.97 = **159.4 of 168.6 px, 9.2 px headroom**: it fits without a re-layout (S110 US-894-a; ceiling 3.5ch). Corrected 2026-10-20 (Atlas PR #115 review F2).
 
 ### 4.3 Empty states
 **Print only what was assessed** (Atlas 2026-10-14 §5, the ARCH-062 rule applied to the whole page). Superseded: `Engine, system and data all clear.`, which claimed two sources V0.30 doesn't check.
@@ -191,7 +191,8 @@ Stored and pending codes re-alert **once per key-on** and can be hidden. This is
 ### 4.6 Ages and formats on this page
 - **Freshness** (how old the reading I'm showing is): `last reading n s ago`, the S105 M7 rule: `Math.floor`, clamped at 0, `N s` with a space, capped at `999+ s ago`. On stale rows and in the takeover only.
 - **Duration** (how long the entry has been wrong): `agoText(now, firstSeenTs)` unchanged, on every row (engine rows too; a battery WATCH active 20 min reads `20 min ago`, not `999+ s ago`) and the takeover's age. Never a short form like `41 d`: `carousel.js` deliberately keeps one age vocabulary.
-- Spool's formats (10-19 §5): battery `0.1 V`, one decimal always (`12.0 V`, never `12 V`), **rounded toward the breach** (low alert floors, 11.96 ⇒ `11.9 V`; high alert ceils, 15.04 ⇒ `15.1 V`), so the shown number never sits on the safe side of the threshold that fired. Over-rev: integer rpm, floor, `,` separator, `(sampled)`, composed by the provider into the sentence (Atlas G3). ⚠️ `displayUnits` rounds V to nearest today; whether the toward-the-breach rounding lives in the provider's `value` or in a page helper is **open for Atlas** (§9).
+- Spool's formats (10-19 §5): battery `0.1 V`, one decimal always (`12.0 V`, never `12 V`), **rounded toward the breach** (low alert floors, 11.96 ⇒ `11.9 V`; high alert ceils, 15.04 ⇒ `15.1 V`), so the shown number never sits on the safe side of the threshold that fired. Over-rev: integer rpm, floor, `,` separator, `(sampled)`, composed by the provider into the sentence (Atlas G3).
+- **Where the direction lives (Atlas RULED 2026-10-20):** the provider decides and the page applies, as a **direction, never a pre-rounded value**. The entry carries the raw `value` (the current reading, G3) plus `round`: `"floor"` | `"ceil"` | null, set by the arbiter from the band that fired (low ⇒ floor, high ⇒ ceil; null = to-nearest, today's behaviour). `displayUnits` applies it as its **final** step, after unit conversion, at the rule's decimals. Pre-rounding would store a display artefact as a measurement, and would fail for any converted unit (a °C floor, converted and rounded to nearest in °F, can land back on the safe side). No threshold reaches the page. VCs: battery low 11.96 ⇒ `11.9 V`; high 15.04 ⇒ `15.1 V`; `round` null ⇒ byte-identical to today; a stale `last.value` keeps the same direction. A small two-tier story for Marcus to schedule (Spool 10-19 §5 is the source); it does not block S108.
 
 ## 5. Data contract
 **Authority: Atlas 2026-10-14 WARNINGS ruling** (`states/alerts` shape, boot-scoped ack store, tier mechanism, 4-story split); tokens 2026-10-16. **The page reads `states/alerts` only** for warnings (never `states/dtc`, except in the code-detail view).
@@ -271,7 +272,7 @@ Knock alerts (need ECMLink) · AFR/lean numeric (no wideband) · oil pressure (n
 ## 9. Open items
 - ~~Atlas G3 / G4 / G6 / G7~~ **RULED 2026-10-18:** value null + `(sampled)` in the sentence; `takeover.directive`; KEEP the dashboard.css:185 mirror; MINOR-/UNRATED-only ⇒ `watch`.
 - ~~Spool G1 (UNRATED sentence)~~ **RULED 2026-10-19:** `Severity unknown. Get it diagnosed.` ~~G2 (rows)~~ **RULED 2026-10-18:** P0400 WATCH, P0443 MINOR, no P0430 row.
-- **Atlas (new, minor):** where the battery value's toward-the-breach rounding lives (§4.6): the provider's `value`, or a page helper beside `displayUnits`. Not blocking S108's ACs.
+- **Ruled (Atlas 2026-10-20):** battery toward-the-breach rounding = provider-set `round` direction applied last by `displayUnits` (§4.6). Owed: the two-tier story (Marcus to schedule). Not blocking S108's ACs.
 - **Iris:** bring the OEM mockup up to this revision (§10).
 - **Top-bar name:** `ALERTS` (86.3 px; `WARNINGS` 125 px doesn't fit the 122 px slot). The page keeps the name Warnings everywhere else.
 
