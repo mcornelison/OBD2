@@ -19,6 +19,7 @@
 # 2026-10-19    | Ralph (Rex)  | US-754-a -- enrichCode title + sentence.
 # 2026-10-19    | Ralph (Rex)  | US-897-a2 -- checkedAtTs + pendingCheckedAtTs
 #               |              | keys and the per-boot seed reader.
+# 2026-10-20    | Ralph (Rex)  | US-897-a3 -- per-code firstSeenTs.
 # ================================================================================
 ################################################################################
 
@@ -551,3 +552,81 @@ def test_readDtcCheckTimes_nonObjectOrNonString_seedsNull(tmp_path):
         (tmp_path / DTC_FILENAME).write_text(body, encoding="utf-8")
 
         assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+
+
+# ---- US-897-a3: per-code firstSeenTs ------------------------------------------
+
+
+def test_enrichCode_firstSeenTs_carriedVerbatim_noneByDefault():
+    tabled = enrichCode(_rawCode("P1300"), _TABLE, "2026-09-04T13:20:05Z")
+
+    assert tabled["firstSeenTs"] == "2026-09-04T13:20:05Z"
+    assert enrichCode(_rawCode("P0999"), _TABLE)["firstSeenTs"] is None
+
+
+def test_buildDtcState_liveCodes_carryFirstSeenTs_nullWhenNoRow():
+    """
+    Given: a live read of P1300 + p0400 and a first-seen map holding only P0400
+    When: the state is built
+    Then: P0400 carries its first-seen string, P1300 (no row) carries null
+    """
+    state = buildDtcState(
+        codes=[_rawCode("P1300"), _rawCode("p0400")],
+        severityTable=_TABLE,
+        mil=True,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T09:00:00Z",
+        firstSeenByCode={"P0400": "2026-09-10T08:15:00Z"},
+    )
+
+    byCode = {c["code"]: c for c in state["codes"]}
+    assert byCode["P0400"]["firstSeenTs"] == "2026-09-10T08:15:00Z"
+    assert byCode["P1300"]["firstSeenTs"] is None
+
+
+def test_buildDtcState_noFirstSeenMap_everyCodeNull():
+    state = buildDtcState(
+        codes=[_rawCode("P1300")],
+        severityTable=_TABLE,
+        mil=True,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T09:00:00Z",
+    )
+
+    assert state["codes"][0]["firstSeenTs"] is None
+
+
+def test_buildDtcState_lastKnownCodes_carryFirstSeenTs():
+    """Remembered codes age from the same reader as live ones."""
+    state = buildDtcState(
+        codes=[],
+        severityTable=_TABLE,
+        mil=False,
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso="2026-09-14T09:00:00Z",
+        dtcAvailable=False,
+        lastKnown=_lastKnownBlock(_knownCode("P0400"), _knownCode("P1300")),
+        firstSeenByCode={"P0400": "2026-09-04T13:20:05Z"},
+    )
+
+    byCode = {c["code"]: c for c in state["lastKnown"]["codes"]}
+    assert byCode["P0400"]["firstSeenTs"] == "2026-09-04T13:20:05Z"
+    assert byCode["P1300"]["firstSeenTs"] is None
+
+
+def test_makeDtcEmitter_writesFirstSeenTs(tmp_path):
+    emit = makeDtcEmitter(
+        str(tmp_path), severityTable=_TABLE, nowIsoFn=lambda: "2026-09-14T09:00:00Z"
+    )
+
+    emit(
+        codes=[_rawCode("P0400")],
+        mil=True,
+        firstSeenByCode={"P0400": "2026-09-10T08:15:00Z"},
+    )
+
+    payload = json.loads((tmp_path / DTC_FILENAME).read_text(encoding="utf-8"))
+    assert payload["codes"][0]["firstSeenTs"] == "2026-09-10T08:15:00Z"

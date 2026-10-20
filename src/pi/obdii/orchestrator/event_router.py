@@ -940,6 +940,9 @@ class EventRouterMixin:
             }
             for c in published
         ]
+        # US-897-a3: each code ages from dtc_log (first seen since the clear).
+        from pi.obdii.dtc_last_known import readFirstSeenByCode
+
         emitter(
             codes=rawCodes,
             mil=any(getattr(c, 'status', None) == 'stored' for c in published),
@@ -947,6 +950,7 @@ class EventRouterMixin:
             sessionResetLock=[],
             checkedAtTs=readAtTs,
             pendingCheckedAtTs=getattr(self, '_dtcPendingCheckedAtTs', None),
+            firstSeenByCode=readFirstSeenByCode(getattr(self, '_database', None)),
         )
 
     def _emitDriveDtcState(self, result: Any, *, includesPending: bool) -> None:

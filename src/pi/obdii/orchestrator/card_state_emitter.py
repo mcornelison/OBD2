@@ -998,14 +998,18 @@ class CardStateEmitterMixin:
         # US-752: the resting state carries the codes the system ALREADY holds,
         # read from the persisted dtc_log -- never a re-query of the ECU (SSOT
         # rule B). Null when nothing is remembered, so "not read" keeps meaning.
-        from pi.obdii.dtc_last_known import readLastKnownDtcs
+        from pi.obdii.dtc_last_known import readFirstSeenByCode, readLastKnownDtcs
 
+        database = getattr(self, "_database", None)
         emitter(
             codes=[],
             mil=False,
             newSinceTs=None,
             dtcAvailable=False,
-            lastKnown=readLastKnownDtcs(getattr(self, "_database", None)),
+            lastKnown=readLastKnownDtcs(database),
+            # US-897-a3: each remembered code ages from its first sighting
+            # since the last clear.
+            firstSeenByCode=readFirstSeenByCode(database),
             # US-897-a2: the seeded read times -- an unavailable source never
             # nulls them.
             checkedAtTs=getattr(self, "_dtcCheckedAtTs", None),

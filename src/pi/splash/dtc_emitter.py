@@ -37,6 +37,8 @@
 #               |              | `pendingCheckedAtTs` (last successful Mode 03 /
 #               |              | Mode 07 this boot) + readDtcCheckTimes, the
 #               |              | per-boot seed from the tmpfs file.
+# 2026-10-20    | Ralph (Rex)  | US-897-a3: every code (live + lastKnown) carries
+#               |              | `firstSeenTs` (first seen since the last clear).
 # ================================================================================
 ################################################################################
 
@@ -141,7 +143,9 @@ def readDtcCheckTimes(statesDir: str) -> tuple[str | None, str | None]:
     )
 
 
-def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
+def enrichCode(
+    raw: dict, severityTable: dict[str, dict], firstSeenTs: str | None = None
+) -> dict:
     """Merge one captured code with Spool's static severity table (pure).
 
     Args:
@@ -150,6 +154,8 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
             ``syncAcked``. ``driveId`` is None for a KOEO read.
         severityTable: The ``{code -> enrichment}`` map from
             :func:`~src.pi.splash.dtc_severity_table.loadP1xxxSeverityTable`.
+        firstSeenTs: When ``dtc_log`` first saw this code since the last clear
+            (US-897-a3, ``readFirstSeenByCode``); None when it has no row.
 
     Returns:
         The enriched code dict (design-spec §8 per-code shape). A code absent
@@ -202,6 +208,7 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
         "clearEligible": clearEligible,
         "title": title,
         "sentence": sentence,
+        "firstSeenTs": firstSeenTs,
     }
 
 
@@ -232,13 +239,23 @@ def _computeClearGate(enrichedCodes: list[dict]) -> dict:
     return {"enabled": True, "reason": _REASON_OK}
 
 
-def _buildLastKnown(lastKnown: dict | None, severityTable: dict[str, dict]) -> dict | None:
+def _firstSeenFor(raw: dict, firstSeenByCode: dict[str, str]) -> str | None:
+    """Look up one code's first-seen time (the map is keyed upper-case)."""
+    return firstSeenByCode.get(str(raw.get("code", "")).upper())
+
+
+def _buildLastKnown(
+    lastKnown: dict | None,
+    severityTable: dict[str, dict],
+    firstSeenByCode: dict[str, str],
+) -> dict | None:
     """Enrich the persisted last-known codes into the `lastKnown` block (US-752).
 
     Args:
         lastKnown: The :func:`pi.obdii.dtc_last_known.readLastKnownDtcs` result,
             or None when nothing is remembered.
         severityTable: Spool's static P1xxx severity map.
+        firstSeenByCode: ``{code: firstSeenTs}`` (US-897-a3).
 
     Returns:
         ``{codes, mil, asOfTs, source}`` -- codes enriched exactly like live ones
@@ -256,6 +273,7 @@ def _buildLastKnown(lastKnown: dict | None, severityTable: dict[str, dict]) -> d
         enriched = enrichCode(
             {**raw, "setAtTs": None, "logged": True, "syncAcked": False},
             severityTable,
+            _firstSeenFor(raw, firstSeenByCode),
         )
         enriched["lastSeenTs"] = raw.get("lastSeenTs")
         codes.append(enriched)
@@ -280,6 +298,7 @@ def buildDtcState(
     lastKnown: dict | None = None,
     checkedAtTs: str | None = None,
     pendingCheckedAtTs: str | None = None,
+    firstSeenByCode: dict | None = None,
 ) -> dict:
     """Assemble the `dtc` payload (pure; design-spec §8 pinned schema).
 
@@ -308,6 +327,9 @@ def buildDtcState(
             and passes it on EVERY publish, available or not.
         pendingCheckedAtTs: When the Mode 07 read the published pending set
             came from ran; None until the first this boot.
+        firstSeenByCode: ``{code: firstSeenTs}`` from ``readFirstSeenByCode``
+            (US-897-a3). Every code, live and lastKnown, carries its value as
+            ``firstSeenTs`` -- None for a code with no row; None -> all None.
 
     Returns:
         The `dtc` dict with the spec §8 keys, the US-429 ``source`` block (one
@@ -320,15 +342,18 @@ def buildDtcState(
     # fields are now honest absences, and what the system already holds rides
     # in a SEPARATE `lastKnown` block -- `codes` is never overloaded. newSinceTs
     # stays None so a remembered code can never mis-fire the US-405 takeover.
+    firstSeen = firstSeenByCode if isinstance(firstSeenByCode, dict) else {}
     if dtcAvailable:
-        enriched: list[dict] | None = [enrichCode(raw, severityTable) for raw in codes]
+        enriched: list[dict] | None = [
+            enrichCode(raw, severityTable, _firstSeenFor(raw, firstSeen)) for raw in codes
+        ]
         liveMil: bool | None = bool(mil)
         lastKnownBlock = None
     else:
         enriched = None
         liveMil = None
         newSinceTs = None
-        lastKnownBlock = _buildLastKnown(lastKnown, severityTable)
+        lastKnownBlock = _buildLastKnown(lastKnown, severityTable, firstSeen)
     return {
         "mil": liveMil,
         "codes": enriched,
@@ -385,6 +410,7 @@ def makeDtcEmitter(
         lastKnown: dict | None = None,
         checkedAtTs: str | None = None,
         pendingCheckedAtTs: str | None = None,
+        firstSeenByCode: dict | None = None,
     ) -> None:
         try:
             payload = buildDtcState(
@@ -399,6 +425,7 @@ def makeDtcEmitter(
                 lastKnown=lastKnown,
                 checkedAtTs=checkedAtTs,
                 pendingCheckedAtTs=pendingCheckedAtTs,
+                firstSeenByCode=firstSeenByCode,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
