@@ -164,6 +164,9 @@
 # 2026-10-18    | Rex (US-896-a) | pi.display.stale.imuSec default 2.0 -> 3.0
 #                                (Atlas S105 Q3/G1, measured basis; the ONE IMU
 #                                stale key, NAV + Motion).
+# 2026-10-20    | Rex (US-897-b1)| pi.bands.coolant.{redGuardPrevMinC 100,
+#                                redClearBelowC 101, redClearHoldSec 60} (Spool
+#                                2026-10-14); ordered below redC / amberC.
 # ================================================================================
 ################################################################################
 
@@ -929,6 +932,12 @@ DEFAULTS: dict[str, Any] = {
     'pi.bands.coolant.redDwellSec': 120,  # grounded-knowledge :75, Spool 2026-10-13
     'pi.bands.coolant.clearBelowC': 102,  # grounded-knowledge :75, Spool 2026-10-13
     'pi.bands.coolant.clearHoldSec': 10,  # grounded-knowledge :75, Spool 2026-10-13
+    # US-897-b1: a single sample >= redC is red only after a fresh predecessor
+    # >= redGuardPrevMinC (else 2 consecutive); red clears only at <= redClearBelowC
+    # (inclusive) held redClearHoldSec. Spool 2026-10-14 WARNINGS rulings.
+    'pi.bands.coolant.redGuardPrevMinC': 100,  # Spool 2026-10-14
+    'pi.bands.coolant.redClearBelowC': 101,  # Spool 2026-10-14
+    'pi.bands.coolant.redClearHoldSec': 60,  # Spool 2026-10-14
     # Battery (BATTERY_V via ELM_VOLTAGE): banded only while the engine runs.
     # Spool 2026-10-13: of 32,241 RPM samples the idle floor is >= 572; the 11
     # samples at 113-548 are all start/stall transients, and 500 sits in the gap.
@@ -1549,6 +1558,7 @@ class ConfigValidator:
         Called after defaults are applied. Every key must be a positive number,
         and the edges must be ordered so each band is reachable:
         clearBelowC < amberC <= redC, amberDwellSec < redDwellSec,
+        redGuardPrevMinC < redC, redClearBelowC < redC, redClearBelowC < amberC,
         redBelowV < greenMinV <= greenMaxV < redAboveV, amberRpm < redRpm.
 
         Args:
@@ -1575,6 +1585,9 @@ class ConfigValidator:
             ('pi.bands.coolant.clearBelowC', 'pi.bands.coolant.amberC', False),
             ('pi.bands.coolant.amberC', 'pi.bands.coolant.redC', True),
             ('pi.bands.coolant.amberDwellSec', 'pi.bands.coolant.redDwellSec', False),
+            ('pi.bands.coolant.redGuardPrevMinC', 'pi.bands.coolant.redC', False),
+            ('pi.bands.coolant.redClearBelowC', 'pi.bands.coolant.redC', False),
+            ('pi.bands.coolant.redClearBelowC', 'pi.bands.coolant.amberC', False),
             ('pi.bands.battery.redBelowV', 'pi.bands.battery.greenMinV', False),
             ('pi.bands.battery.greenMinV', 'pi.bands.battery.greenMaxV', True),
             ('pi.bands.battery.greenMaxV', 'pi.bands.battery.redAboveV', False),

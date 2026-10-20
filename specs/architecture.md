@@ -2437,7 +2437,16 @@ HTML pages comes from ONE provider, the band producer
 (section 11). The page maps `band -> token` and holds no threshold, band or curve:
 `src/pi/ui/` contains no number. The producer covers coolant (threshold + dwell +
 clear hysteresis), battery (RED/GREEN only, gated on the engine running) and the
-RPM bar cues; every other PID has no live band. The numbers, and why they are what
+RPM bar cues; every other PID has no live band. Coolant red is guarded and has its
+own clear (US-897-b1, Spool 2026-10-14 / 2026-10-19, Atlas Q11): a single reading
+>= `redC` (110 C) is red only when the previous fresh, non-null reading was >=
+`redGuardPrevMinC` (100 C); otherwise red needs two consecutive readings >= `redC`
+(same reason `coolant >= 110 C` either way). The amber 104 C x 120 s dwell path to
+red is not guarded. Red clears only when a fresh reading <= `redClearBelowC` (101 C,
+inclusive) has held `redClearHoldSec` (60 s), and then takes whatever band the normal
+producer computes for that value; amber keeps its own clear (below `clearBelowC`
+102 C held `clearHoldSec` 10 s). The band producer is the ONE owner of band entry and
+exit, so the Driving tile and PULL OVER cannot disagree. The numbers, and why they are what
 they are, live in `specs/grounded-knowledge.md` (Coolant Temp, RPM and Battery
 Voltage rows, and "Battery Voltage via ELM_VOLTAGE"); the config keys are
 `pi.bands.*`, with defaults and sources in `src/common/config/validator.py`.
@@ -6005,7 +6014,12 @@ US-890-b, below).
 - **Dwell** is consecutive readings on event time. A stale gap (more than
   `pi.display.stale.obdLiveSec` between readings) or a null reading resets it. The
   producer keeps its own dwell clocks and a few seconds of RPM history for the
-  battery gate; it reads no SQLite either.
+  battery gate; it reads no SQLite either. The same stale gap or null reading also
+  resets the coolant red guard (the last fresh value and the consecutive-red count)
+  and the red-clear hold (US-897-b1): a single 110 C reading is red only after a fresh
+  reading >= 100 C, else after a second in a row (the first reading ever needs a
+  second -- a hot restart reaches red one sample, ~2.2 s, later), and red clears only
+  at <= 101 C held 60 s.
 - **`dataSource`** is a single file-level value: the `data_source` tag of the rows these
   values came from. It is read from `ObdDataLogger.dataSource`, which
   `_resolveDataSource` sets, so it is not derived a second time. It is not

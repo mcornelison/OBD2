@@ -987,6 +987,8 @@ class TestTheContractFixture:
         "coolant-amber": [
             ("COOLANT_TEMP", 105, "C", f"2026-10-13T12:10:{s:02d}Z") for s in range(30)
         ],
+        # US-897-b1: a single 110 C is red only after a fresh >= 100 C reading.
+        "coolant-red": [("COOLANT_TEMP", 100, "C", "2026-10-13T12:15:00Z")],
     }
 
     @staticmethod
@@ -1071,7 +1073,7 @@ class TestTheContractFixture:
 
     def test_coolantRedCase_isRedOnASingleSample(self) -> None:
         """
-        Given: the coolant-red case (one 110 C reading)
+        Given: the coolant-red case (one 110 C reading after a fresh 100 C)
         When: read
         Then: band red, no noBandReason
         """

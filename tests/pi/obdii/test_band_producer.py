@@ -14,6 +14,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-14    | Rex (US-875) | Initial -- band producer fixtures.
+# 2026-10-20    | Rex (US-897-b1) | Coolant red run-up guard and red's own clear.
 # ================================================================================
 ################################################################################
 
@@ -88,13 +89,14 @@ class TestSpoolFixtures:
 
         assert _band(producer, "COOLANT_TEMP") == "amber"
 
-    def test_singleCoolant110_isRedImmediately(self) -> None:
+    def test_singleCoolant110AfterAFresh100_isRedAtOnce(self) -> None:
         """
-        Given: one coolant reading of 110 C
+        Given: a fresh 100 C reading, then one coolant reading of 110 C 1 s later
         When: classified
-        Then: red, no dwell
+        Then: red at the 110, no dwell (US-897-b1: a plausible run-up)
         """
         producer = _producer()
+        producer.observe("COOLANT_TEMP", 100, _at(-1))
         producer.observe("COOLANT_TEMP", 110, _at(0))
 
         result = producer.resultFor("COOLANT_TEMP")
@@ -102,6 +104,24 @@ class TestSpoolFixtures:
             "band": "red", "since": "2026-10-13T12:10:00Z", "reason": "coolant >= 110 C",
         }
         assert result.noBandReason is None
+
+    def test_singleCoolant110After85_isNotRed_aSecond110Is(self) -> None:
+        """
+        Given: 85 C, then 110 C 1 s later, then 110 C again
+        When: classified after each 110
+        Then: not red after the first (implausible jump); red after the second,
+              with the SAME reason as the single-sample path (US-897-b1)
+        """
+        producer = _producer()
+        producer.observe("COOLANT_TEMP", 85, _at(0))
+        producer.observe("COOLANT_TEMP", 110, _at(1))
+        assert _band(producer, "COOLANT_TEMP") != "red"
+
+        producer.observe("COOLANT_TEMP", 110, _at(2))
+
+        assert producer.resultFor("COOLANT_TEMP").band == {
+            "band": "red", "since": "2026-10-13T12:10:02Z", "reason": "coolant >= 110 C",
+        }
 
     def test_coolantAmberThen101_clearsOnlyAfterTenSeconds(self) -> None:
         """
@@ -286,13 +306,16 @@ class TestCoolant:
 
     def test_red_holdsBetweenClearAndAmber(self) -> None:
         """
-        Given: red at 110 C, then 103 C (below amber, above clear) for 60 s
+        Given: red at 110 C, then 101.5 C (below amber's 102 clear, above red's
+               101 clear) for 120 s
         When: classified
-        Then: still red -- only below 102 C held 10 s clears it
+        Then: still red -- amber's clear rule no longer clears red; only <= 101 C
+              held 60 s does (US-897-b1)
         """
         producer = _producer()
+        producer.observe("COOLANT_TEMP", 100, _at(-1))
         producer.observe("COOLANT_TEMP", 110, _at(0))
-        _feed(producer, "COOLANT_TEMP", 103, 1, 61, 1)
+        _feed(producer, "COOLANT_TEMP", 101.5, 1, 121, 1)
 
         assert _band(producer, "COOLANT_TEMP") == "red"
 
@@ -350,6 +373,203 @@ class TestCoolant:
         assert result.band is not None
         assert result.band["band"] == "amber"
         assert result.band["reason"] == "coolant >= 90 C for 5 s"
+
+
+def _red(producer: bp.BandProducer) -> None:
+    """Coolant red by the plausible single-sample path: 100 C at -1 s, 110 C at 0."""
+    producer.observe("COOLANT_TEMP", 100, _at(-1))
+    producer.observe("COOLANT_TEMP", 110, _at(0))
+    assert _band(producer, "COOLANT_TEMP") == "red"
+
+
+class TestCoolantRedGuardAndClear:
+    """US-897-b1 (Spool 2026-10-14, 2026-10-19; Atlas s4 / Q11)."""
+
+    def test_firstSampleEver110_needsASecond(self) -> None:
+        """
+        Given: no predecessor, then 110 C
+        When: classified
+        Then: not red; a second 110 C 2.2 s later is red
+        """
+        producer = _producer()
+        producer.observe("COOLANT_TEMP", 110, _at(0))
+        assert _band(producer, "COOLANT_TEMP") != "red"
+
+        producer.observe("COOLANT_TEMP", 110, _at(2.2))
+        assert _band(producer, "COOLANT_TEMP") == "red"
+
+    def test_nullReading_resetsTheGuard(self) -> None:
+        """
+        Given: 100 C, a null reading, then 110 C
+        When: classified
+        Then: not red -- the null erased the plausible predecessor
+        """
+        producer = _producer()
+        producer.observe("COOLANT_TEMP", 100, _at(0))
+        producer.observe("COOLANT_TEMP", None, _at(1))
+        producer.observe("COOLANT_TEMP", 110, _at(2))
+
+        assert _band(producer, "COOLANT_TEMP") != "red"
+
+    def test_nullBetweenTwo110s_resetsTheConsecutiveCount(self) -> None:
+        """
+        Given: 110 C, a null reading, then 110 C
+        When: classified
+        Then: not red -- two 110s with a null between are not consecutive
+        """
+        producer = _producer()
+        producer.observe("COOLANT_TEMP", 110, _at(0))
+        producer.observe("COOLANT_TEMP", None, _at(1))
+        producer.observe("COOLANT_TEMP", 110, _at(2))
+
+        assert _band(producer, "COOLANT_TEMP") != "red"
+
+    def test_staleGap_resetsTheGuard(self) -> None:
+        """
+        Given: 100 C, then 110 C 6 s later (past the 5 s stale window)
+        When: classified
+        Then: not red -- a stale predecessor is not a run-up
+        """
+        producer = _producer()
+        producer.observe("COOLANT_TEMP", 100, _at(0))
+        producer.observe("COOLANT_TEMP", 110, _at(6))
+
+        assert _band(producer, "COOLANT_TEMP") != "red"
+
+    def test_staleGapBetweenTwo110s_resetsTheConsecutiveCount(self) -> None:
+        """
+        Given: 110 C, then 110 C 6 s later
+        When: classified
+        Then: not red -- the stale gap reset the consecutive-red count
+        """
+        producer = _producer()
+        producer.observe("COOLANT_TEMP", 110, _at(0))
+        producer.observe("COOLANT_TEMP", 110, _at(6))
+
+        assert _band(producer, "COOLANT_TEMP") != "red"
+
+    def test_dwellPath_isNotGuarded(self) -> None:
+        """
+        Given: 105 C held 120 s (no reading ever >= 110)
+        When: classified
+        Then: red by the dwell, reason unchanged
+        """
+        producer = _producer()
+        _feed(producer, "COOLANT_TEMP", 105, 0, 120, 1)
+
+        result = producer.resultFor("COOLANT_TEMP")
+        assert result.band is not None
+        assert result.band["band"] == "red"
+        assert result.band["reason"] == "coolant >= 104 C for 120 s"
+
+    def test_red_clearsAt101HeldSixtySeconds(self) -> None:
+        """
+        Given: red, then 101 C (INCLUSIVE edge) every 1 s for 60 s
+        When: classified
+        Then: the normal producer's band for 101 C -- green, with its reason
+        """
+        producer = _producer()
+        _red(producer)
+        _feed(producer, "COOLANT_TEMP", 101, 1, 61, 1)
+
+        assert producer.resultFor("COOLANT_TEMP").band == {
+            "band": "green",
+            "since": "2026-10-13T12:11:01Z",
+            "reason": "coolant has not held >= 104 C for 30 s",
+        }
+
+    def test_red_doesNotClearAt101HeldFiftyNineSeconds(self) -> None:
+        """
+        Given: red, then 101 C every 1 s for 59 s
+        When: classified
+        Then: still red
+        """
+        producer = _producer()
+        _red(producer)
+        _feed(producer, "COOLANT_TEMP", 101, 1, 60, 1)
+
+        assert _band(producer, "COOLANT_TEMP") == "red"
+
+    def test_red_doesNotClearAt102(self) -> None:
+        """
+        Given: red, then 102 C every 1 s for 120 s
+        When: classified
+        Then: still red -- 102 is above the 101 red clear
+        """
+        producer = _producer()
+        _red(producer)
+        _feed(producer, "COOLANT_TEMP", 102, 1, 121, 1)
+
+        assert _band(producer, "COOLANT_TEMP") == "red"
+
+    def test_red_clearHoldRestartsWhenAReadingRisesAbove101(self) -> None:
+        """
+        Given: red, 101 C for 40 s, one 102 C, then 101 C for 40 s more
+        When: classified
+        Then: still red -- the hold is consecutive readings
+        """
+        producer = _producer()
+        _red(producer)
+        _feed(producer, "COOLANT_TEMP", 101, 1, 40, 1)
+        producer.observe("COOLANT_TEMP", 102, _at(41))
+        _feed(producer, "COOLANT_TEMP", 101, 42, 82, 1)
+
+        assert _band(producer, "COOLANT_TEMP") == "red"
+
+    def test_red_staleGapResetsTheClearHold(self) -> None:
+        """
+        Given: red, 101 C for 40 s, a 6 s gap, then 101 C for 40 s more
+        When: classified
+        Then: still red -- the gap restarted the red-clear hold
+        """
+        producer = _producer()
+        _red(producer)
+        _feed(producer, "COOLANT_TEMP", 101, 1, 40, 1)
+        _feed(producer, "COOLANT_TEMP", 101, 46, 86, 1)
+
+        assert _band(producer, "COOLANT_TEMP") == "red"
+
+    def test_red_nullResetsTheClearHold(self) -> None:
+        """
+        Given: red, 101 C for 40 s, a null reading, then 101 C for 40 s more
+        When: classified
+        Then: still red
+        """
+        producer = _producer()
+        _red(producer)
+        _feed(producer, "COOLANT_TEMP", 101, 1, 40, 1)
+        producer.observe("COOLANT_TEMP", None, _at(41))
+        _feed(producer, "COOLANT_TEMP", 101, 42, 82, 1)
+
+        assert _band(producer, "COOLANT_TEMP") == "red"
+
+    def test_redByDwell_usesTheRedClearToo(self) -> None:
+        """
+        Given: red by the 120 s dwell, then 101.5 C for 30 s (amber's old clear)
+        When: classified
+        Then: still red -- every red clears by the red rule only
+        """
+        producer = _producer()
+        _feed(producer, "COOLANT_TEMP", 105, 0, 120, 1)
+        _feed(producer, "COOLANT_TEMP", 101.5, 121, 151, 1)
+
+        assert _band(producer, "COOLANT_TEMP") == "red"
+
+    def test_guardAndClear_areTheConfigKeys(self) -> None:
+        """
+        Given: redGuardPrevMinC 90, redClearBelowC 95, redClearHoldSec 5
+        When: 92 -> 110 (red at once), then 95 C held 5 s
+        Then: red, then green -- the numbers come from config
+        """
+        producer = _producer({"pi": {"bands": {"coolant": {
+            "redGuardPrevMinC": 90, "redClearBelowC": 95, "redClearHoldSec": 5,
+        }}}})
+        producer.observe("COOLANT_TEMP", 92, _at(0))
+        producer.observe("COOLANT_TEMP", 110, _at(1))
+        assert _band(producer, "COOLANT_TEMP") == "red"
+
+        _feed(producer, "COOLANT_TEMP", 95, 2, 7, 1)
+        assert _band(producer, "COOLANT_TEMP") == "green"
 
 
 # ================================================================ battery

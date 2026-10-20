@@ -1045,6 +1045,8 @@ def test_bands_defaults_areSpoolsAndTheCiosNumbers():
     assert bands["coolant"] == {
         "amberC": 104, "amberDwellSec": 30, "redC": 110,
         "redDwellSec": 120, "clearBelowC": 102, "clearHoldSec": 10,
+        # US-897-b1 (Spool 2026-10-14): red run-up guard and red's own clear.
+        "redGuardPrevMinC": 100, "redClearBelowC": 101, "redClearHoldSec": 60,
     }
     assert bands["battery"] == {
         "rpmMaxAgeSec": 3.0, "runningRpmMin": 500, "crankGuardSec": 3,
@@ -1077,6 +1079,12 @@ def test_bands_eachDefaultCitesItsSource():
         "RPM row (:84)",
     ):
         assert needle in source, needle
+    # US-897-b1: each red guard / red clear key cites Spool 2026-10-14 ON ITS OWN
+    # line (the date alone already appears elsewhere in the module).
+    for key in ("redGuardPrevMinC", "redClearBelowC", "redClearHoldSec"):
+        lines = [ln for ln in source.splitlines() if f"'pi.bands.coolant.{key}':" in ln]
+        assert len(lines) == 1, key
+        assert "Spool 2026-10-14" in lines[0], key
 
 
 @pytest.mark.parametrize(
@@ -1102,6 +1110,11 @@ def test_bands_rejectsANonPositiveOrNonNumericValue(section, key, badValue):
         ("coolant", {"clearBelowC": 104}),
         ("coolant", {"redC": 103}),
         ("coolant", {"redDwellSec": 30}),
+        # US-897-b1 (Spool 2026-10-19): redGuardPrevMinC < redC, redClearBelowC
+        # < redC, redClearBelowC < amberC.
+        ("coolant", {"redGuardPrevMinC": 110}),
+        ("coolant", {"redClearBelowC": 110}),
+        ("coolant", {"redClearBelowC": 104}),
         ("battery", {"redBelowV": 13.5}),
         ("battery", {"greenMinV": 14.6}),
         ("battery", {"redAboveV": 14.5}),
