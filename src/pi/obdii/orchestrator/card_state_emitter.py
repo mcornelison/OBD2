@@ -96,6 +96,8 @@
 # 2026-10-20    | Rex (US-897-b4)| observeObdLiveReading hands each RPM reading +
 #               |              | its band to the arbiter's peak; the alerts tick
 #               |              | passes its own recording -> idle edge.
+# 2026-10-20    | Rex (US-897-b5)| the boot dtc payload reaches the arbiter; the
+#               |              | alerts tick publishes its code source.
 # ================================================================================
 ################################################################################
 
@@ -870,6 +872,7 @@ class CardStateEmitterMixin:
             nowUtc=self._obdLiveNowUtc(),
             dataSource=dataSource,
             bootId=self._alertsBootId,
+            codeSource=arbiter.codeSource(),
         )
 
     def _resetAlertsRpmPeak(self) -> None:
@@ -1118,7 +1121,7 @@ class CardStateEmitterMixin:
         from pi.obdii.dtc_last_known import readFirstSeenByCode, readLastKnownDtcs
 
         database = getattr(self, "_database", None)
-        emitter(
+        payload = emitter(
             codes=[],
             mil=False,
             newSinceTs=None,
@@ -1132,6 +1135,11 @@ class CardStateEmitterMixin:
             checkedAtTs=getattr(self, "_dtcCheckedAtTs", None),
             pendingCheckedAtTs=getattr(self, "_dtcPendingCheckedAtTs", None),
         )
+        # US-897-b5: the arbiter sees the boot state too -- codes null, so its
+        # lastKnown makes no entry and sources.code stays unassessed ('?').
+        arbiter = self._alertsArbiter
+        if arbiter is not None and isinstance(payload, dict):
+            arbiter.observeDtc(payload)
 
     def _recordSyncOutcome(self, rowsPushed: int) -> None:
         """Cache the REAL last-sync outcome for the system-status sync tile.

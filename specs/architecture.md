@@ -6047,7 +6047,8 @@ the one provider of the warnings page: the page renders it and derives nothing (
   never a file read-back, so the alert and the Driving tile cannot disagree.
 - An `AlertsArbiter` held by the orchestrator keeps this boot's episodes in memory. It is
   handed the FULL resolved config (`pi.bands.*`, `pi.warnings.*`).
-  `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId)` is pure over them;
+  `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId, codeSource)` is pure
+  over them;
   `makeAlertsEmitter(statesDir)` writes `<statesDir>/alerts` atomically and never raises.
 - Built in its own try/except (`_initializeAlertsProducer`); when
   `pi.dashboard.stateEmitEnabled` is false it is not built and writes no file.
@@ -6058,13 +6059,16 @@ codeAlert, entries}`.
 - `dataSource` is `_gatherObdLiveDataSource()` (the obd-live tag); `bootId` is
   `readBootId()` (`unknown` when unreadable).
 - **`sources`** says what was ASSESSED; the page prints only that (ARCH-062):
-  - `code: {assessed, checkedAtTs}` -- `{false, null}` until US-897-b5.
-    `codesCheckedThisSession` and `checkedAtTs` repeat it (Iris contract names).
+  - `code: {assessed, checkedAtTs}` (US-897-b5) -- from the last dtc payload handed in:
+    `assessed` = `source.dtc.available` AND `checkedAtTs` not null AND `codes` not null;
+    `checkedAtTs` = that payload's. `codesCheckedThisSession` and `checkedAtTs` repeat it
+    (Iris contract names).
   - `engine: {assessed}` -- true only when obd-live carries a FRESH COOLANT_TEMP reading
     (Q14). Engine off, stale or absent is false.
   - `system` and `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
 - **`entries`**: `{id, source, key, tier, title, sentence, directive, value, unit, last,
-  stale, firstSeenTs, lastSeenTs, active, acknowledged}`, ALREADY ORDERED (B5): tier
+  stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus}` (`codeStatus` is
+  `stored` | `pending` on a code entry, null on an engine one), ALREADY ORDERED (B5): tier
   `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
   newest `firstSeenTs`.
   - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
@@ -6076,8 +6080,11 @@ codeAlert, entries}`.
   entry.
 - **`takeover`** = `{id, title, sentence, directive, value, unit, last, stale,
   firstSeenTs, dismissable: false}` while the top ACTIVE entry is a stop, else null (Iris
-  B1; G4: `directive` is a provider field, Spool's words). `codeAlert` is null until
-  US-897-b5.
+  B1; G4: `directive` is a provider field, Spool's words). A code entry is never a stop,
+  so a code never takes over.
+- **`codeAlert`** (US-897-b5, Atlas Q32) = `{ids: [the active code entry ids, in entries
+  order], tier: the tier of the first of them, dismissable: true}` while any code entry is
+  active, else null. The provider computes `tier`; the page decides moving/parked.
 
 **Tiers** come from config, never a literal: `pi.warnings.engine.<PID>.redTier`
 (validator DEFAULTS only; `COOLANT_TEMP` = `stop`, `BATTERY_V` = `watch`, Spool 2026-10-14).
@@ -6122,6 +6129,39 @@ legacy AlertManager owns that section (config.json).
 - Ended -> `active: false`, listed for the rest of the boot (until acked, Q15). Amber or
   green with no open episode makes no entry. No `alert_log` row (the record is the
   coolant STOP's). Seeded like the STOP (side from the seeded title).
+
+**The CODE source** (US-897-b5; Atlas s1/s2, G1, G7, Q6, Q16, Q32; Spool 2026-10-19):
+- **Input**: the dtc payload handed IN-PROCESS (`AlertsArbiter.observeDtc`). `makeDtcEmitter`'s
+  emit returns the payload it wrote (None on a failed write); `EventRouterMixin._emitDtcState`
+  and `CardStateEmitterMixin._emitInitialDtcState` hand it over. Never a file read-back. The
+  next card tick publishes it (`codeSource()` rides into `buildAlertsState`).
+- **Entries**: one per code in `payload.codes`, stored AND pending, whose severity is `stop`,
+  `watch`, `minor` or `unknown`; `na` is excluded. id `code:<code>:<tier>`, tier
+  `watch | minor | unrated`: a stop-tier row publishes as `watch` (a code is NEVER stop,
+  Spool s4) and keeps the TABLE's own sentence; `unknown` -> `unrated`. `title` / `sentence`
+  are the payload's (US-754-a). An untabled code: `title` = the bare code, `sentence`
+  **`Severity unknown. Get it diagnosed.`** (the UNRATED text, Spool 2026-10-19).
+  `value`/`unit`/`directive` null; `firstSeenTs` = the code's (US-897-a3); `lastSeenTs` =
+  `checkedAtTs`; `source` `code`, ordered after engine entries of the same tier (Q16).
+- **Pending** (Spool 2026-10-19): `codeStatus` `pending`, same tier and sentence, title + ` ·
+  pending` (e.g. `EGR FLOW (P0400) · pending`). A pending code that later stores stays ONE
+  entry (same id; `codeStatus` flips); a code listed both ways in one read is one `stored`
+  entry. Pending entries appear after a drive (Mode 07 runs at drive end), never live.
+- **Removal** (G1): a code absent from a read is REMOVED (not kept `active: false`, unlike the
+  coolant STOP) only when that read's `checkedAtTs` is NEWER than the last one applied. An
+  unchanged `checkedAtTs` only adds; an older one changes nothing. Carried pending codes ride
+  every Mode 03-only payload, so such a read never removes them.
+- **Unknown is not present**: `codes` null (unavailable) creates and removes no entry and
+  leaves `sources.code.assessed` false. The boot state's `lastKnown` codes make NO entries
+  before the first successful read. A null-frame read publishes no payload, so it changes
+  nothing. Code entries are not seeded from the prior `states/alerts`; they return with
+  the next successful read.
+- **Icon** (G7): code entries count; minor-only or unrated-only gives `watch`; codes never
+  pulse.
+- **The clear gate is unchanged**: it keeps reading the dtc payload's TABLE tier
+  (`dtc_emitter._computeClearGate`, `dtc_clear._relevantStored`, `carousel.js`), never the
+  alerts tier, so a stop-tier code is never clearable. It stays stored-only; counting
+  pending codes is US-919.
 
 **Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
 synced `alert_log`. It never UPDATEs: sync is a delta by id.

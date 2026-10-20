@@ -13,6 +13,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-20    | Rex (US-897-b2) | Initial.
+# 2026-10-20    | Rex (US-897-b5) | The CODE source, codeAlert and the code icon.
 # ================================================================================
 ################################################################################
 
@@ -64,6 +65,7 @@ _ENTRY_KEYS = {
     "lastSeenTs",
     "active",
     "acknowledged",
+    "codeStatus",
 }
 
 
@@ -135,6 +137,7 @@ def _build(arbiter: aa.AlertsArbiter, obdLive: dict[str, Any] | None, **kw: Any)
         _NOW,
         dataSource=kw.get("dataSource", "real"),
         bootId=kw.get("bootId", "b7"),
+        codeSource=arbiter.codeSource(),
     )
 
 
@@ -326,7 +329,7 @@ def test_bandClears_entryInactiveStillListed_takeoverNull_iconNotChecked() -> No
     assert entry["stale"] is False
     assert entry["lastSeenTs"] == "2026-10-20T15:12:27Z"
     assert state["takeover"] is None
-    # sources.code is unassessed until US-897-b5.
+    # No dtc payload was handed in, so sources.code is unassessed.
     assert state["icon"] == {"state": "not_checked", "count": 0, "pulse": False}
     assert state["sources"]["engine"] == {"assessed": True}
 
@@ -1219,3 +1222,427 @@ def test_makeAlertsEmitter_neverRaisesOnAWriteFailure(
     emit = aa.makeAlertsEmitter(str(tmp_path / "states"))
 
     assert emit([], None, nowUtc=_NOW, dataSource=None, bootId="b7") is None
+
+
+# -------------------------------------------------------------- codes (b5)
+#
+# US-897-b5: the arbiter's CODE source is the dtc payload handed in-process.
+# The payloads are built by the REAL buildDtcState over the SHIPPED severity
+# table, so the words are Spool's rows, not test literals.
+
+_T0 = "2026-10-20T14:55:00Z"
+_T1 = "2026-10-20T15:02:11Z"
+_T2 = "2026-10-20T15:09:40Z"
+_UNRATED_SENTENCE = "Severity unknown. Get it diagnosed."
+
+
+def _shippedTable() -> dict[str, dict]:
+    from pi.obdii.orchestrator.card_state_emitter import _DEFAULT_SEVERITY_TABLE_PATH
+    from pi.splash.dtc_severity_table import loadP1xxxSeverityTable
+
+    return loadP1xxxSeverityTable(_DEFAULT_SEVERITY_TABLE_PATH)
+
+
+def _dtcPayload(
+    codes: list[tuple[str, str]] | None,
+    checkedAtTs: str | None,
+    *,
+    table: dict[str, dict] | None = None,
+    firstSeen: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """A states/dtc payload as the router publishes it; codes None = unavailable."""
+    from pi.splash.dtc_emitter import buildDtcState
+
+    raw = [
+        {"code": code, "status": status, "description": "", "driveId": None,
+         "setAtTs": None, "logged": True, "syncAcked": False}
+        for code, status in (codes or [])
+    ]
+    return buildDtcState(
+        codes=raw,
+        severityTable=_shippedTable() if table is None else table,
+        mil=any(status == "stored" for _, status in (codes or [])),
+        newSinceTs=None,
+        sessionResetLock=[],
+        nowIso=checkedAtTs or _T0,
+        dtcAvailable=codes is not None,
+        checkedAtTs=checkedAtTs,
+        firstSeenByCode=firstSeen,
+    )
+
+
+def _row(severity: str, title: str | None, sentence: str | None) -> dict[str, Any]:
+    """A hand-made severity-table row (the loader's enrichment shape)."""
+    return {
+        "severity": severity, "severityCaveat": None, "short": "", "long": "",
+        "suggestedFix": None, "fixProvenance": "none", "clearEligible": False,
+        "title": title, "sentence": sentence,
+    }
+
+
+def test_codes_theCarsTwoCodes_watchThenMinor_codeAlert_sourcesAssessed() -> None:
+    """VC1: P0400 (watch) + P0443 (minor) at T -> two entries, codeAlert, assessed."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(
+        _dtcPayload(
+            [("P0443", "stored"), ("P0400", "stored")],
+            _T1,
+            firstSeen={"P0400": "2026-10-01T12:00:00Z", "P0443": "2026-09-02T09:00:00Z"},
+        )
+    )
+
+    state = _build(arbiter, None)
+
+    entries = state["entries"]
+    assert [e["id"] for e in entries] == ["code:P0400:watch", "code:P0443:minor"]
+    egr, purge = entries
+    assert set(egr) == _ENTRY_KEYS
+    assert egr["source"] == "code"
+    assert egr["key"] == "P0400"
+    assert egr["tier"] == "watch"
+    assert egr["title"] == "EGR FLOW (P0400)"
+    assert egr["sentence"] == "Drive gently. Get it diagnosed."
+    assert egr["codeStatus"] == "stored"
+    assert egr["value"] is None and egr["unit"] is None
+    assert egr["directive"] is None
+    assert egr["firstSeenTs"] == "2026-10-01T12:00:00Z"
+    assert egr["lastSeenTs"] == _T1
+    assert egr["active"] is True and egr["stale"] is False and egr["last"] is None
+    assert purge["title"] == "EVAP PURGE (P0443)"
+    assert purge["sentence"] == "Emissions only. Safe to drive."
+    assert purge["firstSeenTs"] == "2026-09-02T09:00:00Z"
+    assert state["codeAlert"] == {
+        "ids": ["code:P0400:watch", "code:P0443:minor"],
+        "tier": "watch",
+        "dismissable": True,
+    }
+    assert state["sources"]["code"] == {"assessed": True, "checkedAtTs": _T1}
+    assert state["codesCheckedThisSession"] is True
+    assert state["checkedAtTs"] == _T1
+    # Codes count but never pulse; no code ever takes over.
+    assert state["icon"] == {"state": "watch", "count": 2, "pulse": False}
+    assert state["takeover"] is None
+
+
+def test_codes_orderedAfterAnyEngineEntryOfTheSameTier() -> None:
+    """Q16: live (engine) before stored (code) inside a tier."""
+    arbiter = _arbiter()
+    _stepBattery(arbiter, _batt(11.2, "2026-10-20T15:12:27Z"))
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored"), ("P0443", "stored")], _T1))
+
+    state = _build(arbiter, None)
+
+    assert [e["id"] for e in state["entries"]] == [
+        _BATTERY_ID,
+        "code:P0400:watch",
+        "code:P0443:minor",
+    ]
+    # codeAlert lists the CODE entries only, in entries order.
+    assert state["codeAlert"]["ids"] == ["code:P0400:watch", "code:P0443:minor"]
+    assert state["icon"]["pulse"] is True  # the engine WATCH pulses
+
+
+def test_codes_untabled_isUnrated_withTheUnratedWords() -> None:
+    """VC2: P0300 has no row -> code:P0300:unrated, title the bare code."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0300", "stored")], _T1))
+
+    state = _build(arbiter, None)
+
+    (entry,) = state["entries"]
+    assert entry["id"] == "code:P0300:unrated"
+    assert entry["tier"] == "unrated"
+    assert entry["title"] == "P0300"
+    assert entry["sentence"] == _UNRATED_SENTENCE
+    assert state["codeAlert"] == {
+        "ids": ["code:P0300:unrated"], "tier": "unrated", "dismissable": True,
+    }
+
+
+def test_codes_p0430_isUnrated_neverATier() -> None:
+    """P0430 (bank 2, not this car) has no row: UNRATED, never a guessed tier."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0430", "stored")], _T1))
+
+    (entry,) = _build(arbiter, None)["entries"]
+
+    assert entry["id"] == "code:P0430:unrated"
+    assert entry["title"] == "P0430"
+    assert entry["sentence"] == _UNRATED_SENTENCE
+
+
+def test_codes_naCodeIsExcluded() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(
+        _dtcPayload([("P0705", "stored")], _T1, table={"P0705": _row("na", None, None)})
+    )
+
+    state = _build(arbiter, None)
+
+    assert state["entries"] == []
+    assert state["codeAlert"] is None
+    assert state["sources"]["code"]["assessed"] is True
+    assert state["icon"]["state"] == "none"
+
+
+def test_codes_minorOnly_iconWatch_noPulse() -> None:
+    """G7: a minor-only list is counted amber, never grey and never pulsing."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0443", "stored")], _T1))
+
+    state = _build(arbiter, None)
+
+    assert state["icon"] == {"state": "watch", "count": 1, "pulse": False}
+    assert state["codeAlert"]["tier"] == "minor"
+
+
+def test_codes_unratedOnly_iconWatch() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0300", "stored")], _T1))
+
+    assert _build(arbiter, None)["icon"] == {"state": "watch", "count": 1, "pulse": False}
+
+
+def test_codes_unread_noActiveStopOrWatch_iconNotChecked() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload(None, None))
+
+    state = _build(arbiter, None)
+
+    assert state["icon"]["state"] == "not_checked"
+    assert state["sources"]["code"] == {"assessed": False, "checkedAtTs": None}
+    assert state["codesCheckedThisSession"] is False
+    assert state["codeAlert"] is None
+
+
+def test_codes_readWithNoCodes_iconNone_assessed() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([], _T1))
+
+    state = _build(arbiter, None)
+
+    assert state["icon"] == {"state": "none", "count": 0, "pulse": False}
+    assert state["sources"]["code"] == {"assessed": True, "checkedAtTs": _T1}
+
+
+def test_codes_null_keepsPriorCodeEntries_assessedFalse() -> None:
+    """VC3: codes null (read unavailable) creates and removes nothing."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored"), ("P0443", "stored")], _T1))
+    before = _build(arbiter, None)
+
+    arbiter.observeDtc(_dtcPayload(None, _T1))
+    after = _build(arbiter, None)
+
+    assert after["entries"] == before["entries"]
+    assert after["codeAlert"] == before["codeAlert"]
+    assert after["sources"]["code"] == {"assessed": False, "checkedAtTs": _T1}
+    assert after["codesCheckedThisSession"] is False
+
+
+def test_codes_atBoot_lastKnownMakesNoEntries_assessedFalse() -> None:
+    """Before the first successful read, remembered codes are not present."""
+    from pi.splash.dtc_emitter import buildDtcState
+
+    payload = buildDtcState(
+        codes=[],
+        severityTable=_shippedTable(),
+        mil=False,
+        newSinceTs=None,
+        sessionResetLock=None,
+        nowIso=_T0,
+        dtcAvailable=False,
+        lastKnown={
+            "codes": [{"code": "P0400", "status": "stored", "description": "",
+                       "driveId": 33, "lastSeenTs": _T0}],
+            "asOfTs": _T0,
+            "source": "dtc_log",
+        },
+    )
+    assert payload["lastKnown"] is not None  # the block IS there to ignore
+    arbiter = _arbiter()
+
+    arbiter.observeDtc(payload)
+    state = _build(arbiter, None)
+
+    assert state["entries"] == []
+    assert state["sources"]["code"]["assessed"] is False
+    assert state["icon"]["state"] == "not_checked"
+
+
+def test_codes_absentFromANewerRead_isRemoved_notKeptInactive() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored"), ("P0443", "stored")], _T1))
+
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored")], _T2))
+    state = _build(arbiter, None)
+
+    assert [e["id"] for e in state["entries"]] == ["code:P0400:watch"]
+    assert state["entries"][0]["lastSeenTs"] == _T2
+    assert state["codeAlert"]["ids"] == ["code:P0400:watch"]
+
+
+def test_codes_allGoneOnANewerRead_codeAlertNull() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored")], _T1))
+
+    arbiter.observeDtc(_dtcPayload([], _T2))
+    state = _build(arbiter, None)
+
+    assert state["entries"] == []
+    assert state["codeAlert"] is None
+    assert state["icon"]["state"] == "none"
+
+
+def test_codes_sameCheckedAtTs_fewerCodes_removesNothing() -> None:
+    """VC4 / G1: an unchanged checkedAtTs never removes an entry."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored"), ("P0443", "stored")], _T1))
+
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored")], _T1))
+    state = _build(arbiter, None)
+
+    assert [e["id"] for e in state["entries"]] == ["code:P0400:watch", "code:P0443:minor"]
+
+
+def test_codes_olderCheckedAtTs_changesNothing() -> None:
+    """G1: a payload older than the last one applied is stale news."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored"), ("P0443", "stored")], _T2))
+    before = _build(arbiter, None)
+
+    arbiter.observeDtc(_dtcPayload([("P0300", "stored")], _T1))
+    after = _build(arbiter, None)
+
+    assert after["entries"] == before["entries"]
+    assert after["sources"]["code"] == {"assessed": True, "checkedAtTs": _T2}
+
+
+def test_codes_pending_isLabelled_atItsTableTier() -> None:
+    """Spool 2026-10-19: a pending code shows at tier, its title ' · pending'."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "pending")], _T1))
+
+    (entry,) = _build(arbiter, None)["entries"]
+
+    assert entry["id"] == "code:P0400:watch"
+    assert entry["codeStatus"] == "pending"
+    assert entry["title"] == "EGR FLOW (P0400) · pending"
+    assert entry["sentence"] == "Drive gently. Get it diagnosed."
+
+
+def test_codes_pendingThatStores_staysOneEntry_statusFlips() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "pending")], _T1, firstSeen={"P0400": _T0}))
+
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored")], _T2, firstSeen={"P0400": _T0}))
+    entries = _build(arbiter, None)["entries"]
+
+    assert len(entries) == 1
+    assert entries[0]["id"] == "code:P0400:watch"
+    assert entries[0]["codeStatus"] == "stored"
+    assert entries[0]["title"] == "EGR FLOW (P0400)"
+    assert entries[0]["firstSeenTs"] == _T0
+
+
+def test_codes_sameCodeStoredAndPending_inOneRead_isOneStoredEntry() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "pending"), ("P0400", "stored")], _T1))
+
+    entries = _build(arbiter, None)["entries"]
+
+    assert [(e["id"], e["codeStatus"]) for e in entries] == [("code:P0400:watch", "stored")]
+
+
+_STOP_SENTENCE = "Reduce load. Get it diagnosed now."
+
+
+def _stopTable() -> dict[str, dict]:
+    """A hypothetical stop-tier row (no shipped row is stop today, Spool)."""
+    return {"P1999": _row("stop", "TEST STOP (P1999)", _STOP_SENTENCE)}
+
+
+def test_codes_stopTierRow_publishedAsWatch_keepsTheTablesSentence() -> None:
+    """Spool s4 / R31: a code is NEVER stop and never takes over."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P1999", "stored")], _T1, table=_stopTable()))
+
+    state = _build(arbiter, None)
+
+    (entry,) = state["entries"]
+    assert entry["id"] == "code:P1999:watch"
+    assert entry["tier"] == "watch"
+    assert entry["title"] == "TEST STOP (P1999)"
+    assert entry["sentence"] == _STOP_SENTENCE
+    assert state["takeover"] is None
+    assert state["icon"]["state"] == "watch"
+
+
+def test_codes_stopTierRow_theClearGateStillReadsTheTableTier_refuses() -> None:
+    """Spool 2026-10-19 (a): the gate reads the dtc payload's TABLE tier."""
+    payload = _dtcPayload([("P1999", "stored")], _T1, table=_stopTable())
+    arbiter = _arbiter()
+
+    arbiter.observeDtc(payload)
+
+    assert payload["codes"][0]["severity"] == "stop"  # the payload is untouched
+    assert payload["clearGate"] == {"enabled": False, "reason": "severity_present"}
+    assert _build(arbiter, None)["entries"][0]["tier"] == "watch"
+
+
+def test_codes_p1xxxStopTierCaveat_neverYieldsTierStop() -> None:
+    """P1103 is 'WATCH -> red if overboost': the caveat never upgrades the tier."""
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P1103", "stored")], _T1))
+
+    state = _build(arbiter, None)
+
+    (entry,) = state["entries"]
+    assert entry["id"] == "code:P1103:watch"
+    assert entry["title"] == "WASTEGATE (P1103)"
+    assert state["takeover"] is None
+
+
+def test_codes_unparseablePayload_isIgnored() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored")], _T1))
+
+    for junk in (None, [], "dtc"):
+        arbiter.observeDtc(junk)  # type: ignore[arg-type]
+
+    state = _build(arbiter, None)
+    assert [e["id"] for e in state["entries"]] == ["code:P0400:watch"]
+    assert state["sources"]["code"] == {"assessed": True, "checkedAtTs": _T1}
+
+
+def test_codes_engineEntriesUnaffectedByACodeRead() -> None:
+    arbiter = _arbiter()
+    _step(arbiter, _fresh(112, "2026-10-20T15:12:27Z"))
+
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored")], _T1))
+    state = _build(arbiter, _obdLive(_fresh(112, "2026-10-20T15:12:29Z")))
+
+    assert [e["id"] for e in state["entries"]] == [_STOP_ID, "code:P0400:watch"]
+    assert state["takeover"]["id"] == _STOP_ID
+    assert state["icon"]["state"] == "stop"
+
+
+def test_engineEntries_carryCodeStatusNull() -> None:
+    state = _step(_arbiter(), _fresh(112, "2026-10-20T15:12:27Z"))
+
+    assert state["entries"][0]["codeStatus"] is None
+
+
+def test_makeAlertsEmitter_carriesTheCodeSource(tmp_path: Path) -> None:
+    emit = aa.makeAlertsEmitter(str(tmp_path / "states"))
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored")], _T1))
+
+    written = emit(
+        arbiter.episodes(), None, nowUtc=_NOW, dataSource="real", bootId="b7",
+        codeSource=arbiter.codeSource(),
+    )
+
+    assert written is not None
+    assert written["sources"]["code"] == {"assessed": True, "checkedAtTs": _T1}
+    assert written["codeAlert"]["ids"] == ["code:P0400:watch"]

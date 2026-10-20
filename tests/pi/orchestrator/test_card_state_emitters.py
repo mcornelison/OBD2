@@ -974,3 +974,125 @@ def test_b4_aFailingPeakReset_doesNotBlockTheDriveStart(tmp_path):
     orch._handleDriveStart(SimpleNamespace(id=2, startTime=None))
 
     assert orch._healthCheckStats.drivesDetected == 1
+
+
+# ---------------------------------------------------------------------------
+# US-897-b5 -- the dtc payload reaches the alerts arbiter IN-PROCESS (Atlas
+# Q6): the router hands it what the dtc emitter returned, the alerts step of
+# the card tick publishes it.
+# ---------------------------------------------------------------------------
+
+
+def _alertsAfterTick(orch, tmp_path):
+    orch._emitAlertsState(None)
+    return _readState(tmp_path, "alerts")
+
+
+def test_b5_bootState_codesNull_noCodeEntries_codeUnassessed(tmp_path, clock):
+    orch = _bootedOrch(tmp_path)
+
+    alerts = _alertsAfterTick(orch, tmp_path)
+
+    assert alerts["entries"] == []
+    assert alerts["sources"]["code"] == {"assessed": False, "checkedAtTs": None}
+    assert alerts["icon"]["state"] == "not_checked"
+    assert alerts["codeAlert"] is None
+
+
+def test_b5_keyOnRead_theCarsTwoCodes_becomeEntries_andTheCodeAlert(tmp_path, clock):
+    """VC1 end to end: through the REAL dtc emitter and the shipped table."""
+    orch = _bootedOrch(tmp_path)
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "stored"), _code("P0443", "stored")])
+
+    orch._dispatchKeyOnDtcs()
+    alerts = _alertsAfterTick(orch, tmp_path)
+
+    assert [e["id"] for e in alerts["entries"]] == ["code:P0400:watch", "code:P0443:minor"]
+    assert alerts["entries"][0]["title"] == "EGR FLOW (P0400)"
+    assert alerts["codeAlert"] == {
+        "ids": ["code:P0400:watch", "code:P0443:minor"], "tier": "watch", "dismissable": True,
+    }
+    assert alerts["sources"]["code"] == {"assessed": True, "checkedAtTs": _T1}
+    assert alerts["icon"] == {"state": "watch", "count": 2, "pulse": False}
+
+
+def test_b5_arbiterIsHandedTheSamePayloadTheDtcEmitterWrote(tmp_path, clock):
+    orch = _bootedOrch(tmp_path)
+    seen = []
+    observe = orch._alertsArbiter.observeDtc
+    orch._alertsArbiter.observeDtc = lambda payload: (seen.append(payload), observe(payload))
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "stored")])
+
+    orch._dispatchKeyOnDtcs()
+
+    assert seen == [_readState(tmp_path, "dtc")]
+
+
+def test_b5_nullFrameReadAfterTheTwoCodes_entriesAndCodeAlertUnchanged(tmp_path, clock):
+    """VC5: a null-frame read publishes nothing, so the arbiter sees nothing."""
+    orch = _bootedOrch(tmp_path)
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "stored"), _code("P0443", "stored")])
+    orch._dispatchKeyOnDtcs()
+    before = _alertsAfterTick(orch, tmp_path)
+    clock["iso"] = _T2
+    orch._dtcLogger.next = _read([], frameNull=True)
+
+    orch._dispatchKeyOnDtcs()
+    after = _alertsAfterTick(orch, tmp_path)
+
+    assert after["entries"] == before["entries"]
+    assert after["codeAlert"] == before["codeAlert"]
+    assert after["sources"]["code"] == {"assessed": True, "checkedAtTs": _T1}
+
+
+def test_b5_newerReadWithoutACode_removesItsEntry(tmp_path, clock):
+    orch = _bootedOrch(tmp_path)
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "stored"), _code("P0443", "stored")])
+    orch._dispatchKeyOnDtcs()
+    clock["iso"] = _T2
+    orch._dtcLogger.next = _read([_code("P0400", "stored")])
+
+    orch._dispatchKeyOnDtcs()
+    alerts = _alertsAfterTick(orch, tmp_path)
+
+    assert [e["id"] for e in alerts["entries"]] == ["code:P0400:watch"]
+
+
+def test_b5_carriedPending_isNeverRemovedByAMode03OnlyRead(tmp_path, clock):
+    """G1: the Mode 03-only payload carries the last Mode 07 pending set."""
+    orch = _bootedOrch(tmp_path)
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "pending")])
+    orch._dispatchKeyOnDtcs()
+    clock["iso"] = _T2
+
+    orch._emitDtcState(_read([]), includesPending=False)
+    alerts = _alertsAfterTick(orch, tmp_path)
+
+    (entry,) = alerts["entries"]
+    assert entry["id"] == "code:P0400:watch"
+    assert entry["codeStatus"] == "pending"
+    assert entry["title"] == "EGR FLOW (P0400) \u00b7 pending"
+    assert alerts["sources"]["code"]["checkedAtTs"] == _T2
+
+
+def test_b5_dtcWriteFails_arbiterSeesNothing(tmp_path, clock, monkeypatch):
+    import pi.splash.dtc_emitter as mod
+
+    orch = _bootedOrch(tmp_path)
+
+    def _boom(*_a, **_k):
+        raise OSError("tmpfs full")
+
+    monkeypatch.setattr(mod, "writeStateAtomic", _boom)
+    clock["iso"] = _T1
+    orch._dtcLogger.next = _read([_code("P0400", "stored")])
+
+    orch._dispatchKeyOnDtcs()
+
+    assert orch._alertsArbiter.codeSource() == {"assessed": False, "checkedAtTs": None}
+    assert [e for e in orch._alertsArbiter.episodes() if e.source == "code"] == []

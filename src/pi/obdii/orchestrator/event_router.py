@@ -55,6 +55,8 @@
 #               |                | a null Mode 03 frame publishes nothing (G1).
 # 2026-10-20    | Rex (US-897-b4) | _handleDriveStart resets the over-rev peak
 #               |                | (_resetAlertsRpmPeak), isolated like the others.
+# 2026-10-20    | Rex (US-897-b5) | _emitDtcState hands the dtc payload it wrote
+#               |                | to the alerts arbiter (observeDtc), in-process.
 # ================================================================================
 ################################################################################
 
@@ -957,7 +959,7 @@ class EventRouterMixin:
         # US-897-a3: each code ages from dtc_log (first seen since the clear).
         from pi.obdii.dtc_last_known import readFirstSeenByCode
 
-        emitter(
+        payload = emitter(
             codes=rawCodes,
             mil=any(getattr(c, 'status', None) == 'stored' for c in published),
             newSinceTs=None,
@@ -966,6 +968,11 @@ class EventRouterMixin:
             pendingCheckedAtTs=getattr(self, '_dtcPendingCheckedAtTs', None),
             firstSeenByCode=readFirstSeenByCode(getattr(self, '_database', None)),
         )
+        # US-897-b5 (Atlas Q6): the alerts arbiter is handed the payload just
+        # WRITTEN, never a file read-back; the next card tick publishes it.
+        arbiter = getattr(self, '_alertsArbiter', None)
+        if arbiter is not None and isinstance(payload, dict):
+            arbiter.observeDtc(payload)
 
     def _emitDriveDtcState(self, result: Any, *, includesPending: bool) -> None:
         """Publish a drive-time DTC read with the current drive id (US-897-a1).

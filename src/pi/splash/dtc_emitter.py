@@ -39,6 +39,8 @@
 #               |              | per-boot seed from the tmpfs file.
 # 2026-10-20    | Ralph (Rex)  | US-897-a3: every code (live + lastKnown) carries
 #               |              | `firstSeenTs` (first seen since the last clear).
+# 2026-10-20    | Ralph (Rex)  | US-897-b5: the emit returns the payload it wrote
+#               |              | (None on a failed write) for the alerts arbiter.
 # ================================================================================
 ################################################################################
 
@@ -379,13 +381,15 @@ def makeDtcEmitter(
     *,
     severityTable: dict[str, dict],
     nowIsoFn: Callable[[], str] | None = None,
-) -> Callable[..., None]:
+) -> Callable[..., dict | None]:
     """Build the `dtc` emit callable owned by the DTC capture path (US-404).
 
     The returned callable takes the just-captured codes (KOEO or drive read),
     merges Spool's severity table, and writes the `dtc` SSOT atomically.
     Best-effort by contract: a write failure is logged but NEVER raised, so the
-    emit hook can never block the connection-edge DTC read.
+    emit hook can never block the connection-edge DTC read. It RETURNS the
+    payload it wrote, None when the write failed (US-897-b5, Atlas Q6: the
+    alerts arbiter is handed it in-process, never a file read-back).
 
     Args:
         statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
@@ -411,7 +415,7 @@ def makeDtcEmitter(
         checkedAtTs: str | None = None,
         pendingCheckedAtTs: str | None = None,
         firstSeenByCode: dict | None = None,
-    ) -> None:
+    ) -> dict | None:
         try:
             payload = buildDtcState(
                 codes=codes,
@@ -435,5 +439,7 @@ def makeDtcEmitter(
                 "blocks the DTC capture path)",
                 exc,
             )
+            return None
+        return payload
 
     return emit

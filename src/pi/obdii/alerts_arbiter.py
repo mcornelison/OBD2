@@ -6,8 +6,9 @@
 #                      takeover. Fed the obd-live payload the card tick just
 #                      published; its entries are the live coolant STOP, the
 #                      battery WATCH and the over-rev WATCH (whose peak is fed
-#                      per reading). Each STOP episode edge is INSERTed into
-#                      alert_log.
+#                      per reading); the stored/pending codes come from the dtc
+#                      payload the router hands in. Each STOP episode edge is
+#                      INSERTed into alert_log.
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-10-20
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -26,6 +27,11 @@
 #                                sentence, value/unit null; ends at drive end or
 #                                after a no-drive green hold; drive start resets
 #                                the peak; seeded like coolant.
+# 2026-10-20    | Rex (US-897-b5) | CODE source: one entry per alertable code of
+#                                the in-process dtc payload (never stop, UNRATED
+#                                words, pending labelled), sources.code from
+#                                checkedAtTs, codeAlert; removal only on a NEWER
+#                                read (G1).
 # ================================================================================
 ################################################################################
 
@@ -71,6 +77,12 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
 from pi.obdii.band_producer import BAND_GREEN, BAND_RED, PID_BATTERY, PID_COOLANT, PID_RPM
+from pi.splash.dtc_severity_table import (
+    SEVERITY_MINOR,
+    SEVERITY_STOP,
+    SEVERITY_UNKNOWN,
+    SEVERITY_WATCH,
+)
 
 __all__ = [
     "ALERTS_STATE_FILENAME",
@@ -150,6 +162,24 @@ _RPM_SENTENCE_PEAK = re.compile(r"^peak ([0-9][0-9,]*) rpm \(sampled\)$")
 _RPM_REDTIER_KEY = "pi.warnings.engine.RPM.redTier"
 _RPM_CLEAR_GREEN_HOLD_KEY = "pi.warnings.rpm.clearGreenHoldSec"
 
+# Code entries (US-897-b5). The table tier -> the alerts tier: a code is NEVER
+# stop (Spool s4, R31 -- only a live coolant red takes over), so a stop-tier row
+# publishes as watch; unknown (no row) is UNRATED, never a guessed tier. 'na' is
+# absent on purpose: an auto-trans code on this manual car is not a fault. The
+# clear gate keeps reading the dtc payload's own table tier, never this one.
+_CODE_TIER_OF_SEVERITY = {
+    SEVERITY_STOP: TIER_WATCH,
+    SEVERITY_WATCH: TIER_WATCH,
+    SEVERITY_MINOR: TIER_MINOR,
+    SEVERITY_UNKNOWN: TIER_UNRATED,
+}
+# Spool 2026-10-19 (S106 Q1), verbatim: every code with no table row.
+CODE_UNRATED_SENTENCE = "Severity unknown. Get it diagnosed."
+# Spool 2026-10-19 (b5): a pending code is labelled; same tier, same sentence.
+CODE_PENDING_TITLE_SUFFIX = " · pending"
+CODE_STATUS_STORED = "stored"
+CODE_STATUS_PENDING = "pending"
+
 # Matches the other card emitters' `ts` format (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -195,6 +225,7 @@ class AlertEpisode:
         acknowledged: Always False until the ack store (S108).
         peak: Highest reading of the episode (the clear row's value).
         recorded: True once THIS process wrote the episode's open row.
+        codeStatus: ``stored`` / ``pending`` for a code entry, else None.
     """
 
     source: str
@@ -213,6 +244,7 @@ class AlertEpisode:
     acknowledged: bool = False
     peak: float | None = None
     recorded: bool = False
+    codeStatus: str | None = None
 
     @property
     def id(self) -> str:
@@ -267,6 +299,30 @@ def _rpmPeakOf(sentence: Any) -> float | None:
     """The peak a published over-rev sentence carries, or None."""
     match = _RPM_SENTENCE_PEAK.match(sentence) if isinstance(sentence, str) else None
     return None if match is None else float(match.group(1).replace(",", ""))
+
+
+def _alertableCodes(codes: Iterable[Any]) -> dict[str, Mapping[str, Any]]:
+    """``{code: enriched code}`` for every stored/pending code with an alert tier.
+
+    ``na`` and any severity outside the table vocabulary are excluded. A code
+    listed both stored and pending in one read is ONE entry, stored.
+    """
+    alertable: dict[str, Mapping[str, Any]] = {}
+    for raw in codes:
+        if not isinstance(raw, Mapping):
+            continue
+        code = str(raw.get("code") or "").upper()
+        status = raw.get("status")
+        if (
+            not code
+            or status not in (CODE_STATUS_STORED, CODE_STATUS_PENDING)
+            or raw.get("severity") not in _CODE_TIER_OF_SEVERITY
+        ):
+            continue
+        prior = alertable.get(code)
+        if prior is None or prior.get("status") != CODE_STATUS_STORED:
+            alertable[code] = raw
+    return alertable
 
 
 def _parseTs(ts: Any) -> datetime | None:
@@ -342,6 +398,14 @@ class AlertsArbiter:
         # green run (per reading, not per snapshot).
         self._rpmGreenSince: datetime | None = None
         self._rpmGreenLatest: datetime | None = None
+        # US-897-b5: the code entries, keyed by code. observeDtc is called off
+        # the run loop (key-on, the MIL edge on the reading thread), so they
+        # move under their own lock, the _rpmLock precedent.
+        self._codeLock = threading.Lock()
+        self._codes: dict[str, AlertEpisode] = {}
+        self._codeSource: dict[str, Any] = {"assessed": False, "checkedAtTs": None}
+        # checkedAtTs of the newest dtc payload whose codes were applied (G1).
+        self._codeAppliedAt: datetime | None = None
         for entry in seedEntries:
             self._seed(entry)
 
@@ -351,7 +415,96 @@ class AlertsArbiter:
         """Every episode of this boot, active or cleared (unordered)."""
         with self._rpmLock:
             rpm = self._rpm
-        return [e for e in (self._coolant, self._battery, rpm) if e is not None]
+        with self._codeLock:
+            codes = list(self._codes.values())
+        return [e for e in (self._coolant, self._battery, rpm) if e is not None] + codes
+
+    def codeSource(self) -> dict[str, Any]:
+        """``sources.code`` -- ``{assessed, checkedAtTs}`` of the last dtc payload."""
+        with self._codeLock:
+            return dict(self._codeSource)
+
+    # --------------------------------------------------------------- codes
+
+    def observeDtc(self, payload: Mapping[str, Any] | None) -> None:
+        """Take the dtc payload the router just wrote (US-897-b5, Atlas Q6).
+
+        Handed IN-PROCESS by ``_emitDtcState`` / ``_emitInitialDtcState``, never
+        a file read-back. ``sources.code`` is assessed only when the read was
+        available AND carries a ``checkedAtTs``. ``codes`` null (unavailable,
+        the boot state with its ``lastKnown`` included) creates and removes no
+        entry: unknown is neither present nor cleared. A code absent from a read
+        is REMOVED only when that read's ``checkedAtTs`` is newer than the last
+        one applied (G1); a payload older than that changes nothing.
+
+        Args:
+            payload: The states/dtc payload written, or None when none was.
+        """
+        if not isinstance(payload, Mapping):
+            return
+        checkedAtTs = payload.get("checkedAtTs")
+        if not isinstance(checkedAtTs, str) or not checkedAtTs:
+            checkedAtTs = None
+        at = _parseTs(checkedAtTs)
+        source = payload.get("source")
+        dtcSource = source.get("dtc") if isinstance(source, Mapping) else None
+        available = isinstance(dtcSource, Mapping) and dtcSource.get("available") is True
+        codes = payload.get("codes")
+        listed = codes if isinstance(codes, list) else None
+        with self._codeLock:
+            applied = self._codeAppliedAt
+            if at is not None and applied is not None and at < applied:
+                return
+            self._codeSource = {
+                "assessed": available and checkedAtTs is not None and listed is not None,
+                "checkedAtTs": checkedAtTs,
+            }
+            if listed is None:
+                return
+            newer = at is not None and (applied is None or at > applied)
+            # A newer read is the whole truth; an unchanged one only adds.
+            updated = {} if newer else dict(self._codes)
+            for code, raw in _alertableCodes(listed).items():
+                updated[code] = self._codeEpisode(code, raw, checkedAtTs)
+            self._codes = updated
+            if newer:
+                self._codeAppliedAt = at
+
+    def _codeEpisode(
+        self, code: str, raw: Mapping[str, Any], checkedAtTs: str | None
+    ) -> AlertEpisode:
+        """One code's entry: the table's own words, or UNRATED's when untabled.
+
+        Called under ``_codeLock``. The id carries no status, so a pending code
+        that later stores stays ONE entry and only ``codeStatus`` flips.
+        """
+        tier = _CODE_TIER_OF_SEVERITY[raw["severity"]]
+        status = raw["status"]
+        title = raw.get("title")
+        if not isinstance(title, str) or not title:
+            title = code
+        if status == CODE_STATUS_PENDING:
+            title += CODE_PENDING_TITLE_SUFFIX
+        sentence = raw.get("sentence")
+        if not isinstance(sentence, str) or not sentence:
+            sentence = CODE_UNRATED_SENTENCE if tier == TIER_UNRATED else ""
+        firstSeenTs = raw.get("firstSeenTs")
+        previous = self._codes.get(code)
+        if not isinstance(firstSeenTs, str) and previous is not None:
+            firstSeenTs = previous.firstSeenTs
+        return AlertEpisode(
+            source=SOURCE_CODE,
+            key=code,
+            tier=tier,
+            title=title,
+            sentence=sentence,
+            directive=None,
+            unit=None,
+            firstSeenTs=firstSeenTs if isinstance(firstSeenTs, str) else None,
+            lastSeenTs=checkedAtTs,
+            active=True,
+            codeStatus=status,
+        )
 
     # ------------------------------------------------------------- the tick
 
@@ -780,6 +933,7 @@ def _entryOf(episode: AlertEpisode) -> dict[str, Any]:
         "lastSeenTs": episode.lastSeenTs,
         "active": episode.active,
         "acknowledged": episode.acknowledged,
+        "codeStatus": episode.codeStatus,
     }
 
 
@@ -823,6 +977,7 @@ def buildAlertsState(
     *,
     dataSource: str | None,
     bootId: str,
+    codeSource: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the states/alerts payload (Atlas s2 shape; pure).
 
@@ -832,37 +987,48 @@ def buildAlertsState(
         nowUtc: Aware UTC instant of this emit.
         dataSource: The obd-live data_source tag, or None.
         bootId: ``readBootId()`` ('unknown' when unreadable).
+        codeSource: ``AlertsArbiter.codeSource()``; None -> unassessed.
 
     Returns:
         ``{ts, dataSource, bootId, sources, codesCheckedThisSession,
         checkedAtTs, icon, takeover, codeAlert, entries}`` -- every key present.
         ``entries`` is already ordered; ``takeover`` is set while the top
-        ACTIVE entry is a stop.
+        ACTIVE entry is a stop; ``codeAlert`` while any code entry is active.
     """
     ordered = sorted(episodes, key=_sortKey)
     entries = [_entryOf(e) for e in ordered]
     active = [e for e in ordered if e.active]
-    # Codes are not an alert source until US-897-b5.
-    codeSource: dict[str, Any] = {"assessed": False, "checkedAtTs": None}
+    code: dict[str, Any] = {"assessed": False, "checkedAtTs": None}
+    if isinstance(codeSource, Mapping):
+        code = {
+            "assessed": codeSource.get("assessed") is True,
+            "checkedAtTs": codeSource.get("checkedAtTs"),
+        }
     takeover = None
     firstActive = next((entry for entry in entries if entry["active"]), None)
     if firstActive is not None and firstActive["tier"] == TIER_STOP:
         takeover = _takeoverOf(firstActive)
+    # Atlas Q32: the provider computes the tier; the page decides moving/parked.
+    codeIds = [e["id"] for e in entries if e["active"] and e["source"] == SOURCE_CODE]
+    codeAlert = None
+    if codeIds:
+        firstTier = next(e["tier"] for e in entries if e["id"] == codeIds[0])
+        codeAlert = {"ids": codeIds, "tier": firstTier, "dismissable": True}
     return {
         "ts": nowUtc.strftime(_ISO_FMT),
         "dataSource": dataSource,
         "bootId": bootId,
         "sources": {
-            "code": dict(codeSource),
+            "code": dict(code),
             "engine": {"assessed": _freshCoolant(obdLive) is not None},
             "system": {"assessed": False, "reason": "not_built"},
             "data": {"assessed": False, "reason": "not_built"},
         },
-        "codesCheckedThisSession": codeSource["assessed"],
-        "checkedAtTs": codeSource["checkedAtTs"],
-        "icon": _icon(active, codeSource["assessed"]),
+        "codesCheckedThisSession": code["assessed"],
+        "checkedAtTs": code["checkedAtTs"],
+        "icon": _icon(active, code["assessed"]),
         "takeover": takeover,
-        "codeAlert": None,
+        "codeAlert": codeAlert,
         "entries": entries,
     }
 
@@ -897,9 +1063,9 @@ def makeAlertsEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
         statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
 
     Returns:
-        ``emit(episodes, obdLive, *, nowUtc, dataSource, bootId)`` writing the
-        payload atomically and returning it. Best-effort by contract: a failure
-        is logged, never raised, and returns None.
+        ``emit(episodes, obdLive, *, nowUtc, dataSource, bootId, codeSource)``
+        writing the payload atomically and returning it. Best-effort by
+        contract: a failure is logged, never raised, and returns None.
     """
     from pi.splash import boot_state_emitter
 
@@ -912,10 +1078,12 @@ def makeAlertsEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
         nowUtc: datetime,
         dataSource: str | None,
         bootId: str,
+        codeSource: Mapping[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         try:
             payload = buildAlertsState(
-                episodes, obdLive, nowUtc, dataSource=dataSource, bootId=bootId
+                episodes, obdLive, nowUtc, dataSource=dataSource, bootId=bootId,
+                codeSource=codeSource,
             )
             boot_state_emitter.ensureStatesDir(statesDir)
             boot_state_emitter.writeStateAtomic(target, payload)

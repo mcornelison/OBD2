@@ -432,8 +432,22 @@ def test_makeDtcEmitter_writeFailure_neverRaises(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "writeStateAtomic", _boom)
     emit = makeDtcEmitter(str(tmp_path), severityTable=_TABLE)
 
-    # Must not raise.
-    emit(codes=[_rawCode("P1300")], mil=True, newSinceTs=None, sessionResetLock=[])
+    # Must not raise -- and says nothing was written (US-897-b5).
+    assert emit(
+        codes=[_rawCode("P1300")], mil=True, newSinceTs=None, sessionResetLock=[]
+    ) is None
+
+
+def test_makeDtcEmitter_returnsThePayloadItWrote(tmp_path):
+    """US-897-b5 (Atlas Q6): the arbiter is handed exactly what was written."""
+    emit = makeDtcEmitter(
+        str(tmp_path), severityTable=_TABLE, nowIsoFn=lambda: "2026-10-20T15:02:11Z"
+    )
+
+    returned = emit(codes=[_rawCode("P1300")], mil=True, checkedAtTs="2026-10-20T15:02:11Z")
+
+    assert returned == json.loads((tmp_path / DTC_FILENAME).read_text())
+    assert returned["checkedAtTs"] == "2026-10-20T15:02:11Z"
 
 
 def test_enrichCode_tabledCode_carriesTableTitleAndSentence():
