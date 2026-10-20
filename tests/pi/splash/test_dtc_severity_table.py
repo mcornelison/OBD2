@@ -15,6 +15,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-404 P1xxx severity-table loader.
+# 2026-10-19    | Ralph (Rex)  | US-754-a -- Title + Sentence columns.
 # ================================================================================
 ################################################################################
 
@@ -128,3 +129,100 @@ def test_loadP1xxxSeverityTable_missingFile_returnsEmptyMap(tmp_path):
     missing = tmp_path / "nope.md"
 
     assert loadP1xxxSeverityTable(str(missing)) == {}
+
+
+# US-754-a: Spool's title + sentence per engine code (Spool 2026-10-19 S2, verbatim).
+_ENGINE_WORDS = {
+    "P1103": ("WASTEGATE (P1103)", "No full throttle. Get it diagnosed."),
+    "P1104": ("BOOST SOLENOID (P1104)", "No full throttle. Get it diagnosed."),
+    "P1105": ("FUEL PRESSURE (P1105)", "No full throttle. Get it diagnosed."),
+    "P1300": ("TIMING CIRCUIT (P1300)", "No full throttle. Get it diagnosed."),
+    "P1400": ("EGR SENSOR (P1400)", "Drive gently. Get it diagnosed."),
+    "P1500": ("CHARGING SIGNAL (P1500)", "Watch battery voltage. Get it checked."),
+    "P1600": ("ECU LINK (P1600)", "Drive gently. Get it diagnosed."),
+}
+
+
+def test_loadP1xxxSeverityTable_engineCodes_carrySpoolTitleAndSentenceVerbatim(table):
+    """
+    Given: Spool's SSOT table with the Title + Sentence columns
+    When: each of the 7 engine P1xxx is looked up
+    Then: title and sentence are Spool's exact words, and the tier is unchanged
+    """
+    for code, (title, sentence) in _ENGINE_WORDS.items():
+        assert table[code]["title"] == title, code
+        assert table[code]["sentence"] == sentence, code
+        assert table[code]["severity"] == SEVERITY_WATCH, code
+
+
+def test_loadP1xxxSeverityTable_autoTransCodes_titleAndSentenceNone(table):
+    """
+    Given: Spool's SSOT table, whose auto-trans rows leave Title/Sentence empty
+    When: each `na` code is looked up
+    Then: title and sentence are None (an empty cell is never an empty string)
+    """
+    for code in ("P1715", "P1750", "P1751", "P1791", "P1795"):
+        assert table[code]["title"] is None, code
+        assert table[code]["sentence"] is None, code
+
+
+def test_loadP1xxxSeverityTable_p1103FixNamesTheTurboNotTd04(table):
+    """
+    Given: the car runs a Garrett TB2566, not a TD04 (Spool 2026-10-19 S2)
+    When: P1103's suggested fix is read
+    Then: it says 'the turbo' and no longer names the TD04
+    """
+    fix = table["P1103"]["suggestedFix"]
+
+    assert "the turbo" in fix
+    assert "TD04" not in fix
+
+
+def test_loadP1xxxSeverityTable_columnsMappedByHeaderNameNotPosition(tmp_path):
+    """
+    Given: an engine table whose Title/Sentence headers are mixed-case and
+           whose Sentence column comes BEFORE Title
+    When: the loader runs
+    Then: each value lands under its header's key, not its position
+    """
+    path = tmp_path / "table.md"
+    path.write_text(
+        "| Code | Description (mfr) | Severity | Clearable | Suggested fix | SENTENCE | title |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| P1400 | MDP Sensor | \U0001f7e1 WATCH | No | Check it. | Drive gently. | EGR SENSOR |\n",
+        encoding="utf-8",
+    )
+
+    entry = loadP1xxxSeverityTable(str(path))["P1400"]
+
+    assert entry["title"] == "EGR SENSOR"
+    assert entry["sentence"] == "Drive gently."
+
+
+def test_loadP1xxxSeverityTable_tableWithoutTitleSentenceHeaders_stillLoads(tmp_path):
+    """
+    Given: both tables in the pre-US-754-a shape (no Title/Sentence columns)
+    When: the loader runs
+    Then: every row still loads, with title and sentence both None
+    """
+    path = tmp_path / "table.md"
+    path.write_text(
+        "| Code | Description (mfr) | Severity | Clearable | Suggested fix (Spool) |\n"
+        "|---|---|---|---|---|\n"
+        "| P1400 | MDP Sensor | \U0001f7e1 WATCH | No | Check it. |\n"
+        "\n"
+        "| Code | Description (mfr) | Disposition |\n"
+        "|---|---|---|\n"
+        "| P1750 | Solenoid Assembly (A/T) | N/A -- auto-trans only |\n",
+        encoding="utf-8",
+    )
+
+    table = loadP1xxxSeverityTable(str(path))
+
+    assert table["P1400"]["severity"] == SEVERITY_WATCH
+    assert table["P1400"]["suggestedFix"] == "Check it."
+    assert table["P1400"]["title"] is None
+    assert table["P1400"]["sentence"] is None
+    assert table["P1750"]["severity"] == SEVERITY_NA
+    assert table["P1750"]["title"] is None
+    assert table["P1750"]["sentence"] is None

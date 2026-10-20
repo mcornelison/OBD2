@@ -16,6 +16,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-404 `dtc` emitter.
+# 2026-10-19    | Ralph (Rex)  | US-754-a -- enrichCode title + sentence.
 # ================================================================================
 ################################################################################
 
@@ -28,6 +29,7 @@ import json
 from pi.splash.dtc_emitter import (
     DTC_FILENAME,
     buildDtcState,
+    enrichCode,
     makeDtcEmitter,
 )
 
@@ -425,3 +427,39 @@ def test_makeDtcEmitter_writeFailure_neverRaises(tmp_path, monkeypatch):
 
     # Must not raise.
     emit(codes=[_rawCode("P1300")], mil=True, newSinceTs=None, sessionResetLock=[])
+
+
+def test_enrichCode_tabledCode_carriesTableTitleAndSentence():
+    """
+    Given: a tabled code whose table entry carries Spool's title + sentence
+    When: it is enriched
+    Then: both flow through verbatim and the existing keys are unchanged
+    """
+    table = {
+        "P1300": {
+            **_TABLE["P1300"],
+            "title": "TIMING CIRCUIT (P1300)",
+            "sentence": "No full throttle. Get it diagnosed.",
+        }
+    }
+
+    code = enrichCode(_rawCode("P1300"), table)
+
+    assert code["title"] == "TIMING CIRCUIT (P1300)"
+    assert code["sentence"] == "No full throttle. Get it diagnosed."
+    assert code["severity"] == "watch"
+    assert code["suggestedFix"] == "Verify base timing is set."
+
+
+def test_enrichCode_unTabledCode_titleAndSentenceNone():
+    """
+    Given: a code absent from the table (P0300)
+    When: it is enriched
+    Then: title and sentence are both None and severity is `unknown` --
+          UNRATED words belong to the arbiter, never the dtc payload
+    """
+    code = enrichCode(_rawCode("P0300", desc="Random misfire"), _TABLE)
+
+    assert code["title"] is None
+    assert code["sentence"] is None
+    assert code["severity"] == "unknown"

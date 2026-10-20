@@ -31,6 +31,8 @@
 #               |              | the US-429 fresh-empty contract (Atlas ruling).
 # 2026-09-14    | Ralph (Rex)  | US-753: clearGate `severity_unknown` for an
 #               |              | ungraded code (was `severity_present`).
+# 2026-10-19    | Ralph (Rex)  | US-754-a: every code carries `title` + `sentence`
+#               |              | (table words; None for an untabled code).
 # ================================================================================
 ################################################################################
 
@@ -118,6 +120,8 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
         suggestedFix = entry["suggestedFix"]
         fixProvenance = entry["fixProvenance"]
         clearEligible = entry["clearEligible"]
+        title = entry.get("title")
+        sentence = entry.get("sentence")
     else:
         # Un-tabled: never fabricate severity/fix. Use python-obd's text only.
         severity = SEVERITY_UNKNOWN
@@ -127,6 +131,9 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
         suggestedFix = None
         fixProvenance = FIX_PROVENANCE_NONE
         clearEligible = False
+        # UNRATED words are the alerts arbiter's, never the dtc payload's.
+        title = None
+        sentence = None
 
     return {
         "code": code,
@@ -143,6 +150,8 @@ def enrichCode(raw: dict, severityTable: dict[str, dict]) -> dict:
         "logged": bool(raw.get("logged", False)),
         "syncAcked": bool(raw.get("syncAcked", False)),
         "clearEligible": clearEligible,
+        "title": title,
+        "sentence": sentence,
     }
 
 
