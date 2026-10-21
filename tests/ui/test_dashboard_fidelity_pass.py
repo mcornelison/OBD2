@@ -44,6 +44,8 @@
 # 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the ALERTS card's 'n ACTIVE'
 #                               count and its tier chips join the font-display
 #                               set (Warnings spec s3).
+# 2026-10-20    | Ralph (Rex)  | US-898-b2 -- MOVED PIN: the empty-state words
+#                               (NO WARNINGS / NOT CHECKED YET) join it.
 # ================================================================================
 ################################################################################
 
@@ -441,7 +443,11 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     MOVED PIN (US-898-b1): the ALERTS card's header count ('n ACTIVE' / '--')
     and its tier chips (STOP / WATCH / MINOR / UNRATED) are Michroma (Warnings
     spec s3: "It carries ... n ACTIVE ... and the chips"). Titles, values,
-    sentences and ages stay --font-mono, pinned in tests/ui/test_warnings_page.py."""
+    sentences and ages stay --font-mono, pinned in tests/ui/test_warnings_page.py.
+
+    MOVED PIN (US-898-b2): the empty-state headline WORDS (NO WARNINGS / NOT
+    CHECKED YET, Iris brief '26 px') are Michroma; the '?' beside them, the
+    sentences and the '↓ n more below' cue stay --font-mono."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -461,6 +467,7 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#light-card .light-status-label",
         "#alerts-card .warn-count",
         "#alerts-card .warn-chip",
+        "#alerts-card .warn-quiet-word",
     }, bound
 
 

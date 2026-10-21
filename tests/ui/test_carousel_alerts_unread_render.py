@@ -52,6 +52,8 @@
 #               |              | ribbon banner, incl. the ribbon's unread case.
 # 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the card renders states/alerts;
 #               |              | its cases re-pointed, the earned all-clear retired.
+# 2026-10-20    | Ralph (Rex)  | US-898-b2 -- MOVED PIN: the unread line is NOT
+#               |              | CHECKED YET (the empty-state body).
 # ================================================================================
 ################################################################################
 
@@ -81,7 +83,9 @@ pytestmark = pytest.mark.skipif(
 
 # The two claims, named so each is pinned in BOTH directions rather than only
 # in the one the original defect happened to point at.
-_UNREAD_VALUE = "codes not read yet"
+# MOVED PIN (US-898-b2): with nothing active the unread state reads the
+# NOT CHECKED header over "? NOT CHECKED YET" (no "codes not read yet" meta).
+_UNREAD_VALUE = "NOT CHECKED YET"
 _ALL_CLEAR_WORDS = ("No stored codes", "NONE", "NO WARNINGS", "clear")
 
 _FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "states", "alerts")
@@ -203,7 +207,7 @@ def test_alertsCard_unreadSourceWithMilFalse_rendersUnreadWithItsReason():
     Given: states/alerts with no code read this boot (checkedAtTs null) and
            nothing active -- the provider's form of the measured unread state
     When: the shipped card renders it
-    Then: the operator reads "codes not read yet".
+    Then: the operator reads "NOT CHECKED YET" (MOVED PIN, US-898-b2).
 
           MOVED PIN (US-898-b1): the reason now lives in the provider's null
           checkedAtTs; the page reads it, never a mil flag.

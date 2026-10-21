@@ -45,6 +45,8 @@
 # 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the alertsCardView cases retire
 #                               with that view; the unread surface pin re-points
 #                               at #alerts-card over states/alerts.
+# 2026-10-20    | Ralph (Rex)  | US-898-b2 -- MOVED PIN: the unread line is NOT
+#                               CHECKED YET (the empty-state body).
 # ================================================================================
 ################################################################################
 
@@ -86,7 +88,8 @@ _RETIRED_HERO = "STANDBY"
 _RETIRED_SUBSTATE = "engine off · OBD asleep"
 # The moved fact (AC-2). MOVED PIN (US-898-b1): on states/alerts it is the
 # header meta for a null checkedAtTs.
-_MOVED_VALUE = "codes not read yet"
+# MOVED PIN (US-898-b2): unread with nothing active is "? NOT CHECKED YET".
+_MOVED_VALUE = "NOT CHECKED YET"
 
 
 def _read(path: str) -> str:

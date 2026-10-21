@@ -2474,11 +2474,38 @@
   // The age column of an entry the provider still lists after it cleared.
   var WARNING_CLEARED_TEXT = "cleared";
 
-  // The header: 'n ACTIVE' (n = the active rows) and when the codes were read,
-  // in the panel's one 12-hour clock without AM/PM (the fmtTimeOfDay split, as
-  // engineHistoryWindow). A null checkedAtTs is "not read", never a time; an
-  // unparseable one is '--', never a guessed instant. NONE / NOT CHECKED for
-  // an empty list are US-898-b2's.
+  // US-898-b2 (Iris brief "Empty state"; Atlas ARCH-062: never claim "clear"
+  // for a source that was not assessed). The words for a card with nothing
+  // active -- Iris's, verbatim. Each clause is printed only when `sources`
+  // says its source WAS assessed.
+  var WARNINGS_NONE_HEADER = "NONE";
+  var WARNINGS_NOT_CHECKED_HEADER = "NOT CHECKED";
+  var WARNINGS_NONE_HEAD = "NO WARNINGS";
+  var WARNINGS_NOT_CHECKED_MARK = "?";
+  var WARNINGS_NOT_CHECKED_HEAD = "NOT CHECKED YET";
+  var WARNINGS_NOT_CHECKED_TEXT =
+    "Trouble codes haven't been read since key-on, so \"nothing found\" can't be claimed.";
+  var WARNINGS_ENGINE_CLAUSE = " Engine checks clear.";
+  var WARNINGS_NOT_BUILT_TEXT = "System and data checks are not built yet.";
+
+  // A source is assessed only when the provider says exactly true; absent or
+  // anything else is "not assessed" -- the direction that claims nothing.
+  function warningSourceAssessed(sources, name) {
+    return isObj(sources[name]) && sources[name].assessed === true;
+  }
+
+  // When the codes were read, in the panel's one 12-hour clock without AM/PM
+  // (the fmtTimeOfDay split, as engineHistoryWindow). An unparseable instant
+  // is '--', never a guessed one.
+  function warningsReadClock(at) {
+    var read = typeof at === "string" && ISO_INSTANT.test(at) ? new Date(Date.parse(at)) : null;
+    return read ? fmtTimeOfDay(read, false).split(" ")[0] : DRIVING_NOT_READ;
+  }
+
+  // The header: 'n ACTIVE' (n = the active rows) plus when the codes were
+  // read; a null checkedAtTs is "not read", never a time. With nothing active
+  // it is NONE when the code read was assessed, else NOT CHECKED (tone
+  // 'amber', no meta: there is no read to time).
   function warningsHeaderView(alerts, rows) {
     var active = 0;
     for (var i = 0; i < rows.length; i++) {
@@ -2486,13 +2513,78 @@
     }
     var sources = isObj(alerts.sources) ? alerts.sources : {};
     var code = isObj(sources.code) ? sources.code : {};
-    var at = code.checkedAtTs;
-    var meta = "codes not read yet";
-    if (at != null) {
-      var read = typeof at === "string" && ISO_INSTANT.test(at) ? new Date(Date.parse(at)) : null;
-      meta = "codes read " + (read ? fmtTimeOfDay(read, false).split(" ")[0] : DRIVING_NOT_READ);
+    var meta = code.checkedAtTs != null
+      ? "codes read " + warningsReadClock(code.checkedAtTs)
+      : "codes not read yet";
+    if (active > 0) return { text: active + " ACTIVE", meta: meta, tone: null };
+    if (!warningSourceAssessed(sources, "code")) {
+      return { text: WARNINGS_NOT_CHECKED_HEADER, meta: "", tone: "amber" };
     }
-    return { text: active + " ACTIVE", meta: meta };
+    return { text: WARNINGS_NONE_HEADER, meta: meta, tone: null };
+  }
+
+  // The body of a card with nothing ACTIVE (cleared rows may still be listed
+  // under it -- a row is never hidden). Code read assessed: 'NO WARNINGS', when
+  // the codes were read (+ the engine clause only while engine is assessed),
+  // and the not-built line while system or data is not assessed. Not assessed:
+  // '? NOT CHECKED YET' and why nothing can be claimed -- no other line, so the
+  // card says nothing about any source. null while anything is active.
+  function warningsQuietView(alerts, rows) {
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].active) return null;
+    }
+    var sources = isObj(alerts.sources) ? alerts.sources : {};
+    if (!warningSourceAssessed(sources, "code")) {
+      return {
+        state: "not-checked",
+        mark: WARNINGS_NOT_CHECKED_MARK,
+        head: WARNINGS_NOT_CHECKED_HEAD,
+        lines: [{ text: WARNINGS_NOT_CHECKED_TEXT, tone: "primary" }],
+      };
+    }
+    var lines = [{
+      text: "Codes read at " + warningsReadClock(sources.code.checkedAtTs) + "." +
+        (warningSourceAssessed(sources, "engine") ? WARNINGS_ENGINE_CLAUSE : ""),
+      tone: "primary",
+    }];
+    if (!warningSourceAssessed(sources, "system") || !warningSourceAssessed(sources, "data")) {
+      lines.push({ text: WARNINGS_NOT_BUILT_TEXT, tone: "secondary" });
+    }
+    return { state: "none", mark: null, head: WARNINGS_NONE_HEAD, lines: lines };
+  }
+
+  // US-898-b2 (Iris U9): '↓ n more below', n = the rows whose bottom edge lies
+  // below the list's visible bottom. At runtime n comes from LAYOUT
+  // (warningsBelowFromLayout); these are the no-layout fallback the harness
+  // tests -- rows at their 48 px floor in the 270 px card body, minus the
+  // header and cue heights measured by the caller. A partly visible row counts
+  // as below, so 7 entries under a ~40 px header and ~20 px cue -> 3.
+  var WARNINGS_BODY_PX = 270;   // 320 panel - 34 bar - 16 dots (Iris brief)
+  var WARNINGS_ROW_FLOOR_PX = 48;
+  // Where not even the header and cue can be measured, their line boxes from
+  // dashboard.css: --fs-primary 34 px and --fs-meta 15 px at --warn-line 1.2.
+  var WARNINGS_HEADER_EST_PX = 34 * 1.2;
+  var WARNINGS_CUE_EST_PX = 15 * 1.2;
+
+  function warningsMoreBelow(rowCount, headerPx, cuePx) {
+    if (typeof rowCount !== "number" || !(rowCount > 0)) return 0;
+    var visible = WARNINGS_BODY_PX - (Number(headerPx) || 0) - (Number(cuePx) || 0);
+    var shown = Math.max(0, Math.floor(visible / WARNINGS_ROW_FLOOR_PX));
+    return Math.max(0, rowCount - shown);
+  }
+
+  // The layout count: rows whose bottom lies below the visible bottom (within
+  // half a pixel, so a row flush with the edge is not "below").
+  function warningsBelowFromLayout(visibleBottom, rowBottoms) {
+    var n = 0;
+    for (var i = 0; i < rowBottoms.length; i++) {
+      if (rowBottoms[i] > visibleBottom + 0.5) n++;
+    }
+    return n;
+  }
+
+  function warningsMoreText(n) {
+    return n > 0 ? "↓ " + n + " more below" : "";
   }
 
   // The FRESHNESS clause of a stale row -- how old the reading on screen is.
@@ -2557,16 +2649,23 @@
     if (!entries) {
       return {
         missing: true,
-        header: { text: WARNINGS_NO_DATA_HEADER, meta: "" },
+        header: { text: WARNINGS_NO_DATA_HEADER, meta: "", tone: null },
         rows: [],
         empty: WARNINGS_NO_DATA_TEXT,
+        quiet: null,
       };
     }
     var rows = [];
     for (var i = 0; i < entries.length; i++) {
       if (isObj(entries[i])) rows.push(warningRowView(entries[i], nowTs));
     }
-    return { missing: false, header: warningsHeaderView(alerts, rows), rows: rows, empty: null };
+    return {
+      missing: false,
+      header: warningsHeaderView(alerts, rows),
+      rows: rows,
+      empty: null,
+      quiet: warningsQuietView(alerts, rows),
+    };
   }
 
   // 3-state trust badge (design §5.4). Verified (Spool) / community-unverified /
@@ -5015,6 +5114,9 @@
     warningsPageView: warningsPageView,
     warningRowView: warningRowView,
     warningStaleText: warningStaleText,
+    warningsMoreBelow: warningsMoreBelow,
+    warningsBelowFromLayout: warningsBelowFromLayout,
+    warningsMoreText: warningsMoreText,
     trustBadge: trustBadge,
     fixArea: fixArea,
     fixSectionLabel: fixSectionLabel,
@@ -7432,7 +7534,10 @@
         if (!body) return;
         card.classList.toggle("unavailable", view.missing && !loading);
         var painted = loading ? "loading" : JSON.stringify(view);
-        if (painted === alertsCardPainted) return;
+        if (painted === alertsCardPainted) {
+          updateWarningsMore(body);
+          return;
+        }
         alertsCardPainted = painted;
         if (loading) {
           renderLoadingBody(body, card.getAttribute("data-page-name") || "");
@@ -7441,13 +7546,17 @@
         body.textContent = "";
         var head = document.createElement("div");
         head.className = "warn-header";
-        head.appendChild(warnSpan("span", "warn-count", view.header.text));
+        var count = warnSpan("span", "warn-count", view.header.text);
+        if (view.header.tone) count.setAttribute("data-tone", view.header.tone);
+        head.appendChild(count);
         if (view.header.meta) head.appendChild(warnSpan("span", "warn-meta", view.header.meta));
         body.appendChild(head);
         if (view.missing) {
           body.appendChild(warnSpan("div", "warn-empty", view.empty));
           return;
         }
+        if (view.quiet) body.appendChild(warningsQuietBlock(view.quiet));
+        if (!view.rows.length) return;
         var list = document.createElement("div");
         list.className = "warn-list";
         for (var i = 0; i < view.rows.length; i++) {
@@ -7482,6 +7591,63 @@
           })(view.rows[i]);
         }
         body.appendChild(list);
+        // The cue line is always laid out under the list (empty while nothing
+        // is below), so showing it never shrinks the list it is counting.
+        body.appendChild(warnSpan("div", "warn-more", ""));
+        list.addEventListener("scroll", function () { updateWarningsMore(body); });
+        updateWarningsMore(body);
+      }
+
+      // US-898-b2: the empty / not-checked body. The '?' is its own --font-mono
+      // span: Michroma carries only the upper-case words.
+      function warningsQuietBlock(quiet) {
+        var block = document.createElement("div");
+        block.className = "warn-quiet";
+        block.setAttribute("data-state", quiet.state);
+        var headline = document.createElement("div");
+        headline.className = "warn-quiet-head";
+        if (quiet.mark) headline.appendChild(warnSpan("span", "warn-quiet-mark", quiet.mark + " "));
+        headline.appendChild(warnSpan("span", "warn-quiet-word", quiet.head));
+        block.appendChild(headline);
+        for (var i = 0; i < quiet.lines.length; i++) {
+          var line = warnSpan("div", "warn-quiet-line", quiet.lines[i].text);
+          line.setAttribute("data-tone", quiet.lines[i].tone);
+          block.appendChild(line);
+        }
+        return block;
+      }
+
+      // A laid-out element's height, or null where there is no layout (the
+      // test harness, a card not yet laid out).
+      function warnHeight(el) {
+        if (!el || typeof el.getBoundingClientRect !== "function") return null;
+        var h = el.getBoundingClientRect().height;
+        return h > 0 ? h : null;
+      }
+
+      // Iris U9: count from LAYOUT -- the rows whose bottom is below the list's
+      // visible bottom. No layout -> the 48 px-floor fallback, over the
+      // measured header and cue heights (0 where even those are unmeasured).
+      function updateWarningsMore(body) {
+        var list = body.querySelector(".warn-list");
+        var cue = body.querySelector(".warn-more");
+        if (!list || !cue) return;
+        var rows = list.querySelectorAll(".warn-row");
+        var n;
+        if (warnHeight(list) !== null) {
+          var bottom = list.getBoundingClientRect().top + list.clientTop + list.clientHeight;
+          var bottoms = [];
+          for (var i = 0; i < rows.length; i++) bottoms.push(rows[i].getBoundingClientRect().bottom);
+          n = warningsBelowFromLayout(bottom, bottoms);
+        } else {
+          n = warningsMoreBelow(
+            rows.length,
+            warnHeight(body.querySelector(".warn-header")) || WARNINGS_HEADER_EST_PX,
+            warnHeight(cue) || WARNINGS_CUE_EST_PX
+          );
+        }
+        var text = warningsMoreText(n);
+        if (cue.textContent !== text) cue.textContent = text;
       }
 
       if (detailBack) detailBack.addEventListener("click", closeDetail);

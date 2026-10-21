@@ -2403,7 +2403,19 @@ html, body {
   --warn-chip-rule: 1px;         /* the outline of a cleared entry's chip */
   --warn-line: 1.2;
   --warn-cleared-opacity: 0.55;  /* a cleared entry is listed, dimmed */
+  --warn-scroll-w: 6px;          /* US-898-b2: the list's visible scrollbar */
+  --warn-scroll-thumb: var(--text-tertiary);
+  --warn-scroll-track: var(--surface);
 }
+/* US-898-b2 (Iris U9): the header, the empty-state block and the cue keep
+   their height; the LIST takes the rest and scrolls inside it with a visible
+   scrollbar -- every entry is rendered, none is clipped. The cue line is
+   always laid out (empty while nothing is below), so showing it never
+   shrinks the list it counts. */
+#alerts-card .card-body { display: flex; flex-direction: column; }
+#alerts-card .warn-header,
+#alerts-card .warn-quiet,
+#alerts-card .warn-more { flex: 0 0 auto; }
 #alerts-card .warn-header {
   display: flex; align-items: baseline; justify-content: space-between;
   gap: var(--warn-gap); white-space: nowrap;
@@ -2412,13 +2424,42 @@ html, body {
   font-family: var(--font-display); font-weight: 400; font-synthesis: none;
   font-size: var(--fs-primary); line-height: var(--warn-line); color: var(--text-primary);
 }
+#alerts-card .warn-count[data-tone="amber"] { color: var(--amber-warn); }
 #alerts-card .warn-meta { font-size: var(--fs-meta); color: var(--text-secondary); }
 #alerts-card .warn-empty { font-size: var(--fs-meta); color: var(--text-secondary); }
-#alerts-card .warn-list { display: flex; flex-direction: column; }
+/* US-898-b2 empty / not-checked body. Michroma carries only the upper-case
+   words (.warn-quiet-word); the '?' and every sentence are --font-mono. */
+#alerts-card .warn-quiet-head {
+  font-size: var(--fs-secondary); line-height: var(--warn-line); color: var(--text-primary);
+}
+#alerts-card .warn-quiet-mark { font-family: var(--font-mono); }
+#alerts-card .warn-quiet-word {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+}
+#alerts-card .warn-quiet-line {
+  font-size: var(--fs-meta); line-height: var(--warn-line); color: var(--text-primary);
+}
+#alerts-card .warn-quiet-line[data-tone="secondary"] { color: var(--text-secondary); }
+#alerts-card .warn-list {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y;           /* US-746: a swipe that starts here still turns the page */
+  scrollbar-width: thin;
+  scrollbar-color: var(--warn-scroll-thumb) var(--warn-scroll-track);
+}
+#alerts-card .warn-list::-webkit-scrollbar { width: var(--warn-scroll-w); }
+#alerts-card .warn-list::-webkit-scrollbar-track { background: var(--warn-scroll-track); }
+#alerts-card .warn-list::-webkit-scrollbar-thumb { background: var(--warn-scroll-thumb); }
+#alerts-card .warn-more {
+  min-height: calc(var(--fs-meta) * var(--warn-line));
+  font-size: var(--fs-meta); line-height: var(--warn-line); color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
 #alerts-card .warn-row {
   display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content;
   column-gap: var(--warn-gap); align-items: baseline;
   min-height: var(--warn-row-min); box-sizing: border-box; width: 100%;
+  flex: 0 0 auto;                /* US-898-b2: in the scrolling list, never squeezed */
   padding-block: var(--warn-row-pad); padding-inline: 0; margin: 0;
   border: none; background: none; color: var(--text-primary);
   font-family: inherit; font-size: var(--fs-label); line-height: var(--warn-line);

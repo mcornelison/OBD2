@@ -21,6 +21,8 @@
 # 2026-07-02    | Ralph (Rex)  | Initial -- US-429 carousel honest-availability.
 # 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-898-b1): the alertsCardView cases
 #               |              | re-pointed at warningsPageView (states/alerts).
+# 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-898-b2): not-read with nothing
+#               |              | active is the NOT CHECKED header + empty state.
 # ================================================================================
 ################################################################################
 
@@ -160,13 +162,16 @@ def test_alertsCardView_dtcUnavailable_typedNaNotAllClear():
     codes" (which would falsely imply a clean all-clear read).
 
     MOVED PIN (US-898-b1): the card reads states/alerts; "not read" is the
-    provider's null sources.code.checkedAtTs."""
+    provider's null sources.code.checkedAtTs.
+    MOVED PIN (US-898-b2): with nothing active an unassessed read is the amber
+    'NOT CHECKED' header (no meta) over '? NOT CHECKED YET'."""
     view = _view(
         "warningsPageView",
         {"sources": {"code": {"assessed": False, "checkedAtTs": None}}, "entries": []},
     )
     assert view["missing"] is False
-    assert view["header"]["meta"] == "codes not read yet"
+    assert view["header"]["text"] == "NOT CHECKED"
+    assert view["quiet"]["head"] == "NOT CHECKED YET"
     assert "no stored codes" not in json.dumps(view).lower()
 
 

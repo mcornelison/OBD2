@@ -17,6 +17,9 @@
 #        >= 48 px and never .tile, sentences plain text (US-758);
 #     4. the GATES -- no '.sort(' and no tier comparison in the Warnings render,
 #        no tier copy literal in it, and the dtc-driven card body is gone.
+#   US-898-b2 adds: NONE / NOT CHECKED with nothing active, the empty-state
+#   body that prints only what `sources` says was assessed (898-2, 898-3), and
+#   the scrolling list with its '↓ n more below' cue (898-5, Iris U9).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-10-20
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -26,6 +29,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-20    | Ralph (Rex)  | Initial -- US-898-b1 ALERTS card from states/alerts.
+# 2026-10-20    | Ralph (Rex)  | US-898-b2 -- empty / not-checked states, scroll cue.
 # ================================================================================
 ################################################################################
 
@@ -101,6 +105,9 @@ TIER_COPY = (
 WARNINGS_FUNCTIONS = (
     "warningsPageView", "warningRowView", "warningsHeaderView",
     "warningStaleText", "renderWarningsCard",
+    # US-898-b2
+    "warningsQuietView", "warningsQuietBlock", "warningsMoreBelow",
+    "warningsBelowFromLayout", "updateWarningsMore",
 )
 
 
@@ -193,14 +200,39 @@ SCENARIOS: dict[str, tuple[list[AlertEpisode], dict[str, Any] | None]] = {
         )],
         CODES_READ,
     ),
+    # US-898-b2. The story's example read time (10:02 in America/Chicago).
+    "checked-clean": ([], {"assessed": True, "checkedAtTs": "2026-10-20T15:02:00Z"}),
+    "not-checked": ([], None),
+    "system-data-not-assessed": ([], CODES_READ),
+    "codes-unread-with-watch": ([_battery("low", 11.8, "2026-10-20T17:28:00Z")], None),
+    "seven-entries-scroll": (
+        [
+            _p0443(),
+            _code("P2187", "unrated", "P2187", CODE_UNRATED_SENTENCE, "2026-10-17T09:00:00Z"),
+            _battery("low", 11.8, "2026-10-20T17:28:00Z"),
+            _p0400(),
+            _code("P0128", "unrated", "P0128", CODE_UNRATED_SENTENCE, "2026-10-18T09:00:00Z"),
+            _episode(
+                source="engine", key="RPM", tier="watch", title=RPM_OVER_REV_TITLE,
+                sentence=_rpmSentence(7150), firstSeenTs="2026-10-20T17:29:10Z",
+                lastSeenTs="2026-10-20T17:29:12Z",
+            ),
+            _coolant(value=112, peak=112, firstSeenTs="2026-10-20T17:29:40Z", lastSeenTs=NOW),
+        ],
+        CODES_READ,
+    ),
 }
+
+# A fresh coolant reading is what makes the provider assess ENGINE (Q14).
+FRESH_COOLANT = {"params": {"COOLANT_TEMP": {"value": 90, "unit": "C", "stale": False}}}
+OBD_LIVE: dict[str, dict[str, Any]] = {"checked-clean": FRESH_COOLANT}
 
 
 def buildFixture(name: str) -> dict[str, Any]:
     """The states/alerts payload the shipped provider writes for a scenario."""
     episodes, codeSource = SCENARIOS[name]
     return buildAlertsState(
-        episodes, None, datetime(2026, 10, 20, 17, 30, tzinfo=UTC),
+        episodes, OBD_LIVE.get(name), datetime(2026, 10, 20, 17, 30, tzinfo=UTC),
         dataSource="real", bootId="boot-fixture-0001", codeSource=codeSource,
     )
 
@@ -257,8 +289,9 @@ def test_mixed_rowsAreTheEntriesInTheirOrder_headerThreeActive():
     payload = _fixture("mixed-live-and-stored")
     view = _page(payload)
     assert [r["id"] for r in view["rows"]] == [e["id"] for e in payload["entries"]]
-    assert view["header"] == {"text": "3 ACTIVE", "meta": "codes read 5:20"}
+    assert view["header"] == {"text": "3 ACTIVE", "meta": "codes read 5:20", "tone": None}
     assert view["missing"] is False
+    assert view["quiet"] is None, "anything active -> no empty-state block"
 
 
 @_NODE_ONLY
@@ -281,14 +314,12 @@ def test_codesReadIsTheLocalTwelveHourClock_noAmPm():
 def test_codesUnreadWithABatteryWatch_iconWatch_metaCodesNotReadYet():
     """898-10: an active WATCH outranks '?', and the meta says the codes were
     not read rather than giving a time."""
-    payload = buildAlertsState(
-        [_battery("low", 11.8, "2026-10-20T17:28:00Z")], None,
-        datetime(2026, 10, 20, 17, 30, tzinfo=UTC),
-        dataSource="real", bootId="boot-fixture-0001", codeSource=None,
-    )
+    payload = _fixture("codes-unread-with-watch")
     assert payload["sources"]["code"]["checkedAtTs"] is None
     assert _views("alertIconView", [[payload]])[0]["state"] == "watch"
-    assert _page(payload)["header"] == {"text": "1 ACTIVE", "meta": "codes not read yet"}
+    view = _page(payload)
+    assert view["header"] == {"text": "1 ACTIVE", "meta": "codes not read yet", "tone": None}
+    assert view["quiet"] is None and len(view["rows"]) == 1
 
 
 @_NODE_ONLY
@@ -300,8 +331,127 @@ def test_anUnreadableCheckedAt_neverInventsATime():
 
 @_NODE_ONLY
 def test_activeCountExcludesClearedEntries():
-    payload = _fixture("stop-live-cleared")
-    assert _page(payload)["header"]["text"] == "0 ACTIVE"
+    """Only a cleared entry -> nothing active: NONE (US-898-b2), and the
+    cleared row is still listed under the empty state (never hidden)."""
+    view = _page(_fixture("stop-live-cleared"))
+    assert view["header"]["text"] == "NONE"
+    assert view["quiet"]["head"] == "NO WARNINGS"
+    assert len(view["rows"]) == 1 and view["rows"][0]["active"] is False
+
+
+# --- US-898-b2: say only what was checked ------------------------------------
+
+NOT_BUILT = "System and data checks are not built yet."
+
+
+@_NODE_ONLY
+def test_checkedClean_isTheStorysExample():
+    """checked-clean at 15:02Z in America/Chicago (CDT) -> 10:02."""
+    view = _page(_fixture("checked-clean"), tz="America/Chicago")
+    assert view["header"] == {"text": "NONE", "meta": "codes read 10:02", "tone": None}
+    assert view["rows"] == []
+    assert view["quiet"] == {
+        "state": "none", "mark": None, "head": "NO WARNINGS",
+        "lines": [
+            {"text": "Codes read at 10:02. Engine checks clear.", "tone": "primary"},
+            {"text": NOT_BUILT, "tone": "secondary"},
+        ],
+    }
+
+
+@_NODE_ONLY
+def test_engineNotAssessed_dropsTheEngineClause():
+    view = _page(_fixture("system-data-not-assessed"))
+    assert _fixture("system-data-not-assessed")["sources"]["engine"]["assessed"] is False
+    assert [line["text"] for line in view["quiet"]["lines"]] == [
+        "Codes read at 5:20.", NOT_BUILT,
+    ]
+
+
+@_NODE_ONLY
+def test_systemAndDataBothAssessed_dropsTheNotBuiltLine():
+    payload = _fixture("checked-clean")
+    payload["sources"]["system"] = {"assessed": True}
+    payload["sources"]["data"] = {"assessed": True}
+    assert [line["text"] for line in _page(payload)["quiet"]["lines"]] == [
+        "Codes read at 3:02. Engine checks clear.",
+    ]
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("which", ["system", "data"])
+def test_eitherSourceUnassessed_keepsTheNotBuiltLine(which: str):
+    payload = _fixture("checked-clean")
+    payload["sources"]["system"] = {"assessed": True}
+    payload["sources"]["data"] = {"assessed": True}
+    del payload["sources"][which]
+    assert _page(payload)["quiet"]["lines"][-1]["text"] == NOT_BUILT
+
+
+@_NODE_ONLY
+def test_notChecked_amberHeaderNoMeta_andTheQuestionMark():
+    view = _page(_fixture("not-checked"))
+    assert view["header"] == {"text": "NOT CHECKED", "meta": "", "tone": "amber"}
+    assert view["quiet"] == {
+        "state": "not-checked", "mark": "?", "head": "NOT CHECKED YET",
+        "lines": [{
+            "text": "Trouble codes haven't been read since key-on, so \"nothing found\" can't be claimed.",
+            "tone": "primary",
+        }],
+    }
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize("assessed", [None, "true", 1, False])
+def test_anythingButAssessedTrue_isNotChecked(assessed: Any):
+    """Only the provider's exact `true` lets the card claim a read."""
+    payload = _fixture("checked-clean")
+    payload["sources"]["code"]["assessed"] = assessed
+    view = _page(payload)
+    assert view["header"]["text"] == "NOT CHECKED"
+    assert view["quiet"]["state"] == "not-checked"
+
+
+# --- US-898-b2: the '↓ n more below' fallback (Iris U9) ----------------------
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    "rows,header,cue,n",
+    [
+        (7, 40, 20, 3),    # Iris U9: (270 - 40 - 20) / 48 -> 4 visible
+        (4, 40, 20, 0),
+        (5, 40, 20, 1),
+        (7, 0, 0, 2),      # 270 / 48 -> 5 visible
+        (7, 100, 20, 4),   # a taller header shows fewer rows
+        (0, 40, 20, 0),
+        (2, 300, 20, 2),   # no room at all -> every row is below
+    ],
+)
+def test_moreBelowFallback_is48pxRowsIn270MinusHeaderAndCue(rows: int, header: float, cue: float, n: int):
+    assert _views("warningsMoreBelow", [[rows, header, cue]])[0] == n
+
+
+@_NODE_ONLY
+def test_moreBelowFromLayout_countsRowsWhoseBottomIsBelowTheVisibleBottom():
+    """A wrapped (taller) row pushes more rows below than the fallback would
+    report -- the layout count is the runtime one (Iris U9)."""
+    bottoms = [48, 120, 168, 216, 264, 312, 360]
+    assert _views("warningsBelowFromLayout", [[210, bottoms], [210.4, [210]], [400, bottoms]]) == [
+        4, 0, 0,
+    ]
+
+
+@_NODE_ONLY
+def test_moreText_isMonoArrowAndCount_orNothing():
+    assert _views("warningsMoreText", [[3], [0], [1]]) == ["↓ 3 more below", "", "↓ 1 more below"]
+
+
+@_NODE_ONLY
+def test_sevenEntries_rowOneIsTheMostSevere():
+    rows = _page(_fixture("seven-entries-scroll"))["rows"]
+    assert len(rows) == 7
+    assert rows[0]["tier"] == "stop" and rows[0]["key"] == "COOLANT_TEMP"
 
 
 @_NODE_ONLY
@@ -394,7 +544,8 @@ def test_cleared_isListedAsClearedInTheAgeColumn():
 def test_noReadablePayload_isDashDash_andNoWarningsData(payload: Any):
     view = _page(payload)
     assert view["missing"] is True
-    assert view["header"] == {"text": "--", "meta": ""}
+    assert view["header"] == {"text": "--", "meta": "", "tone": None}
+    assert view["quiet"] is None, "no payload is never an empty-state claim"
     assert view["rows"] == []
     assert view["empty"] == "no warnings data"
 
@@ -594,6 +745,113 @@ def test_dom_theCardReadsNoStatesDtc():
     assert len(_rowPaths(surface)) == 2
 
 
+# --- US-898-b2 DOM: 898-2, 898-3, 898-5 ---------------------------------------
+
+
+def _cardElementTexts(surface: rh.Surface) -> list[str]:
+    """The text of EVERY element under #alerts-card (the card itself included)."""
+    return [
+        _textOf(p[-1]) for p in surface.paths()
+        if any(n.get("attrs", {}).get("id") == CARD_ID for n in p)
+    ]
+
+
+def _textsByClass(surface: rh.Surface, cls: str) -> list[str]:
+    return [_textOf(p[-1]) for p in surface.pathsByClass(cls)]
+
+
+@_NODE_ONLY
+def test_dom_checkedClean_noneNoWarningsAndTheNotBuiltLine():
+    """The browser harness runs in the machine's zone, so the hour is free here;
+    the view tests pin it per zone."""
+    _, surface, _ = _cardDom(_fixture("checked-clean"))
+    assert _textsByClass(surface, "warn-count") == ["NONE"]
+    [meta] = _textsByClass(surface, "warn-meta")
+    assert re.fullmatch(r"codes read \d{1,2}:02", meta), meta
+    assert _textsByClass(surface, "warn-quiet-head") == ["NO WARNINGS"]
+    lines = _textsByClass(surface, "warn-quiet-line")
+    assert len(lines) == 2 and lines[1] == NOT_BUILT
+    assert re.fullmatch(r"Codes read at \d{1,2}:02\. Engine checks clear\.", lines[0]), lines[0]
+    assert _rowPaths(surface) == [] and surface.pathsByClass("warn-more") == []
+
+
+@_NODE_ONLY
+def test_dom_898_2_notChecked_noElementClaimsAnything():
+    _, surface, _ = _cardDom(_fixture("not-checked"))
+    texts = _cardElementTexts(surface)
+    for text in texts:
+        for word in ("NONE", "NO WARNINGS", "clear"):
+            assert word not in text, (word, text)
+    assert _textsByClass(surface, "warn-count") == ["NOT CHECKED"]
+    # Raw text nodes: _textOf strips each child, which would eat the space.
+    [head] = surface.pathsByClass("warn-quiet-head")
+    raw = "".join(c["children"][0]["text"] for c in head[-1]["children"])
+    assert raw == "? NOT CHECKED YET"
+    assert surface.pathsByClass("warn-meta") == []
+    count = surface.pathsByClass("warn-count")[0]
+    assert surface.winningDeclaration(count, "color")[0] == "var(--amber-warn)"
+
+
+@_NODE_ONLY
+def test_dom_898_3_systemDataNotAssessed_neverPairedWithClear():
+    _, surface, _ = _cardDom(_fixture("system-data-not-assessed"))
+    for text in _cardElementTexts(surface):
+        if "clear" in text:
+            assert "system" not in text and "data" not in text, text
+            assert "System" not in text, text
+    assert NOT_BUILT in _textsByClass(surface, "warn-quiet-line")
+    assert "Engine checks clear." not in " ".join(_cardElementTexts(surface))
+
+
+@_NODE_ONLY
+def test_dom_898_5_sevenEntries_allRendered_cueThreeMoreBelow_rowOneStop():
+    payload = _fixture("seven-entries-scroll")
+    _, surface, _ = _cardDom(payload)
+    rows = _rowPaths(surface)
+    assert len(rows) == 7, "no silent clip: every entry is in the DOM"
+    assert [p[-1]["attrs"]["data-id"] for p in rows] == [e["id"] for e in payload["entries"]]
+    assert rows[0][-1]["attrs"]["data-tier"] == "stop"
+    cue = surface.pathsByClass("warn-more")
+    assert len(cue) == 1 and surface.rendered(cue[0])
+    assert _textOf(cue[0][-1]) == "↓ 3 more below"
+
+
+@_NODE_ONLY
+def test_dom_fewRows_cueLineIsLaidOutButEmpty():
+    _, surface, _ = _cardDom(_fixture("two-stored-codes-real"))
+    cue = surface.pathsByClass("warn-more")
+    assert len(cue) == 1 and _textOf(cue[0][-1]) == ""
+
+
+@_NODE_ONLY
+def test_dom_theListScrollsWithAVisibleTokenScrollbar():
+    _, surface, _ = _cardDom(_fixture("seven-entries-scroll"))
+    path = surface.pathsByClass("warn-list")[0]
+    assert surface.winningDeclaration(path, "overflow-y")[0] in ("auto", "scroll")
+    assert surface.winningDeclaration(path, "scrollbar-width")[0] == "thin"
+    assert surface.winningDeclaration(path, "scrollbar-color")[0] == (
+        "var(--warn-scroll-thumb) var(--warn-scroll-track)"
+    )
+    assert surface.winningDeclaration(path, "min-height")[0] == "0"
+    row = _rowPaths(surface)[0]
+    assert surface.winningDeclaration(row, "flex")[0] == "0 0 auto", "a row never shrinks"
+
+
+@_NODE_ONLY
+@pytest.mark.parametrize(
+    "name,cls,face",
+    [
+        ("not-checked", "warn-quiet-mark", "var(--font-mono)"),
+        ("not-checked", "warn-quiet-word", "var(--font-display)"),
+        ("seven-entries-scroll", "warn-more", "var(--font-mono)"),
+    ],
+)
+def test_dom_theQuestionMarkAndTheCueAreMono_theWordsMichroma(name: str, cls: str, face: str):
+    _, surface, _ = _cardDom(_fixture(name))
+    path = surface.pathsByClass(cls)[0]
+    assert surface.winningDeclaration(path, "font-family")[0] == face
+
+
 # ---------------------------------------------------------------------------
 # 3. CSS -- chips, rows, sentences.
 # ---------------------------------------------------------------------------
@@ -722,7 +980,9 @@ def test_onlyTheCountAndTheChipsAreMichroma():
     """Michroma carries UPPER-CASE words and digits only (spec s3): the count
     and the chips. Titles, values, sentences and ages stay --font-mono."""
     display = {r.selector.strip() for r in _warningsRules() if "var(--font-display)" in r.declarations}
-    assert display == {"#alerts-card .warn-count", "#alerts-card .warn-chip"}
+    assert display == {
+        "#alerts-card .warn-count", "#alerts-card .warn-chip", "#alerts-card .warn-quiet-word",
+    }
     for selector in display:
         block = _rule(selector).declarations
         assert rh.declarationOf(block, "font-weight") == ("400", False), selector
