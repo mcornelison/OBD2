@@ -248,6 +248,9 @@ html, body {
   padding: 0 10px; box-sizing: border-box;
   background: var(--surface); font-size: var(--fs-secondary);
   z-index: 10;
+  /* US-898-a (Iris S108): the glyph letter-spacing as ONE scoped property, so
+     the warnings icon's fixed slot and every text glyph charge the same em. */
+  --glyph-ls: 0.04em;
 }
 /* The clusters exist so the bar has exactly THREE grid children: five children
    in a three-column template wrap into an implicit second row, which on a bar
@@ -261,7 +264,7 @@ html, body {
 #topbar .topbar-left  { display: flex; align-items: center; gap: 10px; }
 #topbar .topbar-right { display: flex; align-items: center;
                         justify-content: flex-end; gap: 8px; }
-#topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
+#topbar .glyph { color: var(--text-secondary); letter-spacing: var(--glyph-ls); }
 #topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
 #topbar .glyph[data-state="ok"]    { color: var(--green-ok); }
 /* US-488: a DOWN link/service is DEGRADED, not dangerous -- WATCH amber. It
@@ -269,6 +272,56 @@ html, body {
    (and, from US-489, the per-tile dot) carries which source is unhappy, and
    inventing a second alarm-red to separate them is what Spool ruled against. */
 #topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
+/* US-898-a (Iris U1): WiFi is a 1ch SVG, so the warnings icon has room. Relative
+   units only; stroked in currentColor so the [data-state] colours above apply.
+   Letter-spacing does not reach an atomic inline, so the glyph is exactly 1ch. */
+#glyph-wifi .wifi-mark {
+  width: 1ch; height: 1em; vertical-align: -0.1em;
+  fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round;
+}
+#glyph-wifi .wifi-mark circle { fill: currentColor; stroke: none; }
+/* US-898-a (F-127; specs/v030-warnings-page-design.md s4.2): the warnings icon.
+   A FIXED three-character slot -- `▲99` is the widest content, 3 x (1ch +
+   --glyph-ls) -- so the cluster never reflows as the count changes; min-width
+   would grow at two digits (Iris S108). Mono, because `?`, `▲` and `△` are not
+   in the Michroma subset. The painted box is the band, the hit box is the
+   #menu-btn pattern: a transparent ::after grown to --tap-min. */
+#glyph-warnings {
+  font-family: var(--font-mono);
+  width: calc(3 * (1ch + var(--glyph-ls))); height: var(--bar-h);
+  flex: none; display: flex; align-items: center;
+  text-align: start; white-space: nowrap;
+  position: relative; cursor: pointer;
+}
+#glyph-warnings::after {
+  content: ""; position: absolute;
+  inset: calc((var(--bar-h) - var(--tap-min)) / 2);
+}
+/* The look is the provider's state (alertIconView), coloured by token only. A
+   missing payload is `--` in tertiary, never the `none` triangle. */
+#topbar #glyph-warnings[data-state="none"],
+#topbar #glyph-warnings[data-state="missing"]     { color: var(--text-tertiary); }
+#topbar #glyph-warnings[data-state="not_checked"],
+#topbar #glyph-warnings[data-state="watch"]       { color: var(--amber-warn); }
+#topbar #glyph-warnings[data-state="stop"]        { color: var(--critical-red); }
+/* A live unacknowledged STOP pulses -- only when the user has not asked for
+   reduced motion, and only while the state attributes say so
+   (test_dashboard_animation_gating). Reduced motion keeps a steady red outline
+   instead, so the STOP still reads as more than its colour. */
+@media (prefers-reduced-motion: no-preference) {
+  #topbar #glyph-warnings[data-state="stop"][data-pulse="true"] {
+    animation: warn-icon-pulse 1.1s ease-in-out infinite;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #topbar #glyph-warnings[data-state="stop"][data-pulse="true"] {
+    outline: 0.08em solid var(--critical-red); outline-offset: -0.08em;
+  }
+}
+@keyframes warn-icon-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
 /* US-542: the wall clock, relocated from the retired parked idle face. It USED
    to sit with the glyphs on the LEFT, and the reasoning for that is still
    correct and is kept here on purpose: two auto margins in one flex row split

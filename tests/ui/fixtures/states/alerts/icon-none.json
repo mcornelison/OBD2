@@ -1,0 +1,32 @@
+{
+  "ts": "2026-10-20T17:30:00Z",
+  "dataSource": "real",
+  "bootId": "boot-fixture-0001",
+  "sources": {
+    "code": {
+      "assessed": true,
+      "checkedAtTs": "2026-10-20T17:20:00Z"
+    },
+    "engine": {
+      "assessed": false
+    },
+    "system": {
+      "assessed": false,
+      "reason": "not_built"
+    },
+    "data": {
+      "assessed": false,
+      "reason": "not_built"
+    }
+  },
+  "codesCheckedThisSession": true,
+  "checkedAtTs": "2026-10-20T17:20:00Z",
+  "icon": {
+    "state": "none",
+    "count": 0,
+    "pulse": false
+  },
+  "takeover": null,
+  "codeAlert": null,
+  "entries": []
+}

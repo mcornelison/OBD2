@@ -2376,6 +2376,41 @@
     return { text: "NOT LIVE", tier: "meta" };
   }
 
+  // US-898-a (F-127; specs/v030-warnings-page-design.md s4.2) -- the top-bar
+  // warnings icon, from states/alerts.icon ALONE. The provider computes the
+  // state; this maps it to Iris's look and compares no tier, count or reading.
+  // A missing or unreadable payload is `--`, never the grey triangle: `none`
+  // is the provider's claim that the codes were read and nothing is active,
+  // and with no payload that claim is false (Iris S108 review). Only a STOP
+  // pulses (her look table); `pulse` is the provider's flag, already false for
+  // an acknowledged entry.
+  var ALERT_ICON_TRIANGLE = "▲";
+  var ALERT_ICON_COUNT_CAP = 99;
+  var ALERT_ICON_FIXED = {
+    none: "△",
+    not_checked: "?",
+  };
+  var ALERT_ICON_MISSING = { state: "missing", text: "--", pulse: false };
+
+  function alertIconView(alerts) {
+    var icon = isObj(alerts) && isObj(alerts.icon) ? alerts.icon : null;
+    if (!icon) return ALERT_ICON_MISSING;
+    var state = icon.state;
+    if (Object.prototype.hasOwnProperty.call(ALERT_ICON_FIXED, state)) {
+      return { state: state, text: ALERT_ICON_FIXED[state], pulse: false };
+    }
+    if (state !== "watch" && state !== "stop") return ALERT_ICON_MISSING;
+    var count = icon.count;
+    var shown = typeof count === "number" && isFinite(count) && count >= 0
+      ? String(Math.min(Math.floor(count), ALERT_ICON_COUNT_CAP))
+      : "";
+    return {
+      state: state,
+      text: ALERT_ICON_TRIANGLE + shown,
+      pulse: state === "stop" && icon.pulse === true,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // US-406 DTC Alerts card (Card 5) + detail -- pure, node-testable logic
   // (S-4/S-5/S-12/S-13/I-3). The card is a PURE CONSUMER of the `dtc` state:
@@ -5007,6 +5042,7 @@
     fmtStamp: fmtStamp,
     carouselIdle: carouselIdle,
     notLiveMarker: notLiveMarker,
+    alertIconView: alertIconView,
     agoText: agoText,
     dtcNotReadTile: dtcNotReadTile,
     dtcRow: dtcRow,
@@ -6236,6 +6272,23 @@
       clockEl.textContent = text;
     }
 
+    // US-898-a: paint the warnings icon (alertIconView). Block scope, beside the
+    // clock, for the clock's reason: the 4 Hz tick inside startAvailabilityPoll
+    // calls it. Writes only on a change, like the clock. It never sets
+    // `hidden`: the icon is the always-visible state (Iris U1).
+    var warnIconEl = null;
+    var lastWarnIconKey = null;
+    function renderTopbarIcon(view) {
+      if (!warnIconEl) warnIconEl = document.getElementById("glyph-warnings");
+      if (!warnIconEl) return;
+      var key = view.state + "|" + view.text + "|" + view.pulse;
+      if (key === lastWarnIconKey) return;
+      lastWarnIconKey = key;
+      warnIconEl.textContent = view.text;
+      warnIconEl.setAttribute("data-state", view.state);
+      warnIconEl.setAttribute("data-pulse", view.pulse ? "true" : "false");
+    }
+
     // US-901-b: paint the not-live marker and hide the clock under it. Block
     // scope, beside the clock, for the same reason the clock lives here: the
     // 4 Hz tick calls it from inside `startAvailabilityPoll`. Writes only on a
@@ -7036,13 +7089,27 @@
       // actually connected (they ship `hidden`, so the pre-first-poll unknown
       // shows no vehicle card).
       var gatedCards = [];
+      // US-898-a: the icon's tap target, found by the bar name the card carries
+      // (US-898-b1 re-keys it by id).
+      var alertsCardIndex = -1;
       for (var ci = 0; ci < cards.length; ci++) {
         var st = cards[ci].getAttribute("data-state");
         if (st === "dtc") dtcCardIndex = ci;
+        if (cards[ci].getAttribute("data-page-name") === "ALERTS") alertsCardIndex = ci;
         if (cards[ci].getAttribute("data-landing") !== null) landingIndex = ci;
         if (cards[ci].getAttribute("data-vehicle-gated") !== null) {
           gatedCards.push(cards[ci]);
         }
+      }
+
+      // US-898-a: tapping the warnings icon opens ALERTS -- allowed while moving
+      // (Iris U1): it only navigates, which a swipe already does, so nothing
+      // here reads the parked signal.
+      var warnIconBtn = document.getElementById("glyph-warnings");
+      if (warnIconBtn) {
+        warnIconBtn.addEventListener("click", function () {
+          if (alertsCardIndex >= 0) goTo(alertsCardIndex);
+        });
       }
 
       // US-496 AC-3: reveal/hide the vehicle-dependent cards from the SAME
@@ -7681,6 +7748,9 @@
         renderNotLiveMarker(
           notLiveMarker(await stateOnce("system-status"), await stateOnce("obd-live"))
         );
+        // US-898-a: the warnings icon is on every page, so states/alerts is read
+        // on EVERY tick, unconditionally -- not only while ALERTS is showing.
+        renderTopbarIcon(alertIconView(await stateOnce("alerts")));
         // US-405/US-406: drive the takeover + persistent ribbon from the same
         // `dtc` state the Alerts card rendered (one fetch per tick).
         updateDtcSurfaces(dtcData);

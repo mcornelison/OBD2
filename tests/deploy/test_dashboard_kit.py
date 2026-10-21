@@ -30,6 +30,7 @@
 #               |              | (F-4: HTML carousel is the sole surface).
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
 #                               card at index 4.
+# 2026-10-20    | Ralph (Rex)  | US-898-a -- the bar carries the warnings icon.
 # ================================================================================
 ################################################################################
 
@@ -137,7 +138,8 @@ def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
     """
     html = _read(KIT_DIR, "dashboard.html")
     assert 'id="topbar"' in html
-    for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi"):
+    # US-898-a: the warnings icon (DoD 9) is on the bar too, on every page.
+    for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi", "glyph-warnings"):
         assert f'id="{glyph}"' in html, f"top bar missing {glyph}"
     assert 'id="glyph-power"' not in html, "the US-696 bolt is still in the kit"
     assert 'id="version-chip"' in html
