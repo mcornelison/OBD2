@@ -41,6 +41,9 @@
 #                               retire with the idle face; the font-display
 #                               set swaps .idle-wordmark for #motion-card
 #                               .motion-label.
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the ALERTS card's 'n ACTIVE'
+#                               count and its tier chips join the font-display
+#                               set (Warnings spec s3).
 # ================================================================================
 ################################################################################
 
@@ -433,7 +436,12 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     RANGE) and the status line's BRIGHTNESS [AUTO] label (the mockup's
     Michroma tier, in which Iris G-2's 412 px worst case was measured). The
     lux, counts, level and qualifier stay --font-mono, pinned in
-    tests/ui/test_light_page.py."""
+    tests/ui/test_light_page.py.
+
+    MOVED PIN (US-898-b1): the ALERTS card's header count ('n ACTIVE' / '--')
+    and its tier chips (STOP / WATCH / MINOR / UNRATED) are Michroma (Warnings
+    spec s3: "It carries ... n ACTIVE ... and the chips"). Titles, values,
+    sentences and ages stay --font-mono, pinned in tests/ui/test_warnings_page.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -451,6 +459,8 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#light-card .light-word",
         "#light-card .light-label",
         "#light-card .light-status-label",
+        "#alerts-card .warn-count",
+        "#alerts-card .warn-chip",
     }, bound
 
 

@@ -46,6 +46,9 @@
 #                               (Atlas B6).
 # 2026-10-19    | Ralph (Rex)  | US-754-b -- MOVED PIN: comments on the incident
 #               |              | codes' tiers corrected (P0400 watch, P0443 minor).
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the Alerts-card listing case
+#               |              | reads #alerts-card over the states/alerts the real
+#               |              | provider builds from the incident payload.
 # ================================================================================
 ################################################################################
 
@@ -81,6 +84,7 @@ from css_type_scale import (  # noqa: E402
 # and is the advance of the face `--font-mono` resolves to -- which is what the
 # ribbon inherits, because `html, body` binds --font-mono and `#dtc-ribbon`
 # declares no font-family of its own (asserted below, never assumed).
+from test_carousel_dtc_clear_gate_unread import _alertsFor  # noqa: E402
 from test_topbar_three_column_grid import STAGE_WIDTH_PX  # noqa: E402
 
 _NODE = shutil.which("node")
@@ -757,13 +761,15 @@ def test_bothCodesAreListedOnTheAlertsCardTheBannerPointsAt():
           it is. Without it the fix would tell him a second fault exists and
           leave him no way to name it -- better than silence, but not the END
           STATE the story asks for.
+
+          MOVED PIN (US-898-b1): the card renders states/alerts, so the run
+          also serves the /alerts the REAL provider builds from this payload.
     """
-    surface = _render(_INCIDENT)
-    text = ""
-    for path in surface.paths():
-        if path[-1].get("attrs", {}).get("data-state") == "dtc":
-            text = " ".join(_textOf(path[-1]))
-            break
+    surface = rh.dashboardSurface(
+        rh.runDashboard(routes={"/dtc": _INCIDENT, "/alerts": _alertsFor(_INCIDENT)})["tree"]
+    )
+    path = surface.pathById("alerts-card")
+    text = " ".join(_textOf(path[-1])) if path else ""
     assert _HERO_CODE in text, text
     assert _SECOND_CODE in text, text
 

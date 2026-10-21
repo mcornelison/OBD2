@@ -21,6 +21,14 @@
 #   what the operator reads. Severities below are fixture labels chosen to
 #   exercise the tiers, not claims about any code's real classification.
 #
+#   MOVED PIN (US-898-b1): the ALERTS card now renders states/alerts entries
+#   (#alerts-card) instead of the dtc-driven hero + list, so the once-invariant
+#   is read off `.warn-row` elements built from provider fixtures. The featured
+#   / directive / empty-state / na cases retired with the hero they pinned:
+#   there is no featured row (the provider orders, the page features nothing),
+#   the empty list is US-898-b2's NONE / NOT CHECKED, and an na code is never
+#   an entry (the provider drops it).
+#
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-09-14
@@ -31,6 +39,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-14    | Ralph (Rex)  | Initial -- US-757 each code renders once.
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the card renders states/alerts;
+#                               the once-invariant re-pointed, hero cases retired.
 # ================================================================================
 ################################################################################
 
@@ -38,10 +48,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
-from typing import Any
 
 import pytest
 
@@ -56,22 +66,13 @@ pytestmark = pytest.mark.skipif(
     reason="node not on PATH -- the render harness boots the shipped carousel.js",
 )
 
-# Shorts deliberately never contain a code identifier, so counting a code's
-# occurrences in the card text counts code ENTRIES, not description words.
-_WORST = {"code": "P0400", "severity": "watch", "short": "EGR flow", "status": "stored"}
-_OTHER = {"code": "P0443", "severity": "minor", "short": "EVAP purge", "status": "stored"}
-_NA = {"code": "P1750", "severity": "na", "short": "Auto-trans solenoid", "status": "stored"}
+_FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "states", "alerts")
 
 
-def _dtcState(codes: list[dict[str, Any]]) -> dict:
-    """A completed-read `dtc` payload in the emitter's shape."""
-    return {
-        "codes": codes,
-        "mil": bool(codes),
-        "newSinceTs": None,
-        "source": {"dtc": {"available": True, "reason": None}},
-        "ts": "2026-09-14T15:54:00Z",
-    }
+def _alerts(name: str) -> dict:
+    """A states/alerts payload written by the real provider (US-898-b1 fixtures)."""
+    with open(os.path.join(_FIXTURES, name + ".json"), encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def _textOf(node: dict) -> list[str]:
@@ -84,21 +85,12 @@ def _textOf(node: dict) -> list[str]:
     return [t for t in out if t]
 
 
-def _card(codes: list[dict[str, Any]]) -> dict:
-    """Render `codes`; return the Alerts card's text + its entry-element counts."""
-    surface = rh.dashboardSurface(
-        rh.runDashboard(routes={"/dtc": _dtcState(codes)})["tree"]
-    )
-    text = ""
-    for path in surface.paths():
-        if path[-1].get("attrs", {}).get("data-state") == "dtc":
-            text = " ".join(_textOf(path[-1]))
-            break
-    return {
-        "text": text,
-        "rows": len(surface.pathsByClass("dtc-row")),
-        "featured": len(surface.pathsByClass("dtc-hero")),
-    }
+def _card(alerts: dict) -> dict:
+    """Render `alerts`; return the ALERTS card's text + its row count."""
+    surface = rh.dashboardSurface(rh.runDashboard(routes={"/alerts": alerts})["tree"])
+    path = surface.pathById("alerts-card")
+    text = " ".join(_textOf(path[-1])) if path else ""
+    return {"text": text, "rows": len(surface.pathsByClass("warn-row"))}
 
 
 def test_harnessReadsTheAlertsCard_negativeControl():
@@ -107,7 +99,7 @@ def test_harnessReadsTheAlertsCard_negativeControl():
     When: two codes render
     Then: both identifiers are present in the card text.
     """
-    got = _card([_WORST, _OTHER])
+    got = _card(_alerts("two-stored-codes-real"))
     assert "P0400" in got["text"] and "P0443" in got["text"], got
 
 
@@ -117,70 +109,32 @@ def test_twoStoredCodes_eachIdentifierAppearsExactlyOnce():
     When: the card renders
     Then: each code identifier appears once; neither reads as two codes.
     """
-    got = _card([_OTHER, _WORST])
+    got = _card(_alerts("two-stored-codes-real"))
     assert got["text"].count("P0400") == 1, got
     assert got["text"].count("P0443") == 1, got
     assert got["rows"] == 2, got
 
 
-def test_twoStoredCodes_onlyTheWorstIsFeatured_andItIsItsOwnRow():
-    """
-    Given: the same two codes
-    When: the card renders
-    Then: exactly one entry is featured, it is a row (not an extra block), and
-          it carries the worst code's directive.
-    """
-    got = _card([_OTHER, _WORST])
-    assert got["featured"] == 1, got
-    assert got["rows"] == 2, got
-    assert "DRIVE GENTLY · GET DIAGNOSED" in got["text"], got
-
-
-def test_oneStoredCode_appearsOnce_andKeepsItsDirective():
+def test_oneStoredCode_appearsOnce_andKeepsItsChip():
     """
     Given: exactly one stored code
     When: the card renders
-    Then: it appears once and does NOT lose its tier chip or directive.
+    Then: it appears once and does NOT lose its tier chip.
     """
-    got = _card([_OTHER])
+    alerts = _alerts("two-stored-codes-real")
+    alerts["entries"] = alerts["entries"][1:]
+    got = _card(alerts)
     assert got["text"].count("P0443") == 1, got
     assert got["rows"] == 1, got
-    assert got["featured"] == 1, got
     assert "MINOR" in got["text"], got
-    assert "SAFE TO CLEAR ONCE LOGGED" in got["text"], got
-
-
-def test_zeroStoredCodes_emptyStateUnchanged():
-    """
-    Given: a completed read with no codes
-    When: the card renders
-    Then: the honest all-clear, no rows, no featured entry.
-    """
-    got = _card([])
-    assert "No stored codes" in got["text"], got
-    assert got["rows"] == 0 and got["featured"] == 0, got
-    assert "0 stored · 0 pending" in got["text"], got
 
 
 def test_countHeader_stillMatchesTheState():
     """
-    Given: two stored codes and one pending
+    Given: a live battery WATCH and two stored codes
     When: the card renders
-    Then: the header reads 2 stored · 1 pending (the count was never the bug).
+    Then: the header counts three active entries, each code still once.
     """
-    pending = {**_NA, "code": "P0301", "severity": "stop", "status": "pending"}
-    got = _card([_WORST, _OTHER, pending])
-    assert "2 stored · 1 pending" in got["text"], got
-    assert got["text"].count("P0301") == 1, got
-
-
-def test_naOnly_isListedButNeverFeatured():
-    """
-    Given: only an `na` code (never a hero, S-12)
-    When: the card renders
-    Then: it is listed once, nothing is featured, no false all-clear.
-    """
-    got = _card([_NA])
-    assert got["text"].count("P1750") == 1, got
-    assert got["rows"] == 1 and got["featured"] == 0, got
-    assert "No stored codes" not in got["text"], got
+    got = _card(_alerts("mixed-live-and-stored"))
+    assert "3 ACTIVE" in got["text"], got
+    assert got["text"].count("P0400") == 1 and got["text"].count("P0443") == 1, got

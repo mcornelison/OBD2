@@ -337,8 +337,10 @@
   //            still g-meter is exactly what a parked car looks like.
   // Cards not listed keep the shipped one-word fallback -- this story was not
   // scoped to restyle the ones it does not touch.
+  // US-898-b1: the `dtc` entry retired with the dtc-driven ALERTS card. That
+  // card now reads states/alerts and paints its own absence ('--' + 'no
+  // warnings data', warningsPageView) -- it no longer passes through here.
   var NO_DATA_VIEWS = {
-    dtc: { label: "ALERTS", reason: "no data -- codes not read" },
     light: { label: "AMBIENT", reason: "no data -- light feed absent" },
     imu: { label: "MOTION", reason: "no data -- IMU feed absent" },
   };
@@ -2438,21 +2440,10 @@
     na: { chip: "N/A", level: "na", directive: "not applicable to this vehicle" },
   };
 
-  // List ordering for the Alerts card: worst-first, but `na` ALWAYS sorts last
-  // (design §5.3) -- higher rank = higher in the list. An unrecognized severity
-  // is treated as `unknown` (never dropped -- hiding a code could hide a fault).
-  var DTC_LIST_RANK = { stop: 4, watch: 3, minor: 2, unknown: 1, na: 0 };
-
   function dtcTier(sev) {
     return Object.prototype.hasOwnProperty.call(DTC_TIER, sev)
       ? DTC_TIER[sev]
       : DTC_TIER.unknown;
-  }
-
-  function dtcListRank(sev) {
-    return Object.prototype.hasOwnProperty.call(DTC_LIST_RANK, sev)
-      ? DTC_LIST_RANK[sev]
-      : DTC_LIST_RANK.unknown;
   }
 
   function dtcShort(code) {
@@ -2463,141 +2454,119 @@
     return (code.severityCaveat && String(code.severityCaveat).trim()) || null;
   }
 
-  // All valid code objects sorted worst-first (na last). Stable within a rank
-  // (input order preserved), so same-severity codes keep their capture order.
-  function dtcListSorted(codes) {
-    if (!Array.isArray(codes)) return [];
-    var out = [];
-    for (var i = 0; i < codes.length; i++) {
-      if (isObj(codes[i])) out.push(codes[i]);
+  // -------------------------------------------------------------------------
+  // US-898-b1 (F-127; specs/v030-warnings-page-design.md s3, s4.1, s4.6) -- the
+  // ALERTS card, from states/alerts ALONE. The provider orders the entries,
+  // picks every tier and writes every word (Spool verbatim); these map each
+  // entry to one row IN THE ORDER GIVEN and compare no tier, rank or reading
+  // (Iris G-6, rule 0). The dtc-driven body they replace -- a hero plus a
+  // worst-first sort the page computed itself -- is retired with them.
+  // -------------------------------------------------------------------------
+
+  // Tier -> chip word. A lookup, never a ranking. An unrecognised tier reads
+  // as UNRATED: "not rated" is the honest name for a tier the page cannot
+  // place, and the row is never dropped (hiding an entry could hide a fault).
+  var WARNING_CHIP = { stop: "STOP", watch: "WATCH", minor: "MINOR", unrated: "UNRATED" };
+  var WARNING_CHIP_FALLBACK = "unrated";
+  // Iris s4.3 (default wording; Iris may re-word): no readable payload.
+  var WARNINGS_NO_DATA_TEXT = "no warnings data";
+  var WARNINGS_NO_DATA_HEADER = "--";
+  // The age column of an entry the provider still lists after it cleared.
+  var WARNING_CLEARED_TEXT = "cleared";
+
+  // The header: 'n ACTIVE' (n = the active rows) and when the codes were read,
+  // in the panel's one 12-hour clock without AM/PM (the fmtTimeOfDay split, as
+  // engineHistoryWindow). A null checkedAtTs is "not read", never a time; an
+  // unparseable one is '--', never a guessed instant. NONE / NOT CHECKED for
+  // an empty list are US-898-b2's.
+  function warningsHeaderView(alerts, rows) {
+    var active = 0;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].active) active++;
     }
-    out.sort(function (a, b) { return dtcListRank(b.severity) - dtcListRank(a.severity); });
-    return out;
+    var sources = isObj(alerts.sources) ? alerts.sources : {};
+    var code = isObj(sources.code) ? sources.code : {};
+    var at = code.checkedAtTs;
+    var meta = "codes not read yet";
+    if (at != null) {
+      var read = typeof at === "string" && ISO_INSTANT.test(at) ? new Date(Date.parse(at)) : null;
+      meta = "codes read " + (read ? fmtTimeOfDay(read, false).split(" ")[0] : DRIVING_NOT_READ);
+    }
+    return { text: active + " ACTIVE", meta: meta };
   }
 
-  // One compact list row (chip · code · short · caveat hint · status).
-  function dtcRow(code) {
-    var tier = dtcTier(code.severity);
+  // The FRESHNESS clause of a stale row -- how old the reading on screen is.
+  // The S105 M7 rule (Iris; spec s4.6), the Motion page's own: floor, clamped
+  // at 0 (a future ts is clock skew, not a negative age), 'N s' with a space,
+  // capped at '999+'. Only this clause; the age column is agoText (a duration).
+  function warningStaleText(lastTs, nowMs) {
+    var then = typeof lastTs === "string" ? Date.parse(lastTs) : NaN;
+    if (isNaN(then) || typeof nowMs !== "number" || isNaN(nowMs)) {
+      return "last reading age unknown";
+    }
+    var shown = Math.max(0, Math.floor((nowMs - then) / 1000));
+    var text = shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown);
+    return "last reading " + text + " s ago";
+  }
+
+  // A reading through the S103 G1 helper by its OWN unit (coolant 'C' -> °F).
+  // Not a number -> no value: a code row and the over-rev row (Atlas G3: its
+  // peak lives in the provider's sentence) carry none.
+  function warningValueText(value, unit) {
+    if (typeof value !== "number" || !isFinite(value)) return null;
+    var shown = displayUnits(value, unit);
+    return shown.unit ? shown.text + " " + shown.unit : shown.text;
+  }
+
+  // One row. Stale (an active entry with no fresh reading): the LAST value plus
+  // its freshness clause -- stale never clears, and a blank would read as
+  // "fine". Every row's age is agoText(now, firstSeenTs) unchanged (Iris
+  // 2026-10-19); an inactive entry reads 'cleared' in that column. Only a CODE
+  // row is a control (US-758; its tap is the code detail).
+  function warningRowView(entry, nowTs) {
+    var tier = Object.prototype.hasOwnProperty.call(WARNING_CHIP, entry.tier)
+      ? entry.tier : WARNING_CHIP_FALLBACK;
+    var active = entry.active !== false;
+    var stale = active && entry.stale === true;
+    var last = isObj(entry.last) ? entry.last : null;
+    var key = typeof entry.key === "string" ? entry.key : null;
     return {
-      code: code.code,
-      chip: tier.chip,
-      level: tier.level,
-      short: dtcShort(code),
-      caveat: dtcCaveat(code),
-      status: code.status === "pending" ? "PEND" : "STORED",
-      isNa: code.severity === "na",
+      id: typeof entry.id === "string" ? entry.id : "",
+      source: typeof entry.source === "string" ? entry.source : "",
+      key: key,
+      tier: tier,
+      chip: WARNING_CHIP[tier],
+      title: typeof entry.title === "string" && entry.title ? entry.title : key || DRIVING_NOT_READ,
+      value: stale
+        ? (last ? warningValueText(last.value, entry.unit) : null)
+        : warningValueText(entry.value, entry.unit),
+      stale: stale ? warningStaleText(last ? last.ts : null, Date.parse(nowTs)) : null,
+      sentence: typeof entry.sentence === "string" && entry.sentence ? entry.sentence : null,
+      age: active ? agoText(nowTs, entry.firstSeenTs) : WARNING_CLEARED_TEXT,
+      active: active,
+      control: entry.source === "code",
     };
   }
 
-  // US-542 AC-2: the fact that MOVED here from the retired idle face. It was
-  // always an Alerts fact -- "no read has happened" is a statement about the
-  // codes, not about the parked screen that happened to be showing it -- and
-  // the Alerts card could not otherwise say it: US-429 already refuses to print
-  // "No stored codes" over an unread source, but a bare typed NA states only
-  // that the instrument is silent, not that the silence dates from key-off.
-  //
-  // Level stays `unavailable`, NOT the idle face's `neutral`. On a card of
-  // mixed tiles neutral read as "calm"; alone on the Alerts card it would read
-  // as a completed read with nothing to report -- the exact false all-clear
-  // US-429 exists to prevent. Grey is the whole dashboard's word for "no read".
-  //
-  // The emitter's own reason rides ALONGSIDE the moved line rather than being
-  // replaced by it: "since key-off" is when, the reason is why, and dropping
-  // either to make room for the other loses a real fact.
-  function dtcNotReadTile(reason) {
-    var why = reason == null ? "" : String(reason).trim();
-    return {
-      label: "ALERTS",
-      value: "DTC not read",
-      detail: why ? "since key-off · " + why : "since key-off",
-      level: "unavailable",
-    };
-  }
-
-  // US-752 -- the codes the system ALREADY HOLDS, shown when no live read is
-  // possible (key-off / restart). Atlas 2026-09-14: a SEPARATE `lastKnown`
-  // block beside honest-null live fields, never an overload of `codes`. The
-  // view is labelled "last known" and dated, so a remembered code never reads
-  // as a live one, and its rows are rendered inert: the detail overlay is where
-  // the clear affordance lives, and a clear offered on remembered codes is a
-  // safety inversion. Null when nothing is remembered (never read, or cleared
-  // since) -- which is what keeps the true "not read" absence meaningful.
-  function lastKnownDtcView(lastKnown, nowTs) {
-    if (!isObj(lastKnown) || !Array.isArray(lastKnown.codes)) return null;
-    var codes = lastKnown.codes.filter(isObj);
-    if (codes.length === 0) return null;
-    var stored = 0;
-    var pending = 0;
-    for (var i = 0; i < codes.length; i++) {
-      if (codes[i].status === "pending") pending++;
-      else stored++;
-    }
-    var age = agoText(nowTs, lastKnown.asOfTs);
-    var mil = lastKnown.mil === true;
-    return {
-      tile: {
-        label: "ALERTS",
-        value: "LAST KNOWN CODES",
-        detail: "last read " + age + " · not a live read" + (mil ? " · MIL was on" : ""),
-        level: "unavailable",
-      },
-      asOfTs: typeof lastKnown.asOfTs === "string" ? lastKnown.asOfTs : null,
-      age: age,
-      rows: dtcListSorted(codes).map(dtcRow),
-      storedCount: stored,
-      pendingCount: pending,
-      mil: mil,
-    };
-  }
-
-  // The Alerts card view: hero (worst ALERT-eligible code + its directive; `na`
-  // and unrecognized severities are never a hero) + the full list (worst-first,
-  // na last) + stored/pending counts. Non-object payload -> null (the shell
-  // renders `unavailable`). An empty `codes` array is a valid no-fault view.
-  // `nowTs` (US-752) dates remembered codes; absent -> the payload's own `ts`.
-  function alertsCardView(data, nowTs) {
-    if (!isObj(data)) return null;
-    // US-429: an unavailable DTC source (no read happened) is a typed NA -- NOT
-    // "No stored codes" (which would falsely imply a clean all-clear read).
-    if (sourceUnavailable(data, "dtc")) {
-      var why = sourceReason(data, "dtc");
-      // US-752: known codes are shown, dated -- never "not read" over them.
-      var remembered = lastKnownDtcView(
-        data.lastKnown, typeof nowTs === "string" ? nowTs : data.ts
-      );
-      if (remembered) {
-        return { unavailable: true, reason: why, notRead: null, lastKnown: remembered };
-      }
-      return { unavailable: true, reason: why, notRead: dtcNotReadTile(why) };
-    }
-    var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
-    var alertable = alertableCodes(codes); // drops na + unrecognized (never a hero)
-    var hero = null;
-    if (alertable.length > 0) {
-      var h = alertable[0];
-      var t = dtcTier(h.severity);
-      hero = {
-        code: h.code,
-        chip: t.chip,
-        level: t.level,
-        short: dtcShort(h),
-        directive: t.directive,
-        caveat: dtcCaveat(h),
+  // The whole card. No readable payload (absent, unreadable, no entries list)
+  // -> header '--' and 'no warnings data': never a list that implies a read.
+  // Otherwise one row per entry, in entries[] order. `nowTs` is the tick's one
+  // clock as an ISO instant.
+  function warningsPageView(alerts, nowTs) {
+    var entries = isObj(alerts) && Array.isArray(alerts.entries) ? alerts.entries : null;
+    if (!entries) {
+      return {
+        missing: true,
+        header: { text: WARNINGS_NO_DATA_HEADER, meta: "" },
+        rows: [],
+        empty: WARNINGS_NO_DATA_TEXT,
       };
     }
-    var stored = 0;
-    var pending = 0;
-    for (var i = 0; i < codes.length; i++) {
-      if (codes[i].status === "pending") pending++;
-      else stored++;
+    var rows = [];
+    for (var i = 0; i < entries.length; i++) {
+      if (isObj(entries[i])) rows.push(warningRowView(entries[i], nowTs));
     }
-    return {
-      hero: hero,
-      rows: dtcListSorted(codes).map(dtcRow),
-      storedCount: stored,
-      pendingCount: pending,
-      mil: data.mil === true,
-    };
+    return { missing: false, header: warningsHeaderView(alerts, rows), rows: rows, empty: null };
   }
 
   // 3-state trust badge (design §5.4). Verified (Spool) / community-unverified /
@@ -5034,7 +5003,6 @@
     takeoverView: takeoverView,
     takeoverShouldShow: takeoverShouldShow,
     ribbonView: ribbonView,
-    dtcListSorted: dtcListSorted,
     appliedBrightness: appliedBrightness,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
@@ -5044,10 +5012,9 @@
     notLiveMarker: notLiveMarker,
     alertIconView: alertIconView,
     agoText: agoText,
-    dtcNotReadTile: dtcNotReadTile,
-    dtcRow: dtcRow,
-    alertsCardView: alertsCardView,
-    lastKnownDtcView: lastKnownDtcView,
+    warningsPageView: warningsPageView,
+    warningRowView: warningRowView,
+    warningStaleText: warningStaleText,
     trustBadge: trustBadge,
     fixArea: fixArea,
     fixSectionLabel: fixSectionLabel,
@@ -6907,8 +6874,12 @@
       // The most-recent `dtc` state, so a ribbon/takeover "View detail" tap can
       // resolve a code string back to its full object.
       var lastDtc = null;
-      // The Alerts card index, so a tap navigates the carousel to it.
-      var dtcCardIndex = -1;
+      // US-898-b1: the ALERTS card, found by its id (Iris U2) -- it no longer
+      // carries data-state, so the generic per-card loop never reaches it.
+      var alertsCard = document.getElementById("alerts-card");
+      // The cached body of the last paint: the tick runs at 4 Hz and the list
+      // is rebuilt only when what it says changed.
+      var alertsCardPainted = null;
       // US-892-b: the Motion card (it replaced the interim Home card). Painted
       // from the raw states/imu on the ~10 Hz motion loop and from
       // states/grade-history, polled on the 4 Hz tick like the other states.
@@ -7089,13 +7060,12 @@
       // actually connected (they ship `hidden`, so the pre-first-poll unknown
       // shows no vehicle card).
       var gatedCards = [];
-      // US-898-a: the icon's tap target, found by the bar name the card carries
-      // (US-898-b1 re-keys it by id).
+      // The ALERTS card's index -- the target of the warnings icon, the CHECK
+      // ENGINE tap, the ribbon and the takeover's "View detail". US-898-b1
+      // (Iris U2): found by the card's id, never by its position or data-state.
       var alertsCardIndex = -1;
       for (var ci = 0; ci < cards.length; ci++) {
-        var st = cards[ci].getAttribute("data-state");
-        if (st === "dtc") dtcCardIndex = ci;
-        if (cards[ci].getAttribute("data-page-name") === "ALERTS") alertsCardIndex = ci;
+        if (cards[ci].getAttribute("id") === "alerts-card") alertsCardIndex = ci;
         if (cards[ci].getAttribute("data-landing") !== null) landingIndex = ci;
         if (cards[ci].getAttribute("data-vehicle-gated") !== null) {
           gatedCards.push(cards[ci]);
@@ -7141,7 +7111,7 @@
       }
       // Navigate the carousel to the Alerts card; optionally open a code detail.
       function openAlertsCard(codeStr) {
-        if (dtcCardIndex >= 0 && typeof goTo === "function") goTo(dtcCardIndex);
+        if (alertsCardIndex >= 0 && typeof goTo === "function") goTo(alertsCardIndex);
         var codeObj = codeStr ? findCode(codeStr) : null;
         if (codeObj) openDetail(codeObj);
       }
@@ -7442,117 +7412,76 @@
         clearConfirmCancel.addEventListener("click", hideClearConfirm);
       }
 
-      // --- US-406 Alerts card render (browser only) --------------------------
+      // --- US-898-b1 ALERTS card render (browser only) -----------------------
 
-      // US-752: remembered codes. Rows are DIVs, not buttons -- no detail
-      // overlay opens from a remembered code, so the clear surface is never
-      // reachable from one (the clear gate computes from LIVE codes only).
-      function renderLastKnownDtc(body, lk) {
-        appendTile(body, lk.tile);
-        var head = document.createElement("div");
-        head.className = "dtc-count";
-        head.textContent =
-          lk.storedCount + " stored · " + lk.pendingCount + " pending · last known";
-        body.appendChild(head);
-        for (var i = 0; i < lk.rows.length; i++) {
-          var r = lk.rows[i];
-          var row = document.createElement("div");
-          row.className = "dtc-row dtc-row-last-known";
-          row.setAttribute("data-level", r.level);
-          var rChip = document.createElement("span");
-          rChip.className = "dtc-chip";
-          rChip.setAttribute("data-level", r.level);
-          rChip.textContent = r.chip;
-          row.appendChild(rChip);
-          var rCode = document.createElement("span");
-          rCode.className = "dtc-row-code";
-          rCode.textContent = r.code;
-          row.appendChild(rCode);
-          var rShort = document.createElement("span");
-          rShort.className = "dtc-row-short";
-          rShort.textContent = r.short;
-          row.appendChild(rShort);
-          var rStatus = document.createElement("span");
-          rStatus.className = "dtc-row-status";
-          rStatus.textContent = r.status;
-          row.appendChild(rStatus);
-          body.appendChild(row);
-        }
+      function warnSpan(tag, cls, text) {
+        var el = document.createElement(tag);
+        el.className = cls;
+        el.textContent = text;
+        return el;
       }
 
-      function renderAlertsCard(card, view) {
-        var body = card.querySelector(".card-body");
-        if (!body || !view) return;
-        // US-429 / Bug-3b: DTC source unavailable -> a typed NA, NOT "No stored
-        // codes" (a false all-clear) and NOT a mis-fired takeover.
-        // US-542 AC-2: that NA now carries the line the retired idle face used
-        // to hold -- "DTC not read · since key-off · <why>". Rendered from the
-        // VIEW's tile, so the words are pinned by a pure test rather than
-        // living as a renderer literal (`renderNaBody` composes "NA" here,
-        // which would have swallowed the moved fact).
-        if (view.unavailable) {
-          body.textContent = "";
-          if (view.lastKnown) {
-            renderLastKnownDtc(body, view.lastKnown);
-            return;
-          }
-          appendTile(body, view.notRead);
+      // Paint warningsPageView into #alerts-card. Rows go in view.rows order --
+      // the provider's -- and nothing here compares a tier. A CODE row is a
+      // real control (a button) that opens the code's detail from the states/dtc
+      // feed the tick still reads (US-898-c re-homes that read); an ENGINE row
+      // and every sentence are plain text (US-758). `loading` is the US-700
+      // bounded LOADING while the first states/alerts read is pending.
+      function renderWarningsCard(card, view, loading) {
+        var body = card ? card.querySelector(".card-body") : null;
+        if (!body) return;
+        card.classList.toggle("unavailable", view.missing && !loading);
+        var painted = loading ? "loading" : JSON.stringify(view);
+        if (painted === alertsCardPainted) return;
+        alertsCardPainted = painted;
+        if (loading) {
+          renderLoadingBody(body, card.getAttribute("data-page-name") || "");
           return;
         }
         body.textContent = "";
-
-        // Header count line (stored · pending).
         var head = document.createElement("div");
-        head.className = "dtc-count";
-        head.textContent = view.storedCount + " stored · " + view.pendingCount + " pending";
+        head.className = "warn-header";
+        head.appendChild(warnSpan("span", "warn-count", view.header.text));
+        if (view.header.meta) head.appendChild(warnSpan("span", "warn-meta", view.header.meta));
         body.appendChild(head);
-
-        if (!view.hero && view.rows.length === 0) {
-          // No codes at all -> an honest all-clear (never a fabricated green).
-          body.appendChild(detailLine("dtc-noalert", "", "No stored codes"));
+        if (view.missing) {
+          body.appendChild(warnSpan("div", "warn-empty", view.empty));
+          return;
         }
-
-        // US-757: the hero is NOT a selection -- it is the head of the same
-        // worst-first ordering -- so drawing it as its own block above the list
-        // showed the worst code twice. The hero code's ROW is now the featured
-        // entry (tier border + directive); every code appears exactly once.
-        var featuredCode = view.hero ? view.hero.code : null;
-
-        // Compact tappable rows (worst-first, na last). Each opens the detail.
+        var list = document.createElement("div");
+        list.className = "warn-list";
         for (var i = 0; i < view.rows.length; i++) {
           (function (r) {
-            var featured = featuredCode !== null && r.code === featuredCode;
-            if (featured) featuredCode = null; // first match only
-            var row = document.createElement("button");
-            row.className = featured ? "dtc-row dtc-hero tap-target" : "dtc-row tap-target";
-            row.setAttribute("data-level", r.level);
-            var rChip = document.createElement("span");
-            rChip.className = "dtc-chip";
-            rChip.setAttribute("data-level", r.level);
-            rChip.textContent = r.chip;
-            row.appendChild(rChip);
-            var rCode = document.createElement("span");
-            rCode.className = "dtc-row-code";
-            rCode.textContent = r.code;
-            row.appendChild(rCode);
-            var rShort = document.createElement("span");
-            rShort.className = "dtc-row-short";
-            rShort.textContent = r.short + (r.caveat ? "  ⚠ " + r.caveat : "");
-            row.appendChild(rShort);
-            var rStatus = document.createElement("span");
-            rStatus.className = "dtc-row-status";
-            rStatus.textContent = r.status;
-            row.appendChild(rStatus);
-            if (featured) {
-              var rDir = document.createElement("span");
-              rDir.className = "dtc-hero-directive";
-              rDir.textContent = view.hero.directive;
-              row.appendChild(rDir);
+            var row = document.createElement(r.control ? "button" : "div");
+            row.className = r.control ? "warn-row warn-row-code" : "warn-row";
+            row.setAttribute("data-id", r.id);
+            row.setAttribute("data-tier", r.tier);
+            row.setAttribute("data-active", r.active ? "true" : "false");
+            var chip = warnSpan("span", "warn-chip", r.chip);
+            chip.setAttribute("data-tier", r.tier);
+            chip.setAttribute("data-active", r.active ? "true" : "false");
+            row.appendChild(chip);
+            var main = document.createElement("span");
+            main.className = "warn-main";
+            var line = document.createElement("span");
+            line.className = "warn-line";
+            line.appendChild(warnSpan("span", "warn-title", r.title));
+            if (r.value) line.appendChild(warnSpan("span", "warn-value", r.value));
+            main.appendChild(line);
+            if (r.stale) main.appendChild(warnSpan("span", "warn-stale", r.stale));
+            if (r.sentence) main.appendChild(warnSpan("span", "warn-sentence", r.sentence));
+            row.appendChild(main);
+            row.appendChild(warnSpan("span", "warn-age", r.age));
+            if (r.control) {
+              row.addEventListener("click", function () {
+                var codeObj = r.key ? findCode(r.key) : null;
+                if (codeObj) openDetail(codeObj);
+              });
             }
-            row.addEventListener("click", function () { openDetail(findCode(r.code) || r); });
-            body.appendChild(row);
+            list.appendChild(row);
           })(view.rows[i]);
         }
+        body.appendChild(list);
       }
 
       if (detailBack) detailBack.addEventListener("click", closeDetail);
@@ -7616,7 +7545,7 @@
       }
 
       async function tick() {
-        var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
+        var dtcData = null; // fetched once (the ribbon/takeover + detail share it)
         var sysData = null; // shared by every surface (one fetch per tick)
         var lightData = null; // shared: the US-507 Health card + the auto-dim
         // US-496: ONE clock for the whole tick, so the Light card's freshness
@@ -7725,8 +7654,6 @@
             renderSystemStatusCard(
               card, systemStatusView(data, captureData), glyphEls
             );
-          } else if (name === "dtc") {
-            renderAlertsCard(card, alertsCardView(data, new Date(nowMs).toISOString()));
           }
           // US-508: the standalone Motion branch is GONE with the card it
           // served -- the live instrument is now a FACE of the home slot,
@@ -7751,8 +7678,22 @@
         // US-898-a: the warnings icon is on every page, so states/alerts is read
         // on EVERY tick, unconditionally -- not only while ALERTS is showing.
         renderTopbarIcon(alertIconView(await stateOnce("alerts")));
-        // US-405/US-406: drive the takeover + persistent ribbon from the same
-        // `dtc` state the Alerts card rendered (one fetch per tick).
+        // US-898-b1: the ALERTS card, from the SAME cached states/alerts the
+        // icon just read, on this tick's one clock. LOADING only while that
+        // feed has never answered (US-700), keyed by the feed's name.
+        renderWarningsCard(
+          alertsCard,
+          warningsPageView(await stateOnce("alerts"), new Date(nowMs).toISOString()),
+          loadPhase(
+            await stateOnce("alerts"), feedWaitedMs(feedSeen, "alerts", feedStartedMs, nowMs)
+          ) === "loading"
+        );
+        // US-405/US-406: drive the takeover + persistent ribbon from states/dtc.
+        // US-898-b1 KEEPS this feed: the ALERTS card no longer carries
+        // data-state="dtc", which was the only thing that read it, so the read
+        // is explicit here -- dtcData also feeds brightnessAlarmActive and the
+        // code detail's findCode / clear gate. US-899-a2 removes it.
+        await stateOnce("dtc");
         updateDtcSurfaces(dtcData);
         // US-630: the derived gear. Read on THIS tick rather than the ~10 Hz
         // motion loop -- the producer debounces for >= 2 s before it will name a

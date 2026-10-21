@@ -104,6 +104,11 @@
 #               |              | re-recorded to `severity_unknown` (refusal same).
 # 2026-10-19    | Ralph (Rex)  | US-754-b MOVED PIN: F3 re-recorded -- P0443 is
 #               |              | MINOR in the shipped table (1 minor, 8 watch).
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 MOVED PIN: the code rows are the ALERTS
+#               |              | card's (states/alerts); each render also serves
+#               |              | the /alerts the REAL provider builds from the
+#               |              | same dtc payload, and the tap is .warn-row-code.
+#               |              | An na code is no entry, so it has no row.
 # ================================================================================
 ################################################################################
 
@@ -111,9 +116,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import subprocess
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -124,6 +132,7 @@ sys.path.insert(0, os.path.join(_REPO, "src"))
 
 import render_harness as rh  # noqa: E402
 
+from pi.obdii.alerts_arbiter import AlertsArbiter, buildAlertsState  # noqa: E402
 from pi.splash import dtc_clear  # noqa: E402
 from pi.splash.dtc_emitter import buildDtcState  # noqa: E402
 from pi.splash.dtc_severity_table import loadP1xxxSeverityTable  # noqa: E402
@@ -235,16 +244,47 @@ _UNREAD = dict(available=False, reason="not read yet")
 # proves nothing about what has a box on the panel.
 # ---------------------------------------------------------------------------
 
+# MOVED PIN (US-898-b1): the code rows are the ALERTS card's, built from
+# states/alerts; a CODE row's tap opens the detail from the states/dtc feed.
 _OPEN_DETAIL = [
     {"flush": 4},
-    {"clickNth": {"selector": ".dtc-row", "index": 0}},
+    {"clickNth": {"selector": ".warn-row-code", "index": 0}},
     {"flush": 2},
 ]
 
 
+def _alertsFor(dtcState: Any) -> dict[str, Any]:
+    """The states/alerts the REAL provider publishes beside this dtc payload.
+
+    The arbiter takes the same payload the router hands it (observeDtc), so the
+    rows the card draws and the codes the detail reads come from one read.
+    """
+    arbiter = AlertsArbiter({}, driveIdProvider=lambda: None)
+    arbiter.observeDtc(dtcState if isinstance(dtcState, dict) else None)
+    return buildAlertsState(
+        arbiter.episodes(), None, datetime(2026, 8, 31, 15, 54, tzinfo=UTC),
+        dataSource=None, bootId="b", codeSource=arbiter.codeSource(),
+    )
+
+
+def _routes(dtcState: Any) -> dict[str, Any]:
+    return {"/dtc": dtcState, "/alerts": _alertsFor(dtcState)}
+
+
+def _clearGateReason(dtcState: Any) -> str:
+    """The shipped display mirror's gate answer, asked directly (node probe)."""
+    probe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carousel_probe.js")
+    proc = subprocess.run(
+        [shutil.which("node") or "node", probe, "clearGateReason", json.dumps(dtcState)],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
 def _clearSurface(dtcState: Any, steps: list[dict[str, Any]] | None = None) -> dict:
     """Render `dtcState` and report the clear affordance as the operator meets it."""
-    out = rh.runDashboard(routes={"/dtc": dtcState}, steps=steps or [{"flush": 4}])
+    out = rh.runDashboard(routes=_routes(dtcState), steps=steps or [{"flush": 4}])
     return _readClear(out)
 
 
@@ -261,7 +301,7 @@ def _readClear(out: dict) -> dict:
             if "text" in child
         )
     return {
-        "rows": len(surface.pathsByClass("dtc-row")),
+        "rows": len(surface.pathsByClass("warn-row-code")),
         "zonePaints": zone is not None and surface.rendered(zone),
         "buttonPaints": button is not None and surface.rendered(button),
         # `disabled` is a bare HTML attribute -- present or absent, never a value.
@@ -281,7 +321,7 @@ def _openThenPublish(later: Any) -> dict:
     for "the poll had not come round yet".
     """
     out = rh.runDashboard(
-        routes={"/dtc": _state([_raw()])},
+        routes=_routes(_state([_raw()])),
         steps=[*_OPEN_DETAIL, {"setRoutes": {"/dtc": later}}, {"flush": 20}],
     )
     return _readClear(out)
@@ -325,7 +365,7 @@ def test_unreadSource_offersNoCodeRowToOpenTheDetailWith():
     """
     Given: the live unread state -- source.dtc.available false, "not read yet"
     When: the dashboard renders
-    Then: there is no `.dtc-row` to tap.
+    Then: there is no code row to tap (MOVED PIN, US-898-b1: `.warn-row-code`).
 
           Reachability is the FIRST gate and the one nobody wrote down: the
           clear button lives inside the per-code detail overlay, and the only
@@ -369,8 +409,15 @@ def test_unreadSource_clearZoneDoesNotPaintAndTheButtonStaysHidden():
 def test_allNaCodes_openTheDetailButOfferNoClearButton():
     """
     Given: a stored P1750 -- Solenoid Assembly (A/T), `na` on this manual car
-    When: its row is tapped, so the detail overlay actually OPENS
-    Then: the clear zone still does not paint.
+    When: the panel renders it
+    Then: there is no row to open the detail with, the clear zone does not
+          paint, and the display mirror's own answer is still `no_codes`.
+
+          MOVED PIN (US-898-b1): the rows are the provider's entries, and the
+          provider makes NO entry for an `na` code (not a fault on this car), so
+          the overlay is no longer reachable from one -- the safer door. The
+          gate function is still asked directly below, so the test is not won
+          by reachability alone.
 
           THE ONLY TEST IN THIS FILE THAT EXERCISES THE GATE FUNCTION. Every
           other absence here is won by reachability: no row, no overlay, no call
@@ -388,11 +435,14 @@ def test_allNaCodes_openTheDetailButOfferNoClearButton():
           Spool's classification of this code, and inventing it locally would
           make the test agree with itself.
     """
-    got = _clearSurface(_state([_raw("P1750")], table=_shippedTable()), _OPEN_DETAIL)
+    state = _state([_raw("P1750")], table=_shippedTable())
+    assert state["codes"][0]["severity"] == "na", "the shipped table moved -- test is vacuous"
+    got = _clearSurface(state)
 
-    assert got["rows"] == 1, "the na code did not even render a row -- test is vacuous"
+    assert got["rows"] == 0, got
     assert got["zonePaints"] is False, got
     assert got["buttonPaints"] is False, got
+    assert _clearGateReason(state) == "no_codes"
 
 
 @_needsNode

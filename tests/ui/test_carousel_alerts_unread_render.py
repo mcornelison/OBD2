@@ -28,6 +28,14 @@
 #   of this story's END STATE, and it is pinned below as a CHARACTERISATION so
 #   the day someone wires the lamp up, they are told this file has an opinion.
 #
+#   MOVED PIN (US-898-b1): the ALERTS card now renders states/alerts
+#   (#alerts-card), not the dtc payload. Its cases are re-pointed: unread is
+#   the provider's null `sources.code.checkedAtTs` ('codes not read yet'), and
+#   a stored P0443 is its MINOR chip and the PROVIDER'S sentence (the page's
+#   tier directive retired with the hero). The earned all-clear is US-898-b2's
+#   (NONE / NO WARNINGS) and leaves this file. The ribbon still reads states/dtc
+#   until US-899-a2, so its two cases are unchanged.
+#
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-31
@@ -42,6 +50,8 @@
 #               |              | BOTH surfaces it can mean -- the card hero (code,
 #               |              | tier chip, directive, count line) and the #dtc-
 #               |              | ribbon banner, incl. the ribbon's unread case.
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the card renders states/alerts;
+#               |              | its cases re-pointed, the earned all-clear retired.
 # ================================================================================
 ################################################################################
 
@@ -49,6 +59,8 @@
 
 from __future__ import annotations
 
+import copy
+import json
 import os
 import shutil
 import sys
@@ -69,8 +81,37 @@ pytestmark = pytest.mark.skipif(
 
 # The two claims, named so each is pinned in BOTH directions rather than only
 # in the one the original defect happened to point at.
-_UNREAD_VALUE = "DTC not read"
-_ALL_CLEAR = "No stored codes"
+_UNREAD_VALUE = "codes not read yet"
+_ALL_CLEAR_WORDS = ("No stored codes", "NONE", "NO WARNINGS", "clear")
+
+_FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "states", "alerts")
+
+
+def _alerts(name: str) -> dict:
+    """A states/alerts payload written by the real provider (US-898-b1 fixtures)."""
+    with open(os.path.join(_FIXTURES, name + ".json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _alertsUnread() -> dict:
+    """No code read this boot and nothing active: the provider's unread shape."""
+    alerts = copy.deepcopy(_alerts("two-stored-codes-real"))
+    alerts["entries"] = []
+    alerts["codeAlert"] = None
+    alerts["sources"]["code"] = {"assessed": False, "checkedAtTs": None}
+    alerts["codesCheckedThisSession"] = False
+    alerts["checkedAtTs"] = None
+    alerts["icon"] = {"state": "not_checked", "count": 0, "pulse": False}
+    return alerts
+
+
+def _alertsP0443() -> dict:
+    """The real stored P0443 alone, codes read."""
+    alerts = copy.deepcopy(_alerts("two-stored-codes-real"))
+    alerts["entries"] = [e for e in alerts["entries"] if e["key"] == "P0443"]
+    alerts["codeAlert"]["ids"] = [e["id"] for e in alerts["entries"]]
+    alerts["icon"]["count"] = 1
+    return alerts
 
 
 def _dtcState(available: bool, reason: str | None, codes: list[dict[str, Any]]) -> dict:
@@ -89,18 +130,16 @@ def _dtcState(available: bool, reason: str | None, codes: list[dict[str, Any]]) 
     }
 
 
-def _renderedAlertsText(dtcState: dict) -> str:
+def _renderedAlertsText(alerts: dict) -> str:
     """Boot the SHIPPED carousel.js over the SHIPPED markup; return card text.
 
-    Composed on purpose. A correct `alertsCardView` proves nothing about what
+    Composed on purpose. A correct view function proves nothing about what
     the operator reads -- US-494/495/498 were all two-correct-halves defects
     that every pure unit test passed, which is why render_harness.py exists.
     """
-    surface = _renderDtc(dtcState)
-    for path in surface.paths():
-        if path[-1].get("attrs", {}).get("data-state") == "dtc":
-            return " ".join(_textOf(path[-1]))
-    return ""
+    surface = rh.dashboardSurface(rh.runDashboard(routes={"/alerts": alerts})["tree"])
+    path = surface.pathById("alerts-card")
+    return " ".join(_textOf(path[-1])) if path else ""
 
 
 def _renderDtc(dtcState: dict):
@@ -150,10 +189,8 @@ def test_theHarnessActuallyReadsTheAlertsCard_negativeControl():
           Without this, a renamed `data-state` or a probe crash would turn the
           whole file green while pinning nothing.
     """
-    text = _renderedAlertsText(
-        _dtcState(True, None, [{"code": "P0301", "severity": "stop", "short": "Misfire"}])
-    )
-    assert "P0301" in text, f"harness read nothing from the Alerts card: {text!r}"
+    text = _renderedAlertsText(_alerts("two-stored-codes-real"))
+    assert "P0400" in text, f"harness read nothing from the Alerts card: {text!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -163,21 +200,16 @@ def test_theHarnessActuallyReadsTheAlertsCard_negativeControl():
 
 def test_alertsCard_unreadSourceWithMilFalse_rendersUnreadWithItsReason():
     """
-    Given: the EXACT live state Atlas measured -- mil:false, codes:[], beside
-           source.dtc.available:false, reason "not read yet"
+    Given: states/alerts with no code read this boot (checkedAtTs null) and
+           nothing active -- the provider's form of the measured unread state
     When: the shipped card renders it
-    Then: the operator reads "DTC not read" AND the emitter's reason.
+    Then: the operator reads "codes not read yet".
 
-          The pre-existing fixture for this path omits `mil` entirely. That is
-          a weaker test than the defect deserves: the danger is precisely that
-          a renderer reaches for the mil flag FIRST and paints a clean lamp
-          from a field nobody has populated. Carrying mil:false explicitly is
-          what makes this a pin on the measured state rather than on a
-          convenient one.
+          MOVED PIN (US-898-b1): the reason now lives in the provider's null
+          checkedAtTs; the page reads it, never a mil flag.
     """
-    text = _renderedAlertsText(_dtcState(False, "not read yet", []))
+    text = _renderedAlertsText(_alertsUnread())
     assert _UNREAD_VALUE in text, text
-    assert "not read yet" in text, text
 
 
 def test_alertsCard_unreadSource_neverRendersTheAllClear():
@@ -190,30 +222,16 @@ def test_alertsCard_unreadSource_neverRendersTheAllClear():
           read looks like, so the all-clear is one dropped source check away at
           all times -- and it is the assertion the driver acts on.
     """
-    text = _renderedAlertsText(_dtcState(False, "not read yet", []))
-    assert _ALL_CLEAR not in text, text
+    text = _renderedAlertsText(_alertsUnread())
+    for word in _ALL_CLEAR_WORDS:
+        assert word not in text, (word, text)
 
 
 # ---------------------------------------------------------------------------
-# END STATE, direction 2 -- available:true DOES earn the all-clear. THE HALF
-# THAT WAS MISSING: the suite could not previously tell a correct renderer from
-# one that had stopped printing the all-clear altogether.
+# END STATE, direction 2 -- the earned all-clear. MOVED PIN (US-898-b1):
+# RETIRED here. On states/alerts it is NONE / NO WARNINGS for a code read with
+# nothing active, which is US-898-b2's to render (898-2/898-3 pin it there).
 # ---------------------------------------------------------------------------
-
-
-def test_alertsCard_genuineEmptyRead_rendersTheEarnedAllClear():
-    """
-    Given: a real key-on read that completed and found nothing
-    When: the card renders
-    Then: it says "No stored codes" -- and does NOT borrow the unread line.
-
-          This is the pin in the direction nobody had pinned. Suppressing the
-          all-clear is the mirror-image lie: it tells the driver to go read
-          codes that were already read, and it would have shipped green.
-    """
-    text = _renderedAlertsText(_dtcState(True, None, []))
-    assert _ALL_CLEAR in text, text
-    assert _UNREAD_VALUE not in text, text
 
 
 # ---------------------------------------------------------------------------
@@ -258,25 +276,24 @@ def test_alertsCard_storedMinorCode_rendersTheHeroWithItsTierAndDirective():
     """
     Given: a completed read carrying the real stored P0443, MIL lit
     When: the shipped card renders it
-    Then: the operator reads the code, its MINOR tier and the tier's directive.
+    Then: the operator reads the code, its MINOR tier and the PROVIDER'S
+          sentence for it (Spool, verbatim).
 
-          Criterion 3, on the card. The directive is the assertion with teeth:
-          it is derived from `severity` alone, so this pin fails the moment the
-          tier mapping drifts -- which would tell the driver to pull over for an
-          emissions code, or to keep driving on one that means stop.
+          MOVED PIN (US-898-b1): the tier and the words are the provider's;
+          the page's tier directive retired with the hero.
     """
-    text = _renderedAlertsText(_dtcState(True, None, [_P0443]))
+    text = _renderedAlertsText(_alertsP0443())
     assert "P0443" in text, text
     assert "MINOR" in text, text
-    assert "SAFE TO CLEAR ONCE LOGGED" in text, text
+    assert "Emissions only. Safe to drive." in text, text
 
 
 def test_alertsCard_storedCode_saysTheReadCompleted_neitherUnreadNorAllClear():
     """
     Given: the same stored-code state
     When: the card is read
-    Then: the count line reports 1 stored / 0 pending, and NEITHER the unread
-          line NOR the all-clear appears.
+    Then: the header reports 1 ACTIVE with the read time, and NEITHER the
+          unread line NOR the all-clear appears (MOVED PIN, US-898-b1).
 
           This is THIS STORY's invariant applied to the read path. Directions 1
           and 2 pin that the two empty-codes states stay apart; nothing pinned
@@ -285,10 +302,11 @@ def test_alertsCard_storedCode_saysTheReadCompleted_neitherUnreadNorAllClear():
           from a dropped source check, the all-clear from a hero/rows
           disagreement -- and either one prints a contradiction.
     """
-    text = _renderedAlertsText(_dtcState(True, None, [_P0443]))
-    assert "1 stored · 0 pending" in text, text
+    text = _renderedAlertsText(_alertsP0443())
+    assert "1 ACTIVE" in text and "codes read" in text, text
     assert _UNREAD_VALUE not in text, text
-    assert _ALL_CLEAR not in text, text
+    for word in _ALL_CLEAR_WORDS:
+        assert word not in text, (word, text)
 
 
 # ---------------------------------------------------------------------------
@@ -333,8 +351,8 @@ def test_ribbon_unreadSource_doesNotPaint():
 
 def test_theMilFlagIsComputedButNeverRendered_characterisation():
     """
-    Given: `alertsCardView` computes `mil` (carousel.js:2086) and no renderer
-           reads it -- the panel has no MIL indicator
+    Given: the panel has no MIL indicator (the retired `alertsCardView`
+           computed `mil` and nothing read it; states/alerts carries none)
     When: a state with the MIL LIT is rendered
     Then: nothing on the card says so. RECORDED, not fixed (I-us629).
 
@@ -345,8 +363,6 @@ def test_theMilFlagIsComputedButNeverRendered_characterisation():
           depends on. Whoever wires the lamp up will fail this test, which is
           the moment to read I-us629 and delete this test on purpose.
     """
-    text = _renderedAlertsText(
-        _dtcState(True, None, [{"code": "P0443", "severity": "minor", "short": "EVAP purge"}])
-    )
+    text = _renderedAlertsText(_alertsP0443())
     assert "P0443" in text, "negative control: the code itself DOES render"
     assert "MIL" not in text, text

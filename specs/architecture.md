@@ -7734,7 +7734,9 @@ column.
 takeover already return early on an unavailable source, so a remembered code never
 takes over. The Alerts card renders them as **inert rows** under "LAST KNOWN CODES ·
 last read <age> · not a live read": no detail overlay (where the clear button
-lives) opens from them.
+lives) opens from them. *(Superseded on the card by US-898-b1: the ALERTS card reads
+`states/alerts` only and never renders `lastKnown`; remembered codes reach it as the
+provider's entries. The clear-gate rule above is unchanged.)*
 
 **Not sticky.** A successful Mode-04 clear (`_maybeServiceDtcClearRequest`) writes
 one `status='cleared'` `dtc_log` row per remembered code — the status the schema
@@ -7806,21 +7808,48 @@ are dropped from `alertableCodes` — **no takeover, no ribbon**, and not counte
 #### DTC Alerts card (Card 5) + detail (US-406) [F-111 / design §5.3–5.4]
 
 The persistent home of the DTC state — a third carousel card (`data-state="dtc"`,
-label **Alerts**) plus a per-code detail overlay. Both are pure functions in
+label **Alerts**; re-keyed onto `states/alerts` by US-898-b1, below) plus a per-code
+detail overlay. Both are pure functions in
 `carousel.js` (node-tested) with thin DOM wiring; the Alerts card is polled in the
 same 4 Hz tick as the other cards (the tick now fetches `GET /dtc` **once** and
 shares it with the card render *and* the US-405 ribbon/takeover). The display maps
 a Spool-classified tier → chip label + color + directive; **it never classifies.**
 
-**Alerts card (`alertsCardView`).** Hero + list (design D-4). The **hero** is the
-worst *alert-eligible* code (via `alertableCodes`, so `na` and unrecognized
-severities are **never** a hero — S-12) with its tier directive; the **list**
-(`dtcListSorted`) shows every code worst-first with **`na` sorted last** (design
-§5.3, `DTC_LIST_RANK` gives `na` the lowest rank). A no-description code shows a
-neutral `?` chip + "No description yet" (never blank — I-3). An empty `codes`
-array is an honest **"No stored codes"** (never a fabricated green). A
-missing/malformed file → the shell's `unavailable` (S-9). Every row + the hero are
-≥40px tap targets that open the detail.
+**Alerts card — RE-KEYED onto `states/alerts` (US-898-b1, F-127;
+`specs/v030-warnings-page-design.md` s3/s4.1/s4.6, Iris U2/U10 + 2026-10-19 ages).**
+The dtc-driven card body (`alertsCardView` hero + `dtcListSorted` worst-first list,
+`DTC_LIST_RANK`, `dtcRow`, `dtcNotReadTile`, `lastKnownDtcView`) is **retired**;
+`DTC_TIER` and `codeDetailView` stay for the detail (US-898-c / US-899-a2).
+- **Identity:** `<section id="alerts-card" aria-label="Alerts"
+  data-page-name="ALERTS">` with **no `data-state`**, so the generic per-card loop
+  never reads it. `alertsCardIndex` is found by that id; the warnings icon, the
+  CHECK ENGINE tap, the ribbon and the takeover "View detail" navigate by it.
+  `NO_DATA_VIEWS` has no `dtc` entry.
+- **View:** pure `warningsPageView(alerts, nowTs)` → `{missing, header, rows,
+  empty}`, one `warningRowView` per entry **in `entries[]` order**. The page never
+  sorts and compares no tier (Iris G-6); every title and sentence is the provider's.
+  Header `n ACTIVE` (active rows) + `codes read h:mm` (12-hour, no AM/PM: the
+  `fmtTimeOfDay` split) or `codes not read yet` for a null `sources.code.checkedAtTs`.
+  NONE / NOT CHECKED for an empty list are US-898-b2's.
+- **Rows** (≥ 48 px, never `.tile`): chip (tier → STOP / WATCH / MINOR / UNRATED; an
+  unknown tier reads UNRATED) + title + value through `displayUnits` by its own unit
+  (°F for coolant). A stale active row shows `last.value` plus `last reading n s ago`
+  (`warningStaleText`: the M7 rule — floor, clamp 0, `999+`). The age column is
+  `agoText(now, firstSeenTs)` on every row; `active:false` reads `cleared` with an
+  outlined chip and dimmed text. Only a CODE row is a control (a `<button>` that opens
+  the code detail from the states/dtc feed, `findCode`; US-898-c re-homes that read);
+  ENGINE rows and sentences carry no border, fill or pointer (US-758).
+- **Absence:** while `states/alerts` has never answered, the US-700 bounded LOADING
+  (`loadPhase` on the `alerts` feed); after the grace, header `--` + `no warnings data`.
+- **States/dtc stays fed:** the tick reads `states/dtc` explicitly (`await
+  stateOnce("dtc")` before `updateDtcSurfaces`), because the card's `data-state="dtc"`
+  was its only reader; it feeds the ribbon, the old takeover, `brightnessAlarmActive`,
+  `findCode` and the clear gate until US-899-a2 removes it.
+- CSS is scoped to `#alerts-card` with geometry in `--warn-*` properties; the count
+  and the chips are Michroma (400, no synthesis), the rest `--font-mono`. Chip inks
+  (Atlas 2026-10-16, AA measured): STOP `--critical-red`/#fff, WATCH
+  `--amber-warn`/`var(--bg)`, MINOR `--green-ok`/`var(--bg)`, UNRATED
+  `--neutral-chip-bg`/`--text-primary`. Tests: `tests/ui/test_warnings_page.py`.
 
 **Detail (`codeDetailView`).** Fixed skeleton: hero (chip + code + short) ·
 severity directive band (🔴/🟡 only) · condition-dependent caveat **line** ·

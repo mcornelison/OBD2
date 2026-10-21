@@ -19,6 +19,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-02    | Ralph (Rex)  | Initial -- US-429 carousel honest-availability.
+# 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-898-b1): the alertsCardView cases
+#               |              | re-pointed at warningsPageView (states/alerts).
 # ================================================================================
 ################################################################################
 
@@ -154,25 +156,35 @@ def test_batteryHealthView_upsAvailable_rendersTiles():
 
 
 def test_alertsCardView_dtcUnavailable_typedNaNotAllClear():
-    """DTC source unavailable (no read happened) -> a typed NA, NOT "No stored
-    codes" (which would falsely imply a clean all-clear read)."""
+    """Codes not read (no read happened) -> 'codes not read yet', NOT "No stored
+    codes" (which would falsely imply a clean all-clear read).
+
+    MOVED PIN (US-898-b1): the card reads states/alerts; "not read" is the
+    provider's null sources.code.checkedAtTs."""
     view = _view(
-        "alertsCardView",
-        {"codes": [], "source": _unavailable("dtc", "not read yet")},
+        "warningsPageView",
+        {"sources": {"code": {"assessed": False, "checkedAtTs": None}}, "entries": []},
     )
-    assert view["unavailable"] is True
-    assert view["reason"] == "not read yet"
+    assert view["missing"] is False
+    assert view["header"]["meta"] == "codes not read yet"
+    assert "no stored codes" not in json.dumps(view).lower()
 
 
 def test_alertsCardView_dtcAvailableEmpty_honestAllClear():
-    """DTC source available with an empty read -> an honest all-clear view (a
-    real read found nothing), NOT unavailable and with no hero."""
+    """Codes read with nothing active -> a read view (the read time, no rows),
+    NOT missing and NOT 'not read'.
+
+    MOVED PIN (US-898-b1): re-pointed at warningsPageView; the NONE / NO
+    WARNINGS words for this state are US-898-b2's."""
     view = _view(
-        "alertsCardView",
-        {"codes": [], "mil": False, "source": _available("dtc")},
+        "warningsPageView",
+        {
+            "sources": {"code": {"assessed": True, "checkedAtTs": "2026-07-02T12:00:00Z"}},
+            "entries": [],
+        },
     )
-    assert view.get("unavailable") in (False, None)
-    assert view["hero"] is None
+    assert view["missing"] is False
+    assert view["header"]["meta"].startswith("codes read ")
     assert view["rows"] == []
 
 

@@ -31,6 +31,9 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
 #                               card at index 4.
 # 2026-10-20    | Ralph (Rex)  | US-898-a -- the bar carries the warnings icon.
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the Alerts card is #alerts-card
+#                               on states/alerts (no data-state="dtc"); the US-406
+#                               card-view asserts re-point at warningsPageView.
 # ================================================================================
 ################################################################################
 
@@ -115,7 +118,10 @@ def test_dashboardHtml_hasBothCardSlots_s1():
         "System Status", "Battery",
     ]
     assert 'data-state="system-status"' in html
-    assert 'data-state="dtc"' in html
+    # MOVED PIN (US-898-b1): the Alerts card reads states/alerts and is found
+    # by its id (Iris U2); it no longer binds the dtc state file.
+    assert 'id="alerts-card"' in html
+    assert 'data-state="dtc"' not in html
     # The live instrument is a FACE of the home slot, not a slot of its own.
     assert 'data-state="imu"' not in html
     # The retirement is only honest if the facts SURVIVED it: each formerly
@@ -1145,42 +1151,33 @@ function dtc(codes) {
            sessionResetLock: [], ts: '2026-06-30T19:40:05Z' };
 }
 
-// --- alertsCardView: hero = worst; rows worst-first; na sorts LAST -----------
-const v = c.alertsCardView(dtc([
-  code('minor', 'P0442', {short: 'Evap small leak'}),
-  code('na', 'P1750', {short: 'Auto-trans solenoid'}),
-  code('stop', 'P0301', {short: 'Cyl 1 misfire'}),
-  code('watch', 'P0420', {short: 'Catalyst low'}),
-]));
-assert.ok(v, 'valid dtc -> card view');
-assert.strictEqual(v.hero.code, 'P0301', 'hero = worst (stop)');
-assert.strictEqual(v.hero.level, 'stop', 'hero chip level = stop');
-assert.ok(/PULL OVER/i.test(v.hero.directive), 'hero carries the stop directive');
-const order = v.rows.map(function (r) { return r.code; });
-assert.deepStrictEqual(order, ['P0301', 'P0420', 'P0442', 'P1750'],
-  'rows sorted worst-first, na LAST (S-12)');
-assert.strictEqual(v.rows[3].chip, 'N/A', 'na row shows the quiet N/A chip');
-assert.strictEqual(v.rows[3].isNa, true, 'na row flagged');
-assert.strictEqual(v.storedCount, 4, 'stored count');
-assert.strictEqual(v.pendingCount, 0, 'pending count');
-
-// --- no-description code -> "No description yet" (I-3), never blank ----------
-const nd = c.alertsCardView(dtc([code('unknown', 'P1601', {short: ''})]));
-assert.strictEqual(nd.rows[0].short, 'No description yet', 'no-desc -> placeholder');
-assert.strictEqual(nd.rows[0].chip, '?', 'unknown chip = ?');
-
-// --- na-only -> NO hero block (S-12: na is never a hero) ---------------------
-const naOnly = c.alertsCardView(dtc([code('na', 'P1750', {short: 'A/T'})]));
-assert.strictEqual(naOnly.hero, null, 'na-only -> no hero block');
-assert.strictEqual(naOnly.rows.length, 1, 'na still listed');
-
-// --- malformed / empty (S-9 the card surface) -------------------------------
-assert.strictEqual(c.alertsCardView(null), null, 'null -> unavailable');
-assert.strictEqual(c.alertsCardView('x'), null, 'string -> unavailable');
-const empty = c.alertsCardView(dtc([]));
-assert.ok(empty, 'empty codes still a (no-fault) view');
-assert.strictEqual(empty.hero, null, 'no codes -> no hero');
-assert.strictEqual(empty.rows.length, 0, 'no rows');
+// --- MOVED PIN (US-898-b1): the card view is warningsPageView over
+// states/alerts. The ORDER is the provider's (the page never sorts, Iris G-6),
+// every word is the provider's, and an absent payload is the card's own
+// '--' + 'no warnings data' -- never null, never an all-clear. -------------
+function entry(id, tier, title, sentence) {
+  return { id: id, source: id.split(':')[0], key: id.split(':')[1], tier: tier,
+           title: title, sentence: sentence, value: null, unit: null, last: null,
+           stale: false, active: true, acknowledged: false,
+           firstSeenTs: '2026-06-30T19:40:00Z', lastSeenTs: '2026-06-30T19:40:00Z' };
+}
+const alerts = {
+  sources: { code: { assessed: true, checkedAtTs: '2026-06-30T19:40:00Z' } },
+  entries: [
+    entry('code:P0442:minor', 'minor', 'EVAP SMALL LEAK (P0442)', 'provider words a'),
+    entry('code:P0420:watch', 'watch', 'CATALYST (P0420)', 'provider words b'),
+  ],
+};
+const v = c.warningsPageView(alerts, '2026-06-30T19:45:00Z');
+assert.deepStrictEqual(v.rows.map(function (r) { return r.id; }),
+  ['code:P0442:minor', 'code:P0420:watch'], 'rows in the provider order, never re-ranked');
+assert.strictEqual(v.rows[1].chip, 'WATCH', 'tier -> chip word');
+assert.strictEqual(v.rows[0].sentence, 'provider words a', 'the provider sentence verbatim');
+assert.strictEqual(v.header.text, '2 ACTIVE', 'header counts the active entries');
+const none = c.warningsPageView(null, '2026-06-30T19:45:00Z');
+assert.strictEqual(none.missing, true, 'null -> the card paints its own absence');
+assert.strictEqual(none.header.text, '--', 'absent -> --');
+assert.strictEqual(none.rows.length, 0, 'absent -> no rows');
 
 // --- S-4 / F-1: 🔴/🟡 fix REPLACED by a diagnose directive, NO raw fix -------
 const stopFix = c.codeDetailView(code('stop', 'P0301', {suggestedFix: 'Replace coil pack'}));
@@ -1248,7 +1245,8 @@ console.log('US406_OK');
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_dtcAlertsCardAndDetailLogic_s4_s5_s12_s13_us406():
-    """US-406: the Alerts card hero+list sort worst-first (na last), and the
+    """US-406: the Alerts card lists the provider's entries in ITS order
+    (MOVED PIN, US-898-b1: warningsPageView, no page sort), and the
     per-code detail severity-GATES the fix (🔴/🟡 diagnose directive, no raw fix;
     🟢 fix + trust badge), renders the freeze-frame-or-realtime fallback, keeps a
     severityCaveat from auto-upgrading the tier, and shows "key-on read" for a
@@ -1268,7 +1266,8 @@ def test_dashboardHtml_hasAlertsCardAndDetail_us406():
     """US-406: the Alerts card (Card 5) slot + the per-code detail overlay mount
     are present (JS fills their content per the polled `dtc` state)."""
     html = _read(KIT_DIR, "dashboard.html")
-    assert 'data-state="dtc"' in html, "Alerts card slot missing"
+    # MOVED PIN (US-898-b1): the slot is found by its id, not data-state="dtc".
+    assert 'id="alerts-card"' in html, "Alerts card slot missing"
     assert 'id="dtc-detail"' in html, "detail overlay mount missing"
     assert 'id="detail-back"' in html, "detail must have a Back control (never trapped)"
     assert 'id="detail-body"' in html

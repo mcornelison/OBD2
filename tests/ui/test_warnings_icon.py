@@ -27,6 +27,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-20    | Ralph (Rex)  | Initial -- US-898-a top-bar warnings icon.
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the tap finds ALERTS by the
+#                               card's id, not its bar name (Iris U2).
 # ================================================================================
 ################################################################################
 
@@ -313,8 +315,10 @@ def test_tappingTheIconOnDrivingWhileMovingOpensAlerts(name: str):
 
 
 def test_theTapFindsAlertsByItsPageName_notByPosition():
+    """MOVED PIN (US-898-b1): Iris U2 re-keys the target by the card's id, so
+    the tap still never depends on the card's position."""
     js = open(_JS, encoding="utf-8").read()
-    assert 'data-page-name") === "ALERTS"' in js or "data-page-name=\"ALERTS\"" in js
+    assert 'getAttribute("id") === "alerts-card"' in js
 
 
 # ---------------------------------------------------------------------------

@@ -475,15 +475,14 @@
       <section class="card" id="light-card" data-state="light" aria-label="Light" data-page-name="LIGHT">
         <div class="card-body">unavailable</div>
       </section>
-      <!-- US-406 Alerts card (F-111): hero (worst code + directive) + a
-           tappable list sorted worst-first (na last). JS fills the body from
-           the polled `dtc` state; a missing/malformed file -> `unavailable`.
-
-           US-540-b moves it to SECOND. Pure markup order -- the carousel finds
-           the Alerts index dynamically (`dtcCardIndex`), so the ribbon tap,
-           the takeover "View detail" and the drill-down all keep working
-           without a nav change. -->
-      <section class="card" data-state="dtc" aria-label="Alerts" data-page-name="ALERTS">
+      <!-- US-898-b1 (F-127; specs/v030-warnings-page-design.md s3): the ALERTS
+           card. carousel.js (`renderWarningsCard`) fills the body from
+           states/alerts ALONE -- a header, then one row per provider entry in
+           the provider's order. No data-state: the card is not a generic
+           per-card read, and the carousel finds it by this id
+           (`alertsCardIndex`), so the icon, the ribbon tap, the takeover
+           "View detail" and the CHECK ENGINE tap all reach it by name. -->
+      <section class="card" id="alerts-card" aria-label="Alerts" data-page-name="ALERTS">
         <div class="card-body">unavailable</div>
       </section>
       <section class="card" data-state="system-status" aria-label="System Status"

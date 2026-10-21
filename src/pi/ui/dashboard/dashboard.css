@@ -2383,3 +2383,73 @@ html, body {
   font-variant-numeric: tabular-nums; color: var(--text-primary);
 }
 #light-card .light-status-note { font-size: var(--fs-meta); color: var(--text-secondary); }
+
+/* US-898-b1 (F-127; specs/v030-warnings-page-design.md s3): the ALERTS card
+   from states/alerts -- a header, then one row per provider entry in the
+   provider's order. Tokens only; geometry with no token is declared ONCE here
+   as properties scoped to the card. The count and the chips are Michroma
+   (UPPER-CASE words and digits only); the title, value, staleness clause,
+   sentence and age inherit the body's --font-mono. Chip colours and inks are
+   Atlas's (2026-10-16, contrast MEASURED; no new tokens): the STOP ink #fff
+   is the existing STOP copy colour. Rows are never .tile; only a CODE row is
+   a control (US-758) -- sentences and ENGINE rows carry no border, fill or
+   pointer. */
+#alerts-card {
+  --warn-row-min: 48px;          /* every row >= 48 px (Iris brief) */
+  --warn-gap: 8px;               /* chip -> text -> age (Iris's 2 x 8 px) */
+  --warn-row-pad: 4px;           /* row padding, top and bottom */
+  --warn-chip-pad: 6px;          /* chip padding, left and right */
+  --warn-chip-radius: 8px;
+  --warn-chip-rule: 1px;         /* the outline of a cleared entry's chip */
+  --warn-line: 1.2;
+  --warn-cleared-opacity: 0.55;  /* a cleared entry is listed, dimmed */
+}
+#alerts-card .warn-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--warn-gap); white-space: nowrap;
+}
+#alerts-card .warn-count {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-primary); line-height: var(--warn-line); color: var(--text-primary);
+}
+#alerts-card .warn-meta { font-size: var(--fs-meta); color: var(--text-secondary); }
+#alerts-card .warn-empty { font-size: var(--fs-meta); color: var(--text-secondary); }
+#alerts-card .warn-list { display: flex; flex-direction: column; }
+#alerts-card .warn-row {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content;
+  column-gap: var(--warn-gap); align-items: baseline;
+  min-height: var(--warn-row-min); box-sizing: border-box; width: 100%;
+  padding-block: var(--warn-row-pad); padding-inline: 0; margin: 0;
+  border: none; background: none; color: var(--text-primary);
+  font-family: inherit; font-size: var(--fs-label); line-height: var(--warn-line);
+  text-align: start;
+}
+#alerts-card .warn-row-code { cursor: pointer; }
+#alerts-card .warn-chip {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); line-height: var(--warn-line); white-space: nowrap;
+  padding-inline: var(--warn-chip-pad); border-radius: var(--warn-chip-radius);
+  border: var(--warn-chip-rule) solid transparent;
+}
+#alerts-card .warn-chip[data-tier="stop"]    { background: var(--critical-red); color: #fff; }
+#alerts-card .warn-chip[data-tier="watch"]   { background: var(--amber-warn); color: var(--bg); }
+#alerts-card .warn-chip[data-tier="minor"]   { background: var(--green-ok); color: var(--bg); }
+#alerts-card .warn-chip[data-tier="unrated"] { background: var(--neutral-chip-bg); color: var(--text-primary); }
+#alerts-card .warn-chip[data-active="false"] {
+  background: none; color: var(--text-secondary); border-color: currentColor;
+}
+#alerts-card .warn-main { display: flex; flex-direction: column; min-width: 0; }
+#alerts-card .warn-line {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--warn-gap);
+}
+#alerts-card .warn-title { font-size: var(--fs-label); overflow-wrap: anywhere; }
+#alerts-card .warn-value {
+  font-size: var(--fs-label); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+#alerts-card .warn-stale { font-size: var(--fs-meta); color: var(--amber-warn); }
+#alerts-card .warn-sentence { font-size: var(--fs-meta); color: var(--text-secondary); }
+#alerts-card .warn-age {
+  font-size: var(--fs-meta); color: var(--text-secondary); white-space: nowrap; text-align: end;
+}
+#alerts-card .warn-row[data-active="false"] .warn-main,
+#alerts-card .warn-row[data-active="false"] .warn-age { opacity: var(--warn-cleared-opacity); }
