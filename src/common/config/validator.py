@@ -180,6 +180,8 @@
 #                                wait, Atlas Q22), finite > 0; pi.warnings.
 #                                ackStorePath /var/lib/eclipse-obd/alerts-ack.json,
 #                                a non-empty string.
+# 2026-10-20    | Rex (US-899-a1)| pi.display.stale.alertsAckConfirmSec 6 (Atlas
+#                                Q33) + alertsAckNoticeSec 3 (Iris), finite > 0.
 # ================================================================================
 ################################################################################
 
@@ -881,6 +883,15 @@ DEFAULTS: dict[str, Any] = {
     # request as window.DISPLAY_STALE.fuelResetConfirmSec beside imuSec; NOT an
     # overlay key (Atlas ruling B) and carousel.js holds no mirror of it.
     'pi.display.stale.fuelResetConfirmSec': 6,
+    # US-899-a1 (F-127, Atlas Q33): after a 200 from POST /alerts-ack the kiosk
+    # waits at most this long (clock from the 200) for a states/alerts re-read
+    # showing the entry acknowledged:true before it says "couldn't acknowledge"
+    # -- the fuelResetConfirmSec pattern and value. Injected per request as
+    # window.DISPLAY_STALE.alertsAckConfirmSec; NOT an overlay key.
+    'pi.display.stale.alertsAckConfirmSec': 6,
+    # US-899-a1 (Iris brief s A): how long "couldn't acknowledge" stays on the
+    # takeover. Injected as window.DISPLAY_STALE.alertsAckNoticeSec.
+    'pi.display.stale.alertsAckNoticeSec': 3,
     # US-880-a (F-159): the speed integrator's gap rule (src/pi/obdii/
     # speed_integrator.py) -- an interval between SPEED readings wider than this
     # is not continuous travel and adds no distance. ONE gap definition across
@@ -2103,9 +2114,11 @@ class ConfigValidator:
     def _validateStaleImu(self, config: dict[str, Any]) -> None:
         """Validate the page's injected stale windows: each a finite number > 0.
 
-        pi.display.stale.imuSec (US-882-c) and
-        pi.display.stale.fuelResetConfirmSec (US-890-f). An absent key is
-        skipped (a custom defaults set may not supply it).
+        pi.display.stale.imuSec (US-882-c),
+        pi.display.stale.fuelResetConfirmSec (US-890-f) and the two ack
+        windows pi.display.stale.alertsAckConfirmSec / alertsAckNoticeSec
+        (US-899-a1). An absent key is skipped (a custom defaults set may not
+        supply it).
 
         Args:
             config: Validated configuration (post-default-application).
@@ -2114,7 +2127,12 @@ class ConfigValidator:
             ConfigValidationError: If a key is non-numeric, non-finite or
                 non-positive.
         """
-        for key in ('pi.display.stale.imuSec', 'pi.display.stale.fuelResetConfirmSec'):
+        for key in (
+            'pi.display.stale.imuSec',
+            'pi.display.stale.fuelResetConfirmSec',
+            'pi.display.stale.alertsAckConfirmSec',
+            'pi.display.stale.alertsAckNoticeSec',
+        ):
             val = self._getNestedValue(config, key)
             if val is None:
                 continue

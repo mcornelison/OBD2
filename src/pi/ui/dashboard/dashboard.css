@@ -855,7 +855,14 @@ html, body {
   color: #fff;                              /* white copy (ch.2) */
   box-sizing: border-box;
   border: 8px solid var(--critical-red);    /* the large-area alarm frame */
-  animation: stop-alarm-pulse 1.1s ease-in-out infinite;
+}
+/* US-899-a1 (Iris U8): the frame pulses only where motion is welcome. With
+   motion reduced the 8 px frame stands steady -- the red frame and the words
+   still carry STOP, so nothing is lost but the motion. */
+@media (prefers-reduced-motion: no-preference) {
+  #dtc-takeover[data-severity="stop"] {
+    animation: stop-alarm-pulse 1.1s ease-in-out infinite;
+  }
 }
 /* The directive is the largest thing on the panel on a STOP -- white on the
    state-alarm red, so AREA + TEXT read before the hue does. */
@@ -904,6 +911,18 @@ html, body {
   font-size: var(--fs-primary); font-weight: 700; letter-spacing: 0.04em; margin-top: 2px;
 }
 .takeover-more { font-size: var(--fs-label); opacity: 0.85; }
+/* US-899-a1: the PULL OVER lines under the directive band, each the
+   provider's words at Iris's size (brief s A + 2026-10-19 stale line). Mono:
+   the sentence, the stale line and the notice carry lower case, and the value's
+   degree sign is outside the Michroma subset. The copy colour is the surface's
+   #fff (inherited); no line is styled as a control (US-758). */
+.takeover-line { font-family: var(--font-mono); }
+#takeover-title { font-size: var(--fs-secondary); }
+#takeover-value { font-size: var(--fs-primary); font-variant-numeric: tabular-nums; }
+#takeover-stale { font-size: var(--fs-label); }
+#takeover-sentence { font-size: var(--fs-label); }
+#takeover-age { font-size: var(--fs-meta); }
+#takeover-notice { font-size: var(--fs-meta); }
 .takeover-actions { display: flex; gap: 10px; margin-top: 12px; }
 .takeover-actions button {
   min-width: var(--tap-min); min-height: var(--tap-min);

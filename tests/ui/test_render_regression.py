@@ -45,6 +45,10 @@
 # 2026-10-20    | Ralph (Rex)  | US-898-c -- MOVED PIN: "View detail" opens the
 #               |              | detail on the code's states/alerts entry, so the
 #               |              | swap case also serves the provider's /alerts.
+# 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): the live STOP routes
+#               |              | serve the provider's takeover; the View detail
+#               |              | swap and the Dismiss click become a tap that
+#               |              | stacks nothing and the takeover ending.
 # ================================================================================
 ################################################################################
 
@@ -53,6 +57,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -120,9 +125,20 @@ def _cleanRoutes(obdAvailable: bool = False) -> dict:
     }
 
 
+def _alertsFixture(name: str) -> dict:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "fixtures", "states", "alerts", name + ".json")
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def _newStopCodeRoutes() -> dict:
-    """One NEW stop-severity code -- the takeover's firing condition."""
+    """One NEW stop-severity code -- the ribbon's STOP -- and the takeover's
+    firing condition. MOVED PIN (US-899-a1): #dtc-takeover is driven by
+    states/alerts.takeover alone, so the live STOP is the provider's coolant
+    takeover (stop-live-overheat), served beside the dtc code."""
     routes = _cleanRoutes()
+    routes["/alerts"] = _alertsFixture("stop-live-overheat")
     routes["/dtc"] = {
         "codes": [
             {
@@ -197,44 +213,37 @@ class TestOverlayRender:
         # The ribbon is a persistent band, not an overlay: it SHOULD ride along.
         assert surface.renderedIds([_RIBBON_ID]) == [_RIBBON_ID]
 
-    def test_viewDetail_swapsTheTakeoverForTheDetail(self):
+    def test_aTapOnTheTakeover_stacksNoOtherOverlay(self):
         """
         Given: the takeover is up
-        When: the operator taps "View detail ›"
-        Then: exactly one overlay still paints -- and it is the detail
+        When: the operator taps it
+        Then: exactly one overlay still paints -- the takeover
 
-        The S2 symptom was overlays STACKING. Navigating between two of them is
-        where a stack would show up, so the count is the assertion, not just the
-        identity.
-
-        MOVED PIN (US-898-c): the detail opens on the code's states/alerts
-        ENTRY, so the run serves the /alerts the real provider builds from the
-        same dtc payload, and flushes once more for the detail's own read.
+        The S2 symptom was overlays STACKING. MOVED PIN (US-899-a1): the PULL
+        OVER carries no "View detail ›" (Iris U7) -- a tap anywhere is the ack,
+        which opens nothing -- so the count is asserted across that tap.
         """
-        from test_carousel_dtc_clear_gate_unread import _alertsFor
-
-        routes = _newStopCodeRoutes()
-        # The provider lists stored/pending codes only, and every real dtc
-        # payload carries `status`; this hand-written one omits it.
-        codes = [{**c, "status": "stored"} for c in routes["/dtc"]["codes"]]
-        stored = {**routes["/dtc"], "codes": codes}
-        routes["/alerts"] = _alertsFor(stored)
         dom = rh.runDashboard(
-            routes=routes,
-            steps=[{"flush": 3}, {"click": "takeover-detail"}, {"flush": 2}],
+            routes=_newStopCodeRoutes(),
+            steps=[{"flush": 3}, {"click": "dtc-takeover"}, {"flush": 2}],
         )
         surface = rh.dashboardSurface(dom["tree"])
-        assert surface.renderedIds(_OVERLAY_IDS) == ["dtc-detail"]
+        assert surface.renderedIds(_OVERLAY_IDS) == ["dtc-takeover"]
 
-    def test_dismiss_returnsToACleanCarousel(self):
+    def test_takeoverEnds_returnsToACleanCarousel(self):
         """
         Given: the takeover is up
-        When: the operator dismisses it
+        When: it ends (MOVED PIN (US-899-a1): the PULL OVER has no dismiss; it
+              ends when the provider drops `takeover`)
         Then: no overlay paints -- the operator is never trapped behind one
         """
         dom = rh.runDashboard(
             routes=_newStopCodeRoutes(),
-            steps=[{"flush": 3}, {"click": "takeover-dismiss"}, {"flush": 1}],
+            steps=[
+                {"flush": 3},
+                {"setRoutes": {"/alerts": _alertsFixture("stop-live-cleared")}},
+                {"flush": 2},
+            ],
         )
         surface = rh.dashboardSurface(dom["tree"])
         assert surface.renderedIds(_OVERLAY_IDS) == []

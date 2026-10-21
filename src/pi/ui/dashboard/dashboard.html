@@ -123,20 +123,28 @@
     <span class="ribbon-more"></span>
   </div>
 
-  <!-- US-405 full-screen DTC takeover: fired on a NEW code (newSinceTs), one at a
-       time, severity-styled. STOP has no plain dismiss -- only "Acknowledge"
-       (drops to the ribbon) so the driver always keeps view control. JS fills the
-       content + wires the buttons from the polled `dtc` state. -->
+  <!-- US-899-a1 full-screen takeover: a live coolant STOP from states/alerts
+       .takeover ONLY (carousel.js renderAlertsTakeover). Top to bottom: the
+       provider's directive band, title, value, the stale line, sentence, age,
+       and the ack notice. NO control on it (Iris U7): a tap anywhere is the ack.
+       The US-405 head, chip, code and buttons below ship hidden and are never
+       shown on this surface; US-899-a2 deletes them. -->
   <div id="dtc-takeover" hidden role="alertdialog" aria-label="Check engine alert">
     <div class="takeover-inner">
-      <span class="takeover-icon" id="takeover-icon">⚠</span>
-      <span class="takeover-head">CHECK ENGINE</span>
-      <span class="takeover-chip" id="takeover-chip"></span>
-      <span class="takeover-code" id="takeover-code"></span>
-      <span class="takeover-desc" id="takeover-desc"></span>
-      <span class="takeover-directive" id="takeover-directive"></span>
+      <span class="takeover-icon" id="takeover-icon" hidden>⚠</span>
+      <span class="takeover-head" hidden>CHECK ENGINE</span>
+      <span class="takeover-chip" id="takeover-chip" hidden></span>
+      <span class="takeover-code" id="takeover-code" hidden></span>
+      <span class="takeover-desc" id="takeover-desc" hidden></span>
+      <span class="takeover-directive" id="takeover-directive" hidden></span>
+      <span class="takeover-line" id="takeover-title" hidden></span>
+      <span class="takeover-line" id="takeover-value" hidden></span>
+      <span class="takeover-line" id="takeover-stale" hidden></span>
+      <span class="takeover-line" id="takeover-sentence" hidden></span>
+      <span class="takeover-line" id="takeover-age" hidden></span>
+      <span class="takeover-line" id="takeover-notice" hidden></span>
       <span class="takeover-more" id="takeover-more" hidden></span>
-      <div class="takeover-actions">
+      <div class="takeover-actions" hidden>
         <button id="takeover-detail" class="tap-target">View detail ›</button>
         <button id="takeover-dismiss" class="tap-target">Dismiss</button>
       </div>

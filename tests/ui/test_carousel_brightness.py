@@ -47,6 +47,10 @@
 #                                the unclamped fallback stays pinned here.
 # 2026-10-19    | Rex (US-893-b)| MOVED PIN (US-893-b): the zero-log gate admits
 #                                the log calls inside luxAxisX (Atlas A2).
+# 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): brightnessAlarmActive
+#                                keys on states/alerts.takeover, so its three
+#                                cases take alerts payloads (+ a dtc STOP code
+#                                alone is now false).
 # ================================================================================
 ################################################################################
 
@@ -250,27 +254,32 @@ def test_appliedBrightness_staleWindowComesFromTheInjection():
 
 
 # ---------------------------------------------------------------------------
-# brightnessAlarmActive -- a real active STOP present (drives the override).
+# brightnessAlarmActive -- a PULL OVER is up (drives the override).
+# MOVED PIN (US-899-a1): it keys on states/alerts.takeover != null, no longer on
+# the states/dtc ribbon level.
 # ---------------------------------------------------------------------------
 
 
 @nodeless
-def test_brightnessAlarmActive_stopCode_isTrue():
-    data = {"codes": [{"code": "P0300", "severity": "stop"}]}
+def test_brightnessAlarmActive_aTakeover_isTrue():
+    data = {"takeover": {"id": "engine:COOLANT_TEMP:stop"}, "entries": []}
     assert _probe("brightnessAlarmActive", data) is True
 
 
 @nodeless
-def test_brightnessAlarmActive_watchCode_isFalse():
+def test_brightnessAlarmActive_aWatchWithNoTakeover_isFalse():
     """WATCH is a real alert but not the PULL-OVER alarm -> no forced full."""
-    data = {"codes": [{"code": "P0420", "severity": "watch"}]}
+    data = {"takeover": None, "icon": {"state": "watch"},
+            "entries": [{"id": "engine:BATTERY_V:watch", "tier": "watch"}]}
     assert _probe("brightnessAlarmActive", data) is False
 
 
 @nodeless
-def test_brightnessAlarmActive_noCodesOrUnavailable_isFalse():
-    assert _probe("brightnessAlarmActive", {"codes": []}) is False
+def test_brightnessAlarmActive_noTakeoverOrNoPayload_isFalse():
+    assert _probe("brightnessAlarmActive", {"takeover": None}) is False
     assert _probe("brightnessAlarmActive", None) is False
+    # A states/dtc STOP code is not the takeover's driver any more.
+    assert _probe("brightnessAlarmActive", {"codes": [{"code": "P0300", "severity": "stop"}]}) is False
 
 
 # ---------------------------------------------------------------------------

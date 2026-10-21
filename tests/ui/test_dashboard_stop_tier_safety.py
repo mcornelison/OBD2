@@ -34,6 +34,9 @@
 #               |              | appliedBrightness over a payload carrying the
 #               |              | bridge's published level (the page curve is
 #               |              | gone); same four cases, same expected values.
+# 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): brightnessAlarmActive
+#               |              | takes the states/alerts takeover (stop / watch
+#               |              | payloads), not a dtc code.
 # ================================================================================
 ################################################################################
 
@@ -453,6 +456,11 @@ def test_appliedBrightness_withoutAStopAlarm_ambientStillDims():
 
 @nodeless
 def test_brightnessAlarmActive_onlyStopForcesFullBrightness():
-    """A WATCH is a real code but not the PULL-OVER alarm -- it keeps dimming."""
-    assert _probe("brightnessAlarmActive", {"codes": [{"code": "P0301", "severity": "stop"}]}) is True
-    assert _probe("brightnessAlarmActive", {"codes": [{"code": "P0420", "severity": "watch"}]}) is False
+    """A WATCH is a real alert but not the PULL-OVER alarm -- it keeps dimming.
+
+    MOVED PIN (US-899-a1): the alarm is the states/alerts takeover (which the
+    provider sets only for a live STOP), no longer a states/dtc STOP code."""
+    stop = {"takeover": {"id": "engine:COOLANT_TEMP:stop"}}
+    watch = {"takeover": None, "entries": [{"id": "engine:BATTERY_V:watch", "tier": "watch"}]}
+    assert _probe("brightnessAlarmActive", stop) is True
+    assert _probe("brightnessAlarmActive", watch) is False

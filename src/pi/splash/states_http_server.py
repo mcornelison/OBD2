@@ -39,6 +39,9 @@
 #               |              | -- asks eclipse-obd to acknowledge alerts for
 #               |              | this boot over alerts_ack_channel; 400 before
 #               |              | any file, 409 all-or-nothing.
+# 2026-10-20    | Rex (US-899-a1)| DISPLAY_STALE gains alertsAckConfirmSec and
+#               |              | alertsAckNoticeSec (the takeover ack windows),
+#               |              | the fuelResetConfirmSec rules.
 # ================================================================================
 ################################################################################
 
@@ -122,6 +125,10 @@ _STALE_IMU_SEC_KEY = "pi.display.stale.imuSec"
 # US-890-f: the kiosk's wait for the re-read after a /fuel-reset 200, injected
 # beside imuSec under the same rules.
 _STALE_FUEL_RESET_CONFIRM_KEY = "pi.display.stale.fuelResetConfirmSec"
+# US-899-a1: the takeover ack's wait for the acknowledged re-read after a
+# /alerts-ack 200, and how long its failure notice holds -- the same rules.
+_STALE_ALERTS_ACK_CONFIRM_KEY = "pi.display.stale.alertsAckConfirmSec"
+_STALE_ALERTS_ACK_NOTICE_KEY = "pi.display.stale.alertsAckNoticeSec"
 
 # US-532 (F-126): the same quoted-placeholder seam for the 5 Slice-1 operator
 # settings at their CURRENT EFFECTIVE values, keyed by the overlay's own flat
@@ -846,13 +853,15 @@ def loadDisplayCarouselConfig(configPath: str) -> dict[str, Any] | None:
 def loadDisplayStaleConfig(configPath: str | None) -> dict[str, float]:
     """Resolve the page's stale windows at their effective values (US-882-c).
 
-    ``imuSec`` is ``pi.display.stale.imuSec`` and ``fuelResetConfirmSec``
-    (US-890-f) is ``pi.display.stale.fuelResetConfirmSec``, each from the
-    effective config (config.json resolved through the shared overlay seam).
+    ``imuSec`` is ``pi.display.stale.imuSec``, ``fuelResetConfirmSec``
+    (US-890-f) is ``pi.display.stale.fuelResetConfirmSec``, and
+    ``alertsAckConfirmSec`` / ``alertsAckNoticeSec`` (US-899-a1) are
+    ``pi.display.stale.alertsAckConfirmSec`` / ``alertsAckNoticeSec``, each from
+    the effective config (config.json resolved through the shared overlay seam).
     Anything that is not a finite number > 0 -- absent key, no config wired,
     unreadable file, or a value the validator would refuse -- serves the
     validator default, so the page always receives the window production runs
-    with, never a fabricated one. Both are config.json engineering keys,
+    with, never a fabricated one. All are config.json engineering keys,
     deliberately NOT in the overlay allow-list (Atlas ruled B), so a
     config.local.json value is ignored.
 
@@ -861,11 +870,14 @@ def loadDisplayStaleConfig(configPath: str | None) -> dict[str, float]:
             config wired.
 
     Returns:
-        ``{"imuSec": <seconds>, "fuelResetConfirmSec": <seconds>}``.
+        ``{"imuSec", "fuelResetConfirmSec", "alertsAckConfirmSec",
+        "alertsAckNoticeSec"}``, each in seconds.
     """
     return {
         "imuSec": _effectiveStaleSec(configPath, _STALE_IMU_SEC_KEY),
         "fuelResetConfirmSec": _effectiveStaleSec(configPath, _STALE_FUEL_RESET_CONFIRM_KEY),
+        "alertsAckConfirmSec": _effectiveStaleSec(configPath, _STALE_ALERTS_ACK_CONFIRM_KEY),
+        "alertsAckNoticeSec": _effectiveStaleSec(configPath, _STALE_ALERTS_ACK_NOTICE_KEY),
     }
 
 

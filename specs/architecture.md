@@ -7804,6 +7804,54 @@ decoration.
 are dropped from `alertableCodes` — **no takeover, no ribbon**, and not counted in
 "+N more". A missing/malformed `dtc` file → no alert (honest: absence of the state
 = no active fault), never a fabricated code. The Mode-04 clear is US-407.
+*(Superseded on `#dtc-takeover` by US-899-a1, below: `updateDtcSurfaces` drives the
+ribbon only; the takeover's one driver is `states/alerts.takeover`. The dead
+newSinceTs path is deleted by US-899-a2.)*
+
+#### PULL OVER takeover from `states/alerts` (US-899-a1) [F-127; CIO R31, Iris brief s A + U7/U8/U11/U12, Atlas G4/Q10/Q33]
+
+**Source.** `#dtc-takeover` renders from `states/alerts.takeover` ALONE (the
+provider sets it only while the top active entry is a STOP — in V0.30 the live
+coolant STOP, `engine:COOLANT_TEMP:stop`). Pure `takeoverAlertView(alerts, nowTs)`
+→ `{id, directive, title, value, stale, sentence, age, colorVar, acknowledged}`,
+or null. Every word is the provider's, the directive band included
+(`takeover.directive`; no page literal and no page fallback — Atlas G4, Iris U11).
+The value goes through `displayUnits` by its own unit (°F for coolant); while
+stale (Atlas Q10: `value null + stale + last`) it is `last.value`, plus a
+`last reading n s ago` line of its own at `--fs-label` (`warningStaleText`, the
+M7 rule). The age is `agoText(now, firstSeenTs)` at `--fs-meta`. The tier colour
+comes from the ONE map `TIER_COLOR_VAR` (stop `--critical-red`, watch
+`--amber-warn`, minor `--green-ok`, unrated `--neutral-chip-bg`; the US-899-b code
+alert reads the same map). `renderAlertsTakeover` is the only writer of the
+surface's state and copy: null takes it down **with** its `data-severity` (US-537
+lockstep). The US-405 head, chip, code and buttons ship `hidden` and are never
+shown (Iris U7; deleted by US-899-a2).
+
+**Look.** The shipped `[data-severity="stop"]` skeleton: opaque `--bg`, 8 px
+`--critical-red` frame, `#fff` copy, z-index 60 — above every page and overlay,
+below the REPLAY marker (70). The `stop-alarm-pulse` frame animation lives inside
+`@media (prefers-reduced-motion: no-preference)` (Iris U8); with motion reduced the
+frame stands steady. **Full brightness:** `brightnessAlarmActive(alerts)` is
+`takeover != null` (no longer the states/dtc ribbon level), so `appliedBrightness`
+returns 1.0 while it is up.
+
+**The ack tap.** No control on the surface (Iris U7): a tap anywhere POSTs
+`/alerts-ack {ids: [takeover.id]}` with `X-Splash-Token` through the page's ONE
+write helper `postWrite(path, body)` (Iris U12; `/dtc-clear` and `/fuel-reset`
+ride it too; it returns `{status, body}` and never reports success itself —
+`postAction` stays the `/service-control` helper). The honest write is
+`alertsAckNext` (the `fuelResetNext` pattern): idle → posting → (200 `{ok:true}`)
+awaiting → idle only when a RE-READ of states/alerts shows that entry
+`acknowledged:true` within `window.DISPLAY_STALE.alertsAckConfirmSec`
+(`pi.display.stale.alertsAckConfirmSec`, validator DEFAULT 6, Atlas Q33).
+A refusal (409 / 503 / 504 / any other), no answer, or no matching re-read in the
+window shows `couldn't acknowledge` for `alertsAckNoticeSec`
+(`pi.display.stale.alertsAckNoticeSec`, DEFAULT 3; a later read showing the ack
+clears it). Both windows are injected per request by `loadDisplayStaleConfig`
+(config.json only, not overlay keys); with either absent the tap posts nothing.
+The ack stops only the provider's ICON pulse; the takeover stays up and its frame
+keeps pulsing until the provider clears it. Tests:
+`tests/ui/test_warnings_takeover.py`.
 
 #### DTC Alerts card (Card 5) + detail (US-406) [F-111 / design §5.3–5.4]
 
@@ -7843,8 +7891,9 @@ The dtc-driven card body (`alertsCardView` hero + `dtcListSorted` worst-first li
   (`loadPhase` on the `alerts` feed); after the grace, header `--` + `no warnings data`.
 - **States/dtc stays fed:** the tick reads `states/dtc` explicitly (`await
   stateOnce("dtc")` before `updateDtcSurfaces`), because the card's `data-state="dtc"`
-  was its only reader; it feeds the ribbon, the old takeover, `brightnessAlarmActive`,
-  `findCode` and the clear gate until US-899-a2 removes it.
+  was its only reader; it feeds the ribbon, `findCode` and the clear gate until
+  US-899-a2 removes it (the takeover and `brightnessAlarmActive` moved to
+  `states/alerts` in US-899-a1).
 - CSS is scoped to `#alerts-card` with geometry in `--warn-*` properties; the count
   and the chips are Michroma (400, no synthesis), the rest `--font-mono`. Chip inks
   (Atlas 2026-10-16, AA measured): STOP `--critical-red`/#fff, WATCH

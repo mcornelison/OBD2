@@ -54,6 +54,10 @@
 #               |              | its age (data-stale + 'N s'), not NA/'stale';
 #               |              | saturated is '--' + 'no reading'. Every
 #               |              | brightness assertion is unchanged.
+# 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): the two active-STOP
+#               |              | cases serve the provider's PULL OVER at /alerts
+#               |              | (stop-live-overheat) in place of a /dtc STOP
+#               |              | code; every brightness assertion is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -245,18 +249,20 @@ def _run(
     *,
     nowMs: int,
     steps: list[dict[str, Any]] | None = None,
-    dtc: Any = None,
+    alerts: Any = None,
 ) -> dict[str, Any]:
     """Boot the SHIPPED carousel over the SHIPPED markup at the panel size.
 
     ``light`` is served at /light; pass None to model the state file being ABSENT
     (an unlisted route 404s -- nothing is invented on the test's behalf).
+    ``alerts`` (MOVED PIN (US-899-a1)) is served at /alerts: the PULL OVER the
+    alarm short-circuit now keys on, in place of a states/dtc STOP code.
     """
     routes: dict[str, Any] = {}
     if light is not None:
         routes["/light"] = light
-    if dtc is not None:
-        routes["/dtc"] = dtc
+    if alerts is not None:
+        routes["/alerts"] = alerts
     return rh.runDashboard(
         routes=routes,
         autoDim=autoDimCfg,
@@ -553,7 +559,14 @@ _DIM_FALLBACK_CFG = {
     "curve": "logarithmic",
 }
 
-_STOP_DTC = {"codes": [{"code": "P0300", "severity": "stop"}]}
+# MOVED PIN (US-899-a1): the real STOP is the provider's PULL OVER takeover
+# (states/alerts), which is what brightnessAlarmActive keys on now.
+with open(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "states", "alerts",
+                 "stop-live-overheat.json"),
+    encoding="utf-8",
+) as _fh:
+    _STOP_ALERTS = json.load(_fh)
 
 
 def test_activeStop_overridesTheDimmedCurveOnALiveFeed(autoDim, tmp_path):
@@ -569,7 +582,7 @@ def test_activeStop_overridesTheDimmedCurveOnALiveFeed(autoDim, tmp_path):
     """
     state = _producedLightState(tmp_path, _luxSample(_DARK_LUX))
 
-    tree = _run(autoDim, state, nowMs=_T0_MS + 1000, dtc=_STOP_DTC)["tree"]
+    tree = _run(autoDim, state, nowMs=_T0_MS + 1000, alerts=_STOP_ALERTS)["tree"]
 
     assert _brightness(tree) == pytest.approx(1.0)
     assert _brightness(tree) != pytest.approx(autoDim["minLevel"])
@@ -592,7 +605,7 @@ def test_frozenFeedUnderActiveStop_staysFullBrightnessNotTheFallback(tmp_path):
         state,
         nowMs=_T0_MS + 1000,
         steps=[{"flush": 3}, {"advanceMs": 30_000, "flush": 3}],
-        dtc=_STOP_DTC,
+        alerts=_STOP_ALERTS,
     )["tree"]
 
     assert _brightness(tree) == pytest.approx(1.0)

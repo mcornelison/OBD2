@@ -39,6 +39,8 @@
 # 2026-10-18    | Rex (US-896-a) | pi.display.stale.imuSec default pin 2.0 -> 3.0.
 # 2026-10-20    | Rex (US-897-c) | pi.warnings.ackTimeoutSec 5 + finite > 0;
 #                                pi.warnings.ackStorePath default + non-empty.
+# 2026-10-20    | Rex (US-899-a1)| pi.display.stale.alertsAckConfirmSec 6 /
+#                                alertsAckNoticeSec 3 + finite > 0.
 # ================================================================================
 ################################################################################
 
@@ -1661,6 +1663,31 @@ def test_validate_staleFuelResetConfirmSec_positiveFloat_accepted():
     cfg["pi"] = {"display": {"stale": {"fuelResetConfirmSec": 8.5}}}
     stale = ConfigValidator().validate(cfg)["pi"]["display"]["stale"]
     assert stale["fuelResetConfirmSec"] == 8.5
+
+
+def test_validate_staleAlertsAckWindows_defaultToSixAndThree():
+    """US-899-a1: the takeover ack waits 6 s for the acknowledged re-read (Atlas
+    Q33, the fuelResetConfirmSec pattern) and its failure notice holds 3 s (Iris)."""
+    stale = ConfigValidator().validate(_baseCfg())["pi"]["display"]["stale"]
+    assert stale["alertsAckConfirmSec"] == 6
+    assert stale["alertsAckNoticeSec"] == 3
+
+
+@pytest.mark.parametrize("key", ["alertsAckConfirmSec", "alertsAckNoticeSec"])
+@pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "6", True])
+def test_validate_staleAlertsAckWindows_nonPositiveOrNonFinite_rejected(key, bad):
+    """US-899-a1: each ack window must be a finite number > 0."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"stale": {key: bad}}}
+    with pytest.raises(ConfigValidationError, match=f"pi.display.stale.{key}"):
+        ConfigValidator().validate(cfg)
+
+
+@pytest.mark.parametrize("key", ["alertsAckConfirmSec", "alertsAckNoticeSec"])
+def test_validate_staleAlertsAckWindows_positiveFloat_accepted(key):
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"stale": {key: 4.5}}}
+    assert ConfigValidator().validate(cfg)["pi"]["display"]["stale"][key] == 4.5
 
 
 def test_validate_fuelKeys_defaultsAreSpoolsSourcedValues():

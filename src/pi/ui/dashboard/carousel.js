@@ -2668,6 +2668,177 @@
     };
   }
 
+  // -------------------------------------------------------------------------
+  // US-899-a1 (F-127; CIO R31, Iris brief s A + U7/U11, Atlas G4/Q10) -- the
+  // live coolant STOP takeover, from states/alerts.takeover ALONE. The provider
+  // decides that a takeover exists and writes every word on it, the directive
+  // band included (no page literal: a page-side directive could only be a
+  // fallback, which G4 retired). The surface carries no control; a tap anywhere
+  // acknowledges it for this boot (alertsAckNext), which stops only the ICON
+  // pulse -- the frame keeps pulsing while the takeover is up.
+  // -------------------------------------------------------------------------
+
+  // Tier -> the colour token of its frame/chip. ONE map: the takeover's STOP
+  // reads it here and the code alert's frame (US-899-b) reads the same row.
+  var TIER_COLOR_VAR = {
+    stop: "--critical-red",
+    watch: "--amber-warn",
+    minor: "--green-ok",
+    unrated: "--neutral-chip-bg",
+  };
+
+  function tierColorVar(tier) {
+    return Object.prototype.hasOwnProperty.call(TIER_COLOR_VAR, tier) ? TIER_COLOR_VAR[tier] : null;
+  }
+
+  // An entry is acknowledged only when the provider's re-read says exactly
+  // true for that id (the takeover itself carries no ack flag).
+  function alertsEntryAcknowledged(alerts, id) {
+    var entries = isObj(alerts) && Array.isArray(alerts.entries) ? alerts.entries : [];
+    for (var i = 0; i < entries.length; i++) {
+      if (isObj(entries[i]) && entries[i].id === id) return entries[i].acknowledged === true;
+    }
+    return false;
+  }
+
+  // The takeover, or null (no payload, or the provider published none). Stale
+  // (Atlas Q10, the existing shape: value null + stale + last): last.value plus
+  // its own 'last reading n s ago' line (the M7 rule, warningStaleText) -- stale
+  // never clears. The age is agoText(now, firstSeenTs) unchanged. `nowTs` is the
+  // tick's one clock as an ISO instant.
+  function takeoverAlertView(alerts, nowTs) {
+    var t = isObj(alerts) && isObj(alerts.takeover) ? alerts.takeover : null;
+    if (!t) return null;
+    var stale = t.stale === true;
+    var last = isObj(t.last) ? t.last : null;
+    return {
+      id: typeof t.id === "string" ? t.id : "",
+      directive: typeof t.directive === "string" && t.directive ? t.directive : null,
+      title: typeof t.title === "string" && t.title ? t.title : null,
+      value: stale
+        ? (last ? warningValueText(last.value, t.unit) : null)
+        : warningValueText(t.value, t.unit),
+      stale: stale ? warningStaleText(last ? last.ts : null, Date.parse(nowTs)) : null,
+      sentence: typeof t.sentence === "string" && t.sentence ? t.sentence : null,
+      age: agoText(nowTs, t.firstSeenTs),
+      colorVar: TIER_COLOR_VAR.stop,
+      acknowledged: alertsEntryAcknowledged(alerts, t.id),
+    };
+  }
+
+  // A real PULL OVER is up (drives the full-brightness short-circuit). Keyed on
+  // the provider's takeover, never on a states/dtc level: the alarm the panel
+  // holds at full is exactly the one it is drawing.
+  function brightnessAlarmActive(alertsData) {
+    return isObj(alertsData) && isObj(alertsData.takeover);
+  }
+
+  // --- the ack: the honest write (the fuelResetNext pattern) -----------------
+  //
+  // A tap POSTs /alerts-ack {ids: [id]} (Atlas Q26: the one shape). Only a
+  // RE-READ of states/alerts showing that entry acknowledged:true settles it,
+  // within pi.display.stale.alertsAckConfirmSec of the 200 (Atlas Q33); a 200 is
+  // not the proof. Anything else -- a refusal (a 409, 503, 504 or any other), no
+  // answer, or no matching re-read in the window -- shows "couldn't acknowledge"
+  // for pi.display.stale.alertsAckNoticeSec, and the provider's pulse simply
+  // continues. Both windows are injected as window.DISPLAY_STALE; there is NO
+  // mirrored default here (no literal in this file), so without them the tap is
+  // not offered (fail closed: an unbounded acknowledging state would lie).
+  var ALERTS_ACK_FAILED_TEXT = "couldn't acknowledge";
+
+  function isPositiveSec(v) {
+    return typeof v === "number" && isFinite(v) && v > 0;
+  }
+
+  function resolvePositiveSec(injected, key) {
+    var v = isObj(injected) ? injected[key] : null;
+    return isPositiveSec(v) ? v : null;
+  }
+
+  function resolveAlertsAckConfirmSec(injected) {
+    return resolvePositiveSec(injected, "alertsAckConfirmSec");
+  }
+
+  function resolveAlertsAckNoticeSec(injected) {
+    return resolvePositiveSec(injected, "alertsAckNoticeSec");
+  }
+
+  function alertsAckBody(id) {
+    return { ids: [id] };
+  }
+
+  // phase: idle | posting (tap -> the answer) | awaiting (200 -> the matching
+  // re-read). `noticeFromMs` is when "couldn't acknowledge" went up, else null.
+  function alertsAckInit() {
+    return { phase: "idle", id: null, confirmFromMs: null, noticeFromMs: null };
+  }
+
+  function alertsAckFailed(s, nowMs) {
+    s.phase = "idle";
+    s.confirmFromMs = null;
+    s.noticeFromMs = typeof nowMs === "number" ? nowMs : null;
+    return s;
+  }
+
+  // Advance the ack by one event. Pure; the clock arrives on the event.
+  //   {type: "tap", view, confirmSec, noticeSec}   the takeover was tapped
+  //   {type: "answer", status, body, nowMs}        the POST answered
+  //   {type: "failure", nowMs}                     the POST never answered
+  //   {type: "read", alerts, nowMs, confirmSec, noticeSec}   one tick's read
+  function alertsAckNext(prev, ev) {
+    var s = isObj(prev) && typeof prev.phase === "string" ? {
+      phase: prev.phase, id: prev.id, confirmFromMs: prev.confirmFromMs,
+      noticeFromMs: prev.noticeFromMs,
+    } : alertsAckInit();
+    var type = isObj(ev) ? ev.type : null;
+    if (type === "tap") {
+      var view = isObj(ev.view) ? ev.view : null;
+      if (s.phase === "idle" && view && view.id && view.acknowledged !== true &&
+          isPositiveSec(ev.confirmSec) && isPositiveSec(ev.noticeSec)) {
+        s.phase = "posting";
+        s.id = view.id;
+        s.noticeFromMs = null;
+      }
+      return s;
+    }
+    if (type === "answer") {
+      if (s.phase !== "posting") return s;
+      if (ev.status === 200 && isObj(ev.body) && ev.body.ok === true) {
+        s.phase = "awaiting";
+        s.confirmFromMs = ev.nowMs;
+        return s;
+      }
+      return alertsAckFailed(s, ev.nowMs);
+    }
+    if (type === "failure") {
+      return s.phase === "posting" ? alertsAckFailed(s, ev.nowMs) : s;
+    }
+    if (type !== "read") return s;
+    var acked = s.id !== null && alertsEntryAcknowledged(ev.alerts, s.id);
+    if (s.phase === "awaiting") {
+      if (acked) {
+        s.phase = "idle";
+        s.confirmFromMs = null;
+      } else if (!(typeof ev.nowMs === "number" && typeof ev.confirmSec === "number" &&
+                   ev.nowMs - s.confirmFromMs <= ev.confirmSec * 1000)) {
+        return alertsAckFailed(s, ev.nowMs);
+      }
+    } else if (s.phase === "idle" && s.noticeFromMs !== null) {
+      // An ack that landed after all (a 504, a late write): the read speaks.
+      // Otherwise the notice holds for its window, then goes.
+      if (acked || !(typeof ev.nowMs === "number" && typeof ev.noticeSec === "number" &&
+                     ev.nowMs - s.noticeFromMs <= ev.noticeSec * 1000)) {
+        s.noticeFromMs = null;
+      }
+    }
+    return s;
+  }
+
+  function alertsAckNoticeText(state) {
+    return isObj(state) && state.phase === "idle" && state.noticeFromMs !== null
+      ? ALERTS_ACK_FAILED_TEXT : "";
+  }
+
   // 3-state trust badge (design §5.4). Verified (Spool) / community-unverified /
   // offline-not-yet-fetched. Any unrecognized/absent provenance -> offline (the
   // honest "no live net in the car" default), never a fabricated authority.
@@ -2988,15 +3159,8 @@
     return out;
   }
 
-  // A real ACTIVE STOP alert is present (drives the alarm floor). Reuses the same
-  // honest ribbon classifier the takeover/ribbon use: an unavailable DTC source
-  // carries no active fault -> false; only a STOP-tier hero forces the floor (the
-  // PULL-OVER alarm). A WATCH/MINOR alert is a real code but not the pull-over
-  // alarm, so it does not force the legible floor (Iris AC-7 scope).
-  function brightnessAlarmActive(dtcData) {
-    var rv = ribbonView(dtcData);
-    return !!rv && rv.level === "stop";
-  }
+  // brightnessAlarmActive (the alarm input below) is US-899-a1's: it keys on the
+  // states/alerts takeover, beside takeoverAlertView.
 
   // US-893-a (Atlas A7) -- THE ONE APPLIER. Every surface that needs the panel's
   // level (the screen frame, and from US-893-b the Light page's status line and
@@ -5155,6 +5319,14 @@
     warningsMoreBelow: warningsMoreBelow,
     warningsBelowFromLayout: warningsBelowFromLayout,
     warningsMoreText: warningsMoreText,
+    tierColorVar: tierColorVar,
+    takeoverAlertView: takeoverAlertView,
+    resolveAlertsAckConfirmSec: resolveAlertsAckConfirmSec,
+    resolveAlertsAckNoticeSec: resolveAlertsAckNoticeSec,
+    alertsAckBody: alertsAckBody,
+    alertsAckInit: alertsAckInit,
+    alertsAckNext: alertsAckNext,
+    alertsAckNoticeText: alertsAckNoticeText,
     trustBadge: trustBadge,
     fixArea: fixArea,
     fixSectionLabel: fixSectionLabel,
@@ -6982,6 +7154,26 @@
         }
       }
 
+      // US-899-a1 (Iris U12): the ONE token-gated POST behind every write on
+      // this page -- /dtc-clear, /fuel-reset and /alerts-ack (postAction stays
+      // the /service-control helper). It answers {status, body} and never
+      // judges either: each caller keeps its own honest-write rule (confirm
+      // from a RE-READ, or say it failed). A body that is not JSON is {}; no
+      // answer at all rejects, which each caller turns into its own failure.
+      function postWrite(path, body) {
+        var init = {
+          method: "POST",
+          headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
+        };
+        if (body !== undefined) init.body = JSON.stringify(body);
+        return fetch(path, init).then(function (r) {
+          return r.json().then(
+            function (j) { return { status: r.status, body: j }; },
+            function () { return { status: r.status, body: {} }; }
+          );
+        });
+      }
+
       // --- US-405 DTC takeover + ribbon surfaces (browser only) --------------
       var ribbonEl = document.getElementById("dtc-ribbon");
       var takeoverEl = document.getElementById("dtc-takeover");
@@ -6997,6 +7189,15 @@
       // records it so the same code never re-takes-over; a newer code (a
       // different stamp) re-fires (escalation, D-3).
       var dtcLastAckedTs = null;
+      // US-899-a1: the PULL OVER lines, the view last painted and the ack.
+      var tvTitle = document.getElementById("takeover-title");
+      var tvValue = document.getElementById("takeover-value");
+      var tvStale = document.getElementById("takeover-stale");
+      var tvSentence = document.getElementById("takeover-sentence");
+      var tvAge = document.getElementById("takeover-age");
+      var tvNotice = document.getElementById("takeover-notice");
+      var takeoverAlert = null;
+      var alertsAck = alertsAckInit();
 
       // --- US-406 Alerts card (Card 5) + per-code detail (browser only) ------
       var detailEl = document.getElementById("dtc-detail");
@@ -7153,18 +7354,9 @@
           // "resetting…" from Yes, not from the 200: the POST can take up to
           // pi.fuel.resetTimeoutSec and the states server stalls reads meanwhile.
           paintFuelMpg();
-          // The /dtc-clear pattern: token-gated POST, status + JSON body. The
+          // The shared token-gated POST (postWrite): status + JSON body. The
           // server's raw text goes to the log only, never to the glass.
-          fetch("/fuel-reset", {
-            method: "POST",
-            headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
-          })
-            .then(function (r) {
-              return r.json().then(
-                function (j) { return { status: r.status, body: j }; },
-                function () { return { status: r.status, body: {} }; }
-              );
-            })
+          postWrite("/fuel-reset")
             .then(function (res) {
               var b = isObj(res.body) ? res.body : {};
               if (res.status !== 200) {
@@ -7324,6 +7516,76 @@
           };
         }
         takeoverEl.hidden = false;
+      }
+
+      // US-899-a1: one takeover line -- its text, and the line DOWN when it has
+      // nothing to say (an empty painted line would still claim its gap).
+      function fillTakeoverLine(el, text) {
+        if (!el) return;
+        el.textContent = text || "";
+        el.hidden = !text;
+      }
+
+      // US-899-a1: paint takeoverAlertView into #dtc-takeover -- the ONLY writer
+      // of its state and copy. null takes it down WITH its severity (the US-537
+      // lockstep: the alarm pulse hangs off [data-severity="stop"]). The legacy
+      // head, chip, code and buttons ship hidden and are never shown here (Iris
+      // U7); the surface holds no control, the whole of it is the ack tap.
+      function renderAlertsTakeover(view, ackState) {
+        takeoverAlert = view;
+        if (!takeoverEl) return;
+        if (!view) {
+          hideTakeover();
+          return;
+        }
+        takeoverEl.setAttribute("data-severity", "stop");
+        fillTakeoverLine(tvDirective, view.directive);
+        fillTakeoverLine(tvTitle, view.title);
+        fillTakeoverLine(tvValue, view.value);
+        fillTakeoverLine(tvStale, view.stale);
+        fillTakeoverLine(tvSentence, view.sentence);
+        fillTakeoverLine(tvAge, view.age);
+        fillTakeoverLine(tvNotice, alertsAckNoticeText(ackState));
+        takeoverEl.hidden = false;
+      }
+
+      function alertsAckWindows() {
+        return {
+          confirmSec: resolveAlertsAckConfirmSec(global.DISPLAY_STALE),
+          noticeSec: resolveAlertsAckNoticeSec(global.DISPLAY_STALE),
+        };
+      }
+
+      // A tap ANYWHERE on the takeover acknowledges it: ONE POST of its id. The
+      // answer only moves the ack on; what settles it is the next re-read.
+      if (takeoverEl) {
+        takeoverEl.addEventListener("click", function () {
+          if (takeoverEl.hidden || !takeoverAlert) return;
+          var windows = alertsAckWindows();
+          var before = alertsAck.phase;
+          alertsAck = alertsAckNext(alertsAck, {
+            type: "tap", view: takeoverAlert,
+            confirmSec: windows.confirmSec, noticeSec: windows.noticeSec,
+          });
+          if (before === "posting" || alertsAck.phase !== "posting") return;
+          renderAlertsTakeover(takeoverAlert, alertsAck);
+          postWrite("/alerts-ack", alertsAckBody(alertsAck.id))
+            .then(function (res) {
+              if (res.status !== 200) {
+                var b = isObj(res.body) ? res.body : {};
+                uiLog(LOG_WARN, "alerts-ack " + res.status + ": " + (b.error || ""));
+              }
+              alertsAck = alertsAckNext(alertsAck, {
+                type: "answer", status: res.status, body: res.body, nowMs: Date.now(),
+              });
+              renderAlertsTakeover(takeoverAlert, alertsAck);
+            })
+            .then(null, function (e) {
+              uiLog(LOG_WARN, "alerts-ack no answer: " + String(e));
+              alertsAck = alertsAckNext(alertsAck, { type: "failure", nowMs: Date.now() });
+              renderAlertsTakeover(takeoverAlert, alertsAck);
+            });
+        });
       }
 
       // US-691: fill one banner slot, and take the slot DOWN when it has nothing
@@ -7581,17 +7843,7 @@
       // result reports the re-read proof (or the re-set), never "command sent".
       function submitClear() {
         hideClearConfirm();
-        fetch("/dtc-clear", {
-          method: "POST",
-          headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
-          body: JSON.stringify({ confirm: true }),
-        })
-          .then(function (r) {
-            return r.json().then(
-              function (j) { return { status: r.status, body: j }; },
-              function () { return { status: r.status, body: {} }; }
-            );
-          })
+        postWrite("/dtc-clear", { confirm: true })
           .then(function (res) {
             if (res.status === 200) {
               showClearResult(postClearMessage(res.body));
@@ -7770,18 +8022,13 @@
         });
       }
 
-      // Apply the polled `dtc` state to the ribbon + takeover. A missing/malformed
-      // `dtc` file -> no alert (honest: absence of the state = no active fault),
-      // never a fabricated code.
+      // Apply the polled `dtc` state to the ribbon. A missing/malformed `dtc`
+      // file -> no alert (honest: absence of the state = no active fault), never
+      // a fabricated code. US-899-a1: it no longer drives #dtc-takeover -- the
+      // states/alerts takeover is that surface's one driver (one writer).
       function updateDtcSurfaces(dtcData) {
         lastDtc = dtcData;
         renderRibbon(ribbonView(dtcData));
-        var view = takeoverView(dtcData);
-        if (view && takeoverShouldShow(view, dtcLastAckedTs)) {
-          showTakeover(view);
-        } else {
-          hideTakeover();
-        }
       }
 
       // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
@@ -7878,7 +8125,7 @@
               sourceCardView(
                 spec, data, await stateOnce("system-status"), displayAutoDim,
                 nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs),
-                brightnessAlarmActive(await stateOnce("dtc"))
+                brightnessAlarmActive(await stateOnce("alerts"))
               )
             );
             continue;
@@ -7951,6 +8198,17 @@
         // on EVERY tick, unconditionally -- not only while ALERTS is showing.
         lastAlerts = await stateOnce("alerts");
         renderTopbarIcon(alertIconView(lastAlerts));
+        // US-899-a1: the PULL OVER takeover, from the SAME cached states/alerts
+        // on this tick's one clock. The read first moves the ack on (a matching
+        // re-read settles it; a lapsed window says so), then the surface paints.
+        var ackWindows = alertsAckWindows();
+        alertsAck = alertsAckNext(alertsAck, {
+          type: "read", alerts: lastAlerts, nowMs: nowMs,
+          confirmSec: ackWindows.confirmSec, noticeSec: ackWindows.noticeSec,
+        });
+        renderAlertsTakeover(
+          takeoverAlertView(lastAlerts, new Date(nowMs).toISOString()), alertsAck
+        );
         // US-898-b1: the ALERTS card, from the SAME cached states/alerts the
         // icon just read, on this tick's one clock. LOADING only while that
         // feed has never answered (US-700), keyed by the feed's name.
@@ -7961,11 +8219,11 @@
             await stateOnce("alerts"), feedWaitedMs(feedSeen, "alerts", feedStartedMs, nowMs)
           ) === "loading"
         );
-        // US-405/US-406: drive the takeover + persistent ribbon from states/dtc.
+        // US-405/US-406: drive the persistent ribbon from states/dtc.
         // US-898-b1 KEEPS this feed: the ALERTS card no longer carries
         // data-state="dtc", which was the only thing that read it, so the read
-        // is explicit here -- dtcData also feeds brightnessAlarmActive and the
-        // code detail (refreshCodeDetail) and clear gate. US-899-a2 removes it.
+        // is explicit here -- dtcData also feeds the code detail
+        // (refreshCodeDetail) and clear gate. US-899-a2 removes it.
         await stateOnce("dtc");
         updateDtcSurfaces(dtcData);
         // US-630: the derived gear. Read on THIS tick rather than the ~10 Hz
@@ -8029,7 +8287,8 @@
         // gate -- the kebab's visibility is no longer a function of any state.
         // US-483-b / US-893-a: APPLY the level the light bridge published in
         // states/light (pure consumer -- never the sensor, never a curve). A
-        // real STOP holds it at full; an absent/stale feed holds the injected
+        // PULL OVER up (US-899-a1: states/alerts.takeover, the same cached read
+        // the takeover painted from) holds it at full; an absent/stale feed holds the injected
         // defaultLevel (honest fallback). See appliedBrightness.
         // US-507: `stateOnce` is idempotent, so this REUSES the payload the
         // Health card's Light section already read and only performs a real
@@ -8041,7 +8300,7 @@
             lightData,
             displayAutoDim,
             nowMs,
-            brightnessAlarmActive(dtcData)
+            brightnessAlarmActive(lastAlerts)
           ).level
         );
       }
