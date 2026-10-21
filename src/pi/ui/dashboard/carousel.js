@@ -2750,37 +2750,66 @@
     return parts.join(" · ");
   }
 
-  // The per-code detail view. Non-object -> null. The caveat is a line, never a
+  // US-898-c (Iris U4): the line a detail prints when the states/dtc read that
+  // backs it failed -- the entry's own words still stand above it.
+  var DETAIL_UNAVAILABLE_TEXT = "details unavailable";
+  // A code entry's id is 'code:<code>:<tier>' (alerts_arbiter).
+  var CODE_ENTRY_ID = /^code:([^:]+):[^:]+$/;
+
+  // The code a states/alerts code entry names, parsed from its id; null for
+  // any other id (an engine entry, a malformed one).
+  function codeFromEntryId(id) {
+    var m = typeof id === "string" ? CODE_ENTRY_ID.exec(id) : null;
+    return m ? m[1] : null;
+  }
+
+  // The states/dtc record for one code, or null (no payload, an unread source
+  // publishing codes:null, or a code the payload does not list).
+  function dtcRecordFor(data, codeStr) {
+    if (!isObj(data) || !Array.isArray(data.codes) || !codeStr) return null;
+    for (var i = 0; i < data.codes.length; i++) {
+      if (isObj(data.codes[i]) && data.codes[i].code === codeStr) return data.codes[i];
+    }
+    return null;
+  }
+
+  // The per-code detail view: (codeRecord, entry). The ENTRY is the provider's
+  // (states/alerts) and supplies the code, the chip and the directive band;
+  // the RECORD is that code's states/dtc row and supplies everything else.
+  // No code entry -> null (nothing to open). The caveat is a line, never a
   // tier upgrade (S-13).
   //
-  // US-491 (polish P-3, directive-first): the band renders for EVERY actionable
-  // tier, not just 🔴/🟡. The detail is the one screen the operator opens to ask
-  // "what do I do", and the answer already existed in DTC_TIER for MINOR ("safe
-  // to clear once logged") and for an uncurated `unknown` ("get diagnosed") --
-  // the takeover has shown both since US-405 while the detail showed nothing.
-  // A blank band on the screen dedicated to the question reads as "no action
-  // needed", which is the dishonest answer on an uncurated code (F-1). `na` is
-  // the one tier that stays blank: "not applicable to this vehicle" is a FACT,
-  // not an instruction, it never alarms anywhere else in the system, and the
-  // fix slot already states it.
-  function codeDetailView(code) {
-    if (!isObj(code)) return null;
-    var tier = dtcTier(code.severity);
+  // US-898-c (Iris U4): the band is the entry's `sentence`, the provider's
+  // words -- never DTC_TIER's tier-table directive -- and the chip is the
+  // entry's tier, `unrated` drawn with the existing `unknown` styling. With no
+  // record (the read failed, or does not list the code) the view keeps the
+  // entry's title, chip and sentence and says `details unavailable`: never a
+  // cached record, never a tier-table directive.
+  function codeDetailView(record, entry) {
+    if (!isObj(entry) || entry.source !== "code") return null;
+    var code = codeFromEntryId(entry.id);
+    if (!code) return null;
+    var tier = Object.prototype.hasOwnProperty.call(WARNING_CHIP, entry.tier)
+      ? entry.tier : WARNING_CHIP_FALLBACK;
+    var title = typeof entry.title === "string" && entry.title ? entry.title : code;
+    var rec = isObj(record) && record.code === code ? record : null;
     return {
-      code: code.code,
-      chip: tier.chip,
-      level: tier.level,
-      short: dtcShort(code),
-      long: (code.long && String(code.long).trim()) || null,
-      directive: tier.level === "na" ? null : tier.directive,
-      caveat: dtcCaveat(code),
-      statusMeta: dtcStatusMeta(code),
-      freezeFrame: freezeFrameView(code),
-      fix: fixArea(code),
-      logged: code.logged === true,
-      syncAcked: code.syncAcked === true,
-      clearEligible: code.clearEligible === true,
-      isNa: code.severity === "na",
+      code: code,
+      chip: WARNING_CHIP[tier],
+      level: tier === "unrated" ? "unknown" : tier,
+      title: title,
+      short: rec ? dtcShort(rec) : title,
+      long: rec ? (rec.long && String(rec.long).trim()) || null : null,
+      directive: typeof entry.sentence === "string" && entry.sentence ? entry.sentence : null,
+      unavailable: rec ? null : DETAIL_UNAVAILABLE_TEXT,
+      caveat: rec ? dtcCaveat(rec) : null,
+      statusMeta: rec ? dtcStatusMeta(rec) : null,
+      freezeFrame: rec ? freezeFrameView(rec) : null,
+      fix: rec ? fixArea(rec) : null,
+      logged: rec ? rec.logged === true : false,
+      syncAcked: rec ? rec.syncAcked === true : false,
+      clearEligible: rec ? rec.clearEligible === true : false,
+      isNa: rec ? rec.severity === "na" : false,
     };
   }
 
@@ -2798,6 +2827,9 @@
     severity_unknown: "🔒 CLEAR CODES — severity could not be determined",
     sync_pending: "🔒 CLEAR CODES — waiting for server sync",
     session_locked: "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it",
+    // US-898-c (Iris 2026-10-19): the lock is engineParked, which also holds
+    // an idling car and the 8 s hold, so it says what unlocks it.
+    moving: "🔒 CLEAR CODES — engine off to clear",
   };
 
   // Re-derive the clear gate from the raw codes (the display mirror of the
@@ -2835,11 +2867,17 @@
   // The Clear button view. `no_codes` -> no button (nothing to clear). Otherwise
   // the button is visible; enabled only when the gate is `ok`, else disabled
   // with an honest reason label (S-6 / S-8).
-  function clearButtonView(data) {
+  //
+  // US-898-c: `parked` is engineParked.parked; only a strict true unlocks. It
+  // is asked only when the gate is otherwise `ok`, so a permanent reason
+  // (WATCH, STOP, UNRATED, sync, session lock) wins over `moving` -- a WATCH
+  // code never implies that turning the engine off unlocks it.
+  function clearButtonView(data, parked) {
     var reason = clearGateReason(data);
     if (reason === "no_codes") {
       return { visible: false, enabled: false, reason: reason, label: null };
     }
+    if (reason === "ok" && parked !== true) reason = "moving";
     return {
       visible: true,
       enabled: reason === "ok",
@@ -5122,6 +5160,8 @@
     fixSectionLabel: fixSectionLabel,
     freezeFrameView: freezeFrameView,
     codeDetailView: codeDetailView,
+    codeFromEntryId: codeFromEntryId,
+    dtcRecordFor: dtcRecordFor,
     clearGateReason: clearGateReason,
     clearButtonView: clearButtonView,
     confirmClearText: confirmClearText,
@@ -6976,6 +7016,12 @@
       // The most-recent `dtc` state, so a ribbon/takeover "View detail" tap can
       // resolve a code string back to its full object.
       var lastDtc = null;
+      // US-898-c: the latest states/alerts (the entries a row tap resolves
+      // to), the entry the code detail is open on (null while closed) and the
+      // detail body last painted (re-built only when what it says changed).
+      var lastAlerts = null;
+      var detailEntry = null;
+      var detailPainted = null;
       // US-898-b1: the ALERTS card, found by its id (Iris U2) -- it no longer
       // carries data-state, so the generic per-card loop never reaches it.
       var alertsCard = document.getElementById("alerts-card");
@@ -7201,21 +7247,34 @@
         if (changed && typeof onVisibilityChange === "function") onVisibilityChange();
       }
 
-      function findCode(codeStr) {
-        if (!lastDtc || !Array.isArray(lastDtc.codes)) return null;
-        for (var i = 0; i < lastDtc.codes.length; i++) {
-          if (lastDtc.codes[i] && lastDtc.codes[i].code === codeStr) return lastDtc.codes[i];
+      // US-898-c: the states/alerts code entry for a code (by its parsed id),
+      // or the entry with this exact id; null when the latest payload has none.
+      function alertsEntryFor(match) {
+        var entries = isObj(lastAlerts) && Array.isArray(lastAlerts.entries)
+          ? lastAlerts.entries : [];
+        for (var i = 0; i < entries.length; i++) {
+          if (isObj(entries[i]) && match(entries[i])) return entries[i];
         }
         return null;
       }
+      function alertsEntryById(id) {
+        return alertsEntryFor(function (e) { return e.id === id; });
+      }
+      function alertsEntryForCode(codeStr) {
+        return alertsEntryFor(function (e) {
+          return e.source === "code" && codeFromEntryId(e.id) === codeStr;
+        });
+      }
       function closeDetail() {
         if (detailEl) detailEl.hidden = true;
+        detailEntry = null;
+        detailPainted = null;
       }
       // Navigate the carousel to the Alerts card; optionally open a code detail.
       function openAlertsCard(codeStr) {
         if (alertsCardIndex >= 0 && typeof goTo === "function") goTo(alertsCardIndex);
-        var codeObj = codeStr ? findCode(codeStr) : null;
-        if (codeObj) openDetail(codeObj);
+        var entry = codeStr ? alertsEntryForCode(codeStr) : null;
+        if (entry) openDetail(entry);
       }
 
       function hideTakeover() {
@@ -7357,6 +7416,13 @@
         if (view.caveat) {
           detailBody.appendChild(detailLine("detail-caveat", "", "⚠ " + view.caveat));
         }
+        // US-898-c (Iris U4): no states/dtc record -- the entry's title, chip
+        // and sentence above stand alone, and nothing below is drawn from a
+        // cached record.
+        if (view.unavailable) {
+          detailBody.appendChild(detailLine("detail-unavailable", "", view.unavailable));
+          return;
+        }
         // Status meta (STORED/PENDING · key-on read | Drive N).
         detailBody.appendChild(detailLine("detail-meta", "", view.statusMeta));
 
@@ -7421,28 +7487,65 @@
         detailBody.appendChild(footer);
       }
 
-      function openDetail(codeObj) {
-        var view = codeDetailView(codeObj);
-        if (!view || !detailEl) return;
-        renderDetailBody(view);
-        renderClearButton();
+      // US-898-c (Iris U4 / G-7 exception): open the detail on a code ENTRY.
+      // The one states/dtc read outside the provider path, scoped to this open
+      // and the ticks while it stays open; it feeds lastDtc for the clear gate.
+      async function openDetail(entry) {
+        if (!detailEl || !codeDetailView(null, entry)) return;
+        var dtcData = await fetchState("dtc");
+        lastDtc = dtcData;
+        detailEntry = entry;
+        detailPainted = null;
+        if (clearResult) clearResult.textContent = "";
+        paintCodeDetail(dtcData);
         detailEl.hidden = false;
+      }
+
+      // Paint the open detail from one states/dtc read (`dtcData`, null when
+      // the read failed). That read is also what the clear gate keys off, so
+      // the record on screen and the button agree; with no record there is no
+      // clear to offer.
+      function paintCodeDetail(dtcData) {
+        var view = codeDetailView(
+          dtcRecordFor(dtcData, codeFromEntryId(detailEntry.id)), detailEntry
+        );
+        if (!view) return;
+        var painted = JSON.stringify(view);
+        if (painted !== detailPainted) {
+          detailPainted = painted;
+          renderDetailBody(view);
+        }
+        renderClearButton(view.unavailable ? null : dtcData);
+      }
+
+      // The tick's half of the open detail: the entry's latest words (kept as
+      // they were if the provider stopped listing it) and a fresh read.
+      function refreshCodeDetail(dtcData) {
+        if (!detailEntry || !detailEl || detailEl.hidden) return;
+        detailEntry = alertsEntryById(detailEntry.id) || detailEntry;
+        lastDtc = dtcData;
+        paintCodeDetail(dtcData);
       }
 
       // --- US-407 clear surface (browser only) -------------------------------
 
       // Reflect the (display-mirror) gate onto the Clear button. No button when
       // nothing is clearable; disabled + reason label otherwise; enabled only on
-      // `ok`. The server RE-CHECKS the gate on submit -- the button never forces.
-      function renderClearButton() {
+      // `ok` while parked. The server RE-CHECKS the gate on submit -- the button
+      // never forces. US-898-c: re-gated on every tick the detail is open, so
+      // the button follows the codes and engineParked under the operator.
+      function renderClearButton(dtcData) {
         if (!clearBtn) return;
-        if (clearResult) clearResult.textContent = "";
-        var view = clearButtonView(lastDtc);
+        var view = clearButtonView(dtcData, engineParked.parked);
         // US-491: the zone is now a bordered, LABELLED card, so it must go with
         // the button -- an empty "CLEAR CODES" box on a nothing-to-clear detail
         // is a new visual regression. The GATE is untouched: visibility still
         // comes from clearButtonView(), and the server re-checks on submit.
-        if (clearZone) clearZone.hidden = !view.visible;
+        // US-898-c: a clear's result line lives in the zone, so the zone stays
+        // while it has something to say (a cleared car has no codes left).
+        if (clearZone) {
+          clearZone.hidden = !view.visible && !(clearResult && clearResult.textContent);
+        }
         if (!view.visible) {
           clearBtn.hidden = true;
           return;
@@ -7525,8 +7628,8 @@
 
       // Paint warningsPageView into #alerts-card. Rows go in view.rows order --
       // the provider's -- and nothing here compares a tier. A CODE row is a
-      // real control (a button) that opens the code's detail from the states/dtc
-      // feed the tick still reads (US-898-c re-homes that read); an ENGINE row
+      // real control (a button) that opens the code's detail while parked
+      // (US-898-c, openDetail); an ENGINE row
       // and every sentence are plain text (US-758). `loading` is the US-700
       // bounded LOADING while the first states/alerts read is pending.
       function renderWarningsCard(card, view, loading) {
@@ -7582,9 +7685,12 @@
             row.appendChild(main);
             row.appendChild(warnSpan("span", "warn-age", r.age));
             if (r.control) {
+              // US-898-c: PARKED-ONLY (engineParked, the US-511 debounce, as
+              // on the glass right now); while not parked the tap does nothing.
               row.addEventListener("click", function () {
-                var codeObj = r.key ? findCode(r.key) : null;
-                if (codeObj) openDetail(codeObj);
+                if (engineParked.parked !== true) return;
+                var entry = alertsEntryById(r.id);
+                if (entry) openDetail(entry);
               });
             }
             list.appendChild(row);
@@ -7843,7 +7949,8 @@
         );
         // US-898-a: the warnings icon is on every page, so states/alerts is read
         // on EVERY tick, unconditionally -- not only while ALERTS is showing.
-        renderTopbarIcon(alertIconView(await stateOnce("alerts")));
+        lastAlerts = await stateOnce("alerts");
+        renderTopbarIcon(alertIconView(lastAlerts));
         // US-898-b1: the ALERTS card, from the SAME cached states/alerts the
         // icon just read, on this tick's one clock. LOADING only while that
         // feed has never answered (US-700), keyed by the feed's name.
@@ -7858,7 +7965,7 @@
         // US-898-b1 KEEPS this feed: the ALERTS card no longer carries
         // data-state="dtc", which was the only thing that read it, so the read
         // is explicit here -- dtcData also feeds brightnessAlarmActive and the
-        // code detail's findCode / clear gate. US-899-a2 removes it.
+        // code detail (refreshCodeDetail) and clear gate. US-899-a2 removes it.
         await stateOnce("dtc");
         updateDtcSurfaces(dtcData);
         // US-630: the derived gear. Read on THIS tick rather than the ~10 Hz
@@ -7880,6 +7987,10 @@
         // states/engine-history alone, and the status row from the same cached
         // obd-live, its codes tap gated on the debounced parked signal.
         engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);
+        // US-898-c: an open code detail re-reads states/dtc each tick (cached:
+        // the read above, until US-899-a2 retires it) and re-gates its clear
+        // against THIS tick's parked signal.
+        if (detailEntry) refreshCodeDetail(await stateOnce("dtc"));
         renderEngineScroll(
           engineCard,
           engineHistoryView(await stateOnce("engine-history")),

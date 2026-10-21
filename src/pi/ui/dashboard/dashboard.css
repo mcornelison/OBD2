@@ -1211,6 +1211,8 @@ html, body {
 .detail-directive[data-level="unknown"] { color: var(--amber-warn); }
 .detail-caveat { font-size: var(--fs-label); color: var(--amber-warn); }
 .detail-meta { font-size: var(--fs-label); color: var(--text-tertiary); letter-spacing: 0.03em; }
+/* US-898-c (Iris U4): the states/dtc read behind the detail failed. */
+.detail-unavailable { font-size: var(--fs-label); color: var(--text-secondary); }
 /* US-491 (AC2): the ONE section shell. Freeze-frame/context, suggested-fix and
    the Clear zone are all `.detail-card` -- three near-identical boxes drift the
    first time one of them is edited, and the drift is exactly what AC3's

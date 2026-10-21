@@ -109,6 +109,12 @@
 #               |              | the /alerts the REAL provider builds from the
 #               |              | same dtc payload, and the tap is .warn-row-code.
 #               |              | An na code is no entry, so it has no row.
+# 2026-10-20    | Ralph (Rex)  | US-898-c MOVED PIN: the row tap opens the detail
+#               |              | only while parked, so every render serves a
+#               |              | parked system-status on a virtual clock held
+#               |              | past the 8 s debounce; the detail's own dtc read
+#               |              | feeds lastDtc. F1 is FIXED (the open detail
+#               |              | re-gates every tick) and re-recorded as such.
 # ================================================================================
 ################################################################################
 
@@ -136,6 +142,7 @@ from pi.obdii.alerts_arbiter import AlertsArbiter, buildAlertsState  # noqa: E40
 from pi.splash import dtc_clear  # noqa: E402
 from pi.splash.dtc_emitter import buildDtcState  # noqa: E402
 from pi.splash.dtc_severity_table import loadP1xxxSeverityTable  # noqa: E402
+from tests.ui.test_carousel_kebab_always_visible import _parked  # noqa: E402
 
 _NODE = shutil.which("node")
 
@@ -246,8 +253,12 @@ _UNREAD = dict(available=False, reason="not read yet")
 
 # MOVED PIN (US-898-b1): the code rows are the ALERTS card's, built from
 # states/alerts; a CODE row's tap opens the detail from the states/dtc feed.
+# MOVED PIN (US-898-c): the tap opens it only while PARKED -- the US-511
+# debounce needs idle held >= 8 s, so the virtual clock is advanced first.
+_NOW_MS = 1_788_000_000_000
 _OPEN_DETAIL = [
     {"flush": 4},
+    {"advanceMs": 9000, "flush": 4},
     {"clickNth": {"selector": ".warn-row-code", "index": 0}},
     {"flush": 2},
 ]
@@ -268,7 +279,7 @@ def _alertsFor(dtcState: Any) -> dict[str, Any]:
 
 
 def _routes(dtcState: Any) -> dict[str, Any]:
-    return {"/dtc": dtcState, "/alerts": _alertsFor(dtcState)}
+    return {"/dtc": dtcState, "/alerts": _alertsFor(dtcState), "/system-status": _parked()}
 
 
 def _clearGateReason(dtcState: Any) -> str:
@@ -284,7 +295,9 @@ def _clearGateReason(dtcState: Any) -> str:
 
 def _clearSurface(dtcState: Any, steps: list[dict[str, Any]] | None = None) -> dict:
     """Render `dtcState` and report the clear affordance as the operator meets it."""
-    out = rh.runDashboard(routes=_routes(dtcState), steps=steps or [{"flush": 4}])
+    out = rh.runDashboard(
+        routes=_routes(dtcState), steps=steps or [{"flush": 4}], nowMs=_NOW_MS
+    )
     return _readClear(out)
 
 
@@ -323,6 +336,7 @@ def _openThenPublish(later: Any) -> dict:
     out = rh.runDashboard(
         routes=_routes(_state([_raw()])),
         steps=[*_OPEN_DETAIL, {"setRoutes": {"/dtc": later}}, {"flush": 20}],
+        nowMs=_NOW_MS,
     )
     return _readClear(out)
 
@@ -662,41 +676,50 @@ def test_performClear_ignoresATamperedClearGateFlagOnAnUnreadState():
 
 # ---------------------------------------------------------------------------
 # CHARACTERISATION -- F1: an open detail overlay never re-gates.
-# RECORDED, NOT FIXED. See the header and I-us636. Whoever calls
-# renderClearButton() from the poll will fail these ON PURPOSE.
+# MOVED PIN (US-898-c): FIXED. The open detail re-reads states/dtc on every
+# tick and re-gates its clear (it must, to lock the button when the engine
+# starts under it), so each of the five unsafe changes now reaches the button.
+# Re-recorded as the measured fact; the name is kept so the history of this
+# pin stays greppable.
 # ---------------------------------------------------------------------------
 
 
 @_needsNode
 @pytest.mark.parametrize(
-    ("laterName", "later"),
+    ("laterName", "later", "paints", "reason", "label"),
     [
-        ("source goes unread", _state([], available=False, reason="not read yet")),
-        ("the state file vanishes", None),
-        ("a STOP code appears", _state([_raw(), _raw("P0301")])),
-        ("the session lock engages", _state([_raw()], lock=["P0442"])),
-        ("the sync ack is withdrawn", _state([_raw(syncAcked=False)])),
+        ("source goes unread", _state([], available=False, reason="not read yet"),
+         False, None, ""),
+        ("the state file vanishes", None, False, None, ""),
+        ("a STOP code appears", _state([_raw(), _raw("P0301")]),
+         True, "severity_present", _LABEL_SEVERITY),
+        ("the session lock engages", _state([_raw()], lock=["P0442"]),
+         True, "session_locked", _LABEL_LOCKED),
+        ("the sync ack is withdrawn", _state([_raw(syncAcked=False)]),
+         True, "sync_pending", _LABEL_SYNC),
     ],
 )
-def test_characterisation_anOpenDetailOverlayNeverRegates(laterName: str, later: Any):
+def test_characterisation_anOpenDetailOverlayNeverRegates(
+    laterName: str, later: Any, paints: bool, reason: str | None, label: str
+):
     """
     Given: the operator has the detail open on a clearable code, and then <later>
     When: 20 further poll rounds elapse
-    Then: the button STILL reads "CLEAR CODES", enabled, data-reason `ok`.
+    Then: the button follows the gate: gone when nothing readable is left to
+          clear, else disabled with the reason and label of the new state.
 
-          All five changes move the gate in the UNSAFE direction and none of
-          them reaches the button, because `renderClearButton()` is wired to
-          `openDetail()` and to nothing else. Recorded as the measured fact, not
-          endorsed: the correct behaviour is to re-gate, and the fix story is
-          filed. The control below proves the gate itself is right and it is
-          only the refresh that is missing -- which is what makes this a
-          one-line-shaped fix rather than a gate rewrite.
+          MOVED PIN (US-898-c): before this story all five changes left the
+          button reading "CLEAR CODES", enabled, `ok` -- `renderClearButton()`
+          ran only from `openDetail()`. The tick now refreshes the open detail
+          from its own states/dtc read, which is also the read the gate keys
+          off, so none of the five can leave an enabled button behind.
     """
     got = _openThenPublish(later)
-    assert got["buttonPaints"] is True, (laterName, got)
-    assert got["disabled"] is False, (laterName, got)
-    assert got["reason"] == "ok", (laterName, got)
-    assert got["label"] == _LABEL_ENABLED, (laterName, got)
+    assert got["buttonPaints"] is paints, (laterName, got)
+    if paints:
+        assert got["disabled"] is True, (laterName, got)
+        assert got["reason"] == reason, (laterName, got)
+        assert got["label"] == label, (laterName, got)
 
 
 @_needsNode
@@ -708,8 +731,8 @@ def test_theGateItselfIsCorrectWhenTheOverlayOpensFresh_controlForF1():
     Then: the button is disabled with `severity_present`.
 
           The control that makes F1 diagnostic instead of vague: the gate reads
-          the STOP correctly every time it is ASKED. The defect is that after
-          `openDetail()` it is never asked again.
+          the STOP correctly every time it is ASKED. (US-898-c: it is now asked
+          on every tick the detail stays open, too.)
     """
     got = _clearSurface(_state([_raw(), _raw("P0301")]), _OPEN_DETAIL)
     assert got["disabled"] is True, got

@@ -19,6 +19,8 @@
 #               |              | severity_present.
 # 2026-10-19    | Ralph (Rex)  | US-754-b MOVED PIN: the live-table test now pins
 #               |              | P0443 minor and an untabled P0300 as unknown.
+# 2026-10-20    | Ralph (Rex)  | US-898-c MOVED PIN: the label table carries the
+#               |              | display-only `moving` lock; no label says moving.
 # ================================================================================
 ################################################################################
 
@@ -302,5 +304,11 @@ def test_everyDisabledGateReason_hasItsOwnDistinctPanelLabel():
     reasons = {
         getattr(dtc_clear, name) for name in dtc_clear.__all__ if name.startswith("GATE_")
     }
-    assert reasons - {dtc_clear.GATE_NO_CODES} == set(labels), (reasons, labels)
+    # MOVED PIN (US-898-c): plus the ONE display-only reason, `moving` -- the
+    # engineParked lock the panel adds over an otherwise-`ok` gate (the server
+    # has no parked input, so it has no GATE_ word for it).
+    assert (reasons - {dtc_clear.GATE_NO_CODES}) | {"moving"} == set(labels), (reasons, labels)
     assert len(set(labels.values())) == len(labels), labels
+    # Iris 2026-10-19: no clear-lock text says `moving` (the lock also holds an
+    # idling car and the 8 s hold, where the word would be false).
+    assert not [v for v in labels.values() if "moving" in v.lower()], labels

@@ -49,6 +49,9 @@
 # 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the Alerts-card listing case
 #               |              | reads #alerts-card over the states/alerts the real
 #               |              | provider builds from the incident payload.
+# 2026-10-20    | Ralph (Rex)  | US-898-c -- MOVED PIN: the banner tap resolves the
+#               |              | hero through its states/alerts code entry, so the
+#               |              | tap case also serves /alerts.
 # ================================================================================
 ################################################################################
 
@@ -787,8 +790,17 @@ def test_tappingTheBannerOpensTheHerosDetail():
           `findCode(null)` simply declines to open anything. So the failure mode
           this guards is a tap that quietly does nothing, which is the hardest
           kind to notice on a panel with no pointer.
+
+          MOVED PIN (US-898-c): the detail is opened on the hero's states/alerts
+          code ENTRY (the provider's words), so the run also serves the /alerts
+          the real provider builds from this payload.
     """
-    surface = _render(_INCIDENT, steps=[{"flush": 4}, {"click": "dtc-ribbon"}])
+    surface = rh.dashboardSurface(
+        rh.runDashboard(
+            routes={"/dtc": _INCIDENT, "/alerts": _alertsFor(_INCIDENT)},
+            steps=[{"flush": 4}, {"click": "dtc-ribbon"}, {"flush": 2}],
+        )["tree"]
+    )
     path = surface.pathById("dtc-detail")
     assert path is not None and surface.rendered(path), (
         "tapping the banner opened nothing -- the hero code did not survive "

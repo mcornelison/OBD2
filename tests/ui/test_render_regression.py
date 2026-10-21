@@ -42,6 +42,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-499 S6 render-regression backstop.
+# 2026-10-20    | Ralph (Rex)  | US-898-c -- MOVED PIN: "View detail" opens the
+#               |              | detail on the code's states/alerts entry, so the
+#               |              | swap case also serves the provider's /alerts.
 # ================================================================================
 ################################################################################
 
@@ -203,10 +206,22 @@ class TestOverlayRender:
         The S2 symptom was overlays STACKING. Navigating between two of them is
         where a stack would show up, so the count is the assertion, not just the
         identity.
+
+        MOVED PIN (US-898-c): the detail opens on the code's states/alerts
+        ENTRY, so the run serves the /alerts the real provider builds from the
+        same dtc payload, and flushes once more for the detail's own read.
         """
+        from test_carousel_dtc_clear_gate_unread import _alertsFor
+
+        routes = _newStopCodeRoutes()
+        # The provider lists stored/pending codes only, and every real dtc
+        # payload carries `status`; this hand-written one omits it.
+        codes = [{**c, "status": "stored"} for c in routes["/dtc"]["codes"]]
+        stored = {**routes["/dtc"], "codes": codes}
+        routes["/alerts"] = _alertsFor(stored)
         dom = rh.runDashboard(
-            routes=_newStopCodeRoutes(),
-            steps=[{"flush": 3}, {"click": "takeover-detail"}, {"flush": 1}],
+            routes=routes,
+            steps=[{"flush": 3}, {"click": "takeover-detail"}, {"flush": 2}],
         )
         surface = rh.dashboardSurface(dom["tree"])
         assert surface.renderedIds(_OVERLAY_IDS) == ["dtc-detail"]

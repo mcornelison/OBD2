@@ -31,6 +31,9 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
 #                               card at index 4.
 # 2026-10-20    | Ralph (Rex)  | US-898-a -- the bar carries the warnings icon.
+# 2026-10-20    | Ralph (Rex)  | US-898-c -- MOVED PIN: codeDetailView(record, entry)
+#               |              | bands the entry's sentence; clearButtonView takes
+#               |              | engineParked.parked (not parked -> 'moving').
 # 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the Alerts card is #alerts-card
 #                               on states/alerts (no data-state="dtc"); the US-406
 #                               card-view asserts re-point at warningsPageView.
@@ -1179,53 +1182,64 @@ assert.strictEqual(none.missing, true, 'null -> the card paints its own absence'
 assert.strictEqual(none.header.text, '--', 'absent -> --');
 assert.strictEqual(none.rows.length, 0, 'absent -> no rows');
 
+// --- MOVED PIN (US-898-c): the detail is (record, entry). The entry is the
+// provider's code entry; it supplies the chip and the band (its sentence). ---
+const SENTENCE = { stop: 'provider words stop', watch: 'provider words watch',
+                   minor: 'provider words minor', unrated: 'provider words unrated' };
+function detail(rec) {
+  const tier = ['stop', 'watch', 'minor'].indexOf(rec.severity) >= 0 ? rec.severity : 'unrated';
+  return c.codeDetailView(rec, { id: 'code:' + rec.code + ':' + tier, source: 'code',
+    key: rec.code, tier: tier, title: rec.code,
+    sentence: rec.severity === 'na' ? '' : SENTENCE[tier] });
+}
+
 // --- S-4 / F-1: 🔴/🟡 fix REPLACED by a diagnose directive, NO raw fix -------
-const stopFix = c.codeDetailView(code('stop', 'P0301', {suggestedFix: 'Replace coil pack'}));
+const stopFix = detail(code('stop', 'P0301', {suggestedFix: 'Replace coil pack'}));
 assert.strictEqual(stopFix.fix.mode, 'directive', 'stop fix = directive, not a raw fix');
 assert.ok(!/coil pack/i.test(stopFix.fix.text), 'stop NEVER shows the raw fix text (F-1)');
 assert.strictEqual(stopFix.fix.badge, null, 'no trust badge on a directive');
-assert.ok(/PULL OVER/i.test(stopFix.directive), 'stop detail carries the directive band');
-const watchFix = c.codeDetailView(code('watch', 'P0420', {suggestedFix: 'Replace catalytic converter'}));
+assert.strictEqual(stopFix.directive, SENTENCE.stop, 'the band is the entry sentence (Iris U4)');
+const watchFix = detail(code('watch', 'P0420', {suggestedFix: 'Replace catalytic converter'}));
 assert.strictEqual(watchFix.fix.mode, 'directive', 'watch fix = directive');
 assert.ok(!/catalytic/i.test(watchFix.fix.text), 'watch NEVER shows the raw fix (F-1)');
 
 // --- S-4: 🟢 shows the fix + a trust badge per fixProvenance -----------------
-const minVer = c.codeDetailView(code('minor', 'P0442',
+const minVer = detail(code('minor', 'P0442',
   {suggestedFix: 'Check/tighten fuel cap', fixProvenance: 'spool-validated'}));
 assert.strictEqual(minVer.fix.mode, 'fix', 'minor shows the fix');
 assert.ok(/fuel cap/i.test(minVer.fix.text), 'minor shows the actual fix text');
 assert.strictEqual(minVer.fix.badge.kind, 'verified', 'spool-validated -> verified badge');
-const minCom = c.codeDetailView(code('minor', 'P0455',
+const minCom = detail(code('minor', 'P0455',
   {suggestedFix: 'Inspect EVAP hoses', fixProvenance: 'auto-unverified'}));
 assert.strictEqual(minCom.fix.badge.kind, 'community', 'auto-unverified -> community badge');
-const minOff = c.codeDetailView(code('minor', 'P0440', {suggestedFix: null, fixProvenance: 'none'}));
+const minOff = detail(code('minor', 'P0440', {suggestedFix: null, fixProvenance: 'none'}));
 assert.strictEqual(minOff.fix.badge.kind, 'offline', 'none -> offline badge');
 assert.ok(!/null/i.test(minOff.fix.text), 'a missing fix is honest text, never "null"');
 
 // --- S-5: missing freeze-frame -> labeled fallback, never blank -------------
-const noFF = c.codeDetailView(code('minor', 'P0442', {freezeFrame: null}));
+const noFF = detail(code('minor', 'P0442', {freezeFrame: null}));
 assert.strictEqual(noFF.freezeFrame.hasFrame, false, 'no freeze frame');
 assert.ok(/no freeze frame captured/i.test(noFF.freezeFrame.fallbackText), 'labeled fallback');
 assert.ok(noFF.freezeFrame.fallbackText.length > 0, 'never blank');
-const withFF = c.codeDetailView(code('stop', 'P0301', {freezeFrame: {rpm: 4250, loadPct: 92}}));
+const withFF = detail(code('stop', 'P0301', {freezeFrame: {rpm: 4250, loadPct: 92}}));
 assert.strictEqual(withFF.freezeFrame.hasFrame, true, 'freeze frame present');
 assert.strictEqual(withFF.freezeFrame.grid.rpm, 4250, 'grid carries the snapshot');
 
 // --- S-13: severityCaveat -> base chip, tier NOT auto-upgraded --------------
-const caveat = c.codeDetailView(code('watch', 'P1300', {severityCaveat: 'stop if knock -- verify'}));
+const caveat = detail(code('watch', 'P1300', {severityCaveat: 'stop if knock -- verify'}));
 assert.strictEqual(caveat.level, 'watch', 'base tier stays WATCH (NOT auto-upgraded)');
 assert.strictEqual(caveat.chip, 'WATCH', 'base chip = WATCH');
 assert.ok(/knock/i.test(caveat.caveat), 'the caveat line is rendered');
 
 // --- driveId: null -> "key-on read"; a number -> "Drive N" (US-404 A-9) -----
-const koeo = c.codeDetailView(code('minor', 'P0443', {driveId: null}));
+const koeo = detail(code('minor', 'P0443', {driveId: null}));
 assert.ok(/key-on read/i.test(koeo.statusMeta), 'null driveId -> key-on read');
 assert.ok(!/Drive/i.test(koeo.statusMeta), 'never fabricates a Drive N for a KOEO read');
-const drv = c.codeDetailView(code('minor', 'P0443', {driveId: 27}));
+const drv = detail(code('minor', 'P0443', {driveId: 27}));
 assert.ok(/Drive 27/.test(drv.statusMeta), 'numeric driveId -> Drive N');
 
 // --- na detail is a quiet N/A (no directive, no fix) ------------------------
-const naDetail = c.codeDetailView(code('na', 'P1750', {short: 'A/T solenoid'}));
+const naDetail = detail(code('na', 'P1750', {short: 'A/T solenoid'}));
 assert.strictEqual(naDetail.isNa, true, 'na flagged');
 assert.strictEqual(naDetail.fix.mode, 'na', 'na fix disposition');
 assert.strictEqual(naDetail.directive, null, 'na has no directive band');
@@ -1233,9 +1247,10 @@ assert.strictEqual(naDetail.directive, null, 'na has no directive band');
 // --- malformed detail -------------------------------------------------------
 assert.strictEqual(c.codeDetailView(null), null, 'null -> no detail');
 assert.strictEqual(c.codeDetailView('x'), null, 'string -> no detail');
+assert.strictEqual(c.codeDetailView(null, null), null, 'no entry -> no detail');
 
 // --- log/sync footer surfaces the capture-before-clear precondition ---------
-const footer = c.codeDetailView(code('minor', 'P0442', {logged: true, syncAcked: true}));
+const footer = detail(code('minor', 'P0442', {logged: true, syncAcked: true}));
 assert.strictEqual(footer.logged, true, 'logged surfaced');
 assert.strictEqual(footer.syncAcked, true, 'syncAcked surfaced');
 
@@ -1316,25 +1331,30 @@ function dtc(codes, lock) {
 }
 
 // --- S-6 ok: all MINOR + logged + synced -> enabled -------------------------
-const ok = c.clearButtonView(dtc([code('minor', 'P0443')]));
+// MOVED PIN (US-898-c): the second input is engineParked.parked.
+const ok = c.clearButtonView(dtc([code('minor', 'P0443')]), true);
 assert.strictEqual(ok.visible, true, 'clearable -> button visible');
 assert.strictEqual(ok.enabled, true, 'S-6 ok -> enabled');
 assert.strictEqual(ok.reason, 'ok');
+const mv = c.clearButtonView(dtc([code('minor', 'P0443')]), false);
+assert.strictEqual(mv.enabled, false, 'not parked -> disabled');
+assert.strictEqual(mv.reason, 'moving');
+assert.ok(/engine off to clear/.test(mv.label) && !/moving/i.test(mv.label), 'lock label');
 
 // --- S-6/S-10 display mirror: a STOP present -> disabled, IGNORES clearGate --
-const sev = c.clearButtonView(dtc([code('minor', 'P0443'), code('stop', 'P0301')]));
+const sev = c.clearButtonView(dtc([code('minor', 'P0443'), code('stop', 'P0301')]), true);
 assert.strictEqual(sev.enabled, false, 'stop present -> disabled (re-derived, not trusting clearGate.enabled)');
 assert.strictEqual(sev.reason, 'severity_present');
 assert.ok(/STOP\/WATCH/i.test(sev.label), 'label names the STOP/WATCH block');
 
 // --- S-6 sync_pending: MINOR not server-acked -> disabled -------------------
-const syn = c.clearButtonView(dtc([code('minor', 'P0443', {syncAcked: false})]));
+const syn = c.clearButtonView(dtc([code('minor', 'P0443', {syncAcked: false})]), true);
 assert.strictEqual(syn.enabled, false);
 assert.strictEqual(syn.reason, 'sync_pending');
 assert.ok(/server sync/i.test(syn.label), 'label = waiting for server sync');
 
 // --- S-8 session-locked -> disabled, "don't chase the light" ----------------
-const lk = c.clearButtonView(dtc([code('minor', 'P0443')], ['P0443']));
+const lk = c.clearButtonView(dtc([code('minor', 'P0443')], ['P0443']), true);
 assert.strictEqual(lk.enabled, false);
 assert.strictEqual(lk.reason, 'session_locked');
 assert.ok(/returned|won't fix/i.test(lk.label), 'session-lock label');
