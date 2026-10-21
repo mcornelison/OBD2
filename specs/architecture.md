@@ -6047,8 +6047,9 @@ the one provider of the warnings page: the page renders it and derives nothing (
   never a file read-back, so the alert and the Driving tile cannot disagree.
 - An `AlertsArbiter` held by the orchestrator keeps this boot's episodes in memory. It is
   handed the FULL resolved config (`pi.bands.*`, `pi.warnings.*`).
-  `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId, codeSource)` is pure
-  over them;
+  `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId, codeSource,
+  acknowledgedIds=())` is pure over them (`acknowledgedIds` is US-897-c's; empty leaves
+  the output unchanged);
   `makeAlertsEmitter(statesDir)` writes `<statesDir>/alerts` atomically and never raises.
 - Built in its own try/except (`_initializeAlertsProducer`); when
   `pi.dashboard.stateEmitEnabled` is false it is not built and writes no file.
@@ -6072,7 +6073,9 @@ codeAlert, entries}`.
   `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
   newest `firstSeenTs`.
   - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
-    new id. `acknowledged` is always false until the ack store (S108).
+    new id. `acknowledged` is true when this boot's ack store matches the entry's
+    episode (US-897-c, below). An acknowledged entry that is no longer active is not
+    listed (Q15: acking removes it).
 - **`icon`** `{state, count, pulse}`: `count` = active entries. `state` is `stop` when any
   active stop; `watch` when any active watch, minor or unrated (G7: never grey); else
   `not_checked` while `sources.code.assessed` is false; else `none`. An active stop/watch
@@ -6084,7 +6087,8 @@ codeAlert, entries}`.
   so a code never takes over.
 - **`codeAlert`** (US-897-b5, Atlas Q32) = `{ids: [the active code entry ids, in entries
   order], tier: the tier of the first of them, dismissable: true}` while any code entry is
-  active, else null. The provider computes `tier`; the page decides moving/parked.
+  active, else null; null too once every one of its ids is acknowledged (US-897-c). The
+  provider computes `tier`; the page decides moving/parked.
 
 **Tiers** come from config, never a literal: `pi.warnings.engine.<PID>.redTier`
 (validator DEFAULTS only; `COOLANT_TEMP` = `stop`, `BATTERY_V` = `watch`, Spool 2026-10-14).
@@ -6105,8 +6109,9 @@ legacy AlertManager owns that section (config.json).
   -- or obd-live published nothing -- an active STOP stays active with `value: null`,
   `stale: true`, `last: {value, band, ts}` of the last red reading.
 - **Cleared** (band left red): the entry stays listed `active: false` (`value: null`,
-  `last` = the last red reading) for the rest of the boot. It never drops by time (Q15). A
-  new red episode re-activates the same id with a new `firstSeenTs`.
+  `last` = the last red reading) until it is acknowledged, bounded by the boot. It never
+  drops by time (Q15). A new red episode re-activates the same id with a new
+  `firstSeenTs`, so it is unacknowledged.
 
 **The battery WATCH** (US-897-b3; Spool 2026-10-14, Atlas Q12), id `engine:BATTERY_V:watch`
 (tier `pi.warnings.engine.BATTERY_V.redTier`, default `watch`):
@@ -6183,6 +6188,35 @@ orchestrator restart inside the boot therefore keeps a cleared STOP listed.
   INSERT-only). Its later clear row carries the highest reading this process saw, which
   starts from the seeded last value.
 - Prior-boot episodes are not re-listed from `alert_log` (Atlas Q15 design 4).
+
+**Acknowledgements -- the boot-scoped ack store** (US-897-c; Atlas s3, Q20-Q27, G1, G2):
+- **Store**: `src/pi/obdii/alerts_ack_store.py`, a Pi-local state file at
+  `pi.warnings.ackStorePath` (validator default `/var/lib/eclipse-obd/alerts-ack.json`,
+  the US-667 dir; operator state, never synced). The ORCHESTRATOR is its only writer, via
+  power_watch `outcome.writeAtomicJson(path, payload, what='alerts-ack')` (fdatasync; its
+  `powerwatch ...` failure-log prefix is accepted). It never creates the directory.
+- **Records** `{id: {bootId, firstSeenTs, ackedAt}}` (`ackedAt` canonical ISO UTC). An
+  ack is keyed to the EPISODE (G1): it counts only when its `bootId` is the current boot
+  AND its `firstSeenTs` is the entry's current one, so a recurrence under the same id is
+  unacknowledged by construction and the next key-on re-alerts every code.
+- **Boot id**: the host's `_alertsBootId` (read once at wiring; never a second
+  `readBootId`). `unknown` records nothing and counts nothing -- the store is not even
+  read.
+- **Honest reads**: a missing, empty or torn file reads as no acks with one WARN
+  (re-alert is the honest direction). Read once, lazily; then held in memory.
+- **Every emit** (the card tick and `emitNow`) hands the store's matching id set to the
+  emitter, then prunes. The file is rewritten only when the record set changes.
+- **Prune only what can never match again**: a prior boot's records (also dropped by the
+  first write of a new boot), and an id the arbiter no longer lists at all. An acked
+  cleared STOP is removed from `entries` but the arbiter still lists it, so its record
+  stays until the boot ends and it never re-lists unacked. Code records are not pruned
+  while `sources.code.assessed` is false (unknown is not cleared); engine records not
+  while `sources.engine.assessed` is false.
+- **`emitNow()`** (`CardStateEmitterMixin`) is a PURE rebuild (G2): the arbiter's
+  episodes plus the obdLive / nowUtc / dataSource the last alerts tick cached, with the
+  current ack set. It never calls `observe` / `observeDtc` / `observeRpmReading`: no
+  episode transition, no hold-timer step, no `alert_log` row. Run-loop thread; no lock.
+- The icon pulse ignores acknowledged entries; an acked live STOP keeps its takeover.
 
 #### `states/engine-history` -- this drive's worst-band buckets (US-889-a)
 
@@ -6458,12 +6492,14 @@ outside closed loop (`FuelSnapshot.openLoopS`). `resetSinceReset(resetAtTs)` zer
 row, the cached `sinceReset` and the watermark together (the US-881-d entry point). No
 database handle -> `sinceReset` null and one WARN.
 
-**`POST /fuel-reset` (US-881-d, Atlas gap 4).** `eclipse-states-http` has exactly FOUR
+**`POST /fuel-reset` (US-881-d, Atlas gap 4).** `eclipse-states-http` has exactly FIVE
 explicit, token-gated (`_tokenOk`) write routes: `/service-control`, `/dtc-clear`,
-`/settings` and `/fuel-reset`; any other POST path (e.g. `/fuel-resetx`) is 404, never a
-catch-all. The HTTP process holds no database, so the route calls the injected
-`fuelResetRunner` -- `src/pi/splash/fuel_reset_channel.py`, the `dtc_clear_channel`
-pattern in its own module (the DTC channel is untouched): it writes
+`/settings`, `/fuel-reset` and `/alerts-ack` (US-897-c, below); any other POST path (e.g.
+`/fuel-resetx`) is 404, never a catch-all. The HTTP process holds no database, so the
+route calls the injected `fuelResetRunner` -- `src/pi/splash/fuel_reset_channel.py`, a
+thin wrapper (own filenames, exceptions, messages) over the ONE request/outcome helper
+`src/pi/splash/request_channel.py` that `dtc_clear_channel` also rides (US-897-c0,
+Atlas Q19: one poll loop, never a copy per route): it writes
 `fuel-reset-request.json {requestId}` into the states dir and waits up to
 `pi.fuel.resetTimeoutSec` (validator default 5, finite > 0; resolved at start by
 `loadFuelResetTimeoutSec`; short because the server is single-threaded and the wait
@@ -6478,6 +6514,33 @@ otherwise it calls `resetSinceReset(resetAtTs = now, canonical UTC)` (never
 or the request cannot be written), 409 refused (`reason` in the body), 504 no outcome in
 time (`ok: null`; the request is withdrawn), 200 `{ok: true, resetAtTs}`. The next
 `states/fuel-economy` then carries `sinceReset` totals 0 and that `resetAtTs`.
+
+**`POST /alerts-ack` (US-897-c; Atlas s3, Q20-Q27).** Acknowledges `states/alerts`
+entries for THIS boot (the store is under `states/alerts` above). Body `{ids: [string,
+...]}` and nothing else (Q26: 1..N, each a non-empty string, bounded by
+`_MAX_ACTION_BODY`). The injected `alertsAckRunner` (appended LAST to
+`makeStatesHandler`, `StatesHttpServer.__init__` and the `main()` wiring) is
+`src/pi/splash/alerts_ack_channel.py` on the `request_channel` helper:
+`alerts-ack-request.json {requestId, ids, requestedAtEpoch}` /
+`alerts-ack-outcome.json {requestId, ok, error, ids}`, waiting up to
+`pi.warnings.ackTimeoutSec` (validator default 5, finite > 0; `loadAlertsAckTimeoutSec`;
+short because the server is single-threaded, Q22). The HTTP process only publishes into
+the tmpfs states dir; it never touches `/var/lib/eclipse-obd`.
+- eclipse-obd services it in `_maybeServiceAlertsAckRequest`, right after
+  `_maybeServiceFuelResetRequest` and before `_maybeEmitCardStates`: it consumes the
+  request FIRST, then checks every id ALL OR NOTHING -- an id the arbiter does not list
+  -> `unknown_id`; all listed but the boot id `unknown`, or no arbiter / emitter / store
+  (card emitters disabled, or the alerts init failed) -> `not_ackable`; `ids` = the bad
+  ones and nothing is recorded. Otherwise it records every id in ONE store write
+  (`store_write_failed` when it does not land, e.g. `/var/lib/eclipse-obd` missing --
+  logged, never mkdir), calls `emitNow()` so `states/alerts` shows `acknowledged: true`
+  and `icon.pulse` false at once, and only then publishes `{ok: true}`. A re-ack of an
+  acked episode is ok (idempotent; no rewrite).
+- Status mapping (the `/fuel-reset` template): 401 bad token (checked first; no file
+  written), 503 no runner, 400 malformed body (before any file is written), 503 the
+  request cannot be published, 504 no outcome in time (`ok: null`; withdrawn), 409
+  `{ok: false, error: 'unknown_id' | 'not_ackable', ids}`, 503 `{ok: false, error:
+  'store_write_failed'}`, 200 `{ok: true}`.
 
 #### `window.DISPLAY_STALE` -- the page's stale windows, injected per request (US-882-c)
 

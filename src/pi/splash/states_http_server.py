@@ -35,15 +35,19 @@
 # 2026-10-18    | Rex (US-890-f) | DISPLAY_STALE gains fuelResetConfirmSec
 #               |              | (pi.display.stale.fuelResetConfirmSec), same
 #               |              | validation + default fallback as imuSec.
+# 2026-10-20    | Rex (US-897-c) | FIFTH token-gated POST route /alerts-ack {ids}
+#               |              | -- asks eclipse-obd to acknowledge alerts for
+#               |              | this boot over alerts_ack_channel; 400 before
+#               |              | any file, 409 all-or-nothing.
 # ================================================================================
 ################################################################################
 
-"""Localhost-only, token-gated state server (read-only GET + four write routes).
+"""Localhost-only, token-gated state server (read-only GET + five write routes).
 
 GET is read-only (states + same-origin assets). Writes are an explicit, closed
 set of POST routes -- US-403 ``/service-control``, US-407 ``/dtc-clear``,
-US-531 ``/settings`` and US-881-d ``/fuel-reset`` -- each token-gated by the
-same ``_tokenOk``, each a thin
+US-531 ``/settings``, US-881-d ``/fuel-reset`` and US-897-c ``/alerts-ack`` --
+each token-gated by the same ``_tokenOk``, each a thin
 transport that delegates its gate to a SSOT module rather than carrying its own
 copy of an allow-list. For ``/service-control`` that SSOT is ``service_control``
 (the real privilege is the 51- polkit rule; the kiosk never runs as root); for
@@ -65,7 +69,13 @@ from urllib.parse import unquote, urlsplit
 
 from common.config import overlay
 from common.config.validator import DEFAULTS
-from pi.splash import dtc_clear, dtc_clear_channel, fuel_reset_channel, service_control
+from pi.splash import (
+    alerts_ack_channel,
+    dtc_clear,
+    dtc_clear_channel,
+    fuel_reset_channel,
+    service_control,
+)
 
 # Placeholder substituted with the live token when the kiosk HTML is served.
 _TOKEN_PLACEHOLDER = "__SPLASH_TOKEN__"
@@ -168,6 +178,19 @@ _FUEL_RESET_PATH = "/fuel-reset"
 # The outcome wait budget (validator default; config.json may override).
 _FUEL_RESET_TIMEOUT_KEY = "pi.fuel.resetTimeoutSec"
 
+# US-897-c [F-127]: acknowledge states/alerts entries for this boot. This process
+# holds neither the arbiter nor the ack store; the injected runner asks
+# eclipse-obd (their one writer) over alerts_ack_channel. Body {ids: [...]} ONLY,
+# all or nothing (Atlas Q26).
+_ALERTS_ACK_PATH = "/alerts-ack"
+
+# Its outcome wait budget (validator default 5; short, the server is
+# single-threaded and the wait blocks every GET -- Atlas Q22).
+_ALERTS_ACK_TIMEOUT_KEY = "pi.warnings.ackTimeoutSec"
+
+# /alerts-ack refusals answered 409 (nothing written); any other failure is 503.
+_ALERTS_ACK_REFUSALS = frozenset({"unknown_id", "not_ackable"})
+
 # The `dtc` state file the clear gate re-check reads (matches dtc_emitter).
 _DTC_STATE_FILENAME = "dtc"
 
@@ -217,6 +240,7 @@ def makeStatesHandler(
     deployVersionPath: str | None = None,
     configPath: str | None = None,
     fuelResetRunner: Callable[[], dict[str, Any]] | None = None,
+    alertsAckRunner: Callable[[list[str]], dict[str, Any]] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to one states dir + token + assets.
 
@@ -255,6 +279,10 @@ def makeStatesHandler(
     ``fuelResetRunner`` (US-881-d) is the ``fuel_reset_channel`` bridge runner
     that asks eclipse-obd to zero the since-reset fuel totals. ``None`` -> POST
     /fuel-reset returns an honest 503 (no states channel to ask over).
+
+    ``alertsAckRunner`` (US-897-c) is the ``alerts_ack_channel`` bridge runner,
+    called with the request's ids, that asks eclipse-obd to acknowledge them.
+    ``None`` -> POST /alerts-ack returns an honest 503.
     """
     assetsDirs = _normalizeAssetsDirs(assetsDir)
     # Serialize once: the JSON object literal substituted for the quoted
@@ -342,10 +370,10 @@ def makeStatesHandler(
                 length = 0
             rawBody = self.rfile.read(length) if 0 < length <= _MAX_ACTION_BODY else b""
 
-            # Exactly four write routes (US-403 service-control, US-407
-            # dtc-clear, US-531 settings, US-881-d fuel-reset). Everything else
-            # is 404 -- the server is otherwise read-only and must not grow a
-            # catch-all writer.
+            # Exactly five write routes (US-403 service-control, US-407
+            # dtc-clear, US-531 settings, US-881-d fuel-reset, US-897-c
+            # alerts-ack). Everything else is 404 -- the server is otherwise
+            # read-only and must not grow a catch-all writer.
             rawPath = unquote(urlsplit(self.path).path)
             if rawPath == _ACTION_PATH:
                 self._handleServiceControl(rawBody)
@@ -358,6 +386,9 @@ def makeStatesHandler(
                 return
             if rawPath == _FUEL_RESET_PATH:
                 self._handleFuelReset()
+                return
+            if rawPath == _ALERTS_ACK_PATH:
+                self._handleAlertsAck(rawBody)
                 return
             self._send(404, b'{"error":"not found"}', "application/json")
 
@@ -517,6 +548,58 @@ def makeStatesHandler(
             body = {"ok": True, "resetAtTs": outcome.get("resetAtTs")}
             self._send(200, json.dumps(body).encode("utf-8"), "application/json")
 
+        def _handleAlertsAck(self, rawBody: bytes) -> None:
+            # US-897-c: /fuel-reset's status mapping. The token is checked
+            # FIRST, and the body before the runner, so neither a bad token nor
+            # a malformed body ever writes a request file.
+            if not self._tokenOk():
+                self._send(401, b'{"error":"unauthorized"}', "application/json")
+                return
+            if alertsAckRunner is None:
+                self._send(
+                    503,
+                    b'{"ok":false,"error":"no states channel on this server"}',
+                    "application/json",
+                )
+                return
+            ids = _parseAlertsAckIds(rawBody)
+            if ids is None:
+                self._send(400, b'{"ok":false,"error":"bad request"}', "application/json")
+                return
+            try:
+                outcome = alertsAckRunner(ids)
+            except alerts_ack_channel.AckBridgeTimeout as exc:
+                # 504: we do not know whether eclipse-obd recorded it; the next
+                # states/alerts is what settles it.
+                self._send(
+                    504,
+                    json.dumps({"ok": None, "error": str(exc)}).encode("utf-8"),
+                    "application/json",
+                )
+                return
+            except alerts_ack_channel.AckBridgeError as exc:
+                self._send(
+                    503,
+                    json.dumps({"ok": False, "error": str(exc)}).encode("utf-8"),
+                    "application/json",
+                )
+                return
+            if outcome.get("ok"):
+                self._send(200, b'{"ok":true}', "application/json")
+                return
+            error = outcome.get("error")
+            if error in _ALERTS_ACK_REFUSALS:
+                # 409: all or nothing -- the bad ids are named, nothing written.
+                body = {"ok": False, "error": error, "ids": outcome.get("ids") or []}
+                self._send(409, json.dumps(body).encode("utf-8"), "application/json")
+                return
+            # store_write_failed (or an unexpected failure): unavailable, said so.
+            self._send(
+                503,
+                json.dumps({"ok": False, "error": error}).encode("utf-8"),
+                "application/json",
+            )
+
         def _handleSettingsWrite(self, rawBody: bytes) -> None:
             # US-531: persist ONE operator setting into the US-530 Pi-local
             # overlay. The kiosk cannot write files, so this process does it.
@@ -672,6 +755,7 @@ class StatesHttpServer:
         deployVersionPath: str | None = None,
         configPath: str | None = None,
         fuelResetRunner: Callable[[], dict[str, Any]] | None = None,
+        alertsAckRunner: Callable[[list[str]], dict[str, Any]] | None = None,
     ) -> None:
         self.host = host
         self.statesDir = statesDir
@@ -685,6 +769,7 @@ class StatesHttpServer:
             deployVersionPath,
             configPath,
             fuelResetRunner,
+            alertsAckRunner,
         )
         # Bind eagerly so a port conflict fails loudly at construction (the unit
         # then exits non-zero -> the kiosk's fetch errors -> splash DEGRADED;
@@ -785,7 +870,8 @@ def loadDisplayStaleConfig(configPath: str | None) -> dict[str, float]:
 
 
 def _effectiveStaleSec(configPath: str | None, key: str) -> float:
-    """One stale window: the effective value if a finite number > 0, else the default."""
+    """One seconds key (a stale window, the ack wait): the effective value if a
+    finite number > 0, else the validator default."""
     if configPath is not None:
         found, value = overlay.readEffectiveValue(configPath, key)
         if (
@@ -824,6 +910,44 @@ def loadFuelResetTimeoutSec(configPath: str | None) -> float:
         ):
             timeoutSec = value
     return float(timeoutSec)
+
+
+def loadAlertsAckTimeoutSec(configPath: str | None) -> float:
+    """Resolve ``pi.warnings.ackTimeoutSec``, the POST /alerts-ack wait (US-897-c).
+
+    The same rule as :func:`loadFuelResetTimeoutSec`: the effective config.json
+    value when it is a finite number > 0, else the validator default.
+
+    Args:
+        configPath: Path to config.json, or ``None`` when none is wired.
+
+    Returns:
+        Seconds to wait for eclipse-obd's outcome.
+    """
+    return float(_effectiveStaleSec(configPath, _ALERTS_ACK_TIMEOUT_KEY))
+
+
+def _parseAlertsAckIds(rawBody: bytes) -> list[str] | None:
+    """The ids of a POST /alerts-ack body, or None when it is malformed.
+
+    The body is ``{"ids": [...]}`` and nothing else (Atlas Q26): 1..N ids, each
+    a non-empty string. An empty body (absent, or over ``_MAX_ACTION_BODY`` and
+    so never read) is malformed.
+    """
+    try:
+        payload = json.loads(rawBody.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict) or set(payload) != {"ids"}:
+        return None
+    ids = payload["ids"]
+    if (
+        not isinstance(ids, list)
+        or not ids
+        or not all(isinstance(i, str) and i for i in ids)
+    ):
+        return None
+    return list(ids)
 
 
 def loadEffectiveSettings(configPath: str | None) -> dict[str, Any] | None:
@@ -961,6 +1085,12 @@ def main(argv: list[str] | None = None) -> int:
         fuelResetRunner=fuel_reset_channel.makeBridgeResetRunner(
             args.states_dir,
             timeoutSeconds=loadFuelResetTimeoutSec(args.config),
+        ),
+        # US-897-c: the ack store and states/alerts have one writer,
+        # eclipse-obd, so the ack crosses the same boundary.
+        alertsAckRunner=alerts_ack_channel.makeBridgeAckRunner(
+            args.states_dir,
+            timeoutSeconds=loadAlertsAckTimeoutSec(args.config),
         ),
     )
     server.serveForever()

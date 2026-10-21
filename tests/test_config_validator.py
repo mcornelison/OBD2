@@ -37,6 +37,8 @@
 # 2026-10-18    | Rex (US-890-f) | pi.display.stale.fuelResetConfirmSec default 6 +
 #                                positivity.
 # 2026-10-18    | Rex (US-896-a) | pi.display.stale.imuSec default pin 2.0 -> 3.0.
+# 2026-10-20    | Rex (US-897-c) | pi.warnings.ackTimeoutSec 5 + finite > 0;
+#                                pi.warnings.ackStorePath default + non-empty.
 # ================================================================================
 ################################################################################
 
@@ -1247,6 +1249,59 @@ def test_warnings_rpm_rejectsAStopTier():
     bad["pi"] = {"warnings": {"engine": {"RPM": {"redTier": "stop"}}}}
     with pytest.raises(ConfigValidationError, match="pi.warnings.engine.RPM"):
         ConfigValidator().validate(bad)
+
+
+def test_warnings_ack_defaults_5sWait_storeUnderVarLib():
+    """US-897-c (Atlas Q22 + s3): the POST /alerts-ack wait and the ack store."""
+    from common.config.validator import DEFAULTS
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["warnings"]["ackTimeoutSec"] == 5
+    assert cfg["pi"]["warnings"]["ackStorePath"] == "/var/lib/eclipse-obd/alerts-ack.json"
+    assert DEFAULTS["pi.warnings.ackTimeoutSec"] == 5
+    assert DEFAULTS["pi.warnings.ackStorePath"] == "/var/lib/eclipse-obd/alerts-ack.json"
+
+
+def test_warnings_ack_defaultsCiteAtlas():
+    import inspect
+
+    import common.config.validator as validatorModule
+
+    lines = inspect.getsource(validatorModule).splitlines()
+    for key, source in (
+        ("pi.warnings.ackTimeoutSec", "Atlas Q22"),
+        ("pi.warnings.ackStorePath", "Atlas s3"),
+    ):
+        line = next(text for text in lines if f"'{key}':" in text)
+        assert source in line
+
+
+@pytest.mark.parametrize("badValue", [0, -1, "5", True, float("nan"), float("inf")])
+def test_warnings_ackTimeoutSec_rejectsAnythingButAFiniteNumberAboveZero(badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"ackTimeoutSec": badValue}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.ackTimeoutSec"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_ackTimeoutSec_acceptsAPositiveNumber():
+    ok = _baseCfg()
+    ok["pi"] = {"warnings": {"ackTimeoutSec": 2.5}}
+    assert ConfigValidator().validate(ok)["pi"]["warnings"]["ackTimeoutSec"] == 2.5
+
+
+@pytest.mark.parametrize("badValue", ["", "   ", 7, True, ["/a"]])
+def test_warnings_ackStorePath_rejectsAnythingButANonEmptyString(badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"ackStorePath": badValue}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.ackStorePath"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_ack_absentKeys_areSkipped_underACustomDefaultsSet():
+    """Codebase pattern: a custom defaults set may not supply the new keys."""
+    cfg = ConfigValidator(defaults={"pi.unrelated": 1}).validate(_baseCfg())
+    assert "warnings" not in cfg["pi"]
 
 
 def test_replay_active_defaultsToFalse_andAnExplicitTrueIsKept():

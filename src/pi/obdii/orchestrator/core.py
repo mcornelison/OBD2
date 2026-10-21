@@ -73,6 +73,9 @@
 #               |              | states/dtc through the router's _emitDtcState.
 # 2026-10-19    | Rex (US-897-a2) | Holds _dtcCheckedAtTs / _dtcPendingCheckedAtTs;
 #               |              | a null post-clear Mode 03 frame publishes nothing.
+# 2026-10-20    | Rex (US-897-c) | _maybeServiceAlertsAckRequest after the fuel
+#               |              | reset hook: services POST /alerts-ack, all or
+#               |              | nothing, one store write, then emitNow.
 # ================================================================================
 ################################################################################
 
@@ -892,6 +895,10 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                     # US-881-d: service a pending POST /fuel-reset the same way
                     # -- this process owns fuel_since_reset. Same fast-path.
                     self._maybeServiceFuelResetRequest()
+                    # US-897-c: service a pending POST /alerts-ack -- this
+                    # process alone writes the ack store and states/alerts.
+                    # BEFORE the card emit, so the ack lands on this pass.
+                    self._maybeServiceAlertsAckRequest()
 
                     # US-226: interval-based Pi->server sync trigger.
                     # Cheap to call every loop pass -- the method is its
@@ -1140,6 +1147,82 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         except OSError as exc:
             logger.error(
                 "US-881-d fuel reset outcome could not be published for %s: %s",
+                requestId, exc,
+            )
+        return True
+
+    def _maybeServiceAlertsAckRequest(self) -> bool:
+        """Service a pending POST /alerts-ack request (US-897-c, Atlas s3 + Q26).
+
+        Called once per :meth:`runLoop` pass right after
+        :meth:`_maybeServiceFuelResetRequest` and before the card emit. The HTTP
+        process holds neither the arbiter nor the ack store, so it asks here.
+
+        All or nothing: every id must be one the arbiter lists this boot (else
+        ``unknown_id`` naming the bad ones), the boot id must be known and an
+        arbiter, emitter and store must exist (else ``not_ackable``). Then every
+        id is recorded in ONE store write (``store_write_failed`` when it does
+        not land) and :meth:`emitNow` republishes states/alerts at once, BEFORE
+        the outcome, so a 200 is only ever seen once the page can show it. A
+        re-ack of an acked episode is ok (idempotent). Every outcome is
+        published, refusals included, and the request is always consumed first.
+
+        Returns:
+            True when a request was found and answered (either way), else False.
+        """
+        from common.time.helper import toCanonicalIso
+        from pi.obdii.alerts_ack_store import ERROR_STORE_WRITE_FAILED, checkAckRequest
+        from pi.splash import alerts_ack_channel
+
+        statesDir = (
+            (self._config.get("pi", {}) or {}).get("splash", {}) or {}
+        ).get("statesDir", "/run/eclipse-obd/states")
+
+        request = alerts_ack_channel.readRequest(statesDir)
+        if request is None:
+            return False
+        requestId = str(request.get("requestId") or "")
+        # Consume FIRST: a request must never survive to be serviced twice.
+        alerts_ack_channel.consumeRequest(statesDir)
+
+        ids = request.get("ids")
+        ok = False
+        error: str | None
+        badIds: list[Any] = []
+        try:
+            arbiter = self._alertsArbiter
+            store = self._alertsAckStore
+            bootId = self._alertsBootId
+            episodes = arbiter.episodes() if arbiter is not None else []
+            error, badIds = checkAckRequest(
+                ids, episodes, bootId=bootId,
+                ackable=arbiter is not None
+                and self._alertsEmitter is not None
+                and store is not None,
+            )
+            if error is None:
+                wanted = set(ids)
+                recorded = store.acknowledge(
+                    {e.id: e.firstSeenTs for e in episodes if e.id in wanted},
+                    bootId=bootId,
+                    ackedAt=toCanonicalIso(self._obdLiveNowUtc()),
+                )
+                if recorded:
+                    self.emitNow()
+                    ok = True
+                else:
+                    error, badIds = ERROR_STORE_WRITE_FAILED, list(ids)
+        except Exception as exc:  # noqa: BLE001 -- must not crash the loop
+            logger.error("US-897-c alerts ack failed for %s: %s", requestId, exc)
+            ok, error, badIds = False, f"ack failed: {exc}", []
+
+        try:
+            alerts_ack_channel.writeOutcome(
+                statesDir, requestId=requestId, ok=ok, error=error, ids=badIds,
+            )
+        except OSError as exc:
+            logger.error(
+                "US-897-c alerts ack outcome could not be published for %s: %s",
                 requestId, exc,
             )
         return True

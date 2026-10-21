@@ -98,6 +98,9 @@
 #               |              | passes its own recording -> idle edge.
 # 2026-10-20    | Rex (US-897-b5)| the boot dtc payload reaches the arbiter; the
 #               |              | alerts tick publishes its code source.
+# 2026-10-20    | Rex (US-897-c)| the alerts ack store: every alerts emit hands
+#               |              | in this boot's matching acks and prunes; the
+#               |              | tick caches its inputs for emitNow (Atlas G2).
 # ================================================================================
 ################################################################################
 
@@ -318,6 +321,10 @@ class CardStateEmitterMixin:
     _alertsBootId: str = "unknown"
     # US-897-b4: the card tick's recording -> idle edge that ends the over-rev.
     _alertsWasRecording: bool = False
+    # US-897-c: the boot-scoped ack store, and the (obdLive, nowUtc, dataSource)
+    # of the last alerts tick -- what emitNow rebuilds from.
+    _alertsAckStore: Any = None
+    _alertsLastInputs: tuple[Any, datetime, str | None] | None = None
     # US-889-a: the states/engine-history writer; the history itself lives in
     # the obd-live tracker. CLASS default for the same reason as above.
     _engineHistoryEmitter: Any = None
@@ -842,6 +849,15 @@ class CardStateEmitterMixin:
             logger.warning("alerts arbiter init skipped: %s", e)
             self._alertsArbiter = None
             self._alertsEmitter = None
+            return
+        # US-897-c: its own try, so a store fault costs the acks, not the alerts.
+        try:
+            from pi.obdii.alerts_ack_store import AlertsAckStore, ackStorePathOf
+
+            self._alertsAckStore = AlertsAckStore(ackStorePathOf(self._config))
+        except Exception as e:  # noqa: BLE001 -- must not fail boot
+            logger.warning("alerts ack store init skipped: %s", e)
+            self._alertsAckStore = None
 
     def _emitAlertsState(self, obdLive: dict[str, Any] | None) -> None:
         """Move the episodes on from ``obdLive`` and publish states/alerts.
@@ -854,6 +870,7 @@ class CardStateEmitterMixin:
         if arbiter is None or emitter is None:
             return
         dataSource = self._gatherObdLiveDataSource()
+        nowUtc = self._obdLiveNowUtc()
         # US-897-b4: the over-rev ends at the recording -> idle edge -- its OWN
         # flag, never the fuel persist's.
         recording = self._gatherDriveState()[0] == "recording"
@@ -866,14 +883,70 @@ class CardStateEmitterMixin:
             driveRecording=recording,
             driveEnded=driveEnded,
         )
-        emitter(
-            arbiter.episodes(),
+        self._alertsLastInputs = (obdLive, nowUtc, dataSource)
+        self._publishAlertsState(arbiter, emitter, obdLive, nowUtc, dataSource)
+
+    def emitNow(self) -> dict[str, Any] | None:
+        """Republish states/alerts at once with the current acks (US-897-c).
+
+        A PURE rebuild (Atlas G2): the arbiter's episodes as they stand plus the
+        obdLive / nowUtc / dataSource the last alerts tick used -- never
+        ``observe`` / ``observeDtc`` / ``observeRpmReading``, so no episode
+        moves, no hold timer steps and no alert_log row is written (re-observing
+        a cached reading would double-count the 10 s / 60 s holds). Before any
+        tick it rebuilds from no obd-live payload. Runs on the run loop, the
+        thread the tick runs on, so it takes no lock.
+
+        Returns:
+            The payload written, or None when there is no arbiter or emitter,
+            or the write failed.
+        """
+        arbiter = self._alertsArbiter
+        emitter = self._alertsEmitter
+        if arbiter is None or emitter is None:
+            return None
+        inputs = self._alertsLastInputs
+        if inputs is None:
+            inputs = (None, self._obdLiveNowUtc(), self._gatherObdLiveDataSource())
+        return self._publishAlertsState(arbiter, emitter, *inputs)
+
+    def _publishAlertsState(
+        self,
+        arbiter: Any,
+        emitter: Any,
+        obdLive: dict[str, Any] | None,
+        nowUtc: datetime,
+        dataSource: str | None,
+    ) -> dict[str, Any] | None:
+        """The one alerts emit: this boot's matching acks in, then the prune.
+
+        Every emit -- the tick and emitNow -- hands the store's matching id set
+        (this boot AND the entry's current firstSeenTs) to the emitter, then
+        prunes the records that can never match again against the sources this
+        emit assessed (the store rewrites only on a change).
+        """
+        episodes = arbiter.episodes()
+        store = self._alertsAckStore
+        bootId = self._alertsBootId
+        acked = store.matchingIds(episodes, bootId=bootId) if store is not None else ()
+        payload = emitter(
+            episodes,
             obdLive,
-            nowUtc=self._obdLiveNowUtc(),
+            nowUtc=nowUtc,
             dataSource=dataSource,
-            bootId=self._alertsBootId,
+            bootId=bootId,
             codeSource=arbiter.codeSource(),
+            acknowledgedIds=acked,
         )
+        if store is not None and isinstance(payload, dict):
+            sources = payload.get("sources") or {}
+            store.prune(
+                episodes,
+                bootId=bootId,
+                codeAssessed=(sources.get("code") or {}).get("assessed") is True,
+                engineAssessed=(sources.get("engine") or {}).get("assessed") is True,
+            )
+        return payload
 
     def _resetAlertsRpmPeak(self) -> None:
         """Drive start: the over-rev peak counts from this drive (US-897-b4)."""
