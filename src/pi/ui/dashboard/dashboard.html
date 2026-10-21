@@ -100,42 +100,19 @@
   </header>
 
   <!-- US-506 auto-rotate progress (F-124): a calm THIN time-to-next bar under
-       the top bar. It reads as ambient chrome, never as an alert -- the DTC
-       ribbon owns that register and sits in the same band. JS sets --rotate-fill
-       0..1; the bar is REMOVED (not frozen part-filled) while paused, because a
+       the top bar. It reads as ambient chrome, never as an alert. JS sets
+       --rotate-fill 0..1; the bar is REMOVED (not frozen part-filled) while paused, because a
        stalled progress bar promises an advance that is not coming. -->
   <div id="rotate-progress" hidden>
     <span id="rotate-progress-fill"></span>
   </div>
 
-  <!-- US-405 persistent DTC ribbon: rides under the top bar on every card while
-       a code is present. STOP state uses the brighter --red-light (R-2, distinct
-       from brand-red) + a leading ⚠ + a subtle pulse. JS sets the level + text. -->
-  <!-- US-691: FOUR SLOTS, not one string. The banner used to carry head, code,
-       description and "+N more" in a single ellipsis-clipped span, so an
-       overflow always ate the count first (it is the tail) and a second stored
-       code became invisible. The slots overflow in a declared order instead --
-       only .ribbon-desc clips; see the dashboard.css rules. -->
-  <div id="dtc-ribbon" hidden>
-    <span class="ribbon-glyph">⚠</span>
-    <span class="ribbon-head"></span>
-    <span class="ribbon-desc"></span>
-    <span class="ribbon-more"></span>
-  </div>
-
   <!-- US-899-a1 full-screen takeover: a live coolant STOP from states/alerts
        .takeover ONLY (carousel.js renderAlertsTakeover). Top to bottom: the
        provider's directive band, title, value, the stale line, sentence, age,
-       and the ack notice. NO control on it (Iris U7): a tap anywhere is the ack.
-       The US-405 head, chip, code and buttons below ship hidden and are never
-       shown on this surface; US-899-a2 deletes them. -->
+       and the ack notice. NO control on it (Iris U7): a tap anywhere is the ack. -->
   <div id="dtc-takeover" hidden role="alertdialog" aria-label="Check engine alert">
     <div class="takeover-inner">
-      <span class="takeover-icon" id="takeover-icon" hidden>⚠</span>
-      <span class="takeover-head" hidden>CHECK ENGINE</span>
-      <span class="takeover-chip" id="takeover-chip" hidden></span>
-      <span class="takeover-code" id="takeover-code" hidden></span>
-      <span class="takeover-desc" id="takeover-desc" hidden></span>
       <span class="takeover-directive" id="takeover-directive" hidden></span>
       <span class="takeover-line" id="takeover-title" hidden></span>
       <span class="takeover-line" id="takeover-value" hidden></span>
@@ -143,11 +120,6 @@
       <span class="takeover-line" id="takeover-sentence" hidden></span>
       <span class="takeover-line" id="takeover-age" hidden></span>
       <span class="takeover-line" id="takeover-notice" hidden></span>
-      <span class="takeover-more" id="takeover-more" hidden></span>
-      <div class="takeover-actions" hidden>
-        <button id="takeover-detail" class="tap-target">View detail ›</button>
-        <button id="takeover-dismiss" class="tap-target">Dismiss</button>
-      </div>
     </div>
   </div>
 
@@ -488,8 +460,8 @@
            states/alerts ALONE -- a header, then one row per provider entry in
            the provider's order. No data-state: the card is not a generic
            per-card read, and the carousel finds it by this id
-           (`alertsCardIndex`), so the icon, the ribbon tap, the takeover
-           "View detail" and the CHECK ENGINE tap all reach it by name. -->
+           (`alertsCardIndex`), so the icon and the CHECK ENGINE tap both
+           reach it by name. -->
       <section class="card" id="alerts-card" aria-label="Alerts" data-page-name="ALERTS">
         <div class="card-body">unavailable</div>
       </section>
@@ -516,8 +488,7 @@
     </div>
   </main>
 
-  <!-- US-406 per-code detail overlay: opened by a list-row tap, the takeover
-       "View detail", or a ribbon tap. Fixed skeleton (hero · status · freeze-
+  <!-- US-406 per-code detail overlay: opened by a list-row tap. Fixed skeleton (hero · status · freeze-
        frame-or-realtime fallback · severity-gated fix + trust badge · log/sync
        footer). A ‹ Back is always present so the operator is never trapped. -->
   <div id="dtc-detail" hidden role="dialog" aria-label="Code detail">

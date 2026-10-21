@@ -113,7 +113,7 @@
   /* --- Layout bands -- US-557 (F-132). SSOT block: tokens.css "Layout bands".
      The stripes that spend the stage's HEIGHT. Before this story `28px` lived
      as FOUR independent literals (#topbar height, #carousel top,
-     #rotate-progress top, #dtc-ribbon top) and `24px` as two (#dots height,
+     #rotate-progress top, the DTC ribbon's top) and `24px` as two (#dots height,
      #carousel bottom) -- one fact, six copies, nothing forcing them to agree.
      That is why F-127's type-scale bump could raise the type and leave every
      band at its pre-F-127 height without anything going red.
@@ -137,18 +137,6 @@
   --accent:         #FF6A2B;   /* SSOT --accent -- pointers + accents ONLY */
   --radius:         10px;      /* SSOT --radius -- panel corners */
   --amber-warn:     #FFC400;   /* SSOT --amber-warn -- WATCH / degraded */
-  /* The two DEEP gradient edges of the DTC takeover. US-510 relocated these
-     from inline literals in the takeover rules; the VALUES ARE UNCHANGED, so
-     the surface renders identically. Iris (A-2) offered either a derived
-     color-mix() or named `--*-deep` edge tokens -- the named route is taken
-     deliberately, because a computed mix would produce a DIFFERENT colour and
-     the zero-visual-change rule governs this whole story. They live here
-     rather than in the SSOT because a new SSOT token name is an Atlas Rule-10
-     addition and only --bg/--surface/--destructive* were ruled; promotion is
-     routed to him (TD-071). */
-  --amber-deep:     #7a5b00;   /* WATCH/unknown takeover gradient outer edge */
-  --green-deep:     #12603a;   /* MINOR takeover gradient inner edge */
-  --green-deepest:  #062617;   /* MINOR takeover gradient outer edge */
   /* BRAND identity reds -- RESERVED for the brand mark (SSOT --red/-light/-dark).
      US-484-b moved every DTC STOP surface OFF these: if the permanent brand
      mark is red AND the pull-over alarm is also red, the driver cannot tell
@@ -161,7 +149,7 @@
   --red:            #E60012;   /* SSOT --red -- brand mark base */
   --red-light:      #F61D2D;   /* SSOT --red-light -- brand mark highlight */
   --red-dark:       #BF000F;   /* SSOT --red-dark -- brand mark shadow */
-  /* STATE-ALARM red -- "PULL OVER NOW". Spool set value + semantics 2026-07-25
+  /* STATE-ALARM red -- "stop the car now". Spool set value + semantics 2026-07-25
      (dtc-display-clear-safety-advisory.md 6d); Atlas Rule-10 gate 2026-07-26.
      The HEX IS ONLY THE 3RD REINFORCEMENT: area + motion + text carry STOP. */
   --critical-red:   #D32F2F;   /* SSOT --critical-red -- the DTC STOP tier and,
@@ -239,7 +227,7 @@ html, body {
    band genuinely under-sized for its own contents -- 26px glyphs and a 40px
    kebab button in a 28px stripe -- which is what pushed the ⋮ outside the
    header fill. Three other rules position themselves against this height
-   (#carousel, #rotate-progress, #dtc-ribbon) and each used to repeat it as its
+   (#carousel, #rotate-progress, the DTC ribbon) and each used to repeat it as its
    own literal; they now read the same token. */
 #topbar {
   position: fixed; top: 0; left: 0; right: 0; height: var(--bar-h);
@@ -682,7 +670,7 @@ html, body {
    halt the Pi -- so it earns the state-alarm red. The earlier stages stay amber
    above, or the escalation would not read as an escalation. This is a SYSTEM
    critical state, not the engine one: the banner copy stays "DRAINING · TRIGGER"
-   (carousel.js), never the DTC tier's "PULL OVER". */
+   (carousel.js), never the STOP takeover's directive. */
 .ladder[data-stage="TRIGGER"] { border-color: var(--critical-red); }
 .ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--critical-red); }
 .ladder-runtime { font-size: var(--fs-label); color: var(--text-secondary); }
@@ -737,16 +725,14 @@ html, body {
 
 /* --- US-506 auto-rotate progress bar (F-124) --------------------------------- */
 /* The calm THIN time-to-next readout for the hands-off carousel. Deliberately
-   quiet: it shares the band directly under the top bar with the DTC ribbon, and
-   an alert must always win that band -- hence z-index 8 against the ribbon's 9,
-   so a live code simply covers this. It is ambient chrome, so it borrows the
+   quiet, and z-index 8 so any alert layer covers it. It is ambient chrome, so it borrows the
    TERTIARY text token rather than any state colour: a green or amber bar here
    would be a fourth thing claiming to mean "healthy"/"degraded" while actually
    meaning "seconds until the next card". Removed entirely while paused (the
    `hidden` attribute -> the global [hidden] guard, US-495). */
-/* US-557: `top` is --bar-h. This rule and #dtc-ribbon below share the band
-   directly under the top bar, and each used to carry its own copy of the bar's
-   height -- so a bar that grew would have left both of them overlapping it. */
+/* US-557: `top` is --bar-h. This rule sits directly under the top bar and
+   used to carry its own copy of the bar's height -- so a bar that grew would
+   have left it overlapping the bar. */
 #rotate-progress {
   position: fixed; left: 0; right: 0; top: var(--bar-h); height: 2px;
   background: transparent; z-index: 8;
@@ -758,72 +744,9 @@ html, body {
   background: var(--text-tertiary);
 }
 
-/* --- US-405 persistent DTC ribbon -------------------------------------------- */
-/* Rides under the top bar on every card while a code is present. R-2 + US-484-b:
-   the ribbon shares cards with brand chrome, so its STOP state renders the
-   STATE-ALARM --critical-red (never a brand red) + a leading ⚠ glyph + a subtle
-   pulse, so it reads as an alarm and never as decoration or as branding. Level
-   is set by JS from `dtc`. */
-/* US-557: `top` is --bar-h -- the ribbon rides UNDER the bar, so it must move
-   with it. `min-height` is the ribbon's own content floor, not a stage band. */
-#dtc-ribbon {
-  position: fixed; left: 0; right: 0; top: var(--bar-h); min-height: 22px;
-  display: flex; align-items: center; gap: 6px;
-  padding: 2px 10px; box-sizing: border-box;
-  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.03em;
-  color: #fff; z-index: 9;
-}
-#dtc-ribbon[data-level="stop"]    { background: var(--critical-red); color: #fff; }
-#dtc-ribbon[data-level="watch"]   { background: var(--amber-warn); color: #000; }
-#dtc-ribbon[data-level="minor"]   { background: var(--green-ok); color: #000; }
-#dtc-ribbon[data-level="unknown"] { background: var(--amber-warn); color: #000; }
-.ribbon-glyph { font-size: var(--fs-secondary); line-height: 1; flex: 0 0 auto; }
-/* US-691 -- THE OVERFLOW ORDER IS THE FIX, and it is declared here rather than
-   left to the default. This was ONE span, `.ribbon-text`, holding "CHECK ENGINE
-   · <code> <description> · +N more" behind a `text-overflow: ellipsis`. An
-   ellipsis truncates from the END, and the END is where the count is -- so the
-   count was, by construction, the FIRST thing every overflow destroyed. When
-   P0400 appeared beside P0443 on 2026-09-04 the banner clipped in all ten
-   dashboard frames of that day and the operator never learned a second fault
-   existed. A stylesheet cannot protect a fact that lives in a string's tail;
-   splitting the slots is what makes the guarantee below expressible.
-
-   `flex: 0 0 auto` on the head and the count is the whole guarantee -- a flex
-   item's DEFAULT is `flex-shrink: 1`, so without it the browser squeezes both
-   and re-creates the defect with the markup looking correct. The description is
-   the only run allowed to clip, and it is the only one whose loss the operator
-   can absorb: he can still read WHICH code and HOW MANY, which is what he needs
-   to act. `min-width: 0` is load-bearing on a flex child -- its default
-   `min-width: auto` refuses to shrink below its content, which would push the
-   count out of the banner instead of shortening the text.
-   Sized at tests/ui/test_carousel_dtc_banner_second_code.py: the unclippable
-   runs fit the 480px panel with room left over, so the count never merely
-   "must not" clip -- it does not need to. */
-.ribbon-head { flex: 0 0 auto; white-space: nowrap; }
-.ribbon-desc {
-  flex: 1 1 auto; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ribbon-more { flex: 0 0 auto; white-space: nowrap; }
-/* US-537: the pulse hangs off `[data-level]`, NOT off the base #dtc-ribbon rule.
-   carousel.js sets data-level and clears `hidden` together, and removes both
-   together (renderRibbon), so this runs exactly while a code is real. Before, the
-   animation was declared unconditionally and silenced only by the US-495
-   `[hidden] { display: none !important }` guard -- i.e. by the PAINT cascade, the
-   very race that let five overlays paint at once. Gate on the state, not on the
-   side effect of the state. */
-#dtc-ribbon[data-level] {
-  animation: ribbon-pulse 2s ease-in-out infinite;
-}
-/* Subtle pulse so a persistent alert never fades into chrome. */
-@keyframes ribbon-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.72; }
-}
-
-/* --- US-405 full-screen DTC takeover ---------------------------------------- */
-/* Fired on a NEW code, severity-styled: same skeleton, per-tier bg + directive +
-   dismiss controls (STOP has no plain dismiss). */
+/* --- US-405 / US-899-a1 full-screen STOP takeover ---------------------------- */
+/* Drawn only from states/alerts.takeover (carousel.js renderAlertsTakeover);
+   the one surface is STOP, and a tap anywhere on it is the ack. */
 #dtc-takeover {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
@@ -840,7 +763,7 @@ html, body {
                a live STOP is mounted (carousel spec 4: motion never implies a
                state that isn't real -- the pulse is scoped to this selector,
                never to the base takeover rule);
-     TEXT   -- an explicit "PULL OVER" directive (carousel.js TAKEOVER_STYLE);
+     TEXT   -- the provider's directive band (states/alerts.takeover);
      FIELD  -- near-black #000 with WHITE copy (ch.2): no brand chrome anywhere
                on this surface, and every pairing clears the WCAG-AA large-text
                floor (white/critical-red 5.0:1, white/black 21:1);
@@ -871,7 +794,6 @@ html, body {
   background: var(--critical-red); color: #fff;
   font-size: var(--fs-hero); letter-spacing: 0.08em;
 }
-#dtc-takeover[data-severity="stop"] .takeover-icon { color: var(--critical-red); }
 /* Deeper-and-darker pulse: the frame drops toward its own near-black field.
    Never a warmer/orange shift -- that would collide with amber WATCH and invert
    which tier reads as worse (ch.3). */
@@ -879,39 +801,14 @@ html, body {
   0%, 100% { border-color: var(--critical-red); }
   50%      { border-color: var(--bg); }
 }
-/* US-510 (TD-065): the three deep gradient edges are tokens now (--amber-deep /
-   --green-deep / --green-deepest, :root above). The VALUES are the ones these
-   rules already carried, so the gradients render pixel-identically -- the point
-   was to get the literals out of the surface, not to restyle the takeover. */
-#dtc-takeover[data-severity="watch"] {
-  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, var(--amber-deep) 100%);
-  color: #000;
-}
-#dtc-takeover[data-severity="minor"] {
-  background: radial-gradient(circle at 50% 38%, var(--green-deep) 0%, var(--green-deepest) 100%);
-}
-#dtc-takeover[data-severity="unknown"] {
-  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, var(--amber-deep) 100%);
-  color: #000;
-}
 .takeover-inner {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 0 18px; max-width: 92%;
 }
-.takeover-icon { font-size: var(--fs-hero); line-height: 1; }
-.takeover-head { font-size: var(--fs-label); letter-spacing: 0.14em; font-weight: 700; }
-.takeover-chip {
-  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.08em;
-  padding: 1px 8px; border-radius: 10px; text-transform: uppercase;
-  border: 1px solid currentColor;
-}
-.takeover-code { font-size: var(--fs-hero); font-weight: 800; letter-spacing: 0.04em; }
-.takeover-desc { font-size: var(--fs-secondary); opacity: 0.9; }
 .takeover-directive {
   font-size: var(--fs-primary); font-weight: 700; letter-spacing: 0.04em; margin-top: 2px;
 }
-.takeover-more { font-size: var(--fs-label); opacity: 0.85; }
-/* US-899-a1: the PULL OVER lines under the directive band, each the
+/* US-899-a1: the STOP takeover lines under the directive band, each the
    provider's words at Iris's size (brief s A + 2026-10-19 stale line). Mono:
    the sentence, the stale line and the notice carry lower case, and the value's
    degree sign is outside the Michroma subset. The copy colour is the surface's
@@ -923,13 +820,6 @@ html, body {
 #takeover-sentence { font-size: var(--fs-label); }
 #takeover-age { font-size: var(--fs-meta); }
 #takeover-notice { font-size: var(--fs-meta); }
-.takeover-actions { display: flex; gap: 10px; margin-top: 12px; }
-.takeover-actions button {
-  min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 16px; font-size: var(--fs-secondary); font-weight: 700; cursor: pointer;
-  border-radius: 4px; border: 1px solid currentColor;
-  background: rgba(0, 0, 0, 0.28); color: inherit;
-}
 
 /* --- US-403 long-press ring (D-6) ------------------------------------------- */
 /* A radial fill driven by the JS --fill (0..1). Centered; non-interactive so it

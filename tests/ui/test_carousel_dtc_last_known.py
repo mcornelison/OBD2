@@ -13,13 +13,13 @@
 #     * never read               -> "DTC not read" still renders
 #     * remembered codes         -> no clear offered (display mirror AND the
 #                                   authoritative gate, runner never called)
-#     * remembered codes         -> no takeover, no ribbon, newSinceTs null
+#     * remembered codes         -> no takeover, newSinceTs null
 #
 #   MOVED PIN (US-898-b1): the two CARD cases (codes + age rendered, never-read
 #   renders "DTC not read") are RETIRED. The ALERTS card now reads states/alerts
 #   only; remembered codes reach it as the provider's entries (the arbiter
 #   prunes nothing on a null read), not as this payload's lastKnown block. The
-#   payload, clear-gate and ribbon/takeover pins below still hold and stay.
+#   payload, clear-gate and takeover pins below still hold and stay.
 #
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
@@ -35,6 +35,8 @@
 #               |              | tiers of P0443/P0400 corrected.
 # 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the two card cases retired; the
 #               |              | ALERTS card reads states/alerts, never this payload.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the ribbon case retired with
+#               |              | #dtc-ribbon; the takeover check reads the DOM.
 # ================================================================================
 ################################################################################
 
@@ -177,18 +179,21 @@ def test_rememberedCodes_offerNoClear_onTheDisplayOrTheAuthoritativeGate():
     assert calls == []
 
 
-def test_rememberedCodes_neverTriggerTheTakeoverOrTheRibbon():
+def test_rememberedCodes_neverTriggerTheTakeover():
     """
     Given: the resting payload with remembered codes
-    When: the US-405 takeover and the ribbon are evaluated
-    Then: newSinceTs is null, neither view exists, and the ribbon does not paint
+    When: the dashboard renders it
+    Then: newSinceTs is null and the takeover does not paint
+
+    MOVED PIN (US-899-a2): the US-405 takeoverView and the ribbon are deleted;
+    the takeover is driven by states/alerts alone, so a states/dtc payload --
+    remembered codes included -- can never raise it.
     """
     state = _resting(_lastKnown())
 
     assert state["newSinceTs"] is None
-    assert _probe("takeoverView", state) is None
-    assert _probe("ribbonView", state) is None
 
     surface = _surface(state)
-    ribbon = surface.pathById("dtc-ribbon")
-    assert ribbon is None or not surface.rendered(ribbon)
+    takeover = surface.pathById("dtc-takeover")
+    assert takeover is not None
+    assert not surface.rendered(takeover)

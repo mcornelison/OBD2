@@ -20,6 +20,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-26    | Ralph (Rex)  | Initial -- US-484-a SSOT token reconciliation.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- CONTRACT CHANGE (Atlas Q31): the
+#               |              | deleted #dtc-ribbon's stop/watch/minor pins removed.
 # ================================================================================
 ################################################################################
 
@@ -155,13 +157,9 @@ def test_stopTier_isReconciledOntoTheSsotCriticalRed():
     SAFE are asserted in tests/ui/test_dashboard_stop_tier_safety.py."""
     css = _read(_CSS)
     assert _tokenValue(css, "critical-red") == _tokenValue(_read(_TOKENS), "critical-red")
-    assert '#dtc-ribbon[data-level="stop"]    { background: var(--critical-red);' in css
     assert '.dtc-chip[data-level="stop"]    { background: var(--critical-red);' in css
 
-
-def test_severityTiersBelowStop_keepTheirSsotColours():
-    """WATCH stays amber and MINOR stays the SSOT green after the rename -- the
-    severity ramp reads in the same order it did before this slice."""
-    css = _read(_CSS)
-    assert '#dtc-ribbon[data-level="watch"]   { background: var(--amber-warn);' in css
-    assert '#dtc-ribbon[data-level="minor"]   { background: var(--green-ok);' in css
+# CONTRACT CHANGE (US-899-a2, Atlas 2026-10-19 Q31): the #dtc-ribbon stop /
+# watch / minor pins are removed with the ribbon they pinned (deleted, Iris U3).
+# test_severityTiersBelowStop_keepTheirSsotColours held ONLY the ribbon's watch
+# and minor lines, so it went with them. No surviving element's pin changed.

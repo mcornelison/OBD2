@@ -29,6 +29,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-20    | Ralph (Rex)  | Initial -- US-899-a1 PULL OVER takeover + ack tap.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the old takeover path and
+#               |              | its hidden markup are deleted, not just undriven.
 # ================================================================================
 ################################################################################
 
@@ -773,10 +775,14 @@ def test_theNewRenderHasNoPullOverLiteral_andNoThresholdOrTierCopy():
         assert ".sort(" not in body, name
 
 
-def test_oneDriver_updateDtcSurfacesNoLongerDrivesTheTakeover():
-    body = rh._fnBody(_js(), "updateDtcSurfaces")
-    for gone in ("showTakeover", "hideTakeover", "takeoverView"):
-        assert gone not in body, gone
+def test_oneDriver_theOldTakeoverPathIsGone():
+    """MOVED PIN (US-899-a2): updateDtcSurfaces and the US-405 takeover path
+    are deleted, so renderAlertsTakeover is the only writer of #dtc-takeover."""
+    js = _js()
+    for gone in ("updateDtcSurfaces", "function showTakeover", "function takeoverView(",
+                 "function ackTakeover"):
+        assert gone not in js, gone
+    assert "renderAlertsTakeover(" in rh._fnBody(js, "tick")
 
 
 def test_brightnessReadsTheAlertsPayload_neverStatesDtc():
@@ -798,14 +804,17 @@ def test_onePostHelper_behindEveryWrite():
     assert "ok: true" not in rh._fnBody(js, "postWrite"), "the helper never reports success"
 
 
-def test_theMarkupHoldsTheNewLines_andHidesTheOldHead():
+def test_theMarkupHoldsTheNewLines_andNotTheOldHead():
+    """MOVED PIN (US-899-a2): the old head, chip, code and buttons that US-899-a1
+    shipped hidden are deleted (Iris U7)."""
     with open(_HTML, encoding="utf-8") as fh:
         html = fh.read()
     for lineId in ("takeover-title", "takeover-value", "takeover-stale",
                    "takeover-sentence", "takeover-age", "takeover-notice"):
         assert f'id="{lineId}"' in html, lineId
-    assert re.search(r'<span class="takeover-head"[^>]*\bhidden\b', html)
-    assert re.search(r'<div class="takeover-actions"[^>]*\bhidden\b', html)
+    for gone in ("takeover-head", "takeover-actions", "takeover-detail",
+                 "takeover-dismiss", "takeover-chip", "takeover-code", "takeover-more"):
+        assert gone not in html, gone
 
 
 if __name__ == "__main__":

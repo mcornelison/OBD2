@@ -30,6 +30,8 @@
 # ================================================================================
 # 2026-10-20    | Ralph (Rex)  | Initial -- US-898-b1 ALERTS card from states/alerts.
 # 2026-10-20    | Ralph (Rex)  | US-898-b2 -- empty / not-checked states, scroll cue.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the tick's states/dtc feed and
+#               |              | the ribbon are deleted; DTC_TIER no longer stays.
 # ================================================================================
 ################################################################################
 
@@ -688,9 +690,10 @@ def test_dom_afterTheGrace_noPayloadIsDashDashAndNoWarningsData():
 
 
 @_NODE_ONLY
-def test_dom_theTickStillFeedsStatesDtcToTheRibbon():
-    """KEEP: the card no longer carries data-state="dtc", so the tick reads
-    states/dtc explicitly -- the ribbon still shows a stored code."""
+def test_dom_theTickReadsNoStatesDtc_andNoRibbonPaints():
+    """MOVED PIN (US-899-a2): the tick's states/dtc feed and the ribbon are
+    deleted (Iris G-7) -- with no code detail open, a stored code costs no
+    /dtc read, while /gear is still read every tick."""
     dtc = {
         "ts": NOW, "newSinceTs": None, "mil": True,
         "source": {"dtc": {"available": True}},
@@ -702,11 +705,10 @@ def test_dom_theTickStillFeedsStatesDtcToTheRibbon():
     dom = rh.runDashboard(routes=routes, steps=[{"flush": 4}], viewport=PANEL, nowMs=NOW_MS)
     dtcReads = [f for f in dom["fetches"] if f["url"] == "/dtc"]
     gearReads = [f for f in dom["fetches"] if f["url"] == "/gear"]
-    assert dtcReads and len(dtcReads) == len(gearReads), (len(dtcReads), len(gearReads))
+    assert gearReads, "the tick did not run -- this test is vacuous"
+    assert dtcReads == [], len(dtcReads)
     surface = rh.dashboardSurface(dom["tree"], viewport=PANEL)
-    ribbon = surface.pathById("dtc-ribbon")
-    assert ribbon is not None and surface.rendered(ribbon)
-    assert "P0443" in _textOf(ribbon[-1])
+    assert surface.pathById("dtc-ribbon") is None
 
 
 @_NODE_ONLY
@@ -1039,9 +1041,11 @@ def test_theDtcDrivenCardBodyIsRetired(gone: str):
     assert not re.search(rf"\b{gone}\b", _js()), gone
 
 
-@pytest.mark.parametrize("kept", ["DTC_TIER", "codeDetailView"])
+# MOVED PIN (US-899-a2): DTC_TIER is deleted (its directives with it); only
+# the code detail stays.
+@pytest.mark.parametrize("kept", ["codeDetailView"])
 def test_theDetailsTablesStay(kept: str):
-    """US-898-c / US-899-a2 own these."""
+    """US-898-c owns this."""
     assert re.search(rf"\b{kept}\b", _js()), kept
 
 
@@ -1051,10 +1055,13 @@ def test_noDataViewsCarryNoDtcEntry():
     assert not re.search(r"^\s*dtc\s*:", body.group(1), re.MULTILINE)
 
 
-def test_theTickReadsStatesDtcExplicitly():
+def test_theTickReadsStatesDtcOnlyForAnOpenDetail():
+    """MOVED PIN (US-899-a2, Iris G-7): the one states/dtc read left on the
+    tick is the open code detail's refresh."""
     tick = _body("tick")
-    assert 'await stateOnce("dtc")' in tick
-    assert "updateDtcSurfaces(dtcData)" in tick
+    reads = re.findall(r'^.*stateOnce\("dtc"\).*$', tick, re.MULTILINE)
+    assert reads == ['        if (detailEntry) refreshCodeDetail(await stateOnce("dtc"));'], reads
+    assert "updateDtcSurfaces" not in _js()
 
 
 if __name__ == "__main__":

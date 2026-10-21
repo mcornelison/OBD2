@@ -37,6 +37,10 @@
 # 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): brightnessAlarmActive
 #               |              | takes the states/alerts takeover (stop / watch
 #               |              | payloads), not a dtc code.
+# 2026-10-20    | Rex (US-899-a2)| MOVED PIN (US-899-a2): the ribbon and the old
+#               |              | takeoverView are deleted -- the ribbon pins are
+#               |              | retired; the STOP colour + PULL OVER text probes
+#               |              | read takeoverAlertView over the provider fixture.
 # ================================================================================
 ################################################################################
 
@@ -91,6 +95,10 @@ _CFG = {
 # stale key on a fielded Pi cannot dim a PULL-OVER alarm".
 _CFG_PRE_US595 = dict(_CFG, alarmFloorLevel=0.40)
 _TS = "2026-07-22T12:00:00+00:00"
+# A live coolant STOP as the REAL provider builds it (US-899-a1's fixture).
+_STOP_ALERTS = os.path.join(
+    os.path.dirname(__file__), "fixtures", "states", "alerts", "stop-live-overheat.json"
+)
 _TS_MS = 1784721600000  # Date.parse(_TS) -- pinned so freshness math is fixed
 
 
@@ -209,12 +217,6 @@ def test_dashboardCss_criticalRedLiteral_appearsOnceInRoot():
 # ---------------------------------------------------------------------------
 
 
-def test_stopRibbon_rendersCriticalRed_notBrandRed():
-    block = _ruleBlock(_read(_CSS), '#dtc-ribbon[data-level="stop"]')
-    assert "var(--critical-red)" in block
-    assert "--red-light" not in block and "var(--red)" not in block
-
-
 def test_stopChip_rendersCriticalRed_notBrandRed():
     block = _ruleBlock(_read(_CSS), '.dtc-chip[data-level="stop"]')
     assert "var(--critical-red)" in block
@@ -249,7 +251,7 @@ def test_noStopSurfaceReferencesABrandRed():
 
 
 def test_carouselJs_stopTakeoverTier_bindsCriticalRedVar():
-    """The token name also lives in JS as DATA (TAKEOVER_STYLE.colorVar) -- a
+    """The token name also lives in JS as DATA (TIER_COLOR_VAR.stop) -- a
     CSS-only repoint would leave the STOP tier bound to a brand red."""
     js = _read(_JS)
     assert '"--critical-red"' in js
@@ -257,12 +259,9 @@ def test_carouselJs_stopTakeoverTier_bindsCriticalRedVar():
 
 
 @nodeless
-def test_takeoverView_stop_carriesCriticalRedColorVar():
-    data = {
-        "codes": [{"code": "P0301", "severity": "stop", "short": "Cyl 1 misfire"}],
-        "newSinceTs": "2026-07-26T10:00:00Z",
-    }
-    view = _probe("takeoverView", data)
+def test_takeoverAlertView_stop_carriesCriticalRedColorVar():
+    """MOVED PIN (US-899-a2): the STOP takeover is takeoverAlertView's."""
+    view = _probe("takeoverAlertView", json.loads(_read(_STOP_ALERTS)), _TS)
     assert view["colorVar"] == "--critical-red"
 
 
@@ -298,15 +297,32 @@ def test_stopTakeover_motionIsOnlyOnALiveStop():
     assert "animation" not in base
 
 
+def test_stopTakeover_hasExactlyOneAlarmKeyframes():
+    """US-899-a2: one STOP pulse, declared once -- a second @keyframes of the
+    same name would silently win the cascade over the first."""
+    assert _read(_CSS).count("@keyframes stop-alarm-pulse") == 1
+
+
+@pytest.mark.parametrize(
+    "gone",
+    ["newSinceTs", "dtcLastAckedTs", "takeoverShouldShow", "GET DIAGNOSED", "PULL OVER",
+     "dtc-ribbon"],
+)
+def test_theDeletedTakeoverPath_leavesNoTraceInTheDashboard(gone):
+    """US-899-a2 (Iris G-1..G-4, G-7): the old takeover path, its directive
+    strings and the ribbon are gone from every dashboard file, comments
+    included. The STOP words now come from the provider (states/alerts)."""
+    for name in ("carousel.js", "dashboard.css", "dashboard.html"):
+        assert gone not in _read(os.path.join(_DIST, name)), f"{gone!r} in {name}"
+
+
 @nodeless
 def test_stopTakeover_directiveSaysPullOver():
     """TEXT channel: the directive is explicit, not a colour the driver has to
-    interpret."""
-    data = {
-        "codes": [{"code": "P0301", "severity": "stop", "short": "Cyl 1 misfire"}],
-        "newSinceTs": "2026-07-26T10:00:00Z",
-    }
-    assert "PULL OVER" in _probe("takeoverView", data)["directive"].upper()
+    interpret. MOVED PIN (US-899-a2): the words are the provider's, carried
+    through takeoverAlertView unchanged."""
+    view = _probe("takeoverAlertView", json.loads(_read(_STOP_ALERTS)), _TS)
+    assert "PULL OVER" in view["directive"].upper()
 
 
 def test_stopTakeover_directiveIsLargerThanBaseCopy():
@@ -401,10 +417,6 @@ def test_watchAndMinorTiers_areUnchanged():
     """WATCH stays --amber-warn and MINOR stays --green-ok on every surface the
     STOP repoint touched."""
     css = _read(_CSS)
-    assert (
-        "var(--amber-warn)" in _ruleBlock(css, '#dtc-ribbon[data-level="watch"]')
-    )
-    assert "var(--green-ok)" in _ruleBlock(css, '#dtc-ribbon[data-level="minor"]')
     assert "var(--amber-warn)" in _ruleBlock(css, '.dtc-chip[data-level="watch"]')
     assert "var(--green-ok)" in _ruleBlock(css, '.dtc-chip[data-level="minor"]')
     assert _tokenValue(css, "amber-warn") == "#FFC400"

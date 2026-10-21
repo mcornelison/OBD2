@@ -46,6 +46,8 @@
 #                               set (Warnings spec s3).
 # 2026-10-20    | Ralph (Rex)  | US-898-b2 -- MOVED PIN: the empty-state words
 #                               (NO WARNINGS / NOT CHECKED YET) join it.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the deleted takeover floods'
+#                               deep-edge token pins retired.
 # ================================================================================
 ################################################################################
 
@@ -272,26 +274,10 @@ def test_neutralChipBackground_isRepointedAtTheExistingSsotToken():
     assert naRule and "var(--neutral-chip-bg)" in naRule[0]
 
 
-def test_takeoverGradientEdges_areTokenisedNotInlined():
-    """Iris A-2 offered two routes for the deep gradient edges and this takes
-    the named-token one deliberately: a color-mix() would COMPUTE a new colour
-    and move the rendered pixels, which the zero-visual-change rule forbids."""
-    rules = dict(_surfaceRules())
-    watch = rules.get('#dtc-takeover[data-severity="watch"]')
-    minor = rules.get('#dtc-takeover[data-severity="minor"]')
-    assert watch and minor, "the takeover severity rules moved -- re-point this"
-    assert "var(--amber-deep)" in watch
-    assert "var(--green-deep)" in minor and "var(--green-deepest)" in minor
-
-
-def test_theDeepEdgeTokensRelocateTheExistingValues_neverNewOnes():
-    """Grounding: these three tokens are NOT new colours. Each holds the exact
-    literal that used to sit in the gradient, so the takeover renders
-    identically -- the relocation is invisible on the panel, which is the point."""
-    css = _read(_CSS)
-    assert _tokenValue(css, "amber-deep") == "#7A5B00"
-    assert _tokenValue(css, "green-deep") == "#12603A"
-    assert _tokenValue(css, "green-deepest") == "#062617"
+# MOVED PIN (US-899-a2): the watch/minor/unknown takeover floods are deleted,
+# and the three deep gradient-edge tokens (--amber-deep / --green-deep /
+# --green-deepest) existed only to paint them, so they went too. Their two pins
+# (the floods bind the tokens; the tokens hold US-510's values) are retired.
 
 
 def test_destructiveTokens_carryTheAtlasRuledValuesInBothFiles():

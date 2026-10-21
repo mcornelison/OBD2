@@ -2184,134 +2184,6 @@
   }
 
   // -------------------------------------------------------------------------
-  // US-405 DTC takeover + ribbon -- pure, node-testable logic (S-1/S-2/R-2).
-  // The display is a PURE CONSUMER of the `dtc` state (severity classified
-  // upstream from Spool's table -- the Pi never decides it). The takeover fires
-  // ONLY on a NEW code (`newSinceTs`), one at a time (highest severity = hero,
-  // the rest fold into "+N more"); after Acknowledge/Dismiss a persistent ribbon
-  // carries the alert on every card. `na` (auto-trans on this manual car) is a
-  // quiet disposition -- never a takeover, never a ribbon (design §4/§5.2).
-  // -------------------------------------------------------------------------
-
-  // Severity ordering (worst-first). `na` is not an alert; `unknown` is a real
-  // uncurated code (ranks below the classified tiers but still alerts honestly).
-  var DTC_SEVERITY_RANK = { stop: 3, watch: 2, minor: 1, unknown: 0 };
-
-  // Per-severity takeover styling. The display maps a tier -> color + directive
-  // + dismiss behavior; it never classifies. US-484-b: STOP binds the STATE-
-  // ALARM `--critical-red`, never a brand red -- if the brand mark and the
-  // pull-over alarm are the same red the driver cannot tell them apart (Spool
-  // 6d ch.2). The colour is only the 3rd reinforcement; dashboard.css carries
-  // STOP by area + motion + text on a near-black field.
-  // STOP has NO plain dismiss -- only
-  // "Acknowledge" (which drops to the ribbon) so a misfire is never dismissed-
-  // and-forgotten, yet the driver still keeps view control (design §5.1/D-3).
-  // `unknown` (severity not curated) gets the honest middle: a "get diagnosed"
-  // caution -- never a false "safe to clear" (green) nor a false "pull over".
-  var TAKEOVER_STYLE = {
-    stop: { colorVar: "--critical-red", icon: "⚠", directive: "REDUCE LOAD · PULL OVER",
-            dismissLabel: "Acknowledge", plainDismiss: false },
-    watch: { colorVar: "--amber-warn", icon: "⚠", directive: "DRIVE GENTLY · GET DIAGNOSED",
-            dismissLabel: "Dismiss", plainDismiss: true },
-    minor: { colorVar: "--green-ok", icon: "ⓘ", directive: "SAFE TO CLEAR ONCE LOGGED",
-            dismissLabel: "Dismiss", plainDismiss: true },
-    unknown: { colorVar: "--amber-warn", icon: "⚠", directive: "GET DIAGNOSED",
-            dismissLabel: "Dismiss", plainDismiss: true },
-  };
-
-  function severityRank(sev) {
-    return Object.prototype.hasOwnProperty.call(DTC_SEVERITY_RANK, sev)
-      ? DTC_SEVERITY_RANK[sev]
-      : -1;
-  }
-
-  // The alert-eligible codes, worst-first. `na` and any unrecognized severity
-  // are dropped (they never alarm). Stable within a rank (input order kept).
-  function alertableCodes(codes) {
-    if (!Array.isArray(codes)) return [];
-    var out = [];
-    for (var i = 0; i < codes.length; i++) {
-      var c = codes[i];
-      if (isObj(c) && severityRank(c.severity) >= 0) out.push(c);
-    }
-    out.sort(function (a, b) { return severityRank(b.severity) - severityRank(a.severity); });
-    return out;
-  }
-
-  // The takeover view for a NEW code, or null (no new code / no alertable code /
-  // malformed). One takeover at a time: the worst code is the hero; the rest are
-  // "+N more". Firing (vs a prior ack) is a stateful concern -> takeoverShouldShow.
-  function takeoverView(data) {
-    if (!isObj(data)) return null;
-    // US-429 / Bug-3b: an unavailable DTC source (no read happened) NEVER fires
-    // a takeover -- an absent source reads `unavailable`, not "no codes -> alert".
-    if (sourceUnavailable(data, "dtc")) return null;
-    if (data.newSinceTs == null) return null; // known code at boot -> ribbon only
-    var alertable = alertableCodes(data.codes);
-    if (alertable.length === 0) return null;   // no real fault (e.g. all `na`)
-    var hero = alertable[0];
-    var style = TAKEOVER_STYLE[hero.severity] || TAKEOVER_STYLE.unknown;
-    return {
-      newSinceTs: data.newSinceTs,
-      severity: hero.severity,
-      code: hero.code,
-      short: (hero.short && String(hero.short).trim()) || "No description yet",
-      directive: style.directive,
-      colorVar: style.colorVar,
-      icon: style.icon,
-      dismissLabel: style.dismissLabel,
-      plainDismiss: style.plainDismiss,
-      moreCount: alertable.length - 1,
-    };
-  }
-
-  // Edge-trigger: show the takeover only when its `newSinceTs` differs from the
-  // last-acknowledged stamp. Same stamp -> already handled (no re-show); a newer
-  // code changes the stamp -> re-fire (escalation, design D-3).
-  function takeoverShouldShow(view, lastAckedTs) {
-    return !!view && view.newSinceTs !== lastAckedTs;
-  }
-
-  // The persistent ribbon while ANY alert-eligible code is present (design §5.2).
-  // Level = the hero severity (drives the color); `na`/empty -> null (no ribbon).
-  //
-  // US-691: THIS RETURNS SLOTS, NOT A SENTENCE, and that is the whole fix. It
-  // used to fold four facts into one string -- "CHECK ENGINE · <code> <desc> ·
-  // +N more" -- which `.ribbon-text` then clipped with a CSS ellipsis. An
-  // ellipsis eats a string FROM THE END, and the end is where the count lives,
-  // so the count was the first thing every overflow destroyed. That is not a
-  // styling accident: while the count exists only as a tail, NO stylesheet can
-  // protect it. On 2026-09-04 P0400 was stored beside P0443 and the operator
-  // did not learn from his own dashboard that a second fault existed.
-  //
-  // Splitting the view lets the stylesheet declare an overflow ORDER instead:
-  // the head and the count do not shrink, the DESCRIPTION is the only run that
-  // clips. What an overflow takes is then the part he can afford to lose.
-  // `more` is EMPTY (not "+0 more") for a single code -- the commonest state
-  // this car is in must not pay for a count it does not carry.
-  function ribbonView(data) {
-    if (!isObj(data)) return null;
-    // US-429: an unavailable DTC source carries no active fault -> no ribbon.
-    if (sourceUnavailable(data, "dtc")) return null;
-    var alertable = alertableCodes(data.codes);
-    if (alertable.length === 0) return null;
-    var hero = alertable[0];
-    // `na` and unrecognized severities are already dropped by alertableCodes,
-    // so this counts FAULTS, never rows: a quiet auto-trans code beside one
-    // real fault must not send the operator hunting for a second one.
-    var moreCount = alertable.length - 1;
-    return {
-      level: hero.severity,
-      glyph: "⚠",
-      head: "CHECK ENGINE · " + hero.code,
-      desc: (hero.short && String(hero.short).trim()) || "",
-      moreCount: moreCount,
-      more: moreCount > 0 ? "+" + moreCount + " more" : "",
-      code: hero.code,
-    };
-  }
-
-  // -------------------------------------------------------------------------
   // US-481 idle home card (F-121) -> US-542 MOTION-FAULT FALLBACK (F-127).
   //
   // This was the calm PARKED view: a STANDBY hero over three borrowed facts.
@@ -2333,8 +2205,8 @@
   //     an Alerts fact (absence of a READ is neither a clean all-clear nor a
   //     fault) and was only ever HERE because this happened to be the screen a
   //     parked operator was looking at.
-  // The persistent ribbon/takeover still fire over every card, so retiring this
-  // screen cannot suppress a genuine fault (Iris AC-5 survives the retirement).
+  // The warnings icon and the STOP takeover still show over every card, so
+  // retiring this screen cannot suppress a genuine fault (Iris AC-5 survives).
   // -------------------------------------------------------------------------
 
   // idle is the emitter's SSOT (system-status `idle` boolean, US-480-a / Atlas
@@ -2427,24 +2299,6 @@
   //            verbatim). `na` (auto-trans on this manual car) is a quiet
   //            disposition -- an N/A chip that sorts LAST, never a hero (S-12).
   // -------------------------------------------------------------------------
-
-  // Tier -> display presentation (chip label + CSS level + hero/detail
-  // directive). `unknown` = an uncurated code (no Spool entry) -> the honest
-  // middle "GET DIAGNOSED", never a false "safe to clear" nor a false "pull
-  // over". `na` = not applicable to this vehicle (quiet, unalarming).
-  var DTC_TIER = {
-    stop: { chip: "STOP", level: "stop", directive: "REDUCE LOAD · PULL OVER" },
-    watch: { chip: "WATCH", level: "watch", directive: "DRIVE GENTLY · GET DIAGNOSED" },
-    minor: { chip: "MINOR", level: "minor", directive: "SAFE TO CLEAR ONCE LOGGED" },
-    unknown: { chip: "?", level: "unknown", directive: "GET DIAGNOSED" },
-    na: { chip: "N/A", level: "na", directive: "not applicable to this vehicle" },
-  };
-
-  function dtcTier(sev) {
-    return Object.prototype.hasOwnProperty.call(DTC_TIER, sev)
-      ? DTC_TIER[sev]
-      : DTC_TIER.unknown;
-  }
 
   function dtcShort(code) {
     return (code.short && String(code.short).trim()) || "No description yet";
@@ -2726,7 +2580,7 @@
     };
   }
 
-  // A real PULL OVER is up (drives the full-brightness short-circuit). Keyed on
+  // A real STOP takeover is up (drives the full-brightness short-circuit). Keyed on
   // the provider's takeover, never on a states/dtc level: the alarm the panel
   // holds at full is exactly the one it is drawing.
   function brightnessAlarmActive(alertsData) {
@@ -2951,7 +2805,7 @@
   // tier upgrade (S-13).
   //
   // US-898-c (Iris U4): the band is the entry's `sentence`, the provider's
-  // words -- never DTC_TIER's tier-table directive -- and the chip is the
+  // words -- never a tier-table directive -- and the chip is the
   // entry's tier, `unrated` drawn with the existing `unknown` styling. With no
   // record (the read failed, or does not list the code) the view keeps the
   // entry's title, chip and sentence and says `details unavailable`: never a
@@ -5300,10 +5154,6 @@
     exceedsMoveCancel: exceedsMoveCancel,
     parkedInit: parkedInit,
     parkedNext: parkedNext,
-    alertableCodes: alertableCodes,
-    takeoverView: takeoverView,
-    takeoverShouldShow: takeoverShouldShow,
-    ribbonView: ribbonView,
     appliedBrightness: appliedBrightness,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
@@ -7174,22 +7024,10 @@
         });
       }
 
-      // --- US-405 DTC takeover + ribbon surfaces (browser only) --------------
-      var ribbonEl = document.getElementById("dtc-ribbon");
+      // --- US-899-a1 STOP takeover surface (browser only) --------------------
+      // Its lines, the view last painted and the ack.
       var takeoverEl = document.getElementById("dtc-takeover");
-      var tvIcon = document.getElementById("takeover-icon");
-      var tvChip = document.getElementById("takeover-chip");
-      var tvCode = document.getElementById("takeover-code");
-      var tvDesc = document.getElementById("takeover-desc");
       var tvDirective = document.getElementById("takeover-directive");
-      var tvMore = document.getElementById("takeover-more");
-      var tvDismiss = document.getElementById("takeover-dismiss");
-      var tvDetail = document.getElementById("takeover-detail");
-      // The last-acknowledged `newSinceTs` (edge-trigger). Acknowledge/Dismiss
-      // records it so the same code never re-takes-over; a newer code (a
-      // different stamp) re-fires (escalation, D-3).
-      var dtcLastAckedTs = null;
-      // US-899-a1: the PULL OVER lines, the view last painted and the ack.
       var tvTitle = document.getElementById("takeover-title");
       var tvValue = document.getElementById("takeover-value");
       var tvStale = document.getElementById("takeover-stale");
@@ -7214,9 +7052,6 @@
       var clearConfirmText = document.getElementById("clear-confirm-text");
       var clearConfirmOk = document.getElementById("clear-confirm-ok");
       var clearConfirmCancel = document.getElementById("clear-confirm-cancel");
-      // The most-recent `dtc` state, so a ribbon/takeover "View detail" tap can
-      // resolve a code string back to its full object.
-      var lastDtc = null;
       // US-898-c: the latest states/alerts (the entries a row tap resolves
       // to), the entry the code detail is open on (null while closed) and the
       // detail body last painted (re-built only when what it says changed).
@@ -7400,8 +7235,8 @@
       // actually connected (they ship `hidden`, so the pre-first-poll unknown
       // shows no vehicle card).
       var gatedCards = [];
-      // The ALERTS card's index -- the target of the warnings icon, the CHECK
-      // ENGINE tap, the ribbon and the takeover's "View detail". US-898-b1
+      // The ALERTS card's index -- the target of the warnings icon and the
+      // CHECK ENGINE tap. US-898-b1
       // (Iris U2): found by the card's id, never by its position or data-state.
       var alertsCardIndex = -1;
       for (var ci = 0; ci < cards.length; ci++) {
@@ -7439,8 +7274,8 @@
         if (changed && typeof onVisibilityChange === "function") onVisibilityChange();
       }
 
-      // US-898-c: the states/alerts code entry for a code (by its parsed id),
-      // or the entry with this exact id; null when the latest payload has none.
+      // US-898-c: the states/alerts entry with this exact id; null when the
+      // latest payload has none.
       function alertsEntryFor(match) {
         var entries = isObj(lastAlerts) && Array.isArray(lastAlerts.entries)
           ? lastAlerts.entries : [];
@@ -7452,21 +7287,14 @@
       function alertsEntryById(id) {
         return alertsEntryFor(function (e) { return e.id === id; });
       }
-      function alertsEntryForCode(codeStr) {
-        return alertsEntryFor(function (e) {
-          return e.source === "code" && codeFromEntryId(e.id) === codeStr;
-        });
-      }
       function closeDetail() {
         if (detailEl) detailEl.hidden = true;
         detailEntry = null;
         detailPainted = null;
       }
-      // Navigate the carousel to the Alerts card; optionally open a code detail.
-      function openAlertsCard(codeStr) {
+      // Navigate the carousel to the Alerts card.
+      function openAlertsCard() {
         if (alertsCardIndex >= 0 && typeof goTo === "function") goTo(alertsCardIndex);
-        var entry = codeStr ? alertsEntryForCode(codeStr) : null;
-        if (entry) openDetail(entry);
       }
 
       function hideTakeover() {
@@ -7475,49 +7303,10 @@
         // US-537: drop the severity WITH the surface. The STOP alarm pulse hangs
         // off [data-severity="stop"], so leaving the attribute behind left an
         // acknowledged takeover matching the alarm rule forever -- inert only
-        // because the element had no box. Same lockstep contract renderRibbon
-        // already keeps with data-level: the state attribute and the surface go
-        // up and down together, so motion can never outlive the alert.
+        // because the element had no box. The state attribute and the surface
+        // go up and down together, so motion can never outlive the alert.
         takeoverEl.removeAttribute("data-severity");
       }
-      // Acknowledge/Dismiss -> record the stamp + drop to the ribbon (the ribbon
-      // keeps carrying the alert). STOP has no plain dismiss, but Acknowledge is
-      // still a drop-to-ribbon so the driver can always clear the view.
-      function ackTakeover(view) {
-        dtcLastAckedTs = view.newSinceTs;
-        hideTakeover();
-      }
-      function showTakeover(view) {
-        if (!takeoverEl) return;
-        takeoverEl.setAttribute("data-severity", view.severity);
-        if (tvIcon) tvIcon.textContent = view.icon;
-        if (tvChip) tvChip.textContent = view.severity.toUpperCase();
-        if (tvCode) tvCode.textContent = view.code;
-        if (tvDesc) tvDesc.textContent = view.short;
-        if (tvDirective) tvDirective.textContent = view.directive;
-        if (tvMore) {
-          if (view.moreCount > 0) {
-            tvMore.textContent = "+" + view.moreCount + " more";
-            tvMore.hidden = false;
-          } else {
-            tvMore.hidden = true;
-          }
-        }
-        if (tvDismiss) {
-          tvDismiss.textContent = view.dismissLabel;
-          tvDismiss.onclick = function () { ackTakeover(view); };
-        }
-        // View detail (US-406): ack the takeover (drops it) + navigate to the
-        // Alerts card and open the hero code's detail.
-        if (tvDetail) {
-          tvDetail.onclick = function () {
-            ackTakeover(view);
-            openAlertsCard(view.code);
-          };
-        }
-        takeoverEl.hidden = false;
-      }
-
       // US-899-a1: one takeover line -- its text, and the line DOWN when it has
       // nothing to say (an empty painted line would still claim its gap).
       function fillTakeoverLine(el, text) {
@@ -7528,9 +7317,8 @@
 
       // US-899-a1: paint takeoverAlertView into #dtc-takeover -- the ONLY writer
       // of its state and copy. null takes it down WITH its severity (the US-537
-      // lockstep: the alarm pulse hangs off [data-severity="stop"]). The legacy
-      // head, chip, code and buttons ship hidden and are never shown here (Iris
-      // U7); the surface holds no control, the whole of it is the ack tap.
+      // lockstep: the alarm pulse hangs off [data-severity="stop"]). The
+      // surface holds no control (Iris U7): the whole of it is the ack tap.
       function renderAlertsTakeover(view, ackState) {
         takeoverAlert = view;
         if (!takeoverEl) return;
@@ -7586,34 +7374,6 @@
               renderAlertsTakeover(takeoverAlert, alertsAck);
             });
         });
-      }
-
-      // US-691: fill one banner slot, and take the slot DOWN when it has nothing
-      // to say. An empty-but-painted span still claims its flex gap, so a single
-      // code would pay width for a count that is not there -- the story's stated
-      // negative case ("do not fix multi-code display by making the one-code
-      // case worse"). Same lockstep the ribbon already keeps with data-level:
-      // the content and the box go up and down together.
-      function fillRibbonSlot(selector, text) {
-        var el = ribbonEl.querySelector(selector);
-        if (!el) return;
-        el.textContent = text || "";
-        el.hidden = !text;
-      }
-
-      function renderRibbon(view) {
-        if (!ribbonEl) return;
-        if (!view) {
-          ribbonEl.hidden = true;
-          ribbonEl.removeAttribute("data-level");
-          return;
-        }
-        ribbonEl.setAttribute("data-level", view.level);
-        fillRibbonSlot(".ribbon-glyph", view.glyph);
-        fillRibbonSlot(".ribbon-head", view.head);
-        fillRibbonSlot(".ribbon-desc", view.desc);
-        fillRibbonSlot(".ribbon-more", view.more);
-        ribbonEl.hidden = false;
       }
 
       // --- US-406 detail render (browser only) -------------------------------
@@ -7751,11 +7511,10 @@
 
       // US-898-c (Iris U4 / G-7 exception): open the detail on a code ENTRY.
       // The one states/dtc read outside the provider path, scoped to this open
-      // and the ticks while it stays open; it feeds lastDtc for the clear gate.
+      // and the ticks while it stays open; it is what the clear gate keys off.
       async function openDetail(entry) {
         if (!detailEl || !codeDetailView(null, entry)) return;
         var dtcData = await fetchState("dtc");
-        lastDtc = dtcData;
         detailEntry = entry;
         detailPainted = null;
         if (clearResult) clearResult.textContent = "";
@@ -7785,7 +7544,6 @@
       function refreshCodeDetail(dtcData) {
         if (!detailEntry || !detailEl || detailEl.hidden) return;
         detailEntry = alertsEntryById(detailEntry.id) || detailEntry;
-        lastDtc = dtcData;
         paintCodeDetail(dtcData);
       }
 
@@ -8013,24 +7771,6 @@
       // the two overlays' escape hatches live together. AC2 -- never traps.
       var sysDetailBack = document.getElementById("sys-detail-back");
       if (sysDetailBack) sysDetailBack.addEventListener("click", closeSysDetail);
-      // The ribbon is tappable -> jump to the Alerts card + the hero detail.
-      if (ribbonEl) {
-        ribbonEl.addEventListener("click", function () {
-          if (ribbonEl.hidden) return;
-          var view = ribbonView(lastDtc);
-          openAlertsCard(view ? view.code : null);
-        });
-      }
-
-      // Apply the polled `dtc` state to the ribbon. A missing/malformed `dtc`
-      // file -> no alert (honest: absence of the state = no active fault), never
-      // a fabricated code. US-899-a1: it no longer drives #dtc-takeover -- the
-      // states/alerts takeover is that surface's one driver (one writer).
-      function updateDtcSurfaces(dtcData) {
-        lastDtc = dtcData;
-        renderRibbon(ribbonView(dtcData));
-      }
-
       // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
       // motion poll (fresh states/imu) and the 4 Hz tick (fresh
       // states/grade-history) -- against one clock per paint.
@@ -8064,7 +7804,6 @@
       }
 
       async function tick() {
-        var dtcData = null; // fetched once (the ribbon/takeover + detail share it)
         var sysData = null; // shared by every surface (one fetch per tick)
         var lightData = null; // shared: the US-507 Health card + the auto-dim
         // US-496: ONE clock for the whole tick, so the Light card's freshness
@@ -8092,8 +7831,7 @@
           // through exactly once per tick. A ledger updated per-consumer would
           // be a ledger some consumer forgets to update.
           feedSeen = feedObserved(feedSeen, name, payload);
-          if (name === "dtc") dtcData = payload;
-          else if (name === "system-status") sysData = payload;
+          if (name === "system-status") sysData = payload;
           else if (name === "light") lightData = payload;
           return payload;
         }
@@ -8198,7 +7936,7 @@
         // on EVERY tick, unconditionally -- not only while ALERTS is showing.
         lastAlerts = await stateOnce("alerts");
         renderTopbarIcon(alertIconView(lastAlerts));
-        // US-899-a1: the PULL OVER takeover, from the SAME cached states/alerts
+        // US-899-a1: the STOP takeover, from the SAME cached states/alerts
         // on this tick's one clock. The read first moves the ack on (a matching
         // re-read settles it; a lapsed window says so), then the surface paints.
         var ackWindows = alertsAckWindows();
@@ -8219,13 +7957,6 @@
             await stateOnce("alerts"), feedWaitedMs(feedSeen, "alerts", feedStartedMs, nowMs)
           ) === "loading"
         );
-        // US-405/US-406: drive the persistent ribbon from states/dtc.
-        // US-898-b1 KEEPS this feed: the ALERTS card no longer carries
-        // data-state="dtc", which was the only thing that read it, so the read
-        // is explicit here -- dtcData also feeds the code detail
-        // (refreshCodeDetail) and clear gate. US-899-a2 removes it.
-        await stateOnce("dtc");
-        updateDtcSurfaces(dtcData);
         // US-630: the derived gear. Read on THIS tick rather than the ~10 Hz
         // motion loop -- the producer debounces for >= 2 s before it will name a
         // gear, so a gear cannot change faster than the 4 Hz card tick can see
@@ -8245,9 +7976,9 @@
         // states/engine-history alone, and the status row from the same cached
         // obd-live, its codes tap gated on the debounced parked signal.
         engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);
-        // US-898-c: an open code detail re-reads states/dtc each tick (cached:
-        // the read above, until US-899-a2 retires it) and re-gates its clear
-        // against THIS tick's parked signal.
+        // US-898-c: an open code detail re-reads states/dtc each tick -- the
+        // only states/dtc read on the tick -- and re-gates its clear against
+        // THIS tick's parked signal.
         if (detailEntry) refreshCodeDetail(await stateOnce("dtc"));
         renderEngineScroll(
           engineCard,
@@ -8287,8 +8018,8 @@
         // gate -- the kebab's visibility is no longer a function of any state.
         // US-483-b / US-893-a: APPLY the level the light bridge published in
         // states/light (pure consumer -- never the sensor, never a curve). A
-        // PULL OVER up (US-899-a1: states/alerts.takeover, the same cached read
-        // the takeover painted from) holds it at full; an absent/stale feed holds the injected
+        // STOP takeover up (US-899-a1: states/alerts.takeover, the same cached
+        // read the takeover painted from) holds it at full; an absent/stale feed holds the injected
         // defaultLevel (honest fallback). See appliedBrightness.
         // US-507: `stateOnce` is idempotent, so this REUSES the payload the
         // Health card's Light section already read and only performs a real

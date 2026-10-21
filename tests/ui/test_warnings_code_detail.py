@@ -17,6 +17,8 @@
 # ================================================================================
 # 2026-10-20    | Ralph (Rex)  | Initial -- US-898-c parked code-row tap + detail
 #               |              | directive source.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: DTC_TIER is deleted; the
+#               |              | tier-table guard holds its former words frozen.
 # ================================================================================
 ################################################################################
 
@@ -184,12 +186,19 @@ def test_codeDetailView_bandIsTheEntrysSentence_chipIsTheEntrysTier():
 
 @_needsNode
 def test_codeDetailView_neverPrintsATierTableDirective():
-    """Iris U4: no tier, with or without a record, prints DTC_TIER's words."""
+    """Iris U4: no tier, with or without a record, prints DTC_TIER's words.
+
+    MOVED PIN (US-899-a2): DTC_TIER is deleted, so its former directive words
+    are frozen here and the table itself must stay gone."""
     js = open(_JS, encoding="utf-8").read()
-    table = re.search(r"var DTC_TIER = \{(.*?)\n  \};", js, re.S)
-    assert table, "DTC_TIER moved -- re-point this guard"
-    tierWords = set(re.findall(r'directive: "([^"]*)"', table.group(1)))
-    assert tierWords, "no DTC_TIER directive strings found -- the guard is vacuous"
+    assert not re.search(r"\bDTC_TIER\b", js), "the tier table is back"
+    tierWords = {
+        "REDUCE LOAD · PULL OVER",
+        "DRIVE GENTLY · GET DIAGNOSED",
+        "SAFE TO CLEAR ONCE LOGGED",
+        "GET DIAGNOSED",
+        "not applicable to this vehicle",
+    }
 
     for tier in ("stop", "watch", "minor", "unrated"):
         entry = {"id": f"code:P0999:{tier}", "source": "code", "key": "P0999",
