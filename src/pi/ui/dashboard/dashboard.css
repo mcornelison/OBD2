@@ -821,6 +821,68 @@ html, body {
 #takeover-age { font-size: var(--fs-meta); }
 #takeover-notice { font-size: var(--fs-meta); }
 
+/* --- US-899-b key-on TROUBLE CODES screen (spec s4.4b; Iris brief s B + U7) ---
+   Its own container (data-surface="code-alert", never a data-severity) on the
+   takeover skeleton: the opaque field and the 8 px frame, but NO pulse and NO
+   full-brightness override -- a stored code is not an emergency. The frame is
+   the provider tier's colour token, set by carousel.js renderCodeAlert as
+   --code-alert-frame (the one TIER_COLOR_VAR map the STOP takeover also reads).
+   z-index 58: above every page and the clear-confirm (55), below the STOP takeover (60)
+   and the REPLAY marker (70). Michroma carries only the UPPER-CASE words (the
+   head, the chips, DISMISS); the titles, sentences, '+n more' and the notice
+   are --font-mono. DISMISS is the ONE control, so it alone is bordered (US-758). */
+#code-alert {
+  --code-alert-frame: var(--neutral-chip-bg);   /* replaced by the tier's token */
+  --code-alert-rule: 8px;                       /* the takeover's frame width */
+  --code-alert-gap: 8px;
+  --code-alert-chip-pad: 6px;
+  --code-alert-radius: 8px;
+  --code-alert-line: 1.2;
+  position: fixed; inset: 0; z-index: 58;
+  display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box; text-align: center;
+  background: var(--bg); color: var(--text-primary);
+  border: var(--code-alert-rule) solid var(--code-alert-frame);
+}
+#code-alert .code-alert-head {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-secondary); line-height: var(--code-alert-line); letter-spacing: 0;
+}
+#code-alert-rows {
+  display: flex; flex-direction: column; gap: var(--code-alert-gap); width: 100%;
+}
+#code-alert .code-alert-row {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--code-alert-gap); align-items: baseline; text-align: start;
+  line-height: var(--code-alert-line);
+}
+#code-alert .code-alert-chip {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); white-space: nowrap;
+  padding-inline: var(--code-alert-chip-pad); border-radius: var(--code-alert-radius);
+}
+#code-alert .code-alert-chip[data-tier="stop"]    { background: var(--critical-red); color: var(--text-primary); }
+#code-alert .code-alert-chip[data-tier="watch"]   { background: var(--amber-warn); color: var(--bg); }
+#code-alert .code-alert-chip[data-tier="minor"]   { background: var(--green-ok); color: var(--bg); }
+#code-alert .code-alert-chip[data-tier="unrated"] { background: var(--neutral-chip-bg); color: var(--text-primary); }
+#code-alert .code-alert-title {
+  font-family: var(--font-mono); font-size: var(--fs-label); overflow-wrap: anywhere;
+}
+#code-alert .code-alert-sentence {
+  grid-column: 2; font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-secondary);
+}
+#code-alert-more { font-size: var(--fs-meta); color: var(--text-secondary); }
+#code-alert-notice { font-size: var(--fs-meta); color: var(--amber-warn); }
+#code-alert-dismiss {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label); letter-spacing: 0;
+  min-height: var(--tap-min); min-width: var(--tap-min);
+  padding-inline: var(--code-alert-chip-pad); border-radius: var(--code-alert-radius);
+  border: 1px solid var(--text-primary); background: var(--surface);
+  color: var(--text-primary); cursor: pointer;
+}
+
 /* --- US-403 long-press ring (D-6) ------------------------------------------- */
 /* A radial fill driven by the JS --fill (0..1). Centered; non-interactive so it
    never intercepts the press it visualizes.

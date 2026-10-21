@@ -433,7 +433,12 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
 
     MOVED PIN (US-898-b2): the empty-state headline WORDS (NO WARNINGS / NOT
     CHECKED YET, Iris brief '26 px') are Michroma; the '?' beside them, the
-    sentences and the '↓ n more below' cue stay --font-mono."""
+    sentences and the '↓ n more below' cue stay --font-mono.
+
+    MOVED PIN (US-899-b): the TROUBLE CODES screen's head, its tier chips and
+    DISMISS are Michroma (spec s4.4b); its titles, sentences, '+n more on
+    ALERTS' and notice stay --font-mono, pinned in
+    tests/ui/test_warnings_code_alert.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -454,6 +459,9 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#alerts-card .warn-count",
         "#alerts-card .warn-chip",
         "#alerts-card .warn-quiet-word",
+        "#code-alert .code-alert-head",
+        "#code-alert .code-alert-chip",
+        "#code-alert-dismiss",
     }, bound
 
 

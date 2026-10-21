@@ -400,6 +400,9 @@ function makeFetch(routes, log) {
       // US-890-f: a write's token, so a test can see the POST was token-gated.
       var hdrs = options && options.headers;
       if (hdrs && typeof hdrs["X-Splash-Token"] === "string") entry.token = hdrs["X-Splash-Token"];
+      // US-899-b: a write's JSON body, so a test can see WHAT one request sent.
+      // Recorded only when there is one: a body-less POST's entry is unchanged.
+      if (options && typeof options.body === "string") entry.body = options.body;
       log.push(entry);
     }
     var key = String(url).split("?")[0];

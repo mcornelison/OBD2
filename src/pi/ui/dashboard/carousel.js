@@ -2644,8 +2644,7 @@
       phase: prev.phase, id: prev.id, confirmFromMs: prev.confirmFromMs,
       noticeFromMs: prev.noticeFromMs,
     } : alertsAckInit();
-    var type = isObj(ev) ? ev.type : null;
-    if (type === "tap") {
+    if (isObj(ev) && ev.type === "tap") {
       var view = isObj(ev.view) ? ev.view : null;
       if (s.phase === "idle" && view && view.id && view.acknowledged !== true &&
           isPositiveSec(ev.confirmSec) && isPositiveSec(ev.noticeSec)) {
@@ -2655,6 +2654,17 @@
       }
       return s;
     }
+    return ackFlowStep(s, ev, function (alerts) {
+      return s.id !== null && alertsEntryAcknowledged(alerts, s.id);
+    });
+  }
+
+  // The half of an honest ack that is not the tap, shared by the STOP takeover's ack
+  // and the code alert's DISMISS (US-899-b): the POST's answer, no answer, and
+  // the re-read. `settled(alerts)` is the ONE proof each surface accepts from a
+  // re-read; nothing else -- not a 200 -- ever settles it. Mutates and returns `s`.
+  function ackFlowStep(s, ev, settled) {
+    var type = isObj(ev) ? ev.type : null;
     if (type === "answer") {
       if (s.phase !== "posting") return s;
       if (ev.status === 200 && isObj(ev.body) && ev.body.ok === true) {
@@ -2668,7 +2678,7 @@
       return s.phase === "posting" ? alertsAckFailed(s, ev.nowMs) : s;
     }
     if (type !== "read") return s;
-    var acked = s.id !== null && alertsEntryAcknowledged(ev.alerts, s.id);
+    var acked = settled(ev.alerts);
     if (s.phase === "awaiting") {
       if (acked) {
         s.phase = "idle";
@@ -2691,6 +2701,92 @@
   function alertsAckNoticeText(state) {
     return isObj(state) && state.phase === "idle" && state.noticeFromMs !== null
       ? ALERTS_ACK_FAILED_TEXT : "";
+  }
+
+  // -------------------------------------------------------------------------
+  // US-899-b (F-127; spec s4.4b, Iris brief s B + U5-U7, Atlas Q26/Q32) -- the
+  // key-on TROUBLE CODES screen, from states/alerts.codeAlert ALONE. The
+  // provider decides that it shows (each key-on; a boot-scoped ack) and its
+  // tier; the page compares nothing. Drawn only while engineParked is parked
+  // (US-511; it starts not-parked) and never under the STOP takeover. Not being drawn
+  // is not a dismiss: only DISMISS posts, and only a re-read with codeAlert
+  // null closes it.
+  // -------------------------------------------------------------------------
+
+  // Iris brief s B: up to 3 rows; the rest are named by count, never clipped.
+  var CODE_ALERT_ROWS_MAX = 3;
+  var CODE_DISMISS_FAILED_TEXT = "couldn't dismiss";
+
+  // The drawn screen, or null: no payload, no codeAlert, no ids, a takeover up
+  // (the STOP takeover wins), or `parked` not strictly true. Each row is the entry its
+  // id names in entries[] (chip + title + sentence, warningRowView's words);
+  // an id with no entry draws no row. `more` is '+n more on ALERTS' beyond 3.
+  function codeAlertView(alerts, parked) {
+    if (!isObj(alerts) || !isObj(alerts.codeAlert) || isObj(alerts.takeover)) return null;
+    if (parked !== true) return null;
+    var ids = Array.isArray(alerts.codeAlert.ids)
+      ? alerts.codeAlert.ids.filter(function (id) { return typeof id === "string" && id; })
+      : [];
+    if (!ids.length) return null;
+    var entries = Array.isArray(alerts.entries) ? alerts.entries : [];
+    var rows = [];
+    for (var i = 0; i < ids.length && i < CODE_ALERT_ROWS_MAX; i++) {
+      for (var j = 0; j < entries.length; j++) {
+        if (isObj(entries[j]) && entries[j].id === ids[i]) {
+          var row = warningRowView(entries[j], null);
+          rows.push({
+            id: row.id, tier: row.tier, chip: row.chip, title: row.title, sentence: row.sentence,
+          });
+          break;
+        }
+      }
+    }
+    var more = ids.length - Math.min(ids.length, CODE_ALERT_ROWS_MAX);
+    return {
+      ids: ids,
+      colorVar: tierColorVar(alerts.codeAlert.tier),
+      rows: rows,
+      more: more > 0 ? "+" + more + " more on ALERTS" : null,
+    };
+  }
+
+  // DISMISS -> ONE POST /alerts-ack {ids: every codeAlert id} (Atlas Q26: one
+  // shape, all-or-nothing).
+  function codeDismissBody(ids) {
+    return { ids: Array.isArray(ids) ? ids.slice() : [] };
+  }
+
+  // The alertsAckNext lifecycle, keyed on the ids: idle | posting | awaiting.
+  function codeDismissInit() {
+    return { phase: "idle", ids: null, confirmFromMs: null, noticeFromMs: null };
+  }
+
+  // Advance the dismiss by one event (the alertsAckNext events; a tap carries
+  // the codeAlertView). Settled ONLY by a re-read whose codeAlert is null -- an
+  // unreadable payload is not that proof.
+  function codeDismissNext(prev, ev) {
+    var s = isObj(prev) && typeof prev.phase === "string" ? {
+      phase: prev.phase, ids: Array.isArray(prev.ids) ? prev.ids.slice() : null,
+      confirmFromMs: prev.confirmFromMs, noticeFromMs: prev.noticeFromMs,
+    } : codeDismissInit();
+    if (isObj(ev) && ev.type === "tap") {
+      var view = isObj(ev.view) ? ev.view : null;
+      if (s.phase === "idle" && view && Array.isArray(view.ids) && view.ids.length &&
+          isPositiveSec(ev.confirmSec) && isPositiveSec(ev.noticeSec)) {
+        s.phase = "posting";
+        s.ids = view.ids.slice();
+        s.noticeFromMs = null;
+      }
+      return s;
+    }
+    return ackFlowStep(s, ev, function (alerts) {
+      return s.ids !== null && isObj(alerts) && alerts.codeAlert === null;
+    });
+  }
+
+  function codeDismissNoticeText(state) {
+    return isObj(state) && state.phase === "idle" && state.noticeFromMs !== null
+      ? CODE_DISMISS_FAILED_TEXT : "";
   }
 
   // 3-state trust badge (design §5.4). Verified (Spool) / community-unverified /
@@ -5177,6 +5273,11 @@
     alertsAckInit: alertsAckInit,
     alertsAckNext: alertsAckNext,
     alertsAckNoticeText: alertsAckNoticeText,
+    codeAlertView: codeAlertView,
+    codeDismissBody: codeDismissBody,
+    codeDismissInit: codeDismissInit,
+    codeDismissNext: codeDismissNext,
+    codeDismissNoticeText: codeDismissNoticeText,
     trustBadge: trustBadge,
     fixArea: fixArea,
     fixSectionLabel: fixSectionLabel,
@@ -7036,6 +7137,17 @@
       var tvNotice = document.getElementById("takeover-notice");
       var takeoverAlert = null;
       var alertsAck = alertsAckInit();
+      // --- US-899-b TROUBLE CODES surface (browser only) ---------------------
+      // Its own container, the view last painted, the rows last built and the
+      // DISMISS state.
+      var codeAlertEl = document.getElementById("code-alert");
+      var codeAlertRows = document.getElementById("code-alert-rows");
+      var codeAlertMore = document.getElementById("code-alert-more");
+      var codeAlertDismiss = document.getElementById("code-alert-dismiss");
+      var codeAlertNotice = document.getElementById("code-alert-notice");
+      var codeAlert = null;
+      var codeAlertRowsPainted = null;
+      var codeDismiss = codeDismissInit();
 
       // --- US-406 Alerts card (Card 5) + per-code detail (browser only) ------
       var detailEl = document.getElementById("dtc-detail");
@@ -7372,6 +7484,75 @@
               uiLog(LOG_WARN, "alerts-ack no answer: " + String(e));
               alertsAck = alertsAckNext(alertsAck, { type: "failure", nowMs: Date.now() });
               renderAlertsTakeover(takeoverAlert, alertsAck);
+            });
+        });
+      }
+
+      // US-899-b: paint codeAlertView into #code-alert. null takes it down
+      // (moving, the STOP takeover up, or no codeAlert) -- which posts nothing. The
+      // frame is the provider tier's colour token; the rows are rebuilt only
+      // when what they say changed.
+      function renderCodeAlert(view, dismissState) {
+        codeAlert = view;
+        if (!codeAlertEl) return;
+        if (!view) {
+          codeAlertEl.hidden = true;
+          return;
+        }
+        // An unknown tier sets "" (removes it): the CSS default frame stands.
+        codeAlertEl.style.setProperty(
+          "--code-alert-frame", view.colorVar ? "var(" + view.colorVar + ")" : ""
+        );
+        var rowsKey = JSON.stringify(view.rows);
+        if (codeAlertRows && rowsKey !== codeAlertRowsPainted) {
+          codeAlertRowsPainted = rowsKey;
+          codeAlertRows.textContent = "";
+          for (var i = 0; i < view.rows.length; i++) {
+            var r = view.rows[i];
+            var row = document.createElement("div");
+            row.className = "code-alert-row";
+            row.setAttribute("data-id", r.id);
+            var chip = warnSpan("span", "code-alert-chip", r.chip);
+            chip.setAttribute("data-tier", r.tier);
+            row.appendChild(chip);
+            row.appendChild(warnSpan("span", "code-alert-title", r.title));
+            if (r.sentence) row.appendChild(warnSpan("span", "code-alert-sentence", r.sentence));
+            codeAlertRows.appendChild(row);
+          }
+        }
+        fillTakeoverLine(codeAlertMore, view.more);
+        fillTakeoverLine(codeAlertNotice, codeDismissNoticeText(dismissState));
+        codeAlertEl.hidden = false;
+      }
+
+      // DISMISS: ONE POST of every id. The answer only moves the dismiss on;
+      // the screen closes on the re-read that shows codeAlert null.
+      if (codeAlertDismiss) {
+        codeAlertDismiss.addEventListener("click", function () {
+          if (!codeAlertEl || codeAlertEl.hidden || !codeAlert) return;
+          var windows = alertsAckWindows();
+          var before = codeDismiss.phase;
+          codeDismiss = codeDismissNext(codeDismiss, {
+            type: "tap", view: codeAlert,
+            confirmSec: windows.confirmSec, noticeSec: windows.noticeSec,
+          });
+          if (before === "posting" || codeDismiss.phase !== "posting") return;
+          renderCodeAlert(codeAlert, codeDismiss);
+          postWrite("/alerts-ack", codeDismissBody(codeDismiss.ids))
+            .then(function (res) {
+              if (res.status !== 200) {
+                var b = isObj(res.body) ? res.body : {};
+                uiLog(LOG_WARN, "alerts-ack (codes) " + res.status + ": " + (b.error || ""));
+              }
+              codeDismiss = codeDismissNext(codeDismiss, {
+                type: "answer", status: res.status, body: res.body, nowMs: Date.now(),
+              });
+              renderCodeAlert(codeAlert, codeDismiss);
+            })
+            .then(null, function (e) {
+              uiLog(LOG_WARN, "alerts-ack (codes) no answer: " + String(e));
+              codeDismiss = codeDismissNext(codeDismiss, { type: "failure", nowMs: Date.now() });
+              renderCodeAlert(codeAlert, codeDismiss);
             });
         });
       }
@@ -7976,6 +8157,14 @@
         // states/engine-history alone, and the status row from the same cached
         // obd-live, its codes tap gated on the debounced parked signal.
         engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);
+        // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
+        // the takeover painted from, against THIS tick's parked signal. The read
+        // moves the dismiss on first (a codeAlert-null re-read settles it).
+        codeDismiss = codeDismissNext(codeDismiss, {
+          type: "read", alerts: lastAlerts, nowMs: nowMs,
+          confirmSec: ackWindows.confirmSec, noticeSec: ackWindows.noticeSec,
+        });
+        renderCodeAlert(codeAlertView(lastAlerts, engineParked.parked), codeDismiss);
         // US-898-c: an open code detail re-reads states/dtc each tick -- the
         // only states/dtc read on the tick -- and re-gates its clear against
         // THIS tick's parked signal.

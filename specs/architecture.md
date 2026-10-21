@@ -7853,6 +7853,42 @@ The ack stops only the provider's ICON pulse; the takeover stays up and its fram
 keeps pulsing until the provider clears it. Tests:
 `tests/ui/test_warnings_takeover.py`.
 
+#### Key-on TROUBLE CODES screen from `states/alerts` (US-899-b) [F-127; spec §4.4b, Iris brief s B + U5/U6/U7, Atlas Q26/Q32]
+
+**Source.** `#code-alert` renders from `states/alerts.codeAlert` (`{ids[], tier,
+dismissable:true}`) plus `entries[]` ALONE. The provider decides that it shows (any
+active code entry not all acknowledged — so each key-on re-alerts, the ack being
+boot-scoped) and computes `tier` (Atlas Q32); the page compares nothing. Pure
+`codeAlertView(alerts, parked)` → `{ids, colorVar, rows, more}` or null. Rows: the
+first 3 ids, each the entry its id names in `entries[]` (chip + provider title +
+provider sentence, through `warningRowView`); beyond 3, `+n more on ALERTS`. The
+frame is `TIER_COLOR_VAR[codeAlert.tier]` (the PULL OVER map), set as the inline
+custom property `--code-alert-frame`.
+
+**When.** Null — not drawn — unless `engineParked.parked` is strictly true (the
+US-511 debounce; it starts not-parked, so the screen appears ≥ 8 s after boot, Iris
+U6) **and** `takeover` is null (PULL OVER > CODE ALERT: with both set only PULL OVER
+is drawn, and the code alert returns once the takeover clears). Not being drawn is
+not a dismiss: it posts nothing and the screen returns when parked, until dismissed.
+
+**Look.** Its own container `data-surface="code-alert"` (never a `data-severity`,
+Iris U7) on the takeover skeleton: opaque `--bg`, 8 px frame, **no pulse and no
+full-brightness override** (`brightnessAlarmActive` keys on `takeover` only).
+z-index 58: above every page and the clear-confirm (55), below PULL OVER (60) and
+the REPLAY marker (70). Head `TROUBLE CODES` in Michroma `--fs-secondary`; the chips
+and `DISMISS` are Michroma (upper-case only), every title, sentence, `+n more` and
+the notice `--font-mono`.
+
+**DISMISS.** The one control (bordered, `--tap-min` hit box, US-758): ONE request,
+`POST /alerts-ack {ids: codeAlert.ids}` (Atlas Q26, all-or-nothing) through
+`postWrite`. The honest write is `codeDismissNext` — `alertsAckNext`'s lifecycle,
+sharing its answer/re-read half (`ackFlowStep`) — settled ONLY by a re-read whose
+`codeAlert` is null within `alertsAckConfirmSec` (an unreadable payload is not that
+proof). A refusal, no answer or a lapsed window keeps the screen up with
+`couldn't dismiss` for `alertsAckNoticeSec`; with either window absent DISMISS posts
+nothing. Tests: `tests/ui/test_warnings_code_alert.py` (also the generator of its
+`code-alert-*` / `ack-prior-boot` fixtures).
+
 #### DTC Alerts card (Card 5) + detail (US-406) [F-111 / design §5.3–5.4]
 
 The persistent home of the DTC state — a third carousel card (`data-state="dtc"`,

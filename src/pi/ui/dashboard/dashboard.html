@@ -123,6 +123,22 @@
     </div>
   </div>
 
+  <!-- US-899-b key-on TROUBLE CODES screen: states/alerts.codeAlert ONLY
+       (carousel.js renderCodeAlert), parked only, never under the STOP takeover. Its own
+       container on the takeover skeleton (Iris U7): no pulse, no brightness
+       override, the frame in the provider tier's colour. Up to 3 code rows,
+       '+n more on ALERTS', ONE real DISMISS button and the dismiss notice. -->
+  <div id="code-alert" data-surface="code-alert" hidden role="alertdialog"
+       aria-label="Trouble codes">
+    <div class="takeover-inner">
+      <span class="code-alert-head" id="code-alert-head">TROUBLE CODES</span>
+      <div id="code-alert-rows"></div>
+      <span class="takeover-line" id="code-alert-more" hidden></span>
+      <button type="button" class="tap-target" id="code-alert-dismiss">DISMISS</button>
+      <span class="takeover-line" id="code-alert-notice" hidden></span>
+    </div>
+  </div>
+
   <main id="carousel" aria-roledescription="carousel">
     <div id="track">
       <!-- US-888-a (F-140; specs/v030-driving-page-design.md, layout B): the

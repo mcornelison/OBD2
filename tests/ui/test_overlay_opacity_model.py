@@ -79,6 +79,13 @@ OVERLAY_ROLES = {
         "US-405 severity takeover -- OUT OF SCOPE per AC-4; its field is set "
         "per-severity by the DTC safety design, not by this rule",
     ),
+    # MOVED PIN (US-899-b): the key-on TROUBLE CODES screen is a new full-screen
+    # layer on the takeover skeleton; the Warnings spec s4.4b owns its field.
+    "#code-alert": (
+        ALARM,
+        "US-899-b key-on TROUBLE CODES screen -- the takeover skeleton without "
+        "pulse; its opaque field and tier frame are set by the Warnings spec s4.4b",
+    ),
 }
 
 
