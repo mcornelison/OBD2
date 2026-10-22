@@ -45,7 +45,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": true,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     },
     {
       "id": "code:P0443:minor",
@@ -63,7 +64,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": true,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     }
   ]
 }

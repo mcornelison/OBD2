@@ -32,6 +32,9 @@
 # 2026-10-20    | Ralph (Rex)  | US-898-b2 -- empty / not-checked states, scroll cue.
 # 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the tick's states/dtc feed and
 #               |              | the ribbon are deleted; DTC_TIER no longer stays.
+# 2026-10-21    | Ralph (Rex)  | US-897-d -- MOVED PIN: a battery episode carries the
+#               |              | provider's round (its side); every fixture entry
+#               |              | gains `round` (rewritten by running this file).
 # ================================================================================
 ################################################################################
 
@@ -140,9 +143,11 @@ def _battery(side: str, value: float, firstSeenTs: str) -> AlertEpisode:
         (BATTERY_LOW_TITLE, BATTERY_LOW_SENTENCE) if side == "low"
         else (BATTERY_HIGH_TITLE, BATTERY_HIGH_SENTENCE)
     )
+    # MOVED PIN (US-897-d): the provider's round for the episode's side.
     return _episode(
         source="engine", key="BATTERY_V", tier="watch", title=title, sentence=sentence,
         unit="V", value=value, firstSeenTs=firstSeenTs, lastSeenTs=NOW,
+        round="floor" if side == "low" else "ceil",
     )
 
 

@@ -76,6 +76,9 @@
 # 2026-10-20    | Rex (US-897-c) | _maybeServiceAlertsAckRequest after the fuel
 #               |              | reset hook: services POST /alerts-ack, all or
 #               |              | nothing, one store write, then emitNow.
+# 2026-10-21    | Rex (US-897-e) | The post-clear re-read empties the carried
+#               |              | pending set first (Mode 04 wiped it); the
+#               |              | restart seed of that set survives the init.
 # ================================================================================
 ################################################################################
 
@@ -308,6 +311,9 @@ class ApplicationOrchestrator(  # type: ignore[misc]
         self._dtcEmitter: Any | None = None
         # US-897-a1: pending codes of the last states/dtc publish that read
         # Mode 07; a Mode 03-only publish carries them (EventRouterMixin).
+        # US-897-e: this initialiser runs in __init__, BEFORE lifecycle's
+        # _initializeCardStateEmitters seeds the set from states/dtc on a
+        # restart, so the seed is never overwritten by it.
         self._dtcCarriedPending: list[Any] = []
         # US-897-a2: when Mode 03 / Mode 07 last read successfully this boot.
         # Seeded from the tmpfs states/dtc at card-emitter init (an orchestrator
@@ -1066,6 +1072,11 @@ class ApplicationOrchestrator(  # type: ignore[misc]
                         *(getattr(readback, "stored", None) or []),
                         *(getattr(readback, "pending", None) or []),
                     ]
+                    # US-897-e (Atlas RULED 2026-10-21): Mode 04 wiped the
+                    # pending codes, so no pre-clear set is carried past it --
+                    # even when the re-read's Mode 07 did not answer and the
+                    # router therefore keeps (rather than replaces) the set.
+                    self._dtcCarriedPending = []
                     emitDtcState(
                         SimpleNamespace(
                             codes=rereadCodes,

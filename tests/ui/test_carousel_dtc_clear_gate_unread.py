@@ -66,6 +66,9 @@
 #         and deliberately ignore it), so the cost is paid by humans reading the
 #         state file. A human already paid it.
 #
+#         MOVED PIN (US-919): FIXED -- the emitter shares dtc_clear's chain, so
+#         nothing relevant publishes `no_codes`.
+#
 #     F3  THE DISABLE LABEL MISNAMES AN UNCLASSIFIED CODE. Against the severity
 #         table SHIPPED IN THIS REPO, P0443 -- the code stored on the car right
 #         now -- is un-tabled, so `enrichCode` honestly degrades it to `unknown`,
@@ -115,6 +118,10 @@
 #               |              | past the 8 s debounce; the detail's own dtc read
 #               |              | feeds lastDtc. F1 is FIXED (the open detail
 #               |              | re-gates every tick) and re-recorded as such.
+# 2026-10-21    | Ralph (Rex)  | US-919 MOVED PIN: _state carries a Mode 07 read
+#               |              | time; F2 is FIXED (the emitter publishes
+#               |              | `no_codes`) and re-recorded; pending_not_read
+#               |              | pinned on the panel and at the action path.
 # ================================================================================
 ################################################################################
 
@@ -221,6 +228,12 @@ def _raw(
     }
 
 
+# MOVED PIN (US-919): a Mode 07 read time. Every fixture below models a session
+# whose pending set WAS read, so each pin keeps testing the reason it names; an
+# unread pending set is its own reason (`pending_not_read`), pinned below.
+_PENDING_READ_TS = "2026-08-31T15:54:00Z"
+
+
 def _state(
     codes: list[dict[str, Any]],
     *,
@@ -228,6 +241,7 @@ def _state(
     reason: str | None = None,
     lock: list[str] | None = None,
     table: dict[str, dict[str, Any]] | None = None,
+    pendingCheckedAtTs: str | None = _PENDING_READ_TS,
 ) -> dict[str, Any]:
     """A `dtc` payload assembled by the real producer."""
     return buildDtcState(
@@ -239,6 +253,7 @@ def _state(
         nowIso="2026-08-31T15:54:00Z",
         dtcAvailable=available,
         dtcUnavailableReason=reason,
+        pendingCheckedAtTs=pendingCheckedAtTs,
     )
 
 
@@ -748,34 +763,35 @@ def test_characterisation_thePublishedClearGateSaysOkForASourceNobodyRead():
     """
     Given: the unread state
     When: the published `clearGate` block is read, as Atlas read it off the Pi
-    Then: it is exactly {enabled: False, reason: "ok"}.
+    Then: it is exactly {enabled: False, reason: "no_codes"}.
 
-          Atlas's punch-list 2.3 observation, pinned verbatim so the pass is
-          evidence rather than memory -- and so the oddity in it is on the
-          record. `ok` is this vocabulary's word for CLEARABLE; publishing it as
-          the REASON for a refusal, over a source nobody has read, is punch-list
-          2.1's defect class one field over.
+          MOVED PIN (US-919): F2 is FIXED. Atlas's punch-list 2.3 observation
+          was {enabled: False, reason: "ok"} -- `ok`, this vocabulary's word for
+          CLEARABLE, published as the REASON for a refusal. The emitter now
+          shares dtc_clear's chain, so nothing relevant reads `no_codes`. The
+          name is kept so the history of this pin stays greppable.
     """
-    assert _state([], **_UNREAD)["clearGate"] == {"enabled": False, "reason": "ok"}
+    assert _state([], **_UNREAD)["clearGate"] == {"enabled": False, "reason": "no_codes"}
 
 
 def test_characterisation_threeDifferentTruthsAllPublishTheSameReason():
     """
     Given: an unread source, a completed clean read, and a clearable car
     When: each published `clearGate.reason` is compared
-    Then: all three say `ok`, and only `enabled` separates the third.
+    Then: the first two say `no_codes`; only the clearable car says `ok`.
 
-          The first two are not even separated by `enabled` -- nothing in this
-          block distinguishes "we have not looked" from "we looked and it is
-          clean". That is the fact that makes the field misleading rather than
-          merely terse.
+          MOVED PIN (US-919): all three used to say `ok`. Unread and clean-read
+          still collapse -- there is nothing to clear either way, the same
+          sameness the panel test above records -- but neither is published as
+          `ok` any more. The name is kept so the history stays greppable.
     """
     unread = _state([], **_UNREAD)["clearGate"]
     cleanRead = _state([])["clearGate"]
     clearable = _state([_raw()])["clearGate"]
 
-    assert unread["reason"] == cleanRead["reason"] == clearable["reason"] == "ok"
-    assert unread == cleanRead, "unread and clean-read are indistinguishable here"
+    assert unread["reason"] == cleanRead["reason"] == "no_codes"
+    assert clearable["reason"] == "ok"
+    assert unread == cleanRead, "nothing to clear either way"
     assert clearable["enabled"] is True and unread["enabled"] is False
 
 
@@ -784,19 +800,42 @@ def test_characterisation_theEmitterVocabularyLacksTheNoCodesTheOthersHave():
     Given: three implementations of one gate -- the emitter's published block,
            the authoritative `dtc_clear`, and carousel.js's display mirror
     When: the same unread state is put through the two Python ones
-    Then: the authoritative gate says `no_codes` and the emitter says `ok`.
+    Then: both say `no_codes`.
 
-          Pinned as a DISAGREEMENT rather than as two separate expectations, so
-          the day someone gives the emitter a `no_codes` member this test fails
-          and points at the right line. `GATE_NO_CODES` is referenced from the
-          real module, so deleting the word cannot make this pass.
+          MOVED PIN (US-919): this was pinned as a DISAGREEMENT "so the day
+          someone gives the emitter a `no_codes` member this test fails" -- that
+          day is US-919 (one chain in all three copies, proved row by row in
+          tests/pi/splash/test_clear_gate_one_predicate.py). Re-recorded as the
+          agreement; the name is kept so the history stays greppable.
     """
     unread = _state([], **_UNREAD)
 
     assert dtc_clear.evaluateClearGate(unread).reason == dtc_clear.GATE_NO_CODES
     assert dtc_clear.GATE_NO_CODES == "no_codes"
-    assert unread["clearGate"]["reason"] == "ok"
-    assert unread["clearGate"]["reason"] != dtc_clear.GATE_NO_CODES
+    assert unread["clearGate"]["reason"] == dtc_clear.GATE_NO_CODES
+
+
+@_needsNode
+def test_pendingSetNeverRead_theButtonIsDisabledAndSaysSo():
+    """
+    Given: a clearable stored MINOR, but no Mode 07 answered this session
+           (pendingCheckedAtTs null) -- US-919
+    When: the operator opens its detail on the panel
+    Then: the button paints, is DISABLED, reasons `pending_not_read` with Iris's
+          label, and the authoritative gate refuses it without the runner.
+    """
+    state = _state([_raw()], pendingCheckedAtTs=None)
+
+    got = _clearSurface(state, _OPEN_DETAIL)
+
+    assert got["buttonPaints"], got
+    assert got["disabled"] is True, got
+    assert got["reason"] == "pending_not_read", got
+    assert got["label"] == "🔒 CLEAR CODES — pending codes haven’t been read", got
+    assert state["clearGate"] == {"enabled": False, "reason": "pending_not_read"}
+    calls: list[int] = []
+    outcome = dtc_clear.performClear(state, clearRunner=lambda: calls.append(1) or {})
+    assert outcome.reason == dtc_clear.GATE_PENDING_NOT_READ and calls == [], outcome
 
 
 # ---------------------------------------------------------------------------

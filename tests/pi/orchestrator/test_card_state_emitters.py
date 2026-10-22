@@ -20,6 +20,8 @@
 # 2026-10-19    | Ralph (Rex)  | US-897-a2 -- checkedAtTs / pendingCheckedAtTs:
 #               |              | the per-boot seed and the publish success rule.
 # 2026-10-20    | Ralph (Rex)  | US-897-b2 -- the alerts arbiter wiring.
+# 2026-10-21    | Ralph (Rex)  | US-897-e -- the restart seed carries the
+#               |              | pending set with its time (VCs 3, 7, 8).
 # ================================================================================
 ################################################################################
 
@@ -523,6 +525,7 @@ def test_a2_seedFromThePriorBootFile_initialEmitCarriesIt(tmp_path, clock):
     assert dtc["codes"] is None  # still the honest unavailable boot state
     assert dtc["source"]["dtc"]["available"] is False
     assert (orch._dtcCheckedAtTs, orch._dtcPendingCheckedAtTs) == (_T1, _T0)
+    assert orch._dtcCarriedPending == []  # US-897-e: (T1, T0, []) unchanged
 
 
 def test_a2_badSeed_seedsNull(tmp_path, clock):
@@ -550,6 +553,79 @@ def test_a2_seededTime_survivesANullFrameRead(tmp_path, clock):
 
     assert _dtcBytes(tmp_path) == before
     assert _readState(tmp_path, "dtc")["checkedAtTs"] == _T1
+
+
+# ---------------------------------------------------------------------------
+# US-897-e -- the pending set is seeded with the time that dates it
+# ---------------------------------------------------------------------------
+
+
+def test_e_restart_seedsTheCarriedSet_theFirstMode03OnlyReadPublishesIt(
+    tmp_path, clock, driveSeven,
+):
+    """VC 3: states/dtc holds pending P0400 -> restart -> a Mode 03-only read.
+
+    _DtcOrch's __init__ sets ``_dtcCarriedPending = []`` BEFORE
+    ``_initializeCardStateEmitters`` runs, the order core.py's initialiser and
+    lifecycle's init keep, so this proves the seed survives that initialiser.
+    """
+    first = _bootedOrch(tmp_path)
+    first._driveDetector = None  # key-on is gated on no RUNNING drive
+    first._dtcLogger.next = _read([_code("P0400", "pending")])  # Mode 07 answered
+    first._dispatchKeyOnDtcs()
+    assert _readState(tmp_path, "dtc")["pendingCheckedAtTs"] == _T0
+
+    restarted = _bootedOrch(tmp_path)
+    assert [(c.code, c.status) for c in restarted._dtcCarriedPending] == [
+        ("P0400", "pending"),
+    ]
+    clock["iso"] = _T1
+    restarted._dtcLogger.next = _read([_code("P0443", "stored")])
+    restarted._dispatchPeriodicDtcPoll()
+
+    dtc = _readState(tmp_path, "dtc")
+    assert [(c["code"], c["status"]) for c in dtc["codes"]] == [
+        ("P0443", "stored"), ("P0400", "pending"),
+    ]
+    assert dtc["checkedAtTs"] == _T1
+    assert dtc["pendingCheckedAtTs"] == _T0
+
+
+def test_e_restart_untabledPendingCode_keepsItsPythonObdText(tmp_path, clock, driveSeven):
+    """VC 7: an un-tabled pending code with python-obd text 'X' survives a restart."""
+    first = _bootedOrch(tmp_path)
+    first._driveDetector = None
+    first._dtcLogger.next = _read(
+        [SimpleNamespace(code="P0999", status="pending", description="X")]
+    )
+    first._dispatchKeyOnDtcs()
+
+    restarted = _bootedOrch(tmp_path)
+    clock["iso"] = _T1
+    restarted._dtcLogger.next = _read([])
+    restarted._dispatchPeriodicDtcPoll()
+
+    (code,) = _readState(tmp_path, "dtc")["codes"]
+    assert (code["code"], code["status"], code["long"]) == ("P0999", "pending", "X")
+
+
+def test_e_doubleRestartBeforeAnyRead_seedsNeither(tmp_path, clock):
+    """VC 8 (Atlas (B) 2026-10-21): the second restart reads the unavailable boot
+    state (codes null) the first one wrote, so it drops to pending_not_read."""
+    first = _bootedOrch(tmp_path)
+    first._driveDetector = None
+    first._dtcLogger.next = _read([_code("P0400", "pending")])
+    first._dispatchKeyOnDtcs()
+
+    once = _bootedOrch(tmp_path)
+    assert once._dtcPendingCheckedAtTs == _T0
+    assert _readState(tmp_path, "dtc")["codes"] is None  # never published (US-752)
+
+    twice = _bootedOrch(tmp_path)
+
+    assert twice._dtcPendingCheckedAtTs is None
+    assert twice._dtcCarriedPending == []
+    assert twice._dtcCheckedAtTs == _T0
 
 
 class _Readback:

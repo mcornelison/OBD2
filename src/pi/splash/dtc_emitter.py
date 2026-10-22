@@ -41,6 +41,12 @@
 #               |              | `firstSeenTs` (first seen since the last clear).
 # 2026-10-20    | Ralph (Rex)  | US-897-b5: the emit returns the payload it wrote
 #               |              | (None on a failed write) for the alerts arbiter.
+# 2026-10-21    | Ralph (Rex)  | US-919: clearGate counts pending codes, gains
+#               |              | no_codes / pending_not_read / session_locked
+#               |              | (one chain with dtc_clear + carousel.js).
+# 2026-10-21    | Ralph (Rex)  | US-897-e: readDtcCheckTimes also returns the
+#               |              | pending set its pendingCheckedAtTs dates, from
+#               |              | the same one read (seeded together or not).
 # ================================================================================
 ################################################################################
 
@@ -80,17 +86,26 @@ DTC_FILENAME = "dtc"
 # The ISO-8601 instant format the F-103 emitters stamp (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
-# clearGate reasons (design-spec §8): a non-MINOR stored code blocks the clear,
-# else an un-synced capture blocks it, else it is clearable. US-407 owns the
-# authoritative gate (re-checked at the privileged action path); this is the
-# honest UI-side computation from what the capture read knows.
+# clearGate reasons (design-spec §8): a non-MINOR stored/pending code blocks
+# the clear, else an unread pending set, else an un-synced capture, else the
+# session lock, else it is clearable. US-407 owns the authoritative gate
+# (re-checked at the privileged action path); this is the honest published
+# computation from what the capture read knows. The vocabulary is
+# dtc_clear's GATE_* (US-919: one chain in all three copies).
+_REASON_NO_CODES = "no_codes"
 _REASON_SEVERITY = "severity_present"
 # US-753: an ungraded code is refused as UNKNOWN, never as a STOP/WATCH it may
 # not be. Mirrors dtc_clear.GATE_SEVERITY_UNKNOWN.
 _REASON_SEVERITY_UNKNOWN = "severity_unknown"
 _SEVERITIES_BLOCKING = frozenset({SEVERITY_STOP, SEVERITY_WATCH})
+# US-919 (Atlas Q4): no Mode 07 answered this session. Mirrors
+# dtc_clear.GATE_PENDING_NOT_READ.
+_REASON_PENDING_NOT_READ = "pending_not_read"
 _REASON_SYNC = "sync_pending"
+_REASON_SESSION_LOCKED = "session_locked"
 _REASON_OK = "ok"
+# US-919 (Atlas Q2): Mode 04 wipes pending codes too, so both statuses gate.
+_RELEVANT_STATUSES = frozenset({"stored", "pending"})
 
 __all__ = [
     "DTC_FILENAME",
@@ -118,31 +133,68 @@ def _parseIsoOrNone(value: object) -> str | None:
     return value
 
 
-def readDtcCheckTimes(statesDir: str) -> tuple[str | None, str | None]:
-    """Read ``(checkedAtTs, pendingCheckedAtTs)`` from the existing `dtc` file.
+def _seededPendingSet(codes: list) -> list:
+    """The file's top-level ``pending`` entries as carried ``DiagnosticCode`` s.
+
+    US-897-e F2: ``description`` is the entry's ``long`` (the text the emitter
+    published -- python-obd's for an un-tabled code); a missing or non-string
+    ``long`` is ''. An entry without a string ``code`` is skipped.
+    """
+    from pi.obdii.dtc_client import DiagnosticCode
+
+    pending = []
+    for entry in codes:
+        if not isinstance(entry, dict) or entry.get("status") != "pending":
+            continue
+        code = entry.get("code")
+        if not isinstance(code, str):
+            continue
+        long = entry.get("long")
+        pending.append(
+            DiagnosticCode(
+                code=code,
+                description=long if isinstance(long, str) else "",
+                status="pending",
+            )
+        )
+    return pending
+
+
+def readDtcCheckTimes(statesDir: str) -> tuple[str | None, str | None, list]:
+    """Read ``(checkedAtTs, pendingCheckedAtTs, pendingSet)`` from the `dtc` file.
 
     Atlas Q3 (US-897-a2): the states dir is tmpfs, so the file it holds was
-    written THIS boot -- an orchestrator restart seeds its read times from it
-    before the boot-time write overwrites it. A missing file, unparseable JSON
-    or an unparseable time seeds None (each time is judged alone).
+    written THIS boot -- an orchestrator restart seeds from it before the
+    boot-time write overwrites it. A missing file, unparseable JSON or an
+    unparseable time seeds None (each time is judged alone).
+
+    US-897-e (Atlas RULED 2026-10-21): a check time and the pending set it
+    describes are seeded TOGETHER from this ONE read, or not at all. A null
+    ``pendingCheckedAtTs`` seeds no set; a ``codes`` that is null, missing or
+    not a list (the unavailable boot state, written before any read) seeds
+    neither the pending time nor the set. ``lastKnown`` (a prior-boot DB
+    fallback, not this boot's read) is never a source.
 
     Args:
         statesDir: tmpfs states directory.
 
     Returns:
-        The two seeded times, each an ISO-8601 UTC string or None.
+        ``checkedAtTs`` and ``pendingCheckedAtTs`` (each an ISO-8601 UTC string
+        or None) and the carried pending ``DiagnosticCode`` list.
     """
     try:
         with open(os.path.join(statesDir, DTC_FILENAME), encoding="utf-8") as fh:
             payload = json.load(fh)
     except (OSError, ValueError):
-        return None, None
+        return None, None, []
     if not isinstance(payload, dict):
-        return None, None
-    return (
-        _parseIsoOrNone(payload.get("checkedAtTs")),
-        _parseIsoOrNone(payload.get("pendingCheckedAtTs")),
-    )
+        return None, None, []
+    checkedAtTs = _parseIsoOrNone(payload.get("checkedAtTs"))
+    codes = payload.get("codes")
+    pendingCheckedAtTs = _parseIsoOrNone(payload.get("pendingCheckedAtTs"))
+    if not isinstance(codes, list) or pendingCheckedAtTs is None:
+        return checkedAtTs, None, []
+    return checkedAtTs, pendingCheckedAtTs, _seededPendingSet(codes)
 
 
 def enrichCode(
@@ -214,30 +266,63 @@ def enrichCode(
     }
 
 
-def _computeClearGate(enrichedCodes: list[dict]) -> dict:
-    """Derive the clear gate from the enriched stored codes (design-spec §8).
+def _relevantCodes(enrichedCodes: list[dict]) -> list[dict]:
+    """Return the codes that gate the all-or-nothing clear (US-919, Atlas Q2/Q3).
 
-    Mode 04 is all-or-nothing, so the gate keys off ALL stored codes. ``na``
-    codes (auto-trans on this manual car) are not real faults and never block.
-    A STOP/WATCH stored fault -> ``severity_present``; any other non-MINOR
-    (ungraded) stored code -> ``severity_unknown``; an un-logged/un-synced
-    MINOR capture -> ``sync_pending``; otherwise clearable. US-407 re-checks
-    this authoritatively at the privileged action path -- the UI is never
-    trusted to be the gate.
+    Mode 04 wipes stored AND pending codes, so relevant = status in {stored,
+    pending} AND severity != ``na`` (auto-trans on this manual car, never a real
+    fault whatever its status). A code both stored and pending counts ONCE, as
+    its stored entry. Mirrors dtc_clear._relevantStored.
     """
-    relevant = [
+    codes = [
         c
         for c in enrichedCodes
-        if c.get("status") == "stored" and c.get("severity") != SEVERITY_NA
+        if c.get("status") in _RELEVANT_STATUSES and c.get("severity") != SEVERITY_NA
     ]
+    storedCodes = {c.get("code") for c in codes if c.get("status") == "stored"}
+    seen: set[object] = set()
+    relevant: list[dict] = []
+    for c in codes:
+        code = c.get("code")
+        if code in seen or (c.get("status") != "stored" and code in storedCodes):
+            continue
+        seen.add(code)
+        relevant.append(c)
+    return relevant
+
+
+def _computeClearGate(
+    enrichedCodes: list[dict],
+    *,
+    pendingCheckedAtTs: str | None,
+    sessionResetLock: list[str],
+) -> dict:
+    """Derive the clear gate from the enriched codes (design-spec §8, US-919).
+
+    Mode 04 is all-or-nothing, so the gate keys off ALL stored and pending
+    codes (:func:`_relevantCodes`). The chain, the same in dtc_clear and
+    carousel.js: nothing relevant -> ``no_codes``; a STOP/WATCH -> ``severity_
+    present``; any other non-MINOR (ungraded) -> ``severity_unknown``; no Mode 07
+    answered (``pendingCheckedAtTs`` None) -> ``pending_not_read``; an un-logged/
+    un-synced capture -> ``sync_pending``; a code in the session lock ->
+    ``session_locked``; otherwise clearable. US-407 re-checks this
+    authoritatively at the privileged action path -- the UI is never trusted to
+    be the gate.
+    """
+    relevant = _relevantCodes(enrichedCodes)
     if not relevant:
-        return {"enabled": False, "reason": _REASON_OK}
+        return {"enabled": False, "reason": _REASON_NO_CODES}
     if any(c.get("severity") in _SEVERITIES_BLOCKING for c in relevant):
         return {"enabled": False, "reason": _REASON_SEVERITY}
     if any(c.get("severity") != SEVERITY_MINOR for c in relevant):
         return {"enabled": False, "reason": _REASON_SEVERITY_UNKNOWN}
+    if pendingCheckedAtTs is None:
+        return {"enabled": False, "reason": _REASON_PENDING_NOT_READ}
     if any(not (c.get("logged") and c.get("syncAcked")) for c in relevant):
         return {"enabled": False, "reason": _REASON_SYNC}
+    lock = set(sessionResetLock)
+    if any(c.get("code") in lock for c in relevant):
+        return {"enabled": False, "reason": _REASON_SESSION_LOCKED}
     return {"enabled": True, "reason": _REASON_OK}
 
 
@@ -362,7 +447,11 @@ def buildDtcState(
         "newSinceTs": newSinceTs,
         # LIVE codes only: a clear offered on remembered codes is a safety
         # inversion, so `lastKnown` never reaches the gate.
-        "clearGate": _computeClearGate(enriched or []),
+        "clearGate": _computeClearGate(
+            enriched or [],
+            pendingCheckedAtTs=pendingCheckedAtTs,
+            sessionResetLock=list(sessionResetLock or []),
+        ),
         "sessionResetLock": list(sessionResetLock or []),
         "lastKnown": lastKnownBlock,
         "source": {

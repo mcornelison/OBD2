@@ -55,7 +55,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     },
     {
       "id": "code:P0443:minor",
@@ -73,7 +74,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     },
     {
       "id": "code:P2187:unrated",
@@ -91,7 +93,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     },
     {
       "id": "code:P0171:unrated",
@@ -109,7 +112,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     },
     {
       "id": "code:P0420:unrated",
@@ -127,7 +131,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     }
   ]
 }

@@ -1215,6 +1215,41 @@ step_install_bond_selfheal_unit() {
     "
 }
 
+step_sync_rfcomm_bind_unit() {
+    # US-908-b: sync the rfcomm-bind.service unit FILE on every deploy. Before
+    # this step the file reached the Pi only under --init (via
+    # install-rfcomm-bind.sh), so US-908's [Unit] fix never left the repo.
+    #
+    # Atlas ruling (b), 2026-10-20: sync-if-changed and daemon-reload ONLY. The
+    # unit is never restarted or switched on here -- install-rfcomm-bind.sh
+    # restarts it, which is why this step does not call that script. A changed
+    # file takes effect on the next boot. The bind itself (the MAC file and the
+    # restart) stays with the --init step_install_rfcomm_bind.
+    echo "--- Step: Syncing rfcomm-bind.service unit (US-908, sync-if-changed, no restart) ---"
+    if $DRY_RUN; then
+        echo "DRY-RUN would: sudo cmp -s ${PI_PATH}/deploy/rfcomm-bind.service /etc/systemd/system/rfcomm-bind.service || (sudo install -m 644 + daemon-reload)"
+        return 0
+    fi
+    remote "
+        set -e
+        SRC='${PI_PATH}/deploy/rfcomm-bind.service'
+        DST='/etc/systemd/system/rfcomm-bind.service'
+
+        if [ ! -f \"\$SRC\" ]; then
+            echo 'WARN: rfcomm-bind.service not present in deploy/ on the Pi -- skipping sync.' >&2
+            exit 0
+        fi
+
+        if sudo test -f \"\$DST\" && sudo cmp -s \"\$SRC\" \"\$DST\"; then
+            echo 'rfcomm-bind.service already up-to-date.'
+        else
+            sudo install -m 644 \"\$SRC\" \"\$DST\"
+            sudo systemctl daemon-reload
+            echo 'rfcomm-bind.service installed + daemon-reload complete (effective next boot; no restart).'
+        fi
+    "
+}
+
 step_install_rfcomm_bind() {
     # US-196: install rfcomm-bind.service so /dev/rfcomm0 is re-bound on every
     # boot. Idempotent — re-running re-writes /etc/default/obdlink with the
@@ -2863,6 +2898,12 @@ step_install_rfkill_unblock
 # confident wrong answer that sends the operator after the wrong fault. Runs
 # AFTER sync_tree so deploy/eclipse-bond-selfheal.service exists on the Pi.
 step_install_bond_selfheal_unit
+
+# US-908-b: the rfcomm-bind.service FILE is synced on EVERY deploy (sync-if-
+# changed + daemon-reload, no restart; effective next boot). Only the bind
+# itself stays --init-only below. Runs AFTER sync_tree so
+# deploy/rfcomm-bind.service exists on the Pi.
+step_sync_rfcomm_bind_unit
 
 # US-196: rfcomm-bind.service install needs to run AFTER sync_tree so
 # deploy/install-rfcomm-bind.sh and deploy/rfcomm-bind.service exist on the

@@ -36,6 +36,11 @@
 #                                (default empty: output unchanged): acknowledged
 #                                true, an acked cleared entry removed (Q15), no
 #                                pulse, codeAlert null once all its ids are acked.
+# 2026-10-21    | Rex (US-897-d) | Battery value/last.value are the RAW reading;
+#                                every entry carries `round` (the battery
+#                                episode's side: 'floor' low / 'ceil' high, else
+#                                null) and the page rounds last. _towardBreach
+#                                deleted (Atlas RULED 2026-10-20/21).
 # ================================================================================
 ################################################################################
 
@@ -79,7 +84,6 @@ import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Any
 
 from pi.obdii.band_producer import BAND_GREEN, BAND_RED, PID_BATTERY, PID_COOLANT, PID_RPM
@@ -154,6 +158,12 @@ _BATTERY_WORDS = {
     _SIDE_LOW: (BATTERY_LOW_TITLE, BATTERY_LOW_SENTENCE),
     _SIDE_HIGH: (BATTERY_HIGH_TITLE, BATTERY_HIGH_SENTENCE),
 }
+# The entry's `round` by the episode's side: the page rounds TOWARD the breach
+# as its last step, after unit conversion (Spool 2026-10-19; Atlas RULED
+# 2026-10-20 -- the provider publishes the raw value, never a pre-rounded one).
+ROUND_FLOOR = "floor"
+ROUND_CEIL = "ceil"
+_ROUND_OF_SIDE = {_SIDE_LOW: ROUND_FLOOR, _SIDE_HIGH: ROUND_CEIL}
 
 _BATTERY_REDTIER_KEY = "pi.warnings.engine.BATTERY_V.redTier"
 _BATTERY_RED_ABOVE_V_KEY = "pi.bands.battery.redAboveV"
@@ -188,9 +198,6 @@ CODE_STATUS_PENDING = "pending"
 
 # Matches the other card emitters' `ts` format (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
-
-# A battery value is published to one decimal (Spool 2026-10-19).
-_TENTH = Decimal("0.1")
 
 
 def _configValue(config: Mapping[str, Any], key: str) -> Any:
@@ -233,6 +240,8 @@ class AlertEpisode:
         peak: Highest reading of the episode (the clear row's value).
         recorded: True once THIS process wrote the episode's open row.
         codeStatus: ``stored`` / ``pending`` for a code entry, else None.
+        round: The page's rounding direction for ``value`` and ``last.value``:
+            ``floor`` / ``ceil`` for the battery episode (its side), else None.
     """
 
     source: str
@@ -252,6 +261,7 @@ class AlertEpisode:
     peak: float | None = None
     recorded: bool = False
     codeStatus: str | None = None
+    round: str | None = None
 
     @property
     def id(self) -> str:
@@ -284,17 +294,6 @@ def _freshParam(obdLive: Mapping[str, Any] | None, pid: str) -> Mapping[str, Any
 def _freshCoolant(obdLive: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
     """The COOLANT_TEMP entry when it is a FRESH reading, else None (Q14)."""
     return _freshParam(obdLive, PID_COOLANT)
-
-
-def _towardBreach(value: float, side: str) -> float:
-    """One decimal, rounded TOWARD the breach (Spool 2026-10-19).
-
-    Low floors (11.96 -> 11.9), high ceils (15.04 -> 15.1). Through the
-    shortest decimal repr, so an exact tenth such as 11.9 is never moved by a
-    binary-float artefact.
-    """
-    rounding = ROUND_FLOOR if side == _SIDE_LOW else ROUND_CEILING
-    return float(Decimal(repr(float(value))).quantize(_TENTH, rounding=rounding))
 
 
 def _rpmSentence(peak: float) -> str:
@@ -390,7 +389,7 @@ class AlertsArbiter:
         self._battery: AlertEpisode | None = None
         # The side ('low'/'high') of the battery episode's last red reading.
         self._batterySide = _SIDE_LOW
-        # {value, band, ts} of the battery episode's last red reading (rounded).
+        # {value, band, ts} of the battery episode's last red reading (raw).
         self._batteryLastReading: dict[str, Any] | None = None
         # Event time of the first reading of the current unbroken green run.
         self._batteryGreenSince: datetime | None = None
@@ -667,20 +666,20 @@ class AlertsArbiter:
             # Side from the VALUE against the configured edge; the band is red,
             # so a value not above redAboveV is below redBelowV.
             side = _SIDE_HIGH if value > self._batteryRedAboveV else _SIDE_LOW
-            shown = _towardBreach(value, side)
             if episode is None or not active:
                 episode = self._newBatteryEpisode(ts, side)
             title, sentence = _BATTERY_WORDS[side]
             self._batterySide = side
-            self._batteryLastReading = {"value": shown, "band": dict(param["band"]), "ts": ts}
+            self._batteryLastReading = {"value": value, "band": dict(param["band"]), "ts": ts}
             self._battery = replace(
                 episode,
                 title=title,
                 sentence=sentence,
                 lastSeenTs=ts,
                 stale=False,
-                value=shown,
+                value=value,
                 last=None,
+                round=_ROUND_OF_SIDE[side],
             )
             return
         if episode is None or not active:
@@ -700,8 +699,11 @@ class AlertsArbiter:
                 episode, active=False, stale=False, value=None, last=self._batteryLast(episode)
             )
             return
+        # The green hold keeps the EPISODE's side for its round (Atlas RULED
+        # 2026-10-21, reading 3): no band fired on this reading.
         self._battery = replace(
-            episode, stale=False, value=_towardBreach(value, self._batterySide), last=None
+            episode, stale=False, value=value, last=None,
+            round=_ROUND_OF_SIDE[self._batterySide],
         )
 
     def _batteryLast(self, episode: AlertEpisode) -> dict[str, Any] | None:
@@ -725,6 +727,7 @@ class AlertsArbiter:
             firstSeenTs=firstSeenTs,
             lastSeenTs=firstSeenTs,
             active=True,
+            round=_ROUND_OF_SIDE[side],
         )
 
     def _observeCoolant(
@@ -941,6 +944,7 @@ def _entryOf(episode: AlertEpisode) -> dict[str, Any]:
         "active": episode.active,
         "acknowledged": episode.acknowledged,
         "codeStatus": episode.codeStatus,
+        "round": episode.round,
     }
 
 

@@ -570,9 +570,22 @@ layers keep `/dev/rfcomm0` live after reboot:
    anyway, so even if the systemd unit is missing the service self-heals
    on its first connect attempt.
 
-Install via `deploy/install-rfcomm-bind.sh` (runs on the Pi) or let
-`deploy-pi.sh --init` do it automatically — the init path writes
-`/etc/default/obdlink` from the Pi's `.env` MAC and enables the unit.
+The unit FILE and the bind are installed by two different paths (US-908-b):
+
+- **The unit file is synced on EVERY deploy** — `deploy-pi.sh`
+  `step_sync_rfcomm_bind_unit` (top level, right after
+  `step_install_bond_selfheal_unit`): `cmp -s` against
+  `/etc/systemd/system/rfcomm-bind.service`; when changed, `install -m 644` +
+  `daemon-reload`; when up to date, nothing. **No restart, no enable, no
+  rfcomm call** — a changed unit takes effect on the next boot.
+- **The bind itself stays `--init`** — `deploy/install-rfcomm-bind.sh` (runs on
+  the Pi), which `deploy-pi.sh --init` calls via `step_install_rfcomm_bind`:
+  it writes `/etc/default/obdlink` from the repo-canonical `$OBD_BT_MAC`
+  (US-477), enables the unit and restarts it. Routine deploys never do.
+
+`tests/deploy/test_every_unit_has_an_installer.py` holds every
+`deploy/*.service` / `*.timer` to an every-deploy installer (or a one-entry
+allow-list), so a unit installed only under `--init` fails the suite.
 
 **Config keys (all optional, override from defaults):**
 
@@ -6068,8 +6081,9 @@ codeAlert, entries}`.
     (Q14). Engine off, stale or absent is false.
   - `system` and `data`: `{assessed: false, reason: 'not_built'}` (Atlas s5).
 - **`entries`**: `{id, source, key, tier, title, sentence, directive, value, unit, last,
-  stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus}` (`codeStatus` is
-  `stored` | `pending` on a code entry, null on an engine one), ALREADY ORDERED (B5): tier
+  stale, firstSeenTs, lastSeenTs, active, acknowledged, codeStatus, round}` (`codeStatus`
+  is `stored` | `pending` on a code entry, null on an engine one; `round` is `floor` |
+  `ceil` on the battery entry, null on every other, US-897-d), ALREADY ORDERED (B5): tier
   `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
   newest `firstSeenTs`.
   - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
@@ -6122,12 +6136,18 @@ legacy AlertManager owns that section (config.json).
   sentence `Head somewhere safe. Turn off accessories.`; high -> title `OVERCHARGING`,
   sentence `Head somewhere safe, then engine off.` No directive. A low<->high flip keeps
   the same id and `firstSeenTs`.
-- `value`: one decimal, rounded TOWARD the breach (Spool 2026-10-19): low floors
-  (11.96 -> 11.9), high ceils (15.04 -> 15.1); unit `V`. `last.value` while stale follows
-  the same rule. `lastSeenTs` = the last red reading.
+- `value`: the RAW reading, unit `V`, plus `round` = the EPISODE's side for the whole
+  episode -- `floor` for a low episode, `ceil` for a high one -- for the red readings, the
+  green hold and `last.value` alike (US-897-d; Atlas RULED 2026-10-20/21). The page
+  applies it LAST: `carousel.js displayUnits(value, unit, round)` rounds TOWARD the breach
+  (Spool 2026-10-19) after unit conversion, at the rule's decimals (11.96 -> `11.9 V`,
+  15.04 -> `15.1 V`), float-guarded so an exact tenth is never moved. The provider never
+  pre-rounds (`_towardBreach` deleted), so a converted unit cannot round back to the safe
+  side. Every other entry carries `round: null` (toFixed, unchanged); the takeover has no
+  `round`. `lastSeenTs` = the last red reading.
 - **End**: only after the band has been GREEN for `pi.warnings.battery.clearGreenHoldSec`
   (10, Spool 2026-10-14), measured on the readings' `ts`. During the hold the entry stays
-  active with the current reading (rounded on the episode's side). A red reading, a null
+  active with the current RAW reading and the episode's `round`. A red reading, a null
   band (`engine_not_running`, `amber_not_shipped`), a stale or an absent reading restarts
   the green run and never ends it -- the last three show the stale shape (`value: null`,
   `stale: true`, `last` = the last red reading).
@@ -6155,7 +6175,13 @@ legacy AlertManager owns that section (config.json).
 - **Removal** (G1): a code absent from a read is REMOVED (not kept `active: false`, unlike the
   coolant STOP) only when that read's `checkedAtTs` is NEWER than the last one applied. An
   unchanged `checkedAtTs` only adds; an older one changes nothing. Carried pending codes ride
-  every Mode 03-only payload, so such a read never removes them.
+  every Mode 03-only payload, so such a read never removes them. The pending set is
+  **carried only on an answered Mode 07; seeded together with its time on restart, from one
+  read of this boot's states/dtc, never from lastKnown** (US-897-e, Atlas RULED 2026-10-21):
+  a key-on / drive-start read whose Mode 07 raised or answered null is a Mode 03-only read
+  for the pending set — the carried codes ride it and `pendingCheckedAtTs` stays — so "not
+  checked" never reads as "no pending" (ARCH-062). The post-clear re-read empties the carried
+  set first: Mode 04 wiped it.
 - **Unknown is not present**: `codes` null (unavailable) creates and removes no entry and
   leaves `sources.code.assessed` false. The boot state's `lastKnown` codes make NO entries
   before the first successful read. A null-frame read publishes no payload, so it changes
@@ -6165,8 +6191,10 @@ legacy AlertManager owns that section (config.json).
   pulse.
 - **The clear gate is unchanged**: it keeps reading the dtc payload's TABLE tier
   (`dtc_emitter._computeClearGate`, `dtc_clear._relevantStored`, `carousel.js`), never the
-  alerts tier, so a stop-tier code is never clearable. It stays stored-only; counting
-  pending codes is US-919.
+  alerts tier, so a stop-tier code is never clearable. Since US-919 it counts pending codes
+  too (Mode 04 wipes them): relevant = status in {stored, pending} AND severity != `na`,
+  one entry per code, and an unread pending set (`pendingCheckedAtTs` null) is refused as
+  `pending_not_read` (the chain is below, US-407).
 
 **Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
 synced `alert_log`. It never UPDATEs: sync is a delta by id.
@@ -7705,7 +7733,13 @@ holds both and passes them on every publish, available or not — never nulled o
 set. **Per boot (Atlas Q3):** the states dir is tmpfs, so at card-emitter init,
 before the boot-time write overwrites it, both are seeded from the existing
 `states/dtc` (`readDtcCheckTimes`); a missing file, unparseable JSON or an
-unparseable time seeds null. The raw Mode 03 / Mode 07 responses are logged at
+unparseable time seeds null. **US-897-e:** the same one read also seeds the carried
+pending set — the top-level `codes[]` entries with `status` `pending`, each as
+`DiagnosticCode(code, long, 'pending')` — so the time and the set it dates are seeded
+together or not at all: a null `pendingCheckedAtTs` seeds no set, and `codes` null,
+missing or not a list (the unavailable boot state) seeds neither the pending time nor
+the set; `lastKnown` is never a source. The boot write keeps `codes: null` (US-752), so a
+second restart before any read seeds neither (→ `pending_not_read`). The raw Mode 03 / Mode 07 responses are logged at
 DEBUG — this ECU's empty-frame shape is not measured, and the raw frame is the
 falsifier (if it answers "no codes" with a null frame, `checkedAtTs` never
 advances after the next clear).
@@ -7761,7 +7795,8 @@ and every bank-2 code included (wrong-vehicle data on this inline four) — is
 display shows "No description yet") — no fabricated severity or fix. `freezeFrame`
 is always `null` (Mode 02 confirmed unsupported on MD326328; US-406 renders the
 realtime fallback). The `clearGate` is the honest UI-side derivation from the
-captured codes (severity_present → sync_pending → ok); **US-407 re-checks it
+captured codes (US-919: the same chain as `dtc_clear`, no_codes → severity_present →
+severity_unknown → pending_not_read → sync_pending → session_locked → ok); **US-407 re-checks it
 authoritatively at the privileged action path** — the UI is never the gate.
 
 **Read-only endpoint.** `eclipse-states-http` already serves any safe file in the
@@ -7975,15 +8010,26 @@ this story implements those semantics, it does not redefine them.
 UI (S-10 / F-3, load-bearing).** `src/pi/splash/dtc_clear.py` is the authoritative
 gate SSOT. `evaluateClearGate` **re-derives** the verdict from the raw captured
 codes and deliberately **ignores** any precomputed `clearGate.enabled` in the
-state: enabled only when **every stored (non-`na`) code is MINOR (green) AND
-logged AND server-sync-acked**, and no code re-set this session. Any STOP/WATCH →
-`severity_present`; else any ungraded code (`unknown`, absent or unrecognised
-severity) → `severity_unknown` ("severity could not be determined" — US-753: the
-refusal is identical, but it is a different fact from a graded STOP/WATCH, so it
-gets its own reason); an un-synced MINOR → `sync_pending` (capture-before-clear,
-advisory §4c); a returned code (`sessionResetLock`) → `session_locked` ("don't
-chase the light", §4d); nothing clearable → `no_codes`. This is the DTC analog of
-US-403's action-path allow-list re-check in `service_control.py`.
+state: enabled only when **every stored or pending (non-`na`) code is MINOR
+(green) AND logged AND server-sync-acked**, the pending set was read this session,
+and no code re-set this session. **Pending codes are relevant** (US-919, Atlas Q2/Q3):
+Mode 04 wipes them too, so relevant = status in {`stored`, `pending`} AND severity
+!= `na` (whatever the status), a code both stored and pending counting ONCE; a
+pending code's tier is the same table tier the emitter publishes for it. The chain,
+in this order and identical in all three copies (`dtc_emitter._computeClearGate`,
+`dtc_clear.evaluateClearGate`, `carousel.js clearGateReason`; one shared case table,
+`tests/pi/splash/clear_gate_cases.py`): nothing relevant → `no_codes`; any
+STOP/WATCH → `severity_present`; else any ungraded code (`unknown`, absent or
+unrecognised severity) → `severity_unknown` ("severity could not be determined" —
+US-753: the refusal is identical, but it is a different fact from a graded
+STOP/WATCH, so it gets its own reason); no Mode 07 answered this session
+(`pendingCheckedAtTs` null) → `pending_not_read` (US-919 Q4; after the permanent
+reasons, so a stored WATCH with pending unread reads `severity_present`); an
+un-synced MINOR → `sync_pending` (capture-before-clear, advisory §4c); a returned
+code (`sessionResetLock`, which already counts pending) → `session_locked` ("don't
+chase the light", §4d). The page's display-only `moving` lock replaces only an
+otherwise-`ok` gate. This is the DTC analog of US-403's action-path allow-list
+re-check in `service_control.py`.
 
 **Three defense-in-depth layers (same shape as US-403's privilege path).**
 1. **UI layer** — `carousel.js` `clearButtonView` mirrors the gate *for display*

@@ -20,6 +20,8 @@
 # 2026-10-19    | Ralph (Rex)  | US-897-a2 -- checkedAtTs + pendingCheckedAtTs
 #               |              | keys and the per-boot seed reader.
 # 2026-10-20    | Ralph (Rex)  | US-897-a3 -- per-code firstSeenTs.
+# 2026-10-21    | Ralph (Rex)  | US-919 MOVED PIN -- an empty gate publishes
+#               |              | `no_codes` (dtc_clear's chain).
 # ================================================================================
 ################################################################################
 
@@ -368,7 +370,9 @@ def test_buildDtcState_lastKnown_neverReachesTheClearGate():
         lastKnown=_lastKnownBlock(_knownCode("P0442")),
     )
 
-    assert state["clearGate"] == {"enabled": False, "reason": "ok"}
+    # MOVED PIN (US-919): the published gate shares dtc_clear's chain, so
+    # nothing relevant reads `no_codes` here too (was `ok` with enabled False).
+    assert state["clearGate"] == {"enabled": False, "reason": "no_codes"}
     assert dtc_clear.evaluateClearGate(state).reason == dtc_clear.GATE_NO_CODES
     calls: list[int] = []
     outcome = dtc_clear.performClear(state, clearRunner=lambda: calls.append(1) or {})
@@ -529,43 +533,163 @@ def test_makeDtcEmitter_writesTheCheckTimes(tmp_path):
 
 
 def test_readDtcCheckTimes_fromAPriorFile(tmp_path):
+    """MOVED PIN (US-897-e): a file with NO codes key seeds no pending time.
+
+    (A, Atlas CHECKED 2026-10-21) a missing codes key counts as null: the
+    pending time and the set it dates are seeded together or not at all.
+    """
     (tmp_path / DTC_FILENAME).write_text(
         json.dumps({"checkedAtTs": "2026-10-20T15:02:11Z",
                     "pendingCheckedAtTs": "2026-10-20T15:01:00Z"}),
         encoding="utf-8",
     )
 
-    assert readDtcCheckTimes(str(tmp_path)) == (
-        "2026-10-20T15:02:11Z", "2026-10-20T15:01:00Z",
-    )
+    assert readDtcCheckTimes(str(tmp_path)) == ("2026-10-20T15:02:11Z", None, [])
 
 
 def test_readDtcCheckTimes_missingFile_seedsNull(tmp_path):
-    assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+    # MOVED PIN (US-897-e): the seed is now (checkedAtTs, pendingCheckedAtTs, set).
+    assert readDtcCheckTimes(str(tmp_path)) == (None, None, [])
 
 
 def test_readDtcCheckTimes_unparseableJson_seedsNull(tmp_path):
     (tmp_path / DTC_FILENAME).write_text("{not json", encoding="utf-8")
 
-    assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+    # MOVED PIN (US-897-e): the seed is now (checkedAtTs, pendingCheckedAtTs, set).
+    assert readDtcCheckTimes(str(tmp_path)) == (None, None, [])
 
 
 def test_readDtcCheckTimes_unparseableTimes_seedNull(tmp_path):
     """Each time is judged alone: a bad one seeds null, a good one survives."""
+    # MOVED PIN (US-897-e): codes [] added -- with no codes key the pending
+    # time is no longer seeded at all (Atlas (A) 2026-10-21).
     (tmp_path / DTC_FILENAME).write_text(
-        json.dumps({"checkedAtTs": "yesterday-ish",
+        json.dumps({"codes": [], "checkedAtTs": "yesterday-ish",
                     "pendingCheckedAtTs": "2026-10-20T15:01:00Z"}),
         encoding="utf-8",
     )
 
-    assert readDtcCheckTimes(str(tmp_path)) == (None, "2026-10-20T15:01:00Z")
+    assert readDtcCheckTimes(str(tmp_path)) == (None, "2026-10-20T15:01:00Z", [])
 
 
 def test_readDtcCheckTimes_nonObjectOrNonString_seedsNull(tmp_path):
     for body in ("[1, 2]", json.dumps({"checkedAtTs": 1760972531})):
         (tmp_path / DTC_FILENAME).write_text(body, encoding="utf-8")
 
-        assert readDtcCheckTimes(str(tmp_path)) == (None, None)
+        # MOVED PIN (US-897-e): the seed is now (checkedAtTs, pendingCheckedAtTs, set).
+        assert readDtcCheckTimes(str(tmp_path)) == (None, None, [])
+
+
+# ---- US-897-e: the pending set is seeded with the time that dates it ---------
+
+_T_CHECKED = "2026-10-20T15:02:11Z"
+_T_PENDING = "2026-10-20T15:01:00Z"
+
+
+def _writeSeedFile(tmp_path, **payload):
+    (tmp_path / DTC_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_readDtcCheckTimes_pendingEntries_seedTheSetWithLongAsDescription(tmp_path):
+    """Example: {codes:[P1500 pending long 'X'], T1, T0} -> (T1, T0, [P1500 'X'])."""
+    from pi.obdii.dtc_client import DiagnosticCode
+
+    _writeSeedFile(
+        tmp_path,
+        codes=[
+            {"code": "P1500", "status": "pending", "short": "S", "long": "X"},
+            {"code": "P0443", "status": "stored", "long": "purge valve"},
+        ],
+        checkedAtTs=_T_CHECKED,
+        pendingCheckedAtTs=_T_PENDING,
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (
+        _T_CHECKED, _T_PENDING, [DiagnosticCode("P1500", "X", "pending")],
+    )
+
+
+def test_readDtcCheckTimes_codesNull_seedsNeitherPendingTimeNorSet(tmp_path):
+    """VC 6: the unavailable boot state (codes null) carries a time but no read."""
+    _writeSeedFile(
+        tmp_path, codes=None, checkedAtTs=_T_CHECKED, pendingCheckedAtTs=_T_PENDING,
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (_T_CHECKED, None, [])
+
+
+def test_readDtcCheckTimes_codesNotAList_seedsNeither(tmp_path):
+    _writeSeedFile(
+        tmp_path, codes={"P1500": "pending"}, checkedAtTs=_T_CHECKED,
+        pendingCheckedAtTs=_T_PENDING,
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (_T_CHECKED, None, [])
+
+
+def test_readDtcCheckTimes_pendingTimeNull_seedsNoSet(tmp_path):
+    _writeSeedFile(
+        tmp_path,
+        codes=[{"code": "P1500", "status": "pending", "long": "X"}],
+        checkedAtTs=_T_CHECKED,
+        pendingCheckedAtTs=None,
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (_T_CHECKED, None, [])
+
+
+def test_readDtcCheckTimes_missingOrNonStringLong_isEmptyDescription(tmp_path):
+    from pi.obdii.dtc_client import DiagnosticCode
+
+    _writeSeedFile(
+        tmp_path,
+        codes=[
+            {"code": "P1500", "status": "pending"},
+            {"code": "P1501", "status": "pending", "long": None},
+            {"code": "P1502", "status": "pending", "long": 7},
+            {"status": "pending", "long": "no code"},
+            "not-an-entry",
+        ],
+        checkedAtTs=_T_CHECKED,
+        pendingCheckedAtTs=_T_PENDING,
+    )
+
+    assert readDtcCheckTimes(str(tmp_path))[2] == [
+        DiagnosticCode("P1500", "", "pending"),
+        DiagnosticCode("P1501", "", "pending"),
+        DiagnosticCode("P1502", "", "pending"),
+    ]
+
+
+def test_readDtcCheckTimes_neverSeedsFromLastKnown(tmp_path):
+    """lastKnown is a prior-boot DB fallback, not this boot's Mode 07 read."""
+    _writeSeedFile(
+        tmp_path,
+        codes=[],
+        lastKnown={"codes": [{"code": "P1500", "status": "pending", "long": "X"}]},
+        checkedAtTs=_T_CHECKED,
+        pendingCheckedAtTs=_T_PENDING,
+    )
+
+    assert readDtcCheckTimes(str(tmp_path)) == (_T_CHECKED, _T_PENDING, [])
+
+
+def test_readDtcCheckTimes_roundTripsWhatTheEmitterWrote(tmp_path):
+    """VC 7: an un-tabled pending code's python-obd text survives the seed."""
+    emit = makeDtcEmitter(str(tmp_path), severityTable=_TABLE, nowIsoFn=lambda: _T_CHECKED)
+    emit(
+        codes=[_rawCode("P0999", status="pending", desc="X")],
+        mil=False,
+        checkedAtTs=_T_CHECKED,
+        pendingCheckedAtTs=_T_PENDING,
+    )
+
+    _, pendingAt, seeded = readDtcCheckTimes(str(tmp_path))
+
+    assert pendingAt == _T_PENDING
+    assert [(c.code, c.description, c.status) for c in seeded] == [
+        ("P0999", "X", "pending"),
+    ]
 
 
 # ---- US-897-a3: per-code firstSeenTs ------------------------------------------

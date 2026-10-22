@@ -65,7 +65,8 @@
       "lastSeenTs": "2026-10-20T17:30:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": null
+      "codeStatus": null,
+      "round": null
     },
     {
       "id": "engine:RPM:watch",
@@ -83,7 +84,8 @@
       "lastSeenTs": "2026-10-20T17:29:12Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": null
+      "codeStatus": null,
+      "round": null
     },
     {
       "id": "engine:BATTERY_V:watch",
@@ -101,7 +103,8 @@
       "lastSeenTs": "2026-10-20T17:30:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": null
+      "codeStatus": null,
+      "round": "floor"
     },
     {
       "id": "code:P0400:watch",
@@ -119,7 +122,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     },
     {
       "id": "code:P0443:minor",
@@ -137,7 +141,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     },
     {
       "id": "code:P0128:unrated",
@@ -155,7 +160,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     },
     {
       "id": "code:P2187:unrated",
@@ -173,7 +179,8 @@
       "lastSeenTs": "2026-10-20T17:20:00Z",
       "active": true,
       "acknowledged": false,
-      "codeStatus": "stored"
+      "codeStatus": "stored",
+      "round": null
     }
   ]
 }
