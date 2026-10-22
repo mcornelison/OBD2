@@ -36,6 +36,10 @@
 #               |              | lightPageView (word = lightBand upper-cased,
 #               |              | '--' + reason, stale dims with its age, an
 #               |              | absent file is the page's own absence).
+# 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-898-b1): the ALERTS card reads
+#               |              | states/alerts; noDataView carries no dtc entry
+#               |              | and its absence is warningsPageView's '--' +
+#               |              | 'no warnings data'.
 # ================================================================================
 ################################################################################
 
@@ -266,13 +270,14 @@ def test_systemStatusView_absentPowerBlock_graysOnlyThatTile():
 
 
 def test_noDataView_dtc_readsNoData_notAnAllClear():
-    """A missing `dtc` state means the codes were never read. The card must say
-    so; "No stored codes" would be a fabricated clean read (F-6)."""
-    view = _view("noDataView", "dtc")
-    assert view is not None
-    assert view["label"] == "ALERTS"
-    assert "no data" in view["reason"].lower()
-    assert "no stored codes" not in view["reason"].lower()
+    """MOVED PIN (US-898-b1): the ALERTS card no longer reads `dtc`, so the
+    shell's no-data table carries no dtc entry. A missing states/alerts is the
+    card's OWN absence -- '--' and 'no warnings data', never an all-clear."""
+    assert _view("noDataView", "dtc") is None
+    view = _view("warningsPageView", None)
+    assert view["header"]["text"] == "--"
+    assert "no warnings data" == view["empty"]
+    assert "no stored codes" not in json.dumps(view).lower()
 
 
 def test_noDataView_light_namesTheSilentInstrument():
@@ -291,9 +296,12 @@ def test_noDataView_unknownCard_isNull_soTheShellFallbackStands():
 
 
 def test_alertsCardView_absentPayload_stillNull():
-    """Unchanged contract (tests/deploy/test_dashboard_kit.py): the VIEW reports
-    absence as null and the shell renders it. noDataView supplies the words."""
-    assert _view("alertsCardView", None) is None
+    """MOVED PIN (US-898-b1): `alertsCardView` retired with the dtc-driven card.
+    Its successor reports absence itself rather than as null: an absent
+    states/alerts is a `missing` view with no rows."""
+    view = _view("warningsPageView", None)
+    assert view["missing"] is True
+    assert view["rows"] == []
 
 
 # ---------------------------------------------------------------------------

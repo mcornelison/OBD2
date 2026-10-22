@@ -6047,8 +6047,9 @@ the one provider of the warnings page: the page renders it and derives nothing (
   never a file read-back, so the alert and the Driving tile cannot disagree.
 - An `AlertsArbiter` held by the orchestrator keeps this boot's episodes in memory. It is
   handed the FULL resolved config (`pi.bands.*`, `pi.warnings.*`).
-  `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId, codeSource)` is pure
-  over them;
+  `buildAlertsState(episodes, obdLive, nowUtc, dataSource, bootId, codeSource,
+  acknowledgedIds=())` is pure over them (`acknowledgedIds` is US-897-c's; empty leaves
+  the output unchanged);
   `makeAlertsEmitter(statesDir)` writes `<statesDir>/alerts` atomically and never raises.
 - Built in its own try/except (`_initializeAlertsProducer`); when
   `pi.dashboard.stateEmitEnabled` is false it is not built and writes no file.
@@ -6072,7 +6073,9 @@ codeAlert, entries}`.
   `stop > watch > minor > unrated`, then live (`engine`) before stored (`code`), then
   newest `firstSeenTs`.
   - **id** = `<source>:<key>:<tier>`, deterministic, never a counter: an escalation is a
-    new id. `acknowledged` is always false until the ack store (S108).
+    new id. `acknowledged` is true when this boot's ack store matches the entry's
+    episode (US-897-c, below). An acknowledged entry that is no longer active is not
+    listed (Q15: acking removes it).
 - **`icon`** `{state, count, pulse}`: `count` = active entries. `state` is `stop` when any
   active stop; `watch` when any active watch, minor or unrated (G7: never grey); else
   `not_checked` while `sources.code.assessed` is false; else `none`. An active stop/watch
@@ -6084,7 +6087,8 @@ codeAlert, entries}`.
   so a code never takes over.
 - **`codeAlert`** (US-897-b5, Atlas Q32) = `{ids: [the active code entry ids, in entries
   order], tier: the tier of the first of them, dismissable: true}` while any code entry is
-  active, else null. The provider computes `tier`; the page decides moving/parked.
+  active, else null; null too once every one of its ids is acknowledged (US-897-c). The
+  provider computes `tier`; the page decides moving/parked.
 
 **Tiers** come from config, never a literal: `pi.warnings.engine.<PID>.redTier`
 (validator DEFAULTS only; `COOLANT_TEMP` = `stop`, `BATTERY_V` = `watch`, Spool 2026-10-14).
@@ -6105,8 +6109,9 @@ legacy AlertManager owns that section (config.json).
   -- or obd-live published nothing -- an active STOP stays active with `value: null`,
   `stale: true`, `last: {value, band, ts}` of the last red reading.
 - **Cleared** (band left red): the entry stays listed `active: false` (`value: null`,
-  `last` = the last red reading) for the rest of the boot. It never drops by time (Q15). A
-  new red episode re-activates the same id with a new `firstSeenTs`.
+  `last` = the last red reading) until it is acknowledged, bounded by the boot. It never
+  drops by time (Q15). A new red episode re-activates the same id with a new
+  `firstSeenTs`, so it is unacknowledged.
 
 **The battery WATCH** (US-897-b3; Spool 2026-10-14, Atlas Q12), id `engine:BATTERY_V:watch`
 (tier `pi.warnings.engine.BATTERY_V.redTier`, default `watch`):
@@ -6183,6 +6188,35 @@ orchestrator restart inside the boot therefore keeps a cleared STOP listed.
   INSERT-only). Its later clear row carries the highest reading this process saw, which
   starts from the seeded last value.
 - Prior-boot episodes are not re-listed from `alert_log` (Atlas Q15 design 4).
+
+**Acknowledgements -- the boot-scoped ack store** (US-897-c; Atlas s3, Q20-Q27, G1, G2):
+- **Store**: `src/pi/obdii/alerts_ack_store.py`, a Pi-local state file at
+  `pi.warnings.ackStorePath` (validator default `/var/lib/eclipse-obd/alerts-ack.json`,
+  the US-667 dir; operator state, never synced). The ORCHESTRATOR is its only writer, via
+  power_watch `outcome.writeAtomicJson(path, payload, what='alerts-ack')` (fdatasync; its
+  `powerwatch ...` failure-log prefix is accepted). It never creates the directory.
+- **Records** `{id: {bootId, firstSeenTs, ackedAt}}` (`ackedAt` canonical ISO UTC). An
+  ack is keyed to the EPISODE (G1): it counts only when its `bootId` is the current boot
+  AND its `firstSeenTs` is the entry's current one, so a recurrence under the same id is
+  unacknowledged by construction and the next key-on re-alerts every code.
+- **Boot id**: the host's `_alertsBootId` (read once at wiring; never a second
+  `readBootId`). `unknown` records nothing and counts nothing -- the store is not even
+  read.
+- **Honest reads**: a missing, empty or torn file reads as no acks with one WARN
+  (re-alert is the honest direction). Read once, lazily; then held in memory.
+- **Every emit** (the card tick and `emitNow`) hands the store's matching id set to the
+  emitter, then prunes. The file is rewritten only when the record set changes.
+- **Prune only what can never match again**: a prior boot's records (also dropped by the
+  first write of a new boot), and an id the arbiter no longer lists at all. An acked
+  cleared STOP is removed from `entries` but the arbiter still lists it, so its record
+  stays until the boot ends and it never re-lists unacked. Code records are not pruned
+  while `sources.code.assessed` is false (unknown is not cleared); engine records not
+  while `sources.engine.assessed` is false.
+- **`emitNow()`** (`CardStateEmitterMixin`) is a PURE rebuild (G2): the arbiter's
+  episodes plus the obdLive / nowUtc / dataSource the last alerts tick cached, with the
+  current ack set. It never calls `observe` / `observeDtc` / `observeRpmReading`: no
+  episode transition, no hold-timer step, no `alert_log` row. Run-loop thread; no lock.
+- The icon pulse ignores acknowledged entries; an acked live STOP keeps its takeover.
 
 #### `states/engine-history` -- this drive's worst-band buckets (US-889-a)
 
@@ -6458,12 +6492,14 @@ outside closed loop (`FuelSnapshot.openLoopS`). `resetSinceReset(resetAtTs)` zer
 row, the cached `sinceReset` and the watermark together (the US-881-d entry point). No
 database handle -> `sinceReset` null and one WARN.
 
-**`POST /fuel-reset` (US-881-d, Atlas gap 4).** `eclipse-states-http` has exactly FOUR
+**`POST /fuel-reset` (US-881-d, Atlas gap 4).** `eclipse-states-http` has exactly FIVE
 explicit, token-gated (`_tokenOk`) write routes: `/service-control`, `/dtc-clear`,
-`/settings` and `/fuel-reset`; any other POST path (e.g. `/fuel-resetx`) is 404, never a
-catch-all. The HTTP process holds no database, so the route calls the injected
-`fuelResetRunner` -- `src/pi/splash/fuel_reset_channel.py`, the `dtc_clear_channel`
-pattern in its own module (the DTC channel is untouched): it writes
+`/settings`, `/fuel-reset` and `/alerts-ack` (US-897-c, below); any other POST path (e.g.
+`/fuel-resetx`) is 404, never a catch-all. The HTTP process holds no database, so the
+route calls the injected `fuelResetRunner` -- `src/pi/splash/fuel_reset_channel.py`, a
+thin wrapper (own filenames, exceptions, messages) over the ONE request/outcome helper
+`src/pi/splash/request_channel.py` that `dtc_clear_channel` also rides (US-897-c0,
+Atlas Q19: one poll loop, never a copy per route): it writes
 `fuel-reset-request.json {requestId}` into the states dir and waits up to
 `pi.fuel.resetTimeoutSec` (validator default 5, finite > 0; resolved at start by
 `loadFuelResetTimeoutSec`; short because the server is single-threaded and the wait
@@ -6478,6 +6514,33 @@ otherwise it calls `resetSinceReset(resetAtTs = now, canonical UTC)` (never
 or the request cannot be written), 409 refused (`reason` in the body), 504 no outcome in
 time (`ok: null`; the request is withdrawn), 200 `{ok: true, resetAtTs}`. The next
 `states/fuel-economy` then carries `sinceReset` totals 0 and that `resetAtTs`.
+
+**`POST /alerts-ack` (US-897-c; Atlas s3, Q20-Q27).** Acknowledges `states/alerts`
+entries for THIS boot (the store is under `states/alerts` above). Body `{ids: [string,
+...]}` and nothing else (Q26: 1..N, each a non-empty string, bounded by
+`_MAX_ACTION_BODY`). The injected `alertsAckRunner` (appended LAST to
+`makeStatesHandler`, `StatesHttpServer.__init__` and the `main()` wiring) is
+`src/pi/splash/alerts_ack_channel.py` on the `request_channel` helper:
+`alerts-ack-request.json {requestId, ids, requestedAtEpoch}` /
+`alerts-ack-outcome.json {requestId, ok, error, ids}`, waiting up to
+`pi.warnings.ackTimeoutSec` (validator default 5, finite > 0; `loadAlertsAckTimeoutSec`;
+short because the server is single-threaded, Q22). The HTTP process only publishes into
+the tmpfs states dir; it never touches `/var/lib/eclipse-obd`.
+- eclipse-obd services it in `_maybeServiceAlertsAckRequest`, right after
+  `_maybeServiceFuelResetRequest` and before `_maybeEmitCardStates`: it consumes the
+  request FIRST, then checks every id ALL OR NOTHING -- an id the arbiter does not list
+  -> `unknown_id`; all listed but the boot id `unknown`, or no arbiter / emitter / store
+  (card emitters disabled, or the alerts init failed) -> `not_ackable`; `ids` = the bad
+  ones and nothing is recorded. Otherwise it records every id in ONE store write
+  (`store_write_failed` when it does not land, e.g. `/var/lib/eclipse-obd` missing --
+  logged, never mkdir), calls `emitNow()` so `states/alerts` shows `acknowledged: true`
+  and `icon.pulse` false at once, and only then publishes `{ok: true}`. A re-ack of an
+  acked episode is ok (idempotent; no rewrite).
+- Status mapping (the `/fuel-reset` template): 401 bad token (checked first; no file
+  written), 503 no runner, 400 malformed body (before any file is written), 503 the
+  request cannot be published, 504 no outcome in time (`ok: null`; withdrawn), 409
+  `{ok: false, error: 'unknown_id' | 'not_ackable', ids}`, 503 `{ok: false, error:
+  'store_write_failed'}`, 200 `{ok: true}`.
 
 #### `window.DISPLAY_STALE` -- the page's stale windows, injected per request (US-882-c)
 
@@ -7671,7 +7734,9 @@ column.
 takeover already return early on an unavailable source, so a remembered code never
 takes over. The Alerts card renders them as **inert rows** under "LAST KNOWN CODES ·
 last read <age> · not a live read": no detail overlay (where the clear button
-lives) opens from them.
+lives) opens from them. *(Superseded on the card by US-898-b1: the ALERTS card reads
+`states/alerts` only and never renders `lastKnown`; remembered codes reach it as the
+provider's entries. The clear-gate rule above is unchanged.)*
 
 **Not sticky.** A successful Mode-04 clear (`_maybeServiceDtcClearRequest`) writes
 one `status='cleared'` `dtc_log` row per remembered code — the status the schema
@@ -7739,25 +7804,137 @@ decoration.
 are dropped from `alertableCodes` — **no takeover, no ribbon**, and not counted in
 "+N more". A missing/malformed `dtc` file → no alert (honest: absence of the state
 = no active fault), never a fabricated code. The Mode-04 clear is US-407.
+*(Superseded on `#dtc-takeover` by US-899-a1, below: `updateDtcSurfaces` drives the
+ribbon only; the takeover's one driver is `states/alerts.takeover`. The dead
+newSinceTs path is deleted by US-899-a2.)*
+
+#### PULL OVER takeover from `states/alerts` (US-899-a1) [F-127; CIO R31, Iris brief s A + U7/U8/U11/U12, Atlas G4/Q10/Q33]
+
+**Source.** `#dtc-takeover` renders from `states/alerts.takeover` ALONE (the
+provider sets it only while the top active entry is a STOP — in V0.30 the live
+coolant STOP, `engine:COOLANT_TEMP:stop`). Pure `takeoverAlertView(alerts, nowTs)`
+→ `{id, directive, title, value, stale, sentence, age, colorVar, acknowledged}`,
+or null. Every word is the provider's, the directive band included
+(`takeover.directive`; no page literal and no page fallback — Atlas G4, Iris U11).
+The value goes through `displayUnits` by its own unit (°F for coolant); while
+stale (Atlas Q10: `value null + stale + last`) it is `last.value`, plus a
+`last reading n s ago` line of its own at `--fs-label` (`warningStaleText`, the
+M7 rule). The age is `agoText(now, firstSeenTs)` at `--fs-meta`. The tier colour
+comes from the ONE map `TIER_COLOR_VAR` (stop `--critical-red`, watch
+`--amber-warn`, minor `--green-ok`, unrated `--neutral-chip-bg`; the US-899-b code
+alert reads the same map). `renderAlertsTakeover` is the only writer of the
+surface's state and copy: null takes it down **with** its `data-severity` (US-537
+lockstep). The US-405 head, chip, code and buttons ship `hidden` and are never
+shown (Iris U7; deleted by US-899-a2).
+
+**Look.** The shipped `[data-severity="stop"]` skeleton: opaque `--bg`, 8 px
+`--critical-red` frame, `#fff` copy, z-index 60 — above every page and overlay,
+below the REPLAY marker (70). The `stop-alarm-pulse` frame animation lives inside
+`@media (prefers-reduced-motion: no-preference)` (Iris U8); with motion reduced the
+frame stands steady. **Full brightness:** `brightnessAlarmActive(alerts)` is
+`takeover != null` (no longer the states/dtc ribbon level), so `appliedBrightness`
+returns 1.0 while it is up.
+
+**The ack tap.** No control on the surface (Iris U7): a tap anywhere POSTs
+`/alerts-ack {ids: [takeover.id]}` with `X-Splash-Token` through the page's ONE
+write helper `postWrite(path, body)` (Iris U12; `/dtc-clear` and `/fuel-reset`
+ride it too; it returns `{status, body}` and never reports success itself —
+`postAction` stays the `/service-control` helper). The honest write is
+`alertsAckNext` (the `fuelResetNext` pattern): idle → posting → (200 `{ok:true}`)
+awaiting → idle only when a RE-READ of states/alerts shows that entry
+`acknowledged:true` within `window.DISPLAY_STALE.alertsAckConfirmSec`
+(`pi.display.stale.alertsAckConfirmSec`, validator DEFAULT 6, Atlas Q33).
+A refusal (409 / 503 / 504 / any other), no answer, or no matching re-read in the
+window shows `couldn't acknowledge` for `alertsAckNoticeSec`
+(`pi.display.stale.alertsAckNoticeSec`, DEFAULT 3; a later read showing the ack
+clears it). Both windows are injected per request by `loadDisplayStaleConfig`
+(config.json only, not overlay keys); with either absent the tap posts nothing.
+The ack stops only the provider's ICON pulse; the takeover stays up and its frame
+keeps pulsing until the provider clears it. Tests:
+`tests/ui/test_warnings_takeover.py`.
+
+#### Key-on TROUBLE CODES screen from `states/alerts` (US-899-b) [F-127; spec §4.4b, Iris brief s B + U5/U6/U7, Atlas Q26/Q32]
+
+**Source.** `#code-alert` renders from `states/alerts.codeAlert` (`{ids[], tier,
+dismissable:true}`) plus `entries[]` ALONE. The provider decides that it shows (any
+active code entry not all acknowledged — so each key-on re-alerts, the ack being
+boot-scoped) and computes `tier` (Atlas Q32); the page compares nothing. Pure
+`codeAlertView(alerts, parked)` → `{ids, colorVar, rows, more}` or null. Rows: the
+first 3 ids, each the entry its id names in `entries[]` (chip + provider title +
+provider sentence, through `warningRowView`); beyond 3, `+n more on ALERTS`. The
+frame is `TIER_COLOR_VAR[codeAlert.tier]` (the PULL OVER map), set as the inline
+custom property `--code-alert-frame`.
+
+**When.** Null — not drawn — unless `engineParked.parked` is strictly true (the
+US-511 debounce; it starts not-parked, so the screen appears ≥ 8 s after boot, Iris
+U6) **and** `takeover` is null (PULL OVER > CODE ALERT: with both set only PULL OVER
+is drawn, and the code alert returns once the takeover clears). Not being drawn is
+not a dismiss: it posts nothing and the screen returns when parked, until dismissed.
+
+**Look.** Its own container `data-surface="code-alert"` (never a `data-severity`,
+Iris U7) on the takeover skeleton: opaque `--bg`, 8 px frame, **no pulse and no
+full-brightness override** (`brightnessAlarmActive` keys on `takeover` only).
+z-index 58: above every page and the clear-confirm (55), below PULL OVER (60) and
+the REPLAY marker (70). Head `TROUBLE CODES` in Michroma `--fs-secondary`; the chips
+and `DISMISS` are Michroma (upper-case only), every title, sentence, `+n more` and
+the notice `--font-mono`.
+
+**DISMISS.** The one control (bordered, `--tap-min` hit box, US-758): ONE request,
+`POST /alerts-ack {ids: codeAlert.ids}` (Atlas Q26, all-or-nothing) through
+`postWrite`. The honest write is `codeDismissNext` — `alertsAckNext`'s lifecycle,
+sharing its answer/re-read half (`ackFlowStep`) — settled ONLY by a re-read whose
+`codeAlert` is null within `alertsAckConfirmSec` (an unreadable payload is not that
+proof). A refusal, no answer or a lapsed window keeps the screen up with
+`couldn't dismiss` for `alertsAckNoticeSec`; with either window absent DISMISS posts
+nothing. Tests: `tests/ui/test_warnings_code_alert.py` (also the generator of its
+`code-alert-*` / `ack-prior-boot` fixtures).
 
 #### DTC Alerts card (Card 5) + detail (US-406) [F-111 / design §5.3–5.4]
 
 The persistent home of the DTC state — a third carousel card (`data-state="dtc"`,
-label **Alerts**) plus a per-code detail overlay. Both are pure functions in
+label **Alerts**; re-keyed onto `states/alerts` by US-898-b1, below) plus a per-code
+detail overlay. Both are pure functions in
 `carousel.js` (node-tested) with thin DOM wiring; the Alerts card is polled in the
 same 4 Hz tick as the other cards (the tick now fetches `GET /dtc` **once** and
 shares it with the card render *and* the US-405 ribbon/takeover). The display maps
 a Spool-classified tier → chip label + color + directive; **it never classifies.**
 
-**Alerts card (`alertsCardView`).** Hero + list (design D-4). The **hero** is the
-worst *alert-eligible* code (via `alertableCodes`, so `na` and unrecognized
-severities are **never** a hero — S-12) with its tier directive; the **list**
-(`dtcListSorted`) shows every code worst-first with **`na` sorted last** (design
-§5.3, `DTC_LIST_RANK` gives `na` the lowest rank). A no-description code shows a
-neutral `?` chip + "No description yet" (never blank — I-3). An empty `codes`
-array is an honest **"No stored codes"** (never a fabricated green). A
-missing/malformed file → the shell's `unavailable` (S-9). Every row + the hero are
-≥40px tap targets that open the detail.
+**Alerts card — RE-KEYED onto `states/alerts` (US-898-b1, F-127;
+`specs/v030-warnings-page-design.md` s3/s4.1/s4.6, Iris U2/U10 + 2026-10-19 ages).**
+The dtc-driven card body (`alertsCardView` hero + `dtcListSorted` worst-first list,
+`DTC_LIST_RANK`, `dtcRow`, `dtcNotReadTile`, `lastKnownDtcView`) is **retired**;
+`DTC_TIER` and `codeDetailView` stay for the detail (US-898-c / US-899-a2).
+- **Identity:** `<section id="alerts-card" aria-label="Alerts"
+  data-page-name="ALERTS">` with **no `data-state`**, so the generic per-card loop
+  never reads it. `alertsCardIndex` is found by that id; the warnings icon, the
+  CHECK ENGINE tap, the ribbon and the takeover "View detail" navigate by it.
+  `NO_DATA_VIEWS` has no `dtc` entry.
+- **View:** pure `warningsPageView(alerts, nowTs)` → `{missing, header, rows,
+  empty}`, one `warningRowView` per entry **in `entries[]` order**. The page never
+  sorts and compares no tier (Iris G-6); every title and sentence is the provider's.
+  Header `n ACTIVE` (active rows) + `codes read h:mm` (12-hour, no AM/PM: the
+  `fmtTimeOfDay` split) or `codes not read yet` for a null `sources.code.checkedAtTs`.
+  NONE / NOT CHECKED for an empty list are US-898-b2's.
+- **Rows** (≥ 48 px, never `.tile`): chip (tier → STOP / WATCH / MINOR / UNRATED; an
+  unknown tier reads UNRATED) + title + value through `displayUnits` by its own unit
+  (°F for coolant). A stale active row shows `last.value` plus `last reading n s ago`
+  (`warningStaleText`: the M7 rule — floor, clamp 0, `999+`). The age column is
+  `agoText(now, firstSeenTs)` on every row; `active:false` reads `cleared` with an
+  outlined chip and dimmed text. Only a CODE row is a control (a `<button>` that opens
+  the code detail from the states/dtc feed, `findCode`; US-898-c re-homes that read);
+  ENGINE rows and sentences carry no border, fill or pointer (US-758).
+- **Absence:** while `states/alerts` has never answered, the US-700 bounded LOADING
+  (`loadPhase` on the `alerts` feed); after the grace, header `--` + `no warnings data`.
+- **States/dtc stays fed:** the tick reads `states/dtc` explicitly (`await
+  stateOnce("dtc")` before `updateDtcSurfaces`), because the card's `data-state="dtc"`
+  was its only reader; it feeds the ribbon, `findCode` and the clear gate until
+  US-899-a2 removes it (the takeover and `brightnessAlarmActive` moved to
+  `states/alerts` in US-899-a1).
+- CSS is scoped to `#alerts-card` with geometry in `--warn-*` properties; the count
+  and the chips are Michroma (400, no synthesis), the rest `--font-mono`. Chip inks
+  (Atlas 2026-10-16, AA measured): STOP `--critical-red`/#fff, WATCH
+  `--amber-warn`/`var(--bg)`, MINOR `--green-ok`/`var(--bg)`, UNRATED
+  `--neutral-chip-bg`/`--text-primary`. Tests: `tests/ui/test_warnings_page.py`.
 
 **Detail (`codeDetailView`).** Fixed skeleton: hero (chip + code + short) ·
 severity directive band (🔴/🟡 only) · condition-dependent caveat **line** ·

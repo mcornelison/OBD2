@@ -113,7 +113,7 @@
   /* --- Layout bands -- US-557 (F-132). SSOT block: tokens.css "Layout bands".
      The stripes that spend the stage's HEIGHT. Before this story `28px` lived
      as FOUR independent literals (#topbar height, #carousel top,
-     #rotate-progress top, #dtc-ribbon top) and `24px` as two (#dots height,
+     #rotate-progress top, the DTC ribbon's top) and `24px` as two (#dots height,
      #carousel bottom) -- one fact, six copies, nothing forcing them to agree.
      That is why F-127's type-scale bump could raise the type and leave every
      band at its pre-F-127 height without anything going red.
@@ -137,18 +137,6 @@
   --accent:         #FF6A2B;   /* SSOT --accent -- pointers + accents ONLY */
   --radius:         10px;      /* SSOT --radius -- panel corners */
   --amber-warn:     #FFC400;   /* SSOT --amber-warn -- WATCH / degraded */
-  /* The two DEEP gradient edges of the DTC takeover. US-510 relocated these
-     from inline literals in the takeover rules; the VALUES ARE UNCHANGED, so
-     the surface renders identically. Iris (A-2) offered either a derived
-     color-mix() or named `--*-deep` edge tokens -- the named route is taken
-     deliberately, because a computed mix would produce a DIFFERENT colour and
-     the zero-visual-change rule governs this whole story. They live here
-     rather than in the SSOT because a new SSOT token name is an Atlas Rule-10
-     addition and only --bg/--surface/--destructive* were ruled; promotion is
-     routed to him (TD-071). */
-  --amber-deep:     #7a5b00;   /* WATCH/unknown takeover gradient outer edge */
-  --green-deep:     #12603a;   /* MINOR takeover gradient inner edge */
-  --green-deepest:  #062617;   /* MINOR takeover gradient outer edge */
   /* BRAND identity reds -- RESERVED for the brand mark (SSOT --red/-light/-dark).
      US-484-b moved every DTC STOP surface OFF these: if the permanent brand
      mark is red AND the pull-over alarm is also red, the driver cannot tell
@@ -161,7 +149,7 @@
   --red:            #E60012;   /* SSOT --red -- brand mark base */
   --red-light:      #F61D2D;   /* SSOT --red-light -- brand mark highlight */
   --red-dark:       #BF000F;   /* SSOT --red-dark -- brand mark shadow */
-  /* STATE-ALARM red -- "PULL OVER NOW". Spool set value + semantics 2026-07-25
+  /* STATE-ALARM red -- "stop the car now". Spool set value + semantics 2026-07-25
      (dtc-display-clear-safety-advisory.md 6d); Atlas Rule-10 gate 2026-07-26.
      The HEX IS ONLY THE 3RD REINFORCEMENT: area + motion + text carry STOP. */
   --critical-red:   #D32F2F;   /* SSOT --critical-red -- the DTC STOP tier and,
@@ -239,7 +227,7 @@ html, body {
    band genuinely under-sized for its own contents -- 26px glyphs and a 40px
    kebab button in a 28px stripe -- which is what pushed the ⋮ outside the
    header fill. Three other rules position themselves against this height
-   (#carousel, #rotate-progress, #dtc-ribbon) and each used to repeat it as its
+   (#carousel, #rotate-progress, the DTC ribbon) and each used to repeat it as its
    own literal; they now read the same token. */
 #topbar {
   position: fixed; top: 0; left: 0; right: 0; height: var(--bar-h);
@@ -248,6 +236,9 @@ html, body {
   padding: 0 10px; box-sizing: border-box;
   background: var(--surface); font-size: var(--fs-secondary);
   z-index: 10;
+  /* US-898-a (Iris S108): the glyph letter-spacing as ONE scoped property, so
+     the warnings icon's fixed slot and every text glyph charge the same em. */
+  --glyph-ls: 0.04em;
 }
 /* The clusters exist so the bar has exactly THREE grid children: five children
    in a three-column template wrap into an implicit second row, which on a bar
@@ -261,7 +252,7 @@ html, body {
 #topbar .topbar-left  { display: flex; align-items: center; gap: 10px; }
 #topbar .topbar-right { display: flex; align-items: center;
                         justify-content: flex-end; gap: 8px; }
-#topbar .glyph { color: var(--text-secondary); letter-spacing: 0.04em; }
+#topbar .glyph { color: var(--text-secondary); letter-spacing: var(--glyph-ls); }
 #topbar .glyph[data-state="amber"] { color: var(--amber-warn); }
 #topbar .glyph[data-state="ok"]    { color: var(--green-ok); }
 /* US-488: a DOWN link/service is DEGRADED, not dangerous -- WATCH amber. It
@@ -269,6 +260,56 @@ html, body {
    (and, from US-489, the per-tile dot) carries which source is unhappy, and
    inventing a second alarm-red to separate them is what Spool ruled against. */
 #topbar .glyph[data-state="down"]  { color: var(--amber-warn); }
+/* US-898-a (Iris U1): WiFi is a 1ch SVG, so the warnings icon has room. Relative
+   units only; stroked in currentColor so the [data-state] colours above apply.
+   Letter-spacing does not reach an atomic inline, so the glyph is exactly 1ch. */
+#glyph-wifi .wifi-mark {
+  width: 1ch; height: 1em; vertical-align: -0.1em;
+  fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round;
+}
+#glyph-wifi .wifi-mark circle { fill: currentColor; stroke: none; }
+/* US-898-a (F-127; specs/v030-warnings-page-design.md s4.2): the warnings icon.
+   A FIXED three-character slot -- `▲99` is the widest content, 3 x (1ch +
+   --glyph-ls) -- so the cluster never reflows as the count changes; min-width
+   would grow at two digits (Iris S108). Mono, because `?`, `▲` and `△` are not
+   in the Michroma subset. The painted box is the band, the hit box is the
+   #menu-btn pattern: a transparent ::after grown to --tap-min. */
+#glyph-warnings {
+  font-family: var(--font-mono);
+  width: calc(3 * (1ch + var(--glyph-ls))); height: var(--bar-h);
+  flex: none; display: flex; align-items: center;
+  text-align: start; white-space: nowrap;
+  position: relative; cursor: pointer;
+}
+#glyph-warnings::after {
+  content: ""; position: absolute;
+  inset: calc((var(--bar-h) - var(--tap-min)) / 2);
+}
+/* The look is the provider's state (alertIconView), coloured by token only. A
+   missing payload is `--` in tertiary, never the `none` triangle. */
+#topbar #glyph-warnings[data-state="none"],
+#topbar #glyph-warnings[data-state="missing"]     { color: var(--text-tertiary); }
+#topbar #glyph-warnings[data-state="not_checked"],
+#topbar #glyph-warnings[data-state="watch"]       { color: var(--amber-warn); }
+#topbar #glyph-warnings[data-state="stop"]        { color: var(--critical-red); }
+/* A live unacknowledged STOP pulses -- only when the user has not asked for
+   reduced motion, and only while the state attributes say so
+   (test_dashboard_animation_gating). Reduced motion keeps a steady red outline
+   instead, so the STOP still reads as more than its colour. */
+@media (prefers-reduced-motion: no-preference) {
+  #topbar #glyph-warnings[data-state="stop"][data-pulse="true"] {
+    animation: warn-icon-pulse 1.1s ease-in-out infinite;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #topbar #glyph-warnings[data-state="stop"][data-pulse="true"] {
+    outline: 0.08em solid var(--critical-red); outline-offset: -0.08em;
+  }
+}
+@keyframes warn-icon-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
 /* US-542: the wall clock, relocated from the retired parked idle face. It USED
    to sit with the glyphs on the LEFT, and the reasoning for that is still
    correct and is kept here on purpose: two auto margins in one flex row split
@@ -629,7 +670,7 @@ html, body {
    halt the Pi -- so it earns the state-alarm red. The earlier stages stay amber
    above, or the escalation would not read as an escalation. This is a SYSTEM
    critical state, not the engine one: the banner copy stays "DRAINING · TRIGGER"
-   (carousel.js), never the DTC tier's "PULL OVER". */
+   (carousel.js), never the STOP takeover's directive. */
 .ladder[data-stage="TRIGGER"] { border-color: var(--critical-red); }
 .ladder[data-stage="TRIGGER"] .ladder-banner { color: var(--critical-red); }
 .ladder-runtime { font-size: var(--fs-label); color: var(--text-secondary); }
@@ -684,16 +725,14 @@ html, body {
 
 /* --- US-506 auto-rotate progress bar (F-124) --------------------------------- */
 /* The calm THIN time-to-next readout for the hands-off carousel. Deliberately
-   quiet: it shares the band directly under the top bar with the DTC ribbon, and
-   an alert must always win that band -- hence z-index 8 against the ribbon's 9,
-   so a live code simply covers this. It is ambient chrome, so it borrows the
+   quiet, and z-index 8 so any alert layer covers it. It is ambient chrome, so it borrows the
    TERTIARY text token rather than any state colour: a green or amber bar here
    would be a fourth thing claiming to mean "healthy"/"degraded" while actually
    meaning "seconds until the next card". Removed entirely while paused (the
    `hidden` attribute -> the global [hidden] guard, US-495). */
-/* US-557: `top` is --bar-h. This rule and #dtc-ribbon below share the band
-   directly under the top bar, and each used to carry its own copy of the bar's
-   height -- so a bar that grew would have left both of them overlapping it. */
+/* US-557: `top` is --bar-h. This rule sits directly under the top bar and
+   used to carry its own copy of the bar's height -- so a bar that grew would
+   have left it overlapping the bar. */
 #rotate-progress {
   position: fixed; left: 0; right: 0; top: var(--bar-h); height: 2px;
   background: transparent; z-index: 8;
@@ -705,72 +744,9 @@ html, body {
   background: var(--text-tertiary);
 }
 
-/* --- US-405 persistent DTC ribbon -------------------------------------------- */
-/* Rides under the top bar on every card while a code is present. R-2 + US-484-b:
-   the ribbon shares cards with brand chrome, so its STOP state renders the
-   STATE-ALARM --critical-red (never a brand red) + a leading ⚠ glyph + a subtle
-   pulse, so it reads as an alarm and never as decoration or as branding. Level
-   is set by JS from `dtc`. */
-/* US-557: `top` is --bar-h -- the ribbon rides UNDER the bar, so it must move
-   with it. `min-height` is the ribbon's own content floor, not a stage band. */
-#dtc-ribbon {
-  position: fixed; left: 0; right: 0; top: var(--bar-h); min-height: 22px;
-  display: flex; align-items: center; gap: 6px;
-  padding: 2px 10px; box-sizing: border-box;
-  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.03em;
-  color: #fff; z-index: 9;
-}
-#dtc-ribbon[data-level="stop"]    { background: var(--critical-red); color: #fff; }
-#dtc-ribbon[data-level="watch"]   { background: var(--amber-warn); color: #000; }
-#dtc-ribbon[data-level="minor"]   { background: var(--green-ok); color: #000; }
-#dtc-ribbon[data-level="unknown"] { background: var(--amber-warn); color: #000; }
-.ribbon-glyph { font-size: var(--fs-secondary); line-height: 1; flex: 0 0 auto; }
-/* US-691 -- THE OVERFLOW ORDER IS THE FIX, and it is declared here rather than
-   left to the default. This was ONE span, `.ribbon-text`, holding "CHECK ENGINE
-   · <code> <description> · +N more" behind a `text-overflow: ellipsis`. An
-   ellipsis truncates from the END, and the END is where the count is -- so the
-   count was, by construction, the FIRST thing every overflow destroyed. When
-   P0400 appeared beside P0443 on 2026-09-04 the banner clipped in all ten
-   dashboard frames of that day and the operator never learned a second fault
-   existed. A stylesheet cannot protect a fact that lives in a string's tail;
-   splitting the slots is what makes the guarantee below expressible.
-
-   `flex: 0 0 auto` on the head and the count is the whole guarantee -- a flex
-   item's DEFAULT is `flex-shrink: 1`, so without it the browser squeezes both
-   and re-creates the defect with the markup looking correct. The description is
-   the only run allowed to clip, and it is the only one whose loss the operator
-   can absorb: he can still read WHICH code and HOW MANY, which is what he needs
-   to act. `min-width: 0` is load-bearing on a flex child -- its default
-   `min-width: auto` refuses to shrink below its content, which would push the
-   count out of the banner instead of shortening the text.
-   Sized at tests/ui/test_carousel_dtc_banner_second_code.py: the unclippable
-   runs fit the 480px panel with room left over, so the count never merely
-   "must not" clip -- it does not need to. */
-.ribbon-head { flex: 0 0 auto; white-space: nowrap; }
-.ribbon-desc {
-  flex: 1 1 auto; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ribbon-more { flex: 0 0 auto; white-space: nowrap; }
-/* US-537: the pulse hangs off `[data-level]`, NOT off the base #dtc-ribbon rule.
-   carousel.js sets data-level and clears `hidden` together, and removes both
-   together (renderRibbon), so this runs exactly while a code is real. Before, the
-   animation was declared unconditionally and silenced only by the US-495
-   `[hidden] { display: none !important }` guard -- i.e. by the PAINT cascade, the
-   very race that let five overlays paint at once. Gate on the state, not on the
-   side effect of the state. */
-#dtc-ribbon[data-level] {
-  animation: ribbon-pulse 2s ease-in-out infinite;
-}
-/* Subtle pulse so a persistent alert never fades into chrome. */
-@keyframes ribbon-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.72; }
-}
-
-/* --- US-405 full-screen DTC takeover ---------------------------------------- */
-/* Fired on a NEW code, severity-styled: same skeleton, per-tier bg + directive +
-   dismiss controls (STOP has no plain dismiss). */
+/* --- US-405 / US-899-a1 full-screen STOP takeover ---------------------------- */
+/* Drawn only from states/alerts.takeover (carousel.js renderAlertsTakeover);
+   the one surface is STOP, and a tap anywhere on it is the ack. */
 #dtc-takeover {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
@@ -787,7 +763,7 @@ html, body {
                a live STOP is mounted (carousel spec 4: motion never implies a
                state that isn't real -- the pulse is scoped to this selector,
                never to the base takeover rule);
-     TEXT   -- an explicit "PULL OVER" directive (carousel.js TAKEOVER_STYLE);
+     TEXT   -- the provider's directive band (states/alerts.takeover);
      FIELD  -- near-black #000 with WHITE copy (ch.2): no brand chrome anywhere
                on this surface, and every pairing clears the WCAG-AA large-text
                floor (white/critical-red 5.0:1, white/black 21:1);
@@ -802,7 +778,14 @@ html, body {
   color: #fff;                              /* white copy (ch.2) */
   box-sizing: border-box;
   border: 8px solid var(--critical-red);    /* the large-area alarm frame */
-  animation: stop-alarm-pulse 1.1s ease-in-out infinite;
+}
+/* US-899-a1 (Iris U8): the frame pulses only where motion is welcome. With
+   motion reduced the 8 px frame stands steady -- the red frame and the words
+   still carry STOP, so nothing is lost but the motion. */
+@media (prefers-reduced-motion: no-preference) {
+  #dtc-takeover[data-severity="stop"] {
+    animation: stop-alarm-pulse 1.1s ease-in-out infinite;
+  }
 }
 /* The directive is the largest thing on the panel on a STOP -- white on the
    state-alarm red, so AREA + TEXT read before the hue does. */
@@ -811,7 +794,6 @@ html, body {
   background: var(--critical-red); color: #fff;
   font-size: var(--fs-hero); letter-spacing: 0.08em;
 }
-#dtc-takeover[data-severity="stop"] .takeover-icon { color: var(--critical-red); }
 /* Deeper-and-darker pulse: the frame drops toward its own near-black field.
    Never a warmer/orange shift -- that would collide with amber WATCH and invert
    which tier reads as worse (ch.3). */
@@ -819,44 +801,86 @@ html, body {
   0%, 100% { border-color: var(--critical-red); }
   50%      { border-color: var(--bg); }
 }
-/* US-510 (TD-065): the three deep gradient edges are tokens now (--amber-deep /
-   --green-deep / --green-deepest, :root above). The VALUES are the ones these
-   rules already carried, so the gradients render pixel-identically -- the point
-   was to get the literals out of the surface, not to restyle the takeover. */
-#dtc-takeover[data-severity="watch"] {
-  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, var(--amber-deep) 100%);
-  color: #000;
-}
-#dtc-takeover[data-severity="minor"] {
-  background: radial-gradient(circle at 50% 38%, var(--green-deep) 0%, var(--green-deepest) 100%);
-}
-#dtc-takeover[data-severity="unknown"] {
-  background: radial-gradient(circle at 50% 38%, var(--amber-warn) 0%, var(--amber-deep) 100%);
-  color: #000;
-}
 .takeover-inner {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 0 18px; max-width: 92%;
 }
-.takeover-icon { font-size: var(--fs-hero); line-height: 1; }
-.takeover-head { font-size: var(--fs-label); letter-spacing: 0.14em; font-weight: 700; }
-.takeover-chip {
-  font-size: var(--fs-label); font-weight: 700; letter-spacing: 0.08em;
-  padding: 1px 8px; border-radius: 10px; text-transform: uppercase;
-  border: 1px solid currentColor;
-}
-.takeover-code { font-size: var(--fs-hero); font-weight: 800; letter-spacing: 0.04em; }
-.takeover-desc { font-size: var(--fs-secondary); opacity: 0.9; }
 .takeover-directive {
   font-size: var(--fs-primary); font-weight: 700; letter-spacing: 0.04em; margin-top: 2px;
 }
-.takeover-more { font-size: var(--fs-label); opacity: 0.85; }
-.takeover-actions { display: flex; gap: 10px; margin-top: 12px; }
-.takeover-actions button {
-  min-width: var(--tap-min); min-height: var(--tap-min);
-  padding: 0 16px; font-size: var(--fs-secondary); font-weight: 700; cursor: pointer;
-  border-radius: 4px; border: 1px solid currentColor;
-  background: rgba(0, 0, 0, 0.28); color: inherit;
+/* US-899-a1: the STOP takeover lines under the directive band, each the
+   provider's words at Iris's size (brief s A + 2026-10-19 stale line). Mono:
+   the sentence, the stale line and the notice carry lower case, and the value's
+   degree sign is outside the Michroma subset. The copy colour is the surface's
+   #fff (inherited); no line is styled as a control (US-758). */
+.takeover-line { font-family: var(--font-mono); }
+#takeover-title { font-size: var(--fs-secondary); }
+#takeover-value { font-size: var(--fs-primary); font-variant-numeric: tabular-nums; }
+#takeover-stale { font-size: var(--fs-label); }
+#takeover-sentence { font-size: var(--fs-label); }
+#takeover-age { font-size: var(--fs-meta); }
+#takeover-notice { font-size: var(--fs-meta); }
+
+/* --- US-899-b key-on TROUBLE CODES screen (spec s4.4b; Iris brief s B + U7) ---
+   Its own container (data-surface="code-alert", never a data-severity) on the
+   takeover skeleton: the opaque field and the 8 px frame, but NO pulse and NO
+   full-brightness override -- a stored code is not an emergency. The frame is
+   the provider tier's colour token, set by carousel.js renderCodeAlert as
+   --code-alert-frame (the one TIER_COLOR_VAR map the STOP takeover also reads).
+   z-index 58: above every page and the clear-confirm (55), below the STOP takeover (60)
+   and the REPLAY marker (70). Michroma carries only the UPPER-CASE words (the
+   head, the chips, DISMISS); the titles, sentences, '+n more' and the notice
+   are --font-mono. DISMISS is the ONE control, so it alone is bordered (US-758). */
+#code-alert {
+  --code-alert-frame: var(--neutral-chip-bg);   /* replaced by the tier's token */
+  --code-alert-rule: 8px;                       /* the takeover's frame width */
+  --code-alert-gap: 8px;
+  --code-alert-chip-pad: 6px;
+  --code-alert-radius: 8px;
+  --code-alert-line: 1.2;
+  position: fixed; inset: 0; z-index: 58;
+  display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box; text-align: center;
+  background: var(--bg); color: var(--text-primary);
+  border: var(--code-alert-rule) solid var(--code-alert-frame);
+}
+#code-alert .code-alert-head {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-secondary); line-height: var(--code-alert-line); letter-spacing: 0;
+}
+#code-alert-rows {
+  display: flex; flex-direction: column; gap: var(--code-alert-gap); width: 100%;
+}
+#code-alert .code-alert-row {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--code-alert-gap); align-items: baseline; text-align: start;
+  line-height: var(--code-alert-line);
+}
+#code-alert .code-alert-chip {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); white-space: nowrap;
+  padding-inline: var(--code-alert-chip-pad); border-radius: var(--code-alert-radius);
+}
+#code-alert .code-alert-chip[data-tier="stop"]    { background: var(--critical-red); color: var(--text-primary); }
+#code-alert .code-alert-chip[data-tier="watch"]   { background: var(--amber-warn); color: var(--bg); }
+#code-alert .code-alert-chip[data-tier="minor"]   { background: var(--green-ok); color: var(--bg); }
+#code-alert .code-alert-chip[data-tier="unrated"] { background: var(--neutral-chip-bg); color: var(--text-primary); }
+#code-alert .code-alert-title {
+  font-family: var(--font-mono); font-size: var(--fs-label); overflow-wrap: anywhere;
+}
+#code-alert .code-alert-sentence {
+  grid-column: 2; font-family: var(--font-mono); font-size: var(--fs-meta);
+  color: var(--text-secondary);
+}
+#code-alert-more { font-size: var(--fs-meta); color: var(--text-secondary); }
+#code-alert-notice { font-size: var(--fs-meta); color: var(--amber-warn); }
+#code-alert-dismiss {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-label); letter-spacing: 0;
+  min-height: var(--tap-min); min-width: var(--tap-min);
+  padding-inline: var(--code-alert-chip-pad); border-radius: var(--code-alert-radius);
+  border: 1px solid var(--text-primary); background: var(--surface);
+  color: var(--text-primary); cursor: pointer;
 }
 
 /* --- US-403 long-press ring (D-6) ------------------------------------------- */
@@ -1158,6 +1182,8 @@ html, body {
 .detail-directive[data-level="unknown"] { color: var(--amber-warn); }
 .detail-caveat { font-size: var(--fs-label); color: var(--amber-warn); }
 .detail-meta { font-size: var(--fs-label); color: var(--text-tertiary); letter-spacing: 0.03em; }
+/* US-898-c (Iris U4): the states/dtc read behind the detail failed. */
+.detail-unavailable { font-size: var(--fs-label); color: var(--text-secondary); }
 /* US-491 (AC2): the ONE section shell. Freeze-frame/context, suggested-fix and
    the Clear zone are all `.detail-card` -- three near-identical boxes drift the
    first time one of them is edited, and the drift is exactly what AC3's
@@ -2330,3 +2356,114 @@ html, body {
   font-variant-numeric: tabular-nums; color: var(--text-primary);
 }
 #light-card .light-status-note { font-size: var(--fs-meta); color: var(--text-secondary); }
+
+/* US-898-b1 (F-127; specs/v030-warnings-page-design.md s3): the ALERTS card
+   from states/alerts -- a header, then one row per provider entry in the
+   provider's order. Tokens only; geometry with no token is declared ONCE here
+   as properties scoped to the card. The count and the chips are Michroma
+   (UPPER-CASE words and digits only); the title, value, staleness clause,
+   sentence and age inherit the body's --font-mono. Chip colours and inks are
+   Atlas's (2026-10-16, contrast MEASURED; no new tokens): the STOP ink #fff
+   is the existing STOP copy colour. Rows are never .tile; only a CODE row is
+   a control (US-758) -- sentences and ENGINE rows carry no border, fill or
+   pointer. */
+#alerts-card {
+  --warn-row-min: 48px;          /* every row >= 48 px (Iris brief) */
+  --warn-gap: 8px;               /* chip -> text -> age (Iris's 2 x 8 px) */
+  --warn-row-pad: 4px;           /* row padding, top and bottom */
+  --warn-chip-pad: 6px;          /* chip padding, left and right */
+  --warn-chip-radius: 8px;
+  --warn-chip-rule: 1px;         /* the outline of a cleared entry's chip */
+  --warn-line: 1.2;
+  --warn-cleared-opacity: 0.55;  /* a cleared entry is listed, dimmed */
+  --warn-scroll-w: 6px;          /* US-898-b2: the list's visible scrollbar */
+  --warn-scroll-thumb: var(--text-tertiary);
+  --warn-scroll-track: var(--surface);
+}
+/* US-898-b2 (Iris U9): the header, the empty-state block and the cue keep
+   their height; the LIST takes the rest and scrolls inside it with a visible
+   scrollbar -- every entry is rendered, none is clipped. The cue line is
+   always laid out (empty while nothing is below), so showing it never
+   shrinks the list it counts. */
+#alerts-card .card-body { display: flex; flex-direction: column; }
+#alerts-card .warn-header,
+#alerts-card .warn-quiet,
+#alerts-card .warn-more { flex: 0 0 auto; }
+#alerts-card .warn-header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--warn-gap); white-space: nowrap;
+}
+#alerts-card .warn-count {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-primary); line-height: var(--warn-line); color: var(--text-primary);
+}
+#alerts-card .warn-count[data-tone="amber"] { color: var(--amber-warn); }
+#alerts-card .warn-meta { font-size: var(--fs-meta); color: var(--text-secondary); }
+#alerts-card .warn-empty { font-size: var(--fs-meta); color: var(--text-secondary); }
+/* US-898-b2 empty / not-checked body. Michroma carries only the upper-case
+   words (.warn-quiet-word); the '?' and every sentence are --font-mono. */
+#alerts-card .warn-quiet-head {
+  font-size: var(--fs-secondary); line-height: var(--warn-line); color: var(--text-primary);
+}
+#alerts-card .warn-quiet-mark { font-family: var(--font-mono); }
+#alerts-card .warn-quiet-word {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+}
+#alerts-card .warn-quiet-line {
+  font-size: var(--fs-meta); line-height: var(--warn-line); color: var(--text-primary);
+}
+#alerts-card .warn-quiet-line[data-tone="secondary"] { color: var(--text-secondary); }
+#alerts-card .warn-list {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y;           /* US-746: a swipe that starts here still turns the page */
+  scrollbar-width: thin;
+  scrollbar-color: var(--warn-scroll-thumb) var(--warn-scroll-track);
+}
+#alerts-card .warn-list::-webkit-scrollbar { width: var(--warn-scroll-w); }
+#alerts-card .warn-list::-webkit-scrollbar-track { background: var(--warn-scroll-track); }
+#alerts-card .warn-list::-webkit-scrollbar-thumb { background: var(--warn-scroll-thumb); }
+#alerts-card .warn-more {
+  min-height: calc(var(--fs-meta) * var(--warn-line));
+  font-size: var(--fs-meta); line-height: var(--warn-line); color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+#alerts-card .warn-row {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content;
+  column-gap: var(--warn-gap); align-items: baseline;
+  min-height: var(--warn-row-min); box-sizing: border-box; width: 100%;
+  flex: 0 0 auto;                /* US-898-b2: in the scrolling list, never squeezed */
+  padding-block: var(--warn-row-pad); padding-inline: 0; margin: 0;
+  border: none; background: none; color: var(--text-primary);
+  font-family: inherit; font-size: var(--fs-label); line-height: var(--warn-line);
+  text-align: start;
+}
+#alerts-card .warn-row-code { cursor: pointer; }
+#alerts-card .warn-chip {
+  font-family: var(--font-display); font-weight: 400; font-synthesis: none;
+  font-size: var(--fs-meta); line-height: var(--warn-line); white-space: nowrap;
+  padding-inline: var(--warn-chip-pad); border-radius: var(--warn-chip-radius);
+  border: var(--warn-chip-rule) solid transparent;
+}
+#alerts-card .warn-chip[data-tier="stop"]    { background: var(--critical-red); color: #fff; }
+#alerts-card .warn-chip[data-tier="watch"]   { background: var(--amber-warn); color: var(--bg); }
+#alerts-card .warn-chip[data-tier="minor"]   { background: var(--green-ok); color: var(--bg); }
+#alerts-card .warn-chip[data-tier="unrated"] { background: var(--neutral-chip-bg); color: var(--text-primary); }
+#alerts-card .warn-chip[data-active="false"] {
+  background: none; color: var(--text-secondary); border-color: currentColor;
+}
+#alerts-card .warn-main { display: flex; flex-direction: column; min-width: 0; }
+#alerts-card .warn-line {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--warn-gap);
+}
+#alerts-card .warn-title { font-size: var(--fs-label); overflow-wrap: anywhere; }
+#alerts-card .warn-value {
+  font-size: var(--fs-label); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+#alerts-card .warn-stale { font-size: var(--fs-meta); color: var(--amber-warn); }
+#alerts-card .warn-sentence { font-size: var(--fs-meta); color: var(--text-secondary); }
+#alerts-card .warn-age {
+  font-size: var(--fs-meta); color: var(--text-secondary); white-space: nowrap; text-align: end;
+}
+#alerts-card .warn-row[data-active="false"] .warn-main,
+#alerts-card .warn-row[data-active="false"] .warn-age { opacity: var(--warn-cleared-opacity); }

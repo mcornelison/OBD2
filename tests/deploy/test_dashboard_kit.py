@@ -30,6 +30,16 @@
 #               |              | (F-4: HTML carousel is the sole surface).
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the Motion card replaces the Home
 #                               card at index 4.
+# 2026-10-20    | Ralph (Rex)  | US-898-a -- the bar carries the warnings icon.
+# 2026-10-20    | Ralph (Rex)  | US-898-c -- MOVED PIN: codeDetailView(record, entry)
+#               |              | bands the entry's sentence; clearButtonView takes
+#               |              | engineParked.parked (not parked -> 'moving').
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the Alerts card is #alerts-card
+#                               on states/alerts (no data-state="dtc"); the US-406
+#                               card-view asserts re-point at warningsPageView.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the US-405 takeover/ribbon node
+#                               logic retired; HTML/CSS asserts pin the STOP-only
+#                               takeover and the ribbon's absence.
 # ================================================================================
 ################################################################################
 
@@ -114,7 +124,10 @@ def test_dashboardHtml_hasBothCardSlots_s1():
         "System Status", "Battery",
     ]
     assert 'data-state="system-status"' in html
-    assert 'data-state="dtc"' in html
+    # MOVED PIN (US-898-b1): the Alerts card reads states/alerts and is found
+    # by its id (Iris U2); it no longer binds the dtc state file.
+    assert 'id="alerts-card"' in html
+    assert 'data-state="dtc"' not in html
     # The live instrument is a FACE of the home slot, not a slot of its own.
     assert 'data-state="imu"' not in html
     # The retirement is only honest if the facts SURVIVED it: each formerly
@@ -137,7 +150,8 @@ def test_dashboardHtml_hasPersistentTopBarGlyphs_d3():
     """
     html = _read(KIT_DIR, "dashboard.html")
     assert 'id="topbar"' in html
-    for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi"):
+    # US-898-a: the warnings icon (DoD 9) is on the bar too, on every page.
+    for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi", "glyph-warnings"):
         assert f'id="{glyph}"' in html, f"top bar missing {glyph}"
     assert 'id="glyph-power"' not in html, "the US-696 bolt is still in the kit"
     assert 'id="version-chip"' in html
@@ -952,157 +966,46 @@ def test_deployPi_installsServiceControlPolkitRule_a7():
 
 # ---------------------------------------------------------------------------
 # US-405 -- DTC takeover + STOP-red ribbon (F-111).
-# The takeover fires ONLY on a NEW code (`newSinceTs`), one at a time
-# (highest-severity = hero, others fold into "+N more"), severity-styled
-# (color + directive + dismiss controls -- STOP has no plain dismiss); the
-# persistent ribbon rides every card while a code is present. `na` codes
-# (auto-trans on this manual car) never take over or ribbon (design §4/§5.2).
-# The takeover-firing + severity-mapping logic is pure + node-tested; the
-# auto-surface DOM drill is a Pi-bench item.
+# MOVED PIN (US-899-a2): the US-405 newSinceTs takeover (takeoverView /
+# takeoverShouldShow), its tier directives and the ribbon are DELETED (Atlas s3,
+# Iris U3, Q31). The node logic script that pinned them is retired; the takeover
+# is now US-899-a1's states/alerts STOP surface (tests/ui/test_warnings_takeover.py).
+# What survives here is the mount, the STOP styling and the brand-vs-alarm red.
 # ---------------------------------------------------------------------------
 
-_US405_NODE_SCRIPT = r"""
-const assert = require('assert');
-const c = require(process.argv[1]);
 
-function code(sev, cd, short, status) {
-  return { code: cd, severity: sev, short: short || '', status: status || 'stored',
-           severityCaveat: null };
-}
-function dtc(codes, newSinceTs) {
-  return { mil: true, codes: codes, newSinceTs: newSinceTs === undefined ? null : newSinceTs,
-           clearGate: {}, sessionResetLock: [], ts: '2026-06-30T19:40:05Z' };
-}
-
-// --- S-1: takeover renders per severity (color + directive + dismiss) --------
-const stopV = c.takeoverView(dtc([code('stop', 'P0301', 'Cyl 1 misfire')], '2026-06-30T19:40:00Z'));
-assert.ok(stopV, 'stop new code -> takeover');
-assert.strictEqual(stopV.severity, 'stop', 'stop severity');
-assert.strictEqual(stopV.code, 'P0301', 'hero code');
-assert.ok(/PULL OVER/i.test(stopV.directive), 'stop directive = pull over');
-assert.strictEqual(stopV.plainDismiss, false, 'STOP has NO plain dismiss (Acknowledge only)');
-assert.ok(/acknowledge/i.test(stopV.dismissLabel), 'stop dismiss label = Acknowledge');
-// US-484-b: STOP binds the STATE-ALARM --critical-red, never a brand red (Spool 6d ch.2).
-assert.strictEqual(stopV.colorVar, '--critical-red', 'stop uses the state-alarm red, not brand');
-
-const watchV = c.takeoverView(dtc([code('watch', 'P0401', 'EGR flow')], '2026-06-30T19:40:00Z'));
-assert.strictEqual(watchV.severity, 'watch', 'watch severity');
-assert.ok(/DRIVE GENTLY/i.test(watchV.directive), 'watch directive');
-assert.strictEqual(watchV.plainDismiss, true, 'watch is dismissible');
-assert.strictEqual(watchV.colorVar, '--amber-warn', 'watch amber');
-
-const minorV = c.takeoverView(dtc([code('minor', 'P0442', 'Evap small leak')], '2026-06-30T19:40:00Z'));
-assert.strictEqual(minorV.severity, 'minor', 'minor severity');
-assert.ok(/SAFE TO CLEAR/i.test(minorV.directive), 'minor directive');
-assert.strictEqual(minorV.plainDismiss, true, 'minor dismissible');
-assert.strictEqual(minorV.colorVar, '--green-ok', 'minor green (SSOT token, US-484-a)');
-
-// hero = highest severity; the rest fold into "+N more" (one takeover at a time).
-const multiV = c.takeoverView(dtc(
-  [code('minor', 'P0442', 'Evap'), code('stop', 'P0301', 'Misfire'), code('watch', 'P0420', 'Cat')],
-  '2026-06-30T19:40:00Z'));
-assert.strictEqual(multiV.severity, 'stop', 'hero = worst severity');
-assert.strictEqual(multiV.code, 'P0301', 'hero code = worst');
-assert.strictEqual(multiV.moreCount, 2, '+2 more folded');
-
-// --- S-2: known/old code (newSinceTs null) -> NO takeover; ribbon present ----
-const known = dtc([code('stop', 'P0301', 'Cyl 1 misfire')], null);
-assert.strictEqual(c.takeoverView(known), null, 'no new code -> no takeover');
-const rb = c.ribbonView(known);
-assert.ok(rb, 'ribbon present while a code exists');
-assert.strictEqual(rb.level, 'stop', 'ribbon level = hero severity');
-assert.strictEqual(rb.glyph, '⚠', 'ribbon carries a leading warning glyph');
-// US-691 CONTRACT CHANGE, deliberate. This read `rb.text`, ONE string holding
-// head + code + description + "+N more" -- and that concatenation is the defect:
-// the CSS ellipsis truncates from the end, so the count was always the first
-// casualty of an overflow and a second stored code went invisible. `ribbonView`
-// now returns SLOTS. The surviving claim -- the banner carries the hero code --
-// is unchanged and is now asserted on the slot that CANNOT be clipped, which is
-// a stronger statement than it was able to make before.
-assert.ok(/P0301/.test(rb.head), 'ribbon carries the hero code, in the unclippable head');
-assert.strictEqual(rb.more, '', 'a lone code carries no count -- never "+0 more"');
-
-// --- escalation re-fires: a newer newSinceTs re-shows even after an ack ------
-assert.strictEqual(c.takeoverShouldShow(stopV, null), true, 'first fire (nothing acked)');
-assert.strictEqual(c.takeoverShouldShow(stopV, '2026-06-30T19:40:00Z'), false,
-  'acked exactly -> no re-fire');
-assert.strictEqual(c.takeoverShouldShow(stopV, '2026-06-30T18:00:00Z'), true,
-  'a newer code (different newSinceTs) re-fires (escalation)');
-
-// --- na (auto-trans on the manual F5M33): NO takeover, NO ribbon (design §4) --
-const naData = dtc([code('na', 'P1750', 'Auto-trans solenoid')], '2026-06-30T19:40:00Z');
-assert.strictEqual(c.takeoverView(naData), null, 'na -> no takeover');
-assert.strictEqual(c.ribbonView(naData), null, 'na -> no ribbon');
-// a na code alongside a real code -> the real code drives hero, na is not counted.
-const mixed = c.takeoverView(dtc(
-  [code('na', 'P1750', 'Auto-trans'), code('watch', 'P0420', 'Cat')], '2026-06-30T19:40:00Z'));
-assert.strictEqual(mixed.severity, 'watch', 'na ignored -> watch is hero');
-assert.strictEqual(mixed.moreCount, 0, 'na not counted in +N more');
-
-// --- no codes / malformed -> nothing (honest-instrument) ---------------------
-assert.strictEqual(c.takeoverView(dtc([], null)), null, 'no codes -> no takeover');
-assert.strictEqual(c.ribbonView(dtc([], null)), null, 'no codes -> no ribbon');
-assert.strictEqual(c.takeoverView(null), null, 'null -> no takeover');
-assert.strictEqual(c.ribbonView('x'), null, 'string -> no ribbon');
-assert.strictEqual(c.takeoverView([]), null, 'array -> no takeover');
-
-console.log('US405_OK');
-"""
-
-
-@pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
-def test_dtcTakeoverAndRibbonLogic_s1_s2_r2_us405():
-    """US-405: the takeover fires only on a new code, severity-styled with the
-    correct directive + dismiss controls (STOP = Acknowledge only), hero = worst
-    code, and the ribbon persists while any non-na code is present."""
-    result = subprocess.run(
-        ["node", "-e", _US405_NODE_SCRIPT, str(KIT_DIR / "carousel.js")],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "US405_OK" in result.stdout
-
-
-def test_dashboardHtml_hasTakeoverAndRibbon_us405():
-    """US-405: the full-screen takeover overlay + the persistent ribbon mount are
-    present in the HTML (JS fills their content per the polled `dtc` state)."""
+def test_dashboardHtml_hasTheStopTakeover_andNoRibbon_us405():
+    """US-405 / US-899-a2: the full-screen takeover mount and its directive band
+    are present; the ribbon and the old Dismiss / View detail buttons are gone."""
     html = _read(KIT_DIR, "dashboard.html")
     assert 'id="dtc-takeover"' in html
-    assert 'id="dtc-ribbon"' in html
-    # The takeover has both a dismiss action and a view-detail affordance.
-    assert 'id="takeover-dismiss"' in html
     assert 'id="takeover-directive"' in html
+    assert 'id="dtc-ribbon"' not in html
+    assert 'id="takeover-dismiss"' not in html
+    assert 'id="takeover-detail"' not in html
 
 
-def test_dashboardCss_ribbonRedDistinctFromBrandRed_r2():
-    """R-2: the ribbon rides on cards where brand-red chrome may live, so its STOP
-    state must not be a brand red. US-484-b moved it onto the state-alarm
-    --critical-red (#D32F2F, SSOT); the brand tier stays declared so the two are
-    provably distinct. Plus a leading warning glyph + a subtle pulse animation."""
+def test_dashboardCss_alarmRedDistinctFromBrandRed_r2():
+    """R-2: a STOP surface must not be a brand red. US-484-b moved STOP onto the
+    state-alarm --critical-red (#D32F2F, SSOT); the brand tier stays declared so
+    the two are provably distinct. MOVED PIN (US-899-a2): the ribbon that carried
+    this rule is deleted, so the STOP takeover carries it -- frame + pulse."""
     css = _read(KIT_DIR, "dashboard.css")
-    # Brand tier + alarm tier both defined -> provably distinct (R-2).
     assert "--red:" in css and "#E60012" in css, "brand --red token missing"
     assert "--red-light:" in css and "#F61D2D" in css, "brand --red-light token missing"
     assert "--critical-red:" in css and "#D32F2F" in css, "state-alarm token missing"
-    # The ribbon's STOP state uses the state-alarm red, not a brand red.
-    assert "#dtc-ribbon" in css
-    assert 'data-level="stop"' in css
-    # A subtle pulse so the ribbon reads as an alarm, never as decoration.
-    assert "@keyframes" in css
-    assert "animation" in css
-    # A leading warning glyph element.
-    assert ".ribbon-glyph" in css
+    assert "#dtc-ribbon" not in css
+    assert 'border: 8px solid var(--critical-red)' in css
+    assert "@keyframes stop-alarm-pulse" in css
 
 
-def test_dashboardCss_takeoverPerSeverityStyles_s1_us405():
-    """S-1: the takeover overlay is severity-styled (per-tier background)."""
+def test_dashboardCss_takeoverIsStopOnly_s1_us405():
+    """S-1 / US-899-a2: the takeover is styled for STOP only -- the watch /
+    minor / unknown floods are deleted with the path that drew them."""
     css = _read(KIT_DIR, "dashboard.css")
-    assert "#dtc-takeover" in css
-    for sev in ("stop", "watch", "minor"):
-        assert f'data-severity="{sev}"' in css, f"takeover missing {sev} styling"
+    assert '#dtc-takeover[data-severity="stop"]' in css
+    for sev in ("watch", "minor", "unknown"):
+        assert f'#dtc-takeover[data-severity="{sev}"]' not in css, f"{sev} flood is back"
 
 
 # ---------------------------------------------------------------------------
@@ -1143,90 +1046,92 @@ function dtc(codes) {
            sessionResetLock: [], ts: '2026-06-30T19:40:05Z' };
 }
 
-// --- alertsCardView: hero = worst; rows worst-first; na sorts LAST -----------
-const v = c.alertsCardView(dtc([
-  code('minor', 'P0442', {short: 'Evap small leak'}),
-  code('na', 'P1750', {short: 'Auto-trans solenoid'}),
-  code('stop', 'P0301', {short: 'Cyl 1 misfire'}),
-  code('watch', 'P0420', {short: 'Catalyst low'}),
-]));
-assert.ok(v, 'valid dtc -> card view');
-assert.strictEqual(v.hero.code, 'P0301', 'hero = worst (stop)');
-assert.strictEqual(v.hero.level, 'stop', 'hero chip level = stop');
-assert.ok(/PULL OVER/i.test(v.hero.directive), 'hero carries the stop directive');
-const order = v.rows.map(function (r) { return r.code; });
-assert.deepStrictEqual(order, ['P0301', 'P0420', 'P0442', 'P1750'],
-  'rows sorted worst-first, na LAST (S-12)');
-assert.strictEqual(v.rows[3].chip, 'N/A', 'na row shows the quiet N/A chip');
-assert.strictEqual(v.rows[3].isNa, true, 'na row flagged');
-assert.strictEqual(v.storedCount, 4, 'stored count');
-assert.strictEqual(v.pendingCount, 0, 'pending count');
+// --- MOVED PIN (US-898-b1): the card view is warningsPageView over
+// states/alerts. The ORDER is the provider's (the page never sorts, Iris G-6),
+// every word is the provider's, and an absent payload is the card's own
+// '--' + 'no warnings data' -- never null, never an all-clear. -------------
+function entry(id, tier, title, sentence) {
+  return { id: id, source: id.split(':')[0], key: id.split(':')[1], tier: tier,
+           title: title, sentence: sentence, value: null, unit: null, last: null,
+           stale: false, active: true, acknowledged: false,
+           firstSeenTs: '2026-06-30T19:40:00Z', lastSeenTs: '2026-06-30T19:40:00Z' };
+}
+const alerts = {
+  sources: { code: { assessed: true, checkedAtTs: '2026-06-30T19:40:00Z' } },
+  entries: [
+    entry('code:P0442:minor', 'minor', 'EVAP SMALL LEAK (P0442)', 'provider words a'),
+    entry('code:P0420:watch', 'watch', 'CATALYST (P0420)', 'provider words b'),
+  ],
+};
+const v = c.warningsPageView(alerts, '2026-06-30T19:45:00Z');
+assert.deepStrictEqual(v.rows.map(function (r) { return r.id; }),
+  ['code:P0442:minor', 'code:P0420:watch'], 'rows in the provider order, never re-ranked');
+assert.strictEqual(v.rows[1].chip, 'WATCH', 'tier -> chip word');
+assert.strictEqual(v.rows[0].sentence, 'provider words a', 'the provider sentence verbatim');
+assert.strictEqual(v.header.text, '2 ACTIVE', 'header counts the active entries');
+const none = c.warningsPageView(null, '2026-06-30T19:45:00Z');
+assert.strictEqual(none.missing, true, 'null -> the card paints its own absence');
+assert.strictEqual(none.header.text, '--', 'absent -> --');
+assert.strictEqual(none.rows.length, 0, 'absent -> no rows');
 
-// --- no-description code -> "No description yet" (I-3), never blank ----------
-const nd = c.alertsCardView(dtc([code('unknown', 'P1601', {short: ''})]));
-assert.strictEqual(nd.rows[0].short, 'No description yet', 'no-desc -> placeholder');
-assert.strictEqual(nd.rows[0].chip, '?', 'unknown chip = ?');
-
-// --- na-only -> NO hero block (S-12: na is never a hero) ---------------------
-const naOnly = c.alertsCardView(dtc([code('na', 'P1750', {short: 'A/T'})]));
-assert.strictEqual(naOnly.hero, null, 'na-only -> no hero block');
-assert.strictEqual(naOnly.rows.length, 1, 'na still listed');
-
-// --- malformed / empty (S-9 the card surface) -------------------------------
-assert.strictEqual(c.alertsCardView(null), null, 'null -> unavailable');
-assert.strictEqual(c.alertsCardView('x'), null, 'string -> unavailable');
-const empty = c.alertsCardView(dtc([]));
-assert.ok(empty, 'empty codes still a (no-fault) view');
-assert.strictEqual(empty.hero, null, 'no codes -> no hero');
-assert.strictEqual(empty.rows.length, 0, 'no rows');
+// --- MOVED PIN (US-898-c): the detail is (record, entry). The entry is the
+// provider's code entry; it supplies the chip and the band (its sentence). ---
+const SENTENCE = { stop: 'provider words stop', watch: 'provider words watch',
+                   minor: 'provider words minor', unrated: 'provider words unrated' };
+function detail(rec) {
+  const tier = ['stop', 'watch', 'minor'].indexOf(rec.severity) >= 0 ? rec.severity : 'unrated';
+  return c.codeDetailView(rec, { id: 'code:' + rec.code + ':' + tier, source: 'code',
+    key: rec.code, tier: tier, title: rec.code,
+    sentence: rec.severity === 'na' ? '' : SENTENCE[tier] });
+}
 
 // --- S-4 / F-1: 🔴/🟡 fix REPLACED by a diagnose directive, NO raw fix -------
-const stopFix = c.codeDetailView(code('stop', 'P0301', {suggestedFix: 'Replace coil pack'}));
+const stopFix = detail(code('stop', 'P0301', {suggestedFix: 'Replace coil pack'}));
 assert.strictEqual(stopFix.fix.mode, 'directive', 'stop fix = directive, not a raw fix');
 assert.ok(!/coil pack/i.test(stopFix.fix.text), 'stop NEVER shows the raw fix text (F-1)');
 assert.strictEqual(stopFix.fix.badge, null, 'no trust badge on a directive');
-assert.ok(/PULL OVER/i.test(stopFix.directive), 'stop detail carries the directive band');
-const watchFix = c.codeDetailView(code('watch', 'P0420', {suggestedFix: 'Replace catalytic converter'}));
+assert.strictEqual(stopFix.directive, SENTENCE.stop, 'the band is the entry sentence (Iris U4)');
+const watchFix = detail(code('watch', 'P0420', {suggestedFix: 'Replace catalytic converter'}));
 assert.strictEqual(watchFix.fix.mode, 'directive', 'watch fix = directive');
 assert.ok(!/catalytic/i.test(watchFix.fix.text), 'watch NEVER shows the raw fix (F-1)');
 
 // --- S-4: 🟢 shows the fix + a trust badge per fixProvenance -----------------
-const minVer = c.codeDetailView(code('minor', 'P0442',
+const minVer = detail(code('minor', 'P0442',
   {suggestedFix: 'Check/tighten fuel cap', fixProvenance: 'spool-validated'}));
 assert.strictEqual(minVer.fix.mode, 'fix', 'minor shows the fix');
 assert.ok(/fuel cap/i.test(minVer.fix.text), 'minor shows the actual fix text');
 assert.strictEqual(minVer.fix.badge.kind, 'verified', 'spool-validated -> verified badge');
-const minCom = c.codeDetailView(code('minor', 'P0455',
+const minCom = detail(code('minor', 'P0455',
   {suggestedFix: 'Inspect EVAP hoses', fixProvenance: 'auto-unverified'}));
 assert.strictEqual(minCom.fix.badge.kind, 'community', 'auto-unverified -> community badge');
-const minOff = c.codeDetailView(code('minor', 'P0440', {suggestedFix: null, fixProvenance: 'none'}));
+const minOff = detail(code('minor', 'P0440', {suggestedFix: null, fixProvenance: 'none'}));
 assert.strictEqual(minOff.fix.badge.kind, 'offline', 'none -> offline badge');
 assert.ok(!/null/i.test(minOff.fix.text), 'a missing fix is honest text, never "null"');
 
 // --- S-5: missing freeze-frame -> labeled fallback, never blank -------------
-const noFF = c.codeDetailView(code('minor', 'P0442', {freezeFrame: null}));
+const noFF = detail(code('minor', 'P0442', {freezeFrame: null}));
 assert.strictEqual(noFF.freezeFrame.hasFrame, false, 'no freeze frame');
 assert.ok(/no freeze frame captured/i.test(noFF.freezeFrame.fallbackText), 'labeled fallback');
 assert.ok(noFF.freezeFrame.fallbackText.length > 0, 'never blank');
-const withFF = c.codeDetailView(code('stop', 'P0301', {freezeFrame: {rpm: 4250, loadPct: 92}}));
+const withFF = detail(code('stop', 'P0301', {freezeFrame: {rpm: 4250, loadPct: 92}}));
 assert.strictEqual(withFF.freezeFrame.hasFrame, true, 'freeze frame present');
 assert.strictEqual(withFF.freezeFrame.grid.rpm, 4250, 'grid carries the snapshot');
 
 // --- S-13: severityCaveat -> base chip, tier NOT auto-upgraded --------------
-const caveat = c.codeDetailView(code('watch', 'P1300', {severityCaveat: 'stop if knock -- verify'}));
+const caveat = detail(code('watch', 'P1300', {severityCaveat: 'stop if knock -- verify'}));
 assert.strictEqual(caveat.level, 'watch', 'base tier stays WATCH (NOT auto-upgraded)');
 assert.strictEqual(caveat.chip, 'WATCH', 'base chip = WATCH');
 assert.ok(/knock/i.test(caveat.caveat), 'the caveat line is rendered');
 
 // --- driveId: null -> "key-on read"; a number -> "Drive N" (US-404 A-9) -----
-const koeo = c.codeDetailView(code('minor', 'P0443', {driveId: null}));
+const koeo = detail(code('minor', 'P0443', {driveId: null}));
 assert.ok(/key-on read/i.test(koeo.statusMeta), 'null driveId -> key-on read');
 assert.ok(!/Drive/i.test(koeo.statusMeta), 'never fabricates a Drive N for a KOEO read');
-const drv = c.codeDetailView(code('minor', 'P0443', {driveId: 27}));
+const drv = detail(code('minor', 'P0443', {driveId: 27}));
 assert.ok(/Drive 27/.test(drv.statusMeta), 'numeric driveId -> Drive N');
 
 // --- na detail is a quiet N/A (no directive, no fix) ------------------------
-const naDetail = c.codeDetailView(code('na', 'P1750', {short: 'A/T solenoid'}));
+const naDetail = detail(code('na', 'P1750', {short: 'A/T solenoid'}));
 assert.strictEqual(naDetail.isNa, true, 'na flagged');
 assert.strictEqual(naDetail.fix.mode, 'na', 'na fix disposition');
 assert.strictEqual(naDetail.directive, null, 'na has no directive band');
@@ -1234,9 +1139,10 @@ assert.strictEqual(naDetail.directive, null, 'na has no directive band');
 // --- malformed detail -------------------------------------------------------
 assert.strictEqual(c.codeDetailView(null), null, 'null -> no detail');
 assert.strictEqual(c.codeDetailView('x'), null, 'string -> no detail');
+assert.strictEqual(c.codeDetailView(null, null), null, 'no entry -> no detail');
 
 // --- log/sync footer surfaces the capture-before-clear precondition ---------
-const footer = c.codeDetailView(code('minor', 'P0442', {logged: true, syncAcked: true}));
+const footer = detail(code('minor', 'P0442', {logged: true, syncAcked: true}));
 assert.strictEqual(footer.logged, true, 'logged surfaced');
 assert.strictEqual(footer.syncAcked, true, 'syncAcked surfaced');
 
@@ -1246,7 +1152,8 @@ console.log('US406_OK');
 
 @pytest.mark.skipif(not _nodeAvailable(), reason="node not available on PATH")
 def test_dtcAlertsCardAndDetailLogic_s4_s5_s12_s13_us406():
-    """US-406: the Alerts card hero+list sort worst-first (na last), and the
+    """US-406: the Alerts card lists the provider's entries in ITS order
+    (MOVED PIN, US-898-b1: warningsPageView, no page sort), and the
     per-code detail severity-GATES the fix (🔴/🟡 diagnose directive, no raw fix;
     🟢 fix + trust badge), renders the freeze-frame-or-realtime fallback, keeps a
     severityCaveat from auto-upgrading the tier, and shows "key-on read" for a
@@ -1266,7 +1173,8 @@ def test_dashboardHtml_hasAlertsCardAndDetail_us406():
     """US-406: the Alerts card (Card 5) slot + the per-code detail overlay mount
     are present (JS fills their content per the polled `dtc` state)."""
     html = _read(KIT_DIR, "dashboard.html")
-    assert 'data-state="dtc"' in html, "Alerts card slot missing"
+    # MOVED PIN (US-898-b1): the slot is found by its id, not data-state="dtc".
+    assert 'id="alerts-card"' in html, "Alerts card slot missing"
     assert 'id="dtc-detail"' in html, "detail overlay mount missing"
     assert 'id="detail-back"' in html, "detail must have a Back control (never trapped)"
     assert 'id="detail-body"' in html
@@ -1315,25 +1223,30 @@ function dtc(codes, lock) {
 }
 
 // --- S-6 ok: all MINOR + logged + synced -> enabled -------------------------
-const ok = c.clearButtonView(dtc([code('minor', 'P0443')]));
+// MOVED PIN (US-898-c): the second input is engineParked.parked.
+const ok = c.clearButtonView(dtc([code('minor', 'P0443')]), true);
 assert.strictEqual(ok.visible, true, 'clearable -> button visible');
 assert.strictEqual(ok.enabled, true, 'S-6 ok -> enabled');
 assert.strictEqual(ok.reason, 'ok');
+const mv = c.clearButtonView(dtc([code('minor', 'P0443')]), false);
+assert.strictEqual(mv.enabled, false, 'not parked -> disabled');
+assert.strictEqual(mv.reason, 'moving');
+assert.ok(/engine off to clear/.test(mv.label) && !/moving/i.test(mv.label), 'lock label');
 
 // --- S-6/S-10 display mirror: a STOP present -> disabled, IGNORES clearGate --
-const sev = c.clearButtonView(dtc([code('minor', 'P0443'), code('stop', 'P0301')]));
+const sev = c.clearButtonView(dtc([code('minor', 'P0443'), code('stop', 'P0301')]), true);
 assert.strictEqual(sev.enabled, false, 'stop present -> disabled (re-derived, not trusting clearGate.enabled)');
 assert.strictEqual(sev.reason, 'severity_present');
 assert.ok(/STOP\/WATCH/i.test(sev.label), 'label names the STOP/WATCH block');
 
 // --- S-6 sync_pending: MINOR not server-acked -> disabled -------------------
-const syn = c.clearButtonView(dtc([code('minor', 'P0443', {syncAcked: false})]));
+const syn = c.clearButtonView(dtc([code('minor', 'P0443', {syncAcked: false})]), true);
 assert.strictEqual(syn.enabled, false);
 assert.strictEqual(syn.reason, 'sync_pending');
 assert.ok(/server sync/i.test(syn.label), 'label = waiting for server sync');
 
 // --- S-8 session-locked -> disabled, "don't chase the light" ----------------
-const lk = c.clearButtonView(dtc([code('minor', 'P0443')], ['P0443']));
+const lk = c.clearButtonView(dtc([code('minor', 'P0443')], ['P0443']), true);
 assert.strictEqual(lk.enabled, false);
 assert.strictEqual(lk.reason, 'session_locked');
 assert.ok(/returned|won't fix/i.test(lk.label), 'session-lock label');

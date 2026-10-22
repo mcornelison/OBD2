@@ -1296,6 +1296,11 @@ step_install_persistent_state_dir() {
     #       written by src/pi/update/update_checker.py + update_applier.py
     #       running inside eclipse-obd.service          (User=mcornelison)
     #
+    #   /var/lib/eclipse-obd/alerts-ack.json       (pi.warnings.ackStorePath)
+    #       written by src/pi/obdii/alerts_ack_store.py (US-897-c)
+    #       running inside eclipse-obd.service          (User=mcornelison)
+    #       -- the same unit as the marker, so no new owner and no dir change.
+    #
     # BOTH units run as mcornelison TODAY, so one owner satisfies both and a
     # single `install -d -o mcornelison -g mcornelison` is sufficient.  That is
     # a fact about the current unit files, not a law -- tests/deploy/
@@ -1321,12 +1326,13 @@ step_install_persistent_state_dir() {
         echo "DRY-RUN would: sudo install -d -o mcornelison -g mcornelison /var/lib/eclipse-obd"
         echo "DRY-RUN would: verify /var/lib/eclipse-obd/pld-transition-witness.json is writable by mcornelison (eclipse-powerwatch.service -- ARCH-019 PLD witness)"
         echo "DRY-RUN would: verify /var/lib/eclipse-obd/update-pending.json is writable by mcornelison (eclipse-obd.service -- pi.update.markerFilePath)"
+        echo "DRY-RUN would: verify /var/lib/eclipse-obd/alerts-ack.json is writable by mcornelison (eclipse-obd.service -- pi.warnings.ackStorePath, US-897-c)"
         return 0
     fi
     remote "
         sudo install -d -o mcornelison -g mcornelison /var/lib/eclipse-obd \
             && echo '/var/lib/eclipse-obd provisioned (owner mcornelison; persistent, survives reboot).' \
-            || echo 'WARN: could not provision /var/lib/eclipse-obd -- the PLD witness and the update marker will BOTH fail to write.' >&2
+            || echo 'WARN: could not provision /var/lib/eclipse-obd -- the PLD witness, the update marker and the alerts ack store will ALL fail to write.' >&2
 
         # Creating the directory is not the same as proving either service can
         # write into it. Check BOTH consumer paths as the account their unit
@@ -1334,7 +1340,7 @@ step_install_persistent_state_dir() {
         # other reproduces this defect in the update subsystem, where nobody
         # has looked. Warn-only: a stale-ownership finding must be VISIBLE in
         # the deploy log, but must not abort a deploy mid-flight.
-        for witnessTarget in /var/lib/eclipse-obd/pld-transition-witness.json /var/lib/eclipse-obd/update-pending.json; do
+        for witnessTarget in /var/lib/eclipse-obd/pld-transition-witness.json /var/lib/eclipse-obd/update-pending.json /var/lib/eclipse-obd/alerts-ack.json; do
             targetDir=\$(dirname \"\$witnessTarget\")
             if ! sudo -u mcornelison test -w \"\$targetDir\"; then
                 echo \"WARN: \$targetDir is NOT writable by mcornelison -- the service writing \$witnessTarget will fail SILENTLY. Inspect: ls -ld \$targetDir\" >&2

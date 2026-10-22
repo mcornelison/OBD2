@@ -42,6 +42,15 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-499 S6 render-regression backstop.
+# 2026-10-20    | Ralph (Rex)  | US-898-c -- MOVED PIN: "View detail" opens the
+#               |              | detail on the code's states/alerts entry, so the
+#               |              | swap case also serves the provider's /alerts.
+# 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): the live STOP routes
+#               |              | serve the provider's takeover; the View detail
+#               |              | swap and the Dismiss click become a tap that
+#               |              | stacks nothing and the takeover ending.
+# 2026-10-20    | Rex (US-899-a2)| MOVED PIN (US-899-a2): #dtc-ribbon is deleted
+#               |              | (Iris U3), so the sweeps cover the overlays only.
 # ================================================================================
 ################################################################################
 
@@ -50,6 +59,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -68,9 +78,10 @@ _NODE_ONLY = pytest.mark.skipif(
     reason="node not on PATH -- the render backstop runs the shipped browser JS",
 )
 
-# The five full-screen overlays + the persistent ribbon: everything on the
-# dashboard that can paint OVER a card. Named explicitly so deleting one from
-# the markup fails loudly instead of shrinking the sweep to nothing.
+# The five full-screen overlays: everything on the dashboard that can paint
+# OVER a card. Named explicitly so deleting one from the markup fails loudly
+# instead of shrinking the sweep to nothing. MOVED PIN (US-899-a2): the
+# persistent ribbon that rode with them is deleted.
 _OVERLAY_IDS = [
     "dtc-takeover",
     "setup-menu",
@@ -78,7 +89,6 @@ _OVERLAY_IDS = [
     "dtc-detail",
     "clear-confirm",
 ]
-_RIBBON_ID = "dtc-ribbon"
 
 # The commits that fixed S2 and S1. Their PARENT holds the defective artifact.
 _US495_FIX_COMMIT = "be8084e"
@@ -117,9 +127,19 @@ def _cleanRoutes(obdAvailable: bool = False) -> dict:
     }
 
 
+def _alertsFixture(name: str) -> dict:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "fixtures", "states", "alerts", name + ".json")
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def _newStopCodeRoutes() -> dict:
-    """One NEW stop-severity code -- the takeover's firing condition."""
+    """One NEW stop-severity code and the takeover's firing condition. MOVED PIN (US-899-a1): #dtc-takeover is driven by
+    states/alerts.takeover alone, so the live STOP is the provider's coolant
+    takeover (stop-live-overheat), served beside the dtc code."""
     routes = _cleanRoutes()
+    routes["/alerts"] = _alertsFixture("stop-live-overheat")
     routes["/dtc"] = {
         "codes": [
             {
@@ -165,14 +185,14 @@ class TestOverlayRender:
         Given: the shipped dashboard, booted by the shipped carousel.js, with a
                clean bench state (no stored DTC)
         When: the real stylesheet is resolved over the resulting DOM
-        Then: not one full-screen overlay -- and not the ribbon -- has a box
+        Then: not one full-screen overlay has a box
 
         This is the CIO's actual complaint rendered as an assertion: the idle
         carousel must be clean and clickable, not a stack of half-boxes.
         """
         dom = rh.runDashboard(routes=_cleanRoutes())
         surface = rh.dashboardSurface(dom["tree"])
-        painted = surface.renderedIds([*_OVERLAY_IDS, _RIBBON_ID])
+        painted = surface.renderedIds(_OVERLAY_IDS)
         assert painted == [], (
             "these overlays paint over the idle carousel with no code present: "
             f"{painted}"
@@ -191,35 +211,38 @@ class TestOverlayRender:
         dom = rh.runDashboard(routes=_newStopCodeRoutes())
         surface = rh.dashboardSurface(dom["tree"])
         assert surface.renderedIds(_OVERLAY_IDS) == ["dtc-takeover"]
-        # The ribbon is a persistent band, not an overlay: it SHOULD ride along.
-        assert surface.renderedIds([_RIBBON_ID]) == [_RIBBON_ID]
 
-    def test_viewDetail_swapsTheTakeoverForTheDetail(self):
+    def test_aTapOnTheTakeover_stacksNoOtherOverlay(self):
         """
         Given: the takeover is up
-        When: the operator taps "View detail ›"
-        Then: exactly one overlay still paints -- and it is the detail
+        When: the operator taps it
+        Then: exactly one overlay still paints -- the takeover
 
-        The S2 symptom was overlays STACKING. Navigating between two of them is
-        where a stack would show up, so the count is the assertion, not just the
-        identity.
+        The S2 symptom was overlays STACKING. MOVED PIN (US-899-a1): the PULL
+        OVER carries no "View detail ›" (Iris U7) -- a tap anywhere is the ack,
+        which opens nothing -- so the count is asserted across that tap.
         """
         dom = rh.runDashboard(
             routes=_newStopCodeRoutes(),
-            steps=[{"flush": 3}, {"click": "takeover-detail"}, {"flush": 1}],
+            steps=[{"flush": 3}, {"click": "dtc-takeover"}, {"flush": 2}],
         )
         surface = rh.dashboardSurface(dom["tree"])
-        assert surface.renderedIds(_OVERLAY_IDS) == ["dtc-detail"]
+        assert surface.renderedIds(_OVERLAY_IDS) == ["dtc-takeover"]
 
-    def test_dismiss_returnsToACleanCarousel(self):
+    def test_takeoverEnds_returnsToACleanCarousel(self):
         """
         Given: the takeover is up
-        When: the operator dismisses it
+        When: it ends (MOVED PIN (US-899-a1): the PULL OVER has no dismiss; it
+              ends when the provider drops `takeover`)
         Then: no overlay paints -- the operator is never trapped behind one
         """
         dom = rh.runDashboard(
             routes=_newStopCodeRoutes(),
-            steps=[{"flush": 3}, {"click": "takeover-dismiss"}, {"flush": 1}],
+            steps=[
+                {"flush": 3},
+                {"setRoutes": {"/alerts": _alertsFixture("stop-live-cleared")}},
+                {"flush": 2},
+            ],
         )
         surface = rh.dashboardSurface(dom["tree"])
         assert surface.renderedIds(_OVERLAY_IDS) == []
@@ -261,8 +284,8 @@ class TestOverlayGuardIsRed:
             )
         dom = rh.runDashboard(routes=_cleanRoutes())
         surface = rh.Surface(dom["tree"], css)
-        painted = surface.renderedIds([*_OVERLAY_IDS, _RIBBON_ID])
-        assert painted == [*_OVERLAY_IDS, _RIBBON_ID], (
+        painted = surface.renderedIds(_OVERLAY_IDS)
+        assert painted == _OVERLAY_IDS, (
             "the pre-US-495 stylesheet must reproduce the stacked-overlay bug; "
             f"this harness only saw {painted} paint, so it would not have caught it"
         )

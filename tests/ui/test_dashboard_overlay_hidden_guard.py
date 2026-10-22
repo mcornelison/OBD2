@@ -27,6 +27,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-29    | Ralph (Rex)  | Initial -- US-495 [hidden] guard cascade tests.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the deleted ribbon's case retired.
 # ================================================================================
 ################################################################################
 
@@ -247,16 +248,5 @@ def test_hiddenOverlay_stillHasItsVisibleDisplayRule():
         )
 
 
-def test_dtcRibbon_hiddenIsAlsoHonoured():
-    """
-    Given: the persistent DTC ribbon, which also ships `hidden` + `display: flex`
-    Then: `hidden` resolves it to `display: none`
-
-    Called out separately from the overlays because it is the one element that
-    also runs an infinite `animation` -- an unhidden ribbon pulses a phantom
-    alert band across every card at idle (F-6 no-phantom).
-    """
-    winner = _winningDisplay(_read(_CSS), "div", {"id": "dtc-ribbon", "hidden": None})
-    assert winner is None or winner[0] == "none", (
-        f"#dtc-ribbon[hidden] resolves to `display: {winner[0]}` via `{winner[1]}`"
-    )
+# MOVED PIN (US-899-a2): test_dtcRibbon_hiddenIsAlsoHonoured is retired with
+# the deleted #dtc-ribbon (Iris U3); the overlays above remain guarded.

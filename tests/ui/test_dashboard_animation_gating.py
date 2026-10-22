@@ -39,11 +39,19 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-07    | Ralph (Rex)  | Initial -- US-537 animation gating + will-change.
+# 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): the STOP takeover is
+#               |              | states/alerts-driven -- the live STOP routes
+#               |              | serve /alerts; "acknowledged" (a Dismiss click)
+#               |              | becomes "ended" (takeover -> null).
+# 2026-10-20    | Rex (US-899-a2)| MOVED PIN (US-899-a2): #dtc-ribbon is deleted
+#               |              | (Iris U3) -- its two pulse cases and its row of
+#               |              | the motion==paint agreement are retired.
 # ================================================================================
 ################################################################################
 
 """US-537 tests: dashboard motion runs only while its alert is real."""
 
+import json
 import os
 import re
 import shutil
@@ -63,7 +71,6 @@ _NODE_ONLY = pytest.mark.skipif(
 
 _CSS_PATH = os.path.join(rh.DASHBOARD_DIR, "dashboard.css")
 
-_RIBBON_ID = "dtc-ribbon"
 _TAKEOVER_ID = "dtc-takeover"
 _TRACK_ID = "track"
 
@@ -105,8 +112,26 @@ def _noCodes() -> dict:
     return _routes({"codes": [], "newSinceTs": None, "ts": "2026-08-07T09:42:00Z"})
 
 
+def _alertsFixture(name: str) -> dict:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "fixtures", "states", "alerts", name + ".json")
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+# MOVED PIN (US-899-a1): #dtc-takeover is driven by states/alerts.takeover alone,
+# so a live STOP is the provider's coolant takeover (served beside a dtc STOP
+# code), and the STOP has no dismiss button: the
+# state that ends the takeover is the provider dropping it (takeover -> null).
+_TAKEOVER_ENDS = [
+    {"flush": 3},
+    {"setRoutes": {"/alerts": _alertsFixture("stop-live-cleared")}},
+    {"flush": 2},
+]
+
+
 def _newStopCode() -> dict:
-    return _routes(
+    routes = _routes(
         {
             "codes": [
                 {
@@ -121,6 +146,8 @@ def _newStopCode() -> dict:
             "ts": "2026-08-07T09:42:00Z",
         }
     )
+    routes["/alerts"] = _alertsFixture("stop-live-overheat")
+    return routes
 
 
 def _surfaceFor(routes: dict, steps: list[dict] | None = None) -> rh.Surface:
@@ -141,63 +168,8 @@ def _isPainted(surface: rh.Surface, elementId: str) -> bool:
     return surface.rendered(path)
 
 
-# --- AC-1: the ribbon pulses only while it carries a live level --------------
-
-
-@_NODE_ONLY
-def test_idleDashboard_ribbonDeclaresNoPulse():
-    """
-    Given: a bench Pi with no stored codes, booted by the shipped carousel.js
-    When: the shipped stylesheet is resolved over the resulting DOM
-    Then: NO `animation` wins on #dtc-ribbon at all
-
-    Pre-US-537 the pulse is declared on the base `#dtc-ribbon` rule, so it wins
-    here and is silenced only by `[hidden] { display: none !important }` -- the
-    same author-vs-UA cascade race that produced US-495. This asserts the gate is
-    the state, not the paint.
-    """
-    surface = _surfaceFor(_noCodes())
-    animation = _animationOf(surface, _RIBBON_ID)
-    assert animation is None, (
-        "#dtc-ribbon still resolves an animation with no code present -- "
-        f"`{animation[1]} {{ animation: {animation[0]} }}`. Motion is gated only by "
-        "the display cascade, so any author `display` rule re-arms a phantom pulse."
-    )
-
-
-@_NODE_ONLY
-@pytest.mark.parametrize("severity", ["stop", "watch", "minor", "unknown"])
-def test_liveCode_ribbonStillPulses_atEverySeverity(severity):
-    """
-    Given: a live code at EACH alertable severity
-    Then: the ribbon resolves its pulse for every one of them
-
-    Two cheap ways to pass the gating test exist, and this closes both. The first
-    is deleting the animation outright, dropping the F-6/US-405 "a persistent
-    alert never fades into chrome" motion channel. The second is subtler and is
-    why this is parametrized rather than a single `stop` case: gating on
-    `[data-level="stop"]` instead of `[data-level]` also silences the idle
-    phantom, but it silently strands WATCH/MINOR/UNKNOWN ribbons static. The base
-    rule pulsed for all four levels; tightening the gate must not quietly narrow
-    that to one. `ribbonView` sets `level: hero.severity` verbatim, so these four
-    are the whole domain.
-    """
-    surface = _surfaceFor(
-        _routes(
-            {
-                "codes": [{"code": "P0301", "severity": severity, "short": "Test code"}],
-                "newSinceTs": None,
-                "ts": "2026-08-07T09:42:00Z",
-            }
-        )
-    )
-    assert _isPainted(surface, _RIBBON_ID), f"a {severity} code should raise the ribbon at all"
-    animation = _animationOf(surface, _RIBBON_ID)
-    assert animation is not None, (
-        f"a live {severity.upper()} ribbon renders STATIC -- the gate is tighter than "
-        "the alert, so three of the four levels lost their motion channel"
-    )
-    assert "ribbon-pulse" in animation[0]
+# MOVED PIN (US-899-a2): the ribbon's two pulse cases are retired with the
+# deleted #dtc-ribbon; the STOP takeover below is the one alarm surface left.
 
 
 # --- AC-1: the STOP alarm pulses only while a STOP is genuinely mounted ------
@@ -220,21 +192,19 @@ def test_liveStop_takeoverPulses():
 
 
 @_NODE_ONLY
-def test_acknowledgedStop_takeoverStopsDeclaringItsAlarm():
+def test_endedStop_takeoverStopsDeclaringItsAlarm():
     """
-    Given: a STOP takeover that the operator has acknowledged
-    When: the shipped stylesheet is resolved over the post-click DOM
+    Given: a STOP takeover that has come down (MOVED PIN (US-899-a1): the
+           provider dropped `takeover`; the STOP has no dismiss button now)
+    When: the shipped stylesheet is resolved over the resulting DOM
     Then: NO `animation` wins on #dtc-takeover
 
     Pre-US-537 `hideTakeover()` sets `hidden` but leaves `data-severity="stop"`
-    behind, so the alarm rule keeps matching an acknowledged takeover forever --
+    behind, so the alarm rule keeps matching a downed takeover forever --
     inert only because the element has no box. The attribute and the alarm must
-    be cleared in lockstep, exactly as `renderRibbon` already clears `data-level`.
+    be cleared in lockstep.
     """
-    surface = _surfaceFor(
-        _newStopCode(),
-        steps=[{"flush": 3}, {"click": "takeover-dismiss"}, {"flush": 1}],
-    )
+    surface = _surfaceFor(_newStopCode(), steps=_TAKEOVER_ENDS)
     animation = _animationOf(surface, _TAKEOVER_ID)
     assert animation is None, (
         "an ACKNOWLEDGED STOP takeover still resolves "
@@ -251,14 +221,12 @@ def test_acknowledgedStop_takeoverStopsDeclaringItsAlarm():
     [
         ("no code", _noCodes(), None),
         ("new stop code", _newStopCode(), [{"flush": 4}]),
-        (
-            "acknowledged stop",
-            _newStopCode(),
-            [{"flush": 3}, {"click": "takeover-dismiss"}, {"flush": 1}],
-        ),
+        # MOVED PIN (US-899-a1): the takeover ends when the provider drops it.
+        ("ended stop", _newStopCode(), _TAKEOVER_ENDS),
     ],
 )
-@pytest.mark.parametrize("elementId", [_RIBBON_ID, _TAKEOVER_ID])
+# MOVED PIN (US-899-a2): the deleted ribbon's row is retired.
+@pytest.mark.parametrize("elementId", [_TAKEOVER_ID])
 def test_motionIsDeclaredExactlyWhenTheSurfaceIsPainted(label, routes, steps, elementId):
     """
     Given: each state the DTC surfaces actually pass through
@@ -270,10 +238,6 @@ def test_motionIsDeclaredExactlyWhenTheSurfaceIsPainted(label, routes, steps, el
     the two drift apart; this cannot pass unless they move together. It also
     covers the direction the story is NOT about: gating so hard that a real alert
     goes static.
-
-    Note the acknowledged-stop row deliberately expects the RIBBON to keep
-    pulsing -- acknowledging drops the takeover TO the ribbon, so the alert is
-    still real and its motion still honest.
     """
     surface = _surfaceFor(routes, steps)
     animated = _animationOf(surface, elementId) is not None

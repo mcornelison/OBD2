@@ -337,8 +337,10 @@
   //            still g-meter is exactly what a parked car looks like.
   // Cards not listed keep the shipped one-word fallback -- this story was not
   // scoped to restyle the ones it does not touch.
+  // US-898-b1: the `dtc` entry retired with the dtc-driven ALERTS card. That
+  // card now reads states/alerts and paints its own absence ('--' + 'no
+  // warnings data', warningsPageView) -- it no longer passes through here.
   var NO_DATA_VIEWS = {
-    dtc: { label: "ALERTS", reason: "no data -- codes not read" },
     light: { label: "AMBIENT", reason: "no data -- light feed absent" },
     imu: { label: "MOTION", reason: "no data -- IMU feed absent" },
   };
@@ -2182,134 +2184,6 @@
   }
 
   // -------------------------------------------------------------------------
-  // US-405 DTC takeover + ribbon -- pure, node-testable logic (S-1/S-2/R-2).
-  // The display is a PURE CONSUMER of the `dtc` state (severity classified
-  // upstream from Spool's table -- the Pi never decides it). The takeover fires
-  // ONLY on a NEW code (`newSinceTs`), one at a time (highest severity = hero,
-  // the rest fold into "+N more"); after Acknowledge/Dismiss a persistent ribbon
-  // carries the alert on every card. `na` (auto-trans on this manual car) is a
-  // quiet disposition -- never a takeover, never a ribbon (design §4/§5.2).
-  // -------------------------------------------------------------------------
-
-  // Severity ordering (worst-first). `na` is not an alert; `unknown` is a real
-  // uncurated code (ranks below the classified tiers but still alerts honestly).
-  var DTC_SEVERITY_RANK = { stop: 3, watch: 2, minor: 1, unknown: 0 };
-
-  // Per-severity takeover styling. The display maps a tier -> color + directive
-  // + dismiss behavior; it never classifies. US-484-b: STOP binds the STATE-
-  // ALARM `--critical-red`, never a brand red -- if the brand mark and the
-  // pull-over alarm are the same red the driver cannot tell them apart (Spool
-  // 6d ch.2). The colour is only the 3rd reinforcement; dashboard.css carries
-  // STOP by area + motion + text on a near-black field.
-  // STOP has NO plain dismiss -- only
-  // "Acknowledge" (which drops to the ribbon) so a misfire is never dismissed-
-  // and-forgotten, yet the driver still keeps view control (design §5.1/D-3).
-  // `unknown` (severity not curated) gets the honest middle: a "get diagnosed"
-  // caution -- never a false "safe to clear" (green) nor a false "pull over".
-  var TAKEOVER_STYLE = {
-    stop: { colorVar: "--critical-red", icon: "⚠", directive: "REDUCE LOAD · PULL OVER",
-            dismissLabel: "Acknowledge", plainDismiss: false },
-    watch: { colorVar: "--amber-warn", icon: "⚠", directive: "DRIVE GENTLY · GET DIAGNOSED",
-            dismissLabel: "Dismiss", plainDismiss: true },
-    minor: { colorVar: "--green-ok", icon: "ⓘ", directive: "SAFE TO CLEAR ONCE LOGGED",
-            dismissLabel: "Dismiss", plainDismiss: true },
-    unknown: { colorVar: "--amber-warn", icon: "⚠", directive: "GET DIAGNOSED",
-            dismissLabel: "Dismiss", plainDismiss: true },
-  };
-
-  function severityRank(sev) {
-    return Object.prototype.hasOwnProperty.call(DTC_SEVERITY_RANK, sev)
-      ? DTC_SEVERITY_RANK[sev]
-      : -1;
-  }
-
-  // The alert-eligible codes, worst-first. `na` and any unrecognized severity
-  // are dropped (they never alarm). Stable within a rank (input order kept).
-  function alertableCodes(codes) {
-    if (!Array.isArray(codes)) return [];
-    var out = [];
-    for (var i = 0; i < codes.length; i++) {
-      var c = codes[i];
-      if (isObj(c) && severityRank(c.severity) >= 0) out.push(c);
-    }
-    out.sort(function (a, b) { return severityRank(b.severity) - severityRank(a.severity); });
-    return out;
-  }
-
-  // The takeover view for a NEW code, or null (no new code / no alertable code /
-  // malformed). One takeover at a time: the worst code is the hero; the rest are
-  // "+N more". Firing (vs a prior ack) is a stateful concern -> takeoverShouldShow.
-  function takeoverView(data) {
-    if (!isObj(data)) return null;
-    // US-429 / Bug-3b: an unavailable DTC source (no read happened) NEVER fires
-    // a takeover -- an absent source reads `unavailable`, not "no codes -> alert".
-    if (sourceUnavailable(data, "dtc")) return null;
-    if (data.newSinceTs == null) return null; // known code at boot -> ribbon only
-    var alertable = alertableCodes(data.codes);
-    if (alertable.length === 0) return null;   // no real fault (e.g. all `na`)
-    var hero = alertable[0];
-    var style = TAKEOVER_STYLE[hero.severity] || TAKEOVER_STYLE.unknown;
-    return {
-      newSinceTs: data.newSinceTs,
-      severity: hero.severity,
-      code: hero.code,
-      short: (hero.short && String(hero.short).trim()) || "No description yet",
-      directive: style.directive,
-      colorVar: style.colorVar,
-      icon: style.icon,
-      dismissLabel: style.dismissLabel,
-      plainDismiss: style.plainDismiss,
-      moreCount: alertable.length - 1,
-    };
-  }
-
-  // Edge-trigger: show the takeover only when its `newSinceTs` differs from the
-  // last-acknowledged stamp. Same stamp -> already handled (no re-show); a newer
-  // code changes the stamp -> re-fire (escalation, design D-3).
-  function takeoverShouldShow(view, lastAckedTs) {
-    return !!view && view.newSinceTs !== lastAckedTs;
-  }
-
-  // The persistent ribbon while ANY alert-eligible code is present (design §5.2).
-  // Level = the hero severity (drives the color); `na`/empty -> null (no ribbon).
-  //
-  // US-691: THIS RETURNS SLOTS, NOT A SENTENCE, and that is the whole fix. It
-  // used to fold four facts into one string -- "CHECK ENGINE · <code> <desc> ·
-  // +N more" -- which `.ribbon-text` then clipped with a CSS ellipsis. An
-  // ellipsis eats a string FROM THE END, and the end is where the count lives,
-  // so the count was the first thing every overflow destroyed. That is not a
-  // styling accident: while the count exists only as a tail, NO stylesheet can
-  // protect it. On 2026-09-04 P0400 was stored beside P0443 and the operator
-  // did not learn from his own dashboard that a second fault existed.
-  //
-  // Splitting the view lets the stylesheet declare an overflow ORDER instead:
-  // the head and the count do not shrink, the DESCRIPTION is the only run that
-  // clips. What an overflow takes is then the part he can afford to lose.
-  // `more` is EMPTY (not "+0 more") for a single code -- the commonest state
-  // this car is in must not pay for a count it does not carry.
-  function ribbonView(data) {
-    if (!isObj(data)) return null;
-    // US-429: an unavailable DTC source carries no active fault -> no ribbon.
-    if (sourceUnavailable(data, "dtc")) return null;
-    var alertable = alertableCodes(data.codes);
-    if (alertable.length === 0) return null;
-    var hero = alertable[0];
-    // `na` and unrecognized severities are already dropped by alertableCodes,
-    // so this counts FAULTS, never rows: a quiet auto-trans code beside one
-    // real fault must not send the operator hunting for a second one.
-    var moreCount = alertable.length - 1;
-    return {
-      level: hero.severity,
-      glyph: "⚠",
-      head: "CHECK ENGINE · " + hero.code,
-      desc: (hero.short && String(hero.short).trim()) || "",
-      moreCount: moreCount,
-      more: moreCount > 0 ? "+" + moreCount + " more" : "",
-      code: hero.code,
-    };
-  }
-
-  // -------------------------------------------------------------------------
   // US-481 idle home card (F-121) -> US-542 MOTION-FAULT FALLBACK (F-127).
   //
   // This was the calm PARKED view: a STANDBY hero over three borrowed facts.
@@ -2331,8 +2205,8 @@
   //     an Alerts fact (absence of a READ is neither a clean all-clear nor a
   //     fault) and was only ever HERE because this happened to be the screen a
   //     parked operator was looking at.
-  // The persistent ribbon/takeover still fire over every card, so retiring this
-  // screen cannot suppress a genuine fault (Iris AC-5 survives the retirement).
+  // The warnings icon and the STOP takeover still show over every card, so
+  // retiring this screen cannot suppress a genuine fault (Iris AC-5 survives).
   // -------------------------------------------------------------------------
 
   // idle is the emitter's SSOT (system-status `idle` boolean, US-480-a / Atlas
@@ -2376,6 +2250,41 @@
     return { text: "NOT LIVE", tier: "meta" };
   }
 
+  // US-898-a (F-127; specs/v030-warnings-page-design.md s4.2) -- the top-bar
+  // warnings icon, from states/alerts.icon ALONE. The provider computes the
+  // state; this maps it to Iris's look and compares no tier, count or reading.
+  // A missing or unreadable payload is `--`, never the grey triangle: `none`
+  // is the provider's claim that the codes were read and nothing is active,
+  // and with no payload that claim is false (Iris S108 review). Only a STOP
+  // pulses (her look table); `pulse` is the provider's flag, already false for
+  // an acknowledged entry.
+  var ALERT_ICON_TRIANGLE = "▲";
+  var ALERT_ICON_COUNT_CAP = 99;
+  var ALERT_ICON_FIXED = {
+    none: "△",
+    not_checked: "?",
+  };
+  var ALERT_ICON_MISSING = { state: "missing", text: "--", pulse: false };
+
+  function alertIconView(alerts) {
+    var icon = isObj(alerts) && isObj(alerts.icon) ? alerts.icon : null;
+    if (!icon) return ALERT_ICON_MISSING;
+    var state = icon.state;
+    if (Object.prototype.hasOwnProperty.call(ALERT_ICON_FIXED, state)) {
+      return { state: state, text: ALERT_ICON_FIXED[state], pulse: false };
+    }
+    if (state !== "watch" && state !== "stop") return ALERT_ICON_MISSING;
+    var count = icon.count;
+    var shown = typeof count === "number" && isFinite(count) && count >= 0
+      ? String(Math.min(Math.floor(count), ALERT_ICON_COUNT_CAP))
+      : "";
+    return {
+      state: state,
+      text: ALERT_ICON_TRIANGLE + shown,
+      pulse: state === "stop" && icon.pulse === true,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // US-406 DTC Alerts card (Card 5) + detail -- pure, node-testable logic
   // (S-4/S-5/S-12/S-13/I-3). The card is a PURE CONSUMER of the `dtc` state:
@@ -2391,35 +2300,6 @@
   //            disposition -- an N/A chip that sorts LAST, never a hero (S-12).
   // -------------------------------------------------------------------------
 
-  // Tier -> display presentation (chip label + CSS level + hero/detail
-  // directive). `unknown` = an uncurated code (no Spool entry) -> the honest
-  // middle "GET DIAGNOSED", never a false "safe to clear" nor a false "pull
-  // over". `na` = not applicable to this vehicle (quiet, unalarming).
-  var DTC_TIER = {
-    stop: { chip: "STOP", level: "stop", directive: "REDUCE LOAD · PULL OVER" },
-    watch: { chip: "WATCH", level: "watch", directive: "DRIVE GENTLY · GET DIAGNOSED" },
-    minor: { chip: "MINOR", level: "minor", directive: "SAFE TO CLEAR ONCE LOGGED" },
-    unknown: { chip: "?", level: "unknown", directive: "GET DIAGNOSED" },
-    na: { chip: "N/A", level: "na", directive: "not applicable to this vehicle" },
-  };
-
-  // List ordering for the Alerts card: worst-first, but `na` ALWAYS sorts last
-  // (design §5.3) -- higher rank = higher in the list. An unrecognized severity
-  // is treated as `unknown` (never dropped -- hiding a code could hide a fault).
-  var DTC_LIST_RANK = { stop: 4, watch: 3, minor: 2, unknown: 1, na: 0 };
-
-  function dtcTier(sev) {
-    return Object.prototype.hasOwnProperty.call(DTC_TIER, sev)
-      ? DTC_TIER[sev]
-      : DTC_TIER.unknown;
-  }
-
-  function dtcListRank(sev) {
-    return Object.prototype.hasOwnProperty.call(DTC_LIST_RANK, sev)
-      ? DTC_LIST_RANK[sev]
-      : DTC_LIST_RANK.unknown;
-  }
-
   function dtcShort(code) {
     return (code.short && String(code.short).trim()) || "No description yet";
   }
@@ -2428,141 +2308,485 @@
     return (code.severityCaveat && String(code.severityCaveat).trim()) || null;
   }
 
-  // All valid code objects sorted worst-first (na last). Stable within a rank
-  // (input order preserved), so same-severity codes keep their capture order.
-  function dtcListSorted(codes) {
-    if (!Array.isArray(codes)) return [];
-    var out = [];
-    for (var i = 0; i < codes.length; i++) {
-      if (isObj(codes[i])) out.push(codes[i]);
+  // -------------------------------------------------------------------------
+  // US-898-b1 (F-127; specs/v030-warnings-page-design.md s3, s4.1, s4.6) -- the
+  // ALERTS card, from states/alerts ALONE. The provider orders the entries,
+  // picks every tier and writes every word (Spool verbatim); these map each
+  // entry to one row IN THE ORDER GIVEN and compare no tier, rank or reading
+  // (Iris G-6, rule 0). The dtc-driven body they replace -- a hero plus a
+  // worst-first sort the page computed itself -- is retired with them.
+  // -------------------------------------------------------------------------
+
+  // Tier -> chip word. A lookup, never a ranking. An unrecognised tier reads
+  // as UNRATED: "not rated" is the honest name for a tier the page cannot
+  // place, and the row is never dropped (hiding an entry could hide a fault).
+  var WARNING_CHIP = { stop: "STOP", watch: "WATCH", minor: "MINOR", unrated: "UNRATED" };
+  var WARNING_CHIP_FALLBACK = "unrated";
+  // Iris s4.3 (default wording; Iris may re-word): no readable payload.
+  var WARNINGS_NO_DATA_TEXT = "no warnings data";
+  var WARNINGS_NO_DATA_HEADER = "--";
+  // The age column of an entry the provider still lists after it cleared.
+  var WARNING_CLEARED_TEXT = "cleared";
+
+  // US-898-b2 (Iris brief "Empty state"; Atlas ARCH-062: never claim "clear"
+  // for a source that was not assessed). The words for a card with nothing
+  // active -- Iris's, verbatim. Each clause is printed only when `sources`
+  // says its source WAS assessed.
+  var WARNINGS_NONE_HEADER = "NONE";
+  var WARNINGS_NOT_CHECKED_HEADER = "NOT CHECKED";
+  var WARNINGS_NONE_HEAD = "NO WARNINGS";
+  var WARNINGS_NOT_CHECKED_MARK = "?";
+  var WARNINGS_NOT_CHECKED_HEAD = "NOT CHECKED YET";
+  var WARNINGS_NOT_CHECKED_TEXT =
+    "Trouble codes haven't been read since key-on, so \"nothing found\" can't be claimed.";
+  var WARNINGS_ENGINE_CLAUSE = " Engine checks clear.";
+  var WARNINGS_NOT_BUILT_TEXT = "System and data checks are not built yet.";
+
+  // A source is assessed only when the provider says exactly true; absent or
+  // anything else is "not assessed" -- the direction that claims nothing.
+  function warningSourceAssessed(sources, name) {
+    return isObj(sources[name]) && sources[name].assessed === true;
+  }
+
+  // When the codes were read, in the panel's one 12-hour clock without AM/PM
+  // (the fmtTimeOfDay split, as engineHistoryWindow). An unparseable instant
+  // is '--', never a guessed one.
+  function warningsReadClock(at) {
+    var read = typeof at === "string" && ISO_INSTANT.test(at) ? new Date(Date.parse(at)) : null;
+    return read ? fmtTimeOfDay(read, false).split(" ")[0] : DRIVING_NOT_READ;
+  }
+
+  // The header: 'n ACTIVE' (n = the active rows) plus when the codes were
+  // read; a null checkedAtTs is "not read", never a time. With nothing active
+  // it is NONE when the code read was assessed, else NOT CHECKED (tone
+  // 'amber', no meta: there is no read to time).
+  function warningsHeaderView(alerts, rows) {
+    var active = 0;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].active) active++;
     }
-    out.sort(function (a, b) { return dtcListRank(b.severity) - dtcListRank(a.severity); });
-    return out;
-  }
-
-  // One compact list row (chip · code · short · caveat hint · status).
-  function dtcRow(code) {
-    var tier = dtcTier(code.severity);
-    return {
-      code: code.code,
-      chip: tier.chip,
-      level: tier.level,
-      short: dtcShort(code),
-      caveat: dtcCaveat(code),
-      status: code.status === "pending" ? "PEND" : "STORED",
-      isNa: code.severity === "na",
-    };
-  }
-
-  // US-542 AC-2: the fact that MOVED here from the retired idle face. It was
-  // always an Alerts fact -- "no read has happened" is a statement about the
-  // codes, not about the parked screen that happened to be showing it -- and
-  // the Alerts card could not otherwise say it: US-429 already refuses to print
-  // "No stored codes" over an unread source, but a bare typed NA states only
-  // that the instrument is silent, not that the silence dates from key-off.
-  //
-  // Level stays `unavailable`, NOT the idle face's `neutral`. On a card of
-  // mixed tiles neutral read as "calm"; alone on the Alerts card it would read
-  // as a completed read with nothing to report -- the exact false all-clear
-  // US-429 exists to prevent. Grey is the whole dashboard's word for "no read".
-  //
-  // The emitter's own reason rides ALONGSIDE the moved line rather than being
-  // replaced by it: "since key-off" is when, the reason is why, and dropping
-  // either to make room for the other loses a real fact.
-  function dtcNotReadTile(reason) {
-    var why = reason == null ? "" : String(reason).trim();
-    return {
-      label: "ALERTS",
-      value: "DTC not read",
-      detail: why ? "since key-off · " + why : "since key-off",
-      level: "unavailable",
-    };
-  }
-
-  // US-752 -- the codes the system ALREADY HOLDS, shown when no live read is
-  // possible (key-off / restart). Atlas 2026-09-14: a SEPARATE `lastKnown`
-  // block beside honest-null live fields, never an overload of `codes`. The
-  // view is labelled "last known" and dated, so a remembered code never reads
-  // as a live one, and its rows are rendered inert: the detail overlay is where
-  // the clear affordance lives, and a clear offered on remembered codes is a
-  // safety inversion. Null when nothing is remembered (never read, or cleared
-  // since) -- which is what keeps the true "not read" absence meaningful.
-  function lastKnownDtcView(lastKnown, nowTs) {
-    if (!isObj(lastKnown) || !Array.isArray(lastKnown.codes)) return null;
-    var codes = lastKnown.codes.filter(isObj);
-    if (codes.length === 0) return null;
-    var stored = 0;
-    var pending = 0;
-    for (var i = 0; i < codes.length; i++) {
-      if (codes[i].status === "pending") pending++;
-      else stored++;
+    var sources = isObj(alerts.sources) ? alerts.sources : {};
+    var code = isObj(sources.code) ? sources.code : {};
+    var meta = code.checkedAtTs != null
+      ? "codes read " + warningsReadClock(code.checkedAtTs)
+      : "codes not read yet";
+    if (active > 0) return { text: active + " ACTIVE", meta: meta, tone: null };
+    if (!warningSourceAssessed(sources, "code")) {
+      return { text: WARNINGS_NOT_CHECKED_HEADER, meta: "", tone: "amber" };
     }
-    var age = agoText(nowTs, lastKnown.asOfTs);
-    var mil = lastKnown.mil === true;
-    return {
-      tile: {
-        label: "ALERTS",
-        value: "LAST KNOWN CODES",
-        detail: "last read " + age + " · not a live read" + (mil ? " · MIL was on" : ""),
-        level: "unavailable",
-      },
-      asOfTs: typeof lastKnown.asOfTs === "string" ? lastKnown.asOfTs : null,
-      age: age,
-      rows: dtcListSorted(codes).map(dtcRow),
-      storedCount: stored,
-      pendingCount: pending,
-      mil: mil,
-    };
+    return { text: WARNINGS_NONE_HEADER, meta: meta, tone: null };
   }
 
-  // The Alerts card view: hero (worst ALERT-eligible code + its directive; `na`
-  // and unrecognized severities are never a hero) + the full list (worst-first,
-  // na last) + stored/pending counts. Non-object payload -> null (the shell
-  // renders `unavailable`). An empty `codes` array is a valid no-fault view.
-  // `nowTs` (US-752) dates remembered codes; absent -> the payload's own `ts`.
-  function alertsCardView(data, nowTs) {
-    if (!isObj(data)) return null;
-    // US-429: an unavailable DTC source (no read happened) is a typed NA -- NOT
-    // "No stored codes" (which would falsely imply a clean all-clear read).
-    if (sourceUnavailable(data, "dtc")) {
-      var why = sourceReason(data, "dtc");
-      // US-752: known codes are shown, dated -- never "not read" over them.
-      var remembered = lastKnownDtcView(
-        data.lastKnown, typeof nowTs === "string" ? nowTs : data.ts
-      );
-      if (remembered) {
-        return { unavailable: true, reason: why, notRead: null, lastKnown: remembered };
-      }
-      return { unavailable: true, reason: why, notRead: dtcNotReadTile(why) };
+  // The body of a card with nothing ACTIVE (cleared rows may still be listed
+  // under it -- a row is never hidden). Code read assessed: 'NO WARNINGS', when
+  // the codes were read (+ the engine clause only while engine is assessed),
+  // and the not-built line while system or data is not assessed. Not assessed:
+  // '? NOT CHECKED YET' and why nothing can be claimed -- no other line, so the
+  // card says nothing about any source. null while anything is active.
+  function warningsQuietView(alerts, rows) {
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].active) return null;
     }
-    var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
-    var alertable = alertableCodes(codes); // drops na + unrecognized (never a hero)
-    var hero = null;
-    if (alertable.length > 0) {
-      var h = alertable[0];
-      var t = dtcTier(h.severity);
-      hero = {
-        code: h.code,
-        chip: t.chip,
-        level: t.level,
-        short: dtcShort(h),
-        directive: t.directive,
-        caveat: dtcCaveat(h),
+    var sources = isObj(alerts.sources) ? alerts.sources : {};
+    if (!warningSourceAssessed(sources, "code")) {
+      return {
+        state: "not-checked",
+        mark: WARNINGS_NOT_CHECKED_MARK,
+        head: WARNINGS_NOT_CHECKED_HEAD,
+        lines: [{ text: WARNINGS_NOT_CHECKED_TEXT, tone: "primary" }],
       };
     }
-    var stored = 0;
-    var pending = 0;
-    for (var i = 0; i < codes.length; i++) {
-      if (codes[i].status === "pending") pending++;
-      else stored++;
+    var lines = [{
+      text: "Codes read at " + warningsReadClock(sources.code.checkedAtTs) + "." +
+        (warningSourceAssessed(sources, "engine") ? WARNINGS_ENGINE_CLAUSE : ""),
+      tone: "primary",
+    }];
+    if (!warningSourceAssessed(sources, "system") || !warningSourceAssessed(sources, "data")) {
+      lines.push({ text: WARNINGS_NOT_BUILT_TEXT, tone: "secondary" });
+    }
+    return { state: "none", mark: null, head: WARNINGS_NONE_HEAD, lines: lines };
+  }
+
+  // US-898-b2 (Iris U9): '↓ n more below', n = the rows whose bottom edge lies
+  // below the list's visible bottom. At runtime n comes from LAYOUT
+  // (warningsBelowFromLayout); these are the no-layout fallback the harness
+  // tests -- rows at their 48 px floor in the 270 px card body, minus the
+  // header and cue heights measured by the caller. A partly visible row counts
+  // as below, so 7 entries under a ~40 px header and ~20 px cue -> 3.
+  var WARNINGS_BODY_PX = 270;   // 320 panel - 34 bar - 16 dots (Iris brief)
+  var WARNINGS_ROW_FLOOR_PX = 48;
+  // Where not even the header and cue can be measured, their line boxes from
+  // dashboard.css: --fs-primary 34 px and --fs-meta 15 px at --warn-line 1.2.
+  var WARNINGS_HEADER_EST_PX = 34 * 1.2;
+  var WARNINGS_CUE_EST_PX = 15 * 1.2;
+
+  function warningsMoreBelow(rowCount, headerPx, cuePx) {
+    if (typeof rowCount !== "number" || !(rowCount > 0)) return 0;
+    var visible = WARNINGS_BODY_PX - (Number(headerPx) || 0) - (Number(cuePx) || 0);
+    var shown = Math.max(0, Math.floor(visible / WARNINGS_ROW_FLOOR_PX));
+    return Math.max(0, rowCount - shown);
+  }
+
+  // The layout count: rows whose bottom lies below the visible bottom (within
+  // half a pixel, so a row flush with the edge is not "below").
+  function warningsBelowFromLayout(visibleBottom, rowBottoms) {
+    var n = 0;
+    for (var i = 0; i < rowBottoms.length; i++) {
+      if (rowBottoms[i] > visibleBottom + 0.5) n++;
+    }
+    return n;
+  }
+
+  function warningsMoreText(n) {
+    return n > 0 ? "↓ " + n + " more below" : "";
+  }
+
+  // The FRESHNESS clause of a stale row -- how old the reading on screen is.
+  // The S105 M7 rule (Iris; spec s4.6), the Motion page's own: floor, clamped
+  // at 0 (a future ts is clock skew, not a negative age), 'N s' with a space,
+  // capped at '999+'. Only this clause; the age column is agoText (a duration).
+  function warningStaleText(lastTs, nowMs) {
+    var then = typeof lastTs === "string" ? Date.parse(lastTs) : NaN;
+    if (isNaN(then) || typeof nowMs !== "number" || isNaN(nowMs)) {
+      return "last reading age unknown";
+    }
+    var shown = Math.max(0, Math.floor((nowMs - then) / 1000));
+    var text = shown > MOTION_AGE_CAP_SEC ? MOTION_AGE_CAP_SEC + "+" : String(shown);
+    return "last reading " + text + " s ago";
+  }
+
+  // A reading through the S103 G1 helper by its OWN unit (coolant 'C' -> °F).
+  // Not a number -> no value: a code row and the over-rev row (Atlas G3: its
+  // peak lives in the provider's sentence) carry none.
+  function warningValueText(value, unit) {
+    if (typeof value !== "number" || !isFinite(value)) return null;
+    var shown = displayUnits(value, unit);
+    return shown.unit ? shown.text + " " + shown.unit : shown.text;
+  }
+
+  // One row. Stale (an active entry with no fresh reading): the LAST value plus
+  // its freshness clause -- stale never clears, and a blank would read as
+  // "fine". Every row's age is agoText(now, firstSeenTs) unchanged (Iris
+  // 2026-10-19); an inactive entry reads 'cleared' in that column. Only a CODE
+  // row is a control (US-758; its tap is the code detail).
+  function warningRowView(entry, nowTs) {
+    var tier = Object.prototype.hasOwnProperty.call(WARNING_CHIP, entry.tier)
+      ? entry.tier : WARNING_CHIP_FALLBACK;
+    var active = entry.active !== false;
+    var stale = active && entry.stale === true;
+    var last = isObj(entry.last) ? entry.last : null;
+    var key = typeof entry.key === "string" ? entry.key : null;
+    return {
+      id: typeof entry.id === "string" ? entry.id : "",
+      source: typeof entry.source === "string" ? entry.source : "",
+      key: key,
+      tier: tier,
+      chip: WARNING_CHIP[tier],
+      title: typeof entry.title === "string" && entry.title ? entry.title : key || DRIVING_NOT_READ,
+      value: stale
+        ? (last ? warningValueText(last.value, entry.unit) : null)
+        : warningValueText(entry.value, entry.unit),
+      stale: stale ? warningStaleText(last ? last.ts : null, Date.parse(nowTs)) : null,
+      sentence: typeof entry.sentence === "string" && entry.sentence ? entry.sentence : null,
+      age: active ? agoText(nowTs, entry.firstSeenTs) : WARNING_CLEARED_TEXT,
+      active: active,
+      control: entry.source === "code",
+    };
+  }
+
+  // The whole card. No readable payload (absent, unreadable, no entries list)
+  // -> header '--' and 'no warnings data': never a list that implies a read.
+  // Otherwise one row per entry, in entries[] order. `nowTs` is the tick's one
+  // clock as an ISO instant.
+  function warningsPageView(alerts, nowTs) {
+    var entries = isObj(alerts) && Array.isArray(alerts.entries) ? alerts.entries : null;
+    if (!entries) {
+      return {
+        missing: true,
+        header: { text: WARNINGS_NO_DATA_HEADER, meta: "", tone: null },
+        rows: [],
+        empty: WARNINGS_NO_DATA_TEXT,
+        quiet: null,
+      };
+    }
+    var rows = [];
+    for (var i = 0; i < entries.length; i++) {
+      if (isObj(entries[i])) rows.push(warningRowView(entries[i], nowTs));
     }
     return {
-      hero: hero,
-      rows: dtcListSorted(codes).map(dtcRow),
-      storedCount: stored,
-      pendingCount: pending,
-      mil: data.mil === true,
+      missing: false,
+      header: warningsHeaderView(alerts, rows),
+      rows: rows,
+      empty: null,
+      quiet: warningsQuietView(alerts, rows),
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // US-899-a1 (F-127; CIO R31, Iris brief s A + U7/U11, Atlas G4/Q10) -- the
+  // live coolant STOP takeover, from states/alerts.takeover ALONE. The provider
+  // decides that a takeover exists and writes every word on it, the directive
+  // band included (no page literal: a page-side directive could only be a
+  // fallback, which G4 retired). The surface carries no control; a tap anywhere
+  // acknowledges it for this boot (alertsAckNext), which stops only the ICON
+  // pulse -- the frame keeps pulsing while the takeover is up.
+  // -------------------------------------------------------------------------
+
+  // Tier -> the colour token of its frame/chip. ONE map: the takeover's STOP
+  // reads it here and the code alert's frame (US-899-b) reads the same row.
+  var TIER_COLOR_VAR = {
+    stop: "--critical-red",
+    watch: "--amber-warn",
+    minor: "--green-ok",
+    unrated: "--neutral-chip-bg",
+  };
+
+  function tierColorVar(tier) {
+    return Object.prototype.hasOwnProperty.call(TIER_COLOR_VAR, tier) ? TIER_COLOR_VAR[tier] : null;
+  }
+
+  // An entry is acknowledged only when the provider's re-read says exactly
+  // true for that id (the takeover itself carries no ack flag).
+  function alertsEntryAcknowledged(alerts, id) {
+    var entries = isObj(alerts) && Array.isArray(alerts.entries) ? alerts.entries : [];
+    for (var i = 0; i < entries.length; i++) {
+      if (isObj(entries[i]) && entries[i].id === id) return entries[i].acknowledged === true;
+    }
+    return false;
+  }
+
+  // The takeover, or null (no payload, or the provider published none). Stale
+  // (Atlas Q10, the existing shape: value null + stale + last): last.value plus
+  // its own 'last reading n s ago' line (the M7 rule, warningStaleText) -- stale
+  // never clears. The age is agoText(now, firstSeenTs) unchanged. `nowTs` is the
+  // tick's one clock as an ISO instant.
+  function takeoverAlertView(alerts, nowTs) {
+    var t = isObj(alerts) && isObj(alerts.takeover) ? alerts.takeover : null;
+    if (!t) return null;
+    var stale = t.stale === true;
+    var last = isObj(t.last) ? t.last : null;
+    return {
+      id: typeof t.id === "string" ? t.id : "",
+      directive: typeof t.directive === "string" && t.directive ? t.directive : null,
+      title: typeof t.title === "string" && t.title ? t.title : null,
+      value: stale
+        ? (last ? warningValueText(last.value, t.unit) : null)
+        : warningValueText(t.value, t.unit),
+      stale: stale ? warningStaleText(last ? last.ts : null, Date.parse(nowTs)) : null,
+      sentence: typeof t.sentence === "string" && t.sentence ? t.sentence : null,
+      age: agoText(nowTs, t.firstSeenTs),
+      colorVar: TIER_COLOR_VAR.stop,
+      acknowledged: alertsEntryAcknowledged(alerts, t.id),
+    };
+  }
+
+  // A real STOP takeover is up (drives the full-brightness short-circuit). Keyed on
+  // the provider's takeover, never on a states/dtc level: the alarm the panel
+  // holds at full is exactly the one it is drawing.
+  function brightnessAlarmActive(alertsData) {
+    return isObj(alertsData) && isObj(alertsData.takeover);
+  }
+
+  // --- the ack: the honest write (the fuelResetNext pattern) -----------------
+  //
+  // A tap POSTs /alerts-ack {ids: [id]} (Atlas Q26: the one shape). Only a
+  // RE-READ of states/alerts showing that entry acknowledged:true settles it,
+  // within pi.display.stale.alertsAckConfirmSec of the 200 (Atlas Q33); a 200 is
+  // not the proof. Anything else -- a refusal (a 409, 503, 504 or any other), no
+  // answer, or no matching re-read in the window -- shows "couldn't acknowledge"
+  // for pi.display.stale.alertsAckNoticeSec, and the provider's pulse simply
+  // continues. Both windows are injected as window.DISPLAY_STALE; there is NO
+  // mirrored default here (no literal in this file), so without them the tap is
+  // not offered (fail closed: an unbounded acknowledging state would lie).
+  var ALERTS_ACK_FAILED_TEXT = "couldn't acknowledge";
+
+  function isPositiveSec(v) {
+    return typeof v === "number" && isFinite(v) && v > 0;
+  }
+
+  function resolvePositiveSec(injected, key) {
+    var v = isObj(injected) ? injected[key] : null;
+    return isPositiveSec(v) ? v : null;
+  }
+
+  function resolveAlertsAckConfirmSec(injected) {
+    return resolvePositiveSec(injected, "alertsAckConfirmSec");
+  }
+
+  function resolveAlertsAckNoticeSec(injected) {
+    return resolvePositiveSec(injected, "alertsAckNoticeSec");
+  }
+
+  function alertsAckBody(id) {
+    return { ids: [id] };
+  }
+
+  // phase: idle | posting (tap -> the answer) | awaiting (200 -> the matching
+  // re-read). `noticeFromMs` is when "couldn't acknowledge" went up, else null.
+  function alertsAckInit() {
+    return { phase: "idle", id: null, confirmFromMs: null, noticeFromMs: null };
+  }
+
+  function alertsAckFailed(s, nowMs) {
+    s.phase = "idle";
+    s.confirmFromMs = null;
+    s.noticeFromMs = typeof nowMs === "number" ? nowMs : null;
+    return s;
+  }
+
+  // Advance the ack by one event. Pure; the clock arrives on the event.
+  //   {type: "tap", view, confirmSec, noticeSec}   the takeover was tapped
+  //   {type: "answer", status, body, nowMs}        the POST answered
+  //   {type: "failure", nowMs}                     the POST never answered
+  //   {type: "read", alerts, nowMs, confirmSec, noticeSec}   one tick's read
+  function alertsAckNext(prev, ev) {
+    var s = isObj(prev) && typeof prev.phase === "string" ? {
+      phase: prev.phase, id: prev.id, confirmFromMs: prev.confirmFromMs,
+      noticeFromMs: prev.noticeFromMs,
+    } : alertsAckInit();
+    if (isObj(ev) && ev.type === "tap") {
+      var view = isObj(ev.view) ? ev.view : null;
+      if (s.phase === "idle" && view && view.id && view.acknowledged !== true &&
+          isPositiveSec(ev.confirmSec) && isPositiveSec(ev.noticeSec)) {
+        s.phase = "posting";
+        s.id = view.id;
+        s.noticeFromMs = null;
+      }
+      return s;
+    }
+    return ackFlowStep(s, ev, function (alerts) {
+      return s.id !== null && alertsEntryAcknowledged(alerts, s.id);
+    });
+  }
+
+  // The half of an honest ack that is not the tap, shared by the STOP takeover's ack
+  // and the code alert's DISMISS (US-899-b): the POST's answer, no answer, and
+  // the re-read. `settled(alerts)` is the ONE proof each surface accepts from a
+  // re-read; nothing else -- not a 200 -- ever settles it. Mutates and returns `s`.
+  function ackFlowStep(s, ev, settled) {
+    var type = isObj(ev) ? ev.type : null;
+    if (type === "answer") {
+      if (s.phase !== "posting") return s;
+      if (ev.status === 200 && isObj(ev.body) && ev.body.ok === true) {
+        s.phase = "awaiting";
+        s.confirmFromMs = ev.nowMs;
+        return s;
+      }
+      return alertsAckFailed(s, ev.nowMs);
+    }
+    if (type === "failure") {
+      return s.phase === "posting" ? alertsAckFailed(s, ev.nowMs) : s;
+    }
+    if (type !== "read") return s;
+    var acked = settled(ev.alerts);
+    if (s.phase === "awaiting") {
+      if (acked) {
+        s.phase = "idle";
+        s.confirmFromMs = null;
+      } else if (!(typeof ev.nowMs === "number" && typeof ev.confirmSec === "number" &&
+                   ev.nowMs - s.confirmFromMs <= ev.confirmSec * 1000)) {
+        return alertsAckFailed(s, ev.nowMs);
+      }
+    } else if (s.phase === "idle" && s.noticeFromMs !== null) {
+      // An ack that landed after all (a 504, a late write): the read speaks.
+      // Otherwise the notice holds for its window, then goes.
+      if (acked || !(typeof ev.nowMs === "number" && typeof ev.noticeSec === "number" &&
+                     ev.nowMs - s.noticeFromMs <= ev.noticeSec * 1000)) {
+        s.noticeFromMs = null;
+      }
+    }
+    return s;
+  }
+
+  function alertsAckNoticeText(state) {
+    return isObj(state) && state.phase === "idle" && state.noticeFromMs !== null
+      ? ALERTS_ACK_FAILED_TEXT : "";
+  }
+
+  // -------------------------------------------------------------------------
+  // US-899-b (F-127; spec s4.4b, Iris brief s B + U5-U7, Atlas Q26/Q32) -- the
+  // key-on TROUBLE CODES screen, from states/alerts.codeAlert ALONE. The
+  // provider decides that it shows (each key-on; a boot-scoped ack) and its
+  // tier; the page compares nothing. Drawn only while engineParked is parked
+  // (US-511; it starts not-parked) and never under the STOP takeover. Not being drawn
+  // is not a dismiss: only DISMISS posts, and only a re-read with codeAlert
+  // null closes it.
+  // -------------------------------------------------------------------------
+
+  // Iris brief s B: up to 3 rows; the rest are named by count, never clipped.
+  var CODE_ALERT_ROWS_MAX = 3;
+  var CODE_DISMISS_FAILED_TEXT = "couldn't dismiss";
+
+  // The drawn screen, or null: no payload, no codeAlert, no ids, a takeover up
+  // (the STOP takeover wins), or `parked` not strictly true. Each row is the entry its
+  // id names in entries[] (chip + title + sentence, warningRowView's words);
+  // an id with no entry draws no row. `more` is '+n more on ALERTS' beyond 3.
+  function codeAlertView(alerts, parked) {
+    if (!isObj(alerts) || !isObj(alerts.codeAlert) || isObj(alerts.takeover)) return null;
+    if (parked !== true) return null;
+    var ids = Array.isArray(alerts.codeAlert.ids)
+      ? alerts.codeAlert.ids.filter(function (id) { return typeof id === "string" && id; })
+      : [];
+    if (!ids.length) return null;
+    var entries = Array.isArray(alerts.entries) ? alerts.entries : [];
+    var rows = [];
+    for (var i = 0; i < ids.length && i < CODE_ALERT_ROWS_MAX; i++) {
+      for (var j = 0; j < entries.length; j++) {
+        if (isObj(entries[j]) && entries[j].id === ids[i]) {
+          var row = warningRowView(entries[j], null);
+          rows.push({
+            id: row.id, tier: row.tier, chip: row.chip, title: row.title, sentence: row.sentence,
+          });
+          break;
+        }
+      }
+    }
+    var more = ids.length - Math.min(ids.length, CODE_ALERT_ROWS_MAX);
+    return {
+      ids: ids,
+      colorVar: tierColorVar(alerts.codeAlert.tier),
+      rows: rows,
+      more: more > 0 ? "+" + more + " more on ALERTS" : null,
+    };
+  }
+
+  // DISMISS -> ONE POST /alerts-ack {ids: every codeAlert id} (Atlas Q26: one
+  // shape, all-or-nothing).
+  function codeDismissBody(ids) {
+    return { ids: Array.isArray(ids) ? ids.slice() : [] };
+  }
+
+  // The alertsAckNext lifecycle, keyed on the ids: idle | posting | awaiting.
+  function codeDismissInit() {
+    return { phase: "idle", ids: null, confirmFromMs: null, noticeFromMs: null };
+  }
+
+  // Advance the dismiss by one event (the alertsAckNext events; a tap carries
+  // the codeAlertView). Settled ONLY by a re-read whose codeAlert is null -- an
+  // unreadable payload is not that proof.
+  function codeDismissNext(prev, ev) {
+    var s = isObj(prev) && typeof prev.phase === "string" ? {
+      phase: prev.phase, ids: Array.isArray(prev.ids) ? prev.ids.slice() : null,
+      confirmFromMs: prev.confirmFromMs, noticeFromMs: prev.noticeFromMs,
+    } : codeDismissInit();
+    if (isObj(ev) && ev.type === "tap") {
+      var view = isObj(ev.view) ? ev.view : null;
+      if (s.phase === "idle" && view && Array.isArray(view.ids) && view.ids.length &&
+          isPositiveSec(ev.confirmSec) && isPositiveSec(ev.noticeSec)) {
+        s.phase = "posting";
+        s.ids = view.ids.slice();
+        s.noticeFromMs = null;
+      }
+      return s;
+    }
+    return ackFlowStep(s, ev, function (alerts) {
+      return s.ids !== null && isObj(alerts) && alerts.codeAlert === null;
+    });
+  }
+
+  function codeDismissNoticeText(state) {
+    return isObj(state) && state.phase === "idle" && state.noticeFromMs !== null
+      ? CODE_DISMISS_FAILED_TEXT : "";
   }
 
   // 3-state trust badge (design §5.4). Verified (Spool) / community-unverified /
@@ -2647,37 +2871,66 @@
     return parts.join(" · ");
   }
 
-  // The per-code detail view. Non-object -> null. The caveat is a line, never a
+  // US-898-c (Iris U4): the line a detail prints when the states/dtc read that
+  // backs it failed -- the entry's own words still stand above it.
+  var DETAIL_UNAVAILABLE_TEXT = "details unavailable";
+  // A code entry's id is 'code:<code>:<tier>' (alerts_arbiter).
+  var CODE_ENTRY_ID = /^code:([^:]+):[^:]+$/;
+
+  // The code a states/alerts code entry names, parsed from its id; null for
+  // any other id (an engine entry, a malformed one).
+  function codeFromEntryId(id) {
+    var m = typeof id === "string" ? CODE_ENTRY_ID.exec(id) : null;
+    return m ? m[1] : null;
+  }
+
+  // The states/dtc record for one code, or null (no payload, an unread source
+  // publishing codes:null, or a code the payload does not list).
+  function dtcRecordFor(data, codeStr) {
+    if (!isObj(data) || !Array.isArray(data.codes) || !codeStr) return null;
+    for (var i = 0; i < data.codes.length; i++) {
+      if (isObj(data.codes[i]) && data.codes[i].code === codeStr) return data.codes[i];
+    }
+    return null;
+  }
+
+  // The per-code detail view: (codeRecord, entry). The ENTRY is the provider's
+  // (states/alerts) and supplies the code, the chip and the directive band;
+  // the RECORD is that code's states/dtc row and supplies everything else.
+  // No code entry -> null (nothing to open). The caveat is a line, never a
   // tier upgrade (S-13).
   //
-  // US-491 (polish P-3, directive-first): the band renders for EVERY actionable
-  // tier, not just 🔴/🟡. The detail is the one screen the operator opens to ask
-  // "what do I do", and the answer already existed in DTC_TIER for MINOR ("safe
-  // to clear once logged") and for an uncurated `unknown` ("get diagnosed") --
-  // the takeover has shown both since US-405 while the detail showed nothing.
-  // A blank band on the screen dedicated to the question reads as "no action
-  // needed", which is the dishonest answer on an uncurated code (F-1). `na` is
-  // the one tier that stays blank: "not applicable to this vehicle" is a FACT,
-  // not an instruction, it never alarms anywhere else in the system, and the
-  // fix slot already states it.
-  function codeDetailView(code) {
-    if (!isObj(code)) return null;
-    var tier = dtcTier(code.severity);
+  // US-898-c (Iris U4): the band is the entry's `sentence`, the provider's
+  // words -- never a tier-table directive -- and the chip is the
+  // entry's tier, `unrated` drawn with the existing `unknown` styling. With no
+  // record (the read failed, or does not list the code) the view keeps the
+  // entry's title, chip and sentence and says `details unavailable`: never a
+  // cached record, never a tier-table directive.
+  function codeDetailView(record, entry) {
+    if (!isObj(entry) || entry.source !== "code") return null;
+    var code = codeFromEntryId(entry.id);
+    if (!code) return null;
+    var tier = Object.prototype.hasOwnProperty.call(WARNING_CHIP, entry.tier)
+      ? entry.tier : WARNING_CHIP_FALLBACK;
+    var title = typeof entry.title === "string" && entry.title ? entry.title : code;
+    var rec = isObj(record) && record.code === code ? record : null;
     return {
-      code: code.code,
-      chip: tier.chip,
-      level: tier.level,
-      short: dtcShort(code),
-      long: (code.long && String(code.long).trim()) || null,
-      directive: tier.level === "na" ? null : tier.directive,
-      caveat: dtcCaveat(code),
-      statusMeta: dtcStatusMeta(code),
-      freezeFrame: freezeFrameView(code),
-      fix: fixArea(code),
-      logged: code.logged === true,
-      syncAcked: code.syncAcked === true,
-      clearEligible: code.clearEligible === true,
-      isNa: code.severity === "na",
+      code: code,
+      chip: WARNING_CHIP[tier],
+      level: tier === "unrated" ? "unknown" : tier,
+      title: title,
+      short: rec ? dtcShort(rec) : title,
+      long: rec ? (rec.long && String(rec.long).trim()) || null : null,
+      directive: typeof entry.sentence === "string" && entry.sentence ? entry.sentence : null,
+      unavailable: rec ? null : DETAIL_UNAVAILABLE_TEXT,
+      caveat: rec ? dtcCaveat(rec) : null,
+      statusMeta: rec ? dtcStatusMeta(rec) : null,
+      freezeFrame: rec ? freezeFrameView(rec) : null,
+      fix: rec ? fixArea(rec) : null,
+      logged: rec ? rec.logged === true : false,
+      syncAcked: rec ? rec.syncAcked === true : false,
+      clearEligible: rec ? rec.clearEligible === true : false,
+      isNa: rec ? rec.severity === "na" : false,
     };
   }
 
@@ -2695,6 +2948,9 @@
     severity_unknown: "🔒 CLEAR CODES — severity could not be determined",
     sync_pending: "🔒 CLEAR CODES — waiting for server sync",
     session_locked: "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it",
+    // US-898-c (Iris 2026-10-19): the lock is engineParked, which also holds
+    // an idling car and the 8 s hold, so it says what unlocks it.
+    moving: "🔒 CLEAR CODES — engine off to clear",
   };
 
   // Re-derive the clear gate from the raw codes (the display mirror of the
@@ -2732,11 +2988,17 @@
   // The Clear button view. `no_codes` -> no button (nothing to clear). Otherwise
   // the button is visible; enabled only when the gate is `ok`, else disabled
   // with an honest reason label (S-6 / S-8).
-  function clearButtonView(data) {
+  //
+  // US-898-c: `parked` is engineParked.parked; only a strict true unlocks. It
+  // is asked only when the gate is otherwise `ok`, so a permanent reason
+  // (WATCH, STOP, UNRATED, sync, session lock) wins over `moving` -- a WATCH
+  // code never implies that turning the engine off unlocks it.
+  function clearButtonView(data, parked) {
     var reason = clearGateReason(data);
     if (reason === "no_codes") {
       return { visible: false, enabled: false, reason: reason, label: null };
     }
+    if (reason === "ok" && parked !== true) reason = "moving";
     return {
       visible: true,
       enabled: reason === "ok",
@@ -2847,15 +3109,8 @@
     return out;
   }
 
-  // A real ACTIVE STOP alert is present (drives the alarm floor). Reuses the same
-  // honest ribbon classifier the takeover/ribbon use: an unavailable DTC source
-  // carries no active fault -> false; only a STOP-tier hero forces the floor (the
-  // PULL-OVER alarm). A WATCH/MINOR alert is a real code but not the pull-over
-  // alarm, so it does not force the legible floor (Iris AC-7 scope).
-  function brightnessAlarmActive(dtcData) {
-    var rv = ribbonView(dtcData);
-    return !!rv && rv.level === "stop";
-  }
+  // brightnessAlarmActive (the alarm input below) is US-899-a1's: it keys on the
+  // states/alerts takeover, beside takeoverAlertView.
 
   // US-893-a (Atlas A7) -- THE ONE APPLIER. Every surface that needs the panel's
   // level (the screen frame, and from US-893-b the Light page's status line and
@@ -4995,11 +5250,6 @@
     exceedsMoveCancel: exceedsMoveCancel,
     parkedInit: parkedInit,
     parkedNext: parkedNext,
-    alertableCodes: alertableCodes,
-    takeoverView: takeoverView,
-    takeoverShouldShow: takeoverShouldShow,
-    ribbonView: ribbonView,
-    dtcListSorted: dtcListSorted,
     appliedBrightness: appliedBrightness,
     brightnessAlarmActive: brightnessAlarmActive,
     resolveAutoDimConfig: resolveAutoDimConfig,
@@ -5007,16 +5257,34 @@
     fmtStamp: fmtStamp,
     carouselIdle: carouselIdle,
     notLiveMarker: notLiveMarker,
+    alertIconView: alertIconView,
     agoText: agoText,
-    dtcNotReadTile: dtcNotReadTile,
-    dtcRow: dtcRow,
-    alertsCardView: alertsCardView,
-    lastKnownDtcView: lastKnownDtcView,
+    warningsPageView: warningsPageView,
+    warningRowView: warningRowView,
+    warningStaleText: warningStaleText,
+    warningsMoreBelow: warningsMoreBelow,
+    warningsBelowFromLayout: warningsBelowFromLayout,
+    warningsMoreText: warningsMoreText,
+    tierColorVar: tierColorVar,
+    takeoverAlertView: takeoverAlertView,
+    resolveAlertsAckConfirmSec: resolveAlertsAckConfirmSec,
+    resolveAlertsAckNoticeSec: resolveAlertsAckNoticeSec,
+    alertsAckBody: alertsAckBody,
+    alertsAckInit: alertsAckInit,
+    alertsAckNext: alertsAckNext,
+    alertsAckNoticeText: alertsAckNoticeText,
+    codeAlertView: codeAlertView,
+    codeDismissBody: codeDismissBody,
+    codeDismissInit: codeDismissInit,
+    codeDismissNext: codeDismissNext,
+    codeDismissNoticeText: codeDismissNoticeText,
     trustBadge: trustBadge,
     fixArea: fixArea,
     fixSectionLabel: fixSectionLabel,
     freezeFrameView: freezeFrameView,
     codeDetailView: codeDetailView,
+    codeFromEntryId: codeFromEntryId,
+    dtcRecordFor: dtcRecordFor,
     clearGateReason: clearGateReason,
     clearButtonView: clearButtonView,
     confirmClearText: confirmClearText,
@@ -6236,6 +6504,23 @@
       clockEl.textContent = text;
     }
 
+    // US-898-a: paint the warnings icon (alertIconView). Block scope, beside the
+    // clock, for the clock's reason: the 4 Hz tick inside startAvailabilityPoll
+    // calls it. Writes only on a change, like the clock. It never sets
+    // `hidden`: the icon is the always-visible state (Iris U1).
+    var warnIconEl = null;
+    var lastWarnIconKey = null;
+    function renderTopbarIcon(view) {
+      if (!warnIconEl) warnIconEl = document.getElementById("glyph-warnings");
+      if (!warnIconEl) return;
+      var key = view.state + "|" + view.text + "|" + view.pulse;
+      if (key === lastWarnIconKey) return;
+      lastWarnIconKey = key;
+      warnIconEl.textContent = view.text;
+      warnIconEl.setAttribute("data-state", view.state);
+      warnIconEl.setAttribute("data-pulse", view.pulse ? "true" : "false");
+    }
+
     // US-901-b: paint the not-live marker and hide the clock under it. Block
     // scope, beside the clock, for the same reason the clock lives here: the
     // 4 Hz tick calls it from inside `startAvailabilityPoll`. Writes only on a
@@ -6820,21 +7105,49 @@
         }
       }
 
-      // --- US-405 DTC takeover + ribbon surfaces (browser only) --------------
-      var ribbonEl = document.getElementById("dtc-ribbon");
+      // US-899-a1 (Iris U12): the ONE token-gated POST behind every write on
+      // this page -- /dtc-clear, /fuel-reset and /alerts-ack (postAction stays
+      // the /service-control helper). It answers {status, body} and never
+      // judges either: each caller keeps its own honest-write rule (confirm
+      // from a RE-READ, or say it failed). A body that is not JSON is {}; no
+      // answer at all rejects, which each caller turns into its own failure.
+      function postWrite(path, body) {
+        var init = {
+          method: "POST",
+          headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
+        };
+        if (body !== undefined) init.body = JSON.stringify(body);
+        return fetch(path, init).then(function (r) {
+          return r.json().then(
+            function (j) { return { status: r.status, body: j }; },
+            function () { return { status: r.status, body: {} }; }
+          );
+        });
+      }
+
+      // --- US-899-a1 STOP takeover surface (browser only) --------------------
+      // Its lines, the view last painted and the ack.
       var takeoverEl = document.getElementById("dtc-takeover");
-      var tvIcon = document.getElementById("takeover-icon");
-      var tvChip = document.getElementById("takeover-chip");
-      var tvCode = document.getElementById("takeover-code");
-      var tvDesc = document.getElementById("takeover-desc");
       var tvDirective = document.getElementById("takeover-directive");
-      var tvMore = document.getElementById("takeover-more");
-      var tvDismiss = document.getElementById("takeover-dismiss");
-      var tvDetail = document.getElementById("takeover-detail");
-      // The last-acknowledged `newSinceTs` (edge-trigger). Acknowledge/Dismiss
-      // records it so the same code never re-takes-over; a newer code (a
-      // different stamp) re-fires (escalation, D-3).
-      var dtcLastAckedTs = null;
+      var tvTitle = document.getElementById("takeover-title");
+      var tvValue = document.getElementById("takeover-value");
+      var tvStale = document.getElementById("takeover-stale");
+      var tvSentence = document.getElementById("takeover-sentence");
+      var tvAge = document.getElementById("takeover-age");
+      var tvNotice = document.getElementById("takeover-notice");
+      var takeoverAlert = null;
+      var alertsAck = alertsAckInit();
+      // --- US-899-b TROUBLE CODES surface (browser only) ---------------------
+      // Its own container, the view last painted, the rows last built and the
+      // DISMISS state.
+      var codeAlertEl = document.getElementById("code-alert");
+      var codeAlertRows = document.getElementById("code-alert-rows");
+      var codeAlertMore = document.getElementById("code-alert-more");
+      var codeAlertDismiss = document.getElementById("code-alert-dismiss");
+      var codeAlertNotice = document.getElementById("code-alert-notice");
+      var codeAlert = null;
+      var codeAlertRowsPainted = null;
+      var codeDismiss = codeDismissInit();
 
       // --- US-406 Alerts card (Card 5) + per-code detail (browser only) ------
       var detailEl = document.getElementById("dtc-detail");
@@ -6851,11 +7164,18 @@
       var clearConfirmText = document.getElementById("clear-confirm-text");
       var clearConfirmOk = document.getElementById("clear-confirm-ok");
       var clearConfirmCancel = document.getElementById("clear-confirm-cancel");
-      // The most-recent `dtc` state, so a ribbon/takeover "View detail" tap can
-      // resolve a code string back to its full object.
-      var lastDtc = null;
-      // The Alerts card index, so a tap navigates the carousel to it.
-      var dtcCardIndex = -1;
+      // US-898-c: the latest states/alerts (the entries a row tap resolves
+      // to), the entry the code detail is open on (null while closed) and the
+      // detail body last painted (re-built only when what it says changed).
+      var lastAlerts = null;
+      var detailEntry = null;
+      var detailPainted = null;
+      // US-898-b1: the ALERTS card, found by its id (Iris U2) -- it no longer
+      // carries data-state, so the generic per-card loop never reaches it.
+      var alertsCard = document.getElementById("alerts-card");
+      // The cached body of the last paint: the tick runs at 4 Hz and the list
+      // is rebuilt only when what it says changed.
+      var alertsCardPainted = null;
       // US-892-b: the Motion card (it replaced the interim Home card). Painted
       // from the raw states/imu on the ~10 Hz motion loop and from
       // states/grade-history, polled on the 4 Hz tick like the other states.
@@ -6981,18 +7301,9 @@
           // "resetting…" from Yes, not from the 200: the POST can take up to
           // pi.fuel.resetTimeoutSec and the states server stalls reads meanwhile.
           paintFuelMpg();
-          // The /dtc-clear pattern: token-gated POST, status + JSON body. The
+          // The shared token-gated POST (postWrite): status + JSON body. The
           // server's raw text goes to the log only, never to the glass.
-          fetch("/fuel-reset", {
-            method: "POST",
-            headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
-          })
-            .then(function (r) {
-              return r.json().then(
-                function (j) { return { status: r.status, body: j }; },
-                function () { return { status: r.status, body: {} }; }
-              );
-            })
+          postWrite("/fuel-reset")
             .then(function (res) {
               var b = isObj(res.body) ? res.body : {};
               if (res.status !== 200) {
@@ -7036,13 +7347,26 @@
       // actually connected (they ship `hidden`, so the pre-first-poll unknown
       // shows no vehicle card).
       var gatedCards = [];
+      // The ALERTS card's index -- the target of the warnings icon and the
+      // CHECK ENGINE tap. US-898-b1
+      // (Iris U2): found by the card's id, never by its position or data-state.
+      var alertsCardIndex = -1;
       for (var ci = 0; ci < cards.length; ci++) {
-        var st = cards[ci].getAttribute("data-state");
-        if (st === "dtc") dtcCardIndex = ci;
+        if (cards[ci].getAttribute("id") === "alerts-card") alertsCardIndex = ci;
         if (cards[ci].getAttribute("data-landing") !== null) landingIndex = ci;
         if (cards[ci].getAttribute("data-vehicle-gated") !== null) {
           gatedCards.push(cards[ci]);
         }
+      }
+
+      // US-898-a: tapping the warnings icon opens ALERTS -- allowed while moving
+      // (Iris U1): it only navigates, which a swipe already does, so nothing
+      // here reads the parked signal.
+      var warnIconBtn = document.getElementById("glyph-warnings");
+      if (warnIconBtn) {
+        warnIconBtn.addEventListener("click", function () {
+          if (alertsCardIndex >= 0) goTo(alertsCardIndex);
+        });
       }
 
       // US-496 AC-3: reveal/hide the vehicle-dependent cards from the SAME
@@ -7062,21 +7386,27 @@
         if (changed && typeof onVisibilityChange === "function") onVisibilityChange();
       }
 
-      function findCode(codeStr) {
-        if (!lastDtc || !Array.isArray(lastDtc.codes)) return null;
-        for (var i = 0; i < lastDtc.codes.length; i++) {
-          if (lastDtc.codes[i] && lastDtc.codes[i].code === codeStr) return lastDtc.codes[i];
+      // US-898-c: the states/alerts entry with this exact id; null when the
+      // latest payload has none.
+      function alertsEntryFor(match) {
+        var entries = isObj(lastAlerts) && Array.isArray(lastAlerts.entries)
+          ? lastAlerts.entries : [];
+        for (var i = 0; i < entries.length; i++) {
+          if (isObj(entries[i]) && match(entries[i])) return entries[i];
         }
         return null;
       }
+      function alertsEntryById(id) {
+        return alertsEntryFor(function (e) { return e.id === id; });
+      }
       function closeDetail() {
         if (detailEl) detailEl.hidden = true;
+        detailEntry = null;
+        detailPainted = null;
       }
-      // Navigate the carousel to the Alerts card; optionally open a code detail.
-      function openAlertsCard(codeStr) {
-        if (dtcCardIndex >= 0 && typeof goTo === "function") goTo(dtcCardIndex);
-        var codeObj = codeStr ? findCode(codeStr) : null;
-        if (codeObj) openDetail(codeObj);
+      // Navigate the carousel to the Alerts card.
+      function openAlertsCard() {
+        if (alertsCardIndex >= 0 && typeof goTo === "function") goTo(alertsCardIndex);
       }
 
       function hideTakeover() {
@@ -7085,75 +7415,146 @@
         // US-537: drop the severity WITH the surface. The STOP alarm pulse hangs
         // off [data-severity="stop"], so leaving the attribute behind left an
         // acknowledged takeover matching the alarm rule forever -- inert only
-        // because the element had no box. Same lockstep contract renderRibbon
-        // already keeps with data-level: the state attribute and the surface go
-        // up and down together, so motion can never outlive the alert.
+        // because the element had no box. The state attribute and the surface
+        // go up and down together, so motion can never outlive the alert.
         takeoverEl.removeAttribute("data-severity");
       }
-      // Acknowledge/Dismiss -> record the stamp + drop to the ribbon (the ribbon
-      // keeps carrying the alert). STOP has no plain dismiss, but Acknowledge is
-      // still a drop-to-ribbon so the driver can always clear the view.
-      function ackTakeover(view) {
-        dtcLastAckedTs = view.newSinceTs;
-        hideTakeover();
-      }
-      function showTakeover(view) {
-        if (!takeoverEl) return;
-        takeoverEl.setAttribute("data-severity", view.severity);
-        if (tvIcon) tvIcon.textContent = view.icon;
-        if (tvChip) tvChip.textContent = view.severity.toUpperCase();
-        if (tvCode) tvCode.textContent = view.code;
-        if (tvDesc) tvDesc.textContent = view.short;
-        if (tvDirective) tvDirective.textContent = view.directive;
-        if (tvMore) {
-          if (view.moreCount > 0) {
-            tvMore.textContent = "+" + view.moreCount + " more";
-            tvMore.hidden = false;
-          } else {
-            tvMore.hidden = true;
-          }
-        }
-        if (tvDismiss) {
-          tvDismiss.textContent = view.dismissLabel;
-          tvDismiss.onclick = function () { ackTakeover(view); };
-        }
-        // View detail (US-406): ack the takeover (drops it) + navigate to the
-        // Alerts card and open the hero code's detail.
-        if (tvDetail) {
-          tvDetail.onclick = function () {
-            ackTakeover(view);
-            openAlertsCard(view.code);
-          };
-        }
-        takeoverEl.hidden = false;
-      }
-
-      // US-691: fill one banner slot, and take the slot DOWN when it has nothing
-      // to say. An empty-but-painted span still claims its flex gap, so a single
-      // code would pay width for a count that is not there -- the story's stated
-      // negative case ("do not fix multi-code display by making the one-code
-      // case worse"). Same lockstep the ribbon already keeps with data-level:
-      // the content and the box go up and down together.
-      function fillRibbonSlot(selector, text) {
-        var el = ribbonEl.querySelector(selector);
+      // US-899-a1: one takeover line -- its text, and the line DOWN when it has
+      // nothing to say (an empty painted line would still claim its gap).
+      function fillTakeoverLine(el, text) {
         if (!el) return;
         el.textContent = text || "";
         el.hidden = !text;
       }
 
-      function renderRibbon(view) {
-        if (!ribbonEl) return;
+      // US-899-a1: paint takeoverAlertView into #dtc-takeover -- the ONLY writer
+      // of its state and copy. null takes it down WITH its severity (the US-537
+      // lockstep: the alarm pulse hangs off [data-severity="stop"]). The
+      // surface holds no control (Iris U7): the whole of it is the ack tap.
+      function renderAlertsTakeover(view, ackState) {
+        takeoverAlert = view;
+        if (!takeoverEl) return;
         if (!view) {
-          ribbonEl.hidden = true;
-          ribbonEl.removeAttribute("data-level");
+          hideTakeover();
           return;
         }
-        ribbonEl.setAttribute("data-level", view.level);
-        fillRibbonSlot(".ribbon-glyph", view.glyph);
-        fillRibbonSlot(".ribbon-head", view.head);
-        fillRibbonSlot(".ribbon-desc", view.desc);
-        fillRibbonSlot(".ribbon-more", view.more);
-        ribbonEl.hidden = false;
+        takeoverEl.setAttribute("data-severity", "stop");
+        fillTakeoverLine(tvDirective, view.directive);
+        fillTakeoverLine(tvTitle, view.title);
+        fillTakeoverLine(tvValue, view.value);
+        fillTakeoverLine(tvStale, view.stale);
+        fillTakeoverLine(tvSentence, view.sentence);
+        fillTakeoverLine(tvAge, view.age);
+        fillTakeoverLine(tvNotice, alertsAckNoticeText(ackState));
+        takeoverEl.hidden = false;
+      }
+
+      function alertsAckWindows() {
+        return {
+          confirmSec: resolveAlertsAckConfirmSec(global.DISPLAY_STALE),
+          noticeSec: resolveAlertsAckNoticeSec(global.DISPLAY_STALE),
+        };
+      }
+
+      // A tap ANYWHERE on the takeover acknowledges it: ONE POST of its id. The
+      // answer only moves the ack on; what settles it is the next re-read.
+      if (takeoverEl) {
+        takeoverEl.addEventListener("click", function () {
+          if (takeoverEl.hidden || !takeoverAlert) return;
+          var windows = alertsAckWindows();
+          var before = alertsAck.phase;
+          alertsAck = alertsAckNext(alertsAck, {
+            type: "tap", view: takeoverAlert,
+            confirmSec: windows.confirmSec, noticeSec: windows.noticeSec,
+          });
+          if (before === "posting" || alertsAck.phase !== "posting") return;
+          renderAlertsTakeover(takeoverAlert, alertsAck);
+          postWrite("/alerts-ack", alertsAckBody(alertsAck.id))
+            .then(function (res) {
+              if (res.status !== 200) {
+                var b = isObj(res.body) ? res.body : {};
+                uiLog(LOG_WARN, "alerts-ack " + res.status + ": " + (b.error || ""));
+              }
+              alertsAck = alertsAckNext(alertsAck, {
+                type: "answer", status: res.status, body: res.body, nowMs: Date.now(),
+              });
+              renderAlertsTakeover(takeoverAlert, alertsAck);
+            })
+            .then(null, function (e) {
+              uiLog(LOG_WARN, "alerts-ack no answer: " + String(e));
+              alertsAck = alertsAckNext(alertsAck, { type: "failure", nowMs: Date.now() });
+              renderAlertsTakeover(takeoverAlert, alertsAck);
+            });
+        });
+      }
+
+      // US-899-b: paint codeAlertView into #code-alert. null takes it down
+      // (moving, the STOP takeover up, or no codeAlert) -- which posts nothing. The
+      // frame is the provider tier's colour token; the rows are rebuilt only
+      // when what they say changed.
+      function renderCodeAlert(view, dismissState) {
+        codeAlert = view;
+        if (!codeAlertEl) return;
+        if (!view) {
+          codeAlertEl.hidden = true;
+          return;
+        }
+        // An unknown tier sets "" (removes it): the CSS default frame stands.
+        codeAlertEl.style.setProperty(
+          "--code-alert-frame", view.colorVar ? "var(" + view.colorVar + ")" : ""
+        );
+        var rowsKey = JSON.stringify(view.rows);
+        if (codeAlertRows && rowsKey !== codeAlertRowsPainted) {
+          codeAlertRowsPainted = rowsKey;
+          codeAlertRows.textContent = "";
+          for (var i = 0; i < view.rows.length; i++) {
+            var r = view.rows[i];
+            var row = document.createElement("div");
+            row.className = "code-alert-row";
+            row.setAttribute("data-id", r.id);
+            var chip = warnSpan("span", "code-alert-chip", r.chip);
+            chip.setAttribute("data-tier", r.tier);
+            row.appendChild(chip);
+            row.appendChild(warnSpan("span", "code-alert-title", r.title));
+            if (r.sentence) row.appendChild(warnSpan("span", "code-alert-sentence", r.sentence));
+            codeAlertRows.appendChild(row);
+          }
+        }
+        fillTakeoverLine(codeAlertMore, view.more);
+        fillTakeoverLine(codeAlertNotice, codeDismissNoticeText(dismissState));
+        codeAlertEl.hidden = false;
+      }
+
+      // DISMISS: ONE POST of every id. The answer only moves the dismiss on;
+      // the screen closes on the re-read that shows codeAlert null.
+      if (codeAlertDismiss) {
+        codeAlertDismiss.addEventListener("click", function () {
+          if (!codeAlertEl || codeAlertEl.hidden || !codeAlert) return;
+          var windows = alertsAckWindows();
+          var before = codeDismiss.phase;
+          codeDismiss = codeDismissNext(codeDismiss, {
+            type: "tap", view: codeAlert,
+            confirmSec: windows.confirmSec, noticeSec: windows.noticeSec,
+          });
+          if (before === "posting" || codeDismiss.phase !== "posting") return;
+          renderCodeAlert(codeAlert, codeDismiss);
+          postWrite("/alerts-ack", codeDismissBody(codeDismiss.ids))
+            .then(function (res) {
+              if (res.status !== 200) {
+                var b = isObj(res.body) ? res.body : {};
+                uiLog(LOG_WARN, "alerts-ack (codes) " + res.status + ": " + (b.error || ""));
+              }
+              codeDismiss = codeDismissNext(codeDismiss, {
+                type: "answer", status: res.status, body: res.body, nowMs: Date.now(),
+              });
+              renderCodeAlert(codeAlert, codeDismiss);
+            })
+            .then(null, function (e) {
+              uiLog(LOG_WARN, "alerts-ack (codes) no answer: " + String(e));
+              codeDismiss = codeDismissNext(codeDismiss, { type: "failure", nowMs: Date.now() });
+              renderCodeAlert(codeAlert, codeDismiss);
+            });
+        });
       }
 
       // --- US-406 detail render (browser only) -------------------------------
@@ -7217,6 +7618,13 @@
         // upgrade (S-13).
         if (view.caveat) {
           detailBody.appendChild(detailLine("detail-caveat", "", "⚠ " + view.caveat));
+        }
+        // US-898-c (Iris U4): no states/dtc record -- the entry's title, chip
+        // and sentence above stand alone, and nothing below is drawn from a
+        // cached record.
+        if (view.unavailable) {
+          detailBody.appendChild(detailLine("detail-unavailable", "", view.unavailable));
+          return;
         }
         // Status meta (STORED/PENDING · key-on read | Drive N).
         detailBody.appendChild(detailLine("detail-meta", "", view.statusMeta));
@@ -7282,28 +7690,63 @@
         detailBody.appendChild(footer);
       }
 
-      function openDetail(codeObj) {
-        var view = codeDetailView(codeObj);
-        if (!view || !detailEl) return;
-        renderDetailBody(view);
-        renderClearButton();
+      // US-898-c (Iris U4 / G-7 exception): open the detail on a code ENTRY.
+      // The one states/dtc read outside the provider path, scoped to this open
+      // and the ticks while it stays open; it is what the clear gate keys off.
+      async function openDetail(entry) {
+        if (!detailEl || !codeDetailView(null, entry)) return;
+        var dtcData = await fetchState("dtc");
+        detailEntry = entry;
+        detailPainted = null;
+        if (clearResult) clearResult.textContent = "";
+        paintCodeDetail(dtcData);
         detailEl.hidden = false;
+      }
+
+      // Paint the open detail from one states/dtc read (`dtcData`, null when
+      // the read failed). That read is also what the clear gate keys off, so
+      // the record on screen and the button agree; with no record there is no
+      // clear to offer.
+      function paintCodeDetail(dtcData) {
+        var view = codeDetailView(
+          dtcRecordFor(dtcData, codeFromEntryId(detailEntry.id)), detailEntry
+        );
+        if (!view) return;
+        var painted = JSON.stringify(view);
+        if (painted !== detailPainted) {
+          detailPainted = painted;
+          renderDetailBody(view);
+        }
+        renderClearButton(view.unavailable ? null : dtcData);
+      }
+
+      // The tick's half of the open detail: the entry's latest words (kept as
+      // they were if the provider stopped listing it) and a fresh read.
+      function refreshCodeDetail(dtcData) {
+        if (!detailEntry || !detailEl || detailEl.hidden) return;
+        detailEntry = alertsEntryById(detailEntry.id) || detailEntry;
+        paintCodeDetail(dtcData);
       }
 
       // --- US-407 clear surface (browser only) -------------------------------
 
       // Reflect the (display-mirror) gate onto the Clear button. No button when
       // nothing is clearable; disabled + reason label otherwise; enabled only on
-      // `ok`. The server RE-CHECKS the gate on submit -- the button never forces.
-      function renderClearButton() {
+      // `ok` while parked. The server RE-CHECKS the gate on submit -- the button
+      // never forces. US-898-c: re-gated on every tick the detail is open, so
+      // the button follows the codes and engineParked under the operator.
+      function renderClearButton(dtcData) {
         if (!clearBtn) return;
-        if (clearResult) clearResult.textContent = "";
-        var view = clearButtonView(lastDtc);
+        var view = clearButtonView(dtcData, engineParked.parked);
         // US-491: the zone is now a bordered, LABELLED card, so it must go with
         // the button -- an empty "CLEAR CODES" box on a nothing-to-clear detail
         // is a new visual regression. The GATE is untouched: visibility still
         // comes from clearButtonView(), and the server re-checks on submit.
-        if (clearZone) clearZone.hidden = !view.visible;
+        // US-898-c: a clear's result line lives in the zone, so the zone stays
+        // while it has something to say (a cleared car has no codes left).
+        if (clearZone) {
+          clearZone.hidden = !view.visible && !(clearResult && clearResult.textContent);
+        }
         if (!view.visible) {
           clearBtn.hidden = true;
           return;
@@ -7339,17 +7782,7 @@
       // result reports the re-read proof (or the re-set), never "command sent".
       function submitClear() {
         hideClearConfirm();
-        fetch("/dtc-clear", {
-          method: "POST",
-          headers: { "X-Splash-Token": token, "Content-Type": "application/json" },
-          body: JSON.stringify({ confirm: true }),
-        })
-          .then(function (r) {
-            return r.json().then(
-              function (j) { return { status: r.status, body: j }; },
-              function () { return { status: r.status, body: {} }; }
-            );
-          })
+        postWrite("/dtc-clear", { confirm: true })
           .then(function (res) {
             if (res.status === 200) {
               showClearResult(postClearMessage(res.body));
@@ -7375,117 +7808,143 @@
         clearConfirmCancel.addEventListener("click", hideClearConfirm);
       }
 
-      // --- US-406 Alerts card render (browser only) --------------------------
+      // --- US-898-b1 ALERTS card render (browser only) -----------------------
 
-      // US-752: remembered codes. Rows are DIVs, not buttons -- no detail
-      // overlay opens from a remembered code, so the clear surface is never
-      // reachable from one (the clear gate computes from LIVE codes only).
-      function renderLastKnownDtc(body, lk) {
-        appendTile(body, lk.tile);
-        var head = document.createElement("div");
-        head.className = "dtc-count";
-        head.textContent =
-          lk.storedCount + " stored · " + lk.pendingCount + " pending · last known";
-        body.appendChild(head);
-        for (var i = 0; i < lk.rows.length; i++) {
-          var r = lk.rows[i];
-          var row = document.createElement("div");
-          row.className = "dtc-row dtc-row-last-known";
-          row.setAttribute("data-level", r.level);
-          var rChip = document.createElement("span");
-          rChip.className = "dtc-chip";
-          rChip.setAttribute("data-level", r.level);
-          rChip.textContent = r.chip;
-          row.appendChild(rChip);
-          var rCode = document.createElement("span");
-          rCode.className = "dtc-row-code";
-          rCode.textContent = r.code;
-          row.appendChild(rCode);
-          var rShort = document.createElement("span");
-          rShort.className = "dtc-row-short";
-          rShort.textContent = r.short;
-          row.appendChild(rShort);
-          var rStatus = document.createElement("span");
-          rStatus.className = "dtc-row-status";
-          rStatus.textContent = r.status;
-          row.appendChild(rStatus);
-          body.appendChild(row);
-        }
+      function warnSpan(tag, cls, text) {
+        var el = document.createElement(tag);
+        el.className = cls;
+        el.textContent = text;
+        return el;
       }
 
-      function renderAlertsCard(card, view) {
-        var body = card.querySelector(".card-body");
-        if (!body || !view) return;
-        // US-429 / Bug-3b: DTC source unavailable -> a typed NA, NOT "No stored
-        // codes" (a false all-clear) and NOT a mis-fired takeover.
-        // US-542 AC-2: that NA now carries the line the retired idle face used
-        // to hold -- "DTC not read · since key-off · <why>". Rendered from the
-        // VIEW's tile, so the words are pinned by a pure test rather than
-        // living as a renderer literal (`renderNaBody` composes "NA" here,
-        // which would have swallowed the moved fact).
-        if (view.unavailable) {
-          body.textContent = "";
-          if (view.lastKnown) {
-            renderLastKnownDtc(body, view.lastKnown);
-            return;
-          }
-          appendTile(body, view.notRead);
+      // Paint warningsPageView into #alerts-card. Rows go in view.rows order --
+      // the provider's -- and nothing here compares a tier. A CODE row is a
+      // real control (a button) that opens the code's detail while parked
+      // (US-898-c, openDetail); an ENGINE row
+      // and every sentence are plain text (US-758). `loading` is the US-700
+      // bounded LOADING while the first states/alerts read is pending.
+      function renderWarningsCard(card, view, loading) {
+        var body = card ? card.querySelector(".card-body") : null;
+        if (!body) return;
+        card.classList.toggle("unavailable", view.missing && !loading);
+        var painted = loading ? "loading" : JSON.stringify(view);
+        if (painted === alertsCardPainted) {
+          updateWarningsMore(body);
+          return;
+        }
+        alertsCardPainted = painted;
+        if (loading) {
+          renderLoadingBody(body, card.getAttribute("data-page-name") || "");
           return;
         }
         body.textContent = "";
-
-        // Header count line (stored · pending).
         var head = document.createElement("div");
-        head.className = "dtc-count";
-        head.textContent = view.storedCount + " stored · " + view.pendingCount + " pending";
+        head.className = "warn-header";
+        var count = warnSpan("span", "warn-count", view.header.text);
+        if (view.header.tone) count.setAttribute("data-tone", view.header.tone);
+        head.appendChild(count);
+        if (view.header.meta) head.appendChild(warnSpan("span", "warn-meta", view.header.meta));
         body.appendChild(head);
-
-        if (!view.hero && view.rows.length === 0) {
-          // No codes at all -> an honest all-clear (never a fabricated green).
-          body.appendChild(detailLine("dtc-noalert", "", "No stored codes"));
+        if (view.missing) {
+          body.appendChild(warnSpan("div", "warn-empty", view.empty));
+          return;
         }
-
-        // US-757: the hero is NOT a selection -- it is the head of the same
-        // worst-first ordering -- so drawing it as its own block above the list
-        // showed the worst code twice. The hero code's ROW is now the featured
-        // entry (tier border + directive); every code appears exactly once.
-        var featuredCode = view.hero ? view.hero.code : null;
-
-        // Compact tappable rows (worst-first, na last). Each opens the detail.
+        if (view.quiet) body.appendChild(warningsQuietBlock(view.quiet));
+        if (!view.rows.length) return;
+        var list = document.createElement("div");
+        list.className = "warn-list";
         for (var i = 0; i < view.rows.length; i++) {
           (function (r) {
-            var featured = featuredCode !== null && r.code === featuredCode;
-            if (featured) featuredCode = null; // first match only
-            var row = document.createElement("button");
-            row.className = featured ? "dtc-row dtc-hero tap-target" : "dtc-row tap-target";
-            row.setAttribute("data-level", r.level);
-            var rChip = document.createElement("span");
-            rChip.className = "dtc-chip";
-            rChip.setAttribute("data-level", r.level);
-            rChip.textContent = r.chip;
-            row.appendChild(rChip);
-            var rCode = document.createElement("span");
-            rCode.className = "dtc-row-code";
-            rCode.textContent = r.code;
-            row.appendChild(rCode);
-            var rShort = document.createElement("span");
-            rShort.className = "dtc-row-short";
-            rShort.textContent = r.short + (r.caveat ? "  ⚠ " + r.caveat : "");
-            row.appendChild(rShort);
-            var rStatus = document.createElement("span");
-            rStatus.className = "dtc-row-status";
-            rStatus.textContent = r.status;
-            row.appendChild(rStatus);
-            if (featured) {
-              var rDir = document.createElement("span");
-              rDir.className = "dtc-hero-directive";
-              rDir.textContent = view.hero.directive;
-              row.appendChild(rDir);
+            var row = document.createElement(r.control ? "button" : "div");
+            row.className = r.control ? "warn-row warn-row-code" : "warn-row";
+            row.setAttribute("data-id", r.id);
+            row.setAttribute("data-tier", r.tier);
+            row.setAttribute("data-active", r.active ? "true" : "false");
+            var chip = warnSpan("span", "warn-chip", r.chip);
+            chip.setAttribute("data-tier", r.tier);
+            chip.setAttribute("data-active", r.active ? "true" : "false");
+            row.appendChild(chip);
+            var main = document.createElement("span");
+            main.className = "warn-main";
+            var line = document.createElement("span");
+            line.className = "warn-line";
+            line.appendChild(warnSpan("span", "warn-title", r.title));
+            if (r.value) line.appendChild(warnSpan("span", "warn-value", r.value));
+            main.appendChild(line);
+            if (r.stale) main.appendChild(warnSpan("span", "warn-stale", r.stale));
+            if (r.sentence) main.appendChild(warnSpan("span", "warn-sentence", r.sentence));
+            row.appendChild(main);
+            row.appendChild(warnSpan("span", "warn-age", r.age));
+            if (r.control) {
+              // US-898-c: PARKED-ONLY (engineParked, the US-511 debounce, as
+              // on the glass right now); while not parked the tap does nothing.
+              row.addEventListener("click", function () {
+                if (engineParked.parked !== true) return;
+                var entry = alertsEntryById(r.id);
+                if (entry) openDetail(entry);
+              });
             }
-            row.addEventListener("click", function () { openDetail(findCode(r.code) || r); });
-            body.appendChild(row);
+            list.appendChild(row);
           })(view.rows[i]);
         }
+        body.appendChild(list);
+        // The cue line is always laid out under the list (empty while nothing
+        // is below), so showing it never shrinks the list it is counting.
+        body.appendChild(warnSpan("div", "warn-more", ""));
+        list.addEventListener("scroll", function () { updateWarningsMore(body); });
+        updateWarningsMore(body);
+      }
+
+      // US-898-b2: the empty / not-checked body. The '?' is its own --font-mono
+      // span: Michroma carries only the upper-case words.
+      function warningsQuietBlock(quiet) {
+        var block = document.createElement("div");
+        block.className = "warn-quiet";
+        block.setAttribute("data-state", quiet.state);
+        var headline = document.createElement("div");
+        headline.className = "warn-quiet-head";
+        if (quiet.mark) headline.appendChild(warnSpan("span", "warn-quiet-mark", quiet.mark + " "));
+        headline.appendChild(warnSpan("span", "warn-quiet-word", quiet.head));
+        block.appendChild(headline);
+        for (var i = 0; i < quiet.lines.length; i++) {
+          var line = warnSpan("div", "warn-quiet-line", quiet.lines[i].text);
+          line.setAttribute("data-tone", quiet.lines[i].tone);
+          block.appendChild(line);
+        }
+        return block;
+      }
+
+      // A laid-out element's height, or null where there is no layout (the
+      // test harness, a card not yet laid out).
+      function warnHeight(el) {
+        if (!el || typeof el.getBoundingClientRect !== "function") return null;
+        var h = el.getBoundingClientRect().height;
+        return h > 0 ? h : null;
+      }
+
+      // Iris U9: count from LAYOUT -- the rows whose bottom is below the list's
+      // visible bottom. No layout -> the 48 px-floor fallback, over the
+      // measured header and cue heights (0 where even those are unmeasured).
+      function updateWarningsMore(body) {
+        var list = body.querySelector(".warn-list");
+        var cue = body.querySelector(".warn-more");
+        if (!list || !cue) return;
+        var rows = list.querySelectorAll(".warn-row");
+        var n;
+        if (warnHeight(list) !== null) {
+          var bottom = list.getBoundingClientRect().top + list.clientTop + list.clientHeight;
+          var bottoms = [];
+          for (var i = 0; i < rows.length; i++) bottoms.push(rows[i].getBoundingClientRect().bottom);
+          n = warningsBelowFromLayout(bottom, bottoms);
+        } else {
+          n = warningsMoreBelow(
+            rows.length,
+            warnHeight(body.querySelector(".warn-header")) || WARNINGS_HEADER_EST_PX,
+            warnHeight(cue) || WARNINGS_CUE_EST_PX
+          );
+        }
+        var text = warningsMoreText(n);
+        if (cue.textContent !== text) cue.textContent = text;
       }
 
       if (detailBack) detailBack.addEventListener("click", closeDetail);
@@ -7493,29 +7952,6 @@
       // the two overlays' escape hatches live together. AC2 -- never traps.
       var sysDetailBack = document.getElementById("sys-detail-back");
       if (sysDetailBack) sysDetailBack.addEventListener("click", closeSysDetail);
-      // The ribbon is tappable -> jump to the Alerts card + the hero detail.
-      if (ribbonEl) {
-        ribbonEl.addEventListener("click", function () {
-          if (ribbonEl.hidden) return;
-          var view = ribbonView(lastDtc);
-          openAlertsCard(view ? view.code : null);
-        });
-      }
-
-      // Apply the polled `dtc` state to the ribbon + takeover. A missing/malformed
-      // `dtc` file -> no alert (honest: absence of the state = no active fault),
-      // never a fabricated code.
-      function updateDtcSurfaces(dtcData) {
-        lastDtc = dtcData;
-        renderRibbon(ribbonView(dtcData));
-        var view = takeoverView(dtcData);
-        if (view && takeoverShouldShow(view, dtcLastAckedTs)) {
-          showTakeover(view);
-        } else {
-          hideTakeover();
-        }
-      }
-
       // US-892-b: paint the Motion card. Called from BOTH loops -- the ~10 Hz
       // motion poll (fresh states/imu) and the 4 Hz tick (fresh
       // states/grade-history) -- against one clock per paint.
@@ -7549,7 +7985,6 @@
       }
 
       async function tick() {
-        var dtcData = null; // fetched once (the Alerts card + ribbon/takeover share it)
         var sysData = null; // shared by every surface (one fetch per tick)
         var lightData = null; // shared: the US-507 Health card + the auto-dim
         // US-496: ONE clock for the whole tick, so the Light card's freshness
@@ -7577,8 +8012,7 @@
           // through exactly once per tick. A ledger updated per-consumer would
           // be a ledger some consumer forgets to update.
           feedSeen = feedObserved(feedSeen, name, payload);
-          if (name === "dtc") dtcData = payload;
-          else if (name === "system-status") sysData = payload;
+          if (name === "system-status") sysData = payload;
           else if (name === "light") lightData = payload;
           return payload;
         }
@@ -7610,7 +8044,7 @@
               sourceCardView(
                 spec, data, await stateOnce("system-status"), displayAutoDim,
                 nowMs, feedWaitedMs(feedSeen, name, feedStartedMs, nowMs),
-                brightnessAlarmActive(await stateOnce("dtc"))
+                brightnessAlarmActive(await stateOnce("alerts"))
               )
             );
             continue;
@@ -7658,8 +8092,6 @@
             renderSystemStatusCard(
               card, systemStatusView(data, captureData), glyphEls
             );
-          } else if (name === "dtc") {
-            renderAlertsCard(card, alertsCardView(data, new Date(nowMs).toISOString()));
           }
           // US-508: the standalone Motion branch is GONE with the card it
           // served -- the live instrument is now a FACE of the home slot,
@@ -7681,9 +8113,31 @@
         renderNotLiveMarker(
           notLiveMarker(await stateOnce("system-status"), await stateOnce("obd-live"))
         );
-        // US-405/US-406: drive the takeover + persistent ribbon from the same
-        // `dtc` state the Alerts card rendered (one fetch per tick).
-        updateDtcSurfaces(dtcData);
+        // US-898-a: the warnings icon is on every page, so states/alerts is read
+        // on EVERY tick, unconditionally -- not only while ALERTS is showing.
+        lastAlerts = await stateOnce("alerts");
+        renderTopbarIcon(alertIconView(lastAlerts));
+        // US-899-a1: the STOP takeover, from the SAME cached states/alerts
+        // on this tick's one clock. The read first moves the ack on (a matching
+        // re-read settles it; a lapsed window says so), then the surface paints.
+        var ackWindows = alertsAckWindows();
+        alertsAck = alertsAckNext(alertsAck, {
+          type: "read", alerts: lastAlerts, nowMs: nowMs,
+          confirmSec: ackWindows.confirmSec, noticeSec: ackWindows.noticeSec,
+        });
+        renderAlertsTakeover(
+          takeoverAlertView(lastAlerts, new Date(nowMs).toISOString()), alertsAck
+        );
+        // US-898-b1: the ALERTS card, from the SAME cached states/alerts the
+        // icon just read, on this tick's one clock. LOADING only while that
+        // feed has never answered (US-700), keyed by the feed's name.
+        renderWarningsCard(
+          alertsCard,
+          warningsPageView(await stateOnce("alerts"), new Date(nowMs).toISOString()),
+          loadPhase(
+            await stateOnce("alerts"), feedWaitedMs(feedSeen, "alerts", feedStartedMs, nowMs)
+          ) === "loading"
+        );
         // US-630: the derived gear. Read on THIS tick rather than the ~10 Hz
         // motion loop -- the producer debounces for >= 2 s before it will name a
         // gear, so a gear cannot change faster than the 4 Hz card tick can see
@@ -7703,6 +8157,18 @@
         // states/engine-history alone, and the status row from the same cached
         // obd-live, its codes tap gated on the debounced parked signal.
         engineParked = parkedNext(engineParked, carouselIdle(sysData), nowMs, carouselCfg);
+        // US-899-b: the TROUBLE CODES screen, from the SAME cached states/alerts
+        // the takeover painted from, against THIS tick's parked signal. The read
+        // moves the dismiss on first (a codeAlert-null re-read settles it).
+        codeDismiss = codeDismissNext(codeDismiss, {
+          type: "read", alerts: lastAlerts, nowMs: nowMs,
+          confirmSec: ackWindows.confirmSec, noticeSec: ackWindows.noticeSec,
+        });
+        renderCodeAlert(codeAlertView(lastAlerts, engineParked.parked), codeDismiss);
+        // US-898-c: an open code detail re-reads states/dtc each tick -- the
+        // only states/dtc read on the tick -- and re-gates its clear against
+        // THIS tick's parked signal.
+        if (detailEntry) refreshCodeDetail(await stateOnce("dtc"));
         renderEngineScroll(
           engineCard,
           engineHistoryView(await stateOnce("engine-history")),
@@ -7741,7 +8207,8 @@
         // gate -- the kebab's visibility is no longer a function of any state.
         // US-483-b / US-893-a: APPLY the level the light bridge published in
         // states/light (pure consumer -- never the sensor, never a curve). A
-        // real STOP holds it at full; an absent/stale feed holds the injected
+        // STOP takeover up (US-899-a1: states/alerts.takeover, the same cached
+        // read the takeover painted from) holds it at full; an absent/stale feed holds the injected
         // defaultLevel (honest fallback). See appliedBrightness.
         // US-507: `stateOnce` is idempotent, so this REUSES the payload the
         // Health card's Light section already read and only performs a real
@@ -7753,7 +8220,7 @@
             lightData,
             displayAutoDim,
             nowMs,
-            brightnessAlarmActive(dtcData)
+            brightnessAlarmActive(lastAlerts)
           ).level
         );
       }

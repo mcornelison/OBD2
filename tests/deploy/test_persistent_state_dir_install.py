@@ -47,6 +47,9 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-09-03    | Rex (US-667) | Initial -- Sprint 80 persistent-state-dir gate.
+# 2026-10-20    | Rex (US-897-c) | A third file in the same dir: the alerts ack
+#               |                | store (pi.warnings.ackStorePath), written by
+#               |                | eclipse-obd.service -- probed and announced.
 # ================================================================================
 ################################################################################
 
@@ -78,6 +81,9 @@ UPDATE_MARKER_UNIT = REPO_ROOT / "deploy" / "eclipse-obd.service"
 #: Windows bench -- which would never match a shell script.
 WITNESS_PATH = PurePosixPath(DEFAULT_WITNESS_PATH.as_posix())
 MARKER_PATH = PurePosixPath(DEFAULTS["pi.update.markerFilePath"])
+#: US-897-c: the alerts ack store, written by eclipse-obd.service (the marker's
+#: unit), derived from its own SSOT like the two above.
+ACK_STORE_PATH = PurePosixPath(DEFAULTS["pi.warnings.ackStorePath"])
 
 STATE_DIR = WITNESS_PATH.parent
 
@@ -407,6 +413,42 @@ class TestDeployPiShDryRunAnnouncesTheProvisioning:
                 f"Dry-run output contains '{forbidden}'; the dry-run guard "
                 f"failed and the script attempted a real SSH connection."
             )
+
+
+# ----------------------------------------------------------------------------
+# US-897-c -- the alerts ack store is a third file in the SAME directory, written
+# by the SAME unit as the update marker: probed and announced, no dir change.
+# ----------------------------------------------------------------------------
+
+class TestTheAlertsAckStoreIsProbedToo:
+    """The ack store's path is derived from pi.warnings.ackStorePath and pinned."""
+
+    def test_ackStore_livesInTheProvisionedDirectory(self):
+        assert ACK_STORE_PATH.parent == STATE_DIR, (
+            f"the alerts ack store ({ACK_STORE_PATH}) left {STATE_DIR}; the "
+            f"provisioning step no longer covers it."
+        )
+        assert ACK_STORE_PATH.name == "alerts-ack.json"
+
+    def test_remoteBlockProbesTheAckStore(self):
+        body = _extractRemoteBlock(DEPLOY_SCRIPT.read_text(encoding="utf-8"))
+        loop = re.search(r"for witnessTarget in ([^;]+);", body)
+        assert loop is not None, "the writability probe loop is gone"
+        assert str(ACK_STORE_PATH) in loop.group(1).split(), (
+            f"the probe loop never checks {ACK_STORE_PATH}: a stale-ownership "
+            f"store would fail every ack silently."
+        )
+
+    @pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")
+    def test_dryRunAnnouncesTheAckStoreProbe(self):
+        result = subprocess.run(
+            ["bash", str(DEPLOY_SCRIPT), "--dry-run"],
+            capture_output=True, text=True, encoding="utf-8", timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert f"verify {ACK_STORE_PATH} is writable by {_serviceUser(UPDATE_MARKER_UNIT)}" in (
+            result.stdout + result.stderr
+        )
 
 
 @pytest.mark.skipif(not _bashAvailable(), reason="bash not available on PATH")

@@ -31,6 +31,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-27    | Ralph (Rex)  | Initial -- US-491 DTC detail overlay hierarchy.
+# 2026-10-20    | Ralph (Rex)  | US-898-c MOVED PIN: codeDetailView takes
+#               |              | (codeRecord, entry); the band is the entry's
+#               |              | sentence and the chip the entry's tier; the
+#               |              | clear gate takes engineParked.parked.
 # ================================================================================
 ################################################################################
 
@@ -95,6 +99,40 @@ def _code(severity: str = "stop", **over: object) -> dict:
     }
     code.update(over)
     return code
+
+
+# US-898-c: the provider's words for each tier (the band shows these now,
+# never DTC_TIER's tier-table directive).
+_SENTENCE = {
+    "stop": "Stop soon. Get it checked.",
+    "watch": "Drive gently. Get it diagnosed.",
+    "minor": "Emissions only. Safe to drive.",
+    "unrated": "Severity unknown. Get it diagnosed.",
+}
+
+
+def _entry(tier: str = "stop", code: str = "P0299", **over: object) -> dict:
+    """A states/alerts CODE entry in the provider's shape."""
+    entry: dict = {
+        "id": f"code:{code}:{tier}",
+        "source": "code",
+        "key": code,
+        "tier": tier,
+        "title": f"TURBO ({code})",
+        "sentence": _SENTENCE.get(tier, ""),
+    }
+    entry.update(over)
+    return entry
+
+
+def _detail(severity: str = "stop", **over: object) -> dict:
+    """codeDetailView(record, entry) for one code whose entry carries its tier
+    (an uncurated severity is the provider's `unrated`)."""
+    record = _code(severity, **over)
+    tier = severity if severity in ("stop", "watch", "minor") else "unrated"
+    view = _probe("codeDetailView", record, _entry(tier, str(record["code"])))
+    assert isinstance(view, dict), view
+    return view
 
 
 def _px(block: str, prop: str) -> int:
@@ -180,12 +218,12 @@ def test_directiveBand_isVisuallyABandNotABareLine():
 @_NODE_TESTS
 def test_stopAndWatch_directivesAreUnchanged():
     """AC4 fence: the hierarchy pass must not re-word the two tiers that carry a
-    safety instruction."""
-    assert _probe("codeDetailView", _code("stop"))["directive"] == "REDUCE LOAD · PULL OVER"
-    assert (
-        _probe("codeDetailView", _code("watch"))["directive"]
-        == "DRIVE GENTLY · GET DIAGNOSED"
-    )
+    safety instruction.
+
+    MOVED PIN (US-898-c, Iris U4): the band is the provider's sentence for the
+    entry, never DTC_TIER's tier-table words."""
+    assert _detail("stop")["directive"] == _SENTENCE["stop"]
+    assert _detail("watch")["directive"] == _SENTENCE["watch"]
 
 
 @_NODE_TESTS
@@ -194,8 +232,9 @@ def test_minorCode_keepsItsSafeToClearDirective():
     "SAFE TO CLEAR ONCE LOGGED" since US-405 and the takeover shows it, but the
     DETAIL rendered no band at all -- so the one screen the operator opens to
     ask "what do I do" answered nothing on a gas-cap code."""
-    view = _probe("codeDetailView", _code("minor"))
-    assert view["directive"] == "SAFE TO CLEAR ONCE LOGGED"
+    # MOVED PIN (US-898-c): the band is the MINOR entry's own sentence.
+    view = _detail("minor")
+    assert view["directive"] == _SENTENCE["minor"]
     assert view["level"] == "minor"
 
 
@@ -204,16 +243,22 @@ def test_uncuratedCode_getsTheHonestGetDiagnosedDirective():
     """An unrecognised severity resolves to `unknown`, and unknown is honestly
     "get diagnosed" -- the same answer the takeover already gives it. A blank
     band would read as "nothing to worry about" (honest-instrument F-1)."""
-    view = _probe("codeDetailView", _code("wat"))
+    # MOVED PIN (US-898-c): the provider rates it `unrated`, drawn with the
+    # existing unknown styling; the band is the entry's sentence.
+    view = _detail("wat")
     assert view["level"] == "unknown"
-    assert view["directive"] == "GET DIAGNOSED"
+    assert view["directive"] == _SENTENCE["unrated"]
 
 
 @_NODE_TESTS
 def test_naCode_stillShowsNoDirectiveBand():
     """The one tier that stays blank. `na` is "not applicable to this vehicle" --
-    a fact, not an action -- and it never alarms anywhere else in the system."""
-    assert _probe("codeDetailView", _code("na"))["directive"] is None
+    a fact, not an action -- and it never alarms anywhere else in the system.
+
+    MOVED PIN (US-898-c): the provider publishes no entry for an `na` code, so
+    the band is blank exactly when the entry carries no sentence."""
+    view = _probe("codeDetailView", _code("na"), _entry("watch", sentence=""))
+    assert isinstance(view, dict) and view["directive"] is None
 
 
 def test_everyRenderedDirective_carriesItsTierTag():
@@ -291,7 +336,9 @@ def test_clearZone_isHiddenWhenThereIsNothingToClear():
     start = js.index("function renderClearButton(")
     block = js[start : js.index("function showClearResult(", start)]
     assert "clearZone.hidden = !view.visible" in block
-    assert "clearButtonView(lastDtc)" in block
+    # MOVED PIN (US-898-c): the gate is fed the detail's own states/dtc read
+    # and the parked signal.
+    assert "clearButtonView(dtcData, engineParked.parked)" in block
 
 
 def test_clearZoneHidden_actuallyRemovesItFromFlow():
@@ -355,7 +402,7 @@ def test_s4_fixIsStillReplacedByADirectiveOnStopAndWatch():
     """S-4/F-1: no raw internet fix on a dangerous code, even when the state
     supplies one."""
     for sev in ("stop", "watch"):
-        view = _probe("codeDetailView", _code(sev, suggestedFix="Replace the turbo"))
+        view = _detail(sev, suggestedFix="Replace the turbo")
         assert view["fix"]["mode"] == "directive", sev
         assert view["fix"]["badge"] is None, sev
         assert "Replace the turbo" not in view["fix"]["text"], sev
@@ -363,10 +410,7 @@ def test_s4_fixIsStillReplacedByADirectiveOnStopAndWatch():
 
 @_NODE_TESTS
 def test_trustBadge_isUnchangedOnAMinorFix():
-    view = _probe(
-        "codeDetailView",
-        _code("minor", suggestedFix="Tighten the gas cap", fixProvenance="spool-validated"),
-    )
+    view = _detail("minor", suggestedFix="Tighten the gas cap", fixProvenance="spool-validated")
     assert view["fix"]["mode"] == "fix"
     assert view["fix"]["text"] == "Tighten the gas cap"
     assert view["fix"]["badge"]["kind"] == "verified"
@@ -375,30 +419,39 @@ def test_trustBadge_isUnchangedOnAMinorFix():
 @_NODE_TESTS
 def test_mode04ClearGate_isUnchanged():
     """The most consequential control on the dash. Re-asserted end to end after
-    a story that re-boxed the zone it lives in."""
+    a story that re-boxed the zone it lives in.
+
+    MOVED PIN (US-898-c): asked while parked (the button's second input)."""
     minorOk = _code("minor", code="P0442", logged=True, syncAcked=True)
-    assert _probe("clearButtonView", {"codes": [minorOk]})["enabled"] is True
+    assert _probe("clearButtonView", {"codes": [minorOk]}, True)["enabled"] is True
     assert (
-        _probe("clearButtonView", {"codes": [minorOk, _code("stop")]})["reason"]
+        _probe("clearButtonView", {"codes": [minorOk, _code("stop")]}, True)["reason"]
         == "severity_present"
     )
     assert (
-        _probe("clearButtonView", {"codes": [_code("minor", syncAcked=False)]})["reason"]
+        _probe("clearButtonView", {"codes": [_code("minor", syncAcked=False)]}, True)["reason"]
         == "sync_pending"
     )
     assert (
         _probe(
             "clearButtonView",
             {"codes": [minorOk], "sessionResetLock": ["P0442"]},
+            True,
         )["reason"]
         == "session_locked"
     )
-    assert _probe("clearButtonView", {"codes": []})["visible"] is False
+    assert _probe("clearButtonView", {"codes": []}, True)["visible"] is False
 
 
 @_NODE_TESTS
 def test_severityChipsAndTiersAreUnchanged():
-    for sev, chip in (("stop", "STOP"), ("watch", "WATCH"), ("minor", "MINOR"), ("na", "N/A")):
-        view = _probe("codeDetailView", _code(sev))
-        assert view["chip"] == chip, sev
-        assert view["level"] == (sev if sev != "na" else "na"), sev
+    # MOVED PIN (US-898-c): the chip is the ENTRY's tier word; `unrated` keeps
+    # the existing unknown styling (data-level 'unknown').
+    for tier, chip, level in (
+        ("stop", "STOP", "stop"), ("watch", "WATCH", "watch"),
+        ("minor", "MINOR", "minor"), ("unrated", "UNRATED", "unknown"),
+    ):
+        view = _probe("codeDetailView", _code("watch"), _entry(tier))
+        assert isinstance(view, dict), tier
+        assert view["chip"] == chip, tier
+        assert view["level"] == level, tier

@@ -14,6 +14,8 @@
 # ================================================================================
 # 2026-10-20    | Rex (US-897-b2) | Initial.
 # 2026-10-20    | Rex (US-897-b5) | The CODE source, codeAlert and the code icon.
+# 2026-10-20    | Rex (US-897-c) | acknowledgedIds: default byte-identical; acked
+#                                entries, pulse, cleared-entry removal, codeAlert.
 # ================================================================================
 ################################################################################
 
@@ -1646,3 +1648,101 @@ def test_makeAlertsEmitter_carriesTheCodeSource(tmp_path: Path) -> None:
     assert written is not None
     assert written["sources"]["code"] == {"assessed": True, "checkedAtTs": _T1}
     assert written["codeAlert"]["ids"] == ["code:P0400:watch"]
+
+
+# ------------------------------------------------- acknowledgedIds (US-897-c)
+
+
+def test_ack_defaultIsByteIdentical_toTheS107Output() -> None:
+    arbiter = _arbiter()
+    _step(arbiter, _fresh(112, "2026-10-20T15:12:27Z"))
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored")], _T1))
+    obdLive = _obdLive(_fresh(112, "2026-10-20T15:12:29Z"))
+    args = (arbiter.episodes(), obdLive, _NOW)
+    kw = {"dataSource": "real", "bootId": "b7", "codeSource": arbiter.codeSource()}
+
+    assert json.dumps(aa.buildAlertsState(*args, **kw)) == json.dumps(
+        aa.buildAlertsState(*args, **kw, acknowledgedIds=())
+    )
+
+
+def test_ack_liveStop_acknowledged_noPulse_takeoverStillSet() -> None:
+    """VC1: an acked live STOP keeps its takeover (never dismissable)."""
+    arbiter = _arbiter()
+    obdLive = _obdLive(_fresh(112, "2026-10-20T15:12:27Z"))
+    arbiter.observe(obdLive, dataSource="real", database=None)
+
+    state = aa.buildAlertsState(
+        arbiter.episodes(), obdLive, _NOW, dataSource="real", bootId="b7",
+        acknowledgedIds={_STOP_ID},
+    )
+
+    assert state["entries"][0]["acknowledged"] is True
+    assert state["icon"] == {"state": "stop", "count": 1, "pulse": False}
+    assert state["takeover"]["id"] == _STOP_ID
+
+
+def test_ack_aClearedStop_isRemovedFromEntries_anUnackedOneStaysListed() -> None:
+    """Atlas Q15: a cleared STOP stays listed until acked; acking removes it."""
+    arbiter = _arbiter()
+    _step(arbiter, _fresh(112, "2026-10-20T15:12:27Z"))
+    _step(arbiter, _fresh(95, "2026-10-20T15:14:00Z", band="green"))
+
+    unacked = _build(arbiter, None)
+    acked = aa.buildAlertsState(
+        arbiter.episodes(), None, _NOW, dataSource="real", bootId="b7",
+        acknowledgedIds=[_STOP_ID],
+    )
+
+    assert [(e["id"], e["active"]) for e in unacked["entries"]] == [(_STOP_ID, False)]
+    assert acked["entries"] == []
+    assert acked["icon"]["count"] == 0
+    assert acked["takeover"] is None
+
+
+def test_ack_codeAlert_isNullOnlyOnceEveryOneOfItsIdsIsAcked() -> None:
+    arbiter = _arbiter()
+    arbiter.observeDtc(_dtcPayload([("P0400", "stored"), ("P0443", "stored")], _T1))
+    ids = [e.id for e in arbiter.episodes()]
+    assert len(ids) == 2
+
+    def build(acked):
+        return aa.buildAlertsState(
+            arbiter.episodes(), None, _NOW, dataSource="real", bootId="b7",
+            codeSource=arbiter.codeSource(), acknowledgedIds=acked,
+        )
+
+    partly = build(ids[:1])
+    assert partly["codeAlert"]["ids"] == [e["id"] for e in partly["entries"]]
+    whole = build(ids)
+    assert whole["codeAlert"] is None
+    # Active code entries stay listed and counted, acknowledged.
+    assert [e["acknowledged"] for e in whole["entries"]] == [True, True]
+    assert whole["icon"]["count"] == 2
+
+
+def test_ack_anIdTheArbiterDoesNotList_changesNothing() -> None:
+    arbiter = _arbiter()
+    obdLive = _obdLive(_fresh(112, "2026-10-20T15:12:27Z"))
+    arbiter.observe(obdLive, dataSource="real", database=None)
+    kw = {"dataSource": "real", "bootId": "b7"}
+
+    assert aa.buildAlertsState(
+        arbiter.episodes(), obdLive, _NOW, **kw, acknowledgedIds={"nope"}
+    ) == aa.buildAlertsState(arbiter.episodes(), obdLive, _NOW, **kw)
+
+
+def test_makeAlertsEmitter_carriesTheAcknowledgedIds(tmp_path: Path) -> None:
+    emit = aa.makeAlertsEmitter(str(tmp_path / "states"))
+    arbiter = _arbiter()
+    obdLive = _obdLive(_fresh(112, "2026-10-20T15:12:27Z"))
+    arbiter.observe(obdLive, dataSource="real", database=None)
+
+    written = emit(
+        arbiter.episodes(), obdLive, nowUtc=_NOW, dataSource="real", bootId="b7",
+        acknowledgedIds=frozenset({_STOP_ID}),
+    )
+
+    assert written["entries"][0]["acknowledged"] is True
+    onDisk = json.loads((tmp_path / "states" / "alerts").read_text(encoding="utf-8"))
+    assert onDisk == written

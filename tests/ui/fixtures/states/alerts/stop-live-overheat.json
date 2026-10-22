@@ -1,0 +1,62 @@
+{
+  "ts": "2026-10-20T17:30:00Z",
+  "dataSource": "real",
+  "bootId": "boot-fixture-0001",
+  "sources": {
+    "code": {
+      "assessed": true,
+      "checkedAtTs": "2026-10-20T17:20:00Z"
+    },
+    "engine": {
+      "assessed": false
+    },
+    "system": {
+      "assessed": false,
+      "reason": "not_built"
+    },
+    "data": {
+      "assessed": false,
+      "reason": "not_built"
+    }
+  },
+  "codesCheckedThisSession": true,
+  "checkedAtTs": "2026-10-20T17:20:00Z",
+  "icon": {
+    "state": "stop",
+    "count": 1,
+    "pulse": true
+  },
+  "takeover": {
+    "id": "engine:COOLANT_TEMP:stop",
+    "title": "ENGINE OVERHEATING",
+    "sentence": "Stop safely, engine off. Do not open the radiator cap hot.",
+    "directive": "PULL OVER",
+    "value": 112,
+    "unit": "C",
+    "last": null,
+    "stale": false,
+    "firstSeenTs": "2026-10-20T17:29:40Z",
+    "dismissable": false
+  },
+  "codeAlert": null,
+  "entries": [
+    {
+      "id": "engine:COOLANT_TEMP:stop",
+      "source": "engine",
+      "key": "COOLANT_TEMP",
+      "tier": "stop",
+      "title": "ENGINE OVERHEATING",
+      "sentence": "Stop safely, engine off. Do not open the radiator cap hot.",
+      "directive": "PULL OVER",
+      "value": 112,
+      "unit": "C",
+      "last": null,
+      "stale": false,
+      "firstSeenTs": "2026-10-20T17:29:40Z",
+      "lastSeenTs": "2026-10-20T17:30:00Z",
+      "active": true,
+      "acknowledged": false,
+      "codeStatus": null
+    }
+  ]
+}

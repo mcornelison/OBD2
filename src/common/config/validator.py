@@ -176,6 +176,12 @@
 # 2026-10-20    | Rex (US-897-b4)| pi.warnings.engine.RPM.redTier 'watch',
 #                                pi.warnings.rpm.clearGreenHoldSec 10 (Atlas
 #                                Q13); the hold must be positive.
+# 2026-10-20    | Rex (US-897-c) | pi.warnings.ackTimeoutSec 5 (POST /alerts-ack
+#                                wait, Atlas Q22), finite > 0; pi.warnings.
+#                                ackStorePath /var/lib/eclipse-obd/alerts-ack.json,
+#                                a non-empty string.
+# 2026-10-20    | Rex (US-899-a1)| pi.display.stale.alertsAckConfirmSec 6 (Atlas
+#                                Q33) + alertsAckNoticeSec 3 (Iris), finite > 0.
 # ================================================================================
 ################################################################################
 
@@ -877,6 +883,15 @@ DEFAULTS: dict[str, Any] = {
     # request as window.DISPLAY_STALE.fuelResetConfirmSec beside imuSec; NOT an
     # overlay key (Atlas ruling B) and carousel.js holds no mirror of it.
     'pi.display.stale.fuelResetConfirmSec': 6,
+    # US-899-a1 (F-127, Atlas Q33): after a 200 from POST /alerts-ack the kiosk
+    # waits at most this long (clock from the 200) for a states/alerts re-read
+    # showing the entry acknowledged:true before it says "couldn't acknowledge"
+    # -- the fuelResetConfirmSec pattern and value. Injected per request as
+    # window.DISPLAY_STALE.alertsAckConfirmSec; NOT an overlay key.
+    'pi.display.stale.alertsAckConfirmSec': 6,
+    # US-899-a1 (Iris brief s A): how long "couldn't acknowledge" stays on the
+    # takeover. Injected as window.DISPLAY_STALE.alertsAckNoticeSec.
+    'pi.display.stale.alertsAckNoticeSec': 3,
     # US-880-a (F-159): the speed integrator's gap rule (src/pi/obdii/
     # speed_integrator.py) -- an interval between SPEED readings wider than this
     # is not continuous travel and adds no distance. ONE gap definition across
@@ -988,6 +1003,12 @@ DEFAULTS: dict[str, Any] = {
     # green this long (its own key, separate from the battery's).
     'pi.warnings.engine.RPM.redTier': 'watch',  # Spool 2026-10-14
     'pi.warnings.rpm.clearGreenHoldSec': 10,  # Atlas Q13
+    # US-897-c: POST /alerts-ack. The HTTP wait for eclipse-obd's outcome --
+    # short, the state server is single-threaded (Atlas Q22) -- and the boot-
+    # scoped ack store, persistent so it survives a restart inside the boot
+    # (Atlas s3: the US-667 dir, beside the PLD witness).
+    'pi.warnings.ackTimeoutSec': 5,  # Atlas Q22
+    'pi.warnings.ackStorePath': '/var/lib/eclipse-obd/alerts-ack.json',  # Atlas s3
     # US-901-a (F-162): a replay run. True makes SyncClient refuse every push
     # (REFUSED, nothing written to sync_log), main.py refuse the production
     # database and states dir, and rows carry data_source 'replay'. Off in
@@ -1641,16 +1662,40 @@ class ConfigValidator:
         ``redTier`` is ``stop`` or ``watch``; only COOLANT_TEMP may be a STOP
         (Spool 2026-10-14: live coolant red is the one PULL OVER).
         ``pi.warnings.battery.clearGreenHoldSec`` and
-        ``pi.warnings.rpm.clearGreenHoldSec`` must be positive numbers.
+        ``pi.warnings.rpm.clearGreenHoldSec`` must be positive numbers;
+        ``pi.warnings.ackTimeoutSec`` (US-897-c) a finite number > 0 and
+        ``pi.warnings.ackStorePath`` a non-empty string. An absent key is
+        skipped (a custom defaults set may not supply it).
 
         Args:
             config: Validated configuration (post-default-application).
 
         Raises:
             ConfigValidationError: If an engine rule is not a mapping, a tier is
-                outside stop/watch, a PID other than COOLANT_TEMP is a stop, or
-                the battery green hold is not a positive number.
+                outside stop/watch, a PID other than COOLANT_TEMP is a stop, a
+                green hold is not a positive number, the ack wait is not a
+                finite number > 0 or the ack store path is not a non-empty
+                string.
         """
+        ackTimeout = self._getNestedValue(config, 'pi.warnings.ackTimeoutSec')
+        if ackTimeout is not None and (
+            isinstance(ackTimeout, bool)
+            or not isinstance(ackTimeout, (int, float))
+            or not math.isfinite(ackTimeout)
+            or ackTimeout <= 0
+        ):
+            raise ConfigValidationError(
+                f"pi.warnings.ackTimeoutSec must be a finite number > 0 (got {ackTimeout!r})",
+                missingFields=['pi.warnings.ackTimeoutSec'],
+            )
+        ackStorePath = self._getNestedValue(config, 'pi.warnings.ackStorePath')
+        if ackStorePath is not None and (
+            not isinstance(ackStorePath, str) or not ackStorePath.strip()
+        ):
+            raise ConfigValidationError(
+                f"pi.warnings.ackStorePath must be a non-empty path (got {ackStorePath!r})",
+                missingFields=['pi.warnings.ackStorePath'],
+            )
         for holdKey in (
             'pi.warnings.battery.clearGreenHoldSec',
             'pi.warnings.rpm.clearGreenHoldSec',
@@ -2069,9 +2114,11 @@ class ConfigValidator:
     def _validateStaleImu(self, config: dict[str, Any]) -> None:
         """Validate the page's injected stale windows: each a finite number > 0.
 
-        pi.display.stale.imuSec (US-882-c) and
-        pi.display.stale.fuelResetConfirmSec (US-890-f). An absent key is
-        skipped (a custom defaults set may not supply it).
+        pi.display.stale.imuSec (US-882-c),
+        pi.display.stale.fuelResetConfirmSec (US-890-f) and the two ack
+        windows pi.display.stale.alertsAckConfirmSec / alertsAckNoticeSec
+        (US-899-a1). An absent key is skipped (a custom defaults set may not
+        supply it).
 
         Args:
             config: Validated configuration (post-default-application).
@@ -2080,7 +2127,12 @@ class ConfigValidator:
             ConfigValidationError: If a key is non-numeric, non-finite or
                 non-positive.
         """
-        for key in ('pi.display.stale.imuSec', 'pi.display.stale.fuelResetConfirmSec'):
+        for key in (
+            'pi.display.stale.imuSec',
+            'pi.display.stale.fuelResetConfirmSec',
+            'pi.display.stale.alertsAckConfirmSec',
+            'pi.display.stale.alertsAckNoticeSec',
+        ):
             val = self._getNestedValue(config, key)
             if val is None:
                 continue

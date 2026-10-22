@@ -30,6 +30,10 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-19    | Rex (US-893-b) | Initial -- the Light page.
+# 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): the stop-override alarm
+#               |                | is served as the provider's PULL OVER at
+#               |                | /alerts (brightnessAlarmActive keys on it);
+#               |                | every assertion is unchanged.
 # ================================================================================
 ################################################################################
 
@@ -113,8 +117,24 @@ def _call(fn: str, *args: Any) -> Any:
     return json.loads(proc.stdout)
 
 
+def _alertsFor(fx: dict[str, Any]) -> dict[str, Any] | None:
+    """MOVED PIN (US-899-a1): the alarm is the provider's PULL OVER takeover
+    (states/alerts), no longer a states/dtc STOP code. A fixture whose `dtc`
+    carries a live STOP is served as the provider's live STOP takeover
+    (tests/ui/fixtures/states/alerts/stop-live-overheat.json); the light
+    fixtures themselves are unchanged."""
+    codes = (fx["dtc"] or {}).get("codes") or []
+    if not any(c.get("severity") == "stop" for c in codes):
+        return None
+    path = os.path.join(os.path.dirname(__file__), "fixtures", "states", "alerts",
+                        "stop-live-overheat.json")
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def _alarm(fx: dict[str, Any]) -> bool:
-    return bool(fx["dtc"]) and _call("brightnessAlarmActive", fx["dtc"])
+    alerts = _alertsFor(fx)
+    return alerts is not None and _call("brightnessAlarmActive", alerts)
 
 
 def _view(name: str, light: Any = "fixture", shiftMs: int = 0) -> dict[str, Any]:
@@ -615,6 +635,8 @@ def _run(name: str, routes: dict[str, Any] | None = None, steps: Any = None) -> 
     r = {"/light": fx["light"]}
     if fx["dtc"]:
         r["/dtc"] = fx["dtc"]
+    if _alertsFor(fx) is not None:
+        r["/alerts"] = _alertsFor(fx)
     return rh.runDashboard(routes=r if routes is None else routes, autoDim=fx["autoDim"],
                            nowMs=_ms(fx["now"]), steps=steps or [{"flush": 4}])
 

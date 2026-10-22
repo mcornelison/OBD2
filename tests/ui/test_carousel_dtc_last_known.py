@@ -13,7 +13,13 @@
 #     * never read               -> "DTC not read" still renders
 #     * remembered codes         -> no clear offered (display mirror AND the
 #                                   authoritative gate, runner never called)
-#     * remembered codes         -> no takeover, no ribbon, newSinceTs null
+#     * remembered codes         -> no takeover, newSinceTs null
+#
+#   MOVED PIN (US-898-b1): the two CARD cases (codes + age rendered, never-read
+#   renders "DTC not read") are RETIRED. The ALERTS card now reads states/alerts
+#   only; remembered codes reach it as the provider's entries (the arbiter
+#   prunes nothing on a null read), not as this payload's lastKnown block. The
+#   payload, clear-gate and takeover pins below still hold and stay.
 #
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
@@ -27,6 +33,10 @@
 # 2026-09-14    | Ralph (Rex)  | Initial -- US-752 last-known Alerts card.
 # 2026-10-19    | Ralph (Rex)  | US-754-b -- MOVED PIN: stale comment on the live
 #               |              | tiers of P0443/P0400 corrected.
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the two card cases retired; the
+#               |              | ALERTS card reads states/alerts, never this payload.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the ribbon case retired with
+#               |              | #dtc-ribbon; the takeover check reads the DOM.
 # ================================================================================
 ################################################################################
 
@@ -127,24 +137,6 @@ def _surface(state: dict[str, Any]):
     )
 
 
-def _textOf(node: dict) -> list[str]:
-    out = []
-    for child in node.get("children", []):
-        if "text" in child:
-            out.append(child["text"].strip())
-        else:
-            out.extend(_textOf(child))
-    return [t for t in out if t]
-
-
-def _alertsText(state: dict[str, Any]) -> str:
-    surface = _surface(state)
-    for path in surface.paths():
-        if path[-1].get("attrs", {}).get("data-state") == "dtc":
-            return " ".join(_textOf(path[-1]))
-    return ""
-
-
 def test_restingPayload_liveFieldsAreNull_lastKnownIsDated():
     """
     Given: the link is down and codes were read before
@@ -162,39 +154,6 @@ def test_restingPayload_liveFieldsAreNull_lastKnownIsDated():
     assert state["lastKnown"]["mil"] is True
     assert state["lastKnown"]["source"] == "dtc_log"
     assert [c["code"] for c in state["lastKnown"]["codes"]] == ["P0443", "P0400"]
-
-
-def test_alertsCard_keyOffWithKnownCodes_rendersThemWithTheirAge():
-    """
-    Given: the resting payload holding P0443 + P0400, last read 3 h ago
-    When: the shipped card renders it
-    Then: both codes and the age are on the card, and it says neither
-          "DTC not read" / "not read yet" nor "No stored codes"
-    """
-    text = _alertsText(_resting(_lastKnown()))
-
-    assert "P0443" in text, text
-    assert "P0400" in text, text
-    assert "LAST KNOWN CODES" in text, text
-    assert "last read 3 h ago" in text, text
-    assert "DTC not read" not in text, text
-    assert "not read yet" not in text, text
-    assert "No stored codes" not in text, text
-
-
-def test_alertsCard_neverRead_stillRendersNotRead():
-    """
-    Given: a genuinely never-read state (no dtc_log rows -> lastKnown null)
-    When: the card renders
-    Then: "DTC not read" -- the true typed absence keeps its meaning
-    """
-    state = _resting(None)
-    assert state["lastKnown"] is None
-
-    text = _alertsText(state)
-
-    assert "DTC not read" in text, text
-    assert "LAST KNOWN" not in text, text
 
 
 def test_rememberedCodes_offerNoClear_onTheDisplayOrTheAuthoritativeGate():
@@ -220,18 +179,21 @@ def test_rememberedCodes_offerNoClear_onTheDisplayOrTheAuthoritativeGate():
     assert calls == []
 
 
-def test_rememberedCodes_neverTriggerTheTakeoverOrTheRibbon():
+def test_rememberedCodes_neverTriggerTheTakeover():
     """
     Given: the resting payload with remembered codes
-    When: the US-405 takeover and the ribbon are evaluated
-    Then: newSinceTs is null, neither view exists, and the ribbon does not paint
+    When: the dashboard renders it
+    Then: newSinceTs is null and the takeover does not paint
+
+    MOVED PIN (US-899-a2): the US-405 takeoverView and the ribbon are deleted;
+    the takeover is driven by states/alerts alone, so a states/dtc payload --
+    remembered codes included -- can never raise it.
     """
     state = _resting(_lastKnown())
 
     assert state["newSinceTs"] is None
-    assert _probe("takeoverView", state) is None
-    assert _probe("ribbonView", state) is None
 
     surface = _surface(state)
-    ribbon = surface.pathById("dtc-ribbon")
-    assert ribbon is None or not surface.rendered(ribbon)
+    takeover = surface.pathById("dtc-takeover")
+    assert takeover is not None
+    assert not surface.rendered(takeover)

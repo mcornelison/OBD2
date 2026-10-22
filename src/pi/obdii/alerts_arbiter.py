@@ -32,6 +32,10 @@
 #                                words, pending labelled), sources.code from
 #                                checkedAtTs, codeAlert; removal only on a NEWER
 #                                read (G1).
+# 2026-10-20    | Rex (US-897-c) | buildAlertsState + the emit take acknowledgedIds
+#                                (default empty: output unchanged): acknowledged
+#                                true, an acked cleared entry removed (Q15), no
+#                                pulse, codeAlert null once all its ids are acked.
 # ================================================================================
 ################################################################################
 
@@ -55,9 +59,11 @@ Three rules are load-bearing:
   ends a STOP -- and only a fresh GREEN held 10 s ends the battery WATCH; while
   the reading is stale or absent the entry stays active with ``value: null``
   and ``last`` carrying the last red reading (Atlas Q10).
-* **A cleared STOP stays listed** ``active: false`` for the rest of the boot; it
-  never drops by time (Atlas Q15). A restart inside the boot re-reads it from the
-  tmpfs ``states/alerts`` (Atlas G3).
+* **A cleared STOP stays listed** ``active: false`` until it is acknowledged,
+  bounded by the boot; it never drops by time (Atlas Q15). A restart inside the
+  boot re-reads it from the tmpfs ``states/alerts`` (Atlas G3). The
+  acknowledgements themselves are the host's ack store's (US-897-c), handed to
+  :func:`buildAlertsState` as ids: the arbiter never writes.
 * **ids are deterministic**: ``<source>:<key>:<tier>``, never a counter, so an
   escalation is a new id.
 """
@@ -222,7 +228,8 @@ class AlertEpisode:
         value: The CURRENT reading, None while stale or cleared.
         last: ``{value, band, ts}`` of the last red reading while ``value`` is
             None, else None.
-        acknowledged: Always False until the ack store (S108).
+        acknowledged: False as held; :func:`buildAlertsState` publishes True
+            for the ids the host's ack store matches this boot (US-897-c).
         peak: Highest reading of the episode (the clear row's value).
         recorded: True once THIS process wrote the episode's open row.
         codeStatus: ``stored`` / ``pending`` for a code entry, else None.
@@ -978,6 +985,7 @@ def buildAlertsState(
     dataSource: str | None,
     bootId: str,
     codeSource: Mapping[str, Any] | None = None,
+    acknowledgedIds: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Build the states/alerts payload (Atlas s2 shape; pure).
 
@@ -988,14 +996,25 @@ def buildAlertsState(
         dataSource: The obd-live data_source tag, or None.
         bootId: ``readBootId()`` ('unknown' when unreadable).
         codeSource: ``AlertsArbiter.codeSource()``; None -> unassessed.
+        acknowledgedIds: The ids the ack store matches for this boot and this
+            episode (US-897-c). Empty (the default) publishes nothing acked.
 
     Returns:
         ``{ts, dataSource, bootId, sources, codesCheckedThisSession,
         checkedAtTs, icon, takeover, codeAlert, entries}`` -- every key present.
         ``entries`` is already ordered; ``takeover`` is set while the top
-        ACTIVE entry is a stop; ``codeAlert`` while any code entry is active.
+        ACTIVE entry is a stop (acked or not: the takeover is not dismissable);
+        ``codeAlert`` while any code entry is active and not every one of its
+        ids is acknowledged. An acknowledged entry that is no longer active is
+        not listed (Atlas Q15: acking removes it), and an acknowledged entry
+        never pulses.
     """
-    ordered = sorted(episodes, key=_sortKey)
+    acked = frozenset(acknowledgedIds)
+    ordered = sorted(
+        (replace(e, acknowledged=True) if e.id in acked else e for e in episodes),
+        key=_sortKey,
+    )
+    ordered = [e for e in ordered if e.active or not e.acknowledged]
     entries = [_entryOf(e) for e in ordered]
     active = [e for e in ordered if e.active]
     code: dict[str, Any] = {"assessed": False, "checkedAtTs": None}
@@ -1011,7 +1030,7 @@ def buildAlertsState(
     # Atlas Q32: the provider computes the tier; the page decides moving/parked.
     codeIds = [e["id"] for e in entries if e["active"] and e["source"] == SOURCE_CODE]
     codeAlert = None
-    if codeIds:
+    if codeIds and not all(e["acknowledged"] for e in entries if e["id"] in codeIds):
         firstTier = next(e["tier"] for e in entries if e["id"] == codeIds[0])
         codeAlert = {"ids": codeIds, "tier": firstTier, "dismissable": True}
     return {
@@ -1063,9 +1082,10 @@ def makeAlertsEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
         statesDir: tmpfs states directory (e.g. ``/run/eclipse-obd/states``).
 
     Returns:
-        ``emit(episodes, obdLive, *, nowUtc, dataSource, bootId, codeSource)``
-        writing the payload atomically and returning it. Best-effort by
-        contract: a failure is logged, never raised, and returns None.
+        ``emit(episodes, obdLive, *, nowUtc, dataSource, bootId, codeSource,
+        acknowledgedIds)`` writing the payload atomically and returning it.
+        Best-effort by contract: a failure is logged, never raised, and
+        returns None.
     """
     from pi.splash import boot_state_emitter
 
@@ -1079,11 +1099,12 @@ def makeAlertsEmitter(statesDir: str) -> Callable[..., dict[str, Any] | None]:
         dataSource: str | None,
         bootId: str,
         codeSource: Mapping[str, Any] | None = None,
+        acknowledgedIds: Iterable[str] = (),
     ) -> dict[str, Any] | None:
         try:
             payload = buildAlertsState(
                 episodes, obdLive, nowUtc, dataSource=dataSource, bootId=bootId,
-                codeSource=codeSource,
+                codeSource=codeSource, acknowledgedIds=acknowledgedIds,
             )
             boot_state_emitter.ensureStatesDir(statesDir)
             boot_state_emitter.writeStateAtomic(target, payload)

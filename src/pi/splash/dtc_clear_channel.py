@@ -31,9 +31,9 @@
 #   an ECU write, and it is the reason every unhappy path raises instead of
 #   returning.
 #
-#   Both files are written temp + os.replace via the shared writeStateAtomic, so
-#   a reader never sees a torn payload and a power cut mid-write cannot leave a
-#   zero-byte file (the US-682 lesson).
+#   The file mechanics and the poll loop live in the shared `request_channel`
+#   (US-897-c0); this module keeps the DTC filenames, budget, exception classes,
+#   messages and the raise-on-refusal readback.
 # Author: Atlas (Architect) -- built under the CIO's standing build directive
 # Creation Date: 2026-09-09
 # Copyright: (c) 2026 Eclipse OBD-II Project. All rights reserved.
@@ -44,19 +44,24 @@
 # ================================================================================
 # 2026-09-09    | Atlas   | Initial -- ARCH-023 request/outcome channel + the
 #               |         | bridge clearRunner the HTTP route was missing.
+# 2026-10-20    | Rex     | US-897-c0 -- thin wrapper over request_channel;
+#               |         | every public name, message and shape unchanged.
 # ================================================================================
 ################################################################################
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any
 
-from pi.splash.boot_state_emitter import writeStateAtomic
+from pi.splash.request_channel import (
+    POLL_INTERVAL_SECONDS,
+    RequestChannel,
+    RequestChannelPublishError,
+    RequestChannelTimeout,
+)
 
 __all__ = [
     "ClearBridgeError",
@@ -83,8 +88,8 @@ OUTCOME_FILENAME = "dtc-clear-outcome.json"
 #: milliseconds.  A caller that wants a different budget passes one.
 DEFAULT_TIMEOUT_SECONDS = 20.0
 
-#: Poll cadence while waiting.  Cheap: a stat on tmpfs.
-POLL_INTERVAL_SECONDS = 0.25
+#: The shared channel over this module's two files.
+_CHANNEL = RequestChannel(REQUEST_FILENAME, OUTCOME_FILENAME)
 
 
 class ClearBridgeError(RuntimeError):
@@ -117,10 +122,7 @@ def writeRequest(
     nowFn: Callable[[], float] = time.time,
 ) -> None:
     """Publish a clear request for the orchestrator to service."""
-    writeStateAtomic(
-        str(Path(statesDir) / REQUEST_FILENAME),
-        {"requestId": requestId, "requestedAtEpoch": nowFn()},
-    )
+    _CHANNEL.writeRequest(statesDir, requestId, nowFn=nowFn)
 
 
 def readRequest(statesDir: str) -> dict[str, Any] | None:
@@ -131,7 +133,7 @@ def readRequest(statesDir: str) -> dict[str, Any] | None:
     down.  It is also self-correcting -- the requester times out and the
     operator sees an honest failure.
     """
-    return _readJson(Path(statesDir) / REQUEST_FILENAME)
+    return _CHANNEL.readRequest(statesDir)
 
 
 def consumeRequest(statesDir: str) -> None:
@@ -140,12 +142,7 @@ def consumeRequest(statesDir: str) -> None:
     🔴 Load-bearing: Mode 04 is irreversible, so a request left in place would be
     serviced again on the next run-loop pass -- a second wipe nobody asked for.
     """
-    try:
-        (Path(statesDir) / REQUEST_FILENAME).unlink()
-    except FileNotFoundError:
-        pass
-    except OSError:
-        pass
+    _CHANNEL.consumeRequest(statesDir)
 
 
 # ==============================================================================
@@ -169,8 +166,8 @@ def writeOutcome(
     ``requestId`` is echoed so a stale outcome can never be mistaken for the
     answer to a later request.
     """
-    writeStateAtomic(
-        str(Path(statesDir) / OUTCOME_FILENAME),
+    _CHANNEL.writeOutcome(
+        statesDir,
         {
             "requestId": requestId,
             "ok": bool(ok),
@@ -178,14 +175,14 @@ def writeOutcome(
             "pending": [str(c) for c in pending],
             "mil": bool(mil),
             "error": error,
-            "completedAtEpoch": nowFn(),
         },
+        nowFn=nowFn,
     )
 
 
 def readOutcome(statesDir: str) -> dict[str, Any] | None:
     """Read the most recent outcome, or None."""
-    return _readJson(Path(statesDir) / OUTCOME_FILENAME)
+    return _CHANNEL.readOutcome(statesDir)
 
 
 # ==============================================================================
@@ -224,50 +221,36 @@ def makeBridgeClearRunner(
     """
 
     def runner() -> Mapping[str, Any]:
-        requestId = idFn()
+        # ⚠️ The channel's requestId match is what stops a LEFTOVER outcome from
+        # an earlier press answering this one.  Without it the second press
+        # reports the first press's result and issues no Mode 04 at all.
         try:
-            writeRequest(statesDir, requestId, nowFn=time.time)
-        except OSError as exc:
+            outcome = _CHANNEL.awaitOutcome(
+                statesDir,
+                timeoutSeconds=timeoutSeconds,
+                nowFn=nowFn,
+                wallFn=time.time,
+                sleepFn=sleepFn,
+                idFn=idFn,
+            )
+        except RequestChannelPublishError as exc:
             raise ClearBridgeError(
-                f"could not publish the clear request to {statesDir}: {exc}"
+                f"could not publish the clear request to {statesDir}: {exc.cause}"
+            ) from exc.cause
+        except RequestChannelTimeout as exc:
+            # The channel has already withdrawn the request so it cannot fire later.
+            raise ClearBridgeTimeout(
+                "no answer from the OBD service within "
+                f"{timeoutSeconds:g}s -- the clear may or may not have been "
+                "issued; re-read the codes before pressing again"
             ) from exc
-
-        deadline = nowFn() + timeoutSeconds
-        while True:
-            outcome = readOutcome(statesDir)
-            # ⚠️ The requestId match is what stops a LEFTOVER outcome from an
-            # earlier press answering this one.  Without it the second press
-            # reports the first press's result and issues no Mode 04 at all.
-            if isinstance(outcome, Mapping) and outcome.get("requestId") == requestId:
-                if not outcome.get("ok", False):
-                    reason = outcome.get("error") or "orchestrator refused the clear"
-                    raise ClearBridgeError(str(reason))
-                return {
-                    "stored": [str(c) for c in (outcome.get("stored") or [])],
-                    "pending": [str(c) for c in (outcome.get("pending") or [])],
-                    "mil": bool(outcome.get("mil", False)),
-                }
-            if nowFn() >= deadline:
-                consumeRequest(statesDir)  # do not leave it to fire later
-                raise ClearBridgeTimeout(
-                    "no answer from the OBD service within "
-                    f"{timeoutSeconds:g}s -- the clear may or may not have been "
-                    "issued; re-read the codes before pressing again"
-                )
-            sleepFn(POLL_INTERVAL_SECONDS)
+        if not outcome.get("ok", False):
+            reason = outcome.get("error") or "orchestrator refused the clear"
+            raise ClearBridgeError(str(reason))
+        return {
+            "stored": [str(c) for c in (outcome.get("stored") or [])],
+            "pending": [str(c) for c in (outcome.get("pending") or [])],
+            "mil": bool(outcome.get("mil", False)),
+        }
 
     return runner
-
-
-# ==============================================================================
-# Internals
-# ==============================================================================
-
-
-def _readJson(path: Path) -> dict[str, Any] | None:
-    """Read a JSON object, or None when absent/unreadable/not an object."""
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None

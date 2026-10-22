@@ -39,6 +39,10 @@
 #               |              | page name (chip moved to #sys-detail).
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: ADVANCE_OBSERVED now imported from
 #                               css_type_scale (Atlas B6).
+# 2026-10-20    | Ralph (Rex)  | US-898-a -- the reader charges every span.glyph by
+#                               its declared width (WiFi SVG, warnings icon) and fails
+#                               on one it cannot charge; "no fourth glyph" restated as
+#                               "no fifth glyph" with Iris's S108 numbers.
 # ================================================================================
 ################################################################################
 
@@ -46,9 +50,12 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import operator
 import os
 import re
+from typing import NamedTuple
 
 import pytest
 
@@ -92,7 +99,11 @@ STAGE_WIDTH_PX = 480
 # not a rule like `isascii()`: a character the face lacks is painted by a
 # FALLBACK face at a different advance, and this model has no honest number for
 # it. `_textWidthPx` fails on one instead -- the thing the P-6 guard could not do.
-_MEASURED_IN_FACE = frozenset(map(chr, range(0x20, 0x7F))) | frozenset("⇅•")
+#
+# US-898-a adds `▲` (U+25B2) and `△` (U+25B3), the warnings icon's triangles:
+# Iris's cmap check of DejaVu Sans Mono 2.35 (2026-10-19) finds both at the same
+# 0.60205 em advance.
+_MEASURED_IN_FACE = frozenset(map(chr, range(0x20, 0x7F))) | frozenset("⇅•▲△")
 
 # The longest string the clock can hold: `fmtClock` renders 12-hour with a
 # meridiem, so "12:45 PM" (8 chars) is the maximum, never "9:05 AM".
@@ -264,6 +275,53 @@ def _textWidthPx(text: str, fontSizePx: float, letterSpacingEm: float) -> float:
     return len(text) * fontSizePx * (PI_MONO_ADVANCE_EM + letterSpacingEm)
 
 
+class Glyph(NamedTuple):
+    """One `span.glyph` of the left cluster, as the markup carries it.
+
+    US-898-a: a glyph is no longer just its text. WiFi is an inline SVG with no
+    text at all, and the warnings icon's text changes at runtime inside a FIXED
+    declared slot -- so the reader keeps what the width model needs to charge
+    each one: the id (to find a declared width), the text, and the class of an
+    inline SVG it draws instead.
+    """
+
+    id: str
+    text: str
+    svgClass: str | None
+
+
+_ARITHMETIC_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
+
+
+def _evalArithmetic(expr: str) -> float:
+    """Evaluate numbers, `+ - * /` and parentheses over a whitelisted AST."""
+
+    def walk(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return walk(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.BinOp) and type(node.op) in _ARITHMETIC_OPS:
+            return _ARITHMETIC_OPS[type(node.op)](walk(node.left), walk(node.right))
+        raise AssertionError(f"{expr!r} contains {type(node).__name__}, which is not arithmetic")
+
+    return walk(ast.parse(expr, mode="eval"))
+
+
+def _declaredWidth(css: str, selector: str) -> str | None:
+    """The raw `width` a rule with exactly this selector declares, or None."""
+    match = re.search(rf"^{re.escape(selector)}\s*\{{([^}}]*)\}}", css, re.MULTILINE)
+    if match is None:
+        return None
+    width = re.search(r"(?<![-\w])width:\s*([^;]+);", match.group(1))
+    return width.group(1).strip() if width is not None else None
+
+
 class _BarModel:
     """The bar's width budget, derived from the SHIPPED values only.
 
@@ -273,6 +331,7 @@ class _BarModel:
     """
 
     def __init__(self, css: str) -> None:
+        self.css = css
         bar = ruleBlock(css, "#topbar")
         self.padding = _shorthandPx(bar, "padding", 0)
         self.gap = _shorthandPx(bar, "gap", 0)
@@ -294,7 +353,13 @@ class _BarModel:
         self.clusterGap = _shorthandPx(clusterGap, "gap", 0)
         leftCluster = ruleBlock(css, "#topbar .topbar-left")
         self.leftGap = _shorthandPx(leftCluster, "gap", 0)
-        self.glyphSpacing = 0.04  # #topbar .glyph letter-spacing, em
+        # MOVED PIN (US-898-a): READ from #topbar's `--glyph-ls` (Iris S108),
+        # which `#topbar .glyph` and the warnings icon's slot both consume. It
+        # was a literal 0.04 restated here.
+        spacing = re.search(r"--glyph-ls:\s*([0-9.]+)em", bar)
+        assert spacing is not None, "#topbar does not declare --glyph-ls in em"
+        self.glyphSpacing = float(spacing.group(1))
+        assert "letter-spacing: var(--glyph-ls)" in ruleBlock(css, "#topbar .glyph")
         self.nameSpacing = 0.0  # #page-name letter-spacing (Iris rule: 0)
         self.clockSpacing = 0.04  # #topbar-clock letter-spacing, em
 
@@ -303,10 +368,54 @@ class _BarModel:
         """Bar width inside its own horizontal padding."""
         return STAGE_WIDTH_PX - 2 * self.padding
 
-    def leftClusterWidth(self, glyphs: list[str]) -> float:
-        runs = sum(
-            _textWidthPx(glyph, self.glyphSize, self.glyphSpacing) for glyph in glyphs
+    def lengthPx(self, expr: str) -> float:
+        """A glyph-size CSS length in px: `ch`, `em`, `var(--glyph-ls)`, `calc()`.
+
+        `1ch` is the Pi mono face's advance at the glyph size (DejaVu Sans Mono's
+        `0` is 0.60205 em like every glyph it carries). Anything else -- a px
+        literal, an unknown var() -- raises rather than resolving to a guess.
+        """
+        resolved = expr.replace("var(--glyph-ls)", f"{self.glyphSpacing}em")
+        resolved = re.sub(r"(?<![-\w])calc\s*\(", "(", resolved)
+        chPx = PI_MONO_ADVANCE_EM * self.glyphSize
+        resolved = re.sub(r"([0-9.]+)ch\b", lambda m: f"({m.group(1)}*{chPx!r})", resolved)
+        resolved = re.sub(
+            r"([0-9.]+)em\b", lambda m: f"({m.group(1)}*{self.glyphSize!r})", resolved
         )
+        assert re.fullmatch(r"[0-9+\-*/(). ]+", resolved), (
+            f"{expr!r} resolves to {resolved!r}, which this model cannot charge"
+        )
+        return _evalArithmetic(resolved)
+
+    def glyphWidth(self, glyph: Glyph) -> float:
+        """What one `span.glyph` costs the cluster (Iris S108 ruling).
+
+        - a DECLARED width on its id (the warnings icon's fixed slot) is charged
+          as declared, whatever text it holds this tick;
+        - an inline SVG is charged its declared width -- letter-spacing does not
+          reach an atomic inline, so WiFi is exactly 1ch;
+        - text is charged n x (1ch + --glyph-ls), at the measured advance.
+
+        Raises:
+            AssertionError: the glyph is none of these -- never a silent 0.
+        """
+        declared = _declaredWidth(self.css, f"#{glyph.id}")
+        if declared is not None:
+            return self.lengthPx(declared)
+        if glyph.svgClass is not None:
+            svgWidth = _declaredWidth(self.css, f"#{glyph.id} .{glyph.svgClass}")
+            assert svgWidth is not None, (
+                f"#{glyph.id} draws an SVG with no declared width -- it cannot be charged"
+            )
+            return self.lengthPx(svgWidth)
+        assert glyph.text, (
+            f"span.glyph #{glyph.id or '?'} has no text, no SVG and no declared width -- "
+            "the width model cannot charge it (never a silent 0)"
+        )
+        return _textWidthPx(glyph.text, self.glyphSize, self.glyphSpacing)
+
+    def leftClusterWidth(self, glyphs: list[Glyph]) -> float:
+        runs = sum(self.glyphWidth(glyph) for glyph in glyphs)
         return runs + self.leftGap * max(0, len(glyphs) - 1)
 
     def centreWidth(self, text: str = LONGEST_CLOCK_TEXT) -> float:
@@ -422,7 +531,8 @@ def test_glyphsSitLeft_pageNameAndKebabSitRight():
     assert left is not None and right is not None
     # US-696 removed `glyph-power`; `glyph-wifi` (ARCH-007) takes its place here
     # so the list still names every glyph the bar actually carries.
-    for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi"):
+    # US-898-a: the warnings icon joins the left cluster.
+    for glyph in ("glyph-bt", "glyph-sync", "glyph-wifi", "glyph-warnings"):
         assert f'id="{glyph}"' in left.group(1), f"{glyph} is not in the left cluster"
         assert f'id="{glyph}"' not in right.group(1)
     assert 'id="page-name"' in right.group(1)
@@ -484,8 +594,14 @@ def test_theWidthCheckCanvasIsTheAuthoredStageBox():
     assert "transform: scale(var(--scale, 1))" in stage
 
 
-def _shippedLeftGlyphs(html: str | None = None) -> list[str]:
-    """The glyph TEXTS the left cluster actually paints, READ from the markup.
+def _shippedLeftGlyphs(html: str | None = None) -> list[Glyph]:
+    """The glyphs the left cluster actually paints, READ from the markup.
+
+    MOVED PIN (US-898-a): this read glyph TEXT only, with a regex that matched a
+    span holding nothing but text -- so the SVG WiFi would have dropped out of
+    the list SILENTLY and been charged 0. It now returns every `span.glyph` as a
+    `Glyph` record (id, text, inline-SVG class), and the model charges each by
+    its declared width (`_BarModel.glyphWidth`).
 
     Read rather than restated, and that distinction is the whole of TD-us696.
     Every budget assertion in this section used to be made against a
@@ -493,7 +609,8 @@ def _shippedLeftGlyphs(html: str | None = None) -> list[str]:
     next glyph landed -- and when one did, nothing forced the list to notice.
     A list derived from the markup cannot drift away from the bar it measures.
     The markup IS the runtime set: carousel.js only ever flips a glyph's
-    `data-state`, never its text.
+    `data-state` -- except the warnings icon's text, which is why the icon is
+    charged its fixed declared slot rather than its shipped `--`.
 
     Args:
         html: the markup to read; the shipped dashboard.html when omitted. The
@@ -501,13 +618,28 @@ def _shippedLeftGlyphs(html: str | None = None) -> list[str]:
             it through THIS reader rather than a copy of it.
 
     Returns:
-        The left cluster's glyph texts in document order.
+        The left cluster's glyphs in document order.
     """
     inner = _topbarMarkup(_readHtml() if html is None else html)
     left = re.search(r'<div class="topbar-left">(.*?)</div>', inner, re.DOTALL)
     assert left is not None, "the left cluster must exist to be measured"
-    glyphs = re.findall(r'<span class="glyph"[^>]*>([^<]*)</span>', left.group(1))
+    glyphs = []
+    for attrs, body in re.findall(
+        r'<span class="glyph"([^>]*)>(.*?)</span>', left.group(1), re.DOTALL
+    ):
+        glyphId = re.search(r'\bid="([^"]*)"', attrs)
+        svg = re.search(r'<svg\b[^>]*\bclass="([^"]*)"', body)
+        assert "<svg" not in body or svg is not None, "an inline SVG glyph carries no class"
+        text = "" if "<" in body else body
+        glyphs.append(
+            Glyph(glyphId.group(1) if glyphId else "", text, svg.group(1) if svg else None)
+        )
     assert glyphs, "no glyphs read from the left cluster -- markup or regex moved"
+    # Every span.glyph in the cluster is read -- a span the regex skipped is the
+    # silent 0 this reader exists to refuse.
+    assert len(glyphs) == left.group(1).count('<span class="glyph"'), (
+        "a span.glyph was not read by the width reader"
+    )
     return glyphs
 
 
@@ -527,9 +659,15 @@ def test_theShippedGlyphListIsReadFromTheMarkup_notRestated():
     satisfied by a wrong read in one direction or the other. Membership is not.
     """
     glyphs = _shippedLeftGlyphs()
-    assert "BT" in glyphs
+    texts = [glyph.text for glyph in glyphs]
+    assert "BT" in texts
     assert len(glyphs) >= 2, f"the left cluster reads implausibly short: {glyphs}"
-    assert "⚡" not in glyphs, "US-696 removed the power glyph; it is back"
+    assert "⚡" not in texts, "US-696 removed the power glyph; it is back"
+    # US-898-a: the SVG WiFi and the warnings icon are read too, by id -- the
+    # old text-only reader would have dropped the SVG without a word.
+    byId = {glyph.id: glyph for glyph in glyphs}
+    assert byId["glyph-wifi"].svgClass == "wifi-mark" and byId["glyph-wifi"].text == ""
+    assert "glyph-warnings" in byId
 
 
 def test_rightClusterFitsItsGuaranteedTrackShare():
@@ -554,7 +692,8 @@ def test_theBarIsNotOverBudgetAcrossItsFullWidth():
 
     THIS is the assertion that means "nothing reflows into a second row", and it
     is the one US-696's band-budget criterion turns on. Measured on the glyphs
-    the bar actually paints, at the measured advance: 397.7px of 460.0px. (The
+    the bar actually paints, at the measured advance: 414.4px of 460.0px after
+    US-898-a (397.7px before the warnings icon and the 1ch WiFi). (The
     5.4px -> 42.5px headroom US-696 recorded was on the full-em guess US-720
     retired.) It is NOT the centring guard -- a glyph small enough to fit this
     headroom can still push the clock off the midpoint, which is why the left
@@ -610,14 +749,14 @@ def test_leftClusterFitsItsGuaranteedTrackShare():
     file reported the three-glyph cluster +5.1px over. That was the model, not
     the bar: it charged `⇅` and `•` a full em for a fallback face they never use.
     At the face's measured advance the cluster is 153.6px against a 168.6px
-    share. The flip is not a re-tuned number -- a real render agrees
+    share (145.8px since US-898-a: BT, sync, the 1ch WiFi SVG, the icon slot). The flip is not a re-tuned number -- a real render agrees
     independently: the grid resolves to 168.625px / 102.734px / 168.641px and
     the clock's centre sits 0.008px from the bar's midpoint.
     """
     _assertLeftClusterFits()
 
 
-def test_noFourthGlyphOfAnyWidthDropsIn_theHeadroomIsNarrowerThanOneCharacter():
+def test_noFifthGlyphOfAnyWidthDropsIn_theHeadroomIsNarrowerThanOneCharacter():
     """The honest successor to `test_aFourthGlyphStillFits_soP6DropsInWithNoRelayout`.
 
     That guard modelled the incoming glyph as a one-character `▾`; US-696's
@@ -627,9 +766,14 @@ def test_noFourthGlyphOfAnyWidthDropsIn_theHeadroomIsNarrowerThanOneCharacter():
     narrowest glyph a monospace bar can carry -- one character plus the cluster
     gap -- so the answer holds for every glyph anyone could add.
 
-    Today: 15.1px of headroom against 26.7px. No fourth glyph drops in; adding
-    one is a re-layout, and `test_leftClusterFitsItsGuaranteedTrackShare` is what
-    turns red when someone tries.
+    MOVED PIN (US-898-a): RE-STATED, not deleted -- "no fourth glyph" became "no
+    fifth glyph". The re-layout this guard predicted happened: WiFi shrank from
+    `((•))` to a 1ch SVG and the warnings icon took a fixed 3-character slot.
+    Iris's S108 numbers, asserted below: 145.8 of 168.6 px, headroom 22.8 px <
+    26.69 px (one glyph + gap). (Before: 15.1 px of headroom against 26.7.)
+    No fifth glyph drops in; adding one is a re-layout, and
+    `test_leftClusterFitsItsGuaranteedTrackShare` is what turns red when someone
+    tries.
 
     This fails if the headroom GROWS past one character (a glyph narrowed or
     removed). Re-state the claim then, with the new number; do not delete it.
@@ -638,6 +782,11 @@ def test_noFourthGlyphOfAnyWidthDropsIn_theHeadroomIsNarrowerThanOneCharacter():
     left, share = _leftClusterFit()
     narrowestGlyph = model.leftGap + _textWidthPx("x", model.glyphSize, model.glyphSpacing)
     headroom = share - left
+    assert left == pytest.approx(145.8, abs=0.05), f"left cluster {left:.2f}px"
+    assert share == pytest.approx(168.6, abs=0.05), f"share {share:.2f}px"
+    assert headroom == pytest.approx(22.8, abs=0.05), f"headroom {headroom:.2f}px"
+    assert narrowestGlyph == pytest.approx(26.69, abs=0.01)
+    assert len(_shippedLeftGlyphs()) == 4, "the cluster is BT, sync, WiFi and the icon"
     assert headroom < narrowestGlyph, (
         f"{headroom:.1f}px of headroom now holds a one-character glyph "
         f"({narrowestGlyph:.1f}px with its gap) -- the bar has room for another "
@@ -707,11 +856,53 @@ def test_aPlantedGlyphTurnsTheLeftGuardRed_subjectControl(planted: str):
     the old file certified exactly that width as a drop-in, and it too is red.
     """
     html = _plantLeftGlyph(_readHtml(), planted)
-    assert _shippedLeftGlyphs(html)[-1] == planted, (
+    assert _shippedLeftGlyphs(html)[-1].text == planted, (
         "the plant was not read by the guard's own reader -- a red below would prove nothing"
     )
+    assert len(_shippedLeftGlyphs(html)) == 5, "the plant is the FIFTH glyph"
     with pytest.raises(AssertionError, match="exceeds its"):
         _assertLeftClusterFits(html)
+
+
+def test_aPlantedGlyphTheModelCannotChargeFails_neverASilentZero_subjectControl():
+    """US-898-a (Iris S108): a `span.glyph` with no text, no SVG and no declared
+    width has no honest width. The reader must refuse it, not charge 0 -- a 0 is
+    how a glyph slips past the guard it was planted to trip."""
+    html = _plantLeftGlyph(_readHtml(), "")
+    assert _shippedLeftGlyphs(html)[-1] == Glyph("glyph-planted", "", None)
+    with pytest.raises(AssertionError, match="cannot charge"):
+        _assertLeftClusterFits(html)
+
+
+def test_anSvgGlyphWithNoDeclaredWidthFails_subjectControl():
+    html = _plantLeftGlyph(_readHtml(), '<svg class="planted-mark" viewBox="0 0 1 1"></svg>')
+    assert _shippedLeftGlyphs(html)[-1].svgClass == "planted-mark"
+    with pytest.raises(AssertionError, match="cannot be charged"):
+        _assertLeftClusterFits(html)
+
+
+@pytest.mark.parametrize(
+    "glyphId,expectedPx",
+    [("glyph-bt", 33.38), ("glyph-sync", 16.69), ("glyph-wifi", 15.65), ("glyph-warnings", 50.07)],
+)
+def test_eachGlyphIsChargedIrisS108Width(glyphId: str, expectedPx: float):
+    """Iris's per-glyph charges: text at n x (1ch + --glyph-ls), the SVG WiFi at
+    its declared 1ch (no letter-spacing on an atomic inline), the icon at its
+    declared fixed slot."""
+    model = _BarModel(readCss(_CSS_PATH))
+    glyph = {g.id: g for g in _shippedLeftGlyphs()}[glyphId]
+    assert model.glyphWidth(glyph) == pytest.approx(expectedPx, abs=0.02)
+
+
+def test_theIconSlotHoldsItsWidestContent_soTheCountNeverReflows():
+    """`▲99` is the cap, so it is the widest text the icon ever holds. The
+    declared slot must hold it: then `▲9` -> `▲99` changes no box width (Iris
+    S108; a `min-width: 3ch` slot grew 3.1 px at two digits)."""
+    model = _BarModel(readCss(_CSS_PATH))
+    slot = model.glyphWidth(Glyph("glyph-warnings", "▲9", None))
+    assert slot == model.glyphWidth(Glyph("glyph-warnings", "▲99", None))
+    widest = _textWidthPx("▲99", model.glyphSize, model.glyphSpacing)
+    assert widest <= slot + 0.01, f"▲99 is {widest:.2f}px in a {slot:.2f}px slot"
 
 
 def test_aPlantedGlyphTheFaceLacksTurnsTheLeftGuardRed_notAGuess_subjectControl():
@@ -723,6 +914,6 @@ def test_aPlantedGlyphTheFaceLacksTurnsTheLeftGuardRed_notAGuess_subjectControl(
     mono advance, or at a full em -- is the guess US-720 removed.
     """
     html = _plantLeftGlyph(_readHtml(), "⋮")
-    assert _shippedLeftGlyphs(html)[-1] == "⋮", "the plant was not read by the guard's reader"
+    assert _shippedLeftGlyphs(html)[-1].text == "⋮", "the plant was not read by the guard's reader"
     with pytest.raises(AssertionError, match="no measured advance"):
         _assertLeftClusterFits(html)

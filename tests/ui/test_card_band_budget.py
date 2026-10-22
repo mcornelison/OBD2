@@ -32,6 +32,7 @@
 # ================================================================================
 # 2026-08-21    | Ralph (Rex)  | Initial -- US-557 band budget + tokenization.
 # 2026-10-15    | Ralph (Rex)  | US-887-c -- card title row retired; body 254px.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: #dtc-ribbon band row retired.
 # ================================================================================
 ################################################################################
 
@@ -465,7 +466,7 @@ def test_bandTokensAreDeclaredInTheSsotAndMirroredInTheDist(token, expected):
         ("#topbar", "height", "bar-h"),
         ("#carousel", "top", "bar-h"),
         ("#rotate-progress", "top", "bar-h"),
-        ("#dtc-ribbon", "top", "bar-h"),
+        # MOVED PIN (US-899-a2): #dtc-ribbon's row retired with the ribbon.
         ("#carousel", "bottom", "dots-h"),
         ("#dots", "height", "dots-h"),
     ],

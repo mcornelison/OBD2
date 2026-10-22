@@ -41,6 +41,13 @@
 #                               retire with the idle face; the font-display
 #                               set swaps .idle-wordmark for #motion-card
 #                               .motion-label.
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the ALERTS card's 'n ACTIVE'
+#                               count and its tier chips join the font-display
+#                               set (Warnings spec s3).
+# 2026-10-20    | Ralph (Rex)  | US-898-b2 -- MOVED PIN: the empty-state words
+#                               (NO WARNINGS / NOT CHECKED YET) join it.
+# 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the deleted takeover floods'
+#                               deep-edge token pins retired.
 # ================================================================================
 ################################################################################
 
@@ -267,26 +274,10 @@ def test_neutralChipBackground_isRepointedAtTheExistingSsotToken():
     assert naRule and "var(--neutral-chip-bg)" in naRule[0]
 
 
-def test_takeoverGradientEdges_areTokenisedNotInlined():
-    """Iris A-2 offered two routes for the deep gradient edges and this takes
-    the named-token one deliberately: a color-mix() would COMPUTE a new colour
-    and move the rendered pixels, which the zero-visual-change rule forbids."""
-    rules = dict(_surfaceRules())
-    watch = rules.get('#dtc-takeover[data-severity="watch"]')
-    minor = rules.get('#dtc-takeover[data-severity="minor"]')
-    assert watch and minor, "the takeover severity rules moved -- re-point this"
-    assert "var(--amber-deep)" in watch
-    assert "var(--green-deep)" in minor and "var(--green-deepest)" in minor
-
-
-def test_theDeepEdgeTokensRelocateTheExistingValues_neverNewOnes():
-    """Grounding: these three tokens are NOT new colours. Each holds the exact
-    literal that used to sit in the gradient, so the takeover renders
-    identically -- the relocation is invisible on the panel, which is the point."""
-    css = _read(_CSS)
-    assert _tokenValue(css, "amber-deep") == "#7A5B00"
-    assert _tokenValue(css, "green-deep") == "#12603A"
-    assert _tokenValue(css, "green-deepest") == "#062617"
+# MOVED PIN (US-899-a2): the watch/minor/unknown takeover floods are deleted,
+# and the three deep gradient-edge tokens (--amber-deep / --green-deep /
+# --green-deepest) existed only to paint them, so they went too. Their two pins
+# (the floods bind the tokens; the tokens hold US-510's values) are retired.
 
 
 def test_destructiveTokens_carryTheAtlasRuledValuesInBothFiles():
@@ -433,7 +424,21 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
     RANGE) and the status line's BRIGHTNESS [AUTO] label (the mockup's
     Michroma tier, in which Iris G-2's 412 px worst case was measured). The
     lux, counts, level and qualifier stay --font-mono, pinned in
-    tests/ui/test_light_page.py."""
+    tests/ui/test_light_page.py.
+
+    MOVED PIN (US-898-b1): the ALERTS card's header count ('n ACTIVE' / '--')
+    and its tier chips (STOP / WATCH / MINOR / UNRATED) are Michroma (Warnings
+    spec s3: "It carries ... n ACTIVE ... and the chips"). Titles, values,
+    sentences and ages stay --font-mono, pinned in tests/ui/test_warnings_page.py.
+
+    MOVED PIN (US-898-b2): the empty-state headline WORDS (NO WARNINGS / NOT
+    CHECKED YET, Iris brief '26 px') are Michroma; the '?' beside them, the
+    sentences and the '↓ n more below' cue stay --font-mono.
+
+    MOVED PIN (US-899-b): the TROUBLE CODES screen's head, its tier chips and
+    DISMISS are Michroma (spec s4.4b); its titles, sentences, '+n more on
+    ALERTS' and notice stay --font-mono, pinned in
+    tests/ui/test_warnings_code_alert.py."""
     bound = {
         selector
         for selector, body in _surfaceRules()
@@ -451,6 +456,12 @@ def test_fontDisplayBindsToTheBrandMomentsAndNothingElse():
         "#light-card .light-word",
         "#light-card .light-label",
         "#light-card .light-status-label",
+        "#alerts-card .warn-count",
+        "#alerts-card .warn-chip",
+        "#alerts-card .warn-quiet-word",
+        "#code-alert .code-alert-head",
+        "#code-alert .code-alert-chip",
+        "#code-alert-dismiss",
     }, bound
 
 

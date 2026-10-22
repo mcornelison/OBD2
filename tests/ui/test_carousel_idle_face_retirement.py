@@ -24,6 +24,11 @@
 #           things in this file are called "idle" -- the parked SSOT and the
 #           motion-fault face -- and that collision is exactly how a future edit
 #           re-couples them, so the separation is asserted rather than assumed.
+#   MOVED PIN (US-898-b1): AC-2's moved line lived in `alertsCardView`, which
+#   retired with the dtc-driven ALERTS card. Its unread fact is now the
+#   provider's null `sources.code.checkedAtTs`, read as 'codes not read yet'
+#   (tests/ui/test_warnings_page.py). The pure-view cases go; the surface pin
+#   in both directions is kept, re-pointed at #alerts-card over states/alerts.
 #   Skipped when node is not on PATH (a node-less CI box).
 # Author: Ralph Agent (Rex)
 # Creation Date: 2026-08-11
@@ -37,6 +42,11 @@
 # 2026-10-19    | Ralph (Rex)  | US-892-b -- MOVED PIN: the fallback-face cases retire with
 #                               the face; the clock, Alerts and parked-signal
 #                               cases stay.
+# 2026-10-20    | Ralph (Rex)  | US-898-b1 -- MOVED PIN: the alertsCardView cases retire
+#                               with that view; the unread surface pin re-points
+#                               at #alerts-card over states/alerts.
+# 2026-10-20    | Ralph (Rex)  | US-898-b2 -- MOVED PIN: the unread line is NOT
+#                               CHECKED YET (the empty-state body).
 # ================================================================================
 ################################################################################
 
@@ -76,9 +86,10 @@ pytestmark = pytest.mark.skipif(
 # The retired copy, named so its ABSENCE is a pin rather than a coincidence.
 _RETIRED_HERO = "STANDBY"
 _RETIRED_SUBSTATE = "engine off · OBD asleep"
-# The moved fact (AC-2), verbatim from the retired face's `idleFaultsFact`.
-_MOVED_VALUE = "DTC not read"
-_MOVED_DETAIL = "since key-off"
+# The moved fact (AC-2). MOVED PIN (US-898-b1): on states/alerts it is the
+# header meta for a null checkedAtTs.
+# MOVED PIN (US-898-b2): unread with nothing active is "? NOT CHECKED YET".
+_MOVED_VALUE = "NOT CHECKED YET"
 
 
 def _read(path: str) -> str:
@@ -108,35 +119,29 @@ def _codeOnly(src: str) -> str:
     return "\n".join(keep)
 
 
-def _dtcUnread(reason: str = "no key-on read yet") -> dict:
-    """A `dtc` payload whose SOURCE is unavailable -- the state the moved line
-    exists for. Note `codes: []`: the array is empty here exactly as it is on a
-    genuine clean read, which is why "no read happened" has to be carried by the
-    source block and can never be inferred from the codes."""
-    return {"codes": [], "source": {"dtc": {"available": False, "reason": reason}}}
+def _alertsUnread() -> dict:
+    """A states/alerts payload with NO code read this boot and nothing active.
 
-
-def _dtcCleanRead() -> dict:
-    """A REAL key-on read that found nothing. Same empty array, opposite fact."""
+    `entries: []` here is exactly as empty as on a genuine clean read, which is
+    why "no read happened" has to be carried by `sources.code` and can never be
+    inferred from the list."""
     return {
-        "codes": [],
-        "mil": False,
-        "source": {"dtc": {"available": True, "reason": None}},
+        "sources": {"code": {"assessed": False, "checkedAtTs": None}},
+        "icon": {"state": "not_checked", "count": 0, "pulse": False},
+        "entries": [],
     }
 
 
-def _cardText(tree: dict, stateName: str) -> str:
-    """All rendered text under the card bound to ``stateName``.
+def _alertsCardText(tree: dict) -> str:
+    """All rendered text under #alerts-card.
 
     Joined rather than structured on purpose: this is the "did the two halves
     connect?" backstop, and what it needs to know is whether the operator can
     READ the line -- not which span carries which half of it.
     """
     surface = rh.dashboardSurface(tree)
-    for path in surface.paths():
-        if path[-1].get("attrs", {}).get("data-state") == stateName:
-            return " ".join(_textOf(path[-1]))
-    return ""
+    path = surface.pathById("alerts-card")
+    return " ".join(_textOf(path[-1])) if path else ""
 
 
 def _textOf(node: dict) -> list[str]:
@@ -272,88 +277,19 @@ def test_theRetiredClockSelectorsAreGoneFromTheStylesheet():
 # ---------------------------------------------------------------------------
 
 
-def test_alertsCardView_unreadSource_carriesTheMovedLine():
-    """
-    Given: the DTC source is unavailable (no key-on read has happened)
-    When: the Alerts view is assembled
-    Then: it states "DTC not read - since key-off".
-
-          US-429 already refused to print "No stored codes" over an unread
-          source, but a bare typed NA says only that the instrument is silent.
-          WHEN the silence started is the fact the retired face carried, and it
-          is the one that tells the operator this is normal after a key-off
-          rather than a fault that just appeared.
-    """
-    view = _view("alertsCardView", _dtcUnread())
-    assert view["unavailable"] is True
-    assert view["notRead"]["value"] == _MOVED_VALUE
-    assert view["notRead"]["detail"].startswith(_MOVED_DETAIL)
-
-
-def test_alertsCardView_keepsTheEmittersReasonBesideTheMovedLine():
-    """
-    Given: "since key-off" is WHEN and the emitter's reason is WHY
-    When: the view is assembled
-    Then: both survive.
-
-          Dropping either to make room for the other loses a real fact. The
-          reason is also still on the view itself, so nothing that already read
-          `view.reason` breaks on the relocation.
-    """
-    view = _view("alertsCardView", _dtcUnread("bus asleep"))
-    assert "bus asleep" in view["notRead"]["detail"]
-    assert view["reason"] == "bus asleep"
-
-
-def test_alertsCardView_unreadSource_isGreyNotACalmNeutral():
-    """
-    Given: the retired face rendered this line NEUTRAL, among other tiles
-    When: it is re-hosted alone on the Alerts card
-    Then: it takes the `unavailable` level.
-
-          Neutral read as "calm" beside a battery tile and a last-drive tile.
-          Alone on the Alerts card it would read as a completed read with
-          nothing to report -- the false all-clear US-429 exists to prevent.
-          Grey is this whole dashboard's word for "no read happened".
-    """
-    view = _view("alertsCardView", _dtcUnread())
-    assert view["notRead"]["level"] == "unavailable"
-
-
-def test_alertsCardView_realEmptyRead_neverBorrowsTheMovedLine():
-    """
-    Given: a genuine key-on read that found no codes
-    When: the view is assembled
-    Then: no `notRead` line -- the card says its honest all-clear instead.
-
-          This is the pin in the OTHER direction, and it guards the more
-          dangerous lie. "DTC not read" over a completed clean read tells the
-          operator to go read the codes that were already read; the two states
-          share an empty `codes` array and are told apart ONLY by the source
-          block, so a one-character slip collapses them.
-    """
-    view = _view("alertsCardView", _dtcCleanRead())
-    assert view.get("unavailable") is not True
-    assert "notRead" not in view
-    assert view["hero"] is None
-    assert view["rows"] == []
-
-
 def test_alertsCard_renderedBody_actuallyShowsTheMovedLine():
     """
     Given: a correct view proves nothing if the renderer paints something else
     When: the SHIPPED carousel.js boots over the SHIPPED markup with an unread
-          dtc state
-    Then: the operator can read the moved line on the Alerts card.
+          states/alerts payload
+    Then: the operator can read the unread line on the Alerts card.
 
-          The two-correct-halves-never-connected backstop. The old renderer
-          composed its own "NA" via `renderNaBody`, which would have swallowed
-          the moved fact whole while every pure test above stayed green.
+          The two-correct-halves-never-connected backstop. MOVED PIN
+          (US-898-b1): the card reads states/alerts.
     """
-    tree = rh.runDashboard(routes={"/dtc": _dtcUnread("no key-on read yet")})["tree"]
-    text = _cardText(tree, "dtc")
+    tree = rh.runDashboard(routes={"/alerts": _alertsUnread()})["tree"]
+    text = _alertsCardText(tree)
     assert _MOVED_VALUE in text, text
-    assert _MOVED_DETAIL in text, text
 
 
 def test_alertsCard_renderedBody_neverSaysNoStoredCodesOverAnUnreadSource():
@@ -365,8 +301,10 @@ def test_alertsCard_renderedBody_neverSaysNoStoredCodesOverAnUnreadSource():
           Asserted on the SURFACE and not only in the view, because this is the
           claim the operator acts on -- and the one US-429 was filed over.
     """
-    tree = rh.runDashboard(routes={"/dtc": _dtcUnread()})["tree"]
-    assert "No stored codes" not in _cardText(tree, "dtc")
+    tree = rh.runDashboard(routes={"/alerts": _alertsUnread()})["tree"]
+    text = _alertsCardText(tree)
+    assert _MOVED_VALUE in text, "negative control: the card was read"
+    assert "No stored codes" not in text, text
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,10 @@
 # 2026-10-18    | Rex (US-890-f) | PIN CHANGE: the injected-dict equalities gain
 #               |              | fuelResetConfirmSec (via _stale); its own
 #               |              | default / configured / invalid / overlay cases.
+# 2026-10-20    | Rex (US-899-a1)| MOVED PIN (US-899-a1): the dict gains
+#               |              | alertsAckConfirmSec + alertsAckNoticeSec (via
+#               |              | _stale); their default / configured / invalid /
+#               |              | overlay cases.
 # ================================================================================
 ################################################################################
 """US-882-c tests: window.DISPLAY_STALE is injected per request."""
@@ -40,6 +44,8 @@ from pi.splash.states_http_server import StatesHttpServer
 _TOKEN = "test-token-abcdefghijklmnopqrstuvwxyz123456"
 _IMU_SEC_KEY = "pi.display.stale.imuSec"
 _CONFIRM_KEY = "pi.display.stale.fuelResetConfirmSec"
+_ACK_CONFIRM_KEY = "pi.display.stale.alertsAckConfirmSec"
+_ACK_NOTICE_KEY = "pi.display.stale.alertsAckNoticeSec"
 
 _INDEX = "<script>\n" 'window.DISPLAY_STALE = "__DISPLAY_STALE__";\n' "</script>"
 
@@ -95,12 +101,23 @@ def _injectedStale(body: str):
     return json.loads(body[start : body.index(";", start)])
 
 
-def _stale(imuSec, fuelResetConfirmSec=None) -> dict:
+def _stale(imuSec, fuelResetConfirmSec=None, alertsAckConfirmSec=None,
+           alertsAckNoticeSec=None) -> dict:
     """The whole injected dict. US-890-f PIN CHANGE: it gains fuelResetConfirmSec,
-    the validator default unless a test configures it."""
+    the validator default unless a test configures it. MOVED PIN (US-899-a1): it
+    gains the two takeover ack windows under the same rule."""
     if fuelResetConfirmSec is None:
         fuelResetConfirmSec = DEFAULTS[_CONFIRM_KEY]
-    return {"imuSec": imuSec, "fuelResetConfirmSec": fuelResetConfirmSec}
+    if alertsAckConfirmSec is None:
+        alertsAckConfirmSec = DEFAULTS[_ACK_CONFIRM_KEY]
+    if alertsAckNoticeSec is None:
+        alertsAckNoticeSec = DEFAULTS[_ACK_NOTICE_KEY]
+    return {
+        "imuSec": imuSec,
+        "fuelResetConfirmSec": fuelResetConfirmSec,
+        "alertsAckConfirmSec": alertsAckConfirmSec,
+        "alertsAckNoticeSec": alertsAckNoticeSec,
+    }
 
 
 def test_configJsonChange_appliesWithoutARestart(tmp_path):
@@ -232,6 +249,53 @@ def test_fuelResetConfirmSec_overlayValue_isIgnored(served):
     """Not operator-overridable (Atlas ruling B), exactly as imuSec."""
     server, configPath = served
     _writeJson(Path(overlay.overlayPathFor(str(configPath))), {_CONFIRM_KEY: 30})
+    assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
+
+
+def test_alertsAckWindows_absent_serveTheValidatorDefaultsOfSixAndThree(served):
+    """US-899-a1: validator-default only (config.json is not edited)."""
+    server, _ = served
+    stale = _injectedStale(_index(server))
+    assert stale["alertsAckConfirmSec"] == DEFAULTS[_ACK_CONFIRM_KEY] == 6
+    assert stale["alertsAckNoticeSec"] == DEFAULTS[_ACK_NOTICE_KEY] == 3
+
+
+def test_alertsAckWindows_configJsonValues_areServed_perRequest(tmp_path):
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, {"pi": {"display": {"stale": {
+        "alertsAckConfirmSec": 8.5, "alertsAckNoticeSec": 4}}}})
+    server, thread = _startServer(tmp_path, str(configPath))
+    try:
+        assert _injectedStale(_index(server)) == _stale(
+            DEFAULTS[_IMU_SEC_KEY], alertsAckConfirmSec=8.5, alertsAckNoticeSec=4
+        )
+        _writeJson(configPath, {"pi": {"display": {"stale": {"alertsAckConfirmSec": 9}}}})
+        assert _injectedStale(_index(server)) == _stale(
+            DEFAULTS[_IMU_SEC_KEY], alertsAckConfirmSec=9
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("key", ["alertsAckConfirmSec", "alertsAckNoticeSec"])
+@pytest.mark.parametrize("bad", [0, -1, "6", True, None])
+def test_alertsAckWindows_invalid_serveTheValidatorDefault(tmp_path, key, bad):
+    configPath = tmp_path / "config.json"
+    _writeJson(configPath, {"pi": {"display": {"stale": {key: bad}}}})
+    server, thread = _startServer(tmp_path, str(configPath))
+    try:
+        assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_alertsAckWindows_overlayValues_areIgnored(served):
+    """Not operator-overridable (Atlas ruling B), exactly as fuelResetConfirmSec."""
+    server, configPath = served
+    _writeJson(Path(overlay.overlayPathFor(str(configPath))),
+               {_ACK_CONFIRM_KEY: 30, _ACK_NOTICE_KEY: 30})
     assert _injectedStale(_index(server)) == _stale(DEFAULTS[_IMU_SEC_KEY])
 
 

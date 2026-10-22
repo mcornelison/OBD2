@@ -19,6 +19,12 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-02    | Ralph (Rex)  | Initial -- US-429 carousel honest-availability.
+# 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-898-b1): the alertsCardView cases
+#               |              | re-pointed at warningsPageView (states/alerts).
+# 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-898-b2): not-read with nothing
+#               |              | active is the NOT CHECKED header + empty state.
+# 2026-10-20    | Ralph (Rex)  | MOVED PIN (US-899-a2): takeoverView/ribbonView
+#               |              | cases retired with the deleted functions.
 # ================================================================================
 ################################################################################
 
@@ -149,79 +155,46 @@ def test_batteryHealthView_upsAvailable_rendersTiles():
 
 
 # ---------------------------------------------------------------------------
-# Alerts card + takeover + ribbon -- Bug-3b: never mis-fire on absent/empty.
+# Alerts card -- Bug-3b: never mis-fire on absent/empty.
 # ---------------------------------------------------------------------------
 
 
 def test_alertsCardView_dtcUnavailable_typedNaNotAllClear():
-    """DTC source unavailable (no read happened) -> a typed NA, NOT "No stored
-    codes" (which would falsely imply a clean all-clear read)."""
+    """Codes not read (no read happened) -> 'codes not read yet', NOT "No stored
+    codes" (which would falsely imply a clean all-clear read).
+
+    MOVED PIN (US-898-b1): the card reads states/alerts; "not read" is the
+    provider's null sources.code.checkedAtTs.
+    MOVED PIN (US-898-b2): with nothing active an unassessed read is the amber
+    'NOT CHECKED' header (no meta) over '? NOT CHECKED YET'."""
     view = _view(
-        "alertsCardView",
-        {"codes": [], "source": _unavailable("dtc", "not read yet")},
+        "warningsPageView",
+        {"sources": {"code": {"assessed": False, "checkedAtTs": None}}, "entries": []},
     )
-    assert view["unavailable"] is True
-    assert view["reason"] == "not read yet"
+    assert view["missing"] is False
+    assert view["header"]["text"] == "NOT CHECKED"
+    assert view["quiet"]["head"] == "NOT CHECKED YET"
+    assert "no stored codes" not in json.dumps(view).lower()
 
 
 def test_alertsCardView_dtcAvailableEmpty_honestAllClear():
-    """DTC source available with an empty read -> an honest all-clear view (a
-    real read found nothing), NOT unavailable and with no hero."""
+    """Codes read with nothing active -> a read view (the read time, no rows),
+    NOT missing and NOT 'not read'.
+
+    MOVED PIN (US-898-b1): re-pointed at warningsPageView; the NONE / NO
+    WARNINGS words for this state are US-898-b2's."""
     view = _view(
-        "alertsCardView",
-        {"codes": [], "mil": False, "source": _available("dtc")},
+        "warningsPageView",
+        {
+            "sources": {"code": {"assessed": True, "checkedAtTs": "2026-07-02T12:00:00Z"}},
+            "entries": [],
+        },
     )
-    assert view.get("unavailable") in (False, None)
-    assert view["hero"] is None
+    assert view["missing"] is False
+    assert view["header"]["meta"].startswith("codes read ")
     assert view["rows"] == []
 
 
-def test_takeoverView_dtcUnavailable_neverFires():
-    """Bug-3b: an unavailable DTC source NEVER fires a takeover, even if a stale
-    newSinceTs + code somehow rode along -- an absent source reads unavailable."""
-    view = _view(
-        "takeoverView",
-        {
-            "newSinceTs": "2026-07-02T00:00:00Z",
-            "codes": [{"code": "P0301", "severity": "stop", "short": "Misfire"}],
-            "source": _unavailable("dtc", "not read yet"),
-        },
-    )
-    assert view is None
-
-
-def test_takeoverView_emptyAvailable_neverFires():
-    """An available but empty read (no new code) -> no takeover (honest quiet)."""
-    view = _view(
-        "takeoverView",
-        {"newSinceTs": None, "codes": [], "source": _available("dtc")},
-    )
-    assert view is None
-
-
-def test_takeoverView_realNewCode_fires():
-    """A real new code on an available source DOES fire the takeover (the guard
-    only suppresses absent/unavailable/empty, never a genuine fault)."""
-    view = _view(
-        "takeoverView",
-        {
-            "newSinceTs": "2026-07-02T00:00:00Z",
-            "codes": [{"code": "P0301", "severity": "stop", "short": "Misfire"}],
-            "source": _available("dtc"),
-        },
-    )
-    assert view is not None
-    assert view["code"] == "P0301"
-    assert view["severity"] == "stop"
-
-
-def test_ribbonView_dtcUnavailable_noRibbon():
-    """An unavailable DTC source carries no active fault -> no ribbon."""
-    view = _view(
-        "ribbonView",
-        {
-            "codes": [{"code": "P0301", "severity": "stop", "short": "Misfire"}],
-            "source": _unavailable("dtc", "not read yet"),
-        },
-    )
-    assert view is None
+# MOVED PIN (US-899-a2): the takeoverView / ribbonView cases are retired with
+# the deleted functions. The takeover is takeoverAlertView over states/alerts
+# (no payload or a null takeover -> none), pinned in test_warnings_takeover.py.

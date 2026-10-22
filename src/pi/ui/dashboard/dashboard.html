@@ -37,7 +37,9 @@
          implicit second row that a 28px bar clips. The P-6 WiFi glyph joined
          the LEFT cluster (ARCH-007). The width bound that keeps the clock on the
          bar's midpoint is asserted in tests/ui/test_topbar_three_column_grid.py,
-         and it says a FOURTH glyph does not fit without a re-layout (US-720). -->
+         and it says a FOURTH glyph does not fit without a re-layout (US-720).
+         US-898-a made that re-layout: WiFi shrank to a 1ch SVG and the
+         warnings icon took the room, and the bound now says no FIFTH glyph. -->
     <div class="topbar-left">
       <span class="glyph" id="glyph-bt" data-state="neutral" title="Bluetooth">BT</span>
       <span class="glyph" id="glyph-sync" data-state="neutral" title="Sync">⇅</span>
@@ -55,7 +57,19 @@
            needs no re-layout -- the three-column grid still has exactly three
            children. Ships `neutral`: nothing has been read yet, and `down`
            would be a claim we looked. -->
-      <span class="glyph" id="glyph-wifi" data-state="neutral" title="WiFi">((•))</span>
+      <!-- US-898-a (Iris U1): WiFi is redrawn as a 1ch inline SVG -- three arcs
+           and a dot, stroked in currentColor so the data-state colours still
+           apply -- to give the warnings icon its room. `((•))` spent five
+           characters on the fact the driver needs least. The id, title and
+           data-state binding are unchanged; only the drawing moved. -->
+      <span class="glyph" id="glyph-wifi" data-state="neutral" title="WiFi"><svg class="wifi-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.1 10.1A14 14 0 0 1 21.9 10.1"/><path d="M5.28 13.28A9.5 9.5 0 0 1 18.72 13.28"/><path d="M8.46 16.46A5 5 0 0 1 15.54 16.46"/><circle cx="12" cy="20" r="1.6"/></svg></span>
+      <!-- US-898-a (F-127; specs/v030-warnings-page-design.md s4.2): the
+           warnings icon, on every page. A FIXED three-character slot so the
+           cluster never reflows as the count changes. carousel.js paints it
+           from states/alerts.icon (alertIconView) and never hides it; a tap
+           opens ALERTS. Ships `--`: nothing has been read yet, and the grey
+           triangle would be the provider's all-clear. -->
+      <span class="glyph" id="glyph-warnings" data-state="missing" data-pulse="false" role="button" aria-label="Warnings" title="Warnings">--</span>
     </div>
     <!-- US-542 (F-127): the wall clock, relocated from the retired parked idle
          face. It is PERSISTENT chrome now -- readable from every card, not just
@@ -86,46 +100,42 @@
   </header>
 
   <!-- US-506 auto-rotate progress (F-124): a calm THIN time-to-next bar under
-       the top bar. It reads as ambient chrome, never as an alert -- the DTC
-       ribbon owns that register and sits in the same band. JS sets --rotate-fill
-       0..1; the bar is REMOVED (not frozen part-filled) while paused, because a
+       the top bar. It reads as ambient chrome, never as an alert. JS sets
+       --rotate-fill 0..1; the bar is REMOVED (not frozen part-filled) while paused, because a
        stalled progress bar promises an advance that is not coming. -->
   <div id="rotate-progress" hidden>
     <span id="rotate-progress-fill"></span>
   </div>
 
-  <!-- US-405 persistent DTC ribbon: rides under the top bar on every card while
-       a code is present. STOP state uses the brighter --red-light (R-2, distinct
-       from brand-red) + a leading ⚠ + a subtle pulse. JS sets the level + text. -->
-  <!-- US-691: FOUR SLOTS, not one string. The banner used to carry head, code,
-       description and "+N more" in a single ellipsis-clipped span, so an
-       overflow always ate the count first (it is the tail) and a second stored
-       code became invisible. The slots overflow in a declared order instead --
-       only .ribbon-desc clips; see the dashboard.css rules. -->
-  <div id="dtc-ribbon" hidden>
-    <span class="ribbon-glyph">⚠</span>
-    <span class="ribbon-head"></span>
-    <span class="ribbon-desc"></span>
-    <span class="ribbon-more"></span>
-  </div>
-
-  <!-- US-405 full-screen DTC takeover: fired on a NEW code (newSinceTs), one at a
-       time, severity-styled. STOP has no plain dismiss -- only "Acknowledge"
-       (drops to the ribbon) so the driver always keeps view control. JS fills the
-       content + wires the buttons from the polled `dtc` state. -->
+  <!-- US-899-a1 full-screen takeover: a live coolant STOP from states/alerts
+       .takeover ONLY (carousel.js renderAlertsTakeover). Top to bottom: the
+       provider's directive band, title, value, the stale line, sentence, age,
+       and the ack notice. NO control on it (Iris U7): a tap anywhere is the ack. -->
   <div id="dtc-takeover" hidden role="alertdialog" aria-label="Check engine alert">
     <div class="takeover-inner">
-      <span class="takeover-icon" id="takeover-icon">⚠</span>
-      <span class="takeover-head">CHECK ENGINE</span>
-      <span class="takeover-chip" id="takeover-chip"></span>
-      <span class="takeover-code" id="takeover-code"></span>
-      <span class="takeover-desc" id="takeover-desc"></span>
-      <span class="takeover-directive" id="takeover-directive"></span>
-      <span class="takeover-more" id="takeover-more" hidden></span>
-      <div class="takeover-actions">
-        <button id="takeover-detail" class="tap-target">View detail ›</button>
-        <button id="takeover-dismiss" class="tap-target">Dismiss</button>
-      </div>
+      <span class="takeover-directive" id="takeover-directive" hidden></span>
+      <span class="takeover-line" id="takeover-title" hidden></span>
+      <span class="takeover-line" id="takeover-value" hidden></span>
+      <span class="takeover-line" id="takeover-stale" hidden></span>
+      <span class="takeover-line" id="takeover-sentence" hidden></span>
+      <span class="takeover-line" id="takeover-age" hidden></span>
+      <span class="takeover-line" id="takeover-notice" hidden></span>
+    </div>
+  </div>
+
+  <!-- US-899-b key-on TROUBLE CODES screen: states/alerts.codeAlert ONLY
+       (carousel.js renderCodeAlert), parked only, never under the STOP takeover. Its own
+       container on the takeover skeleton (Iris U7): no pulse, no brightness
+       override, the frame in the provider tier's colour. Up to 3 code rows,
+       '+n more on ALERTS', ONE real DISMISS button and the dismiss notice. -->
+  <div id="code-alert" data-surface="code-alert" hidden role="alertdialog"
+       aria-label="Trouble codes">
+    <div class="takeover-inner">
+      <span class="code-alert-head" id="code-alert-head">TROUBLE CODES</span>
+      <div id="code-alert-rows"></div>
+      <span class="takeover-line" id="code-alert-more" hidden></span>
+      <button type="button" class="tap-target" id="code-alert-dismiss">DISMISS</button>
+      <span class="takeover-line" id="code-alert-notice" hidden></span>
     </div>
   </div>
 
@@ -461,15 +471,14 @@
       <section class="card" id="light-card" data-state="light" aria-label="Light" data-page-name="LIGHT">
         <div class="card-body">unavailable</div>
       </section>
-      <!-- US-406 Alerts card (F-111): hero (worst code + directive) + a
-           tappable list sorted worst-first (na last). JS fills the body from
-           the polled `dtc` state; a missing/malformed file -> `unavailable`.
-
-           US-540-b moves it to SECOND. Pure markup order -- the carousel finds
-           the Alerts index dynamically (`dtcCardIndex`), so the ribbon tap,
-           the takeover "View detail" and the drill-down all keep working
-           without a nav change. -->
-      <section class="card" data-state="dtc" aria-label="Alerts" data-page-name="ALERTS">
+      <!-- US-898-b1 (F-127; specs/v030-warnings-page-design.md s3): the ALERTS
+           card. carousel.js (`renderWarningsCard`) fills the body from
+           states/alerts ALONE -- a header, then one row per provider entry in
+           the provider's order. No data-state: the card is not a generic
+           per-card read, and the carousel finds it by this id
+           (`alertsCardIndex`), so the icon and the CHECK ENGINE tap both
+           reach it by name. -->
+      <section class="card" id="alerts-card" aria-label="Alerts" data-page-name="ALERTS">
         <div class="card-body">unavailable</div>
       </section>
       <section class="card" data-state="system-status" aria-label="System Status"
@@ -495,8 +504,7 @@
     </div>
   </main>
 
-  <!-- US-406 per-code detail overlay: opened by a list-row tap, the takeover
-       "View detail", or a ribbon tap. Fixed skeleton (hero · status · freeze-
+  <!-- US-406 per-code detail overlay: opened by a list-row tap. Fixed skeleton (hero · status · freeze-
        frame-or-realtime fallback · severity-gated fix + trust badge · log/sync
        footer). A ‹ Back is always present so the operator is never trapped. -->
   <div id="dtc-detail" hidden role="dialog" aria-label="Code detail">

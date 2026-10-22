@@ -24,6 +24,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-21    | Ralph (Rex)  | Initial -- US-558 destination-vs-modal opacity.
+# 2026-10-20    | Rex (US-899-a2)| MOVED PIN (US-899-a2): the watch/minor/unknown
+#               |              | takeover floods are deleted; STOP is the one field.
 # ================================================================================
 ################################################################################
 
@@ -76,6 +78,13 @@ OVERLAY_ROLES = {
         ALARM,
         "US-405 severity takeover -- OUT OF SCOPE per AC-4; its field is set "
         "per-severity by the DTC safety design, not by this rule",
+    ),
+    # MOVED PIN (US-899-b): the key-on TROUBLE CODES screen is a new full-screen
+    # layer on the takeover skeleton; the Warnings spec s4.4b owns its field.
+    "#code-alert": (
+        ALARM,
+        "US-899-b key-on TROUBLE CODES screen -- the takeover skeleton without "
+        "pulse; its opaque field and tier frame are set by the Warnings spec s4.4b",
     ),
 }
 
@@ -348,6 +357,10 @@ def test_theTakeoverFieldIsStillOwnedBySeverity_notByThisStory():
     near-black field under the WATCH gradient and quietly weakened the AREA
     channel the STOP tier is built on.
 
+    MOVED PIN (US-899-a2): the watch/minor/unknown gradient floods are deleted
+    (the takeover is STOP only), so STOP's near-black field is the one left
+    to pin, and no other severity may grow a field back.
+
     Pinned as an absence, because "I did not touch it" is otherwise a claim in a
     close note rather than a property of the sheet."""
     css = readCss(DASHBOARD_CSS)
@@ -357,9 +370,9 @@ def test_theTakeoverFieldIsStillOwnedBySeverity_notByThisStory():
     )
     assert _declaration(css, '#dtc-takeover[data-severity="stop"]', "background") == FIELD_TOKEN
     for severity in ("watch", "minor", "unknown"):
-        value = _declaration(css, f'#dtc-takeover[data-severity="{severity}"]', "background")
-        assert value.startswith("radial-gradient("), (
-            f"the {severity} takeover no longer paints its severity gradient"
+        selector = f'#dtc-takeover[data-severity="{severity}"]'
+        assert not re.search(rf"^{re.escape(selector)}\s*\{{", css, re.MULTILINE), (
+            f"the deleted {severity} takeover flood is back"
         )
 
 

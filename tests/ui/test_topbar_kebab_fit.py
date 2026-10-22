@@ -30,6 +30,7 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-08-21    | Ralph (Rex)  | Initial -- US-556 kebab visual box vs hit box.
+# 2026-10-20    | Ralph (Rex)  | US-898-a -- CONTROL_BANDS gains the warnings icon.
 # ================================================================================
 ################################################################################
 
@@ -73,6 +74,12 @@ CONTROL_BANDS = {
         ".detail-head",
         "US-509 drill-down Back, sharing the per-code overlay's head shell that "
         "US-491 already sized against --tap-min",
+    ),
+    # US-898-a: the warnings icon is the kebab's pattern in the LEFT cluster --
+    # painted at --bar-h, its hit box grown by a transparent ::after.
+    "#glyph-warnings": (
+        "#topbar",
+        "US-898-a warnings icon -- a top-bar control on the #menu-btn pattern",
     ),
 }
 

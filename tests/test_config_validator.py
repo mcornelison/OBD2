@@ -37,6 +37,10 @@
 # 2026-10-18    | Rex (US-890-f) | pi.display.stale.fuelResetConfirmSec default 6 +
 #                                positivity.
 # 2026-10-18    | Rex (US-896-a) | pi.display.stale.imuSec default pin 2.0 -> 3.0.
+# 2026-10-20    | Rex (US-897-c) | pi.warnings.ackTimeoutSec 5 + finite > 0;
+#                                pi.warnings.ackStorePath default + non-empty.
+# 2026-10-20    | Rex (US-899-a1)| pi.display.stale.alertsAckConfirmSec 6 /
+#                                alertsAckNoticeSec 3 + finite > 0.
 # ================================================================================
 ################################################################################
 
@@ -1249,6 +1253,59 @@ def test_warnings_rpm_rejectsAStopTier():
         ConfigValidator().validate(bad)
 
 
+def test_warnings_ack_defaults_5sWait_storeUnderVarLib():
+    """US-897-c (Atlas Q22 + s3): the POST /alerts-ack wait and the ack store."""
+    from common.config.validator import DEFAULTS
+
+    cfg = ConfigValidator().validate(_baseCfg())
+    assert cfg["pi"]["warnings"]["ackTimeoutSec"] == 5
+    assert cfg["pi"]["warnings"]["ackStorePath"] == "/var/lib/eclipse-obd/alerts-ack.json"
+    assert DEFAULTS["pi.warnings.ackTimeoutSec"] == 5
+    assert DEFAULTS["pi.warnings.ackStorePath"] == "/var/lib/eclipse-obd/alerts-ack.json"
+
+
+def test_warnings_ack_defaultsCiteAtlas():
+    import inspect
+
+    import common.config.validator as validatorModule
+
+    lines = inspect.getsource(validatorModule).splitlines()
+    for key, source in (
+        ("pi.warnings.ackTimeoutSec", "Atlas Q22"),
+        ("pi.warnings.ackStorePath", "Atlas s3"),
+    ):
+        line = next(text for text in lines if f"'{key}':" in text)
+        assert source in line
+
+
+@pytest.mark.parametrize("badValue", [0, -1, "5", True, float("nan"), float("inf")])
+def test_warnings_ackTimeoutSec_rejectsAnythingButAFiniteNumberAboveZero(badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"ackTimeoutSec": badValue}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.ackTimeoutSec"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_ackTimeoutSec_acceptsAPositiveNumber():
+    ok = _baseCfg()
+    ok["pi"] = {"warnings": {"ackTimeoutSec": 2.5}}
+    assert ConfigValidator().validate(ok)["pi"]["warnings"]["ackTimeoutSec"] == 2.5
+
+
+@pytest.mark.parametrize("badValue", ["", "   ", 7, True, ["/a"]])
+def test_warnings_ackStorePath_rejectsAnythingButANonEmptyString(badValue):
+    bad = _baseCfg()
+    bad["pi"] = {"warnings": {"ackStorePath": badValue}}
+    with pytest.raises(ConfigValidationError, match="pi.warnings.ackStorePath"):
+        ConfigValidator().validate(bad)
+
+
+def test_warnings_ack_absentKeys_areSkipped_underACustomDefaultsSet():
+    """Codebase pattern: a custom defaults set may not supply the new keys."""
+    cfg = ConfigValidator(defaults={"pi.unrelated": 1}).validate(_baseCfg())
+    assert "warnings" not in cfg["pi"]
+
+
 def test_replay_active_defaultsToFalse_andAnExplicitTrueIsKept():
     """US-901-a: pi.replay.active exists with validator default false (production
     unchanged), and a replay config's true survives validation."""
@@ -1606,6 +1663,31 @@ def test_validate_staleFuelResetConfirmSec_positiveFloat_accepted():
     cfg["pi"] = {"display": {"stale": {"fuelResetConfirmSec": 8.5}}}
     stale = ConfigValidator().validate(cfg)["pi"]["display"]["stale"]
     assert stale["fuelResetConfirmSec"] == 8.5
+
+
+def test_validate_staleAlertsAckWindows_defaultToSixAndThree():
+    """US-899-a1: the takeover ack waits 6 s for the acknowledged re-read (Atlas
+    Q33, the fuelResetConfirmSec pattern) and its failure notice holds 3 s (Iris)."""
+    stale = ConfigValidator().validate(_baseCfg())["pi"]["display"]["stale"]
+    assert stale["alertsAckConfirmSec"] == 6
+    assert stale["alertsAckNoticeSec"] == 3
+
+
+@pytest.mark.parametrize("key", ["alertsAckConfirmSec", "alertsAckNoticeSec"])
+@pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan"), "6", True])
+def test_validate_staleAlertsAckWindows_nonPositiveOrNonFinite_rejected(key, bad):
+    """US-899-a1: each ack window must be a finite number > 0."""
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"stale": {key: bad}}}
+    with pytest.raises(ConfigValidationError, match=f"pi.display.stale.{key}"):
+        ConfigValidator().validate(cfg)
+
+
+@pytest.mark.parametrize("key", ["alertsAckConfirmSec", "alertsAckNoticeSec"])
+def test_validate_staleAlertsAckWindows_positiveFloat_accepted(key):
+    cfg = _baseCfg()
+    cfg["pi"] = {"display": {"stale": {key: 4.5}}}
+    assert ConfigValidator().validate(cfg)["pi"]["display"]["stale"][key] == 4.5
 
 
 def test_validate_fuelKeys_defaultsAreSpoolsSourcedValues():
