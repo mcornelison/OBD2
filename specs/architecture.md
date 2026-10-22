@@ -6165,8 +6165,10 @@ legacy AlertManager owns that section (config.json).
   pulse.
 - **The clear gate is unchanged**: it keeps reading the dtc payload's TABLE tier
   (`dtc_emitter._computeClearGate`, `dtc_clear._relevantStored`, `carousel.js`), never the
-  alerts tier, so a stop-tier code is never clearable. It stays stored-only; counting
-  pending codes is US-919.
+  alerts tier, so a stop-tier code is never clearable. Since US-919 it counts pending codes
+  too (Mode 04 wipes them): relevant = status in {stored, pending} AND severity != `na`,
+  one entry per code, and an unread pending set (`pendingCheckedAtTs` null) is refused as
+  `pending_not_read` (the chain is below, US-407).
 
 **Overheat record** (Atlas Q15 option C): the arbiter INSERTs into the EXISTING, already
 synced `alert_log`. It never UPDATEs: sync is a delta by id.
@@ -7761,7 +7763,8 @@ and every bank-2 code included (wrong-vehicle data on this inline four) — is
 display shows "No description yet") — no fabricated severity or fix. `freezeFrame`
 is always `null` (Mode 02 confirmed unsupported on MD326328; US-406 renders the
 realtime fallback). The `clearGate` is the honest UI-side derivation from the
-captured codes (severity_present → sync_pending → ok); **US-407 re-checks it
+captured codes (US-919: the same chain as `dtc_clear`, no_codes → severity_present →
+severity_unknown → pending_not_read → sync_pending → session_locked → ok); **US-407 re-checks it
 authoritatively at the privileged action path** — the UI is never the gate.
 
 **Read-only endpoint.** `eclipse-states-http` already serves any safe file in the
@@ -7975,15 +7978,26 @@ this story implements those semantics, it does not redefine them.
 UI (S-10 / F-3, load-bearing).** `src/pi/splash/dtc_clear.py` is the authoritative
 gate SSOT. `evaluateClearGate` **re-derives** the verdict from the raw captured
 codes and deliberately **ignores** any precomputed `clearGate.enabled` in the
-state: enabled only when **every stored (non-`na`) code is MINOR (green) AND
-logged AND server-sync-acked**, and no code re-set this session. Any STOP/WATCH →
-`severity_present`; else any ungraded code (`unknown`, absent or unrecognised
-severity) → `severity_unknown` ("severity could not be determined" — US-753: the
-refusal is identical, but it is a different fact from a graded STOP/WATCH, so it
-gets its own reason); an un-synced MINOR → `sync_pending` (capture-before-clear,
-advisory §4c); a returned code (`sessionResetLock`) → `session_locked` ("don't
-chase the light", §4d); nothing clearable → `no_codes`. This is the DTC analog of
-US-403's action-path allow-list re-check in `service_control.py`.
+state: enabled only when **every stored or pending (non-`na`) code is MINOR
+(green) AND logged AND server-sync-acked**, the pending set was read this session,
+and no code re-set this session. **Pending codes are relevant** (US-919, Atlas Q2/Q3):
+Mode 04 wipes them too, so relevant = status in {`stored`, `pending`} AND severity
+!= `na` (whatever the status), a code both stored and pending counting ONCE; a
+pending code's tier is the same table tier the emitter publishes for it. The chain,
+in this order and identical in all three copies (`dtc_emitter._computeClearGate`,
+`dtc_clear.evaluateClearGate`, `carousel.js clearGateReason`; one shared case table,
+`tests/pi/splash/clear_gate_cases.py`): nothing relevant → `no_codes`; any
+STOP/WATCH → `severity_present`; else any ungraded code (`unknown`, absent or
+unrecognised severity) → `severity_unknown` ("severity could not be determined" —
+US-753: the refusal is identical, but it is a different fact from a graded
+STOP/WATCH, so it gets its own reason); no Mode 07 answered this session
+(`pendingCheckedAtTs` null) → `pending_not_read` (US-919 Q4; after the permanent
+reasons, so a stored WATCH with pending unread reads `severity_present`); an
+un-synced MINOR → `sync_pending` (capture-before-clear, advisory §4c); a returned
+code (`sessionResetLock`, which already counts pending) → `session_locked` ("don't
+chase the light", §4d). The page's display-only `moving` lock replaces only an
+otherwise-`ok` gate. This is the DTC analog of US-403's action-path allow-list
+re-check in `service_control.py`.
 
 **Three defense-in-depth layers (same shape as US-403's privilege path).**
 1. **UI layer** — `carousel.js` `clearButtonView` mirrors the gate *for display*

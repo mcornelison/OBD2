@@ -35,6 +35,8 @@
 #               |              | (codeRecord, entry); the band is the entry's
 #               |              | sentence and the chip the entry's tier; the
 #               |              | clear gate takes engineParked.parked.
+# 2026-10-21    | Ralph (Rex)  | US-919 MOVED PIN: the Mode-04 gate pin's states
+#               |              | carry a pendingCheckedAtTs (pending was read).
 # ================================================================================
 ################################################################################
 
@@ -421,26 +423,45 @@ def test_mode04ClearGate_isUnchanged():
     """The most consequential control on the dash. Re-asserted end to end after
     a story that re-boxed the zone it lives in.
 
-    MOVED PIN (US-898-c): asked while parked (the button's second input)."""
+    MOVED PIN (US-898-c): asked while parked (the button's second input).
+    MOVED PIN (US-919): every state carries a Mode 07 read time (`read`) -- an
+    unread pending set is its own reason, pending_not_read."""
+    read = "2026-07-27T12:00:00Z"
     minorOk = _code("minor", code="P0442", logged=True, syncAcked=True)
-    assert _probe("clearButtonView", {"codes": [minorOk]}, True)["enabled"] is True
     assert (
-        _probe("clearButtonView", {"codes": [minorOk, _code("stop")]}, True)["reason"]
+        _probe("clearButtonView", {"codes": [minorOk], "pendingCheckedAtTs": read}, True)[
+            "enabled"
+        ]
+        is True
+    )
+    assert (
+        _probe(
+            "clearButtonView",
+            {"codes": [minorOk, _code("stop")], "pendingCheckedAtTs": read},
+            True,
+        )["reason"]
         == "severity_present"
     )
     assert (
-        _probe("clearButtonView", {"codes": [_code("minor", syncAcked=False)]}, True)["reason"]
+        _probe(
+            "clearButtonView",
+            {"codes": [_code("minor", syncAcked=False)], "pendingCheckedAtTs": read},
+            True,
+        )["reason"]
         == "sync_pending"
     )
     assert (
         _probe(
             "clearButtonView",
-            {"codes": [minorOk], "sessionResetLock": ["P0442"]},
+            {"codes": [minorOk], "sessionResetLock": ["P0442"], "pendingCheckedAtTs": read},
             True,
         )["reason"]
         == "session_locked"
     )
-    assert _probe("clearButtonView", {"codes": []}, True)["visible"] is False
+    assert (
+        _probe("clearButtonView", {"codes": [], "pendingCheckedAtTs": read}, True)["visible"]
+        is False
+    )
 
 
 @_NODE_TESTS

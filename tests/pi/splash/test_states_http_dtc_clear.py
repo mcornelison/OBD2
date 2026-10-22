@@ -18,6 +18,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-407 POST /dtc-clear action route.
+# 2026-10-21    | Ralph (Rex)  | US-919 MOVED PIN: the state file carries a
+#               |              | pendingCheckedAtTs (a Mode 07 read happened).
 # ================================================================================
 ################################################################################
 
@@ -69,6 +71,9 @@ def _writeDtc(statesDir, codes, *, sessionResetLock=None):
         # Deliberately claims clearable; the endpoint must re-derive, not trust it.
         "clearGate": {"enabled": True, "reason": "ok"},
         "sessionResetLock": list(sessionResetLock or []),
+        # MOVED PIN (US-919): a Mode 07 read happened, so the gate is not
+        # refused as pending_not_read and these pins keep their own reasons.
+        "pendingCheckedAtTs": "2026-06-30T19:42:00Z",
         "ts": "2026-06-30T19:42:00Z",
     }
     (statesDir / "dtc").write_text(json.dumps(payload), encoding="utf-8")

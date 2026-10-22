@@ -40,6 +40,8 @@
 # 2026-10-20    | Ralph (Rex)  | US-899-a2 -- MOVED PIN: the US-405 takeover/ribbon node
 #                               logic retired; HTML/CSS asserts pin the STOP-only
 #                               takeover and the ribbon's absence.
+# 2026-10-21    | Ralph (Rex)  | US-919 -- MOVED PIN: the US-407 clear-logic fixture
+#                               carries a pendingCheckedAtTs (pending was read).
 # ================================================================================
 ################################################################################
 
@@ -1216,10 +1218,13 @@ function code(sev, cd, opts) {
     syncAcked: opts.syncAcked === undefined ? true : opts.syncAcked,
   };
 }
+// MOVED PIN (US-919): the state carries a Mode 07 read time (pendingCheckedAtTs)
+// so each pin keeps its own reason; an unread pending set is pending_not_read.
 function dtc(codes, lock) {
   return { mil: true, codes: codes, newSinceTs: null,
            clearGate: { enabled: true, reason: 'ok' },
-           sessionResetLock: lock || [], ts: '2026-06-30T19:42:00Z' };
+           sessionResetLock: lock || [], pendingCheckedAtTs: '2026-06-30T19:42:00Z',
+           ts: '2026-06-30T19:42:00Z' };
 }
 
 // --- S-6 ok: all MINOR + logged + synced -> enabled -------------------------

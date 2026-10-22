@@ -20,6 +20,8 @@
 # 2026-10-19    | Ralph (Rex)  | US-897-a2 -- checkedAtTs + pendingCheckedAtTs
 #               |              | keys and the per-boot seed reader.
 # 2026-10-20    | Ralph (Rex)  | US-897-a3 -- per-code firstSeenTs.
+# 2026-10-21    | Ralph (Rex)  | US-919 MOVED PIN -- an empty gate publishes
+#               |              | `no_codes` (dtc_clear's chain).
 # ================================================================================
 ################################################################################
 
@@ -368,7 +370,9 @@ def test_buildDtcState_lastKnown_neverReachesTheClearGate():
         lastKnown=_lastKnownBlock(_knownCode("P0442")),
     )
 
-    assert state["clearGate"] == {"enabled": False, "reason": "ok"}
+    # MOVED PIN (US-919): the published gate shares dtc_clear's chain, so
+    # nothing relevant reads `no_codes` here too (was `ok` with enabled False).
+    assert state["clearGate"] == {"enabled": False, "reason": "no_codes"}
     assert dtc_clear.evaluateClearGate(state).reason == dtc_clear.GATE_NO_CODES
     calls: list[int] = []
     outcome = dtc_clear.performClear(state, clearRunner=lambda: calls.append(1) or {})

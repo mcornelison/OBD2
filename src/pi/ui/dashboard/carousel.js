@@ -2948,6 +2948,9 @@
     severity_unknown: "🔒 CLEAR CODES — severity could not be determined",
     sync_pending: "🔒 CLEAR CODES — waiting for server sync",
     session_locked: "🔒 CLEAR CODES — a cleared code returned; clearing again won't fix it",
+    // US-919 (Iris 2026-10-20, verbatim): no Mode 07 answered, so the pending
+    // set Mode 04 would also wipe was never read. One fact, no tier, no "yet".
+    pending_not_read: "🔒 CLEAR CODES — pending codes haven’t been read",
     // US-898-c (Iris 2026-10-19): the lock is engineParked, which also holds
     // an idling car and the 8 s hold, so it says what unlocks it.
     moving: "🔒 CLEAR CODES — engine off to clear",
@@ -2956,14 +2959,29 @@
   // Re-derive the clear gate from the raw codes (the display mirror of the
   // server-side dtc_clear.evaluateClearGate). Deliberately IGNORES any
   // precomputed clearGate.enabled -- the button never lies just because the
-  // state's flag does. Mode 04 is all-or-nothing, so the gate keys off ALL
-  // stored (non-na) codes, not the one on screen.
+  // state's flag does. Mode 04 is all-or-nothing and wipes pending codes too,
+  // so the gate keys off ALL stored and pending (non-na) codes, not the one on
+  // screen (US-919, Atlas Q2/Q3); a code both stored and pending counts once.
+  function clearGateRelevant(codes) {
+    var candidates = codes.filter(function (c) {
+      return (c.status === "stored" || c.status === "pending") && c.severity !== "na";
+    });
+    var storedCodes = {};
+    candidates.forEach(function (c) {
+      if (c.status === "stored") storedCodes[c.code] = true;
+    });
+    var seen = {};
+    return candidates.filter(function (c) {
+      if (seen[c.code] || (c.status !== "stored" && storedCodes[c.code])) return false;
+      seen[c.code] = true;
+      return true;
+    });
+  }
+
   function clearGateReason(data) {
     if (!isObj(data)) return "no_codes";
     var codes = Array.isArray(data.codes) ? data.codes.filter(isObj) : [];
-    var relevant = codes.filter(function (c) {
-      return c.status === "stored" && c.severity !== "na";
-    });
+    var relevant = clearGateRelevant(codes);
     if (relevant.length === 0) return "no_codes";
     if (relevant.some(function (c) {
       return c.severity === "stop" || c.severity === "watch";
@@ -2972,6 +2990,11 @@
     }
     if (relevant.some(function (c) { return c.severity !== "minor"; })) {
       return "severity_unknown";
+    }
+    // US-919 (Atlas Q4): after every permanent reason, before sync -- no
+    // Mode 07 answered this session (null or absent).
+    if (data.pendingCheckedAtTs === null || data.pendingCheckedAtTs === undefined) {
+      return "pending_not_read";
     }
     if (relevant.some(function (c) { return !(c.logged && c.syncAcked); })) {
       return "sync_pending";

@@ -4,8 +4,9 @@
 #   + clear orchestration (pi.splash.dtc_clear). The load-bearing safety layer:
 #   the Mode-04 issuance re-checks the gate at the privileged action path,
 #   RE-DERIVED from the raw captured codes -- it NEVER trusts the UI-supplied
-#   `clearGate.enabled` flag (S-10 / F-3). Gate = every stored (non-`na`) code is
-#   MINOR (green) AND logged AND server-sync-acked; any STOP/WATCH -> disabled; an
+#   `clearGate.enabled` flag (S-10 / F-3). Gate = every stored/pending (non-`na`)
+#   code is MINOR (green) AND logged AND server-sync-acked AND the pending set was
+#   read (US-919); any STOP/WATCH -> disabled; an
 #   un-synced MINOR -> disabled; a code that re-set this session (sessionResetLock)
 #   -> disabled ("don't chase the light", advisory sec 4d). performClear refuses
 #   to call the vehicle-write runner when the gate fails, and flags an instant
@@ -19,6 +20,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-06-30    | Ralph (Rex)  | Initial -- US-407 authoritative clear gate.
+# 2026-10-21    | Ralph (Rex)  | US-919 MOVED PIN: _state carries a Mode 07 read
+#               |              | time; pending counts; pending_not_read pinned.
 # ================================================================================
 ################################################################################
 
@@ -48,15 +51,25 @@ def _code(
     }
 
 
-def _state(codes: list[dict], *, sessionResetLock: list[str] | None = None) -> dict:
+def _state(
+    codes: list[dict],
+    *,
+    sessionResetLock: list[str] | None = None,
+    pendingCheckedAtTs: str | None = "2026-06-30T19:42:00Z",
+) -> dict:
     # NOTE: clearGate.enabled is deliberately set to True here so the tests prove
     # the action path RE-DERIVES the gate from the codes and ignores this flag.
+    # MOVED PIN (US-919): the state carries a Mode 07 read time by default, so
+    # these pins keep testing the reason they name; an unread pending set is
+    # its own reason (pending_not_read), pinned below and in
+    # test_clear_gate_one_predicate.py.
     return {
         "mil": True,
         "codes": codes,
         "newSinceTs": None,
         "clearGate": {"enabled": True, "reason": "ok"},
         "sessionResetLock": list(sessionResetLock or []),
+        "pendingCheckedAtTs": pendingCheckedAtTs,
         "ts": "2026-06-30T19:42:00Z",
     }
 
@@ -124,6 +137,26 @@ def test_gate_sessionLockedCode_disabled_dontChaseTheLight():
     )
     assert decision.enabled is False
     assert decision.reason == dtc_clear.GATE_SESSION_LOCKED
+
+
+def test_gate_pendingWatch_besideStoredMinor_disabledSeverity():
+    """MOVED PIN (US-919): pending is no longer informational -- Mode 04 wipes it
+    too, so a pending WATCH beside a clearable stored MINOR blocks the clear."""
+    decision = dtc_clear.evaluateClearGate(
+        _state([_code("P0443", "minor"), _code("P0400", "watch", status="pending")])
+    )
+    assert decision.enabled is False
+    assert decision.reason == dtc_clear.GATE_SEVERITY
+
+
+def test_gate_pendingSetNeverRead_disabledPendingNotRead():
+    """US-919 (Atlas Q4): no Mode 07 answered this session -> pending_not_read,
+    re-checked here at the action path like every other reason."""
+    decision = dtc_clear.evaluateClearGate(
+        _state([_code("P0443", "minor")], pendingCheckedAtTs=None)
+    )
+    assert decision.enabled is False
+    assert decision.reason == dtc_clear.GATE_PENDING_NOT_READ
 
 
 # ---------------------------------------------------------------------------

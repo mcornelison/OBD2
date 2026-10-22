@@ -10,13 +10,15 @@
 #
 #   Gate (Spool advisory sec 4b, NON-NEGOTIABLE): Mode 04 is all-or-nothing (it
 #   wipes EVERY stored+pending code, the freeze-frame, and resets readiness
-#   monitors), so the gate keys off ALL stored codes, not the one on screen. It is
-#   ENABLED only when every stored (non-`na`) code is MINOR (green) AND logged AND
-#   server-sync-acked, and no code re-set this session. Any STOP/WATCH ->
+#   monitors), so the gate keys off ALL stored AND pending codes (US-919), not
+#   the one on screen. It is ENABLED only when every stored/pending (non-`na`)
+#   code is MINOR (green) AND logged AND server-sync-acked, the pending set was
+#   read this session, and no code re-set this session. Any STOP/WATCH ->
 #   `severity_present`; else any ungraded (`unknown` / absent / unrecognised)
-#   severity -> `severity_unknown`; an un-synced MINOR -> `sync_pending`; a returned code (in
-#   sessionResetLock) -> `session_locked` ("don't chase the light", advisory
-#   sec 4d).
+#   severity -> `severity_unknown`; no Mode 07 answered (pendingCheckedAtTs
+#   null) -> `pending_not_read`; an un-synced MINOR -> `sync_pending`; a
+#   returned code (in sessionResetLock) -> `session_locked` ("don't chase the
+#   light", advisory sec 4d).
 #
 #   performClear refuses to invoke the injected vehicle-write runner when the gate
 #   fails (no wipe, no freeze-frame destroyed), and detects an instant re-set from
@@ -32,6 +34,8 @@
 # 2026-06-30    | Ralph (Rex)  | Initial implementation (US-407 clear gate).
 # 2026-09-14    | Ralph (Rex)  | US-753: `severity_unknown` split out of
 #               |              | `severity_present`; refusal unchanged.
+# 2026-10-21    | Ralph (Rex)  | US-919: pending codes are relevant (one entry
+#               |              | per code) + `pending_not_read` reason.
 # ================================================================================
 ################################################################################
 
@@ -49,6 +53,9 @@ _SEVERITY_NA = "na"
 # The graded blocking tiers. Only these justify saying "a STOP/WATCH code is
 # present"; any other non-MINOR value is a severity nobody could determine.
 _SEVERITIES_BLOCKING = frozenset({"stop", "watch"})
+# US-919: Mode 04 wipes pending codes as well as stored ones (sec 4b), so both
+# statuses gate the clear.
+_RELEVANT_STATUSES = frozenset({"stored", "pending"})
 
 # Gate reasons (design-spec sec 6.1 + advisory sec 4). `ok` is the only enabled
 # state; the rest are honest disable reasons the UI renders verbatim.
@@ -60,10 +67,14 @@ GATE_SEVERITY_UNKNOWN = "severity_unknown"
 GATE_SYNC = "sync_pending"
 GATE_NO_CODES = "no_codes"
 GATE_SESSION_LOCKED = "session_locked"
+# US-919 (Atlas Q4): no Mode 07 answered this session (pendingCheckedAtTs null),
+# so the pending set Mode 04 would also wipe was never read.
+GATE_PENDING_NOT_READ = "pending_not_read"
 
 __all__ = [
     "GATE_NO_CODES",
     "GATE_OK",
+    "GATE_PENDING_NOT_READ",
     "GATE_SESSION_LOCKED",
     "GATE_SEVERITY",
     "GATE_SEVERITY_UNKNOWN",
@@ -80,11 +91,12 @@ class ClearGateDecision:
     """The authoritative clear-gate verdict.
 
     Attributes:
-        enabled: True only when every stored (non-``na``) code is MINOR, logged,
-            server-sync-acked, and none re-set this session.
+        enabled: True only when every stored/pending (non-``na``) code is
+            MINOR, logged, server-sync-acked, the pending set was read, and
+            none re-set this session.
         reason: ``ok`` when enabled; otherwise the honest disable cause
-            (``severity_present`` / ``severity_unknown`` / ``sync_pending`` /
-            ``no_codes`` / ``session_locked``).
+            (``severity_present`` / ``severity_unknown`` / ``pending_not_read``
+            / ``sync_pending`` / ``no_codes`` / ``session_locked``).
     """
 
     enabled: bool
@@ -118,19 +130,30 @@ class ClearOutcome:
 
 
 def _relevantStored(dtcState: Mapping) -> list[Mapping]:
-    """Return the stored codes that gate the all-or-nothing clear.
+    """Return the codes that gate the all-or-nothing clear (stored AND pending).
 
-    Pending codes are informational; ``na`` codes (auto-trans P1xxx on this
-    manual car) are not real faults -- neither participates in the gate.
+    US-919 (Atlas Q2/Q3): Mode 04 wipes pending codes too, so relevant =
+    status in {stored, pending} AND severity != ``na`` (auto-trans P1xxx on
+    this manual car is not a real fault, whatever its status). A code both
+    stored and pending counts ONCE, as its stored entry.
     """
-    codes = dtcState.get("codes") or []
-    return [
+    codes = [
         c
-        for c in codes
+        for c in (dtcState.get("codes") or [])
         if isinstance(c, Mapping)
-        and c.get("status") == "stored"
+        and c.get("status") in _RELEVANT_STATUSES
         and c.get("severity") != _SEVERITY_NA
     ]
+    storedCodes = {c.get("code") for c in codes if c.get("status") == "stored"}
+    seen: set[object] = set()
+    relevant: list[Mapping] = []
+    for c in codes:
+        code = c.get("code")
+        if code in seen or (c.get("status") != "stored" and code in storedCodes):
+            continue
+        seen.add(code)
+        relevant.append(c)
+    return relevant
 
 
 def evaluateClearGate(dtcState: Mapping) -> ClearGateDecision:
@@ -139,7 +162,9 @@ def evaluateClearGate(dtcState: Mapping) -> ClearGateDecision:
     This deliberately IGNORES any precomputed ``clearGate.enabled`` in the state:
     the gate is recomputed from the codes so a tampered or stale UI can never
     force a clear. The order of the disable checks yields the most operator-
-    relevant reason (severity first, then capture/sync, then the session lock).
+    relevant reason: the permanent severity reasons first, then the unread
+    pending set, then capture/sync, then the session lock (US-919 chain, Atlas
+    REVIEW 2026-10-20 G2).
 
     Args:
         dtcState: The current ``dtc`` state mapping (see the emitter schema).
@@ -154,6 +179,8 @@ def evaluateClearGate(dtcState: Mapping) -> ClearGateDecision:
         return ClearGateDecision(enabled=False, reason=GATE_SEVERITY)
     if any(c.get("severity") != _SEVERITY_MINOR for c in relevant):
         return ClearGateDecision(enabled=False, reason=GATE_SEVERITY_UNKNOWN)
+    if dtcState.get("pendingCheckedAtTs") is None:
+        return ClearGateDecision(enabled=False, reason=GATE_PENDING_NOT_READ)
     if any(not (c.get("logged") and c.get("syncAcked")) for c in relevant):
         return ClearGateDecision(enabled=False, reason=GATE_SYNC)
     lock = set(dtcState.get("sessionResetLock") or [])
