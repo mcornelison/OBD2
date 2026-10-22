@@ -5143,7 +5143,7 @@ collapsed into one another:
 | Layer | Fact | Where it is read | Gates capture? |
 |---|---|---|---|
 | **Powered** | the dongle has power | nowhere in software; the OBDLink LX is powered with the key **out** | no |
-| **Bluetooth-connected** | the RFCOMM link to the dongle is up | `ConnectionStatus.connected` (+ `signalReadable`, US-767-a) | **no** — up on a parked car |
+| **Bluetooth-connected** | the RFCOMM link to the dongle is up | **no `ConnectionStatus` field reads it yet** (US-876-e adds the BT observation; until then `system-status.link.bt` is not read). `ConnectionStatus.connected` is **not** this fact: it is python-OBD's `is_connected()`, i.e. status `CAR_CONNECTED` — an ECU-at-connect fact (Atlas MEASURED; corrected in US-876-c) | **no** — up on a parked car |
 | **ECU-connected** | an ECU read the data path already made **returned data** | `ConnectionStatus.reachability` (US-793-a), one of `answered` / `did_not_answer` / `not_yet_attempted` / `could_not_determine` | **yes — this is the gate signal** |
 
 🔴 **A `connect_success` (or `reconnect_success`) connection_log row is NOT
@@ -7384,6 +7384,56 @@ reusing the boot-state primitives). Schema (spec §7):
 (US-880-a: the `drive` block also carries `distanceKm` / `distanceSinceTs`, and US-896-b
 adds `elapsedSec` (frozen at drive end) / `distancePartial`; see
 "`system-status.drive.distanceKm`" in section 11.)
+
+**`link` — the link chain (US-876-c, Atlas L1/L5/L6, X1).** An always-present
+block, one entry per layer of the chain, every key always present:
+
+```json
+"link": { "bt":      {"state": null, "ts": null, "lastOkTs": null},
+          "adapter": {"state": null, "ts": null, "lastOkTs": null},
+          "ecu":     {"state": "up", "ts": "2026-10-20T15:02:11Z",
+                      "lastOkTs": "2026-10-20T15:04:30Z"} }
+```
+
+- **`state`** ∈ `up` (latest observation positive) / `connecting` (not up and
+  never up this session — neutral, not counted) / `retrying` (not up but up
+  earlier this session — counted) / `down` (not up and **no retry authority**)
+  / `null` (not read; `ts` and `lastOkTs` null too — available = `state != null`).
+  "This session" is this process: a restart is null until re-observed.
+- **`ts`** is the canonical-UTC time of the layer's **last state transition**,
+  never the publish tick; `connecting` is dated the attempt's start.
+- **`lastOkTs`** is the last time the layer was up this session (null if never;
+  never carried across a boot).
+- **Never blanked** when `source.obd.available` is false — that blanking was
+  the ARCH-061 grey. `obdLink {state, retries}` ships **unchanged** beside it
+  (S110 retires it); link `retrying` is not reflected in `obdLink.retries`.
+
+One rule decides every layer: `deriveLinkLayerState` + `LinkLayerTracker` in
+`system_status_emitter.py`. The tracker (one per layer, held by the
+orchestrator's `card_state_emitter`) owns the "up this session" flag, set on the
+first up and never cleared — a reconnect resets the producer's observation, so
+the flag cannot live there. For bt/adapter (US-876-d/e) "up earlier" means up
+**while link.ecu was up** (G1): before the ECU first answers, a key-off attempt
+that raises and releases BT reads `connecting`, never `retrying`.
+
+- **ECU (live, US-876-c)** from `ConnectionStatus.reachability`: `answered` →
+  up; `did_not_answer` / `not_yet_attempted` → not up; `could_not_determine`,
+  no connection or a raising `getStatus()` → not read (retrying once up this
+  session). `ts` comes from `ConnectionStatus.ecuChangedAtUtc` — the producer's
+  wall-clock stamp of each reachability transition (a freshness decay is dated
+  last answer + the window; a generation bump is dated the bump) — and
+  `lastOkTs` from `ecuLastOkAtUtc`. Both fields stay **out of `toDict()`**. A
+  status with no `reachability` field publishes the layer null.
+- **bt / adapter**: not read until US-876-d/e.
+- **`down` (RE-HUNT C2)** needs no retry authority: none of the three retry
+  threads (US-301 heartbeat, recovery loop, post-failure heartbeat) alive, no
+  connect in flight (`isConnectInFlight()`), and the link not held
+  (`status.connected` — the data path re-reads the ECU behind a held link, so
+  the post-drive key-off edge reads `retrying`). `_shutdownEvent` set is down at
+  once. Otherwise the absence must last one heartbeat tick
+  (`HEARTBEAT_TICK_INTERVAL_SEC`) before it is down, dated when the authority
+  was first seen gone — so the gap before a retry thread spawns never flashes
+  down. A `cancelPendingConnects()` is not a down fact.
 
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
 `linked` (green) / `reconnecting` (amber, with `retries`) / `down`

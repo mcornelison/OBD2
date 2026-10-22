@@ -22,6 +22,8 @@
 # 2026-10-20    | Ralph (Rex)  | US-897-b2 -- the alerts arbiter wiring.
 # 2026-10-21    | Ralph (Rex)  | US-897-e -- the restart seed carries the
 #               |              | pending set with its time (VCs 3, 7, 8).
+# 2026-10-22    | Ralph (Rex)  | US-876-c -- system-status `link`: the ECU layer
+#               |              | from reachability, retry authority (C2) + hold.
 # ================================================================================
 ################################################################################
 
@@ -1173,3 +1175,351 @@ def test_b5_dtcWriteFails_arbiterSeesNothing(tmp_path, clock, monkeypatch):
 
     assert orch._alertsArbiter.codeSource() == {"assessed": False, "checkedAtTs": None}
     assert [e for e in orch._alertsArbiter.episodes() if e.source == "code"] == []
+
+
+# ---------------------------------------------------------------------------
+# US-876-c -- system-status `link`: the ECU layer live from reachability.
+# ---------------------------------------------------------------------------
+
+_LINK_NULL = {"state": None, "ts": None, "lastOkTs": None}
+
+
+def _isoOf(dt):
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class _LinkClocks:
+    """One monotonic + one wall clock shared by the connection and the provider."""
+
+    def __init__(self):
+        self.mono = 5000.0
+        self.wall = datetime(2026, 10, 22, 15, 0, 0, tzinfo=UTC)
+
+    def advance(self, seconds):
+        self.mono += seconds
+        self.wall += timedelta(seconds=seconds)
+
+
+class _EcuResponse:
+    def __init__(self, null):
+        self._null = null
+        self.value = None if null else 800
+
+    def is_null(self):
+        return self._null
+
+
+class _LinkObd:
+    """A python-obd double: linked, answering whatever `next` says."""
+
+    def __init__(self):
+        self.next = _EcuResponse(null=False)
+
+    def is_connected(self):
+        return True
+
+    def query(self, command, force=False):
+        return self.next
+
+    def close(self):
+        pass
+
+
+class _AliveThread:
+    """A retry thread that is alive (the US-301 heartbeat between ticks)."""
+
+    name = "obd-reconnect-heartbeat"
+
+    def is_alive(self):
+        return True
+
+
+def _linkOrch(tmp_path, clocks, *, heartbeat=True):
+    from pi.obdii.obd_connection import ObdConnection
+
+    conn = ObdConnection(
+        {"pi": {"bluetooth": {"macAddress": "00:11:22:33:44:55"}}},
+        monotonicFn=lambda: clocks.mono,
+        wallClockFn=lambda: clocks.wall,
+    )
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._linkClock = lambda: clocks.mono
+    orch._linkWallClock = lambda: clocks.wall
+    if heartbeat:
+        orch._reconnectHeartbeatThread = _AliveThread()
+    orch._initializeCardStateEmitters()
+    return orch, conn
+
+
+def _emitLink(orch, tmp_path):
+    orch._emitSystemStatusState()
+    return _readState(tmp_path, "system-status")["link"]
+
+
+def _ecuRead(conn, obd, null):
+    obd.next = _EcuResponse(null=null)
+    conn.query("RPM")
+
+
+def test_link_ecu_neverUp_up_drop_up_readsConnectingUpRetryingUp(tmp_path):
+    """Atlas VC: the reconnect after a drop reads RETRYING, not connecting --
+    the drop's generation bump resets reachability to NOT_YET_ATTEMPTED, which
+    is why the up-this-session flag lives on the orchestrator side (c-1, c-2)."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    seen = []
+
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+    conn.obd = obd
+    clocks.advance(5)
+    _ecuRead(conn, obd, null=False)
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+    clocks.advance(5)
+    conn.disconnect()
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+    clocks.advance(5)
+    conn.obd = obd  # the reconnect
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+    _ecuRead(conn, obd, null=False)
+    seen.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+
+    assert seen == ["connecting", "up", "retrying", "retrying", "up"]
+
+
+def test_link_ecu_answeredThenDidNotAnswer_upThenRetrying_eachDatedItsTransition(tmp_path):
+    """VC 1: ANSWERED then DID_NOT_ANSWER -> up then retrying; ts = each
+    transition's UTC time (the answer; the decay instant), never the tick."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    window = conn.reachabilityFreshnessSeconds
+
+    clocks.advance(3)
+    answeredAt = clocks.wall
+    _ecuRead(conn, obd, null=False)
+    clocks.advance(2)
+    up = _emitLink(orch, tmp_path)["ecu"]
+    clocks.advance(window + 120)
+    retrying = _emitLink(orch, tmp_path)["ecu"]
+
+    assert up == {"state": "up", "ts": _isoOf(answeredAt), "lastOkTs": _isoOf(answeredAt)}
+    assert retrying == {
+        "state": "retrying",
+        "ts": _isoOf(answeredAt + timedelta(seconds=window)),
+        "lastOkTs": _isoOf(answeredAt),
+    }
+
+
+def test_link_obdSourceUnavailable_neverConnected_linkStillPublished(tmp_path):
+    """VC 2: source.obd.available false (never connected) -> link present; ecu
+    connecting (dated the attempt's start); bt/adapter not read."""
+    clocks = _LinkClocks()
+    builtAt = clocks.wall
+    orch, _conn = _linkOrch(tmp_path, clocks)
+    clocks.advance(30)
+
+    orch._emitSystemStatusState()
+    ss = _readState(tmp_path, "system-status")
+
+    assert ss["source"]["obd"]["available"] is False
+    assert ss["obdLink"] == {"state": None, "retries": 0}
+    assert ss["link"] == {
+        "bt": _LINK_NULL,
+        "adapter": _LINK_NULL,
+        "ecu": {"state": "connecting", "ts": _isoOf(builtAt), "lastOkTs": None},
+    }
+
+
+def test_link_couldNotDetermine_beforeAnUpIsNull_afterAnUpIsRetrying(tmp_path):
+    """COULD_NOT_DETERMINE (a read that raised) before any up -> null; after
+    an up (and a reconnect, so the old answer no longer counts) -> retrying."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+
+    def _raise(command, force=False):
+        raise RuntimeError("serial read exploded")
+
+    obd.query = _raise
+    with pytest.raises(RuntimeError):
+        conn.query("RPM")
+    before = _emitLink(orch, tmp_path)["ecu"]
+
+    obd.query = lambda command, force=False: _EcuResponse(null=False)
+    conn.query("RPM")
+    _emitLink(orch, tmp_path)
+    clocks.advance(2)
+    droppedAt = clocks.wall
+    conn.disconnect()
+    _emitLink(orch, tmp_path)
+    conn.obd = obd
+    obd.query = _raise
+    clocks.advance(3)
+    with pytest.raises(RuntimeError):
+        conn.query("RPM")
+    after = _emitLink(orch, tmp_path)["ecu"]
+
+    assert before == _LINK_NULL
+    # Still retrying -- the unread read is not a new transition, so the state
+    # stays dated by the drop that began it.
+    assert after == {
+        "state": "retrying", "ts": _isoOf(droppedAt), "lastOkTs": after["lastOkTs"],
+    }
+    assert after["lastOkTs"] is not None
+
+
+def test_link_statusWithoutReachability_ecuNotRead(tmp_path):
+    """C5: a status object with no `reachability` (the card-test fakes) reads
+    ecu null -- the provider never invents a layer it cannot see."""
+    conn = SimpleNamespace(
+        getStatus=lambda: _connectionStatus(connected=True, totalConnections=1)
+    )
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._initializeCardStateEmitters()
+
+    assert _emitLink(orch, tmp_path) == {
+        "bt": _LINK_NULL, "adapter": _LINK_NULL, "ecu": _LINK_NULL,
+    }
+
+
+def test_link_noConnection_isNull(tmp_path):
+    """conn None before any up -> null (all three keys)."""
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+
+    assert _emitLink(orch, tmp_path)["ecu"] == _LINK_NULL
+
+
+def test_link_getStatusRaisingAfterAnUp_isRetrying_notNull(tmp_path):
+    """getStatus() raising after an up -> retrying (the layer WAS there; an
+    unreadable instant is not evidence it is gone), lastOkTs kept."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    answeredAt = clocks.wall
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)
+
+    def _boom():
+        raise RuntimeError("status unreadable")
+
+    conn.getStatus = _boom
+    clocks.advance(4)
+    ecu = _emitLink(orch, tmp_path)["ecu"]
+
+    assert ecu["state"] == "retrying"
+    assert ecu["lastOkTs"] == _isoOf(answeredAt)
+
+
+def test_link_cancelThenALiveHeartbeat_isNotDown(tmp_path):
+    """C2: a cancel (cancelPendingConnects) is NOT a down fact -- with the
+    heartbeat alive the layer keeps retrying however long it lasts."""
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)
+    conn.disconnect()
+    conn.cancelPendingConnects()
+
+    states = []
+    for _tick in range(4):
+        clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC)
+        states.append(_emitLink(orch, tmp_path)["ecu"]["state"])
+
+    assert states == ["retrying"] * 4
+
+
+def test_link_noRetryAuthority_downOnlyAfterOneHeartbeatTick_datedWhenItWent(tmp_path):
+    """C2 hold: with no retry thread, no connect in flight and no held link,
+    the layer is NOT down at once (the gap before a heartbeat spawns must not
+    flash down); after one heartbeat tick without authority it is down, dated
+    when the authority was first seen gone. Authority back -> retrying."""
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks, heartbeat=False)
+    obd = _LinkObd()
+    conn.obd = obd
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)  # up: the held link is itself the authority
+    conn.disconnect()
+
+    clocks.advance(2)
+    goneAt = clocks.wall
+    gap = _emitLink(orch, tmp_path)["ecu"]
+    clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC - 1)
+    stillGap = _emitLink(orch, tmp_path)["ecu"]
+    clocks.advance(1)
+    down = _emitLink(orch, tmp_path)["ecu"]
+    orch._reconnectHeartbeatThread = _AliveThread()
+    clocks.advance(2)
+    back = _emitLink(orch, tmp_path)["ecu"]
+
+    assert gap["state"] == "retrying"
+    assert stillGap["state"] == "retrying"
+    assert down["state"] == "down"
+    assert down["ts"] == _isoOf(goneAt)
+    assert back["state"] == "retrying"
+
+
+def test_link_shutdownEventSet_isDownAtOnce(tmp_path):
+    """C2: _shutdownEvent set is down by itself -- no hold, even with a live
+    heartbeat (it is exiting)."""
+    import threading
+
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    orch._shutdownEvent = threading.Event()
+    _emitLink(orch, tmp_path)
+
+    orch._shutdownEvent.set()
+    clocks.advance(1)
+
+    assert _emitLink(orch, tmp_path)["ecu"]["state"] == "down"
+
+
+def test_link_heldLinkWithASilentEcu_isRetrying_notDown(tmp_path):
+    """The known edge (G1): after a drive, key-off silences the ECU while the
+    link stays held -- no retry thread runs, the data path re-reads it -- so
+    the layer reads retrying until shutdown, never down."""
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks, heartbeat=False)
+    obd = _LinkObd()
+    conn.obd = obd
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)
+
+    clocks.advance(conn.reachabilityFreshnessSeconds + 1)
+    _ecuRead(conn, obd, null=True)
+    clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC * 3)
+
+    assert _emitLink(orch, tmp_path)["ecu"]["state"] == "retrying"
+
+
+def test_link_obdLinkUnchanged_retriesKeepTheirShippedMeaning(tmp_path):
+    """C1: obdLink {state, retries} ships unchanged -- link retrying is not
+    reflected in obdLink.retries."""
+    clocks = _LinkClocks()
+    orch, conn = _linkOrch(tmp_path, clocks)
+    obd = _LinkObd()
+    conn.obd = obd
+    conn._status.totalConnections = 1
+    _ecuRead(conn, obd, null=False)
+    _emitLink(orch, tmp_path)
+    conn.disconnect()
+
+    orch._emitSystemStatusState()
+    ss = _readState(tmp_path, "system-status")
+
+    assert ss["link"]["ecu"]["state"] == "retrying"
+    assert ss["obdLink"] == {"state": "down", "retries": 0}

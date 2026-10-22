@@ -103,6 +103,9 @@
 #               |              | tick caches its inputs for emitNow (Atlas G2).
 # 2026-10-21    | Rex (US-897-e)| the restart seed also carries the pending set
 #               |              | its pendingCheckedAtTs dates (one read).
+# 2026-10-22    | Rex (US-876-c)| system-status `link`: the ECU layer live from
+#               |              | reachability (tracker held here), bt/adapter
+#               |              | not read; C2 retry authority with a one-tick hold.
 # ================================================================================
 ################################################################################
 
@@ -233,6 +236,29 @@ class _UnreadableBatteryVerdict:
     jobAvgS = None
     jobMaxS = None
     provisional = False
+
+
+def _ecuObservedUp(status: Any) -> bool | None:
+    """Map ``status.reachability`` to the ECU layer's observation (US-876-c).
+
+    Compared by VALUE, so a status from either import root of the connection
+    module maps the same. ANSWERED is up; DID_NOT_ANSWER and NOT_YET_ATTEMPTED
+    are not up; COULD_NOT_DETERMINE, anything else or no status is not read.
+    """
+    from pi.obdii.obd_connection import Reachability
+
+    if status is None:
+        return None
+    reachability = getattr(status, "reachability", None)
+    value = getattr(reachability, "value", reachability)
+    if value == Reachability.ANSWERED.value:
+        return True
+    if value in (
+        Reachability.DID_NOT_ANSWER.value,
+        Reachability.NOT_YET_ATTEMPTED.value,
+    ):
+        return False
+    return None
 
 
 class CardStateEmitterMixin:
@@ -1821,7 +1847,136 @@ class CardStateEmitterMixin:
             obdAvailable=obdAvailable,
             obdUnavailableReason=obdReason,
             runMode=self._gatherRunMode(),
+            # US-876-c: the link chain. NOT gated on obdAvailable -- the
+            # never-connected branch above blanks obdLink, never this.
+            link=self._gatherLinkChain(),
         )
+
+    def _gatherLinkChain(self) -> dict[str, dict[str, str | None]]:
+        """Gather the US-876-c link chain ``{bt, adapter, ecu}`` (Atlas L6).
+
+        The ECU layer is live from ``ConnectionStatus.reachability``. BT and
+        the adapter are not read until US-876-d/e give them an observation;
+        they will go through the same :class:`LinkLayerTracker`.
+        """
+        from pi.splash.system_status_emitter import unreadLinkLayer
+
+        return {
+            "bt": unreadLinkLayer(),
+            "adapter": unreadLinkLayer(),
+            "ecu": self._gatherEcuLinkLayer(),
+        }
+
+    def _gatherEcuLinkLayer(self) -> dict[str, str | None]:
+        """The ECU layer from reachability (US-876-c; Atlas L1, c-1..c-4, C2-C5).
+
+        ANSWERED is up; DID_NOT_ANSWER / NOT_YET_ATTEMPTED are not up;
+        COULD_NOT_DETERMINE, an absent connection or a raising getStatus() are
+        not read. The up-this-session flag lives in this side's tracker, not
+        in reachability: a reconnect's generation bump resets reachability to
+        NOT_YET_ATTEMPTED, and the flag must survive it. Every attribute is
+        read through ``getattr`` so the bare stub composers keep emitting.
+
+        Returns:
+            ``{"state", "ts", "lastOkTs"}``; all null for a status that carries
+            no ``reachability`` at all.
+        """
+        from pi.splash.system_status_emitter import LinkLayerTracker, unreadLinkLayer
+
+        conn = getattr(self, "_connection", None)
+        status = None
+        if conn is not None:
+            try:
+                status = conn.getStatus()
+            except Exception as e:  # noqa: BLE001 -- unread, never a guess
+                logger.debug("link.ecu: getStatus() unreadable: %s", e)
+        if status is not None and not hasattr(status, "reachability"):
+            return unreadLinkLayer()
+
+        tracker = getattr(self, "_ecuLinkTracker", None)
+        if tracker is None:
+            tracker = LinkLayerTracker()
+            self._ecuLinkTracker = tracker
+        from common.time.helper import toCanonicalIso
+
+        nowTs = toCanonicalIso(self._linkNowUtc())
+        return tracker.observe(
+            observedUp=_ecuObservedUp(status),
+            observedTs=getattr(status, "ecuChangedAtUtc", None),
+            nowTs=nowTs,
+            noAuthoritySinceTs=self._linkNoAuthoritySinceTs(conn, status, nowTs),
+            lastOkTs=getattr(status, "ecuLastOkAtUtc", None),
+        )
+
+    def _linkNoAuthoritySinceTs(
+        self, conn: Any, status: Any, nowTs: str
+    ) -> str | None:
+        """RE-HUNT C2: since when NO retry authority has existed, else None.
+
+        Authority is anything that will try the link again: one of the
+        orchestrator's three retry threads alive (the US-690 set -- the US-301
+        heartbeat, the recovery loop, the post-failure heartbeat), a connect in
+        flight on the connection, or the link itself still held (the data path
+        re-reads the ECU behind it every cycle -- the post-drive key-off edge
+        reads retrying, not down). A cancel is not a down fact.
+
+        ``_shutdownEvent`` set is down by itself, at once. Otherwise the
+        absence must last one heartbeat tick before it counts, so the gap
+        between a drop and the next retry thread's spawn cannot flash down.
+        """
+        from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+        shutdownEvent = getattr(self, "_shutdownEvent", None)
+        shuttingDown = shutdownEvent is not None and shutdownEvent.is_set()
+        if not shuttingDown and self._linkRetryAuthorityExists(conn, status):
+            self._linkNoAuthoritySince = None
+            return None
+        since = getattr(self, "_linkNoAuthoritySince", None)
+        if since is None:
+            since = (self._linkNowS(), nowTs)
+            self._linkNoAuthoritySince = since
+        sinceS, sinceTs = since
+        if shuttingDown or self._linkNowS() - sinceS >= HEARTBEAT_TICK_INTERVAL_SEC:
+            return sinceTs
+        return None
+
+    def _linkRetryAuthorityExists(self, conn: Any, status: Any) -> bool:
+        """Whether anything will try the OBD link again (C2; see above)."""
+        if bool(getattr(status, "connected", False)):
+            return True
+        inFlight = getattr(conn, "isConnectInFlight", None)
+        if callable(inFlight):
+            try:
+                if inFlight():
+                    return True
+            except Exception as e:  # noqa: BLE001 -- an unreadable probe is no authority
+                logger.debug("link: isConnectInFlight() raised: %s", e)
+        for name in (
+            "_reconnectHeartbeatThread",
+            "_reconnectThread",
+            "_postFailureReconnectHeartbeatThread",
+        ):
+            isAlive = getattr(getattr(self, name, None), "is_alive", None)
+            if callable(isAlive) and isAlive():
+                return True
+        return False
+
+    def _linkNowS(self) -> float:
+        """Monotonic seconds for the C2 authority hold."""
+        clock = getattr(self, "_linkClock", None)
+        if clock is not None:
+            return float(clock())
+        import time
+
+        return time.monotonic()
+
+    def _linkNowUtc(self) -> datetime:
+        """Aware UTC now -- the link block's publish instant."""
+        clock = getattr(self, "_linkWallClock", None)
+        if clock is not None:
+            now: datetime = clock()
+            return now
+        return datetime.now(UTC)
 
     def _gatherRunMode(self) -> str:
         """Resolve the US-901-b runMode from pi.replay.active and --simulate.

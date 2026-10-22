@@ -23,6 +23,9 @@
 # 2026-10-18    | Rex (US-896-b)| the two exact drive pins gain elapsedSec /
 #               |              | distancePartial (null when not supplied); the
 #               |              | elapsed rule and the partial rule.
+# 2026-10-22    | Rex (US-876-c)| the exact pin gains `link`; the shared per-layer
+#               |              | state function + tracker (Atlas L1, G1), the
+#               |              | link block's shape and the emit forwarding.
 # ================================================================================
 ################################################################################
 
@@ -35,6 +38,10 @@ import pytest
 
 from pi.obdii.orchestrator.card_state_emitter import CardStateEmitterMixin
 from pi.splash.system_status_emitter import (
+    LINK_CONNECTING,
+    LINK_DOWN,
+    LINK_RETRYING,
+    LINK_UP,
     OBD_DOWN,
     OBD_LINKED,
     OBD_RECONNECTING,
@@ -42,7 +49,9 @@ from pi.splash.system_status_emitter import (
     RUN_MODE_REPLAY,
     RUN_MODE_SIMULATE,
     SYSTEM_STATUS_FILENAME,
+    LinkLayerTracker,
     buildSystemStatusState,
+    deriveLinkLayerState,
     deriveRunMode,
     isSyncStaleWhileDriving,
     makeSystemStatusEmitter,
@@ -101,6 +110,13 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         # of 2026-08-20. It defaults to UNAVAILABLE, never to a fabricated link:
         # a caller that has not wired the provider must not publish one.
         "wifi": {"state": None, "ssid": None, "rssiDbm": None},
+        # US-876-c: `link` is ALWAYS a key, every layer always present; a
+        # caller that supplies no chain publishes every layer as not read.
+        "link": {
+            "bt": {"state": None, "ts": None, "lastOkTs": None},
+            "adapter": {"state": None, "ts": None, "lastOkTs": None},
+            "ecu": {"state": None, "ts": None, "lastOkTs": None},
+        },
         "source": {
             "obd": {"available": True, "reason": None},
             "wifi": {"available": False, "reason": "wifi: not read"},
@@ -692,3 +708,230 @@ def test_emitter_forwardsElapsedAndPartial_throughTheJsonRoundTrip(tmp_path):
     )["drive"]
     assert drive["elapsedSec"] == 1800
     assert drive["distancePartial"] is True
+
+
+# ---------------------------------------------------------------------------
+# US-876-c: the link chain {bt, adapter, ecu} (Atlas L1/L5/L6, G1, X1).
+# ---------------------------------------------------------------------------
+
+_T0 = "2026-10-22T15:00:00Z"
+_T1 = "2026-10-22T15:00:10Z"
+_T2 = "2026-10-22T15:01:00Z"
+_T3 = "2026-10-22T15:02:00Z"
+_T4 = "2026-10-22T15:03:00Z"
+_NULL_LAYER = {"state": None, "ts": None, "lastOkTs": None}
+
+
+@pytest.mark.parametrize(
+    ("observedUp", "upEarlier", "authority", "expected"),
+    [
+        (True, False, True, LINK_UP),
+        (True, True, False, LINK_UP),
+        (False, False, True, LINK_CONNECTING),
+        (False, True, True, LINK_RETRYING),
+        (False, False, False, LINK_DOWN),
+        (False, True, False, LINK_DOWN),
+        (None, False, True, None),
+        (None, False, False, None),
+        (None, True, True, LINK_RETRYING),
+    ],
+)
+def test_deriveLinkLayerState_theL1Table(observedUp, upEarlier, authority, expected):
+    """Atlas L1, exact: up / connecting (never up) / retrying (up earlier) /
+    down (no retry authority) / null (not read; retrying once up earlier)."""
+    assert deriveLinkLayerState(
+        observedUp=observedUp, upEarlierThisSession=upEarlier, retryAuthority=authority
+    ) == expected
+
+
+def test_tracker_neverUp_up_drop_up_readsConnectingUpRetryingUp():
+    """Atlas VC: the reconnect after the drop reads retrying, NOT connecting --
+    the up-this-session flag survives the drop that reset the observation."""
+    tracker = LinkLayerTracker()
+
+    states = [
+        tracker.observe(observedUp=False, observedTs=_T0, nowTs=_T1)["state"],
+        tracker.observe(observedUp=True, observedTs=_T1, nowTs=_T2)["state"],
+        tracker.observe(observedUp=False, observedTs=_T2, nowTs=_T3)["state"],
+        tracker.observe(observedUp=True, observedTs=_T3, nowTs=_T4)["state"],
+    ]
+
+    assert states == [LINK_CONNECTING, LINK_UP, LINK_RETRYING, LINK_UP]
+
+
+def test_tracker_notReadBeforeAnUp_isNull_afterAnUp_isRetrying():
+    """COULD_NOT_DETERMINE (observedUp None) before any up -> null (all three
+    keys); after an up -> retrying."""
+    tracker = LinkLayerTracker()
+
+    before = tracker.observe(observedUp=None, observedTs=_T0, nowTs=_T0)
+    tracker.observe(observedUp=True, observedTs=_T1, nowTs=_T1)
+    after = tracker.observe(observedUp=None, observedTs=_T2, nowTs=_T3)
+
+    assert before == _NULL_LAYER
+    assert after["state"] == LINK_RETRYING
+    assert after["ts"] == _T2
+
+
+def test_tracker_ts_isTheTransitionTime_andHoldsWhileTheStateHolds():
+    """ts = the last STATE transition's event time (c-6), never the publish
+    tick; a repeat observation of the same state does not re-date it."""
+    tracker = LinkLayerTracker()
+
+    first = tracker.observe(observedUp=False, observedTs=_T0, nowTs=_T1)
+    # Another not-up observation dated later (e.g. NOT_YET_ATTEMPTED ->
+    # DID_NOT_ANSWER): still connecting, so still dated the attempt's start.
+    second = tracker.observe(observedUp=False, observedTs=_T2, nowTs=_T3)
+    up = tracker.observe(observedUp=True, observedTs=_T3, nowTs=_T4)
+
+    assert first["ts"] == _T0
+    assert second["ts"] == _T0
+    assert up["ts"] == _T3
+
+
+def test_tracker_lastOkTs_isTheLastUpThisSession_nullUntilThen():
+    """X1: lastOkTs = the last time the layer was up THIS session; the
+    producer's own last-ok instant wins over the publish tick."""
+    tracker = LinkLayerTracker()
+
+    never = tracker.observe(observedUp=False, observedTs=_T0, nowTs=_T0)
+    up = tracker.observe(observedUp=True, observedTs=_T1, nowTs=_T2, lastOkTs=_T1)
+    upNoProducerTs = tracker.observe(observedUp=True, observedTs=_T1, nowTs=_T3)
+    dropped = tracker.observe(observedUp=False, observedTs=_T4, nowTs=_T4)
+
+    assert never["lastOkTs"] is None
+    assert up["lastOkTs"] == _T1
+    assert upNoProducerTs["lastOkTs"] == _T3
+    assert dropped["lastOkTs"] == _T3
+
+
+def test_tracker_down_onlyWithoutRetryAuthority_datedWhenAuthorityWentAway():
+    """C2: not up AND no retry authority -> down, dated when BOTH became true
+    (here the authority leaving, after the drop); authority back -> retrying,
+    dated when that was seen -- the drop's own time precedes the down, so it
+    cannot be the time of this transition."""
+    tracker = LinkLayerTracker()
+    tracker.observe(observedUp=True, observedTs=_T0, nowTs=_T0)
+
+    down = tracker.observe(
+        observedUp=False, observedTs=_T1, nowTs=_T3, noAuthoritySinceTs=_T2
+    )
+    back = tracker.observe(observedUp=False, observedTs=_T1, nowTs=_T4)
+
+    assert down == {"state": LINK_DOWN, "ts": _T2, "lastOkTs": _T0}
+    assert back["state"] == LINK_RETRYING
+    assert back["ts"] == _T4
+
+
+def test_sharedLayerFunction_G1a_keyOff_ecuNeverAnswers_btNeverRetrying():
+    """G1 (a): key off, the ECU never answers, 3 attempts each bringing BT up
+    then down (rfcomm released after a failed attempt, US-512) -> link.bt reads
+    only connecting/up, never retrying: BT was never up WHILE the ECU was."""
+    bt = LinkLayerTracker()
+    seen = []
+    clock = iter(f"2026-10-22T15:{m:02d}:00Z" for m in range(10))
+
+    for _attempt in range(3):
+        for btUp in (True, False):
+            ts = next(clock)
+            seen.append(
+                bt.observe(
+                    observedUp=btUp, observedTs=ts, nowTs=ts, chainComplete=False
+                )["state"]
+            )
+
+    assert set(seen) == {LINK_UP, LINK_CONNECTING}
+    assert LINK_RETRYING not in seen
+
+
+def test_sharedLayerFunction_G1b_ecuUp_thenDongleUnplugged_btRetrying():
+    """G1 (b): BT up while the ECU is up (the chain was complete), then the
+    dongle is unplugged -> link.bt retrying (counted, US-877-b)."""
+    bt = LinkLayerTracker()
+
+    bt.observe(observedUp=True, observedTs=_T0, nowTs=_T0, chainComplete=True)
+    unplugged = bt.observe(
+        observedUp=False, observedTs=_T1, nowTs=_T2, chainComplete=False
+    )
+
+    assert unplugged["state"] == LINK_RETRYING
+    assert unplugged["ts"] == _T1
+
+
+def test_buildSystemStatusState_link_isPublished_everyLayerAndKeyPresent():
+    """L6: every layer and every key always present; a supplied ECU layer is
+    carried verbatim and the unsupplied layers are not read (all three null)."""
+    ecu = {"state": LINK_UP, "ts": _T0, "lastOkTs": _T1}
+
+    state = buildSystemStatusState(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
+        link={"ecu": ecu},
+    )
+
+    assert state["link"] == {"bt": _NULL_LAYER, "adapter": _NULL_LAYER, "ecu": ecu}
+
+
+def test_buildSystemStatusState_link_aNullState_publishesAllThreeNull():
+    """A layer whose state is null is not read: ts and lastOkTs are null too,
+    whatever the caller passed beside it (available = state != null)."""
+    state = buildSystemStatusState(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
+        link={"ecu": {"state": None, "ts": _T0, "lastOkTs": _T1}},
+    )
+
+    assert state["link"]["ecu"] == _NULL_LAYER
+
+
+def test_buildSystemStatusState_link_notBlanked_whenObdSourceUnavailable():
+    """L6 / ARCH-061: source.obd.available false blanks obdLink but NEVER link
+    -- blanking it is the grey this block exists to retire."""
+    ecu = {"state": LINK_CONNECTING, "ts": _T0, "lastOkTs": None}
+
+    state = buildSystemStatusState(
+        obdLinkState=OBD_DOWN, obdRetries=0,
+        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
+        obdAvailable=False, obdUnavailableReason="never connected",
+        link={"ecu": ecu},
+    )
+
+    assert state["obdLink"] == {"state": None, "retries": 0}
+    assert state["link"]["ecu"] == ecu
+
+
+def test_emitter_forwardsLink_throughTheJsonRoundTrip(tmp_path):
+    """The wiring trap: a builder parameter emit() does not take is never
+    published. link travels builder <- emit() <- orchestrator."""
+    emit = makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=120.0, nowIsoFn=lambda: _NOW
+    )
+    ecu = {"state": LINK_RETRYING, "ts": _T0, "lastOkTs": _T0}
+
+    emit(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
+        powerSource="external", driveState="idle", driveId=None,
+        link={"ecu": ecu},
+    )
+
+    link = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )["link"]
+    assert link["ecu"] == ecu
+    assert link["bt"] == _NULL_LAYER
+
+
+def test_orchestratorEmit_passesLink_evenFromAComposerWithNoConnection():
+    """Stub hosts: a composer that never set `_connection` (or any new
+    attribute) still emits, with every link layer not read."""
+    composer = _StubComposer({}, False)
+
+    composer._emitSystemStatusState()
+
+    assert composer.calls[0]["link"] == {
+        "bt": _NULL_LAYER, "adapter": _NULL_LAYER, "ecu": _NULL_LAYER,
+    }

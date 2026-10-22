@@ -120,6 +120,11 @@
 #                |              | attempt only (prior level restored); every
 #                |              | attempt logs INFO 'CONNECT PHASE' lines.
 #                |              | Connect behaviour unchanged.
+# 2026-10-22    | Rex (US-876-c)| ConnectionStatus.ecuChangedAtUtc / ecuLastOkAtUtc:
+#                |              | the WALL-CLOCK canonical-UTC instant of the last
+#                |              | reachability transition (a decay is dated
+#                |              | lastAnswer + window) and of the last answer this
+#                |              | session.  Kept out of toDict().
 # ================================================================================
 ################################################################################
 
@@ -153,13 +158,18 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from . import bluetooth_helper, bond_self_heal, decoders
 
 logger = logging.getLogger(__name__)
+
+
+def _wallClockNow() -> datetime:
+    """Aware UTC now -- the default wall clock for transition stamps (US-876-c)."""
+    return datetime.now(UTC)
 
 
 # OBD library import with fallback for environments where it's not available
@@ -395,6 +405,15 @@ class ConnectionStatus:
         reachability: Whether the ECU answered (US-793-a); see
             :class:`Reachability`.  Independent of ``connected``: linked to
             the dongle with no ECU is ``connected=True`` + ``DID_NOT_ANSWER``.
+        ecuChangedAtUtc: Canonical-UTC WALL time of ``reachability``'s last
+            transition (US-876-c) -- the event instant, never the read.  A
+            freshness decay is dated lastAnswer + the window; a generation
+            bump is dated the bump.  None until a producer stamps it.  The
+            first of the per-layer transition-ts family (US-876-d/e add the
+            adapter and BT layers beside it).  Not in :meth:`toDict`.
+        ecuLastOkAtUtc: Canonical-UTC WALL time of the last ECU answer THIS
+            SESSION (US-876-c), across generations; None if none.  Not in
+            :meth:`toDict`.
     """
     state: ConnectionState = ConnectionState.DISCONNECTED
     macAddress: str | None = None
@@ -407,6 +426,8 @@ class ConnectionStatus:
     totalErrors: int = 0
     signalReadable: bool = True
     reachability: Reachability = Reachability.NOT_YET_ATTEMPTED
+    ecuChangedAtUtc: str | None = None
+    ecuLastOkAtUtc: str | None = None
 
     def toDict(self) -> dict[str, Any]:
         """Convert status to dictionary for logging/serialization."""
@@ -540,6 +561,7 @@ class ObdConnection:
         obdFactory: Callable[..., Any] | None = None,
         shutdownEvent: threading.Event | None = None,
         monotonicFn: Callable[[], float] = time.monotonic,
+        wallClockFn: Callable[[], datetime] = _wallClockNow,
     ):
         """
         Initialize OBD connection manager.
@@ -556,6 +578,8 @@ class ObdConnection:
                 handlers installed by the orchestrator set the event.
             monotonicFn: Monotonic clock for reachability freshness (US-793-a);
                 injected by tests.
+            wallClockFn: Aware-UTC wall clock that dates reachability
+                transitions (US-876-c); injected by tests.
         """
         self.config = config
         self.database = database
@@ -668,6 +692,16 @@ class ObdConnection:
         self.reachabilityFreshnessSeconds = (
             freshness if freshness > 0 else float(DEFAULT_DRIVE_END_DURATION_SECONDS)
         )
+        # US-876-c: reachability runs on the monotonic clock, but link.ecu
+        # publishes the WALL instant of each transition (the US-860-a
+        # connectedAtUtc pattern).  The last recorded (state, wall time) pair,
+        # replaced whole like _ecuObservation.  Construction is the start of
+        # this session's first attempt, so NOT_YET_ATTEMPTED is dated by it.
+        self._wallNow = wallClockFn
+        self._lastAnswerWall: datetime | None = None
+        self._ecuTransition: tuple[Reachability, datetime] = (
+            Reachability.NOT_YET_ATTEMPTED, self._wallNow()
+        )
 
     def getStatus(self) -> ConnectionStatus:
         """
@@ -689,7 +723,16 @@ class ObdConnection:
             # No connection object is a readable verdict, not a failed read.
             self._status.signalReadable = True
         # US-793-a: derived from reads already made -- this issues none.
-        self._status.reachability = self._readReachability()
+        reachability, changedAt = self._ecuTransitionNow()
+        self._status.reachability = reachability
+        # US-876-c: the event instants, canonical UTC.
+        from common.time.helper import toCanonicalIso
+
+        self._status.ecuChangedAtUtc = toCanonicalIso(changedAt)
+        lastAnswerWall = self._lastAnswerWall
+        self._status.ecuLastOkAtUtc = (
+            toCanonicalIso(lastAnswerWall) if lastAnswerWall is not None else None
+        )
         return self._status
 
     def _readReachability(self) -> Reachability:
@@ -711,6 +754,43 @@ class ObdConnection:
         # A null read, or an answer that went stale: never a latched ANSWERED.
         return Reachability.DID_NOT_ANSWER
 
+    def _ecuTransitionNow(self) -> tuple[Reachability, datetime]:
+        """Current reachability and the wall time of its last transition (US-876-c).
+
+        Side-effect free, like :meth:`_readReachability`.  The only change
+        that happens WITHOUT passing through :meth:`_settleEcuTransition` is
+        the freshness decay -- a function of the clock, not of a read -- so an
+        ANSWERED that now reads DID_NOT_ANSWER is dated the instant it
+        decayed: the last answer plus the window (Atlas C3).
+        """
+        current = self._readReachability()
+        stored, storedAt = self._ecuTransition
+        if current is stored:
+            return current, storedAt
+        lastAnswerWall = self._lastAnswerWall
+        if (
+            stored is Reachability.ANSWERED
+            and current is Reachability.DID_NOT_ANSWER
+            and lastAnswerWall is not None
+        ):
+            return current, lastAnswerWall + timedelta(
+                seconds=self.reachabilityFreshnessSeconds
+            )
+        # A change whose settle has not run yet (another thread is between the
+        # observation update and its settle): it happened now.
+        return current, self._wallNow()
+
+    def _settleEcuTransition(self) -> None:
+        """Record a reachability change with its wall time (US-876-c).
+
+        Called wherever the observation can change -- around each ECU read
+        and at each generation bump -- so every transition but the decay is
+        dated by the event that caused it.  A steady state records nothing.
+        """
+        current, changedAt = self._ecuTransitionNow()
+        if current is not self._ecuTransition[0]:
+            self._ecuTransition = (current, changedAt)
+
     def _recordEcuRead(self, command: Any, outcome: Reachability) -> None:
         """Record one completed ECU read's outcome (US-793-a).
 
@@ -720,12 +800,16 @@ class ObdConnection:
         """
         if _isAdapterLevelCommand(command):
             return
+        # US-876-c: a decay that happened before this read keeps its own instant.
+        self._settleEcuTransition()
         generation, lastAnswerAt, _ = self._ecuObservation
         if generation != self._generation:
             lastAnswerAt = None
         if outcome is Reachability.ANSWERED:
             lastAnswerAt = self._now()
+            self._lastAnswerWall = self._wallNow()
         self._ecuObservation = (self._generation, lastAnswerAt, outcome)
+        self._settleEcuTransition()
 
     def _logReachabilityTransition(self) -> None:
         """Write one ``ecu_reachability`` row if reachability changed (US-793-c).
@@ -1231,6 +1315,9 @@ class ObdConnection:
                         # generation.  Runs under the held _ioLock so the bump is
                         # atomic w.r.t. activeGeneration()/query().
                         self._generation += 1
+                        # US-876-c: the new generation is NOT_YET_ATTEMPTED
+                        # from this instant (Atlas C4).
+                        self._settleEcuTransition()
 
                         # US-199: one-shot supported-PID probe so the realtime
                         # logger can silent-skip unsupported PIDs (0x42/0x0B/0x15
@@ -1681,6 +1768,8 @@ class ObdConnection:
             # generation so a superseded connect/query daemon bound to the old
             # connection is fenced when it finally wakes.
             self._generation += 1
+            # US-876-c: NOT_YET_ATTEMPTED from this instant (Atlas C4).
+            self._settleEcuTransition()
 
             # US-432 (BL-016): clear the engine-confirmed force latch on
             # teardown.  The next connect() re-runs the US-199 probe (dark ECU

@@ -36,6 +36,23 @@
       "ssid": null,
       "rssiDbm": null
     },
+    "link": {
+      "bt": {
+        "state": null,
+        "ts": null,
+        "lastOkTs": null
+      },
+      "adapter": {
+        "state": null,
+        "ts": null,
+        "lastOkTs": null
+      },
+      "ecu": {
+        "state": null,
+        "ts": null,
+        "lastOkTs": null
+      }
+    },
     "drive": {
       "state": "recording",
       "driveId": 112,

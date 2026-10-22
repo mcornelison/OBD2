@@ -798,11 +798,13 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 # regenerates the fixtures from the real builder and edits THIS table, so the
 # regenerated files can differ from the old ones only in the keys named here.
 # US-876-a: obdLink lost `lastSeenS` (and the inputs lost `obdLastSeenS`).
+# US-876-c: the new top-level `link` block, its three layers (checked below).
 _TRIP_STATUS_KEYS = {
     "obdLink": {"state", "retries"},
     "sync": {"lastOkTs", "rows", "pending", "stale"},
     "power": {"source", "reasons"},
     "wifi": {"state", "ssid", "rssiDbm"},
+    "link": {"bt", "adapter", "ecu"},
     "drive": {
         "state", "driveId", "lastDrive", "distanceKm", "distanceSinceTs",
         "elapsedSec", "distancePartial",
@@ -813,6 +815,7 @@ _TRIP_STATUS_KEYS = {
     "source": {"obd", "wifi"},
     "ts": None,
 }
+_TRIP_LINK_LAYER_KEYS = {"state", "ts", "lastOkTs"}
 _TRIP_INPUT_KEYS_REMOVED = {"obdLastSeenS"}
 
 
@@ -826,6 +829,8 @@ def test_tripFixtures_carryExactlyTheExpectedTopLevelAndBlockKeys():
         for block, keys in _TRIP_STATUS_KEYS.items():
             if keys is not None:
                 assert set(status[block]) == keys, (name, block)
+        for layer in _TRIP_STATUS_KEYS["link"]:
+            assert set(status["link"][layer]) == _TRIP_LINK_LAYER_KEYS, (name, layer)
         assert not _TRIP_INPUT_KEYS_REMOVED & set(fx["inputs"]), name
 
 

@@ -33,6 +33,9 @@
 #               |              | distanceKm / distanceSinceTs (speed integrator).
 # 2026-10-18    | Rex (US-896-b)| drive block gains the always-present elapsedSec
 #               |              | (frozen at drive end) and distancePartial.
+# 2026-10-22    | Rex (US-876-c)| the always-present link {bt, adapter, ecu}
+#               |              | block (Atlas L6/X1) and the shared per-layer
+#               |              | state function + tracker (Atlas L1/L5, G1).
 # ================================================================================
 ################################################################################
 
@@ -79,10 +82,33 @@ RUN_MODE_LIVE = "live"
 RUN_MODE_SIMULATE = "simulate"
 RUN_MODE_REPLAY = "replay"
 
+# US-876-c link-chain layer states (Atlas L1, exact). A DIFFERENT vocabulary
+# from obdLink's, which ships unchanged until S110 retires it with the page.
+#   up         = the latest observation of the layer was positive.
+#   connecting = not up, and never up this session (neutral, not counted).
+#   retrying   = not up, but up earlier this session (counted).
+#   down       = not up and NO retry authority exists (RE-HUNT C2).
+#   null       = not read.
+# "This session" is this process (L5): a restart is null until re-observed.
+LINK_UP = "up"
+LINK_CONNECTING = "connecting"
+LINK_RETRYING = "retrying"
+LINK_DOWN = "down"
+
+# The three layers, chain order (L6), and every layer's keys (X1).
+LINK_LAYERS: tuple[str, ...] = ("bt", "adapter", "ecu")
+LINK_LAYER_KEYS: tuple[str, ...] = ("state", "ts", "lastOkTs")
+
 # The ISO-8601 instant format the F-103 emitters stamp (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 __all__ = [
+    "LINK_CONNECTING",
+    "LINK_DOWN",
+    "LINK_LAYERS",
+    "LINK_LAYER_KEYS",
+    "LINK_RETRYING",
+    "LINK_UP",
     "OBD_DOWN",
     "OBD_LINKED",
     "OBD_RECONNECTING",
@@ -90,9 +116,12 @@ __all__ = [
     "RUN_MODE_REPLAY",
     "RUN_MODE_SIMULATE",
     "SYSTEM_STATUS_FILENAME",
+    "LinkLayerTracker",
     "buildSystemStatusState",
     "deriveElapsedSec",
+    "deriveLinkLayerState",
     "deriveRunMode",
+    "unreadLinkLayer",
     "isSyncStaleWhileDriving",
     "makeSystemStatusEmitter",
 ]
@@ -149,6 +178,151 @@ def deriveElapsedSec(
         return None
     seconds = (until - since).total_seconds()
     return int(seconds) if seconds >= 0 else None
+
+
+def unreadLinkLayer() -> dict[str, str | None]:
+    """A link layer that was not read: every key present, every value null (X1)."""
+    return dict.fromkeys(LINK_LAYER_KEYS)
+
+
+def deriveLinkLayerState(
+    *,
+    observedUp: bool | None,
+    upEarlierThisSession: bool,
+    retryAuthority: bool,
+) -> str | None:
+    """Resolve ONE link layer's state (Atlas L1, exact; RE-HUNT C2).
+
+    The shared rule every layer uses -- the ECU here (US-876-c), the adapter
+    and BT layers through the same call (US-876-d/e). The page compares
+    nothing; this is where the state is decided.
+
+    Args:
+        observedUp: The layer's latest observation -- True up, False not up,
+            None not read (could not determine, or no source to read).
+        upEarlierThisSession: Whether the layer was up earlier this process.
+            For bt/adapter that means up WHILE the ECU was up (G1); the caller
+            owns that flag (:class:`LinkLayerTracker`).
+        retryAuthority: Whether anything exists that will try the layer again.
+
+    Returns:
+        ``LINK_UP`` / ``LINK_CONNECTING`` / ``LINK_RETRYING`` / ``LINK_DOWN``,
+        or None when the layer is not read and was never up. A layer that was
+        up and now cannot be read is retrying: it WAS there, and an unread
+        instant is not evidence it is gone.
+    """
+    if observedUp is None:
+        return LINK_RETRYING if upEarlierThisSession else None
+    if observedUp:
+        return LINK_UP
+    if not retryAuthority:
+        return LINK_DOWN
+    return LINK_RETRYING if upEarlierThisSession else LINK_CONNECTING
+
+
+class LinkLayerTracker:
+    """One link layer's memory for THIS session (Atlas L1/L5, G1, X1, c-6).
+
+    Holds what a single observation cannot carry: whether the layer was up
+    earlier this session -- set on the first up and never cleared, because a
+    reconnect resets the producer's observation (the ECU's generation bump
+    returns reachability to NOT_YET_ATTEMPTED) -- plus the published state's
+    transition time and the last time the layer was up. Owned by the
+    orchestrator side, one per layer; US-876-d/e feed bt/adapter through the
+    same class, which is their production caller.
+    """
+
+    def __init__(self) -> None:
+        self._upEarlier = False
+        self._state: str | None = None
+        self._ts: str | None = None
+        self._lastOkTs: str | None = None
+
+    def observe(
+        self,
+        *,
+        observedUp: bool | None,
+        observedTs: str | None,
+        nowTs: str,
+        noAuthoritySinceTs: str | None = None,
+        chainComplete: bool = True,
+        lastOkTs: str | None = None,
+    ) -> dict[str, str | None]:
+        """Fold one observation in and return the layer's published block.
+
+        Args:
+            observedUp: True up / False not up / None not read.
+            observedTs: Canonical-UTC event time of the observation's own last
+                change (the producer's transition stamp), or None if it has
+                none.
+            nowTs: The publish instant (canonical UTC) -- used only where no
+                event time exists.
+            noAuthoritySinceTs: None while a retry authority exists; else the
+                canonical-UTC instant since which none has (the layer may be
+                down).
+            chainComplete: Whether this up counts as "up this session". Always
+                True for the ECU; for bt/adapter, whether link.ecu is up (G1).
+            lastOkTs: The producer's own last-up instant, when it has one.
+
+        Returns:
+            ``{"state", "ts", "lastOkTs"}`` -- all three null when not read.
+        """
+        state = deriveLinkLayerState(
+            observedUp=observedUp,
+            upEarlierThisSession=self._upEarlier,
+            retryAuthority=noAuthoritySinceTs is None,
+        )
+        if state == LINK_UP:
+            if chainComplete:
+                self._upEarlier = True
+            self._lastOkTs = lastOkTs or nowTs
+        if state != self._state:
+            self._ts = self._transitionTs(state, observedTs, nowTs, noAuthoritySinceTs)
+            self._state = state
+        if state is None:
+            return unreadLinkLayer()
+        return {"state": state, "ts": self._ts, "lastOkTs": self._lastOkTs}
+
+    def _transitionTs(
+        self,
+        state: str | None,
+        observedTs: str | None,
+        nowTs: str,
+        noAuthoritySinceTs: str | None,
+    ) -> str | None:
+        """The event time of a change INTO ``state`` (c-6: never the tick if known).
+
+        Down begins when its two conditions are both true: the later of the
+        observation's change and the authority's departure. Otherwise an
+        observation newer than the current state is the cause; an older one
+        is not (the change came from the authority side, seen now).
+        """
+        if state is None:
+            return None
+        if state == LINK_DOWN:
+            causes = [t for t in (observedTs, noAuthoritySinceTs) if t is not None]
+            return max(causes) if causes else nowTs
+        # Canonical UTC strings order as the instants they name.
+        if observedTs is not None and (self._ts is None or observedTs > self._ts):
+            return observedTs
+        return nowTs
+
+
+def _publishLinkChain(link: dict | None) -> dict[str, dict[str, str | None]]:
+    """Normalise a caller's chain to the L6 shape: every layer, every key.
+
+    A missing layer is not read; a layer whose state is null is not read in
+    all three keys, whatever was passed beside it (available = state != null).
+    """
+    chain = link or {}
+    published: dict[str, dict[str, str | None]] = {}
+    for layer in LINK_LAYERS:
+        block = chain.get(layer) or {}
+        if block.get("state") is None:
+            published[layer] = unreadLinkLayer()
+        else:
+            published[layer] = {key: block.get(key) for key in LINK_LAYER_KEYS}
+    return published
 
 
 # ARCH-007 -- WiFi band thresholds. Defaults MIRROR pi.network.wifi.* in
@@ -228,6 +402,7 @@ def buildSystemStatusState(
     distanceSinceTs: str | None = None,
     distanceEndTs: str | None = None,
     distancePartial: bool | None = None,
+    link: dict | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -290,6 +465,11 @@ def buildSystemStatusState(
             at the first SPEED reading after a mid-drive restart, False when it
             starts at a drive start. Published only beside a non-null
             ``distanceSinceTs``; null otherwise (nothing to qualify).
+        link: US-876-c: the link chain ``{bt, adapter, ecu}``, each
+            ``{state, ts, lastOkTs}`` as :class:`LinkLayerTracker` publishes
+            it. Normalised to every layer and key; a missing layer or a null
+            state is all three null. NEVER blanked by ``obdAvailable`` -- that
+            blanking is the ARCH-061 grey this block replaces.
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -354,6 +534,9 @@ def buildSystemStatusState(
             "ssid": wifiSsid if wifiAvailable else None,
             "rssiDbm": wifiRssiDbm if wifiAvailable else None,
         },
+        # US-876-c (Atlas L6): always a key, every layer always present, and
+        # deliberately NOT gated on obdAvailable like obdLink above.
+        "link": _publishLinkChain(link),
         # `lastDrive` is ALWAYS present as a key (null when unknown) rather than
         # sometimes-absent: an intermittently-missing key is the shape that lets
         # a renderer quietly fall through to the wrong branch, and a stable
@@ -478,6 +661,7 @@ def makeSystemStatusEmitter(
         distanceSinceTs: str | None = None,
         distanceEndTs: str | None = None,
         distancePartial: bool | None = None,
+        link: dict | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -505,6 +689,7 @@ def makeSystemStatusEmitter(
                 distanceSinceTs=distanceSinceTs,
                 distanceEndTs=distanceEndTs,
                 distancePartial=distancePartial,
+                link=link,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)
