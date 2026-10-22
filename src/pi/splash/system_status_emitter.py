@@ -36,6 +36,8 @@
 # 2026-10-22    | Rex (US-876-c)| the always-present link {bt, adapter, ecu}
 #               |              | block (Atlas L6/X1) and the shared per-layer
 #               |              | state function + tracker (Atlas L1/L5, G1).
+# 2026-10-22    | Rex (US-876-d)| LinkLayerTracker.markUnread: a layer whose
+#               |              | producer judged its evidence stale reads null.
 # ================================================================================
 ################################################################################
 
@@ -282,6 +284,22 @@ class LinkLayerTracker:
         if state is None:
             return unreadLinkLayer()
         return {"state": state, "ts": self._ts, "lastOkTs": self._lastOkTs}
+
+    def markUnread(self) -> dict[str, str | None]:
+        """Publish the layer as not read, whatever it was before (US-876-d, D5).
+
+        For a producer that judged its own evidence too old to stand on (the
+        adapter: no observation for the freshness bound). Unlike an unread
+        observation, this does NOT fall back to retrying after an up -- stale
+        evidence is no evidence. The up-this-session flag is kept, so the
+        layer's next observation re-enters as a transition at its own time.
+
+        Returns:
+            The all-null layer block.
+        """
+        self._state = None
+        self._ts = None
+        return unreadLinkLayer()
 
     def _transitionTs(
         self,

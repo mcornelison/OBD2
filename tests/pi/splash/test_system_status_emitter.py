@@ -26,6 +26,7 @@
 # 2026-10-22    | Rex (US-876-c)| the exact pin gains `link`; the shared per-layer
 #               |              | state function + tracker (Atlas L1, G1), the
 #               |              | link block's shape and the emit forwarding.
+# 2026-10-22    | Rex (US-876-d)| LinkLayerTracker.markUnread (stale evidence).
 # ================================================================================
 ################################################################################
 
@@ -771,6 +772,24 @@ def test_tracker_notReadBeforeAnUp_isNull_afterAnUp_isRetrying():
     assert before == _NULL_LAYER
     assert after["state"] == LINK_RETRYING
     assert after["ts"] == _T2
+
+
+def test_tracker_markUnread_isNullEvenAfterAnUp_andTheNextObservationIsATransition():
+    """US-876-d (D5): a producer that judged its evidence stale publishes the
+    layer null -- NOT retrying, as an unread observation after an up would --
+    and the next observation re-enters dated its own event, the up-this-session
+    flag kept (a later not-up reads retrying)."""
+    tracker = LinkLayerTracker()
+    tracker.observe(observedUp=True, observedTs=_T0, nowTs=_T0)
+
+    stale = tracker.markUnread()
+    back = tracker.observe(observedUp=True, observedTs=_T0, nowTs=_T2)
+    dropped = tracker.observe(observedUp=False, observedTs=_T3, nowTs=_T3)
+
+    assert stale == _NULL_LAYER
+    assert back["state"] == LINK_UP
+    assert back["ts"] == _T0
+    assert dropped["state"] == LINK_RETRYING
 
 
 def test_tracker_ts_isTheTransitionTime_andHoldsWhileTheStateHolds():

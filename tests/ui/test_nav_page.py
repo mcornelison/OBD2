@@ -799,6 +799,8 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 # regenerated files can differ from the old ones only in the keys named here.
 # US-876-a: obdLink lost `lastSeenS` (and the inputs lost `obdLastSeenS`).
 # US-876-c: the new top-level `link` block, its three layers (checked below).
+# US-876-d: NO delta -- link.adapter fills keys US-876-c already publishes and
+#           the builder gains no input (the provider feeds the existing `link`).
 _TRIP_STATUS_KEYS = {
     "obdLink": {"state", "retries"},
     "sync": {"lastOkTs", "rows", "pending", "stale"},

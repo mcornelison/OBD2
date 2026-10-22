@@ -5144,6 +5144,7 @@ collapsed into one another:
 |---|---|---|---|
 | **Powered** | the dongle has power | nowhere in software; the OBDLink LX is powered with the key **out** | no |
 | **Bluetooth-connected** | the RFCOMM link to the dongle is up | **no `ConnectionStatus` field reads it yet** (US-876-e adds the BT observation; until then `system-status.link.bt` is not read). `ConnectionStatus.connected` is **not** this fact: it is python-OBD's `is_connected()`, i.e. status `CAR_CONNECTED` — an ECU-at-connect fact (Atlas MEASURED; corrected in US-876-c) | **no** — up on a parked car |
+| **Adapter-answered** | the dongle's ELM answered (status ELM Connected or better at a connect attempt, or any answered read on a held session, ATRV included) | `ConnectionStatus.adapterAnswered` (US-876-d) → `system-status.link.adapter` | **no** — the ELM answers with the key out |
 | **ECU-connected** | an ECU read the data path already made **returned data** | `ConnectionStatus.reachability` (US-793-a), one of `answered` / `did_not_answer` / `not_yet_attempted` / `could_not_determine` | **yes — this is the gate signal** |
 
 🔴 **A `connect_success` (or `reconnect_success`) connection_log row is NOT
@@ -7424,7 +7425,29 @@ that raises and releases BT reads `connecting`, never `retrying`.
   last answer + the window; a generation bump is dated the bump) — and
   `lastOkTs` from `ecuLastOkAtUtc`. Both fields stay **out of `toDict()`**. A
   status with no `reachability` field publishes the layer null.
-- **bt / adapter**: not read until US-876-d/e.
+- **adapter (live, US-876-d; Atlas L4, D1–D6)** — up means **the ELM answered**.
+  The evidence, recorded by `obd_connection` with a wall-clock canonical-UTC
+  event time: on a connect attempt, `obd.status()` read through a guarded
+  `getattr` from **this attempt's** object (never the previous session's —
+  a factory raise is "did not answer") **before** `_closePartialConnection`,
+  `ELM Connected` / `OBD Connected` / `Car Connected` (python-OBD 0.7.3
+  `OBDStatus`) → answered, anything else / no `status()` / a raise / `None` →
+  did not answer; a connect success (Car Connected) → answered; and on a held
+  session any `query()` whose response answered — **ATRV included**, which the
+  ECU layer ignores — → answered (a null read is no adapter evidence).
+  `ConnectionStatus.adapterAnswered` (True / False / None),
+  `adapterChangedAtUtc` (when it took that value → `ts`) and
+  `adapterLastOkAtUtc` (→ `lastOkTs`) stay **out of `toDict()`**. A failed
+  attempt is `connecting` / `retrying`, **never `down`** (d-1); down is only the
+  shared C2 rule below, from the same tick's verdict as the ECU. **Freshness
+  (D5):** no observation for 2 × the reconnect heartbeat's longest interval
+  (`HEARTBEAT_TICK_INTERVAL_SEC × 2^BACKOFF_EXP_CAP` = 320 s → **640 s**;
+  derived, no config key, never `retryCeilingSeconds`) → `adapterAnswered`
+  None → the layer is **null** (`LinkLayerTracker.markUnread`, even after an
+  up: stale evidence is no evidence). A status with no adapter fields
+  (`--simulate`, stubs) is null; an unreadable `getStatus()` follows the ECU's
+  unread rule. Key off at home (ARCH-061): adapter `up`, ecu `connecting`.
+- **bt**: not read until US-876-e.
 - **`down` (RE-HUNT C2)** needs no retry authority: none of the three retry
   threads (US-301 heartbeat, recovery loop, post-failure heartbeat) alive, no
   connect in flight (`isConnectInFlight()`), and the link not held

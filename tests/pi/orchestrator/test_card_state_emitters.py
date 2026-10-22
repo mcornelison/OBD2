@@ -24,6 +24,8 @@
 #               |              | pending set with its time (VCs 3, 7, 8).
 # 2026-10-22    | Ralph (Rex)  | US-876-c -- system-status `link`: the ECU layer
 #               |              | from reachability, retry authority (C2) + hold.
+# 2026-10-22    | Ralph (Rex)  | US-876-d -- link.adapter from the connection's
+#               |              | adapter observation (VCs 1-2, G1, D2, D5).
 # ================================================================================
 ################################################################################
 
@@ -1523,3 +1525,200 @@ def test_link_obdLinkUnchanged_retriesKeepTheirShippedMeaning(tmp_path):
 
     assert ss["link"]["ecu"]["state"] == "retrying"
     assert ss["obdLink"] == {"state": "down", "retries": 0}
+
+
+# ---------------------------------------------------------------------------
+# US-876-d -- link.adapter: did the ELM answer (Atlas L4, D2, D5, G1).
+# ---------------------------------------------------------------------------
+
+
+class _AdapterAttempt:
+    """One connect attempt's python-obd object: ELM status + whether linked."""
+
+    def __init__(self, status, connected=False):
+        self._status = status
+        self._connected = connected
+        self.next = _EcuResponse(null=False)
+
+    def status(self):
+        return self._status
+
+    def is_connected(self):
+        return self._connected
+
+    def query(self, command, force=False):
+        return self.next
+
+    def close(self):
+        pass
+
+
+def _adapterOrch(tmp_path, clocks, *, heartbeat=True):
+    """A provider over a REAL ObdConnection whose attempts a test scripts."""
+    from pi.obdii.obd_connection import ObdConnection
+
+    conn = ObdConnection(
+        {"pi": {"bluetooth": {"macAddress": "/dev/rfcomm0", "retryDelays": []}}},
+        obdFactory=lambda port, timeout: conn.nextAttempt(),
+        monotonicFn=lambda: clocks.mono,
+        wallClockFn=lambda: clocks.wall,
+    )
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._linkClock = lambda: clocks.mono
+    orch._linkWallClock = lambda: clocks.wall
+    if heartbeat:
+        orch._reconnectHeartbeatThread = _AliveThread()
+    orch._initializeCardStateEmitters()
+    return orch, conn
+
+
+def _attempt(conn, result):
+    """One heartbeat-style attempt; ``result`` is the factory's object or raise."""
+
+    def _next():
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    conn.nextAttempt = _next
+    return conn.connectOnce()
+
+
+def test_link_adapter_elmAnswersEcuSilent_adapterUp_ecuConnecting(tmp_path):
+    """VC 1 (ARCH-061, key off at home): the ELM answers ATZ, the ECU is
+    silent -> link.adapter up dated the attempt, link.ecu connecting."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+
+    clocks.advance(3)
+    attemptAt = clocks.wall
+    assert _attempt(conn, _AdapterAttempt("ELM Connected")) is False
+    clocks.advance(2)
+    link = _emitLink(orch, tmp_path)
+
+    assert link["adapter"] == {
+        "state": "up", "ts": _isoOf(attemptAt), "lastOkTs": _isoOf(attemptAt),
+    }
+    assert link["ecu"]["state"] == "connecting"
+    assert link["bt"] == _LINK_NULL
+
+
+def test_link_adapter_noObservationFor641s_isNull(tmp_path):
+    """VC 2 (D5): no adapter observation for 641 s -> link.adapter all null --
+    even after an up while the ECU was up (stale evidence is no evidence)."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+    car = _AdapterAttempt("Car Connected", connected=True)
+    _attempt(conn, car)
+    conn.query("RPM")
+    assert _emitLink(orch, tmp_path)["adapter"]["state"] == "up"
+
+    clocks.advance(640)
+    atBound = _emitLink(orch, tmp_path)["adapter"]["state"]
+    clocks.advance(1)
+    stale = _emitLink(orch, tmp_path)["adapter"]
+
+    assert atBound == "up"
+    assert stale == _LINK_NULL
+
+
+def test_link_adapter_portOpenFails_beforeAnyUp_isConnecting_neverDown(tmp_path):
+    """A failed attempt is connecting before any up (d-1) -- never down."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+
+    states = []
+    for _ in range(3):
+        clocks.advance(320)
+        _attempt(conn, OSError("could not open port"))
+        states.append(_emitLink(orch, tmp_path)["adapter"]["state"])
+
+    assert states == ["connecting"] * 3
+
+
+def test_link_adapter_failedAttemptAfterAnUpWithTheEcu_isRetrying(tmp_path):
+    """After an up while link.ecu was up, a failed attempt reads retrying,
+    dated the failed attempt, with the last up kept."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+    car = _AdapterAttempt("Car Connected", connected=True)
+    _attempt(conn, car)
+    okAt = clocks.wall
+    conn.query("RPM")
+    up = _emitLink(orch, tmp_path)
+
+    conn.disconnect()
+    clocks.advance(10)
+    failedAt = clocks.wall
+    _attempt(conn, OSError("could not open port"))
+    adapter = _emitLink(orch, tmp_path)["adapter"]
+
+    assert up["ecu"]["state"] == "up" and up["adapter"]["state"] == "up"
+    assert adapter == {
+        "state": "retrying", "ts": _isoOf(failedAt), "lastOkTs": _isoOf(okAt),
+    }
+
+
+def test_link_adapter_upOnlyWhileTheEcuWasSilent_thenAFailure_isConnecting(tmp_path):
+    """G1: an adapter up does not count as 'up this session' until link.ecu
+    is up beside it -- so a failure after a key-off answer reads connecting."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+    _attempt(conn, _AdapterAttempt("ELM Connected"))
+    assert _emitLink(orch, tmp_path)["adapter"]["state"] == "up"
+
+    clocks.advance(320)
+    _attempt(conn, _AdapterAttempt("Not Connected"))
+
+    assert _emitLink(orch, tmp_path)["adapter"]["state"] == "connecting"
+
+
+def test_link_adapter_downOnlyByTheSharedC2Rule(tmp_path):
+    """D2: with no retry authority past the one-tick hold the adapter is down
+    -- the same verdict as the ECU's, on the same tick."""
+    from pi.obdii.reconnect_loop import HEARTBEAT_TICK_INTERVAL_SEC
+
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks, heartbeat=False)
+    _attempt(conn, OSError("could not open port"))
+    first = _emitLink(orch, tmp_path)
+    clocks.advance(HEARTBEAT_TICK_INTERVAL_SEC)
+    later = _emitLink(orch, tmp_path)
+
+    assert first["adapter"]["state"] == "connecting"
+    assert later["adapter"]["state"] == "down"
+    assert later["ecu"]["state"] == "down"
+
+
+def test_link_adapter_simulateStatus_hasNoAdapterFields_isNull(tmp_path):
+    """D6: a status with no adapter observation (SimulatedObdConnection's,
+    the stub composers') reads adapter null; the ECU is unaffected."""
+    from pi.obdii.obd_connection import ConnectionStatus, Reachability
+
+    status = ConnectionStatus(connected=True, reachability=Reachability.ANSWERED)
+    conn = SimpleNamespace(getStatus=lambda: status)
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0), connection=conn)
+    orch._initializeCardStateEmitters()
+
+    link = _emitLink(orch, tmp_path)
+
+    assert link["adapter"] == _LINK_NULL
+    assert link["ecu"]["state"] == "up"
+
+
+def test_link_adapter_getStatusRaisingAfterAnUp_isRetrying(tmp_path):
+    """An unreadable status is the ECU's unread rule: after an up (with the
+    ECU) the adapter reads retrying, not null."""
+    clocks = _LinkClocks()
+    orch, conn = _adapterOrch(tmp_path, clocks)
+    _attempt(conn, _AdapterAttempt("Car Connected", connected=True))
+    conn.query("RPM")
+    _emitLink(orch, tmp_path)
+
+    def _boom():
+        raise RuntimeError("status unreadable")
+
+    conn.getStatus = _boom
+    clocks.advance(2)
+
+    assert _emitLink(orch, tmp_path)["adapter"]["state"] == "retrying"

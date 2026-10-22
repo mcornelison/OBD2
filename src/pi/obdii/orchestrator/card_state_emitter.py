@@ -106,6 +106,9 @@
 # 2026-10-22    | Rex (US-876-c)| system-status `link`: the ECU layer live from
 #               |              | reachability (tracker held here), bt/adapter
 #               |              | not read; C2 retry authority with a one-tick hold.
+# 2026-10-22    | Rex (US-876-d)| link.adapter live from the connection's adapter
+#               |              | observation (own tracker, G1 via link.ecu); one
+#               |              | status read + one C2 verdict per tick.
 # ================================================================================
 ################################################################################
 
@@ -116,7 +119,10 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pi.splash.system_status_emitter import LinkLayerTracker
 
 logger = logging.getLogger("pi.obdii.orchestrator")
 
@@ -1855,19 +1861,46 @@ class CardStateEmitterMixin:
     def _gatherLinkChain(self) -> dict[str, dict[str, str | None]]:
         """Gather the US-876-c link chain ``{bt, adapter, ecu}`` (Atlas L6).
 
-        The ECU layer is live from ``ConnectionStatus.reachability``. BT and
-        the adapter are not read until US-876-d/e give them an observation;
-        they will go through the same :class:`LinkLayerTracker`.
+        The ECU layer is live from ``ConnectionStatus.reachability``, the
+        adapter from the connection's adapter observation (US-876-d). Both
+        come from ONE status read and share one retry-authority verdict
+        (D2: the adapter's down is the ECU's C2 rule). BT is not read until
+        US-876-e gives it an observation.
         """
-        from pi.splash.system_status_emitter import unreadLinkLayer
+        from common.time.helper import toCanonicalIso
+        from pi.splash.system_status_emitter import LINK_UP, unreadLinkLayer
 
+        conn = getattr(self, "_connection", None)
+        status = None
+        if conn is not None:
+            try:
+                status = conn.getStatus()
+            except Exception as e:  # noqa: BLE001 -- unread, never a guess
+                logger.debug("link: getStatus() unreadable: %s", e)
+        nowTs = toCanonicalIso(self._linkNowUtc())
+        noAuthoritySinceTs = self._linkNoAuthoritySinceTs(conn, status, nowTs)
+        ecu = self._gatherEcuLinkLayer(status, nowTs, noAuthoritySinceTs)
         return {
             "bt": unreadLinkLayer(),
-            "adapter": unreadLinkLayer(),
-            "ecu": self._gatherEcuLinkLayer(),
+            "adapter": self._gatherAdapterLinkLayer(
+                status, nowTs, noAuthoritySinceTs, ecuUp=ecu["state"] == LINK_UP
+            ),
+            "ecu": ecu,
         }
 
-    def _gatherEcuLinkLayer(self) -> dict[str, str | None]:
+    def _linkTracker(self, attr: str) -> LinkLayerTracker:
+        """This layer's session tracker, created on first use (stub hosts too)."""
+        from pi.splash.system_status_emitter import LinkLayerTracker
+
+        tracker: LinkLayerTracker | None = getattr(self, attr, None)
+        if tracker is None:
+            tracker = LinkLayerTracker()
+            setattr(self, attr, tracker)
+        return tracker
+
+    def _gatherEcuLinkLayer(
+        self, status: Any, nowTs: str, noAuthoritySinceTs: str | None
+    ) -> dict[str, str | None]:
         """The ECU layer from reachability (US-876-c; Atlas L1, c-1..c-4, C2-C5).
 
         ANSWERED is up; DID_NOT_ANSWER / NOT_YET_ATTEMPTED are not up;
@@ -1877,35 +1910,66 @@ class CardStateEmitterMixin:
         NOT_YET_ATTEMPTED, and the flag must survive it. Every attribute is
         read through ``getattr`` so the bare stub composers keep emitting.
 
+        Args:
+            status: The connection's status this tick, or None if unreadable.
+            nowTs: The publish instant (canonical UTC).
+            noAuthoritySinceTs: The C2 verdict (see _linkNoAuthoritySinceTs).
+
         Returns:
             ``{"state", "ts", "lastOkTs"}``; all null for a status that carries
             no ``reachability`` at all.
         """
-        from pi.splash.system_status_emitter import LinkLayerTracker, unreadLinkLayer
+        from pi.splash.system_status_emitter import unreadLinkLayer
 
-        conn = getattr(self, "_connection", None)
-        status = None
-        if conn is not None:
-            try:
-                status = conn.getStatus()
-            except Exception as e:  # noqa: BLE001 -- unread, never a guess
-                logger.debug("link.ecu: getStatus() unreadable: %s", e)
         if status is not None and not hasattr(status, "reachability"):
             return unreadLinkLayer()
-
-        tracker = getattr(self, "_ecuLinkTracker", None)
-        if tracker is None:
-            tracker = LinkLayerTracker()
-            self._ecuLinkTracker = tracker
-        from common.time.helper import toCanonicalIso
-
-        nowTs = toCanonicalIso(self._linkNowUtc())
-        return tracker.observe(
+        return self._linkTracker("_ecuLinkTracker").observe(
             observedUp=_ecuObservedUp(status),
             observedTs=getattr(status, "ecuChangedAtUtc", None),
             nowTs=nowTs,
-            noAuthoritySinceTs=self._linkNoAuthoritySinceTs(conn, status, nowTs),
+            noAuthoritySinceTs=noAuthoritySinceTs,
             lastOkTs=getattr(status, "ecuLastOkAtUtc", None),
+        )
+
+    def _gatherAdapterLinkLayer(
+        self,
+        status: Any,
+        nowTs: str,
+        noAuthoritySinceTs: str | None,
+        *,
+        ecuUp: bool,
+    ) -> dict[str, str | None]:
+        """The adapter layer: did the ELM answer (US-876-d; Atlas L4, D2-D6, G1).
+
+        ``adapterAnswered`` True is up; False (an attempt the ELM did not
+        answer) is connecting/retrying -- or down only by the shared C2 rule,
+        never because an attempt failed. A status with no adapter observation
+        (none this session, none within the connection's freshness bound, a
+        --simulate status or a stub's) is null outright: stale evidence is no
+        evidence. An unreadable status follows the ECU's unread rule. The
+        up-this-session flag counts only an up while link.ecu was up (G1).
+
+        Args:
+            status: The connection's status this tick, or None if unreadable.
+            nowTs: The publish instant (canonical UTC).
+            noAuthoritySinceTs: The C2 verdict, shared with the ECU layer.
+            ecuUp: Whether link.ecu is up on this same tick.
+        """
+        tracker = self._linkTracker("_adapterLinkTracker")
+        if status is None:
+            observedUp = None
+        else:
+            answered = getattr(status, "adapterAnswered", None)
+            if not isinstance(answered, bool):
+                return tracker.markUnread()
+            observedUp = answered
+        return tracker.observe(
+            observedUp=observedUp,
+            observedTs=getattr(status, "adapterChangedAtUtc", None),
+            nowTs=nowTs,
+            noAuthoritySinceTs=noAuthoritySinceTs,
+            chainComplete=ecuUp,
+            lastOkTs=getattr(status, "adapterLastOkAtUtc", None),
         )
 
     def _linkNoAuthoritySinceTs(
