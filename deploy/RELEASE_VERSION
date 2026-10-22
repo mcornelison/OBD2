@@ -1,5 +1,5 @@
 {
-  "version": "V0.30.9",
-  "theme": "V0.30 kiosk session + warnings provider",
-  "description": "Pi-only (server unchanged since V0.30.6). Sprint 106 (#118): lightdm Wayland kiosk session shipped (design A; X11 stays the default), logind power-key drop-in, StartLimit keys moved to [Unit], Fuel 'ECU relearning', '1 code', chores. Sprint 107 (#119): warnings provider -- rated DTC titles, code read times, alerts arbiter + states/alerts (coolant STOP, battery, over-rev, codes). Specs #115-#117."
+  "version": "V0.30.10",
+  "theme": "V0.30 warnings page",
+  "description": "Pi-only (server unchanged since V0.30.6). Sprint 108 (#121): warnings icon on every page, ALERTS card lists the provider's entries (honest empty / not-checked states, scroll cue), parked code detail, POST /alerts-ack (acks for this boot), live coolant STOP takeover (PULL OVER) from states/alerts, TROUBLE CODES screen while parked; old DTC takeover + ribbon deleted."
 }
