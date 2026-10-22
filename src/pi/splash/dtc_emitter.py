@@ -44,6 +44,9 @@
 # 2026-10-21    | Ralph (Rex)  | US-919: clearGate counts pending codes, gains
 #               |              | no_codes / pending_not_read / session_locked
 #               |              | (one chain with dtc_clear + carousel.js).
+# 2026-10-21    | Ralph (Rex)  | US-897-e: readDtcCheckTimes also returns the
+#               |              | pending set its pendingCheckedAtTs dates, from
+#               |              | the same one read (seeded together or not).
 # ================================================================================
 ################################################################################
 
@@ -130,31 +133,68 @@ def _parseIsoOrNone(value: object) -> str | None:
     return value
 
 
-def readDtcCheckTimes(statesDir: str) -> tuple[str | None, str | None]:
-    """Read ``(checkedAtTs, pendingCheckedAtTs)`` from the existing `dtc` file.
+def _seededPendingSet(codes: list) -> list:
+    """The file's top-level ``pending`` entries as carried ``DiagnosticCode`` s.
+
+    US-897-e F2: ``description`` is the entry's ``long`` (the text the emitter
+    published -- python-obd's for an un-tabled code); a missing or non-string
+    ``long`` is ''. An entry without a string ``code`` is skipped.
+    """
+    from pi.obdii.dtc_client import DiagnosticCode
+
+    pending = []
+    for entry in codes:
+        if not isinstance(entry, dict) or entry.get("status") != "pending":
+            continue
+        code = entry.get("code")
+        if not isinstance(code, str):
+            continue
+        long = entry.get("long")
+        pending.append(
+            DiagnosticCode(
+                code=code,
+                description=long if isinstance(long, str) else "",
+                status="pending",
+            )
+        )
+    return pending
+
+
+def readDtcCheckTimes(statesDir: str) -> tuple[str | None, str | None, list]:
+    """Read ``(checkedAtTs, pendingCheckedAtTs, pendingSet)`` from the `dtc` file.
 
     Atlas Q3 (US-897-a2): the states dir is tmpfs, so the file it holds was
-    written THIS boot -- an orchestrator restart seeds its read times from it
-    before the boot-time write overwrites it. A missing file, unparseable JSON
-    or an unparseable time seeds None (each time is judged alone).
+    written THIS boot -- an orchestrator restart seeds from it before the
+    boot-time write overwrites it. A missing file, unparseable JSON or an
+    unparseable time seeds None (each time is judged alone).
+
+    US-897-e (Atlas RULED 2026-10-21): a check time and the pending set it
+    describes are seeded TOGETHER from this ONE read, or not at all. A null
+    ``pendingCheckedAtTs`` seeds no set; a ``codes`` that is null, missing or
+    not a list (the unavailable boot state, written before any read) seeds
+    neither the pending time nor the set. ``lastKnown`` (a prior-boot DB
+    fallback, not this boot's read) is never a source.
 
     Args:
         statesDir: tmpfs states directory.
 
     Returns:
-        The two seeded times, each an ISO-8601 UTC string or None.
+        ``checkedAtTs`` and ``pendingCheckedAtTs`` (each an ISO-8601 UTC string
+        or None) and the carried pending ``DiagnosticCode`` list.
     """
     try:
         with open(os.path.join(statesDir, DTC_FILENAME), encoding="utf-8") as fh:
             payload = json.load(fh)
     except (OSError, ValueError):
-        return None, None
+        return None, None, []
     if not isinstance(payload, dict):
-        return None, None
-    return (
-        _parseIsoOrNone(payload.get("checkedAtTs")),
-        _parseIsoOrNone(payload.get("pendingCheckedAtTs")),
-    )
+        return None, None, []
+    checkedAtTs = _parseIsoOrNone(payload.get("checkedAtTs"))
+    codes = payload.get("codes")
+    pendingCheckedAtTs = _parseIsoOrNone(payload.get("pendingCheckedAtTs"))
+    if not isinstance(codes, list) or pendingCheckedAtTs is None:
+        return checkedAtTs, None, []
+    return checkedAtTs, pendingCheckedAtTs, _seededPendingSet(codes)
 
 
 def enrichCode(

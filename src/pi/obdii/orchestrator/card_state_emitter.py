@@ -101,6 +101,8 @@
 # 2026-10-20    | Rex (US-897-c)| the alerts ack store: every alerts emit hands
 #               |              | in this boot's matching acks and prunes; the
 #               |              | tick caches its inputs for emitNow (Atlas G2).
+# 2026-10-21    | Rex (US-897-e)| the restart seed also carries the pending set
+#               |              | its pendingCheckedAtTs dates (one read).
 # ================================================================================
 ################################################################################
 
@@ -256,6 +258,8 @@ class CardStateEmitterMixin:
     # US-897-a2: last successful Mode 03 / Mode 07 read times this boot.
     _dtcCheckedAtTs: str | None
     _dtcPendingCheckedAtTs: str | None
+    # US-897-e: the carried pending set, seeded with pendingCheckedAtTs.
+    _dtcCarriedPending: list[Any]
     # US-533: config.json's path, when the composer knows it. A CLASS default of
     # None (rather than a getattr) so every composer -- including the standalone
     # ones that never had a path -- keeps working while the orchestrator sets a
@@ -439,9 +443,13 @@ class CardStateEmitterMixin:
             # US-897-a2 (Atlas Q3): the states dir is per boot, so a states/dtc
             # already there was written THIS boot by a previous orchestrator.
             # Seed the read times from it BEFORE the boot write overwrites it.
-            self._dtcCheckedAtTs, self._dtcPendingCheckedAtTs = readDtcCheckTimes(
-                statesDir
-            )
+            # US-897-e: the pending set is seeded from the SAME read as the
+            # time that dates it -- together or not at all.
+            (
+                self._dtcCheckedAtTs,
+                self._dtcPendingCheckedAtTs,
+                self._dtcCarriedPending,
+            ) = readDtcCheckTimes(statesDir)
             # AC5: write an HONEST initial `dtc` state at boot so a parked-from-
             # boot Pi (no KOEO read yet) renders "DTC not read since key-off"
             # instead of starving -- kills the phantom-Check-Engine backdrop.

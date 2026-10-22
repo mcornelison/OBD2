@@ -6155,7 +6155,13 @@ legacy AlertManager owns that section (config.json).
 - **Removal** (G1): a code absent from a read is REMOVED (not kept `active: false`, unlike the
   coolant STOP) only when that read's `checkedAtTs` is NEWER than the last one applied. An
   unchanged `checkedAtTs` only adds; an older one changes nothing. Carried pending codes ride
-  every Mode 03-only payload, so such a read never removes them.
+  every Mode 03-only payload, so such a read never removes them. The pending set is
+  **carried only on an answered Mode 07; seeded together with its time on restart, from one
+  read of this boot's states/dtc, never from lastKnown** (US-897-e, Atlas RULED 2026-10-21):
+  a key-on / drive-start read whose Mode 07 raised or answered null is a Mode 03-only read
+  for the pending set — the carried codes ride it and `pendingCheckedAtTs` stays — so "not
+  checked" never reads as "no pending" (ARCH-062). The post-clear re-read empties the carried
+  set first: Mode 04 wiped it.
 - **Unknown is not present**: `codes` null (unavailable) creates and removes no entry and
   leaves `sources.code.assessed` false. The boot state's `lastKnown` codes make NO entries
   before the first successful read. A null-frame read publishes no payload, so it changes
@@ -7707,7 +7713,13 @@ holds both and passes them on every publish, available or not — never nulled o
 set. **Per boot (Atlas Q3):** the states dir is tmpfs, so at card-emitter init,
 before the boot-time write overwrites it, both are seeded from the existing
 `states/dtc` (`readDtcCheckTimes`); a missing file, unparseable JSON or an
-unparseable time seeds null. The raw Mode 03 / Mode 07 responses are logged at
+unparseable time seeds null. **US-897-e:** the same one read also seeds the carried
+pending set — the top-level `codes[]` entries with `status` `pending`, each as
+`DiagnosticCode(code, long, 'pending')` — so the time and the set it dates are seeded
+together or not at all: a null `pendingCheckedAtTs` seeds no set, and `codes` null,
+missing or not a list (the unavailable boot state) seeds neither the pending time nor
+the set; `lastKnown` is never a source. The boot write keeps `codes: null` (US-752), so a
+second restart before any read seeds neither (→ `pending_not_read`). The raw Mode 03 / Mode 07 responses are logged at
 DEBUG — this ECU's empty-frame shape is not measured, and the raw frame is the
 falsifier (if it answers "no codes" with a null frame, `checkedAtTs` never
 advances after the next clear).

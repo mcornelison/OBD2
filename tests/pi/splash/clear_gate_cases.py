@@ -22,6 +22,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-10-21    | Ralph (Rex)  | Initial -- US-919 one predicate, one table.
+# 2026-10-21    | Ralph (Rex)  | US-897-e: the carried-pending-after-failed-
+#               |              | Mode 07 row (VC 5).
 # ================================================================================
 ################################################################################
 
@@ -76,6 +78,12 @@ CLEAR_GATE_CASES: list[dict[str, Any]] = [
      "expected": "severity_unknown"},
     {"id": "storedNaBesidePendingWatch",
      "codes": [_code("P1750", "stored", "na"), _code("P0400", "pending", "watch")],
+     "syncAcked": True, "pendingCheckedAtTs": READ_TS, "lock": [],
+     "expected": "severity_present"},
+    # US-897-e VC 5: a key-on read whose Mode 07 failed keeps the CARRIED
+    # pending WATCH (and its older read time) -- it still blocks the clear.
+    {"id": "storedMinor_carriedPendingWatchAfterFailedMode07",
+     "codes": [_code("P0443", "stored", "minor"), _code("P0400", "pending", "watch")],
      "syncAcked": True, "pendingCheckedAtTs": READ_TS, "lock": [],
      "expected": "severity_present"},
     # --- both -------------------------------------------------------------

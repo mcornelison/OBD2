@@ -57,6 +57,9 @@
 #               |                | (_resetAlertsRpmPeak), isolated like the others.
 # 2026-10-20    | Rex (US-897-b5) | _emitDtcState hands the dtc payload it wrote
 #               |                | to the alerts arbiter (observeDtc), in-process.
+# 2026-10-21    | Rex (US-897-e) | The carried pending set is replaced only when
+#               |                | Mode 07 answered -- the predicate that advances
+#               |                | pendingCheckedAtTs; else it is carried.
 # ================================================================================
 ################################################################################
 
@@ -905,11 +908,13 @@ class EventRouterMixin:
         (the takeover trigger) is US-405's concern and ``sessionResetLock`` is
         US-407's.
 
-        Pending carry-forward (Atlas G-a1): a read that included Mode 07
-        (``includesPending``: key-on, drive start, post-clear) replaces both
-        sets and becomes the pending set later reads carry.  A Mode 03-only read
-        (MIL edge, periodic) publishes its fresh stored codes plus that carried
-        pending set, minus any code now stored, so no code is listed twice.
+        Pending carry-forward (Atlas G-a1, US-897-e): a read whose Mode 07
+        ANSWERED (``includesPending`` -- key-on, drive start, post-clear -- AND
+        ``mode07Probe.supported``) replaces both sets and becomes the pending
+        set later reads carry.  Every other read (MIL edge, periodic, or a
+        Mode 07 that raised / answered null) publishes its fresh codes plus that
+        carried pending set, minus any code now stored, so no code is listed
+        twice and "not checked" never reads as "no pending" (ARCH-062).
 
         Read times (US-897-a2, ARCH-062): reaching the emit means Mode 03
         answered with a real frame, so ``checkedAtTs`` advances to now; a read
@@ -929,13 +934,18 @@ class EventRouterMixin:
         readAtTs = dtc_emitter.dtcNowIso()
         self._dtcCheckedAtTs = readAtTs
         fresh = list(getattr(result, 'codes', None) or [])
-        if includesPending:
+        # US-897-e (Atlas RULED 2026-10-21): ONE predicate drives the pending
+        # set and its time -- a Mode 07 that raised or answered null is not a
+        # read, so it neither replaces the carried set nor advances the time.
+        probe = getattr(result, 'mode07Probe', None)
+        pendingAnswered = (
+            includesPending and getattr(probe, 'supported', False) is True
+        )
+        if pendingAnswered:
             self._dtcCarriedPending = [
                 c for c in fresh if getattr(c, 'status', None) == 'pending'
             ]
-            probe = getattr(result, 'mode07Probe', None)
-            if getattr(probe, 'supported', False) is True:
-                self._dtcPendingCheckedAtTs = readAtTs
+            self._dtcPendingCheckedAtTs = readAtTs
             published = fresh
         else:
             storedNow = {getattr(c, 'code', None) for c in fresh}
