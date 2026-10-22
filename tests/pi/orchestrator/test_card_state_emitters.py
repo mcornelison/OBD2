@@ -32,6 +32,8 @@
 #               |              | sampler; one lazy HomeNetworkDetector; W4.
 # 2026-10-22    | Ralph (Rex)  | US-916 -- sync lastOkTs/rowsWaiting from the DB;
 #               |              | _recordSyncOutcome stamps no time (MOVED PIN).
+# 2026-10-22    | Ralph (Rex)  | US-877-a -- system-status pi from the off-tick
+#               |              | PiHealthSampler; limit from pi.health.limits.
 # ================================================================================
 ################################################################################
 
@@ -2276,3 +2278,124 @@ def test_wifi_homeDetector_isBuiltOnce_andCached(tmp_path):
     second = orch._getHomeNetworkDetector(lambda: "other")
 
     assert first is not None and first is second
+
+
+# ---------------------------------------------------------------------------
+# US-877-a -- system-status `pi` from the off-tick PiHealthSampler.
+# ---------------------------------------------------------------------------
+
+
+def _piReaders(reads, temp=52.6, throttled="throttled=0x0"):
+    import threading
+
+    from src.pi.diagnostics.disk_space_guard import assessDiskSpace
+    from src.pi.hardware.pi_health import parseThrottled
+
+    def tempReader():
+        reads.append(threading.current_thread())
+        return temp
+
+    return {
+        "tempReader": tempReader,
+        "throttledReader": lambda: parseThrottled(throttled),
+        "diskReader": lambda: assessDiskSpace(
+            "/", freeSpaceReader=lambda _p: 102005460992, searchRoots=[]
+        ),
+        "uptimeReader": lambda: 3720.6,
+    }
+
+
+def _stopPiSampler(orch):
+    orch._shutdownEvent.set()
+    for name in ("_piSampler", "_wifiSampler"):
+        sampler = getattr(orch, name, None)
+        if sampler is not None and getattr(sampler, "thread", None) is not None:
+            sampler.thread.join(timeout=5.0)
+            assert not sampler.thread.is_alive()
+
+
+def _runPiOrch(tmp_path, config, reads, **readerArgs):
+    import threading
+    import time
+
+    orch = _FakeOrch(config)
+    orch._shutdownEvent = threading.Event()
+    orch._wifiReader = lambda: _wifiReading("nmcli_absent")
+    orch._piHealthReaders = _piReaders(reads, **readerArgs)
+    orch._initializeCardStateEmitters()
+    try:
+        orch._emitSystemStatusState()
+        sampler = orch._piSampler
+        deadline = time.monotonic() + 5.0
+        while sampler.snapshot()["cpuTempC"] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        readsBefore = len(reads)
+        orch._emitSystemStatusState()
+        readsDuringTick = len(reads) - readsBefore
+        pi = _readState(tmp_path, "system-status")["pi"]
+    finally:
+        _stopPiSampler(orch)
+    return pi, readsDuringTick, sampler
+
+
+def test_pi_realSampler_offTheTick_publishesTheBlock(tmp_path):
+    """P2/P4: the reads run on the daemon sampler; the tick reads its cache."""
+    import threading
+
+    reads: list = []
+    pi, readsDuringTick, sampler = _runPiOrch(
+        tmp_path, _config(tmp_path, stateEmitIntervalSeconds=0.0), reads
+    )
+
+    assert pi["cpuTempC"] == 52.6
+    assert pi["cpuTempLimitC"] == 80.0
+    assert (pi["throttled"], pi["throttledHex"]) == (False, "0x0")
+    assert (pi["diskVerdict"], pi["diskFreeBytes"]) == ("healthy", 102005460992)
+    assert pi["uptimeS"] == 3720
+    assert pi["overLimit"] == []
+    assert all(pi[k] is not None for k in ("cpuTempTs", "throttledTs", "diskTs", "uptimeTs"))
+    assert readsDuringTick == 0
+    assert reads and all(t is not threading.main_thread() for t in reads)
+    assert sampler.thread.daemon
+
+
+def test_pi_limit_comesFromPiHealthLimits(tmp_path):
+    config = _config(tmp_path, stateEmitIntervalSeconds=0.0)
+    config["pi"]["health"] = {"limits": {"cpuTempC": 50}}
+    pi, _, _ = _runPiOrch(tmp_path, config, [], temp=52.6)
+
+    assert pi["cpuTempLimitC"] == 50.0
+    assert pi["overLimit"] == ["cpuTemp"]
+
+
+def test_pi_stubHostWithoutShutdownEvent_everyKeyNull_noThread(tmp_path):
+    import threading
+
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+    threadsBefore = {t.name for t in threading.enumerate()}
+
+    orch._emitSystemStatusState()
+
+    pi = _readState(tmp_path, "system-status")["pi"]
+    assert pi.pop("overLimit") == []
+    assert set(pi.values()) == {None}
+    assert getattr(orch, "_piSampler", None) is None
+    assert "pi-health-sampler" not in (
+        {t.name for t in threading.enumerate()} - threadsBefore
+    )
+
+
+def test_pi_aRaisingSnapshot_isNotRead(tmp_path):
+    class _Broken:
+        def snapshot(self):
+            raise RuntimeError("torn")
+
+    orch = _FakeOrch(_config(tmp_path, stateEmitIntervalSeconds=0.0))
+    orch._initializeCardStateEmitters()
+    orch._piSampler = _Broken()
+
+    orch._emitSystemStatusState()
+
+    pi = _readState(tmp_path, "system-status")["pi"]
+    assert pi["overLimit"] == [] and pi["cpuTempC"] is None

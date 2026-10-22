@@ -809,6 +809,9 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
 # US-916:   `sync` gains `rowsWaiting`, `edrRowsWaiting` and `notCounted` (null
 #           in every trip fixture: no database in a trip scene); the inputs
 #           gain the three builder parameters behind them, all null.
+# US-877-a: the new top-level `pi` health block (every key null and overLimit
+#           [] in every trip fixture: no sampler in a trip scene); the inputs
+#           gain its one builder parameter, piHealth, null.
 _TRIP_STATUS_KEYS = {
     "obdLink": {"state", "retries"},
     "sync": {
@@ -818,6 +821,12 @@ _TRIP_STATUS_KEYS = {
     "power": {"source", "reasons"},
     "wifi": {"state", "ssid", "rssiDbm", "home", "ts"},
     "link": {"bt", "adapter", "ecu"},
+    "pi": {
+        "cpuTempC", "cpuTempTs", "cpuTempLimitC",
+        "throttled", "throttledHex", "throttledSinceBoot", "throttledTs",
+        "diskFreeBytes", "diskThresholdBytes", "diskVerdict", "diskTs",
+        "uptimeS", "uptimeTs", "overLimit",
+    },
     "drive": {
         "state", "driveId", "lastDrive", "distanceKm", "distanceSinceTs",
         "elapsedSec", "distancePartial",
@@ -830,7 +839,9 @@ _TRIP_STATUS_KEYS = {
 }
 _TRIP_LINK_LAYER_KEYS = {"state", "ts", "lastOkTs"}
 _TRIP_INPUT_KEYS_REMOVED = {"obdLastSeenS"}
-_TRIP_INPUT_KEYS_ADDED = {"syncRowsWaiting", "syncEdrRowsWaiting", "syncNotCounted"}
+_TRIP_INPUT_KEYS_ADDED = {
+    "syncRowsWaiting", "syncEdrRowsWaiting", "syncNotCounted", "piHealth",
+}
 
 
 def test_tripFixtures_carryExactlyTheExpectedTopLevelAndBlockKeys():

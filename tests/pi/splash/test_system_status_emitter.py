@@ -31,6 +31,8 @@
 #               |              | VCs and the emit forwarding of the wifi inputs.
 # 2026-10-22    | Rex (US-916) | the exact pin gains sync rowsWaiting /
 #               |              | edrRowsWaiting / notCounted; their forwarding.
+# 2026-10-22    | Rex (US-877-a)| the exact pin gains `pi` (all null); the pi
+#               |              | block's normalisation + its emit forwarding.
 # ================================================================================
 ################################################################################
 
@@ -121,6 +123,15 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         # a caller that has not wired the provider must not publish one.
         # US-732: home and ts are always keys; null when not read.
         "wifi": {"state": None, "ssid": None, "rssiDbm": None, "home": None, "ts": None},
+        # US-877-a: `pi` is ALWAYS a key, every key present; unwired is every
+        # key null and overLimit [].
+        "pi": {
+            "cpuTempC": None, "cpuTempTs": None, "cpuTempLimitC": None,
+            "throttled": None, "throttledHex": None, "throttledSinceBoot": None,
+            "throttledTs": None, "diskFreeBytes": None, "diskThresholdBytes": None,
+            "diskVerdict": None, "diskTs": None, "uptimeS": None, "uptimeTs": None,
+            "overLimit": [],
+        },
         # US-876-c: `link` is ALWAYS a key, every layer always present; a
         # caller that supplies no chain publishes every layer as not read.
         "link": {
@@ -1140,3 +1151,87 @@ def test_orchestratorEmit_stubComposer_noDatabase_syncFieldsNull():
     assert call["syncEdrRowsWaiting"] is None
     assert call["syncNotCounted"] is None
     assert call["syncPending"] is None
+
+
+# ---------------------------------------------------------------------------
+# US-877-a -- the `pi` health block (Atlas Y-5, P2).
+# ---------------------------------------------------------------------------
+
+_PI_BLOCK = {
+    "cpuTempC": 52.6, "cpuTempTs": "2026-06-30T19:41:58Z", "cpuTempLimitC": 80.0,
+    "throttled": False, "throttledHex": "0x0", "throttledSinceBoot": False,
+    "throttledTs": "2026-06-30T19:41:58Z",
+    "diskFreeBytes": 102005460992, "diskThresholdBytes": 21474836480,
+    "diskVerdict": "healthy", "diskTs": "2026-06-30T19:35:00Z",
+    "uptimeS": 3720, "uptimeTs": _NOW, "overLimit": [],
+}
+
+
+def _piState(piHealth):
+    return buildSystemStatusState(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
+        powerSource="external", driveState="idle", driveId=None, nowIso=_NOW,
+        piHealth=piHealth,
+    )
+
+
+def test_pi_blockKeys_areTheProvidersExactKeySet_noBlockTs():
+    from pi.splash.system_status_emitter import PI_HEALTH_BLOCK_KEYS
+    from src.pi.hardware.pi_health import PI_HEALTH_KEYS
+
+    assert PI_HEALTH_BLOCK_KEYS == PI_HEALTH_KEYS
+    assert "ts" not in PI_HEALTH_BLOCK_KEYS
+    assert set(_piState(None)["pi"]) == set(PI_HEALTH_KEYS)
+
+
+def test_pi_suppliedBlock_isTransportedVerbatim():
+    assert _piState(dict(_PI_BLOCK))["pi"] == _PI_BLOCK
+
+
+def test_pi_unwired_everyKeyNull_overLimitEmpty():
+    pi = _piState(None)["pi"]
+    assert pi.pop("overLimit") == []
+    assert set(pi.values()) == {None}
+
+
+def test_pi_partialBlock_missingKeysAreNull_neverInvented():
+    pi = _piState({"cpuTempC": 81.0, "overLimit": ["cpuTemp"]})["pi"]
+    assert pi["cpuTempC"] == 81.0
+    assert pi["overLimit"] == ["cpuTemp"]
+    assert pi["diskVerdict"] is None and pi["uptimeS"] is None
+
+
+def test_emitter_forwardsPiHealth_throughTheJsonRoundTrip(tmp_path):
+    """Wiring trap: emit() must take and forward piHealth, or it never ships."""
+    emit = makeSystemStatusEmitter(
+        str(tmp_path / "states"), syncStaleThresholdS=120.0, nowIsoFn=lambda: _NOW
+    )
+
+    emit(
+        obdLinkState=OBD_LINKED, obdRetries=0,
+        syncLastOkTs=None, syncRows=0, syncPending=None,
+        powerSource="external", driveState="idle", driveId=None,
+        piHealth=dict(_PI_BLOCK),
+    )
+
+    payload = json.loads(
+        (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
+    )
+    assert payload["pi"] == _PI_BLOCK
+
+
+def test_orchestratorEmit_stubComposer_piHealthNone_startsNoSampler():
+    """Stub hosts (no _shutdownEvent): piHealth None, no sampler, no thread."""
+    import threading
+
+    composer = _StubComposer({}, False)
+    threadsBefore = {t.name for t in threading.enumerate()}
+
+    composer._emitSystemStatusState()
+
+    assert composer.calls[0]["piHealth"] is None
+    assert getattr(composer, "_piSampler", None) is None
+    assert "pi-health-sampler" not in (
+        {t.name for t in threading.enumerate()} - threadsBefore
+    )

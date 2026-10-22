@@ -182,6 +182,11 @@
 #                                a non-empty string.
 # 2026-10-20    | Rex (US-899-a1)| pi.display.stale.alertsAckConfirmSec 6 (Atlas
 #                                Q33) + alertsAckNoticeSec 3 (Iris), finite > 0.
+# 2026-10-22    | Rex (US-877-a)| pi.health.limits.cpuTempC 80 (Atlas P1:
+#                                raspberrypi.com frequency management, Arm
+#                                throttling 80-85 C, 80 = onset); finite,
+#                                0 < x < 125. A DEFAULT only -- never an
+#                                overlay key.
 # ================================================================================
 ################################################################################
 
@@ -892,6 +897,14 @@ DEFAULTS: dict[str, Any] = {
     # US-899-a1 (Iris brief s A): how long "couldn't acknowledge" stays on the
     # takeover. Injected as window.DISPLAY_STALE.alertsAckNoticeSec.
     'pi.display.stale.alertsAckNoticeSec': 3,
+    # US-877-a (F-159, Atlas P1): the CPU temperature at which system-status
+    # `pi` counts cpuTemp over its limit (value >= limit). Source:
+    # raspberrypi.com documentation, "Frequency management and thermal
+    # control" -- the Arm cores begin throttling at 80 C and reach full
+    # throttling at 85 C; 80 = the onset. Published as pi.cpuTempLimitC so the
+    # page shows the provider's limit, never a constant of its own. A DEFAULT
+    # only: NOT an overlay OVERRIDABLE_KEYS entry.
+    'pi.health.limits.cpuTempC': 80,
     # US-880-a (F-159): the speed integrator's gap rule (src/pi/obdii/
     # speed_integrator.py) -- an interval between SPEED readings wider than this
     # is not continuous travel and adds no distance. ONE gap definition across
@@ -1154,6 +1167,7 @@ class ConfigValidator:
         self._validateFuel(config)
         self._validateObdiiConnectDebug(config)
         self._validateLocalZone(config)
+        self._validatePiHealth(config)
 
         logger.info("Configuration validated successfully")
         return config
@@ -2452,6 +2466,36 @@ class ConfigValidator:
                 "pi.sensors.imu.stateHz %g exceeds its source pi.sensors.imu.sampleHz %g -- "
                 "writes past the sample rate repeat the same burst, effective rate %g Hz",
                 stateHz, sampleHz, sampleHz,
+            )
+
+    def _validatePiHealth(self, config: dict[str, Any]) -> None:
+        """Validate pi.health.limits.cpuTempC (US-877-a, Atlas P1).
+
+        Called after defaults are applied. The limit must be a finite number
+        strictly between 0 and 125 C (the bounds Atlas P1 set): a limit at or
+        below 0 would count every reading over. An absent key is skipped -- a caller with a narrow
+        defaults dict is entitled to omit it (the _validateLocalZone idiom).
+
+        Args:
+            config: Validated configuration (post-default-application).
+
+        Raises:
+            ConfigValidationError: If the limit is present but not a finite
+                number in (0, 125).
+        """
+        key = 'pi.health.limits.cpuTempC'
+        val = self._getNestedValue(config, key)
+        if val is None:
+            return
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+            or not (0 < val < 125)
+        ):
+            raise ConfigValidationError(
+                f"{key} must be a finite number with 0 < x < 125 (got {val!r})",
+                missingFields=[key],
             )
 
     def _validateLocalZone(self, config: dict[str, Any]) -> None:

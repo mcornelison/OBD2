@@ -119,6 +119,9 @@
 #               |              | and rowsWaiting / edrRowsWaiting / notCounted,
 #               |              | read every 30 s through pi.sync.backlog;
 #               |              | _recordSyncOutcome no longer stamps a time.
+# 2026-10-22    | Rex (US-877-a)| system-status `pi` health from the off-tick
+#               |              | PiHealthSampler (temp/throttle 10 s, disk 600 s,
+#               |              | uptime per tick); limit from pi.health.limits.
 # ================================================================================
 ################################################################################
 
@@ -1875,7 +1878,67 @@ class CardStateEmitterMixin:
             **self._gatherWifiState(),
             # US-916: lastOkTs + the backlog, from the 30 s cached read.
             **self._gatherSyncState(),
+            # US-877-a: the pi health block from the off-tick sampler.
+            piHealth=self._gatherPiHealth(),
         )
+
+    def _gatherPiHealth(self) -> dict[str, Any] | None:
+        """The US-877-a ``pi`` block: the sampler's cached reads + uptime now.
+
+        Reads ONLY the sampler's cache -- vcgencmd and the disk guard never
+        run on this tick (Atlas P2). No sampler (a stub host) is None, which
+        the builder publishes as every key null.
+        """
+        sampler = self._piHealthSampler()
+        if sampler is None:
+            return None
+        try:
+            block: dict[str, Any] = sampler.snapshot()
+        except Exception as e:  # noqa: BLE001 -- not read, never a guess
+            logger.debug("pi health: snapshot unreadable: %s", e)
+            return None
+        return block
+
+    def _piCpuTempLimitC(self) -> float:
+        """Effective ``pi.health.limits.cpuTempC`` (validator DEFAULT 80)."""
+        from src.pi.hardware.pi_health import DEFAULT_CPU_TEMP_LIMIT_C
+
+        piConfig = (getattr(self, "_config", None) or {}).get("pi") or {}
+        limits = (piConfig.get("health") or {}).get("limits") or {}
+        return float(limits.get("cpuTempC", DEFAULT_CPU_TEMP_LIMIT_C))
+
+    def _piHealthSampler(self) -> Any:
+        """The Pi health sampler, started on first use (US-877-a; Atlas P4).
+
+        A daemon thread on the US-876-e sampler pattern: it waits on the
+        host's ``_shutdownEvent`` (getattr); a host without one (the stub
+        composers) starts nothing. ``_piHealthReaders`` (getattr) is the
+        tests' seam for the OS reads -- a dict of PiHealthSampler reader
+        keywords.
+
+        Returns:
+            The running sampler (or a test's stand-in), or None.
+        """
+        sampler = getattr(self, "_piSampler", None)
+        if sampler is not None:
+            return sampler
+        shutdownEvent = getattr(self, "_shutdownEvent", None)
+        if shutdownEvent is None:
+            return None
+        from common.time.helper import toCanonicalIso
+        from src.pi.hardware.pi_health import PiHealthSampler
+
+        sampler = PiHealthSampler(
+            stopEvent=shutdownEvent,
+            cpuTempLimitC=self._piCpuTempLimitC(),
+            clock=self._linkNowS,
+            wallClockIso=lambda: toCanonicalIso(self._linkNowUtc()),
+            **(getattr(self, "_piHealthReaders", None) or {}),
+        )
+        sampler.start()
+        self._piSampler = sampler
+        logger.info("pi health: sampler started")
+        return sampler
 
     def _gatherSyncState(self) -> dict[str, Any]:
         """The US-916 sync inputs for system-status, as emit() keywords.

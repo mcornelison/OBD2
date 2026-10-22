@@ -7555,6 +7555,47 @@ Every key always present; null = not read, never 0:
   no raise). The orchestrator reads it from `_database.dbPath` at most every
   **30 s**, cached between ticks; no database → every field null.
 
+**`pi` — Pi health with its limits marked (US-877-a; Atlas Y-5, P1–P5).**
+Always a key, the exact key set below, **no block `ts`** — every value carries
+its own event-time ts:
+
+```json
+"pi": {"cpuTempC": 52.6, "cpuTempTs": "…", "cpuTempLimitC": 80.0,
+       "throttled": false, "throttledHex": "0x0", "throttledSinceBoot": false,
+       "throttledTs": "…", "diskFreeBytes": 102005460992,
+       "diskThresholdBytes": 21474836480, "diskVerdict": "healthy", "diskTs": "…",
+       "uptimeS": 3720, "uptimeTs": "…", "overLimit": []}
+```
+
+- **Provider.** `src/pi/hardware/pi_health.py` (`PiHealthSampler`), reached by
+  `card_state_emitter._gatherPiHealth` as ONE `piHealth` dict (builder, `emit()`
+  and the orchestrator call). Unwired (a stub host with no `_shutdownEvent`) or
+  not yet read → every key null and `overLimit` `[]`.
+- **Reads.** `cpuTempC` = `vcgencmd measure_temp` ONLY (0.1 °C; no thermal_zone0
+  fallback; `telemetry_logger`'s own reader is separate and unchanged);
+  `throttled*` = `vcgencmd get_throttled` (2 s timeout, encoding declared);
+  `disk*` = the US-762 `disk_space_guard.assessDiskSpace`, called unchanged
+  (UNKNOWN → `diskVerdict` `unknown`, `diskFreeBytes` null); `uptimeS` =
+  `soc_calibration.readSystemUptimeSeconds`, floored to an int. Off-Pi vcgencmd
+  is absent → temp/throttle null; disk is real on any host.
+- **Cadence.** Temp + throttle every **10 s** and disk every **600 s** on a
+  daemon thread waiting on `_shutdownEvent` (the US-876-e sampler pattern);
+  uptime is read on each tick. The tick publishes cached values only and never
+  blocks on vcgencmd or the guard. A failed read publishes null for that field,
+  its ts the time it was tried.
+- **Limits — the provider judges, the page compares nothing.** `overLimit` lists,
+  in the order `cpuTemp`, `throttled`, `disk`:
+  `cpuTemp` when `cpuTempC >= pi.health.limits.cpuTempC` (inclusive; validator
+  DEFAULT **80**, raspberrypi.com frequency management: Arm throttling 80–85 °C,
+  80 = onset; `_validatePiHealth` finite, 0 < x < 125; a DEFAULT only, never an
+  overlay key) — published as `cpuTempLimitC`; `throttled` when ANY of bits 0–3
+  is set now (firmware facts, no threshold); bits 16–19 are `throttledSinceBoot`
+  (+ `throttledHex`) and NOT counted; `disk` when the guard's verdict is
+  `breached` against its `LOW_DISK_THRESHOLD_BYTES` (published as
+  `diskThresholdBytes`). A field not read is never over.
+- **Not here.** The software version is not in this block (Atlas P8: one reader,
+  `.deploy-version`).
+
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
 `linked` (green) / `reconnecting` (amber, with `retries`) / `down`
 (red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop

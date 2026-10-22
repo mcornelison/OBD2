@@ -20,7 +20,8 @@
     "distanceKm": 0.0,
     "distanceSinceTs": "2026-10-20T19:49:00Z",
     "distancePartial": false,
-    "nowIso": "2026-10-20T19:49:00Z"
+    "nowIso": "2026-10-20T19:49:00Z",
+    "piHealth": null
   },
   "system-status": {
     "obdLink": {
@@ -46,6 +47,22 @@
       "rssiDbm": null,
       "home": null,
       "ts": null
+    },
+    "pi": {
+      "cpuTempC": null,
+      "cpuTempTs": null,
+      "cpuTempLimitC": null,
+      "throttled": null,
+      "throttledHex": null,
+      "throttledSinceBoot": null,
+      "throttledTs": null,
+      "diskFreeBytes": null,
+      "diskThresholdBytes": null,
+      "diskVerdict": null,
+      "diskTs": null,
+      "uptimeS": null,
+      "uptimeTs": null,
+      "overLimit": []
     },
     "link": {
       "bt": {

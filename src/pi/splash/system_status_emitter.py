@@ -43,6 +43,8 @@
 #               |              | the snake token not_read (Atlas W4/W6/W8).
 # 2026-10-22    | Rex (US-916) | sync gains rowsWaiting / edrRowsWaiting /
 #               |              | notCounted; lastOkTs is now max(last_ok_at).
+# 2026-10-22    | Rex (US-877-a)| the always-present `pi` health block (Atlas
+#               |              | Y-5, P2): one piHealth dict, normalised here.
 # ================================================================================
 ################################################################################
 
@@ -106,6 +108,16 @@ LINK_DOWN = "down"
 LINK_LAYERS: tuple[str, ...] = ("bt", "adapter", "ecu")
 LINK_LAYER_KEYS: tuple[str, ...] = ("state", "ts", "lastOkTs")
 
+# US-877-a: the `pi` health block's exact keys (Atlas Y-5; no block ts). The
+# provider (pi.hardware.pi_health) computes every value and the overLimit list.
+PI_HEALTH_BLOCK_KEYS: tuple[str, ...] = (
+    "cpuTempC", "cpuTempTs", "cpuTempLimitC",
+    "throttled", "throttledHex", "throttledSinceBoot", "throttledTs",
+    "diskFreeBytes", "diskThresholdBytes", "diskVerdict", "diskTs",
+    "uptimeS", "uptimeTs",
+    "overLimit",
+)
+
 # The ISO-8601 instant format the F-103 emitters stamp (second resolution, UTC).
 _ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -119,6 +131,7 @@ __all__ = [
     "OBD_DOWN",
     "OBD_LINKED",
     "OBD_RECONNECTING",
+    "PI_HEALTH_BLOCK_KEYS",
     "RUN_MODE_LIVE",
     "RUN_MODE_REPLAY",
     "RUN_MODE_SIMULATE",
@@ -348,6 +361,18 @@ def _publishLinkChain(link: dict | None) -> dict[str, dict[str, str | None]]:
     return published
 
 
+def _publishPiHealth(piHealth: dict | None) -> dict:
+    """Normalise the provider's block to the exact key set (Atlas P2).
+
+    Unwired or not yet read is every key null and ``overLimit`` []; a missing
+    key is null. Values are transported verbatim -- the provider judged them.
+    """
+    source = piHealth or {}
+    block = {key: source.get(key) for key in PI_HEALTH_BLOCK_KEYS}
+    block["overLimit"] = list(source.get("overLimit") or [])
+    return block
+
+
 # ARCH-007 -- WiFi band thresholds. Defaults MIRROR pi.network.wifi.* in
 # config.json (the tuning SSOT); they are parameters, never magic numbers, per
 # the Atlas ruling 2026-08-20 section 2.2.
@@ -434,6 +459,7 @@ def buildSystemStatusState(
     syncRowsWaiting: int | None = None,
     syncEdrRowsWaiting: int | None = None,
     syncNotCounted: list[str] | None = None,
+    piHealth: dict | None = None,
 ) -> dict:
     """Assemble the system-status payload (pure; spec §7 pinned A-3 schema).
 
@@ -522,6 +548,10 @@ def buildSystemStatusState(
             field as the drain reports it; None when not read.
         syncNotCounted: US-916: the snapshot tables, sorted -- named, never
             folded into a count; None when not read.
+        piHealth: US-877-a: the ``pi`` block from
+            ``pi.hardware.pi_health.PiHealthSampler.snapshot`` (values, their
+            own ts, the limits and ``overLimit``). None -- unwired or not yet
+            read -- publishes every key null and ``overLimit`` [].
 
     Returns:
         The system-status dict with exactly the spec §7 A-3 keys plus the US-429
@@ -594,6 +624,8 @@ def buildSystemStatusState(
             # The sample's read time, failed reads included: when we looked.
             "ts": wifiTs,
         },
+        # US-877-a (Atlas Y-5, P2): always a key, every key always present.
+        "pi": _publishPiHealth(piHealth),
         # US-876-c (Atlas L6): always a key, every layer always present, and
         # deliberately NOT gated on obdAvailable like obdLink above.
         "link": _publishLinkChain(link),
@@ -733,6 +765,7 @@ def makeSystemStatusEmitter(
         syncRowsWaiting: int | None = None,
         syncEdrRowsWaiting: int | None = None,
         syncNotCounted: list[str] | None = None,
+        piHealth: dict | None = None,
     ) -> None:
         try:
             nowIso = nowFn()
@@ -772,6 +805,7 @@ def makeSystemStatusEmitter(
                 syncRowsWaiting=syncRowsWaiting,
                 syncEdrRowsWaiting=syncEdrRowsWaiting,
                 syncNotCounted=syncNotCounted,
+                piHealth=piHealth,
             )
             ensureStatesDir(statesDir)
             writeStateAtomic(target, payload)

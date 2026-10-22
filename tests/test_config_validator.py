@@ -1795,3 +1795,40 @@ def test_validate_gradeHistory_windowEqualToInterval_accepted():
     cfg["pi"] = {"display": {"gradeHistory": {"intervalSec": 30, "windowSec": 30}}}
     result = ConfigValidator().validate(cfg)
     assert result["pi"]["display"]["gradeHistory"]["windowSec"] == 30
+
+
+# ---------------------------------------------------------------------------
+# US-877-a -- pi.health.limits.cpuTempC (Atlas P1).
+# ---------------------------------------------------------------------------
+
+
+def test_piHealth_cpuTempLimit_defaultsTo80():
+    result = ConfigValidator().validate(_baseCfg())
+    assert result["pi"]["health"]["limits"]["cpuTempC"] == 80
+
+
+def test_piHealth_cpuTempLimit_isNotAnOverlayKey():
+    from common.config.overlay import OVERRIDABLE_KEYS
+
+    assert "pi.health.limits.cpuTempC" not in OVERRIDABLE_KEYS
+
+
+@pytest.mark.parametrize("value", [0, -1, 125, 130.5, float("nan"), float("inf"), True, "80"])
+def test_piHealth_cpuTempLimit_outOfRangeOrNotANumber_rejected(value):
+    cfg = _baseCfg()
+    cfg["pi"] = {"health": {"limits": {"cpuTempC": value}}}
+    with pytest.raises(ConfigValidationError):
+        ConfigValidator().validate(cfg)
+
+
+@pytest.mark.parametrize("value", [0.1, 70, 80, 124.9])
+def test_piHealth_cpuTempLimit_inRange_accepted(value):
+    cfg = _baseCfg()
+    cfg["pi"] = {"health": {"limits": {"cpuTempC": value}}}
+    result = ConfigValidator().validate(cfg)
+    assert result["pi"]["health"]["limits"]["cpuTempC"] == value
+
+
+def test_piHealth_absentUnderCustomDefaults_isSkipped():
+    result = ConfigValidator(defaults={"logging.level": "INFO"}).validate(_baseCfg())
+    assert "health" not in result.get("pi", {})

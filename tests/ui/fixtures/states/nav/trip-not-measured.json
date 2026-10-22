@@ -17,7 +17,8 @@
     "driveState": "recording",
     "driveId": 112,
     "obdAvailable": true,
-    "nowIso": "2026-10-20T20:12:00Z"
+    "nowIso": "2026-10-20T20:12:00Z",
+    "piHealth": null
   },
   "system-status": {
     "obdLink": {
@@ -43,6 +44,22 @@
       "rssiDbm": null,
       "home": null,
       "ts": null
+    },
+    "pi": {
+      "cpuTempC": null,
+      "cpuTempTs": null,
+      "cpuTempLimitC": null,
+      "throttled": null,
+      "throttledHex": null,
+      "throttledSinceBoot": null,
+      "throttledTs": null,
+      "diskFreeBytes": null,
+      "diskThresholdBytes": null,
+      "diskVerdict": null,
+      "diskTs": null,
+      "uptimeS": null,
+      "uptimeTs": null,
+      "overLimit": []
     },
     "link": {
       "bt": {
