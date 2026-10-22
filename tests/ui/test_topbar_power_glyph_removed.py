@@ -155,7 +155,7 @@ def _systemStatus(**overrides: Any) -> dict:
     args: dict[str, Any] = {
         "obdLinkState": "linked",
         "obdRetries": 0,
-        "obdLastSeenS": 1,
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": "2026-09-10T14:19:40Z",
         "syncRows": 1204,
         "syncPending": 0,

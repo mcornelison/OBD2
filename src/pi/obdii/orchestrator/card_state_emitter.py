@@ -1788,9 +1788,6 @@ class CardStateEmitterMixin:
         emitter(
             obdLinkState=obdLinkState,
             obdRetries=obdRetries,
-            # No per-read timestamp is tracked at this layer, so we do not claim
-            # a "seconds since last read" we cannot measure (honest-instrument).
-            obdLastSeenS=None,
             syncLastOkTs=self._lastSyncOkTsIso,
             syncRows=self._lastSyncRows,
             # US-564: NOT MEASURED HERE -> None, never 0. A pending-row count is

@@ -573,7 +573,8 @@ def test_engineRowsAreNotControls_codeRowsAre():
 def _systemStatus() -> dict[str, Any]:
     return {
         "wifi": {"state": "up", "ssid": "bench", "rssiDbm": -50},
-        "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 1},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "linked", "retries": 0},
         "sync": {"lastOkTs": NOW, "rows": 50, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "idle", "driveId": None},

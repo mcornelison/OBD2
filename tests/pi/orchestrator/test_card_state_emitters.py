@@ -235,7 +235,8 @@ def test_maybeEmit_droppedButSeenLink_isDownButAvailable_notIdle(tmp_path):
 
     orch._maybeEmitCardStates()
     ss = _readState(tmp_path, "system-status")
-    assert ss["obdLink"] == {"state": "down", "retries": 3, "lastSeenS": None}
+    # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+    assert ss["obdLink"] == {"state": "down", "retries": 3}
     assert ss["source"]["obd"]["available"] is True
     assert ss["idle"] is False
 

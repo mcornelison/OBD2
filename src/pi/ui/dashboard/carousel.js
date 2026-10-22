@@ -697,27 +697,21 @@
     return nowMs - startedAtMs;
   }
 
-  function seenDetail(s) {
-    return s == null ? "" : "seen " + s + "s ago";
-  }
-
   // OBD link tile: linked -> ok; reconnecting -> amber (I-033 visibility, the
   // operator SEES the retry); down -> red; missing/unknown -> unavailable.
   function obdLinkTile(o) {
     if (!isObj(o)) {
       return { label: "OBD LINK", value: "—", detail: "unavailable", level: "unavailable" };
     }
-    var seen = seenDetail(o.lastSeenS);
     if (o.state === "linked") {
-      return { label: "OBD LINK", value: "LINKED", detail: seen, level: "ok" };
+      return { label: "OBD LINK", value: "LINKED", detail: "", level: "ok" };
     }
     if (o.state === "reconnecting") {
       var d = "retry " + (o.retries == null ? 0 : o.retries);
-      if (seen) d += " · " + seen;
       return { label: "OBD LINK", value: "RECONNECTING", detail: d, level: "amber" };
     }
     if (o.state === "down") {
-      return { label: "OBD LINK", value: "DOWN", detail: seen || "no signal", level: "down" };
+      return { label: "OBD LINK", value: "DOWN", detail: "no signal", level: "down" };
     }
     return { label: "OBD LINK", value: "—", detail: "unavailable", level: "unavailable" };
   }
@@ -1075,20 +1069,17 @@
   //                  which is the exact dead end this story removes.
   var SYS_ROW_FLOOR = SYS_LEVEL_RANK.unavailable;
 
-  // The typed absence for a source that publishes no age at all. Only the OBD
-  // source emits `lastSeenS` today, so the other three MUST say the age was not
-  // reported rather than render "seen 0s ago" -- which would claim we had just
-  // seen a source we never timed. Same fabrication as a zeroed altitude
-  // (US-508): an unmeasured quantity is an absence, never a zero.
+  // The typed absence for a source that publishes no age at all. No source
+  // publishes a per-source age today (the OBD link's was always null and was
+  // removed, US-876-a), so every row MUST say the age was not reported rather
+  // than render "seen 0s ago" -- which would claim we had just seen a source we
+  // never timed. Same fabrication as a zeroed altitude (US-508): an unmeasured
+  // quantity is an absence, never a zero.
   var SYS_NO_AGE = "age not reported";
 
-  // Read one source's own freshness fact out of the SAME payload the tiles were
-  // built from. A non-finite or negative age is not a reading.
-  function sysRowFreshness(data, key) {
-    if (isObj(data) && isObj(data[key])) {
-      var s = data[key].lastSeenS;
-      if (typeof s === "number" && isFinite(s) && s >= 0) return seenDetail(s);
-    }
+  // One source's freshness for its drill-down row: always the typed absence
+  // until a provider publishes a real per-source age.
+  function sysRowFreshness() {
     return SYS_NO_AGE;
   }
 
@@ -1105,7 +1096,7 @@
         var key = SYS_TILE_ORDER[i];
         var tile = tiles[key];
         if (!isObj(tile) || sysLevelRank(tile.level) !== rank) continue;
-        var freshness = sysRowFreshness(data, key);
+        var freshness = sysRowFreshness();
         var detail = typeof tile.detail === "string" ? tile.detail : "";
         rows.push({
           key: key,
@@ -1116,8 +1107,7 @@
           level: tile.level,
           // The emitter's own words. The drill-down explains what the card
           // already said; it does not re-diagnose. Dropped when it only repeats
-          // the freshness the row prints beside it (the DOWN OBD tile's detail
-          // IS the seen-age string).
+          // the freshness the row prints beside it.
           reason: detail === freshness ? "" : detail,
           freshness: freshness,
         });

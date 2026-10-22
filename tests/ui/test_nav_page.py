@@ -793,6 +793,42 @@ def test_tripFixtures_arePresent_described_andTheRealProvidersPayload():
         assert buildSystemStatusState(**fx["inputs"]) == fx["system-status"], name
 
 
+# The trip fixtures' system-status SHAPE, written out by hand (never read from
+# an older fixture). A story that adds or removes a system-status key
+# regenerates the fixtures from the real builder and edits THIS table, so the
+# regenerated files can differ from the old ones only in the keys named here.
+# US-876-a: obdLink lost `lastSeenS` (and the inputs lost `obdLastSeenS`).
+_TRIP_STATUS_KEYS = {
+    "obdLink": {"state", "retries"},
+    "sync": {"lastOkTs", "rows", "pending", "stale"},
+    "power": {"source", "reasons"},
+    "wifi": {"state", "ssid", "rssiDbm"},
+    "drive": {
+        "state", "driveId", "lastDrive", "distanceKm", "distanceSinceTs",
+        "elapsedSec", "distancePartial",
+    },
+    "idle": None,
+    "priorShutdown": None,
+    "runMode": None,
+    "source": {"obd", "wifi"},
+    "ts": None,
+}
+_TRIP_INPUT_KEYS_REMOVED = {"obdLastSeenS"}
+
+
+def test_tripFixtures_carryExactlyTheExpectedTopLevelAndBlockKeys():
+    """Every regenerated trip fixture has the hand-written key set above, at the
+    top level and inside each block, and no input the builder no longer takes."""
+    for name in TRIP_FIXTURES:
+        fx = _fixture(name)
+        status = fx["system-status"]
+        assert set(status) == set(_TRIP_STATUS_KEYS), name
+        for block, keys in _TRIP_STATUS_KEYS.items():
+            if keys is not None:
+                assert set(status[block]) == keys, (name, block)
+        assert not _TRIP_INPUT_KEYS_REMOVED & set(fx["inputs"]), name
+
+
 def test_gradeNullFixture_isTheRealBridgesPayload_gradeOnlyNull():
     from pi.sensors.imu_state_bridge import buildImuState
 

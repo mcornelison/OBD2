@@ -204,7 +204,6 @@ def buildSystemStatusState(
     *,
     obdLinkState: str,
     obdRetries: int,
-    obdLastSeenS: int | None,
     syncLastOkTs: str | None,
     syncRows: int,
     syncPending: int | None,
@@ -235,7 +234,6 @@ def buildSystemStatusState(
     Args:
         obdLinkState: One of ``OBD_LINKED`` / ``OBD_RECONNECTING`` / ``OBD_DOWN``.
         obdRetries: Reconnect attempt count for the current drop (0 when linked).
-        obdLastSeenS: Seconds since the last successful OBD read (None if never).
         syncLastOkTs: ISO-8601 instant of the last successful Pi->server sync.
         syncRows: Rows synced in the last successful batch.
         syncPending: Rows captured but not yet synced, or None when no caller
@@ -302,13 +300,9 @@ def buildSystemStatusState(
     # source is unavailable, its value is a fresh typed NULL (never the last real
     # state left stale) and the reason travels in `source.obd`.
     if obdAvailable:
-        obdLink = {
-            "state": obdLinkState,
-            "retries": obdRetries,
-            "lastSeenS": obdLastSeenS,
-        }
+        obdLink = {"state": obdLinkState, "retries": obdRetries}
     else:
-        obdLink = {"state": None, "retries": 0, "lastSeenS": None}
+        obdLink = {"state": None, "retries": 0}
     # US-480-a idle-SSOT (Atlas ruling b): the emitter OWNS the idle decision --
     # it holds BOTH inputs (obdAvailable + driveState), so the display renders
     # this flag and never re-derives idle from the drive-state string (the
@@ -468,7 +462,6 @@ def makeSystemStatusEmitter(
         *,
         obdLinkState: str,
         obdRetries: int,
-        obdLastSeenS: int | None,
         syncLastOkTs: str | None,
         syncRows: int,
         syncPending: int | None,
@@ -494,7 +487,6 @@ def makeSystemStatusEmitter(
             payload = buildSystemStatusState(
                 obdLinkState=obdLinkState,
                 obdRetries=obdRetries,
-                obdLastSeenS=obdLastSeenS,
                 syncLastOkTs=syncLastOkTs,
                 syncRows=syncRows,
                 syncPending=syncPending,

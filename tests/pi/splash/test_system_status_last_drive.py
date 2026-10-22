@@ -34,7 +34,7 @@ _TS = "2026-08-02T12:00:00Z"
 _BASE: dict = {
     "obdLinkState": "down",
     "obdRetries": 0,
-    "obdLastSeenS": None,
+    # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
     "syncLastOkTs": None,
     "syncRows": 0,
     "syncPending": 0,

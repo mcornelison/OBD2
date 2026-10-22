@@ -7374,7 +7374,7 @@ orchestrator loop) and writes the A-3 schema atomically (`writeStateAtomic`,
 reusing the boot-state primitives). Schema (spec §7):
 
 ```json
-{ "obdLink": {"state":"reconnecting","retries":3,"lastSeenS":14},
+{ "obdLink": {"state":"reconnecting","retries":3},
   "sync": {"lastOkTs":"…","rows":1204,"pending":0,"stale":false},
   "power": {"mode":"car","source":"external"},
   "drive": {"state":"recording","driveId":27},
@@ -7386,7 +7386,7 @@ adds `elapsedSec` (frozen at drive end) / `distancePartial`; see
 "`system-status.drive.distanceKm`" in section 11.)
 
 **I-033 reconnect visibility.** `obdLink.state` is reported **verbatim** —
-`linked` (green) / `reconnecting` (amber, with `retries` + `lastSeenS`) / `down`
+`linked` (green) / `reconnecting` (amber, with `retries`) / `down`
 (red) — never fabricated as `linked`. On a mid-drive BT drop the reconnect loop
 flips the state to `reconnecting`; the 4 Hz poll surfaces `RECONNECTING` on the
 tile and an amber BT glyph within ≤2 s (the operator finally *sees* the
@@ -7440,8 +7440,9 @@ source state is recomputed. Four decisions are load-bearing:
   *is* listed: the summary reads `SYSTEM · N UNAVAILABLE` in that state, so
   excluding unavailables would make a tappable headline open an **empty**
   overlay — the exact dead end this surface exists to remove.
-- **Freshness is never fabricated.** Only `obdLink` publishes `lastSeenS`; rows
-  for sources that publish no age read **"age not reported"**, never
+- **Freshness is never fabricated.** No source publishes a per-source age (the
+  always-null `obdLink.lastSeenS` was removed, US-876-a), so every row's
+  freshness reads **"age not reported"**, never
   `"seen 0s ago"` (which would claim we had just seen a source we never timed —
   the zeroed-altitude lie of US-508 in a different costume).
 - **The affordance is gated on `drill.tappable`** (`rows.length > 0`), so a

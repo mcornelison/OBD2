@@ -42,7 +42,8 @@ import pytest
 from src.pi.splash.system_status_emitter import buildSystemStatusState, deriveWifiState
 
 _BASE = dict(
-    obdLinkState="down", obdRetries=0, obdLastSeenS=None,
+    # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+    obdLinkState="down", obdRetries=0,
     syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
     powerSource="unknown",
     driveState="idle", driveId=None, nowIso="2026-08-28T00:00:00Z",

@@ -65,7 +65,8 @@ def _unavailable(name: str, reason: str) -> dict:
 def _sys(idle: bool, *, drive_state: str = "idle", drive_id=None) -> dict:
     """A minimal system-status state with the US-480-a `idle` SSOT boolean."""
     return {
-        "obdLink": {"state": None, "retries": 0, "lastSeenS": None},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": None, "retries": 0},
         "sync": {"lastOkTs": None, "rows": 0, "pending": 0, "stale": False},
         "power": {"mode": "wall", "source": "external"},
         "drive": {"state": drive_state, "driveId": drive_id},

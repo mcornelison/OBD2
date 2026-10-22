@@ -12,7 +12,8 @@
 #        inactive, NOT broken". But an `unavailable` source MUST appear, or the
 #        "SYSTEM . N UNAVAILABLE" headline opens an EMPTY overlay -- the exact
 #        dead end this story exists to remove.
-#     3. FABRICATED FRESHNESS -- only the OBD source publishes `lastSeenS`. A
+#     3. FABRICATED FRESHNESS -- no source publishes a per-source age (the
+#        always-null obdLink.lastSeenS went in US-876-a). A
 #        row for a source that publishes no age must say so, never "seen 0s
 #        ago", which claims we just saw a source we never timed (the US-508
 #        zeroed-altitude mistake in a different costume).
@@ -30,6 +31,8 @@
 # Date          | Author       | Description
 # ================================================================================
 # 2026-07-31    | Ralph (Rex)  | Initial -- US-509 System-Status drill-down.
+# 2026-10-22    | Ralph (Rex)  | US-876-a MOVED PIN: no source publishes an age;
+#               |              | seen-age freshness/dedup cases reworked.
 # ================================================================================
 ################################################################################
 
@@ -118,7 +121,8 @@ def _tiles(
 def _sysState(**over: object) -> dict:
     """A healthy system-status emitter payload (US-400 / Atlas A-3 schema)."""
     state: dict = {
-        "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 2},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "linked", "retries": 0},
         "sync": {"lastOkTs": "2026-07-31T11:41:50Z", "rows": 50, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "recording", "driveId": 27},
@@ -299,19 +303,20 @@ def test_systemIssueRows_reasonIsTheTilesOwnDetail_notReWorded():
 
 
 @_NODE_TESTS
-def test_systemIssueRows_freshnessReadsSeenSecondsAgoWhenThePublisherReportsIt():
+def test_systemIssueRows_obdRowFreshnessIsTypedAbsent_noSourcePublishesAnAge():
     """
-    Given: the OBD source published `lastSeenS`
+    MOVED PIN (US-876-a): was ...freshnessReadsSeenSecondsAgoWhenThePublisherReportsIt.
+    Given: a DOWN OBD source -- obdLink carries {state, retries} and no age
     When: the row is built
-    Then: the freshness reads "seen Ns ago"
+    Then: the freshness is the typed absence, like every other source's
     """
     rows = _view(
         "systemIssueRows",
         _tiles(obd="down"),
-        _sysState(obdLink={"state": "down", "retries": 3, "lastSeenS": 42}),
+        _sysState(obdLink={"state": "down", "retries": 3}),
     )
 
-    assert rows[0]["freshness"] == "seen 42s ago"
+    assert rows[0]["freshness"] == "age not reported"
 
 
 @_NODE_TESTS
@@ -330,38 +335,43 @@ def test_systemIssueRows_freshnessIsTypedAbsent_whenTheSourceReportsNoAge():
 
 
 @_NODE_TESTS
-def test_systemIssueRows_freshnessIsTypedAbsent_whenLastSeenIsNull():
+def test_systemIssueRows_freshnessIsTypedAbsent_evenWhenAnOldPayloadCarriesAnAge():
     """
-    Given: the OBD source is present but its `lastSeenS` is null (never seen)
+    MOVED PIN (US-876-a): was ...freshnessIsTypedAbsent_whenLastSeenIsNull.
+    Given: a state file written before the upgrade, still carrying a numeric
+           obdLink age
     When: the row is built
-    Then: the freshness is the typed absence, never a fabricated zero
+    Then: the freshness is the typed absence -- the page no longer reads an age
+          the producer does not publish
     """
     row = _view(
         "systemIssueRows",
         _tiles(obd="down"),
-        _sysState(obdLink={"state": "down", "retries": 0, "lastSeenS": None}),
+        _sysState(obdLink={"state": "down", "retries": 0, "lastSeenS": 42}),
     )[0]
 
     assert row["freshness"] == "age not reported"
 
 
 @_NODE_TESTS
-def test_systemIssueRows_reasonIsDroppedWhenItOnlyRepeatsTheFreshness():
+def test_systemIssueRows_downObdRow_keepsItsReason_besideTheNoAgeFreshness():
     """
-    Given: a DOWN OBD tile, whose detail IS the seen-age string
+    MOVED PIN (US-876-a): reworked from ...reasonIsDroppedWhenItOnlyRepeatsTheFreshness,
+    which can no longer happen -- the DOWN OBD tile's detail was the seen-age
+    string, and no age is published any more.
+    Given: a DOWN OBD tile whose detail is "no signal"
     When: the row is built
-    Then: the reason is empty rather than printing the same sentence twice in
-          one row -- the freshness column already carries that fact
+    Then: the reason is the tile's own words and the freshness the typed absence
     """
-    tiles = _tiles(obd="down", obdDetail="seen 42s ago")
+    tiles = _tiles(obd="down", obdDetail="no signal")
     row = _view(
         "systemIssueRows",
         tiles,
-        _sysState(obdLink={"state": "down", "retries": 3, "lastSeenS": 42}),
+        _sysState(obdLink={"state": "down", "retries": 3}),
     )[0]
 
-    assert row["freshness"] == "seen 42s ago"
-    assert row["reason"] == ""
+    assert row["freshness"] == "age not reported"
+    assert row["reason"] == "no signal"
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +404,7 @@ def test_systemStatusView_carriesTheDrillDownAlongsideTheSummary():
     """
     view = _view(
         "systemStatusView",
-        _sysState(obdLink={"state": "down", "retries": 5, "lastSeenS": 900}),
+        _sysState(obdLink={"state": "down", "retries": 5}),
     )
 
     assert view["drill"]["rows"][0]["label"] == "OBD LINK"

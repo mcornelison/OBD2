@@ -135,7 +135,7 @@ def _systemStatus(
     return buildSystemStatusState(
         obdLinkState="linked" if obdAvailable else "down",
         obdRetries=0,
-        obdLastSeenS=1 if obdAvailable else None,
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs="2026-08-31T15:45:22Z",
         syncRows=1204,
         syncPending=0,

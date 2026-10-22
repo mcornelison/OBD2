@@ -220,7 +220,8 @@ def _routes() -> dict[str, Any]:
     return {
         "/system-status": {
             "wifi": {"state": "up", "ssid": "bench", "rssiDbm": -50},
-            "obdLink": {"state": "down", "retries": 0, "lastSeenS": 2},
+            # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+            "obdLink": {"state": "down", "retries": 0},
             "sync": {"lastOkTs": _now(), "rows": 50, "pending": 0, "stale": False},
             "power": {"mode": "car", "source": "external"},
             "drive": {"state": "idle", "driveId": None},

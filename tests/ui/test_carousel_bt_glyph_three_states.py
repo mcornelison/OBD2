@@ -256,7 +256,7 @@ def _handBuilt(**overrides: Any) -> dict:
     args: dict[str, Any] = {
         "obdLinkState": "linked",
         "obdRetries": 0,
-        "obdLastSeenS": 1,
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         "syncLastOkTs": _FRESH_SYNC,
         "syncRows": 1204,
         "syncPending": 0,
@@ -555,7 +555,7 @@ def test_theGlyphsOwnFallbackIsNeutral_notInheritedFromTheSourceOverride():
           SYNC glyph that US-633 found defaulting to green.
     """
     payload = _handBuilt()
-    payload["obdLink"] = {"state": None, "retries": 0, "lastSeenS": None}
+    payload["obdLink"] = {"state": None, "retries": 0}
     assert payload["source"]["obd"]["available"] is True, "the halves must disagree"
     assert _btGlyph(payload) == ("neutral", NEUTRAL)
 
@@ -576,7 +576,7 @@ def test_anUnrecognisedLinkStateIsNeutral_neverGreen():
           cannot be "made consistent" in the wrong direction.
     """
     payload = _handBuilt()
-    payload["obdLink"] = {"state": "connected", "retries": 0, "lastSeenS": 1}
+    payload["obdLink"] = {"state": "connected", "retries": 0}
     state, colour = _btGlyph(payload)
     assert (state, colour) == ("neutral", NEUTRAL)
     assert colour != GREEN
@@ -596,7 +596,7 @@ def test_anUnavailableSourceOverridesAStaleLinkState_andTheColourGoesGrey():
           claim than "not green" while the stylesheet is free to move.
     """
     payload = _handBuilt(obdAvailable=False)
-    payload["obdLink"] = {"state": "linked", "retries": 0, "lastSeenS": 4}
+    payload["obdLink"] = {"state": "linked", "retries": 0}
     state, colour = _btGlyph(payload)
     assert (state, colour) == ("neutral", NEUTRAL)
     assert colour != GREEN
@@ -800,7 +800,7 @@ def test_characterisation_bothGlyphsObeyTheSourceRule_soTheDivergenceIsUpstream(
           so the fix belongs upstream (I-us663).
     """
     payload = _handBuilt(obdAvailable=False, wifiAvailable=False)
-    payload["obdLink"] = {"state": "linked", "retries": 0, "lastSeenS": 4}
+    payload["obdLink"] = {"state": "linked", "retries": 0}
     payload["wifi"] = {"state": "up", "ssid": "garage", "rssiDbm": -42}
 
     surface = _surface({"/system-status": payload})

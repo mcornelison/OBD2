@@ -5,7 +5,6 @@
   "inputs": {
     "obdLinkState": "linked",
     "obdRetries": 0,
-    "obdLastSeenS": null,
     "syncLastOkTs": null,
     "syncRows": 0,
     "syncPending": null,
@@ -23,8 +22,7 @@
   "system-status": {
     "obdLink": {
       "state": "linked",
-      "retries": 0,
-      "lastSeenS": null
+      "retries": 0
     },
     "sync": {
       "lastOkTs": null,

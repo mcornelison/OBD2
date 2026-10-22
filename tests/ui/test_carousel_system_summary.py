@@ -99,7 +99,8 @@ def _tiles(obd: str = "ok", sync: str = "ok", power: str = "ok", drive: str = "o
 def _sysState(**over: object) -> dict:
     """A healthy system-status emitter payload (US-400 / Atlas A-3 schema)."""
     state = {
-        "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 2},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "linked", "retries": 0},
         "sync": {"lastOkTs": "2026-07-27T19:41:50Z", "rows": 50, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "recording", "driveId": 27},
@@ -246,7 +247,7 @@ def test_systemStatusView_degradedState_summaryIsNotGreen():
     view = _view(
         "systemStatusView",
         _sysState(
-            obdLink={"state": "down", "retries": 0, "lastSeenS": None},
+            obdLink={"state": "down", "retries": 0},
             sync={"lastOkTs": None, "rows": 0, "pending": 12, "stale": True},
             power={"mode": "car", "source": "battery"},
             drive={"state": "idle", "driveId": None},
@@ -281,7 +282,13 @@ def test_systemStatusView_summaryMatchesItsOwnTiles():
 def test_systemStatusView_preservesEveryTileValueAndDetail():
     """AC2 guard: the 2x2 regrouping is PRESENTATION -- all 4 tiles survive with
     their value AND their detail (nothing is dropped to make room)."""
-    view = _view("systemStatusView", _sysState())
+    # MOVED PIN (US-876-a): a LINKED tile's detail was the fake "seen 2s ago"
+    # from this fixture's lastSeenS; with no age published it is "" (as in
+    # production), so the OBD tile is put in a state whose detail is real.
+    view = _view(
+        "systemStatusView",
+        _sysState(obdLink={"state": "reconnecting", "retries": 1}),
+    )
     assert set(view["tiles"].keys()) == {"obdLink", "sync", "power", "drive"}
     for tile in view["tiles"].values():
         assert tile["value"]

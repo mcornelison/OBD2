@@ -64,7 +64,7 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
     state = buildSystemStatusState(
         obdLinkState=OBD_RECONNECTING,
         obdRetries=3,
-        obdLastSeenS=14,
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=_SYNC_OK,
         syncRows=1204,
         syncPending=0,
@@ -75,7 +75,7 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
         nowIso=_NOW,
     )
     assert state == {
-        "obdLink": {"state": "reconnecting", "retries": 3, "lastSeenS": 14},
+        "obdLink": {"state": "reconnecting", "retries": 3},
         "sync": {"lastOkTs": _SYNC_OK, "rows": 1204, "pending": 0, "stale": False},
         # US-628: `reasons` is ALWAYS a key and is EMPTY here -- this source is
         # a real measurement, and a reason standing beside one would be a
@@ -110,12 +110,11 @@ def test_buildSystemStatusState_a3Schema_hasExactShape():
 
 
 def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
-    """A down link with no last-seen is serialized faithfully (state='down',
-    lastSeenS=None) -- the emitter never fabricates a 'linked' state."""
+    """A down link is serialized faithfully ({state: 'down', retries: 0})
+    -- the emitter never fabricates a 'linked' state."""
     state = buildSystemStatusState(
         obdLinkState=OBD_DOWN,
         obdRetries=0,
-        obdLastSeenS=None,
         syncLastOkTs=None,
         syncRows=0,
         syncPending=12,
@@ -125,7 +124,7 @@ def test_buildSystemStatusState_honestInstrument_downLinkIsVerbatim():
         driveId=None,
         nowIso=_NOW,
     )
-    assert state["obdLink"] == {"state": "down", "retries": 0, "lastSeenS": None}
+    assert state["obdLink"] == {"state": "down", "retries": 0}
     assert state["obdLink"]["state"] != OBD_LINKED
     assert state["sync"]["lastOkTs"] is None
     assert state["drive"]["driveId"] is None
@@ -158,7 +157,6 @@ def test_buildSystemStatusState_lastDriveKey_isPresentInEveryShape():
     baseKwargs = {
         "obdLinkState": OBD_LINKED,
         "obdRetries": 0,
-        "obdLastSeenS": 1,
         "syncLastOkTs": _SYNC_OK,
         "syncRows": 1,
         "syncPending": 0,
@@ -203,7 +201,6 @@ def test_buildSystemStatusState_lastDrive_isVerbatimAndDistinctFromDriveId():
     state = buildSystemStatusState(
         obdLinkState=OBD_DOWN,
         obdRetries=0,
-        obdLastSeenS=None,
         syncLastOkTs=_SYNC_OK,
         syncRows=0,
         syncPending=0,
@@ -232,7 +229,6 @@ def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
     state = buildSystemStatusState(
         obdLinkState=OBD_LINKED,  # a stale caller value must NOT leak through
         obdRetries=5,
-        obdLastSeenS=3,
         syncLastOkTs=_SYNC_OK,
         syncRows=10,
         syncPending=0,
@@ -244,7 +240,7 @@ def test_buildSystemStatusState_obdUnavailable_typedNaNotStaleLink():
         obdAvailable=False,
         obdUnavailableReason="OBD: off",
     )
-    assert state["obdLink"] == {"state": None, "retries": 0, "lastSeenS": None}
+    assert state["obdLink"] == {"state": None, "retries": 0}
     assert state["source"]["obd"] == {"available": False, "reason": "OBD: off"}
     # Other sources are unaffected (one truth per SOURCE).
     assert state["sync"]["rows"] == 10
@@ -269,7 +265,6 @@ def test_buildSystemStatusState_idle_trueOnlyWhenObdAbsentAndNotRecording():
     state = buildSystemStatusState(
         obdLinkState=OBD_DOWN,
         obdRetries=0,
-        obdLastSeenS=None,
         syncLastOkTs=None,
         syncRows=0,
         syncPending=0,
@@ -289,7 +284,6 @@ def test_buildSystemStatusState_idle_falseWhenObdAvailable():
     state = buildSystemStatusState(
         obdLinkState=OBD_LINKED,
         obdRetries=0,
-        obdLastSeenS=1,
         syncLastOkTs=_SYNC_OK,
         syncRows=0,
         syncPending=0,
@@ -310,7 +304,6 @@ def test_buildSystemStatusState_idle_falseWhileRecording():
     state = buildSystemStatusState(
         obdLinkState=OBD_LINKED,
         obdRetries=0,
-        obdLastSeenS=1,
         syncLastOkTs=_SYNC_OK,
         syncRows=5,
         syncPending=0,
@@ -393,7 +386,6 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
     emit(
         obdLinkState=OBD_RECONNECTING,
         obdRetries=2,
-        obdLastSeenS=8,
         syncLastOkTs=_SYNC_OK,
         syncRows=10,
         syncPending=4,
@@ -405,7 +397,7 @@ def test_emitter_writesSystemStatusFile_andComputesStale(tmp_path):
     written = json.loads(
         (tmp_path / "states" / SYSTEM_STATUS_FILENAME).read_text(encoding="utf-8")
     )
-    assert written["obdLink"] == {"state": "reconnecting", "retries": 2, "lastSeenS": 8}
+    assert written["obdLink"] == {"state": "reconnecting", "retries": 2}
     assert written["sync"]["pending"] == 4
     assert written["sync"]["stale"] is True  # recording + 120s-old sync > 60s
     assert written["drive"] == {
@@ -443,7 +435,6 @@ def test_emitter_forwardsLastDrive_verbatimThroughTheJsonRoundTrip(tmp_path):
     emit(
         obdLinkState=OBD_LINKED,
         obdRetries=0,
-        obdLastSeenS=1,
         syncLastOkTs=_SYNC_OK,
         syncRows=10,
         syncPending=0,
@@ -474,7 +465,6 @@ def test_emitter_neverRaises_onWriteFailure(tmp_path):
     emit(
         obdLinkState=OBD_LINKED,
         obdRetries=0,
-        obdLastSeenS=1,
         syncLastOkTs=_SYNC_OK,
         syncRows=1,
         syncPending=0,
@@ -518,7 +508,6 @@ def test_buildSystemStatusState_runMode_isCarriedVerbatim():
     state = buildSystemStatusState(
         obdLinkState=OBD_LINKED,
         obdRetries=0,
-        obdLastSeenS=1,
         syncLastOkTs=_SYNC_OK,
         syncRows=1,
         syncPending=0,
@@ -548,7 +537,6 @@ def test_emitter_forwardsRunMode_throughTheJsonRoundTrip(tmp_path):
     emit(
         obdLinkState=OBD_LINKED,
         obdRetries=0,
-        obdLastSeenS=1,
         syncLastOkTs=_SYNC_OK,
         syncRows=1,
         syncPending=0,
@@ -637,7 +625,7 @@ _SINCE = "2026-06-30T19:19:00Z"  # 23 min before _NOW
 
 def _drive(**kwargs) -> dict:
     return buildSystemStatusState(
-        obdLinkState=OBD_LINKED, obdRetries=0, obdLastSeenS=None,
+        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=None, syncRows=0, syncPending=None, syncStale=False,
         powerSource="external", driveState="recording", driveId=27,
         nowIso=_NOW, **kwargs,
@@ -692,7 +680,7 @@ def test_emitter_forwardsElapsedAndPartial_throughTheJsonRoundTrip(tmp_path):
     )
 
     emit(
-        obdLinkState=OBD_LINKED, obdRetries=0, obdLastSeenS=None,
+        obdLinkState=OBD_LINKED, obdRetries=0,
         syncLastOkTs=_SYNC_OK, syncRows=0, syncPending=None,
         powerSource="external", driveState="idle", driveId=None,
         distanceKm=19.96, distanceSinceTs=_SINCE,

@@ -322,7 +322,7 @@ def test_buildSystemStatusState_refusesAReasonBesideAResolvedSource():
     state = buildSystemStatusState(
         obdLinkState="linked",
         obdRetries=0,
-        obdLastSeenS=1,
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
         syncLastOkTs=None,
         syncRows=0,
         syncPending=None,
@@ -346,7 +346,6 @@ def test_buildSystemStatusState_unknownWithNoReasonStaysSilentRatherThanGuessing
     state = buildSystemStatusState(
         obdLinkState="linked",
         obdRetries=0,
-        obdLastSeenS=1,
         syncLastOkTs=None,
         syncRows=0,
         syncPending=None,

@@ -117,7 +117,8 @@ def _systemStatus(moving: bool) -> dict[str, Any]:
     now = "2026-10-20T17:30:00Z"
     return {
         "wifi": {"state": "up", "ssid": "bench", "rssiDbm": -50},
-        "obdLink": {"state": "linked", "retries": 0, "lastSeenS": 1},
+        # MOVED PIN (US-876-a): obdLink.lastSeenS is gone from system-status.
+        "obdLink": {"state": "linked", "retries": 0},
         "sync": {"lastOkTs": now, "rows": 50, "pending": 0, "stale": False},
         "power": {"mode": "car", "source": "external"},
         "drive": {"state": "driving" if moving else "idle", "driveId": 7 if moving else None},
