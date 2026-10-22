@@ -395,8 +395,8 @@ class TestReadOnlyRead:
         env["PYTHONPATH"] = os.pathsep.join([str(_REPO_ROOT), str(_REPO_ROOT / "src")])
         out = subprocess.run(
             [sys.executable, "-c", code, dbPath],
-            cwd=_REPO_ROOT, env=env, capture_output=True, text=True, timeout=60,
-            check=True,
+            cwd=_REPO_ROOT, env=env, capture_output=True, text=True, encoding="utf-8",
+            timeout=60, check=True,
         )
         assert json.loads(out.stdout.strip().splitlines()[-1]) == _T1
 
