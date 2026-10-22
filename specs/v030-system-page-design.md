@@ -35,7 +35,7 @@ Per-id answers to Marcus: S1–S10. Where this spec and an older note disagree, 
 | S-10 | ECU silent with BT + adapter up | **Not an issue**: grey step + `ECU not answering (key off?)` |
 | S-11 | Settings contents | **Brightness override (US-878-c, CIO 2026-10-19 IN)** · **auto-dim ends (`luxMin` / `luxFull`; CIO 2026-10-19 reversed Atlas ruling B, Atlas acked)** · auto-rotate · calibration · auto-analyze. ~~Power mode~~ **DROPPED** (CIO 2026-10-19; already deleted from the code by US-668) |
 | S-12 | UPS power source (CIO 2026-10-19) | **External or battery only, never wall / car.** The Pi can't tell those two apart, and the US-668 ruling stands: if the screen is lit, the power is on |
-| S-13 | ⋮ while not parked (CIO 2026-10-19, US-659) | **The ⋮ stays visible and openable while driving.** Its Settings band stays, and **every control is locked read-only until parked**: engine off, held 8 s (Atlas A7, CIO accepted; §4.7.2) |
+| S-13 | ⋮ while not parked (CIO 2026-10-19, US-659) | **The ⋮ stays visible and openable while driving.** Its Settings band stays, and **every control is locked read-only until parked**: gear `P` or `N`, held 8 s (CIO 2026-10-22; §4.7.2) |
 
 **Why three layers and not "powered / BT / ECU" (ARCH-061's wording):** the Pi cannot measure "dongle powered"; an unpowered dongle and an out-of-range one look identical. It **can** measure Bluetooth `Connected`, the ELM adapter answering AT commands (works key-off), and the ECU answering. Those three are the honest layers.
 
@@ -305,16 +305,28 @@ One list, which **scrolls with a visible scrollbar** if it's taller than the pan
 - **On tap:** `saving…`, then confirm **from the re-read** (`settingsSaveResult`), or snap back + `couldn't save`. Never optimistic success.
 - **Service controls:** the destructive service controls stay in their own band below, with confirms (unchanged).
 
-#### 4.7.2 Locked until parked (S-13; S9)
-The lock is `engineParked.parked === false`, the ONE US-511 debounce: **parked = engine OFF held 8 s** (Atlas A7, CIO accepted). Never a second test.
-- ⚠️ **The lock is not "moving".** It also locks a stationary car with the engine idling, and for 8 s after the engine stops, so no word on the glass may say `moving`.
+#### 4.7.2 Locked until parked (S-13; S9) — the ONE parked rule for every parked-only control
+**Parked = the derived gear fact** (CIO RULED 2026-10-22, UIDEV-011; *"P or N, same as everything"*):
+- **Raw parked** = `states/gear` has `available === true` **and** `gear` is `"P"` or `"N"`. Strict string compare. A numbered gear is not parked.
+  - `N` is published only when RPM > 0 **and** SPEED == 0 on fresh readings (`gear_derivation.py`, US-687-a), so a car stopped with the engine idling is parked.
+  - `P` is published when the ECU reports RPM 0, or when RPM has been unusable on a healthy link past `parkDwellSec` (US-687-b).
+  - **`P` and `N` both mean stopped** (Spool proposed, Atlas concurred 2026-10-22). `N` already requires SPEED == 0. The deriver's `P` branch now requires a fresh SPEED == 0 as well; that is a `gear_derivation.py` change, not on dev yet. So a rolling stall (engine dead, car still rolling) publishes the deriver's absence, not `P`, and the lock line reads `gear unknown`. **The parked rule stays exactly "gear `P` or `N`"; no page adds a speed term.**
+- **Debounce:** the ONE US-511 hysteresis, kept as is: **8 s of raw parked turns it on, 3 s of raw not-parked turns it off.** Its input changes from `system-status.idle` to the gear fact; nothing else about it changes.
+- **Any absence = not parked (fails closed):** no `states/gear`, `available` false or missing, any `reason` (`link_down`, `settling_park`, `stale`, `no_data`, …), an unreadable clock. Absence of the fact is never the fact.
+- **One rule, every parked-only control:** this Settings band, System row taps, the Light shortcut, the Engine MIL link, and on Warnings the code-row tap, the Clear button and the key-on CODE ALERT. No page keeps a second test, and no page reads speed, RPM or `idle` to decide parked.
+  - **The one exception is not a second parked test:** the Fuel SINCE RESET hold has its OWN gate, parked **or** fresh SPEED ≤ 8 km/h (CIO 2026-10-22, Fuel §4.3), and its own refusal word `slow to reset`. Its parked half is this rule, unchanged.
+- **Replaces** "parked = engine OFF held 8 s" (Atlas A7). That rule's input was `system-status.idle`, which means "never connected this boot", so after the first connect parked never returned until restart (Atlas US-407 b0; F2 confirmed on the car 2026-10-22: the P0443 row tap did nothing at KOEO while `states/gear` read `P`).
+- ⚠️ **Known consequence, as ruled (Atlas confirmed 2026-10-22: `settling_park` is not parked, whatever the prior state; on car power the Pi has shut down ~9–10 s after key-off, before the unlock could matter):** after key-off, `gear` is unavailable (`settling_park`) for `parkDwellSec` + the RPM freshness window before `P` publishes. A car that was parked in `N` therefore locks 3 s after key-off and unlocks 8 s after `P` arrives. The lock line says `gear unknown` throughout, which is true. Flagged to Marcus and Atlas; not the page's to smooth over.
+- ⚠️ **The lock is not "moving".** It also locks during the 8 s hold and whenever the gear is unknown, so no word on the glass may say `moving`.
 - **The band stays visible and readable while locked.** Every value shows its real stored value, as parked.
 - **Every control is locked:**
   - `--text-tertiary` ink, no fill on the active segment (the active one keeps a `--text-tertiary` outline so the stored value is still readable);
   - no pointer, and steppers show no `−` / `+`;
   - a tap does nothing: no write, no `saving…`.
-- **One line at the top of the band**, mono `--fs-meta`, `--text-secondary`: **`🔒 view only — engine off to change`** (34 characters, 307.0 px).
-  - It's an instruction, so it's true in every locked state: idling at the kerb, driving, and the 8 s hold. `engine on — view only` would be false during the hold; `car is moving` is false whenever the car is idling.
+- **One line at the top of the band**, mono `--fs-meta`, `--text-secondary`. The word follows the CURRENT raw gear reading, not the debounced state:
+  - gear known and not parked (a numbered gear), or in the 8 s hold: **`🔒 view only — stop to change`** (29 characters, ≈ 262 px). It's an instruction and it's true: stopping gives `N` (or `P` with the engine off), and the hold then unlocks it. *Replaces `engine off to change` (2026-10-19), which became false: under the gear rule an idling car at rest unlocks.*
+  - gear **unknown** (any absence above): **`🔒 view only — gear unknown`** (27 characters, ≈ 244 px). Not an instruction, on purpose: while the gear is unknown no driver action is sure to unlock it (a dead link stays dead when the car stops), so the line names the missing fact instead of promising an unlock. *(Atlas's US-407 b0 ASK: "a word for parked unknown". This is it.)*
+  - Widths are computed, not measured: mono at 15 px is 9.03 px per character, taken off the measured 34-character `engine off to change` line (307.0 px) they replace. Both are shorter than that line, so both fit wherever it fit.
   - It's not Michroma: it has lower case, `—` and `🔒`.
   - Apply tags and status lines stay as they are.
 - **A write in flight when the lock engages finishes honestly:** its re-read still confirms or snaps back. Locking must never abandon a write mid-way and leave `saving…` on the glass.
@@ -333,6 +345,7 @@ The lock is `engineParked.parked === false`, the ONE US-511 debounce: **parked =
 | Sync | `system-status.sync {lastOkTs, rowsWaiting, edrRowsWaiting, notCounted}` | **S109 US-916** | Atlas / Ralph |
 | WiFi | `system-status.wifi {state, ssid, rssiDbm, home, ts}` + `source.wifi {available, reason}` | **S109 US-732** | Atlas / Ralph |
 | UPS cell | `states/battery-health` (`vcellV`, `soc`, health verdict + reasons + margin, `ts`) | exists | — |
+| Parked (every parked-only control) | `states/gear` `{available, gear, reason}`; parked = `"P"` or `"N"` and available, through the US-511 8 s / 3 s debounce (§4.7.2) | exists (US-687-a/b); **the debounce's input moves from `idle` to gear: US-511 reopened (b0)** | Ralph |
 | Power source | `system-status.power.source` (`external` \| `battery`) | exists (US-668) | — |
 | Pi health | `system-status.pi {cpuTempC, throttled, throttledHex, throttledSinceBoot, diskFreeBytes, diskThresholdBytes, diskVerdict, uptimeS, overLimit[], ts}` | **S109 US-877-a** | Atlas / Ralph |
 | Version | `.deploy-version` via the `#version-chip` reader | exists (Atlas P8) | — |
@@ -360,11 +373,12 @@ The lock is `engineParked.parked === false`, the ONE US-511 debounce: **parked =
    - `on battery` is not amber;
    - no `min to cutoff` anywhere on the page or its details.
 7. **🔴 The amber set equals the member set:** every amber element maps to exactly one `verdict.members[].key`, and every member has one (US-759). Assert it on every fixture.
-8. **While not parked** (engine on, or off < 8 s; test both an idling-stationary and a driving fixture):
+8. **While not parked** (§4.7.2: a numbered gear, the 8 s hold, or the gear unknown; test a driving fixture, a hold fixture and a `link_down` fixture):
    - row taps open nothing;
    - SETTINGS › and ⋮ open the Settings band locked;
    - no control writes;
-   - `🔒 view only — engine off to change` is present, and no element on the page says `moving`.
+   - `🔒 view only — stop to change` with a numbered gear or in the hold; `🔒 view only — gear unknown` with the gear unavailable; no element on the page says `moving` or `engine off to change`.
+   - **Parked-in-N unlocks:** `gear` `"N"`, `available` true, held 8 s ⇒ the band unlocks with the engine running. A 7 s hold does not.
    - **In-flight write:** one in flight across the transition still ends in `saved` or `couldn't save`.
 9. **Settings:**
    - a rejected write snaps back with `couldn't save`;
@@ -416,7 +430,9 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 | `settings-write-rejected` | AC 9 |
 | `settings-lux-cross-rejected` | AC 9: a crossing write gets a 400 ⇒ `couldn't save`, snap back |
 | `settings-floor-from-minlevel` | AC 9: FIXED floor = effective `minLevel` (0.75 ⇒ 75 %); `minLevel` unreadable ⇒ FIXED disabled, `Unknown` |
-| `settings-locked-idling` | AC 8: stationary, engine on |
+| `settings-locked-hold` | AC 8: stopped, gear `N`, inside the 8 s hold ⇒ `stop to change` (replaces `settings-locked-idling`: an idling car at rest is now parked) |
+| `settings-locked-gear-unknown` | AC 8: `states/gear` unavailable (`link_down`) ⇒ `gear unknown` |
+| `settings-parked-idling` | AC 8: gear `N`, engine idling, held 8 s ⇒ unlocked |
 | `settings-locked-driving` | AC 8, incl. one in-flight write |
 
 **Retired:** `ups-low`. There's no UPS member (Spool + Atlas P5), so the fixture had no basis.
@@ -442,6 +458,7 @@ Each is a `system-status` (+ `capture-health`, + `battery-health` where named) p
 - **AC 7 is asserted, not eyeballed:** every amber element carries the member it belongs to (`data-m`), and on every fixture the amber set equals `verdict.members` (41/41 in the mockup's harness).
 - **Corrections it made to this spec:** the yesterday sync stamp (§4.3), the two apply tags (§4.7, Atlas B12), and the tag wrap and description length (§4.7).
 - **Unchanged and not drawn:** the ⋮ overlay's service band (US-659's rules).
+- **UIDEV-011 (2026-10-22): parked is the gear fact (§4.7.2).** The car control is now Parked (`P`/`N` held 8 s) · the hold · Driving · Gear unknown, and the lock line is `stop to change` or `gear unknown`. `settings-locked-idling` is replaced by `settings-locked-hold`, plus `settings-locked-gear-unknown` and `settings-parked-idling`: 43 fixtures.
 
 ### Superseded: the gaps the older mockups had
 The 2026-10-12 System mockup, the 2026-10-15 OEM mockup (`proposals/`, never in the repo) and the 2026-10-13 Settings mockup all predate the S110 fold. Their gaps were these, and the v2 mockup closes every one:
