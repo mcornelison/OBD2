@@ -91,7 +91,12 @@ Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest
 **Print only what was assessed** (Atlas 2026-10-14 §5, the ARCH-062 rule applied to the whole page). Superseded: `Engine, system and data all clear.`, which claimed two sources V0.30 doesn't check.
 - **Checked, nothing found:** `NO WARNINGS` (26 px, 281.5 px), then `Codes read at h:mm. Engine checks clear.`. The engine clause appears only when `sources.engine.assessed`.
 - **Not checked:** `? NOT CHECKED YET`, plus `Trouble codes haven't been read since key-on, so "nothing found" can't be claimed.`
-- **Both states**, while `sources.system` or `sources.data` is `assessed:false`, add one line in `--text-tertiary`: `System and data checks are not built yet.`
+- **Checked, nothing found only**, one line per unassessed source, mono `--fs-meta`, `--text-secondary` (S108 shipped `tone:"secondary"`; Marcus/Iris S109 I1, 2026-10-22). The System line comes first:
+  - `sources.system` `{assessed:false, reason:not_read}` ⇒ `System checks not read yet.` (S109 US-877-c: the System checks are built, but not read yet this boot.)
+  - `sources.data` `not_built` ⇒ `Data checks are not built yet.`
+  - **Not in the NOT CHECKED state** (S109 I2): that state already says "nothing found" can't be claimed, so the line would add nothing.
+  - Superseded: `System and data checks are not built yet.` in `--text-tertiary`, shown in both states. After S109 it is false for System.
+  - **Deferred, not cancelled:** once System is assessed with no entries, `Engine and system checks clear.` could go on its own line under `Codes read at h:mm.`. It was kept out of S109 (I2). Nothing is lost except saying more of what's true.
 - **No data:** while the first read is pending, the US-700 bounded LOADING. After the grace, a missing or unreadable `states/alerts` ⇒ header `--`, body `no warnings data`. The icon shows `--` at the same time (§4.2), so the two never disagree.
 - The wording is mine (2026-10-18). The rule (no "clear" for an unassessed source) is Atlas's and not optional.
 

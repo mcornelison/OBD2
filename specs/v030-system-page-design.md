@@ -214,7 +214,7 @@ The provider publishes `wifi {state: up|weak|down|null, ssid, rssiDbm, home, ts}
 ### 4.6 Detail screens (parked; Back returns to System)
 | Detail | Contents |
 |---|---|
-| **OBD** | per layer: state, since when, last success `ts`, retry count; adapter MAC; the row's sentence in full |
+| **OBD** | per layer, **this session only** (ARCH-062): state; since when (= the layer's `ts`, the transition time); last success (= `lastOkTs`, through `fmtStamp`; `--` when the layer hasn't been up this session, never a time from an earlier boot); adapter MAC; the row's sentence in full. `available` = `state != null` (S109 I4, 2026-10-22). **Retry count waits on a field:** S109 doesn't publish one, so the line isn't drawn (the same rule as I5's IP). |
 | **DATA** | per feed (OBD, light, IMU, UPS): `writing` / `stalled` / `idle` / `--` (unknown) + last row age (`--` when undated) (I3); sync: last data stored (`lastOkTs` through `fmtStamp`, local, full date), rows waiting, event rows waiting, `not counted: <table>, <table>` (the `notCounted` names, verbatim), at-home state |
 | **WIFI** | SSID, strength (word + `rssiDbm` dBm), home network `yes` / `no` / `unknown`, and the typed `source.wifi.reason` in words: `nmcli_absent` ⇒ `no WiFi tool on this host`, `not_associated` ⇒ `not connected to any network`, `read_failed` ⇒ the member's reason. **No IP:** there's no field, and the row isn't drawn (I5) |
 | **UPS** (replaces the Battery Health card; S6) | below |
