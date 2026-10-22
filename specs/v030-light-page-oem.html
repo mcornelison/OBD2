@@ -99,7 +99,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
   <header>
     <span class="eyebrow">V0.30 · Sprint 105 · US-893</span>
     <h1>Light page in the OEM skin</h1>
-    <p class="lede">The real 480 × 320 Light page in the 90s Mitsubishi OEM style. Updated 2026-10-19 to the S105 build rulings (Iris L1–L7, Atlas A3/A7/L1–L6). The simulated sensor sweeps from night to full sun and back; watch the gain word change in daylight and the dot ride the auto-dim curve. The word, the level, the reason codes and the curve points all come from the sensor bridge. The page holds one applier and one log function, and computes no level and no band.</p>
+    <p class="lede">The real 480 × 320 Light page in the 90s Mitsubishi OEM style. Updated 2026-10-19 to the S105 build rulings (Iris L1–L7, Atlas A3/A7/L1–L6), and 2026-10-22 to the merged spec's F-126 fixed level (S110 US-878-c, Atlas B4, PR #115 F1). The simulated sensor sweeps from night to full sun and back; watch the gain word change in daylight and the dot ride the auto-dim curve. The word, the level, the reason codes and the curve points all come from the sensor bridge. The page holds one applier and one log function, and computes no level and no band.</p>
   </header>
 
   <section class="stage" aria-label="Live page">
@@ -119,6 +119,11 @@ code { font-family: var(--font-mono); font-size: .92em; }
         <legend>Alerts</legend>
         <label><input type="radio" name="al" id="al-off" value="off" checked><span>No STOP alarm</span></label>
         <label><input type="radio" name="al" id="al-on" value="on"><span>STOP alarm forcing 100 %</span></label>
+      </fieldset>
+      <fieldset>
+        <legend>Brightness in Settings (F-126 overrideLevel)</legend>
+        <label><input type="radio" name="ov" id="ov-auto" value="auto" checked><span>Auto</span></label>
+        <label><input type="radio" name="ov" id="ov-80" value="0.8"><span>Fixed 80 %</span></label>
       </fieldset>
       <div class="readout" id="readout">—</div>
     </div>
@@ -142,9 +147,11 @@ code { font-family: var(--font-mono); font-size: .92em; }
     <div>
       <h2>The applier and the status</h2>
       <ul>
-        <li><b>One applier:</b> <code>appliedBrightness()</code> returns <code>{level, basis}</code>: alarm ⇒ 1.0 <code>alert</code>; fresh ⇒ the published level and mode; otherwise the injected <code>defaultLevel</code>, <code>fallback</code>. The panel, the status line and the dot all read it.</li>
-        <li><b>Status from <code>basis</code>, never from <code>brightnessMode</code>:</b> <code>BRIGHTNESS AUTO nn %</code>; default or fallback <code>BRIGHTNESS nn % (default, no reading)</code> (405.6 px of 456); alert <code>BRIGHTNESS 100 % (alert)</code>. A stale file that says <code>auto</code> can never show AUTO.</li>
-        <li><b>Not drawn: the override line and the SETTINGS shortcut.</b> Both wait for the F-126 brightness row.</li>
+        <li><b>One applier:</b> <code>appliedBrightness()</code> returns <code>{level, basis}</code>: alarm ⇒ 1.0 <code>alert</code>; a Settings <code>overrideLevel</code> (found, finite, in [0, 1]) ⇒ that level, <code>fixed</code>; fresh ⇒ the published level and mode; otherwise the injected <code>defaultLevel</code>, <code>fallback</code>. The panel, the status line and the dot all read it.</li>
+        <li><b>The fixed level is a config fact, not a sensor fact</b> (Atlas S110 B4). It comes only from the per-request settings blob. <code>states/light</code> gains no key, so a fixed level survives a dead sensor (fixture: fixed, no light data). Out of range never clamps; it falls through to the bridge.</li>
+        <li><b>Status from <code>basis</code>, never from <code>brightnessMode</code>:</b> <code>BRIGHTNESS AUTO nn %</code>; default or fallback <code>BRIGHTNESS nn % (default, no reading)</code> (405.6 px of 456); alert <code>BRIGHTNESS 100 % (alert)</code>; fixed <code>BRIGHTNESS 80 % (fixed in Settings)</code>. A stale file that says <code>auto</code> can never show AUTO.</li>
+        <li><b>A setting is not a warning.</b> The fixed status uses the same <code>--text-secondary</code> as every other basis, and nothing on the page turns amber. No extra line on the curve either: the dot at the applied level, off the line, plus the status sentence say it all (Atlas PR #115 F1).</li>
+        <li><b>Not drawn: the SETTINGS shortcut.</b> Banked, not S110 (System spec I13).</li>
       </ul>
     </div>
     <div>
@@ -152,7 +159,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
       <ul>
         <li>X axis is log lux over the published points (0.3 to 30,000). <code>luxAxisX()</code> is the only function that takes a log, and only to place a lux on the axis.</li>
         <li>Y axis runs from <code>minLevel − 0.25</code> to 100 % (0.5–1.0 today). Labels <code>100%</code>, <code>75%</code>, <code>3</code> and <code>300 lux</code>, all at <code>--fs-meta</code>.</li>
-        <li><b>The dot sits at the APPLIED level.</b> Fresh auto: on the line. Stale fallback: the default level, off the line, dimmed. Alert: 100 %.</li>
+        <li><b>The dot sits at the APPLIED level.</b> Fresh auto: on the line. Stale fallback: the default level, off the line, dimmed. Alert: 100 %. Fixed in Settings: the setting, off the line.</li>
         <li>⚠️ <b>Flat to the knee.</b> The line stays flat at 75 % up to about 94.9 lux and climbs to 100 % at 300 lux. <b>NIGHT and DUSK both dim to 75 % on this car.</b> Whether that is wanted is a tuning question for the in-car check.</li>
         <li>A channel at the limit reads <code>at limit</code> in amber on its own cell and on VISIBLE, which is derived from it.</li>
       </ul>
@@ -175,7 +182,9 @@ code { font-family: var(--font-mono); font-size: .92em; }
     [1400, "low", 100, 12400, 4300, 8100, false, false], [9800, "low", 100, 37888, 13900, 23988, false, true], [3100, "low", 100, 27500, 9600, 17900, false, false],
     [410, "low", 100, 3600, 1200, 2400, false, false], [48, "med", 100, 10600, 3500, 7100, false, false], [4, "high", 100, 900, 320, 580, false, false]
   ];
-  var S = { i: 0, sn: "ok", cf: "dev", al: "off", lastGood: Date.now() };
+  var S = { i: 0, sn: "ok", cf: "dev", al: "off", ov: "auto", lastGood: Date.now() };
+  // The per-request settings blob entry for overrideLevel (F-126): {found, value}. Auto = not found.
+  function settingsOverride(ov) { return ov === "auto" ? { found: false, value: null } : { found: true, value: Number(ov) }; }
 
   // ---- PROVIDER side (simulates light_state_bridge.py, US-893-a). NOT page code. ----
   function luxReading(x) { return typeof x === "number" && isFinite(x) && x >= 0 ? x : null; }   // Atlas A3: one predicate
@@ -226,9 +235,11 @@ code { font-family: var(--font-mono); font-size: .92em; }
     if (lux >= luxHi) return widthPx;
     return widthPx * (Math.log10(lux) - Math.log10(luxLo)) / (Math.log10(luxHi) - Math.log10(luxLo));
   }
-  // ONE applier (Atlas A7). The panel, the status line and the dot all read this return.
-  function appliedBrightness(L, inj, nowMs, alarm) {
+  // ONE applier (Atlas A7, S110 B4). The panel, the status line and the dot all read this return.
+  // ov: the settings blob's overrideLevel {found, value}. Out of [0, 1] never clamps; it falls through.
+  function appliedBrightness(L, inj, nowMs, alarm, ov) {
     if (alarm) return { level: 1.0, basis: "alert" };
+    if (ov && ov.found && isNum(ov.value) && ov.value >= 0 && ov.value <= 1) return { level: ov.value, basis: "fixed" };
     var t = L && typeof L.ts === "number" ? L.ts : NaN;
     var fresh = !!L && !L.sourceUnavailable && isFinite(t) && (nowMs - t) / 1000 <= inj.luxStaleSec &&
       isNum(L.brightnessLevel) && L.brightnessLevel >= 0 && L.brightnessLevel <= 1;
@@ -268,6 +279,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
     var v = Math.round(applied.level * 100) + " %";
     if (applied.basis === "auto") return "BRIGHTNESS AUTO <b>" + v + "</b>";
     if (applied.basis === "alert") return "BRIGHTNESS <b>" + v + '</b> <span class="reason">(alert)</span>';
+    if (applied.basis === "fixed") return "BRIGHTNESS <b>" + v + '</b> <span class="reason">(fixed in Settings)</span>';
     return "BRIGHTNESS <b>" + v + '</b> <span class="reason">(default, no reading)</span>';
   }
   // One raw cell (Atlas L2): 'at limit' on its flag, a count, or '--' for a null count. Never a floored 0.
@@ -285,9 +297,10 @@ code { font-family: var(--font-mono); font-size: .92em; }
   function dots() { var s = '<div class="dots" aria-hidden="true">'; for (var i = 0; i < 9; i++) s += "<i" + (i === 6 ? ' class="on"' : "") + "></i>"; return s + "</div>"; }
   function cell(label, inner) { return '<div class="tile"><span class="lbl">' + label + "</span>" + inner + "</div>"; }
 
-  // L: a states/light payload or null (no file); nowMs: the page clock; alarm: the STOP takeover is up
-  function render(p, L, nowMs, alarm) {
-    var applied = appliedBrightness(L, INJECTED, nowMs, alarm), body;
+  // L: a states/light payload or null (no file); nowMs: the page clock; alarm: the STOP takeover is up;
+  // ov: the settings blob's overrideLevel
+  function render(p, L, nowMs, alarm, ov) {
+    var applied = appliedBrightness(L, INJECTED, nowMs, alarm, ov), body;
     if (!L) {
       body = '<div class="hero"><div class="tile"><div class="wordrow"><span class="word">--</span></div>' +
         cell("AMBIENT", '<span class="val">--</span><span class="reason">no light data</span>') + "</div>" + curve(null, applied) + "</div>" +
@@ -334,14 +347,17 @@ code { font-family: var(--font-mono); font-size: .92em; }
     { t: "No reading", d: "<code>light-null</code>: <code>reasons.lux</code> <code>no_reading</code>. <code>--</code>, no glyph, status <code>(default, no reading)</code>, never AUTO.", L: bridge({ lux: -1, gain: "high", ms: 100, full: null, ir: null, vis: null, limIr: false, limFull: false }, CONFIGS.dev, T) },
     { t: "No light data", d: "No <code>states/light</code> file: <code>--</code> + <code>no light data</code>. The page can't see a sensor, only a file, so never <code>sensor not found</code>.", L: null },
     { t: "No timestamp", d: "<code>ts</code> null: values as published, dimmed, <code>no timestamp</code> in place of the age.", L: bridge(raw(D[6]), CONFIGS.dev, null) },
-    { t: "STOP alarm forcing 100 %", d: "<code>stop-override</code>: status <code>(alert)</code> and the dot at 100 %, the level actually on the panel.", L: fresh(D[1]), alarm: true }
+    { t: "STOP alarm forcing 100 %", d: "<code>stop-override</code>: status <code>(alert)</code> and the dot at 100 %, the level actually on the panel.", L: fresh(D[1]), alarm: true },
+    { t: "Fixed 80 % in Settings", d: "F-126 <code>overrideLevel</code> 0.8 at night: status <code>BRIGHTNESS 80 % (fixed in Settings)</code> in <code>--text-secondary</code>, the dot at 80 %, above the 75 % floor, off the line. No extra line, no amber anywhere.", L: fresh(D[0]), ov: settingsOverride("0.8") },
+    { t: "Fixed, no light data", d: "Atlas B4 (a): no <code>states/light</code> + <code>overrideLevel</code> 0.8 ⇒ still <code>fixed</code> at 80 %. A setting doesn't die with the sensor. AMBIENT still reads <code>no light data</code>.", L: null, ov: settingsOverride("0.8") },
+    { t: "Fixed, STOP alarm", d: "Atlas B4 (b): STOP still wins over the setting. Status <code>(alert)</code>, dot at 100 %.", L: fresh(D[0]), alarm: true, ov: settingsOverride("0.8") }
   ];
   var fxRoot = document.getElementById("fixtures");
   fxRoot.innerHTML = FIX.map(function (f, i) {
     return '<div class="fx"><div class="frame"><div class="panel" id="fx' + i + '"></div></div><p><b>' + f.t + ".</b> " + f.d + "</p></div>";
   }).join("");
   var live = document.getElementById("live");
-  var fxPanels = FIX.map(function (f, i) { var p = document.getElementById("fx" + i); render(p, f.L, T, !!f.alarm); return p; });
+  var fxPanels = FIX.map(function (f, i) { var p = document.getElementById("fx" + i); render(p, f.L, T, !!f.alarm, f.ov); return p; });
   var panels = [live].concat(fxPanels);
   function fit() { panels.forEach(function (p) { p.style.transform = "scale(" + (p.parentNode.clientWidth / 480) + ")"; }); }
   window.addEventListener("resize", fit); fit();
@@ -355,12 +371,12 @@ code { font-family: var(--font-mono); font-size: .92em; }
 
   var lastKey = "";
   function tick() {
-    var now = Date.now(), ageS = Math.floor((now - L.ts) / 1000), alarm = S.al === "on";
-    var key = [S.i, S.cf, S.al, ageS > INJECTED.luxStaleSec ? ageS : "", new Date().getMinutes()].join("|");
+    var now = Date.now(), ageS = Math.floor((now - L.ts) / 1000), alarm = S.al === "on", ov = settingsOverride(S.ov);
+    var key = [S.i, S.cf, S.al, S.ov, ageS > INJECTED.luxStaleSec ? ageS : "", new Date().getMinutes()].join("|");
     if (key !== lastKey) {
       lastKey = key;
-      render(live, L, now, alarm);
-      var a = appliedBrightness(L, INJECTED, now, alarm);
+      render(live, L, now, alarm, ov);
+      var a = appliedBrightness(L, INJECTED, now, alarm, ov);
       document.getElementById("readout").textContent =
         "states/light: lux " + (isNum(L.lux) ? fmtLux(L.lux) : "null (" + (L.reasons && L.reasons.lux) + ")") +
         " · gain " + L.gain + " · lightBand " + L.lightBand + " · brightnessLevel " + L.brightnessLevel.toFixed(2) +
@@ -373,5 +389,6 @@ code { font-family: var(--font-mono); font-size: .92em; }
   document.querySelectorAll('input[name="sn"]').forEach(function (r) { r.addEventListener("change", function () { S.sn = r.value; if (r.value === "ok") { S.lastGood = Date.now(); L = bridge(raw(D[S.i]), CONFIGS[S.cf], S.lastGood); } }); });
   document.querySelectorAll('input[name="cf"]').forEach(function (r) { r.addEventListener("change", function () { S.cf = r.value; L = bridge(raw(D[S.i]), CONFIGS[S.cf], L.ts); }); });
   document.querySelectorAll('input[name="al"]').forEach(function (r) { r.addEventListener("change", function () { S.al = r.value; }); });
+  document.querySelectorAll('input[name="ov"]').forEach(function (r) { r.addEventListener("change", function () { S.ov = r.value; }); });
 })();
 </script>

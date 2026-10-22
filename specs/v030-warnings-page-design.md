@@ -49,7 +49,7 @@
 | Chip | `--fs-meta` | STOP `--critical-red`, ink `#fff` (the existing STOP copy colour, 4.98) · WATCH `--amber-warn`, ink `var(--bg)` (12.4) · MINOR `--green-ok`, ink `var(--bg)` (8.73) · UNRATED `--neutral-chip-bg` (#2a2f37, tokens.css SSOT; the dashboard.css:185 mirror STAYS, Atlas G6), ink `--text-primary` (11.94). **No new tokens** (Atlas 2026-10-16, contrast MEASURED). |
 | Title | `--fs-label` mono | the provider's `title` (a code row reads `EGR FLOW (P0400)`) + value and unit through `displayUnits` (°F for coolant). Stale: `last.value` + `last reading n s ago` (§4.6) |
 | Sentence | `--fs-meta` mono | the provider's `sentence` as **plain text** (US-758) |
-| Age | `--fs-meta` mono, right | **`agoText(now, firstSeenTs)` unchanged**: `just now` / `n min ago` / `n h ago` / `n days ago` / `age unknown`; `cleared` for an `active:false` row. **No `code ·` / `engine ·` prefix** (the title already names the source). Worst row: `EVAP PURGE (P0443)` 216.7 + chip ~60 + `999 days ago` 108.4 + 2 × 8 gaps ≈ 401 of 448 px; with a prefix ≈ 455 px, which clips |
+| Age | `--fs-meta` mono, right | **`agoText(now, firstSeenTs)` unchanged**: `just now` / `n min ago` / `n h ago` / `n days ago` / `age unknown`; `cleared` for an `active:false` row. **No `code ·` / `engine ·` prefix** (the title already names the source). Worst row: `EVAP PURGE (P0443)` 216.7 + chip column 116 + `999 days ago` 108.4 + 2 × 8 gaps ≈ **457 of 456 px**. Corrected 2026-10-22 (UIDEV-010): the earlier "chip ~60, ≈ 401 px" was wrong, because the Michroma `UNRATED` chip measures 107 px, so the column is 116. **So the title wraps; it never clips**: the row grows past 48 px, and a value never splits from its unit (`white-space: nowrap` on the value). A live STOP row (`ENGINE OVERHEATING 234 °F` + `just now`) wraps too. A prefix would cost another ~54 px |
 
 Entries ≥ 48 px tall, never `.tile` (the fact-ceiling test). **All entries render; the list scrolls** with a visible scrollbar (styled through scoped custom properties) and a mono `↓ n more below` cue (no silent clip). **n is counted from layout at runtime:** the rows whose bottom edge is below the list's visible bottom. The pure function (48 px rows in 270 px minus the MEASURED header and cue heights) is only the no-layout fallback the harness tests, and it never reports fewer than the layout would; 7 entries ⇒ `↓ 3 more below` (270 − ~40 − ~20 = 210 ⇒ 4 visible). A pure function alone can under-count once a row wraps, which is the dishonest direction. Ranking means the most severe are always above the fold, so **nothing requires touch while driving** (R5).
 
@@ -91,7 +91,12 @@ Order: **tier (STOP > WATCH > MINOR > UNRATED) → live before stored → newest
 **Print only what was assessed** (Atlas 2026-10-14 §5, the ARCH-062 rule applied to the whole page). Superseded: `Engine, system and data all clear.`, which claimed two sources V0.30 doesn't check.
 - **Checked, nothing found:** `NO WARNINGS` (26 px, 281.5 px), then `Codes read at h:mm. Engine checks clear.`. The engine clause appears only when `sources.engine.assessed`.
 - **Not checked:** `? NOT CHECKED YET`, plus `Trouble codes haven't been read since key-on, so "nothing found" can't be claimed.`
-- **Both states**, while `sources.system` or `sources.data` is `assessed:false`, add one line in `--text-tertiary`: `System and data checks are not built yet.`
+- **Checked, nothing found only**, one line per unassessed source, mono `--fs-meta`, `--text-secondary` (S108 shipped `tone:"secondary"`; Marcus/Iris S109 I1, 2026-10-22). The System line comes first:
+  - `sources.system` `{assessed:false, reason:not_read}` ⇒ `System checks not read yet.` (S109 US-877-c: the System checks are built, but not read yet this boot.)
+  - `sources.data` `not_built` ⇒ `Data checks are not built yet.`
+  - **Not in the NOT CHECKED state** (S109 I2): that state already says "nothing found" can't be claimed, so the line would add nothing.
+  - Superseded: `System and data checks are not built yet.` in `--text-tertiary`, shown in both states. After S109 it is false for System.
+  - **Deferred, not cancelled:** once System is assessed with no entries, `Engine and system checks clear.` could go on its own line under `Codes read at h:mm.`. It was kept out of S109 (I2). Nothing is lost except saying more of what's true.
 - **No data:** while the first read is pending, the US-700 bounded LOADING. After the grace, a missing or unreadable `states/alerts` ⇒ header `--`, body `no warnings data`. The icon shows `--` at the same time (§4.2), so the two never disagree.
 - The wording is mine (2026-10-18). The rule (no "clear" for an unassessed source) is Atlas's and not optional.
 
@@ -186,7 +191,8 @@ Stored and pending codes re-alert **once per key-on** and can be hidden. This is
     - **Why not `car is moving`:** the lock is `engineParked`, which also holds a stationary car with the engine idling and for 8 s after the engine stops. There the old words were false.
     - **Why an instruction:** like the System Settings lock (`🔒 view only — engine off to change`), it says what unlocks the button, which is true in every locked state.
     - No clear-lock text says `moving`.
-  - **A permanent reason wins over `moving`** (`severity_present`, `severity_unknown`, `session_locked`, `sync_pending`); `moving` shows only when the gate would otherwise be `ok`. Otherwise a WATCH code seen while driving would say "engine off to clear", implying that turning the engine off unlocks it.
+  - **`moving` replaces only `ok`; every other reason wins** (Atlas RULED 2026-10-21, US-919; the shipped `clearButtonView`): `severity_present`, `severity_unknown`, `session_locked`, `sync_pending` and `pending_not_read` (`🔒 CLEAR CODES — pending codes haven’t been read`, S111 US-919). **The test is not permanent vs transient. It is whether the action the label names would unlock the button.** "Engine off to clear" is true only when not being parked is the sole blocker. Stopping doesn't read Mode 07 and doesn't ack a sync. With the car as shipped (`syncAcked` always false) the old permanent-vs-transient order would have shown "engine off", then flipped to `sync pending` once the driver stopped: a broken promise every time. Which non-ok reason shows first is the gate's order (`clearGateReason`), not the page's. Corrected 2026-10-22 (UIDEV-010): this line used to say "a permanent reason wins", which Atlas's ruling replaced.
+  - **Detail fetch failed (open, not ruled):** the gate is fed by the same `states/dtc` read. The v3 mockup draws **no Clear control** in that case, never a guessed lock or an enabled button. Atlas to confirm. If the shipped code draws one, the label must not promise an unlock.
 
 ### 4.6 Ages and formats on this page
 - **Freshness** (how old the reading I'm showing is): `last reading n s ago`, the S105 M7 rule: `Math.floor`, clamped at 0, `N s` with a space, capped at `999+ s ago`. On stale rows and in the takeover only.
@@ -228,7 +234,7 @@ From the S106 brief (2026-10-18), U1–U12 and the S108 review (2026-10-19); the
 8. Battery-red: a red Driving tile beside an amber WATCH icon (band vs tier).
 9. Chip inks meet AA per §3.
 10. Codes unread + an active WATCH: the icon is watch, not `?`; header meta `codes not read yet`.
-10a. Code detail (§4.5): a tap on a code row while not parked (driving, and idling stationary) opens nothing; the band shows the entry's sentence; a failed `states/dtc` fetch ⇒ title, chip, sentence + `details unavailable`; the Clear button is visible and disabled for WATCH/STOP/UNRATED (existing lock label) and while not parked (`🔒 CLEAR CODES — engine off to clear`, tested both driving and idling stationary), with a permanent reason winning over `moving`. No clear-lock text contains `moving`.
+10a. Code detail (§4.5): a tap on a code row while not parked (driving, and idling stationary) opens nothing; the band shows the entry's sentence; a failed `states/dtc` fetch ⇒ title, chip, sentence + `details unavailable`; the Clear button is visible and disabled for WATCH/STOP/UNRATED (existing lock label) and while not parked (`🔒 CLEAR CODES — engine off to clear`, tested both driving and idling stationary), with **every non-ok reason winning over `moving`** (Atlas US-919, 2026-10-21): stored MINOR + pending unread + not parked ⇒ the `pending_not_read` label, never "engine off to clear". No clear-lock text contains `moving`.
 10b. Ages: row ages are `agoText` (a `firstSeenTs` 41 days back reads `41 days ago`, no source prefix); a stale row reads `last reading n s ago` and caps at `999+ s ago`.
 
 **US-899 (PULL OVER + CODE ALERT)**
@@ -276,13 +282,15 @@ Knock alerts (need ECMLink) · AFR/lean numeric (no wideband) · oil pressure (n
 - **Iris:** bring the OEM mockup up to this revision (§10).
 - **Top-bar name:** `ALERTS` (86.3 px; `WARNINGS` 125 px doesn't fit the 122 px slot). The page keeps the name Warnings everywhere else.
 
-## 10. Where the v2 OEM mockup is behind this spec (2026-10-19)
-The mockup (`specs/v030-warnings-page-oem.html`, v2 of 2026-10-18) predates these folds. **Build from the spec where they differ:**
-- the icon's `none` look (`△`), the no-data `--`, the WiFi SVG glyph and the fixed icon slot (§4.2);
-- code titles in Spool's `<NAME> (<code>)` form, the UNRATED sentence, no P0430 (§4.1);
-- row ages from `agoText`, no source prefix (§3);
-- the takeover's directive from the provider and the stale line on its own line (§4.4);
-- the clear-button labels (§4.5).
+## 10. The OEM mockup (v3, 2026-10-22, UIDEV-010)
+`specs/v030-warnings-page-oem.html` v3 is brought up to this spec. It folds the five 2026-10-19 gaps (the `△`/`--` icon in a fixed 3-character slot with the S108 top-bar cluster; Spool's code titles, the UNRATED sentence, no P0430; `agoText` ages with no prefix; the provider's `directive` and the stale line on its own line; the clear-button labels). It also folds what landed after:
+- the code detail (§4.5), with every shipped `CLEAR_REASON_LABEL` and Atlas's US-919 precedence (`moving` replaces only `ok`), as eight fixtures;
+- `displayUnits` with the provider's `round` direction applied last (§4.6: 11.96 ⇒ `11.9 V`, 15.04 ⇒ `15.1 V`, coolant 112.2 °C ceiled to `234 °F`);
+- the S109 not-assessed lines (§4.3);
+- `codeAlert.tier` as the frame colour (Q32), `code-alert-five-codes`, `icon-count-120`, `icon-missing-payload`, `watch-battery-red-no-takeover`;
+- every sentence in `--font-mono` (§3 fonts rule; v2 drew them in the body face).
+
+**Still the spec's to settle:** Clear when the detail fetch fails (§4.5, open). The other OEM mockups draw a word stand-in top bar; §4.2's widths govern the build.
 
 ## OEM mockup findings (2026-10-15)
 Mockup: `proposals/2026-10-15-v030-warnings-page-oem.html`. Measured: Michroma from the advances table; DejaVu Sans / Sans Mono via PIL.
